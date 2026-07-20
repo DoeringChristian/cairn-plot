@@ -50,7 +50,10 @@ import {
   getCachedImageData,
   setCachedImageData,
 } from "../image";
-import { applyColormap, getColormapLUT, DIVERGING_COLORMAPS } from "../colormaps";
+import { applyColormap, getColormapLUT } from "../colormaps";
+// Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
+// safe to pull into the CPU pane / core bundle.
+import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import {
   getTonemapOperator,
   applyExposureOffset,
@@ -58,13 +61,13 @@ import {
   type RgbTriple,
 } from "../image/tonemap";
 import {
-  CHANNEL_COLORS,
-  formatChannelValue,
+  buildChannelSample,
   type PixelSample,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
 import { colormapToolbarButton } from "./use-image-controller";
+import { useResettableState } from "../hooks/use-resettable-state";
 import {
   isHdrProps,
   shapeDims,
@@ -178,17 +181,13 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   // until the user overrides it locally. (Only surfaces when the toolbar shows,
   // i.e. `toolbar={true}` backend-seam mounts, not the legacy `toolbar={false}`
   // card chrome — see report note on the card-control interaction.)
-  const [colormap, setColormap] = useState<Colormap>(colormapProp);
+  // Descriptor default captured at mount; HOME restores the view-local colormap
+  // override (and `isModified` enables it while off-default) — same contract as
+  // GpuImagePane / the compare pane, now via the shared `useResettableState`.
+  const [colormap, setColormap, colormapMeta] = useResettableState<Colormap>(colormapProp);
   useEffect(() => {
     setColormap(colormapProp);
-  }, [colormapProp]);
-  // Descriptor default captured at mount; HOME restores the view-local
-  // colormap override (and enables while off-default) — same contract as
-  // GpuImagePane / the compare pane.
-  const defaultColormapRef = useRef(colormapProp);
-  const resetColormapOverride = useCallback(() => {
-    setColormap(defaultColormapRef.current);
-  }, []);
+  }, [colormapProp, setColormap]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
@@ -303,7 +302,7 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       if (!ctx) return;
       ctx.drawImage(img, 0, 0);
       const src = ctx.getImageData(0, 0, c.width, c.height);
-      const cmapMode = DIVERGING_COLORMAPS.has(colormap) ? "positive" : "linear";
+      const cmapMode = resolveColormapMode(colormap);
       const mapped = applyColormap(
         src,
         colormap as Exclude<Colormap, "none">,
@@ -379,20 +378,10 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
         lb = dd.data[j + 2]!;
       }
       const luminance = (0.299 * lr + 0.587 * lg + 0.114 * lb) / 255;
+      // A false-colored (colormap) or grayscale pixel prints one untinted line;
+      // a true multi-channel pixel prints three channel-tinted lines.
       const single = colormap !== "none" || (r === g && g === b);
-      if (single) {
-        return { lines: [formatChannelValue(r, "uint8", notation)], luminance };
-      }
-      // Multi-channel: tint each digit line by its channel (R/G/B).
-      return {
-        lines: [
-          formatChannelValue(r, "uint8", notation),
-          formatChannelValue(g, "uint8", notation),
-          formatChannelValue(b, "uint8", notation),
-        ],
-        luminance,
-        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
-      };
+      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notation, luminance);
     },
     [colormap],
   );
@@ -628,8 +617,8 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       // SDR single-image: a view-local COLORMAP menu (shown only when the
       // toolbar renders — `toolbar={true}` backend-seam mounts).
       leadingMenus={[colormapToolbarButton(colormap, (id) => setColormap(id as Colormap))]}
-      onReset={resetColormapOverride}
-      extraModified={colormap !== defaultColormapRef.current}
+      onReset={colormapMeta.reset}
+      extraModified={colormapMeta.isModified}
       // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
       // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
       // (or a colormap/diff `<canvas>`), with no scene-linear pixel-recompute
@@ -728,22 +717,11 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
             0.114 * disp.data[j + 2]!) /
           255;
       }
-      if (c === 1) {
-        return {
-          lines: [formatChannelValue(src[base] ?? 0, "unit", notation)],
-          luminance,
-        };
-      }
-      // Multi-channel HDR: tint each float line by its channel (R/G/B).
-      return {
-        lines: [
-          formatChannelValue(src[base] ?? 0, "unit", notation),
-          formatChannelValue(src[base + 1] ?? 0, "unit", notation),
-          formatChannelValue(src[base + 2] ?? 0, "unit", notation),
-        ],
-        luminance,
-        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
-      };
+      const values =
+        c === 1
+          ? [src[base] ?? 0]
+          : [src[base] ?? 0, src[base + 1] ?? 0, src[base + 2] ?? 0];
+      return buildChannelSample(values, "unit", notation, luminance);
     },
     [hdr, dims],
   );

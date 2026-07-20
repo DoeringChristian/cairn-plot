@@ -47,5 +47,19 @@ export function resolveDiffCmapMode(
   // Unit range (zero error = 0): a DIVERGING map must fold `[0,1]` into its upper
   // half so zero sits on the neutral midpoint; a SEQUENTIAL map uses its FULL
   // range linearly.
+  return resolveColormapMode(colormapName);
+}
+
+/**
+ * The sequential-vs-diverging rule in ONE place: a DIVERGING colormap folds a
+ * unit `[0,1]` value into its upper half (`"positive"`, so zero lands on the
+ * neutral midpoint); a SEQUENTIAL map indexes the full ramp linearly
+ * (`"linear"`). Shared by `resolveDiffCmapMode`'s unit branch (GPU diff blit)
+ * and the CPU false-color / diff paths (`applyColormap`'s `mode`), so the two
+ * pipelines never disagree. `null`/`"none"`/unknown → `"linear"`.
+ */
+export function resolveColormapMode(
+  colormapName: string | null | undefined,
+): "positive" | "linear" {
   return DIVERGING_COLORMAPS.has(colormapName ?? "") ? "positive" : "linear";
 }

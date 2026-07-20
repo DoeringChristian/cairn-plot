@@ -90,6 +90,31 @@ export interface PixelSample {
   colors?: (string | null)[];
 }
 
+/**
+ * Build a {@link PixelSample} from one pixel's channel values, the ONE place the
+ * "1 value = a single untinted line, 3 values = three CHANNEL_COLORS-tinted
+ * lines" convention lives. Every pane sampler (CPU SDR/HDR, GPU compare u8/float/
+ * diff) formats through here so int↔decimal + channel-tinting stay identical.
+ *
+ *  - `values.length === 1` → one line, no `colors` (per-pixel auto-contrast).
+ *  - otherwise → one line per value, each tinted by its `CHANNEL_COLORS` slot.
+ */
+export function buildChannelSample(
+  values: number[],
+  scale: PixelValueScale,
+  notation: PixelValueNotation,
+  luminance: number,
+): PixelSample {
+  if (values.length === 1) {
+    return { lines: [formatChannelValue(values[0]!, scale, notation)], luminance };
+  }
+  return {
+    lines: values.map((v) => formatChannelValue(v, scale, notation)),
+    luminance,
+    colors: values.map((_, i) => CHANNEL_COLORS[i] ?? null),
+  };
+}
+
 export type PixelSampler = (
   px: number,
   py: number,

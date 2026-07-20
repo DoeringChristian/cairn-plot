@@ -1,5 +1,6 @@
 import type { ColormapName } from "../types";
 import { getColormapLUT } from "./lut.ts";
+import { applyExposureOffset } from "../image/tonemap.ts";
 
 /**
  * Apply a colormap LUT to an ImageData.
@@ -28,13 +29,13 @@ export function applyColormap(
   const out = new ImageData(src.width, src.height);
   const sd = src.data;
   const od = out.data;
-  const scale = Math.pow(2, exposureEV);
   const adjust = exposureEV !== 0 || offset !== 0;
   for (let i = 0; i < sd.length; i += 4) {
     let avg = (sd[i]! + sd[i + 1]! + sd[i + 2]!) / 3;
     if (adjust) {
-      // Exposure/offset act in the normalized [0,1] domain, then back to 0..255.
-      avg = Math.max(0, Math.min(255, ((avg / 255) * scale + offset) * 255));
+      // Exposure/offset act in the normalized [0,1] domain (the canonical
+      // `applyExposureOffset` = v*2^EV + offset), then back to 0..255.
+      avg = Math.max(0, Math.min(255, applyExposureOffset(avg / 255, exposureEV, offset) * 255));
     }
     let idx: number;
     if (mode === "positive") {

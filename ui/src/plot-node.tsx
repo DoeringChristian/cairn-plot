@@ -53,6 +53,7 @@ import {
   IMAGE_TOOLBAR_CONFIG,
 } from "./lib/cairn-plot/renderers/use-image-controller";
 import type { ToolbarButtonSpec } from "./lib/cairn-plot/controls/ToolbarConfig";
+import { buildCompareModeMenu } from "./lib/cairn-plot/media-compare/compare-mode-menu";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -409,39 +410,22 @@ function CompareView({ node }: { node: CompareNode }) {
   // composited views, by `GpuComparePane`'s shell toolbar (which builds the same
   // list + a "Side" entry wired to `onRequestSide`). Both stay in sync through
   // this component's `viewMode`/`diffKernel` state.
-  const modeMenu = useMemo<ToolbarButtonSpec>(() => {
-    const options = [
-      { id: "side", label: "Side" },
-      { id: "slide", label: "Slide" },
-      { id: "blend", label: "Blend" },
-      ...readDiffMenuModes(),
-    ];
-    const value =
-      viewMode === "side"
-        ? "side"
-        : viewMode === "split"
-          ? "slide"
-          : viewMode === "blend"
-            ? "blend"
-            : diffKernel;
-    return {
-      id: "compare-mode",
-      title: "Compare / diff mode",
-      menu: {
-        options,
-        value,
-        onSelect: (id: string) => {
-          if (id === "side") setViewMode("side");
-          else if (id === "slide") setViewMode("split");
-          else if (id === "blend") setViewMode("blend");
-          else {
-            setViewMode("diff");
-            setDiffKernel(id);
-          }
+  const modeMenu = useMemo<ToolbarButtonSpec>(
+    () =>
+      buildCompareModeMenu({
+        mode: viewMode,
+        kernel: diffKernel,
+        kernelOptions: readDiffMenuModes(),
+        onSide: () => setViewMode("side"),
+        onSlide: () => setViewMode("split"),
+        onBlend: () => setViewMode("blend"),
+        onKernel: (id) => {
+          setViewMode("diff");
+          setDiffKernel(id);
         },
-      },
-    };
-  }, [viewMode, diffKernel]);
+      }),
+    [viewMode, diffKernel],
+  );
 
   // A controller for the side view's overlay toolbar, bound to the SAME shared
   // viewport the two side panes render from (so its zoom/reset drive both).

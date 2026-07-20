@@ -66,11 +66,11 @@ import { colormapToolbarButton } from "../renderers/use-image-controller";
 import { loadImageData } from "../image";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
+import { useResettableState } from "../hooks/use-resettable-state";
 import { screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
 import PixelValueOverlay, {
-  CHANNEL_COLORS,
   PIXEL_VALUE_MIN_SCREEN_PX,
-  formatChannelValue,
+  buildChannelSample,
   type PixelSample,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
@@ -93,6 +93,7 @@ import {
   CompareFloatUnsupportedError,
   type CompareFloatSource,
 } from "./compositor";
+import { buildCompareModeMenu } from "./compare-mode-menu";
 
 export interface GpuComparePaneProps {
   imageUrl: string | null;
@@ -261,16 +262,16 @@ export default function GpuComparePane({
   // state then owns it so a menu can switch it view-locally. The toolbar-menu
   // track wires a dropdown to `listDiffKernels()` + `setDiffKernel`.
   const initialKernel = diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute";
-  const [diffKernel, setDiffKernelState] = useState<string>(initialKernel);
+  const [diffKernel, setDiffKernelState, diffKernelMeta] = useResettableState<string>(initialKernel);
   useEffect(() => {
     setDiffKernelState(diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute");
-  }, [diffKernelProp, diffSubmode]);
+  }, [diffKernelProp, diffSubmode, setDiffKernelState]);
   const setDiffKernel = useCallback(
     (id: string) => {
       setDiffKernelState(id);
       onDiffKernelChange?.(id);
     },
-    [onDiffKernelChange],
+    [onDiffKernelChange, setDiffKernelState],
   );
   // Expose the selection API on the pane element so the toolbar-menu track (and
   // the browser harness) can drive kernel switching without prop-drilling.
@@ -289,10 +290,10 @@ export default function GpuComparePane({
   // a descriptor round-trip. NOTE: `"side"` is NOT reachable here — it's a
   // 2-cell grid composed ABOVE this pane by `CompositeMediaPane`, so the menu
   // scopes to slide · blend · kernels (see the menu build below).
-  const [compareMode, setCompareModeState] = useState<CompareMode>(mode);
+  const [compareMode, setCompareModeState, compareModeMeta] = useResettableState<CompareMode>(mode);
   useEffect(() => {
     setCompareModeState(mode);
-  }, [mode]);
+  }, [mode, setCompareModeState]);
   // Set the compare mode AND notify an owner above (so `CompareView` can keep
   // its lifted view-mode state coherent for side ⇄ compare round-trips). Menu
   // selections go through here; the prop-driven `useEffect` above does NOT
@@ -302,41 +303,44 @@ export default function GpuComparePane({
       setCompareModeState(next);
       onCompareModeChange?.(next);
     },
-    [onCompareModeChange],
+    [onCompareModeChange, setCompareModeState],
   );
 
   // Diff COLORMAP selection (spec §toolbar). Seeded from the `colormap` prop;
   // internal state owns it so the COLORMAP menu is view-local (display-only —
   // it NEVER changes the diff cache key / recompute count, only the blit LUT).
-  const [colormapState, setColormapState] = useState<Colormap>(colormap);
+  const [colormapState, setColormapState, colormapMeta] = useResettableState<Colormap>(colormap);
   useEffect(() => {
     setColormapState(colormap);
-  }, [colormap]);
+  }, [colormap, setColormapState]);
 
   // HOME / double-click reset restores every VIEW-LOCAL selection to its
   // descriptor default — mode, colormap AND kernel — alongside the shell's own
   // viewport + EV/OFFSET reset (user requirement: home = fully neutral pane).
   // `setCompareMode` (not the raw state setter) so an owner above (CompareView)
   // re-syncs its lifted view-mode state too.
-  // Descriptor DEFAULTS captured at MOUNT (first-render props are the
-  // descriptor-seeded values; later prop changes mirror lifted view-local
-  // state, so resetting to the live prop would no-op).
-  const defaultsRef = useRef({
-    mode,
-    colormap,
-    kernel: diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute",
-  });
+  // Descriptor DEFAULTS captured at MOUNT (via `useResettableState`'s seed
+  // capture — first-render props are the descriptor-seeded values; later prop
+  // changes mirror lifted view-local state, so resetting to the live prop would
+  // no-op). Reset restores mode + kernel through their ECHO setters
+  // (`setCompareMode`/`setDiffKernel`) so an owner above (CompareView) re-syncs
+  // its lifted state; colormap has no echo callback (display-only), so it resets
+  // through the raw setter — identical to the prior hand-rolled behavior.
   const resetViewSelections = useCallback(() => {
-    const d = defaultsRef.current;
-    setCompareMode(d.mode);
-    setColormapState(d.colormap);
-    setDiffKernel(d.kernel);
-  }, [setCompareMode, setDiffKernel]);
+    setCompareMode(compareModeMeta.default);
+    setColormapState(colormapMeta.default);
+    setDiffKernel(diffKernelMeta.default);
+  }, [
+    setCompareMode,
+    setColormapState,
+    setDiffKernel,
+    compareModeMeta.default,
+    colormapMeta.default,
+    diffKernelMeta.default,
+  ]);
   // Home enables when any view-local selection is off its descriptor default.
   const viewSelectionsModified =
-    compareMode !== defaultsRef.current.mode ||
-    colormapState !== defaultsRef.current.colormap ||
-    diffKernel !== defaultsRef.current.kernel;
+    compareModeMeta.isModified || colormapMeta.isModified || diffKernelMeta.isModified;
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only in EVERY mode. Split/blend: fed into the compose pass (`color *
@@ -355,37 +359,22 @@ export default function GpuComparePane({
   const leadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
     // `listDiffMenuModes()` collapses the FLIP family to one "FLIP (perceptual)"
     // entry (`flip`, auto-dispatched LDR/HDR by source type) + "FLIP (LDR
-    // forced)" (`flip_ldr`) — HDR-FLIP is never listed separately.
-    const modeOptions = [
-      // "Side" (the 2-pane side-by-side, owned by `CompareView` ABOVE this pane)
-      // leads the menu — matching the Python enum order side · slide · blend ·
-      // <kernels> — but only when an owner wired `onRequestSide` to receive it.
-      ...(onRequestSide ? [{ id: "side", label: "Side" }] : []),
-      { id: "slide", label: "Slide" },
-      { id: "blend", label: "Blend" },
-      ...listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
-    ];
-    const modeValue = compareMode === "diff" ? diffKernel : compareMode === "split" ? "slide" : "blend";
-    const modeMenu: ToolbarButtonSpec = {
-      id: "compare-mode",
-      title: "Compare / diff mode",
-      menu: {
-        options: modeOptions,
-        value: modeValue,
-        onSelect: (id: string) => {
-          // "side" leaves this pane entirely — delegate UP, don't touch internal
-          // state (the shader has no side pass; `CompareView` swaps in the
-          // 2-pane layout).
-          if (id === "side") onRequestSide?.();
-          else if (id === "slide") setCompareMode("split");
-          else if (id === "blend") setCompareMode("blend");
-          else {
-            setCompareMode("diff");
-            setDiffKernel(id);
-          }
-        },
+    // forced)" (`flip_ldr`) — HDR-FLIP is never listed separately. "Side" (the
+    // 2-pane layout owned by `CompareView` ABOVE this pane) leads the menu only
+    // when an owner wired `onRequestSide` — selecting it delegates UP (the
+    // shader has no side pass) rather than touching internal state.
+    const modeMenu = buildCompareModeMenu({
+      mode: compareMode,
+      kernel: diffKernel,
+      kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
+      onSide: onRequestSide,
+      onSlide: () => setCompareMode("split"),
+      onBlend: () => setCompareMode("blend"),
+      onKernel: (id) => {
+        setCompareMode("diff");
+        setDiffKernel(id);
       },
-    };
+    });
     const menus: ToolbarButtonSpec[] = [modeMenu];
     if (compareMode === "diff") {
       menus.push(colormapToolbarButton(colormapState, (id) => setColormapState(id as Colormap)));
@@ -842,18 +831,11 @@ export default function GpuComparePane({
         if (px < 0 || py < 0 || px >= width || py >= height) return null;
         const base = (py * width + px) * channels;
         const luminance = 0.5; // GPU-rendered: no CPU-tonemapped buffer retained
-        if (channels === 1) {
-          return { lines: [formatChannelValue(data[base] ?? 0, "unit", notationArg)], luminance };
-        }
-        return {
-          lines: [
-            formatChannelValue(data[base] ?? 0, "unit", notationArg),
-            formatChannelValue(data[base + 1] ?? 0, "unit", notationArg),
-            formatChannelValue(data[base + 2] ?? 0, "unit", notationArg),
-          ],
-          luminance,
-          colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
-        };
+        const values =
+          channels === 1
+            ? [data[base] ?? 0]
+            : [data[base] ?? 0, data[base + 1] ?? 0, data[base + 2] ?? 0];
+        return buildChannelSample(values, "unit", notationArg, luminance);
       }
       const d = dataRef.current;
       if (!d || px < 0 || py < 0 || px >= d.width || py >= d.height) return null;
@@ -862,16 +844,7 @@ export default function GpuComparePane({
       const g = d.data[i + 1]!;
       const b = d.data[i + 2]!;
       const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-      if (r === g && g === b) return { lines: [formatChannelValue(r, "uint8", notationArg)], luminance };
-      return {
-        lines: [
-          formatChannelValue(r, "uint8", notationArg),
-          formatChannelValue(g, "uint8", notationArg),
-          formatChannelValue(b, "uint8", notationArg),
-        ],
-        luminance,
-        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
-      };
+      return buildChannelSample(r === g && g === b ? [r] : [r, g, b], "uint8", notationArg, luminance);
     };
   const sampleFg = useMemo(() => makeSampler(fgDataRef, fgFloatRef), []);
   const sampleRef = useMemo(() => makeSampler(refDataRef, refFloatRef), []);
@@ -890,19 +863,13 @@ export default function GpuComparePane({
       const base = (py * w + px) * 4;
       const output = getDiffKernel(resolvedKernelId)?.output ?? "per-channel";
       const luminance = 0.5; // GPU-rendered diff: no CPU-tonemapped buffer retained
-      if (output === "scalar") {
-        // FLIP & friends replicate the scalar across R/G/B; read R, print once.
-        return { lines: [formatChannelValue(arr[base] ?? 0, "unit", notationArg)], luminance };
-      }
-      return {
-        lines: [
-          formatChannelValue(arr[base] ?? 0, "unit", notationArg),
-          formatChannelValue(arr[base + 1] ?? 0, "unit", notationArg),
-          formatChannelValue(arr[base + 2] ?? 0, "unit", notationArg),
-        ],
-        luminance,
-        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
-      };
+      // FLIP & friends ("scalar") replicate the metric across R/G/B — read R and
+      // print one untinted line; per-channel kernels print three tinted lines.
+      const values =
+        output === "scalar"
+          ? [arr[base] ?? 0]
+          : [arr[base] ?? 0, arr[base + 1] ?? 0, arr[base + 2] ?? 0];
+      return buildChannelSample(values, "unit", notationArg, luminance);
     };
   }, [dims, resolvedKernelId]);
 

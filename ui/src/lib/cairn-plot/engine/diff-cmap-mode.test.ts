@@ -8,7 +8,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveDiffCmapMode } from "./diff-cmap-mode.ts";
+import { resolveDiffCmapMode, resolveColormapMode } from "./diff-cmap-mode.ts";
 
 test("signed/relative ranges are always 'signed' (zero on the LUT midpoint)", () => {
   for (const cmap of ["viridis", "plasma", "magma", "red-blue", "red-green", null]) {
@@ -34,4 +34,21 @@ test("unit range + no colormap defaults to 'linear' (moot: no LUT applied)", () 
   assert.equal(resolveDiffCmapMode("unit", null), "linear");
   assert.equal(resolveDiffCmapMode("unit", undefined), "linear");
   assert.equal(resolveDiffCmapMode("unit", "none"), "linear");
+});
+
+test("resolveColormapMode: the shared sequential-vs-diverging rule", () => {
+  // DIVERGING → 'positive'; SEQUENTIAL / unknown / empty → 'linear'.
+  assert.equal(resolveColormapMode("red-blue"), "positive");
+  assert.equal(resolveColormapMode("red-green"), "positive");
+  assert.equal(resolveColormapMode("viridis"), "linear");
+  assert.equal(resolveColormapMode("plasma"), "linear");
+  assert.equal(resolveColormapMode(null), "linear");
+  assert.equal(resolveColormapMode(undefined), "linear");
+  assert.equal(resolveColormapMode("none"), "linear");
+});
+
+test("resolveDiffCmapMode's unit branch matches resolveColormapMode", () => {
+  for (const cmap of ["viridis", "plasma", "magma", "red-blue", "red-green", "none", null]) {
+    assert.equal(resolveDiffCmapMode("unit", cmap), resolveColormapMode(cmap));
+  }
 });

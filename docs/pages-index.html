@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cairn-plot — live examples</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 3rem 1.25rem;
+    font: 16px/1.6 -apple-system, system-ui, "Segoe UI", sans-serif;
+    background: #0d1117; color: #e6edf3;
+  }
+  @media (prefers-color-scheme: light) {
+    body { background: #ffffff; color: #1f2328; }
+    .card { background: #f6f8fa; border-color: #d0d7de; }
+    .muted { color: #57606a; }
+    code { background: #eff2f5; }
+  }
+  main { max-width: 44rem; margin: 0 auto; }
+  h1 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.5rem; }
+  .muted { color: #8b949e; }
+  a { color: #4493f8; }
+  .card {
+    display: block; margin: 1rem 0; padding: 1rem 1.25rem;
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    text-decoration: none; color: inherit;
+  }
+  .card:hover { border-color: #4493f8; }
+  .card strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .card p { margin: 0.35rem 0 0; font-size: 0.9rem; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em; background: #1f242c; padding: 0.1em 0.35em; border-radius: 4px;
+  }
+  footer { margin-top: 2.5rem; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>cairn-plot — live examples</h1>
+  <p class="muted">
+    Every page below is ONE self-contained HTML file rendered by CI from the
+    latest <code>main</code> — the same output
+    <code>import cairn_plot as cp</code> produces locally. No server, no CDN;
+    everything (data, renderer bundles, WebGPU kernels) is baked in.
+  </p>
+
+  <a class="card" href="gallery.html">
+    <strong>Gallery — every plot type</strong>
+    <p class="muted">2D charts, tables, SDR + true-float HDR images, all
+    compare modes (incl. FLIP at 2048×2048), WebGL 3D viewers. Large page
+    (~40&nbsp;MB — the data is inline).</p>
+  </a>
+
+  <a class="card" href="report.html">
+    <strong>Feature report — themed <code>cp.Report</code></strong>
+    <p class="muted">Markdown + components in the report layout: compare/diff
+    kernels, FLIP validated against NVIDIA's official flip-evaluator,
+    HDR-FLIP, synced viewports.</p>
+  </a>
+
+  <a class="card" href="url-images.html">
+    <strong>URL images — client-side EXR decoding</strong>
+    <p class="muted">The page bakes no pixels — the browser fetches and
+    decodes OpenEXR (ZIP + PIZ) itself. Needs network when viewed.</p>
+  </a>
+
+  <footer class="muted">
+    GPU features need WebGPU (a notice appears in-page if your browser lacks
+    it) — see the
+    <a href="https://github.com/doeringchristian/cairn-plot/blob/main/docs/browser-support.md">browser
+    support guide</a>. Source:
+    <a href="https://github.com/doeringchristian/cairn-plot">github.com/doeringchristian/cairn-plot</a>.
+  </footer>
+</main>
+</body>
+</html>

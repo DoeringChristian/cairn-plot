@@ -48,17 +48,20 @@ reports work with numpy + pydantic alone.
 browser to see every feature live, no install needed (each file is fully
 self-contained):
 
-**View them rendered in your browser right now** (served via raw.githack, so
-the link opens the live page, not the file's source):
+**View them live right now** — CI re-renders the showcase from every push to
+`main` and publishes it via GitHub Pages
+(**<https://doeringchristian.github.io/cairn-plot/>**):
 
-- [**Gallery** — every plot type](https://raw.githack.com/doeringchristian/cairn-plot/main/examples/rendered/gallery.html)
-  (2D charts, tables, SDR/HDR images, compare modes, WebGL 3D viewers)
-  · [source file](examples/rendered/gallery.html)
-- [**Feature report** — themed `cp.Report`](https://raw.githack.com/doeringchristian/cairn-plot/main/examples/rendered/report.html)
+- [**Gallery** — every plot type](https://doeringchristian.github.io/cairn-plot/gallery.html)
+  (2D charts, tables, SDR/HDR images, compare modes incl. FLIP at 2048×2048,
+  WebGL 3D viewers)
+- [**Feature report** — themed `cp.Report`](https://doeringchristian.github.io/cairn-plot/report.html)
   (compare/diff kernels, FLIP + HDR-FLIP validation, synced viewports)
-  · [source file](examples/rendered/report.html)
-- [**URL images** — client-side EXR decoding](https://raw.githack.com/doeringchristian/cairn-plot/main/examples/rendered/url-images.html)
-  (needs network when viewed) · [source file](examples/rendered/url-images.html)
+- [**URL images** — client-side EXR decoding](https://doeringchristian.github.io/cairn-plot/url-images.html)
+  (needs network when viewed)
+
+Snapshot copies are also committed under
+[`examples/rendered/`](examples/rendered/) for offline use.
 
 Three runnable, self-documenting examples live in [`examples/`](examples/) —
 each renders a single offline HTML file (pass `--open` to view it immediately):

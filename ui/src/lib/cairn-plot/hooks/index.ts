@@ -7,3 +7,7 @@ export {
   type SeriesVisibility,
 } from "./use-series-visibility";
 export { useEmitAutoHeight } from "./use-emit-auto-height";
+export {
+  useResettableState,
+  type ResettableMeta,
+} from "./use-resettable-state";
