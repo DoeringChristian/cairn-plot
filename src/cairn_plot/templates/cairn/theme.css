@@ -285,10 +285,17 @@
   border-radius: 0;
 }
 
-/* Media inside a report never overflows its column. */
-.cairn-report img,
-.cairn-report canvas,
-.cairn-report svg {
+/* Media inside MARKDOWN prose never overflows its column. Scoped to
+   `.cairn-prose` ONLY: a component block's canvases/svgs are laid out by the
+   components themselves (e.g. the TEV pixel-value overlay canvas is
+   `absolute inset-0 h-full` over its pane) — a blanket
+   `.cairn-report canvas { height: auto }` out-specificities those utility
+   classes and forces every such canvas to its backing-store aspect ratio,
+   clipping the overlay to a band whenever the image aspect differs from the
+   pane aspect (the "missing pixel numbers in some comparison views" bug). */
+.cairn-report .cairn-prose img,
+.cairn-report .cairn-prose canvas,
+.cairn-report .cairn-prose svg {
   max-width: 100%;
   height: auto;
 }
