@@ -81,21 +81,19 @@
  * pan, an exposure/operator change, or the double-click reset on a
  * cap-parked-but-visible pane always paints a live, correct frame.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap, DIVERGING_COLORMAPS } from "../colormaps";
 import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
-import PixelAxes from "../primitives/PixelAxes";
-import LabelChip from "../primitives/LabelChip";
 import ImageOverlay from "./ImageOverlay";
-import PixelValueOverlay, {
+import {
   CHANNEL_COLORS,
   PIXEL_VALUE_MIN_SCREEN_PX,
   formatChannelValue,
   type PixelSample,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
-import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
+import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { acquirePane, releasePane, type PaneHandle, type SourceUpload } from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
@@ -107,12 +105,7 @@ import type { ImageOperator, ImageParams } from "../engine/image-engine";
 // core-bundle guard is about core staying free of the ENGINE, not about the
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
 import CpuImagePane from "./CpuImagePane";
-import PlotToolbar from "../primitives/PlotToolbar";
-import {
-  useImageController,
-  IMAGE_TOOLBAR_CONFIG,
-  notationToolbarButton,
-} from "./use-image-controller";
+import ImagePaneShell from "./ImagePaneShell";
 import {
   isHdrProps,
   shapeDims,
@@ -274,8 +267,6 @@ export function screenPxPerTexel(
   return Math.min(box.width / visibleW, box.height / visibleH);
 }
 
-const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
-
 export default function GpuImagePane(props: GpuImagePaneProps) {
   const hdrMode = isHdrProps(props);
 
@@ -316,8 +307,6 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const hdrDataRef = useRef<HdrData | null>(null);
   const sdrImageDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
-  const [notation, setNotation] = useState<PixelValueNotation>(props.pixelValueNotation ?? "decimal");
-  const [overlayActive, setOverlayActive] = useState(false);
 
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
@@ -392,24 +381,9 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // -----------------------------------------------------------------------
-  // Viewport interaction (Alt-gated wheel zoom-to-cursor + pointer pan) —
-  // REUSED verbatim from the CPU panes; only the CONSUMPTION (uvRect instead
-  // of a CSS transform) differs.
-  // -----------------------------------------------------------------------
-  const { containerProps: viewportProps } = useImageViewport({
-    containerRef: paneRef,
-    zoom,
-    pan,
-    onViewportChange,
-    // Q29: adaptive max-zoom — zoom until one source texel fills the viewport.
-    naturalWidth: naturalDims?.w,
-    naturalHeight: naturalDims?.h,
-  });
-
-  const resetViewport = useCallback(() => {
-    onViewportChange?.(HOME_VIEWPORT);
-  }, [onViewportChange]);
+  // Viewport interaction (Alt-gated wheel zoom-to-cursor + pointer pan) and
+  // the double-click reset are owned by the shared `ImagePaneShell` — this
+  // backend only CONSUMES the resulting `{zoom, pan}` (as a uvRect) below.
 
   // Redraw the TEV overlay / re-run the render pass when the container's own
   // box changes (object-contain fit depends on the live rect).
@@ -629,35 +603,9 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     renderPass();
   }, [renderPass, uploadVersion, containerTick]);
 
-  // -----------------------------------------------------------------------
-  // PlotToolbar controller (zoom/pan/reset/screenshot) — the image pane's
-  // adapter onto the renderer-agnostic PlotController facade the modebar
-  // drives. `requestRender` is `renderPass` so the screenshot forces a fresh
-  // WebGPU frame before reading the canvas back (see the hook's module doc).
-  // -----------------------------------------------------------------------
-  const controller = useImageController({
-    rootRef: paneRef,
-    canvasRef,
-    zoom,
-    pan,
-    onViewportChange,
-    naturalWidth: naturalDims?.w,
-    naturalHeight: naturalDims?.h,
-    requestRender: renderPass,
-  });
-
-  // Toolbar config: while the pixel-value overlay is active, expose the
-  // notation toggle ("0–255"/"0–1") as a LEADING toolbar button (replacing the
-  // old free-floating chip). Leftmost so it never shifts the standard buttons.
-  const toolbarConfig = useMemo(
-    () => ({
-      ...IMAGE_TOOLBAR_CONFIG,
-      leadingButtons: overlayActive
-        ? [notationToolbarButton(notation, setNotation)]
-        : [],
-    }),
-    [overlayActive, notation],
-  );
+  // The PlotToolbar + `useImageController` wiring (with `requestRender:
+  // renderPass` so the screenshot forces a fresh WebGPU frame) and the
+  // notation leading button now live in the shared `ImagePaneShell`.
 
   // -----------------------------------------------------------------------
   // TEV per-pixel value overlay sampler.
@@ -738,89 +686,66 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     );
   }
 
+  // The image quad is placed inside the FULL-viewport canvas by
+  // `viewportToUvRect` (letterboxed at rest, filling/pannable at any zoom); the
+  // canvas is always `w-full h-full` of the shell's wrapper (no inline size /
+  // object-fit — only its device-pixel backing store is set imperatively, in
+  // the render-pass effect above). The checkerboard lives on that padding-free
+  // wrapper (`checkerboard="wrapper"`, Q26) so it shows ONLY where the quad
+  // doesn't cover the canvas (letterbox margins / under-zoomed pan), never as a
+  // fixed border in the axis gutter.
+  const overlayNode =
+    overlay &&
+    overlaySettings?.enabled &&
+    naturalDims &&
+    ((overlay.boxes?.length ?? 0) > 0 || (overlay.masks?.length ?? 0) > 0) ? (
+      <ImageOverlay
+        data={overlay}
+        settings={overlaySettings}
+        naturalWidth={naturalDims.w}
+        naturalHeight={naturalDims.h}
+      />
+    ) : undefined;
+
   return (
-    <div className="group relative flex flex-col h-full" data-gpu-image-pane data-gpu-backend-ready={paneReady}>
-      <PlotToolbar controller={controller} config={toolbarConfig} />
-      <div
-        ref={paneRef}
-        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded"
-        style={{ padding: showAxes && naturalDims ? "16px 4px 4px 28px" : 0, ...viewportProps.style }}
-        onPointerDown={viewportProps.onPointerDown}
-        onPointerMove={viewportProps.onPointerMove}
-        onPointerUp={viewportProps.onPointerUp}
-        onPointerCancel={viewportProps.onPointerCancel}
-        onDoubleClick={resetViewport}
-        data-gpu-image-viewport
-      >
-        <div
-          ref={imgWrapperRef}
-          className="relative w-full h-full flex items-center justify-center cairn-checkerboard"
-        >
-          {/*
-            Q24 fix: the canvas is the FULL viewport — `w-full h-full` of
-            this wrapper, always (no inline CSS size override, no
-            object-fit) — its device-pixel backing store tracks this box's
-            measured CSS size x devicePixelRatio (the render-pass effect
-            above; Q22's crispness fix, preserved). The image is placed
-            inside this full-canvas viewport as a quad by `viewportToUvRect`
-            (letterboxed at rest, filling/pannable at any zoom — see that
-            function's doc comment); Q18's OOB -> transparent shader path
-            paints checkerboard (this wrapper itself now carries
-            `cairn-checkerboard` — Q26 fix: it used to live on `paneRef`,
-            which fills the PADDED pane including the axis-label gutter,
-            producing a permanent checkerboard RING at the pane edge that no
-            zoom could ever cover, since zoom only affects the canvas inside
-            that padding. Moving the class onto this padding-free wrapper —
-            and dropping `paneRef`'s padding to 0 whenever `showAxes` is off,
-            so the wrapper spans the full pane edge-to-edge — confines the
-            checkerboard to exactly the canvas's own box, so it now appears
-            ONLY where the image quad genuinely doesn't cover the canvas
-            (letterbox margins / under-zoomed pan), never as a fixed border)
-            wherever the quad doesn't cover the canvas.
-          */}
-          <canvas
-            ref={canvasRef}
-            className="w-full h-full block"
-            style={{ imageRendering: imgRendering }}
-            data-gpu-image-canvas
-          />
-          {showAxes && naturalDims && (
-            <PixelAxes
-              naturalWidth={naturalDims.w}
-              naturalHeight={naturalDims.h}
-              zoom={zoom}
-              containerRef={imgWrapperRef}
-            />
-          )}
-          {overlay &&
-            overlaySettings?.enabled &&
-            naturalDims &&
-            ((overlay.boxes?.length ?? 0) > 0 || (overlay.masks?.length ?? 0) > 0) && (
-              <ImageOverlay
-                data={overlay}
-                settings={overlaySettings}
-                naturalWidth={naturalDims.w}
-                naturalHeight={naturalDims.h}
-              />
-            )}
-        </div>
-        {naturalDims && (
-          <PixelValueOverlay
-            imageElRef={canvasRef}
-            naturalWidth={naturalDims.w}
-            naturalHeight={naturalDims.h}
-            zoom={zoom}
-            pan={pan}
-            sourceWindow={overlayWindow}
-            sample={samplePixel}
-            notation={notation}
-            version={pixelDataVersion}
-            onActiveChange={setOverlayActive}
-          />
-        )}
-      </div>
-      {label ? <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} /> : null}
-    </div>
+    <ImagePaneShell
+      paneAttrs={{ "data-gpu-image-pane": "", "data-gpu-backend-ready": paneReady }}
+      viewportAttrs={{ "data-gpu-image-viewport": "" }}
+      toolbar
+      paneRef={paneRef}
+      wrapperRef={imgWrapperRef}
+      zoom={zoom}
+      pan={pan}
+      onViewportChange={onViewportChange}
+      naturalDims={naturalDims}
+      checkerboard="wrapper"
+      wrapperClassName="relative w-full h-full flex items-center justify-center"
+      viewportPadding={showAxes && naturalDims ? "16px 4px 4px 28px" : 0}
+      surface={
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full block"
+          style={{ imageRendering: imgRendering }}
+          data-gpu-image-canvas
+        />
+      }
+      showAxes={showAxes}
+      overlayNode={overlayNode}
+      overlay={{
+        displayElRef: canvasRef,
+        sample: samplePixel,
+        version: pixelDataVersion,
+        hasSource: true,
+        sourceWindow: overlayWindow,
+      }}
+      notationSeed={props.pixelValueNotation ?? "decimal"}
+      exportCanvasRef={canvasRef}
+      requestRender={renderPass}
+      label={label}
+      showLabelChip={!!label}
+      isDraggable={isDraggable}
+      onDragStart={onDragStart}
+    />
   );
 }
 
