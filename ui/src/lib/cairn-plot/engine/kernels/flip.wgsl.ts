@@ -1,0 +1,243 @@
+/**
+ * FLIP (LDR-FLIP) multi-pass diff kernel (spec §FLIP), per Andersson et al.
+ * 2020. Numerically mirrors the CPU reference (`flip-reference.ts`) — the two
+ * are cross-verified in `engine/__tests__/flip.browser.ts` (GPU vs CPU) and the
+ * CPU reference itself against the official `flip-evaluator` package
+ * (`flip-reference.test.ts`).
+ *
+ * ## Pass graph (all intermediates rgba16float, source resolution)
+ *   ycxczA / ycxczB : srcA/srcB (sRGB) → YCxCz.
+ *   labA   / labB   : ycxcz → per-channel CSF spatial filter → Hunt-CIELAB.
+ *   combine         : HyAB color diff (redistributed) ⊕ edge/point feature diff
+ *                     on the (unfiltered) achromatic channel → flip ∈ [0,1].
+ *
+ * The CSF (radius from ppd) and feature (radius from `gw*ppd`) convolutions
+ * recompute their Gaussian weights per tap in-shader; only whole-window
+ * normalization factors + `cmax` are precomputed on the CPU and passed as
+ * uniforms (see `prelude.wgsl.ts`'s SEPARABLE_CONV_NOTE). `displayRange:"unit"`
+ * — the output is already in [0,1].
+ *
+ * ## LDR only (spec: out of scope = HDR-FLIP)
+ * Inputs are assumed sRGB/display-encoded LDR. Float/HDR sources are not
+ * tone-mapped here; callers must feed LDR sources (the pane uploads rgba8unorm).
+ */
+import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl";
+import { FLIP_CMAX } from "./flip-reference";
+import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
+import type { BindGroupEntry } from "../types";
+
+const GW = 0.082;
+
+// ---- CPU-side filter constants (match flip-reference.ts) -------------------
+function csfConstants(ppd: number): { r: number; deltaX: number; sums: [number, number, number] } {
+  const a1 = [1.0, 1.0, 34.1];
+  const b1 = [0.0047, 0.0053, 0.04];
+  const a2 = [0.0, 0.0, 13.5];
+  const b2 = [1e-5, 1e-5, 0.025];
+  const maxScale = Math.max(...b1, ...b2);
+  const r = Math.ceil(3 * Math.sqrt(maxScale / (2 * Math.PI ** 2)) * ppd);
+  const deltaX = 1 / ppd;
+  const pi2 = Math.PI ** 2;
+  const sums: [number, number, number] = [0, 0, 0];
+  for (let y = -r; y <= r; y++) {
+    for (let x = -r; x <= r; x++) {
+      const z = (x * deltaX) ** 2 + (y * deltaX) ** 2;
+      for (let c = 0; c < 3; c++) {
+        sums[c] +=
+          a1[c]! * Math.sqrt(Math.PI / b1[c]!) * Math.exp((-pi2 * z) / b1[c]!) +
+          a2[c]! * Math.sqrt(Math.PI / b2[c]!) * Math.exp((-pi2 * z) / b2[c]!);
+      }
+    }
+  }
+  return { r, deltaX, sums };
+}
+
+function featureConstants(ppd: number): { r: number; sd: number; edgeNorm: number; pointPos: number; pointNeg: number } {
+  const sd = 0.5 * GW * ppd;
+  const r = Math.ceil(3 * sd);
+  let edgePos = 0;
+  let pointPos = 0;
+  let pointNeg = 0;
+  for (let y = -r; y <= r; y++) {
+    for (let x = -r; x <= r; x++) {
+      const g = Math.exp(-(x * x + y * y) / (2 * sd * sd));
+      const e = -x * g;
+      const p = ((x * x) / (sd * sd) - 1) * g;
+      if (e > 0) edgePos += e;
+      if (p > 0) pointPos += p;
+      else pointNeg -= p;
+    }
+  }
+  return { r, sd, edgeNorm: edgePos, pointPos, pointNeg };
+}
+
+// ---- WGSL pass shaders -----------------------------------------------------
+const YCXCZ_SHADER = `
+${VERTEX_WGSL}
+${FLIP_COLOR_WGSL}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let px = vec2<i32>(in.position.xy);
+  let s = textureLoad(src, px, 0);
+  return vec4<f32>(flip_rgb2ycxcz(s.rgb), 1.0);
+}
+`;
+
+const LAB_SHADER = `
+${VERTEX_WGSL}
+${FLIP_COLOR_WGSL}
+@group(0) @binding(0) var ycxcz: texture_2d<f32>;
+@group(0) @binding(5) var<uniform> u_csf0: vec4<f32>; // deltaX, r, sumA, sumRG
+@group(0) @binding(8) var<uniform> u_csf1: vec4<f32>; // sumBY, 0, 0, 0
+
+const A1 = vec3<f32>(1.0, 1.0, 34.1);
+const B1 = vec3<f32>(0.0047, 0.0053, 0.04);
+const A2 = vec3<f32>(0.0, 0.0, 13.5);
+const B2 = vec3<f32>(1e-5, 1e-5, 0.025);
+const PI = 3.14159265358979;
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let dims = vec2<i32>(textureDimensions(ycxcz));
+  let px = vec2<i32>(in.position.xy);
+  let deltaX = u_csf0.x;
+  let r = i32(u_csf0.y);
+  let sums = vec3<f32>(u_csf0.z, u_csf0.w, u_csf1.x);
+  let pi2 = PI * PI;
+  var acc = vec3<f32>(0.0);
+  for (var dy = -r; dy <= r; dy = dy + 1) {
+    for (var dx = -r; dx <= r; dx = dx + 1) {
+      let sx = clamp(px.x + dx, 0, dims.x - 1);
+      let sy = clamp(px.y + dy, 0, dims.y - 1);
+      let v = textureLoad(ycxcz, vec2<i32>(sx, sy), 0).rgb;
+      let z = f32(dx * dx) * deltaX * deltaX + f32(dy * dy) * deltaX * deltaX;
+      let w = A1 * sqrt(PI / B1) * exp(-pi2 * z / B1) + A2 * sqrt(PI / B2) * exp(-pi2 * z / B2);
+      acc = acc + (w / sums) * v;
+    }
+  }
+  let lin = clamp(flip_ycxcz2linrgb(acc), vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(flip_linrgb2huntlab(lin), 1.0);
+}
+`;
+
+const COMBINE_SHADER = `
+${VERTEX_WGSL}
+@group(0) @binding(0) var labA: texture_2d<f32>;
+@group(0) @binding(3) var labB: texture_2d<f32>;
+@group(0) @binding(6) var ycxczA: texture_2d<f32>;
+@group(0) @binding(9) var ycxczB: texture_2d<f32>;
+@group(0) @binding(14) var<uniform> u0: vec4<f32>; // cmax, sd, rF, edgeNorm
+@group(0) @binding(17) var<uniform> u1: vec4<f32>; // pointPos, pointNeg, 0, 0
+
+const QC = 0.7;
+const PC = 0.4;
+const PT = 0.95;
+const QF = 0.5;
+
+fn hyab(l1: vec3<f32>, l2: vec3<f32>) -> f32 {
+  let d = l1 - l2;
+  return abs(d.x) + sqrt(d.y * d.y + d.z * d.z);
+}
+
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let dims = vec2<i32>(textureDimensions(labA));
+  let px = vec2<i32>(in.position.xy);
+
+  // --- color difference (HyAB, redistributed) ---
+  let la = textureLoad(labA, px, 0).rgb;
+  let lb = textureLoad(labB, px, 0).rgb;
+  let cmax = u0.x;
+  let pccmax = PC * cmax;
+  let power = pow(hyab(la, lb), QC);
+  var deltaEc: f32;
+  if (power < pccmax) {
+    deltaEc = (PT / pccmax) * power;
+  } else {
+    deltaEc = PT + ((power - pccmax) / (cmax - pccmax)) * (1.0 - PT);
+  }
+
+  // --- feature difference (edge/point on unfiltered achromatic channel) ---
+  let sd = u0.y;
+  let rF = i32(u0.z);
+  let edgeNorm = u0.w;
+  let pointPos = u1.x;
+  let pointNeg = u1.y;
+  var exR = 0.0; var eyR = 0.0; var pxR = 0.0; var pyR = 0.0;
+  var exT = 0.0; var eyT = 0.0; var pxT = 0.0; var pyT = 0.0;
+  for (var dy = -rF; dy <= rF; dy = dy + 1) {
+    for (var dx = -rF; dx <= rF; dx = dx + 1) {
+      let sx = clamp(px.x + dx, 0, dims.x - 1);
+      let sy = clamp(px.y + dy, 0, dims.y - 1);
+      let yr = (textureLoad(ycxczA, vec2<i32>(sx, sy), 0).x + 16.0) / 116.0;
+      let yt = (textureLoad(ycxczB, vec2<i32>(sx, sy), 0).x + 16.0) / 116.0;
+      let fx = f32(dx); let fy = f32(dy);
+      let g = exp(-(fx * fx + fy * fy) / (2.0 * sd * sd));
+      // edge (1st deriv), pos/neg symmetric -> single norm
+      let ex = (-fx * g) / edgeNorm;
+      let ey = (-fy * g) / edgeNorm;
+      // point (2nd deriv), pos/neg separate norm
+      let pRawX = (fx * fx / (sd * sd) - 1.0) * g;
+      let pRawY = (fy * fy / (sd * sd) - 1.0) * g;
+      let pxw = select(pRawX / pointNeg, pRawX / pointPos, pRawX > 0.0);
+      let pyw = select(pRawY / pointNeg, pRawY / pointPos, pRawY > 0.0);
+      exR = exR + ex * yr; eyR = eyR + ey * yr; pxR = pxR + pxw * yr; pyR = pyR + pyw * yr;
+      exT = exT + ex * yt; eyT = eyT + ey * yt; pxT = pxT + pxw * yt; pyT = pyT + pyw * yt;
+    }
+  }
+  let edgesR = sqrt(exR * exR + eyR * eyR);
+  let edgesT = sqrt(exT * exT + eyT * eyT);
+  let pointsR = sqrt(pxR * pxR + pyR * pyR);
+  let pointsT = sqrt(pxT * pxT + pyT * pyT);
+  let df = max(abs(edgesR - edgesT), abs(pointsR - pointsT));
+  let deltaEf = pow((1.0 / sqrt(2.0)) * df, QF);
+
+  let flip = pow(deltaEc, 1.0 - deltaEf);
+  return vec4<f32>(flip, flip, flip, 1.0);
+}
+`;
+
+function u(binding: number, arr: number[]): BindGroupEntry {
+  return { binding, resource: { uniform: new Float32Array(arr) } };
+}
+
+export const flipKernel: MultipassKernel = {
+  kind: "multipass",
+  id: "flip",
+  label: "FLIP (perceptual)",
+  publicName: "flip",
+  displayRange: "unit",
+  params: { ppd: 67 },
+  buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
+    const ppd = ctx.params.ppd ?? 67;
+    const csf = csfConstants(ppd);
+    const feat = featureConstants(ppd);
+    const passes: KernelPass[] = [
+      { name: "ycxczA", shader: YCXCZ_SHADER, inputs: ["srcA"], output: "ycxczA" },
+      { name: "ycxczB", shader: YCXCZ_SHADER, inputs: ["srcB"], output: "ycxczB" },
+      {
+        name: "labA",
+        shader: LAB_SHADER,
+        inputs: ["ycxczA"],
+        output: "labA",
+        uniforms: () => [u(1, [csf.deltaX, csf.r, csf.sums[0], csf.sums[1]]), u(2, [csf.sums[2], 0, 0, 0])],
+      },
+      {
+        name: "labB",
+        shader: LAB_SHADER,
+        inputs: ["ycxczB"],
+        output: "labB",
+        uniforms: () => [u(1, [csf.deltaX, csf.r, csf.sums[0], csf.sums[1]]), u(2, [csf.sums[2], 0, 0, 0])],
+      },
+      {
+        name: "combine",
+        shader: COMBINE_SHADER,
+        inputs: ["labA", "labB", "ycxczA", "ycxczB"],
+        output: "flip",
+        uniforms: () => [
+          u(4, [FLIP_CMAX, feat.sd, feat.r, feat.edgeNorm]),
+          u(5, [feat.pointPos, feat.pointNeg, 0, 0]),
+        ],
+      },
+    ];
+    return { passes, final: "flip" };
+  },
+};
