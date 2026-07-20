@@ -403,7 +403,8 @@ def build_report() -> cp.Report:
                     cp.Image(_official_u8),
                     cp.Compare(
                         cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
-                        colormap="viridis",
+                        # magma to match the official flip-evaluator's magma-colored map.
+                        colormap="magma",
                     ),
                 ]
             ]

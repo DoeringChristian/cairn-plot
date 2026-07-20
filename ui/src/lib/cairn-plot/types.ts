@@ -58,7 +58,7 @@ export type DiffMode =
   | "relative_absolute"
   | "relative_squared";
 
-export type Colormap = "none" | "viridis" | "plasma" | "red-green" | "red-blue";
+export type Colormap = "none" | "viridis" | "plasma" | "magma" | "red-green" | "red-blue";
 export type ColormapName = Exclude<Colormap, "none">;
 export type Interpolation = "auto" | "pixelated" | "crisp-edges";
 // The old per-card "compare mode" enum (side-by-side | split | blend) was

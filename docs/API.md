@@ -23,11 +23,11 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | Component | What it renders |
 | --- | --- |
 | `cp.Line` | Line / scalar-sequence chart. `Line(y)`, `Line(y, x)`, `Line({"a": ya, "b": yb})`. |
-| `cp.Scatter` | Scatter plot. `color=` maps a per-point value through `colormap=` (`viridis` · `plasma` · `red-green` · `red-blue`; default `viridis`). |
+| `cp.Scatter` | Scatter plot. `color=` maps a per-point value through `colormap=` (`viridis` · `plasma` · `magma` · `red-green` · `red-blue`; default `viridis`). |
 | `cp.Bar` | Bar chart. |
 | `cp.Histogram` | Histogram. |
-| `cp.Heatmap` | Heatmap. `colormap=` (`viridis` · `plasma` · `red-green` · `red-blue`; default `viridis`). |
-| `cp.ParallelCoordinates` | Parallel-coordinates plot. `colormap=` colors the lines by the last column (`viridis` · `plasma` · `red-green` · `red-blue`; default `viridis`). |
+| `cp.Heatmap` | Heatmap. `colormap=` (`viridis` · `plasma` · `magma` · `red-green` · `red-blue`; default `viridis`). |
+| `cp.ParallelCoordinates` | Parallel-coordinates plot. `colormap=` colors the lines by the last column (`viridis` · `plasma` · `magma` · `red-green` · `red-blue`; default `viridis`). |
 | `cp.Image` | Single image (`PIL`/ndarray/PNG-JPEG bytes, or `url=`). Float `.npy`/`.exr` → HDR renderer. |
 | `cp.PointCloud` | 3D point cloud `(N,3\|4\|6)`. |
 | `cp.Mesh` | 3D mesh (`vertices`/`faces`). |

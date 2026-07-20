@@ -30,6 +30,20 @@ test("colormapColor('viridis', ...) returns the viridis endpoints + midpoint", (
   assert.equal(colormapColor("viridis", 1), "rgb(253,231,37)");
 });
 
+// Magma (matplotlib anchors) — sequential, used by the reference FLIP tools.
+// Endpoints are the exact first/last stops run through `buildLUT`.
+test("colormapColor('magma', ...) returns the magma endpoints", () => {
+  assert.equal(colormapColor("magma", 0), "rgb(0,0,4)");
+  assert.equal(colormapColor("magma", 1), "rgb(252,253,191)");
+});
+
+test("getColormapLUT('magma') has the expected endpoint texels", () => {
+  const lut = getColormapLUT("magma");
+  assert.equal(lut.length, 256 * 3);
+  assert.deepEqual([lut[0], lut[1], lut[2]], [0, 0, 4]);
+  assert.deepEqual([lut[255 * 3], lut[255 * 3 + 1], lut[255 * 3 + 2]], [252, 253, 191]);
+});
+
 test("colormapColor clamps t to [0, 1]", () => {
   assert.equal(colormapColor("plasma", -1), colormapColor("plasma", 0));
   assert.equal(colormapColor("plasma", 2), colormapColor("plasma", 1));
@@ -37,7 +51,7 @@ test("colormapColor clamps t to [0, 1]", () => {
 
 // The string is exactly the LUT triple at the sampled index, for any map.
 test("colormapColor matches the underlying LUT sample", () => {
-  for (const name of ["plasma", "viridis", "red-green", "red-blue"] as const) {
+  for (const name of ["plasma", "viridis", "magma", "red-green", "red-blue"] as const) {
     const lut = getColormapLUT(name);
     for (const t of [0, 0.25, 0.5, 0.75, 1]) {
       const i = Math.round(t * 255);

@@ -32,6 +32,9 @@ export const COLORMAP_STOPS: Record<ColormapName, Array<[number, number, number]
   viridis: [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
   // matplotlib plasma anchors: deep blue-violet -> magenta -> orange -> yellow.
   plasma: [[13, 8, 135], [126, 3, 168], [204, 71, 120], [248, 149, 64], [240, 249, 33]],
+  // matplotlib magma anchors: near-black -> purple -> magenta -> orange -> pale.
+  // Sequential (NOT diverging) — the color scheme the official FLIP tools use.
+  magma: [[0, 0, 4], [81, 18, 124], [183, 55, 121], [252, 137, 97], [252, 253, 191]],
   "red-green": [[215, 25, 28], [255, 255, 255], [26, 150, 65]],
   "red-blue": [[215, 25, 28], [255, 255, 255], [44, 123, 182]],
 };

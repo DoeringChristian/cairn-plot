@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import cairn_plot as cp
+from cairn_plot.components import _COLORMAPS
 
 
 def test_scatter_accepts_plasma():
@@ -51,3 +52,19 @@ def test_heatmap_accepts_plasma_and_rejects_unknown():
     assert node["props"]["colormap"] == "plasma"
     with pytest.raises(ValueError, match="colormap must be one of"):
         cp.Heatmap(np.zeros((2, 2)), colormap="inferno")
+
+
+def test_magma_is_an_accepted_colormap():
+    # magma (matplotlib anchors) is the sequential map the reference FLIP tools
+    # use; it's now a first-class named colormap across the color-by-value charts.
+    assert "magma" in _COLORMAPS
+    node = cp.Scatter([0, 1], [0, 1], color=[0.2, 0.8], colormap="magma").to_node()
+    assert node["props"]["colormap"] == "magma"
+    hm = cp.Heatmap(np.arange(9).reshape(3, 3), colormap="magma").to_node()
+    assert hm["props"]["colormap"] == "magma"
+
+
+def test_compare_accepts_magma_colormap():
+    img = cp.Image(np.zeros((2, 2, 3), dtype=np.uint8))
+    node = cp.Compare(img, img, mode="flip", colormap="magma").to_node()
+    assert node["props"]["colormap"] == "magma"
