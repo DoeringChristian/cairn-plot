@@ -7,7 +7,11 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeToolbarFold, TOOLBAR_FOLD_SAFETY_PX } from "./toolbar-fold.ts";
+import {
+  computeToolbarFold,
+  selectedMenuIndex,
+  TOOLBAR_FOLD_SAFETY_PX,
+} from "./toolbar-fold.ts";
 
 test("folds when the pane is narrower than the expanded toolbar + safety", () => {
   // expanded toolbar is 200px; pane is 150px -> must fold.
@@ -42,4 +46,21 @@ test("no oscillation at the boundary: a folded toolbar only unfolds past the thr
   // stable comparison, not a re-measurement of the collapsed "⋯" button.
   assert.equal(computeToolbarFold(expanded, expanded, true), true);
   assert.equal(computeToolbarFold(expanded + TOOLBAR_FOLD_SAFETY_PX, expanded, true), false);
+});
+
+const opts = [{ id: "flip" }, { id: "absolute" }, { id: "ssim" }];
+
+test("selectedMenuIndex returns the matching option's index", () => {
+  assert.equal(selectedMenuIndex(opts, "flip"), 0);
+  assert.equal(selectedMenuIndex(opts, "absolute"), 1);
+  assert.equal(selectedMenuIndex(opts, "ssim"), 2);
+});
+
+test("selectedMenuIndex clamps a non-matching value to 0 (never -1)", () => {
+  assert.equal(selectedMenuIndex(opts, "does-not-exist"), 0);
+  assert.equal(selectedMenuIndex(opts, ""), 0);
+});
+
+test("selectedMenuIndex is 0 for an empty option list", () => {
+  assert.equal(selectedMenuIndex([], "anything"), 0);
 });

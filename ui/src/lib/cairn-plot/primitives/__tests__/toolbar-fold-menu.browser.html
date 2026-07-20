@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Folded PlotToolbar leading-menu clipping harness</title>
+    <!-- Real compiled Tailwind CSS (copied from dist/plot-inline/style.css) — the
+         toolbar chrome + menus use token utility classes; without the real
+         classes the overflow/absolute layout under test would not exist. Not
+         committed — regenerate (cp from dist) alongside the bundle if it drifts. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* The pane under test: narrow (forces the fold) + overflow-hidden, exactly
+         like a real cairn-plot pane root. `group` enables hover-reveal, `relative`
+         anchors the absolutely-positioned toolbar. */
+      #pane {
+        position: relative;
+        width: 240px;
+        height: 360px;
+        overflow: hidden;
+        background: #1b1b1b;
+        border: 1px solid #333;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Folded PlotToolbar — leading-menu (MODE / COLORMAP) clipping harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="pane" class="group"></div>
+    <script type="module" src="./toolbar-fold-menu.browser.bundle.js?v=1"></script>
+  </body>
+</html>

@@ -42,3 +42,25 @@ export function computeToolbarFold(
   if (!(expandedWidth > 0) || !(containerWidth > 0)) return currentlyFolded;
   return containerWidth < expandedWidth + safety;
 }
+
+/**
+ * The selected index of a toolbar MENU, clamped to a real row. Shared PURE
+ * helper for both menu variants — the expanded-toolbar `<ToolbarMenu>` (whose
+ * button face + keyboard highlight open on the selection) and the folded
+ * overflow popover's inline expandable group (whose face label reflects it). A
+ * `value` that matches no option (or an empty list) yields `0`, so the face
+ * never renders `undefined` and keyboarding never starts at `-1`.
+ *
+ * @param options  the menu's options in display order.
+ * @param value    the currently-selected option id.
+ * @returns the index of the matching option, or `0` when none matches.
+ */
+export function selectedMenuIndex(
+  options: ReadonlyArray<{ id: string }>,
+  value: string,
+): number {
+  return Math.max(
+    0,
+    options.findIndex((o) => o.id === value),
+  );
+}

@@ -24,7 +24,7 @@ import type {
   ToolbarSliderSpec,
 } from "../controls/ToolbarConfig";
 import { downloadBlob } from "./plot-to-png";
-import { computeToolbarFold } from "./toolbar-fold";
+import { computeToolbarFold, selectedMenuIndex } from "./toolbar-fold";
 
 export interface PlotToolbarProps {
   /** The imperative facade this modebar drives (the only real input). */
@@ -226,10 +226,7 @@ function ToolbarMenu({
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  const selectedIndex = Math.max(
-    0,
-    options.findIndex((o) => o.id === value),
-  );
+  const selectedIndex = selectedMenuIndex(options, value);
   const face = icon ? undefined : (options[selectedIndex]?.label ?? "");
 
   // Open toward the current selection so the highlight starts where the user
@@ -412,10 +409,96 @@ function ToolbarSlider({ spec }: { spec: ToolbarSliderSpec }) {
 }
 
 /**
+ * A leading MENU rendered INSIDE the folded overflow popover, as an inline
+ * expandable group (a header row that toggles its options open BELOW it, in
+ * normal document flow).
+ *
+ * ## Why not reuse `<ToolbarMenu>` here
+ * `<ToolbarMenu>`'s option list is `position:absolute`. The overflow popover is
+ * an `overflow:auto` scroll container, and an absolutely-positioned descendant
+ * of a scroll container is CLIPPED to that container's padding box. The menu
+ * button sits at the RIGHT edge of the right-aligned popover, so the list —
+ * anchored `left-0` and `min-w-[7rem]` — overhangs the popover's right edge by
+ * ~50px and its right portion (the option text) is neither painted nor
+ * hit-testable: the leading menus (compare MODE / COLORMAP) were unusable when
+ * folded. Rendering the options as INLINE rows instead makes them part of the
+ * popover's own (scrollable) content, so every option stays visible and
+ * clickable. Selecting closes the whole overflow, mirroring an action pick.
+ */
+function OverflowMenuGroup({
+  icon,
+  title,
+  menu,
+  onClose,
+}: {
+  icon?: string;
+  title: string;
+  menu: ToolbarMenuSpec;
+  onClose: () => void;
+}) {
+  const { options, value, onSelect } = menu;
+  const [expanded, setExpanded] = useState(false);
+  const selectedIndex = selectedMenuIndex(options, value);
+  const faceLabel = options[selectedIndex]?.label ?? "";
+  return (
+    <div>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={expanded}
+        aria-label={title}
+        onClick={(e) => {
+          e.stopPropagation();
+          setExpanded((v) => !v);
+        }}
+        className={[
+          "flex w-full items-center gap-2 px-2 py-1 text-left text-[11px]",
+          expanded ? "text-accent" : "text-fg hover:bg-bg-hover",
+        ].join(" ")}
+      >
+        {icon ? <Icon name={icon} /> : <span className="w-[13px]" />}
+        <span className="flex-1">{title}</span>
+        <span className="font-mono text-[10px] text-fg-muted">{faceLabel}</span>
+        <span className={expanded ? "rotate-180 transition-transform" : "transition-transform"}>
+          <Icon name="caret" />
+        </span>
+      </button>
+      {expanded &&
+        options.map((opt) => {
+          const isSelected = opt.id === value;
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={isSelected}
+              data-menu-option=""
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(opt.id);
+                onClose();
+              }}
+              className={[
+                "flex w-full items-center gap-1.5 py-1 pl-3 pr-2 text-left text-[11px]",
+                isSelected ? "text-accent font-medium bg-bg-hover/40" : "text-fg hover:bg-bg-hover",
+              ].join(" ")}
+            >
+              <span aria-hidden="true" className="w-3 text-center text-accent">
+                {isSelected ? "✓" : ""}
+              </span>
+              <span>{opt.label}</span>
+            </button>
+          );
+        })}
+    </div>
+  );
+}
+
+/**
  * The FOLDED toolbar: a single "⋯" button that opens a panel containing every
- * action (as rows), the leading menus (as inline dropdown rows) and the second-
- * row sliders (as rows). Self-contained open/close (outside-click / Escape),
- * mirroring `ToolbarMenu`.
+ * action (as rows), the leading menus (as inline expandable groups — see
+ * `OverflowMenuGroup`) and the second-row sliders (as rows). Self-contained
+ * open/close (outside-click / Escape), mirroring `ToolbarMenu`.
  */
 function OverflowMenu({
   actions,
@@ -478,10 +561,13 @@ function OverflowMenu({
         >
           {leading.map((b) =>
             b.menu ? (
-              <div key={b.id} className="flex items-center justify-between gap-2 px-2 py-1">
-                <span className="text-[11px] text-fg-muted">{b.title}</span>
-                <ToolbarMenu icon={b.icon} title={b.title} menu={b.menu} />
-              </div>
+              <OverflowMenuGroup
+                key={b.id}
+                icon={b.icon}
+                title={b.title}
+                menu={b.menu}
+                onClose={() => setOpen(false)}
+              />
             ) : (
               <button
                 key={b.id}
