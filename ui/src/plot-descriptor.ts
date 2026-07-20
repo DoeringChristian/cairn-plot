@@ -143,10 +143,14 @@ export interface GridNode {
   shared?: SharedProps;
 }
 
-/** Two DataSpec frames composited into one pane (split/blend/diff). */
+/** Two DataSpec frames composited into one pane (side/split/blend/diff).
+ *  `side` renders the two frames as a plain 2-pane side-by-side (the former
+ *  component-level 2-cell Grid, now owned by the compare stack so it is
+ *  client-switchable via the view-mode menu); `split`/`blend`/`diff` composite
+ *  them through the shared compositor / GPU compare pane. */
 export interface CompareNode {
   kind: "compare";
-  mode: "split" | "blend" | "diff";
+  mode: "side" | "split" | "blend" | "diff";
   a: DataSpec;
   b: DataSpec;
   /** Which frame is the reference/baseline (0 = `a`, 1 = `b`). Default 0. */

@@ -95,9 +95,11 @@ def _resolver(name: str) -> Any:
     return fn
 
 
-# The compare compositor's INTERNAL one-pane descriptor modes; `"side"` lowers
-# to a 2-cell Grid, the rest to a compare node.
-_COMPARE_NODE_MODES = ("split", "blend", "diff")
+# The compare compositor's INTERNAL descriptor modes — ALL now lower to a
+# `compare` node (`"side"` included, so the view-mode menu can switch it
+# client-side; it renders the 2-pane side-by-side VISUAL owned by the compare
+# stack rather than a component-level Grid).
+_COMPARE_NODE_MODES = ("side", "split", "blend", "diff")
 
 # The PUBLIC flat `cp.Compare(mode=...)` enum (diff-kernels spec). View modes +
 # the diff-kernel short names; each kernel short name maps to a registry kernel
@@ -1647,8 +1649,11 @@ class Compare(Component):
 
     Flat ``mode`` enum:
 
-    * View compositions: ``"side"`` (2-cell ``cp.Grid``), ``"slide"`` (draggable
-      divider), ``"blend"`` (opacity mix).
+    * View compositions: ``"side"`` (2-pane side-by-side), ``"slide"`` (draggable
+      divider), ``"blend"`` (opacity mix). ``"side"`` lowers to a ``compare`` node
+      with ``mode="side"`` (NOT a component-level Grid) so the view-mode menu can
+      switch it client-side; it still renders the 2-pane side-by-side visual, now
+      owned by the compare stack.
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
       ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
       a ``compare`` node with ``mode="diff"`` and the kernel id as ``diffSubmode``
@@ -1661,8 +1666,9 @@ class Compare(Component):
     clipping highlights) and is identical to ``"flip"`` on u8 sources.
 
     ``reference`` is always the baseline (``baselineIndex=0``; the ``REF`` chip);
-    ``diff = prediction vs reference``. Non-``side`` modes require both operands
-    be image-like (``cp.Image`` / an image ``run[tag]``)."""
+    ``diff = prediction vs reference``. ALL modes (``side`` included) require both
+    operands be image-like (``cp.Image`` / an image ``run[tag]``); for arbitrary
+    non-image cells side by side, use ``cp.Grid([...], cols=2)`` directly."""
 
     _label = "compare"
 
@@ -1725,28 +1731,22 @@ class Compare(Component):
             built.update(props)
         self._props = built or None
 
-        if mode == "side":
-            self._delegate: Grid | None = Grid(
-                [_as_component(prediction), _as_component(reference)], cols=2
-            )
-            self._a = self._b = None
-            return
-        self._delegate = None
-        # `a` = reference/baseline (baselineIndex 0, texA / REF chip); `b` =
-        # prediction/foreground. Keeps the existing internal A/B semantics.
+        # ALL modes (side included) lower to a `compare` node now — `side`
+        # renders the 2-pane side-by-side VISUAL owned by the compare stack
+        # (client-switchable via the view-mode menu) instead of a component-level
+        # Grid. `a` = reference/baseline (baselineIndex 0, texA / REF chip); `b`
+        # = prediction/foreground. Keeps the existing internal A/B semantics.
         self._a = _as_component(reference)
         self._b = _as_component(prediction)
         if self._a._leaf_dataspec() is None or self._b._leaf_dataspec() is None:
             raise TypeError(
                 f"cp.Compare(prediction, reference, mode={mode!r}) requires "
                 "image-like leaves (cp.Image or an image run[tag]); at least one "
-                "argument is not an image. Use mode='side' to place arbitrary "
-                "cells side by side."
+                "argument is not an image. To place arbitrary (non-image) cells "
+                "side by side, use cp.Grid([...], cols=2) directly."
             )
 
     def to_node(self) -> dict[str, Any]:
-        if self._delegate is not None:
-            return self._delegate.to_node()
         node: dict[str, Any] = {
             "kind": "compare",
             "mode": self._internal_mode,
@@ -1759,8 +1759,6 @@ class Compare(Component):
         return node
 
     def _collect_store(self) -> dict[str, dict[str, str]]:
-        if self._delegate is not None:
-            return self._delegate._collect_store()
         store: dict[str, dict[str, str]] = {}
         store.update(self._a._collect_store())
         store.update(self._b._collect_store())

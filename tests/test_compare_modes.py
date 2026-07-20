@@ -25,9 +25,23 @@ def test_view_modes_lower_to_descriptor():
     assert slide["props"]["splitPosition"] == 0.25
     blend = cp.Compare(_img(), _img(), mode="blend", blend_alpha=0.5).to_node()
     assert blend["mode"] == "blend"
-    # side lowers to a 2-cell grid (no compare node).
+
+
+def test_side_lowers_to_compare_node():
+    # `side` now emits a COMPARE node (mode="side"), NOT a 2-cell grid — so the
+    # view-mode menu can switch it client-side. a=reference, b=prediction,
+    # baselineIndex=0 (the REF pane), matching the other compare modes.
     side = cp.Compare(_img(), _img(), mode="side").to_node()
-    assert side["kind"] == "grid"
+    assert side["kind"] == "compare"
+    assert side["mode"] == "side"
+    assert side["baselineIndex"] == 0
+    assert side["a"] is not None and side["b"] is not None
+
+
+def test_side_requires_image_leaves():
+    # side is a compare node now, so non-image operands raise (use cp.Grid).
+    with pytest.raises(TypeError):
+        cp.Compare(cp.Line([1, 2, 3]), _img(), mode="side")
 
 
 @pytest.mark.parametrize(
