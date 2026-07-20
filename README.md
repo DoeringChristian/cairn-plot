@@ -43,6 +43,20 @@ reports work with numpy + pydantic alone.
 
 ## Examples
 
+**Pre-rendered pages are committed in
+[`examples/rendered/`](examples/rendered/)** — download one and open it in a
+browser to see every feature live, no install needed (each file is fully
+self-contained):
+
+- [`examples/rendered/gallery.html`](examples/rendered/gallery.html) — the
+  full plot-type gallery (2D charts, tables, SDR/HDR images, compare modes,
+  WebGL 3D viewers).
+- [`examples/rendered/report.html`](examples/rendered/report.html) — the
+  themed `cp.Report` feature report (compare/diff kernels, FLIP + HDR-FLIP
+  validation, synced viewports).
+- [`examples/rendered/url-images.html`](examples/rendered/url-images.html) —
+  client-side EXR decoding from URLs (needs network when viewed).
+
 Three runnable, self-documenting examples live in [`examples/`](examples/) —
 each renders a single offline HTML file (pass `--open` to view it immediately):
 
