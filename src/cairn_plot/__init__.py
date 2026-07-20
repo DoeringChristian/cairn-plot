@@ -138,12 +138,14 @@ def boxes(data: Any, maxs: Any = None, **kwargs: Any) -> PlotElement:
     return Boxes(data, maxs, **kwargs)._build_element()
 
 
-def report(title: str | None = None) -> Report:
+def report(
+    title: str | None = None, template: str = "cairn", theme: str = "auto"
+) -> Report:
     """A composable, self-contained ``cairn-plot`` report — the lowercase
     factory for :class:`Report` (== :class:`PlotReport`). Chain
     ``.md(...)`` / ``.html(...)`` / ``.add(component)`` / ``.grid(...)``; emit
     via ``_repr_html_`` / ``.show()`` / ``.save(path)``."""
-    return Report(title=title)
+    return Report(title=title, template=template, theme=theme)
 
 
 __all__ = [

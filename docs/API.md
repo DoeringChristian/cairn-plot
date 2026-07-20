@@ -57,7 +57,7 @@ self-contained mode. (`run[tag]` handles + endpoint mode are provided by the
 separate `cairn-track` package layered on this surface.)
 
 ### Reports
-- `cp.Report(title=None)` / `cp.report(title=None)` — a composable, self-contained
+- `cp.Report(title=None, template="cairn", theme="auto"|"light"|"dark")` / `cp.report(...)` — a composable, self-contained
   report. Chain `.md(...)` · `.html(...)` · `.add(component)` · `.grid(...)`; emit
   via `_repr_html_` · `.show()` · `.save(path)`.
 - `cp.PlotReport` — the report class (`Report` is its ergonomic public alias).

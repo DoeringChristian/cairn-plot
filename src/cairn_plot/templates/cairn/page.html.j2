@@ -10,6 +10,6 @@
 {% include "cairn/theme.css" %}
 </style>
 </head>
-<body class="cairn-report cairn-plot-doc">
+<body class="cairn-report cairn-plot-doc"{% if theme != "auto" %} data-theme="{{ theme }}"{% endif %}>
 {{ f.render_body(title, blocks, bundle_html, store_html, meta) }}
 </body></html>

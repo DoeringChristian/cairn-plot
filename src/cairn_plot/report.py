@@ -382,9 +382,23 @@ class PlotReport:
     serialization failure degrades to a visible inline message.
     """
 
-    def __init__(self, title: str | None = None, template: Any = "cairn") -> None:
+    def __init__(
+        self,
+        title: str | None = None,
+        template: Any = "cairn",
+        theme: str = "auto",
+    ) -> None:
+        if theme not in ("auto", "light", "dark"):
+            raise ValueError(
+                f'cp.Report theme must be "auto", "light" or "dark"; got {theme!r}. '
+                '"auto" follows the viewer\'s browser preference; "light"/"dark" pin it.'
+            )
         self.title = title
         self.template = template
+        #: Authored theme: "auto" (default) follows `prefers-color-scheme`;
+        #: "light"/"dark" pin it via `data-theme` on the report root (the same
+        #: override attribute a viewer/host can set manually).
+        self.theme = theme
         # Ordered blocks: ("md", str) | ("html", str) | ("element", PlotElement).
         self._blocks: list[tuple[str, Any]] = []
         # Resolve eagerly so a bad template name/dir fails at construction with
@@ -533,6 +547,7 @@ class PlotReport:
         """The stable template context contract (see module docstring)."""
         return {
             "title": self.title,
+            "theme": self.theme,
             "blocks": self._block_contexts(),
             "bundle_html": self._bundle_html(),
             "store_html": self._store_html(),

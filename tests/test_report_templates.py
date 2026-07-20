@@ -128,7 +128,7 @@ def test_context_contract_fields_present():
         [cp.Line([1]), cp.Line([2])], cols=2
     )
     ctx = rep._context()
-    assert set(ctx) == {"title", "blocks", "bundle_html", "store_html", "meta"}
+    assert set(ctx) == {"title", "blocks", "bundle_html", "store_html", "meta", "theme"}
     assert ctx["title"] == "Ctx"
     assert set(ctx["meta"]) == {"generated_at", "cairn_plot_version"}
     assert ctx["meta"]["cairn_plot_version"]  # non-empty
@@ -234,3 +234,34 @@ def test_resolve_templates_builtin_pair():
     page, frag = _resolve_templates("cairn")
     assert page.name == "cairn/page.html.j2"
     assert frag.name == "cairn/fragment.html.j2"
+
+
+# ── theme= (user-authored default theme) ────────────────────────────────────
+
+
+def test_theme_dark_pins_data_theme_attribute():
+    import cairn_plot as cp
+
+    r = cp.Report(title="t", theme="dark").md("# hi")
+    frag = r._repr_html_()
+    assert 'data-theme="dark"' in frag
+    # .save() path: write to tmp and inspect
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as d:
+        p = r.save(str(pathlib.Path(d) / "t.html"))
+        assert 'data-theme="dark"' in open(p).read()
+
+
+def test_theme_light_pins_and_auto_omits():
+    import cairn_plot as cp
+
+    assert 'data-theme="light"' in cp.Report(theme="light").md("x")._repr_html_()
+    assert '<div class="cairn-report cairn-plot-doc">' in cp.Report().md("x")._repr_html_()
+
+
+def test_theme_invalid_raises():
+    import pytest
+    import cairn_plot as cp
+
+    with pytest.raises(ValueError, match="auto"):
+        cp.Report(theme="solarized")
