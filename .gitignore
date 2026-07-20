@@ -12,6 +12,7 @@ venv/
 # Node / UI build
 ui/node_modules/
 ui/dist/
+*.tsbuildinfo
 
 # OS / editor
 .DS_Store
