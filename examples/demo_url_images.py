@@ -17,7 +17,7 @@ NOTE: viewing needs NETWORK access (the whole point — the images are
 referenced, not baked), so this stays a separate example: the offline demo
 gallery and the ``smoke:plot`` CI gate must not depend on the network.
 
-Run:  PYTHONPATH=. python examples/demo_url_images.py [-o out.html]
+Run:  PYTHONPATH=. python examples/demo_url_images.py [-o out.html] [--open]
 """
 
 from __future__ import annotations
@@ -58,12 +58,21 @@ def build_report() -> "cp.Report":
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("-o", "--out", default="/tmp/cairn-url-images.html")
+    ap.add_argument(
+        "-o", "--output", "--out", dest="output",
+        default="/tmp/cairn-url-images.html",
+    )
+    ap.add_argument("--open", action="store_true", help="open the file when done")
     args = ap.parse_args()
-    path = build_report().save(args.out)
-    size_kb = Path(path).stat().st_size // 1024
+    path = Path(build_report().save(args.output)).expanduser().resolve()
+    size_kb = path.stat().st_size // 1024
     print(f"Rendered URL-image demo → {path}  ({size_kb} KB; needs network to view)")
-    print(f"Open it:  open {path}")
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(path.as_uri())
+    else:
+        print(f"Open it:  open {path}")
 
 
 if __name__ == "__main__":
