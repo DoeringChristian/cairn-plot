@@ -374,6 +374,32 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
   }, []);
 
   /**
+   * Ensure the renderer's backing store matches the pane's CURRENT measured
+   * size before any render or park-capture. Guards the stale-backing bug:
+   * effect ordering can leave the renderer at its creation-time size (or
+   * three.js's 120x80 default) when the container was measured BEFORE the
+   * renderer existed — the resize effect had already run (renderer null →
+   * early return) and, the size never changing again, never re-fires. Every
+   * subsequent render AND the `park()` snapshot then came out at that
+   * degenerate size: the pane showed a tiny blank/white cached image
+   * stretched to the pane ("3D cached view broken" bug). Cheap no-op when
+   * already in sync.
+   */
+  const syncRendererSize = useCallback(() => {
+    const r = rendererRef.current;
+    const want = sizeRef.current;
+    if (!r || !want || want.w <= 0 || want.h <= 0) return;
+    const cnv = r.domElement;
+    if (cnv.width === want.w && cnv.height === want.h) return;
+    r.setSize(want.w, want.h, false);
+    const cam = cameraRef.current;
+    if (cam) {
+      cam.aspect = want.w / want.h;
+      cam.updateProjectionMatrix();
+    }
+  }, []);
+
+  /**
    * Snapshots the current frame to `cachedImageUrl` and releases this
    * viewer's WebGL context via `WEBGL_lose_context.loseContext()` — NOT
    * `renderer.dispose()+forceContextLoss()` (that combination is reserved
@@ -443,6 +469,9 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     const gl = r.getContext();
     let captured = false;
     if (!gl.isContextLost()) {
+      // Stale-backing guard: capture at the pane's CURRENT size, never a
+      // leftover creation-time/default backing (see `syncRendererSize`).
+      syncRendererSize();
       const s = sceneRef.current;
       const c = cameraRef.current;
       if (s && c) r.render(s, c);
@@ -625,12 +654,13 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     const s = sceneRef.current;
     const c = cameraRef.current;
     if (r && s && c) {
+      syncRendererSize();
       r.render(s, c);
       onFrameRef.current?.(r.domElement);
     }
     poolTouch(sourceIdRef.current!);
     scheduleIdlePark();
-  }, [acquireRenderer, scheduleIdlePark]);
+  }, [acquireRenderer, scheduleIdlePark, syncRendererSize]);
 
   const fitToBounds = useCallback(
     (bounds: Scene3DBounds) => {

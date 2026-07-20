@@ -38,7 +38,21 @@ export function Scene3DCanvas({ handle, className }: Scene3DCanvasProps) {
 
   return (
     <div ref={handle.containerRef} className={className ?? "relative h-full w-full"}>
-      <canvas ref={handle.canvasRef} className="block h-full w-full rounded" />
+      {/* While parked, the canvas's WebGL context is deliberately RELEASED
+          (`WEBGL_lose_context.loseContext()` in `park()`), and Chrome paints a
+          lost-context canvas as WHITE with a sad-face glyph in the top-left.
+          The cached snapshot overlays it, but the snapshot is (by design)
+          TRANSPARENT-background — so Chrome's white/frowny showed straight
+          through ("3D cached view is white with a frowny face"). opacity:0
+          (not visibility/display — those would break the OrbitControls
+          listeners that re-acquire on pointer/wheel) hides the lost-context
+          paint while parked; the theme background shows behind the
+          transparent snapshot instead. */}
+      <canvas
+        ref={handle.canvasRef}
+        className="block h-full w-full rounded"
+        style={showCached ? { opacity: 0 } : undefined}
+      />
       {showCached && (
         <img
           src={handle.cachedImageUrl!}
