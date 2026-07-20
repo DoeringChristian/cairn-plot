@@ -40,7 +40,7 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | Container | Purpose |
 | --- | --- |
 | `cp.Grid` | Lay out child components in a grid (per-column widths, optional viewport/camera sync via `Shared`). |
-| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`side` · `slide` · `blend`) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip`). `flip` is perceptual LDR-FLIP; `colormap=` colors the diff map. |
+| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`side` · `slide` · `blend`) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip` · `flip_ldr`). `flip` is perceptual FLIP — auto-dispatched LDR-FLIP for u8 sources, HDR-FLIP (multi-exposure) for float/HDR sources; `flip_ldr` forces the tone-mapped LDR comparison on float sources. `colormap=` colors the diff map. |
 | `cp.Shared` | Declare shared viewport/camera sync scope for children of a `Grid`. |
 | `cp.Component` | Base class for the above (subclassing seam). |
 

@@ -111,7 +111,12 @@ _COMPARE_KERNEL_MODES = {
     "rel_signed": "relative_signed",
     "rel_abs": "relative_absolute",
     "rel_square": "relative_squared",
+    # `flip` is perceptual FLIP: LDR-FLIP on u8 sources, HDR-FLIP on float/HDR
+    # sources (auto-dispatch in the UI). `flip_ldr` forces the tone-mapped-first
+    # LDR comparison even on float sources (clips highlights to the display range
+    # before FLIP); on u8 sources it is identical to `flip`.
     "flip": "flip",
+    "flip_ldr": "flip_ldr",
 }
 _COMPARE_PUBLIC_MODES = ("side", "slide", "blend", *_COMPARE_KERNEL_MODES.keys())
 
@@ -218,7 +223,10 @@ class Component:
         node = self.to_node()
         if node.get("kind") == "plot":
             data = node.get("data") or {}
-            if data.get("kind") in ("image", "url"):
+            # `imghdr` = a true-float HDR image (`cp.Image(hdr_float)`) — a valid
+            # compare leaf: the renderer decodes it to a float compare side and
+            # `mode="flip"` auto-dispatches to HDR-FLIP (spec addendum).
+            if data.get("kind") in ("image", "url", "imghdr"):
                 return data
         return None
 
@@ -1642,9 +1650,15 @@ class Compare(Component):
     * View compositions: ``"side"`` (2-cell ``cp.Grid``), ``"slide"`` (draggable
       divider), ``"blend"`` (opacity mix).
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
-      ``"rel_abs"``, ``"rel_square"``, ``"flip"`` (perceptual LDR-FLIP) — each
-      lowers to a ``compare`` node with ``mode="diff"`` and the kernel id as
-      ``diffSubmode`` (the pane's initial diff kernel).
+      ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
+      a ``compare`` node with ``mode="diff"`` and the kernel id as ``diffSubmode``
+      (the pane's initial diff kernel).
+
+    ``"flip"`` is perceptual FLIP (Andersson et al.): the UI auto-dispatches
+    LDR-FLIP for u8 sources and HDR-FLIP (multi-exposure, per Andersson et al.
+    2021) for float/HDR sources — no separate mode needed. ``"flip_ldr"`` forces
+    the LDR comparison on float sources (tone-maps to the display range first,
+    clipping highlights) and is identical to ``"flip"`` on u8 sources.
 
     ``reference`` is always the baseline (``baselineIndex=0``; the ``REF`` chip);
     ``diff = prediction vs reference``. Non-``side`` modes require both operands

@@ -372,6 +372,45 @@ def build_report() -> cp.Report:
         ]
     )
 
+    # ── perceptual diff — HDR-FLIP (auto-dispatch on float sources) ───────────
+    rep.md(
+        "### HDR-FLIP — same `mode=\"flip\"`, float/HDR sources\n\n"
+        "The **same** `mode=\"flip\"` on **float/HDR** sources (`cp.Image` of a "
+        "true-float array) auto-dispatches to **HDR-FLIP** (Andersson et al. "
+        "2021): it derives an exposure range from the reference's luminance, "
+        "tone-maps + runs LDR-FLIP at each exposure, and takes the per-pixel "
+        "maximum — so it catches errors that would clip out of the display range "
+        "at any single exposure (e.g. differences buried inside a blown-out "
+        "highlight). `mode=\"flip_ldr\"` (right) forces the plain tone-mapped LDR "
+        "comparison instead, clipping highlights to the display range before "
+        "FLIP. (HDR compare is GPU-only — it needs the WebGPU engine.)"
+    )
+    hdr_ref = _hdr_image()
+    _rng = np.random.default_rng(7)
+    # A shifted + noisy prediction, plus a highlight-localized error inside the
+    # bright core (only revealed when HDR-FLIP sweeps the core's exposure in).
+    hdr_pred = hdr_ref * (
+        1.0 + 0.12 * (_rng.random(hdr_ref.shape).astype(np.float32) - 0.5)
+    )
+    _ys = np.linspace(-1, 1, hdr_ref.shape[0])[:, None]
+    _xs = np.linspace(-1, 1, hdr_ref.shape[1])[None, :]
+    hdr_pred[..., 0] += (3.0 * np.exp(-(_xs**2 + _ys**2) / 0.02)).astype(np.float32)
+    hdr_pred = np.clip(hdr_pred, 0.0, None).astype(np.float32)
+    rep.grid(
+        [
+            [
+                cp.Compare(
+                    cp.Image(hdr_pred), cp.Image(hdr_ref), mode="flip",
+                    colormap="viridis",
+                ),
+                cp.Compare(
+                    cp.Image(hdr_pred), cp.Image(hdr_ref), mode="flip_ldr",
+                    colormap="viridis",
+                ),
+            ]
+        ]
+    )
+
     # ── synced images + synced charts ────────────────────────────────────────
     rep.md(
         "## Synced viewports\n\n"

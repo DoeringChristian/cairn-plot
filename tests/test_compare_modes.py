@@ -40,6 +40,7 @@ def test_view_modes_lower_to_descriptor():
         ("rel_abs", "relative_absolute"),
         ("rel_square", "relative_squared"),
         ("flip", "flip"),
+        ("flip_ldr", "flip_ldr"),
     ],
 )
 def test_diff_kernel_modes(mode, kernel_id):
@@ -55,6 +56,14 @@ def test_flip_is_accepted_and_orientation():
     # `flip` is the additive perceptual kernel; reference is the baseline.
     node = cp.Compare(_img(), _img(), mode="flip").to_node()
     assert node["props"]["diffSubmode"] == "flip"
+    assert node["baselineIndex"] == 0
+
+
+def test_flip_ldr_forced_mode_accepted():
+    # `flip_ldr` forces the LDR-FLIP comparison (tone-map-first on float sources).
+    node = cp.Compare(_img(), _img(), mode="flip_ldr").to_node()
+    assert node["mode"] == "diff"
+    assert node["props"]["diffSubmode"] == "flip_ldr"
     assert node["baselineIndex"] == 0
 
 
