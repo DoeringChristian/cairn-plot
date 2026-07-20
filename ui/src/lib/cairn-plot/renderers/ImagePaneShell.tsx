@@ -202,6 +202,9 @@ export interface ImagePaneShellProps {
    *  slider reset — a compare pane restores its colormap / view-mode / kernel
    *  to the descriptor defaults here. */
   onReset?: () => void;
+  /** Host-pane "off default" flag (compare: colormap/mode/kernel differ from
+   *  the descriptor) — folded into the HOME button's enabled state. */
+  extraModified?: boolean;
 
   // --- chips ---------------------------------------------------------------
   label: string;
@@ -237,6 +240,7 @@ export default function ImagePaneShell({
   leadingMenus,
   displayAdjust,
   onReset,
+  extraModified,
   label,
   showLabelChip,
   isDraggable = false,
@@ -295,7 +299,9 @@ export default function ImagePaneShell({
     // sliders too (onReset above), so the button must read enabled whenever
     // either slider is off 0 — even at home zoom/pan.
     extraModified:
-      (displayAdjust?.exposureEV ?? 0) !== 0 || (displayAdjust?.offset ?? 0) !== 0,
+      (displayAdjust?.exposureEV ?? 0) !== 0 ||
+      (displayAdjust?.offset ?? 0) !== 0 ||
+      !!extraModified,
   });
 
   // EXPOSURE / OFFSET display-adjust sliders (image panes only; §requirement B).

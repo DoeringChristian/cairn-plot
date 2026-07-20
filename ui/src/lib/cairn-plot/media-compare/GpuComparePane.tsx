@@ -318,11 +318,25 @@ export default function GpuComparePane({
   // viewport + EV/OFFSET reset (user requirement: home = fully neutral pane).
   // `setCompareMode` (not the raw state setter) so an owner above (CompareView)
   // re-syncs its lifted view-mode state too.
+  // Descriptor DEFAULTS captured at MOUNT (first-render props are the
+  // descriptor-seeded values; later prop changes mirror lifted view-local
+  // state, so resetting to the live prop would no-op).
+  const defaultsRef = useRef({
+    mode,
+    colormap,
+    kernel: diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute",
+  });
   const resetViewSelections = useCallback(() => {
-    setCompareMode(mode);
-    setColormapState(colormap);
-    setDiffKernel(diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute");
-  }, [mode, colormap, diffKernelProp, diffSubmode, setCompareMode, setDiffKernel]);
+    const d = defaultsRef.current;
+    setCompareMode(d.mode);
+    setColormapState(d.colormap);
+    setDiffKernel(d.kernel);
+  }, [setCompareMode, setDiffKernel]);
+  // Home enables when any view-local selection is off its descriptor default.
+  const viewSelectionsModified =
+    compareMode !== defaultsRef.current.mode ||
+    colormapState !== defaultsRef.current.colormap ||
+    diffKernel !== defaultsRef.current.kernel;
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only in EVERY mode. Split/blend: fed into the compose pass (`color *
@@ -1015,6 +1029,7 @@ export default function GpuComparePane({
       showAxes={false}
       notationSeed={pixelValueNotation}
       onReset={resetViewSelections}
+      extraModified={viewSelectionsModified}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
       leadingMenus={leadingMenus}
