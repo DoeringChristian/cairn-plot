@@ -92,10 +92,11 @@ fn applyOperator(rgb: vec3<f32>, operatorId: i32) -> vec3<f32> {
   return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Per-side exposure -> [scalar LUT] -> operator -> encode. The lut is only
-// read when isScalar. Verbatim behavior from compare.wgsl.ts's processSide.
-fn processSide(lut: texture_2d<f32>, sampled: vec4<f32>, exposureEV: f32, operatorId: i32, gamma: f32, isScalar: bool, hdrOut: bool) -> vec3<f32> {
-  var rgb = sampled.rgb * exp2(exposureEV);
+// Per-side exposure+offset -> [scalar LUT] -> operator -> encode. The lut is
+// only read when isScalar. offset is the TEV display offset, added AFTER
+// exposure and BEFORE the colormap/tonemap/encode stages (default 0 = identity).
+fn processSide(lut: texture_2d<f32>, sampled: vec4<f32>, exposureEV: f32, offset: f32, operatorId: i32, gamma: f32, isScalar: bool, hdrOut: bool) -> vec3<f32> {
+  var rgb = sampled.rgb * exp2(exposureEV) + vec3<f32>(offset);
   if (isScalar) { rgb = sampleLUT(lut, rgb.x); }
   rgb = applyOperator(rgb, operatorId);
   if (hdrOut) { return rgb; }

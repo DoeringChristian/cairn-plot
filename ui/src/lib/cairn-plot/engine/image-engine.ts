@@ -37,6 +37,10 @@ export type ImageOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended"
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
   exposureEV: number;
+  /** TEV display offset — added to the scene value AFTER exposure and BEFORE
+   *  the colormap / tone-map / output-encode stages. Unset = 0 (identity), so
+   *  omitting it renders bit-for-bit as before. */
+  offset?: number;
   /** Tone-map operator name — matches `TONEMAP_OPERATORS` in image/tonemap.ts. */
   operator: ImageOperator;
   /** Output-encode gamma override. Unset/<=0 = sRGB OETF (matches outputEncode's `undefined` case). */
@@ -149,6 +153,8 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // Field order MUST match image.wgsl.ts / image.glsl.ts's u_bind5 doc
   // comment. Default "linear" when unset — see ImageParams.filter's doc.
   const filterFlag = new Float32Array([params.filter === "nearest" ? 0 : 1]);
+  // u_bind6 = TEV display offset (default 0 = identity).
+  const offsetVec = new Float32Array([params.offset ?? 0]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -159,6 +165,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 3, resource: { uniform: uvRect } },
       { binding: 4, resource: { uniform: hdrFlag } },
       { binding: 5, resource: { uniform: filterFlag } },
+      { binding: 6, resource: { uniform: offsetVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {
@@ -247,6 +254,8 @@ export function renderCompose(
     params.hdrOut ? 1 : 0,
     params.filter === "nearest" ? 0 : 1,
   ]);
+  // u_extra: offset, _, _, _ (TEV display offset; default 0 = identity).
+  const extraVec = new Float32Array([params.offset ?? 0, 0, 0, 0]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -257,6 +266,7 @@ export function renderCompose(
       { binding: 3, resource: { uniform: imgVec } },
       { binding: 4, resource: { uniform: uvRect } },
       { binding: 5, resource: { uniform: composeVec } },
+      { binding: 6, resource: { uniform: extraVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

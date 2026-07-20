@@ -26,6 +26,7 @@
  *   3 unif imageParams: exposureEV, operatorId, gamma, isScalar   @binding(11)
  *   4 unif uvRect: xy, wh                                         @binding(14)
  *   5 unif composeParams: split, alpha, hdrOut, filterMode        @binding(17)
+ *   6 unif extraParams: offset, _, _, _ (TEV display offset)       @binding(20)
  */
 import { VERTEX_WGSL, SAMPLING_WGSL, TONEMAP_WGSL } from "../kernels/prelude.wgsl";
 
@@ -41,6 +42,7 @@ ${TONEMAP_WGSL}
 @group(0) @binding(11) var<uniform> u_img: vec4<f32>;     // exposureEV, operatorId, gamma, isScalar
 @group(0) @binding(14) var<uniform> u_uv: vec4<f32>;      // uvRect.xy, uvRect.wh
 @group(0) @binding(17) var<uniform> u_compose: vec4<f32>; // split, alpha, hdrOut, filterMode
+@group(0) @binding(20) var<uniform> u_extra: vec4<f32>;   // offset, _, _, _ (TEV display offset; default 0)
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
@@ -68,9 +70,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let gamma = u_img.z;
   let isScalar = u_img.w > 0.5;
   let hdrOut = u_compose.z > 0.5;
+  let offset = u_extra.x;
 
-  let colorA = processSide(lut, sampledA, exposureEV, operatorId, gamma, isScalar, hdrOut);
-  let colorB = processSide(lut, sampledB, exposureEV, operatorId, gamma, isScalar, hdrOut);
+  let colorA = processSide(lut, sampledA, exposureEV, offset, operatorId, gamma, isScalar, hdrOut);
+  let colorB = processSide(lut, sampledB, exposureEV, offset, operatorId, gamma, isScalar, hdrOut);
 
   let split = u_compose.x;
   let alpha = u_compose.y;

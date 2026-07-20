@@ -53,7 +53,7 @@ import {
 import { applyColormap, getColormapLUT, DIVERGING_COLORMAPS } from "../colormaps";
 import {
   getTonemapOperator,
-  applyExposure,
+  applyExposureOffset,
   outputEncode,
   type RgbTriple,
 } from "../image/tonemap";
@@ -99,6 +99,7 @@ export function tonemapToImageData(
   tonemap: string,
   exposure: number,
   gamma?: number,
+  offset: number = 0,
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
   const src = hdr.data;
@@ -125,11 +126,12 @@ export function tonemapToImageData(
       a = finite(src[base + 3]!);
     }
 
-    // 1) exposure in scene-linear, 2) tone-map HDR→[0,1], 3) output-encode.
+    // 1) exposure + offset (TEV) in scene-linear, 2) tone-map HDR→[0,1],
+    //    3) output-encode. Offset is added after exposure, before the operator.
     const lit: RgbTriple = [
-      applyExposure(r, exposure),
-      applyExposure(g, exposure),
-      applyExposure(b, exposure),
+      applyExposureOffset(r, exposure, offset),
+      applyExposureOffset(g, exposure, offset),
+      applyExposureOffset(b, exposure, offset),
     ];
     const [tr, tg, tb] = op(lit);
     const o = i * 4;
@@ -619,6 +621,13 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       // SDR single-image: a view-local COLORMAP menu (shown only when the
       // toolbar renders — `toolbar={true}` backend-seam mounts).
       leadingMenus={[colormapToolbarButton(colormap, (id) => setColormap(id as Colormap))]}
+      // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
+      // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
+      // (or a colormap/diff `<canvas>`), with no scene-linear pixel-recompute
+      // stage to apply `color*2^EV + offset` in. Applying it would need a full
+      // per-pixel re-encode pipeline this path doesn't have. The GPU SDR backend
+      // (`GpuImagePane`) applies both in-shader, and the CPU HDR path recomputes
+      // its tone-map pass — so `displayAdjust` is wired there, just not here.
       label={label}
       showLabelChip
       isDraggable={isDraggable}
@@ -657,13 +666,20 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
   const dispDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
 
-  // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma.
+  // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
+  // display-only — recomputes the CPU tone-map pass (like a tonemap/exposure
+  // change already does), never a diff. The display EV ADDS to the prop exposure.
+  const [displayEV, setDisplayEV] = useState(0);
+  const [displayOffset, setDisplayOffset] = useState(0);
+
+  // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma /
+  // display-adjust.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let imageData: ImageData;
     try {
-      imageData = tonemapToImageData(hdr, tonemap, exposure, gamma);
+      imageData = tonemapToImageData(hdr, tonemap, exposure + displayEV, gamma, displayOffset);
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
       return;
@@ -682,7 +698,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemap, exposure, gamma]);
+  }, [hdr, tonemap, exposure, gamma, displayEV, displayOffset]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -759,6 +775,14 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
+      // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
+      // applies them (recomputed like any exposure/tonemap change).
+      displayAdjust={{
+        exposureEV: displayEV,
+        offset: displayOffset,
+        onExposureChange: setDisplayEV,
+        onOffsetChange: setDisplayOffset,
+      }}
       label={label}
       showLabelChip={!!label}
     />

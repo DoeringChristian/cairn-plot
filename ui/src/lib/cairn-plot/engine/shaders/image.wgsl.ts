@@ -41,6 +41,9 @@
  *   logical binding 5 (`u_bind5: f32`, native binding 5*3+2=17):
  *     = filterMode (f32, 0=nearest, 1=linear — see "Out-of-bounds..." /
  *       "Source filtering" sections below; Q20)
+ *   logical binding 6 (`u_bind6: f32`, native binding 6*3+2=20):
+ *     = offset (f32, TEV display offset — added to the scene value AFTER
+ *       exposure and BEFORE colormap/tonemap/encode; default 0 = identity)
  *
  * ## Out-of-bounds -> fully transparent (Q18)
  * `uvRect` (`u_bind3`) is the zoom/pan WINDOW in source-space `[0,1]`; when
@@ -155,6 +158,11 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 @group(0) @binding(14) var<uniform> u_bind4: f32;
 // Logical binding 5 (uniform f32: filterMode, 0=nearest/1=linear) -> native binding 5*3+2 = 17.
 @group(0) @binding(17) var<uniform> u_bind5: f32;
+// Logical binding 6 (uniform f32: display OFFSET, TEV convention — added after
+// exposure, before colormap/tonemap/encode) -> native binding 6*3+2 = 20.
+// Defaults to 0 (the bind-group builder zero-fills any binding the caller omits),
+// so an image with no offset renders bit-for-bit as before.
+@group(0) @binding(20) var<uniform> u_bind6: f32;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -259,9 +267,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let gamma = u_bind2.z;
   let isScalar = u_bind2.w > 0.5;
   let hdrOut = u_bind4 > 0.5;
+  let offset = u_bind6;
 
-  // 1) exposure, in scene-linear space: v * 2^EV.
-  var rgb = sampled.rgb * exp2(exposureEV);
+  // 1) exposure + offset (TEV convention), in scene-linear space:
+  //    v * 2^EV + offset. Offset is additive AFTER exposure, BEFORE the
+  //    colormap / tone-map / output-encode stages below.
+  var rgb = sampled.rgb * exp2(exposureEV) + vec3<f32>(offset);
 
   // 2) scalar image + colormap LUT (GPU-only pipeline stage; see module doc).
   if (isScalar) {

@@ -74,7 +74,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
-import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
+import type { ToolbarButtonSpec, ToolbarSliderSpec } from "../controls/ToolbarConfig";
 import PixelValueOverlay, {
   PixelNotationToggle,
   type PixelSampler,
@@ -93,6 +93,23 @@ const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 /** `data-*` markers spread onto the root / viewport box. Boolean values render
  *  as `"true"`/`"false"` (the `…-ready` attrs); `""` marks a bare attribute. */
 export type PaneDataAttrs = Record<string, string | boolean>;
+
+/**
+ * EXPOSURE / OFFSET display-adjust wiring (image panes only). The PANE owns the
+ * `exposureEV`/`offset` state (so it can feed them straight into its own render
+ * pass — display-only, never a diff recompute) and passes the current values +
+ * setters here; the shell renders them as the toolbar's SECOND slider row (which
+ * folds into the overflow menu on a narrow pane). Omitted by panes/sub-paths
+ * that can't apply the adjustment (e.g. the CPU SDR `<img>` path) — the slider
+ * row is then simply absent. */
+export interface ImageDisplayAdjust {
+  /** Exposure in EV stops (color * 2^EV). Range -8..+8, default 0. */
+  readonly exposureEV: number;
+  /** Additive offset applied AFTER exposure. Range -1..+1, default 0. */
+  readonly offset: number;
+  readonly onExposureChange: (ev: number) => void;
+  readonly onOffsetChange: (offset: number) => void;
+}
 
 /** Context the shell hands a custom-overlay renderer — it owns notation/active
  *  state, so the pane reads them from here rather than duplicating them. */
@@ -177,6 +194,10 @@ export interface ImagePaneShellProps {
    *  never shift the corner-anchored standard buttons. Only shown when the
    *  toolbar itself renders (`toolbar={true}`). */
   leadingMenus?: ToolbarButtonSpec[];
+  /** EXPOSURE / OFFSET display-adjust sliders (image panes; see
+   *  {@link ImageDisplayAdjust}). When omitted, the second slider row is absent.
+   *  Only shown when the toolbar itself renders (`toolbar={true}`). */
+  displayAdjust?: ImageDisplayAdjust;
 
   // --- chips ---------------------------------------------------------------
   label: string;
@@ -210,6 +231,7 @@ export default function ImagePaneShell({
   exportCanvasRef,
   requestRender,
   leadingMenus,
+  displayAdjust,
   label,
   showLabelChip,
   isDraggable = false,
@@ -251,6 +273,44 @@ export default function ImagePaneShell({
     requestRender,
   });
 
+  // EXPOSURE / OFFSET display-adjust sliders (image panes only; §requirement B).
+  // TEV convention: color * 2^EV, then + offset, applied in display/linear space
+  // BEFORE tonemap/gamma/colormap. Display-only — the pane feeds these into its
+  // render pass, never a diff recompute.
+  const sliders = useMemo<ToolbarSliderSpec[] | undefined>(() => {
+    if (!displayAdjust) return undefined;
+    const signed = (v: number, digits: number) =>
+      `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}`;
+    return [
+      {
+        id: "exposure",
+        icon: "sun",
+        label: "EV",
+        title: "Exposure (EV stops) — color × 2^EV. Double-click to reset.",
+        min: -8,
+        max: 8,
+        step: 0.1,
+        value: displayAdjust.exposureEV,
+        onChange: displayAdjust.onExposureChange,
+        format: (v) => signed(v, 1),
+        defaultValue: 0,
+      },
+      {
+        id: "offset",
+        icon: "plusminus",
+        label: "OFF",
+        title: "Offset — added after exposure (before tonemap). Double-click to reset.",
+        min: -1,
+        max: 1,
+        step: 0.01,
+        value: displayAdjust.offset,
+        onChange: displayAdjust.onOffsetChange,
+        format: (v) => signed(v, 2),
+        defaultValue: 0,
+      },
+    ];
+  }, [displayAdjust]);
+
   // While the overlay is active, expose the notation toggle ("0–255"/"0–1") as
   // a LEADING toolbar button (leftmost so it never shifts the standard buttons).
   const toolbarConfig = useMemo(
@@ -260,8 +320,9 @@ export default function ImagePaneShell({
         ...(leadingMenus ?? []),
         ...(overlayActive ? [notationToolbarButton(notation, setNotation)] : []),
       ],
+      sliders,
     }),
-    [overlayActive, notation, leadingMenus],
+    [overlayActive, notation, leadingMenus, sliders],
   );
 
   const checkerClass = " cairn-checkerboard";

@@ -13,6 +13,7 @@ import {
   TONEMAP_OPERATORS,
   getTonemapOperator,
   applyExposure,
+  applyExposureOffset,
   srgbOetf,
   outputEncode,
   type RgbTriple,
@@ -71,6 +72,18 @@ test("applyExposure scales by 2**ev", () => {
   approx(applyExposure(1, 1), 2);
   approx(applyExposure(1, -2), 0.25);
   approx(applyExposure(0.5, 2), 2);
+});
+
+test("applyExposureOffset: v*2**ev + offset (TEV convention)", () => {
+  // Identity at rest — the sliders' defaults leave a value unchanged.
+  approx(applyExposureOffset(0.4, 0, 0), 0.4);
+  // Exposure is multiplicative, applied first.
+  approx(applyExposureOffset(1, 1, 0), 2);
+  approx(applyExposureOffset(1, -2, 0), 0.25);
+  // Offset is additive AFTER exposure.
+  approx(applyExposureOffset(1, 0, 0.25), 1.25);
+  approx(applyExposureOffset(0.5, 1, -0.25), 0.75); // 0.5*2 - 0.25
+  approx(applyExposureOffset(0.5, 2, 0), 2);
 });
 
 test("srgbOetf matches known reference points", () => {

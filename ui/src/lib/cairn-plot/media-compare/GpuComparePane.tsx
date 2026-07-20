@@ -311,6 +311,14 @@ export default function GpuComparePane({
     setColormapState(colormap);
   }, [colormap]);
 
+  // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
+  // display-only — fed into the split/blend compose pass (the shader applies
+  // `color * 2^EV + offset` before tonemap/encode). Diff mode ignores them (the
+  // cached diff visualization is already normalized) and hides the sliders, so
+  // slider drags NEVER recompute the diff (the cached-diff invariant holds).
+  const [displayEV, setDisplayEV] = useState(0);
+  const [displayOffset, setDisplayOffset] = useState(0);
+
   // The two leading toolbar menus (rendered by `ImagePaneShell` → `PlotToolbar`).
   //   MODE — slide · blend · every registered diff kernel (flat list). Selecting
   //          a view mode sets `compareMode`; selecting a kernel switches to diff
@@ -659,7 +667,8 @@ export default function GpuComparePane({
         });
       } else {
         const params: CompareParams = {
-          exposureEV: 0,
+          exposureEV: displayEV,
+          offset: displayOffset,
           operator: "linear",
           gamma: 1,
           isScalar: false,
@@ -686,6 +695,8 @@ export default function GpuComparePane({
     compareMode,
     splitPosition,
     blendAlpha,
+    displayEV,
+    displayOffset,
     diffKernel,
     resolvedKernelId,
     hdrExposures,
@@ -907,6 +918,19 @@ export default function GpuComparePane({
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
       leadingMenus={leadingMenus}
+      // EXPOSURE / OFFSET sliders apply to the split/blend compose pass only;
+      // diff mode ignores them (cached, normalized visualization) so the row is
+      // hidden there — a slider drag never touches the diff cache.
+      displayAdjust={
+        compareMode === "diff"
+          ? undefined
+          : {
+              exposureEV: displayEV,
+              offset: displayOffset,
+              onExposureChange: setDisplayEV,
+              onOffsetChange: setDisplayOffset,
+            }
+      }
       label=""
       showLabelChip={false}
       // Per-side TEV overlays. split -> each side clipped at the divider, LEFT
@@ -992,11 +1016,12 @@ export default function GpuComparePane({
           ) : null}
           {metrics && (
             <span
-              // The diff metrics sit just BELOW the top-right toolbar (hover-
-              // revealed, ~28px tall anchored at top:6px), right-aligned to tuck
-              // under it. The notation toggle lives INSIDE the toolbar (a
-              // leading button), so there's no separate chip to dodge.
-              className="absolute right-1.5 top-9 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono"
+              // §requirement C: the diff metrics live in the LOWER-RIGHT corner.
+              // When a label chip also occupies bottom-right (`label` truthy,
+              // bottom-1 right-1), stack the metrics directly ABOVE it (bottom-7);
+              // otherwise pin it to bottom-1. z-30 keeps it ABOVE the split
+              // divider (z-20) so dragging the divider never occludes it.
+              className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${label ? "bottom-7" : "bottom-1"}`}
               data-gpu-compare-metrics
             >
               MSE {metrics.mse.toExponential(2)} · PSNR {Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB · MAE{" "}

@@ -17,8 +17,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { DragMode, PlotController } from "../controls/types";
-import type { ToolbarConfig, ToolbarMenuSpec } from "../controls/ToolbarConfig";
+import type {
+  ToolbarConfig,
+  ToolbarMenuSpec,
+  ToolbarButtonSpec,
+  ToolbarSliderSpec,
+} from "../controls/ToolbarConfig";
 import { downloadBlob } from "./plot-to-png";
+import { computeToolbarFold } from "./toolbar-fold";
 
 export interface PlotToolbarProps {
   /** The imperative facade this modebar drives (the only real input). */
@@ -96,6 +102,29 @@ const ICON_PATHS: Record<string, ReactNode> = {
   ),
   // A small down-caret for the menu (dropdown) button face.
   caret: <path d="M6 9l6 6 6-6" />,
+  // Overflow ("⋯") — the folded-toolbar trigger.
+  ellipsis: (
+    <>
+      <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // Sun (EXPOSURE slider) — a disc with short rays.
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+    </>
+  ),
+  // Plus/minus (OFFSET slider).
+  plusminus: (
+    <>
+      <path d="M4 7h6M7 4v6" />
+      <path d="M14 17h6" />
+      <path d="M6 20l12-16" />
+    </>
+  ),
 };
 
 function Icon({ name }: { name: string }) {
@@ -325,11 +354,241 @@ function ToolbarMenu({
   );
 }
 
+/** Normalized action descriptor — the ONE source both the expanded button row
+ *  and the folded overflow menu render from, so the two never diverge. */
+interface ActionItem {
+  id: string;
+  icon?: string;
+  title: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+const sliderFmt = (s: ToolbarSliderSpec) => (s.format ? s.format(s.value) : String(s.value));
+
+/**
+ * A compact slider for the toolbar's SECOND row (image panes' EXPOSURE /
+ * OFFSET). Icon (or short label) + native range input + a tiny value read-out.
+ * Controlled — holds no state. `stopPropagation` on the pointer events keeps a
+ * drag from reaching the plot surface underneath (same as `ToolbarButton`).
+ */
+function ToolbarSlider({ spec }: { spec: ToolbarSliderSpec }) {
+  return (
+    <label
+      className="inline-flex items-center gap-1 text-fg-muted"
+      title={spec.title}
+      onPointerDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        if (spec.defaultValue !== undefined) spec.onChange(spec.defaultValue);
+      }}
+    >
+      {spec.icon ? (
+        <span aria-hidden="true" className="inline-flex">
+          <Icon name={spec.icon} />
+        </span>
+      ) : (
+        <span aria-hidden="true" className="text-[9px] font-mono">
+          {spec.label}
+        </span>
+      )}
+      <input
+        type="range"
+        aria-label={spec.title}
+        min={spec.min}
+        max={spec.max}
+        step={spec.step}
+        value={spec.value}
+        onChange={(e) => spec.onChange(Number(e.target.value))}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="cairn-plot-toolbar-slider h-1 w-16 cursor-pointer accent-accent"
+      />
+      <span aria-hidden="true" className="w-8 text-right text-[9px] font-mono tabular-nums">
+        {sliderFmt(spec)}
+      </span>
+    </label>
+  );
+}
+
+/**
+ * The FOLDED toolbar: a single "⋯" button that opens a panel containing every
+ * action (as rows), the leading menus (as inline dropdown rows) and the second-
+ * row sliders (as rows). Self-contained open/close (outside-click / Escape),
+ * mirroring `ToolbarMenu`.
+ */
+function OverflowMenu({
+  actions,
+  leading,
+  sliders,
+}: {
+  actions: ActionItem[];
+  leading: ToolbarButtonSpec[];
+  sliders: ToolbarSliderSpec[];
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocPointer = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onDocPointer, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointer, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative inline-flex" onPointerDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More controls"
+        title="More controls"
+        className={[
+          "h-[22px] min-w-[22px] inline-flex items-center justify-center rounded text-xs",
+          open ? "bg-bg-hover text-accent" : "text-fg-muted hover:text-fg hover:bg-bg-hover",
+        ].join(" ")}
+      >
+        <Icon name="ellipsis" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={[
+            "absolute right-0 top-full z-40 mt-1 min-w-[10rem] max-h-80 overflow-auto",
+            "rounded border border-border bg-bg-elevated py-1 shadow-md",
+          ].join(" ")}
+        >
+          {leading.map((b) =>
+            b.menu ? (
+              <div key={b.id} className="flex items-center justify-between gap-2 px-2 py-1">
+                <span className="text-[11px] text-fg-muted">{b.title}</span>
+                <ToolbarMenu icon={b.icon} title={b.title} menu={b.menu} />
+              </div>
+            ) : (
+              <button
+                key={b.id}
+                type="button"
+                disabled={b.disabled}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (b.disabled) return;
+                  b.onClick?.();
+                  setOpen(false);
+                }}
+                className={[
+                  "flex w-full items-center gap-2 px-2 py-1 text-left text-[11px]",
+                  b.disabled ? "opacity-40 cursor-default text-fg-muted" : "text-fg hover:bg-bg-hover",
+                  b.active ? "text-accent" : "",
+                ].join(" ")}
+              >
+                {b.icon ? <Icon name={b.icon} /> : <span className="w-[13px]" />}
+                <span>{b.label ?? b.title}</span>
+              </button>
+            ),
+          )}
+
+          {leading.length > 0 && actions.length > 0 && (
+            <div aria-hidden="true" className="my-1 h-px bg-border" />
+          )}
+
+          {actions.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              role="menuitem"
+              disabled={a.disabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (a.disabled) return;
+                a.onClick();
+                setOpen(false);
+              }}
+              className={[
+                "flex w-full items-center gap-2 px-2 py-1 text-left text-[11px]",
+                a.disabled ? "opacity-40 cursor-default text-fg-muted" : "text-fg hover:bg-bg-hover",
+                a.active ? "text-accent" : "",
+              ].join(" ")}
+            >
+              {a.icon ? <Icon name={a.icon} /> : <span className="w-[13px]" />}
+              <span>{a.title}</span>
+            </button>
+          ))}
+
+          {sliders.length > 0 && (actions.length > 0 || leading.length > 0) && (
+            <div aria-hidden="true" className="my-1 h-px bg-border" />
+          )}
+
+          {sliders.map((s) => (
+            <div key={s.id} className="px-2 py-1">
+              <ToolbarSlider spec={s} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * The modebar. Renders nothing when disabled or when no capability-backed
  * button survives gating (e.g. a controller that advertises nothing).
  */
 export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
+  // --- responsive fold (requirement A) -----------------------------------
+  // Collapse the whole toolbar into one "⋯" overflow button when the pane is
+  // too narrow to hold the expanded row (see `toolbar-fold.ts` for the pure
+  // decision + hysteresis rationale). Measured against the toolbar's own
+  // positioned parent (the pane/chart root) via a ResizeObserver — fully
+  // self-contained, no host wiring.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [folded, setFolded] = useState(false);
+  const foldedRef = useRef(folded);
+  foldedRef.current = folded;
+  const expandedWidthRef = useRef(0);
+
+  // Re-observe (and re-measure) whenever the toolbar's CONTENT could change its
+  // expanded width — leading menus / notation button / sliders appearing.
+  const foldKey = `${config?.leadingButtons?.length ?? 0}:${config?.sliders?.length ?? 0}:${
+    config?.visibility ?? "hover"
+  }`;
+  useEffect(() => {
+    const root = rootRef.current;
+    const parent = root?.parentElement;
+    if (!parent) return;
+    const measure = () => {
+      const containerWidth = parent.clientWidth;
+      // Cache the expanded width only WHILE expanded — measuring the collapsed
+      // "⋯" button would say "fits" and oscillate (see toolbar-fold.ts).
+      if (!foldedRef.current && rootRef.current) {
+        const w = rootRef.current.scrollWidth;
+        if (w > 0) expandedWidthRef.current = w;
+      }
+      setFolded(computeToolbarFold(containerWidth, expandedWidthRef.current, foldedRef.current));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(parent);
+    measure();
+    return () => ro.disconnect();
+  }, [foldKey]);
+
   if (config?.enabled === false) return null;
 
   const caps = controller.capabilities;
@@ -339,167 +598,144 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
   const shown = (id: string, cap: boolean) => cap && btn?.[id] !== false;
 
   const setMode = (m: DragMode) => () => controller.setDragMode(m);
+  const doScreenshot = () => {
+    // Rasterize the chart and trigger a browser download. Swallow any failure so
+    // a rejected export never throws an unhandled rejection.
+    controller
+      .toPNG({ filename: "plot" })
+      .then((b) => downloadBlob(b, "plot.png"))
+      .catch(() => {});
+  };
 
-  const dragGroup =
-    shown("zoom", caps.zoom) ||
-    shown("pan", caps.pan) ||
-    shown("select", caps.select) ||
-    shown("lasso", caps.lasso);
-  const zoomGroup =
-    shown("zoomIn", caps.zoom) || shown("zoomOut", caps.zoom);
-  // The reset ("home") button is ALWAYS shown when reset is available (it just
+  // Build the capability-gated action groups ONCE — the expanded button row and
+  // the folded overflow menu both render from these, so they never diverge.
+  const dragActions: ActionItem[] = [];
+  if (shown("zoom", caps.zoom))
+    dragActions.push({ id: "zoom", icon: "boxZoom", title: "Box zoom", active: controller.dragMode === "zoom", onClick: setMode("zoom") });
+  if (shown("pan", caps.pan))
+    dragActions.push({ id: "pan", icon: "pan", title: "Pan", active: controller.dragMode === "pan", onClick: setMode("pan") });
+  if (shown("select", caps.select))
+    dragActions.push({ id: "select", icon: "select", title: "Box select", active: controller.dragMode === "select", onClick: setMode("select") });
+  if (shown("lasso", caps.lasso))
+    dragActions.push({ id: "lasso", icon: "lasso", title: "Lasso select", active: controller.dragMode === "lasso", onClick: setMode("lasso") });
+
+  const zoomActions: ActionItem[] = [];
+  if (shown("zoomIn", caps.zoom))
+    zoomActions.push({ id: "zoomIn", icon: "zoomIn", title: "Zoom in", onClick: () => controller.zoomIn() });
+  if (shown("zoomOut", caps.zoom))
+    zoomActions.push({ id: "zoomOut", icon: "zoomOut", title: "Zoom out", onClick: () => controller.zoomOut() });
+
+  const viewActions: ActionItem[] = [];
+  if (shown("autoscale", caps.autoscale))
+    viewActions.push({ id: "autoscale", icon: "autoscale", title: "Autoscale", onClick: () => controller.autoscale() });
+  // The reset ("home") button is ALWAYS present when reset is available (it just
   // renders disabled when the view is already at home), so the group's presence
-  // must not depend on `isModified` — otherwise the toolbar width would still
-  // flip and shift buttons under the cursor.
-  const viewGroup =
-    shown("autoscale", caps.autoscale) || shown("reset", caps.reset);
-  const exportGroup = shown("screenshot", caps.screenshot);
-  const leading = config?.leadingButtons ?? [];
+  // never flips on `isModified` and buttons don't shift under the cursor.
+  if (shown("reset", caps.reset))
+    viewActions.push({
+      id: "reset",
+      icon: "home",
+      title: controller.isModified ? "Reset view" : "Reset view (at home)",
+      disabled: !controller.isModified,
+      onClick: () => controller.reset(),
+    });
 
-  if (!leading.length && !dragGroup && !zoomGroup && !viewGroup && !exportGroup)
-    return null;
+  const exportActions: ActionItem[] = [];
+  if (shown("screenshot", caps.screenshot))
+    exportActions.push({ id: "screenshot", icon: "camera", title: "Download plot as PNG", onClick: doScreenshot });
+
+  const groups = [dragActions, zoomActions, viewActions, exportActions].filter((g) => g.length > 0);
+  const flatActions = groups.flat();
+  const leading = config?.leadingButtons ?? [];
+  const sliders = config?.sliders ?? [];
+
+  if (!leading.length && flatActions.length === 0 && sliders.length === 0) return null;
 
   const position = config?.position ?? "top-right";
   const alwaysOn = config?.visibility === "always";
+  // Anchor the fold trigger / slider row to the same corner the toolbar uses.
+  const rightAligned = position === "top-right" || position === "bottom-right";
 
+  const revealClass = alwaysOn ? "opacity-100" : "opacity-0 group-hover:opacity-100";
+  const chromeClass = [
+    // z-30 keeps the toolbar ABOVE the pixel-value number overlay (z-10) AND the
+    // compare pane's split-slider divider (z-20) — the modebar must always be
+    // clickable, even with the slider dragged beneath it.
+    "z-30 rounded border border-border bg-bg-elevated/90 shadow-sm backdrop-blur-sm transition-opacity",
+    revealClass,
+  ].join(" ");
+
+  const wrapperStyle: CSSProperties = {
+    position: "absolute",
+    // pointer-events re-enabled here even if a parent disabled them (Heatmap
+    // overlays an SVG with pointer-events:none); the toolbar must stay live.
+    pointerEvents: "auto",
+    ...POSITION_STYLE[position],
+  };
+
+  // --- FOLDED: one "⋯" button opening a menu with every control ------------
+  if (folded) {
+    return (
+      <div ref={rootRef} style={wrapperStyle} className={`${chromeClass} inline-flex px-0.5 py-0.5`} role="toolbar" aria-label="Plot controls">
+        <OverflowMenu actions={flatActions} leading={leading} sliders={sliders} />
+      </div>
+    );
+  }
+
+  // --- EXPANDED: the button row, plus an optional second slider row --------
   return (
     <div
-      // pointer-events re-enabled here even if a parent disabled them (Heatmap
-      // overlays an SVG with pointer-events:none); the toolbar must stay live.
-      style={{
-        position: "absolute",
-        pointerEvents: "auto",
-        ...POSITION_STYLE[position],
-      }}
-      className={[
-        // z-30 keeps the toolbar ABOVE the pixel-value number overlay (z-10)
-        // AND the compare pane's split-slider divider (z-20) — the modebar
-        // must always be clickable, even with the slider dragged beneath it.
-        // the digits.
-        "z-30 flex items-center gap-0.5 rounded border border-border",
-        "bg-bg-elevated/90 px-1 py-0.5 shadow-sm backdrop-blur-sm transition-opacity",
-        alwaysOn ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-      ].join(" ")}
+      ref={rootRef}
+      style={wrapperStyle}
+      className={`${chromeClass} flex flex-col gap-0.5 px-1 py-0.5`}
       role="toolbar"
       aria-label="Plot controls"
     >
-      {leading.length > 0 && (
-        <>
-          {leading.map((b) =>
-            b.menu ? (
-              <ToolbarMenu key={b.id} icon={b.icon} title={b.title} menu={b.menu} />
-            ) : (
+      <div className={`flex items-center gap-0.5 ${rightAligned ? "justify-end" : "justify-start"}`}>
+        {leading.length > 0 && (
+          <>
+            {leading.map((b) =>
+              b.menu ? (
+                <ToolbarMenu key={b.id} icon={b.icon} title={b.title} menu={b.menu} />
+              ) : (
+                <ToolbarButton
+                  key={b.id}
+                  icon={b.icon}
+                  label={b.label}
+                  title={b.title}
+                  active={b.active}
+                  disabled={b.disabled}
+                  onClick={b.onClick ?? (() => {})}
+                />
+              ),
+            )}
+            {groups.length > 0 && <Divider />}
+          </>
+        )}
+
+        {groups.map((group, gi) => (
+          <span key={group[0]!.id} className="inline-flex items-center gap-0.5">
+            {gi > 0 && <Divider />}
+            {group.map((a) => (
               <ToolbarButton
-                key={b.id}
-                icon={b.icon}
-                label={b.label}
-                title={b.title}
-                active={b.active}
-                disabled={b.disabled}
-                onClick={b.onClick ?? (() => {})}
+                key={a.id}
+                icon={a.icon}
+                title={a.title}
+                active={a.active}
+                disabled={a.disabled}
+                onClick={a.onClick}
               />
-            ),
-          )}
-          {(dragGroup || zoomGroup || viewGroup || exportGroup) && <Divider />}
-        </>
-      )}
+            ))}
+          </span>
+        ))}
+      </div>
 
-      {dragGroup && (
-        <>
-          {shown("zoom", caps.zoom) && (
-            <ToolbarButton
-              icon="boxZoom"
-              title="Box zoom"
-              active={controller.dragMode === "zoom"}
-              onClick={setMode("zoom")}
-            />
-          )}
-          {shown("pan", caps.pan) && (
-            <ToolbarButton
-              icon="pan"
-              title="Pan"
-              active={controller.dragMode === "pan"}
-              onClick={setMode("pan")}
-            />
-          )}
-          {shown("select", caps.select) && (
-            <ToolbarButton
-              icon="select"
-              title="Box select"
-              active={controller.dragMode === "select"}
-              onClick={setMode("select")}
-            />
-          )}
-          {shown("lasso", caps.lasso) && (
-            <ToolbarButton
-              icon="lasso"
-              title="Lasso select"
-              active={controller.dragMode === "lasso"}
-              onClick={setMode("lasso")}
-            />
-          )}
-        </>
-      )}
-
-      {zoomGroup && (
-        <>
-          {dragGroup && <Divider />}
-          {shown("zoomIn", caps.zoom) && (
-            <ToolbarButton
-              icon="zoomIn"
-              title="Zoom in"
-              onClick={() => controller.zoomIn()}
-            />
-          )}
-          {shown("zoomOut", caps.zoom) && (
-            <ToolbarButton
-              icon="zoomOut"
-              title="Zoom out"
-              onClick={() => controller.zoomOut()}
-            />
-          )}
-        </>
-      )}
-
-      {viewGroup && (
-        <>
-          {(dragGroup || zoomGroup) && <Divider />}
-          {shown("autoscale", caps.autoscale) && (
-            <ToolbarButton
-              icon="autoscale"
-              title="Autoscale"
-              onClick={() => controller.autoscale()}
-            />
-          )}
-          {shown("reset", caps.reset) && (
-            <ToolbarButton
-              icon="home"
-              title={
-                controller.isModified ? "Reset view" : "Reset view (at home)"
-              }
-              disabled={!controller.isModified}
-              onClick={() => controller.reset()}
-            />
-          )}
-        </>
-      )}
-
-      {exportGroup && (
-        <>
-          {(dragGroup || zoomGroup || viewGroup) && <Divider />}
-          <ToolbarButton
-            icon="camera"
-            title="Download plot as PNG"
-            onClick={() => {
-              // Rasterize the chart and trigger a browser download. Swallow any
-              // failure so a rejected export never throws an unhandled rejection.
-              controller
-                .toPNG({ filename: "plot" })
-                .then((b) => downloadBlob(b, "plot.png"))
-                .catch(() => {});
-            }}
-          />
-        </>
+      {sliders.length > 0 && (
+        <div className={`flex items-center gap-2 ${rightAligned ? "justify-end" : "justify-start"}`}>
+          {sliders.map((s) => (
+            <ToolbarSlider key={s.id} spec={s} />
+          ))}
+        </div>
       )}
     </div>
   );
