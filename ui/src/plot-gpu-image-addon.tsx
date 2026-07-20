@@ -58,6 +58,7 @@
 import { getSharedDevice } from "./lib/cairn-plot/engine/device";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
 import GpuComparePane from "./lib/cairn-plot/media-compare/GpuComparePane";
+import { listDiffMenuModes } from "./lib/cairn-plot/engine/kernels";
 
 /**
  * Dispatched on `window` once registration succeeds. Name duplicated (not
@@ -103,6 +104,16 @@ async function tryRegister(): Promise<void> {
     // doc — so the engine ships here in the addon, not in core.iife.js.
     (window as unknown as { __cairnPlotGpuComparePane?: typeof GpuComparePane }).__cairnPlotGpuComparePane =
       GpuComparePane;
+    // Publish the diff-kernel MENU list (id/label pairs) so the CORE
+    // view-mode menu (`plot-node.tsx`'s `CompareView`, which owns the side ⇄
+    // slide ⇄ blend ⇄ kernel selection) can offer the kernel entries WITHOUT
+    // importing `engine/kernels` — that module pulls every WGSL source and must
+    // stay OUT of `core.iife.js`. Empty/absent (addon not loaded / no WebGPU)
+    // ⇒ the core menu shows only side · slide · blend, which is exactly right:
+    // there are no kernels to switch to without the engine.
+    (window as unknown as {
+      __cairnPlotDiffMenuModes?: { id: string; label: string }[];
+    }).__cairnPlotDiffMenuModes = listDiffMenuModes();
     // Default ON once the engine is confirmed available (Task 8). The
     // opt-out was already checked (and returned early on) above; TS narrows
     // the property to exclude `false` from that point on, so re-checking it

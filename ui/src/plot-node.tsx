@@ -15,6 +15,8 @@ import React, {
   useContext,
   useEffect,
   useId,
+  useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -45,6 +47,12 @@ import {
 } from "./plot-descriptor";
 import { getRenderer, onRegister } from "./plot-registry";
 import { ChartBox, ChartFillContext } from "./plot-standalone-helpers";
+import PlotToolbar from "./lib/cairn-plot/primitives/PlotToolbar";
+import {
+  useImageController,
+  IMAGE_TOOLBAR_CONFIG,
+} from "./lib/cairn-plot/renderers/use-image-controller";
+import type { ToolbarButtonSpec } from "./lib/cairn-plot/controls/ToolbarConfig";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -280,6 +288,27 @@ async function resolveFrame(
   return { url: null };
 }
 
+/** The compare view modes the client can switch between (the flat Python enum,
+ *  minus the kernel short names which ride on `diff` via `diffKernel`). */
+type CompareViewMode = "side" | "split" | "blend" | "diff";
+
+/** Read the diff-kernel MENU list the gpu-image addon publishes on `window`
+ *  (`plot-gpu-image-addon.tsx`). Empty when the addon hasn't loaded / no WebGPU
+ *  — the menu then shows only side · slide · blend (no kernels to switch to
+ *  without the engine). Kept off a static import so `engine/kernels` (all the
+ *  WGSL sources) never enters `core.iife.js`. */
+function readDiffMenuModes(): { id: string; label: string }[] {
+  if (typeof window === "undefined") return [];
+  return (
+    (window as unknown as { __cairnPlotDiffMenuModes?: { id: string; label: string }[] })
+      .__cairnPlotDiffMenuModes ?? []
+  );
+}
+
+/** Event the gpu-image addon dispatches once it's initialized (name mirrored,
+ *  not imported — core must not depend back on an addon file). */
+const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
+
 function CompareView({ node }: { node: CompareNode }) {
   const { source, shared } = useSharedPlot();
   const [state, setState] = useState<
@@ -332,31 +361,101 @@ function CompareView({ node }: { node: CompareNode }) {
     (props.colormap as ColormapName | undefined) ??
     (shared?.colormap as ColormapName | undefined) ??
     "viridis";
-  const diffSubmode =
-    (props.diffSubmode as DiffMode | undefined) ??
-    (node.diffSubmode as DiffMode | undefined) ??
-    "signed";
+
+  // View-mode state (Change 2): CompareView OWNS the side ⇄ slide ⇄ blend ⇄
+  // kernel selection — the layer that owns which layout renders (the 2-pane
+  // side-by-side vs the composited `CompositeMediaPane`/`GpuComparePane`). The
+  // descriptor's `mode` SEEDS it; menu changes stay view-local. `diffKernel`
+  // holds the last selected kernel token so a side ⇄ diff round-trip re-seeds
+  // the pane to it. Declared unconditionally (rules-of-hooks) BEFORE the
+  // loading/error returns below.
+  const [viewMode, setViewMode] = useState<CompareViewMode>(node.mode);
+  const [diffKernel, setDiffKernel] = useState<string>(
+    (props.diffSubmode as string | undefined) ??
+      (node.diffSubmode as string | undefined) ??
+      "absolute",
+  );
+
+  // Re-render when the gpu-image addon finishes initializing, so the side
+  // view's MODE menu picks up the kernel entries the moment they're published.
+  const [, bumpReady] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onReady = () => bumpReady((n) => n + 1);
+    window.addEventListener(GPU_IMAGE_READY_EVENT, onReady);
+    return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
+  }, []);
 
   // The split-view separator is a CONTROLLED drag handle: MediaComparePane's
   // divider calls `onSplitPositionChange` but renders `splitPosition` from
   // props, so without local state the separator has nowhere to write and can't
   // move. Own the split position here, seeded from the node's own prop.
-  // (`blendAlpha` has no interactive control in the compositor — the blend is a
-  // static opacity — so it stays a plain prop.) Declared unconditionally (before
-  // the loading/error returns below) to satisfy the rules of hooks.
   const [splitPos, setSplitPos] = useState<number>(
     (props.splitPosition as number | undefined) ?? 0.5,
   );
 
   // Own the live viewport (zoom/pan) locally so wheel-zoom + drag-pan work in
   // the compare view exactly like the single ImageStandalone pane. The
-  // compositor forwards this SAME zoom/pan to BOTH the baseline and comparison
-  // panes, so split/blend/diff zoom in lock-step and the split divider stays
-  // aligned. (Previously hardcoded zoom=1/pan=0, so zoom never worked here.)
+  // compositor forwards this SAME zoom/pan to BOTH panes, so split/blend/diff
+  // (and the two side panes) zoom in lock-step.
   const [viewport, setViewport] = useState<ImageViewport>({
     zoom: 1,
     pan: { x: 0, y: 0 },
   });
+
+  // The MODE menu (side · slide · blend · <kernels>) — matches the Python enum.
+  // Hosted TWO ways: (1) in the side view, by CompareView's own PlotToolbar
+  // (below), since the 2-pane layout has no toolbar of its own; (2) in the
+  // composited views, by `GpuComparePane`'s shell toolbar (which builds the same
+  // list + a "Side" entry wired to `onRequestSide`). Both stay in sync through
+  // this component's `viewMode`/`diffKernel` state.
+  const modeMenu = useMemo<ToolbarButtonSpec>(() => {
+    const options = [
+      { id: "side", label: "Side" },
+      { id: "slide", label: "Slide" },
+      { id: "blend", label: "Blend" },
+      ...readDiffMenuModes(),
+    ];
+    const value =
+      viewMode === "side"
+        ? "side"
+        : viewMode === "split"
+          ? "slide"
+          : viewMode === "blend"
+            ? "blend"
+            : diffKernel;
+    return {
+      id: "compare-mode",
+      title: "Compare / diff mode",
+      menu: {
+        options,
+        value,
+        onSelect: (id: string) => {
+          if (id === "side") setViewMode("side");
+          else if (id === "slide") setViewMode("split");
+          else if (id === "blend") setViewMode("blend");
+          else {
+            setViewMode("diff");
+            setDiffKernel(id);
+          }
+        },
+      },
+    };
+  }, [viewMode, diffKernel]);
+
+  // A controller for the side view's overlay toolbar, bound to the SAME shared
+  // viewport the two side panes render from (so its zoom/reset drive both).
+  const sideRef = useRef<HTMLDivElement | null>(null);
+  const sideController = useImageController({
+    rootRef: sideRef,
+    zoom: viewport.zoom,
+    pan: viewport.pan,
+    onViewportChange: setViewport,
+  });
+  const sideToolbarConfig = useMemo(
+    () => ({ ...IMAGE_TOOLBAR_CONFIG, leadingButtons: [modeMenu] }),
+    [modeMenu],
+  );
 
   if (state.status === "loading") return <Message text="Loading…" />;
   if (state.status === "error") return <Message text={`Plot error: ${state.message}`} error />;
@@ -365,19 +464,67 @@ function CompareView({ node }: { node: CompareNode }) {
   const reference = baseIdx === 0 ? state.a : state.b;
   const foreground = baseIdx === 0 ? state.b : state.a;
 
+  const interpolation = (props.interpolation as Interpolation | undefined) ?? "auto";
+  const showAxes = (props.showAxes as boolean | undefined) ?? false;
+  const processing = props.processing as ImageProcessing | undefined;
+  const pixelValueNotation = props.pixelValueNotation as "decimal" | "int" | undefined;
+
+  // SIDE view: the 2-pane side-by-side (rendered by `CompositeMediaPane`'s side
+  // branch) plus CompareView's OWN overlay PlotToolbar hosting the MODE menu —
+  // the toolbar the composited views get from the pane shell, here supplied by
+  // the layout owner. `group` enables the toolbar's hover-reveal.
+  if (viewMode === "side") {
+    return (
+      <ChartBox>
+        <div ref={sideRef} className="relative h-full w-full group">
+          <PlotToolbar controller={sideController} config={sideToolbarConfig} />
+          <CompositeMediaPane
+            mode="side"
+            imageUrl={foreground.url}
+            baselineUrl={reference.url}
+            imageFloat={foreground.float}
+            baselineFloat={reference.float}
+            diffSubmode={diffKernel as DiffMode}
+            colormap={colormap}
+            interpolation={interpolation}
+            showAxes={showAxes}
+            processing={processing}
+            splitPosition={splitPos}
+            onSplitPositionChange={setSplitPos}
+            blendAlpha={props.blendAlpha as number | undefined}
+            zoom={viewport.zoom}
+            pan={viewport.pan}
+            onViewportChange={setViewport}
+            label=""
+            overlay={foreground.overlay}
+            pixelValueNotation={pixelValueNotation}
+          />
+        </div>
+      </ChartBox>
+    );
+  }
+
+  // Composited views (slide/blend/diff): `CompositeMediaPane` → `GpuComparePane`
+  // (when the engine is present), whose shell hosts the MODE menu (with a "Side"
+  // entry). Its selections flow back up through the callbacks below so this
+  // component's lifted view-mode state stays coherent for side round-trips.
   return (
     <ChartBox>
       <CompositeMediaPane
-        mode={node.mode}
+        mode={viewMode}
         imageUrl={foreground.url}
         baselineUrl={reference.url}
         imageFloat={foreground.float}
         baselineFloat={reference.float}
-        diffSubmode={diffSubmode}
+        diffSubmode={diffKernel as DiffMode}
+        diffKernel={diffKernel}
+        onDiffKernelChange={setDiffKernel}
+        onCompareModeChange={setViewMode}
+        onRequestSide={() => setViewMode("side")}
         colormap={colormap}
-        interpolation={(props.interpolation as Interpolation | undefined) ?? "auto"}
-        showAxes={(props.showAxes as boolean | undefined) ?? false}
-        processing={props.processing as ImageProcessing | undefined}
+        interpolation={interpolation}
+        showAxes={showAxes}
+        processing={processing}
         splitPosition={splitPos}
         onSplitPositionChange={setSplitPos}
         blendAlpha={props.blendAlpha as number | undefined}
@@ -386,9 +533,7 @@ function CompareView({ node }: { node: CompareNode }) {
         onViewportChange={setViewport}
         label=""
         overlay={foreground.overlay}
-        pixelValueNotation={
-          props.pixelValueNotation as "decimal" | "int" | undefined
-        }
+        pixelValueNotation={pixelValueNotation}
       />
     </ChartBox>
   );

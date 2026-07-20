@@ -11,6 +11,7 @@ import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-i
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
 import CpuImagePane from "../renderers/CpuImagePane";
+import type { HdrData } from "../renderers/image-backend";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PixelNotationToggle,
@@ -412,9 +413,13 @@ export function MediaComparePane({
           <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
       </div>
-      <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-        REF
-      </span>
+      {/* REF chip (Change 1): only in `split`/slide, where the reference side is
+          distinctly visible left of the divider. Hidden in `blend` (fused). */}
+      {mode === "split" && (
+        <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
+          REF
+        </span>
+      )}
       <span
         className={`absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable && !modifierActive ? " cairn-drag-grip" : ""}`}
         draggable={isDraggable && !modifierActive}
@@ -489,6 +494,24 @@ export function CompareFloatUnsupportedError() {
   );
 }
 
+/**
+ * A decoded float compare side (`{data,width,height,channels}`) → the
+ * `HdrData` shape `CpuImagePane`'s float-HDR path consumes (`[H,W]` gray /
+ * `[H,W,C]`). Used by the `side` layout so a float side renders through the CPU
+ * HDR pane — which carries its OWN float-formatted TEV pixel overlay — instead
+ * of erroring (a float side in the side-by-side needs no GPU).
+ */
+function compareFloatToHdrData(src: CompareFloatSource): HdrData {
+  return {
+    data: src.data,
+    shape:
+      src.channels === 1
+        ? [src.height, src.width]
+        : [src.height, src.width, src.channels],
+    dtype: "<f4",
+  };
+}
+
 export interface CompositeMediaPaneProps {
   mode: MediaCompareModeKind;
   imageUrl: string | null;
@@ -503,6 +526,17 @@ export interface CompositeMediaPaneProps {
 
   /** Used only when the effective mode is "diff". */
   diffSubmode: DiffMode;
+  /** Initial diff KERNEL id (engine compare pane) — seeds `GpuComparePane`'s
+   *  view-local kernel selection; falls back to `diffSubmode` when unset. */
+  diffKernel?: string;
+  /** Fired when the engine pane's diff kernel changes (menu). */
+  onDiffKernelChange?: (kernelId: string) => void;
+  /** Fired when the engine pane's compare mode changes (split/blend/diff menu).
+   *  Lets `CompareView` keep its lifted view-mode state in sync. */
+  onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
+  /** Fired when the user picks "Side" in the engine pane's MODE menu — routes
+   *  back UP to `CompareView`, which owns the side-by-side layout. */
+  onRequestSide?: () => void;
   colormap: Colormap;
   interpolation: Interpolation;
   showAxes?: boolean;
@@ -537,6 +571,10 @@ export function CompositeMediaPane({
   baselineFloat,
   isReferencePane,
   diffSubmode,
+  diffKernel,
+  onDiffKernelChange,
+  onCompareModeChange,
+  onRequestSide,
   colormap,
   interpolation,
   showAxes,
@@ -570,12 +608,96 @@ export function CompositeMediaPane({
   const engineComposited =
     effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff";
 
-  // Float sides are GPU-only (`rgba32float` upload — the legacy CPU panes take
-  // only URL sources). If the engine pane isn't available, or the effective
-  // mode isn't one it composites, surface the standard clear error — never a
-  // blank pane (Task point 3). `useGpuCompareReadyTick` above still forces a
-  // re-render once the gpu-image addon finishes initializing, so on a WebGPU
-  // browser this resolves to the real GPU pane below the instant it's ready.
+  // Side-by-side: two independent panes — reference (left, REF chip) and
+  // prediction (right). Handled BEFORE the float guard because `side` needs NO
+  // engine: each side renders through `CpuImagePane`, picking its float-HDR path
+  // (`hdr=…`, which carries its own float-formatted TEV pixel overlay) when that
+  // side resolved to a `CompareFloatSource`, else the 8-bit `imageUrl` path. So
+  // a float side shows tone-mapped pixels + float TEV numbers here instead of
+  // erroring. The REF chip sits on the reference pane (Change 2 pt 5).
+  if (effectiveMode === "side") {
+    const refPane = baselineFloat ? (
+      <CpuImagePane
+        toolbar={false}
+        hdr={compareFloatToHdrData(baselineFloat)}
+        interpolation={interpolation}
+        showAxes={false}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        label="REF"
+        pixelValueNotation={pixelValueNotation}
+      />
+    ) : (
+      <CpuImagePane
+        toolbar={false}
+        imageUrl={baselineUrl}
+        baselineUrl={null}
+        isBaseline
+        diffMode="none"
+        interpolation={interpolation}
+        colormap="none"
+        showAxes={false}
+        processing={processing}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        label="REF"
+        pixelValueNotation={pixelValueNotation}
+      />
+    );
+    const fgPane = imageFloat ? (
+      <CpuImagePane
+        toolbar={false}
+        hdr={compareFloatToHdrData(imageFloat)}
+        interpolation={interpolation}
+        showAxes={showAxes ?? false}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        label={label}
+        pixelValueNotation={pixelValueNotation}
+      />
+    ) : (
+      <CpuImagePane
+        toolbar={false}
+        imageUrl={imageUrl}
+        baselineUrl={baselineUrl}
+        isBaseline={false}
+        diffMode="none"
+        interpolation={interpolation}
+        colormap={colormap}
+        showAxes={showAxes ?? false}
+        processing={processing}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+        onNaturalSize={onNaturalSize}
+        label={label}
+        overlay={overlay}
+        overlaySettings={overlaySettings}
+        pixelValueNotation={pixelValueNotation}
+      />
+    );
+    return (
+      <div className="flex gap-0.5 h-full">
+        <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
+          {refPane}
+        </div>
+        <div className="relative flex-1 min-w-0 overflow-hidden">{fgPane}</div>
+      </div>
+    );
+  }
+
+  // Float sides are GPU-only for the COMPOSITED modes (`rgba32float` upload —
+  // the legacy CPU split/blend/diff panes take only URL sources). If the engine
+  // pane isn't available, or the effective mode isn't one it composites, surface
+  // the standard clear error — never a blank pane (Task point 3). (`side` above
+  // already handled float via the CPU HDR pane.) `useGpuCompareReadyTick` above
+  // still forces a re-render once the gpu-image addon finishes initializing, so
+  // on a WebGPU browser this resolves to the real GPU pane below once ready.
   if (hasFloatSide && (!GpuCompare || !engineComposited)) {
     return <CompareFloatUnsupportedError />;
   }
@@ -598,6 +720,10 @@ export function CompositeMediaPane({
         blendAlpha={blendAlpha ?? 0.5}
         onSplitPositionChange={onSplitPositionChange}
         diffSubmode={diffSubmode}
+        diffKernel={diffKernel}
+        onDiffKernelChange={onDiffKernelChange}
+        onCompareModeChange={onCompareModeChange}
+        onRequestSide={onRequestSide}
         colormap={colormap}
         zoom={zoom}
         pan={pan}
@@ -606,54 +732,6 @@ export function CompositeMediaPane({
         label={label}
         pixelValueNotation={pixelValueNotation}
       />
-    );
-  }
-
-  if (effectiveMode === "side") {
-    return (
-      <div className="flex gap-0.5 h-full">
-        <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
-          <CpuImagePane
-            toolbar={false}
-            imageUrl={baselineUrl}
-            baselineUrl={null}
-            isBaseline
-            diffMode="none"
-            interpolation={interpolation}
-            colormap="none"
-            showAxes={false}
-            processing={processing}
-            zoom={zoom}
-            pan={pan}
-            onViewportChange={onViewportChange}
-            label="REF"
-            pixelValueNotation={pixelValueNotation}
-          />
-        </div>
-        <div className="relative flex-1 min-w-0 overflow-hidden">
-          <CpuImagePane
-            toolbar={false}
-            imageUrl={imageUrl}
-            baselineUrl={baselineUrl}
-            isBaseline={false}
-            diffMode="none"
-            interpolation={interpolation}
-            colormap={colormap}
-            showAxes={showAxes ?? false}
-            processing={processing}
-            zoom={zoom}
-            pan={pan}
-            onViewportChange={onViewportChange}
-            isDraggable={isDraggable}
-            onDragStart={onDragStart}
-            onNaturalSize={onNaturalSize}
-            label={label}
-            overlay={overlay}
-            overlaySettings={overlaySettings}
-            pixelValueNotation={pixelValueNotation}
-          />
-        </div>
-      </div>
     );
   }
 
