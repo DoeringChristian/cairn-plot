@@ -10,7 +10,7 @@ import type {
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
-import ImagePane from "../renderers/ImagePane";
+import CpuImagePane from "../renderers/CpuImagePane";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PixelNotationToggle,
@@ -545,7 +545,8 @@ export function CompositeMediaPane({
     return (
       <div className="flex gap-0.5 h-full">
         <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
-          <ImagePane
+          <CpuImagePane
+            toolbar={false}
             imageUrl={baselineUrl}
             baselineUrl={null}
             isBaseline
@@ -562,7 +563,8 @@ export function CompositeMediaPane({
           />
         </div>
         <div className="relative flex-1 min-w-0 overflow-hidden">
-          <ImagePane
+          <CpuImagePane
+            toolbar={false}
             imageUrl={imageUrl}
             baselineUrl={baselineUrl}
             isBaseline={false}
@@ -615,7 +617,8 @@ export function CompositeMediaPane({
   // pipeline (cache, GPU/CPU dispatch) and the false-color path, so "diff"
   // is simply passing its diffMode through, not a separate implementation.
   return (
-    <ImagePane
+    <CpuImagePane
+      toolbar={false}
       imageUrl={imageUrl}
       baselineUrl={baselineUrl}
       isBaseline={isReferencePane}

@@ -120,9 +120,19 @@ export {
 } from "./renderers";
 export { ParallelCoords } from "./renderers";
 export { ScalarPlot } from "./renderers";
-export { ImagePane } from "./renderers";
-export { HdrImagePane, tonemapToImageData } from "./renderers";
-export type { HdrImagePaneProps, HdrData } from "./renderers";
+// Image backends: the CPU pane + the interchangeable-backend contract
+// (`GpuImagePane` is addon-loaded via the runtime registry seam, not re-exported
+// here). `tonemapToImageData` is the pure HDR-float → `ImageData` tone-mapper.
+export { CpuImagePane, tonemapToImageData, isHdrProps, resolveRenderMode } from "./renderers";
+export type {
+  CpuImagePaneProps,
+  ImageBackend,
+  ImageBackendProps,
+  HdrImageProps,
+  SdrImageProps,
+  HdrData,
+  RenderMode as ImageBackendRenderMode,
+} from "./renderers";
 export { Heatmap } from "./renderers";
 export { HistogramPlot } from "./renderers";
 export { ImageOverlay } from "./renderers";

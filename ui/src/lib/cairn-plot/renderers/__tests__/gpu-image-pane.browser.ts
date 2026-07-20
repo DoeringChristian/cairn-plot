@@ -71,7 +71,8 @@
  */
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GpuImagePane, { type HdrData } from "../GpuImagePane";
+import GpuImagePane from "../GpuImagePane";
+import { type HdrData } from "../image-backend";
 import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../engine/pool";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 

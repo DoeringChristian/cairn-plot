@@ -62,7 +62,8 @@
  */
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GpuImagePane, { type HdrData } from "../GpuImagePane";
+import GpuImagePane from "../GpuImagePane";
+import { type HdrData } from "../image-backend";
 import GpuComparePane from "../../media-compare/GpuComparePane";
 
 const h = React.createElement;

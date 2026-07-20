@@ -13,10 +13,9 @@
  * `plot-gpu-image-addon.tsx`).
  *
  * ## Two prop shapes, one component
- * `GpuImagePaneProps = HdrGpuImagePaneProps | SdrGpuImagePaneProps` — presence
- * of `hdr` selects the HDR-float path (mirrors `HdrImagePane`'s contract
- * exactly); its absence selects the SDR `imageUrl` path (mirrors
- * `ImagePane`'s contract). Both retain the CPU source buffer the TEV overlay
+ * `ImageBackendProps = HdrImageProps | SdrImageProps` — presence
+ * of `hdr` selects the HDR-float path; its absence selects the SDR `imageUrl`
+ * path. Both retain the CPU source buffer the TEV overlay
  * (`PixelValueOverlay`) reads, exactly like the two CPU panes do.
  *
  * ## SCOPE (documented gaps — see Task 6 report for the full rationale)
@@ -111,31 +110,11 @@ import {
   shapeDims,
   finite,
   type HdrData,
-  type HdrGpuImagePaneProps,
-  type SdrGpuImagePaneProps,
+  type HdrImageProps,
+  type SdrImageProps,
   type ImageBackend,
   type ImageBackendProps,
 } from "./image-backend";
-
-// The shared backend prop contract now lives in `renderers/image-backend.ts`
-// (ONE place both interchangeable backends import it from). Re-exported here
-// under the historical names so existing importers keep working.
-export type { HdrData, HdrGpuImagePaneProps, SdrGpuImagePaneProps };
-
-export type GpuImagePaneProps = ImageBackendProps;
-
-/**
- * The formalized prop CONTRACT shared between the two interchangeable image
- * BACKENDS this codebase ships: the CPU/2D-canvas backend (`CpuImagePane`)
- * and this WebGPU engine backend (`GpuImagePane`).
- * `plot-renderers.tsx`'s `resolveImageRenderer(mode)` is the render-mode seam
- * that picks ONE backend per mount — the WebGPU-or-CPU fallback boundary (see
- * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`) — and both
- * sides accept this same shape, so the swap is prop-compatible. Kept as a
- * TYPE-only alias of `image-backend.ts`'s `ImageBackendProps` for existing
- * importers; new code should import from `image-backend.ts` directly.
- */
-export type ImageRenderProps = GpuImagePaneProps;
 
 const OPERATORS: readonly ImageOperator[] = ["linear", "srgb", "reinhard", "aces"];
 function toOperator(name: string | undefined): ImageOperator {
@@ -267,7 +246,7 @@ export function screenPxPerTexel(
   return Math.min(box.width / visibleW, box.height / visibleH);
 }
 
-export default function GpuImagePane(props: GpuImagePaneProps) {
+export default function GpuImagePane(props: ImageBackendProps) {
   const hdrMode = isHdrProps(props);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -311,7 +290,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
   const onViewportChange = props.onViewportChange;
-  const sdrColormap = hdrMode ? "none" : ((props as SdrGpuImagePaneProps).colormap ?? "none");
+  const sdrColormap = hdrMode ? "none" : ((props as SdrImageProps).colormap ?? "none");
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
   // re-fire that sizing whenever `devicePixelRatio` itself changes (moving
@@ -428,7 +407,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!hdrMode || !paneReady) return;
-    const hdr = (props as HdrGpuImagePaneProps).hdr;
+    const hdr = (props as HdrImageProps).hdr;
     hdrDataRef.current = hdr;
     const upload = hdrToRGBAFloat32(hdr);
     paneHandleRef.current?.setSource(upload);
@@ -438,7 +417,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
     setPixelDataVersion((v) => v + 1);
     setUploadVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, hdrMode ? (props as HdrGpuImagePaneProps).hdr : null]);
+  }, [hdrMode, paneReady, hdrMode ? (props as HdrImageProps).hdr : null]);
 
   // -----------------------------------------------------------------------
   // SDR mode: decode `imageUrl` (+ optional CPU colormap false-color, exact
@@ -446,7 +425,7 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (hdrMode || !paneReady) return;
-    const p = props as SdrGpuImagePaneProps;
+    const p = props as SdrImageProps;
     const imageUrl = p.imageUrl;
     const colormap = p.colormap ?? "none";
     if (!imageUrl) {
@@ -497,15 +476,15 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, hdrMode ? null : (props as SdrGpuImagePaneProps).imageUrl, hdrMode ? null : (props as SdrGpuImagePaneProps).colormap]);
+  }, [hdrMode, paneReady, hdrMode ? null : (props as SdrImageProps).imageUrl, hdrMode ? null : (props as SdrImageProps).colormap]);
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +
   // viewport/exposure/operator/gamma/container-resize change. NOT per frame.
   // -----------------------------------------------------------------------
-  const exposure = hdrMode ? ((props as HdrGpuImagePaneProps).exposure ?? 0) : 0;
-  const tonemapName = hdrMode ? (props as HdrGpuImagePaneProps).tonemap : undefined;
-  const gamma = hdrMode ? (props as HdrGpuImagePaneProps).gamma : undefined;
+  const exposure = hdrMode ? ((props as HdrImageProps).exposure ?? 0) : 0;
+  const tonemapName = hdrMode ? (props as HdrImageProps).tonemap : undefined;
+  const gamma = hdrMode ? (props as HdrImageProps).gamma : undefined;
 
   // The render pass, extracted into a stable callback so the screenshot path
   // (`useImageController`'s `toPNG`) can force a fresh, SYNCHRONOUS repaint
@@ -663,13 +642,13 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   // Render.
   // -----------------------------------------------------------------------
   const showAxes = props.showAxes ?? false;
-  const label = hdrMode ? ((props as HdrGpuImagePaneProps).label ?? "") : (props as SdrGpuImagePaneProps).label;
+  const label = hdrMode ? ((props as HdrImageProps).label ?? "") : (props as SdrImageProps).label;
   const interpolation = props.interpolation ?? "auto";
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
-  const overlay = hdrMode ? undefined : (props as SdrGpuImagePaneProps).overlay;
-  const overlaySettings = hdrMode ? undefined : (props as SdrGpuImagePaneProps).overlaySettings;
-  const isDraggable = hdrMode ? false : ((props as SdrGpuImagePaneProps).isDraggable ?? false);
-  const onDragStart = hdrMode ? undefined : (props as SdrGpuImagePaneProps).onDragStart;
+  const overlay = hdrMode ? undefined : (props as SdrImageProps).overlay;
+  const overlaySettings = hdrMode ? undefined : (props as SdrImageProps).overlaySettings;
+  const isDraggable = hdrMode ? false : ((props as SdrImageProps).isDraggable ?? false);
+  const onDragStart = hdrMode ? undefined : (props as SdrImageProps).onDragStart;
 
   // C1 fix (whole-branch review) — engine bailout: the GPU backend self-heals
   // to the CPU backend (`CpuImagePane`) on any activation/render hard
@@ -680,9 +659,9 @@ export default function GpuImagePane(props: GpuImagePaneProps) {
   // its own GPU canvas.
   if (engineFailed) {
     return hdrMode ? (
-      <CpuImagePane {...(props as HdrGpuImagePaneProps)} />
+      <CpuImagePane {...(props as HdrImageProps)} />
     ) : (
-      <CpuImagePane {...(props as SdrGpuImagePaneProps)} />
+      <CpuImagePane {...(props as SdrImageProps)} />
     );
   }
 

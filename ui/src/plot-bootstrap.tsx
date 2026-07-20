@@ -69,7 +69,7 @@ async function readPageDescriptor(): Promise<PlotDescriptor> {
     document.getElementById(DESCRIPTOR_SCRIPT_ID) ??
     document.querySelector(`script[type="${DESCRIPTOR_MIME}"]`);
   if (inline?.textContent) {
-    return normalizeDescriptor(JSON.parse(inline.textContent));
+    return JSON.parse(inline.textContent) as PlotDescriptor;
   }
   const params = new URLSearchParams(window.location.search);
   const src = params.get("src");
@@ -78,7 +78,7 @@ async function readPageDescriptor(): Promise<PlotDescriptor> {
     if (!res.ok) {
       throw new Error(`failed to fetch descriptor from ${src} (${res.status})`);
     }
-    return normalizeDescriptor(await res.json());
+    return (await res.json()) as PlotDescriptor;
   }
   if (params.get("sid")) {
     throw new Error("?sid= descriptor loading is not available yet (Phase C).");
@@ -87,28 +87,6 @@ async function readPageDescriptor(): Promise<PlotDescriptor> {
     "No plot descriptor found (expected an inline " +
       `<script type="${DESCRIPTOR_MIME}"> blob or a ?src= param).`,
   );
-}
-
-/**
- * Legacy-flat shim (plan B): a pre-G1 descriptor is `{renderer,props?,data,…}`
- * with no `root`. Lift it to the G1 tree shape `{root:{kind:"plot",…},…}` so old
- * committed fixtures / emitters keep mounting. New descriptors already carry
- * `root` and pass through unchanged.
- */
-export function normalizeDescriptor(raw: any): PlotDescriptor {
-  if (raw && !raw.root && typeof raw.renderer === "string") {
-    return {
-      root: {
-        kind: "plot",
-        renderer: raw.renderer,
-        props: raw.props,
-        data: raw.data,
-      },
-      mode: raw.mode,
-      endpoint: raw.endpoint,
-    };
-  }
-  return raw as PlotDescriptor;
 }
 
 /** Build the `DataSource` the descriptor's `mode` selects. */
@@ -132,7 +110,7 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 /**
  * Mount ONE plot tree. `descriptor` may be supplied directly (per-div notebook
  * mount) or read from the page (server `/plot` root, possibly via a `?src=`
- * fetch). Thin root wrapper (G1): normalize (legacy-flat shim) → build ONE
+ * fetch). Thin root wrapper (G1): build ONE
  * `DataSource` → seed `SharedPlotContext` → `<PlotNodeView node={root}>`. Each
  * leaf owns its own resolve + bounded registry-wait (plot-node.tsx). NEVER
  * throws to the host — a descriptor read failure degrades to a visible message.
@@ -147,8 +125,7 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
     | { status: "ready"; descriptor: PlotDescriptor; source: DataSource }
   >(() => {
     if (!given) return { status: "loading" };
-    const descriptor = normalizeDescriptor(given);
-    return { status: "ready", descriptor, source: dataSourceFor(descriptor) };
+    return { status: "ready", descriptor: given, source: dataSourceFor(given) };
   });
 
   useEffect(() => {
@@ -156,7 +133,7 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
     let cancelled = false;
     (async () => {
       try {
-        const descriptor = normalizeDescriptor(await readPageDescriptor());
+        const descriptor = await readPageDescriptor();
         if (cancelled) return;
         setState({
           status: "ready",

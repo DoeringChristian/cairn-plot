@@ -39,7 +39,7 @@ export interface HdrData {
 }
 
 /** The float-HDR prop shape (presence of `hdr` selects this backend path). */
-export interface HdrGpuImagePaneProps {
+export interface HdrImageProps {
   hdr: HdrData;
   tonemap?: string;
   exposure?: number;
@@ -54,7 +54,7 @@ export interface HdrGpuImagePaneProps {
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
-export interface SdrGpuImagePaneProps {
+export interface SdrImageProps {
   imageUrl: string | null;
   baselineUrl?: string | null;
   isBaseline?: boolean;
@@ -77,11 +77,11 @@ export interface SdrGpuImagePaneProps {
 }
 
 /**
- * The shared prop union BOTH image backends accept. `HdrGpuImagePaneProps`
- * (float-HDR) | `SdrGpuImagePaneProps` (8-bit `imageUrl`), discriminated by
+ * The shared prop union BOTH image backends accept. `HdrImageProps`
+ * (float-HDR) | `SdrImageProps` (8-bit `imageUrl`), discriminated by
  * the presence of `hdr`.
  */
-export type ImageBackendProps = HdrGpuImagePaneProps | SdrGpuImagePaneProps;
+export type ImageBackendProps = HdrImageProps | SdrImageProps;
 
 /**
  * The interchangeable image-backend interface: a component accepting the
@@ -91,8 +91,8 @@ export type ImageBackendProps = HdrGpuImagePaneProps | SdrGpuImagePaneProps;
 export type ImageBackend = (props: ImageBackendProps) => JSX.Element;
 
 /** Discriminant: `true` when these props select the float-HDR backend path. */
-export function isHdrProps(p: ImageBackendProps): p is HdrGpuImagePaneProps {
-  return "hdr" in p && (p as HdrGpuImagePaneProps).hdr != null;
+export function isHdrProps(p: ImageBackendProps): p is HdrImageProps {
+  return "hdr" in p && (p as HdrImageProps).hdr != null;
 }
 
 // ---------------------------------------------------------------------------

@@ -7,8 +7,7 @@
  *
  * The former flat single-renderer body of `PlotApp` lives on here as
  * `LeafView` (resolveDataProps → bounded wait-for-registration → render via the
- * `*Standalone` adapters in the registry), verbatim in behaviour so the
- * legacy-flat shim path renders identically.
+ * `*Standalone` adapters in the registry).
  */
 import React, {
   Suspense,

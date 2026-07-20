@@ -17,7 +17,7 @@
  *     gamma)` per-pixel → `putImageData`.
  * ASYMMETRY (unchanged from before the unification): the HDR branch has no
  * colormap / compare-diff / `processing` — those props only exist on the SDR
- * shape (`SdrGpuImagePaneProps`), exactly as the two separate panes had it.
+ * shape (`SdrImageProps`), exactly as the two separate panes had it.
  *
  * ## Shared plumbing — the shared `ImagePaneShell`
  * Both branches render through `renderers/ImagePaneShell.tsx` (the ONE frame
@@ -69,8 +69,8 @@ import {
   shapeDims,
   finite,
   type HdrData,
-  type HdrGpuImagePaneProps,
-  type SdrGpuImagePaneProps,
+  type HdrImageProps,
+  type SdrImageProps,
   type ImageBackend,
 } from "./image-backend";
 import type { ImageProcessing } from "../types";
@@ -146,7 +146,7 @@ export function tonemapToImageData(
 // verbatim), rendering its display element through the shared shell.
 // ---------------------------------------------------------------------------
 
-function CpuSdrImagePane(props: SdrGpuImagePaneProps & { toolbar?: boolean }) {
+function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   const {
     imageUrl,
     baselineUrl = null,
@@ -618,7 +618,7 @@ function CpuSdrImagePane(props: SdrGpuImagePaneProps & { toolbar?: boolean }) {
 // compare-diff / processing here — asymmetric by design (see module doc).
 // ---------------------------------------------------------------------------
 
-function CpuHdrImagePane(props: HdrGpuImagePaneProps & { toolbar?: boolean }) {
+function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
   const {
     hdr,
     tonemap = "srgb",
@@ -756,8 +756,8 @@ function CpuHdrImagePane(props: HdrGpuImagePaneProps & { toolbar?: boolean }) {
 
 /** `ImageBackendProps` plus the shim-only chrome flag (see module doc). */
 export type CpuImagePaneProps =
-  | (HdrGpuImagePaneProps & { toolbar?: boolean })
-  | (SdrGpuImagePaneProps & { toolbar?: boolean });
+  | (HdrImageProps & { toolbar?: boolean })
+  | (SdrImageProps & { toolbar?: boolean });
 
 /**
  * One of the two interchangeable image backends (the CPU/2D-canvas one — see
