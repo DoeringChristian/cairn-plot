@@ -34,6 +34,10 @@ import {
 } from "./kernels";
 import { VERTEX_WGSL, SAMPLING_WGSL } from "./kernels/prelude.wgsl";
 import { computeMetrics, type DiffMetrics } from "./image-engine";
+import { type DiffCmapMode } from "./diff-cmap-mode";
+
+export { resolveDiffCmapMode } from "./diff-cmap-mode";
+export type { DiffCmapMode } from "./diff-cmap-mode";
 
 // ===========================================================================
 // Pipeline caching (per device, per shader source, per target format)
@@ -172,6 +176,16 @@ export interface DiffCacheEntry {
   /** Lazily-computed + cached MSE/PSNR/MAE over the SOURCES (kernel-independent). */
   scalars?: DiffMetrics;
   scalarsPending?: Promise<DiffMetrics>;
+  /**
+   * Lazily-read-back RGBA-float samples of the diff RESULT texture (row-major at
+   * result resolution, 4 floats/pixel, top-left origin — same coord convention
+   * the TEV overlay samples). Computed on demand the first time the overlay needs
+   * a per-pixel metric value and cached here, so zoom/pan/colormap NEVER re-read
+   * and `getDiffComputeCount()` never moves. Dropped when the entry is evicted
+   * (the whole entry — texture + this array — is released together).
+   */
+  resultSamples?: Float32Array;
+  resultSamplesPending?: Promise<Float32Array>;
 }
 
 const DEFAULT_MAX_ENTRIES = 8;
@@ -312,6 +326,30 @@ export async function ensureDiffScalars(
   return entry.scalarsPending;
 }
 
+/**
+ * Lazily read back the entry's diff RESULT texture into a CPU `Float32Array`
+ * (RGBA, row-major, result resolution) and cache it IN the entry. Used by the
+ * TEV overlay to show the METRIC value(s) per pixel in diff mode. Idempotent +
+ * memoized: repeated calls (zoom/pan/colormap redraws) return the cached array
+ * without a second GPU readback, and this NEVER calls `computeDiff`, so
+ * `getDiffComputeCount()` does not move.
+ */
+export async function ensureDiffResultReadback(
+  device: Device,
+  entry: DiffCacheEntry,
+): Promise<Float32Array> {
+  if (entry.resultSamples) return entry.resultSamples;
+  if (!entry.resultSamplesPending) {
+    entry.resultSamplesPending = device.readback(entry.texture).then((buf) => {
+      // rgba16float readback returns a Float32Array; be defensive for any other.
+      const arr = buf instanceof Float32Array ? buf : Float32Array.from(buf);
+      entry.resultSamples = arr;
+      return arr;
+    });
+  }
+  return entry.resultSamplesPending;
+}
+
 /** Test/introspection: current cache entry count for a device. */
 export function diffCacheSize(device: Device): number {
   return cacheFor(device).size;
@@ -333,6 +371,7 @@ ${SAMPLING_WGSL}
 @group(0) @binding(3) var lut: texture_2d<f32>;
 @group(0) @binding(8) var<uniform> u_uv: vec4<f32>;   // uvRect.xy, uvRect.wh
 @group(0) @binding(11) var<uniform> u_disp: vec4<f32>; // displayRangeId, cmapModeId, useColormap, filterMode
+@group(0) @binding(14) var<uniform> u_expo: vec4<f32>; // exposureEV, offset, 0, 0
 
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(0.999999));
@@ -351,7 +390,11 @@ ${SAMPLING_WGSL}
     raw = textureLoad(resultTex, vec2<i32>(srcUV * dims), 0);
   }
   let displayRangeId = i32(round(u_disp.x));
-  var v = raw.rgb;
+  // Exposure/offset adjust the RAW metric value BEFORE the cmap-mode index
+  // mapping and LUT — i.e. they change the colormap SENSITIVITY (value * 2^EV +
+  // offset), not the final RGB. Display-only: the cached diff RESULT is never
+  // touched, so this never triggers a recompute.
+  var v = raw.rgb * exp2(u_expo.x) + vec3<f32>(u_expo.y);
   if (displayRangeId == 1 || displayRangeId == 2) {
     v = (v + vec3<f32>(1.0)) * 0.5; // signed / relative -> [0,1] about 0.5
   }
@@ -372,7 +415,6 @@ ${SAMPLING_WGSL}
 `;
 
 const DISPLAY_RANGE_ID: Record<DisplayRange, number> = { unit: 0, signed: 1, relative: 2 };
-export type DiffCmapMode = "linear" | "signed" | "positive";
 const CMAP_MODE_ID: Record<DiffCmapMode, number> = { linear: 0, signed: 1, positive: 2 };
 
 export interface DiffDisplayParams {
@@ -384,6 +426,13 @@ export interface DiffDisplayParams {
   colormap?: Float32Array;
   /** Source filter, like ImageParams.filter. Default `"linear"`. */
   filter?: "nearest" | "linear";
+  /** Exposure in EV stops applied to the RAW metric value BEFORE the cmap-mode
+   *  index mapping + LUT (`value * 2^EV`) — changes colormap sensitivity, not the
+   *  final RGB. Display-only; never recomputes the cached result. Default 0. */
+  exposureEV?: number;
+  /** Additive offset applied after exposure, before the cmap index mapping.
+   *  Display-only. Default 0. */
+  offset?: number;
 }
 
 function buildLutTexture(device: Device, colormap: Float32Array | undefined): Texture {
@@ -428,6 +477,7 @@ export function renderDiffDisplay(
     params.colormap ? 1 : 0,
     params.filter === "nearest" ? 0 : 1,
   ]);
+  const expoVec = new Float32Array([params.exposureEV ?? 0, params.offset ?? 0, 0, 0]);
   let bg: BindGroup | undefined;
   try {
     bg = device.createBindGroup(pipeline, [
@@ -435,6 +485,7 @@ export function renderDiffDisplay(
       { binding: 1, resource: lut },
       { binding: 2, resource: { uniform: uvRect } },
       { binding: 3, resource: { uniform: dispVec } },
+      { binding: 4, resource: { uniform: expoVec } },
     ]);
     device.renderFullscreen(target, pipeline, bg);
   } finally {

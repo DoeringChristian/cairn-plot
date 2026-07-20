@@ -52,7 +52,9 @@ import {
 import {
   ensureDiff,
   ensureDiffScalars,
+  ensureDiffResultReadback,
   renderDiffDisplay,
+  resolveDiffCmapMode,
   type DiffCacheEntry,
 } from "../engine/diff-engine";
 import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId } from "../engine/kernels";
@@ -312,10 +314,10 @@ export default function GpuComparePane({
   }, [colormap]);
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
-  // display-only — fed into the split/blend compose pass (the shader applies
-  // `color * 2^EV + offset` before tonemap/encode). Diff mode ignores them (the
-  // cached diff visualization is already normalized) and hides the sliders, so
-  // slider drags NEVER recompute the diff (the cached-diff invariant holds).
+  // display-only in EVERY mode. Split/blend: fed into the compose pass (`color *
+  // 2^EV + offset` before tonemap/encode). Diff: fed into the display blit as the
+  // colormap SENSITIVITY (the raw metric is scaled BEFORE the LUT). Neither path
+  // touches the cached diff RESULT, so slider drags never recompute the diff.
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
 
@@ -375,6 +377,14 @@ export default function GpuComparePane({
   const fgFloatRef = useRef<CompareFloatSource | null>(null);
   const refFloatRef = useRef<CompareFloatSource | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
+
+  // Diff-mode TEV: the RESULT texture's per-pixel metric value(s), read back
+  // lazily (once per cache entry) and cached in the entry. `null` while a
+  // readback is in flight (the overlay then draws nothing and settles on its
+  // own). `diffOverlayVersion` bumps on every kernel switch (clear) and on each
+  // readback settle (draw), so the printed numbers TRACK the selected metric.
+  const diffSamplesRef = useRef<Float32Array | null>(null);
+  const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
 
   // Q22 fix: same as `GpuImagePane` — the canvas backing store / surface
   // track the on-screen display resolution x dpr, not the source images'.
@@ -564,10 +574,19 @@ export default function GpuComparePane({
     return computeHdrFlipExposures(ref.data, ref.width, ref.height, ref.channels);
   }, [sourcesAreFloat, baselineFloat, imageFloat]);
 
-  const diffCmapMode = useMemo<"linear" | "signed" | "positive">(() => {
-    const range = getDiffKernel(resolvedKernelId)?.displayRange ?? "unit";
-    return range === "signed" ? "signed" : "positive";
-  }, [resolvedKernelId]);
+  // Derive the cmap index mode from BOTH the kernel's display range AND the
+  // colormap's divergence (the reported bug: a SEQUENTIAL map like plasma/magma
+  // must use its FULL range for a unit-range kernel, not be pushed into its upper
+  // half). Colormap-dependent, but display-only — a colormap switch re-blits, it
+  // never recomputes the cached diff.
+  const diffCmapMode = useMemo(
+    () =>
+      resolveDiffCmapMode(
+        getDiffKernel(resolvedKernelId)?.displayRange ?? "unit",
+        colormapState === "none" ? null : colormapState,
+      ),
+    [resolvedKernelId, colormapState],
+  );
   const diffColormap = useMemo<Float32Array | undefined>(
     () => (colormapState !== "none" ? floatLutFor(colormapState as Exclude<Colormap, "none">) : undefined),
     [colormapState],
@@ -664,6 +683,10 @@ export default function GpuComparePane({
           cmapMode: diffCmapMode,
           colormap: diffColormap,
           filter,
+          // Exposure/offset change the colormap SENSITIVITY (applied to the raw
+          // metric BEFORE the LUT), display-only — never a diff recompute.
+          exposureEV: displayEV,
+          offset: displayOffset,
         });
       } else {
         const params: CompareParams = {
@@ -742,6 +765,41 @@ export default function GpuComparePane({
     };
   }, [ready, uploadVersion, hasBaseline, compareMode, diffKernel]);
 
+  // ---- diff RESULT readback (TEV per-pixel metric values) ----------------
+  // In diff mode the overlay must show the METRIC value(s), NOT the source
+  // prediction pixels (the reported bug). Read back the cached RESULT texture
+  // once per entry (memoized IN the entry); keyed on the SOURCE/kernel identity
+  // (via `resolvedKernelId`/`uploadVersion`) so zoom/pan/colormap/exposure never
+  // re-read and `getDiffComputeCount()` never moves. `renderPass` (the effect
+  // above) has already populated `diffEntryRef.current` for the current kernel
+  // by the time this runs (same commit, declared earlier).
+  useEffect(() => {
+    if (compareMode !== "diff") {
+      diffSamplesRef.current = null;
+      return;
+    }
+    const r = resRef.current;
+    const entry = diffEntryRef.current;
+    if (!ready || !r || !entry) return;
+    let cancelled = false;
+    // Clear the old metric's numbers immediately on a kernel switch, then settle
+    // to the new metric's values when the readback resolves — no user gesture.
+    diffSamplesRef.current = null;
+    setDiffOverlayVersion((v) => v + 1);
+    ensureDiffResultReadback(r.device, entry)
+      .then((arr) => {
+        if (cancelled) return;
+        diffSamplesRef.current = arr;
+        setDiffOverlayVersion((v) => v + 1);
+      })
+      .catch(() => {
+        /* readback failure: leave numbers blank (non-fatal, display-only) */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, compareMode, resolvedKernelId, uploadVersion]);
+
   // ---- TEV samplers ------------------------------------------------------
   // A side is EITHER u8 (`ImageData`) or FLOAT (`CompareFloatSource`); the
   // sampler checks the float ref FIRST (a float side has no `ImageData`), then
@@ -792,6 +850,36 @@ export default function GpuComparePane({
     };
   const sampleFg = useMemo(() => makeSampler(fgDataRef, fgFloatRef), []);
   const sampleRef = useMemo(() => makeSampler(refDataRef, refFloatRef), []);
+
+  // Diff-mode sampler: reads the RESULT readback (the computed metric), NOT a
+  // source image. A `"scalar"` kernel (FLIP) prints ONE untinted line (the raw
+  // metric, in "unit" float formatting); a `"per-channel"` kernel prints three
+  // channel-tinted lines. Reads `diffSamplesRef` live, so it needn't depend on
+  // the (frequently-bumped) readback array itself.
+  const sampleDiff = useMemo(() => {
+    return (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
+      const arr = diffSamplesRef.current;
+      if (!arr || !dims) return null;
+      const { w, h } = dims;
+      if (px < 0 || py < 0 || px >= w || py >= h) return null;
+      const base = (py * w + px) * 4;
+      const output = getDiffKernel(resolvedKernelId)?.output ?? "per-channel";
+      const luminance = 0.5; // GPU-rendered diff: no CPU-tonemapped buffer retained
+      if (output === "scalar") {
+        // FLIP & friends replicate the scalar across R/G/B; read R, print once.
+        return { lines: [formatChannelValue(arr[base] ?? 0, "unit", notationArg)], luminance };
+      }
+      return {
+        lines: [
+          formatChannelValue(arr[base] ?? 0, "unit", notationArg),
+          formatChannelValue(arr[base + 1] ?? 0, "unit", notationArg),
+          formatChannelValue(arr[base + 2] ?? 0, "unit", notationArg),
+        ],
+        luminance,
+        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
+      };
+    };
+  }, [dims, resolvedKernelId]);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
@@ -918,19 +1006,17 @@ export default function GpuComparePane({
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
       leadingMenus={leadingMenus}
-      // EXPOSURE / OFFSET sliders apply to the split/blend compose pass only;
-      // diff mode ignores them (cached, normalized visualization) so the row is
-      // hidden there — a slider drag never touches the diff cache.
-      displayAdjust={
-        compareMode === "diff"
-          ? undefined
-          : {
-              exposureEV: displayEV,
-              offset: displayOffset,
-              onExposureChange: setDisplayEV,
-              onOffsetChange: setDisplayOffset,
-            }
-      }
+      // EXPOSURE / OFFSET sliders: in split/blend they adjust the compose pass;
+      // in DIFF they adjust the colormap SENSITIVITY (value * 2^EV + offset fed
+      // to the LUT, `renderDiffDisplay`'s `exposureEV`/`offset`). Either way it's
+      // display-only — a slider drag re-blits the cached diff, never recomputes
+      // it — so the row is shown in ALL modes now.
+      displayAdjust={{
+        exposureEV: displayEV,
+        offset: displayOffset,
+        onExposureChange: setDisplayEV,
+        onOffsetChange: setDisplayOffset,
+      }}
       label=""
       showLabelChip={false}
       // Per-side TEV overlays. split -> each side clipped at the divider, LEFT
@@ -989,9 +1075,10 @@ export default function GpuComparePane({
                 zoom={zoom}
                 pan={pan}
                 sourceWindow={overlayWindow}
-                sample={sampleFg}
+                // diff -> the computed METRIC values; blend -> the foreground.
+                sample={compareMode === "diff" ? sampleDiff : sampleFg}
                 notation={notation}
-                version={pixelDataVersion}
+                version={compareMode === "diff" ? diffOverlayVersion : pixelDataVersion}
                 onActiveChange={setOverlayActive}
               />
             )
