@@ -59,6 +59,7 @@ import { getSharedDevice } from "./lib/cairn-plot/engine/device";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
 import GpuComparePane from "./lib/cairn-plot/media-compare/GpuComparePane";
 import { listDiffMenuModes } from "./lib/cairn-plot/engine/kernels";
+import { reportCapabilityLimit } from "./lib/cairn-plot/primitives/capability-notice";
 
 /**
  * Dispatched on `window` once registration succeeds. Name duplicated (not
@@ -127,8 +128,13 @@ async function tryRegister(): Promise<void> {
     window.dispatchEvent(new Event(GPU_IMAGE_READY_EVENT));
   } catch (err) {
     // WebGPU not available (or failed to initialize) — the legacy CPU panes
-    // stay in place. This is an expected, non-fatal path.
+    // stay in place. This is an expected, non-fatal path. This addon only
+    // loads on pages that actually contain GPU-preferring content (image/
+    // compare panes — see `_gpu_image_addon_html()` in `elements.py`), so this
+    // is exactly the right place to surface the FUNDAMENTAL browser limitation
+    // to the reader: a chart-only page never runs this and never warns.
     console.warn("cairn-plot gpu-image addon: engine init failed, staying on legacy panes", err);
+    reportCapabilityLimit("no-webgpu");
   }
 }
 

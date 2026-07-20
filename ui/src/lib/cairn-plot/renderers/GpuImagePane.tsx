@@ -116,6 +116,7 @@ import {
   type ImageBackend,
   type ImageBackendProps,
 } from "./image-backend";
+import { reportCapabilityLimit } from "../primitives/capability-notice";
 
 const OPERATORS: readonly ImageOperator[] = ["linear", "srgb", "reinhard", "aces"];
 function toOperator(name: string | undefined): ImageOperator {
@@ -347,6 +348,15 @@ export default function GpuImagePane(props: ImageBackendProps) {
           typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
         const useHdr = device.capabilities.hdr && hasHighDynamicRangeDisplay && hdrMode;
         useHdrRef.current = useHdr;
+        // This pane WANTED HDR (true-float `imagehdr` content) but is getting
+        // an SDR surface — either the browser lacks the `rgba16float` +
+        // extended-tone-mapping canvas path (a FUNDAMENTAL limitation, e.g.
+        // Firefox), or there's no HDR display/OS-HDR. Surface a one-time notice
+        // that the HDR output is tone-mapped to SDR. Reported from here (not the
+        // addon) because only a real HDR pane knows it wanted HDR and got SDR.
+        if (hdrMode && !useHdr) {
+          reportCapabilityLimit("no-hdr");
+        }
         acquirePane(canvas, { hdr: useHdr })
           .then((handle) => {
             if (cancelled) {

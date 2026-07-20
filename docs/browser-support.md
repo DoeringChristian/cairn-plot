@@ -67,10 +67,15 @@ Brave-specific gotchas:
      only for testing).
   4. Restart Firefox. **Firefox Nightly** has the most complete and current
      WebGPU implementation and is the recommended channel for it.
-- **HDR output**: Firefox does **not** yet implement the canvas
-  `toneMapping: "extended"` path, so there is no way to enable true HDR
-  output — cairn-plot detects this and renders the HDR pipeline tone-mapped
-  into SDR (all controls still work; peak highlights clip to SDR white).
+- **HDR output**: Firefox does **not** implement the canvas
+  `toneMapping: "extended"` path **at all**, so there is no flag, no
+  `about:config` toggle, and no channel (including Nightly) that enables true
+  HDR output today. This is a **fundamental browser limitation that cairn-plot
+  cannot work around** — the output clips to SDR white until Firefox itself
+  ships extended tone mapping. cairn-plot detects this and renders the HDR
+  pipeline tone-mapped into SDR (all controls still work; peak highlights clip
+  to SDR white), and shows a one-time in-page notice (see below) explaining
+  why.
 
 ## Safari
 
@@ -93,3 +98,25 @@ Brave-specific gotchas:
 
 The pane self-heals downward at runtime (engine loss → CPU fallback), so a
 report authored on a WebGPU machine still renders everywhere.
+
+## In-page capability notice
+
+When a rendered page hits one of the two limits above, cairn-plot shows a
+single small, dismissible banner in the bottom-right corner so the reader knows
+the degraded output is a **browser limitation, not a cairn-plot bug**:
+
+- **GPU renderer unavailable** — the page contains GPU-preferring content (GPU
+  image / compare panes) but WebGPU is missing, so the CPU fallback is active
+  and FLIP kernels + HDR compare are disabled. A chart-only page never shows
+  this (it doesn't load the GPU engine at all).
+- **HDR output unsupported** — WebGPU works, but the true-float HDR canvas path
+  is unavailable while the page actually shows HDR content, so HDR images are
+  tone-mapped to SDR.
+
+Each banner states the limitation, gives a one-line, browser-specific hint on
+how to enable the capability (e.g. Firefox `about:config → dom.webgpu.enabled`,
+Chromium-on-Linux `chrome://flags/#enable-unsafe-webgpu`), and links back to
+this guide via **Learn more**. It appears **at most once per page**: dismiss it
+with the `×` and it never returns on that page (the dismissal is remembered per
+page in `localStorage`, falling back to `sessionStorage` or in-memory on
+`file://` / private-mode pages where storage is denied).
