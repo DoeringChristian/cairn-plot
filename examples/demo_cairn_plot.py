@@ -66,6 +66,39 @@ def _hdr_image(w: int = 128, h: int = 96) -> np.ndarray:
     return rgb.astype(np.float32)
 
 
+def _render_pair(w: int = 128, h: int = 96) -> tuple[np.ndarray, np.ndarray]:
+    """A structured 'reference render' and a degraded 'prediction' with the kind
+    of STRUCTURED error a perceptual metric (FLIP) is built to surface: the
+    prediction is the reference shifted one pixel + additive noise + a slightly
+    darker exposure. A flat absolute diff shows a smear of magnitude; FLIP
+    weights it by human contrast sensitivity + edge/feature detection, so the
+    error concentrates on the disks' edges. Both baked offline (no network).
+
+    Returns ``(prediction, reference)`` as uint8 ``(H, W, 3)`` arrays."""
+    ys = np.linspace(0.0, 1.0, h)[:, None]
+    xs = np.linspace(0.0, 1.0, w)[None, :]
+    base = np.stack(
+        [
+            0.5 + 0.5 * np.sin(6.0 * xs) * np.ones((h, w)),
+            ys * np.ones((h, w)),
+            0.5 + 0.5 * np.cos(5.0 * ys) * np.ones((h, w)),
+        ],
+        axis=-1,
+    )
+    rng = np.random.default_rng(3)
+    for _ in range(6):  # a few bright disks → strong edges FLIP keys off
+        cx, cy = rng.uniform(0.2, 0.8), rng.uniform(0.2, 0.8)
+        r2 = (xs - cx) ** 2 + (ys - cy) ** 2
+        base = base + np.exp(-r2 / 0.004)[..., None] * np.array([1.0, 0.9, 0.7])
+    base = np.clip(base, 0.0, 1.0)
+    reference = (base * 255).astype(np.uint8)
+
+    pred = np.roll(base, 1, axis=1)  # 1px horizontal shift
+    pred = pred * 0.95 + rng.normal(0.0, 0.05, pred.shape)  # dim + noise
+    prediction = (np.clip(pred, 0.0, 1.0) * 255).astype(np.uint8)
+    return prediction, reference
+
+
 def _sphere_pointcloud(n: int) -> np.ndarray:
     """An ``(n, 6)`` colored point cloud (xyz on a unit sphere + rgb)."""
     rng = np.random.default_rng(7)
@@ -281,6 +314,26 @@ def build_gallery() -> list[tuple[str, object]]:
                     cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_square", colormap="red-green"),
                 ],
             ],
+        ),
+    ))
+
+    # ── perceptual diff: FLIP (menu-switchable live in the pane) ───────────
+    # A structured render vs a shifted+noisy prediction, shown as FLIP (a
+    # perceptual LDR error metric — NVIDIA FLIP) beside a plain absolute diff.
+    # In each pane the toolbar (hover top-right) exposes TWO dropdowns: a MODE
+    # menu — slide · blend · every diff kernel (signed · absolute · … · flip) —
+    # and a COLORMAP menu. Switching the kernel recomputes once and re-blits;
+    # switching the colormap is display-only (no recompute); zoom/pan never
+    # recompute. FLIP concentrates error on edges; abs shows raw magnitude.
+    flip_pred, flip_ref = _render_pair()
+    items.append((
+        "Perceptual diff — FLIP vs absolute "
+        "(pane toolbar: MODE menu slide · blend · kernels; COLORMAP menu)",
+        cp.Grid(
+            [[cp.Compare(cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
+                         colormap="viridis"),
+              cp.Compare(cp.Image(flip_pred), cp.Image(flip_ref), mode="abs",
+                         colormap="viridis")]],
         ),
     ))
 

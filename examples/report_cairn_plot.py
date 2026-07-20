@@ -52,6 +52,7 @@ try:
         _gradient_image,
         _hdr_image,
         _mesh,
+        _render_pair,
         _sphere_pointcloud,
         _volume,
     )
@@ -67,6 +68,7 @@ except ImportError:  # pragma: no cover - path-based fallback for odd cwds
     _gradient_image = _demo._gradient_image
     _hdr_image = _demo._hdr_image
     _mesh = _demo._mesh
+    _render_pair = _demo._render_pair
     _sphere_pointcloud = _demo._sphere_pointcloud
     _volume = _demo._volume
 
@@ -334,6 +336,39 @@ def build_report() -> cp.Report:
                     cp.Image(img_a), cp.Image(img_b), mode="rel_square", colormap="red-green",
                 ),
             ],
+        ]
+    )
+
+    # ── perceptual diff — FLIP ───────────────────────────────────────────────
+    rep.md(
+        "## Perceptual diff — FLIP\n\n"
+        "**FLIP** (NVIDIA's perceptual LDR image-difference metric) weights the "
+        "error by human contrast sensitivity and edge/feature detection instead "
+        "of raw per-channel magnitude, so it concentrates on the differences a "
+        "viewer actually notices. Below, a structured reference render is "
+        "compared against a shifted + noisy prediction as **flip** (left) and "
+        "plain **abs** (right) for contrast.\n\n"
+        "Each pane's toolbar (hover, top-right) carries two dropdowns: a **MODE** "
+        "menu — *slide · blend · every diff kernel* (signed · absolute · squared "
+        "· relative_* · **flip**) — and a **COLORMAP** menu. Picking a kernel "
+        "recomputes the diff once and re-blits; picking a colormap is "
+        "display-only (no recompute); zoom/pan never recompute. FLIP is "
+        "GPU-only — the CPU compare fallback keeps the pointwise kernels."
+    )
+    flip_pred, flip_ref = _render_pair()
+    rep.md("### FLIP vs absolute")
+    rep.grid(
+        [
+            [
+                cp.Compare(
+                    cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
+                    colormap="viridis",
+                ),
+                cp.Compare(
+                    cp.Image(flip_pred), cp.Image(flip_ref), mode="abs",
+                    colormap="viridis",
+                ),
+            ]
         ]
     )
 
