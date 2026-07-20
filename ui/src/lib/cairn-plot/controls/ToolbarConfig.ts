@@ -59,9 +59,44 @@ export interface ToolbarButtonSpec {
   onClick?(): void;
 }
 
+/**
+ * A compact SLIDER control rendered as a SECOND toolbar row (image panes only —
+ * the EXPOSURE / OFFSET display adjustments). Like {@link ToolbarButtonSpec} it
+ * holds no state of its own: `value` is the current value and `onChange` is
+ * called with the next one. `<PlotToolbar>` renders these under the button row
+ * (same hover-reveal), and folds them into the overflow menu as rows when the
+ * pane is too narrow (see the toolbar's fold behavior).
+ */
+export interface ToolbarSliderSpec {
+  /** Stable identity (React key). */
+  id: string;
+  /** Minimal on-toolbar label (e.g. "EV", "OFF") — kept tiny. */
+  label: string;
+  /** Inline-SVG icon name (ICON_PATHS key) shown before the slider, if any. */
+  icon?: string;
+  /** Tooltip / aria-label (the full human description). */
+  title: string;
+  min: number;
+  max: number;
+  step: number;
+  /** Current value (controlled). */
+  value: number;
+  /** Called with the next value as the user drags. */
+  onChange(value: number): void;
+  /** Formats `value` for the tiny read-out next to the slider. Default: as-is. */
+  format?(value: number): string;
+  /** When set, double-clicking the slider resets it to this value (via
+   *  `onChange`). Used for the EXPOSURE / OFFSET "reset to 0" affordance. */
+  defaultValue?: number;
+}
+
 export interface ToolbarConfig {
   /** Master switch. Default: on. */
   enabled?: boolean;
+  /** Second-row slider controls (image panes' EXPOSURE / OFFSET). Rendered
+   *  under the button row with the same hover-reveal; folded into the overflow
+   *  menu when the pane is too narrow. */
+  sliders?: ToolbarSliderSpec[];
   /** Per-button overrides keyed by button id (e.g. "zoom", "pan", "reset").
    *  Omitted buttons follow capability-gating. */
   buttons?: Partial<Record<string, boolean>>;
