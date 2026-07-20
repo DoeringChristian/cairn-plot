@@ -179,7 +179,7 @@ function Divider() {
  * owns its open/highlight state and closes on select / outside-click / Escape,
  * with arrow-key + Enter keyboarding. The button face shows the current
  * option's label (or the spec's `icon`) + a caret; the option list is
- * absolutely positioned below it (`z-30`, above the `z-20` toolbar) and styled
+ * absolutely positioned below it (`z-40`, above the `z-30` toolbar) and styled
  * like the tooltip chrome (rounded / bordered / elevated bg / shadow). No
  * portal / no external dependency — it lives in the toolbar's own DOM subtree.
  */
@@ -291,8 +291,8 @@ function ToolbarMenu({
         <ul
           role="listbox"
           className={[
-            // Above the toolbar (z-20); tooltip-like chrome.
-            "absolute left-0 top-full z-30 mt-1 min-w-[7rem] max-h-64 overflow-auto",
+            // Above the toolbar (z-30); tooltip-like chrome.
+            "absolute left-0 top-full z-40 mt-1 min-w-[7rem] max-h-64 overflow-auto",
             "rounded border border-border bg-bg-elevated py-0.5 shadow-md",
           ].join(" ")}
         >
@@ -372,10 +372,11 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
         ...POSITION_STYLE[position],
       }}
       className={[
-        // z-20 keeps the toolbar ABOVE the image pane's pixel-value number
-        // overlay (which sits at z-10) so the modebar is never painted under
+        // z-30 keeps the toolbar ABOVE the pixel-value number overlay (z-10)
+        // AND the compare pane's split-slider divider (z-20) — the modebar
+        // must always be clickable, even with the slider dragged beneath it.
         // the digits.
-        "z-20 flex items-center gap-0.5 rounded border border-border",
+        "z-30 flex items-center gap-0.5 rounded border border-border",
         "bg-bg-elevated/90 px-1 py-0.5 shadow-sm backdrop-blur-sm transition-opacity",
         alwaysOn ? "opacity-100" : "opacity-0 group-hover:opacity-100",
       ].join(" ")}
