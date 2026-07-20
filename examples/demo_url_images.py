@@ -53,6 +53,22 @@ def build_report() -> "cp.Report":
             "Worker. The full decoder also covers PXR24, B44(A), and DWAA/DWAB."
         )
         .add(cp.Image(url=f"{ASWF}/ScanLines/Desk.exr"))
+        .md(
+            "### URL comparison — `SquaresSwirls.exr` vs `WideColorGamut.exr`\n"
+            "Both operands are URL-referenced EXRs (PXR24 and ZIP compressed) — "
+            "fetched, decoded, and diffed client-side through the cached diff "
+            "pipeline (`mode=\"abs\"`, `colormap=\"plasma\"`). Use the toolbar "
+            "menus to switch the diff kernel (incl. FLIP) and colormap live; "
+            "dimensions are min-cropped for the diff."
+        )
+        .add(
+            cp.Compare(
+                cp.Image(url=f"{ASWF}/TestImages/SquaresSwirls.exr"),
+                cp.Image(url=f"{ASWF}/TestImages/WideColorGamut.exr"),
+                mode="abs",
+                colormap="plasma",
+            )
+        )
     )
 
 

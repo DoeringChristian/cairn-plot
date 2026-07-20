@@ -34,24 +34,28 @@ export default {
         ],
       },
       colors: {
-        // Semantic light-first palette.
+        // Semantic palette routed through the token contract (tokens.css /
+        // the report theme) as RGB TRIPLET custom properties, so utilities —
+        // including opacity-modified ones like `bg-bg-elevated/90` — follow
+        // light/dark at runtime instead of baking the light hex. The `-rgb`
+        // triplets are defined alongside the hex tokens in both themes.
         bg: {
-          DEFAULT: "#ffffff",
-          elevated: "#f6f8fa",
-          hover: "#ebedf0",
+          DEFAULT: "rgb(var(--color-bg-rgb) / <alpha-value>)",
+          elevated: "rgb(var(--color-bg-elevated-rgb) / <alpha-value>)",
+          hover: "rgb(var(--color-bg-hover-rgb) / <alpha-value>)",
         },
         fg: {
-          DEFAULT: "#1f2328",
-          muted: "#656d76",
-          subtle: "#8b949e",
+          DEFAULT: "rgb(var(--color-fg-rgb) / <alpha-value>)",
+          muted: "rgb(var(--color-fg-muted-rgb) / <alpha-value>)",
+          subtle: "rgb(var(--color-fg-subtle-rgb) / <alpha-value>)",
         },
         border: {
-          DEFAULT: "#d0d7de",
-          subtle: "#e8ebef",
+          DEFAULT: "rgb(var(--color-border-rgb) / <alpha-value>)",
+          subtle: "rgb(var(--color-border-subtle-rgb) / <alpha-value>)",
         },
         accent: {
-          DEFAULT: "#0969da",
-          hover: "#0550ae",
+          DEFAULT: "rgb(var(--color-accent-rgb) / <alpha-value>)",
+          hover: "rgb(var(--color-accent-hover-rgb) / <alpha-value>)",
         },
       },
     },

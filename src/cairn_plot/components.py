@@ -496,7 +496,7 @@ class Heatmap(Component):
     log_color=False, origin_top=True, x_label=None, y_label=None,
     value_label=None)`` where ``z`` is a 2-D array (``matrix[y][x]``).
     Convenience: ``cp.Heatmap(run["confusion"])`` deserializes a 2-D artifact.
-    ``colormap`` is one of ``viridis``/``red-green``/``red-blue``."""
+    ``colormap`` is one of ``viridis``/``plasma``/``red-green``/``red-blue``."""
 
     _label = "heatmap"
 
