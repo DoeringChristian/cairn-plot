@@ -51,6 +51,14 @@ from .recipes import bar, confusion_matrix, line_series, pr_curve, roc_curve
 from .report import PlotReport
 from .report import PlotReport as Report
 
+# Register the default raw-data resolvers (pure numpy serializers vendored under
+# ._sdk) so the local(baked) data mode is self-contained — cp.Table(df) /
+# cp.PointCloud / cp.Mesh / cp.Volume / cp.Boxes bake offline with no
+# cairn-track. Side-effect import; must follow `.components` (which owns the
+# resolver seam). cairn.plot re-registers its tracking handlers on top when the
+# full tracker is installed.
+from . import _default_resolvers as _default_resolvers  # noqa: F401,E402
+
 __version__ = "0.1.0"
 
 
