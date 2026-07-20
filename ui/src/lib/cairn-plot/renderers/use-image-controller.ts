@@ -93,6 +93,7 @@ export function notationToolbarButton(
 export const COLORMAP_MENU_OPTIONS: { id: string; label: string }[] = [
   { id: "none", label: "None" },
   { id: "viridis", label: "Viridis" },
+  { id: "plasma", label: "Plasma" },
   { id: "red-green", label: "Red–Green" },
   { id: "red-blue", label: "Red–Blue" },
 ];

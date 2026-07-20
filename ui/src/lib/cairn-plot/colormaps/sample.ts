@@ -6,7 +6,7 @@
  * `t` is clamped to [0, 1].
  */
 import type { ColormapName } from "../types";
-import { getColormapLUT } from "./lut";
+import { getColormapLUT } from "./lut.ts";
 
 export function colormapColor(name: ColormapName, t: number): string {
   const lut = getColormapLUT(name);

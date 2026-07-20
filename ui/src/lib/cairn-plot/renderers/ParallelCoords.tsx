@@ -1,7 +1,7 @@
 import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
-import type { ParallelColumn, ParallelRow } from "../types";
+import type { ParallelColumn, ParallelRow, ColormapName } from "../types";
 import { normalizeValue } from "../transforms/normalize";
-import { viridis } from "../colormaps/viridis";
+import { colormapColor } from "../colormaps/sample";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { AXIS } from "../theme";
@@ -50,6 +50,8 @@ export interface ParallelCoordsProps {
     row: ParallelRow,
     columns: ParallelColumn[],
   ) => ReactNode;
+  /** Colormap for the line color-by-value + colorbar. Default "viridis". */
+  colormap?: ColormapName;
   className?: string;
 }
 
@@ -61,6 +63,7 @@ export default function ParallelCoords({
   onHover,
   onClick,
   tooltipContent,
+  colormap = "viridis",
   className,
 }: ParallelCoordsProps) {
   const rawId = useId();
@@ -223,7 +226,7 @@ export default function ParallelCoords({
                   columns[colorColIdx],
                 )
               : null;
-            const color = colorT != null ? viridis(colorT) : "#656d76";
+            const color = colorT != null ? colormapColor(colormap, colorT) : "#656d76";
             const isHovered = hoveredId === row.id;
             const isSelected = selectedIds?.has(row.id);
             const isDimmed =
@@ -282,9 +285,9 @@ export default function ParallelCoords({
                   x2="0"
                   y2="0"
                 >
-                  <stop offset="0%" stopColor={viridis(0)} />
-                  <stop offset="50%" stopColor={viridis(0.5)} />
-                  <stop offset="100%" stopColor={viridis(1)} />
+                  <stop offset="0%" stopColor={colormapColor(colormap, 0)} />
+                  <stop offset="50%" stopColor={colormapColor(colormap, 0.5)} />
+                  <stop offset="100%" stopColor={colormapColor(colormap, 1)} />
                 </linearGradient>
               </defs>
               <rect
