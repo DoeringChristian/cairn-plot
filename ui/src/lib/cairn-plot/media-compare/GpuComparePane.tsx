@@ -85,11 +85,28 @@ import PixelValueOverlay, {
 // erase, so this is not a runtime import cycle.
 import CpuImagePane from "../renderers/CpuImagePane";
 import ImagePaneShell from "../renderers/ImagePaneShell";
-import { MediaComparePane } from "./compositor";
+import {
+  MediaComparePane,
+  CompareFloatUnsupportedError,
+  type CompareFloatSource,
+} from "./compositor";
 
 export interface GpuComparePaneProps {
   imageUrl: string | null;
   baselineUrl: string | null;
+  /**
+   * DECODED float sides (`.exr`/float `.npy` URLs) — the GPU-only alternative
+   * to `imageUrl`/`baselineUrl`. When set, THIS side is uploaded as an
+   * `rgba32float` source texture (mirroring the HDR image path) instead of
+   * being fetched+decoded from a URL, so the diff runs in true float values.
+   * `imageFloat` is the foreground/comparison side, `baselineFloat` the
+   * reference. Either format may pair with the other (mixed u8/f32) — each side
+   * uploads in its natural texture format; the engine samples both via
+   * `textureLoad` (format-agnostic), so a u8 side reads normalized `[0,1]` and a
+   * float side reads its raw values. See {@link CompareFloatSource}.
+   */
+  imageFloat?: CompareFloatSource;
+  baselineFloat?: CompareFloatSource;
   /** split | blend | diff (the three engine-composited modes). */
   mode: CompareMode;
   splitPosition: number;
@@ -140,9 +157,46 @@ interface GpuResources {
   texB: Texture | null;
 }
 
+/** Expand a decoded float side (1/3/4 channels, row-major) into an RGBA
+ *  `Float32Array` for an `rgba32float` upload — mirrors `GpuImagePane`'s
+ *  `hdrToRGBAFloat32`, NaN/Inf-guarded so a bad sample never poisons the diff. */
+function floatSideToRGBA(src: CompareFloatSource): Float32Array {
+  const { data, width, height, channels } = src;
+  const n = width * height;
+  const out = new Float32Array(n * 4);
+  const f = (v: number | undefined): number => (Number.isFinite(v) ? (v as number) : 0);
+  for (let i = 0; i < n; i++) {
+    const base = i * channels;
+    let r: number;
+    let g: number;
+    let b: number;
+    let a = 1;
+    if (channels === 1) {
+      r = g = b = f(data[base]);
+    } else if (channels === 3) {
+      r = f(data[base]);
+      g = f(data[base + 1]);
+      b = f(data[base + 2]);
+    } else {
+      r = f(data[base]);
+      g = f(data[base + 1]);
+      b = f(data[base + 2]);
+      a = f(data[base + 3]);
+    }
+    const o = i * 4;
+    out[o] = r;
+    out[o + 1] = g;
+    out[o + 2] = b;
+    out[o + 3] = a;
+  }
+  return out;
+}
+
 export default function GpuComparePane({
   imageUrl,
   baselineUrl,
+  imageFloat,
+  baselineFloat,
   mode,
   splitPosition,
   blendAlpha,
@@ -333,67 +387,104 @@ export default function GpuComparePane({
     return () => ro.disconnect();
   }, []);
 
-  // ---- load both images -> upload as rgba8unorm textures ----------------
+  // ---- load both sides -> upload source textures ------------------------
+  // Each side is EITHER a decoded float payload (`imageFloat`/`baselineFloat`,
+  // uploaded as `rgba32float`) OR a browser-decodable URL (`imageUrl`/
+  // `baselineUrl`, decoded to `ImageData` and uploaded as `rgba8unorm`). Mixed
+  // pairs work: the engine samples both formats via `textureLoad`.
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
     const r = resRef.current;
     if (!r) return;
 
-    async function loadOne(url: string | null): Promise<ImageData | null> {
+    // A resolved side: its natural dims, an optional `ImageData` for the TEV
+    // pixel sampler (float sides have none — no 8-bit readout), and a `make`
+    // that uploads it as a texture in its natural format.
+    interface LoadedSide {
+      width: number;
+      height: number;
+      imageData: ImageData | null;
+      make: (device: Device) => Texture;
+    }
+    async function loadSide(
+      url: string | null,
+      float: CompareFloatSource | undefined,
+    ): Promise<LoadedSide | null> {
+      if (float) {
+        const rgba = floatSideToRGBA(float);
+        return {
+          width: float.width,
+          height: float.height,
+          imageData: null,
+          make: (device) => {
+            const t = device.createTexture(float.width, float.height, "rgba32float");
+            t.write(rgba);
+            return t;
+          },
+        };
+      }
       if (!url) return null;
-      return loadImageData(url);
+      const d = await loadImageData(url);
+      if (!d) return null;
+      return {
+        width: d.width,
+        height: d.height,
+        imageData: d,
+        make: (device) => {
+          const t = device.createTexture(d.width, d.height, "rgba8unorm");
+          t.write(d.data);
+          return t;
+        },
+      };
     }
 
-    Promise.all([loadOne(imageUrl), loadOne(baselineUrl)]).then(([fg, ref]) => {
-      if (cancelled || !resRef.current) return;
-      const res = resRef.current;
-      fgDataRef.current = fg;
-      refDataRef.current = ref;
+    Promise.all([loadSide(imageUrl, imageFloat), loadSide(baselineUrl, baselineFloat)]).then(
+      ([fg, ref]) => {
+        if (cancelled || !resRef.current) return;
+        const res = resRef.current;
+        fgDataRef.current = fg?.imageData ?? null;
+        refDataRef.current = ref?.imageData ?? null;
 
-      res.texA?.destroy();
-      res.texB?.destroy();
-      res.texA = null;
-      res.texB = null;
+        res.texA?.destroy();
+        res.texB?.destroy();
+        res.texA = null;
+        res.texB = null;
 
-      // Foreground drives the canvas natural dims. Reference falls back to the
-      // foreground (single-source display) when absent so renderCompare always
-      // has two bindings.
-      const primary = fg ?? ref;
-      if (!primary) {
-        setDims(null);
+        // Foreground drives the canvas natural dims. Reference falls back to the
+        // foreground (single-source display) when absent so renderCompose always
+        // has two bindings.
+        const primary = fg ?? ref;
+        if (!primary) {
+          setDims(null);
+          setPixelDataVersion((v) => v + 1);
+          // Q24 fix: no explicit inline CSS size to drop — the canvas is
+          // always `w-full h-full` of its wrapper (see `GpuImagePane`'s
+          // identical reasoning for the `imageUrl:null` case).
+          return;
+        }
+        // texA = reference/baseline (the shader's "A" role: left side / alpha=0
+        // endpoint / diff `a` operand — matches legacy `compositor.tsx`'s
+        // left-clipped reference pane, `ImagePane.tsx`'s blend alpha=0 side, and
+        // `image/webgl-diff.ts`'s `computeDiffChannel(base.*, other.*, ...)`
+        // where `base` = baselineUrl). texB = foreground/comparison ("B": right
+        // side / alpha=1 / diff `b`).
+        res.texA = (ref ?? primary).make(res.device);
+        res.texB = (fg ?? primary).make(res.device);
+
+        // Q22 fix: canvas backing-store / surface sizing is driven by the
+        // render-pass effect below (display resolution x dpr), NOT the source
+        // images' own resolution — no `canvas.width/height`/`surface.configure`
+        // here.
+        setDims({ w: primary.width, h: primary.height });
         setPixelDataVersion((v) => v + 1);
-        // Q24 fix: no explicit inline CSS size to drop — the canvas is
-        // always `w-full h-full` of its wrapper (see `GpuImagePane`'s
-        // identical reasoning for the `imageUrl:null` case).
-        return;
-      }
-      const uploadTex = (d: ImageData): Texture => {
-        const t = res.device.createTexture(d.width, d.height, "rgba8unorm");
-        t.write(d.data);
-        return t;
-      };
-      // texA = reference/baseline (the shader's "A" role: left side / alpha=0
-      // endpoint / diff `a` operand — matches legacy `compositor.tsx`'s
-      // left-clipped reference pane, `ImagePane.tsx`'s blend alpha=0 side, and
-      // `image/webgl-diff.ts`'s `computeDiffChannel(base.*, other.*, ...)`
-      // where `base` = baselineUrl). texB = foreground/comparison ("B": right
-      // side / alpha=1 / diff `b`).
-      res.texA = uploadTex(ref ?? primary);
-      res.texB = uploadTex(fg ?? primary);
-
-      // Q22 fix: canvas backing-store / surface sizing is driven by the
-      // render-pass effect below (display resolution x dpr), NOT the source
-      // images' own resolution — no `canvas.width/height`/`surface.configure`
-      // here.
-      setDims({ w: primary.width, h: primary.height });
-      setPixelDataVersion((v) => v + 1);
-      setUploadVersion((v) => v + 1);
-    });
+        setUploadVersion((v) => v + 1);
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [ready, imageUrl, baselineUrl]);
+  }, [ready, imageUrl, baselineUrl, imageFloat, baselineFloat]);
 
   // ---- diff colormap params ---------------------------------------------
   // The colormap index mode follows the selected kernel's display range:
@@ -465,8 +556,12 @@ export default function GpuComparePane({
         // SOURCE content, NOT the viewport/exposure/colormap — then blit it
         // through the uv-window. Zoom/pan/exposure/colormap only re-run the
         // blit below; `ensureDiff` is a cache hit and does NOT recompute.
-        const contentKeyRef = baselineUrl ?? imageUrl ?? "none";
-        const contentKeyFg = imageUrl ?? baselineUrl ?? "none";
+        // Content key: for a float side the ORIGINAL source URL
+        // (`*Float.contentKey`) is the cache key, NOT the decoded bytes — so a
+        // remount with the same URL is a cache hit, same as a URL side. (Task
+        // point (b): "the URL string remains the content key".)
+        const contentKeyRef = baselineFloat?.contentKey ?? baselineUrl ?? imageFloat?.contentKey ?? imageUrl ?? "none";
+        const contentKeyFg = imageFloat?.contentKey ?? imageUrl ?? baselineFloat?.contentKey ?? baselineUrl ?? "none";
         const kernel = getDiffKernel(diffKernel);
         const entry: DiffCacheEntry = ensureDiff(
           r.device,
@@ -518,6 +613,8 @@ export default function GpuComparePane({
     diffColormap,
     imageUrl,
     baselineUrl,
+    imageFloat,
+    baselineFloat,
     dpr,
   ]);
 
@@ -530,9 +627,11 @@ export default function GpuComparePane({
   // (`ensureDiffScalars`), so a remount with the same sources is a cache hit —
   // fixing the legacy remount-recompute. Split/blend have no diff entry, so
   // they fall back to a direct `computeMetrics` over the sources.
+  // A reference side is present when there's a URL baseline OR a float baseline.
+  const hasBaseline = baselineUrl != null || baselineFloat != null;
   useEffect(() => {
     const r = resRef.current;
-    if (!ready || !r || !r.texA || !r.texB || !baselineUrl) {
+    if (!ready || !r || !r.texA || !r.texB || !hasBaseline) {
       setMetrics(null);
       return;
     }
@@ -550,7 +649,7 @@ export default function GpuComparePane({
     return () => {
       cancelled = true;
     };
-  }, [ready, uploadVersion, baselineUrl, compareMode, diffKernel]);
+  }, [ready, uploadVersion, hasBaseline, compareMode, diffKernel]);
 
   // ---- TEV samplers ------------------------------------------------------
   const makeSampler =
@@ -593,6 +692,12 @@ export default function GpuComparePane({
   // Placed after every hook above runs unconditionally (rules-of-hooks) but
   // before this component paints its own GPU canvas.
   if (engineFailed) {
+    // A float side can't self-heal to a CPU pane — the legacy panes take only
+    // URL sources (`rgba32float` is GPU-only). Surface the standard clear error
+    // instead of a blank pane (Task point 3).
+    if (imageFloat != null || baselineFloat != null) {
+      return <CompareFloatUnsupportedError />;
+    }
     if (compareMode === "diff") {
       return (
         <CpuImagePane
@@ -707,7 +812,7 @@ export default function GpuComparePane({
         render: ({ notation, setOverlayActive }) =>
           compareMode === "split" ? (
             <>
-              {baselineUrl && dims && (
+              {hasBaseline && dims && (
                 <div
                   className="absolute inset-0 overflow-hidden pointer-events-none"
                   style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
@@ -725,7 +830,7 @@ export default function GpuComparePane({
                   />
                 </div>
               )}
-              {baselineUrl && dims && (
+              {hasBaseline && dims && (
                 <div
                   className="absolute inset-0 overflow-hidden pointer-events-none"
                   style={{ clipPath: `inset(0 0 0 ${splitPosition * 100}%)` }}
