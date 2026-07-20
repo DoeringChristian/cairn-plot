@@ -19,14 +19,16 @@
  * colormap / compare-diff / `processing` — those props only exist on the SDR
  * shape (`SdrGpuImagePaneProps`), exactly as the two separate panes had it.
  *
- * ## Shared plumbing — written ONCE (`CpuPaneShell`)
- * Both branches render through one shell that owns: `useImageViewport`
- * zoom/pan (modifier-gated wheel zoom-to-cursor + drag pan, CSS
- * `translate(pan) scale(zoom)` transform), object-contain canvas letterbox
- * fit, the TEV `PixelValueOverlay` mount + notation state, double-click
- * viewport reset, and the `PlotToolbar` + `useImageController` wiring
- * (identical treatment to `GpuImagePane`, including the notation leading
- * button, so the two backends look the same).
+ * ## Shared plumbing — the shared `ImagePaneShell`
+ * Both branches render through `renderers/ImagePaneShell.tsx` (the ONE frame
+ * all three image panes share): it owns the `useImageViewport` zoom/pan
+ * (modifier-gated wheel zoom-to-cursor + drag pan), the TEV `PixelValueOverlay`
+ * mount + notation state, the double-click viewport reset, and the
+ * `PlotToolbar` + `useImageController` wiring (notation leading button
+ * included, so the two backends look the same). This CPU backend passes the
+ * bits that are genuinely its own: the CSS `translate(pan) scale(zoom)`
+ * transform (`wrapperStyle`), the checkerboard-on-the-padded-pane placement,
+ * and its `<img>`/`<canvas>` surface.
  *
  * ## `toolbar` (shim compatibility)
  * The legacy `ImagePane.tsx`/`HdrImagePane.tsx` shims forward here with
@@ -55,23 +57,13 @@ import {
   outputEncode,
   type RgbTriple,
 } from "../image/tonemap";
-import PixelAxes from "../primitives/PixelAxes";
-import LabelChip from "../primitives/LabelChip";
-import PixelValueOverlay, {
+import {
   CHANNEL_COLORS,
-  PixelNotationToggle,
   formatChannelValue,
   type PixelSample,
-  type PixelSampler,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
-import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
-import PlotToolbar from "../primitives/PlotToolbar";
-import {
-  useImageController,
-  IMAGE_TOOLBAR_CONFIG,
-  notationToolbarButton,
-} from "./use-image-controller";
+import ImagePaneShell from "./ImagePaneShell";
 import {
   isHdrProps,
   shapeDims,
@@ -91,8 +83,6 @@ const DEFAULT_PROCESSING: ImageProcessing = {
   offset: 0,
   flipSign: false,
 };
-
-const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 
 // ---------------------------------------------------------------------------
 // HDR tone-map (moved verbatim from HdrImagePane.tsx; re-exported there).
@@ -152,177 +142,6 @@ export function tonemapToImageData(
 }
 
 // ---------------------------------------------------------------------------
-// CpuPaneShell — the SHARED plumbing, written once for both branches:
-// viewport interaction + CSS-transform zoom/pan, letterbox container,
-// double-click reset, PixelValueOverlay + notation state, PlotToolbar +
-// useImageController (mirroring GpuImagePane's toolbar wiring exactly).
-// ---------------------------------------------------------------------------
-
-interface CpuPaneShellProps {
-  zoom: number;
-  pan: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
-  showAxes: boolean;
-  naturalDims: { w: number; h: number } | null;
-  label: string;
-  /** SDR always shows the chip (legacy ImagePane parity); HDR only when the
-   *  label is non-empty (legacy HdrImagePane parity). */
-  showLabelChip: boolean;
-  isDraggable?: boolean;
-  onDragStart?: (e: React.DragEvent) => void;
-  /** PlotToolbar on (backend mode) vs. legacy chrome (floating notation chip). */
-  toolbar: boolean;
-  notationSeed: PixelValueNotation;
-  sample: PixelSampler;
-  pixelDataVersion: number;
-  /** The displayed <img>/<canvas> — the PixelValueOverlay geometry source. */
-  displayElRef: React.RefObject<HTMLElement | null>;
-  /** The displayed <canvas> (when the display IS a canvas) — the preferred
-   *  `canvasToPng` screenshot target. Null/absent → `plotToPng(root)`. */
-  exportCanvasRef?: React.RefObject<HTMLCanvasElement | null>;
-  /** Gates the PixelValueOverlay (legacy: `imageUrl && naturalDims`). */
-  hasPixelSource: boolean;
-  /** Rendered before the pane box (the SDR branch's `GammaFilterSvg`). */
-  header?: React.ReactNode;
-  /** Rendered inside the transformed wrapper, after PixelAxes (`ImageOverlay`). */
-  overlayNode?: React.ReactNode;
-  children: React.ReactNode;
-}
-
-function CpuPaneShell({
-  zoom,
-  pan,
-  onViewportChange,
-  showAxes,
-  naturalDims,
-  label,
-  showLabelChip,
-  isDraggable = false,
-  onDragStart,
-  toolbar,
-  notationSeed,
-  sample,
-  pixelDataVersion,
-  displayElRef,
-  exportCanvasRef,
-  hasPixelSource,
-  header,
-  overlayNode,
-  children,
-}: CpuPaneShellProps) {
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const imgWrapperRef = useRef<HTMLDivElement | null>(null);
-
-  // Notation is owned locally (seeded from the prop) so the pane is
-  // self-contained; the toggle shows only while the overlay is active.
-  const [notation, setNotation] = useState<PixelValueNotation>(notationSeed);
-  const [overlayActive, setOverlayActive] = useState(false);
-
-  // CSS transform (computed locally from zoom + pan) — the CPU backend zooms
-  // by physically growing the wrapper, unlike the GPU backend's uvRect crop.
-  const transformStr = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
-
-  const { containerProps: viewportProps } = useImageViewport({
-    containerRef: paneRef,
-    zoom,
-    pan,
-    onViewportChange,
-    // Q29: adaptive max-zoom — zoom until one source texel fills the viewport
-    // (same cap the GPU backend and the toolbar's +/- buttons use).
-    naturalWidth: naturalDims?.w,
-    naturalHeight: naturalDims?.h,
-  });
-
-  // Double-click reset (Q17) — same gesture as GpuImagePane / the 2D charts.
-  const resetViewport = useCallback(() => {
-    onViewportChange?.(HOME_VIEWPORT);
-  }, [onViewportChange]);
-
-  // PlotToolbar controller (zoom/pan/reset/screenshot) — same adapter
-  // GpuImagePane uses. The hooks run unconditionally (rules-of-hooks); only
-  // the toolbar's RENDER is gated on `toolbar`.
-  const controller = useImageController({
-    rootRef: paneRef,
-    canvasRef: exportCanvasRef,
-    zoom,
-    pan,
-    onViewportChange,
-    naturalWidth: naturalDims?.w,
-    naturalHeight: naturalDims?.h,
-  });
-
-  const toolbarConfig = useMemo(
-    () => ({
-      ...IMAGE_TOOLBAR_CONFIG,
-      leadingButtons: overlayActive
-        ? [notationToolbarButton(notation, setNotation)]
-        : [],
-    }),
-    [overlayActive, notation],
-  );
-
-  return (
-    <div
-      className={`relative flex flex-col h-full${toolbar ? " group" : ""}`}
-      data-cpu-image-pane
-    >
-      {header}
-      {toolbar && <PlotToolbar controller={controller} config={toolbarConfig} />}
-      <div
-        ref={paneRef}
-        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-        style={{
-          padding: showAxes && naturalDims ? "16px 4px 4px 28px" : "4px",
-          ...viewportProps.style,
-        }}
-        onPointerDown={viewportProps.onPointerDown}
-        onPointerMove={viewportProps.onPointerMove}
-        onPointerUp={viewportProps.onPointerUp}
-        onPointerCancel={viewportProps.onPointerCancel}
-        onDoubleClick={resetViewport}
-        data-cpu-image-viewport
-      >
-        <div
-          ref={imgWrapperRef}
-          className="relative w-full h-full"
-          style={{ transform: transformStr, transformOrigin: "0 0" }}
-        >
-          {children}
-          {showAxes && naturalDims && (
-            <PixelAxes
-              naturalWidth={naturalDims.w}
-              naturalHeight={naturalDims.h}
-              zoom={zoom}
-              containerRef={imgWrapperRef}
-            />
-          )}
-          {overlayNode}
-        </div>
-        {hasPixelSource && naturalDims && (
-          <PixelValueOverlay
-            imageElRef={displayElRef}
-            naturalWidth={naturalDims.w}
-            naturalHeight={naturalDims.h}
-            zoom={zoom}
-            pan={pan}
-            sample={sample}
-            notation={notation}
-            version={pixelDataVersion}
-            onActiveChange={setOverlayActive}
-          />
-        )}
-        {!toolbar && overlayActive && (
-          <PixelNotationToggle notation={notation} onChange={setNotation} />
-        )}
-      </div>
-      {showLabelChip && (
-        <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // SDR branch — the former ImagePane body (decode/colormap/diff effects ported
 // verbatim), rendering its display element through the shared shell.
 // ---------------------------------------------------------------------------
@@ -352,6 +171,11 @@ function CpuSdrImagePane(props: SdrGpuImagePaneProps & { toolbar?: boolean }) {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
+  // The shared shell attaches these (see `ImagePaneShell`); the CPU backend
+  // has no render-pass effect that reads them, but the shell needs them for
+  // the viewport/controller wiring and the PixelAxes container.
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
 
   // -----------------------------------------------------------------------
   // TEV-style per-pixel value overlay — source buffers.
@@ -690,87 +514,101 @@ function CpuSdrImagePane(props: SdrGpuImagePaneProps & { toolbar?: boolean }) {
       />
     ) : undefined;
 
+  const surface = !imageUrl ? (
+    <span className="text-xs text-fg-muted">no image</span>
+  ) : showDiff ? (
+    <>
+      {!diffReady && (
+        <span className="text-xs text-fg-muted motion-safe:animate-pulse">
+          computing diff...
+        </span>
+      )}
+      <canvas
+        ref={setCanvasEl}
+        className="w-full h-full object-contain block"
+        style={{
+          display: diffReady ? "block" : "none",
+          imageRendering: imgRendering,
+          ...invertStyle,
+        }}
+      />
+    </>
+  ) : useFalseColor ? (
+    <>
+      {!falseColorReady && (
+        <span className="text-xs text-fg-muted motion-safe:animate-pulse">
+          applying colormap...
+        </span>
+      )}
+      <canvas
+        ref={setFalseColorEl}
+        className="w-full h-full object-contain block"
+        style={{
+          display: falseColorReady ? "block" : "none",
+          imageRendering: imgRendering,
+          ...invertStyle,
+        }}
+      />
+    </>
+  ) : (
+    <img
+      ref={setImgEl}
+      src={imageUrl}
+      alt={label}
+      className="w-full h-full object-contain block"
+      draggable={false}
+      style={{
+        filter: filterStr,
+        imageRendering: imgRendering,
+      }}
+      onLoad={(e) => {
+        const img = e.currentTarget;
+        setNaturalDims({
+          w: img.naturalWidth,
+          h: img.naturalHeight,
+        });
+        onNaturalSize?.(img.naturalWidth, img.naturalHeight);
+      }}
+    />
+  );
+
   return (
-    <CpuPaneShell
+    <ImagePaneShell
+      paneAttrs={{ "data-cpu-image-pane": "" }}
+      viewportAttrs={{ "data-cpu-image-viewport": "" }}
+      toolbar={toolbar}
+      paneRef={paneRef}
+      wrapperRef={wrapperRef}
       zoom={zoomProp}
       pan={panProp}
       onViewportChange={onViewportChange}
-      showAxes={showAxes}
       naturalDims={naturalDims}
+      checkerboard="pane"
+      wrapperClassName="relative w-full h-full"
+      // The CPU backend zooms by physically growing the wrapper (CSS
+      // transform), unlike the GPU backend's uvRect crop.
+      wrapperStyle={{
+        transform: `translate(${panProp.x}px, ${panProp.y}px) scale(${zoomProp})`,
+        transformOrigin: "0 0",
+      }}
+      viewportPadding={showAxes && naturalDims ? "16px 4px 4px 28px" : "4px"}
+      header={<GammaFilterSvg id={gammaFilterId} gamma={gamma} offset={offset} />}
+      surface={surface}
+      showAxes={showAxes}
+      overlayNode={overlayNode}
+      overlay={{
+        displayElRef,
+        sample: samplePixel,
+        version: pixelDataVersion,
+        hasSource: !!imageUrl,
+      }}
+      notationSeed={pixelValueNotation}
+      exportCanvasRef={exportCanvasRef}
       label={label}
       showLabelChip
       isDraggable={isDraggable}
       onDragStart={onDragStart}
-      toolbar={toolbar}
-      notationSeed={pixelValueNotation}
-      sample={samplePixel}
-      pixelDataVersion={pixelDataVersion}
-      displayElRef={displayElRef}
-      exportCanvasRef={exportCanvasRef}
-      hasPixelSource={!!imageUrl}
-      header={
-        <GammaFilterSvg id={gammaFilterId} gamma={gamma} offset={offset} />
-      }
-      overlayNode={overlayNode}
-    >
-      {!imageUrl ? (
-        <span className="text-xs text-fg-muted">no image</span>
-      ) : showDiff ? (
-        <>
-          {!diffReady && (
-            <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-              computing diff...
-            </span>
-          )}
-          <canvas
-            ref={setCanvasEl}
-            className="w-full h-full object-contain block"
-            style={{
-              display: diffReady ? "block" : "none",
-              imageRendering: imgRendering,
-              ...invertStyle,
-            }}
-          />
-        </>
-      ) : useFalseColor ? (
-        <>
-          {!falseColorReady && (
-            <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-              applying colormap...
-            </span>
-          )}
-          <canvas
-            ref={setFalseColorEl}
-            className="w-full h-full object-contain block"
-            style={{
-              display: falseColorReady ? "block" : "none",
-              imageRendering: imgRendering,
-              ...invertStyle,
-            }}
-          />
-        </>
-      ) : (
-        <img
-          ref={setImgEl}
-          src={imageUrl}
-          alt={label}
-          className="w-full h-full object-contain block"
-          draggable={false}
-          style={{
-            filter: filterStr,
-            imageRendering: imgRendering,
-          }}
-          onLoad={(e) => {
-            const img = e.currentTarget;
-            setNaturalDims({
-              w: img.naturalWidth,
-              h: img.naturalHeight,
-            });
-            onNaturalSize?.(img.naturalWidth, img.naturalHeight);
-          }}
-        />
-      )}
-    </CpuPaneShell>
+    />
   );
 }
 
@@ -797,6 +635,8 @@ function CpuHdrImagePane(props: HdrGpuImagePaneProps & { toolbar?: boolean }) {
   } = props;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   // Retained tone-mapped pixels — used for the overlay's auto-contrast.
   const dispDataRef = useRef<ImageData | null>(null);
@@ -871,28 +711,42 @@ function CpuHdrImagePane(props: HdrGpuImagePaneProps & { toolbar?: boolean }) {
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
   return (
-    <CpuPaneShell
+    <ImagePaneShell
+      paneAttrs={{ "data-cpu-image-pane": "" }}
+      viewportAttrs={{ "data-cpu-image-viewport": "" }}
+      toolbar={toolbar}
+      paneRef={paneRef}
+      wrapperRef={wrapperRef}
       zoom={zoom}
       pan={pan}
       onViewportChange={onViewportChange}
-      showAxes={showAxes}
       naturalDims={dims}
+      checkerboard="pane"
+      wrapperClassName="relative w-full h-full"
+      wrapperStyle={{
+        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+        transformOrigin: "0 0",
+      }}
+      viewportPadding={showAxes && dims ? "16px 4px 4px 28px" : "4px"}
+      surface={
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full object-contain block"
+          style={{ imageRendering: imgRendering }}
+        />
+      }
+      showAxes={showAxes}
+      overlay={{
+        displayElRef: canvasRef,
+        sample: samplePixel,
+        version: pixelDataVersion,
+        hasSource: true,
+      }}
+      notationSeed={pixelValueNotation}
+      exportCanvasRef={canvasRef}
       label={label}
       showLabelChip={!!label}
-      toolbar={toolbar}
-      notationSeed={pixelValueNotation}
-      sample={samplePixel}
-      pixelDataVersion={pixelDataVersion}
-      displayElRef={canvasRef}
-      exportCanvasRef={canvasRef}
-      hasPixelSource
-    >
-      <canvas
-        ref={canvasRef}
-        className="w-full h-full object-contain block"
-        style={{ imageRendering: imgRendering }}
-      />
-    </CpuPaneShell>
+    />
   );
 }
 
