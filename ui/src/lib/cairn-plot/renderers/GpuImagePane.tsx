@@ -301,6 +301,13 @@ export default function GpuImagePane(props: ImageBackendProps) {
     setColormapOverride(propColormap);
   }, [propColormap]);
   const sdrColormap = hdrMode ? "none" : colormapOverride;
+  // Descriptor default captured at mount; HOME restores the view-local
+  // colormap override to it (and enables while it's off-default) — same
+  // contract as the compare pane's mode/colormap/kernel reset.
+  const defaultColormapRef = useRef(propColormap);
+  const resetColormapOverride = useCallback(() => {
+    setColormapOverride(defaultColormapRef.current);
+  }, []);
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only state — fed straight into the render pass below (the GPU shader
@@ -781,6 +788,8 @@ export default function GpuImagePane(props: ImageBackendProps) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
+      onReset={resetColormapOverride}
+      extraModified={colormapOverride !== defaultColormapRef.current}
       label={label}
       showLabelChip={!!label}
       isDraggable={isDraggable}

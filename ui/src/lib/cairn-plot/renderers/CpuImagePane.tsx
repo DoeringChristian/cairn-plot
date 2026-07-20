@@ -182,6 +182,13 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   useEffect(() => {
     setColormap(colormapProp);
   }, [colormapProp]);
+  // Descriptor default captured at mount; HOME restores the view-local
+  // colormap override (and enables while off-default) — same contract as
+  // GpuImagePane / the compare pane.
+  const defaultColormapRef = useRef(colormapProp);
+  const resetColormapOverride = useCallback(() => {
+    setColormap(defaultColormapRef.current);
+  }, []);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
@@ -621,6 +628,8 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       // SDR single-image: a view-local COLORMAP menu (shown only when the
       // toolbar renders — `toolbar={true}` backend-seam mounts).
       leadingMenus={[colormapToolbarButton(colormap, (id) => setColormap(id as Colormap))]}
+      onReset={resetColormapOverride}
+      extraModified={colormap !== defaultColormapRef.current}
       // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
       // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
       // (or a colormap/diff `<canvas>`), with no scene-linear pixel-recompute
