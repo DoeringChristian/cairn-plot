@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import type { ParallelColumn, ParallelRow, ColormapName } from "../types";
 import { normalizeValue } from "../transforms/normalize";
 import { colormapColor } from "../colormaps/sample";
+import { getColormapLUT } from "../colormaps/lut";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { AXIS } from "../theme";
@@ -168,6 +169,11 @@ export default function ParallelCoords({
   const colorColIdx = columns.length - 1;
   const colorDomain = columnDomains[colorColIdx];
 
+  // Resolve the colormap LUT ONCE (cached) and index it inline per row — one
+  // polyline per row previously re-called `colormapColor` (string alloc/parse)
+  // for each. The colorbar gradient stops below keep using `colormapColor`.
+  const cmapLut = getColormapLUT(colormap);
+
   const hoveredRow = hoveredId
     ? (rows.find((r) => r.id === hoveredId) ?? null)
     : null;
@@ -226,7 +232,11 @@ export default function ParallelCoords({
                   columns[colorColIdx],
                 )
               : null;
-            const color = colorT != null ? colormapColor(colormap, colorT) : "#656d76";
+            let color = "#656d76";
+            if (colorT != null) {
+              const ci = Math.max(0, Math.min(255, Math.round(colorT * 255)));
+              color = `rgb(${cmapLut[ci * 3]},${cmapLut[ci * 3 + 1]},${cmapLut[ci * 3 + 2]})`;
+            }
             const isHovered = hoveredId === row.id;
             const isSelected = selectedIds?.has(row.id);
             const isDimmed =

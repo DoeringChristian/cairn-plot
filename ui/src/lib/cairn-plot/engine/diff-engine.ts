@@ -221,6 +221,29 @@ class DiffCache {
     this.evict();
   }
 
+  /**
+   * Charge a lazily-read-back RESULT `Float32Array` against the byte budget once
+   * it resolves: its `byteLength` (a full-frame RGBA-f32 array, ~33MB for a 2K
+   * frame) is added to BOTH the entry's accounted bytes and the running total,
+   * then re-evicted — so up to `maxEntries` uncounted readbacks can't accumulate
+   * invisibly. Eviction subtracts `entry.bytes` (now texture + readback), so the
+   * charge is released with the entry. No-op if the entry was already evicted
+   * (its budget is gone — double-charging would corrupt the total).
+   */
+  accountReadbackBytes(entry: DiffCacheEntry, bytes: number): void {
+    let resident = false;
+    for (const e of this.map.values()) {
+      if (e === entry) {
+        resident = true;
+        break;
+      }
+    }
+    if (!resident) return;
+    entry.bytes += bytes;
+    this.totalBytes += bytes;
+    this.evict();
+  }
+
   private evict(): void {
     while (this.map.size > this.maxEntries || this.totalBytes > this.maxBytes) {
       const oldestKey = this.map.keys().next().value as string | undefined;
@@ -344,6 +367,9 @@ export async function ensureDiffResultReadback(
       // rgba16float readback returns a Float32Array; be defensive for any other.
       const arr = buf instanceof Float32Array ? buf : Float32Array.from(buf);
       entry.resultSamples = arr;
+      // Charge the retained readback against the LRU byte budget (fix: these
+      // full-frame arrays were previously uncounted, so ~8 could pile up).
+      cacheFor(device).accountReadbackBytes(entry, arr.byteLength);
       return arr;
     });
   }

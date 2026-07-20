@@ -603,6 +603,20 @@ export function CompositeMediaPane({
   useGpuCompareReadyTick();
   const GpuCompare = resolveGpuComparePane();
 
+  // Memoize the float→HdrData conversions on source identity so a zoom/pan
+  // re-render (new zoom/pan props, same float sources) does NOT re-wrap the
+  // full-frame buffer — `CpuImagePane` keys its CPU tone-map memo on the `hdr`
+  // object identity, so a fresh wrapper each render would re-run a whole-frame
+  // tone-map on every viewport tick. Only the `side` branch consumes these.
+  const baselineHdr = useMemo(
+    () => (baselineFloat ? compareFloatToHdrData(baselineFloat) : null),
+    [baselineFloat],
+  );
+  const imageHdr = useMemo(
+    () => (imageFloat ? compareFloatToHdrData(imageFloat) : null),
+    [imageFloat],
+  );
+
   // The engine pane composites only split/blend/diff (side is a 2-cell grid
   // above this pane; normal is a single image).
   const engineComposited =
@@ -616,76 +630,80 @@ export function CompositeMediaPane({
   // a float side shows tone-mapped pixels + float TEV numbers here instead of
   // erroring. The REF chip sits on the reference pane (Change 2 pt 5).
   if (effectiveMode === "side") {
-    const refPane = baselineFloat ? (
-      <CpuImagePane
-        toolbar={false}
-        hdr={compareFloatToHdrData(baselineFloat)}
-        interpolation={interpolation}
-        showAxes={false}
-        zoom={zoom}
-        pan={pan}
-        onViewportChange={onViewportChange}
-        label="REF"
-        pixelValueNotation={pixelValueNotation}
-      />
-    ) : (
-      <CpuImagePane
-        toolbar={false}
-        imageUrl={baselineUrl}
-        baselineUrl={null}
-        isBaseline
-        diffMode="none"
-        interpolation={interpolation}
-        colormap="none"
-        showAxes={false}
-        processing={processing}
-        zoom={zoom}
-        pan={pan}
-        onViewportChange={onViewportChange}
-        label="REF"
-        pixelValueNotation={pixelValueNotation}
-      />
-    );
-    const fgPane = imageFloat ? (
-      <CpuImagePane
-        toolbar={false}
-        hdr={compareFloatToHdrData(imageFloat)}
-        interpolation={interpolation}
-        showAxes={showAxes ?? false}
-        zoom={zoom}
-        pan={pan}
-        onViewportChange={onViewportChange}
-        label={label}
-        pixelValueNotation={pixelValueNotation}
-      />
-    ) : (
-      <CpuImagePane
-        toolbar={false}
-        imageUrl={imageUrl}
-        // Side view shows the two RAW images. No baseline (no diff machinery)
-        // and no colormap: `colormap` here is the compare's DIFF colormap —
-        // passing it false-colors the prediction by luminance (a near-uniform
-        // wash), which is not what a side-by-side means. Mirrors the reference
-        // pane above.
-        baselineUrl={null}
-        isBaseline={false}
-        diffMode="none"
-        interpolation={interpolation}
-        colormap="none"
-        showAxes={showAxes ?? false}
-        processing={processing}
-        zoom={zoom}
-        pan={pan}
-        onViewportChange={onViewportChange}
-        isDraggable={isDraggable}
-        onDragStart={onDragStart}
-        onNaturalSize={onNaturalSize}
-        label={label}
-        overlay={overlay}
-        overlaySettings={overlaySettings}
-        pixelValueNotation={pixelValueNotation}
-      />
-    );
+    // ONE pane renderer for both sides: a float side renders through the CPU
+    // HDR path (which carries its own float TEV overlay); a URL side renders the
+    // RAW 8-bit image with NO baseline/colormap (side-by-side never diffs or
+    // false-colors — `colormap` here is the compare's DIFF colormap, which would
+    // wash the prediction by luminance). Reference vs prediction differ only in
+    // `isBaseline`/label and the prediction-only drag/overlay/onNaturalSize.
+    const renderSidePane = (opts: {
+      hdr: HdrData | null;
+      url: string | null;
+      isBaseline: boolean;
+      paneLabel: string;
+      draggable?: boolean;
+      onDrag?: (e: React.DragEvent) => void;
+      onNat?: (w: number, h: number) => void;
+      paneOverlay?: ImageOverlayData;
+      paneOverlaySettings?: ImageOverlaySettings;
+    }) => {
+      const paneShowAxes = opts.isBaseline ? false : (showAxes ?? false);
+      if (opts.hdr) {
+        return (
+          <CpuImagePane
+            toolbar={false}
+            hdr={opts.hdr}
+            interpolation={interpolation}
+            showAxes={paneShowAxes}
+            zoom={zoom}
+            pan={pan}
+            onViewportChange={onViewportChange}
+            label={opts.paneLabel}
+            pixelValueNotation={pixelValueNotation}
+          />
+        );
+      }
+      return (
+        <CpuImagePane
+          toolbar={false}
+          imageUrl={opts.url}
+          baselineUrl={null}
+          isBaseline={opts.isBaseline}
+          diffMode="none"
+          interpolation={interpolation}
+          colormap="none"
+          showAxes={paneShowAxes}
+          processing={processing}
+          zoom={zoom}
+          pan={pan}
+          onViewportChange={onViewportChange}
+          isDraggable={opts.draggable}
+          onDragStart={opts.onDrag}
+          onNaturalSize={opts.onNat}
+          label={opts.paneLabel}
+          overlay={opts.paneOverlay}
+          overlaySettings={opts.paneOverlaySettings}
+          pixelValueNotation={pixelValueNotation}
+        />
+      );
+    };
+    const refPane = renderSidePane({
+      hdr: baselineHdr,
+      url: baselineUrl,
+      isBaseline: true,
+      paneLabel: "REF",
+    });
+    const fgPane = renderSidePane({
+      hdr: imageHdr,
+      url: imageUrl,
+      isBaseline: false,
+      paneLabel: label,
+      draggable: isDraggable,
+      onDrag: onDragStart,
+      onNat: onNaturalSize,
+      paneOverlay: overlay,
+      paneOverlaySettings: overlaySettings,
+    });
     return (
       <div className="flex gap-0.5 h-full">
         <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">

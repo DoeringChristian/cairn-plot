@@ -662,17 +662,33 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
     const measure = () => {
       const containerWidth = parent.clientWidth;
       // Cache the expanded width only WHILE expanded — measuring the collapsed
-      // "⋯" button would say "fits" and oscillate (see toolbar-fold.ts).
+      // "⋯" button would say "fits" and oscillate (see toolbar-fold.ts). Skipping
+      // the scrollWidth read while folded also avoids a layout read there.
       if (!foldedRef.current && rootRef.current) {
         const w = rootRef.current.scrollWidth;
         if (w > 0) expandedWidthRef.current = w;
       }
       setFolded(computeToolbarFold(containerWidth, expandedWidthRef.current, foldedRef.current));
     };
-    const ro = new ResizeObserver(measure);
+    // Coalesce ResizeObserver ticks into a SINGLE pending rAF: a drag-resize
+    // fires many ticks per frame, and each `measure()` does synchronous layout
+    // reads (clientWidth + scrollWidth). One rAF at a time collapses them to one
+    // measure per frame.
+    let rafId = 0;
+    const schedule = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        measure();
+      });
+    };
+    const ro = new ResizeObserver(schedule);
     ro.observe(parent);
-    measure();
-    return () => ro.disconnect();
+    measure(); // initial fold decision synchronously on mount (no frame delay).
+    return () => {
+      ro.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [foldKey]);
 
   if (config?.enabled === false) return null;

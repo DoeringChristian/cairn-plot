@@ -11,6 +11,7 @@ import { SERIES_COLORS, type ScatterPoint, type ColormapName } from "../types";
 import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
 import { colormapColor } from "../colormaps/sample";
+import { getColormapLUT } from "../colormaps/lut";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { AXIS, niceTicks, paddedDomain } from "../theme";
@@ -283,6 +284,10 @@ export default function ScatterPlot({
     : null;
 
   const clipId = `scatter-clip-${rawId.replace(/:/g, "")}`;
+  // Resolve the colormap LUT ONCE (it's cached) and index it inline per point —
+  // `colormapColor` allocated + parsed a fresh string call for every marker.
+  // The few colorbar gradient stops below still use `colormapColor`.
+  const cmapLut = getColormapLUT(colormap);
   return (
     <div
       ref={containerRef}
@@ -344,7 +349,8 @@ export default function ScatterPlot({
               const t =
                 (pt.color - colorDomain.min) /
                 (colorDomain.max - colorDomain.min);
-              color = colormapColor(colormap, t);
+              const ci = Math.max(0, Math.min(255, Math.round(t * 255)));
+              color = `rgb(${cmapLut[ci * 3]},${cmapLut[ci * 3 + 1]},${cmapLut[ci * 3 + 2]})`;
             } else {
               color = colors[i % colors.length];
             }
