@@ -128,6 +128,18 @@ export interface GpuComparePaneProps {
   /** Fired when the pane's diff kernel changes (menu selection). The
    *  toolbar-menu track wires a dropdown to this + `diffKernel`. */
   onDiffKernelChange?: (kernelId: string) => void;
+  /** Fired when the pane's compare MODE changes via its MODE menu (split ⇄
+   *  blend ⇄ diff). Lets an owner above this pane (`CompareView`) keep its
+   *  lifted view-mode state in sync so a later side ⇄ compare round-trip
+   *  re-seeds to the last selection. Optional — the pane stays self-contained
+   *  (owns `compareMode`) when unwired (the browser harness path). */
+  onCompareModeChange?: (mode: CompareMode) => void;
+  /** Fired when the user picks "Side" in the MODE menu. `side` is NOT an engine
+   *  composite (`CompareMode` is split/blend/diff only — the shader has no side
+   *  pass); the 2-pane side-by-side lives ABOVE this pane in `CompareView`, so
+   *  selecting it delegates UP instead of mutating internal state. Absent ⇒ the
+   *  "Side" entry is omitted from the menu. */
+  onRequestSide?: () => void;
 
   zoom: number;
   pan: { x: number; y: number };
@@ -206,6 +218,8 @@ export default function GpuComparePane({
   colormap = "none",
   diffKernel: diffKernelProp,
   onDiffKernelChange,
+  onCompareModeChange,
+  onRequestSide,
   zoom,
   pan,
   onViewportChange,
@@ -277,6 +291,17 @@ export default function GpuComparePane({
   useEffect(() => {
     setCompareModeState(mode);
   }, [mode]);
+  // Set the compare mode AND notify an owner above (so `CompareView` can keep
+  // its lifted view-mode state coherent for side ⇄ compare round-trips). Menu
+  // selections go through here; the prop-driven `useEffect` above does NOT
+  // (that mirrors an owner change already made upstream — no echo back).
+  const setCompareMode = useCallback(
+    (next: CompareMode) => {
+      setCompareModeState(next);
+      onCompareModeChange?.(next);
+    },
+    [onCompareModeChange],
+  );
 
   // Diff COLORMAP selection (spec §toolbar). Seeded from the `colormap` prop;
   // internal state owns it so the COLORMAP menu is view-local (display-only —
@@ -297,6 +322,10 @@ export default function GpuComparePane({
     // entry (`flip`, auto-dispatched LDR/HDR by source type) + "FLIP (LDR
     // forced)" (`flip_ldr`) — HDR-FLIP is never listed separately.
     const modeOptions = [
+      // "Side" (the 2-pane side-by-side, owned by `CompareView` ABOVE this pane)
+      // leads the menu — matching the Python enum order side · slide · blend ·
+      // <kernels> — but only when an owner wired `onRequestSide` to receive it.
+      ...(onRequestSide ? [{ id: "side", label: "Side" }] : []),
       { id: "slide", label: "Slide" },
       { id: "blend", label: "Blend" },
       ...listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
@@ -309,10 +338,14 @@ export default function GpuComparePane({
         options: modeOptions,
         value: modeValue,
         onSelect: (id: string) => {
-          if (id === "slide") setCompareModeState("split");
-          else if (id === "blend") setCompareModeState("blend");
+          // "side" leaves this pane entirely — delegate UP, don't touch internal
+          // state (the shader has no side pass; `CompareView` swaps in the
+          // 2-pane layout).
+          if (id === "side") onRequestSide?.();
+          else if (id === "slide") setCompareMode("split");
+          else if (id === "blend") setCompareMode("blend");
           else {
-            setCompareModeState("diff");
+            setCompareMode("diff");
             setDiffKernel(id);
           }
         },
@@ -323,11 +356,16 @@ export default function GpuComparePane({
       menus.push(colormapToolbarButton(colormapState, (id) => setColormapState(id as Colormap)));
     }
     return menus;
-  }, [compareMode, diffKernel, colormapState, setDiffKernel]);
+  }, [compareMode, diffKernel, colormapState, setDiffKernel, setCompareMode, onRequestSide]);
 
-  // TEV per-side source pixels (raw ImageData), like MediaComparePane.
+  // TEV per-side source pixels. u8 sides keep their raw `ImageData`; FLOAT sides
+  // (`.exr`/`imghdr`) have NO 8-bit `ImageData` (decoded to `rgba32float`), so
+  // the float source is retained separately and the sampler reads it directly —
+  // otherwise a float side would show NO pixel numbers (the reported bug).
   const fgDataRef = useRef<ImageData | null>(null);
   const refDataRef = useRef<ImageData | null>(null);
+  const fgFloatRef = useRef<CompareFloatSource | null>(null);
+  const refFloatRef = useRef<CompareFloatSource | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
 
   // Q22 fix: same as `GpuImagePane` — the canvas backing store / surface
@@ -449,6 +487,10 @@ export default function GpuComparePane({
         const res = resRef.current;
         fgDataRef.current = fg?.imageData ?? null;
         refDataRef.current = ref?.imageData ?? null;
+        // Retain the FLOAT sources next to the ImageData refs so the TEV sampler
+        // can read float pixels (a float side has `imageData:null`).
+        fgFloatRef.current = imageFloat ?? null;
+        refFloatRef.current = baselineFloat ?? null;
 
         res.texA?.destroy();
         res.texB?.destroy();
@@ -690,9 +732,35 @@ export default function GpuComparePane({
   }, [ready, uploadVersion, hasBaseline, compareMode, diffKernel]);
 
   // ---- TEV samplers ------------------------------------------------------
+  // A side is EITHER u8 (`ImageData`) or FLOAT (`CompareFloatSource`); the
+  // sampler checks the float ref FIRST (a float side has no `ImageData`), then
+  // falls back to the u8 `ImageData`. Float values use the `"unit"` float
+  // formatting (0–1 = SDR white; the notation toggle switches 0–1 ↔ 0–255) and a
+  // mid-grey luminance fallback — mirroring the HDR image panes (`GpuImagePane`'s
+  // `hdrMode` branch / `CpuHdrImagePane`), so both sides show numbers and float
+  // sides read as floats.
   const makeSampler =
-    (dataRef: React.RefObject<ImageData | null>) =>
+    (dataRef: React.RefObject<ImageData | null>, floatRef: React.RefObject<CompareFloatSource | null>) =>
     (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
+      const fl = floatRef.current;
+      if (fl) {
+        const { data, width, height, channels } = fl;
+        if (px < 0 || py < 0 || px >= width || py >= height) return null;
+        const base = (py * width + px) * channels;
+        const luminance = 0.5; // GPU-rendered: no CPU-tonemapped buffer retained
+        if (channels === 1) {
+          return { lines: [formatChannelValue(data[base] ?? 0, "unit", notationArg)], luminance };
+        }
+        return {
+          lines: [
+            formatChannelValue(data[base] ?? 0, "unit", notationArg),
+            formatChannelValue(data[base + 1] ?? 0, "unit", notationArg),
+            formatChannelValue(data[base + 2] ?? 0, "unit", notationArg),
+          ],
+          luminance,
+          colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
+        };
+      }
       const d = dataRef.current;
       if (!d || px < 0 || py < 0 || px >= d.width || py >= d.height) return null;
       const i = (py * d.width + px) * 4;
@@ -711,8 +779,8 @@ export default function GpuComparePane({
         colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
       };
     };
-  const sampleFg = useMemo(() => makeSampler(fgDataRef), []);
-  const sampleRef = useMemo(() => makeSampler(refDataRef), []);
+  const sampleFg = useMemo(() => makeSampler(fgDataRef, fgFloatRef), []);
+  const sampleRef = useMemo(() => makeSampler(refDataRef, refFloatRef), []);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
@@ -907,9 +975,16 @@ export default function GpuComparePane({
       }}
       extraChips={
         <>
-          <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-            REF
-          </span>
+          {/* REF chip (Change 1): shown ONLY when BOTH images are visible on
+              screen — i.e. `split`/slide (the left-of-divider side IS the
+              reference). Hidden for `blend` (images fused, no distinct reference
+              side) and every `diff` kernel (a derived error map has no reference
+              side). `side` shows its own REF chip on the reference pane. */}
+          {compareMode === "split" && (
+            <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
+              REF
+            </span>
+          )}
           {label ? (
             <span className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
               {label}
