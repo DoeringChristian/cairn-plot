@@ -11,11 +11,10 @@ or a ``compare`` — and to contribute its baked binary blobs to a merged
 content-addressed store (:meth:`Component._collect_store`). ``_build_element``
 wraps that into a :class:`~cairn.sdk.elements.PlotElement`:
 
-* a **leaf** component lowers to the FLAT ``PlotSpec`` form (``{renderer, props,
-  data, mode}``) so a standalone ``cp.Image(...)`` / ``cp.scalar(...)`` renders
-  through the exact legacy-flat path (and the emit tests) it always has;
-* a **container** (``Grid``/``Compare`` split/blend/diff) lowers to the recursive
-  ``PlotDescriptorSpec(root=…)`` tree the G1 ``<PlotGrid>`` compositor renders.
+every component — a **leaf** (``cp.Image(...)`` / ``cp.scalar(...)``) or a
+**container** (``Grid``/``Compare`` split/blend/diff) — lowers to the ONE
+recursive ``PlotDescriptorSpec(root=…)`` tree descriptor the ``<PlotGrid>``
+compositor renders. The tree root form is the only descriptor shape.
 
 The heavy data-shaping (scalar sequence → ``Series``, plotly ``Figure`` → JSON,
 DataFrame → table blob, image bytes → content-addressed store) is REUSED from
@@ -217,37 +216,23 @@ class Component:
     def _build_element(self):
         """Wrap this component into a :class:`~cairn.sdk.elements.PlotElement`.
 
-        A leaf lowers to the flat ``PlotSpec`` (legacy-flat render path);
-        a container lowers to the recursive ``PlotDescriptorSpec`` tree."""
+        Every component — leaf (``plot``) or container (``grid``/``compare``) —
+        lowers to the ONE recursive ``PlotDescriptorSpec`` tree descriptor
+        (``{root, mode?, endpoint?}``). The tree root form is the only descriptor
+        the renderer accepts."""
         from .elements import PlotElement
-        from .spec import PlotDescriptorSpec, PlotSpec
+        from .spec import PlotDescriptorSpec
 
         node = self.to_node()
         store = self._collect_store()
 
-        if node.get("kind") == "plot":
-            props = node.get("props") or {}
-            data = node["data"]
-            if self._data_mode == "endpoint":
-                server = self._endpoint_server()
-                spec = PlotSpec(
-                    renderer=node["renderer"],
-                    props=props,
-                    data=data,
-                    mode="endpoint",
-                    endpoint=server,
-                )
-                return PlotElement(
-                    spec, bundle="link", server=server, label=self._label, height=self._height
-                )
-            spec = PlotSpec(
-                renderer=node["renderer"], props=props, data=data, mode="local"
-            )
+        if node.get("kind") == "plot" and self._data_mode == "endpoint":
+            server = self._endpoint_server()
+            spec = PlotDescriptorSpec(root=node, mode="endpoint", endpoint=server)
             return PlotElement(
-                spec, store=store, bundle="inline", label=self._label, height=self._height
+                spec, bundle="link", server=server, label=self._label, height=self._height
             )
 
-        # Container (grid / compare): the recursive tree descriptor.
         spec = PlotDescriptorSpec(root=node, mode="local")
         return PlotElement(
             spec, store=store, bundle="inline", label=self._label, height=self._height

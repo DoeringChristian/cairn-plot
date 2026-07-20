@@ -166,7 +166,7 @@ class PlotElement(Element):
         label: str = "plot",
         height: int | None = None,
     ) -> None:
-        self.spec = spec  # a PlotSpec (plot_spec.PlotSpec) or a plain dict
+        self.spec = spec  # a PlotDescriptorSpec (tree) or a plain dict
         self._store = store or {}
         self._bundle = bundle
         self._server = server

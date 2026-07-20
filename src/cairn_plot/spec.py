@@ -12,9 +12,9 @@ Mirrors the authoritative TS ``PlotDescriptor``/``DataSpec``/``PlotNode`` in
 ``tests/unit/test_plot_spec_conformance.py`` field-for-field against that
 committed schema. Construction == validation, like ``CardSpec``.
 
-``card_spec.py`` re-exports every name here (``from .plot_spec import *``) so
-existing callers (``from cairn.sdk.card_spec import PlotSpec`` and the
-conformance tests) keep working unchanged.
+The single accepted descriptor shape is the recursive tree ``PlotDescriptorSpec``
+(``{root, mode?, endpoint?}``); every component — leaf or container — lowers to
+it. There is no flat ``{renderer, data}`` descriptor form.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ __all__ = [
     "NpzDataSpec",
     "ImgHdrDataSpec",
     "DataSpec",
-    "PlotSpec",
     "PlotLeafSpec",
     "GridSpec",
     "CompareSpec",
@@ -125,21 +124,6 @@ DataSpec = Annotated[
     Union[InlineDataSpec, ImageDataSpec, UrlDataSpec, NpzDataSpec, ImgHdrDataSpec],
     Field(discriminator="kind"),
 ]
-
-
-class PlotSpec(_Strict):
-    """One (flat) plot descriptor = `{renderer, props?, data, mode?, endpoint?}`.
-
-    The pre-G1 flat form, kept as a leaf-builder for the lowercase
-    (``cp.scalar``/``cp.image``/…) path. The recursive tree descriptor is
-    ``PlotDescriptorSpec`` below. ``mode`` defaults to ``"local"`` (the
-    self-contained baked-store mode); ``props`` defaults to ``{}``."""
-
-    renderer: str
-    props: dict[str, Any] = Field(default_factory=dict)
-    data: DataSpec
-    mode: Literal["local", "endpoint"] = "local"
-    endpoint: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

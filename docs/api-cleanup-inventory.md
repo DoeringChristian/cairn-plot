@@ -61,12 +61,27 @@ The canonical names already live in `renderers/image-backend.ts`.
 
 ### TS-4 — `plot-bootstrap.tsx` `normalizeDescriptor` legacy-flat shim
 Lifts a pre-G1 flat descriptor `{renderer,props,data,…}` → the G1 tree
-`{root:{kind:"plot",…}}`. The standalone library has **no** pre-tree emitter:
-Python always emits `PlotDescriptorSpec(root=…)` (verified in
-`components.py`/`report.py`/`spec.py`; schema requires `root`).
+`{root:{kind:"plot",…}}`.
 - **Action:** delete `normalizeDescriptor`; the 3 call sites parse the descriptor
   directly. Tree root form is the only accepted descriptor. Update the stale
   "legacy-flat shim" comment in `plot-node.tsx`.
+- **CORRECTION to the seed premise:** the standalone library *did* still have one
+  pre-tree emitter — `Component._build_element()` lowered a single **leaf**
+  (`cp.line`/`cp.image`/…) to the flat `PlotSpec` (`{renderer,props,data,mode}`),
+  only containers emitted the tree. The `normalizeDescriptor` shim was therefore
+  load-bearing for every bare single-plot mount (caught by `smoke:plot` — 14/22
+  sections went blank after the TS-only removal). The principled fix (see PY-4)
+  makes the leaf builder emit the tree form too, so the TS side is genuinely
+  tree-only.
+
+### PY-4 — flat `PlotSpec` leaf emitter → tree
+`Component._build_element()` emitted the flat `PlotSpec` for `plot` leaves;
+`spec.PlotSpec` is the "pre-G1 flat form". This is the Python half of the
+legacy-flat descriptor path removed in TS-4.
+- **Action:** every component (leaf and container) now lowers to the ONE
+  `PlotDescriptorSpec(root=node, mode?, endpoint?)` tree descriptor. Delete the
+  `PlotSpec` model + its `spec.__all__` entry; update the docstrings. `smoke:plot`
+  back to 22/22.
 
 ### PY-1 — `Scalar = Line` deprecated alias
 `components.py` defines `Scalar = Line` ("deprecated pre-G2 name"); `__init__.py`
