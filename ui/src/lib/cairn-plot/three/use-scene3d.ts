@@ -457,9 +457,25 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
         // false), keeping whatever previous good url is already set.
         const url = r.domElement.toDataURL("image/png");
         if (isValidPngDataUrl(url)) {
-          setCachedImageUrl(url);
-          cachedImageUrlRef.current = url;
+          // Structural frowny-face guarantee: never COMMIT a snapshot that
+          // hasn't provably DECODED. `isValidPngDataUrl` filters degenerate
+          // urls by shape, but a readback raced with context release can
+          // yield a well-formed-looking yet CORRUPT PNG — mounted as an
+          // `<img>` that fails decode, the browser paints the broken-image
+          // icon (a white box + frowny on some platforms). Probing through an
+          // off-DOM Image first means only decodable snapshots ever reach
+          // `cachedImageUrl`; a corrupt readback keeps the previous good
+          // snapshot instead. The probe is async — `captured` is still set
+          // synchronously so the park/release flow proceeds; if the probe
+          // fails AND no prior good snapshot exists, the restore path
+          // repaints live (same as the pre-existing not-captured case).
           captured = true;
+          const probe = new Image();
+          probe.onload = () => {
+            setCachedImageUrl(url);
+            cachedImageUrlRef.current = url;
+          };
+          probe.src = url;
         }
       } catch {
         // Tainted/unreadable canvas (shouldn't happen — same-origin app) —
