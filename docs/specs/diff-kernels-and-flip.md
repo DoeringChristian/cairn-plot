@@ -85,3 +85,26 @@ HDR-FLIP (LDR only for now; error clearly for float-HDR sources or tone-map firs
 pick one, document); SSIM (next kernel, the registry makes it a drop-in); CPU-backend
 FLIP (GPU-only; CPU compare keeps its existing pointwise modes and simply doesn't list
 FLIP in its menu).
+
+## Addendum (user, 2026-07-20): HDR-FLIP
+
+For float-HDR sources (imghdr arrays, f32-decoded EXR urls), support **HDR-FLIP**
+(Andersson et al. 2021) as a kernel — supersedes the earlier "LDR-only, error on HDR"
+scoping:
+
+- Algorithm per the paper: derive the exposure range from the REFERENCE image's
+  luminance percentiles (paper's c_start/c_stop formulation), N exposures per the
+  paper's count rule; for each exposure, apply exposure compensation + the paper's
+  tone mapper to BOTH images → run LDR-FLIP → combine as the per-pixel MAXIMUM
+  across exposures. Output in [0,1] (`displayRange: unit`).
+- Registry: `hdr-flip` multi-pass kernel (public name `flip_hdr` — or fold into
+  `flip` with auto-dispatch: float sources → HDR-FLIP, u8 sources → LDR-FLIP;
+  DECISION: auto-dispatch under the single public `flip` mode, with `flip_ldr`
+  available to force LDR on float sources; menus show "FLIP (perceptual)" once).
+- Params: `ppd` (shared), optional `start_exposure`/`stop_exposure` overrides
+  (mirroring the official tool's flags).
+- Verification: two-sided like LDR — CPU TS reference validated against the official
+  `flip-evaluator` HDR mode on committed float fixtures; GPU-vs-reference browser
+  harness. Cache: exposure-range params enter the params hash.
+- Depends on: float-side compare ingestion (fix/compare-url-sources) — HDR-FLIP
+  requires rgba16float sides.
