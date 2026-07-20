@@ -43,13 +43,19 @@ import type { Colormap, DiffMode, Interpolation } from "../types";
 import { getSharedDevice } from "../engine/device";
 import { forceEngineFailRequested } from "../engine/test-hooks";
 import {
-  renderCompare,
+  renderCompose,
   computeMetrics,
   type CompareParams,
   type CompareMode,
-  type CompareDiffSubmode,
   type DiffMetrics,
 } from "../engine/image-engine";
+import {
+  ensureDiff,
+  ensureDiffScalars,
+  renderDiffDisplay,
+  type DiffCacheEntry,
+} from "../engine/diff-engine";
+import { getDiffKernel } from "../engine/kernels";
 import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
 import { loadImageData } from "../image";
@@ -91,6 +97,17 @@ export interface GpuComparePaneProps {
   /** diff submode + colormap (used only in `mode:"diff"`). */
   diffSubmode?: DiffMode;
   colormap?: Colormap;
+  /**
+   * Diff KERNEL id (the diff-kernel registry — the six pointwise ids plus
+   * `flip`). This is the pane's INITIAL diff kernel; internal state
+   * (`diffKernel`) then owns it so the toolbar-menu track can switch it
+   * view-locally via `onDiffKernelChange`. When unset it defaults from
+   * `diffSubmode` (the legacy 1:1 mapping). Ignored unless `mode:"diff"`.
+   */
+  diffKernel?: string;
+  /** Fired when the pane's diff kernel changes (menu selection). The
+   *  toolbar-menu track wires a dropdown to this + `diffKernel`. */
+  onDiffKernelChange?: (kernelId: string) => void;
 
   zoom: number;
   pan: { x: number; y: number };
@@ -130,6 +147,8 @@ export default function GpuComparePane({
   onSplitPositionChange,
   diffSubmode,
   colormap = "none",
+  diffKernel: diffKernelProp,
+  onDiffKernelChange,
   zoom,
   pan,
   onViewportChange,
@@ -143,6 +162,9 @@ export default function GpuComparePane({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const resRef = useRef<GpuResources | null>(null);
+  // Most-recent cached diff entry (diff mode) — its scalars back the metrics
+  // chip without a separate readback.
+  const diffEntryRef = useRef<DiffCacheEntry | null>(null);
 
   // C1 fix (whole-branch review): true once the engine has definitively
   // failed to activate or render this compare pane (a hard GPU-init/render
@@ -159,6 +181,34 @@ export default function GpuComparePane({
   // The DISPLAYED uv window, for `PixelValueOverlay`'s
   // `sourceWindow` — same reasoning as `GpuImagePane`'s `overlayWindow`.
   const [overlayWindow, setOverlayWindow] = useState({ x: 0, y: 0, w: 1, h: 1 });
+
+  // Diff KERNEL selection (spec §toolbar). Initial value comes from the
+  // `diffKernel` prop (the descriptor's initial state) or, failing that, the
+  // legacy `diffSubmode` (1:1 with the six pointwise kernel ids); internal
+  // state then owns it so a menu can switch it view-locally. The toolbar-menu
+  // track wires a dropdown to `listDiffKernels()` + `setDiffKernel`.
+  const initialKernel = diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute";
+  const [diffKernel, setDiffKernelState] = useState<string>(initialKernel);
+  useEffect(() => {
+    setDiffKernelState(diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute");
+  }, [diffKernelProp, diffSubmode]);
+  const setDiffKernel = useCallback(
+    (id: string) => {
+      setDiffKernelState(id);
+      onDiffKernelChange?.(id);
+    },
+    [onDiffKernelChange],
+  );
+  // Expose the selection API on the pane element so the toolbar-menu track (and
+  // the browser harness) can drive kernel switching without prop-drilling.
+  useEffect(() => {
+    const el = paneRef.current as (HTMLDivElement & { __cairnDiffKernel?: unknown }) | null;
+    if (!el) return;
+    el.__cairnDiffKernel = { current: diffKernel, set: setDiffKernel };
+    return () => {
+      if (el) delete el.__cairnDiffKernel;
+    };
+  }, [diffKernel, setDiffKernel]);
 
   // TEV per-side source pixels (raw ImageData), like MediaComparePane.
   const fgDataRef = useRef<ImageData | null>(null);
@@ -289,10 +339,14 @@ export default function GpuComparePane({
   }, [ready, imageUrl, baselineUrl]);
 
   // ---- diff colormap params ---------------------------------------------
+  // The colormap index mode follows the selected kernel's display range:
+  // `signed`-range kernels center 0 at the LUT midpoint (cmap "signed"), the
+  // rest push [0,1] into the upper half (cmap "positive") — same visual
+  // convention the legacy diff blit used, now derived from the registry.
   const diffCmapMode = useMemo<"linear" | "signed" | "positive">(() => {
-    const isSigned = ((diffSubmode as string) ?? "").includes("signed");
-    return isSigned ? "signed" : "positive";
-  }, [diffSubmode]);
+    const range = getDiffKernel(diffKernel)?.displayRange ?? "unit";
+    return range === "signed" ? "signed" : "positive";
+  }, [diffKernel]);
   const diffColormap = useMemo<Float32Array | undefined>(
     () => (colormap !== "none" ? floatLutFor(colormap as Exclude<Colormap, "none">) : undefined),
     [colormap],
@@ -342,32 +396,55 @@ export default function GpuComparePane({
     const filter: "nearest" | "linear" =
       screenPxPerTexel(rawUv, box, dims.w, dims.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
     const uv = rawUv;
-    const params: CompareParams = {
-      exposureEV: 0,
-      operator: "linear",
-      gamma: 1,
-      isScalar: false,
-      hdrOut: false,
-      uv,
-      filter,
-      mode,
-      split: splitPosition,
-      alpha: blendAlpha,
-      diffSubmode: (diffSubmode as CompareDiffSubmode) ?? "absolute",
-      diffCmapMode,
-      diffColormap: mode === "diff" ? diffColormap : undefined,
-    };
-    // C1 fix (whole-branch review): `renderCompare()` is called
-    // SYNCHRONOUSLY in this effect with NO try/catch at all previously — an
-    // uncaught throw here would unmount this pane's whole subtree in React
-    // 18. Catch and fall back to the legacy compare pane instead (see the
-    // bailout branch near the bottom of this component's render body) — a
-    // pane never blanks.
+    // C1 fix (whole-branch review): the render call is SYNCHRONOUS in this
+    // effect; an uncaught throw would unmount this pane's whole subtree in
+    // React 18. Catch and fall back to the legacy compare pane instead (see the
+    // bailout branch near the bottom of this component's render body) — a pane
+    // never blanks.
     try {
-      renderCompare(r.device, r.surface, r.texA, r.texB, params);
+      if (mode === "diff") {
+        // Cached kernel path (spec §cached): ensure the diff RESULT texture for
+        // the CURRENT (contentKey, kernel, params) — a pure function of the
+        // SOURCE content, NOT the viewport/exposure/colormap — then blit it
+        // through the uv-window. Zoom/pan/exposure/colormap only re-run the
+        // blit below; `ensureDiff` is a cache hit and does NOT recompute.
+        const contentKeyRef = baselineUrl ?? imageUrl ?? "none";
+        const contentKeyFg = imageUrl ?? baselineUrl ?? "none";
+        const kernel = getDiffKernel(diffKernel);
+        const entry: DiffCacheEntry = ensureDiff(
+          r.device,
+          r.texA,
+          r.texB,
+          kernel ? diffKernel : "absolute",
+          undefined,
+          contentKeyRef,
+          contentKeyFg,
+        );
+        diffEntryRef.current = entry;
+        renderDiffDisplay(r.device, r.surface, entry.texture, entry.displayRange, {
+          uv,
+          cmapMode: diffCmapMode,
+          colormap: diffColormap,
+          filter,
+        });
+      } else {
+        const params: CompareParams = {
+          exposureEV: 0,
+          operator: "linear",
+          gamma: 1,
+          isScalar: false,
+          hdrOut: false,
+          uv,
+          filter,
+          mode,
+          split: splitPosition,
+          alpha: blendAlpha,
+        };
+        renderCompose(r.device, r.surface, r.texA, r.texB, params);
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn("cairn-plot: GpuComparePane renderCompare failed, falling back to legacy pane", err);
+      console.warn("cairn-plot: GpuComparePane render failed, falling back to legacy pane", err);
       setEngineFailed(true);
     }
   }, [
@@ -379,9 +456,11 @@ export default function GpuComparePane({
     mode,
     splitPosition,
     blendAlpha,
-    diffSubmode,
+    diffKernel,
     diffCmapMode,
     diffColormap,
+    imageUrl,
+    baselineUrl,
     dpr,
   ]);
 
@@ -389,7 +468,11 @@ export default function GpuComparePane({
     renderPass();
   }, [renderPass, uploadVersion, containerTick]);
 
-  // ---- metrics (recomputed on source change) ----------------------------
+  // ---- metrics (computed on source change; NEVER on viewport/exposure) -----
+  // In diff mode the scalars are cached IN the diff-cache entry
+  // (`ensureDiffScalars`), so a remount with the same sources is a cache hit —
+  // fixing the legacy remount-recompute. Split/blend have no diff entry, so
+  // they fall back to a direct `computeMetrics` over the sources.
   useEffect(() => {
     const r = resRef.current;
     if (!ready || !r || !r.texA || !r.texB || !baselineUrl) {
@@ -397,13 +480,20 @@ export default function GpuComparePane({
       return;
     }
     let cancelled = false;
-    computeMetrics(r.device, r.texA, r.texB).then((m) => {
+    const texA = r.texA;
+    const texB = r.texB;
+    const entry = diffEntryRef.current;
+    const p =
+      mode === "diff" && entry
+        ? ensureDiffScalars(r.device, entry, texA, texB)
+        : computeMetrics(r.device, texA, texB);
+    p.then((m) => {
       if (!cancelled) setMetrics(m);
     });
     return () => {
       cancelled = true;
     };
-  }, [ready, uploadVersion, baselineUrl]);
+  }, [ready, uploadVersion, baselineUrl, mode, diffKernel]);
 
   // ---- TEV samplers ------------------------------------------------------
   const makeSampler =
@@ -451,7 +541,10 @@ export default function GpuComparePane({
         <CpuImagePane
           imageUrl={imageUrl}
           baselineUrl={baselineUrl}
-          diffMode={diffSubmode ?? "signed"}
+          // FLIP is GPU-only (spec: CPU compare keeps its pointwise modes) —
+          // if the GPU pane fell back, map the selected kernel to a valid CPU
+          // DiffMode (the pointwise ids are 1:1; `flip` degrades to `absolute`).
+          diffMode={(getDiffKernel(diffKernel)?.kind === "pointwise" ? diffKernel : "absolute") as DiffMode}
           interpolation={interpolation}
           colormap={colormap}
           showAxes={false}
