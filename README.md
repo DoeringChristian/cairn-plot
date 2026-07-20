@@ -41,6 +41,29 @@ The `media` extra (`pip install cairn-plot[media]`) adds Plotly (for the
 recipes) and Pillow (for raw-image baking). The core 2D/3D composables and
 reports work with numpy + pydantic alone.
 
+## Examples
+
+Three runnable, self-documenting examples live in [`examples/`](examples/) —
+each renders a single offline HTML file (pass `--open` to view it immediately):
+
+```bash
+python examples/demo_cairn_plot.py --open     # every plot type, one gallery page
+python examples/report_cairn_plot.py --open   # the full cp.Report feature report
+python examples/demo_url_images.py --open     # URL-referenced EXR images (needs network)
+```
+
+- [`demo_cairn_plot.py`](examples/demo_cairn_plot.py) — the kitchen-sink
+  gallery: all 2D charts, tables, images (SDR + true-float HDR), compare
+  modes, and the WebGL 3D viewers (point cloud / mesh / volume / boxes).
+- [`report_cairn_plot.py`](examples/report_cairn_plot.py) — dogfoods
+  `cp.Report`: markdown + components in the themed report layout, every
+  `cp.Compare` mode and diff kernel (incl. FLIP validated against NVIDIA's
+  official `flip-evaluator`, shown side by side in magma), HDR-FLIP, and
+  viewport-synced grids.
+- [`demo_url_images.py`](examples/demo_url_images.py) — `cp.Image(url=...)`:
+  the page bakes no pixels; the browser fetches and decodes EXR (ZIP + PIZ)
+  client-side. See [`docs/API.md`](docs/API.md) for the full 0.1 API contract.
+
 ## HTML / JS library
 
 The renderer bundles live under `ui/` (a TS/React library). Build the

@@ -145,6 +145,12 @@ export interface UseImageControllerArgs {
    *  toolbar home button (and, via the shell, the double-click reset) return the
    *  pane to a fully neutral state, not just zoom/pan. */
   onReset?: () => void;
+  /** True when pane state BEYOND zoom/pan is off its neutral default (a
+   *  non-zero EXPOSURE/OFFSET slider). Folded into `isModified` so the HOME
+   *  button reads enabled whenever it would actually do something — reset
+   *  covers the sliders too (`onReset`), so a pane at home zoom but with a
+   *  dialed slider must not show a disabled "(at home)" button. */
+  extraModified?: boolean;
 }
 
 export function useImageController({
@@ -159,6 +165,7 @@ export function useImageController({
   maxZoom = DEFAULT_MAX_ZOOM,
   requestRender,
   onReset,
+  extraModified = false,
 }: UseImageControllerArgs): PlotController {
   // Zoom toward the pane center, reusing `use-image-viewport`'s exact
   // zoom-to-cursor formula with the cursor pinned to the box center — NO new
@@ -230,7 +237,7 @@ export function useImageController({
     [],
   );
 
-  const isModified = zoom !== 1 || pan.x !== 0 || pan.y !== 0;
+  const isModified = zoom !== 1 || pan.x !== 0 || pan.y !== 0 || extraModified;
 
   // Drag always pans (no other image drag mode); the setters below are inert
   // beyond that so the toolbar's Pan button reads as the fixed active mode.

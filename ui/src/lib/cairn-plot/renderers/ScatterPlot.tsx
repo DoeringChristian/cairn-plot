@@ -369,10 +369,10 @@ export default function ScatterPlot({
                   isSelected
                     ? "var(--color-accent, #0969da)"
                     : isHovered
-                      ? "#1f2328"
-                      : "white"
+                      ? "var(--color-fg, #1f2328)"
+                      : "none"
                 }
-                strokeWidth={isSelected ? 2.5 : isHovered ? 2 : 1.5}
+                strokeWidth={isSelected ? 2.5 : isHovered ? 2 : 0}
                 className="cursor-pointer"
                 onClick={() => {
                   if (wasDragRef.current) {

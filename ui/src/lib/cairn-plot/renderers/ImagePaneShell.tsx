@@ -198,6 +198,10 @@ export interface ImagePaneShellProps {
    *  {@link ImageDisplayAdjust}). When omitted, the second slider row is absent.
    *  Only shown when the toolbar itself renders (`toolbar={true}`). */
   displayAdjust?: ImageDisplayAdjust;
+  /** Extra host-pane reset run by HOME / double-click alongside the viewport +
+   *  slider reset — a compare pane restores its colormap / view-mode / kernel
+   *  to the descriptor defaults here. */
+  onReset?: () => void;
 
   // --- chips ---------------------------------------------------------------
   label: string;
@@ -232,6 +236,7 @@ export default function ImagePaneShell({
   requestRender,
   leadingMenus,
   displayAdjust,
+  onReset,
   label,
   showLabelChip,
   isDraggable = false,
@@ -262,7 +267,10 @@ export default function ImagePaneShell({
   const resetDisplayAdjust = useCallback(() => {
     displayAdjust?.onExposureChange(0);
     displayAdjust?.onOffsetChange(0);
-  }, [displayAdjust]);
+    // A host pane's extra reset (compare: colormap / view-mode / kernel back to
+    // their descriptor defaults) rides the same HOME/dblclick chain.
+    onReset?.();
+  }, [displayAdjust, onReset]);
 
   // Double-click reset (Q17) — same gesture across every image pane + the 2D
   // charts.
@@ -283,6 +291,11 @@ export default function ImagePaneShell({
     naturalHeight: naturalDims?.h,
     requestRender,
     onReset: resetDisplayAdjust,
+    // A dialed EXPOSURE/OFFSET slider counts as "modified": HOME resets the
+    // sliders too (onReset above), so the button must read enabled whenever
+    // either slider is off 0 — even at home zoom/pan.
+    extraModified:
+      (displayAdjust?.exposureEV ?? 0) !== 0 || (displayAdjust?.offset ?? 0) !== 0,
   });
 
   // EXPOSURE / OFFSET display-adjust sliders (image panes only; §requirement B).

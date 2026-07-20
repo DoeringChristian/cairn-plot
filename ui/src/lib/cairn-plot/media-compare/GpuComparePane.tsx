@@ -313,6 +313,17 @@ export default function GpuComparePane({
     setColormapState(colormap);
   }, [colormap]);
 
+  // HOME / double-click reset restores every VIEW-LOCAL selection to its
+  // descriptor default — mode, colormap AND kernel — alongside the shell's own
+  // viewport + EV/OFFSET reset (user requirement: home = fully neutral pane).
+  // `setCompareMode` (not the raw state setter) so an owner above (CompareView)
+  // re-syncs its lifted view-mode state too.
+  const resetViewSelections = useCallback(() => {
+    setCompareMode(mode);
+    setColormapState(colormap);
+    setDiffKernel(diffKernelProp ?? (diffSubmode as string | undefined) ?? "absolute");
+  }, [mode, colormap, diffKernelProp, diffSubmode, setCompareMode, setDiffKernel]);
+
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only in EVERY mode. Split/blend: fed into the compose pass (`color *
   // 2^EV + offset` before tonemap/encode). Diff: fed into the display blit as the
@@ -1003,6 +1014,7 @@ export default function GpuComparePane({
       surface={surface}
       showAxes={false}
       notationSeed={pixelValueNotation}
+      onReset={resetViewSelections}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
       leadingMenus={leadingMenus}
