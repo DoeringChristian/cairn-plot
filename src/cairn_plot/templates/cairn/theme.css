@@ -93,15 +93,13 @@
   margin-top: 0;
 }
 
-/* Prose (markdown + raw HTML) — a comfortable reading measure. */
-.cairn-report .cairn-prose {
-  max-width: 72ch;
-}
-
-/* Component cards + the title block break out wider than the prose column. */
+/* ONE content width for everything — prose, components, and the title share
+   the same column so the page edge is straight, never jagged (user call:
+   the earlier 72ch-prose / 1100px-component break-out read as ragged). */
+.cairn-report .cairn-prose,
 .cairn-report .cairn-component,
 .cairn-report .cairn-title {
-  max-width: 1100px;
+  max-width: 880px;
 }
 
 /* ---- title block --------------------------------------------------------- */
@@ -246,13 +244,15 @@
   font-weight: 600;
 }
 
-/* ---- component cards (app look) ------------------------------------------ */
-
+/* ---- component blocks ---------------------------------------------------- */
+/* Components sit directly on the page — no card chrome (user call: the
+   elevated-bg/border/radius frame was unrequested; renderers bring their own
+   visual boundaries where they need them). */
 .cairn-report .cairn-component {
-  padding: 0.75rem;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
 }
 
 /* Media inside a report never overflows its column. */
