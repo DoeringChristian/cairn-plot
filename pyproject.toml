@@ -38,6 +38,7 @@ dev = [
     "pytest>=8.0",
     "plotly>=5.18",
     "pillow>=10.0.0",
+    "flip-evaluator>=1.7",  # official NVIDIA FLIP — validation example + kernel test fixtures
 ]
 
 [project.urls]

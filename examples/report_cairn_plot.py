@@ -372,6 +372,49 @@ def build_report() -> cp.Report:
         ]
     )
 
+    # ── ground truth: the OFFICIAL flip-evaluator beside our GPU kernel ──────
+    # (https://github.com/NVlabs/flip — the compiled reference implementation.)
+    # Optional dependency: the section is skipped with a note when absent.
+    try:
+        import flip_evaluator as _flip
+
+        _official_map, _official_mean, _ = _flip.evaluate(
+            flip_ref.astype(np.float32) / 255.0,
+            flip_pred.astype(np.float32) / 255.0,
+            "LDR",
+        )
+        _official_u8 = (np.clip(np.asarray(_official_map), 0.0, 1.0) * 255.0).astype(
+            np.uint8
+        )
+        rep.md(
+            "### Validation — official `flip-evaluator` vs our client-side kernel\n\n"
+            "Left: the error map computed OFFLINE by NVIDIA's compiled reference "
+            "implementation ([NVlabs/flip](https://github.com/NVlabs/flip), "
+            f"`flip-evaluator`), **mean FLIP = {_official_mean:.4f}** — baked into "
+            "this page as a plain image (magma-colored by the official tool). "
+            "Right: the SAME pair diffed live by cairn-plot's GPU FLIP kernel "
+            "(`mode=\"flip\"`). The kernel is verified against this reference to "
+            "≤3.6e-3 per pixel in the test suite; here you can eyeball the "
+            "agreement directly."
+        )
+        rep.grid(
+            [
+                [
+                    cp.Image(_official_u8),
+                    cp.Compare(
+                        cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
+                        colormap="viridis",
+                    ),
+                ]
+            ]
+        )
+    except ImportError:
+        rep.md(
+            "### Validation — official `flip-evaluator` vs our client-side kernel\n\n"
+            "*(skipped: `pip install flip-evaluator` to bake the official NVIDIA "
+            "reference error map beside the live GPU kernel.)*"
+        )
+
     # ── perceptual diff — HDR-FLIP (auto-dispatch on float sources) ───────────
     rep.md(
         "### HDR-FLIP — same `mode=\"flip\"`, float/HDR sources\n\n"
