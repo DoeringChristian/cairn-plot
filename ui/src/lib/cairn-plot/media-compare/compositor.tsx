@@ -662,11 +662,16 @@ export function CompositeMediaPane({
       <CpuImagePane
         toolbar={false}
         imageUrl={imageUrl}
-        baselineUrl={baselineUrl}
+        // Side view shows the two RAW images. No baseline (no diff machinery)
+        // and no colormap: `colormap` here is the compare's DIFF colormap —
+        // passing it false-colors the prediction by luminance (a near-uniform
+        // wash), which is not what a side-by-side means. Mirrors the reference
+        // pane above.
+        baselineUrl={null}
         isBaseline={false}
         diffMode="none"
         interpolation={interpolation}
-        colormap={colormap}
+        colormap="none"
         showAxes={showAxes ?? false}
         processing={processing}
         zoom={zoom}
