@@ -82,6 +82,40 @@ export function notationToolbarButton(
   };
 }
 
+/**
+ * The registered colormaps as a toolbar-menu option list (diff-kernels
+ * toolbar-selection track). Order + ids mirror `types.ts`'s `Colormap` union
+ * (`colormaps/lut.ts`'s `COLORMAP_STOPS` keys, plus the `"none"` passthrough);
+ * `"none"` shows the raw image / grayscale diff. Kept here (not in the toolbar
+ * primitive) so the panes' shared image-controller module owns the one canonical
+ * list both single-image backends and the compare pane's diff colormap draw from.
+ */
+export const COLORMAP_MENU_OPTIONS: { id: string; label: string }[] = [
+  { id: "none", label: "None" },
+  { id: "viridis", label: "Viridis" },
+  { id: "red-green", label: "Red–Green" },
+  { id: "red-blue", label: "Red–Blue" },
+];
+
+/**
+ * A colormap dropdown as a toolbar LEADING button (menu variant). `value` is the
+ * current colormap id; `onSelect` receives the picked id. Shown by a
+ * colormap-capable pane (SDR single-image, or the compare pane's diff view) so
+ * the colormap can be switched view-locally without leaving the pane. Like the
+ * notation button, it's a leading (leftmost) control so its presence never
+ * shifts the corner-anchored zoom/pan/reset buttons.
+ */
+export function colormapToolbarButton(
+  value: string,
+  onSelect: (id: string) => void,
+): ToolbarButtonSpec {
+  return {
+    id: "colormap",
+    title: "Colormap",
+    menu: { options: COLORMAP_MENU_OPTIONS, value, onSelect },
+  };
+}
+
 export interface UseImageControllerArgs {
   /** The pane's root element — the `plotToPng` fallback target and the box the
    *  center-zoom math measures against. */

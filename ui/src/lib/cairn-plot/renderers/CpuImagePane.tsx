@@ -64,6 +64,7 @@ import {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
+import { colormapToolbarButton } from "./use-image-controller";
 import {
   isHdrProps,
   shapeDims,
@@ -153,7 +154,7 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
     isBaseline = false,
     diffMode = "none",
     interpolation = "auto",
-    colormap = "none",
+    colormap: colormapProp = "none",
     showAxes = false,
     processing = DEFAULT_PROCESSING,
     zoom: zoomProp = 1,
@@ -168,6 +169,17 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
     pixelValueNotation = "decimal",
     toolbar = true,
   } = props;
+
+  // Colormap: the `colormap` prop SEEDS a view-local override so the toolbar
+  // COLORMAP menu can switch it in-pane (diff-kernels toolbar track). Re-seeds
+  // on prop change (the app card's colormap control) — a controlled surface
+  // until the user overrides it locally. (Only surfaces when the toolbar shows,
+  // i.e. `toolbar={true}` backend-seam mounts, not the legacy `toolbar={false}`
+  // card chrome — see report note on the card-control interaction.)
+  const [colormap, setColormap] = useState<Colormap>(colormapProp);
+  useEffect(() => {
+    setColormap(colormapProp);
+  }, [colormapProp]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
@@ -604,6 +616,9 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={exportCanvasRef}
+      // SDR single-image: a view-local COLORMAP menu (shown only when the
+      // toolbar renders — `toolbar={true}` backend-seam mounts).
+      leadingMenus={[colormapToolbarButton(colormap, (id) => setColormap(id as Colormap))]}
       label={label}
       showLabelChip
       isDraggable={isDraggable}

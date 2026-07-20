@@ -74,6 +74,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
+import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
 import PixelValueOverlay, {
   PixelNotationToggle,
   type PixelSampler,
@@ -171,6 +172,11 @@ export interface ImagePaneShellProps {
   exportCanvasRef?: RefObject<HTMLCanvasElement | null>;
   /** The pane's synchronous repaint, so `toPNG` gets a fresh WebGPU frame. */
   requestRender?: () => void;
+  /** Pane-supplied LEADING toolbar buttons/menus (the diff-mode + colormap
+   *  dropdowns). Rendered before the notation button, so they sit leftmost and
+   *  never shift the corner-anchored standard buttons. Only shown when the
+   *  toolbar itself renders (`toolbar={true}`). */
+  leadingMenus?: ToolbarButtonSpec[];
 
   // --- chips ---------------------------------------------------------------
   label: string;
@@ -203,6 +209,7 @@ export default function ImagePaneShell({
   notationSeed,
   exportCanvasRef,
   requestRender,
+  leadingMenus,
   label,
   showLabelChip,
   isDraggable = false,
@@ -249,9 +256,12 @@ export default function ImagePaneShell({
   const toolbarConfig = useMemo(
     () => ({
       ...IMAGE_TOOLBAR_CONFIG,
-      leadingButtons: overlayActive ? [notationToolbarButton(notation, setNotation)] : [],
+      leadingButtons: [
+        ...(leadingMenus ?? []),
+        ...(overlayActive ? [notationToolbarButton(notation, setNotation)] : []),
+      ],
     }),
-    [overlayActive, notation],
+    [overlayActive, notation, leadingMenus],
   );
 
   const checkerClass = " cairn-checkerboard";

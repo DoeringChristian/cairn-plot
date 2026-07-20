@@ -105,6 +105,7 @@ import type { ImageOperator, ImageParams } from "../engine/image-engine";
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
 import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
+import { colormapToolbarButton } from "./use-image-controller";
 import {
   isHdrProps,
   shapeDims,
@@ -290,7 +291,16 @@ export default function GpuImagePane(props: ImageBackendProps) {
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
   const onViewportChange = props.onViewportChange;
-  const sdrColormap = hdrMode ? "none" : ((props as SdrImageProps).colormap ?? "none");
+  // Colormap: the `colormap` prop SEEDS a view-local override so the toolbar
+  // COLORMAP menu can switch it in-pane (diff-kernels toolbar track). Re-seeds
+  // when the prop changes (e.g. the app card's colormap control) so the pane
+  // stays a controlled surface until the user overrides it locally.
+  const propColormap: Colormap = hdrMode ? "none" : ((props as SdrImageProps).colormap ?? "none");
+  const [colormapOverride, setColormapOverride] = useState<Colormap>(propColormap);
+  useEffect(() => {
+    setColormapOverride(propColormap);
+  }, [propColormap]);
+  const sdrColormap = hdrMode ? "none" : colormapOverride;
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
   // re-fire that sizing whenever `devicePixelRatio` itself changes (moving
@@ -427,7 +437,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
     if (hdrMode || !paneReady) return;
     const p = props as SdrImageProps;
     const imageUrl = p.imageUrl;
-    const colormap = p.colormap ?? "none";
+    const colormap = colormapOverride;
     if (!imageUrl) {
       sdrImageDataRef.current = null;
       setNaturalDims(null);
@@ -476,7 +486,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, hdrMode ? null : (props as SdrImageProps).imageUrl, hdrMode ? null : (props as SdrImageProps).colormap]);
+  }, [hdrMode, paneReady, hdrMode ? null : (props as SdrImageProps).imageUrl, hdrMode ? null : colormapOverride]);
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +
@@ -720,6 +730,9 @@ export default function GpuImagePane(props: ImageBackendProps) {
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
+      // SDR single-image: a view-local COLORMAP menu (diff-kernels toolbar
+      // track). HDR has no colormap prop (asymmetric by design), so it's omitted.
+      leadingMenus={hdrMode ? undefined : [colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap))]}
       label={label}
       showLabelChip={!!label}
       isDraggable={isDraggable}

@@ -55,9 +55,11 @@ import {
   renderDiffDisplay,
   type DiffCacheEntry,
 } from "../engine/diff-engine";
-import { getDiffKernel } from "../engine/kernels";
+import { getDiffKernel, listDiffKernels } from "../engine/kernels";
 import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
+import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
+import { colormapToolbarButton } from "../renderers/use-image-controller";
 import { loadImageData } from "../image";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
@@ -210,6 +212,61 @@ export default function GpuComparePane({
     };
   }, [diffKernel, setDiffKernel]);
 
+  // Compare MODE selection (spec §toolbar). The `mode` prop seeds the initial
+  // composition (slide/blend/diff); internal state then owns it so the toolbar
+  // MODE menu can switch it VIEW-LOCALLY (slide ⇄ blend ⇄ a diff kernel) without
+  // a descriptor round-trip. NOTE: `"side"` is NOT reachable here — it's a
+  // 2-cell grid composed ABOVE this pane by `CompositeMediaPane`, so the menu
+  // scopes to slide · blend · kernels (see the menu build below).
+  const [compareMode, setCompareModeState] = useState<CompareMode>(mode);
+  useEffect(() => {
+    setCompareModeState(mode);
+  }, [mode]);
+
+  // Diff COLORMAP selection (spec §toolbar). Seeded from the `colormap` prop;
+  // internal state owns it so the COLORMAP menu is view-local (display-only —
+  // it NEVER changes the diff cache key / recompute count, only the blit LUT).
+  const [colormapState, setColormapState] = useState<Colormap>(colormap);
+  useEffect(() => {
+    setColormapState(colormap);
+  }, [colormap]);
+
+  // The two leading toolbar menus (rendered by `ImagePaneShell` → `PlotToolbar`).
+  //   MODE — slide · blend · every registered diff kernel (flat list). Selecting
+  //          a view mode sets `compareMode`; selecting a kernel switches to diff
+  //          mode AND sets the kernel (the `__cairnDiffKernel/set` path).
+  //   COLORMAP — the registered colormaps; shown only in diff mode (colormap has
+  //          no effect on slide/blend). Display-only (view-local state).
+  const leadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
+    const modeOptions = [
+      { id: "slide", label: "Slide" },
+      { id: "blend", label: "Blend" },
+      ...listDiffKernels().map((k) => ({ id: k.id, label: k.label })),
+    ];
+    const modeValue = compareMode === "diff" ? diffKernel : compareMode === "split" ? "slide" : "blend";
+    const modeMenu: ToolbarButtonSpec = {
+      id: "compare-mode",
+      title: "Compare / diff mode",
+      menu: {
+        options: modeOptions,
+        value: modeValue,
+        onSelect: (id: string) => {
+          if (id === "slide") setCompareModeState("split");
+          else if (id === "blend") setCompareModeState("blend");
+          else {
+            setCompareModeState("diff");
+            setDiffKernel(id);
+          }
+        },
+      },
+    };
+    const menus: ToolbarButtonSpec[] = [modeMenu];
+    if (compareMode === "diff") {
+      menus.push(colormapToolbarButton(colormapState, (id) => setColormapState(id as Colormap)));
+    }
+    return menus;
+  }, [compareMode, diffKernel, colormapState, setDiffKernel]);
+
   // TEV per-side source pixels (raw ImageData), like MediaComparePane.
   const fgDataRef = useRef<ImageData | null>(null);
   const refDataRef = useRef<ImageData | null>(null);
@@ -348,8 +405,8 @@ export default function GpuComparePane({
     return range === "signed" ? "signed" : "positive";
   }, [diffKernel]);
   const diffColormap = useMemo<Float32Array | undefined>(
-    () => (colormap !== "none" ? floatLutFor(colormap as Exclude<Colormap, "none">) : undefined),
-    [colormap],
+    () => (colormapState !== "none" ? floatLutFor(colormapState as Exclude<Colormap, "none">) : undefined),
+    [colormapState],
   );
 
   // ---- render pass -------------------------------------------------------
@@ -402,7 +459,7 @@ export default function GpuComparePane({
     // bailout branch near the bottom of this component's render body) — a pane
     // never blanks.
     try {
-      if (mode === "diff") {
+      if (compareMode === "diff") {
         // Cached kernel path (spec §cached): ensure the diff RESULT texture for
         // the CURRENT (contentKey, kernel, params) — a pure function of the
         // SOURCE content, NOT the viewport/exposure/colormap — then blit it
@@ -436,7 +493,7 @@ export default function GpuComparePane({
           hdrOut: false,
           uv,
           filter,
-          mode,
+          mode: compareMode,
           split: splitPosition,
           alpha: blendAlpha,
         };
@@ -453,7 +510,7 @@ export default function GpuComparePane({
     zoom,
     pan.x,
     pan.y,
-    mode,
+    compareMode,
     splitPosition,
     blendAlpha,
     diffKernel,
@@ -484,7 +541,7 @@ export default function GpuComparePane({
     const texB = r.texB;
     const entry = diffEntryRef.current;
     const p =
-      mode === "diff" && entry
+      compareMode === "diff" && entry
         ? ensureDiffScalars(r.device, entry, texA, texB)
         : computeMetrics(r.device, texA, texB);
     p.then((m) => {
@@ -493,7 +550,7 @@ export default function GpuComparePane({
     return () => {
       cancelled = true;
     };
-  }, [ready, uploadVersion, baselineUrl, mode, diffKernel]);
+  }, [ready, uploadVersion, baselineUrl, compareMode, diffKernel]);
 
   // ---- TEV samplers ------------------------------------------------------
   const makeSampler =
@@ -536,7 +593,7 @@ export default function GpuComparePane({
   // Placed after every hook above runs unconditionally (rules-of-hooks) but
   // before this component paints its own GPU canvas.
   if (engineFailed) {
-    if (mode === "diff") {
+    if (compareMode === "diff") {
       return (
         <CpuImagePane
           imageUrl={imageUrl}
@@ -546,7 +603,7 @@ export default function GpuComparePane({
           // DiffMode (the pointwise ids are 1:1; `flip` degrades to `absolute`).
           diffMode={(getDiffKernel(diffKernel)?.kind === "pointwise" ? diffKernel : "absolute") as DiffMode}
           interpolation={interpolation}
-          colormap={colormap}
+          colormap={colormapState}
           showAxes={false}
           zoom={zoom}
           pan={pan}
@@ -560,7 +617,7 @@ export default function GpuComparePane({
       <MediaComparePane
         imageUrl={imageUrl}
         baselineUrl={baselineUrl}
-        mode={mode}
+        mode={compareMode as Extract<CompareMode, "split" | "blend">}
         splitPosition={splitPosition}
         blendAlpha={blendAlpha}
         onSplitPositionChange={onSplitPositionChange}
@@ -589,7 +646,7 @@ export default function GpuComparePane({
         data-gpu-compare-canvas
       />
       {/* Full-height, gapless split divider — drives the `split` uniform. */}
-      {mode === "split" && (
+      {compareMode === "split" && (
         <div
           className="absolute top-0 bottom-0 z-20 flex items-center"
           style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
@@ -638,6 +695,7 @@ export default function GpuComparePane({
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
+      leadingMenus={leadingMenus}
       label=""
       showLabelChip={false}
       // Per-side TEV overlays. split -> each side clipped at the divider, LEFT
@@ -647,7 +705,7 @@ export default function GpuComparePane({
       // active state and passes them in here.
       overlay={{
         render: ({ notation, setOverlayActive }) =>
-          mode === "split" ? (
+          compareMode === "split" ? (
             <>
               {baselineUrl && dims && (
                 <div
