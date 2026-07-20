@@ -40,6 +40,8 @@ export {
   CompositeMediaPane,
   type CompositeMediaPaneProps,
   CrossTypeCompositeMediaPane,
+  CompareFloatUnsupportedError,
+  type CompareFloatSource,
 } from "./compositor";
 
 // NB: `GpuComparePane` is intentionally NOT re-exported from this barrel — it

@@ -448,10 +448,55 @@ export function MediaComparePane({
 // duplicate of itself") and passes `baselineUrl: null` to opt a pane out.
 // ---------------------------------------------------------------------------
 
+/**
+ * A DECODED float side for the engine compare pane — the non-URL alternative to
+ * a browser-decodable `imageUrl`/`baselineUrl`. Produced client-side by the
+ * compare descriptor resolver (`plot-node.tsx`'s `resolveFrame`) when an image
+ * `DataSpec` carries a `url` that decodes to float samples (`.exr`/float `.npy`
+ * — formats the browser can't `<img>`-decode). Uploaded as an `rgba32float`
+ * source texture by `GpuComparePane` (mirroring the HDR image path's
+ * `hdrToRGBAFloat32`), so the diff runs in the TRUE float values rather than the
+ * 8-bit-quantized legacy path. GPU-ONLY: the legacy CPU compare panes
+ * (`MediaComparePane`/`CpuImagePane`) take only URL sources, so a float side
+ * with no engine pane available surfaces `CompareFloatUnsupportedError`, never a
+ * blank pane.
+ *
+ * `data` is the raw decoded buffer (`width*height*channels`, row-major); the
+ * pane expands it to RGBA. `contentKey` is the STABLE diff-cache key — the
+ * original source URL (NOT the float bytes), so a remount/rerender with the
+ * same URL is a cache hit.
+ */
+export interface CompareFloatSource {
+  data: Float32Array;
+  width: number;
+  height: number;
+  channels: number;
+  contentKey: string;
+}
+
+/**
+ * The standard "this side can't render on the CPU compare" error state. Shown
+ * when a `CompareFloatSource` side is present but the engine compare pane is
+ * unavailable (render mode `cpu`, the gpu-image addon never loaded, or WebGPU
+ * is unavailable) — a float side is GPU-only (`rgba32float` upload), and the
+ * legacy CPU panes take only URL sources. Never a blank pane (Task point 3).
+ */
+export function CompareFloatUnsupportedError() {
+  return (
+    <div className="card p-4 text-sm text-red-400 h-full flex items-center justify-center text-center">
+      Plot error: float URL sources need the GPU compare (WebGPU) — unavailable here
+    </div>
+  );
+}
+
 export interface CompositeMediaPaneProps {
   mode: MediaCompareModeKind;
   imageUrl: string | null;
   baselineUrl: string | null;
+  /** DECODED float sides (`.exr`/float `.npy` URLs) — the GPU-only alternative
+   *  to the URL sources above; see {@link CompareFloatSource}. */
+  imageFloat?: CompareFloatSource;
+  baselineFloat?: CompareFloatSource;
   /** True when this pane's own image IS the resolved reference series
    *  (the "series-same-step" baseline pane rendered alongside its peers). */
   isReferencePane?: boolean;
@@ -488,6 +533,8 @@ export function CompositeMediaPane({
   mode,
   imageUrl,
   baselineUrl,
+  imageFloat,
+  baselineFloat,
   isReferencePane,
   diffSubmode,
   colormap,
@@ -508,23 +555,44 @@ export function CompositeMediaPane({
   overlaySettings,
   pixelValueNotation,
 }: CompositeMediaPaneProps) {
-  const effectiveMode: MediaCompareModeKind = baselineUrl == null ? "normal" : mode;
+  // A "reference side" is either a URL baseline or a decoded float baseline; a
+  // float side has no `baselineUrl` string, so gate on BOTH (the old
+  // `baselineUrl == null` alone would misclassify a float-only reference as
+  // "no reference" and collapse to a single "normal" pane).
+  const hasBaseline = baselineUrl != null || baselineFloat != null;
+  const hasFloatSide = imageFloat != null || baselineFloat != null;
+  const effectiveMode: MediaCompareModeKind = !hasBaseline ? "normal" : mode;
   useGpuCompareReadyTick();
   const GpuCompare = resolveGpuComparePane();
+
+  // The engine pane composites only split/blend/diff (side is a 2-cell grid
+  // above this pane; normal is a single image).
+  const engineComposited =
+    effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff";
+
+  // Float sides are GPU-only (`rgba32float` upload — the legacy CPU panes take
+  // only URL sources). If the engine pane isn't available, or the effective
+  // mode isn't one it composites, surface the standard clear error — never a
+  // blank pane (Task point 3). `useGpuCompareReadyTick` above still forces a
+  // re-render once the gpu-image addon finishes initializing, so on a WebGPU
+  // browser this resolves to the real GPU pane below the instant it's ready.
+  if (hasFloatSide && (!GpuCompare || !engineComposited)) {
+    return <CompareFloatUnsupportedError />;
+  }
 
   // Engine-backed split/blend/diff (opt-in — see `resolveGpuComparePane`). One
   // `renderCompare` GPU pass replaces the CPU clip-path split / opacity blend /
   // webgl-diff path, plus a `computeMetrics` MSE/PSNR/MAE readout. Q17
-  // double-click-resets the shared viewport inside GpuComparePane.
-  if (
-    GpuCompare &&
-    baselineUrl != null &&
-    (effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff")
-  ) {
+  // double-click-resets the shared viewport inside GpuComparePane. Float sides
+  // (`imageFloat`/`baselineFloat`) are threaded through here — this is the ONLY
+  // pane that can ingest them (`rgba32float` textures).
+  if (GpuCompare && hasBaseline && engineComposited) {
     return (
       <GpuCompare
         imageUrl={imageUrl}
         baselineUrl={baselineUrl}
+        imageFloat={imageFloat}
+        baselineFloat={baselineFloat}
         mode={effectiveMode}
         splitPosition={splitPosition ?? 0.5}
         blendAlpha={blendAlpha ?? 0.5}

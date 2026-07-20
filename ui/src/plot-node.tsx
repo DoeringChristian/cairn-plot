@@ -20,9 +20,12 @@ import React, {
 import {
   Colorbar,
   CompositeMediaPane,
+  decodeImage,
+  decodedU8ToDataUrl,
   parseOverlay,
   resolveImageViewportItems,
   type ColormapName,
+  type CompareFloatSource,
   type DataSource,
   type DiffMode,
   type ImageOverlayData,
@@ -169,20 +172,73 @@ function LeafView({ node }: { node: PlotLeafNode }) {
 }
 
 // ---------------------------------------------------------------------------
-// Compare — two DataSpec frames composited into one pane. Resolves each frame's
-// URL (image → DataSource lookup, url → verbatim), picks the reference by
-// `baselineIndex`, and delegates to `CompositeMediaPane` (which degrades to a
-// single "normal" pane if no baseline resolves). Wrapped in `ChartBox` so it
-// fills a sized grid cell (fill) or gets a default height standalone.
+// Compare — two DataSpec frames composited into one pane. Resolves each frame
+// to a compare source (image → DataSource lookup or the `url` client-decode
+// seam, url → verbatim), picks the reference by `baselineIndex`, and delegates
+// to `CompositeMediaPane`. Wrapped in `ChartBox` so it fills a sized grid cell
+// (fill) or gets a default height standalone.
+//
+// Resolution is ASYNC (like `LeafView`): a `url`-bearing `image` side is
+// FETCHED + decoded (`decodeImage`), the SAME client-decode seam the image
+// LEAF uses — u8 → a browser-decodable data URL (the texture path), float
+// (`.exr`/float `.npy`) → a decoded `CompareFloatSource` the GPU pane uploads
+// as `rgba32float`. A side that resolves to NEITHER a url nor a float payload
+// surfaces the standard error state — never a silent blank pane (the bug this
+// fixes: a compare node whose sides were `url`-only `image` specs resolved to
+// null hashes and rendered nothing).
 // ---------------------------------------------------------------------------
-function resolveFrame(
+interface ResolvedCompareFrame {
+  url: string | null;
+  float?: CompareFloatSource;
+  overlay?: ImageOverlayData;
+}
+
+async function resolveFrame(
   data: DataSpec,
   source: DataSource,
-): { url: string | null; overlay?: ImageOverlayData } {
+): Promise<ResolvedCompareFrame> {
   if (data.kind === "url") {
     return { url: data.src, overlay: parseOverlay(data.metadata) ?? undefined };
   }
   if (data.kind === "image") {
+    // Direct-URL CLIENT-DECODE seam — the compare mirror of the image LEAF's
+    // `image.url` path (`plot-descriptor.ts`): fetch the bytes and normalize
+    // through `decodeImage` (sniffed by Content-Type → URL ext → magic bytes).
+    // Float buffers (`.exr`/float `.npy`) become a `CompareFloatSource` (the
+    // GPU pane uploads them as `rgba32float`, diffing in true float values);
+    // uint8/browser-native buffers become an `imageUrl` PNG data URL (the
+    // existing texture path). CORS applies to the fetch.
+    if (data.url) {
+      const res = await fetch(data.url);
+      if (!res.ok) {
+        throw new Error(
+          `cairn-plot: failed to fetch compare image ${data.url} (${res.status})`,
+        );
+      }
+      const bytes = await res.arrayBuffer();
+      const decoded = await decodeImage({
+        bytes,
+        url: data.url,
+        mime: res.headers.get("content-type") ?? undefined,
+      });
+      const overlay = parseOverlay(data.metadata) ?? undefined;
+      if (decoded.kind === "f32") {
+        return {
+          url: null,
+          float: {
+            data: decoded.data,
+            width: decoded.width,
+            height: decoded.height,
+            channels: decoded.channels,
+            // The ORIGINAL source URL is the stable diff-cache content key —
+            // NOT the decoded bytes — so a rerender with the same URL is a hit.
+            contentKey: data.url,
+          },
+          overlay,
+        };
+      }
+      return { url: decodedU8ToDataUrl(decoded), overlay };
+    }
     const res = resolveImageViewportItems(
       {
         hashes: [data.hash ?? null],
@@ -201,11 +257,47 @@ function resolveFrame(
 
 function CompareView({ node }: { node: CompareNode }) {
   const { source, shared } = useSharedPlot();
-  const a = resolveFrame(node.a, source);
-  const b = resolveFrame(node.b, source);
-  const baseIdx = node.baselineIndex ?? 0;
-  const reference = baseIdx === 0 ? a : b;
-  const foreground = baseIdx === 0 ? b : a;
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "ready"; a: ResolvedCompareFrame; b: ResolvedCompareFrame }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [a, b] = await Promise.all([
+          resolveFrame(node.a, source),
+          resolveFrame(node.b, source),
+        ]);
+        if (cancelled) return;
+        // Silent-empty guard (the bug): a side that resolves to NEITHER a url
+        // nor a float payload is unrenderable — surface the standard error
+        // state instead of a blank pane.
+        const missing: string[] = [];
+        if (!a.url && !a.float) missing.push("a");
+        if (!b.url && !b.float) missing.push("b");
+        if (missing.length) {
+          setState({
+            status: "error",
+            message: `compare side ${missing.join(" & ")} did not resolve to an image source`,
+          });
+          return;
+        }
+        setState({ status: "ready", a, b });
+      } catch (err) {
+        if (cancelled) return;
+        setState({
+          status: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [node, source]);
 
   // F2: honour the compare node's own `props` (interpolation/colormap/diff
   // submode/split/blend/…) — CompareView previously dropped them entirely. A
@@ -225,7 +317,8 @@ function CompareView({ node }: { node: CompareNode }) {
   // props, so without local state the separator has nowhere to write and can't
   // move. Own the split position here, seeded from the node's own prop.
   // (`blendAlpha` has no interactive control in the compositor — the blend is a
-  // static opacity — so it stays a plain prop.)
+  // static opacity — so it stays a plain prop.) Declared unconditionally (before
+  // the loading/error returns below) to satisfy the rules of hooks.
   const [splitPos, setSplitPos] = useState<number>(
     (props.splitPosition as number | undefined) ?? 0.5,
   );
@@ -240,12 +333,21 @@ function CompareView({ node }: { node: CompareNode }) {
     pan: { x: 0, y: 0 },
   });
 
+  if (state.status === "loading") return <Message text="Loading…" />;
+  if (state.status === "error") return <Message text={`Plot error: ${state.message}`} error />;
+
+  const baseIdx = node.baselineIndex ?? 0;
+  const reference = baseIdx === 0 ? state.a : state.b;
+  const foreground = baseIdx === 0 ? state.b : state.a;
+
   return (
     <ChartBox>
       <CompositeMediaPane
         mode={node.mode}
         imageUrl={foreground.url}
         baselineUrl={reference.url}
+        imageFloat={foreground.float}
+        baselineFloat={reference.float}
         diffSubmode={diffSubmode}
         colormap={colormap}
         interpolation={(props.interpolation as Interpolation | undefined) ?? "auto"}

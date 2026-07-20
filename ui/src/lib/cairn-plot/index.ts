@@ -183,6 +183,7 @@ export {
   resolveGlobalPositionalReference,
   CompositeMediaPane,
   CrossTypeCompositeMediaPane,
+  CompareFloatUnsupportedError,
   migrateLegacyMode,
   LEGACY_MODE_MIGRATION_TABLE,
   alignFrameSourcesForDiff,
@@ -198,6 +199,7 @@ export type {
   ReferenceSource,
   ReferenceSelection,
   CompositeMediaPaneProps,
+  CompareFloatSource,
   LegacyModeInputs,
   RasterAlignmentResult,
 } from "./media-compare";
