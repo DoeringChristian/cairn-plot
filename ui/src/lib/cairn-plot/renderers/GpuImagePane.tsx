@@ -301,6 +301,14 @@ export default function GpuImagePane(props: ImageBackendProps) {
     setColormapOverride(propColormap);
   }, [propColormap]);
   const sdrColormap = hdrMode ? "none" : colormapOverride;
+
+  // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
+  // display-only state — fed straight into the render pass below (the GPU shader
+  // applies `color * 2^EV + offset` before tonemap/colormap/encode). For the HDR
+  // path this display EV ADDS to the prop `exposure`; for SDR the prop exposure
+  // is 0 so it's the only exposure. Never triggers a source re-upload.
+  const [displayEV, setDisplayEV] = useState(0);
+  const [displayOffset, setDisplayOffset] = useState(0);
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
   // re-fire that sizing whenever `devicePixelRatio` itself changes (moving
@@ -559,7 +567,8 @@ export default function GpuImagePane(props: ImageBackendProps) {
     // read, is skipped whenever `hdrOut` is set).
     const params: ImageParams = hdrMode
       ? {
-          exposureEV: exposure,
+          exposureEV: exposure + displayEV,
+          offset: displayOffset,
           operator: useHdrRef.current ? "extended" : toOperator(tonemapName),
           gamma,
           isScalar: false,
@@ -567,7 +576,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
           uv,
           filter,
         }
-      : { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv, filter };
+      : { exposureEV: displayEV, offset: displayOffset, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv, filter };
     // C1 fix (whole-branch review): `handle.render()` is called SYNCHRONOUSLY
     // in this effect, so an uncaught throw here would unmount this pane's
     // whole subtree in React 18. `engine/pool.ts`'s `attemptRender` already
@@ -586,7 +595,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, tonemapName, gamma, hdrMode, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, tonemapName, gamma, hdrMode, dpr]);
 
   useEffect(() => {
     renderPass();
@@ -733,6 +742,14 @@ export default function GpuImagePane(props: ImageBackendProps) {
       // SDR single-image: a view-local COLORMAP menu (diff-kernels toolbar
       // track). HDR has no colormap prop (asymmetric by design), so it's omitted.
       leadingMenus={hdrMode ? undefined : [colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap))]}
+      // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
+      // in-pass (both HDR and SDR paths), so no source re-upload / diff recompute.
+      displayAdjust={{
+        exposureEV: displayEV,
+        offset: displayOffset,
+        onExposureChange: setDisplayEV,
+        onOffsetChange: setDisplayOffset,
+      }}
       label={label}
       showLabelChip={!!label}
       isDraggable={isDraggable}
