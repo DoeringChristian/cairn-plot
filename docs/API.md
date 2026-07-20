@@ -136,8 +136,9 @@ picked per mount by `resolveRenderMode(...)`.
 - `isHdrProps(props)` — the discriminant.
 - `type RenderMode = "cpu" | "gpu" | "auto"`; `resolveRenderMode(explicit?)`.
 - `interface HdrData` — a parsed float image buffer (`data`, `shape`, `dtype`).
-- `tonemapToImageData(hdr, tonemap, exposure, gamma?)` — pure HDR-float → `ImageData`
-  tone-mapper (exported from `CpuImagePane`).
+- `tonemapToImageData(hdr, tonemap, exposure, gamma?, offset?)` — pure HDR-float →
+  `ImageData` tone-mapper (exported from `CpuImagePane`). `offset` (default 0) is
+  the TEV display offset, added after exposure (before the tone-map operator).
 
 The prior `HdrGpuImagePaneProps` / `SdrGpuImagePaneProps` names and the
 `GpuImagePaneProps` / `ImageRenderProps` aliases were removed — use the canonical

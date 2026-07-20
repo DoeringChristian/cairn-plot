@@ -102,6 +102,18 @@ export function applyExposure(v: number, ev: number): number {
   return v * 2 ** ev;
 }
 
+/**
+ * The TEV-convention display adjustment applied to a scene value BEFORE the
+ * tone-map / colormap / output-encode stages: `v * 2**ev + offset`. Exposure is
+ * multiplicative (stops), the offset is additive AFTER exposure. Both default to
+ * the identity (`ev=0, offset=0` → `v`), so the display adjustment sliders leave
+ * an image bit-for-bit unchanged at rest. This is the single source of truth the
+ * CPU panes call; the WebGPU shaders port the same `v * exp2(ev) + offset` line
+ * (see `engine/shaders/image.wgsl.ts` / `engine/kernels/prelude.wgsl.ts`). */
+export function applyExposureOffset(v: number, ev: number, offset: number): number {
+  return v * 2 ** ev + offset;
+}
+
 /** The standard sRGB opto-electronic transfer function (linear → sRGB code). */
 export function srgbOetf(x: number): number {
   const v = clamp01(x);
