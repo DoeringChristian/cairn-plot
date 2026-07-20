@@ -53,7 +53,7 @@ import {
 import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
 import { loadImageData } from "../image";
-import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
+import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
 import PixelValueOverlay, {
@@ -76,13 +76,8 @@ import PixelValueOverlay, {
 // `GpuComparePaneProps` as a TYPE (`import type`), which TS/esbuild fully
 // erase, so this is not a runtime import cycle.
 import CpuImagePane from "../renderers/CpuImagePane";
+import ImagePaneShell from "../renderers/ImagePaneShell";
 import { MediaComparePane } from "./compositor";
-import PlotToolbar from "../primitives/PlotToolbar";
-import {
-  useImageController,
-  IMAGE_TOOLBAR_CONFIG,
-  notationToolbarButton,
-} from "../renderers/use-image-controller";
 
 export interface GpuComparePaneProps {
   imageUrl: string | null;
@@ -105,8 +100,6 @@ export interface GpuComparePaneProps {
   label?: string;
   pixelValueNotation?: PixelValueNotation;
 }
-
-const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 
 /** Uint8 256x3 LUT -> Float32 256x4 (RGBA, [0,1]) for `CompareParams.diffColormap`. */
 function floatLutFor(colormap: Exclude<Colormap, "none">): Float32Array {
@@ -145,6 +138,9 @@ export default function GpuComparePane({
   pixelValueNotation = "decimal",
 }: GpuComparePaneProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
+  // Attached by the shared shell (see `ImagePaneShell`); this pane measures
+  // `paneRef` (padding 0), not the wrapper, so it's here only for the shell.
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const resRef = useRef<GpuResources | null>(null);
 
@@ -160,8 +156,6 @@ export default function GpuComparePane({
   const [uploadVersion, setUploadVersion] = useState(0);
   const [containerTick, setContainerTick] = useState(0);
   const [metrics, setMetrics] = useState<DiffMetrics | null>(null);
-  const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
-  const [overlayActive, setOverlayActive] = useState(false);
   // The DISPLAYED uv window, for `PixelValueOverlay`'s
   // `sourceWindow` — same reasoning as `GpuImagePane`'s `overlayWindow`.
   const [overlayWindow, setOverlayWindow] = useState({ x: 0, y: 0, w: 1, h: 1 });
@@ -436,46 +430,12 @@ export default function GpuComparePane({
   const sampleFg = useMemo(() => makeSampler(fgDataRef), []);
   const sampleRef = useMemo(() => makeSampler(refDataRef), []);
 
-  const { containerProps: viewportProps } = useImageViewport({
-    containerRef: paneRef,
-    zoom,
-    pan,
-    onViewportChange,
-    // Q29: adaptive max-zoom — zoom until one source texel fills the viewport.
-    naturalWidth: dims?.w,
-    naturalHeight: dims?.h,
-  });
-
-  const resetViewport = useCallback(() => onViewportChange?.(HOME_VIEWPORT), [onViewportChange]);
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
-  // PlotToolbar controller (zoom/pan/reset/screenshot) for the composite
-  // compare view — one modebar zoom/pan/reset/screenshots the whole split/
-  // blend/diff composite. `requestRender` is `renderPass` so the screenshot
-  // forces a fresh WebGPU frame before reading the canvas back.
-  const controller = useImageController({
-    rootRef: paneRef,
-    canvasRef,
-    zoom,
-    pan,
-    onViewportChange,
-    naturalWidth: dims?.w,
-    naturalHeight: dims?.h,
-    requestRender: renderPass,
-  });
-
-  // Toolbar config: top-right (default) with the pixel-value notation toggle as
-  // a LEADING button while the overlay is active (replaces the old floating
-  // chip). The diff metrics chip sits just BELOW this toolbar (see render).
-  const toolbarConfig = useMemo(
-    () => ({
-      ...IMAGE_TOOLBAR_CONFIG,
-      leadingButtons: overlayActive
-        ? [notationToolbarButton(notation, setNotation)]
-        : [],
-    }),
-    [overlayActive, notation],
-  );
+  // The viewport interaction, the double-click reset, the PlotToolbar +
+  // `useImageController` wiring (with `requestRender: renderPass`) and the
+  // notation leading button all live in the shared `ImagePaneShell` — this
+  // compare pane keeps only its own render pass / metrics / split overlays.
 
   // C1 fix (whole-branch review) — engine bailout: on any activation/render
   // hard failure, self-heal to the LEGACY compare pane using the SAME props
@@ -521,159 +481,161 @@ export default function GpuComparePane({
     );
   }
 
-  return (
-    <div className="group relative flex flex-col h-full" data-gpu-compare-pane data-gpu-compare-ready={ready}>
-      {/* Top-right toolbar (default). The diff metrics chip is anchored just
-          below it (see below); the REF chip stays top-left and the label
-          bottom-right. */}
-      <PlotToolbar controller={controller} config={toolbarConfig} />
-      <div
-        ref={paneRef}
-        className="relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded cairn-checkerboard"
-        style={{ padding: 0, ...viewportProps.style }}
-        onPointerDown={viewportProps.onPointerDown}
-        onPointerMove={viewportProps.onPointerMove}
-        onPointerUp={viewportProps.onPointerUp}
-        onPointerCancel={viewportProps.onPointerCancel}
-        onDoubleClick={resetViewport}
-        data-gpu-compare-viewport
-      >
-        <div className="relative w-full h-full flex items-center justify-center">
-          {/* Q23/Q24 fix: the canvas is the FULL viewport — `w-full h-full`
-              of this wrapper, always (no inline CSS size, no object-fit) —
-              its device-pixel backing store tracks this box's measured CSS
-              size x devicePixelRatio (the render-pass effect above; Q22's
-              crispness fix, preserved). The image quads are placed inside
-              this full-canvas viewport by `viewportToUvRect` (letterboxed at
-              rest, filling/pannable at any zoom). Crucially, the split
-              divider below is ALSO positioned as a percentage of THIS SAME
-              wrapper's full width — since the canvas (and hence the
-              shader's screen-space `uv.x` the `split` uniform is compared
-              against) now spans exactly that same box, the divider and the
-              rendered A|B boundary are guaranteed to agree at any zoom/pane
-              aspect, by construction (Q23) — no separate coordinate
-              conversion needed here. */}
-          <canvas
-            ref={canvasRef}
-            className="w-full h-full block"
-            style={{ imageRendering: imgRendering }}
-            data-gpu-compare-canvas
-          />
-          {/* Full-height, gapless split divider — drives the `split` uniform. */}
-          {mode === "split" && (
-            <div
-              className="absolute top-0 bottom-0 z-20 flex items-center"
-              style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                onSplitPositionChange?.(0.5);
-              }}
-              onPointerDown={(ev) => {
-                ev.stopPropagation();
-                ev.preventDefault();
-                const container = ev.currentTarget.parentElement!;
-                const rect = container.getBoundingClientRect();
-                const onMoveEvt = (me: PointerEvent) => {
-                  onSplitPositionChange?.(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
-                };
-                const onUpEvt = () => {
-                  window.removeEventListener("pointermove", onMoveEvt);
-                  window.removeEventListener("pointerup", onUpEvt);
-                };
-                window.addEventListener("pointermove", onMoveEvt);
-                window.addEventListener("pointerup", onUpEvt);
-              }}
-            >
-              <div className="w-1 h-full bg-accent/80 rounded-full" />
-            </div>
-          )}
-        </div>
-
-        {/* Per-side TEV overlays. split -> each side clipped at the divider,
-            LEFT (x<split) = reference, RIGHT (x>=split) = foreground —
-            matching the corrected texA(=reference)/texB(=foreground) binding
-            and legacy `compositor.tsx`'s left-clipped-reference /
-            right-clipped-foreground panes; blend/diff -> single foreground
-            overlay (also matches legacy). */}
-        {mode === "split" ? (
-          <>
-            {baselineUrl && dims && (
-              <div
-                className="absolute inset-0 overflow-hidden pointer-events-none"
-                style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
-              >
-                <PixelValueOverlay
-                  imageElRef={canvasRef}
-                  naturalWidth={dims.w}
-                  naturalHeight={dims.h}
-                  zoom={zoom}
-                  pan={pan}
-                  sourceWindow={overlayWindow}
-                  sample={sampleRef}
-                  notation={notation}
-                  version={pixelDataVersion}
-                />
-              </div>
-            )}
-            {baselineUrl && dims && (
-              <div
-                className="absolute inset-0 overflow-hidden pointer-events-none"
-                style={{ clipPath: `inset(0 0 0 ${splitPosition * 100}%)` }}
-              >
-                <PixelValueOverlay
-                  imageElRef={canvasRef}
-                  naturalWidth={dims.w}
-                  naturalHeight={dims.h}
-                  zoom={zoom}
-                  pan={pan}
-                  sourceWindow={overlayWindow}
-                  sample={sampleFg}
-                  notation={notation}
-                  version={pixelDataVersion}
-                  onActiveChange={setOverlayActive}
-                />
-              </div>
-            )}
-          </>
-        ) : (
-          dims && (
-            <PixelValueOverlay
-              imageElRef={canvasRef}
-              naturalWidth={dims.w}
-              naturalHeight={dims.h}
-              zoom={zoom}
-              pan={pan}
-              sourceWindow={overlayWindow}
-              sample={sampleFg}
-              notation={notation}
-              version={pixelDataVersion}
-              onActiveChange={setOverlayActive}
-            />
-          )
-        )}
-      </div>
-
-      <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-        REF
-      </span>
-      {label ? (
-        <span className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
-          {label}
-        </span>
-      ) : null}
-      {metrics && (
-        <span
-          // The diff metrics sit just BELOW the top-right toolbar (hover-
-          // revealed, ~28px tall anchored at top:6px), right-aligned to tuck
-          // under it. The notation toggle now lives INSIDE the toolbar (a
-          // leading button), so there's no longer a separate chip to dodge.
-          className="absolute right-1.5 top-9 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono"
-          data-gpu-compare-metrics
+  // The canvas is the FULL viewport (`w-full h-full` of the shell's wrapper,
+  // no inline size / object-fit — only its device-pixel backing store is set
+  // imperatively in the render pass). The image quads are placed inside it by
+  // `viewportToUvRect`; the split divider below is positioned as a percentage
+  // of that SAME wrapper, so the divider and the shader's `split` boundary
+  // agree at any zoom/aspect by construction (Q23), no coordinate conversion.
+  const surface = (
+    <>
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full block"
+        style={{ imageRendering: imgRendering }}
+        data-gpu-compare-canvas
+      />
+      {/* Full-height, gapless split divider — drives the `split` uniform. */}
+      {mode === "split" && (
+        <div
+          className="absolute top-0 bottom-0 z-20 flex items-center"
+          style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onSplitPositionChange?.(0.5);
+          }}
+          onPointerDown={(ev) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+            const container = ev.currentTarget.parentElement!;
+            const rect = container.getBoundingClientRect();
+            const onMoveEvt = (me: PointerEvent) => {
+              onSplitPositionChange?.(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
+            };
+            const onUpEvt = () => {
+              window.removeEventListener("pointermove", onMoveEvt);
+              window.removeEventListener("pointerup", onUpEvt);
+            };
+            window.addEventListener("pointermove", onMoveEvt);
+            window.addEventListener("pointerup", onUpEvt);
+          }}
         >
-          MSE {metrics.mse.toExponential(2)} · PSNR {Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB · MAE{" "}
-          {metrics.mae.toExponential(2)}
-        </span>
+          <div className="w-1 h-full bg-accent/80 rounded-full" />
+        </div>
       )}
-    </div>
+    </>
+  );
+
+  return (
+    <ImagePaneShell
+      paneAttrs={{ "data-gpu-compare-pane": "", "data-gpu-compare-ready": ready }}
+      viewportAttrs={{ "data-gpu-compare-viewport": "" }}
+      toolbar
+      paneRef={paneRef}
+      wrapperRef={wrapperRef}
+      zoom={zoom}
+      pan={pan}
+      onViewportChange={onViewportChange}
+      naturalDims={dims}
+      checkerboard="pane"
+      wrapperClassName="relative w-full h-full flex items-center justify-center"
+      viewportPadding={0}
+      surface={surface}
+      showAxes={false}
+      notationSeed={pixelValueNotation}
+      exportCanvasRef={canvasRef}
+      requestRender={renderPass}
+      label=""
+      showLabelChip={false}
+      // Per-side TEV overlays. split -> each side clipped at the divider, LEFT
+      // (x<split) = reference, RIGHT (x>=split) = foreground (matching the
+      // texA=reference / texB=foreground binding + legacy compositor.tsx);
+      // blend/diff -> single foreground overlay. The shell owns the notation /
+      // active state and passes them in here.
+      overlay={{
+        render: ({ notation, setOverlayActive }) =>
+          mode === "split" ? (
+            <>
+              {baselineUrl && dims && (
+                <div
+                  className="absolute inset-0 overflow-hidden pointer-events-none"
+                  style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
+                >
+                  <PixelValueOverlay
+                    imageElRef={canvasRef}
+                    naturalWidth={dims.w}
+                    naturalHeight={dims.h}
+                    zoom={zoom}
+                    pan={pan}
+                    sourceWindow={overlayWindow}
+                    sample={sampleRef}
+                    notation={notation}
+                    version={pixelDataVersion}
+                  />
+                </div>
+              )}
+              {baselineUrl && dims && (
+                <div
+                  className="absolute inset-0 overflow-hidden pointer-events-none"
+                  style={{ clipPath: `inset(0 0 0 ${splitPosition * 100}%)` }}
+                >
+                  <PixelValueOverlay
+                    imageElRef={canvasRef}
+                    naturalWidth={dims.w}
+                    naturalHeight={dims.h}
+                    zoom={zoom}
+                    pan={pan}
+                    sourceWindow={overlayWindow}
+                    sample={sampleFg}
+                    notation={notation}
+                    version={pixelDataVersion}
+                    onActiveChange={setOverlayActive}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            dims && (
+              <PixelValueOverlay
+                imageElRef={canvasRef}
+                naturalWidth={dims.w}
+                naturalHeight={dims.h}
+                zoom={zoom}
+                pan={pan}
+                sourceWindow={overlayWindow}
+                sample={sampleFg}
+                notation={notation}
+                version={pixelDataVersion}
+                onActiveChange={setOverlayActive}
+              />
+            )
+          ),
+      }}
+      extraChips={
+        <>
+          <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
+            REF
+          </span>
+          {label ? (
+            <span className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
+              {label}
+            </span>
+          ) : null}
+          {metrics && (
+            <span
+              // The diff metrics sit just BELOW the top-right toolbar (hover-
+              // revealed, ~28px tall anchored at top:6px), right-aligned to tuck
+              // under it. The notation toggle lives INSIDE the toolbar (a
+              // leading button), so there's no separate chip to dodge.
+              className="absolute right-1.5 top-9 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono"
+              data-gpu-compare-metrics
+            >
+              MSE {metrics.mse.toExponential(2)} · PSNR {Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB · MAE{" "}
+              {metrics.mae.toExponential(2)}
+            </span>
+          )}
+        </>
+      }
+    />
   );
 }
