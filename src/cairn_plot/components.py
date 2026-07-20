@@ -1,7 +1,7 @@
 """G2: the Plotly-style composable ``cairn.plot`` API.
 
 ``import cairn.plot as cp`` then compose capitalized objects —
-:class:`Scalar`, :class:`Figure`, :class:`Table`, :class:`Image`,
+:class:`Line`, :class:`Figure`, :class:`Table`, :class:`Image`,
 :class:`Compare`, :class:`Grid` — into a recursive tree that renders
 self-contained in any notebook (design spec §5–§7 / plan G2).
 
@@ -295,7 +295,7 @@ class Component:
 
 
 # ---------------------------------------------------------------------------
-# Leaves — cp.Scalar / Figure / Table / Image.
+# Leaves — cp.Line / Figure / Table / Image.
 # ---------------------------------------------------------------------------
 
 
@@ -343,12 +343,6 @@ class Line(Component):
             "renderer": "scalar",
             "data": {"kind": "inline", "props": self._inline},
         }
-
-
-# ``cp.Scalar`` is the deprecated pre-G2 name for a line chart — a scalar
-# sequence IS a line plot. Kept as a thin alias (case-sensitive; distinct from
-# the lowercase ``cp.scalar`` builder that returns a ``PlotElement``).
-Scalar = Line
 
 
 class Scatter(Component):

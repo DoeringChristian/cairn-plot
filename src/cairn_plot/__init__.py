@@ -40,7 +40,6 @@ from .components import (
     Mesh,
     ParallelCoordinates,
     PointCloud,
-    Scalar,
     Scatter,
     Shared,
     Table,
@@ -71,8 +70,9 @@ __version__ = "0.1.0"
 
 def scalar(data: Any, *, data_mode: str = "local") -> PlotElement:
     """A single scalar-sequence plot (mounts the pure ``ScalarPlot`` renderer).
-    ``data``: raw numeric values (any array-like) or a ``run[tag]`` handle."""
-    return Scalar(data, data_mode=data_mode)._build_element()
+    ``data``: raw numeric values (any array-like) or a ``run[tag]`` handle. A
+    scalar sequence IS a line plot — this is a thin front over :class:`Line`."""
+    return Line(data, data_mode=data_mode)._build_element()
 
 
 def line(
@@ -170,7 +170,6 @@ __all__ = [
     "PlotElement",
     "Element",
     "HtmlElement",
-    "Scalar",  # deprecated alias == Line
     # Lowercase builders (return a PlotElement).
     "scalar",
     "line",

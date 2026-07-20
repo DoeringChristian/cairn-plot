@@ -41,8 +41,8 @@ def _require_plotly() -> Any:
         import plotly.graph_objects as go
     except ImportError as exc:  # pragma: no cover - exercised via mark.media skip
         raise ImportError(
-            "cairn.plot requires plotly. Install it with `pip install "
-            "cairn-track[media]`."
+            "cairn_plot figure recipes require plotly. Install it with "
+            "`pip install cairn-plot[media]`."
         ) from exc
     return go
 

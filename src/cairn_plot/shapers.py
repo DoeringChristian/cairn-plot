@@ -487,8 +487,8 @@ def _encode_image_raw(data: Any) -> tuple[bytes, str]:
         from PIL import Image as _PILImage
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "cairn.plot.image(...) with a raw PIL/ndarray image requires "
-            "Pillow. Install it with `pip install cairn-track[media]`."
+            "cairn_plot.image(...) with a raw PIL/ndarray image requires "
+            "Pillow. Install it with `pip install cairn-plot[media]`."
         ) from exc
     import io as _io
 
