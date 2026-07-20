@@ -141,6 +141,13 @@ function dumpDom(chrome) {
   const url = pathToFileURL(GALLERY_HTML).href;
   const args = [
     "--headless=new",
+    // CI runners ship Chromium with an unconfigured SUID sandbox helper
+    // (chrome-sandbox not root:4755), which makes Chrome ABORT before loading
+    // anything — --dump-dom then produces 0 bytes. The sandbox protects
+    // against hostile web content; this harness only ever loads the locally
+    // generated gallery file, so disabling it is safe and standard for CI.
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
     "--disable-gpu",
     // Software WebGL (SwiftShader) so the WebGL/three.js 3D sections
     // (PointCloud / Mesh / Volume / Boxes) still mount a <canvas> headlessly —
