@@ -337,6 +337,21 @@ def build_gallery() -> list[tuple[str, object]]:
         ),
     ))
 
+    # ── FLIP at scale: 2048×2048 ──────────────────────────────────────────
+    # Same structured pair at production render resolution. Exercises the
+    # GPU pipeline where it matters: the multi-pass FLIP kernel (CSF
+    # filtering + feature detection) runs once at 2048² into the cached
+    # result texture — mode/colormap switches re-blit without recomputing,
+    # and zoom/pan stays texture-sampling only. The pair bakes as two PNGs
+    # (the smooth field compresses well), so the page stays portable.
+    big_pred, big_ref = _render_pair(w=2048, h=2048)
+    items.append((
+        "FLIP at scale — 2048×2048 (kernel runs once into the cached result; "
+        "zoom in for per-pixel FLIP values)",
+        cp.Compare(cp.Image(big_pred), cp.Image(big_ref), mode="flip",
+                   colormap="magma"),
+    ))
+
     # ── 3D (WebGL): mesh / volume / boxes ─────────────────────────────────
     verts, faces, vals = _mesh()
     items.append((
