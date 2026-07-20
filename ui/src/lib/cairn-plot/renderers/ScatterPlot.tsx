@@ -7,10 +7,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { SERIES_COLORS, type ScatterPoint } from "../types";
+import { SERIES_COLORS, type ScatterPoint, type ColormapName } from "../types";
 import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
-import { viridis } from "../colormaps/viridis";
+import { colormapColor } from "../colormaps/sample";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { AXIS, niceTicks, paddedDomain } from "../theme";
@@ -50,6 +50,8 @@ export interface ScatterPlotProps {
   onBackgroundClick?: () => void;
   tooltipContent?: (point: ScatterPoint) => ReactNode;
   colors?: string[];
+  /** Colormap for the color-by-value marker fill + colorbar. Default "viridis". */
+  colormap?: ColormapName;
   className?: string;
 }
 
@@ -67,6 +69,7 @@ export default function ScatterPlot({
   onBackgroundClick,
   tooltipContent,
   colors = DEFAULT_COLORS,
+  colormap = "viridis",
   className,
 }: ScatterPlotProps) {
   const rawId = useId();
@@ -341,7 +344,7 @@ export default function ScatterPlot({
               const t =
                 (pt.color - colorDomain.min) /
                 (colorDomain.max - colorDomain.min);
-              color = viridis(t);
+              color = colormapColor(colormap, t);
             } else {
               color = colors[i % colors.length];
             }
@@ -394,9 +397,9 @@ export default function ScatterPlot({
               <>
                 <defs>
                   <linearGradient id={gradientId} x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor={viridis(0)} />
-                    <stop offset="50%" stopColor={viridis(0.5)} />
-                    <stop offset="100%" stopColor={viridis(1)} />
+                    <stop offset="0%" stopColor={colormapColor(colormap, 0)} />
+                    <stop offset="50%" stopColor={colormapColor(colormap, 0.5)} />
+                    <stop offset="100%" stopColor={colormapColor(colormap, 1)} />
                   </linearGradient>
                 </defs>
                 <rect

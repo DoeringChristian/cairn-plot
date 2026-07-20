@@ -95,6 +95,25 @@ def _resolver(name: str) -> Any:
     return fn
 
 
+# The named scalar colormaps every renderer offers — mirrors the TS
+# `COLORMAP_STOPS` keys (`ui/.../colormaps/lut.ts`) and the `Colormap` union
+# minus the image-only `"none"` passthrough (a color-by-value chart always
+# needs a real ramp). Kept as one canonical tuple so Scatter / ParallelCoordinates
+# / Heatmap validate against the same allowed set with one error style.
+_COLORMAPS = ("viridis", "plasma", "red-green", "red-blue")
+
+
+def _check_colormap(value: str) -> str:
+    """Validate a chart's ``colormap`` kwarg against the named colormap set,
+    raising a clear ``ValueError`` (same style as ``_check_pixel_value_notation``)
+    on an unknown name."""
+    if value not in _COLORMAPS:
+        raise ValueError(
+            f"colormap must be one of {_COLORMAPS!r}, got {value!r}"
+        )
+    return value
+
+
 # The compare compositor's INTERNAL descriptor modes — ALL now lower to a
 # `compare` node (`"side"` included, so the view-mode menu can switch it
 # client-side; it renders the 2-pane side-by-side VISUAL owned by the compare
@@ -360,8 +379,9 @@ class Scatter(Component):
     """A scatter plot (renderer key ``scatter``).
 
     ``cp.Scatter(x, y, *, color=None, labels=None, x_label=None, y_label=None,
-    color_label=None, x_log=False, y_log=False)``. ``color`` is a per-point
-    numeric value mapped through the viridis colorbar. Raw-only (``local``)."""
+    color_label=None, x_log=False, y_log=False, colormap="viridis")``. ``color``
+    is a per-point numeric value mapped through the ``colormap`` colorbar (one of
+    ``viridis``/``plasma``/``red-green``/``red-blue``). Raw-only (``local``)."""
 
     _label = "scatter"
 
@@ -377,12 +397,14 @@ class Scatter(Component):
         color_label: str | None = None,
         x_log: bool = False,
         y_log: bool = False,
+        colormap: str = "viridis",
     ) -> None:
         from .shapers import _scatter_points_from_raw
 
+        _check_colormap(colormap)
         points = _scatter_points_from_raw(x, y, color=color, labels=labels)
         self._inline = {"points": points}
-        cfg: dict[str, Any] = {}
+        cfg: dict[str, Any] = {"colormap": colormap}
         if x_label is not None:
             cfg["xLabel"] = x_label
         if y_label is not None:
@@ -526,6 +548,7 @@ class Heatmap(Component):
     ) -> None:
         from .shapers import _check_data_mode, _heatmap_matrix_from_raw
 
+        _check_colormap(colormap)
         _check_data_mode(data_mode)
         if _is_data_ref(z):
             arr = z.run.artifact(z.tag, step=z.step)
@@ -567,28 +590,33 @@ class Heatmap(Component):
 class ParallelCoordinates(Component):
     """A parallel-coordinates plot (renderer key ``parallel``).
 
-    ``cp.ParallelCoordinates(dimensions)`` where ``dimensions`` is a list of
-    ``{label, values}`` dicts (Plotly-style), a ``{label: values}`` dict, or a
-    pandas ``DataFrame`` (duck-typed). Numeric columns keep their scale;
-    non-numeric columns are treated categorically (first-seen index). The last
-    column drives the line color. Raw-only (``local``)."""
+    ``cp.ParallelCoordinates(dimensions, *, colormap="viridis")`` where
+    ``dimensions`` is a list of ``{label, values}`` dicts (Plotly-style), a
+    ``{label: values}`` dict, or a pandas ``DataFrame`` (duck-typed). Numeric
+    columns keep their scale; non-numeric columns are treated categorically
+    (first-seen index). The last column drives the line color, mapped through the
+    ``colormap`` ramp (one of ``viridis``/``plasma``/``red-green``/``red-blue``).
+    Raw-only (``local``)."""
 
     _label = "parallel"
 
-    def __init__(self, dimensions: Any) -> None:
+    def __init__(self, dimensions: Any, *, colormap: str = "viridis") -> None:
         from .shapers import _parallel_from_dimensions
 
+        _check_colormap(colormap)
         columns, rows, column_domains = _parallel_from_dimensions(dimensions)
         self._inline = {
             "columns": columns,
             "rows": rows,
             "columnDomains": column_domains,
         }
+        self._config = {"colormap": colormap}
 
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
             "renderer": "parallel",
+            "props": self._config,
             "data": {"kind": "inline", "props": self._inline},
         }
 
