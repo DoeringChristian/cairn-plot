@@ -22,6 +22,7 @@ import {
   CompositeMediaPane,
   decodeImage,
   decodedU8ToDataUrl,
+  parseNpy,
   parseOverlay,
   resolveImageViewportItems,
   type ColormapName,
@@ -250,6 +251,30 @@ async function resolveFrame(
     );
     const item = res.items[0] ?? null;
     return { url: item?.url ?? null, overlay: item?.overlay ?? undefined };
+  }
+  if (data.kind === "imghdr") {
+    // True float-HDR side (`cp.Image(hdr_float)`): fetch the float `.npy` from
+    // the store/endpoint and hand the GPU compare pane a `CompareFloatSource`
+    // (uploaded as `rgba32float`), mirroring the `.exr`/float-`.npy` URL path
+    // above. This is what makes `mode="flip"` auto-dispatch to HDR-FLIP on baked
+    // HDR arrays. The store hash is the stable diff-cache content key. No `meta`
+    // needed — shape/channels come from the npy header itself.
+    if (!data.hash) return { url: null };
+    const npy = parseNpy(await source.bytes(data.hash));
+    const height = npy.shape[0] ?? 0;
+    const width = npy.shape[1] ?? 0;
+    const channels = npy.shape.length >= 3 ? (npy.shape[2] ?? 1) : 1;
+    if (!width || !height) return { url: null };
+    return {
+      url: null,
+      float: {
+        data: Float32Array.from(npy.data),
+        width,
+        height,
+        channels,
+        contentKey: data.hash,
+      },
+    };
   }
   // `inline` frames have no image URL — compare needs images.
   return { url: null };

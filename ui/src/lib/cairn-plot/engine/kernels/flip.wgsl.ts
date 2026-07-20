@@ -17,9 +17,14 @@
  * uniforms (see `prelude.wgsl.ts`'s SEPARABLE_CONV_NOTE). `displayRange:"unit"`
  * — the output is already in [0,1].
  *
- * ## LDR only (spec: out of scope = HDR-FLIP)
- * Inputs are assumed sRGB/display-encoded LDR. Float/HDR sources are not
- * tone-mapped here; callers must feed LDR sources (the pane uploads rgba8unorm).
+ * ## LDR-FLIP + forced-LDR
+ * `flipKernel` assumes sRGB/display-encoded LDR inputs (u8 sources). For FLOAT
+ * (HDR) sources the public `flip` mode auto-dispatches to HDR-FLIP
+ * (`hdr-flip.ts`) instead; `flipLdrForcedKernel` (public `flip_ldr`) forces the
+ * LDR comparison on float sources by clamping the linear values to the display
+ * range first (see `YCXCZ_LINEAR_CLAMP_SHADER`). This file also exports the
+ * shared LDR pass pieces (`LAB_SHADER`, `COMBINE_SHADER`, filter constants,
+ * `buildLdrFlipPasses`) that HDR-FLIP reuses per exposure.
  */
 import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl";
 import { FLIP_CMAX } from "./flip-reference";
@@ -29,7 +34,7 @@ import type { BindGroupEntry } from "../types";
 const GW = 0.082;
 
 // ---- CPU-side filter constants (match flip-reference.ts) -------------------
-function csfConstants(ppd: number): { r: number; deltaX: number; sums: [number, number, number] } {
+export function csfConstants(ppd: number): { r: number; deltaX: number; sums: [number, number, number] } {
   const a1 = [1.0, 1.0, 34.1];
   const b1 = [0.0047, 0.0053, 0.04];
   const a2 = [0.0, 0.0, 13.5];
@@ -52,7 +57,7 @@ function csfConstants(ppd: number): { r: number; deltaX: number; sums: [number, 
   return { r, deltaX, sums };
 }
 
-function featureConstants(ppd: number): { r: number; sd: number; edgeNorm: number; pointPos: number; pointNeg: number } {
+export function featureConstants(ppd: number): { r: number; sd: number; edgeNorm: number; pointPos: number; pointNeg: number } {
   const sd = 0.5 * GW * ppd;
   const r = Math.ceil(3 * sd);
   let edgePos = 0;
@@ -83,7 +88,23 @@ ${FLIP_COLOR_WGSL}
 }
 `;
 
-const LAB_SHADER = `
+// Forced-LDR-on-float front-end: the source is LINEAR float (not sRGB), so we
+// tone-map with the default srgb operator = clamp to [0,1] then (implicitly)
+// sRGB-encode-for-display. LDR-FLIP would sRGB-DECODE its input, so encode∘decode
+// cancels and the net linear value entering YCxCz is exactly `clamp(linear,0,1)`
+// — i.e. compare what the two HDR images look like once clipped to the display.
+export const YCXCZ_LINEAR_CLAMP_SHADER = `
+${VERTEX_WGSL}
+${FLIP_COLOR_WGSL}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let px = vec2<i32>(in.position.xy);
+  let s = textureLoad(src, px, 0);
+  return vec4<f32>(flip_linrgb2ycxcz(clamp(s.rgb, vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
+}
+`;
+
+export const LAB_SHADER = `
 ${VERTEX_WGSL}
 ${FLIP_COLOR_WGSL}
 @group(0) @binding(0) var ycxcz: texture_2d<f32>;
@@ -119,7 +140,7 @@ const PI = 3.14159265358979;
 }
 `;
 
-const COMBINE_SHADER = `
+export const COMBINE_SHADER = `
 ${VERTEX_WGSL}
 @group(0) @binding(0) var labA: texture_2d<f32>;
 @group(0) @binding(3) var labB: texture_2d<f32>;
@@ -195,8 +216,53 @@ fn hyab(l1: vec3<f32>, l2: vec3<f32>) -> f32 {
 }
 `;
 
-function u(binding: number, arr: number[]): BindGroupEntry {
+export function u(binding: number, arr: number[]): BindGroupEntry {
   return { binding, resource: { uniform: new Float32Array(arr) } };
+}
+
+/** Per-pass uniform builders for LAB (CSF-filter) and COMBINE passes, shared by
+ *  LDR-FLIP (this file) and HDR-FLIP (`hdr-flip.ts`, per-exposure). */
+export function labUniforms(csf: ReturnType<typeof csfConstants>): (BindGroupEntry)[] {
+  return [u(1, [csf.deltaX, csf.r, csf.sums[0], csf.sums[1]]), u(2, [csf.sums[2], 0, 0, 0])];
+}
+export function combineUniforms(feat: ReturnType<typeof featureConstants>): BindGroupEntry[] {
+  return [u(4, [FLIP_CMAX, feat.sd, feat.r, feat.edgeNorm]), u(5, [feat.pointPos, feat.pointNeg, 0, 0])];
+}
+
+/**
+ * Build the LDR-FLIP pass graph for one already-source-space pair, given the
+ * front-end YCxCz shader (`ycxczShader`) that maps each source to YCxCz. Suffix
+ * lets HDR-FLIP instantiate one sub-graph per exposure with unique texture refs;
+ * for LDR the suffix is empty. Returns the passes + the ref of the flip output.
+ */
+export function buildLdrFlipPasses(
+  ppd: number,
+  ycxczShader: string,
+  srcA: string,
+  srcB: string,
+  suffix = "",
+): { passes: KernelPass[]; flipRef: string } {
+  const csf = csfConstants(ppd);
+  const feat = featureConstants(ppd);
+  const yA = `ycxczA${suffix}`;
+  const yB = `ycxczB${suffix}`;
+  const lA = `labA${suffix}`;
+  const lB = `labB${suffix}`;
+  const flip = `flip${suffix}`;
+  const passes: KernelPass[] = [
+    { name: yA, shader: ycxczShader, inputs: [srcA], output: yA },
+    { name: yB, shader: ycxczShader, inputs: [srcB], output: yB },
+    { name: lA, shader: LAB_SHADER, inputs: [yA], output: lA, uniforms: () => labUniforms(csf) },
+    { name: lB, shader: LAB_SHADER, inputs: [yB], output: lB, uniforms: () => labUniforms(csf) },
+    {
+      name: flip,
+      shader: COMBINE_SHADER,
+      inputs: [lA, lB, yA, yB],
+      output: flip,
+      uniforms: () => combineUniforms(feat),
+    },
+  ];
+  return { passes, flipRef: flip };
 }
 
 export const flipKernel: MultipassKernel = {
@@ -208,36 +274,29 @@ export const flipKernel: MultipassKernel = {
   params: { ppd: 67 },
   buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;
-    const csf = csfConstants(ppd);
-    const feat = featureConstants(ppd);
-    const passes: KernelPass[] = [
-      { name: "ycxczA", shader: YCXCZ_SHADER, inputs: ["srcA"], output: "ycxczA" },
-      { name: "ycxczB", shader: YCXCZ_SHADER, inputs: ["srcB"], output: "ycxczB" },
-      {
-        name: "labA",
-        shader: LAB_SHADER,
-        inputs: ["ycxczA"],
-        output: "labA",
-        uniforms: () => [u(1, [csf.deltaX, csf.r, csf.sums[0], csf.sums[1]]), u(2, [csf.sums[2], 0, 0, 0])],
-      },
-      {
-        name: "labB",
-        shader: LAB_SHADER,
-        inputs: ["ycxczB"],
-        output: "labB",
-        uniforms: () => [u(1, [csf.deltaX, csf.r, csf.sums[0], csf.sums[1]]), u(2, [csf.sums[2], 0, 0, 0])],
-      },
-      {
-        name: "combine",
-        shader: COMBINE_SHADER,
-        inputs: ["labA", "labB", "ycxczA", "ycxczB"],
-        output: "flip",
-        uniforms: () => [
-          u(4, [FLIP_CMAX, feat.sd, feat.r, feat.edgeNorm]),
-          u(5, [feat.pointPos, feat.pointNeg, 0, 0]),
-        ],
-      },
-    ];
-    return { passes, final: "flip" };
+    const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_SHADER, "srcA", "srcB");
+    return { passes, final: flipRef };
+  },
+};
+
+/**
+ * Forced-LDR FLIP for FLOAT sources (`flip_ldr` on HDR sources; spec addendum).
+ * Identical to LDR-FLIP except the front-end reads LINEAR float and clamps to
+ * [0,1] (the default srgb tone-map operator) instead of sRGB-decoding — see
+ * `YCXCZ_LINEAR_CLAMP_SHADER`. On u8 sources the public `flip_ldr` resolves to
+ * the plain `flip` kernel instead (auto-dispatch, `kernels/index.ts`), so this
+ * kernel only ever runs on float sources.
+ */
+export const flipLdrForcedKernel: MultipassKernel = {
+  kind: "multipass",
+  id: "flip-ldr-forced",
+  label: "FLIP (LDR forced)",
+  publicName: "flip_ldr",
+  displayRange: "unit",
+  params: { ppd: 67 },
+  buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
+    const ppd = ctx.params.ppd ?? 67;
+    const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_LINEAR_CLAMP_SHADER, "srcA", "srcB");
+    return { passes, final: flipRef };
   },
 };

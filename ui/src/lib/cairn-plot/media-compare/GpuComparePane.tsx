@@ -55,7 +55,8 @@ import {
   renderDiffDisplay,
   type DiffCacheEntry,
 } from "../engine/diff-engine";
-import { getDiffKernel, listDiffKernels } from "../engine/kernels";
+import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId } from "../engine/kernels";
+import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
 import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
@@ -292,10 +293,13 @@ export default function GpuComparePane({
   //   COLORMAP — the registered colormaps; shown only in diff mode (colormap has
   //          no effect on slide/blend). Display-only (view-local state).
   const leadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
+    // `listDiffMenuModes()` collapses the FLIP family to one "FLIP (perceptual)"
+    // entry (`flip`, auto-dispatched LDR/HDR by source type) + "FLIP (LDR
+    // forced)" (`flip_ldr`) — HDR-FLIP is never listed separately.
     const modeOptions = [
       { id: "slide", label: "Slide" },
       { id: "blend", label: "Blend" },
-      ...listDiffKernels().map((k) => ({ id: k.id, label: k.label })),
+      ...listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
     ];
     const modeValue = compareMode === "diff" ? diffKernel : compareMode === "split" ? "slide" : "blend";
     const modeMenu: ToolbarButtonSpec = {
@@ -491,10 +495,29 @@ export default function GpuComparePane({
   // `signed`-range kernels center 0 at the LUT midpoint (cmap "signed"), the
   // rest push [0,1] into the upper half (cmap "positive") — same visual
   // convention the legacy diff blit used, now derived from the registry.
+  // Auto-dispatch (spec addendum): float sources (imghdr / f32 EXR) route the
+  // public `flip` selection → HDR-FLIP and `flip_ldr` → forced-LDR; u8 sources
+  // keep LDR-FLIP. Either side being float is enough to make the pair "float".
+  const sourcesAreFloat = imageFloat != null || baselineFloat != null;
+  const resolvedKernelId = useMemo(
+    () => resolveDiffKernelId(diffKernel, sourcesAreFloat),
+    [diffKernel, sourcesAreFloat],
+  );
+  // HDR-FLIP exposure range: computed once per REFERENCE source content from its
+  // linear luminance (max + median) — deterministic, so it folds into the diff
+  // cache key without ever triggering a recompute on zoom/pan. The pane already
+  // holds the decoded float array (`*Float.data`), so no GPU readback is needed.
+  const hdrExposures = useMemo(() => {
+    if (!sourcesAreFloat) return null;
+    const ref = baselineFloat ?? imageFloat;
+    if (!ref) return null;
+    return computeHdrFlipExposures(ref.data, ref.width, ref.height, ref.channels);
+  }, [sourcesAreFloat, baselineFloat, imageFloat]);
+
   const diffCmapMode = useMemo<"linear" | "signed" | "positive">(() => {
-    const range = getDiffKernel(diffKernel)?.displayRange ?? "unit";
+    const range = getDiffKernel(resolvedKernelId)?.displayRange ?? "unit";
     return range === "signed" ? "signed" : "positive";
-  }, [diffKernel]);
+  }, [resolvedKernelId]);
   const diffColormap = useMemo<Float32Array | undefined>(
     () => (colormapState !== "none" ? floatLutFor(colormapState as Exclude<Colormap, "none">) : undefined),
     [colormapState],
@@ -562,13 +585,26 @@ export default function GpuComparePane({
         // point (b): "the URL string remains the content key".)
         const contentKeyRef = baselineFloat?.contentKey ?? baselineUrl ?? imageFloat?.contentKey ?? imageUrl ?? "none";
         const contentKeyFg = imageFloat?.contentKey ?? imageUrl ?? baselineFloat?.contentKey ?? baselineUrl ?? "none";
-        const kernel = getDiffKernel(diffKernel);
+        // Auto-dispatch the selected mode to a concrete kernel by source type
+        // (float → HDR-FLIP / forced-LDR; u8 → LDR-FLIP). HDR-FLIP needs the
+        // reference-derived exposure range in its params so they enter the cache
+        // key (deterministic per source; recomputed only when the content changes).
+        const kernelId = getDiffKernel(resolvedKernelId) ? resolvedKernelId : "absolute";
+        const diffParams: Record<string, number> | undefined =
+          kernelId === "hdr-flip" && hdrExposures
+            ? {
+                ppd: 67,
+                startExposure: hdrExposures.startExposure,
+                stopExposure: hdrExposures.stopExposure,
+                numExposures: hdrExposures.numExposures,
+              }
+            : undefined;
         const entry: DiffCacheEntry = ensureDiff(
           r.device,
           r.texA,
           r.texB,
-          kernel ? diffKernel : "absolute",
-          undefined,
+          kernelId,
+          diffParams,
           contentKeyRef,
           contentKeyFg,
         );
@@ -609,6 +645,8 @@ export default function GpuComparePane({
     splitPosition,
     blendAlpha,
     diffKernel,
+    resolvedKernelId,
+    hdrExposures,
     diffCmapMode,
     diffColormap,
     imageUrl,
@@ -706,7 +744,7 @@ export default function GpuComparePane({
           // FLIP is GPU-only (spec: CPU compare keeps its pointwise modes) —
           // if the GPU pane fell back, map the selected kernel to a valid CPU
           // DiffMode (the pointwise ids are 1:1; `flip` degrades to `absolute`).
-          diffMode={(getDiffKernel(diffKernel)?.kind === "pointwise" ? diffKernel : "absolute") as DiffMode}
+          diffMode={(getDiffKernel(resolvedKernelId)?.kind === "pointwise" ? resolvedKernelId : "absolute") as DiffMode}
           interpolation={interpolation}
           colormap={colormapState}
           showAxes={false}

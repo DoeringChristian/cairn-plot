@@ -126,11 +126,17 @@ fn flip_srgb2linear(c: f32) -> f32 {
   if (c <= 0.04045) { return c / 12.92; }
   return pow((c + 0.055) / 1.055, 2.4);
 }
-fn flip_rgb2ycxcz(srgb: vec3<f32>) -> vec3<f32> {
-  let lin = vec3<f32>(flip_srgb2linear(srgb.r), flip_srgb2linear(srgb.g), flip_srgb2linear(srgb.b));
+// Linear RGB -> YCxCz (no OETF decode). Used by HDR-FLIP (tone-mapped, already
+// linear inputs, hdr-flip.ts) and forced-LDR-on-float (linear-clamp input,
+// flip.wgsl.ts); matches flip-reference.ts's linrgb2ycxcz.
+fn flip_linrgb2ycxcz(lin: vec3<f32>) -> vec3<f32> {
   let xyz = M_RGB2XYZ * lin;
   let n = xyz * WHITE_INV;
   return vec3<f32>(116.0 * n.y - 16.0, 500.0 * (n.x - n.y), 200.0 * (n.y - n.z));
+}
+fn flip_rgb2ycxcz(srgb: vec3<f32>) -> vec3<f32> {
+  let lin = vec3<f32>(flip_srgb2linear(srgb.r), flip_srgb2linear(srgb.g), flip_srgb2linear(srgb.b));
+  return flip_linrgb2ycxcz(lin);
 }
 fn flip_ycxcz2linrgb(yc: vec3<f32>) -> vec3<f32> {
   let yy = (yc.x + 16.0) / 116.0;

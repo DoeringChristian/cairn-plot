@@ -28,7 +28,7 @@
  */
 
 // linear RGB -> XYZ (D65) — exact rationals from FLIP.h.
-const M_RGB2XYZ = [
+export const M_RGB2XYZ = [
   [10135552 / 24577794, 8788810 / 24577794, 4435075 / 24577794],
   [2613072 / 12288897, 8788810 / 12288897, 887015 / 12288897],
   [1425312 / 73733382, 8788810 / 73733382, 70074185 / 73733382],
@@ -65,7 +65,7 @@ function srgb2linear(c: number): number {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
-function mat3mul(m: number[][], x: number, y: number, z: number): [number, number, number] {
+export function mat3mul(m: number[][], x: number, y: number, z: number): [number, number, number] {
   return [
     m[0]![0]! * x + m[0]![1]! * y + m[0]![2]! * z,
     m[1]![0]! * x + m[1]![1]! * y + m[1]![2]! * z,
@@ -73,11 +73,17 @@ function mat3mul(m: number[][], x: number, y: number, z: number): [number, numbe
   ];
 }
 
-function xyz2ycxcz(x: number, y: number, z: number): [number, number, number] {
+export function xyz2ycxcz(x: number, y: number, z: number): [number, number, number] {
   const nx = x * WHITE_INV[0];
   const ny = y * WHITE_INV[1];
   const nz = z * WHITE_INV[2];
   return [116 * ny - 16, 500 * (nx - ny), 200 * (ny - nz)];
+}
+
+/** Linear RGB -> YCxCz (no sRGB decode). Used by HDR-FLIP / forced-LDR. */
+export function linrgb2ycxcz(r: number, g: number, b: number): [number, number, number] {
+  const [x, y, z] = mat3mul(M_RGB2XYZ, r, g, b);
+  return xyz2ycxcz(x, y, z);
 }
 
 function ycxcz2linrgb(Y: number, Cx: number, Cz: number): [number, number, number] {
@@ -248,14 +254,33 @@ export function flipLDR(
       const r = srgb2linear(src[i * 3]!);
       const g = srgb2linear(src[i * 3 + 1]!);
       const b = srgb2linear(src[i * 3 + 2]!);
-      const [x, y, z] = mat3mul(M_RGB2XYZ, r, g, b);
-      const [Y, Cx, Cz] = xyz2ycxcz(x, y, z);
+      const [Y, Cx, Cz] = linrgb2ycxcz(r, g, b);
       dst[0]![i] = Y;
       dst[1]![i] = Cx;
       dst[2]![i] = Cz;
     }
   }
+  return flipCoreFromYCxCz(refYc as YCxCzPlanes, testYc as YCxCzPlanes, W, H, ppd);
+}
 
+/** [Y, Cx, Cz] planes, each length W*H, row-major. */
+export type YCxCzPlanes = [Float64Array, Float64Array, Float64Array];
+
+/**
+ * FLIP stages 2–5 (CSF filter → Hunt-Lab → HyAB color diff → feature diff →
+ * combine) given the two images already in YCxCz. Shared verbatim by LDR-FLIP
+ * (`flipLDR`, sRGB→YCxCz front-end) and HDR-FLIP (`hdr-flip-reference.ts`,
+ * per-exposure tone-map→linRGB→YCxCz front-end), so both agree bit-for-bit on
+ * the perceptual core.
+ */
+export function flipCoreFromYCxCz(
+  refYc: YCxCzPlanes,
+  testYc: YCxCzPlanes,
+  W: number,
+  H: number,
+  ppd = 67,
+): Float32Array {
+  const N = W * H;
   // Stage 2: CSF filtering per channel, then -> Hunt-Lab.
   const csf = csfFilters(ppd);
   const toLab = (yc: Float64Array[]): [Float64Array, Float64Array, Float64Array] => {

@@ -14,13 +14,17 @@ import { squaredKernel } from "./squared.wgsl";
 import { relativeSignedKernel } from "./relative-signed.wgsl";
 import { relativeAbsoluteKernel } from "./relative-absolute.wgsl";
 import { relativeSquaredKernel } from "./relative-squared.wgsl";
-import { flipKernel } from "./flip.wgsl";
+import { flipKernel, flipLdrForcedKernel } from "./flip.wgsl";
+import { hdrFlipKernel } from "./hdr-flip";
 
 let registered = false;
 function registerBuiltins(): void {
   if (registered) return;
   registered = true;
-  // Pointwise diffs (menu order), then multi-pass FLIP.
+  // Pointwise diffs (menu order), then the multi-pass FLIP family (LDR, HDR,
+  // forced-LDR). HDR-FLIP + forced-LDR are reached via auto-dispatch under the
+  // single public `flip` menu entry (+ `flip_ldr`), never listed on their own —
+  // see `listDiffMenuModes` / `resolveDiffKernelId`.
   registerDiffKernel(absoluteKernel);
   registerDiffKernel(signedKernel);
   registerDiffKernel(squaredKernel);
@@ -28,8 +32,48 @@ function registerBuiltins(): void {
   registerDiffKernel(relativeSignedKernel);
   registerDiffKernel(relativeSquaredKernel);
   registerDiffKernel(flipKernel);
+  registerDiffKernel(hdrFlipKernel);
+  registerDiffKernel(flipLdrForcedKernel);
 }
 registerBuiltins();
+
+/**
+ * A selectable diff MODE for the compare toolbar menu. Unlike raw
+ * `listDiffKernels()`, the FLIP family collapses to a single "FLIP (perceptual)"
+ * entry (public `flip`, auto-dispatched LDR/HDR by source type) plus "FLIP (LDR
+ * forced)" (`flip_ldr`); HDR-FLIP/forced-LDR are never shown directly. `id` is
+ * the selection token the pane stores (== the descriptor `diffSubmode` /
+ * Python `mode`); resolve it to a concrete kernel id with `resolveDiffKernelId`.
+ */
+export interface DiffMenuMode {
+  id: string;
+  label: string;
+}
+export function listDiffMenuModes(): DiffMenuMode[] {
+  const out: DiffMenuMode[] = [];
+  for (const k of listDiffKernels()) {
+    if (k.kind === "pointwise") out.push({ id: k.id, label: k.label });
+  }
+  out.push({ id: "flip", label: "FLIP (perceptual)" });
+  out.push({ id: "flip_ldr", label: "FLIP (LDR forced)" });
+  return out;
+}
+
+/**
+ * Auto-dispatch (spec addendum DECISION): resolve a menu selection token +
+ * whether the compare sources are FLOAT (HDR: imghdr arrays / f32 EXR) into the
+ * concrete registered kernel id to run.
+ *   - `flip`     → `hdr-flip` (float) | `flip` (u8)
+ *   - `flip_ldr` → `flip-ldr-forced` (float: tone-map-first) | `flip` (u8)
+ *   - any pointwise id → itself.
+ */
+export function resolveDiffKernelId(selection: string, sourcesAreFloat: boolean): string {
+  if (selection === "flip") return sourcesAreFloat ? "hdr-flip" : "flip";
+  if (selection === "flip_ldr" || selection === "flip-ldr-forced") {
+    return sourcesAreFloat ? "flip-ldr-forced" : "flip";
+  }
+  return selection;
+}
 
 /** Map a flat public name (`abs`, `rel_signed`, `flip`, …) → internal kernel id. */
 export function kernelIdForPublicName(publicName: string): string | undefined {
