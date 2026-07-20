@@ -94,6 +94,7 @@ export const COLORMAP_MENU_OPTIONS: { id: string; label: string }[] = [
   { id: "none", label: "None" },
   { id: "viridis", label: "Viridis" },
   { id: "plasma", label: "Plasma" },
+  { id: "magma", label: "Magma" },
   { id: "red-green", label: "Red–Green" },
   { id: "red-blue", label: "Red–Blue" },
 ];
@@ -139,6 +140,11 @@ export interface UseImageControllerArgs {
   /** The pane's synchronous render callback — see the module doc's screenshot
    *  note. When provided, `toPNG` repaints before capturing. */
   requestRender?: () => void;
+  /** Extra side effect the HOME / reset action runs ALONGSIDE resetting the
+   *  viewport — used to zero the EXPOSURE/OFFSET display-adjust sliders so the
+   *  toolbar home button (and, via the shell, the double-click reset) return the
+   *  pane to a fully neutral state, not just zoom/pan. */
+  onReset?: () => void;
 }
 
 export function useImageController({
@@ -152,6 +158,7 @@ export function useImageController({
   minZoom = DEFAULT_MIN_ZOOM,
   maxZoom = DEFAULT_MAX_ZOOM,
   requestRender,
+  onReset,
 }: UseImageControllerArgs): PlotController {
   // Zoom toward the pane center, reusing `use-image-viewport`'s exact
   // zoom-to-cursor formula with the cursor pinned to the box center — NO new
@@ -179,7 +186,10 @@ export function useImageController({
 
   const zoomIn = useCallback(() => applyZoom(ZOOM_STEP), [applyZoom]);
   const zoomOut = useCallback(() => applyZoom(1 / ZOOM_STEP), [applyZoom]);
-  const home = useCallback(() => onViewportChange?.(HOME), [onViewportChange]);
+  const home = useCallback(() => {
+    onViewportChange?.(HOME);
+    onReset?.(); // zero EXPOSURE/OFFSET alongside the viewport reset
+  }, [onViewportChange, onReset]);
 
   const toPNG = useCallback(
     (opts?: ToPNGOptions): Promise<Blob> => {

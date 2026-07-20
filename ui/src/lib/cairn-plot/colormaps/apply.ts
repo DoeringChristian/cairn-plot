@@ -1,5 +1,5 @@
 import type { ColormapName } from "../types";
-import { getColormapLUT } from "./lut";
+import { getColormapLUT } from "./lut.ts";
 
 /**
  * Apply a colormap LUT to an ImageData.
@@ -10,18 +10,32 @@ import { getColormapLUT } from "./lut";
  *   zero diff. Use for signed diffs where the computation already maps zero to 128.
  * - "positive": 0→LUT[128], 255→LUT[255]. Use for absolute/squared diffs
  *   where 0 = no diff (should map to colormap center/white in diverging maps).
+ *
+ * `exposureEV`/`offset` adjust the colormap SENSITIVITY: they scale the source
+ * value fed into the LUT (`value * 2^EV + offset`, in the normalized [0,1]
+ * domain) BEFORE the index mapping — i.e. exposure changes which part of the
+ * ramp a given pixel lands on, exactly like the GPU diff blit's exposure. Both
+ * default to 0 (identity), so existing callers are unaffected.
  */
 export function applyColormap(
   src: ImageData,
   cmap: ColormapName,
   mode: "linear" | "signed" | "positive" = "linear",
+  exposureEV = 0,
+  offset = 0,
 ): ImageData {
   const lut = getColormapLUT(cmap);
   const out = new ImageData(src.width, src.height);
   const sd = src.data;
   const od = out.data;
+  const scale = Math.pow(2, exposureEV);
+  const adjust = exposureEV !== 0 || offset !== 0;
   for (let i = 0; i < sd.length; i += 4) {
-    const avg = (sd[i]! + sd[i + 1]! + sd[i + 2]!) / 3;
+    let avg = (sd[i]! + sd[i + 1]! + sd[i + 2]!) / 3;
+    if (adjust) {
+      // Exposure/offset act in the normalized [0,1] domain, then back to 0..255.
+      avg = Math.max(0, Math.min(255, ((avg / 255) * scale + offset) * 255));
+    }
     let idx: number;
     if (mode === "positive") {
       idx = Math.round(128 + (avg / 255) * 127);

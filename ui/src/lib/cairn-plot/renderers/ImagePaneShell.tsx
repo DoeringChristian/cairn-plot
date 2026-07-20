@@ -254,11 +254,22 @@ export default function ImagePaneShell({
     naturalHeight: naturalDims?.h,
   });
 
+  // HOME / reset also zeroes the EXPOSURE/OFFSET display-adjust sliders (they're
+  // controlled inputs, so resetting the pane's state snaps their positions back
+  // to 0). Shared by the toolbar home button (via the controller's `onReset`)
+  // and the double-click reset below, so both gestures return the pane to a
+  // fully neutral state, not just zoom/pan.
+  const resetDisplayAdjust = useCallback(() => {
+    displayAdjust?.onExposureChange(0);
+    displayAdjust?.onOffsetChange(0);
+  }, [displayAdjust]);
+
   // Double-click reset (Q17) — same gesture across every image pane + the 2D
   // charts.
   const resetViewport = useCallback(() => {
     onViewportChange?.(HOME_VIEWPORT);
-  }, [onViewportChange]);
+    resetDisplayAdjust();
+  }, [onViewportChange, resetDisplayAdjust]);
 
   // PlotToolbar controller (zoom/pan/reset/screenshot). Runs unconditionally
   // (rules-of-hooks); only the toolbar's RENDER is gated on `toolbar`.
@@ -271,6 +282,7 @@ export default function ImagePaneShell({
     naturalWidth: naturalDims?.w,
     naturalHeight: naturalDims?.h,
     requestRender,
+    onReset: resetDisplayAdjust,
   });
 
   // EXPOSURE / OFFSET display-adjust sliders (image panes only; §requirement B).

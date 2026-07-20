@@ -463,13 +463,22 @@ export default function GpuImagePane(props: ImageBackendProps) {
       if (cancelled || !raw) return;
       let display = raw;
       if (colormap !== "none") {
-        const cacheKey = `gpu::${imageUrl}::${colormap}`;
+        // Exposure/offset are folded into the LUT INDEX here (before the LUT),
+        // so the toolbar sliders change colormap SENSITIVITY — matching the GPU
+        // diff blit. They enter the cache key so a bake is reused per EV/offset.
+        const cacheKey = `gpu::${imageUrl}::${colormap}::ev${displayEV}::off${displayOffset}`;
         const cached = getCachedImageData(cacheKey);
         if (cached) {
           display = cached;
         } else {
           const cmapMode = DIVERGING_COLORMAPS.has(colormap) ? "positive" : "linear";
-          display = applyColormap(raw, colormap as Exclude<Colormap, "none">, cmapMode);
+          display = applyColormap(
+            raw,
+            colormap as Exclude<Colormap, "none">,
+            cmapMode,
+            displayEV,
+            displayOffset,
+          );
           setCachedImageData(cacheKey, display);
         }
       }
@@ -494,7 +503,16 @@ export default function GpuImagePane(props: ImageBackendProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, hdrMode ? null : (props as SdrImageProps).imageUrl, hdrMode ? null : colormapOverride]);
+  }, [
+    hdrMode,
+    paneReady,
+    hdrMode ? null : (props as SdrImageProps).imageUrl,
+    hdrMode ? null : colormapOverride,
+    // Exposure/offset re-bake the colormap (pre-LUT) — only meaningful when a
+    // colormap is active; harmless (re-uploads the raw) otherwise.
+    hdrMode ? 0 : displayEV,
+    hdrMode ? 0 : displayOffset,
+  ]);
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +
@@ -576,7 +594,20 @@ export default function GpuImagePane(props: ImageBackendProps) {
           uv,
           filter,
         }
-      : { exposureEV: displayEV, offset: displayOffset, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv, filter };
+      : {
+          // For a COLORMAPPED SDR image, exposure/offset were already applied
+          // BEFORE the LUT in the CPU bake (colormap sensitivity), so the display
+          // blit must NOT apply them again — pass 0. Plain RGB (no colormap)
+          // keeps the post-exposure display path unchanged.
+          exposureEV: sdrColormap !== "none" ? 0 : displayEV,
+          offset: sdrColormap !== "none" ? 0 : displayOffset,
+          operator: "linear",
+          gamma: 1,
+          isScalar: false,
+          hdrOut: false,
+          uv,
+          filter,
+        };
     // C1 fix (whole-branch review): `handle.render()` is called SYNCHRONOUSLY
     // in this effect, so an uncaught throw here would unmount this pane's
     // whole subtree in React 18. `engine/pool.ts`'s `attemptRender` already
@@ -595,7 +626,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, tonemapName, gamma, hdrMode, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, tonemapName, gamma, hdrMode, sdrColormap, dpr]);
 
   useEffect(() => {
     renderPass();
