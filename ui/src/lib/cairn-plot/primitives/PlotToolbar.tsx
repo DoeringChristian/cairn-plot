@@ -721,8 +721,12 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
     viewActions.push({
       id: "reset",
       icon: "home",
-      title: controller.isModified ? "Reset view" : "Reset view (at home)",
-      disabled: !controller.isModified,
+      // ALWAYS clickable: `isModified` only tracks zoom/pan(+sliders), but
+      // reset also restores view-local selections (compare colormap / mode /
+      // kernel) the controller can't see — a disabled home button would make
+      // those unrecoverable except back through the menus.
+      title: "Reset view",
+      disabled: false,
       onClick: () => controller.reset(),
     });
 
