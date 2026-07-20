@@ -23,6 +23,9 @@ import type { BindGroupEntry } from "../types";
 /** How the display blit maps a raw result value → [0,1] before the colormap. */
 export type DisplayRange = "unit" | "signed" | "relative";
 
+/** Result arity of a diff kernel (see `KernelMetaBase.output`). */
+export type KernelOutput = "scalar" | "per-channel";
+
 interface KernelMetaBase {
   /** Internal kernel id (also the descriptor `diffSubmode` value). */
   id: string;
@@ -30,6 +33,14 @@ interface KernelMetaBase {
   label: string;
   /** Flat short name for the Python `mode=` enum + toolbar menu. */
   publicName: string;
+  /** Result arity — drives the diff-mode TEV overlay's line count. A `"scalar"`
+   *  kernel produces ONE value per pixel (a perceptual metric like FLIP)
+   *  replicated across R/G/B in the rgba16float result (alpha=1), so the overlay
+   *  reads the R channel and prints ONE untinted line; a `"per-channel"` kernel
+   *  (the six pointwise diffs) produces a genuine R/G/B error and prints three
+   *  channel-tinted lines. Printing three identical numbers for a scalar kernel
+   *  was the reported bug. */
+  output: KernelOutput;
   /** Display value→[0,1] mapping the blit applies before the colormap. */
   displayRange: DisplayRange;
   /** Typed default parameters (e.g. FLIP `ppd`). */

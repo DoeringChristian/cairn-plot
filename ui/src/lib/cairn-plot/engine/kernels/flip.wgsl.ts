@@ -26,8 +26,8 @@
  * shared LDR pass pieces (`LAB_SHADER`, `COMBINE_SHADER`, filter constants,
  * `buildLdrFlipPasses`) that HDR-FLIP reuses per exposure.
  */
-import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl";
-import { FLIP_CMAX } from "./flip-reference";
+import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl.ts";
+import { FLIP_CMAX } from "./flip-reference.ts";
 import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
 import type { BindGroupEntry } from "../types";
 
@@ -271,6 +271,9 @@ export const flipKernel: MultipassKernel = {
   label: "FLIP (perceptual)",
   publicName: "flip",
   displayRange: "unit",
+  // FLIP is a single perceptual error per pixel (replicated across R/G/B in the
+  // result); the overlay prints ONE untinted number, never three channels.
+  output: "scalar",
   params: { ppd: 67 },
   buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;
@@ -293,6 +296,7 @@ export const flipLdrForcedKernel: MultipassKernel = {
   label: "FLIP (LDR forced)",
   publicName: "flip_ldr",
   displayRange: "unit",
+  output: "scalar",
   params: { ppd: 67 },
   buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;

@@ -7,15 +7,15 @@
  *
  * Registration order == menu order (`listDiffKernels()`).
  */
-import { registerDiffKernel, listDiffKernels, getDiffKernel } from "./kernel-registry";
-import { signedKernel } from "./signed.wgsl";
-import { absoluteKernel } from "./absolute.wgsl";
-import { squaredKernel } from "./squared.wgsl";
-import { relativeSignedKernel } from "./relative-signed.wgsl";
-import { relativeAbsoluteKernel } from "./relative-absolute.wgsl";
-import { relativeSquaredKernel } from "./relative-squared.wgsl";
-import { flipKernel, flipLdrForcedKernel } from "./flip.wgsl";
-import { hdrFlipKernel } from "./hdr-flip";
+import { registerDiffKernel, listDiffKernels, getDiffKernel } from "./kernel-registry.ts";
+import { signedKernel } from "./signed.wgsl.ts";
+import { absoluteKernel } from "./absolute.wgsl.ts";
+import { squaredKernel } from "./squared.wgsl.ts";
+import { relativeSignedKernel } from "./relative-signed.wgsl.ts";
+import { relativeAbsoluteKernel } from "./relative-absolute.wgsl.ts";
+import { relativeSquaredKernel } from "./relative-squared.wgsl.ts";
+import { flipKernel, flipLdrForcedKernel } from "./flip.wgsl.ts";
+import { hdrFlipKernel } from "./hdr-flip.ts";
 
 let registered = false;
 function registerBuiltins(): void {
@@ -86,5 +86,5 @@ export function listDiffKernelPublicNames(): string[] {
   return listDiffKernels().map((k) => k.publicName);
 }
 
-export * from "./kernel-registry";
+export * from "./kernel-registry.ts";
 export { getDiffKernel };

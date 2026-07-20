@@ -8,6 +8,7 @@ export const absoluteKernel: PointwiseKernel = {
   label: "Absolute Error",
   publicName: "abs",
   displayRange: "unit",
+  output: "per-channel",
   source: `
 fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
   return vec4<f32>(abs(a.rgb - b.rgb), 1.0);

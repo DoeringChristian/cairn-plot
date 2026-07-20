@@ -8,6 +8,7 @@ export const relativeSignedKernel: PointwiseKernel = {
   label: "Relative Signed",
   publicName: "rel_signed",
   displayRange: "signed",
+  output: "per-channel",
   source: `
 fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
   let denom = max(a.rgb, vec3<f32>(1.0 / 255.0));

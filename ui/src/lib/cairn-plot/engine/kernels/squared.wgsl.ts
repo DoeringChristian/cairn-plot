@@ -8,6 +8,7 @@ export const squaredKernel: PointwiseKernel = {
   label: "Squared Error",
   publicName: "square",
   displayRange: "unit",
+  output: "per-channel",
   source: `
 fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
   let d = a.rgb - b.rgb;

@@ -25,7 +25,7 @@
  *                  `COMBINE_SHADER`). The last accumulator is the HDR-FLIP map.
  * Output ∈ [0,1] (`displayRange:"unit"`).
  */
-import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl";
+import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl.ts";
 import { FLIP_CMAX } from "./flip-reference.ts";
 import {
   LAB_SHADER,
@@ -35,7 +35,7 @@ import {
   labUniforms,
   combineUniforms,
   u,
-} from "./flip.wgsl";
+} from "./flip.wgsl.ts";
 import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
 
 // ACES filmic tone mapper (pre-exposure cancellation folded in), matching
@@ -157,6 +157,7 @@ export const hdrFlipKernel: MultipassKernel = {
   // `flip` mode when sources are float (see `kernels/index.ts`).
   publicName: "flip_hdr",
   displayRange: "unit",
+  output: "scalar",
   // Exposure params default to placeholders; the pane / harness computes the real
   // range from the reference luminance (`computeHdrFlipExposures`) and passes them,
   // so they enter the cache key. A direct `computeDiff` with only `ppd` falls back
