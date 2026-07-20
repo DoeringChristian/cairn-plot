@@ -14,9 +14,10 @@
  * min-w-[22px] …`), but the icons are inline SVG (see `ICON_PATHS` below) —
  * the self-contained plot bundle can't depend on the app's CDN Font Awesome.
  */
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { DragMode, PlotController } from "../controls/types";
-import type { ToolbarConfig } from "../controls/ToolbarConfig";
+import type { ToolbarConfig, ToolbarMenuSpec } from "../controls/ToolbarConfig";
 import { downloadBlob } from "./plot-to-png";
 
 export interface PlotToolbarProps {
@@ -93,6 +94,8 @@ const ICON_PATHS: Record<string, ReactNode> = {
       <circle cx="12" cy="13.5" r="3.3" />
     </>
   ),
+  // A small down-caret for the menu (dropdown) button face.
+  caret: <path d="M6 9l6 6 6-6" />,
 };
 
 function Icon({ name }: { name: string }) {
@@ -172,6 +175,157 @@ function Divider() {
 }
 
 /**
+ * The MENU (dropdown) variant of a leading toolbar button. Self-contained: it
+ * owns its open/highlight state and closes on select / outside-click / Escape,
+ * with arrow-key + Enter keyboarding. The button face shows the current
+ * option's label (or the spec's `icon`) + a caret; the option list is
+ * absolutely positioned below it (`z-30`, above the `z-20` toolbar) and styled
+ * like the tooltip chrome (rounded / bordered / elevated bg / shadow). No
+ * portal / no external dependency — it lives in the toolbar's own DOM subtree.
+ */
+function ToolbarMenu({
+  icon,
+  title,
+  menu,
+}: {
+  icon?: string;
+  title: string;
+  menu: ToolbarMenuSpec;
+}) {
+  const { options, value, onSelect } = menu;
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((o) => o.id === value),
+  );
+  const face = icon ? undefined : (options[selectedIndex]?.label ?? "");
+
+  // Open toward the current selection so the highlight starts where the user
+  // expects (Plotly / native <select> behavior).
+  const toggle = useCallback(() => {
+    setOpen((prev) => {
+      const next = !prev;
+      if (next) setHighlight(selectedIndex);
+      return next;
+    });
+  }, [selectedIndex]);
+
+  const choose = useCallback(
+    (id: string) => {
+      onSelect(id);
+      setOpen(false);
+    },
+    [onSelect],
+  );
+
+  // Close on outside-click / Escape while open (self-contained — no parent
+  // wiring). Both listeners are torn down when the menu closes/unmounts.
+  useEffect(() => {
+    if (!open) return;
+    const onDocPointer = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onDocPointer, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointer, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  const onButtonKeyDown = (e: React.KeyboardEvent) => {
+    if (!open) {
+      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setHighlight(selectedIndex);
+        setOpen(true);
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => (h + 1) % options.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => (h - 1 + options.length) % options.length);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const opt = options[highlight];
+      if (opt) choose(opt.id);
+    }
+  };
+
+  return (
+    <div ref={rootRef} className="relative inline-flex" onPointerDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          toggle();
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onKeyDown={onButtonKeyDown}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={title}
+        title={title}
+        className={[
+          "h-[22px] min-w-[22px] inline-flex items-center gap-0.5 rounded",
+          face ? "px-1.5 text-[10px] font-mono" : "px-1 text-xs",
+          open ? "bg-bg-hover text-accent" : "text-fg-muted hover:text-fg hover:bg-bg-hover",
+        ].join(" ")}
+      >
+        {face ? <span aria-hidden="true">{face}</span> : <Icon name={icon ?? ""} />}
+        <Icon name="caret" />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          className={[
+            // Above the toolbar (z-20); tooltip-like chrome.
+            "absolute left-0 top-full z-30 mt-1 min-w-[7rem] max-h-64 overflow-auto",
+            "rounded border border-border bg-bg-elevated py-0.5 shadow-md",
+          ].join(" ")}
+        >
+          {options.map((opt, i) => {
+            const isSelected = opt.id === value;
+            const isHi = i === highlight;
+            return (
+              <li key={opt.id} role="option" aria-selected={isSelected}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    choose(opt.id);
+                  }}
+                  onPointerEnter={() => setHighlight(i)}
+                  className={[
+                    "block w-full text-left px-2 py-1 text-[11px] whitespace-nowrap",
+                    isHi ? "bg-bg-hover" : "",
+                    isSelected ? "text-accent font-medium" : "text-fg",
+                  ].join(" ")}
+                >
+                  {opt.label}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
  * The modebar. Renders nothing when disabled or when no capability-backed
  * button survives gating (e.g. a controller that advertises nothing).
  */
@@ -230,17 +384,21 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
     >
       {leading.length > 0 && (
         <>
-          {leading.map((b) => (
-            <ToolbarButton
-              key={b.id}
-              icon={b.icon}
-              label={b.label}
-              title={b.title}
-              active={b.active}
-              disabled={b.disabled}
-              onClick={b.onClick}
-            />
-          ))}
+          {leading.map((b) =>
+            b.menu ? (
+              <ToolbarMenu key={b.id} icon={b.icon} title={b.title} menu={b.menu} />
+            ) : (
+              <ToolbarButton
+                key={b.id}
+                icon={b.icon}
+                label={b.label}
+                title={b.title}
+                active={b.active}
+                disabled={b.disabled}
+                onClick={b.onClick ?? (() => {})}
+              />
+            ),
+          )}
           {(dragGroup || zoomGroup || viewGroup || exportGroup) && <Divider />}
         </>
       )}

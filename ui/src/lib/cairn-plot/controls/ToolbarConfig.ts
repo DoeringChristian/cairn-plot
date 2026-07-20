@@ -5,10 +5,39 @@
  * the controller. All fields optional; the toolbar supplies defaults.
  */
 /**
+ * A single option in a {@link ToolbarMenuSpec} dropdown. `id` is the value
+ * passed back through `onSelect`; `label` is the human-readable menu text.
+ */
+export interface ToolbarMenuOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * The MENU variant of a leading toolbar button (diff-kernels toolbar-selection
+ * track). When a {@link ToolbarButtonSpec} carries this, `<PlotToolbar>` renders
+ * a self-contained dropdown instead of a plain button: the button FACE shows the
+ * currently-selected option's label (or the spec's `icon`) with a caret, and
+ * clicking it opens an absolutely-positioned option list (token-styled like the
+ * tooltip chrome) that closes on select / outside-click / Escape and supports
+ * arrow-key + Enter keyboarding. No external dependency — pure inline React.
+ */
+export interface ToolbarMenuSpec {
+  /** Options in menu (== display) order. */
+  options: ToolbarMenuOption[];
+  /** The currently-selected option id (drives the button face + highlight). */
+  value: string;
+  /** Called with the chosen option id when the user picks one. */
+  onSelect(id: string): void;
+}
+
+/**
  * A host-supplied extra button (not tied to a controller capability). Rendered
  * at the LEADING edge of the toolbar so a renderer/method can inject its own
- * controls (e.g. the image pane's pixel-value notation toggle). Either a short
- * text `label` (e.g. "0–255") or an inline-SVG `icon` (an ICON_PATHS key).
+ * controls (e.g. the image pane's pixel-value notation toggle, or the
+ * compare pane's diff-mode / colormap dropdowns). Either a short text `label`
+ * (e.g. "0–255"), an inline-SVG `icon` (an ICON_PATHS key), or — when `menu`
+ * is set — a dropdown whose face is the current option's label (or `icon`).
  */
 export interface ToolbarButtonSpec {
   /** Stable identity (React key). */
@@ -23,7 +52,11 @@ export interface ToolbarButtonSpec {
   active?: boolean;
   /** Greyed + non-interactive. */
   disabled?: boolean;
-  onClick(): void;
+  /** When present, this is a DROPDOWN (see {@link ToolbarMenuSpec}); `onClick`
+   *  is then ignored (the menu owns interaction). */
+  menu?: ToolbarMenuSpec;
+  /** Plain-button click handler. Optional — a `menu` button doesn't use it. */
+  onClick?(): void;
 }
 
 export interface ToolbarConfig {
