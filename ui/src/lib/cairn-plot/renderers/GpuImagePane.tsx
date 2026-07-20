@@ -82,13 +82,13 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Colormap } from "../types";
-import { applyColormap, DIVERGING_COLORMAPS } from "../colormaps";
+import { applyColormap } from "../colormaps";
+import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
 import ImageOverlay from "./ImageOverlay";
 import {
-  CHANNEL_COLORS,
   PIXEL_VALUE_MIN_SCREEN_PX,
-  formatChannelValue,
+  buildChannelSample,
   type PixelSample,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
@@ -488,7 +488,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
         if (cached) {
           display = cached;
         } else {
-          const cmapMode = DIVERGING_COLORMAPS.has(colormap) ? "positive" : "linear";
+          const cmapMode = resolveColormapMode(colormap);
           display = applyColormap(
             raw,
             colormap as Exclude<Colormap, "none">,
@@ -668,18 +668,11 @@ export default function GpuImagePane(props: ImageBackendProps) {
         // Luminance approximated at 0.5 (mid-grey) — matches HdrImagePane's
         // fallback when no CPU-tonemapped buffer is retained (GPU-rendered).
         const luminance = 0.5;
-        if (c === 1) {
-          return { lines: [formatChannelValue(src[base] ?? 0, "unit", notationArg)], luminance };
-        }
-        return {
-          lines: [
-            formatChannelValue(src[base] ?? 0, "unit", notationArg),
-            formatChannelValue(src[base + 1] ?? 0, "unit", notationArg),
-            formatChannelValue(src[base + 2] ?? 0, "unit", notationArg),
-          ],
-          luminance,
-          colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
-        };
+        const values =
+          c === 1
+            ? [src[base] ?? 0]
+            : [src[base] ?? 0, src[base + 1] ?? 0, src[base + 2] ?? 0];
+        return buildChannelSample(values, "unit", notationArg, luminance);
       }
       const vd = sdrImageDataRef.current;
       if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
@@ -688,19 +681,10 @@ export default function GpuImagePane(props: ImageBackendProps) {
       const g = vd.data[i + 1]!;
       const b = vd.data[i + 2]!;
       const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      // A false-colored (colormap) or grayscale pixel prints one untinted line;
+      // a true multi-channel pixel prints three channel-tinted lines.
       const single = sdrColormap !== "none" || (r === g && g === b);
-      if (single) {
-        return { lines: [formatChannelValue(r, "uint8", notationArg)], luminance };
-      }
-      return {
-        lines: [
-          formatChannelValue(r, "uint8", notationArg),
-          formatChannelValue(g, "uint8", notationArg),
-          formatChannelValue(b, "uint8", notationArg),
-        ],
-        luminance,
-        colors: [CHANNEL_COLORS[0], CHANNEL_COLORS[1], CHANNEL_COLORS[2]],
-      };
+      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notationArg, luminance);
     },
     [hdrMode, naturalDims, sdrColormap],
   );
