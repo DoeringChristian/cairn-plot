@@ -79,7 +79,9 @@ python examples/demo_url_images.py --open     # URL-referenced EXR images (needs
   viewport-synced grids.
 - [`demo_url_images.py`](examples/demo_url_images.py) — `cp.Image(url=...)`:
   the page bakes no pixels; the browser fetches and decodes EXR (ZIP + PIZ)
-  client-side. See [`docs/API.md`](docs/API.md) for the full 0.1 API contract.
+  client-side. See [`docs/API.md`](docs/API.md) for the full 0.1 API contract,
+  and [`docs/browser-support.md`](docs/browser-support.md) for enabling
+  WebGPU / HDR output per browser (Chrome, Brave, Firefox, Safari).
 
 ## HTML / JS library
 
