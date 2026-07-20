@@ -30,7 +30,7 @@
  */
 import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./types";
 import { imageWGSL } from "./shaders/image.wgsl";
-import { compareWGSL } from "./shaders/compare.wgsl";
+import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl";
 
 export type ImageOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended";
 
@@ -168,129 +168,85 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
 }
 
 // ===========================================================================
-// COMPARE render pass (Task 7) — split / blend / diff over TWO textures.
-// See `engine/shaders/compare.wgsl.ts`'s module doc comment for the shader
-// design; this section mirrors `renderImage` above but drives the compare
-// pipeline (texA + texB + the 7-binding uniform layout).
+// COMPOSE render pass — split / blend view compositions over TWO textures.
+// (Diff moved to the cached kernel path — see `engine/diff-engine.ts`. The
+// `diffChannel` switch + mode/submode uniforms were DELETED per the
+// diff-kernel spec; split/blend are now two switch-free specialized pipelines
+// built from the shared prelude — see `engine/shaders/compare.wgsl.ts`.)
 // ===========================================================================
 
-/** Diff submodes (`image/diff.ts`'s `DiffMode`) — kept as a local id map so
- *  the engine has no import onto the app's `types.ts`. MUST match
- *  `image/webgl-diff.ts`'s `DIFF_MODE_MAP` order (the shader ports its
- *  `computeDiffChannel` verbatim). */
-export type CompareDiffSubmode =
-  | "signed"
-  | "absolute"
-  | "squared"
-  | "relative_signed"
-  | "relative_absolute"
-  | "relative_squared";
-
-const DIFF_SUBMODE_ID: Record<CompareDiffSubmode, number> = {
-  signed: 0,
-  absolute: 1,
-  squared: 2,
-  relative_signed: 3,
-  relative_absolute: 4,
-  relative_squared: 5,
-};
-
-/** Diff-colormap index mapping (matches `image/webgl-diff.ts`'s `CMAP_MODE_MAP`
- *  and `colormaps/apply.ts`'s `mode`). */
-export type CompareDiffCmapMode = "linear" | "signed" | "positive";
-const DIFF_CMAP_MODE_ID: Record<CompareDiffCmapMode, number> = { linear: 0, signed: 1, positive: 2 };
-
+/** Pane-facing compare mode. `diff` is handled by the diff-engine, not the
+ *  compose pipelines here — see `renderCompose`. */
 export type CompareMode = "split" | "blend" | "diff";
-const COMPARE_MODE_ID: Record<CompareMode, number> = { split: 0, blend: 1, diff: 2 };
 
 export interface CompareParams extends ImageParams {
-  /** Composite mode: `split` (draggable divider), `blend` (mix), `diff` (colormapped per-channel diff). */
+  /** Compose mode. Only `split`/`blend` are rendered here; `diff` is a caller
+   *  error (routed to the diff-engine instead). */
   mode: CompareMode;
   /** Split-divider screen-space fraction `[0,1]` — reference (texA) shown where `uv.x < split`. */
   split: number;
   /** Blend factor `[0,1]` for `mode:"blend"` — `mix(texA, texB, alpha)`. */
   alpha: number;
-  /** Diff submode (`mode:"diff"`). */
-  diffSubmode: CompareDiffSubmode;
-  /** Diff-colormap index mode (`mode:"diff"` + a `colormap` LUT). Default `"linear"`. */
-  diffCmapMode?: CompareDiffCmapMode;
-  /** When set (`mode:"diff"`), the average diff indexes this 256x4 RGBA-float LUT
-   *  (same convention as `ImageParams.colormap`); when absent the raw per-channel
-   *  diff is shown directly. */
-  diffColormap?: Float32Array;
 }
 
-const comparePipelineCache = new WeakMap<Device, Map<TextureFormat, RenderPipeline>>();
+// One compiled pipeline per (Device, split|blend shader, target format).
+const composeCache = new WeakMap<Device, Map<string, RenderPipeline>>();
 
-function getComparePipeline(device: Device, targetFormat: TextureFormat): RenderPipeline {
-  let byFormat = comparePipelineCache.get(device);
-  if (!byFormat) {
-    byFormat = new Map();
-    comparePipelineCache.set(device, byFormat);
+function getComposePipeline(device: Device, mode: "split" | "blend", targetFormat: TextureFormat): RenderPipeline {
+  let byKey = composeCache.get(device);
+  if (!byKey) {
+    byKey = new Map();
+    composeCache.set(device, byKey);
   }
-  let pipeline = byFormat.get(targetFormat);
+  const key = `${mode}:${targetFormat}`;
+  let pipeline = byKey.get(key);
   if (!pipeline) {
-    pipeline = device.createRenderPipeline({ shaderWGSL: compareWGSL, targetFormat });
-    byFormat.set(targetFormat, pipeline);
+    pipeline = device.createRenderPipeline({
+      shaderWGSL: mode === "split" ? compareSplitWGSL : compareBlendWGSL,
+      targetFormat,
+    });
+    byKey.set(key, pipeline);
   }
   return pipeline;
 }
 
 /**
- * Runs the COMPARE render pass: samples `texA` (reference/baseline, the "A"
- * role: left side / alpha=0 endpoint / diff `a` operand — see
- * `media-compare/GpuComparePane.tsx`'s doc comment) and `texB`
- * (foreground/comparison) through the shared exposure/scalar-LUT/tonemap/
- * encode pipeline, then composites them per `params.mode` (split/blend/diff)
- * and writes the result to `target`. Allocates (and frees) a per-call LUT
- * texture + bind group, like `renderImage`.
- *
- * The LUT texture serves BOTH the scalar-image path (when `params.isScalar`
- * -> `params.colormap`) and the diff-colormap path (when `mode:"diff"` +
- * `params.diffColormap`); at most one is used per call, so a single binding
- * is enough. When neither is present a 1x1 placeholder is bound (WebGPU
- * requires every declared texture binding to have a resource — see
- * `renderImage`'s `buildColormapTexture`).
+ * Runs the COMPOSE render pass: samples `texA` (reference/baseline, the "A"
+ * role: left side / alpha=0 endpoint) and `texB` (foreground/comparison)
+ * through the shared exposure/scalar-LUT/tonemap/encode pipeline, then
+ * composites them per `params.mode` (split | blend) into `target` using the
+ * matching switch-free specialized pipeline. `mode:"diff"` is NOT valid here —
+ * the pane routes diff through `engine/diff-engine.ts` (cached kernel result +
+ * `renderDiffDisplay`).
  */
-export function renderCompare(
+export function renderCompose(
   device: Device,
   target: Surface | Texture,
   texA: Texture,
   texB: Texture,
   params: CompareParams,
 ): void {
+  if (params.mode === "diff") {
+    throw new Error("renderCompose: mode 'diff' is handled by the diff-engine, not renderCompose");
+  }
   const targetFormat = targetFormatOf(target);
-  const pipeline = getComparePipeline(device, targetFormat);
-
-  const useDiffColormap = params.mode === "diff" && !!params.diffColormap;
-  const lutData = params.isScalar ? params.colormap : useDiffColormap ? params.diffColormap : undefined;
-  const lut = buildColormapTexture(device, lutData);
+  const pipeline = getComposePipeline(device, params.mode, targetFormat);
+  const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);
 
   const gamma = typeof params.gamma === "number" && params.gamma > 0 ? params.gamma : 0;
   const operatorId = OPERATOR_ID[params.operator] ?? OPERATOR_ID.srgb;
 
-  // u_bind3: exposureEV, operatorId, gamma, isScalar (IDENTICAL to image.wgsl's u_bind2).
-  const paramsVec = new Float32Array([params.exposureEV, operatorId, gamma, params.isScalar ? 1 : 0]);
-  // u_bind4: uvRect.xy, uvRect.wh (IDENTICAL to image.wgsl's u_bind3).
+  // u_img: exposureEV, operatorId, gamma, isScalar.
+  const imgVec = new Float32Array([params.exposureEV, operatorId, gamma, params.isScalar ? 1 : 0]);
+  // u_uv: uvRect.xy, uvRect.wh.
   const uvRect = new Float32Array([params.uv.x, params.uv.y, params.uv.w, params.uv.h]);
-  // u_bind5: modeId, split, alpha, diffSubmodeId.
-  const modeVec = new Float32Array([
-    COMPARE_MODE_ID[params.mode],
+  // u_compose: split, alpha, hdrOut, filterMode.
+  const composeVec = new Float32Array([
     params.split,
     params.alpha,
-    DIFF_SUBMODE_ID[params.diffSubmode] ?? 0,
-  ]);
-  // u_bind6: diffCmapModeId, hdrOut, useColormap, unused.
-  const cmapVec = new Float32Array([
-    DIFF_CMAP_MODE_ID[params.diffCmapMode ?? "linear"] ?? 0,
     params.hdrOut ? 1 : 0,
-    useDiffColormap ? 1 : 0,
-    0,
+    params.filter === "nearest" ? 0 : 1,
   ]);
-  // u_bind7: filterMode (0=nearest, 1=linear) — IDENTICAL convention to
-  // renderImage's filterFlag / image.wgsl.ts's u_bind5. Default "linear"
-  // when unset — see ImageParams.filter's doc.
-  const filterFlag = new Float32Array([params.filter === "nearest" ? 0 : 1]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -298,11 +254,9 @@ export function renderCompare(
       { binding: 0, resource: texA },
       { binding: 1, resource: texB },
       { binding: 2, resource: lut },
-      { binding: 3, resource: { uniform: paramsVec } },
+      { binding: 3, resource: { uniform: imgVec } },
       { binding: 4, resource: { uniform: uvRect } },
-      { binding: 5, resource: { uniform: modeVec } },
-      { binding: 6, resource: { uniform: cmapVec } },
-      { binding: 7, resource: { uniform: filterFlag } },
+      { binding: 5, resource: { uniform: composeVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {
