@@ -95,9 +95,25 @@ def _resolver(name: str) -> Any:
     return fn
 
 
-# The compare compositor's one-pane modes (mirrors `_COMPARE_MODES` in
-# `cairn/plot.py`); `"side"` lowers to a 2-cell Grid, the rest to a compare node.
+# The compare compositor's INTERNAL one-pane descriptor modes; `"side"` lowers
+# to a 2-cell Grid, the rest to a compare node.
 _COMPARE_NODE_MODES = ("split", "blend", "diff")
+
+# The PUBLIC flat `cp.Compare(mode=...)` enum (diff-kernels spec). View modes +
+# the diff-kernel short names; each kernel short name maps to a registry kernel
+# id (== the descriptor `diffSubmode`, mirrored by the TS `listDiffKernels()`
+# `publicName`s). `"slide"` is the public name for the internal `"split"`.
+_COMPARE_VIEW_MODES = {"side", "slide", "blend"}
+_COMPARE_KERNEL_MODES = {
+    "signed": "signed",
+    "abs": "absolute",
+    "square": "squared",
+    "rel_signed": "relative_signed",
+    "rel_abs": "relative_absolute",
+    "rel_square": "relative_squared",
+    "flip": "flip",
+}
+_COMPARE_PUBLIC_MODES = ("side", "slide", "blend", *_COMPARE_KERNEL_MODES.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -1619,25 +1635,31 @@ class Grid(Component):
 
 
 class Compare(Component):
-    """Compare two image-like leaves (plan G2.4).
+    """Compare a ``prediction`` against a ``reference`` (diff-kernels spec).
 
-    ``mode="side"`` lowers to a 2-cell ``cp.Grid([a, b], cols=2)``. ``mode`` in
-    ``{split, blend, diff}`` emits a ``compare`` node compositing ``a`` (the
-    reference, ``baselineIndex=0``) and ``b`` into one pane. Split/blend/diff
-    require ``a``/``b`` be image-like (``cp.Image`` / an image ``run[tag]``)."""
+    Flat ``mode`` enum:
+
+    * View compositions: ``"side"`` (2-cell ``cp.Grid``), ``"slide"`` (draggable
+      divider), ``"blend"`` (opacity mix).
+    * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
+      ``"rel_abs"``, ``"rel_square"``, ``"flip"`` (perceptual LDR-FLIP) — each
+      lowers to a ``compare`` node with ``mode="diff"`` and the kernel id as
+      ``diffSubmode`` (the pane's initial diff kernel).
+
+    ``reference`` is always the baseline (``baselineIndex=0``; the ``REF`` chip);
+    ``diff = prediction vs reference``. Non-``side`` modes require both operands
+    be image-like (``cp.Image`` / an image ``run[tag]``)."""
 
     _label = "compare"
 
     def __init__(
         self,
-        a: Any,
-        b: Any,
+        prediction: Any,
+        reference: Any,
         *,
         mode: str = "side",
-        baseline: int = 0,
         split_position: float | None = None,
         blend_alpha: float | None = None,
-        diff_submode: str | None = None,
         colormap: str | None = None,
         exposure: float | None = None,
         gamma: float | None = None,
@@ -1651,11 +1673,25 @@ class Compare(Component):
         props: dict[str, Any] | None = None,
     ) -> None:
         self._mode = mode
-        if baseline not in (0, 1):
-            raise ValueError(f"cp.Compare(baseline=...) must be 0 or 1, got {baseline!r}")
-        self._baseline = baseline
+        if mode not in _COMPARE_PUBLIC_MODES:
+            raise ValueError(
+                f"cp.Compare(mode=...) must be one of {_COMPARE_PUBLIC_MODES!r}, "
+                f"got {mode!r}"
+            )
+        # Lower the flat public mode → internal descriptor mode (+ diff kernel).
+        if mode == "side":
+            internal_mode = "side"
+            diff_kernel: str | None = None
+        elif mode == "slide":
+            internal_mode, diff_kernel = "split", None
+        elif mode == "blend":
+            internal_mode, diff_kernel = "blend", None
+        else:
+            internal_mode, diff_kernel = "diff", _COMPARE_KERNEL_MODES[mode]
+        self._internal_mode = internal_mode
+
         # Typed kwargs → the compare node's `props` (interpolation/colormap/diff
-        # submode/split/blend/processing…); a hand-passed `props` dict merges on
+        # kernel/split/blend/processing…); a hand-passed `props` dict merges on
         # top (escape hatch).
         built = _image_display_props(
             exposure=exposure, gamma=gamma, brightness=brightness,
@@ -1667,29 +1703,31 @@ class Compare(Component):
             built["splitPosition"] = float(split_position)
         if blend_alpha is not None:
             built["blendAlpha"] = float(blend_alpha)
-        if diff_submode is not None:
-            built["diffSubmode"] = diff_submode
+        if diff_kernel is not None:
+            # Carried as `diffSubmode` (the kernel id) — the pane initializes its
+            # diff kernel from this; the toolbar menu (next track) preselects it.
+            built["diffSubmode"] = diff_kernel
         if props:
             built.update(props)
         self._props = built or None
 
         if mode == "side":
-            self._delegate: Grid | None = Grid([_as_component(a), _as_component(b)], cols=2)
+            self._delegate: Grid | None = Grid(
+                [_as_component(prediction), _as_component(reference)], cols=2
+            )
             self._a = self._b = None
             return
-        if mode not in _COMPARE_NODE_MODES:
-            raise ValueError(
-                f"cp.Compare(mode=...) must be one of ('side',) + "
-                f"{_COMPARE_NODE_MODES!r}, got {mode!r}"
-            )
         self._delegate = None
-        self._a = _as_component(a)
-        self._b = _as_component(b)
+        # `a` = reference/baseline (baselineIndex 0, texA / REF chip); `b` =
+        # prediction/foreground. Keeps the existing internal A/B semantics.
+        self._a = _as_component(reference)
+        self._b = _as_component(prediction)
         if self._a._leaf_dataspec() is None or self._b._leaf_dataspec() is None:
             raise TypeError(
-                f"cp.Compare(a, b, mode={mode!r}) requires image-like leaves "
-                "(cp.Image or an image run[tag]); at least one argument is not "
-                "an image. Use mode='side' to place arbitrary cells side by side."
+                f"cp.Compare(prediction, reference, mode={mode!r}) requires "
+                "image-like leaves (cp.Image or an image run[tag]); at least one "
+                "argument is not an image. Use mode='side' to place arbitrary "
+                "cells side by side."
             )
 
     def to_node(self) -> dict[str, Any]:
@@ -1697,10 +1735,10 @@ class Compare(Component):
             return self._delegate.to_node()
         node: dict[str, Any] = {
             "kind": "compare",
-            "mode": self._mode,
+            "mode": self._internal_mode,
             "a": self._a._leaf_dataspec(),
             "b": self._b._leaf_dataspec(),
-            "baselineIndex": self._baseline,
+            "baselineIndex": 0,
         }
         if self._props:
             node["props"] = self._props

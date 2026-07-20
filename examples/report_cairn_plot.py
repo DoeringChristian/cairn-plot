@@ -278,7 +278,7 @@ def build_report() -> cp.Report:
     rep.md("### Zoomable split w/ TEV-style pixel values (small image)")
     rep.add(
         cp.Compare(
-            cp.Image(small_a), cp.Image(small_b), mode="split", split_position=0.5
+            cp.Image(small_a), cp.Image(small_b), mode="slide", split_position=0.5
         )
     )
     rep.md("### All modes — side · split · blend · diff")
@@ -287,7 +287,7 @@ def build_report() -> cp.Report:
             [
                 cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="split", split_position=0.5
+                    cp.Image(img_a), cp.Image(img_b), mode="slide", split_position=0.5
                 ),
             ],
             [
@@ -297,8 +297,7 @@ def build_report() -> cp.Report:
                 cp.Compare(
                     cp.Image(img_a),
                     cp.Image(img_b),
-                    mode="diff",
-                    diff_submode="signed",
+                    mode="signed",
                     colormap="red-blue",
                 ),
             ],
@@ -315,30 +314,24 @@ def build_report() -> cp.Report:
         [
             [
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="diff",
-                    diff_submode="signed", colormap="red-blue",
+                    cp.Image(img_a), cp.Image(img_b), mode="signed", colormap="red-blue",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="diff",
-                    diff_submode="absolute", colormap="viridis",
+                    cp.Image(img_a), cp.Image(img_b), mode="abs", colormap="viridis",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="diff",
-                    diff_submode="squared", colormap="viridis",
+                    cp.Image(img_a), cp.Image(img_b), mode="square", colormap="viridis",
                 ),
             ],
             [
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="diff",
-                    diff_submode="relative_signed", colormap="red-blue",
+                    cp.Image(img_a), cp.Image(img_b), mode="rel_signed", colormap="red-blue",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="diff",
-                    diff_submode="relative_absolute", colormap="viridis",
+                    cp.Image(img_a), cp.Image(img_b), mode="rel_abs", colormap="viridis",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="diff",
-                    diff_submode="relative_squared", colormap="red-green",
+                    cp.Image(img_a), cp.Image(img_b), mode="rel_square", colormap="red-green",
                 ),
             ],
         ]

@@ -241,7 +241,7 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "Compare — zoomable split w/ TEV-style pixel values "
         "(Alt/Ctrl + wheel to zoom; per-pixel RGB appears when pixels get big)",
-        cp.Compare(cp.Image(small_a), cp.Image(small_b), mode="split",
+        cp.Compare(cp.Image(small_a), cp.Image(small_b), mode="slide",
                    split_position=0.5),
     ))
 
@@ -252,12 +252,11 @@ def build_gallery() -> list[tuple[str, object]]:
         "Compare — all modes (side · split · blend · diff)",
         cp.Grid(
             [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
-              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="split",
+              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide",
                          split_position=0.5)],
              [cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend",
                          blend_alpha=0.5),
-              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                         diff_submode="signed", colormap="red-blue")]],
+              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="signed", colormap="red-blue")]],
         ),
     ))
     # Every diff submode the renderer supports (see DiffMode in types.ts /
@@ -272,20 +271,14 @@ def build_gallery() -> list[tuple[str, object]]:
         cp.Grid(
             [
                 [
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="absolute", colormap="viridis"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="squared", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="signed", colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="abs", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="square", colormap="viridis"),
                 ],
                 [
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="relative_signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="relative_absolute", colormap="viridis"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="diff",
-                               diff_submode="relative_squared", colormap="red-green"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_signed", colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_abs", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_square", colormap="red-green"),
                 ],
             ],
         ),

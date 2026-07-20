@@ -16,3 +16,6 @@ ui/dist/
 
 # OS / editor
 .DS_Store
+
+# Browser harness bundles (regenerated, not committed)
+*.browser.bundle.js
