@@ -19,3 +19,4 @@ ui/dist/
 
 # Browser harness bundles (regenerated, not committed)
 *.browser.bundle.js
+examples/rendered/

@@ -43,13 +43,8 @@ reports work with numpy + pydantic alone.
 
 ## Examples
 
-**Pre-rendered pages are committed in
-[`examples/rendered/`](examples/rendered/)** — download one and open it in a
-browser to see every feature live, no install needed (each file is fully
-self-contained):
-
-**View them live right now** — CI re-renders the showcase from every push to
-`main` and publishes it via GitHub Pages
+**View every feature live right now** — CI re-renders the showcase from every
+push to `main` and publishes it via GitHub Pages
 (**<https://doeringchristian.github.io/cairn-plot/>**):
 
 - [**Gallery** — every plot type](https://doeringchristian.github.io/cairn-plot/gallery.html)
@@ -60,8 +55,10 @@ self-contained):
 - [**URL images** — client-side EXR decoding](https://doeringchristian.github.io/cairn-plot/url-images.html)
   (needs network when viewed)
 
-Snapshot copies are also committed under
-[`examples/rendered/`](examples/rendered/) for offline use.
+Each page is one fully self-contained HTML file — save it from the browser for
+offline use, or regenerate locally with the example scripts below.
+(`examples/rendered/` is git-ignored: the pages are CI-rendered artifacts, not
+sources — committing the ~50 MB regenerations made pushes enormous.)
 
 Three runnable, self-documenting examples live in [`examples/`](examples/) —
 each renders a single offline HTML file (pass `--open` to view it immediately):
