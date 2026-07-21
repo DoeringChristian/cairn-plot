@@ -24,7 +24,6 @@ module, not vice-versa) — one shaper, two front doors.
 
 from __future__ import annotations
 
-import base64 as _base64
 import html as _html
 import logging
 from typing import Any, Sequence
@@ -836,6 +835,7 @@ class Image(Component):
             _check_data_mode,
             _content_hash,
             _encode_image_raw,
+            _store_entry,
         )
 
         _check_data_mode(data_mode)
@@ -963,12 +963,7 @@ class Image(Component):
             np.save(buf, arr)
             raw = buf.getvalue()
             hash_ = _content_hash(raw)
-            self._store = {
-                hash_: {
-                    "mime": "application/octet-stream",
-                    "b64": _base64.b64encode(raw).decode("ascii"),
-                }
-            }
+            self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             self._data: dict[str, Any] = {"kind": "imghdr", "hash": hash_, "meta": meta}
             self._renderer = "imagehdr"
             self._data_mode = "local"
@@ -998,9 +993,7 @@ class Image(Component):
                 self._source = data
             else:
                 raw = data.run.artifact_bytes(data.tag, step=data.step)
-                self._store = {
-                    hash_: {"mime": mime, "b64": _base64.b64encode(raw).decode("ascii")}
-                }
+                self._store = {hash_: _store_entry(raw, mime)}
             return
 
         if isinstance(data, str):
@@ -1018,7 +1011,7 @@ class Image(Component):
             )
         raw, mime = _encode_image_raw(data)
         hash_ = _content_hash(raw)
-        self._store = {hash_: {"mime": mime, "b64": _base64.b64encode(raw).decode("ascii")}}
+        self._store = {hash_: _store_entry(raw, mime)}
         self._data = {"kind": "image", "hash": hash_}
         self._data_mode = "local"
 
@@ -1079,6 +1072,7 @@ class PointCloud(Component):
             _check_data_mode,
             _content_hash,
             _parse_meta,
+            _store_entry,
         )
 
         _check_data_mode(data_mode)
@@ -1116,12 +1110,7 @@ class PointCloud(Component):
                 self._source = data
             else:
                 raw = data.run.artifact_bytes(data.tag, step=data.step)
-                self._store = {
-                    hash_: {
-                        "mime": "application/octet-stream",
-                        "b64": _base64.b64encode(raw).decode("ascii"),
-                    }
-                }
+                self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 
         # Raw arrays — LOCAL only (no server reference). The tracking handler's
@@ -1134,12 +1123,7 @@ class PointCloud(Component):
             )
         raw, meta = _resolver("serialize_pointcloud")(data, values)
         hash_ = _content_hash(raw)
-        self._store = {
-            hash_: {
-                "mime": "application/octet-stream",
-                "b64": _base64.b64encode(raw).decode("ascii"),
-            }
-        }
+        self._store = {hash_: _store_entry(raw, "application/octet-stream")}
         self._data = {
             "kind": "npz",
             "hash": hash_,
@@ -1216,6 +1200,7 @@ class Mesh(Component):
             _check_data_mode,
             _content_hash,
             _parse_meta,
+            _store_entry,
         )
 
         _check_data_mode(data_mode)
@@ -1259,12 +1244,7 @@ class Mesh(Component):
                 self._source = vertices
             else:
                 raw = vertices.run.artifact_bytes(vertices.tag, step=vertices.step)
-                self._store = {
-                    hash_: {
-                        "mime": "application/octet-stream",
-                        "b64": _base64.b64encode(raw).decode("ascii"),
-                    }
-                }
+                self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 
         # Raw arrays — LOCAL only. `MeshHandler().serialize` gives the exact
@@ -1285,12 +1265,7 @@ class Mesh(Component):
             }
         )
         hash_ = _content_hash(raw)
-        self._store = {
-            hash_: {
-                "mime": "application/octet-stream",
-                "b64": _base64.b64encode(raw).decode("ascii"),
-            }
-        }
+        self._store = {hash_: _store_entry(raw, "application/octet-stream")}
         self._data = {
             "kind": "npz",
             "hash": hash_,
@@ -1354,6 +1329,7 @@ class Volume(Component):
             _check_data_mode,
             _content_hash,
             _parse_meta,
+            _store_entry,
         )
 
         _check_data_mode(data_mode)
@@ -1393,12 +1369,7 @@ class Volume(Component):
                 self._source = grid
             else:
                 raw = grid.run.artifact_bytes(grid.tag, step=grid.step)
-                self._store = {
-                    hash_: {
-                        "mime": "application/octet-stream",
-                        "b64": _base64.b64encode(raw).decode("ascii"),
-                    }
-                }
+                self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 
         # Raw grid — LOCAL only. `VolumeHandler().serialize` gives the exact
@@ -1410,12 +1381,7 @@ class Volume(Component):
             )
         raw, meta = _resolver("serialize_volume")(grid, spacing, origin)
         hash_ = _content_hash(raw)
-        self._store = {
-            hash_: {
-                "mime": "application/octet-stream",
-                "b64": _base64.b64encode(raw).decode("ascii"),
-            }
-        }
+        self._store = {hash_: _store_entry(raw, "application/octet-stream")}
         self._data = {
             "kind": "npz",
             "hash": hash_,
@@ -1479,6 +1445,7 @@ class Boxes(Component):
             _check_data_mode,
             _content_hash,
             _parse_meta,
+            _store_entry,
         )
 
         _check_data_mode(data_mode)
@@ -1512,12 +1479,7 @@ class Boxes(Component):
                 self._source = mins
             else:
                 raw = mins.run.artifact_bytes(mins.tag, step=mins.step)
-                self._store = {
-                    hash_: {
-                        "mime": "application/octet-stream",
-                        "b64": _base64.b64encode(raw).decode("ascii"),
-                    }
-                }
+                self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 
         # Raw arrays — LOCAL only. `Boxes3DHandler().serialize` gives the exact
@@ -1532,12 +1494,7 @@ class Boxes(Component):
             kind,
         )
         hash_ = _content_hash(raw)
-        self._store = {
-            hash_: {
-                "mime": "application/octet-stream",
-                "b64": _base64.b64encode(raw).decode("ascii"),
-            }
-        }
+        self._store = {hash_: _store_entry(raw, "application/octet-stream")}
         self._data = {
             "kind": "npz",
             "hash": hash_,

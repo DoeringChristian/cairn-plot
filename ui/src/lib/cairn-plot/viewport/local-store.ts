@@ -20,10 +20,21 @@
  */
 import type { DataSource } from "./data-sources";
 
-/** One stored blob: its MIME type and base64-encoded bytes. */
+/** One stored blob: its MIME type and base64-encoded bytes.
+ *
+ * `encoding` tags how `b64` was packed by the Python emitter
+ * (`cairn_plot.shapers._store_entry`). Absent/`"raw"` = the base64 IS the blob
+ * bytes (every `image/*` container — PNG/JPEG/… — stays raw: already
+ * compressed, and consumed synchronously as a `data:` URL). `"deflate"` = the
+ * base64 is RAW-DEFLATE-compressed bytes (wbits -15, no zlib header) that
+ * `bytes()` inflates via `DecompressionStream("deflate-raw")` — used for the
+ * highly-compressible `application/octet-stream` float/HDR `.npy` and
+ * mesh/point-cloud/volume/boxes `.npz` payloads, all consumed via the async
+ * `bytes()` seam. Absent tag keeps existing pages/tests valid. */
 export interface PlotStoreEntry {
   mime: string;
   b64: string;
+  encoding?: "raw" | "deflate";
 }
 
 /** hash -> blob. The value written to `window.__cairnPlotStore`. */
@@ -83,6 +94,21 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
 }
 
 /**
+ * Inflate one store entry to its original bytes. A `"deflate"`-tagged entry is
+ * RAW-DEFLATE-decompressed via the browser's `DecompressionStream("deflate-raw")`
+ * (mirroring the Python emitter's `zlib` wbits -15 — the SAME container the npz
+ * reader already uses, `transforms/parse-npz.ts`); any other/absent tag returns
+ * the base64 bytes verbatim (backward-compatible raw entries).
+ */
+async function inflateEntry(entry: PlotStoreEntry): Promise<ArrayBuffer> {
+  const buf = base64ToArrayBuffer(entry.b64);
+  if (entry.encoding !== "deflate") return buf;
+  const ds = new DecompressionStream("deflate-raw");
+  const stream = new Response(buf).body!.pipeThrough(ds);
+  return new Response(stream).arrayBuffer();
+}
+
+/**
  * The LOCAL `DataSource` (design spec §5) — resolves a content hash against
  * the page-level `window.__cairnPlotStore` with NO network:
  *  - `artifactUrl(hash)` = `data:${mime};base64,${b64}` (an `<img src>` /
@@ -102,11 +128,21 @@ export function createLocalDataSource(
   };
   return {
     artifactUrl(hash: string): string {
-      const { mime, b64 } = get(hash);
+      const { mime, b64, encoding } = get(hash);
+      // A `data:` URL inlines the base64 verbatim, so it only works for RAW
+      // entries. The emitter only ever deflates `application/octet-stream`
+      // payloads — all consumed via the async `bytes()` seam — so a deflated
+      // entry reaching this SYNC path would be a wiring bug, not garbage output.
+      if (encoding === "deflate") {
+        throw new Error(
+          `plot store blob ${hash} is deflate-encoded; resolve it via bytes(), ` +
+            `not artifactUrl() (a data: URL cannot inflate it)`,
+        );
+      }
       return `data:${mime};base64,${b64}`;
     },
     async bytes(hash: string): Promise<ArrayBuffer> {
-      return base64ToArrayBuffer(get(hash).b64);
+      return inflateEntry(get(hash));
     },
   };
 }

@@ -14,8 +14,10 @@ and are wired into :mod:`cairn_plot.components` via its resolver registry.
 
 from __future__ import annotations
 
+import base64 as _base64
 import hashlib as _hashlib
 import json as _json
+import zlib as _zlib
 from typing import Any
 
 import numpy as np
@@ -51,6 +53,37 @@ def _content_hash(data: bytes) -> str:
     """A content-address for baked bytes — matches the store-key convention
     (design spec §5/R6): the artifact's own hash when known, else this."""
     return "sha256:" + _hashlib.sha256(data).hexdigest()
+
+
+# raw DEFLATE (no zlib header/adler checksum) — mirrors the TS inflate seam
+# (`DecompressionStream("deflate-raw")`, wbits ↔ -15), the same container the
+# renderer already uses for `.npz` members (`transforms/parse-npz.ts`).
+_DEFLATE_WBITS = -15
+
+
+def _store_entry(raw: bytes, mime: str) -> dict[str, str]:
+    """Build ONE content-store entry ``{mime, b64[, encoding]}`` for baked bytes.
+
+    Already-compressed image containers (PNG/JPEG/GIF/WebP — every ``image/*``
+    MIME the emitter produces) are stored RAW: recompressing them wastes CPU for
+    ~0% and they are consumed synchronously via a ``data:`` URL. All other binary
+    payloads (``application/octet-stream``: float/HDR ``.npy``, mesh/point-cloud/
+    volume/boxes ``.npz``) are RAW-DEFLATED and tagged ``encoding:"deflate"``;
+    these are consumed via the async ``bytes()`` seam which inflates them. The
+    deflate is skipped if it would not shrink the payload (e.g. an already
+    zip-compressed ``.npz``), leaving the entry raw (absent tag = raw, so
+    existing pages/tests stay valid)."""
+    if mime.startswith("image/"):
+        return {"mime": mime, "b64": _base64.b64encode(raw).decode("ascii")}
+    co = _zlib.compressobj(9, _zlib.DEFLATED, _DEFLATE_WBITS)
+    packed = co.compress(raw) + co.flush()
+    if len(packed) >= len(raw):
+        return {"mime": mime, "b64": _base64.b64encode(raw).decode("ascii")}
+    return {
+        "mime": mime,
+        "encoding": "deflate",
+        "b64": _base64.b64encode(packed).decode("ascii"),
+    }
 
 
 # ---------------------------------------------------------------------------
