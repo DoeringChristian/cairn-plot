@@ -1,0 +1,51 @@
+[package]
+name = "cairn-exr-decode"
+version = "0.1.0"
+edition = "2021"
+description = "Rust->WASM OpenEXR decode core for cairn-plot (Phase A scaffold)."
+license = "MIT"
+publish = false
+
+# This crate is intentionally workspace-INDEPENDENT: it lives under wasm/ and is
+# not part of any cargo workspace, so it can be built/tested in isolation with
+# its own release profile + RUSTFLAGS (.cargo/config.toml) without perturbing the
+# rest of the repo. `[workspace]` here makes it its own root.
+[workspace]
+
+[lib]
+# `cdylib` for the wasm-bindgen build target; `rlib` so `cargo test` (native) and
+# the fixture-generator bin can link the pure decode core.
+crate-type = ["cdylib", "rlib"]
+
+# wasm-opt runs post-link; it must be told the SIMD feature is present (we emit
+# v128 ops via +simd128) and we ask for size optimization (-Oz).
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-simd", "--enable-bulk-memory"]
+
+[dependencies]
+# Pure-Rust OpenEXR (johannesvollmer/exrs). default-features=false drops the
+# `rayon`/threads feature: on wasm32-unknown-unknown there is no thread pool, so
+# we decode single-threaded. Coverage below is unchanged by this (compression
+# support is not thread-gated).
+exr = { version = "1.74.2", default-features = false }
+half = "2"
+
+[dependencies.wasm-bindgen]
+version = "0.2"
+# `js-sys` comes transitively; we use Uint16Array / Float32Array from it.
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+
+[dev-dependencies]
+# (native cargo test only)
+
+# --- Release profile tuned for a small .wasm ---------------------------------
+# opt-level "z" (size) + fat LTO + a single codegen unit + panic=abort +
+# symbol stripping. See the build script for the measured size.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
