@@ -138,7 +138,13 @@ function isExecutable(p) {
 
 // ── 3. Headless render → settled DOM ────────────────────────────────────────
 function dumpDom(chrome) {
-  const url = pathToFileURL(GALLERY_HTML).href;
+  // EAGER mount (P2): panes are now viewport-lazy — a below-fold section stays
+  // a placeholder until it nears the viewport, which would leave most sections
+  // unrendered inside this deliberately-short virtual-time budget. `?eager=1`
+  // (an escape hatch read by `LazyGate`, see lib/cairn-plot/lazy-mount.ts)
+  // forces every section to mount up front, exactly as before P2. file:// URLs
+  // accept a query string and `window.location.search` reflects it.
+  const url = pathToFileURL(GALLERY_HTML).href + "?eager=1";
   const args = [
     "--headless=new",
     // CI runners ship Chromium with an unconfigured SUID sandbox helper

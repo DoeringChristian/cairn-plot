@@ -46,7 +46,16 @@ import {
   type SharedProps,
 } from "./plot-descriptor";
 import { getRenderer, onRegister } from "./plot-registry";
-import { ChartBox, ChartFillContext } from "./plot-standalone-helpers";
+import {
+  ChartBox,
+  ChartFillContext,
+  DEFAULT_CHART_HEIGHT,
+} from "./plot-standalone-helpers";
+import {
+  isEagerMount,
+  LAZY_ROOT_MARGIN,
+  type EagerMountSignals,
+} from "./lib/cairn-plot/lazy-mount";
 import PlotToolbar from "./lib/cairn-plot/primitives/PlotToolbar";
 import {
   useImageController,
@@ -607,15 +616,136 @@ function GridView({ node }: { node: GridNode }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// LazyGate (P2) — viewport-lazy mounting. A leaf/compare pane is expensive to
+// mount: images decode, WebGPU pipelines compile, 3D scenes build, addons eval.
+// Off the eager path, this gate renders a layout-preserving PLACEHOLDER (same
+// height ChartBox reserves) and mounts the REAL child only once an
+// `IntersectionObserver` (generous rootMargin) says the placeholder is nearing
+// the viewport. Once mounted it STAYS mounted (no unmount on scroll-away — the
+// pane pool already handles GPU pressure), so scroll-back is instant.
+//
+// Three EAGER escape hatches force immediate mount of everything: `?eager=1`,
+// `window.__cairnPlotEagerMount === true`, and print (matchMedia("print") /
+// `beforeprint`). Grid children inherit eager naturally: the signals are
+// page-global, so every gate on the page reads the same answer. See
+// `lib/cairn-plot/lazy-mount.ts` for the pure decision fn.
+// ---------------------------------------------------------------------------
+
+declare global {
+  interface Window {
+    /** Imperative EAGER escape hatch — set before mount to disable lazy gating
+     *  for the whole page (mirrors `?eager=1`). */
+    __cairnPlotEagerMount?: boolean;
+  }
+}
+
+/** Gather the ambient eager-mode signals from the live DOM — the impure half of
+ *  the decision (`isEagerMount` is the pure core). SSR (no `window`) mounts
+ *  eagerly: there's no viewport to gate against. */
+function readEagerMountSignals(): EagerMountSignals {
+  if (typeof window === "undefined") return { windowFlag: true };
+  let printMedia = false;
+  try {
+    printMedia = window.matchMedia?.("print")?.matches ?? false;
+  } catch {
+    printMedia = false;
+  }
+  return {
+    search: window.location?.search,
+    windowFlag: window.__cairnPlotEagerMount,
+    printMedia,
+  };
+}
+
+function LazyGate({
+  reservedHeight,
+  children,
+}: {
+  reservedHeight?: number;
+  children: React.ReactNode;
+}) {
+  // Decide once, at mount (the signals are page-global and don't change under
+  // us — except print, handled by the `beforeprint` listener below).
+  const eager = useMemo(() => isEagerMount(readEagerMountSignals()), []);
+  const [mounted, setMounted] = useState(eager);
+  const placeholderRef = useRef<HTMLDivElement | null>(null);
+  const fill = useContext(ChartFillContext);
+
+  useEffect(() => {
+    if (mounted) return;
+    // Print must render EVERYTHING — mount before the print snapshot is taken.
+    const onBeforePrint = () => setMounted(true);
+    window.addEventListener("beforeprint", onBeforePrint);
+    const cleanupPrint = () => window.removeEventListener("beforeprint", onBeforePrint);
+
+    // No IntersectionObserver (old headless / jsdom) → mount eagerly rather
+    // than never: lazy is a perf optimization, not a correctness gate.
+    if (typeof IntersectionObserver === "undefined") {
+      setMounted(true);
+      return cleanupPrint;
+    }
+    const el = placeholderRef.current;
+    if (!el) return cleanupPrint;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setMounted(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: LAZY_ROOT_MARGIN },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      cleanupPrint();
+    };
+  }, [mounted]);
+
+  if (mounted) return <>{children}</>;
+  // Layout-preserving placeholder: reserve the SAME height ChartBox will use
+  // once the real child mounts (props.height → fill 100% → 400px default), so
+  // the swap causes no layout shift for the ChartBox-wrapped renderers.
+  return (
+    <div
+      ref={placeholderRef}
+      className="cairn-plot-lazy-placeholder"
+      aria-hidden="true"
+      style={{
+        height: reservedHeight ?? (fill ? "100%" : DEFAULT_CHART_HEIGHT),
+        width: "100%",
+      }}
+    />
+  );
+}
+
+/** The reserved-height hint for a leaf/compare placeholder: the node's own
+ *  `props.height` (px) when present, else undefined (LazyGate falls back to the
+ *  ChartBox fill/default heuristic). */
+function reservedHeightOf(props: Record<string, unknown> | undefined): number | undefined {
+  const h = props?.height;
+  return typeof h === "number" ? h : undefined;
+}
+
 /** Render one node — dispatch on `kind`. */
 export function PlotNodeView({ node }: { node: PlotNode }) {
   switch (node.kind) {
     case "plot":
-      return <LeafView node={node} />;
+      return (
+        <LazyGate reservedHeight={reservedHeightOf(node.props)}>
+          <LeafView node={node} />
+        </LazyGate>
+      );
     case "grid":
+      // Grids are cheap layout — only their leaf/compare descendants gate.
       return <GridView node={node} />;
     case "compare":
-      return <CompareView node={node} />;
+      return (
+        <LazyGate reservedHeight={reservedHeightOf(node.props)}>
+          <CompareView node={node} />
+        </LazyGate>
+      );
     default:
       return <Message text={`unknown node kind "${(node as PlotNode).kind}"`} error />;
   }
