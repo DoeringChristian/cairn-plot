@@ -36,7 +36,11 @@ import {
   constrainDragRect,
   DRAG_START_PX,
   domainsEqual,
+  forcesTouchPan,
   panByPixels,
+  pinchZoomDomain,
+  pointerDistance,
+  pointerMidpoint,
   wheelZoom,
   WHEEL_FACTOR,
   zoomAboutAnchor,
@@ -371,6 +375,19 @@ export function useChartViewport({
 
   const wasDragRef = useRef(false);
   const dragRef = useRef<DragState | null>(null);
+  // ── Touch: two-finger pinch-zoom ──
+  // Active touch pointers (id → client px) and the pinch snapshot. A pinch
+  // supersedes any single-pointer drag; a plain one-finger touch drag is forced
+  // to PAN (box-zoom is unusable one-finger — see the pointer-down path).
+  const touchPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{
+    idA: number;
+    idB: number;
+    startDist: number;
+    startMid: PixelPoint;
+    startDomain: ChartDomain;
+    rectClient: ClientRect;
+  } | null>(null);
   // Latest `onSelect` behind a ref so the pointer handlers stay stable and a
   // renderer can point it at a closure that reads its freshest `toX`/`toY`.
   const onSelectRef = useRef(onSelect);
@@ -505,16 +522,46 @@ export function useChartViewport({
         width: pr.width,
         height: pr.height,
       };
+      const isTouch = forcesTouchPan(e.pointerType);
+
+      // ── Touch: track pointers; a second finger promotes to a pinch-zoom ──
+      if (isTouch) {
+        touchPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touchPointersRef.current.size >= 2) {
+          const ids = [...touchPointersRef.current.keys()];
+          const a = touchPointersRef.current.get(ids[ids.length - 2])!;
+          const b = touchPointersRef.current.get(ids[ids.length - 1])!;
+          dragRef.current = null; // pinch supersedes a single-finger pan
+          pinchRef.current = {
+            idA: ids[ids.length - 2],
+            idB: ids[ids.length - 1],
+            startDist: pointerDistance(a, b),
+            startMid: pointerMidpoint(a, b),
+            startDomain: domainRef.current,
+            rectClient: rect,
+          };
+          try {
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          } catch {
+            /* best-effort */
+          }
+          return;
+        }
+      }
+
       const right = rect.left + rect.width;
       const bottom = rect.top + rect.height;
       const inPlotX = e.clientX >= rect.left && e.clientX <= right;
       const inPlotY = e.clientY >= rect.top && e.clientY <= bottom;
 
       if (inPlotX && inPlotY) {
-        // Inside the plot rect: pan or box-zoom (modifier inverts the mode).
+        // Inside the plot rect: pan or box-zoom (modifier inverts the mode). A
+        // TOUCH drag always PANS — box-zoom / marquee are unusable one-finger.
         const modifier = e.altKey || e.ctrlKey || e.metaKey;
         const base = dragModeRef.current;
-        const mode: ChartDragMode = modifier
+        const mode: ChartDragMode = isTouch
+          ? "pan"
+          : modifier
           ? base === "pan"
             ? "box"
             : "pan"
@@ -573,6 +620,31 @@ export function useChartViewport({
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
+      // ── Touch: drive an active two-finger pinch-zoom ──
+      if (touchPointersRef.current.has(e.pointerId)) {
+        touchPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      const pinch = pinchRef.current;
+      if (pinch) {
+        const a = touchPointersRef.current.get(pinch.idA);
+        const b = touchPointersRef.current.get(pinch.idB);
+        if (a && b) {
+          wasDragRef.current = true;
+          commit(
+            pinchZoomDomain(
+              pinch.startDomain,
+              pinch.startDist,
+              pinch.startMid,
+              pointerDistance(a, b),
+              pointerMidpoint(a, b),
+              pinch.rectClient,
+              constrainRef.current,
+            ),
+          );
+        }
+        return;
+      }
+
       const s = dragRef.current;
       if (!s) {
         // ── No active drag: axis-gutter cursor affordance ──
@@ -705,6 +777,21 @@ export function useChartViewport({
 
   const endDrag = useCallback(
     (e: React.PointerEvent) => {
+      // ── Touch: retire the pointer; end/demote an active pinch ──
+      if (touchPointersRef.current.delete(e.pointerId)) {
+        try {
+          (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+        } catch {
+          /* ok */
+        }
+        const pinch = pinchRef.current;
+        if (pinch && (e.pointerId === pinch.idA || e.pointerId === pinch.idB)) {
+          pinchRef.current = null;
+          // Suppress the click that ends a pinch (mirrors wasDragRef usage).
+          wasDragRef.current = true;
+        }
+      }
+
       const s = dragRef.current;
       if (!s || s.pointerId !== e.pointerId) return;
       try {
