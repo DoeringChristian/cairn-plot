@@ -13,6 +13,13 @@
  * `group` class). Button chrome matches CardHeader's sizing (`h-[22px]
  * min-w-[22px] …`), but the icons are inline SVG (see `ICON_PATHS` below) —
  * the self-contained plot bundle can't depend on the app's CDN Font Awesome.
+ *
+ * The optional SECOND row of `sliders` (image panes' EXPOSURE / OFFSET) supports
+ * MANUAL NUMERIC ENTRY: double-clicking a slider switches it to an inline text
+ * field so the user can type a value that EXCEEDS the slider's min/max (see
+ * {@link ToolbarSlider}). NOTE: double-click used to reset a slider to its
+ * default; it now means "edit". Reset is on the HOME (reset) button, which
+ * zeroes both sliders.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -25,6 +32,7 @@ import type {
 } from "../controls/ToolbarConfig";
 import { downloadBlob } from "./plot-to-png";
 import { computeToolbarFold, selectedMenuIndex } from "./toolbar-fold";
+import { commitSliderEntry, sliderEntryDraft } from "./slider-entry";
 
 export interface PlotToolbarProps {
   /** The imperative facade this modebar drives (the only real input). */
@@ -367,18 +375,70 @@ const sliderFmt = (s: ToolbarSliderSpec) => (s.format ? s.format(s.value) : Stri
 /**
  * A compact slider for the toolbar's SECOND row (image panes' EXPOSURE /
  * OFFSET). Icon (or short label) + native range input + a tiny value read-out.
- * Controlled — holds no state. `stopPropagation` on the pointer events keeps a
+ * Controlled for its VALUE (holds no chart state); it owns only its transient
+ * "am I being edited?" flag. `stopPropagation` on the pointer events keeps a
  * drag from reaching the plot surface underneath (same as `ToolbarButton`).
+ *
+ * ## Manual numeric entry (double-click to type)
+ * DOUBLE-CLICKING anywhere on the control (track / thumb / value read-out)
+ * switches it to an inline numeric input — same footprint, auto-focused, the
+ * current value pre-filled and selected. Enter or blur COMMITS (via the pure
+ * {@link commitSliderEntry} rule: lenient parse, invalid → revert, never a
+ * NaN); Escape CANCELS. The committed value may EXCEED the slider's min/max
+ * (out-of-range is legal for these display-adjust sliders) — the range element
+ * clamps only the VISUAL thumb position, while the read-out (and state) always
+ * show the TRUE value via {@link sliderFmt}.
+ *
+ * NOTE (semantic change): double-click used to RESET the slider to its default.
+ * It now means "edit". Reset lives on the toolbar's HOME button, which zeroes
+ * both EXPOSURE and OFFSET.
+ *
+ * Behavior is implemented HERE (the shared renderer), so it applies to the
+ * expanded second row AND the folded overflow menu AND any future spec slider.
+ * (Folded caveat: the overflow popover closes on a document-level Escape, so
+ * inside the menu Escape discards the in-progress edit by closing the menu —
+ * still a cancel; in the expanded row Escape cancels inline and keeps the row.)
  */
 function ToolbarSlider({ spec }: { spec: ToolbarSliderSpec }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const beginEdit = useCallback(() => {
+    setDraft(sliderEntryDraft(spec.value));
+    setEditing(true);
+  }, [spec.value]);
+
+  // Auto-focus + select the whole value the moment the entry field appears.
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  // Commit the current draft (Enter / blur). Guarded through a functional
+  // update so a stray blur AFTER a commit can't re-commit or fire onChange
+  // twice. Out-of-range and lenient parsing live in `commitSliderEntry`.
+  const commit = useCallback(() => {
+    setEditing((wasEditing) => {
+      if (wasEditing) spec.onChange(commitSliderEntry(draft, spec.value));
+      return false;
+    });
+  }, [draft, spec]);
+
+  const cancel = useCallback(() => setEditing(false), []);
+
   return (
     <label
       className="inline-flex items-center gap-1 text-fg-muted"
       title={spec.title}
       onPointerDown={(e) => e.stopPropagation()}
       onDoubleClick={(e) => {
+        // Double-click anywhere on the control (track / thumb / read-out)
+        // enters manual numeric entry.
         e.stopPropagation();
-        if (spec.defaultValue !== undefined) spec.onChange(spec.defaultValue);
+        if (!editing) beginEdit();
       }}
     >
       {spec.icon ? (
@@ -390,20 +450,51 @@ function ToolbarSlider({ spec }: { spec: ToolbarSliderSpec }) {
           {spec.label}
         </span>
       )}
-      <input
-        type="range"
-        aria-label={spec.title}
-        min={spec.min}
-        max={spec.max}
-        step={spec.step}
-        value={spec.value}
-        onChange={(e) => spec.onChange(Number(e.target.value))}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="cairn-plot-toolbar-slider h-1 w-16 cursor-pointer accent-accent"
-      />
-      <span aria-hidden="true" className="w-8 text-right text-[9px] font-mono tabular-nums">
-        {sliderFmt(spec)}
-      </span>
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="decimal"
+          aria-label={`${spec.title} (numeric entry)`}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            // Keep typing (arrows, etc.) from reaching the chart underneath.
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancel();
+            }
+          }}
+          onBlur={commit}
+          // Same footprint as range (w-16) + read-out (w-8) + gap.
+          className="cairn-plot-toolbar-slider-entry h-3.5 w-[6.5rem] rounded border border-border bg-bg px-1 text-[9px] font-mono tabular-nums text-fg outline-none focus:border-accent"
+        />
+      ) : (
+        <>
+          <input
+            type="range"
+            aria-label={spec.title}
+            min={spec.min}
+            max={spec.max}
+            step={spec.step}
+            // The range element clamps only the VISUAL thumb to [min,max]; the
+            // true (possibly out-of-range) value is shown by the read-out below.
+            value={spec.value}
+            onChange={(e) => spec.onChange(Number(e.target.value))}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="cairn-plot-toolbar-slider h-1 w-16 cursor-pointer accent-accent"
+          />
+          <span aria-hidden="true" className="w-8 text-right text-[9px] font-mono tabular-nums">
+            {sliderFmt(spec)}
+          </span>
+        </>
+      )}
     </label>
   );
 }

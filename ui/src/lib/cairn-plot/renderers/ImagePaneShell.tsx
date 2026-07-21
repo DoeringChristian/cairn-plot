@@ -103,9 +103,11 @@ export type PaneDataAttrs = Record<string, string | boolean>;
  * that can't apply the adjustment (e.g. the CPU SDR `<img>` path) — the slider
  * row is then simply absent. */
 export interface ImageDisplayAdjust {
-  /** Exposure in EV stops (color * 2^EV). Range -8..+8, default 0. */
+  /** Exposure in EV stops (color * 2^EV). Slider range -8..+8, default 0, but
+   *  any finite value is legal (manual toolbar entry can exceed the range). */
   readonly exposureEV: number;
-  /** Additive offset applied AFTER exposure. Range -1..+1, default 0. */
+  /** Additive offset applied AFTER exposure. Slider range -1..+1, default 0, but
+   *  any finite value is legal (manual toolbar entry can exceed the range). */
   readonly offset: number;
   readonly onExposureChange: (ev: number) => void;
   readonly onOffsetChange: (offset: number) => void;
@@ -317,27 +319,27 @@ export default function ImagePaneShell({
         id: "exposure",
         icon: "sun",
         label: "EV",
-        title: "Exposure (EV stops) — color × 2^EV. Double-click to reset.",
+        title:
+          "Exposure (EV stops) — color × 2^EV. Double-click to type a value (may exceed the slider range).",
         min: -8,
         max: 8,
         step: 0.1,
         value: displayAdjust.exposureEV,
         onChange: displayAdjust.onExposureChange,
         format: (v) => signed(v, 1),
-        defaultValue: 0,
       },
       {
         id: "offset",
         icon: "plusminus",
         label: "OFF",
-        title: "Offset — added after exposure (before tonemap). Double-click to reset.",
+        title:
+          "Offset — added after exposure (before tonemap). Double-click to type a value (may exceed the slider range).",
         min: -1,
         max: 1,
         step: 0.01,
         value: displayAdjust.offset,
         onChange: displayAdjust.onOffsetChange,
         format: (v) => signed(v, 2),
-        defaultValue: 0,
       },
     ];
   }, [displayAdjust]);

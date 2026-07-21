@@ -85,9 +85,6 @@ export interface ToolbarSliderSpec {
   onChange(value: number): void;
   /** Formats `value` for the tiny read-out next to the slider. Default: as-is. */
   format?(value: number): string;
-  /** When set, double-clicking the slider resets it to this value (via
-   *  `onChange`). Used for the EXPOSURE / OFFSET "reset to 0" affordance. */
-  defaultValue?: number;
 }
 
 export interface ToolbarConfig {

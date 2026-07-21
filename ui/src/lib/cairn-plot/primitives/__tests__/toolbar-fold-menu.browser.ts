@@ -64,6 +64,8 @@ interface ToolbarHarnessApi {
   openMenu(ariaLabel: string): boolean;
   hitTestOptions(): HitReport;
   slidersHittable(): { total: number; hittable: number };
+  editFirstSlider(): boolean;
+  entryFields(): number;
 }
 
 const h = React.createElement;
@@ -157,8 +159,8 @@ function buildConfig(): ToolbarConfig {
       },
     ],
     sliders: [
-      { id: "ev", label: "EV", icon: "sun", title: "Exposure", min: -4, max: 4, step: 0.1, value: exposure, defaultValue: 0, onChange: (v) => { exposure = v; render(); } },
-      { id: "off", label: "OFF", icon: "plusminus", title: "Offset", min: -1, max: 1, step: 0.01, value: offset, defaultValue: 0, onChange: (v) => { offset = v; render(); } },
+      { id: "ev", label: "EV", icon: "sun", title: "Exposure", min: -4, max: 4, step: 0.1, value: exposure, onChange: (v) => { exposure = v; render(); } },
+      { id: "off", label: "OFF", icon: "plusminus", title: "Offset", min: -1, max: 1, step: 0.01, value: offset, onChange: (v) => { offset = v; render(); } },
     ],
   };
 }
@@ -255,7 +257,26 @@ function slidersHittable(): { total: number; hittable: number } {
   return { total: ranges.length, hittable };
 }
 
-window.__toolbarHarness = { isFolded, openOverflow, openMenu, hitTestOptions, slidersHittable };
+/** Double-click the first folded slider's range input to switch it to manual
+ *  numeric entry (the double-click bubbles to the wrapping <label>). */
+function editFirstSlider(): boolean {
+  const range = container.querySelector<HTMLInputElement>('input[type="range"]');
+  if (!range) return false;
+  range.scrollIntoView({ block: "center" });
+  for (const t of ["pointerdown", "mousedown", "mouseup", "click", "dblclick"] as const) {
+    range.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+  }
+  return true;
+}
+
+/** Count the manual-entry text inputs currently mounted in the toolbar. */
+function entryFields(): number {
+  return container.querySelectorAll('input.cairn-plot-toolbar-slider-entry').length;
+}
+
+window.__toolbarHarness = {
+  isFolded, openOverflow, openMenu, hitTestOptions, slidersHittable, editFirstSlider, entryFields,
+};
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -294,6 +315,13 @@ async function main(): Promise<void> {
     const slidersOk = sh.total === 2 && sh.hittable === sh.total;
     report(slidersOk, `[4] SLIDERS: ${sh.hittable}/${sh.total} range inputs usable (scrolled into popover view)`);
     ok = ok && slidersOk;
+
+    // --- Manual numeric entry: double-click a folded slider → text field ---
+    ok = editFirstSlider() && ok;
+    await wait(60);
+    const editOk = entryFields() === 1;
+    report(editOk, `[5] EDIT: double-click a folded slider mounts ${entryFields()} numeric entry field (want 1)`);
+    ok = ok && editOk;
 
     setOverallStatus(ok);
   } catch (err) {
