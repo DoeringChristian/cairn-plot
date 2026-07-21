@@ -327,13 +327,15 @@ export function MediaComparePane({
           </div>
           {mode === "split" && (
             <div
-              className="absolute top-0 bottom-0 z-20 flex items-center"
-              style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
+              className="cairn-plot-split-divider absolute top-0 bottom-0 z-20 flex items-center justify-center"
+              style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize", touchAction: "none" }}
               onDoubleClick={() => onSplitPositionChange?.(0.5)}
               onPointerDown={(ev) => {
                 ev.stopPropagation();
                 ev.preventDefault();
-                const container = ev.currentTarget.parentElement!;
+                const el = ev.currentTarget;
+                try { el.setPointerCapture(ev.pointerId); } catch { /* best-effort */ }
+                const container = el.parentElement!;
                 const rect = container.getBoundingClientRect();
                 const onMoveEvt = (me: PointerEvent) => {
                   onSplitPositionChange?.(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
@@ -346,7 +348,7 @@ export function MediaComparePane({
                 window.addEventListener("pointerup", onUpEvt);
               }}
             >
-              <div className="w-1 h-full bg-accent/80 rounded-full" />
+              <div className="w-1 h-full bg-accent/80 rounded-full pointer-events-none" />
             </div>
           )}
         </div>

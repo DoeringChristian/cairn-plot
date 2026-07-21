@@ -61,3 +61,79 @@
 
 /* Font Awesome icons inside buttons */
 button i[class*="fa-"] { font-size: 12px; line-height: 1; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Mobile / touch affordances (self-contained plot + report pages)
+
+   These rules are UNLAYERED and appear after `@tailwind utilities`, so they win
+   over the same-specificity Tailwind utility classes they override (later source
+   order). They are scoped to the interactive plot chrome only — never to the
+   page/body — so ordinary page scroll over prose keeps working on touch.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* HOVER-FREE CONTROLS — a touchscreen can never fire the toolbar's group-hover
+   reveal (`.opacity-0` → `group-hover:opacity-100`), so on any device whose
+   primary pointer can't hover, pin the toolbar visible. Slightly translucent so
+   it stays unobtrusive over the plot until touched (focus-within → fully
+   opaque). Hover-capable devices keep the reveal-on-hover behaviour untouched. */
+@media (hover: none) {
+  .cairn-plot-toolbar {
+    opacity: 0.9;
+  }
+  .cairn-plot-toolbar:focus-within {
+    opacity: 1;
+  }
+}
+
+/* HIT TARGETS — under a coarse primary pointer (finger), controls need ≥40px
+   touch targets. Toolbar icon buttons stay visually compact (22px) but get a
+   centered 40×40 invisible hit extension via a pseudo-element, so the design
+   doesn't grow. Menu/option rows and the split divider grow their hit area
+   directly (they're already large or invisible). */
+@media (pointer: coarse) {
+  /* Icon buttons: keep the 22px visual box, extend the tappable area to 40px. */
+  .cairn-plot-toolbar button {
+    position: relative;
+  }
+  .cairn-plot-toolbar button::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    min-width: 40px;
+    min-height: 40px;
+    transform: translate(-50%, -50%);
+    /* Purely a hit-area extension — never painted; the button stays the event
+       target, the ::after just enlarges its box for hit-testing. */
+  }
+  /* Dropdown / overflow menu rows: full-width, ≥40px tall. */
+  .cairn-plot-toolbar [role="menu"] button,
+  .cairn-plot-toolbar [role="listbox"] button {
+    min-height: 40px;
+  }
+  /* The compare split divider: widen the invisible grab band, keep the thin
+     visual line centered inside it. */
+  .cairn-plot-split-divider {
+    width: 40px;
+  }
+  /* Toolbar range sliders (exposure / offset): larger thumbs for a fingertip. */
+  input[type="range"].cairn-plot-toolbar-slider {
+    height: 22px;
+  }
+  input[type="range"].cairn-plot-toolbar-slider::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+  }
+  input[type="range"].cairn-plot-toolbar-slider::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* The split divider never scrolls the page while being dragged, on any pointer
+   type (touch-action also set inline as a belt-and-suspenders default). */
+.cairn-plot-split-divider {
+  touch-action: none;
+}
