@@ -344,18 +344,34 @@ export default function GpuImagePane(props: ImageBackendProps) {
     getSharedDevice()
       .then((device) => {
         if (cancelled) return;
+        // Two INDEPENDENT signals decide true-HDR output, and we DIAGNOSE which
+        // one is missing so the notice can show the right message + hint:
+        //   (a) BROWSER support for the extended-tone-mapping canvas path —
+        //       probed for real (`capabilities.hdr` is a hardcoded backend flag,
+        //       always `true`, so it is NOT this signal; see
+        //       `webgpu/device.ts`'s `probeExtendedToneMapping`). Firefox lacks
+        //       this entirely — a FUNDAMENTAL browser limitation.
+        //   (b) DISPLAY/OS actually in HDR mode (`dynamic-range: high`). An HDR
+        //       surface on a plain SDR panel just re-clips at the compositor.
+        const browserHasExtendedToneMapping = device.probeExtendedToneMapping?.() ?? false;
         const hasHighDynamicRangeDisplay =
           typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
-        const useHdr = device.capabilities.hdr && hasHighDynamicRangeDisplay && hdrMode;
+        const useHdr =
+          browserHasExtendedToneMapping && hasHighDynamicRangeDisplay && hdrMode;
         useHdrRef.current = useHdr;
-        // This pane WANTED HDR (true-float `imagehdr` content) but is getting
-        // an SDR surface — either the browser lacks the `rgba16float` +
-        // extended-tone-mapping canvas path (a FUNDAMENTAL limitation, e.g.
-        // Firefox), or there's no HDR display/OS-HDR. Surface a one-time notice
-        // that the HDR output is tone-mapped to SDR. Reported from here (not the
-        // addon) because only a real HDR pane knows it wanted HDR and got SDR.
+        // This pane WANTED HDR (true-float `imagehdr` content) but is getting an
+        // SDR surface. Report a one-time notice, diagnosing the missing layer.
+        // Prefer the BROWSER sub-case when both signals fail — it's the harder
+        // (unworkaroundable) limit. Reported from here (not the addon) because
+        // only a real HDR pane knows it wanted HDR and got SDR; and because
+        // this whole `.then` only runs when WebGPU IS available (a WebGPU-less
+        // browser REJECTS `getSharedDevice()` → the `.catch` below → the legacy
+        // CPU pane, which never reports no-hdr), the no-webgpu and no-hdr-*
+        // notices are mutually exclusive by construction.
         if (hdrMode && !useHdr) {
-          reportCapabilityLimit("no-hdr");
+          reportCapabilityLimit(
+            browserHasExtendedToneMapping ? "no-hdr-display" : "no-hdr-browser",
+          );
         }
         acquirePane(canvas, { hdr: useHdr })
           .then((handle) => {

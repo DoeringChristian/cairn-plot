@@ -1,16 +1,27 @@
 /**
  * In-page **capability notice** — one small, dismissible warning banner shown
- * when a rendered cairn-plot page hits a FUNDAMENTAL browser capability limit
- * (not a cairn-plot bug). Two kinds:
+ * when a rendered cairn-plot page hits a FUNDAMENTAL browser/OS capability
+ * limit (not a cairn-plot bug). It DIAGNOSES which layer is missing and shows
+ * the matching message. Three kinds:
  *
  *   - `"no-webgpu"` — the page contains GPU-preferring content (the gpu-image
- *     addon tried to register) but WebGPU is unavailable. Reported from the
- *     addon's `tryRegister()` failure path (`plot-gpu-image-addon.tsx`), so a
- *     chart-only page (which never loads the addon) NEVER warns.
- *   - `"no-hdr"` — WebGPU works, but the HDR canvas path (`rgba16float` +
- *     `toneMapping:"extended"`) is unavailable while the page actually shows
- *     true-float HDR content. Reported from `GpuImagePane`'s acquire logic
- *     (it knows when it wanted HDR and got an SDR surface).
+ *     addon tried to register) but WebGPU is unavailable entirely. Reported
+ *     from the addon's `tryRegister()` failure path (`plot-gpu-image-addon.tsx`),
+ *     so a chart-only page (which never loads the addon) NEVER warns. This
+ *     message implicitly covers HDR too (no WebGPU ⇒ no HDR canvas), and the
+ *     `"no-hdr-*"` kinds can NEVER co-occur with it: they are only reported
+ *     from inside a resolved `getSharedDevice()` (WebGPU present), whereas a
+ *     WebGPU-less page renders the legacy CPU pane, which reports nothing.
+ *   - `"no-hdr-browser"` — WebGPU works, but THIS BROWSER cannot configure a
+ *     canvas with `toneMapping:{mode:"extended"}` (the true-HDR path) while the
+ *     page shows true-float HDR content. A FUNDAMENTAL browser limitation
+ *     (Firefox today). Reported from `GpuImagePane`, which probes the browser
+ *     signal via `device.probeExtendedToneMapping()`.
+ *   - `"no-hdr-display"` — WebGPU AND the browser both support extended tone
+ *     mapping, but the DISPLAY/OS is not in HDR mode
+ *     (`matchMedia("(dynamic-range: high)")` is false). Also reported from
+ *     `GpuImagePane`. When BOTH signals fail the browser sub-case wins (it is
+ *     the harder, unworkaroundable limit).
  *
  * DESIGN: vanilla DOM injection (no React), same spirit as the page bootstrap,
  * so it works in EVERY baked page (report + gallery), `file://` included, with
@@ -19,8 +30,8 @@
  * `:root.cairn-plot-doc`, so it reads correctly in light AND dark.
  *
  * IDEMPOTENT / at-most-one: each kind reports at most once; at most ONE banner
- * is mounted per page. If both fire, `no-webgpu` wins (in practice they are
- * mutually exclusive — `no-hdr` requires WebGPU to be working).
+ * is mounted per page. When a second kind reports, the higher-priority one
+ * wins (`no-webgpu` > `no-hdr-browser` > `no-hdr-display`).
  *
  * DISMISSAL persists per page under a `localStorage` key namespaced by
  * `location.pathname`, falling back to `sessionStorage` then in-memory when
@@ -28,7 +39,14 @@
  * session.
  */
 
-export type CapabilityLimit = "no-webgpu" | "no-hdr";
+export type CapabilityLimit = "no-webgpu" | "no-hdr-browser" | "no-hdr-display";
+
+/** One-banner priority: lower number wins when two kinds are reported. */
+const KIND_PRIORITY: Record<CapabilityLimit, number> = {
+  "no-webgpu": 0,
+  "no-hdr-browser": 1,
+  "no-hdr-display": 2,
+};
 
 /** Full browser-support guide the "Learn more" link points at. */
 export const BROWSER_SUPPORT_GUIDE_URL =
@@ -43,6 +61,7 @@ export interface HintEnv {
 }
 
 type Browser = "brave" | "firefox" | "safari" | "chromium-linux" | "chromium";
+type OS = "macos" | "windows" | "other";
 
 /** Classify the browser from its UA string (+ the Brave flag). Order matters:
  *  Brave first (UA looks like Chrome), then Firefox, then real Safari (has
@@ -57,14 +76,49 @@ export function detectBrowser(userAgent: string, isBrave = false): Browser {
   return "chromium";
 }
 
+/** Classify the OS from the UA string — used only for the `no-hdr-display`
+ *  hint (how to turn ON OS/display HDR). Exported for the unit test. */
+export function detectOS(userAgent: string): OS {
+  const ua = userAgent || "";
+  if (/mac os x|macintosh/i.test(ua)) return "macos";
+  if (/windows/i.test(ua)) return "windows";
+  return "other";
+}
+
 /**
- * One short, browser-specific sentence on how to enable the missing capability
- * in the CURRENT browser. Pure — depends only on `kind` + `env`. The Firefox
- * hint deliberately states the HDR limitation inline (Firefox has no extended
- * tone-mapping path at all), so it is correct for both kinds.
+ * One short sentence on how to enable the missing capability. Pure — depends
+ * only on `kind` + `env`:
+ *   - `no-hdr-display` (browser is fine, OS/display isn't in HDR) → an OS hint.
+ *   - `no-hdr-browser` (browser lacks extended tone mapping) → a browser hint
+ *     stating it's a browser limitation.
+ *   - `no-webgpu` (WebGPU missing) → a browser hint on enabling WebGPU.
  */
 export function pickEnableHint(kind: CapabilityLimit, env: HintEnv): string {
-  switch (detectBrowser(env.userAgent, env.isBrave)) {
+  if (kind === "no-hdr-display") {
+    switch (detectOS(env.userAgent)) {
+      case "macos":
+        return "macOS: EDR engages automatically on HDR-capable displays — confirm your display supports HDR.";
+      case "windows":
+        return "Windows: turn on Settings → System → Display → Use HDR.";
+      default:
+        return "Enable HDR in your display and OS settings.";
+    }
+  }
+
+  const browser = detectBrowser(env.userAgent, env.isBrave);
+  if (kind === "no-hdr-browser") {
+    switch (browser) {
+      case "firefox":
+        return "Firefox has no extended-tone-mapping canvas path at all — true HDR output is impossible until Firefox implements it (fundamental browser limitation).";
+      case "safari":
+        return "Safari's WebGPU HDR canvas tone-mapping is still maturing — update to the latest Safari 26+.";
+      default:
+        return "Chrome/Edge 129+ is required for HDR canvas output (toneMapping: extended) — update your browser.";
+    }
+  }
+
+  // no-webgpu
+  switch (browser) {
     case "firefox":
       return "Firefox: about:config → dom.webgpu.enabled (HDR output is not available in Firefox at all — browser limitation).";
     case "safari":
@@ -75,17 +129,20 @@ export function pickEnableHint(kind: CapabilityLimit, env: HintEnv): string {
       return "Chromium on Linux: enable chrome://flags/#enable-unsafe-webgpu.";
     case "chromium":
     default:
-      return kind === "no-hdr"
-        ? "Chrome/Edge: requires an HDR display with OS HDR enabled."
-        : "Chrome/Edge: enable chrome://flags/#enable-unsafe-webgpu and hardware acceleration.";
+      return "Chrome/Edge: enable chrome://flags/#enable-unsafe-webgpu and hardware acceleration.";
   }
 }
 
-/** The one-line limitation message per kind. */
-function limitMessage(kind: CapabilityLimit): string {
-  return kind === "no-webgpu"
-    ? "GPU renderer unavailable → CPU fallback active; FLIP kernels + HDR compare disabled."
-    : "true HDR output unsupported by this browser → HDR images tone-mapped to SDR.";
+/** The one-line limitation message per kind. Exported for the unit test. */
+export function limitMessage(kind: CapabilityLimit): string {
+  switch (kind) {
+    case "no-webgpu":
+      return "GPU renderer unavailable → CPU fallback active; FLIP kernels + HDR compare disabled.";
+    case "no-hdr-browser":
+      return "True HDR output is unsupported by this browser — a fundamental browser limitation, not a cairn-plot bug → HDR images tone-mapped to SDR.";
+    case "no-hdr-display":
+      return "Your display/OS is not in HDR mode → HDR images tone-mapped to SDR.";
+  }
 }
 
 /** Per-page dismissal key, namespaced by kind + `location.pathname`. Pure. */
@@ -238,8 +295,10 @@ export function reportCapabilityLimit(kind: CapabilityLimit): void {
     // Re-check dismissal in case the deferred callback ran after a dismiss.
     if (readDismissed(key)) return;
     if (shownKind !== null) {
-      // A banner is already up. Prefer no-webgpu; otherwise keep the first.
-      if (kind === "no-webgpu" && shownKind === "no-hdr") {
+      // A banner is already up. Replace it only when the new kind is strictly
+      // higher priority (no-webgpu > no-hdr-browser > no-hdr-display); else
+      // keep the one already shown.
+      if (KIND_PRIORITY[kind] < KIND_PRIORITY[shownKind]) {
         removeBanner();
       } else {
         return;

@@ -496,6 +496,65 @@ export async function createWebGPUDevice(): Promise<Device> {
 
   let destroyed = false;
 
+  // Memoized (one per GPUDevice) probe of whether THIS BROWSER can configure a
+  // canvas with `toneMapping:{mode:"extended"}` — the true-HDR canvas path.
+  // `capabilities.hdr` above is hardcoded `true` for the WebGPU backend and is
+  // NOT this signal; the real answer is only knowable by actually configuring a
+  // context and reading `getConfiguration()` BACK. A browser that silently
+  // IGNORES the unknown `toneMapping` dictionary member (WebIDL drops unknown
+  // members rather than throwing — Firefox does exactly this) does NOT throw on
+  // `configure()`, so a throw-based probe would misreport it as supported; the
+  // `getConfiguration().toneMapping.mode === "extended"` readback is the only
+  // reliable discriminator. When `getConfiguration` is unavailable we
+  // conservatively report `false` (extended tone mapping and `getConfiguration`
+  // shipped together in Chromium, so a browser lacking the readback is old/
+  // limited enough that "browser limitation" is the correct diagnosis).
+  let extendedToneMappingProbe: boolean | null = null;
+  function probeExtendedToneMapping(): boolean {
+    if (extendedToneMappingProbe !== null) return extendedToneMappingProbe;
+    let supported = false;
+    try {
+      if (typeof document !== "undefined") {
+        const probeCanvas = document.createElement("canvas");
+        probeCanvas.width = 1;
+        probeCanvas.height = 1;
+        const ctx = probeCanvas.getContext("webgpu");
+        if (ctx) {
+          try {
+            ctx.configure({
+              device: gpuDevice,
+              format: "rgba16float",
+              colorSpace: "display-p3",
+              toneMapping: { mode: "extended" },
+              alphaMode: "premultiplied",
+              usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            const cfg = (
+              ctx as GPUCanvasContext & {
+                getConfiguration?: () => { toneMapping?: { mode?: string } } | null;
+              }
+            ).getConfiguration?.();
+            supported = cfg?.toneMapping?.mode === "extended";
+          } catch {
+            // configure() threw → the browser rejected the extended-HDR config
+            // outright (genuinely unsupported).
+            supported = false;
+          } finally {
+            try {
+              ctx.unconfigure();
+            } catch {
+              /* best-effort cleanup */
+            }
+          }
+        }
+      }
+    } catch {
+      supported = false;
+    }
+    extendedToneMappingProbe = supported;
+    return supported;
+  }
+
   // Lazily-built, memoized (one per GPUDevice, not per call) compute pipeline
   // for `reduceDiffSumSquaredAbs` — see `engine/shaders/reduce.wgsl.ts`'s
   // module doc comment for the reduction design.
@@ -525,6 +584,7 @@ export async function createWebGPUDevice(): Promise<Device> {
   const device: Device = {
     backend: "webgpu",
     capabilities,
+    probeExtendedToneMapping,
 
     createTexture(width, height, format) {
       return new WGPUTexture(gpuDevice, width, height, format);

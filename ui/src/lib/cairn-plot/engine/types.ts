@@ -34,6 +34,16 @@ export interface Device {
   createComputePipeline?(spec: { shaderWGSL: string }): ComputePipeline;
   createBindGroup(pipeline: RenderPipeline, entries: BindGroupEntry[]): BindGroup;
   createSurface(canvas: HTMLCanvasElement, opts: { hdr: boolean }): Surface;
+  /**
+   * True iff THIS BROWSER can actually configure a canvas with the true-HDR
+   * `toneMapping:{mode:"extended"}` path — probed by configuring a throwaway
+   * context and reading `getConfiguration()` back (NOT `capabilities.hdr`,
+   * which is a hardcoded backend flag). Distinguishes the "browser lacks
+   * extended tone mapping" limitation (e.g. Firefox) from a merely non-HDR
+   * display. Optional/defensive on the interface; always present on the
+   * WebGPU backend, memoized per device.
+   */
+  probeExtendedToneMapping?(): boolean;
   renderFullscreen(target: Surface | Texture, pipeline: RenderPipeline, bindGroup: BindGroup): void;
   readback(source: Surface | Texture): Promise<Uint8Array | Float32Array>;
   /**

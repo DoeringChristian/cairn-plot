@@ -101,22 +101,41 @@ report authored on a WebGPU machine still renders everywhere.
 
 ## In-page capability notice
 
-When a rendered page hits one of the two limits above, cairn-plot shows a
-single small, dismissible banner in the bottom-right corner so the reader knows
-the degraded output is a **browser limitation, not a cairn-plot bug**:
+When a rendered page hits one of the limits above, cairn-plot shows a single
+small, dismissible banner in the bottom-right corner so the reader knows the
+degraded output is a **browser/OS limitation, not a cairn-plot bug**. The notice
+**diagnoses which layer is missing** and shows one of three messages:
 
-- **GPU renderer unavailable** — the page contains GPU-preferring content (GPU
-  image / compare panes) but WebGPU is missing, so the CPU fallback is active
-  and FLIP kernels + HDR compare are disabled. A chart-only page never shows
-  this (it doesn't load the GPU engine at all).
-- **HDR output unsupported** — WebGPU works, but the true-float HDR canvas path
-  is unavailable while the page actually shows HDR content, so HDR images are
-  tone-mapped to SDR.
+1. **GPU renderer unavailable** (`no-webgpu`) — the page contains GPU-preferring
+   content (GPU image / compare panes) but WebGPU is missing entirely, so the
+   CPU fallback is active and FLIP kernels + HDR compare are disabled. A
+   chart-only page never shows this (it doesn't load the GPU engine at all).
+   This message covers HDR implicitly — with no WebGPU there is no HDR canvas —
+   and the two HDR messages below can never co-occur with it (they are only
+   raised once WebGPU has resolved).
+2. **True HDR output unsupported by this browser** (`no-hdr-browser`) — WebGPU
+   works, but the browser cannot configure a canvas with
+   `toneMapping:{mode:"extended"}`, so true-float HDR images are tone-mapped to
+   SDR. This is a **fundamental browser limitation** (Firefox today — see the
+   Firefox section above). It is detected by actually probing the browser:
+   configuring a throwaway context with the extended-HDR recipe and reading
+   `context.getConfiguration().toneMapping.mode` back — a browser that silently
+   ignores the `toneMapping` option (rather than throwing) is still correctly
+   diagnosed as unsupported.
+3. **Display/OS not in HDR mode** (`no-hdr-display`) — WebGPU *and* the browser
+   both support extended tone mapping, but the display/OS isn't in HDR mode
+   (`matchMedia("(dynamic-range: high)")` is false), so HDR images are
+   tone-mapped to SDR. The hint is OS-specific (macOS: EDR engages automatically
+   on HDR-capable displays; Windows: Settings → System → Display → *Use HDR*).
 
-Each banner states the limitation, gives a one-line, browser-specific hint on
-how to enable the capability (e.g. Firefox `about:config → dom.webgpu.enabled`,
-Chromium-on-Linux `chrome://flags/#enable-unsafe-webgpu`), and links back to
-this guide via **Learn more**. It appears **at most once per page**: dismiss it
-with the `×` and it never returns on that page (the dismissal is remembered per
-page in `localStorage`, falling back to `sessionStorage` or in-memory on
+When both HDR signals fail (browser lacks extended tone mapping **and** the
+display isn't HDR), the notice prefers message 2 — the harder, unworkaroundable
+limit.
+
+Each banner states the limitation, gives a one-line hint on how to enable the
+capability (browser-specific for messages 1–2, OS-specific for message 3), and
+links back to this guide via **Learn more**. It appears **at most once per
+page**: dismiss it with the `×` and it never returns on that page (the dismissal
+is remembered per page under a `localStorage` key namespaced by
+`location.pathname`, falling back to `sessionStorage` then in-memory on
 `file://` / private-mode pages where storage is denied).
