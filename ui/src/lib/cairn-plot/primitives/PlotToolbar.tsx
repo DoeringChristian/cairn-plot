@@ -857,7 +857,12 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
     // z-30 keeps the toolbar ABOVE the pixel-value number overlay (z-10) AND the
     // compare pane's split-slider divider (z-20) — the modebar must always be
     // clickable, even with the slider dragged beneath it.
-    "z-30 rounded border border-border bg-bg-elevated/90 shadow-sm backdrop-blur-sm transition-opacity",
+    // `cairn-plot-toolbar` is the stable hook the standalone stylesheet targets
+    // for coarse-pointer / hover-free affordances (plot.css): on a touch device
+    // (`@media (hover: none)`) the hover-reveal can never fire, so the toolbar is
+    // forced visible; under `@media (pointer: coarse)` its buttons/rows get ≥40px
+    // hit areas. Both live in CSS so they need no per-mount config plumbing.
+    "cairn-plot-toolbar z-30 rounded border border-border bg-bg-elevated/90 shadow-sm backdrop-blur-sm transition-opacity",
     revealClass,
   ].join(" ");
 

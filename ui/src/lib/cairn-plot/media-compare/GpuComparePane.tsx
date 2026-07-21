@@ -997,8 +997,8 @@ export default function GpuComparePane({
       {/* Full-height, gapless split divider — drives the `split` uniform. */}
       {compareMode === "split" && (
         <div
-          className="absolute top-0 bottom-0 z-20 flex items-center"
-          style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize" }}
+          className="cairn-plot-split-divider absolute top-0 bottom-0 z-20 flex items-center justify-center"
+          style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize", touchAction: "none" }}
           onDoubleClick={(e) => {
             e.stopPropagation();
             onSplitPositionChange?.(0.5);
@@ -1006,7 +1006,9 @@ export default function GpuComparePane({
           onPointerDown={(ev) => {
             ev.stopPropagation();
             ev.preventDefault();
-            const container = ev.currentTarget.parentElement!;
+            const el = ev.currentTarget;
+            try { el.setPointerCapture(ev.pointerId); } catch { /* best-effort */ }
+            const container = el.parentElement!;
             const rect = container.getBoundingClientRect();
             const onMoveEvt = (me: PointerEvent) => {
               onSplitPositionChange?.(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
@@ -1019,7 +1021,7 @@ export default function GpuComparePane({
             window.addEventListener("pointerup", onUpEvt);
           }}
         >
-          <div className="w-1 h-full bg-accent/80 rounded-full" />
+          <div className="w-1 h-full bg-accent/80 rounded-full pointer-events-none" />
         </div>
       )}
     </>

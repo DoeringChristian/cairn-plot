@@ -390,6 +390,106 @@ export function applyConstraints(
   return out;
 }
 
+// ── Touch: pinch-zoom + gesture discrimination ──
+// Two-pointer pinch and one-finger pan for coarse/touch input. These are the
+// pure math shared by every 2D viewport hook (image panes, unified charts,
+// ScalarPlot) so touch behaves identically everywhere and can be unit-tested
+// without a browser or PointerEvents.
+
+/** Euclidean distance between two client/container points. `0` for coincident
+ *  points (callers guard against a zero-distance divide). */
+export function pointerDistance(a: PixelPoint, b: PixelPoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/** Midpoint of two client/container points (the pinch anchor). */
+export function pointerMidpoint(a: PixelPoint, b: PixelPoint): PixelPoint {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/**
+ * On a TOUCH pointer a plain one-finger drag must PAN — box-zoom / marquee
+ * select / lasso are unusable one-finger on a touchscreen, and a two-finger
+ * gesture is handled as pinch, not drag. Mouse/pen keep their configured drag
+ * mode (with a held modifier still inverting it). This is the single predicate
+ * every 2D viewport hook gates its "force pan" branch on, so charts, ScalarPlot
+ * and the image panes stay in lockstep. `undefined` (no pointerType) is treated
+ * as non-touch.
+ */
+export function forcesTouchPan(pointerType: string | undefined): boolean {
+  return pointerType === "touch";
+}
+
+/** A scale+translate viewport: screen = content * zoom + pan (image panes). */
+export interface ScaleViewport {
+  zoom: number;
+  pan: { x: number; y: number };
+}
+
+/**
+ * Two-pointer pinch for a scale+translate viewport (image / compare panes).
+ * The distance RATIO (`curDist / startDist`) is applied directly to the zoom
+ * captured at pinch-start, then the content point that sat under the start
+ * midpoint is pinned back under the CURRENT midpoint — so a pinch both zooms
+ * (about the midpoint) AND pans with a two-finger drag, in one step. Absolute
+ * from the pinch-start snapshot (not incremental) so it never drifts. `midpoint`
+ * points are container-local px (same space as `pan`). Zoom is clamped to
+ * `[minZoom, maxZoom]`; a degenerate `startDist` leaves the zoom unchanged.
+ */
+export function pinchZoomScale(
+  start: ScaleViewport,
+  startDist: number,
+  startMid: PixelPoint,
+  curDist: number,
+  curMid: PixelPoint,
+  minZoom: number,
+  maxZoom: number,
+): ScaleViewport {
+  const ratio = startDist > 0 && curDist > 0 ? curDist / startDist : 1;
+  const nextZoom = Math.max(minZoom, Math.min(maxZoom, start.zoom * ratio));
+  // Content coordinate under the start midpoint (reuse the wheel zoom-to-anchor
+  // math): c = (mid - pan) / zoom; after scaling, pin it back under curMid.
+  const cx = (startMid.x - start.pan.x) / start.zoom;
+  const cy = (startMid.y - start.pan.y) / start.zoom;
+  return {
+    zoom: nextZoom,
+    pan: { x: curMid.x - cx * nextZoom, y: curMid.y - cy * nextZoom },
+  };
+}
+
+/**
+ * Two-pointer pinch for a domain viewport (unified charts + ScalarPlot). The
+ * distance ratio drives a span multiplier (`spanFactor = startDist / curDist` —
+ * fingers apart → ratio > 1 → span shrinks → zoom in) applied about the data
+ * value under the start midpoint via {@link zoomAboutAnchor}; the anchor is then
+ * translated by the midpoint delta so a two-finger drag also pans. Absolute from
+ * the pinch-start `startDomain` snapshot. `rect` is the plot rect and the
+ * midpoints share its coordinate space (client or container-local — only their
+ * relative geometry matters). `constrainTo` no-ops an axis for 1D charts.
+ */
+export function pinchZoomDomain(
+  startDomain: ChartDomain,
+  startDist: number,
+  startMid: PixelPoint,
+  curDist: number,
+  curMid: PixelPoint,
+  rect: ClientRect,
+  constrainTo: ConstrainAxis = "both",
+): ChartDomain {
+  const ratio = startDist > 0 && curDist > 0 ? curDist / startDist : 1;
+  const spanFactor = 1 / ratio;
+  const w = Math.max(1, rect.width);
+  const h = Math.max(1, rect.height);
+  const bottom = rect.top + rect.height;
+  const fx = (startMid.x - rect.left) / w;
+  const fy = (bottom - startMid.y) / h;
+  const ax = fracToValue(fx, startDomain.xDomain[0], startDomain.xDomain[1]);
+  const ay = fracToValue(fy, startDomain.yDomain[0], startDomain.yDomain[1]);
+  const zoomed = zoomAboutAnchor(startDomain, ax, ay, spanFactor, constrainTo);
+  // Translate so the anchor (now at the start midpoint's fraction) tracks curMid.
+  return panByPixels(curMid.x - startMid.x, curMid.y - startMid.y, { width: w, height: h }, zoomed, constrainTo);
+}
+
 /** Structural equality — used to decide whether a view is "modified" vs home. */
 export function domainsEqual(a: ChartDomain, b: ChartDomain): boolean {
   return (

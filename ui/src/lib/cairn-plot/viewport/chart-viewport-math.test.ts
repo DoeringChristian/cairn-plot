@@ -19,6 +19,11 @@ import {
   panByPixels,
   pointInPolygon,
   pointInRect,
+  pointerDistance,
+  pointerMidpoint,
+  forcesTouchPan,
+  pinchZoomScale,
+  pinchZoomDomain,
   wheelZoom,
   wheelZoomFactor,
   zoomAboutAnchor,
@@ -310,4 +315,98 @@ test("pointInPolygon: degenerate ring (< 3 vertices) is always false", () => {
     ]),
     false,
   );
+});
+
+// ── Touch: pinch-zoom + gesture discrimination ──
+
+test("pointerDistance / pointerMidpoint: basic geometry", () => {
+  approx(pointerDistance({ x: 0, y: 0 }, { x: 3, y: 4 }), 5);
+  approx(pointerDistance({ x: 5, y: 5 }, { x: 5, y: 5 }), 0);
+  const m = pointerMidpoint({ x: 0, y: 10 }, { x: 4, y: 2 });
+  assert.deepEqual(m, { x: 2, y: 6 });
+});
+
+test("forcesTouchPan: only 'touch' forces a pan drag", () => {
+  assert.equal(forcesTouchPan("touch"), true);
+  assert.equal(forcesTouchPan("mouse"), false);
+  assert.equal(forcesTouchPan("pen"), false);
+  assert.equal(forcesTouchPan(undefined), false);
+  assert.equal(forcesTouchPan(""), false);
+});
+
+test("pinchZoomScale: fingers apart doubles the zoom about the midpoint", () => {
+  const start = { zoom: 2, pan: { x: 100, y: 50 } };
+  const mid = { x: 300, y: 200 };
+  // Distance doubles, midpoint fixed → zoom doubles, the content point under the
+  // midpoint stays under the midpoint (screen-invariant anchor).
+  const out = pinchZoomScale(start, 100, mid, 200, mid, 0.25, 64);
+  approx(out.zoom, 4);
+  // content under mid before: (300-100)/2 = 100 ; after: 100*4 = 400 ; pan = 300-400 = -100
+  approx(out.pan.x, mid.x - ((mid.x - start.pan.x) / start.zoom) * out.zoom);
+  approx(out.pan.y, mid.y - ((mid.y - start.pan.y) / start.zoom) * out.zoom);
+  // The anchor point maps back to the same screen point at the new zoom.
+  const cx = (mid.x - start.pan.x) / start.zoom;
+  approx(cx * out.zoom + out.pan.x, mid.x);
+});
+
+test("pinchZoomScale: distance ratio applies directly and clamps to [min,max]", () => {
+  const start = { zoom: 10, pan: { x: 0, y: 0 } };
+  const m = { x: 0, y: 0 };
+  approx(pinchZoomScale(start, 100, m, 150, m, 0.25, 64).zoom, 15); // 10 * 1.5
+  // Over-zoom clamps at max; a degenerate startDist leaves zoom unchanged.
+  approx(pinchZoomScale(start, 100, m, 1000, m, 0.25, 64).zoom, 64);
+  approx(pinchZoomScale(start, 0, m, 200, m, 0.25, 64).zoom, 10);
+});
+
+test("pinchZoomScale: moving the midpoint pans (two-finger drag)", () => {
+  const start = { zoom: 1, pan: { x: 0, y: 0 } };
+  // Same distance (no zoom) but the midpoint slides +30/+20 → pure pan by that.
+  const out = pinchZoomScale(start, 100, { x: 50, y: 50 }, 100, { x: 80, y: 70 }, 0.25, 64);
+  approx(out.zoom, 1);
+  approx(out.pan.x, 30);
+  approx(out.pan.y, 20);
+});
+
+test("pinchZoomDomain: fingers apart zooms in (span shrinks) about the anchor", () => {
+  const rect: ClientRect = { left: 0, top: 0, width: 100, height: 100 };
+  const start = D(0, 100, 0, 100);
+  const mid = { x: 50, y: 50 }; // center → data anchor (50,50)
+  const out = pinchZoomDomain(start, 100, mid, 200, mid, rect, "both");
+  // ratio 2 → spanFactor 0.5 → each span halves, centered on the anchor.
+  approx(out.xDomain[1] - out.xDomain[0], 50);
+  approx(out.yDomain[1] - out.yDomain[0], 50);
+  approx((out.xDomain[0] + out.xDomain[1]) / 2, 50);
+  approx((out.yDomain[0] + out.yDomain[1]) / 2, 50);
+});
+
+test("pinchZoomDomain: the anchor data value stays under the start midpoint", () => {
+  const rect: ClientRect = { left: 0, top: 0, width: 100, height: 100 };
+  const start = D(0, 100, 0, 100);
+  const mid = { x: 25, y: 75 }; // fx=0.25 → ax=25 ; fy (from bottom) = 0.25 → ay=25
+  const out = pinchZoomDomain(start, 100, mid, 200, mid, rect, "both");
+  // ax=25 must remain at fraction 0.25 of the new x-domain; ay=25 at fraction
+  // 0.25 from the bottom (i.e. fraction 0.25 of the y-domain).
+  approx((25 - out.xDomain[0]) / (out.xDomain[1] - out.xDomain[0]), 0.25);
+  approx((25 - out.yDomain[0]) / (out.yDomain[1] - out.yDomain[0]), 0.25);
+});
+
+test("pinchZoomDomain: constrainTo:'x' leaves the y-domain untouched", () => {
+  const rect: ClientRect = { left: 0, top: 0, width: 100, height: 100 };
+  const start = D(0, 100, 0, 100);
+  const mid = { x: 50, y: 50 };
+  const out = pinchZoomDomain(start, 100, mid, 200, mid, rect, "x");
+  assert.deepEqual(out.yDomain, [0, 100]);
+  assert.ok(out.xDomain[1] - out.xDomain[0] < 100);
+});
+
+test("pinchZoomDomain: moving the midpoint pans the domain", () => {
+  const rect: ClientRect = { left: 0, top: 0, width: 100, height: 100 };
+  const start = D(0, 100, 0, 100);
+  // Same distance (no zoom); midpoint slides +10px in x → domain shifts left by
+  // 10 data units (content moves right). No y movement.
+  const out = pinchZoomDomain(start, 100, { x: 50, y: 50 }, 100, { x: 60, y: 50 }, rect, "both");
+  approx(out.xDomain[0], -10);
+  approx(out.xDomain[1], 90);
+  approx(out.yDomain[0], 0);
+  approx(out.yDomain[1], 100);
 });
