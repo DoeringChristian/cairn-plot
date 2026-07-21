@@ -29,7 +29,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
 import type { PromotedSeriesConfig, Viewport } from "../../types";
 import { useModifierKey } from "../../hooks/use-modifier-key";
-import { boxZoomAxis } from "../../viewport/chart-viewport-math";
+import { boxZoomAxis, wheelZoomFactor } from "../../viewport/chart-viewport-math";
 
 export interface PlotOffset {
   top: number;
@@ -107,11 +107,12 @@ export function usePlotGestures({
   const [selection, setSelection] = useState<Selection | null>(null);
 
   // ── Wheel zoom (centers on cursor) ──
-  // Modifier-gated (Alt/Ctrl/Meta via useModifierKey, matching useChartViewport
-  // + the image viewport): only modifier+wheel zooms. A plain wheel does nothing
-  // and never calls preventDefault, so it bubbles and scrolls the page normally.
-  // WheelEvent.altKey is unreliable during scroll on some platforms, so we gate
-  // on the keyboard-tracked modifier state instead.
+  // Gated on either a trackpad PINCH (`e.ctrlKey` — the browser's pinch
+  // signature, no keydown) or a held Alt/Ctrl/Meta (via useModifierKey, matching
+  // useChartViewport + the image viewport). A plain wheel does nothing and never
+  // calls preventDefault, so it bubbles and scrolls the page normally.
+  // WheelEvent.altKey is unreliable during scroll on some platforms, so the
+  // keyboard-tracked modifier state backs the (real) ctrl/alt/meta+wheel path.
   const modifierDown = useModifierKey();
   const modifierDownRef = useRef(modifierDown);
   modifierDownRef.current = modifierDown;
@@ -119,7 +120,10 @@ export function usePlotGestures({
     const el = chartBoxRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      if (!modifierDownRef.current) return; // plain wheel → let the page scroll (no preventDefault)
+      // Zoom on a trackpad PINCH (`e.ctrlKey` — the browser's pinch signature,
+      // arrives with no keydown) OR a held Alt/Ctrl/Meta; a plain wheel does
+      // nothing and never calls preventDefault, so it scrolls the page.
+      if (!e.ctrlKey && !modifierDownRef.current) return;
       const po = plotOffsetRef.current;
       if (!po) return; // geometry not measured yet — bail rather than guess
       const rect = el.getBoundingClientRect();
@@ -133,7 +137,9 @@ export function usePlotGestures({
       ) return;
       e.preventDefault();
 
-      const factor = e.deltaY < 0 ? 1 / 1.1 : 1.1;
+      // SPAN multiplier (`factor < 1` zooms in), so use the RECIPROCAL of the
+      // magnification. Delta-proportional: smooth for a pinch, ~1.1 per notch.
+      const factor = 1 / wheelZoomFactor(e.deltaY);
       const { x, y } = effectiveRef.current;
       const fx = (e.clientX - plotLeft) / Math.max(1, plotRight - plotLeft);
       const fy = (plotBottom - e.clientY) / Math.max(1, plotBottom - plotTop);

@@ -21,6 +21,32 @@
 
 /** Wheel zoom factor per notch — identical to use-plot-gestures.ts:116. */
 export const WHEEL_FACTOR = 1.1;
+
+/**
+ * Wheel/pinch zoom sensitivity. `factor = exp(-deltaY * k)`; `k` is tuned so a
+ * notchy mouse wheel (`|deltaY| ≈ 100`) lands near the legacy fixed 1.1 step
+ * (`exp(100 * 0.001) ≈ 1.105 ≈ WHEEL_FACTOR`), while a trackpad pinch — whose
+ * `deltaY` arrives small/fractional and continuous — scales smoothly through
+ * the exact same formula. */
+export const WHEEL_ZOOM_K = 0.001;
+
+/**
+ * Delta-proportional zoom MAGNIFICATION for a wheel/pinch notch.
+ *
+ * `> 1` = zoom IN (magnify), `< 1` = zoom OUT — following the wheel sign
+ * convention `deltaY < 0` (scroll up / pinch apart) → zoom in. A single
+ * exponential makes BOTH a notchy mouse wheel (|deltaY|~100 → ~1.1 per notch,
+ * matching the legacy fixed step) and a smooth trackpad pinch (tiny fractional
+ * deltas → tiny fractional steps) feel right.
+ *
+ * Callers whose zoom model is a SCALE multiplier (image viewport: `zoom *=
+ * factor`) use this value directly. Callers whose model is a SPAN multiplier
+ * (`zoomAboutAnchor` / ScalarPlot, where `factor < 1` zooms in) use its
+ * RECIPROCAL — see `wheelZoom` below.
+ */
+export function wheelZoomFactor(deltaY: number, k: number = WHEEL_ZOOM_K): number {
+  return Math.exp(-deltaY * k);
+}
 /** Minimum drag (px) before a box-zoom rectangle is drawn/committed. */
 export const BOX_THRESHOLD_PX = 6;
 /** Minimum drag (px) before a gesture counts as a drag (vs. a click). */
@@ -116,7 +142,10 @@ export function wheelZoom(
   if (clientX < left || clientX > right || clientY < top || clientY > bottom) {
     return null;
   }
-  const factor = deltaY < 0 ? 1 / WHEEL_FACTOR : WHEEL_FACTOR;
+  // `zoomAboutAnchor`'s `factor` is a SPAN multiplier (`< 1` zooms in), so feed
+  // it the RECIPROCAL of the magnification. Delta-proportional (`wheelZoomFactor`)
+  // so a trackpad pinch scales smoothly and a mouse notch still lands near 1.1.
+  const factor = 1 / wheelZoomFactor(deltaY);
   const fx = (clientX - left) / Math.max(1, right - left);
   const fy = (bottom - clientY) / Math.max(1, bottom - top);
   const ax = fracToValue(fx, domain.xDomain[0], domain.xDomain[1]);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useModifierKey } from "./use-modifier-key";
+import { wheelZoomFactor } from "../viewport/chart-viewport-math";
 
 export interface Viewport {
   zoom: number;
@@ -105,10 +106,17 @@ export function useImageViewport(args: {
     const el = containerRef.current;
     if (!el || !onViewportChange) return;
     const handler = (e: WheelEvent) => {
-      if (!altDownRef.current) return;
+      // A wheel with `ctrlKey` is the browser's trackpad-PINCH signature (it
+      // arrives with NO keydown, so `altDownRef` never opens); a real ctrl/alt/
+      // meta+wheel is already an accepted zoom modifier. Treat both as zoom —
+      // preventDefault is REQUIRED for pinch or the browser page-zooms instead.
+      if (!e.ctrlKey && !altDownRef.current) return;
       e.preventDefault();
       e.stopPropagation();
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      // Delta-proportional: smooth for a pinch, ~1.1 per mouse notch. `factor`
+      // multiplies the scale directly (`> 1` = zoom in), matching this hook's
+      // `zoom *= factor` model.
+      const factor = wheelZoomFactor(e.deltaY);
       const s = viewportRef.current;
       const rect = el.getBoundingClientRect();
       // Q29: cap zoom by the FINAL resolution (one texel fills the viewport),

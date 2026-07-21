@@ -20,10 +20,12 @@ import {
   pointInPolygon,
   pointInRect,
   wheelZoom,
+  wheelZoomFactor,
   zoomAboutAnchor,
   fracToValue,
   THIN_BAND_PX,
   WHEEL_FACTOR,
+  WHEEL_ZOOM_K,
   type ChartDomain,
   type ClientRect,
   type PixelPoint,
@@ -62,6 +64,37 @@ test("zoomAboutAnchor with constrainTo:'x' leaves y untouched", () => {
   const out = zoomAboutAnchor(D(0, 10, 0, 10), 5, 5, 1 / WHEEL_FACTOR, "x");
   assert.deepEqual(out.yDomain, [0, 10]);
   assert.ok(out.xDomain[1] - out.xDomain[0] < 10);
+});
+
+test("wheelZoomFactor: a mouse notch (|deltaY|~100) is ~WHEEL_FACTOR", () => {
+  // Delta-proportional exp() must approximate the legacy fixed 1.1 step for a
+  // typical notchy wheel, so mouse zoom feel is unchanged.
+  approx(wheelZoomFactor(-100), WHEEL_FACTOR, 6e-3); // zoom in ≈ 1.1
+  approx(wheelZoomFactor(100), 1 / WHEEL_FACTOR, 6e-3); // zoom out ≈ 1/1.1
+  // Exactly reciprocal for opposite-sign equal deltas.
+  approx(wheelZoomFactor(100) * wheelZoomFactor(-100), 1);
+});
+
+test("wheelZoomFactor: sign convention (deltaY<0 zooms in, >0 out, 0 identity)", () => {
+  assert.ok(wheelZoomFactor(-50) > 1, "scroll up / pinch apart → magnify");
+  assert.ok(wheelZoomFactor(50) < 1, "scroll down / pinch together → shrink");
+  assert.equal(wheelZoomFactor(0), 1, "no delta → no zoom");
+});
+
+test("wheelZoomFactor: pinch deltas scale continuously and monotonically", () => {
+  // Small fractional trackpad deltas produce small fractional, ordered steps —
+  // no fixed per-notch jump — and compose (two half-steps == one full step).
+  const half = wheelZoomFactor(-5);
+  const full = wheelZoomFactor(-10);
+  assert.ok(half > 1 && half < full, "bigger pinch delta → bigger magnification");
+  approx(half * half, full); // exp additivity ⇒ composability
+  // Continuity near zero: a tiny delta yields a factor very close to 1.
+  approx(wheelZoomFactor(-0.5), 1 + 0.5 * WHEEL_ZOOM_K, 1e-3);
+});
+
+test("wheelZoomFactor: k is configurable", () => {
+  approx(wheelZoomFactor(-100, 0), 1);
+  approx(wheelZoomFactor(-100, 0.002), Math.exp(0.2));
 });
 
 test("wheelZoom outside the rect returns null", () => {

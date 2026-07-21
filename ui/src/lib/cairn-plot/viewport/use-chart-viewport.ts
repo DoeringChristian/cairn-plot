@@ -458,14 +458,20 @@ export function useChartViewport({
   }, [syncTarget?.groupId, syncTarget?.sourceId]);
 
   // ── Wheel zoom (non-passive so preventDefault sticks) ──
-  // Modifier-gated (Alt/Ctrl/Meta via useModifierKey, matching the image
-  // viewport): only modifier+wheel zooms. A plain wheel does nothing and never
-  // calls preventDefault, so it bubbles and scrolls the page normally.
+  // Gated on either a trackpad PINCH (`e.ctrlKey` — the browser's pinch
+  // signature, no keydown) or a held Alt/Ctrl/Meta (via useModifierKey, matching
+  // the image viewport). A plain wheel does nothing and never calls
+  // preventDefault, so it bubbles and scrolls the page normally. (No
+  // gesturestart/gesturechange handling — modern Safari also sends ctrlKey
+  // wheels for pinch, so the one path covers it.)
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      if (!modifierDownRef.current) return; // plain wheel → let the page scroll (no preventDefault)
+      // Zoom when the trackpad-pinch signature (`ctrlKey` wheel, synthesized by
+      // the browser with no keydown) OR a held Alt/Ctrl/Meta is present; a plain
+      // wheel does nothing and never calls preventDefault, so it scrolls the page.
+      if (!e.ctrlKey && !modifierDownRef.current) return;
       const rect = rectToClient(containerRef, plotRectRef);
       if (!rect) return;
       const next = wheelZoom(
