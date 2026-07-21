@@ -132,6 +132,24 @@ When both HDR signals fail (browser lacks extended tone mapping **and** the
 display isn't HDR), the notice prefers message 2 — the harder, unworkaroundable
 limit.
 
+## EXR decoding (WASM-accelerated)
+
+OpenEXR sources are decoded **WASM-first**: a small Rust decoder (the pure-Rust
+`exr` crate, compiled to WebAssembly and shipped inline as base64 — no fetch, so
+it works on `file://` and under strict CSP) runs inside the same persistent Web
+Worker that already handles EXR off the main thread. It covers the full classic
+compression set — NONE, RLE, ZIP(S), PIZ, PXR24, B44/B44A **and DWAA/DWAB** — and
+returns all-`HALF` sources as raw f16 bit patterns that stay half-precision all
+the way to the `rgba16float` GPU upload (no eager widening to f32). The decoder
+is instantiated once per worker lifetime.
+
+The previous **TypeScript decoder remains the fallback**, used automatically when
+the WASM path can't handle an input: HTJ2K compression or luminance-chroma
+(Y/RY/BY) channel layouts (which the WASM decoder reports as typed errors), or
+if the WASM module fails to instantiate on a given browser. Beneath both sits the
+original pure-TS reader (NONE/ZIP/ZIPS) as a last-ditch net. The decode result is
+identical either way, so this acceleration is transparent to page authors.
+
 Each banner states the limitation, gives a one-line hint on how to enable the
 capability (browser-specific for messages 1–2, OS-specific for message 3), and
 links back to this guide via **Learn more**. It appears **at most once per

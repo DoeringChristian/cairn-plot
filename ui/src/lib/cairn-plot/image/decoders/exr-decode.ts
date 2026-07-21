@@ -3,13 +3,14 @@
  * Moves the (potentially slow) EXR decode OFF the main thread and layers a
  * clean fallback chain:
  *
- *   1. a PERSISTENT Web Worker running the full vendored decoder
- *      (`exr-worker.ts` → `exr-full.ts`), the normal browser path — all
- *      compressions (PIZ/PXR24/B44/DWA/…), result returned as a transferable;
+ *   1. a PERSISTENT Web Worker running the WASM-first core
+ *      (`exr-worker.ts` → `exr-wasm.ts`: Rust `exr` crate, TS decoder fallback),
+ *      the normal browser path — all compressions (PIZ/PXR24/B44/DWA/…), result
+ *      returned as a transferable (f16 bit patterns for all-HALF, else f32);
  *   2. if `Worker` is unavailable or the worker path fails to spin up, the SAME
- *      full decoder on the MAIN thread (also the `node:test` path);
- *   3. if the full decoder throws, the original pure-TS reader (`exr.ts`,
- *      NONE/ZIP/ZIPS) as a last-ditch net.
+ *      WASM-first core on the MAIN thread (also the `node:test` path);
+ *   3. if that throws, the original pure-TS reader (`exr.ts`, NONE/ZIP/ZIPS) as
+ *      a last-ditch net.
  *
  * Unsupported-by-everything variants surface the full decoder's explicit error.
  *
@@ -18,8 +19,8 @@
  * awaiting promise.
  */
 import type { DecodedImage, ImageSource } from "../decoders.ts";
-import { decodeExrBuffer, decodeExrFull } from "./exr-full.ts";
 import { decodeExr as decodeExrPure } from "./exr.ts";
+import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import type { ExrWorkerRequest, ExrWorkerResponse } from "./exr-worker.ts";
 
 // A decode should never hang the queue; cap it generously (large DWA/PIZ frames
@@ -66,16 +67,18 @@ function onWorkerMessage(event: MessageEvent<ExrWorkerResponse>): void {
   pending.delete(msg.id);
   clearTimeout(job.timer);
   if (msg.ok) {
+    // The worker is WASM-first (`exr-wasm.ts`): all-HALF sources come back as
+    // raw f16 bit patterns (`precision:"f16-bits"` → reinterpret `data` as a
+    // Uint16Array, kept half through to the rgba16float upload); everything else
+    // (incl. the TS fallback) is genuine f32.
     job.resolve({
       kind: "f32",
-      data: new Float32Array(msg.data),
+      data:
+        msg.precision === "f16-bits" ? new Uint16Array(msg.data) : new Float32Array(msg.data),
       width: msg.width,
       height: msg.height,
       channels: msg.channels,
-      // The worker runs the three.js full decoder (FLOAT_TYPE), so this path is
-      // always genuine f32 — see `exr-full.ts`'s note on the half-output
-      // follow-up. The pure-TS reader (`exr.ts`) is the current f16-bits path.
-      precision: "f32",
+      precision: msg.precision,
     });
   } else {
     job.reject(new Error(msg.error));
@@ -122,19 +125,20 @@ async function decodeViaWorker(bytes: ArrayBuffer): Promise<F32Image> {
   });
 }
 
-/** Full decode: worker when possible, else the same decoder on the main thread. */
+/** Full decode: worker when possible, else the same WASM-first core on the main thread. */
 async function decodeFull(src: ImageSource): Promise<DecodedImage> {
   const bytes = src.bytes!;
   if (canUseWorker()) {
     try {
       return await decodeViaWorker(bytes);
     } catch {
-      // Worker path unavailable/broken → retry synchronously on the main thread
-      // (also yields the real, informative error for a genuinely bad file).
-      return decodeExrBuffer(bytes);
+      // Worker path unavailable/broken → run the SAME WASM-first core on the
+      // main thread (also yields the real, informative error for a bad file).
+      return decodeExrPreferWasm(bytes.slice(0));
     }
   }
-  return decodeExrFull(src);
+  // No Worker (e.g. node): the WASM-first core runs inline, TS fallback beneath.
+  return decodeExrPreferWasm(bytes.slice(0));
 }
 
 /**

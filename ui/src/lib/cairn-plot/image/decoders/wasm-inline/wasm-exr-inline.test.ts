@@ -4,17 +4,14 @@
  * Rust + TS decoder tests use.
  *
  *   node --experimental-strip-types --test \
- *     wasm/exr-decode/inline/wasm-exr-inline.test.ts
+ *     src/lib/cairn-plot/image/decoders/wasm-inline/wasm-exr-inline.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { loadExrDecoder } from "./wasm-exr-inline.ts";
 
-const FIXTURE = new URL(
-  "../../../ui/src/lib/cairn-plot/image/decoders/fixtures/rgb-piz-half-64x48.exr",
-  import.meta.url,
-);
+const FIXTURE = new URL("../fixtures/rgb-piz-half-64x48.exr", import.meta.url);
 
 function halfToF32(bits: number): number {
   const s = (bits & 0x8000) >> 15;

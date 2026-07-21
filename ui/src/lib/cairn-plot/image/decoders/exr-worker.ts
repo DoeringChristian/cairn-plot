@@ -5,12 +5,19 @@
  * graph (this file + `exr-full.ts` + `vendor/exr-loader.js` + `fflate`) is
  * embedded as a self-contained inline blob — no separate asset, no CDN.
  *
+ * Decode is WASM-first (Rust `exr` crate, inline base64) with the vendored TS
+ * decoder as the fallback — see `exr-wasm.ts`. The WASM decoder is instantiated
+ * ONCE per worker lifetime (memoized inside `loadExrDecoder`). All-HALF sources
+ * come back as raw f16 bit patterns (`precision:"f16-bits"`), so the reply also
+ * carries a `precision` tag telling the host how to reinterpret `data`.
+ *
  * Protocol (one job per message; the dispatcher correlates by `id`):
- *   ← { id, buffer: ArrayBuffer }                      (buffer transferred in)
- *   → { id, ok: true, data, width, height, channels }  (data transferred out)
+ *   ← { id, buffer: ArrayBuffer }                                  (transferred in)
+ *   → { id, ok: true, data, width, height, channels, precision }   (transferred out)
  *   → { id, ok: false, error: string }
  */
-import { decodeExrBuffer } from "./exr-full.ts";
+import type { Precision } from "../half.ts";
+import { decodeExrPreferWasm } from "./exr-wasm.ts";
 
 /** Inbound decode request. */
 export interface ExrWorkerRequest {
@@ -27,6 +34,8 @@ export type ExrWorkerResponse =
       width: number;
       height: number;
       channels: number;
+      /** How to reinterpret `data`: `"f16-bits"` → Uint16Array, `"f32"` → Float32Array. */
+      precision: Precision;
     }
   | { id: number; ok: false; error: string };
 
@@ -43,25 +52,27 @@ const ctx = self as unknown as WorkerScope;
 
 ctx.addEventListener("message", (event) => {
   const { id, buffer } = event.data;
-  try {
-    const decoded = decodeExrBuffer(buffer);
-    const out = decoded.data.buffer as ArrayBuffer;
-    ctx.postMessage(
-      {
+  decodeExrPreferWasm(buffer)
+    .then((decoded) => {
+      const out = decoded.data.buffer as ArrayBuffer;
+      ctx.postMessage(
+        {
+          id,
+          ok: true,
+          data: out,
+          width: decoded.width,
+          height: decoded.height,
+          channels: decoded.channels,
+          precision: decoded.precision,
+        },
+        [out], // zero-copy transfer of the decoded (f16-bits or f32) buffer
+      );
+    })
+    .catch((err) => {
+      ctx.postMessage({
         id,
-        ok: true,
-        data: out,
-        width: decoded.width,
-        height: decoded.height,
-        channels: decoded.channels,
-      },
-      [out], // zero-copy transfer of the decoded float buffer
-    );
-  } catch (err) {
-    ctx.postMessage({
-      id,
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
-  }
 });
