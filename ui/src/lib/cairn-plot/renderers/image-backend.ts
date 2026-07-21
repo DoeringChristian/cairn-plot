@@ -30,12 +30,24 @@ import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
 // DataSpec). `[H,W]` grayscale, `[H,W,C]` with `C∈{1,3,4}`.
 // ---------------------------------------------------------------------------
 export interface HdrData {
-  /** Flattened float samples in row-major order. */
-  data: Float64Array | Float32Array;
+  /**
+   * Flattened samples in row-major order. Read per {@link HdrData.precision}:
+   * a `Float64Array`/`Float32Array` of float VALUES (`"f32"`, the default), or
+   * a `Uint16Array` of raw IEEE-754 binary16 BIT PATTERNS (`"f16-bits"` — the
+   * F16 pipeline, kept half-precision through to an `rgba16float` upload; see
+   * `../image/half.ts`).
+   */
+  data: Float64Array | Float32Array | Uint16Array;
   /** `[H,W]` | `[H,W,C]` with `C∈{1,3,4}`. */
   shape: number[];
   /** Raw numpy dtype string (e.g. `<f4`) — informational. */
   dtype: string;
+  /**
+   * How to interpret `data`: `"f32"` (float values, the default when absent —
+   * every pre-F16 caller) or `"f16-bits"` (raw binary16 bits in a
+   * `Uint16Array`). See `../image/half.ts`.
+   */
+  precision?: import("../image/half.ts").Precision;
 }
 
 /** The float-HDR prop shape (presence of `hdr` selects this backend path). */

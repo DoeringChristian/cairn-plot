@@ -472,11 +472,20 @@ export function MediaComparePane({
  * same URL is a cache hit.
  */
 export interface CompareFloatSource {
-  data: Float32Array;
+  /**
+   * Row-major samples. Read per {@link CompareFloatSource.precision}: a
+   * `Float32Array` of float VALUES (`"f32"`, the default), or a `Uint16Array`
+   * of raw IEEE-754 binary16 BIT PATTERNS (`"f16-bits"` — the F16 pipeline,
+   * uploaded as `rgba16float`; see `../image/half.ts`).
+   */
+  data: Float32Array | Uint16Array;
   width: number;
   height: number;
   channels: number;
   contentKey: string;
+  /** How to read `data` — `"f32"` (float values, default when absent) or
+   *  `"f16-bits"` (raw binary16 bits). See `../image/half.ts`. */
+  precision?: import("../image/half.ts").Precision;
 }
 
 /**
@@ -508,7 +517,8 @@ function compareFloatToHdrData(src: CompareFloatSource): HdrData {
       src.channels === 1
         ? [src.height, src.width]
         : [src.height, src.width, src.channels],
-    dtype: "<f4",
+    dtype: src.precision === "f16-bits" ? "<f2" : "<f4",
+    precision: src.precision,
   };
 }
 

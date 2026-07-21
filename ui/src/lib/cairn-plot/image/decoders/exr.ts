@@ -15,13 +15,27 @@
  * single channel.
  *
  * Output is the canonical float payload the HDR image path consumes:
- * `{ kind:"f32", data:Float32Array, width, height, channels }` (RGB→3, RGBA→4,
+ * `{ kind:"f32", data, width, height, channels, precision }` (RGB→3, RGBA→4,
  * Y/single→1), row-major, top-to-bottom, channels interleaved in R,G,B,A order.
+ *
+ * ## Half precision preserved (F16 pipeline)
+ * When EVERY output channel is a `HALF` channel the decoder keeps the raw
+ * binary16 BIT PATTERNS in a `Uint16Array` and tags the payload
+ * `precision:"f16-bits"` (2 bytes/sample) instead of eagerly widening to `f32`
+ * (`halfToFloat`) — the bits survive to an `rgba16float` GPU upload and are
+ * lazily widened only where a CPU consumer needs float values (see
+ * `../half.ts`). `FLOAT`/`UINT` channels (or any MIX with a half channel) still
+ * decode to a `Float32Array` (`precision:"f32"`), preserving exact behavior for
+ * every non-all-half EXR.
  *
  * See `docs/superpowers/specs/2026-07-19-client-image-decoders.md` for the full
  * layout notes (esp. the ZIP predictor+interleave post-filter).
  */
 import type { DecodedImage, ImageSource } from "../decoders.ts";
+import { halfToFloat } from "../half.ts";
+
+// Re-exported for back-compat with existing importers/tests (`./exr.test.ts`).
+export { halfToFloat };
 
 // EXR version-field flag bits that gate support (little-endian int32; the low
 // byte is the version number, the upper bits are flags).
@@ -112,23 +126,6 @@ class Reader {
   skip(n: number): void {
     this.pos += n;
   }
-}
-
-/** IEEE-754 half (16-bit) → f32. Exact for every half value. */
-export function halfToFloat(h: number): number {
-  const sign = h & 0x8000 ? -1 : 1;
-  const exp = (h >> 10) & 0x1f;
-  const mant = h & 0x3ff;
-  if (exp === 0) {
-    if (mant === 0) return sign * 0;
-    // subnormal: mant * 2^-24
-    return sign * mant * 2 ** -24;
-  }
-  if (exp === 31) {
-    return mant === 0 ? sign * Infinity : NaN;
-  }
-  // normal: 2^(exp-15) * (1 + mant/1024)
-  return sign * 2 ** (exp - 15) * (1 + mant / 1024);
 }
 
 /** Inflate a zlib (RFC-1950) buffer via the native `DecompressionStream`. */
@@ -334,12 +331,20 @@ export async function decodeExr(src: ImageSource): Promise<DecodedImage> {
   const bytesPerScanline = width * hdr.channels.reduce((a, c) => a + c.size, 0);
   const perBlock = linesPerBlock(hdr.compression);
 
+  // F16 pipeline: when EVERY channel is HALF, keep the raw binary16 bit
+  // patterns (a `Uint16Array`, `precision:"f16-bits"`) instead of widening to
+  // f32 — see this module's doc comment. Any FLOAT/UINT channel (or a mix)
+  // falls back to the f32 path unchanged.
+  const allHalf = hdr.channels.every((c) => c.pixelType === PT_HALF);
+
   // Scanline offset table: ceil(height/perBlock) uint64 file offsets.
   const nBlocks = Math.ceil(height / perBlock);
   const offsets: number[] = new Array(nBlocks);
   for (let i = 0; i < nBlocks; i++) offsets[i] = r.u64();
 
-  const out = new Float32Array(width * height * outChannels);
+  const out = allHalf
+    ? new Uint16Array(width * height * outChannels)
+    : new Float32Array(width * height * outChannels);
 
   for (let b = 0; b < nBlocks; b++) {
     r.pos = offsets[b]!;
@@ -362,6 +367,8 @@ export async function decodeExr(src: ImageSource): Promise<DecodedImage> {
     }
 
     // Natural layout: per scanline, then per (sorted) channel, then per pixel.
+    // On the all-HALF path we copy the raw u16 bit pattern straight through
+    // (no `halfToFloat`); otherwise we widen every sample to f32.
     const rawDv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     for (let i = 0; i < scanlines; i++) {
       const row = blockY + i - hdr.yMin;
@@ -371,12 +378,16 @@ export async function decodeExr(src: ImageSource): Promise<DecodedImage> {
         const comp = compFor[ci]!;
         const rowBase = (row * width) * outChannels + comp;
         for (let x = 0; x < width; x++) {
-          out[rowBase + x * outChannels] = readSample(rawDv, off, ch.pixelType);
+          out[rowBase + x * outChannels] = allHalf
+            ? rawDv.getUint16(off, true) // raw binary16 bits (f16-bits payload)
+            : readSample(rawDv, off, ch.pixelType);
           off += ch.size;
         }
       }
     }
   }
 
-  return { kind: "f32", data: out, width, height, channels: outChannels };
+  return allHalf
+    ? { kind: "f32", data: out as Uint16Array, width, height, channels: outChannels, precision: "f16-bits" }
+    : { kind: "f32", data: out as Float32Array, width, height, channels: outChannels, precision: "f32" };
 }
