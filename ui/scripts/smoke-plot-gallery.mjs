@@ -55,7 +55,11 @@ const DUMP_HTML = join(tmpdir(), "cairn-smoke-dump.html");
 // renderer's real first paint, comfortably before the broken build's async
 // catch-up — so the harness stays green on good code and red on the
 // regression. Override with SMOKE_VT_BUDGET_MS for debugging.
-const VIRTUAL_TIME_BUDGET_MS = Number(process.env.SMOKE_VT_BUDGET_MS) || 250;
+// 400 (was 250 pre-deflate): the async store inflate (DecompressionStream)
+// needs cold-run headroom — the first run after a rebuild (and always-cold CI)
+// missed the octet-stream sections at 250. Still two orders of magnitude below
+// the ~15s that masked the first-paint gap this harness exists to catch.
+const VIRTUAL_TIME_BUDGET_MS = Number(process.env.SMOKE_VT_BUDGET_MS) || 400;
 
 const RED = (s) => `\x1b[31m${s}\x1b[0m`;
 const GREEN = (s) => `\x1b[32m${s}\x1b[0m`;
