@@ -15,6 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import zlib from "node:zlib";
 import { decodeExr, halfToFloat } from "./exr.ts";
+import { f16BitsToFloat32 } from "../half.ts";
 
 // ---------------------------------------------------------------------------
 // halfToFloat — direct edge-case coverage (normals, subnormals, ±0, ±inf, nan).
@@ -258,6 +259,39 @@ test("FLOAT RGB, NONE: exact pixel + channel + row/col layout", async () => {
   assert.equal(d.width, 3);
   assert.equal(d.height, 2);
   assert.equal(d.channels, 3);
+  // FLOAT channels stay f32 VALUES (Float32Array) — exact prior behavior.
+  assert.equal(d.precision, "f32");
+  assert.ok(d.data instanceof Float32Array);
+  for (let i = 0; i < w * h; i++) {
+    assert.equal(d.data[i * 3 + 0], R[i]);
+    assert.equal(d.data[i * 3 + 1], G[i]);
+    assert.equal(d.data[i * 3 + 2], B[i]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// MIXED HALF+FLOAT channels → f32 (any non-HALF channel forces the f32 path).
+// ---------------------------------------------------------------------------
+test("mixed HALF + FLOAT channels decode to f32 values (widened)", async () => {
+  const w = 2;
+  const h = 2;
+  const R = [0.5, 1.0, 1.5, 2.0]; // HALF (exactly representable)
+  const G = [0.25, 0.75, 1.25, 1.75]; // HALF (exactly representable)
+  const B = [3.5, 4.25, 5.125, 6.0]; // FLOAT
+  const buf = makeExr({
+    width: w,
+    height: h,
+    channels: [
+      { name: "R", pixelType: HALF, values: R },
+      { name: "G", pixelType: HALF, values: G },
+      { name: "B", pixelType: FLOAT, values: B },
+    ],
+  });
+  const d = await decodeExr({ bytes: buf });
+  assert.equal(d.kind, "f32");
+  if (d.kind !== "f32") return;
+  assert.equal(d.precision, "f32");
+  assert.ok(d.data instanceof Float32Array);
   for (let i = 0; i < w * h; i++) {
     assert.equal(d.data[i * 3 + 0], R[i]);
     assert.equal(d.data[i * 3 + 1], G[i]);
@@ -331,10 +365,26 @@ test("HALF RGB, ZIP: multi-block layout + HALF samples round-trip", async () => 
   assert.equal(d.width, 4);
   assert.equal(d.height, 20);
   assert.equal(d.channels, 3);
+  // F16 pipeline: an all-HALF EXR keeps the raw binary16 BIT PATTERNS (a
+  // Uint16Array, `precision:"f16-bits"`) — NOT widened to f32 by the decoder.
+  assert.equal(d.precision, "f16-bits");
+  assert.ok(d.data instanceof Uint16Array, "half payload data must be a Uint16Array of bits");
+  // The stored bits round-trip back to the exact expected values via halfToFloat
+  // (the lazy per-pixel conversion the TEV overlay uses). All test values are
+  // exactly representable halves, so this is exact.
   for (let i = 0; i < w * h; i++) {
-    assert.equal(d.data[i * 3 + 0], R[i]);
-    assert.equal(d.data[i * 3 + 1], G[i]);
-    assert.equal(d.data[i * 3 + 2], B[i]);
+    assert.equal(halfToFloat(d.data[i * 3 + 0]!), R[i]);
+    assert.equal(halfToFloat(d.data[i * 3 + 1]!), G[i]);
+    assert.equal(halfToFloat(d.data[i * 3 + 2]!), B[i]);
+  }
+  // The bulk lazy conversion (`f16BitsToFloat32`, used by the CPU tonemap
+  // fallback + FLIP paths) agrees with the scalar `halfToFloat` bit-for-bit.
+  const widened = f16BitsToFloat32(d.data as Uint16Array);
+  assert.equal(widened.length, d.data.length);
+  for (let i = 0; i < w * h; i++) {
+    assert.equal(widened[i * 3 + 0], R[i]);
+    assert.equal(widened[i * 3 + 1], G[i]);
+    assert.equal(widened[i * 3 + 2], B[i]);
   }
 });
 

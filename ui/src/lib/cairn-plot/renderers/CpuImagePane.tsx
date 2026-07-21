@@ -54,6 +54,7 @@ import { applyColormap, getColormapLUT } from "../colormaps";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
+import { f16BitsToFloat32, halfToFloat } from "../image/half";
 import {
   getTonemapOperator,
   applyExposureOffset,
@@ -105,7 +106,12 @@ export function tonemapToImageData(
   offset: number = 0,
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
-  const src = hdr.data;
+  // F16 pipeline: this is the CPU tone-map FALLBACK path (used when the GPU
+  // backend is unavailable), so a `precision:"f16-bits"` source is widened to
+  // f32 ONCE for the whole frame here (see `../image/half.ts`) rather than
+  // kept half — the GPU path keeps the bits; only this fallback pays the copy.
+  const src =
+    hdr.precision === "f16-bits" ? f16BitsToFloat32(hdr.data as Uint16Array) : hdr.data;
   const op = getTonemapOperator(tonemap);
   const out = new Uint8ClampedArray(w * h * 4);
 
@@ -707,6 +713,11 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
       const base = (py * d.w + px) * c;
       const src = hdr.data;
+      // F16 pipeline: widen the touched samples lazily (single pixel).
+      const readV =
+        hdr.precision === "f16-bits"
+          ? (k: number) => halfToFloat(src[k] ?? 0)
+          : (k: number) => src[k] ?? 0;
       const disp = dispDataRef.current;
       let luminance = 0.5;
       if (disp && disp.width === d.w && disp.height === d.h) {
@@ -718,9 +729,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
           255;
       }
       const values =
-        c === 1
-          ? [src[base] ?? 0]
-          : [src[base] ?? 0, src[base + 1] ?? 0, src[base + 2] ?? 0];
+        c === 1 ? [readV(base)] : [readV(base), readV(base + 1), readV(base + 2)];
       return buildChannelSample(values, "unit", notation, luminance);
     },
     [hdr, dims],

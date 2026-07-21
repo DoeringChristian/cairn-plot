@@ -220,7 +220,16 @@ export async function resolveDataProps(
             decoded.channels === 1
               ? [decoded.height, decoded.width]
               : [decoded.height, decoded.width, decoded.channels];
-          return { hdr: { data: decoded.data, shape, dtype: "<f4" }, baselineUrl: null, overlay };
+          return {
+            hdr: {
+              data: decoded.data,
+              shape,
+              dtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
+              precision: decoded.precision,
+            },
+            baselineUrl: null,
+            overlay,
+          };
         }
         return { imageUrl: decodedU8ToDataUrl(decoded), baselineUrl: null, overlay };
       }
@@ -243,7 +252,16 @@ export async function resolveDataProps(
             decoded.channels === 1
               ? [decoded.height, decoded.width]
               : [decoded.height, decoded.width, decoded.channels];
-          return { hdr: { data: decoded.data, shape, dtype: "<f4" }, baselineUrl, overlay };
+          return {
+            hdr: {
+              data: decoded.data,
+              shape,
+              dtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
+              precision: decoded.precision,
+            },
+            baselineUrl,
+            overlay,
+          };
         }
         return { imageUrl: decodedU8ToDataUrl(decoded), baselineUrl, overlay };
       }

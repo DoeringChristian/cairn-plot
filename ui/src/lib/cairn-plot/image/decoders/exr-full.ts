@@ -83,7 +83,13 @@ export function decodeExrBuffer(buffer: ArrayBuffer): Extract<DecodedImage, { ki
     }
   }
 
-  return { kind: "f32", data: out, width, height, channels: outChannels };
+  // The vendored three.js loader is configured with FLOAT_TYPE (above), so this
+  // path always emits genuine f32 VALUES. Emitting half BITS from the full/
+  // worker decoder (`precision:"f16-bits"`, matching the pure `exr.ts` reader)
+  // is a follow-up: it needs the loader run with HALF_FLOAT_TYPE only when the
+  // source channels are all HALF (else it would lossily downconvert FLOAT→half),
+  // which requires a cheap channel-pixelType peek this decoder doesn't do yet.
+  return { kind: "f32", data: out, width, height, channels: outChannels, precision: "f32" };
 }
 
 /** {@link ImageSource} entry point for the full decoder (needs raw bytes). */

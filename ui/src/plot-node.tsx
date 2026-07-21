@@ -249,6 +249,7 @@ async function resolveFrame(
             width: decoded.width,
             height: decoded.height,
             channels: decoded.channels,
+            precision: decoded.precision,
             // The ORIGINAL source URL is the stable diff-cache content key —
             // NOT the decoded bytes — so a rerender with the same URL is a hit.
             contentKey: data.url,

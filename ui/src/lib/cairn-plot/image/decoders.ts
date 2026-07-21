@@ -55,17 +55,26 @@ import { decodeExr } from "./decoders/exr-decode.ts";
  *  - `u8`  — 8-bit samples for the SDR path. `data` is an `ImageData` (RGBA,
  *    from the browser-native decoders) or a raw `Uint8ClampedArray` (from a
  *    uint8 `.npy`/`.npz`, laid out row-major, `width*height*channels`).
- *  - `f32` — float samples for the HDR path (`HdrData`-compatible). `channels`
- *    is `1` for `[H,W]`, else the trailing dim of `[H,W,C]`.
+ *  - `f32` — the float/HDR path (`HdrData`-compatible). `channels` is `1` for
+ *    `[H,W]`, else the trailing dim of `[H,W,C]`. The `precision` tag says how
+ *    to read `data` (F16 pipeline — see `./half.ts`):
+ *      - `"f32"`      → `data` is a `Float32Array` of IEEE-754 f32 VALUES.
+ *      - `"f16-bits"` → `data` is a `Uint16Array` of raw IEEE-754 binary16 BIT
+ *        PATTERNS (2 bytes/sample), kept half-precision through to an
+ *        `rgba16float` GPU upload and lazily widened to f32 by CPU consumers.
+ *    The `kind` stays `"f32"` for BOTH so every existing `decoded.kind ===
+ *    "f32"` branch (the HDR routing seams) keeps working unchanged; consumers
+ *    that touch `data` VALUES dispatch on `precision`.
  */
 export type DecodedImage =
   | { kind: "u8"; data: Uint8ClampedArray | ImageData; width: number; height: number }
   | {
       kind: "f32";
-      data: Float32Array;
+      data: Float32Array | Uint16Array;
       width: number;
       height: number;
       channels: number;
+      precision: import("./half.ts").Precision;
     };
 
 /** A decodable image source: a `url`, raw `bytes`, or both, plus format hints. */
@@ -263,8 +272,10 @@ export function npyArrayToDecoded(npy: NpyArray): DecodedImage {
     return { kind: "u8", data: Uint8ClampedArray.from(data), width, height };
   }
   // Floats (and any other numeric dtype `parseNpy` coerced to Float64) feed the
-  // HDR/float path.
-  return { kind: "f32", data: Float32Array.from(data), width, height, channels };
+  // HDR/float path. `parseNpy` always widens to Float64, so numpy `.npy` arrays
+  // are always `precision:"f32"` here; emitting `float16` arrays as `"f16-bits"`
+  // is a deferred follow-up (needs a raw-half path in `parseNpy` — see P1 note).
+  return { kind: "f32", data: Float32Array.from(data), width, height, channels, precision: "f32" };
 }
 
 async function decodeNpy(src: ImageSource): Promise<DecodedImage> {

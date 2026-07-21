@@ -135,10 +135,32 @@ picked per mount by `resolveRenderMode(...)`.
 - `type ImageBackend = (props: ImageBackendProps) => JSX.Element`.
 - `isHdrProps(props)` — the discriminant.
 - `type RenderMode = "cpu" | "gpu" | "auto"`; `resolveRenderMode(explicit?)`.
-- `interface HdrData` — a parsed float image buffer (`data`, `shape`, `dtype`).
+- `interface HdrData` — a parsed float image buffer (`data`, `shape`, `dtype`,
+  `precision?`). See the F16 pipeline below for `precision`.
 - `tonemapToImageData(hdr, tonemap, exposure, gamma?, offset?)` — pure HDR-float →
   `ImageData` tone-mapper (exported from `CpuImagePane`). `offset` (default 0) is
   the TEV display offset, added after exposure (before the tone-map operator).
+
+#### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
+An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end
+instead of widening to f32 on decode. The float payload carries a
+`precision: "f32" | "f16-bits"` tag (`DecodedImage`, `HdrData`,
+`CompareFloatSource`; default/absent = `"f32"`):
+- `"f16-bits"` ⇒ `data` is a `Uint16Array` of half bits (2 bytes/sample); the
+  pure-TS `exr.ts` reader emits it when **every** channel is `HALF` (a mix with
+  any `FLOAT`/`UINT` channel stays `"f32"`).
+- Upload: `GpuImagePane`/`GpuComparePane` expand RGB→RGBA **in half space**
+  (alpha = `HALF_ONE` = `0x3C00`) and upload an `rgba16float` source texture
+  (8 B/px vs 16 B/px for `rgba32float`). `textureLoad` yields f32 in-shader, so
+  all diff/tonemap/FLIP kernel math is unchanged.
+- CPU consumers widen **lazily** via `image/half.ts` — `halfToFloat` per pixel
+  (TEV overlays), `f16BitsToFloat32` per frame (the CPU tone-map **fallback**
+  and the FLIP reference exposure pass), preferring a native `Float16Array` when
+  present, scalar fallback otherwise.
+- **Deferred:** the vendored three.js worker decoder (`exr-full.ts`, the normal
+  browser EXR path) still emits `"f32"`; float16 `.npy` from Python still bakes
+  as f32 (`parseNpy` widens to Float64). Both are follow-ups — the plumbing
+  already routes `"f16-bits"` through once those sources emit it.
 
 The prior `HdrGpuImagePaneProps` / `SdrGpuImagePaneProps` names and the
 `GpuImagePaneProps` / `ImageRenderProps` aliases were removed — use the canonical

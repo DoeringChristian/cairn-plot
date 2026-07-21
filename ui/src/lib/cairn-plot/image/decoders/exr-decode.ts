@@ -72,6 +72,10 @@ function onWorkerMessage(event: MessageEvent<ExrWorkerResponse>): void {
       width: msg.width,
       height: msg.height,
       channels: msg.channels,
+      // The worker runs the three.js full decoder (FLOAT_TYPE), so this path is
+      // always genuine f32 — see `exr-full.ts`'s note on the half-output
+      // follow-up. The pure-TS reader (`exr.ts`) is the current f16-bits path.
+      precision: "f32",
     });
   } else {
     job.reject(new Error(msg.error));
