@@ -85,6 +85,7 @@ import type { Colormap } from "../types";
 import { applyColormap } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
+import { HALF_ONE, halfToFloat } from "../image/half";
 import ImageOverlay from "./ImageOverlay";
 import {
   PIXEL_VALUE_MIN_SCREEN_PX,
@@ -123,11 +124,41 @@ function toOperator(name: string | undefined): ImageOperator {
   return (name && (OPERATORS as readonly string[]).includes(name) ? name : "srgb") as ImageOperator;
 }
 
-/** Expand the raw float HDR buffer into an RGBA `Float32Array` upload — NO
- *  exposure/tonemap/encode here (that's the GPU shader's job); mirrors
- *  `HdrImagePane`'s `tonemapToImageData` per-pixel channel extraction. */
+/** Expand the raw HDR buffer into an RGBA source upload — NO exposure/tonemap/
+ *  encode here (that's the GPU shader's job); mirrors `HdrImagePane`'s
+ *  `tonemapToImageData` per-pixel channel extraction.
+ *
+ *  F16 pipeline: a `precision:"f16-bits"` source (`Uint16Array` of raw binary16
+ *  bits) expands RGB→RGBA IN HALF SPACE — the u16 bit patterns are copied
+ *  straight through (alpha = `HALF_ONE`, the bits for 1.0) into an
+ *  `rgba16float` upload (8 bytes/px), never widened to f32. `textureLoad` of an
+ *  `rgba16float` texture yields f32 in the shader, so the render math is
+ *  identical to the f32 path. NaN/Inf half bits pass through as-is (no
+ *  `finite()` guard) — the diff/tonemap kernels handle non-finite samples the
+ *  same way they would after a float upload. The `"f32"` path is unchanged. */
 function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
   const { h, w, c } = shapeDims(hdr.shape);
+  if (hdr.precision === "f16-bits") {
+    const src = hdr.data as Uint16Array;
+    const out = new Uint16Array(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      const base = i * c;
+      const o = i * 4;
+      if (c === 1) {
+        const v = src[base]!;
+        out[o] = v;
+        out[o + 1] = v;
+        out[o + 2] = v;
+        out[o + 3] = HALF_ONE;
+      } else {
+        out[o] = src[base]!;
+        out[o + 1] = src[base + 1]!;
+        out[o + 2] = src[base + 2]!;
+        out[o + 3] = c >= 4 ? src[base + 3]! : HALF_ONE;
+      }
+    }
+    return { data: out, width: w, height: h, format: "rgba16float" };
+  }
   const src = hdr.data;
   const out = new Float32Array(w * h * 4);
   for (let i = 0; i < w * h; i++) {
@@ -681,13 +712,19 @@ export default function GpuImagePane(props: ImageBackendProps) {
         const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
         const base = (py * dims.w + px) * c;
         const src = hdr.data;
+        // F16 pipeline: a half-bits source reads one sample per pixel, widened
+        // lazily (the overlay only touches single pixels — see `../image/half.ts`).
+        const readV =
+          hdr.precision === "f16-bits"
+            ? (k: number) => halfToFloat(src[k] ?? 0)
+            : (k: number) => src[k] ?? 0;
         // Luminance approximated at 0.5 (mid-grey) — matches HdrImagePane's
         // fallback when no CPU-tonemapped buffer is retained (GPU-rendered).
         const luminance = 0.5;
         const values =
           c === 1
-            ? [src[base] ?? 0]
-            : [src[base] ?? 0, src[base + 1] ?? 0, src[base + 2] ?? 0];
+            ? [readV(base)]
+            : [readV(base), readV(base + 1), readV(base + 2)];
         return buildChannelSample(values, "unit", notationArg, luminance);
       }
       const vd = sdrImageDataRef.current;

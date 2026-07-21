@@ -59,6 +59,7 @@ import {
 } from "../engine/diff-engine";
 import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId } from "../engine/kernels";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
+import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
 import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
 import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
@@ -173,12 +174,48 @@ interface GpuResources {
   texB: Texture | null;
 }
 
-/** Expand a decoded float side (1/3/4 channels, row-major) into an RGBA
- *  `Float32Array` for an `rgba32float` upload — mirrors `GpuImagePane`'s
- *  `hdrToRGBAFloat32`, NaN/Inf-guarded so a bad sample never poisons the diff. */
-function floatSideToRGBA(src: CompareFloatSource): Float32Array {
-  const { data, width, height, channels } = src;
+/** The RGBA-expanded upload for a compare side: `Float32Array`+`rgba32float`
+ *  (f32) or `Uint16Array`+`rgba16float` (F16 pipeline half bits). */
+interface FloatUpload {
+  data: Float32Array | Uint16Array;
+  format: "rgba32float" | "rgba16float";
+}
+
+/** Expand a decoded float side (1/3/4 channels, row-major) into an RGBA upload
+ *  — mirrors `GpuImagePane`'s `hdrToRGBAFloat32`.
+ *
+ *  F16 pipeline: a `precision:"f16-bits"` side (`Uint16Array` of raw binary16
+ *  bits) expands RGB→RGBA IN HALF SPACE (alpha = `HALF_ONE`) into an
+ *  `rgba16float` upload (8 bytes/px, never widened to f32); `textureLoad` yields
+ *  f32 in the shader, so the diff math is unchanged. The f32 path is
+ *  NaN/Inf-guarded (a bad sample never poisons the diff) as before; the half
+ *  path passes bits through (non-finite halves stay non-finite, same as the
+ *  shader would see after a float upload). */
+function floatSideToRGBA(src: CompareFloatSource): FloatUpload {
+  const { width, height, channels } = src;
   const n = width * height;
+  if (src.precision === "f16-bits") {
+    const data = src.data as Uint16Array;
+    const out = new Uint16Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      const base = i * channels;
+      const o = i * 4;
+      if (channels === 1) {
+        const v = data[base]!;
+        out[o] = v;
+        out[o + 1] = v;
+        out[o + 2] = v;
+        out[o + 3] = HALF_ONE;
+      } else {
+        out[o] = data[base]!;
+        out[o + 1] = data[base + 1]!;
+        out[o + 2] = data[base + 2]!;
+        out[o + 3] = channels >= 4 ? data[base + 3]! : HALF_ONE;
+      }
+    }
+    return { data: out, format: "rgba16float" };
+  }
+  const data = src.data;
   const out = new Float32Array(n * 4);
   const f = (v: number | undefined): number => (Number.isFinite(v) ? (v as number) : 0);
   for (let i = 0; i < n; i++) {
@@ -205,7 +242,7 @@ function floatSideToRGBA(src: CompareFloatSource): Float32Array {
     out[o + 2] = b;
     out[o + 3] = a;
   }
-  return out;
+  return { data: out, format: "rgba32float" };
 }
 
 export default function GpuComparePane({
@@ -486,14 +523,14 @@ export default function GpuComparePane({
       float: CompareFloatSource | undefined,
     ): Promise<LoadedSide | null> {
       if (float) {
-        const rgba = floatSideToRGBA(float);
+        const upload = floatSideToRGBA(float);
         return {
           width: float.width,
           height: float.height,
           imageData: null,
           make: (device) => {
-            const t = device.createTexture(float.width, float.height, "rgba32float");
-            t.write(rgba);
+            const t = device.createTexture(float.width, float.height, upload.format);
+            t.write(upload.data);
             return t;
           },
         };
@@ -585,7 +622,12 @@ export default function GpuComparePane({
     if (!sourcesAreFloat) return null;
     const ref = baselineFloat ?? imageFloat;
     if (!ref) return null;
-    return computeHdrFlipExposures(ref.data, ref.width, ref.height, ref.channels);
+    // F16 pipeline: `computeHdrFlipExposures` reads float VALUES (luminance), so
+    // widen a half-bits reference once here (deterministic, memoized — folds
+    // into the diff-cache key like the f32 path). See `../image/half.ts`.
+    const refData =
+      ref.precision === "f16-bits" ? f16BitsToFloat32(ref.data as Uint16Array) : ref.data;
+    return computeHdrFlipExposures(refData, ref.width, ref.height, ref.channels);
   }, [sourcesAreFloat, baselineFloat, imageFloat]);
 
   // Derive the cmap index mode from BOTH the kernel's display range AND the
@@ -830,11 +872,16 @@ export default function GpuComparePane({
         const { data, width, height, channels } = fl;
         if (px < 0 || py < 0 || px >= width || py >= height) return null;
         const base = (py * width + px) * channels;
+        // F16 pipeline: widen the touched sample lazily (single pixel).
+        const readV =
+          fl.precision === "f16-bits"
+            ? (k: number) => halfToFloat(data[k] ?? 0)
+            : (k: number) => data[k] ?? 0;
         const luminance = 0.5; // GPU-rendered: no CPU-tonemapped buffer retained
         const values =
           channels === 1
-            ? [data[base] ?? 0]
-            : [data[base] ?? 0, data[base + 1] ?? 0, data[base + 2] ?? 0];
+            ? [readV(base)]
+            : [readV(base), readV(base + 1), readV(base + 2)];
         return buildChannelSample(values, "unit", notationArg, luminance);
       }
       const d = dataRef.current;
