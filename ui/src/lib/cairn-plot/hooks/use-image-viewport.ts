@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useModifierKey } from "./use-modifier-key";
-import { wheelZoomFactor } from "../viewport/chart-viewport-math";
+import {
+  wheelZoomFactor,
+  pinchZoomScale,
+  pointerDistance,
+  pointerMidpoint,
+} from "../viewport/chart-viewport-math";
 
 export interface Viewport {
   zoom: number;
@@ -142,8 +147,14 @@ export function useImageViewport(args: {
   }, [containerRef, !!onViewportChange, minZoom, maxZoom, naturalWidth, naturalHeight]);
 
   // -----------------------------------------------------------------------
-  // Pointer pan (local)
+  // Pointer pan + two-finger pinch (local)
   // -----------------------------------------------------------------------
+  // `pointersRef` tracks every active pointer (id → container-local px) so a
+  // second touch can promote a one-finger pan into a two-finger pinch and a
+  // lifted finger can demote it back to a pan. Mouse/pen keep the
+  // modifier-gated single-pointer pan; a TOUCH pointer pans with one finger and
+  // zooms with two — no modifier needed (there's no keyboard on a touchscreen).
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const dragStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -151,41 +162,148 @@ export function useImageViewport(args: {
     panX: number;
     panY: number;
   } | null>(null);
+  // Two-pointer pinch snapshot (absolute-from-start; see `pinchZoomScale`).
+  const pinchStateRef = useRef<{
+    idA: number;
+    idB: number;
+    startDist: number;
+    startMid: { x: number; y: number };
+    startZoom: number;
+    startPan: { x: number; y: number };
+  } | null>(null);
 
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    if (!altDownRef.current || !onViewportChangeRef.current) return;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  /** Container-local px for a client point (origin = container top-left). */
+  const localPoint = useCallback(
+    (el: HTMLElement, clientX: number, clientY: number) => {
+      const rect = el.getBoundingClientRect();
+      return { x: clientX - rect.left, y: clientY - rect.top };
+    },
+    [],
+  );
+
+  /** The effective max zoom right now (adaptive from natural size when known,
+   *  matching the wheel handler), using the LIVE container rect. */
+  const effMaxZoom = useCallback(
+    (el: HTMLElement): number => {
+      if (!naturalWidth || !naturalHeight) return maxZoom;
+      const rect = el.getBoundingClientRect();
+      return adaptiveMaxZoom(naturalWidth, naturalHeight, rect.width, rect.height);
+    },
+    [naturalWidth, naturalHeight, maxZoom],
+  );
+
+  /** Begin a two-finger pinch from the two currently-tracked pointers. */
+  const beginPinch = useCallback((idA: number, idB: number) => {
+    const pts = pointersRef.current;
+    const a = pts.get(idA);
+    const b = pts.get(idB);
+    if (!a || !b) return;
+    dragStateRef.current = null; // pinch supersedes any single-pointer pan
+    pinchStateRef.current = {
+      idA,
+      idB,
+      startDist: pointerDistance(a, b),
+      startMid: pointerMidpoint(a, b),
+      startZoom: viewportRef.current.zoom,
+      startPan: { ...viewportRef.current.pan },
+    };
+  }, []);
+
+  /** Begin a single-pointer pan from the given tracked pointer. */
+  const beginPan = useCallback((pointerId: number) => {
+    const p = pointersRef.current.get(pointerId);
+    if (!p) return;
     dragStateRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
+      pointerId,
+      startX: p.x,
+      startY: p.y,
       panX: viewportRef.current.pan.x,
       panY: viewportRef.current.pan.y,
     };
   }, []);
 
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    const s = dragStateRef.current;
-    if (!s || s.pointerId !== e.pointerId) return;
-    const dx = e.clientX - s.startX;
-    const dy = e.clientY - s.startY;
-    onViewportChangeRef.current?.({
-      zoom: viewportRef.current.zoom,
-      pan: { x: s.panX + dx, y: s.panY + dy },
-    });
-  }, []);
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (!onViewportChangeRef.current) return;
+      const isTouch = e.pointerType === "touch";
+      // Mouse/pen only pan while a modifier is held (unchanged); touch always
+      // engages (one finger pans, two pinch).
+      if (!isTouch && !altDownRef.current) return;
+      const el = e.currentTarget as HTMLElement;
+      el.setPointerCapture(e.pointerId);
+      pointersRef.current.set(e.pointerId, localPoint(el, e.clientX, e.clientY));
+
+      if (isTouch && pointersRef.current.size >= 2) {
+        const ids = [...pointersRef.current.keys()];
+        beginPinch(ids[ids.length - 2], ids[ids.length - 1]);
+        return;
+      }
+      beginPan(e.pointerId);
+    },
+    [localPoint, beginPinch, beginPan],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const el = e.currentTarget as HTMLElement;
+      const tracked = pointersRef.current.get(e.pointerId);
+      if (tracked) {
+        const p = localPoint(el, e.clientX, e.clientY);
+        tracked.x = p.x;
+        tracked.y = p.y;
+      }
+
+      const pinch = pinchStateRef.current;
+      if (pinch) {
+        const a = pointersRef.current.get(pinch.idA);
+        const b = pointersRef.current.get(pinch.idB);
+        if (!a || !b) return;
+        const next = pinchZoomScale(
+          { zoom: pinch.startZoom, pan: pinch.startPan },
+          pinch.startDist,
+          pinch.startMid,
+          pointerDistance(a, b),
+          pointerMidpoint(a, b),
+          minZoom,
+          effMaxZoom(el),
+        );
+        onViewportChangeRef.current?.(next);
+        return;
+      }
+
+      const s = dragStateRef.current;
+      if (!s || s.pointerId !== e.pointerId || !tracked) return;
+      onViewportChangeRef.current?.({
+        zoom: viewportRef.current.zoom,
+        pan: { x: s.panX + (tracked.x - s.startX), y: s.panY + (tracked.y - s.startY) },
+      });
+    },
+    [localPoint, minZoom, effMaxZoom],
+  );
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
-    const s = dragStateRef.current;
-    if (!s || s.pointerId !== e.pointerId) return;
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {
       /* ignore */
     }
-    dragStateRef.current = null;
-  }, []);
+    pointersRef.current.delete(e.pointerId);
+    const pinch = pinchStateRef.current;
+    if (pinch && (e.pointerId === pinch.idA || e.pointerId === pinch.idB)) {
+      pinchStateRef.current = null;
+      // A finger lifted mid-pinch: if one remains, continue as a pan so the
+      // gesture never dead-stops.
+      const rest = [...pointersRef.current.keys()];
+      if (rest.length === 1) beginPan(rest[0]);
+      return;
+    }
+    if (dragStateRef.current?.pointerId === e.pointerId) dragStateRef.current = null;
+  }, [beginPan]);
 
+  // Pan is available when a modifier is held (mouse/pen). Touch pan/pinch is
+  // always available and doesn't affect the cursor. `touchAction: "none"` is set
+  // on the viewport surface (a bounded element, never the page) so the browser
+  // never hijacks a one-finger pan or two-finger pinch into scroll/page-zoom.
   const canPan = modifierActive && !!onViewportChange;
 
   return {
@@ -196,7 +314,7 @@ export function useImageViewport(args: {
       onPointerCancel: onPointerUp,
       style: {
         cursor: canPan ? "move" : undefined,
-        touchAction: canPan ? "none" : undefined,
+        touchAction: onViewportChange ? "none" : undefined,
       },
     },
     modifierActive,
