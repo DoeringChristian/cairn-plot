@@ -149,7 +149,10 @@ Because it is the reference implementation, it decodes **literally every EXR**:
 - **Scanline and tiled** images (all mip/rip levels; the largest level is read).
 - **Luminance-chroma** (Y/RY/BY) — reconstructed natively to RGBA (stays `HALF`).
 - **Deep** (`deepscanline`/`deeptile`) — flattened for display by sorting each
-  pixel's samples front-to-back by Z and compositing with premultiplied OVER.
+  pixel's samples front-to-back by Z and compositing with premultiplied OVER. A
+  single-image deep pane also shows a toolbar **DEPTH slider** that cuts off
+  compositing beyond a chosen Z (flatten only samples with Z ≤ the cutoff), live
+  and debounced; HOME restores the full composite.
 - **Multi-part** files — part 0 is decoded (explicit part selection is a follow-up).
 
 All-`HALF` sources (including luma-chroma and deep composites) come back as raw

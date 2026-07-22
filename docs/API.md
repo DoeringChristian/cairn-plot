@@ -159,6 +159,10 @@ picked per mount by `resolveRenderMode(...)`.
   `ImageData` tone-mapper (exported from `CpuImagePane`). `offset` (default 0) is
   the TEV display offset, added after exposure (before the tone-map operator).
 
+For a **deep** `.exr` (`deepscanline`/`deeptile`), a single-image pane also gets a
+toolbar **DEPTH (Z) slider** that live-flattens only the samples with Z ≤ the
+cutoff (linear, or log10 when `zMax/zMin > 1e3`); HOME restores the full composite.
+
 #### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end
 instead of widening to f32 on decode. The float payload carries a
