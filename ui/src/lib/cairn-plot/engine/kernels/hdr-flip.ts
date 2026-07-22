@@ -25,7 +25,7 @@
  *                  `COMBINE_SHADER`). The last accumulator is the HDR-FLIP map.
  * Output ∈ [0,1] (`displayRange:"unit"`).
  */
-import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl.ts";
+import { VERTEX_WGSL, FLIP_COLOR_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
 import { FLIP_CMAX } from "./flip-reference.ts";
 import {
   LAB_SHADER,
@@ -34,6 +34,7 @@ import {
   featureConstants,
   labUniforms,
   combineUniforms,
+  sourceMapUniforms,
   u,
 } from "./flip.wgsl.ts";
 import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
@@ -43,8 +44,12 @@ import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-regis
 const TONE_YCXCZ_SHADER = `
 ${VERTEX_WGSL}
 ${FLIP_COLOR_WGSL}
+${SAMPLING_WGSL}
+${SOURCE_MAP_WGSL}
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(5) var<uniform> u_exp: vec4<f32>; // exposure (c_i), 0, 0, 0
+@group(0) @binding(8) var<uniform> u_map0: vec4<f32>; // offX, offY, fitFill, 0
+@group(0) @binding(11) var<uniform> u_map1: vec4<f32>; // resultW, resultH, 0, 0
 
 const AK0 = 0.6 * 0.6 * 2.51;
 const AK1 = 0.6 * 0.03;
@@ -63,7 +68,7 @@ fn aces(x: f32) -> f32 {
 
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let px = vec2<i32>(in.position.xy);
-  let s = textureLoad(src, px, 0).rgb;
+  let s = mapSample(src, px, u_map0.x, u_map0.y, u_map1.x, u_map1.y, u_map0.z).rgb;
   let scale = exp2(u_exp.x);
   let x = scale * s;
   let tm = vec3<f32>(aces(x.r), aces(x.g), aces(x.b));
@@ -183,8 +188,10 @@ export const hdrFlipKernel: MultipassKernel = {
       const lB = `labB${s}`;
       const acc = `acc${s}`;
       passes.push(
-        { name: yA, shader: TONE_YCXCZ_SHADER, inputs: ["srcA"], output: yA, uniforms: () => [u(1, [exposure, 0, 0, 0])] },
-        { name: yB, shader: TONE_YCXCZ_SHADER, inputs: ["srcB"], output: yB, uniforms: () => [u(1, [exposure, 0, 0, 0])] },
+        // u_exp at logical 1; the align/fit source-map uniforms follow at
+        // logical 2/3 (native @binding(8)/(11)) — offsetA for srcA, offsetB for srcB.
+        { name: yA, shader: TONE_YCXCZ_SHADER, inputs: ["srcA"], output: yA, uniforms: () => [u(1, [exposure, 0, 0, 0]), ...sourceMapUniforms(2, "a", ctx)] },
+        { name: yB, shader: TONE_YCXCZ_SHADER, inputs: ["srcB"], output: yB, uniforms: () => [u(1, [exposure, 0, 0, 0]), ...sourceMapUniforms(2, "b", ctx)] },
         { name: lA, shader: LAB_SHADER, inputs: [yA], output: lA, uniforms: () => labUniforms(csf) },
         { name: lB, shader: LAB_SHADER, inputs: [yB], output: lB, uniforms: () => labUniforms(csf) },
       );

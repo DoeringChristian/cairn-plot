@@ -76,10 +76,24 @@ export interface PassGraph {
   final: string;
 }
 
+/**
+ * Per-source RESULT→source sample mapping a multi-pass kernel's front-end passes
+ * apply (mirrors `engine/compare-align.ts`'s `CompareMapping`). `width`/`height`
+ * are the RESULT grid; `offsetA`/`offsetB` are the integer texel anchors under
+ * crop (0 under fill); `fill` switches to normalized-uv bilinear rescale. Absent
+ * ⇒ legacy top-left crop (offsets 0), the identity mapping. */
+export interface KernelSourceMap {
+  fill: boolean;
+  offsetA: { x: number; y: number };
+  offsetB: { x: number; y: number };
+}
+
 export interface KernelBuildCtx {
   width: number;
   height: number;
   params: Record<string, number>;
+  /** Compare align/fit mapping for the front-end source reads (see type doc). */
+  sourceMap?: KernelSourceMap;
 }
 
 export interface MultipassKernel extends KernelMetaBase {

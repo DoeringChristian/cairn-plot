@@ -31,6 +31,7 @@
 import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./types";
 import { imageWGSL } from "./shaders/image.wgsl";
 import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl";
+import { computeCompareMapping, type CompareMapping } from "./compare-align";
 
 export type ImageOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended";
 
@@ -313,38 +314,112 @@ function metricsFromSums(sumSq: number, sumAbs: number, channelCount: number): D
  * `readback()` supports (the CPU fallback path) — for the metrics use case
  * they are the exact source textures a pane already uploaded.
  */
-export async function computeMetrics(device: Device, texA: Texture, texB: Texture): Promise<DiffMetrics> {
-  const width = Math.min(texA.width, texB.width);
-  const height = Math.min(texA.height, texB.height);
+export async function computeMetrics(
+  device: Device,
+  texA: Texture,
+  texB: Texture,
+  mapping?: CompareMapping,
+): Promise<DiffMetrics> {
+  const map =
+    mapping ??
+    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const width = map.result.w;
+  const height = map.result.h;
   const channelCount = width * height * 3;
   if (channelCount <= 0) return { mse: 0, psnr: Infinity, mae: 0 };
 
-  if (device.reduceDiffSumSquaredAbs) {
+  // Fast path — the DEFAULT top-left crop (zero offsets, `fit:"crop"`) reduces
+  // exactly the top-left `min(A,B)` region the GPU reduction already covers, so
+  // the common case stays on the GPU. Any alignment offset or `fit:"fill"` needs
+  // the mapped CPU reduction below (readback), so the metrics honor the SAME
+  // mapping the displayed diff / TEV numbers use — overlap region under crop,
+  // full common grid under fill.
+  const isDefault =
+    map.fit === "crop" &&
+    map.offsetA.x === 0 && map.offsetA.y === 0 &&
+    map.offsetB.x === 0 && map.offsetB.y === 0;
+  if (isDefault && device.reduceDiffSumSquaredAbs) {
     const { sumSq, sumAbs } = await device.reduceDiffSumSquaredAbs(texA, texB, width, height);
     return metricsFromSums(sumSq, sumAbs, channelCount);
   }
 
-  // Defensive fallback (no known live caller — the engine's one backend,
-  // WebGPU, always implements reduceDiffSumSquaredAbs): readback both
-  // textures, reduce on the CPU.
+  // Readback + CPU reduce, applying the align/fit mapping per source (mirrors
+  // SOURCE_MAP_WGSL): integer texel offset under crop; normalized-uv bilinear
+  // rescale under fill. Also the defensive fallback for a device with no GPU
+  // reduction.
   const a = await device.readback(texA);
   const b = await device.readback(texB);
-  const normA = a instanceof Uint8Array;
-  const normB = b instanceof Uint8Array;
+  const normA = a instanceof Uint8Array ? 255 : 1;
+  const normB = b instanceof Uint8Array ? 255 : 1;
+  const sampleA = makeCpuMapSampler(a, texA.width, texA.height, normA, map.offsetA, map.fit === "fill", width, height);
+  const sampleB = makeCpuMapSampler(b, texB.width, texB.height, normB, map.offsetB, map.fit === "fill", width, height);
   let sumSq = 0;
   let sumAbs = 0;
+  const va = [0, 0, 0];
+  const vb = [0, 0, 0];
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const ia = (y * texA.width + x) * 4;
-      const ib = (y * texB.width + x) * 4;
+      sampleA(x, y, va);
+      sampleB(x, y, vb);
       for (let c = 0; c < 3; c++) {
-        const va = (a[ia + c] ?? 0) / (normA ? 255 : 1);
-        const vb = (b[ib + c] ?? 0) / (normB ? 255 : 1);
-        const d = va - vb;
+        const d = va[c]! - vb[c]!;
         sumSq += d * d;
         sumAbs += Math.abs(d);
       }
     }
   }
   return metricsFromSums(sumSq, sumAbs, channelCount);
+}
+
+/**
+ * A CPU replica of `SOURCE_MAP_WGSL`'s `mapSample` for one source: maps a RESULT
+ * pixel `(x,y)` to the source's RGB (normalized) via an integer texel offset
+ * (crop) or normalized-uv bilinear rescale (fill), writing into `out[0..2]`.
+ * Keeps `computeMetrics` byte-consistent with the GPU diff / TEV mapping.
+ */
+function makeCpuMapSampler(
+  data: Uint8Array | Float32Array,
+  srcW: number,
+  srcH: number,
+  norm: number,
+  offset: { x: number; y: number },
+  fill: boolean,
+  resW: number,
+  resH: number,
+): (x: number, y: number, out: number[]) => void {
+  const at = (sx: number, sy: number, c: number): number => data[(sy * srcW + sx) * 4 + c] ?? 0;
+  if (!fill) {
+    return (x, y, out) => {
+      const sx = Math.min(Math.max(x + offset.x, 0), srcW - 1);
+      const sy = Math.min(Math.max(y + offset.y, 0), srcH - 1);
+      out[0] = at(sx, sy, 0) / norm;
+      out[1] = at(sx, sy, 1) / norm;
+      out[2] = at(sx, sy, 2) / norm;
+    };
+  }
+  const maxX = srcW - 1;
+  const maxY = srcH - 1;
+  return (x, y, out) => {
+    const u = (x + 0.5) / resW;
+    const v = (y + 0.5) / resH;
+    const tx = u * srcW - 0.5;
+    const ty = v * srcH - 0.5;
+    const bx = Math.floor(tx);
+    const by = Math.floor(ty);
+    const fx = tx - bx;
+    const fy = ty - by;
+    const x0 = Math.min(Math.max(bx, 0), maxX);
+    const x1 = Math.min(Math.max(bx + 1, 0), maxX);
+    const y0 = Math.min(Math.max(by, 0), maxY);
+    const y1 = Math.min(Math.max(by + 1, 0), maxY);
+    for (let c = 0; c < 3; c++) {
+      const c00 = at(x0, y0, c);
+      const c10 = at(x1, y0, c);
+      const c01 = at(x0, y1, c);
+      const c11 = at(x1, y1, c);
+      const top = c00 + (c10 - c00) * fx;
+      const bot = c01 + (c11 - c01) * fx;
+      out[c] = (top + (bot - top) * fy) / norm;
+    }
+  };
 }

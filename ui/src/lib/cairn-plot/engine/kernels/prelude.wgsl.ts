@@ -67,6 +67,30 @@ fn sampleLUT(lut: texture_2d<f32>, valueUnit: f32) -> vec3<f32> {
 }
 `;
 
+// Compare align/fit source mapping (mirrors engine/compare-align.ts). Maps a
+// RESULT-grid pixel to a source sample so the diff compute honors the user's
+// alignment anchor / fill scaling. Requires SAMPLING_WGSL (`sampleBilinearOf`).
+//   fitFill < 0.5 (CROP): sample the INTEGER texel `resultPx + (offX,offY)`
+//                         (the alignment anchor), clamped to the source.
+//   fitFill > 0.5 (FILL): sample BILINEARLY at uv `(resultPx+0.5)/(resW,resH)`
+//                         over the source's full extent (rescale to the common
+//                         grid); the offset is unused.
+export const SOURCE_MAP_WGSL = `
+fn mapSample(
+  tex: texture_2d<f32>, resultPx: vec2<i32>,
+  offX: f32, offY: f32, resW: f32, resH: f32, fitFill: f32,
+) -> vec4<f32> {
+  let dims = vec2<i32>(textureDimensions(tex));
+  if (fitFill > 0.5) {
+    let uv = (vec2<f32>(resultPx) + vec2<f32>(0.5)) / vec2<f32>(resW, resH);
+    return sampleBilinearOf(tex, uv, vec2<f32>(dims));
+  }
+  let off = vec2<i32>(i32(round(offX)), i32(round(offY)));
+  let p = clamp(resultPx + off, vec2<i32>(0), dims - vec2<i32>(1));
+  return textureLoad(tex, p, 0);
+}
+`;
+
 export const TONEMAP_WGSL = `
 fn srgbOetf(x: f32) -> f32 {
   let v = clamp(x, 0.0, 1.0);
