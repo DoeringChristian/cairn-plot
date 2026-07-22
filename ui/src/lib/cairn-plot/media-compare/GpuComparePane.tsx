@@ -435,6 +435,14 @@ export default function GpuComparePane({
   // own). `diffOverlayVersion` bumps on every kernel switch (clear) and on each
   // readback settle (draw), so the printed numbers TRACK the selected metric.
   const diffSamplesRef = useRef<Float32Array | null>(null);
+  // The RESULT texture's own dimensions (`min(A,B)`, top-left cropped) — the
+  // readback array is laid out at THIS resolution, NOT the primary `dims`. When
+  // the two sources differ in size the two disagree, so the TEV sampler MUST
+  // index the readback at the result stride and treat pixels beyond the crop as
+  // "no value" (the reported bug: indexing the min-cropped readback with the
+  // larger primary stride mis-indexed / `?? 0`-zeroed the numbers). Set together
+  // with `diffSamplesRef` so the two never disagree.
+  const diffResultDimsRef = useRef<{ w: number; h: number } | null>(null);
   const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
 
   // Q22 fix: same as `GpuImagePane` — the canvas backing store / surface
@@ -739,6 +747,12 @@ export default function GpuComparePane({
           cmapMode: diffCmapMode,
           colormap: diffColormap,
           filter,
+          // The RESULT is min-cropped to `min(A,B)`, top-left aligned inside the
+          // primary `dims` footprint the uv-window is expressed in — pass those
+          // dims so the blit shows the result 1:1 in the crop and leaves the rest
+          // transparent, coinciding with `sampleDiff` (which returns null beyond
+          // the crop). Equal-size pair → identity (unchanged).
+          sourceDims: dims,
           // Exposure/offset change the colormap SENSITIVITY (applied to the raw
           // metric BEFORE the LUT), display-only — never a diff recompute.
           exposureEV: displayEV,
@@ -832,6 +846,7 @@ export default function GpuComparePane({
   useEffect(() => {
     if (compareMode !== "diff") {
       diffSamplesRef.current = null;
+      diffResultDimsRef.current = null;
       return;
     }
     const r = resRef.current;
@@ -841,11 +856,16 @@ export default function GpuComparePane({
     // Clear the old metric's numbers immediately on a kernel switch, then settle
     // to the new metric's values when the readback resolves — no user gesture.
     diffSamplesRef.current = null;
+    diffResultDimsRef.current = null;
     setDiffOverlayVersion((v) => v + 1);
     ensureDiffResultReadback(r.device, entry)
       .then((arr) => {
         if (cancelled) return;
         diffSamplesRef.current = arr;
+        // The readback is laid out at the RESULT resolution (`min(A,B)`), which
+        // can differ from the primary `dims` — pin it alongside the samples so
+        // `sampleDiff` indexes at the correct stride.
+        diffResultDimsRef.current = { w: entry.width, h: entry.height };
         setDiffOverlayVersion((v) => v + 1);
       })
       .catch(() => {
@@ -904,8 +924,14 @@ export default function GpuComparePane({
   const sampleDiff = useMemo(() => {
     return (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
       const arr = diffSamplesRef.current;
-      if (!arr || !dims) return null;
-      const { w, h } = dims;
+      // Index at the RESULT resolution (`min(A,B)`, top-left cropped), NOT the
+      // primary `dims`. The overlay grid runs over the primary source, but the
+      // readback is laid out at the result stride; a pixel OUTSIDE the crop has
+      // NO diff value, so return null (draw nothing) rather than a mis-indexed /
+      // `?? 0` fake zero — this is the reported bug for differently-sized pairs.
+      const rdims = diffResultDimsRef.current;
+      if (!arr || !rdims) return null;
+      const { w, h } = rdims;
       if (px < 0 || py < 0 || px >= w || py >= h) return null;
       const base = (py * w + px) * 4;
       const output = getDiffKernel(resolvedKernelId)?.output ?? "per-channel";
@@ -918,7 +944,44 @@ export default function GpuComparePane({
           : [arr[base] ?? 0, arr[base + 1] ?? 0, arr[base + 2] ?? 0];
       return buildChannelSample(values, "unit", notationArg, luminance);
     };
-  }, [dims, resolvedKernelId]);
+    // Reads `diffResultDimsRef`/`diffSamplesRef` live, so it depends only on the
+    // kernel identity (which selects `output`), not on `dims`.
+  }, [resolvedKernelId]);
+
+  // Test seam (browser harness only): expose the live TEV samplers + the diff
+  // readback state on the pane element so a headless harness can probe the exact
+  // numbers the overlay would print — see
+  // `__tests__/gpu-compare-diff-readback.browser.ts`. No production code reads
+  // this; it mirrors the `__cairnDiffKernel` seam above.
+  useEffect(() => {
+    const el = paneRef.current as
+      | (HTMLDivElement & { __cairnCompareProbe?: unknown })
+      | null;
+    if (!el) return;
+    el.__cairnCompareProbe = {
+      sampleDiff: (px: number, py: number, n: PixelValueNotation = "decimal") => sampleDiff(px, py, n),
+      sampleFg: (px: number, py: number, n: PixelValueNotation = "decimal") => sampleFg(px, py, n),
+      sampleRef: (px: number, py: number, n: PixelValueNotation = "decimal") => sampleRef(px, py, n),
+      get diffSamples() {
+        return diffSamplesRef.current;
+      },
+      get dims() {
+        return dims;
+      },
+      get diffResultDims() {
+        return diffResultDimsRef.current;
+      },
+      get resolvedKernelId() {
+        return resolvedKernelId;
+      },
+      get compareMode() {
+        return compareMode;
+      },
+    };
+    return () => {
+      if (el) delete el.__cairnCompareProbe;
+    };
+  }, [sampleDiff, sampleFg, sampleRef, dims, resolvedKernelId, compareMode]);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 

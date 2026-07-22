@@ -398,6 +398,7 @@ ${SAMPLING_WGSL}
 @group(0) @binding(8) var<uniform> u_uv: vec4<f32>;   // uvRect.xy, uvRect.wh
 @group(0) @binding(11) var<uniform> u_disp: vec4<f32>; // displayRangeId, cmapModeId, useColormap, filterMode
 @group(0) @binding(14) var<uniform> u_expo: vec4<f32>; // exposureEV, offset, 0, 0
+@group(0) @binding(17) var<uniform> u_src: vec4<f32>;  // primaryW, primaryH, 0, 0 (source footprint)
 
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(0.999999));
@@ -408,12 +409,25 @@ ${SAMPLING_WGSL}
   }
   let srcUV = clamp(rawSrcUV, vec2<f32>(0.0), vec2<f32>(0.999999));
   let dims = vec2<f32>(textureDimensions(resultTex));
+  // The diff RESULT is min-cropped to min(A,B), TOP-LEFT aligned. The pane's
+  // uv-rect and this fragment's srcUV live in the PRIMARY source's normalized
+  // space (u_src.xy = the primary/foreground dims that drive the overlay grid
+  // and viewport). Map srcUV to a PRIMARY pixel and show the result 1:1 in the
+  // crop's top-left; a fragment beyond the crop (primary pixel >= result dims)
+  // has NO diff value, so it is transparent -- matching sampleDiff, which
+  // returns null there (never a fake zero). For an EQUAL-size pair primaryDims
+  // == dims, so this collapses to the identity mapping (unchanged behavior).
+  let primaryDims = select(dims, u_src.xy, u_src.x > 0.5);
+  let primaryPixel = srcUV * primaryDims;
+  if (primaryPixel.x >= dims.x || primaryPixel.y >= dims.y) {
+    return vec4<f32>(0.0);
+  }
   let filterLinear = u_disp.w > 0.5;
   var raw: vec4<f32>;
   if (filterLinear) {
-    raw = sampleBilinearOf(resultTex, srcUV, dims);
+    raw = sampleBilinearOf(resultTex, primaryPixel / dims, dims);
   } else {
-    raw = textureLoad(resultTex, vec2<i32>(srcUV * dims), 0);
+    raw = textureLoad(resultTex, vec2<i32>(primaryPixel), 0);
   }
   let displayRangeId = i32(round(u_disp.x));
   // Exposure/offset adjust the RAW metric value BEFORE the cmap-mode index
@@ -459,6 +473,16 @@ export interface DiffDisplayParams {
   /** Additive offset applied after exposure, before the cmap index mapping.
    *  Display-only. Default 0. */
   offset?: number;
+  /**
+   * The PRIMARY (foreground) source footprint the uv-window is expressed in —
+   * the same dims that drive the pane's overlay grid + viewport. The diff RESULT
+   * texture is min-cropped to `min(A,B)` and TOP-LEFT aligned inside this
+   * footprint, so the blit maps `uv → primary pixel` and shows the result 1:1 in
+   * the crop, leaving the region beyond the crop transparent (matching
+   * `sampleDiff`, which returns null there — never a fake "0"). Omit for an
+   * EQUAL-size pair: the mapping then collapses to the result texture's own dims
+   * (identity — unchanged behavior). */
+  sourceDims?: { w: number; h: number };
 }
 
 function buildLutTexture(device: Device, colormap: Float32Array | undefined): Texture {
@@ -504,6 +528,10 @@ export function renderDiffDisplay(
     params.filter === "nearest" ? 0 : 1,
   ]);
   const expoVec = new Float32Array([params.exposureEV ?? 0, params.offset ?? 0, 0, 0]);
+  // Primary/foreground footprint for the min-crop top-left mapping (see
+  // `sourceDims` doc). `0` → the shader falls back to the result texture's own
+  // dims (identity), so an equal-size pair is unchanged.
+  const srcVec = new Float32Array([params.sourceDims?.w ?? 0, params.sourceDims?.h ?? 0, 0, 0]);
   let bg: BindGroup | undefined;
   try {
     bg = device.createBindGroup(pipeline, [
@@ -512,6 +540,7 @@ export function renderDiffDisplay(
       { binding: 2, resource: { uniform: uvRect } },
       { binding: 3, resource: { uniform: dispVec } },
       { binding: 4, resource: { uniform: expoVec } },
+      { binding: 5, resource: { uniform: srcVec } },
     ]);
     device.renderFullscreen(target, pipeline, bg);
   } finally {
