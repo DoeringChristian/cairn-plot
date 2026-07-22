@@ -288,46 +288,107 @@ DecodeResult* decodeLumaChroma(MemIStream& stream, const ChannelPlan& plan) {
 //
 // A DeepHandle retains one deep image's per-pixel samples in wasm memory in a
 // compact CSR layout (a single flat array per channel + a per-pixel offset
-// prefix-sum), so `flattenDeep(zClip)` re-composites live with NO re-decode.
-// Samples are premultiplied (associated alpha) floats, exactly as read.
+// prefix-sum), so `flattenDeep(zClip)` re-composites live with NO re-decode —
+// fast enough for a REAL-TIME drag. Samples are premultiplied (associated
+// alpha) floats, exactly as read.
 //
 //   offsets[i]..offsets[i+1)  are pixel i's sample indices into R/G/B/A/Z.
 //   A empty ⇒ opaque (a=1);   Z empty ⇒ file order, no depth clip.
 //
-// Retained bytes = totalSamples·(channels + hasZ)·4 + (pixels+1)·4. Measured
-// against the flat f16 image (pixels·channels·2) for the retained-vs-redecode
-// call — see wasm/openexr/bench.mjs and the feature report.
+// RETENTION-FIRST with a GLOBAL LRU BYTE BUDGET (see the deep-LRU manager
+// below): every handle ALSO keeps its compressed `fileBytes`, so an evicted
+// handle (whose CSR was dropped to stay under budget) degrades gracefully to a
+// re-decode inside flatten. `fileBytes` is always-present overhead; only the
+// (large) CSR counts toward the budget.
 struct DeepHandle {
   int width = 0, height = 0, channels = 3;  // channels: 3 | 4
   bool hasA = false, hasZ = false;
   float zMin = 0.0f, zMax = 0.0f;
   size_t sampleTotal = 0;                    // Σ per-pixel sample counts
 
-  // Adaptive retention (see cairn_exr_open_deep). `retained` = keep the decoded
-  // samples in the CSR arrays below for a zero-decode flatten; otherwise those
-  // are dropped and only `fileBytes` (the compressed .exr) is kept, and flatten
-  // RE-DECODES from it. Chosen per file so a dense deep image can't blow the
-  // wasm heap: retained-CSR bytes ≤ RETAIN_RATIO × the flat f16 image bytes.
+  // `retained` = the CSR arrays below hold the samples (zero-decode flatten).
+  // When false the CSR was evicted (or never kept) and flatten RE-DECODES from
+  // `fileBytes`. `lastUse` is the LRU clock stamp (bumped on every flatten).
   bool retained = true;
+  uint64_t lastUse = 0;
+  size_t retainedCsrBytes = 0;               // CSR bytes counted toward the budget
   std::vector<uint32_t> offsets;            // size pixels+1 (prefix sum)
   std::vector<float> R, G, B, A, Z;         // A/Z empty when absent
-  std::vector<uint8_t> fileBytes;           // redecode source (non-retained mode)
+  std::vector<uint8_t> fileBytes;           // ALWAYS kept: redecode-on-evict source
 
   size_t totalSamples() const { return sampleTotal; }
-  // Bytes the CSR arrays would occupy if retained.
-  size_t retainedBytes() const {
+  // Bytes the CSR arrays occupy when retained.
+  size_t csrBytes() const {
     size_t perSample = ((size_t)3 + (hasA ? 1 : 0) + (hasZ ? 1 : 0)) * sizeof(float);
-    return sampleTotal * perSample + offsets.size() * sizeof(uint32_t);
+    return sampleTotal * perSample + (sampleTotal ? ((size_t)width * height + 1) : 0) * sizeof(uint32_t);
   }
-  size_t flatBytes() const {
-    return (size_t)width * height * channels * sizeof(uint16_t);
+  void dropCsr() {
+    offsets.clear(); offsets.shrink_to_fit();
+    R.clear(); R.shrink_to_fit();
+    G.clear(); G.shrink_to_fit();
+    B.clear(); B.shrink_to_fit();
+    A.clear(); A.shrink_to_fit();
+    Z.clear(); Z.shrink_to_fit();
+    retained = false;
   }
 };
 
-// Retained-CSR is kept only while ≤ this multiple of the flat image; a denser
-// deep image falls back to cache-bytes + redecode (the ~100ms slider debounce
-// covers the re-decode). See the feature report for the measured numbers.
-static const double RETAIN_RATIO = 4.0;
+// ---- Global deep-retention LRU manager -------------------------------------
+// Retention-first: a newly opened handle keeps its CSR; if the sum of retained
+// CSR bytes exceeds the budget, the LEAST-recently-used retained handles are
+// evicted (CSR dropped → redecode-on-flatten) until back under budget. Default
+// 512 MB, overridable via cairn_exr_set_deep_budget (used by the eviction test).
+// Single-threaded wasm ⇒ no locking; handle counts are tiny ⇒ O(n) LRU scan.
+static const size_t DEEP_BUDGET_DEFAULT = (size_t)512 * 1024 * 1024;
+static size_t g_deepBudget = DEEP_BUDGET_DEFAULT;
+static size_t g_deepRetainedBytes = 0;
+static uint64_t g_deepClock = 0;
+static std::vector<DeepHandle*> g_deepRetained;  // handles currently holding CSR
+
+static void deepEvictToBudget(DeepHandle* keep) {
+  // Evict least-recently-used retained handles until under budget. `keep` (the
+  // just-opened handle) is evicted LAST — only if it alone still exceeds budget.
+  while (g_deepRetainedBytes > g_deepBudget && !g_deepRetained.empty()) {
+    DeepHandle* victim = nullptr;
+    size_t vidx = 0;
+    for (size_t i = 0; i < g_deepRetained.size(); ++i) {
+      DeepHandle* h = g_deepRetained[i];
+      if (h == keep) continue;  // prefer any other handle first
+      if (!victim || h->lastUse < victim->lastUse) { victim = h; vidx = i; }
+    }
+    if (!victim) {  // only `keep` remains — evict it too if still over budget
+      victim = keep;
+      for (size_t i = 0; i < g_deepRetained.size(); ++i)
+        if (g_deepRetained[i] == keep) { vidx = i; break; }
+    }
+    g_deepRetainedBytes -= victim->retainedCsrBytes;
+    victim->retainedCsrBytes = 0;
+    victim->dropCsr();
+    g_deepRetained.erase(g_deepRetained.begin() + vidx);
+    if (victim == keep) break;
+  }
+}
+
+static void deepRetainRegister(DeepHandle* hd) {
+  hd->retained = true;
+  hd->retainedCsrBytes = hd->csrBytes();
+  hd->lastUse = ++g_deepClock;
+  g_deepRetained.push_back(hd);
+  g_deepRetainedBytes += hd->retainedCsrBytes;
+  deepEvictToBudget(hd);
+}
+
+static void deepTouch(DeepHandle* hd) {
+  if (hd->retained) hd->lastUse = ++g_deepClock;
+}
+
+static void deepUnregister(DeepHandle* hd) {
+  if (!hd->retained) return;
+  for (size_t i = 0; i < g_deepRetained.size(); ++i)
+    if (g_deepRetained[i] == hd) { g_deepRetained.erase(g_deepRetained.begin() + i); break; }
+  g_deepRetainedBytes -= hd->retainedCsrBytes;
+  hd->retainedCsrBytes = 0;
+}
 
 // Read every sample of a deep part (scanline or tiled) into `hd` (CSR). Throws
 // on an OpenEXR read error (caught at the ABI boundary). `hd` channels/flags
@@ -587,22 +648,16 @@ DeepOpenResult* cairn_exr_open_deep(const uint8_t* bytes, int len) {
       return makeDeepError(code, msg);
     }
     // One full read: validates the file, fills the CSR arrays, and yields the
-    // Z range + total sample count needed for the retention decision below.
+    // Z range + total sample count.
     readDeepInto(mfile, h, type == DEEPTILE, *hd);
 
-    // Adaptive retention: keep the decoded samples for a zero-decode flatten
-    // only while they stay within RETAIN_RATIO× the flat image; otherwise drop
-    // them and keep the compressed bytes, re-decoding inside flattenDeep.
-    if (hd->retainedBytes() > (size_t)(RETAIN_RATIO * (double)hd->flatBytes())) {
-      hd->retained = false;
-      hd->offsets.clear(); hd->offsets.shrink_to_fit();
-      hd->R.clear(); hd->R.shrink_to_fit();
-      hd->G.clear(); hd->G.shrink_to_fit();
-      hd->B.clear(); hd->B.shrink_to_fit();
-      hd->A.clear(); hd->A.shrink_to_fit();
-      hd->Z.clear(); hd->Z.shrink_to_fit();
-      hd->fileBytes.assign(bytes, bytes + len);
-    }
+    // Retention-first: ALWAYS keep the compressed bytes (redecode-on-evict
+    // source), then register the CSR with the global LRU byte budget. If total
+    // retained CSR now exceeds the budget, the least-recently-used handles
+    // (possibly including this one, if it alone is huge) are evicted to
+    // redecode mode — nothing breaks, those files just re-decode on flatten.
+    hd->fileBytes.assign(bytes, bytes + len);
+    deepRetainRegister(hd);
 
     DeepOpenResult* r =
         static_cast<DeepOpenResult*>(std::calloc(1, sizeof(DeepOpenResult)));
@@ -629,9 +684,12 @@ DeepOpenResult* cairn_exr_open_deep(const uint8_t* bytes, int len) {
 DecodeResult* cairn_exr_flatten_deep(DeepHandle* hd, float zClip) {
   try {
     if (!hd) return makeError("decode-error", "cairn-exr: null deep handle");
-    if (hd->retained) return flattenHandle(*hd, zClip);
-    // Non-retained (dense) mode: re-decode the samples from the cached bytes
-    // into a scratch handle, flatten, discard. The slider debounce covers it.
+    if (hd->retained) {
+      deepTouch(hd);  // mark most-recently-used for the LRU
+      return flattenHandle(*hd, zClip);
+    }
+    // Evicted (or over-budget) handle: re-decode the samples from the cached
+    // bytes into a scratch handle, flatten, discard.
     MemIStream stream(reinterpret_cast<const char*>(hd->fileBytes.data()),
                       (uint64_t)hd->fileBytes.size());
     MultiPartInputFile mfile(stream);
@@ -658,7 +716,18 @@ void cairn_exr_free_open_deep(DeepOpenResult* r) {
   std::free(r);
 }
 
-// Release a retained deep handle (frees all retained samples).
-void cairn_exr_free_deep(DeepHandle* hd) { delete hd; }
+// Release a retained deep handle (frees all retained samples + cached bytes).
+void cairn_exr_free_deep(DeepHandle* hd) {
+  if (!hd) return;
+  deepUnregister(hd);
+  delete hd;
+}
+
+// Set the global deep-retention LRU byte budget (default 512 MB). Lowering it
+// evicts LRU handles to redecode mode immediately; used by the eviction test.
+void cairn_exr_set_deep_budget(double bytes) {
+  g_deepBudget = bytes < 0 ? 0 : (size_t)bytes;
+  deepEvictToBudget(nullptr);
+}
 
 }  // extern "C"

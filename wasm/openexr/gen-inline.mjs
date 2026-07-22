@@ -45,6 +45,7 @@ export interface CairnOpenExrModule {
   _cairn_exr_flatten_deep(handle: number, zClip: number): number;
   _cairn_exr_free_open_deep(r: number): void;
   _cairn_exr_free_deep(handle: number): void;
+  _cairn_exr_set_deep_budget(bytes: number): void;
   HEAPU8: Uint8Array;
   HEAPU16: Uint16Array;
   HEAP32: Int32Array;
@@ -241,6 +242,8 @@ export interface ExrDecoder {
   flatten_deep: (handle: number, zClip: number) => DecodedImage;
   /** Free a retained deep handle. */
   free_deep: (handle: number) => void;
+  /** Set the global deep-retention LRU byte budget (default 512 MB). */
+  set_deep_budget: (bytes: number) => void;
   DecodedImage: unknown;
 }
 
@@ -269,6 +272,7 @@ export async function loadExrDecoder(): Promise<ExrDecoder> {
     open_deep: (bytes: Uint8Array) => openDeep(mod, bytes),
     flatten_deep: (handle: number, zClip: number) => flattenDeep(mod, handle, zClip),
     free_deep: (handle: number) => freeDeep(mod, handle),
+    set_deep_budget: (bytes: number) => mod._cairn_exr_set_deep_budget(bytes),
     DecodedImage: class {},
   };
 }

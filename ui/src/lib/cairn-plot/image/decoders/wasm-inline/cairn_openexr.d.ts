@@ -9,6 +9,7 @@ export interface CairnOpenExrModule {
   _cairn_exr_flatten_deep(handle: number, zClip: number): number;
   _cairn_exr_free_open_deep(r: number): void;
   _cairn_exr_free_deep(handle: number): void;
+  _cairn_exr_set_deep_budget(bytes: number): void;
   HEAPU8: Uint8Array;
   HEAPU16: Uint16Array;
   HEAP32: Int32Array;

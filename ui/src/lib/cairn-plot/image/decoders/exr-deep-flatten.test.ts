@@ -98,3 +98,32 @@ test("flatten_deep with zClip between front and back yields ONLY the front", asy
   assert.ok(twoCount > 0 && oneCount > 0, "fixture must have both pixel kinds");
   free_deep(deep.handle);
 });
+
+test("evicted (over-budget → redecode) handle flattens identically to retained", async () => {
+  const { decode_exr, open_deep, flatten_deep, free_deep, set_deep_budget } =
+    await loadExrDecoder();
+  const full = decode_exr(fixture("deep-rgba-32x32.exr"));
+  const deep = open_deep(fixture("deep-rgba-32x32.exr"))!;
+  try {
+    // Force the global LRU budget to 0 → every retained handle (incl. this one)
+    // is evicted to redecode-from-cached-bytes mode. Correctness must not change.
+    set_deep_budget(0);
+    const flat = flatten_deep(deep.handle, deep.zMax);
+    assert.deepEqual(Array.from(flat.halfBits!), Array.from(full.halfBits!));
+    // A mid-Z cut still yields only the front (α 0.5) on 2-sample pixels.
+    const clip = flatten_deep(deep.handle, 7);
+    const ch = clip.halfBits!;
+    let checked = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!twoSample(x, y)) continue;
+        checked++;
+        assert.ok(Math.abs(h2f(ch[(y * W + x) * 4 + 3]!) - 0.5) < 1e-3);
+      }
+    }
+    assert.ok(checked > 0);
+  } finally {
+    free_deep(deep.handle);
+    set_deep_budget(512 * 1024 * 1024); // restore default for other tests
+  }
+});
