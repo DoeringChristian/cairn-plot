@@ -44,6 +44,24 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | `cp.Shared` | Declare shared viewport/camera sync scope for children of a `Grid`. |
 | `cp.Component` | Base class for the above (subclassing seam). |
 
+#### `cp.Compare` mismatched-size operands: `align=` / `fit=`
+In diff modes, `prediction`/`reference` need not share a resolution. `align=`
+and `fit=` control how they're reconciled before the diff (and its metrics —
+MSE/PSNR/MAE) are computed; both are ignored outside diff modes.
+
+| `fit=` | Meaning |
+| --- | --- |
+| `"crop"` (default) | Min-crop overlap: the diff/metrics are computed over the overlapping region only. |
+| `"fill"` | Rescale both operands to a common grid (the primary/foreground resolution) before diffing; the diff/metrics cover the full common grid. `align=` is irrelevant under `"fill"`. |
+
+| `align=` | Meaning |
+| --- | --- |
+| `"top-left"` (default) | Smaller operand anchored to the top-left of the larger, before the overlap crop. |
+| `"center"` | Smaller operand centered within the larger. |
+| `"top-right"` | Smaller operand anchored to the top-right. |
+| `"bottom-left"` | Smaller operand anchored to the bottom-left. |
+| `"bottom-right"` | Smaller operand anchored to the bottom-right. |
+
 ### Lowercase builders (return a ready `PlotElement`)
 Thin fronts over the capitalized components, mirroring the `cairn.plot` surface.
 Case-sensitive and distinct from the capitalized names and the recipes.

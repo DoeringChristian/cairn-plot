@@ -84,3 +84,45 @@ def test_flip_ldr_forced_mode_accepted():
 def test_unknown_mode_rejected():
     with pytest.raises(ValueError):
         cp.Compare(_img(), _img(), mode="not_a_mode")
+
+
+def test_align_and_fit_defaults_omitted_from_node():
+    # Defaults ("top-left" / "crop") are elided — the descriptor stays minimal.
+    node = cp.Compare(_img(), _img(), mode="abs").to_node()
+    assert "align" not in node
+    assert "fit" not in node
+
+
+def test_align_and_fit_non_default_emitted_top_level():
+    node = cp.Compare(_img(), _img(), mode="abs", align="center", fit="fill").to_node()
+    assert node["align"] == "center"
+    assert node["fit"] == "fill"
+
+
+@pytest.mark.parametrize(
+    "align",
+    ["top-left", "center", "top-right", "bottom-left", "bottom-right"],
+)
+def test_each_align_value_accepted(align):
+    node = cp.Compare(_img(), _img(), mode="abs", align=align).to_node()
+    if align == "top-left":
+        assert "align" not in node
+    else:
+        assert node["align"] == align
+
+
+def test_fit_fill_accepted_and_crop_omitted():
+    fill_node = cp.Compare(_img(), _img(), mode="abs", fit="fill").to_node()
+    assert fill_node["fit"] == "fill"
+    crop_node = cp.Compare(_img(), _img(), mode="abs", fit="crop").to_node()
+    assert "fit" not in crop_node
+
+
+def test_unknown_align_rejected():
+    with pytest.raises(ValueError):
+        cp.Compare(_img(), _img(), mode="abs", align="middle")
+
+
+def test_unknown_fit_rejected():
+    with pytest.raises(ValueError):
+        cp.Compare(_img(), _img(), mode="abs", fit="stretch")

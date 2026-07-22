@@ -156,6 +156,14 @@ export interface CompareNode {
   /** Which frame is the reference/baseline (0 = `a`, 1 = `b`). Default 0. */
   baselineIndex?: 0 | 1;
   diffSubmode?: string;
+  /** Alignment anchor for mismatched-size operands in diff modes: where the
+   *  smaller extent sits within the larger before the overlap crop. Ignored
+   *  under `fit:"fill"`. Default "top-left". */
+  align?: "top-left" | "center" | "top-right" | "bottom-left" | "bottom-right";
+  /** Mismatched-size handling in diff modes: "crop" (min-crop overlap, default)
+   *  or "fill" (rescale both operands to a common grid = the primary/foreground
+   *  resolution). */
+  fit?: "crop" | "fill";
   props?: Record<string, unknown>;
 }
 

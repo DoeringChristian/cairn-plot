@@ -140,6 +140,13 @@ _COMPARE_KERNEL_MODES = {
 }
 _COMPARE_PUBLIC_MODES = ("side", "slide", "blend", *_COMPARE_KERNEL_MODES.keys())
 
+# Mismatched-size operand handling for `cp.Compare(align=..., fit=...)` (diff
+# modes): `align` = where the smaller extent sits within the larger before the
+# overlap crop; `fit` = "crop" (min-crop overlap) or "fill" (rescale both
+# operands to a common grid, at which point `align` is moot).
+_COMPARE_ALIGNS = ("top-left", "center", "top-right", "bottom-left", "bottom-right")
+_COMPARE_FITS = ("crop", "fill")
+
 
 # ---------------------------------------------------------------------------
 # Shared props helper.
@@ -1653,7 +1660,13 @@ class Compare(Component):
     ``reference`` is always the baseline (``baselineIndex=0``; the ``REF`` chip);
     ``diff = prediction vs reference``. ALL modes (``side`` included) require both
     operands be image-like (``cp.Image`` / an image ``run[tag]``); for arbitrary
-    non-image cells side by side, use ``cp.Grid([...], cols=2)`` directly."""
+    non-image cells side by side, use ``cp.Grid([...], cols=2)`` directly.
+
+    For mismatched-size operands in diff modes, ``align`` picks where the
+    smaller extent sits within the larger before the overlap crop is taken
+    (default ``"top-left"``), and ``fit`` picks ``"crop"`` (min-crop overlap,
+    default) vs ``"fill"`` (rescale both operands to a common grid — the
+    primary/foreground resolution — making ``align`` moot)."""
 
     _label = "compare"
 
@@ -1663,6 +1676,8 @@ class Compare(Component):
         reference: Any,
         *,
         mode: str = "side",
+        align: str = "top-left",
+        fit: str = "crop",
         split_position: float | None = None,
         blend_alpha: float | None = None,
         colormap: str | None = None,
@@ -1683,6 +1698,16 @@ class Compare(Component):
                 f"cp.Compare(mode=...) must be one of {_COMPARE_PUBLIC_MODES!r}, "
                 f"got {mode!r}"
             )
+        if align not in _COMPARE_ALIGNS:
+            raise ValueError(
+                f"cp.Compare(align=...) must be one of {_COMPARE_ALIGNS!r}, got {align!r}"
+            )
+        if fit not in _COMPARE_FITS:
+            raise ValueError(
+                f"cp.Compare(fit=...) must be one of {_COMPARE_FITS!r}, got {fit!r}"
+            )
+        self._align = align
+        self._fit = fit
         # Lower the flat public mode → internal descriptor mode (+ diff kernel).
         if mode == "side":
             internal_mode = "side"
@@ -1739,6 +1764,10 @@ class Compare(Component):
             "b": self._b._leaf_dataspec(),
             "baselineIndex": 0,
         }
+        if self._align != "top-left":
+            node["align"] = self._align
+        if self._fit != "crop":
+            node["fit"] = self._fit
         if self._props:
             node["props"] = self._props
         return node

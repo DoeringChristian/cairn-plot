@@ -181,6 +181,8 @@ class CompareSpec(_Strict):
     b: DataSpec
     baselineIndex: Optional[Literal[0, 1]] = None
     diffSubmode: Optional[str] = None
+    align: Optional[Literal["top-left", "center", "top-right", "bottom-left", "bottom-right"]] = None
+    fit: Optional[Literal["crop", "fill"]] = None
     props: Optional[dict[str, Any]] = None
 
 

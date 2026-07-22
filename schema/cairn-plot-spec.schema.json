@@ -341,6 +341,25 @@
         "diffSubmode": {
           "type": "string"
         },
+        "align": {
+          "type": "string",
+          "enum": [
+            "top-left",
+            "center",
+            "top-right",
+            "bottom-left",
+            "bottom-right"
+          ],
+          "description": "Alignment anchor for mismatched-size operands in diff modes: where the smaller extent sits within the larger before the overlap crop. Ignored under `fit:\"fill\"`. Default \"top-left\"."
+        },
+        "fit": {
+          "type": "string",
+          "enum": [
+            "crop",
+            "fill"
+          ],
+          "description": "Mismatched-size handling in diff modes: \"crop\" (min-crop overlap, default) or \"fill\" (rescale both operands to a common grid = the primary/foreground resolution)."
+        },
         "props": {
           "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
         }
