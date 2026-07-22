@@ -81,20 +81,77 @@ export const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = 
   // `configureHDRSurface`) can preserve them past 1.0 — Chrome's `'extended'`
   // canvas tone-mapping mode expects EXACTLY this: the shader hands over raw
   // scene-referred values and the OS/display compositor (not this pipeline)
-  // maps them to the panel's actual peak brightness. NOT reachable from any
-  // user-facing tonemap picker — only `engine/image-engine.ts`'s HDR-out
-  // render path selects it (see `renderers/GpuImagePane.tsx`'s `useHdr`).
+  // maps them to the panel's actual peak brightness. It is the EFFECTIVE
+  // operator whenever a pane's true-HDR surface engages (`GpuImagePane`'s
+  // `useHdr`), and — since that engaged state is what the toolbar TONEMAP menu
+  // reflects — it is now offered as the "Extended (HDR)" menu option too, but
+  // ONLY on a pane whose HDR surface actually engaged (see
+  // `renderers/use-image-controller.ts`'s `tonemapToolbarButton` +
+  // `resolveEffectiveTonemap`). Picking an SDR operator on such a pane instead
+  // deliberately tone-maps INTO SDR range (previewing the SDR rendition on the
+  // HDR display) — the render path then sets `hdrOut:false` so the output-encode
+  // stage runs. SDR panes never see this operator (their pixels are already
+  // encoded 8-bit).
   extended: ([r, g, b]) => [r, g, b],
 };
 
 /** The default operator when none / an unknown key is supplied. */
 export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
 
+/**
+ * The user-selectable SDR tone-map operators — the TONEMAP toolbar menu's base
+ * option domain. `"extended"` is deliberately EXCLUDED here: it is HDR-out-only
+ * and is appended to the menu (as "Extended (HDR)") only on a pane whose real
+ * HDR surface engaged (see `resolveEffectiveTonemap`).
+ */
+export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
+  "linear",
+  "srgb",
+  "reinhard",
+  "aces",
+];
+
 /** Resolve an operator name to its function, falling back to the default. */
 export function getTonemapOperator(
   name: string | undefined | null,
 ): (rgb: RgbTriple) => RgbTriple {
   return (name && TONEMAP_OPERATORS[name]) || TONEMAP_OPERATORS[DEFAULT_TONEMAP]!;
+}
+
+/**
+ * Coerce an arbitrary operator name to a valid SDR operator, falling back to
+ * `DEFAULT_TONEMAP` ("srgb"). Unlike {@link getTonemapOperator} (which returns
+ * the operator FUNCTION) this returns the validated NAME — the value domain the
+ * TONEMAP menu and the engine's `ImageParams.operator` both use. Never returns
+ * `"extended"` (that is added to the menu only when the HDR surface engaged).
+ */
+export function toSdrTonemap(name: string | undefined | null): TonemapOperator {
+  return name && (SDR_TONEMAP_OPERATORS as readonly string[]).includes(name)
+    ? (name as TonemapOperator)
+    : DEFAULT_TONEMAP;
+}
+
+/**
+ * The tone-map operator ACTUALLY IN EFFECT for an image pane — the value the
+ * TONEMAP toolbar menu shows, and the pane's HOME-reset target:
+ *
+ *   - When the pane's true-HDR surface engaged (`rgba16float` + extended canvas
+ *     tone-mapping active — `GpuImagePane`'s `useHdr`), the effective operator
+ *     is `"extended"`: the descriptor's SDR `tonemap=` is BYPASSED in favor of
+ *     the pass-through HDR-out path, so the menu must show "extended", not the
+ *     descriptor's SDR operator.
+ *   - Otherwise the effective operator is the descriptor's `tonemap=` prop
+ *     (validated to an SDR operator; Python default "srgb").
+ *
+ * Pure (no DOM / GPU) so it is unit-tested directly. The panes layer a
+ * view-local override on top of this default; HOME clears the override back to
+ * this value.
+ */
+export function resolveEffectiveTonemap(
+  descriptorTonemap: string | undefined | null,
+  hdrSurfaceEngaged: boolean,
+): TonemapOperator {
+  return hdrSurfaceEngaged ? "extended" : toSdrTonemap(descriptorTonemap);
 }
 
 /** Apply an exposure of `ev` stops in scene-linear space: v * 2**ev. */

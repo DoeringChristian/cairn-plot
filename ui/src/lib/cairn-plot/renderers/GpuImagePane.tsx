@@ -97,7 +97,7 @@ import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { acquirePane, releasePane, type PaneHandle, type SourceUpload } from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
-import type { ImageOperator, ImageParams } from "../engine/image-engine";
+import type { ImageParams } from "../engine/image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
 // when the engine fails to activate/render (see `engineFailed` state below).
 // Safe to import here: this file only ever ships inside the gpu-image ADDON
@@ -106,7 +106,8 @@ import type { ImageOperator, ImageParams } from "../engine/image-engine";
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
 import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
-import { colormapToolbarButton } from "./use-image-controller";
+import { colormapToolbarButton, tonemapToolbarButton } from "./use-image-controller";
+import { resolveEffectiveTonemap, type TonemapOperator } from "../image/tonemap";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
   isHdrProps,
@@ -123,11 +124,6 @@ import {
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
 const NULL_HDR: HdrData = { data: new Float32Array(0), shape: [0, 0], dtype: "<f4" };
 import { reportCapabilityLimit } from "../primitives/capability-notice";
-
-const OPERATORS: readonly ImageOperator[] = ["linear", "srgb", "reinhard", "aces"];
-function toOperator(name: string | undefined): ImageOperator {
-  return (name && (OPERATORS as readonly string[]).includes(name) ? name : "srgb") as ImageOperator;
-}
 
 /** Expand the raw HDR buffer into an RGBA source upload — NO exposure/tonemap/
  *  encode here (that's the GPU shader's job); mirrors `HdrImagePane`'s
@@ -316,6 +312,13 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // BEFORE the render effect's first pass and never itself needs to trigger
   // a re-render (paneReady already does that once acquisition resolves).
   const useHdrRef = useRef(false);
+  // The SAME `useHdr` decision, mirrored into STATE so the toolbar TONEMAP menu
+  // re-renders once acquisition resolves it: the menu offers "Extended (HDR)"
+  // and its effective default IS "extended" only when the true-HDR surface
+  // engaged. The ref (above) stays the render effect's source of truth (settled
+  // before the first pass); this state drives the UI. Stable per pane instance —
+  // set exactly once when acquisition resolves the HDR-out gate.
+  const [hdrEngaged, setHdrEngaged] = useState(false);
 
   // C1 fix (whole-branch review): true once the engine has definitively
   // failed to activate or render this pane (a non-context-lost hard failure
@@ -362,6 +365,28 @@ export default function GpuImagePane(props: ImageBackendProps) {
   const resetColormapOverride = useCallback(() => {
     setColormapOverride(defaultColormapRef.current);
   }, []);
+
+  // TONE-MAP operator (HDR/float panes only). The view-local override is a
+  // NULLABLE "user explicitly picked X"; `null` means "follow the effective
+  // default". The default itself is resolved by `resolveEffectiveTonemap`
+  // (`image/tonemap.ts`) from the descriptor `tonemap=` prop AND the async
+  // `hdrEngaged` gate — so it can't be a static mount-captured seed (unlike the
+  // colormap default above): when the true-HDR surface engages, the effective
+  // default flips to "extended", and the menu / HOME target follow it. Re-seeds
+  // to "follow default" when the descriptor prop changes (controlled surface).
+  const propTonemap = hdrMode ? (props as HdrImageProps).tonemap : undefined;
+  const [tonemapOverride, setTonemapOverride] = useState<TonemapOperator | null>(null);
+  useEffect(() => {
+    setTonemapOverride(null);
+  }, [propTonemap]);
+  // The operator ACTUALLY in effect (menu value + render operator): the override
+  // when the user picked one, else the effective default. `hdrEngaged` drives
+  // both the default and whether "extended" is a legal value at all.
+  const effectiveDefaultTonemap = resolveEffectiveTonemap(propTonemap, hdrEngaged);
+  const effectiveTonemap: TonemapOperator = tonemapOverride ?? effectiveDefaultTonemap;
+  const tonemapModified =
+    tonemapOverride !== null && tonemapOverride !== effectiveDefaultTonemap;
+  const resetTonemapOverride = useCallback(() => setTonemapOverride(null), []);
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only state — fed straight into the render pass below (the GPU shader
@@ -412,6 +437,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
         const useHdr =
           browserHasExtendedToneMapping && hasHighDynamicRangeDisplay && hdrMode;
         useHdrRef.current = useHdr;
+        setHdrEngaged(useHdr);
         // This pane WANTED HDR (true-float `imagehdr` content) but is getting an
         // SDR surface. Report a one-time notice, diagnosing the missing layer.
         // Prefer the BROWSER sub-case when both signals fail — it's the harder
@@ -637,7 +663,6 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // viewport/exposure/operator/gamma/container-resize change. NOT per frame.
   // -----------------------------------------------------------------------
   const exposure = hdrMode ? ((props as HdrImageProps).exposure ?? 0) : 0;
-  const tonemapName = hdrMode ? (props as HdrImageProps).tonemap : undefined;
   const gamma = hdrMode ? (props as HdrImageProps).gamma : undefined;
 
   // The render pass, extracted into a stable callback so the screenshot path
@@ -691,24 +716,31 @@ export default function GpuImagePane(props: ImageBackendProps) {
         ? "nearest"
         : "linear";
     const uv = rawUv;
-    // On the true-HDR-out path, the user-selected `tonemap` operator is
-    // BYPASSED in favor of `"extended"` (a pure identity — see
-    // `image/tonemap.ts`'s doc comment on that entry): with a real HDR
-    // surface (`hdrOut:true` -> `rgba16float` + `toneMapping:'extended'`,
-    // `engine/webgpu/surface.ts`'s `configureHDRSurface`) there is nothing
-    // to compress — Chrome's extended tone-mapping mode expects raw
-    // scene-linear values and maps them to the panel's actual peak
-    // brightness itself. `gamma`/`tonemapName` remain irrelevant here too
-    // (the shader's output-encode stage, which is the only place they're
-    // read, is skipped whenever `hdrOut` is set).
+    // TONE-MAP operator = the operator ACTUALLY in effect (`effectiveTonemap`,
+    // the toolbar menu's value): the view-local override if the user picked one,
+    // else the effective default. On an HDR-engaged pane that default is
+    // `"extended"` (a pure identity — see `image/tonemap.ts`'s doc on that
+    // entry): with a real HDR surface (`hdrOut:true` -> `rgba16float` +
+    // `toneMapping:'extended'`, `engine/webgpu/surface.ts`'s
+    // `configureHDRSurface`) there is nothing to compress — Chrome's extended
+    // tone-mapping mode expects raw scene-linear values and maps them to the
+    // panel's peak brightness itself; `gamma` is then irrelevant (the shader's
+    // output-encode stage, its only reader, is skipped when `hdrOut` is set).
+    // If the user instead selects an SDR operator on such a pane, `hdrOut`
+    // drops to false and the operator + output-encode run — deliberately
+    // tone-mapping INTO SDR range to preview the SDR rendition on the HDR
+    // display. `hdrOut` therefore tracks the SELECTED operator, not the surface:
+    // it is `"extended"` ⇔ true-HDR pass-through (guarded by `useHdrRef` so a
+    // stale "extended" can never request HDR-out on a non-HDR surface).
+    const hdrOut = useHdrRef.current && effectiveTonemap === "extended";
     const params: ImageParams = hdrMode
       ? {
           exposureEV: exposure + displayEV,
           offset: displayOffset,
-          operator: useHdrRef.current ? "extended" : toOperator(tonemapName),
+          operator: effectiveTonemap,
           gamma,
           isScalar: false,
-          hdrOut: useHdrRef.current,
+          hdrOut,
           uv,
           filter,
         }
@@ -744,7 +776,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, tonemapName, gamma, hdrMode, sdrColormap, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, effectiveTonemap, gamma, hdrMode, sdrColormap, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -882,9 +914,15 @@ export default function GpuImagePane(props: ImageBackendProps) {
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
-      // SDR single-image: a view-local COLORMAP menu (diff-kernels toolbar
-      // track). HDR has no colormap prop (asymmetric by design), so it's omitted.
-      leadingMenus={hdrMode ? undefined : [colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap))]}
+      // HDR: a view-local TONEMAP menu (the operator in effect; "Extended (HDR)"
+      // offered only when the real HDR surface engaged). SDR: a COLORMAP menu
+      // instead (HDR has no colormap prop, SDR pixels are already encoded so have
+      // no tone-map stage — asymmetric by design).
+      leadingMenus={
+        hdrMode
+          ? [tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator), hdrEngaged)]
+          : [colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap))]
+      }
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths), so no source re-upload / diff recompute.
       displayAdjust={{
@@ -894,13 +932,18 @@ export default function GpuImagePane(props: ImageBackendProps) {
         onOffsetChange: setDisplayOffset,
       }}
       // DEEP depth slider (HDR deep sources only; undefined otherwise). Its
-      // reset/modified fold into the colormap ones so HOME clears both.
+      // reset/modified fold into the colormap/tonemap ones so HOME clears all.
       depthSlider={deepFlatten.slider}
       onReset={() => {
         resetColormapOverride();
+        resetTonemapOverride();
         deepFlatten.reset();
       }}
-      extraModified={colormapOverride !== defaultColormapRef.current || deepFlatten.isModified}
+      extraModified={
+        colormapOverride !== defaultColormapRef.current ||
+        tonemapModified ||
+        deepFlatten.isModified
+      }
       label={label}
       showLabelChip={!!label}
       isDraggable={isDraggable}

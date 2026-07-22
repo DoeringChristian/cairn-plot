@@ -118,6 +118,50 @@ export function colormapToolbarButton(
   };
 }
 
+/**
+ * The user-selectable SDR tone-map operators as a toolbar-menu option list.
+ * Order + ids mirror `image/tonemap.ts`'s `SDR_TONEMAP_OPERATORS`. `"extended"`
+ * is NOT here — it is appended by {@link tonemapToolbarButton} (as
+ * "Extended (HDR)") ONLY on a pane whose real HDR surface engaged.
+ */
+export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] = [
+  { id: "linear", label: "Linear" },
+  { id: "srgb", label: "sRGB" },
+  { id: "reinhard", label: "Reinhard" },
+  { id: "aces", label: "ACES" },
+];
+
+/** The extra "Extended (HDR)" option, added only when the pane's true-HDR
+ *  surface engaged (see {@link tonemapToolbarButton}). */
+export const EXTENDED_TONEMAP_OPTION = { id: "extended", label: "Extended (HDR)" };
+
+/**
+ * A tone-map operator dropdown as a toolbar LEADING button (menu variant),
+ * shown on HDR/float image panes only (SDR panes show already-encoded 8-bit
+ * pixels, so they have no tone-map stage to switch). `value` is the operator
+ * ACTUALLY in effect (see `image/tonemap.ts`'s `resolveEffectiveTonemap`);
+ * `onSelect` receives the picked id. `includeExtended` appends the
+ * "Extended (HDR)" option — pass it ONLY when the pane's real HDR surface
+ * engaged (`rgba16float` + extended canvas tone-mapping active); on an
+ * HDR-engaged pane, picking an SDR operator instead previews the SDR rendition.
+ * Like the colormap button, it's a leading (leftmost) control so its presence
+ * never shifts the corner-anchored zoom/pan/reset buttons.
+ */
+export function tonemapToolbarButton(
+  value: string,
+  onSelect: (id: string) => void,
+  includeExtended: boolean,
+): ToolbarButtonSpec {
+  const options = includeExtended
+    ? [...TONEMAP_MENU_OPTIONS, EXTENDED_TONEMAP_OPTION]
+    : TONEMAP_MENU_OPTIONS;
+  return {
+    id: "tonemap",
+    title: "Tone-mapping operator",
+    menu: { options, value, onSelect },
+  };
+}
+
 export interface UseImageControllerArgs {
   /** The pane's root element — the `plotToPng` fallback target and the box the
    *  center-zoom math measures against. */

@@ -809,6 +809,12 @@ class Image(Component):
       stops), and an OPTIONAL ``gamma`` override; ``showAxes``/``interpolation``
       are honoured; ``colormap``/``brightness``/``contrast``/``offset``/
       ``flip_sign`` are 8-bit-only and ignored (with a note) on the HDR path.
+      The viewer also gets a leading toolbar **TONEMAP menu** to switch the
+      operator interactively; ``tonemap=`` sets its default. When the client's
+      true-HDR surface engages (WebGPU ``rgba16float`` + extended canvas
+      tone-mapping on an HDR display) the effective operator becomes a
+      scene-linear ``"extended"`` pass-through and the menu adds an
+      "Extended (HDR)" option — a client-only state, never a Python input.
 
     NOTE: a ``run[tag]`` handle always takes the 8-bit path — the tracking
     ingest clamps images to 8-bit, so no float artifact exists yet. Real HDR is

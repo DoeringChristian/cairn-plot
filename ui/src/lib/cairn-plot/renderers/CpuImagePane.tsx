@@ -57,9 +57,11 @@ import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { f16BitsToFloat32, halfToFloat } from "../image/half";
 import {
   getTonemapOperator,
+  toSdrTonemap,
   applyExposureOffset,
   outputEncode,
   type RgbTriple,
+  type TonemapOperator,
 } from "../image/tonemap";
 import {
   buildChannelSample,
@@ -67,7 +69,7 @@ import {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
-import { colormapToolbarButton } from "./use-image-controller";
+import { colormapToolbarButton, tonemapToolbarButton } from "./use-image-controller";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -667,6 +669,19 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
   const deepFlatten = useDeepFlatten(props.hdr);
   const hdr = deepFlatten.hdr;
 
+  // TONE-MAP operator (view-local override for the toolbar menu). Seeded from
+  // the descriptor `tonemap=` prop (validated to an SDR operator; default
+  // "srgb") and re-seeded on prop change — same controlled-surface contract as
+  // the colormap override on the SDR pane. The CPU pane tone-maps to an 8-bit
+  // ImageData (no real HDR surface), so "extended" is NOT offered — the menu
+  // shows Linear/sRGB/Reinhard/ACES only. HOME restores the descriptor default.
+  const [tonemapOp, setTonemapOp, tonemapMeta] = useResettableState<TonemapOperator>(
+    toSdrTonemap(tonemap),
+  );
+  useEffect(() => {
+    setTonemapOp(toSdrTonemap(tonemap));
+  }, [tonemap, setTonemapOp]);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -688,7 +703,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
     if (!canvas) return;
     let imageData: ImageData;
     try {
-      imageData = tonemapToImageData(hdr, tonemap, exposure + displayEV, gamma, displayOffset);
+      imageData = tonemapToImageData(hdr, tonemapOp, exposure + displayEV, gamma, displayOffset);
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
       return;
@@ -707,7 +722,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemap, exposure, gamma, displayEV, displayOffset]);
+  }, [hdr, tonemapOp, exposure, gamma, displayEV, displayOffset]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -776,6 +791,11 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
+      // TONEMAP menu (HDR/float pane). CPU tone-maps to 8-bit, so no
+      // "Extended (HDR)" option (includeExtended=false). HOME restores the default.
+      leadingMenus={[
+        tonemapToolbarButton(tonemapOp, (id) => setTonemapOp(id as TonemapOperator), false),
+      ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change).
       displayAdjust={{
@@ -784,10 +804,14 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
-      // DEEP depth slider (absent for non-deep); HOME resets the cutoff to zMax.
+      // DEEP depth slider (absent for non-deep); HOME resets the cutoff to zMax
+      // and the tonemap override to the descriptor default.
       depthSlider={deepFlatten.slider}
-      onReset={deepFlatten.reset}
-      extraModified={deepFlatten.isModified}
+      onReset={() => {
+        deepFlatten.reset();
+        tonemapMeta.reset();
+      }}
+      extraModified={deepFlatten.isModified || tonemapMeta.isModified}
       label={label}
       showLabelChip={!!label}
     />

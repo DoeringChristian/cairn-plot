@@ -163,6 +163,24 @@ For a **deep** `.exr` (`deepscanline`/`deeptile`), a single-image pane also gets
 toolbar **DEPTH (Z) slider** that live-flattens only the samples with Z ≤ the
 cutoff (linear, or log10 when `zMax/zMin > 1e3`); HOME restores the full composite.
 
+An **HDR/float** image pane (`imagehdr`) gets a leading toolbar **TONEMAP menu**
+— `Linear · sRGB · Reinhard · ACES` — that switches the tone-map operator
+view-locally (SDR panes have no such menu: their 8-bit pixels are already
+encoded, so there is no tone-map stage). The menu shows the operator **actually
+in effect**, and HOME restores it:
+- The default is the descriptor's `tonemap=` prop (Python default `"srgb"`).
+- When the pane's **true-HDR surface engages** (WebGPU `rgba16float` + Chrome
+  extended canvas tone-mapping, on an HDR display), the effective operator is
+  **`"extended"`** — a scene-linear pass-through the OS compositor maps to the
+  panel's peak brightness — and the menu shows an extra **"Extended (HDR)"**
+  option reflecting that. On such a pane, selecting an SDR operator instead
+  **tone-maps into SDR range** (previewing the SDR rendition on the HDR display):
+  the render path drops `hdrOut` and runs the operator + output-encode. The CPU
+  backend never engages a real HDR surface, so it never offers "Extended (HDR)".
+  See `image/tonemap.ts`'s `resolveEffectiveTonemap` (pure, unit-tested) for the
+  default-in-effect rule. **Follow-up:** `cp.Compare` panes (split/blend/diff of
+  HDR sources) do not yet expose a TONEMAP menu.
+
 #### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end
 instead of widening to f32 on decode. The float payload carries a

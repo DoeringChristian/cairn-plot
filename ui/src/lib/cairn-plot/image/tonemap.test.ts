@@ -12,6 +12,9 @@ import assert from "node:assert/strict";
 import {
   TONEMAP_OPERATORS,
   getTonemapOperator,
+  toSdrTonemap,
+  resolveEffectiveTonemap,
+  SDR_TONEMAP_OPERATORS,
   applyExposure,
   applyExposureOffset,
   srgbOetf,
@@ -65,6 +68,45 @@ test("getTonemapOperator falls back to srgb for unknown key", () => {
   assert.equal(getTonemapOperator("does-not-exist"), TONEMAP_OPERATORS.srgb);
   assert.equal(getTonemapOperator(null), TONEMAP_OPERATORS.srgb);
   assert.equal(getTonemapOperator("aces"), TONEMAP_OPERATORS.aces);
+});
+
+test("toSdrTonemap validates + falls back to srgb, never yields extended", () => {
+  assert.equal(toSdrTonemap("linear"), "linear");
+  assert.equal(toSdrTonemap("srgb"), "srgb");
+  assert.equal(toSdrTonemap("reinhard"), "reinhard");
+  assert.equal(toSdrTonemap("aces"), "aces");
+  // Unknown / empty / null → srgb default.
+  assert.equal(toSdrTonemap("nope"), "srgb");
+  assert.equal(toSdrTonemap(undefined), "srgb");
+  assert.equal(toSdrTonemap(null), "srgb");
+  // "extended" is NOT an SDR operator — it is coerced back to the default.
+  assert.equal(toSdrTonemap("extended"), "srgb");
+  // SDR menu domain excludes extended.
+  assert.ok(!(SDR_TONEMAP_OPERATORS as readonly string[]).includes("extended"));
+});
+
+test("resolveEffectiveTonemap: descriptor prop when SDR, extended when HDR engaged", () => {
+  // NOT engaged → the descriptor's (validated) operator, srgb default.
+  assert.equal(resolveEffectiveTonemap("aces", false), "aces");
+  assert.equal(resolveEffectiveTonemap("srgb", false), "srgb");
+  assert.equal(resolveEffectiveTonemap(undefined, false), "srgb");
+  assert.equal(resolveEffectiveTonemap("garbage", false), "srgb");
+  // HDR surface engaged → "extended" IN EFFECT, regardless of the descriptor's
+  // SDR operator (the SDR tonemap is bypassed by the pass-through HDR-out path).
+  assert.equal(resolveEffectiveTonemap("aces", true), "extended");
+  assert.equal(resolveEffectiveTonemap("srgb", true), "extended");
+  assert.equal(resolveEffectiveTonemap(undefined, true), "extended");
+});
+
+test("extended is a pure pass-through; SDR operators clamp HDR into [0,1]", () => {
+  // The "SDR preview on an HDR display" semantics: switching from extended to an
+  // SDR operator (e.g. aces) on an HDR-engaged pane clamps values into range.
+  const hi: RgbTriple = [8, 8, 8];
+  assert.deepEqual(TONEMAP_OPERATORS.extended!(hi), [8, 8, 8]); // unclamped, past 1.0
+  const [ar, ag, ab] = TONEMAP_OPERATORS.aces!(hi);
+  assert.ok(ar <= 1 && ag <= 1 && ab <= 1, "aces clamps to SDR range");
+  const [lr] = TONEMAP_OPERATORS.linear!(hi);
+  assert.equal(lr, 1, "linear clamps to 1");
 });
 
 test("applyExposure scales by 2**ev", () => {
