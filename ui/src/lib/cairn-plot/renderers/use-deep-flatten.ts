@@ -7,10 +7,12 @@
  *   - seeds the Z cutoff at `zMax` (full composite) via `useResettableState`, so
  *     HOME/double-click reset it through the shell's existing reset/extraModified
  *     contract;
- *   - on a cutoff change, DEBOUNCES (~100ms) a `deep.flatten(zClip)` re-composite
- *     and swaps the resulting buffer into the returned `hdr` (same dims/precision)
- *     — the pane's existing "hdr changed → re-render/re-upload" effect does the
- *     rest;
+ *   - re-flattens in REAL TIME as the cutoff moves — NO debounce. A pure
+ *     latest-wins / one-in-flight coalescer (`./coalesce.ts`) keeps at most one
+ *     `deep.flatten(zClip)` running; while it runs only the LATEST cutoff is
+ *     remembered, and the newest buffer is uploaded rAF-aligned. The slider
+ *     thumb + Z read-out track the pointer instantly (they read `zClip` state
+ *     directly, decoupled from the async flatten);
  *   - exposes a `ToolbarSliderSpec` for the shell's slider row (double-click
  *     manual entry + out-of-range typing come free). The slider is LINEAR in Z
  *     unless the volume spans > 1e3× (`zMax/zMin`), where it maps LOG10 so the
@@ -24,11 +26,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HdrData } from "./image-backend";
 import type { ToolbarSliderSpec } from "../controls/ToolbarConfig";
 import { useResettableState } from "../hooks/use-resettable-state";
+import { IDLE_COALESCE, requestCoalesce, resolveCoalesce, type CoalesceState } from "./coalesce";
 
-/** Debounce before firing a re-flatten (coalesces slider drags). */
-const DEEP_FLATTEN_DEBOUNCE_MS = 100;
 /** Dynamic-range threshold above which the slider maps Z on a log10 scale. */
 const LOG_SCALE_RATIO = 1e3;
+
+/** rAF shim so the upload aligns to a frame (fallback for non-DOM envs). */
+const raf: (cb: () => void) => number =
+  typeof requestAnimationFrame === "function"
+    ? (cb) => requestAnimationFrame(() => cb())
+    : (cb) => setTimeout(cb, 0) as unknown as number;
+const cancelRaf: (h: number) => void =
+  typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : (h) => clearTimeout(h);
 
 export interface DeepFlattenState {
   /** The effective `HdrData` — the prop `hdr`, or a Z-clipped re-flatten of it. */
@@ -50,34 +59,74 @@ export function useDeepFlatten(hdr: HdrData): DeepFlattenState {
   const [zClip, setZClip, zMeta] = useResettableState<number>(zMax);
   // Re-flattened buffer for the current cutoff (null ⇒ show the full composite).
   const [flatData, setFlatData] = useState<HdrData["data"] | null>(null);
-  const reqRef = useRef(0);
 
-  // Dispose the retained handle when the source changes or the pane unmounts.
+  // Live refs so the (stable) launcher never closes over stale values.
+  const deepRef = useRef(deep);
+  deepRef.current = deep;
+  const zMaxRef = useRef(zMax);
+  zMaxRef.current = zMax;
+  // The most-recent cutoff the user WANTS shown — an in-flight flatten for any
+  // other value is stale and its result is dropped (latest-wins).
+  const wantRef = useRef(zClip);
+  const coalesceRef = useRef<CoalesceState>(IDLE_COALESCE);
+  const rafRef = useRef<number | null>(null);
+
+  // Launch one flatten; on resolve upload (rAF-aligned) only if still wanted,
+  // then chain the latest pending cutoff (if any) — the coalescer's one-in-flight
+  // guarantee. Stable across renders (reads everything through refs).
+  const launch = useCallback((value: number) => {
+    const d = deepRef.current;
+    if (!d) return;
+    const done = () => {
+      const step = resolveCoalesce(coalesceRef.current);
+      coalesceRef.current = step.state;
+      if (step.launch != null) launch(step.launch);
+    };
+    d.flatten(value)
+      .then((buf) => {
+        // Apply only if this is still the wanted cutoff AND it's a real clip
+        // (returning to zMax shows the prop's full composite, not this buffer).
+        if (wantRef.current === value && value < zMaxRef.current) {
+          if (rafRef.current != null) cancelRaf(rafRef.current);
+          rafRef.current = raf(() => {
+            rafRef.current = null;
+            setFlatData(buf);
+          });
+        }
+        done();
+      })
+      .catch(done);
+  }, []);
+
+  const request = useCallback(
+    (value: number) => {
+      const step = requestCoalesce(coalesceRef.current, value);
+      coalesceRef.current = step.state;
+      if (step.launch != null) launch(step.launch);
+    },
+    [launch],
+  );
+
+  // Dispose the retained handle + cancel any pending upload on unmount / source change.
   useEffect(() => {
-    return () => deep?.dispose();
+    return () => {
+      if (rafRef.current != null) cancelRaf(rafRef.current);
+      deep?.dispose();
+    };
   }, [deep]);
 
-  // Debounced re-flatten on cutoff change. At (or above) zMax the full composite
-  // already IS `hdr.data`, so we just clear the override — no worker round-trip.
+  // Drive the re-flatten as the cutoff changes — no debounce, coalesced. At (or
+  // above) zMax the full composite already IS `hdr.data`, so drop the override
+  // (and stop wanting any in-flight clipped result).
   useEffect(() => {
     if (!deep) return;
+    wantRef.current = zClip;
     if (zClip >= zMax) {
       setFlatData(null);
       return;
     }
-    const myReq = ++reqRef.current;
-    const timer = setTimeout(() => {
-      deep
-        .flatten(zClip)
-        .then((buf) => {
-          if (reqRef.current === myReq) setFlatData(buf);
-        })
-        .catch(() => {
-          /* a stale/failed re-flatten leaves the previous frame shown */
-        });
-    }, DEEP_FLATTEN_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [deep, zClip, zMax]);
+    request(zClip);
+  }, [deep, zClip, zMax, request]);
 
   const effectiveHdr = useMemo<HdrData>(
     () => (deep && flatData != null ? { ...hdr, data: flatData } : hdr),
