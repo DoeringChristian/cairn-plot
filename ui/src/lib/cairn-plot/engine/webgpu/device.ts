@@ -101,8 +101,10 @@ import type {
   TextureFormat,
   Capabilities,
 } from "../types";
+import type { DeepSampleBuffers, DeepGpuCsrSpec } from "../types";
 import { configureHDRSurface, configureSDRSurface, type SurfaceConfigResult } from "./surface";
 import { reduceWGSL } from "../shaders/reduce.wgsl";
+import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl";
 
 function gpuFormatFor(format: TextureFormat): GPUTextureFormat {
   switch (format) {
@@ -375,6 +377,44 @@ class WGPUComputePipeline implements ComputePipeline {
 }
 
 /**
+ * GPU-resident deep samples for the depth-composite pass (see
+ * `../shaders/deep-composite.wgsl.ts`). Owns three storage buffers
+ * (offsets/colors/zs), a small params uniform buffer, and a bind group built
+ * once against the shared deep-composite pipeline layout. `compositeDeep` only
+ * rewrites the params buffer + re-runs the pass, so the (large) sample buffers
+ * upload ONCE. `destroy()` frees all four buffers.
+ */
+class WGPUDeepSampleBuffers implements DeepSampleBuffers {
+  readonly width: number;
+  readonly height: number;
+  readonly paramsBuffer: GPUBuffer;
+  readonly bindGroup: GPUBindGroup;
+  private readonly buffers: GPUBuffer[];
+  private destroyed = false;
+
+  constructor(
+    width: number,
+    height: number,
+    buffers: GPUBuffer[],
+    paramsBuffer: GPUBuffer,
+    bindGroup: GPUBindGroup,
+  ) {
+    this.width = width;
+    this.height = height;
+    this.buffers = buffers;
+    this.paramsBuffer = paramsBuffer;
+    this.bindGroup = bindGroup;
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    for (const b of this.buffers) b.destroy();
+    this.paramsBuffer.destroy();
+    this.destroyed = true;
+  }
+}
+
+/**
  * Owns the `GPUBuffer`(s) `createBindGroup` allocates for `{uniform}`
  * bindings (both the default zero-fill buffers and the caller-supplied-value
  * buffers — see module doc comment's `createBindGroup` section). `destroy()`
@@ -581,6 +621,34 @@ export async function createWebGPUDevice(): Promise<Device> {
     return { pipeline: reducePipeline, layout: reduceBindGroupLayout };
   }
 
+  // Lazily-built, memoized deep-composite RENDER pipeline (one per GPUDevice).
+  // Dedicated (not the generic parseWGSLBindings path — that only knows
+  // uniform/texture/sampler) so it can bind read-only STORAGE buffers. Targets
+  // rgba16float — the pane source-texture format the display pass samples.
+  let deepPipeline: GPURenderPipeline | null = null;
+  let deepBindGroupLayout: GPUBindGroupLayout | null = null;
+  function getDeepCompositePipeline(): { pipeline: GPURenderPipeline; layout: GPUBindGroupLayout } {
+    if (!deepPipeline || !deepBindGroupLayout) {
+      const module = gpuDevice.createShaderModule({ code: deepCompositeWGSL });
+      deepBindGroupLayout = gpuDevice.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        ],
+      });
+      const layout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [deepBindGroupLayout] });
+      deepPipeline = gpuDevice.createRenderPipeline({
+        layout,
+        vertex: { module, entryPoint: "vs_main" },
+        fragment: { module, entryPoint: "fs_main", targets: [{ format: "rgba16float" }] },
+        primitive: { topology: "triangle-list" },
+      });
+    }
+    return { pipeline: deepPipeline, layout: deepBindGroupLayout };
+  }
+
   const device: Device = {
     backend: "webgpu",
     capabilities,
@@ -746,6 +814,69 @@ export async function createWebGPUDevice(): Promise<Device> {
       pass.setPipeline(gpuPipeline);
       pass.setBindGroup(0, bg.gpuBindGroup);
       pass.setViewport(0, 0, width, height, 0, 1);
+      pass.draw(3);
+      pass.end();
+      gpuDevice.queue.submit([encoder.finish()]);
+    },
+
+    createDeepSampleBuffers(spec: DeepGpuCsrSpec): DeepSampleBuffers {
+      const { layout } = getDeepCompositePipeline();
+      const storage = (view: ArrayBufferView): GPUBuffer => {
+        const buf = gpuDevice.createBuffer({
+          size: view.byteLength,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+        gpuDevice.queue.writeBuffer(buf, 0, view.buffer as ArrayBuffer, view.byteOffset, view.byteLength);
+        return buf;
+      };
+      const offsetsBuf = storage(spec.offsets);
+      const colorsBuf = storage(spec.colors);
+      const zsBuf = storage(spec.zs);
+      const paramsBuffer = gpuDevice.createBuffer({
+        size: 16, // vec4<f32>
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const bindGroup = gpuDevice.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: { buffer: offsetsBuf } },
+          { binding: 1, resource: { buffer: colorsBuf } },
+          { binding: 2, resource: { buffer: zsBuf } },
+          { binding: 3, resource: { buffer: paramsBuffer } },
+        ],
+      });
+      return new WGPUDeepSampleBuffers(
+        spec.width,
+        spec.height,
+        [offsetsBuf, colorsBuf, zsBuf],
+        paramsBuffer,
+        bindGroup,
+      );
+    },
+
+    compositeDeep(buffers: DeepSampleBuffers, target: Texture, zClip: number): void {
+      const b = buffers as WGPUDeepSampleBuffers;
+      const t = target as WGPUTexture;
+      const { pipeline } = getDeepCompositePipeline();
+      gpuDevice.queue.writeBuffer(
+        b.paramsBuffer,
+        0,
+        new Float32Array([b.width, b.height, zClip, 0]),
+      );
+      const encoder = gpuDevice.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: t.gpuTexture.createView(),
+            loadOp: "clear",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            storeOp: "store",
+          },
+        ],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, b.bindGroup);
+      pass.setViewport(0, 0, t.width, t.height, 0, 1);
       pass.draw(3);
       pass.end();
       gpuDevice.queue.submit([encoder.finish()]);

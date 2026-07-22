@@ -43,7 +43,7 @@
  */
 import { getSharedDevice } from "./device";
 import { renderImage, type ImageParams } from "./image-engine";
-import type { Device, Surface, Texture, TextureFormat } from "./types";
+import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
 import { forceEngineFailRequested } from "./test-hooks";
 
 /**
@@ -85,6 +85,22 @@ export interface PaneHandle {
    * producing blurry edges and sub-pixel jitter on zoom/pan.
    */
   setSource(src: SourceUpload): void;
+  /**
+   * DEEP-EXR GPU composite source (the depth slider on GPU panes). Uploads the
+   * Z-sorted samples to GPU storage buffers ONCE and composites them at `zClip`
+   * into this pane's `rgba16float` source texture — the texture `render()` then
+   * blits. Retained across park/restore (re-uploaded + re-composited on
+   * restore) like {@link setSource}'s CPU buffer. Replaces any prior CPU/deep
+   * source. If live, uploads + composites immediately; if parked, deferred to
+   * the next `render()`/`restore()`.
+   */
+  setDeepSource(spec: DeepGpuCsrSpec, zClip: number): void;
+  /**
+   * Re-composite the retained deep samples at a new Z cutoff (no re-upload) —
+   * the real-time depth-slider path. No-op unless a {@link setDeepSource} is
+   * live. The caller still calls `render()` afterward to blit the result.
+   */
+  setDeepZClip(zClip: number): void;
   /**
    * Size this pane's canvas backing store + WebGPU surface to
    * `width x height` DEVICE pixels (i.e. already `displayCssSize * dpr` —
@@ -150,6 +166,14 @@ interface PaneEntry {
   surface: Surface | null;
   srcTexture: Texture | null;
   source: SourceUpload | null;
+  /** DEEP-EXR GPU composite source (retained CSR) — mutually exclusive with
+   *  `source`; when set, `srcTexture` is filled by `compositeDeep`, not a CPU
+   *  upload. See `PaneHandle.setDeepSource`. */
+  deep: DeepGpuCsrSpec | null;
+  /** Current depth cutoff for `deep`. */
+  deepZClip: number;
+  /** GPU storage buffers for `deep` (freed on park/dispose, rebuilt on restore). */
+  deepBuffers: DeepSampleBuffers | null;
   parked: boolean;
   disposed: boolean;
   /** Last-reported on-screen visibility (`PaneHandle.setVisible`) — read by
@@ -188,6 +212,10 @@ function parkEntry(entry: PaneEntry): void {
   if (entry.srcTexture) {
     entry.srcTexture.destroy();
     entry.srcTexture = null;
+  }
+  if (entry.deepBuffers) {
+    entry.deepBuffers.destroy();
+    entry.deepBuffers = null;
   }
   entry.surface = null;
   entry.parked = true;
@@ -239,12 +267,20 @@ function activateEntry(entry: PaneEntry): void {
   // the narrow window before the caller's first `resize()` call (e.g. a
   // render requested before the pane's container has been measured), so
   // `configure()` never sees a zero size.
-  const w = entry.backingWidth || entry.source?.width || 1;
-  const h = entry.backingHeight || entry.source?.height || 1;
+  const w = entry.backingWidth || entry.source?.width || entry.deep?.width || 1;
+  const h = entry.backingHeight || entry.source?.height || entry.deep?.height || 1;
   entry.canvas.width = w;
   entry.canvas.height = h;
   entry.surface.configure(w, h);
-  if (entry.source) {
+  if (entry.deep) {
+    // DEEP GPU composite: an rgba16float target the composite pass fills, plus
+    // the (once-uploaded) sample storage buffers. Re-created on every
+    // restore from the retained CSR (like the CPU `source` path re-uploads).
+    const tex = device.createTexture(entry.deep.width, entry.deep.height, "rgba16float");
+    entry.srcTexture = tex;
+    entry.deepBuffers = device.createDeepSampleBuffers!(entry.deep);
+    device.compositeDeep!(entry.deepBuffers, tex, entry.deepZClip);
+  } else if (entry.source) {
     const tex = device.createTexture(entry.source.width, entry.source.height, entry.source.format);
     tex.write(entry.source.data);
     entry.srcTexture = tex;
@@ -264,7 +300,7 @@ function activateEntry(entry: PaneEntry): void {
  * which would otherwise unmount the caller's whole subtree.
  */
 function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
-  if (entry.disposed || !entry.source) return true;
+  if (entry.disposed || (!entry.source && !entry.deep)) return true;
   try {
     activateEntry(entry);
     if (!entry.surface || !entry.srcTexture) return false;
@@ -291,6 +327,12 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     setSource(src: SourceUpload): void {
       if (entry.disposed) return;
       entry.source = src;
+      // A plain CPU source supersedes any prior DEEP composite source.
+      entry.deep = null;
+      if (entry.deepBuffers) {
+        entry.deepBuffers.destroy();
+        entry.deepBuffers = null;
+      }
       // Q22 fix: no canvas/surface sizing here — that's `resize()`'s job now,
       // driven by the pane's ON-SCREEN display size, not this source
       // texture's own resolution.
@@ -301,6 +343,29 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         entry.srcTexture = tex;
       }
       // Parked: the new source is picked up by the next activateEntry().
+    },
+    setDeepSource(spec: DeepGpuCsrSpec, zClip: number): void {
+      if (entry.disposed) return;
+      entry.deep = spec;
+      entry.deepZClip = zClip;
+      entry.source = null; // mutually exclusive with a CPU source
+      if (!entry.parked && entry.surface) {
+        // Rebuild the composite target + storage buffers, then composite once.
+        if (entry.srcTexture) entry.srcTexture.destroy();
+        if (entry.deepBuffers) entry.deepBuffers.destroy();
+        const tex = entry.device.createTexture(spec.width, spec.height, "rgba16float");
+        entry.srcTexture = tex;
+        entry.deepBuffers = entry.device.createDeepSampleBuffers!(spec);
+        entry.device.compositeDeep!(entry.deepBuffers, tex, zClip);
+      }
+      // Parked: picked up by the next activateEntry().
+    },
+    setDeepZClip(zClip: number): void {
+      if (entry.disposed) return;
+      entry.deepZClip = zClip;
+      if (!entry.parked && entry.deepBuffers && entry.srcTexture) {
+        entry.device.compositeDeep!(entry.deepBuffers, entry.srcTexture, zClip);
+      }
     },
     resize(width: number, height: number): void {
       if (entry.disposed) return;
@@ -324,7 +389,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       parkEntry(entry);
     },
     restore(): void {
-      if (entry.disposed || !entry.source) return;
+      if (entry.disposed || (!entry.source && !entry.deep)) return;
       activateEntry(entry);
     },
     setVisible(visible: boolean): void {
@@ -333,8 +398,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     dispose(): void {
       if (entry.disposed) return;
-      parkEntry(entry);
+      parkEntry(entry); // frees srcTexture + deepBuffers
       entry.source = null;
+      entry.deep = null;
       entry.disposed = true;
     },
   };
@@ -362,6 +428,9 @@ export async function acquirePane(
     surface: null,
     srcTexture: null,
     source: null,
+    deep: null,
+    deepZClip: 0,
+    deepBuffers: null,
     parked: true,
     disposed: false,
     visible: true,

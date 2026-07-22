@@ -24,6 +24,23 @@ export interface BindGroupEntry { binding: number; resource: Texture | Sampler |
  * needed, or those buffers leak until `Device.destroy()`.
  */
 export interface BindGroup { readonly _b: unknown; destroy?(): void; }
+/**
+ * GPU-resident deep-EXR samples (storage buffers) for the depth-composite pass.
+ * Created once from a {@link DeepGpuCsrSpec} (uploaded offsets/colors/zs), then
+ * re-composited at any Z cutoff via {@link Device.compositeDeep} with no
+ * re-upload. `destroy()` frees the underlying GPU buffers.
+ */
+export interface DeepSampleBuffers { readonly width: number; readonly height: number; destroy(): void; }
+/** Z-sorted deep samples to upload — see `wasm/openexr` `DeepGpuCsr`. */
+export interface DeepGpuCsrSpec {
+  width: number; height: number;
+  /** pixels+1 prefix sums. */
+  offsets: Uint32Array;
+  /** 4·total premultiplied RGBA (one vec4 per sample). */
+  colors: Float32Array;
+  /** total per-sample Z, ascending within each pixel. */
+  zs: Float32Array;
+}
 export interface Surface { readonly canvas: HTMLCanvasElement; readonly hdr: boolean; configure(width: number, height: number): void; getCurrentTextureView(): unknown; }
 export interface Device {
   readonly backend: Backend;
@@ -45,6 +62,20 @@ export interface Device {
    */
   probeExtendedToneMapping?(): boolean;
   renderFullscreen(target: Surface | Texture, pipeline: RenderPipeline, bindGroup: BindGroup): void;
+  /**
+   * Upload Z-sorted deep samples to GPU storage buffers for the depth-composite
+   * pass (the deep depth slider on GPU-backed panes). Optional/defensive on the
+   * interface; always present on the WebGPU backend. See
+   * `engine/shaders/deep-composite.wgsl.ts`.
+   */
+  createDeepSampleBuffers?(spec: DeepGpuCsrSpec): DeepSampleBuffers;
+  /**
+   * Composite retained deep samples at a Z cutoff into `target` (an
+   * `rgba16float` texture, front-to-back OVER of samples with Z ≤ `zClip`) —
+   * a uniform write + one fullscreen fragment pass. Pairs with
+   * {@link createDeepSampleBuffers}.
+   */
+  compositeDeep?(buffers: DeepSampleBuffers, target: Texture, zClip: number): void;
   readback(source: Surface | Texture): Promise<Uint8Array | Float32Array>;
   /**
    * GPU-side parallel reduction (Task 7) over the `[0,width)x[0,height)`
