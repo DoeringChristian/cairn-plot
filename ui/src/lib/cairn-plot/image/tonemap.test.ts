@@ -142,10 +142,10 @@ test("extended·Linear is a pure pass-through; SDR operators clamp HDR into [0,1
   assert.equal(lr, 1, "linear clamps to 1");
 });
 
-test("extendedReinhardCurve: monotone, ≈x for x≪1, 0→0", () => {
+test("extendedReinhardCurve: monotone, ≈x for x≪1, →P asymptote", () => {
   const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
   approx(extendedReinhardCurve(0, P), 0);
-  // Identity-like at low x.
+  // Identity-like at low x (slope exactly 1 at 0).
   approx(extendedReinhardCurve(0.001, P), 0.001, 5e-6);
   approx(extendedReinhardCurve(0.01, P), 0.01, 5e-4);
   // Monotone increasing across the HDR range.
@@ -157,8 +157,14 @@ test("extendedReinhardCurve: monotone, ≈x for x≪1, 0→0", () => {
   }
   // Negative input pre-clamps to 0.
   approx(extendedReinhardCurve(-3, P), 0);
-  // Exact formula spot-check: y = x(1 + x/P^2)/(1+x). At x=P=4: (4·(1+4/16))/5 = 1.
-  approx(extendedReinhardCurve(4, 4), 1);
+  // Exact formula spot-checks: y = x/(1 + x/P). At x=P: P/2. Approaches P for
+  // large x and never exceeds it (the extended-output ceiling).
+  approx(extendedReinhardCurve(4, 4), 2);
+  approx(extendedReinhardCurve(1e6, P), P, 1e-3);
+  assert.ok(extendedReinhardCurve(1e9, P) < P);
+  // Midrange stays NEAR identity (the SDR white-point form dipped x=1 to 0.53
+  // at P=4 — the bug this formula replaces): x=1 → 1/(1+1/4) = 0.8.
+  approx(extendedReinhardCurve(1, 4), 0.8);
 });
 
 test("extendedAcesCurve: monotone, ≈x for x≪1 (slope 1), →P asymptote", () => {

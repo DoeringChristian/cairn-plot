@@ -91,14 +91,20 @@ export const EXTENDED_TONEMAP_PEAK_MAX = 16;
 export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
 
 /**
- * Extended Reinhard with a white point P (peak): `y = x·(1 + x/P²)/(1 + x)`.
- * Per channel, `x` pre-clamped to `[0,∞)`. Monotonic increasing; `y ≈ x` for
- * `x ≪ 1` (identity-like in the SDR range). The Reinhard white-point form
- * (Reinhard et al. 2002, eq. 4) with `L_white = P`.
+ * Extended Reinhard with a display peak P: `y = x/(1 + x/P)` — the plain
+ * Reinhard curve `x/(1+x)` rescaled so the ASYMPTOTE is `P` while the low-`x`
+ * slope stays exactly 1. Per channel, `x` pre-clamped to `[0,∞)`. Invariants
+ * (tested): monotonic increasing; `y ≈ x` for `x ≪ 1`; `y → P` as `x → ∞`.
+ *
+ * NOT the SDR white-point form `x·(1+x/P²)/(1+x)` (Reinhard et al. 2002,
+ * eq. 4): that curve targets `x = P → 1` — an SDR-OUTPUT mapping — and dips
+ * well below identity in the midrange (at P=4, `x=1 → 0.53`), visibly
+ * darkening SDR-range content on an HDR display. For extended output the
+ * ceiling must be `P`, not 1.
  */
 export function extendedReinhardCurve(x: number, peak: number): number {
   const v = x < 0 ? 0 : x;
-  return (v * (1 + v / (peak * peak))) / (1 + v);
+  return v / (1 + v / peak);
 }
 
 /**

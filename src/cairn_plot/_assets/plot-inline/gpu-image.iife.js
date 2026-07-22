@@ -228,11 +228,14 @@ fn acesCurve(x: f32) -> f32 {
 // --- HDR-out roll-off operators (peak-parameterized) — ported verbatim from
 // image/tonemap.ts's extendedReinhardCurve / extendedAcesCurve. ---
 
-// Extended Reinhard white-point form: y = x*(1 + x/P^2)/(1 + x).
+// Extended Reinhard with display peak P: y = x/(1 + x/P) — identity slope at
+// 0, asymptote P. Mirrors image/tonemap.ts's extendedReinhardCurve exactly
+// (see its doc for why the SDR white-point form x*(1+x/P^2)/(1+x) is wrong
+// for extended output: it targets x=P -> 1 and darkens the midrange).
 fn extendedReinhardCurve(x: f32, peak: f32) -> f32 {
   let v = max(x, 0.0);
   let p = max(peak, 1e-6);
-  return (v * (1.0 + v / (p * p))) / (1.0 + v);
+  return v / (1.0 + v / p);
 }
 
 // The reciprocal of acesCurve's slope at 0 (0.03/0.14) — makes the low-x slope

@@ -177,7 +177,7 @@ shows the operator **actually in effect**, and HOME restores it.
 | SDR | `reinhard` (Reinhard) | `x / (1 + x)` | → `[0,1)` |
 | SDR | `aces` (ACES) | Narkowicz `clamp((x(2.51x+0.03))/(x(2.43x+0.59)+0.14), 0, 1)` | → `[0,1]` |
 | HDR | `extended` (Extended · Linear) | `x` (unclamped pass-through) | → `[0,∞)` |
-| HDR | `extended-reinhard` (Extended · Reinhard) | `x·(1 + x/P²)/(1 + x)` | roll-off, `≈x` at low `x` |
+| HDR | `extended-reinhard` (Extended · Reinhard) | `x/(1 + x/P)` | → `P` asymptote, slope 1 at 0 |
 | HDR | `extended-aces` (Extended · ACES) | `P·aces(x·S/P)`, `S = 0.14/0.03` | → `P` asymptote, slope 1 at 0 |
 
 The **SDR group** always shows. The **HDR group** (`extended*`) appears **only**
