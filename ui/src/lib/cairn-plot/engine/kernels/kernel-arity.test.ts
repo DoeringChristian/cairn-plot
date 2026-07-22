@@ -24,7 +24,7 @@ test("every registered kernel declares a valid output arity", () => {
 });
 
 test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
-  const scalar = ["flip", "flip-ldr-forced", "hdr-flip"];
+  const scalar = ["flip", "flip-ldr-forced", "hdr-flip", "ssim"];
   const perChannel = [
     "signed",
     "absolute",

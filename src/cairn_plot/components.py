@@ -137,6 +137,9 @@ _COMPARE_KERNEL_MODES = {
     # before FLIP); on u8 sources it is identical to `flip`.
     "flip": "flip",
     "flip_ldr": "flip_ldr",
+    # `ssim` is structural similarity (Wang et al. 2004); the diff map shows the
+    # ERROR field 1 - SSIM. GPU-only kernel (like FLIP); registry drop-in.
+    "ssim": "ssim",
 }
 _COMPARE_PUBLIC_MODES = ("side", "slide", "blend", *_COMPARE_KERNEL_MODES.keys())
 

@@ -55,6 +55,7 @@ def test_side_requires_image_leaves():
         ("rel_square", "relative_squared"),
         ("flip", "flip"),
         ("flip_ldr", "flip_ldr"),
+        ("ssim", "ssim"),
     ],
 )
 def test_diff_kernel_modes(mode, kernel_id):
@@ -78,6 +79,14 @@ def test_flip_ldr_forced_mode_accepted():
     node = cp.Compare(_img(), _img(), mode="flip_ldr").to_node()
     assert node["mode"] == "diff"
     assert node["props"]["diffSubmode"] == "flip_ldr"
+    assert node["baselineIndex"] == 0
+
+
+def test_ssim_mode_accepted():
+    # `ssim` is the structural-similarity diff kernel (displays 1 - SSIM).
+    node = cp.Compare(_img(), _img(), mode="ssim").to_node()
+    assert node["mode"] == "diff"
+    assert node["props"]["diffSubmode"] == "ssim"
     assert node["baselineIndex"] == 0
 
 

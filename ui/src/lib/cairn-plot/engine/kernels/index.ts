@@ -16,6 +16,7 @@ import { relativeAbsoluteKernel } from "./relative-absolute.wgsl.ts";
 import { relativeSquaredKernel } from "./relative-squared.wgsl.ts";
 import { flipKernel, flipLdrForcedKernel } from "./flip.wgsl.ts";
 import { hdrFlipKernel } from "./hdr-flip.ts";
+import { ssimKernel } from "./ssim.wgsl.ts";
 
 let registered = false;
 function registerBuiltins(): void {
@@ -34,6 +35,9 @@ function registerBuiltins(): void {
   registerDiffKernel(flipKernel);
   registerDiffKernel(hdrFlipKernel);
   registerDiffKernel(flipLdrForcedKernel);
+  // SSIM (Wang et al.) — a self-contained multi-pass kernel with its own public
+  // menu entry (unlike the auto-dispatched FLIP family, it maps 1:1 to a mode).
+  registerDiffKernel(ssimKernel);
 }
 registerBuiltins();
 
@@ -56,6 +60,9 @@ export function listDiffMenuModes(): DiffMenuMode[] {
   }
   out.push({ id: "flip", label: "FLIP (perceptual)" });
   out.push({ id: "flip_ldr", label: "FLIP (LDR forced)" });
+  // SSIM is a plain 1:1 mode (no LDR/HDR collapse), so surface it directly.
+  const ssim = getDiffKernel("ssim");
+  if (ssim) out.push({ id: ssim.id, label: ssim.label });
   return out;
 }
 

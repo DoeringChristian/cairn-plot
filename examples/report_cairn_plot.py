@@ -356,12 +356,23 @@ def build_report() -> cp.Report:
         "GPU-only — the CPU compare fallback keeps the pointwise kernels."
     )
     flip_pred, flip_ref = _render_pair()
-    rep.md("### FLIP vs absolute")
+    rep.md(
+        "### FLIP vs SSIM vs absolute\n\n"
+        "The same pair diffed three ways: **flip** (perceptual), **ssim** "
+        "(structural similarity — the map shows the error field *1 − SSIM* on "
+        "linear-luminance, Wang et al. 2004), and plain **abs**. SSIM is another "
+        "GPU registry drop-in (multi-pass: local Gaussian means/variances → the "
+        "SSIM index), switch-free like FLIP."
+    )
     rep.grid(
         [
             [
                 cp.Compare(
                     cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
+                    colormap="viridis",
+                ),
+                cp.Compare(
+                    cp.Image(flip_pred), cp.Image(flip_ref), mode="ssim",
                     colormap="viridis",
                 ),
                 cp.Compare(
