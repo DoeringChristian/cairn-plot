@@ -749,7 +749,20 @@ def _check_pixel_value_notation(value: str) -> str:
     return value
 
 
-_HDR_TONEMAP_OPERATORS = ("linear", "srgb", "reinhard", "aces")
+# SDR operators (always valid) + the HDR-out "extended" family. The extended
+# operators are used VERBATIM by the client when its true-HDR surface engages;
+# when it does NOT engage, the client falls back to their SDR counterpart
+# (extended→linear, extended-reinhard→reinhard, extended-aces→aces). See
+# `image/tonemap.ts`'s `resolveEffectiveTonemap` / `toSdrTonemap`.
+_HDR_TONEMAP_OPERATORS = (
+    "linear",
+    "srgb",
+    "reinhard",
+    "aces",
+    "extended",
+    "extended-reinhard",
+    "extended-aces",
+)
 
 
 def _image_hdr_props(
@@ -766,7 +779,12 @@ def _image_hdr_props(
     ``exposure`` to ``0`` (always emitted). ``gamma`` is an OPTIONAL override —
     it is included ONLY when the caller explicitly passes it, so the renderer's
     correct sRGB output-encode (HDR-A M1) stays the default. ``showAxes`` /
-    ``interpolation`` are the two extra ``HdrImagePane`` props honoured."""
+    ``interpolation`` are the two extra ``HdrImagePane`` props honoured.
+
+    ``tonemap`` also accepts the HDR-out ``"extended"`` family
+    (``extended`` · ``extended-reinhard`` · ``extended-aces``): these are used
+    verbatim when the client's true-HDR surface engages, and fall back to their
+    SDR counterpart (``linear``/``reinhard``/``aces``) otherwise."""
     tm = tonemap if tonemap is not None else "srgb"
     if tm not in _HDR_TONEMAP_OPERATORS:
         raise ValueError(
@@ -805,16 +823,22 @@ class Image(Component):
       AND the array has values outside ``[0,1]``)). ``hdr=False`` forces the
       8-bit clamp path; a uint8 array or a float array in ``[0,1]`` (``hdr``
       unset) stays 8-bit. HDR props route to the real tone-map: ``tonemap`` ∈
-      ``{linear,srgb,reinhard,aces}`` (default ``srgb``), ``exposure`` (EV
-      stops), and an OPTIONAL ``gamma`` override; ``showAxes``/``interpolation``
-      are honoured; ``colormap``/``brightness``/``contrast``/``offset``/
-      ``flip_sign`` are 8-bit-only and ignored (with a note) on the HDR path.
-      The viewer also gets a leading toolbar **TONEMAP menu** to switch the
-      operator interactively; ``tonemap=`` sets its default. When the client's
-      true-HDR surface engages (WebGPU ``rgba16float`` + extended canvas
-      tone-mapping on an HDR display) the effective operator becomes a
-      scene-linear ``"extended"`` pass-through and the menu adds an
-      "Extended (HDR)" option — a client-only state, never a Python input.
+      the SDR set ``{linear,srgb,reinhard,aces}`` OR the HDR-out ``extended``
+      family ``{extended,extended-reinhard,extended-aces}`` (default ``srgb``),
+      ``exposure`` (EV stops), and an OPTIONAL ``gamma`` override;
+      ``showAxes``/``interpolation`` are honoured;
+      ``colormap``/``brightness``/``contrast``/``offset``/``flip_sign`` are
+      8-bit-only and ignored (with a note) on the HDR path. The viewer also gets
+      a leading toolbar **TONEMAP menu** to switch the operator interactively;
+      ``tonemap=`` sets its default. When the client's true-HDR surface engages
+      (WebGPU ``rgba16float`` + extended canvas tone-mapping on an HDR display)
+      the menu adds the HDR-out group — ``Extended · Linear`` (unclamped
+      pass-through), ``Extended · Reinhard`` and ``Extended · ACES`` (peak
+      roll-off, with a **PEAK** slider) — and the default-in-effect becomes
+      ``Extended · Linear`` unless ``tonemap=`` explicitly names an ``extended*``
+      operator (used verbatim). Off an HDR surface, an ``extended*`` ``tonemap=``
+      falls back to its SDR counterpart. The engaged menu state + PEAK are
+      client-only; ``tonemap=`` is the only Python input.
 
     NOTE: a ``run[tag]`` handle always takes the 8-bit path — the tracking
     ingest clamps images to 8-bit, so no float artifact exists yet. Real HDR is

@@ -58,7 +58,13 @@
  */
 import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
-import { applyExposure, TONEMAP_OPERATORS, outputEncode, type RgbTriple } from "../../image/tonemap";
+import {
+  applyExposure,
+  applyTonemapOperatorTriple,
+  outputEncode,
+  EXTENDED_TONEMAP_PEAK_DEFAULT,
+  type RgbTriple,
+} from "../../image/tonemap";
 import { buildLUT, COLORMAP_STOPS } from "../../colormaps/lut";
 import type { Device, Texture } from "../types";
 
@@ -143,8 +149,13 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
     rgb = [lut[idx * 4 + 0]!, lut[idx * 4 + 1]!, lut[idx * 4 + 2]!];
   }
 
-  const opFn = TONEMAP_OPERATORS[params.operator] ?? TONEMAP_OPERATORS.srgb!;
-  const toned = opFn(rgb);
+  // Peak-aware operator dispatch (mirrors image.wgsl.ts's applyOperator): the
+  // extended roll-off operators (extended-reinhard/-aces) read params.peak.
+  const toned = applyTonemapOperatorTriple(
+    rgb,
+    params.operator,
+    params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,
+  );
 
   if (params.hdrOut) return toned;
   return [outputEncode(toned[0], params.gamma), outputEncode(toned[1], params.gamma), outputEncode(toned[2], params.gamma)];
@@ -358,6 +369,40 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const params: ImageParams = { exposureEV: 0.5, operator: "aces", isScalar: false, hdrOut: true, uv: uvFull };
     const r = await runHdrOutCase(device, caseLabel, GRADIENT_PIXELS, params);
     results.set(caseLabel, r);
+  }
+
+  // Extended HDR roll-off operators (peak-parameterized) — hdrOut float target,
+  // so values above 1.0 survive. Each is checked GPU-vs-TS through the SAME
+  // `applyTonemapOperatorTriple` the shader's `applyOperator` mirrors, at a
+  // non-default peak to exercise the P uniform. GRADIENT_PIXELS includes 3.0
+  // (HDR), so extended-reinhard/-aces produce >1 display-linear light.
+  for (const op of ["extended-reinhard", "extended-aces"] as ImageOperator[]) {
+    const caseLabel = `${label}/hdrOut/${op}/peak=6`;
+    const params: ImageParams = {
+      exposureEV: 0,
+      operator: op,
+      isScalar: false,
+      hdrOut: true,
+      peak: 6,
+      uv: uvFull,
+    };
+    results.set(caseLabel, await runHdrOutCase(device, caseLabel, GRADIENT_PIXELS, params));
+  }
+
+  {
+    // SDR-preview of an extended roll-off operator: hdrOut:false so the shader's
+    // output-encode runs, producing clamped SDR bytes (the "preview the SDR
+    // rendition on an HDR display" path).
+    const caseLabel = `${label}/extended-aces-sdr-preview/peak=4`;
+    const params: ImageParams = {
+      exposureEV: 0,
+      operator: "extended-aces",
+      isScalar: false,
+      hdrOut: false,
+      peak: 4,
+      uv: uvFull,
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GRADIENT_PIXELS, params, undefined));
   }
 
   // ---------------------------------------------------------------------

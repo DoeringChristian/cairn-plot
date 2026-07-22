@@ -119,10 +119,11 @@ export function colormapToolbarButton(
 }
 
 /**
- * The user-selectable SDR tone-map operators as a toolbar-menu option list.
- * Order + ids mirror `image/tonemap.ts`'s `SDR_TONEMAP_OPERATORS`. `"extended"`
- * is NOT here — it is appended by {@link tonemapToolbarButton} (as
- * "Extended (HDR)") ONLY on a pane whose real HDR surface engaged.
+ * The user-selectable SDR tone-map operators as a toolbar-menu option list (the
+ * menu's ALWAYS-shown first group). Order + ids mirror `image/tonemap.ts`'s
+ * `SDR_TONEMAP_OPERATORS`. The `extended*` operators are NOT here — they form
+ * {@link EXTENDED_TONEMAP_MENU_OPTIONS}, appended by {@link tonemapToolbarButton}
+ * only on a pane whose real HDR surface engaged.
  */
 export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] = [
   { id: "linear", label: "Linear" },
@@ -131,21 +132,27 @@ export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] = [
   { id: "aces", label: "ACES" },
 ];
 
-/** The extra "Extended (HDR)" option, added only when the pane's true-HDR
- *  surface engaged (see {@link tonemapToolbarButton}). */
-export const EXTENDED_TONEMAP_OPTION = { id: "extended", label: "Extended (HDR)" };
+/** The HDR-out operator group ("extended" family), appended to the TONEMAP menu
+ *  only when the pane's true-HDR surface engaged. Ids mirror
+ *  `image/tonemap.ts`'s `HDR_TONEMAP_OPERATORS`; the roll-off pair
+ *  (extended-reinhard/-aces) reveals the PEAK slider when selected. */
+export const EXTENDED_TONEMAP_MENU_OPTIONS: { id: string; label: string }[] = [
+  { id: "extended", label: "Extended · Linear" },
+  { id: "extended-reinhard", label: "Extended · Reinhard" },
+  { id: "extended-aces", label: "Extended · ACES" },
+];
 
 /**
  * A tone-map operator dropdown as a toolbar LEADING button (menu variant),
  * shown on HDR/float image panes only (SDR panes show already-encoded 8-bit
  * pixels, so they have no tone-map stage to switch). `value` is the operator
  * ACTUALLY in effect (see `image/tonemap.ts`'s `resolveEffectiveTonemap`);
- * `onSelect` receives the picked id. `includeExtended` appends the
- * "Extended (HDR)" option — pass it ONLY when the pane's real HDR surface
- * engaged (`rgba16float` + extended canvas tone-mapping active); on an
- * HDR-engaged pane, picking an SDR operator instead previews the SDR rendition.
- * Like the colormap button, it's a leading (leftmost) control so its presence
- * never shifts the corner-anchored zoom/pan/reset buttons.
+ * `onSelect` receives the picked id. `includeExtended` appends the HDR-out
+ * operator group ({@link EXTENDED_TONEMAP_MENU_OPTIONS}) — pass it ONLY when the
+ * pane's real HDR surface engaged (`rgba16float` + extended canvas tone-mapping
+ * active); on an HDR-engaged pane, picking an SDR operator instead previews the
+ * SDR rendition. Like the colormap button, it's a leading (leftmost) control so
+ * its presence never shifts the corner-anchored zoom/pan/reset buttons.
  */
 export function tonemapToolbarButton(
   value: string,
@@ -153,7 +160,7 @@ export function tonemapToolbarButton(
   includeExtended: boolean,
 ): ToolbarButtonSpec {
   const options = includeExtended
-    ? [...TONEMAP_MENU_OPTIONS, EXTENDED_TONEMAP_OPTION]
+    ? [...TONEMAP_MENU_OPTIONS, ...EXTENDED_TONEMAP_MENU_OPTIONS]
     : TONEMAP_MENU_OPTIONS;
   return {
     id: "tonemap",

@@ -44,6 +44,10 @@
  *   logical binding 6 (`u_bind6: f32`, native binding 6*3+2=20):
  *     = offset (f32, TEV display offset — added to the scene value AFTER
  *       exposure and BEFORE colormap/tonemap/encode; default 0 = identity)
+ *   logical binding 7 (`u_bind7: f32`, native binding 7*3+2=23):
+ *     = peak (f32, PEAK white ×SDR white for the extended roll-off operators
+ *       `extended-reinhard`(5)/`extended-aces`(6); default 4, ignored by the
+ *       others)
  *
  * ## Out-of-bounds -> fully transparent (Q18)
  * `uvRect` (`u_bind3`) is the zoom/pan WINDOW in source-space `[0,1]`; when
@@ -163,6 +167,12 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // Defaults to 0 (the bind-group builder zero-fills any binding the caller omits),
 // so an image with no offset renders bit-for-bit as before.
 @group(0) @binding(20) var<uniform> u_bind6: f32;
+// Logical binding 7 (uniform f32: PEAK white, ×SDR white — for the extended
+// roll-off operators extended-reinhard(5)/extended-aces(6)) -> native binding
+// 7*3+2 = 23. Defaults to 0 when the caller omits it (zero-filled); the engine
+// always writes EXTENDED_TONEMAP_PEAK_DEFAULT (4), and the roll-off curves guard
+// peak<=0 anyway.
+@group(0) @binding(23) var<uniform> u_bind7: f32;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -193,6 +203,27 @@ fn acesCurve(x: f32) -> f32 {
   return clamp(num / den, 0.0, 1.0);
 }
 
+// --- HDR-out roll-off operators (peak-parameterized) — ported verbatim from
+// image/tonemap.ts's extendedReinhardCurve / extendedAcesCurve. ---
+
+// Extended Reinhard white-point form: y = x*(1 + x/P^2)/(1 + x).
+fn extendedReinhardCurve(x: f32, peak: f32) -> f32 {
+  let v = max(x, 0.0);
+  let p = max(peak, 1e-6);
+  return (v * (1.0 + v / (p * p))) / (1.0 + v);
+}
+
+// The reciprocal of acesCurve's slope at 0 (0.03/0.14) — makes the low-x slope
+// of extendedAcesCurve exactly 1 (identity-like). Matches ACES_IDENTITY_SCALE.
+const ACES_IDENTITY_SCALE: f32 = 0.14 / 0.03;
+
+// ACES fit rescaled to the peak: y = P * acesCurve(x * S / P). Saturates at P.
+fn extendedAcesCurve(x: f32, peak: f32) -> f32 {
+  let v = max(x, 0.0);
+  let p = max(peak, 1e-6);
+  return p * acesCurve((v * ACES_IDENTITY_SCALE) / p);
+}
+
 // Manual bilinear blend of the 4 texels surrounding 'uv' (source-space
 // [0,1]) — see module doc comment's "Source filtering" section for why this
 // is hand-rolled instead of a real Sampler+textureSample. 'uv' is assumed
@@ -218,13 +249,14 @@ fn sampleBilinearF(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
   return mix(top, bot, frac.y);
 }
 
-// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (matches
-// TONEMAP_OPERATORS key order in image/tonemap.ts). linear/srgb are the SAME
-// clamp — the sRGB OETF lives in outputEncodeF, not here. 4 (extended) is a
-// pure identity — no compression, no clamp — deliberately preserving values
-// above 1.0 for a real HDR (hdrOut) target; see image/tonemap.ts's doc
-// comment on the "extended" entry for why.
-fn applyOperator(rgb: vec3<f32>, operatorId: i32) -> vec3<f32> {
+// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (Extended·Linear),
+// 5=extended-reinhard, 6=extended-aces (matches OPERATOR_ID in image-engine.ts /
+// TONEMAP_OPERATORS + the extended curves in image/tonemap.ts). linear/srgb are
+// the SAME clamp — the sRGB OETF lives in outputEncodeF, not here. 4 (extended)
+// is a pure identity — no compression, no clamp — deliberately preserving values
+// above 1.0 for a real HDR (hdrOut) target. 5/6 are the peak-parameterized HDR
+// roll-off operators (see image/tonemap.ts's doc comments).
+fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
   if (operatorId == 2) {
     return vec3<f32>(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z));
   }
@@ -233,6 +265,12 @@ fn applyOperator(rgb: vec3<f32>, operatorId: i32) -> vec3<f32> {
   }
   if (operatorId == 4) {
     return rgb;
+  }
+  if (operatorId == 5) {
+    return vec3<f32>(extendedReinhardCurve(rgb.x, peak), extendedReinhardCurve(rgb.y, peak), extendedReinhardCurve(rgb.z, peak));
+  }
+  if (operatorId == 6) {
+    return vec3<f32>(extendedAcesCurve(rgb.x, peak), extendedAcesCurve(rgb.y, peak), extendedAcesCurve(rgb.z, peak));
   }
   // 0 (linear) and 1 (srgb), and any unrecognized id, fall back to the clamp.
   return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -268,6 +306,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let isScalar = u_bind2.w > 0.5;
   let hdrOut = u_bind4 > 0.5;
   let offset = u_bind6;
+  let peak = u_bind7;
 
   // 1) exposure + offset (TEV convention), in scene-linear space:
   //    v * 2^EV + offset. Offset is additive AFTER exposure, BEFORE the
@@ -286,8 +325,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     rgb = lutColor.rgb;
   }
 
-  // 3) tone-map operator: HDR [0,inf) -> display-linear [0,1].
-  rgb = applyOperator(rgb, operatorId);
+  // 3) tone-map operator: HDR [0,inf) -> display-linear [0,1] (or [0,peak] for
+  //    the extended roll-off operators, which stay HDR-out).
+  rgb = applyOperator(rgb, operatorId, peak);
 
   // 4) output-encode (skipped for an HDR-linear target).
   if (hdrOut) {

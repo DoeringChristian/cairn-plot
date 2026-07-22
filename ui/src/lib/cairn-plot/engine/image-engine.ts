@@ -32,8 +32,16 @@ import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat
 import { imageWGSL } from "./shaders/image.wgsl";
 import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl";
 import { computeCompareMapping, type CompareMapping } from "./compare-align";
+import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../image/tonemap";
 
-export type ImageOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended";
+export type ImageOperator =
+  | "linear"
+  | "srgb"
+  | "reinhard"
+  | "aces"
+  | "extended"
+  | "extended-reinhard"
+  | "extended-aces";
 
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
@@ -52,6 +60,10 @@ export interface ImageParams {
   isScalar: boolean;
   /** When true, skip the output-encode stage and write display-linear float straight to `target`. */
   hdrOut: boolean;
+  /** Peak white (×SDR white) for the extended roll-off operators
+   *  (`extended-reinhard`/`extended-aces`). Unset defaults to
+   *  `EXTENDED_TONEMAP_PEAK_DEFAULT` (4); ignored by every other operator. */
+  peak?: number;
   /** Source-space [0,1] viewport window (zoom/pan): sampled UV = uv.xy + rawUV * uv.wh. */
   uv: { x: number; y: number; w: number; h: number };
   /**
@@ -73,8 +85,17 @@ export interface ImageParams {
   filter?: "nearest" | "linear";
 }
 
-/** Matches TONEMAP_OPERATORS' key order in image/tonemap.ts — see image.wgsl.ts's doc comment. */
-const OPERATOR_ID: Record<ImageOperator, number> = { linear: 0, srgb: 1, reinhard: 2, aces: 3, extended: 4 };
+/** Matches TONEMAP_OPERATORS' key order in image/tonemap.ts — see image.wgsl.ts's doc comment.
+ *  Ids 5/6 are the peak-parameterized extended roll-off operators. */
+const OPERATOR_ID: Record<ImageOperator, number> = {
+  linear: 0,
+  srgb: 1,
+  reinhard: 2,
+  aces: 3,
+  extended: 4,
+  "extended-reinhard": 5,
+  "extended-aces": 6,
+};
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
 const pipelineCache = new WeakMap<Device, Map<TextureFormat, RenderPipeline>>();
@@ -156,6 +177,9 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const filterFlag = new Float32Array([params.filter === "nearest" ? 0 : 1]);
   // u_bind6 = TEV display offset (default 0 = identity).
   const offsetVec = new Float32Array([params.offset ?? 0]);
+  // u_bind7 = PEAK white (×SDR white) for the extended roll-off operators
+  // (ids 5/6). Default 4 when unset; ignored by every other operator.
+  const peakVec = new Float32Array([params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -167,6 +191,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 4, resource: { uniform: hdrFlag } },
       { binding: 5, resource: { uniform: filterFlag } },
       { binding: 6, resource: { uniform: offsetVec } },
+      { binding: 7, resource: { uniform: peakVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

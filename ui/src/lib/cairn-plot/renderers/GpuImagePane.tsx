@@ -107,7 +107,16 @@ import type { ImageParams } from "../engine/image-engine";
 import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
 import { colormapToolbarButton, tonemapToolbarButton } from "./use-image-controller";
-import { resolveEffectiveTonemap, type TonemapOperator } from "../image/tonemap";
+import {
+  resolveEffectiveTonemap,
+  tonemapHasPeak,
+  isHdrTonemap,
+  EXTENDED_TONEMAP_PEAK_DEFAULT,
+  EXTENDED_TONEMAP_PEAK_MIN,
+  EXTENDED_TONEMAP_PEAK_MAX,
+  EXTENDED_TONEMAP_PEAK_STEP,
+  type TonemapOperator,
+} from "../image/tonemap";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
   isHdrProps,
@@ -387,6 +396,14 @@ export default function GpuImagePane(props: ImageBackendProps) {
   const tonemapModified =
     tonemapOverride !== null && tonemapOverride !== effectiveDefaultTonemap;
   const resetTonemapOverride = useCallback(() => setTonemapOverride(null), []);
+
+  // PEAK white (×SDR white) for the extended roll-off operators
+  // (extended-reinhard/-aces). View-local, display-only — fed into the render
+  // pass; the slider is shown ONLY while such an operator is in effect (see the
+  // shell props below). Default 4; HOME restores it. Never a source re-upload.
+  const [peak, setPeak] = useState(EXTENDED_TONEMAP_PEAK_DEFAULT);
+  const peakModified = peak !== EXTENDED_TONEMAP_PEAK_DEFAULT;
+  const resetPeak = useCallback(() => setPeak(EXTENDED_TONEMAP_PEAK_DEFAULT), []);
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only state — fed straight into the render pass below (the GPU shader
@@ -726,13 +743,20 @@ export default function GpuImagePane(props: ImageBackendProps) {
     // tone-mapping mode expects raw scene-linear values and maps them to the
     // panel's peak brightness itself; `gamma` is then irrelevant (the shader's
     // output-encode stage, its only reader, is skipped when `hdrOut` is set).
-    // If the user instead selects an SDR operator on such a pane, `hdrOut`
-    // drops to false and the operator + output-encode run — deliberately
-    // tone-mapping INTO SDR range to preview the SDR rendition on the HDR
-    // display. `hdrOut` therefore tracks the SELECTED operator, not the surface:
-    // it is `"extended"` ⇔ true-HDR pass-through (guarded by `useHdrRef` so a
-    // stale "extended" can never request HDR-out on a non-HDR surface).
-    const hdrOut = useHdrRef.current && effectiveTonemap === "extended";
+    // The default (`"extended"`, Extended·Linear) is a pure identity — with a
+    // real HDR surface (`hdrOut:true` -> `rgba16float` + `toneMapping:'extended'`,
+    // `engine/webgpu/surface.ts`'s `configureHDRSurface`) there is nothing to
+    // compress. The two roll-off siblings (extended-reinhard/-aces) are ALSO
+    // HDR-out — they emit display-linear light up to `peak` for the surface to
+    // map. So `hdrOut` is set for ANY extended operator (`isHdrTonemap`), guarded
+    // by `useHdrRef` so a stale extended pick can never request HDR-out on a
+    // non-HDR surface. `gamma` is irrelevant on that path (the output-encode
+    // stage, its only reader, is skipped when `hdrOut` is set). If the user
+    // instead selects an SDR operator on such a pane, `hdrOut` drops to false and
+    // the operator + output-encode run — tone-mapping INTO SDR range to preview
+    // the SDR rendition on the HDR display. `peak` is read only by the roll-off
+    // operators (ignored otherwise).
+    const hdrOut = useHdrRef.current && isHdrTonemap(effectiveTonemap);
     const params: ImageParams = hdrMode
       ? {
           exposureEV: exposure + displayEV,
@@ -741,6 +765,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
           gamma,
           isScalar: false,
           hdrOut,
+          peak,
           uv,
           filter,
         }
@@ -776,7 +801,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, effectiveTonemap, gamma, hdrMode, sdrColormap, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, effectiveTonemap, peak, gamma, hdrMode, sdrColormap, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -914,10 +939,11 @@ export default function GpuImagePane(props: ImageBackendProps) {
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
-      // HDR: a view-local TONEMAP menu (the operator in effect; "Extended (HDR)"
-      // offered only when the real HDR surface engaged). SDR: a COLORMAP menu
-      // instead (HDR has no colormap prop, SDR pixels are already encoded so have
-      // no tone-map stage — asymmetric by design).
+      // HDR: a view-local TONEMAP menu (the operator in effect). Its SDR group
+      // (Linear/sRGB/Reinhard/ACES) always shows; the HDR group (Extended ·
+      // Linear/Reinhard/ACES) is appended only when the real HDR surface engaged
+      // (`hdrEngaged`). SDR: a COLORMAP menu instead (HDR has no colormap prop,
+      // SDR pixels are already encoded so have no tone-map stage).
       leadingMenus={
         hdrMode
           ? [tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator), hdrEngaged)]
@@ -931,17 +957,39 @@ export default function GpuImagePane(props: ImageBackendProps) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
+      // PEAK slider — shown ONLY while an extended roll-off operator
+      // (extended-reinhard/-aces) is in effect; it feeds the P uniform.
+      extraSliders={
+        hdrMode && tonemapHasPeak(effectiveTonemap)
+          ? [
+              {
+                id: "peak",
+                label: "PK",
+                title:
+                  "Peak white (×SDR white) — HDR roll-off shoulder for the extended Reinhard/ACES operators. Double-click to type a value.",
+                min: EXTENDED_TONEMAP_PEAK_MIN,
+                max: EXTENDED_TONEMAP_PEAK_MAX,
+                step: EXTENDED_TONEMAP_PEAK_STEP,
+                value: peak,
+                onChange: setPeak,
+                format: (v: number) => `${v.toFixed(1)}×`,
+              },
+            ]
+          : undefined
+      }
       // DEEP depth slider (HDR deep sources only; undefined otherwise). Its
-      // reset/modified fold into the colormap/tonemap ones so HOME clears all.
+      // reset/modified fold into the colormap/tonemap/peak ones so HOME clears all.
       depthSlider={deepFlatten.slider}
       onReset={() => {
         resetColormapOverride();
         resetTonemapOverride();
+        resetPeak();
         deepFlatten.reset();
       }}
       extraModified={
         colormapOverride !== defaultColormapRef.current ||
         tonemapModified ||
+        peakModified ||
         deepFlatten.isModified
       }
       label={label}

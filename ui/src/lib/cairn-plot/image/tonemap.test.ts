@@ -15,6 +15,15 @@ import {
   toSdrTonemap,
   resolveEffectiveTonemap,
   SDR_TONEMAP_OPERATORS,
+  HDR_TONEMAP_OPERATORS,
+  EXTENDED_ROLLOFF_OPERATORS,
+  isHdrTonemap,
+  tonemapHasPeak,
+  extendedReinhardCurve,
+  extendedAcesCurve,
+  applyTonemapOperatorTriple,
+  ACES_IDENTITY_SCALE,
+  EXTENDED_TONEMAP_PEAK_DEFAULT,
   applyExposure,
   applyExposureOffset,
   srgbOetf,
@@ -70,7 +79,7 @@ test("getTonemapOperator falls back to srgb for unknown key", () => {
   assert.equal(getTonemapOperator("aces"), TONEMAP_OPERATORS.aces);
 });
 
-test("toSdrTonemap validates + falls back to srgb, never yields extended", () => {
+test("toSdrTonemap: SDR pass-through, extended*→SDR counterpart, else srgb", () => {
   assert.equal(toSdrTonemap("linear"), "linear");
   assert.equal(toSdrTonemap("srgb"), "srgb");
   assert.equal(toSdrTonemap("reinhard"), "reinhard");
@@ -79,26 +88,50 @@ test("toSdrTonemap validates + falls back to srgb, never yields extended", () =>
   assert.equal(toSdrTonemap("nope"), "srgb");
   assert.equal(toSdrTonemap(undefined), "srgb");
   assert.equal(toSdrTonemap(null), "srgb");
-  // "extended" is NOT an SDR operator — it is coerced back to the default.
-  assert.equal(toSdrTonemap("extended"), "srgb");
-  // SDR menu domain excludes extended.
-  assert.ok(!(SDR_TONEMAP_OPERATORS as readonly string[]).includes("extended"));
+  // Extended operators fall back to their SDR counterparts (used when a pane
+  // requested HDR but the surface never engaged).
+  assert.equal(toSdrTonemap("extended"), "linear");
+  assert.equal(toSdrTonemap("extended-reinhard"), "reinhard");
+  assert.equal(toSdrTonemap("extended-aces"), "aces");
+  // SDR menu domain excludes every extended operator.
+  for (const op of HDR_TONEMAP_OPERATORS) {
+    assert.ok(!(SDR_TONEMAP_OPERATORS as readonly string[]).includes(op));
+  }
 });
 
-test("resolveEffectiveTonemap: descriptor prop when SDR, extended when HDR engaged", () => {
-  // NOT engaged → the descriptor's (validated) operator, srgb default.
+test("isHdrTonemap / tonemapHasPeak classify the operator groups", () => {
+  assert.deepEqual([...HDR_TONEMAP_OPERATORS], ["extended", "extended-reinhard", "extended-aces"]);
+  for (const op of HDR_TONEMAP_OPERATORS) assert.ok(isHdrTonemap(op));
+  for (const op of SDR_TONEMAP_OPERATORS) assert.ok(!isHdrTonemap(op));
+  assert.ok(!isHdrTonemap(undefined));
+  // Only the roll-off pair reads the PEAK parameter (extended·Linear does not).
+  assert.deepEqual([...EXTENDED_ROLLOFF_OPERATORS], ["extended-reinhard", "extended-aces"]);
+  assert.ok(tonemapHasPeak("extended-reinhard"));
+  assert.ok(tonemapHasPeak("extended-aces"));
+  assert.ok(!tonemapHasPeak("extended"));
+  assert.ok(!tonemapHasPeak("aces"));
+});
+
+test("resolveEffectiveTonemap: SDR fallback when not engaged; HDR verbatim + extended default when engaged", () => {
+  // NOT engaged → descriptor coerced to SDR (extended*→counterpart, srgb default).
   assert.equal(resolveEffectiveTonemap("aces", false), "aces");
   assert.equal(resolveEffectiveTonemap("srgb", false), "srgb");
   assert.equal(resolveEffectiveTonemap(undefined, false), "srgb");
   assert.equal(resolveEffectiveTonemap("garbage", false), "srgb");
-  // HDR surface engaged → "extended" IN EFFECT, regardless of the descriptor's
-  // SDR operator (the SDR tonemap is bypassed by the pass-through HDR-out path).
+  assert.equal(resolveEffectiveTonemap("extended", false), "linear");
+  assert.equal(resolveEffectiveTonemap("extended-reinhard", false), "reinhard");
+  assert.equal(resolveEffectiveTonemap("extended-aces", false), "aces");
+  // Engaged → an explicit HDR descriptor is honored verbatim; an SDR/unset
+  // descriptor defaults to "extended" (Extended · Linear).
+  assert.equal(resolveEffectiveTonemap("extended", true), "extended");
+  assert.equal(resolveEffectiveTonemap("extended-reinhard", true), "extended-reinhard");
+  assert.equal(resolveEffectiveTonemap("extended-aces", true), "extended-aces");
   assert.equal(resolveEffectiveTonemap("aces", true), "extended");
   assert.equal(resolveEffectiveTonemap("srgb", true), "extended");
   assert.equal(resolveEffectiveTonemap(undefined, true), "extended");
 });
 
-test("extended is a pure pass-through; SDR operators clamp HDR into [0,1]", () => {
+test("extended·Linear is a pure pass-through; SDR operators clamp HDR into [0,1]", () => {
   // The "SDR preview on an HDR display" semantics: switching from extended to an
   // SDR operator (e.g. aces) on an HDR-engaged pane clamps values into range.
   const hi: RgbTriple = [8, 8, 8];
@@ -107,6 +140,61 @@ test("extended is a pure pass-through; SDR operators clamp HDR into [0,1]", () =
   assert.ok(ar <= 1 && ag <= 1 && ab <= 1, "aces clamps to SDR range");
   const [lr] = TONEMAP_OPERATORS.linear!(hi);
   assert.equal(lr, 1, "linear clamps to 1");
+});
+
+test("extendedReinhardCurve: monotone, ≈x for x≪1, 0→0", () => {
+  const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
+  approx(extendedReinhardCurve(0, P), 0);
+  // Identity-like at low x.
+  approx(extendedReinhardCurve(0.001, P), 0.001, 5e-6);
+  approx(extendedReinhardCurve(0.01, P), 0.01, 5e-4);
+  // Monotone increasing across the HDR range.
+  let prev = -1;
+  for (let x = 0; x <= 32; x += 0.25) {
+    const y = extendedReinhardCurve(x, P);
+    assert.ok(y > prev, `extended-reinhard not monotone at ${x}`);
+    prev = y;
+  }
+  // Negative input pre-clamps to 0.
+  approx(extendedReinhardCurve(-3, P), 0);
+  // Exact formula spot-check: y = x(1 + x/P^2)/(1+x). At x=P=4: (4·(1+4/16))/5 = 1.
+  approx(extendedReinhardCurve(4, 4), 1);
+});
+
+test("extendedAcesCurve: monotone, ≈x for x≪1 (slope 1), →P asymptote", () => {
+  const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
+  approx(extendedAcesCurve(0, P), 0);
+  // Low-x slope is exactly 1 (the ACES_IDENTITY_SCALE normalization). ACES
+  // curvature lifts midtones, so "≈x" only holds as x→0 (check a very small x);
+  // the slope at 1e-5 pins the normalization directly.
+  approx(extendedAcesCurve(1e-5, P), 1e-5, 1e-8);
+  const slope = extendedAcesCurve(1e-5, P) / 1e-5;
+  approx(slope, 1, 1e-3);
+  assert.equal(ACES_IDENTITY_SCALE, 0.14 / 0.03);
+  // Monotone increasing.
+  let prev = -1;
+  for (let x = 0; x <= 64; x += 0.5) {
+    const y = extendedAcesCurve(x, P);
+    assert.ok(y >= prev - 1e-12, `extended-aces not monotone at ${x}`);
+    prev = y;
+  }
+  // Never exceeds the peak, and saturates to exactly P for very bright inputs.
+  assert.ok(extendedAcesCurve(1000, P) <= P + 1e-9);
+  approx(extendedAcesCurve(1000, P), P, 1e-6);
+  // Peak scales: a larger P raises the asymptote proportionally.
+  approx(extendedAcesCurve(1000, 8), 8, 1e-6);
+});
+
+test("applyTonemapOperatorTriple dispatches SDR + extended(peak) operators", () => {
+  const hi: RgbTriple = [2, 2, 2];
+  // SDR / pass-through operators ignore peak and match TONEMAP_OPERATORS.
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "aces", 4), TONEMAP_OPERATORS.aces!(hi));
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended", 4), [2, 2, 2]);
+  // Extended roll-off operators apply the peak curve per channel.
+  const r = extendedReinhardCurve(2, 4);
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended-reinhard", 4), [r, r, r]);
+  const a = extendedAcesCurve(2, 4);
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended-aces", 4), [a, a, a]);
 });
 
 test("applyExposure scales by 2**ev", () => {

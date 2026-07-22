@@ -204,6 +204,11 @@ export interface ImagePaneShellProps {
    *  row when present. Its `reset()`/`isModified` ride the `onReset`/
    *  `extraModified` contract below, exactly like the display-adjust sliders. */
   depthSlider?: ToolbarSliderSpec;
+  /** Extra pane-supplied slider rows APPENDED after the EXPOSURE/OFFSET pair
+   *  (e.g. the HDR PEAK slider, shown only while an extended roll-off operator
+   *  is selected). The pane owns their value/reset — their `reset`/`isModified`
+   *  ride the `onReset`/`extraModified` contract below, like the others. */
+  extraSliders?: ToolbarSliderSpec[];
   /** Extra host-pane reset run by HOME / double-click alongside the viewport +
    *  slider reset — a compare pane restores its colormap / view-mode / kernel
    *  to the descriptor defaults here. */
@@ -246,6 +251,7 @@ export default function ImagePaneShell({
   leadingMenus,
   displayAdjust,
   depthSlider,
+  extraSliders,
   onReset,
   extraModified,
   label,
@@ -316,10 +322,14 @@ export default function ImagePaneShell({
   // BEFORE tonemap/gamma/colormap. Display-only — the pane feeds these into its
   // render pass, never a diff recompute.
   const sliders = useMemo<ToolbarSliderSpec[] | undefined>(() => {
-    // DEEP depth slider leads; the EXPOSURE/OFFSET display-adjust pair follows.
+    // DEEP depth slider leads; the EXPOSURE/OFFSET display-adjust pair follows;
+    // any pane-supplied extra rows (e.g. the HDR PEAK slider) come last.
     const rows: ToolbarSliderSpec[] = [];
     if (depthSlider) rows.push(depthSlider);
-    if (!displayAdjust) return rows.length ? rows : undefined;
+    if (!displayAdjust) {
+      if (extraSliders) rows.push(...extraSliders);
+      return rows.length ? rows : undefined;
+    }
     const signed = (v: number, digits: number) =>
       `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}`;
     rows.push(
@@ -350,8 +360,9 @@ export default function ImagePaneShell({
         format: (v) => signed(v, 2),
       },
     );
+    if (extraSliders) rows.push(...extraSliders);
     return rows;
-  }, [displayAdjust, depthSlider]);
+  }, [displayAdjust, depthSlider, extraSliders]);
 
   // While the overlay is active, expose the notation toggle ("0–255"/"0–1") as
   // a LEADING toolbar button (leftmost so it never shifts the standard buttons).

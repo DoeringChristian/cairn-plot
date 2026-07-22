@@ -43,7 +43,15 @@ export type RgbTriple = [number, number, number];
  * (pre-gamma / pre-sRGB). Keep it a plain object so adding an operator is a
  * one-line addition (see module doc).
  */
-export type TonemapOperator = "linear" | "srgb" | "reinhard" | "aces" | "extended";
+export type TonemapOperator =
+  | "linear"
+  | "srgb"
+  | "reinhard"
+  | "aces"
+  // HDR-OUT family (selectable only when the extended surface engaged):
+  | "extended" //          Extended · Linear    — unclamped pass-through
+  | "extended-reinhard" // Extended · Reinhard  — peak/white-point roll-off
+  | "extended-aces"; //    Extended · ACES      — ACES fit rescaled to the peak
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
@@ -64,6 +72,55 @@ const acesCurve = (x: number): number => {
   return clamp01(num / den);
 };
 
+// ---------------------------------------------------------------------------
+// HDR-OUT roll-off operators (the "extended" family). HDR-out-only: they emit
+// DISPLAY-LINEAR light in [0, peak] (NOT [0,1]) so a real HDR surface
+// (`rgba16float` + extended canvas tone-mapping) preserves values above SDR
+// white while rolling the very brightest ones off toward the panel's headroom.
+// `peak` is the white point in multiples of SDR white (the PEAK slider; default
+// EXTENDED_TONEMAP_PEAK_DEFAULT). Ported verbatim into `engine/shaders/
+// image.wgsl.ts`'s `applyOperator`; the GPU-vs-TS parity harness checks them.
+// ---------------------------------------------------------------------------
+
+/** Peak-white slider bounds (×SDR white). Default 4, range 1..16, step 0.5.
+ *  FOLLOW-UP: a browser-exposed display headroom (once standardized) would seed
+ *  the default; until then it is a fixed 4. */
+export const EXTENDED_TONEMAP_PEAK_DEFAULT = 4;
+export const EXTENDED_TONEMAP_PEAK_MIN = 1;
+export const EXTENDED_TONEMAP_PEAK_MAX = 16;
+export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
+
+/**
+ * Extended Reinhard with a white point P (peak): `y = x·(1 + x/P²)/(1 + x)`.
+ * Per channel, `x` pre-clamped to `[0,∞)`. Monotonic increasing; `y ≈ x` for
+ * `x ≪ 1` (identity-like in the SDR range). The Reinhard white-point form
+ * (Reinhard et al. 2002, eq. 4) with `L_white = P`.
+ */
+export function extendedReinhardCurve(x: number, peak: number): number {
+  const v = x < 0 ? 0 : x;
+  return (v * (1 + v / (peak * peak))) / (1 + v);
+}
+
+/**
+ * The exact reciprocal of `acesCurve`'s slope at 0 (`acesCurve'(0) = 0.03/0.14`).
+ * Scaling the ACES input by this makes `extendedAcesCurve`'s low-`x` slope
+ * exactly 1 (identity-like), the normalization the feature brief requires.
+ */
+export const ACES_IDENTITY_SCALE = 0.14 / 0.03;
+
+/**
+ * ACES fit rescaled to a peak P: `y = P · acesFit(x · S / P)`, where
+ * `acesFit = acesCurve` (Narkowicz, clamped to `[0,1]`) and
+ * `S = ACES_IDENTITY_SCALE = 0.14/0.03`. Per channel, `x` pre-clamped to
+ * `[0,∞)`. The `S/P` input scale makes it `y ≈ x` for `x ≪ 1` (low-`x` slope
+ * `= P · acesCurve'(0) · S/P = 1`) and `y → P` asymptotically (`acesCurve`
+ * saturates at 1, so `y → P·1 = P`), monotonically between.
+ */
+export function extendedAcesCurve(x: number, peak: number): number {
+  const v = x < 0 ? 0 : x;
+  return peak * acesCurve((v * ACES_IDENTITY_SCALE) / peak);
+}
+
 export const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = {
   // Straight clamp — no tone compression, just clip to displayable range.
   linear: ([r, g, b]) => [clamp01(r), clamp01(g), clamp01(b)],
@@ -75,23 +132,23 @@ export const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = 
   reinhard: ([r, g, b]) => [reinhardCurve(r), reinhardCurve(g), reinhardCurve(b)],
   // ACES filmic (Narkowicz), per channel.
   aces: ([r, g, b]) => [acesCurve(r), acesCurve(g), acesCurve(b)],
-  // Extended (HDR-out only): pure identity — no compression, no clamp.
+  // Extended · Linear (HDR-out only): pure identity — no compression, no clamp.
   // Values stay in scene-linear [0, ∞) so a real HDR surface (`rgba16float`
   // + `toneMapping:{mode:'extended'}`, see `engine/webgpu/surface.ts`'s
   // `configureHDRSurface`) can preserve them past 1.0 — Chrome's `'extended'`
   // canvas tone-mapping mode expects EXACTLY this: the shader hands over raw
   // scene-referred values and the OS/display compositor (not this pipeline)
-  // maps them to the panel's actual peak brightness. It is the EFFECTIVE
+  // maps them to the panel's actual peak brightness. It is the DEFAULT effective
   // operator whenever a pane's true-HDR surface engages (`GpuImagePane`'s
-  // `useHdr`), and — since that engaged state is what the toolbar TONEMAP menu
-  // reflects — it is now offered as the "Extended (HDR)" menu option too, but
-  // ONLY on a pane whose HDR surface actually engaged (see
-  // `renderers/use-image-controller.ts`'s `tonemapToolbarButton` +
-  // `resolveEffectiveTonemap`). Picking an SDR operator on such a pane instead
-  // deliberately tone-maps INTO SDR range (previewing the SDR rendition on the
-  // HDR display) — the render path then sets `hdrOut:false` so the output-encode
-  // stage runs. SDR panes never see this operator (their pixels are already
-  // encoded 8-bit).
+  // `useHdr`), and heads the HDR menu group ("Extended · Linear/Reinhard/ACES")
+  // offered ONLY on such a pane. The two ROLL-OFF siblings (extended-reinhard /
+  // extended-aces) are NOT in this object — they take a `peak` parameter, so
+  // they live as the standalone `extendedReinhardCurve`/`extendedAcesCurve`
+  // functions above (and `applyTonemapOperatorTriple` dispatches all three).
+  // Picking an SDR operator on an engaged pane instead tone-maps INTO SDR range
+  // (previewing the SDR rendition on the HDR display) — the render path then
+  // sets `hdrOut:false` so the output-encode stage runs. SDR panes never see any
+  // extended operator (their pixels are already encoded 8-bit).
   extended: ([r, g, b]) => [r, g, b],
 };
 
@@ -100,9 +157,9 @@ export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
 
 /**
  * The user-selectable SDR tone-map operators — the TONEMAP toolbar menu's base
- * option domain. `"extended"` is deliberately EXCLUDED here: it is HDR-out-only
- * and is appended to the menu (as "Extended (HDR)") only on a pane whose real
- * HDR surface engaged (see `resolveEffectiveTonemap`).
+ * option group (always shown). The `extended*` operators are HDR-out-only and
+ * excluded here; they form the separate {@link HDR_TONEMAP_OPERATORS} group,
+ * appended to the menu only on a pane whose real HDR surface engaged.
  */
 export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
   "linear",
@@ -110,6 +167,42 @@ export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
   "reinhard",
   "aces",
 ];
+
+/**
+ * The HDR-out tone-map operators (the "extended" family) — the menu's second
+ * group, offered ONLY when the pane's real HDR surface engaged.
+ */
+export const HDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
+  "extended",
+  "extended-reinhard",
+  "extended-aces",
+];
+
+/** The extended operators that take a PEAK parameter (the roll-off pair) — the
+ *  ones whose selection reveals the PEAK slider. `extended` (Linear) has none. */
+export const EXTENDED_ROLLOFF_OPERATORS: readonly TonemapOperator[] = [
+  "extended-reinhard",
+  "extended-aces",
+];
+
+/** True when `op` is an HDR-out operator (drives `hdrOut` + the menu group). */
+export function isHdrTonemap(name: string | undefined | null): name is TonemapOperator {
+  return !!name && (HDR_TONEMAP_OPERATORS as readonly string[]).includes(name);
+}
+
+/** True when the operator reads the PEAK parameter (extended-reinhard/-aces),
+ *  i.e. the PEAK slider should be visible. */
+export function tonemapHasPeak(name: string | undefined | null): boolean {
+  return !!name && (EXTENDED_ROLLOFF_OPERATORS as readonly string[]).includes(name);
+}
+
+/** Each extended operator's SDR counterpart — the fallback used when a pane
+ *  requests an HDR operator but the HDR surface does NOT engage. */
+const EXTENDED_TO_SDR: Record<string, TonemapOperator> = {
+  extended: "linear",
+  "extended-reinhard": "reinhard",
+  "extended-aces": "aces",
+};
 
 /** Resolve an operator name to its function, falling back to the default. */
 export function getTonemapOperator(
@@ -119,13 +212,45 @@ export function getTonemapOperator(
 }
 
 /**
- * Coerce an arbitrary operator name to a valid SDR operator, falling back to
- * `DEFAULT_TONEMAP` ("srgb"). Unlike {@link getTonemapOperator} (which returns
- * the operator FUNCTION) this returns the validated NAME — the value domain the
- * TONEMAP menu and the engine's `ImageParams.operator` both use. Never returns
- * `"extended"` (that is added to the menu only when the HDR surface engaged).
+ * Apply a named tone-map operator (INCLUDING the peak-parameterized extended
+ * roll-off ones) to an RGB triple — the single dispatch the GPU shader's
+ * `applyOperator` mirrors and the parity harness checks. For `linear`/`srgb`/
+ * `reinhard`/`aces`/`extended` it delegates to {@link TONEMAP_OPERATORS} (peak
+ * ignored); for `extended-reinhard`/`extended-aces` it applies the peak curve
+ * per channel.
+ */
+export function applyTonemapOperatorTriple(
+  rgb: RgbTriple,
+  operator: string,
+  peak: number,
+): RgbTriple {
+  if (operator === "extended-reinhard") {
+    return [
+      extendedReinhardCurve(rgb[0], peak),
+      extendedReinhardCurve(rgb[1], peak),
+      extendedReinhardCurve(rgb[2], peak),
+    ];
+  }
+  if (operator === "extended-aces") {
+    return [
+      extendedAcesCurve(rgb[0], peak),
+      extendedAcesCurve(rgb[1], peak),
+      extendedAcesCurve(rgb[2], peak),
+    ];
+  }
+  return getTonemapOperator(operator)(rgb);
+}
+
+/**
+ * Coerce an arbitrary operator name to a valid SDR operator. An SDR operator
+ * passes through; an extended operator maps to its SDR counterpart
+ * (`extended`→`linear`, `extended-reinhard`→`reinhard`, `extended-aces`→`aces`)
+ * — the fallback for a pane that requested HDR but never engaged the surface;
+ * anything else falls back to `DEFAULT_TONEMAP` ("srgb"). Returns the validated
+ * NAME (not the function). Never returns an `extended*` operator.
  */
 export function toSdrTonemap(name: string | undefined | null): TonemapOperator {
+  if (name && EXTENDED_TO_SDR[name]) return EXTENDED_TO_SDR[name]!;
   return name && (SDR_TONEMAP_OPERATORS as readonly string[]).includes(name)
     ? (name as TonemapOperator)
     : DEFAULT_TONEMAP;
@@ -136,12 +261,15 @@ export function toSdrTonemap(name: string | undefined | null): TonemapOperator {
  * TONEMAP toolbar menu shows, and the pane's HOME-reset target:
  *
  *   - When the pane's true-HDR surface engaged (`rgba16float` + extended canvas
- *     tone-mapping active — `GpuImagePane`'s `useHdr`), the effective operator
- *     is `"extended"`: the descriptor's SDR `tonemap=` is BYPASSED in favor of
- *     the pass-through HDR-out path, so the menu must show "extended", not the
- *     descriptor's SDR operator.
- *   - Otherwise the effective operator is the descriptor's `tonemap=` prop
- *     (validated to an SDR operator; Python default "srgb").
+ *     tone-mapping active — `GpuImagePane`'s `useHdr`): if the descriptor
+ *     explicitly asked for an HDR operator (`extended`/`extended-reinhard`/
+ *     `extended-aces`), it is honored VERBATIM; otherwise the descriptor's SDR
+ *     `tonemap=` is BYPASSED and the default-in-effect is `"extended"`
+ *     (Extended · Linear).
+ *   - Otherwise (SDR surface) the effective operator is the descriptor's
+ *     `tonemap=` coerced to an SDR operator via {@link toSdrTonemap} — so an
+ *     `extended*` descriptor falls back to its SDR counterpart (Python default
+ *     "srgb").
  *
  * Pure (no DOM / GPU) so it is unit-tested directly. The panes layer a
  * view-local override on top of this default; HOME clears the override back to
@@ -151,7 +279,10 @@ export function resolveEffectiveTonemap(
   descriptorTonemap: string | undefined | null,
   hdrSurfaceEngaged: boolean,
 ): TonemapOperator {
-  return hdrSurfaceEngaged ? "extended" : toSdrTonemap(descriptorTonemap);
+  if (hdrSurfaceEngaged) {
+    return isHdrTonemap(descriptorTonemap) ? descriptorTonemap : "extended";
+  }
+  return toSdrTonemap(descriptorTonemap);
 }
 
 /** Apply an exposure of `ev` stops in scene-linear space: v * 2**ev. */

@@ -164,22 +164,46 @@ toolbar **DEPTH (Z) slider** that live-flattens only the samples with Z ≤ the
 cutoff (linear, or log10 when `zMax/zMin > 1e3`); HOME restores the full composite.
 
 An **HDR/float** image pane (`imagehdr`) gets a leading toolbar **TONEMAP menu**
-— `Linear · sRGB · Reinhard · ACES` — that switches the tone-map operator
-view-locally (SDR panes have no such menu: their 8-bit pixels are already
-encoded, so there is no tone-map stage). The menu shows the operator **actually
-in effect**, and HOME restores it:
-- The default is the descriptor's `tonemap=` prop (Python default `"srgb"`).
-- When the pane's **true-HDR surface engages** (WebGPU `rgba16float` + Chrome
-  extended canvas tone-mapping, on an HDR display), the effective operator is
-  **`"extended"`** — a scene-linear pass-through the OS compositor maps to the
-  panel's peak brightness — and the menu shows an extra **"Extended (HDR)"**
-  option reflecting that. On such a pane, selecting an SDR operator instead
-  **tone-maps into SDR range** (previewing the SDR rendition on the HDR display):
-  the render path drops `hdrOut` and runs the operator + output-encode. The CPU
-  backend never engages a real HDR surface, so it never offers "Extended (HDR)".
-  See `image/tonemap.ts`'s `resolveEffectiveTonemap` (pure, unit-tested) for the
-  default-in-effect rule. **Follow-up:** `cp.Compare` panes (split/blend/diff of
-  HDR sources) do not yet expose a TONEMAP menu.
+that switches the tone-map operator view-locally (SDR panes have no such menu:
+their 8-bit pixels are already encoded, so there is no tone-map stage). The menu
+shows the operator **actually in effect**, and HOME restores it.
+
+**Operators** (per channel; `x` = exposure/offset-applied scene-linear light):
+
+| Group | Operator (menu label) | Formula | Range |
+|---|---|---|---|
+| SDR | `linear` (Linear) | `clamp(x, 0, 1)` | → `[0,1]` |
+| SDR | `srgb` (sRGB) | `clamp(x, 0, 1)`, then the sRGB OETF at output-encode | → `[0,1]` |
+| SDR | `reinhard` (Reinhard) | `x / (1 + x)` | → `[0,1)` |
+| SDR | `aces` (ACES) | Narkowicz `clamp((x(2.51x+0.03))/(x(2.43x+0.59)+0.14), 0, 1)` | → `[0,1]` |
+| HDR | `extended` (Extended · Linear) | `x` (unclamped pass-through) | → `[0,∞)` |
+| HDR | `extended-reinhard` (Extended · Reinhard) | `x·(1 + x/P²)/(1 + x)` | roll-off, `≈x` at low `x` |
+| HDR | `extended-aces` (Extended · ACES) | `P·aces(x·S/P)`, `S = 0.14/0.03` | → `P` asymptote, slope 1 at 0 |
+
+The **SDR group** always shows. The **HDR group** (`extended*`) appears **only**
+when the pane's true-HDR surface engages (WebGPU `rgba16float` + Chrome extended
+canvas tone-mapping, on an HDR display); those operators emit display-linear
+light in `[0, P]` (not `[0,1]`) that the OS compositor maps to the panel's peak.
+`P` is the **PEAK** slider (×SDR white; range `1..16`, default `4`, step `0.5`),
+shown only while `extended-reinhard`/`extended-aces` is selected. `S = 0.14/0.03`
+normalizes Extended · ACES so its slope at 0 is exactly 1 (identity-like at low
+`x`) and it saturates at `P`. (**Follow-up:** a browser-exposed display headroom,
+once standardized, would seed the PEAK default.)
+
+**Default-in-effect + fallback** (`image/tonemap.ts`'s `resolveEffectiveTonemap`,
+pure + unit-tested):
+- Not engaged → the descriptor's `tonemap=` coerced to SDR (`extended`→`linear`,
+  `extended-reinhard`→`reinhard`, `extended-aces`→`aces`; Python default `srgb`).
+- Engaged → an explicit `extended*` `tonemap=` is honored **verbatim**; any SDR /
+  unset descriptor defaults to **`extended`** (Extended · Linear). Selecting an
+  SDR operator on an engaged pane **tone-maps into SDR range** (previewing the
+  SDR rendition on the HDR display): the render path drops `hdrOut` and runs the
+  operator + output-encode.
+
+The CPU backend never engages a real HDR surface, so it never offers the HDR
+group (its `extended*` descriptors resolve to the SDR fallback). **Follow-up:**
+`cp.Compare` panes (split/blend/diff of HDR sources) do not yet expose a TONEMAP
+menu.
 
 #### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end
