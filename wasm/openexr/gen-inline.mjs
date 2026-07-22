@@ -46,6 +46,8 @@ export interface CairnOpenExrModule {
   _cairn_exr_free_open_deep(r: number): void;
   _cairn_exr_free_deep(handle: number): void;
   _cairn_exr_set_deep_budget(bytes: number): void;
+  _cairn_exr_deep_gpu_csr(handle: number): number;
+  _cairn_exr_free_gpu_csr(r: number): void;
   HEAPU8: Uint8Array;
   HEAPU16: Uint16Array;
   HEAP32: Int32Array;
@@ -132,10 +134,27 @@ export interface DeepImageOpen {
   readonly totalSamples: number;
 }
 
+/**
+ * A deep image's per-pixel Z-SORTED samples, laid out for direct upload to
+ * WebGPU storage buffers (the GPU depth-composite path). \`offsets\` are the
+ * pixels+1 prefix sums; \`colors\` is 4·total premultiplied RGBA; \`zs\` is the
+ * per-sample Z (ascending within each pixel). All JS-owned copies.
+ */
+export interface DeepGpuCsr {
+  readonly width: number;
+  readonly height: number;
+  readonly total: number;
+  readonly offsets: Uint32Array;
+  readonly colors: Float32Array;
+  readonly zs: Float32Array;
+}
+
 // Result struct field order — CONTRACT with wasm/openexr/src/binding.cpp.
 const F = { status: 0, width: 1, height: 2, channels: 3, precision: 4, data: 5, dataLen: 6, errCode: 7, errMsg: 8 };
 // DeepOpenResult field order (z_min/z_max are FLOATs → read from HEAPF32).
 const DF = { status: 0, handle: 1, width: 2, height: 3, channels: 4, zMin: 5, zMax: 6, total: 7, errCode: 8, errMsg: 9 };
+// DeepGpuCsr field order — CONTRACT with wasm/openexr/src/binding.cpp.
+const GF = { status: 0, offsets: 1, colors: 2, z: 3, total: 4, width: 5, height: 6, errCode: 7, errMsg: 8 };
 
 /** Read a DecodeResult* out of the module heap into a JS-owned DecodedImage
  *  (copies the payload out of wasm memory, then frees the wasm-side result). */
@@ -231,6 +250,41 @@ function freeDeep(mod: CairnOpenExrModule, handle: number): void {
   mod._cairn_exr_free_deep(handle);
 }
 
+/** Export a retained deep handle's Z-sorted samples for GPU upload. Copies the
+ *  three arrays out of wasm memory (JS-owned), then frees the wasm-side result. */
+function deepGpuCsr(mod: CairnOpenExrModule, handle: number): DeepGpuCsr {
+  const rPtr = mod._cairn_exr_deep_gpu_csr(handle);
+  const H = mod.HEAP32;
+  const base = rPtr >> 2;
+  if (H[base + GF.status] !== 0) {
+    const code = mod.UTF8ToString(H[base + GF.errCode]!);
+    const msg = mod.UTF8ToString(H[base + GF.errMsg]!);
+    mod._cairn_exr_free_gpu_csr(rPtr);
+    const err = new Error(msg) as Error & { code: string };
+    err.name = "CairnExrDecodeError";
+    err.code = code;
+    throw err;
+  }
+  const width = H[base + GF.width]!;
+  const height = H[base + GF.height]!;
+  const total = H[base + GF.total]! >>> 0;
+  const offsetsPtr = H[base + GF.offsets]! >>> 0;
+  const colorsPtr = H[base + GF.colors]! >>> 0;
+  const zPtr = H[base + GF.z]! >>> 0;
+  const offsets = mod.HEAPU8.slice(offsetsPtr, offsetsPtr + (width * height + 1) * 4);
+  const colors = mod.HEAPU8.slice(colorsPtr, colorsPtr + total * 4 * 4);
+  const zbytes = mod.HEAPU8.slice(zPtr, zPtr + total * 4);
+  mod._cairn_exr_free_gpu_csr(rPtr);
+  return {
+    width,
+    height,
+    total,
+    offsets: new Uint32Array(offsets.buffer, offsets.byteOffset, width * height + 1),
+    colors: new Float32Array(colors.buffer, colors.byteOffset, total * 4),
+    zs: new Float32Array(zbytes.buffer, zbytes.byteOffset, total),
+  };
+}
+
 let ready: Promise<CairnOpenExrModule> | null = null;
 
 /** The decoder surface returned by {@link loadExrDecoder}. */
@@ -244,6 +298,8 @@ export interface ExrDecoder {
   free_deep: (handle: number) => void;
   /** Set the global deep-retention LRU byte budget (default 512 MB). */
   set_deep_budget: (bytes: number) => void;
+  /** Export a deep handle's Z-sorted samples for GPU upload (storage buffers). */
+  deep_gpu_csr: (handle: number) => DeepGpuCsr;
   DecodedImage: unknown;
 }
 
@@ -273,6 +329,7 @@ export async function loadExrDecoder(): Promise<ExrDecoder> {
     flatten_deep: (handle: number, zClip: number) => flattenDeep(mod, handle, zClip),
     free_deep: (handle: number) => freeDeep(mod, handle),
     set_deep_budget: (bytes: number) => mod._cairn_exr_set_deep_budget(bytes),
+    deep_gpu_csr: (handle: number) => deepGpuCsr(mod, handle),
     DecodedImage: class {},
   };
 }

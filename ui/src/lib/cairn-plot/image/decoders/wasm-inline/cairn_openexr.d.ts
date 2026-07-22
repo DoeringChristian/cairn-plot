@@ -10,6 +10,8 @@ export interface CairnOpenExrModule {
   _cairn_exr_free_open_deep(r: number): void;
   _cairn_exr_free_deep(handle: number): void;
   _cairn_exr_set_deep_budget(bytes: number): void;
+  _cairn_exr_deep_gpu_csr(handle: number): number;
+  _cairn_exr_free_gpu_csr(r: number): void;
   HEAPU8: Uint8Array;
   HEAPU16: Uint16Array;
   HEAP32: Int32Array;

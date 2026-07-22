@@ -89,6 +89,24 @@ struct DeepOpenResult {
   int32_t err_code;       // malloc'd null-terminated C string (or 0)
   int32_t err_msg;        // malloc'd null-terminated C string (or 0)
 };
+
+// GPU-composite CSR export: the retained deep samples, PER-PIXEL Z-SORTED and
+// laid out for direct upload to WebGPU storage buffers so the depth slider can
+// composite on the GPU (uniform write + one pass) with no wasm round-trip. The
+// fragment shader walks `offsets[i]..offsets[i+1)` and OVER-accumulates while
+// `z ≤ zClip` (samples ascending in Z ⇒ early break). Field order is a CONTRACT
+// with wasm-exr-inline.ts.
+struct DeepGpuCsr {
+  int32_t status;       // 0 = ok, 1 = error
+  int32_t offsets_ptr;  // uint32_t*  — length width*height+1 (prefix sums)
+  int32_t colors_ptr;   // float*     — length 4*total (premultiplied RGBA/sample)
+  int32_t z_ptr;        // float*     — length total (per-sample Z, sorted asc.)
+  int32_t total;        // Σ samples
+  int32_t width;
+  int32_t height;
+  int32_t err_code;     // malloc'd C string (or 0)
+  int32_t err_msg;      // malloc'd C string (or 0)
+};
 }
 
 static const int PREC_F16BITS = 0;
@@ -571,6 +589,52 @@ DecodeResult* decodeDeep(MultiPartInputFile& mfile, const Header& h,
   return flattenHandle(hd, std::numeric_limits<float>::infinity());
 }
 
+// Export a handle's samples PER-PIXEL Z-SORTED into GPU-upload-ready arrays:
+// offsets (u32, pixels+1), colors (f32, 4·total premultiplied RGBA), z (f32,
+// total). Alpha defaults to 1 when the source has no A; Z defaults to 0 when the
+// source has no Z (then the slider clips nothing — every sample is included).
+DeepGpuCsr* emitGpuCsr(const DeepHandle& hd) {
+  size_t pixels = (size_t)hd.width * hd.height;
+  size_t total = hd.totalSamples();
+  uint32_t* offsets = static_cast<uint32_t*>(std::malloc((pixels + 1) * sizeof(uint32_t)));
+  float* colors = static_cast<float*>(std::malloc((total ? total : 1) * 4 * sizeof(float)));
+  float* zs = static_cast<float*>(std::malloc((total ? total : 1) * sizeof(float)));
+
+  std::vector<int> order;
+  for (size_t i = 0; i < pixels; ++i) {
+    offsets[i] = hd.offsets[i];
+    uint32_t off = hd.offsets[i];
+    unsigned int n = hd.offsets[i + 1] - off;
+    order.resize(n);
+    for (unsigned int s = 0; s < n; ++s) order[s] = (int)s;
+    if (hd.hasZ && n > 1) {
+      const float* z = &hd.Z[off];
+      std::sort(order.begin(), order.end(),
+                [&](int a, int b) { return z[a] < z[b]; });
+    }
+    for (unsigned int k = 0; k < n; ++k) {
+      int s = order[k];
+      size_t o = (size_t)(off + k);
+      colors[o * 4 + 0] = hd.R[off + s];
+      colors[o * 4 + 1] = hd.G[off + s];
+      colors[o * 4 + 2] = hd.B[off + s];
+      colors[o * 4 + 3] = hd.hasA ? hd.A[off + s] : 1.0f;
+      zs[o] = hd.hasZ ? hd.Z[off + s] : 0.0f;
+    }
+  }
+  offsets[pixels] = hd.offsets[pixels];
+
+  DeepGpuCsr* r = static_cast<DeepGpuCsr*>(std::calloc(1, sizeof(DeepGpuCsr)));
+  r->status = 0;
+  r->offsets_ptr = (int32_t)reinterpret_cast<intptr_t>(offsets);
+  r->colors_ptr = (int32_t)reinterpret_cast<intptr_t>(colors);
+  r->z_ptr = (int32_t)reinterpret_cast<intptr_t>(zs);
+  r->total = (int32_t)total;
+  r->width = hd.width;
+  r->height = hd.height;
+  return r;
+}
+
 }  // namespace
 
 extern "C" {
@@ -705,6 +769,52 @@ DecodeResult* cairn_exr_flatten_deep(DeepHandle* hd, float zClip) {
   } catch (...) {
     return makeError("decode-error", "cairn-exr: unknown deep flatten failure");
   }
+}
+
+static DeepGpuCsr* makeGpuCsrError(const std::string& code, const std::string& msg) {
+  DeepGpuCsr* r = static_cast<DeepGpuCsr*>(std::calloc(1, sizeof(DeepGpuCsr)));
+  r->status = 1;
+  r->err_code = (int32_t)reinterpret_cast<intptr_t>(dupCStr(code));
+  r->err_msg = (int32_t)reinterpret_cast<intptr_t>(dupCStr(msg));
+  return r;
+}
+
+// Export a retained deep handle's Z-sorted samples for GPU upload (see
+// DeepGpuCsr). Works on an evicted handle too — it re-decodes from the cached
+// bytes into a scratch handle first. Never throws across the ABI.
+DeepGpuCsr* cairn_exr_deep_gpu_csr(DeepHandle* hd) {
+  try {
+    if (!hd) return makeGpuCsrError("decode-error", "cairn-exr: null deep handle");
+    if (hd->retained) return emitGpuCsr(*hd);
+    MemIStream stream(reinterpret_cast<const char*>(hd->fileBytes.data()),
+                      (uint64_t)hd->fileBytes.size());
+    MultiPartInputFile mfile(stream);
+    const Header& h = mfile.header(0);
+    std::string type = h.hasType() ? h.type() : std::string(SCANLINEIMAGE);
+    DeepHandle scratch;
+    DecodeResult* perr = prepareDeepHandle(h, scratch);
+    if (perr) {
+      cairn_exr_free(perr);
+      return makeGpuCsrError("unsupported-channel-layout", "cairn-exr: deep gpu csr layout");
+    }
+    readDeepInto(mfile, h, type == DEEPTILE, scratch);
+    return emitGpuCsr(scratch);
+  } catch (const std::exception& e) {
+    return makeGpuCsrError("decode-error", std::string("cairn-exr: ") + e.what());
+  } catch (...) {
+    return makeGpuCsrError("decode-error", "cairn-exr: unknown deep gpu csr failure");
+  }
+}
+
+// Free a DeepGpuCsr (its three arrays + the struct + any error strings).
+void cairn_exr_free_gpu_csr(DeepGpuCsr* r) {
+  if (!r) return;
+  if (r->offsets_ptr) std::free(reinterpret_cast<void*>((intptr_t)r->offsets_ptr));
+  if (r->colors_ptr) std::free(reinterpret_cast<void*>((intptr_t)r->colors_ptr));
+  if (r->z_ptr) std::free(reinterpret_cast<void*>((intptr_t)r->z_ptr));
+  if (r->err_code) std::free(reinterpret_cast<void*>((intptr_t)r->err_code));
+  if (r->err_msg) std::free(reinterpret_cast<void*>((intptr_t)r->err_msg));
+  std::free(r);
 }
 
 // Free the DeepOpenResult struct (+ its error strings). Does NOT free the
