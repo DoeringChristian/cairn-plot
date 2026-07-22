@@ -70,6 +70,16 @@ def build_report() -> "cp.Report":
                 colormap="plasma",
             )
         )
+        .md(
+            "### DEEP EXR — `v2/Stereo/Trunks.exr`\n"
+            "A **deep** tiled EXR (per-pixel sample *lists* with Z, from the "
+            "official OpenEXR 2.0 stereo examples) — and a multi-part file "
+            "(left/right views; part 0 = left is decoded). The WASM decoder "
+            "flattens the deep samples for display: per pixel, samples are "
+            "Z-sorted front-to-back and OVER-composited (associated alpha) "
+            "into a flat HDR image — fully client-side."
+        )
+        .add(cp.Image(url=f"{ASWF}/v2/Stereo/Trunks.exr", tonemap="aces"))
     )
 
 
