@@ -33,6 +33,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuComparePane from "../GpuComparePane";
 import { flipLDR } from "../../engine/kernels/flip-reference";
+import { computeCompareMapping, type CompareAlign, type CompareFit } from "../../engine/compare-align";
 import type { PixelSample, PixelValueNotation } from "../../primitives/PixelValueOverlay";
 import type { CompareFloatSource } from "../compositor";
 
@@ -42,8 +43,13 @@ interface CompareProbe {
   sampleDiff: (px: number, py: number, n?: PixelValueNotation) => PixelSample | null;
   sampleFg: (px: number, py: number, n?: PixelValueNotation) => PixelSample | null;
   diffSamples: Float32Array | null;
+  /** Framing/overlay grid: diff+crop → overlap dims, diff+fill / split/blend → primary. */
   dims: { w: number; h: number } | null;
+  /** Primary/foreground source footprint (pre-framing). */
+  primaryDims: { w: number; h: number } | null;
   diffResultDims: { w: number; h: number } | null;
+  align: CompareAlign;
+  fit: CompareFit;
   resolvedKernelId: string;
   compareMode: string;
 }
@@ -285,6 +291,8 @@ function mountPane(opts: {
   imageFloat?: CompareFloatSource;
   baselineFloat?: CompareFloatSource;
   diffKernel: string;
+  align?: CompareAlign;
+  fit?: CompareFit;
 }): Handle {
   const container = document.createElement("div");
   container.id = opts.id;
@@ -302,6 +310,8 @@ function mountPane(opts: {
       baselineFloat: opts.baselineFloat,
       mode: "diff",
       diffKernel: opts.diffKernel,
+      align: opts.align,
+      fit: opts.fit,
       splitPosition: 0.5,
       blendAlpha: 0.5,
       colormap: "magma",
@@ -422,34 +432,79 @@ async function assertCase(
   return ok;
 }
 
-// CPU |ref - pred| over the top-left min-crop, R channel, laid out at the result
-// resolution — the reference the pane's `absolute` readback must reproduce.
-function cpuAbsCrop(
-  refDec: Uint8ClampedArray,
-  refW: number,
-  predDec: Uint8ClampedArray,
-  predW: number,
+// A CPU replica of SOURCE_MAP_WGSL's `mapSample` for one 8-bit RGBA source:
+// RESULT pixel (x,y) → the source's R (normalized), via an integer texel offset
+// (crop) or normalized-uv bilinear rescale (fill). Mirrors the GPU/CPU mapping.
+function mapSampleR(
+  dec: Uint8ClampedArray,
+  sw: number,
+  sh: number,
+  offX: number,
+  offY: number,
+  fill: boolean,
   rw: number,
   rh: number,
-): Float32Array {
+): (x: number, y: number) => number {
+  const at = (sx: number, sy: number) => (dec[(sy * sw + sx) * 4] ?? 0) / 255;
+  if (!fill) {
+    return (x, y) => at(Math.min(Math.max(x + offX, 0), sw - 1), Math.min(Math.max(y + offY, 0), sh - 1));
+  }
+  const maxX = sw - 1;
+  const maxY = sh - 1;
+  return (x, y) => {
+    const tx = ((x + 0.5) / rw) * sw - 0.5;
+    const ty = ((y + 0.5) / rh) * sh - 0.5;
+    const bx = Math.floor(tx);
+    const by = Math.floor(ty);
+    const fx = tx - bx;
+    const fy = ty - by;
+    const x0 = Math.min(Math.max(bx, 0), maxX);
+    const x1 = Math.min(Math.max(bx + 1, 0), maxX);
+    const y0 = Math.min(Math.max(by, 0), maxY);
+    const y1 = Math.min(Math.max(by + 1, 0), maxY);
+    const top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+    const bot = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+    return top + (bot - top) * fy;
+  };
+}
+
+// CPU |ref - pred| (R channel) over the RESULT grid under the SAME align/fit
+// mapping the pane uses — the reference the `absolute` readback must reproduce.
+// `a` = ref (offsetA), `b` = pred/foreground (offsetB, the primary under fill).
+function cpuAbsMapped(
+  refDec: Uint8ClampedArray,
+  refW: number,
+  refH: number,
+  predDec: Uint8ClampedArray,
+  predW: number,
+  predH: number,
+  align: CompareAlign,
+  fit: CompareFit,
+): { rw: number; rh: number; out: Float32Array } {
+  const m = computeCompareMapping({ w: refW, h: refH }, { w: predW, h: predH }, align, fit, "b");
+  const rw = m.result.w;
+  const rh = m.result.h;
+  const fill = fit === "fill";
+  const sa = mapSampleR(refDec, refW, refH, m.offsetA.x, m.offsetA.y, fill, rw, rh);
+  const sb = mapSampleR(predDec, predW, predH, m.offsetB.x, m.offsetB.y, fill, rw, rh);
   const out = new Float32Array(rw * rh);
   for (let y = 0; y < rh; y++) {
     for (let x = 0; x < rw; x++) {
-      const ri = (y * refW + x) * 4;
-      const pi = (y * predW + x) * 4;
-      out[y * rw + x] = Math.abs(refDec[ri]! / 255 - predDec[pi]! / 255);
+      out[y * rw + x] = Math.abs(sa(x, y) - sb(x, y));
     }
   }
-  return out;
+  return { rw, rh, out };
 }
 
-// The DECISIVE case (the reported bug): fg and ref have DIFFERENT dimensions.
-// The diff RESULT is min-cropped; the readback is laid out at the crop
-// resolution, but the overlay grid runs over the LARGER primary footprint. The
-// pre-fix `sampleDiff` indexed the crop-sized readback with the primary stride
-// and `?? 0`-zeroed pixels beyond it — so the numbers read ZERO across the
-// bottom/right band while the displayed map was clearly non-zero.
-async function assertMismatched(
+// Mismatched-size diff (align/fit): fg and ref differ in size. Under the align/
+// fit mapping the diff RESULT is the overlap grid (crop) or the primary grid
+// (fill); the pane FRAMES on that RESULT grid (requirement 2), so the home view
+// FILLS the viewport with the diff — no transparent dead band — and the TEV grid
+// spans exactly the result. Asserts: (i) framing == result dims (not primary);
+// (ii) every in-frame sampleDiff matches the CPU abs reference computed under the
+// SAME mapping; (iii) the display fills the frame (opaque, centered), vs the old
+// top-left crop stripe; (iv) a probe BEYOND the result returns null (defensive).
+async function assertDiffFramed(
   name: string,
   handle: Handle,
   primaryW: number,
@@ -470,13 +525,19 @@ async function assertMismatched(
   const arr = p.diffSamples!;
   const dims = p.dims!;
   const rdims = p.diffResultDims!;
+  const pdims = p.primaryDims!;
   let ok = true;
 
+  // (i) FRAMING == RESULT/overlap dims (the requirement-2 reframe) — the pane no
+  //     longer frames on the larger primary footprint.
   const shapeOk =
-    dims.w === primaryW && dims.h === primaryH &&
+    dims.w === resultW && dims.h === resultH &&
     rdims.w === resultW && rdims.h === resultH &&
-    (rdims.w !== dims.w || rdims.h !== dims.h);
-  report(shapeOk, `[${name}] primary=${dims.w}x${dims.h}, result(crop)=${rdims.w}x${rdims.h} (dimensions differ)`);
+    pdims.w === primaryW && pdims.h === primaryH;
+  report(
+    shapeOk,
+    `[${name}] framing=${dims.w}x${dims.h} == result=${rdims.w}x${rdims.h} (primary=${pdims.w}x${pdims.h}); align=${p.align}, fit=${p.fit}`,
+  );
   ok = ok && shapeOk;
 
   const rw = rdims.w, rh = rdims.h;
@@ -484,8 +545,8 @@ async function assertMismatched(
   for (let i = 0; i < rw * rh; i++) idx.push(i);
   idx.sort((a, b) => (arr[b * 4] ?? 0) - (arr[a * 4] ?? 0));
 
-  // (i) INSIDE the crop: sampleDiff must return the non-zero metric, correctly
-  //     indexed at the RESULT stride.
+  // (ii) every in-frame sampleDiff returns the non-zero metric, indexed at the
+  //      RESULT stride (no zero-bug, no mis-index).
   let zero = 0, mism = 0;
   const N = Math.min(12, idx.length);
   for (let k = 0; k < N; k++) {
@@ -496,34 +557,21 @@ async function assertMismatched(
     const got = val(p.sampleDiff(px, py));
     if (got === null || Math.abs(got) < 1e-4) {
       zero++;
-      if (zero <= 3) report(false, `[${name}] IN-crop sampleDiff(${px},${py})=${got} but readback=${expected.toFixed(4)} (ZERO BUG)`);
+      if (zero <= 3) report(false, `[${name}] sampleDiff(${px},${py})=${got} but readback=${expected.toFixed(4)} (ZERO BUG)`);
     } else if (Math.abs(got - expected) > 1e-3) {
       mism++;
       if (mism <= 3) report(false, `[${name}] sampleDiff(${px},${py})=${got.toFixed(4)} != readback ${expected.toFixed(4)}`);
     }
   }
   const inOk = zero === 0 && mism === 0;
-  report(inOk, `[${name}] in-crop sampleDiff at ${N} hottest pixels: ${zero} zero, ${mism} mismatch`);
+  report(inOk, `[${name}] in-frame sampleDiff at ${N} hottest pixels: ${zero} zero, ${mism} mismatch`);
   ok = ok && inOk;
 
-  // (ii) OUTSIDE the crop (the band beyond min(A,B)): NO diff value exists, so
-  //      sampleDiff MUST return null — never a fake 0. This is the exact region
-  //      the reported bug printed as ZERO.
-  let outNonNull = 0, outChecked = 0;
-  for (let py = 0; py < primaryH; py += 3) {
-    for (let px = 0; px < primaryW; px += 3) {
-      if (px < resultW && py < resultH) continue;
-      outChecked++;
-      if (p.sampleDiff(px, py) !== null) outNonNull++;
-    }
-  }
-  const outOk = outChecked > 0 && outNonNull === 0;
-  report(outOk, `[${name}] OUTSIDE-crop sampleDiff is null: ${outNonNull}/${outChecked} non-null (must be 0)`);
-  ok = ok && outOk;
-
-  // (iii) the printed number IS the diff metric (matches CPU abs), not source px.
+  // (iii) the printed number IS the diff metric computed under the SAME align/fit
+  //       mapping (matches the CPU abs reference) — proves the offsets/fill mapped
+  //       the SOURCES correctly, not source px, not a stale top-left crop.
   let worst = 0, checked = 0;
-  for (let k = 0; k < Math.min(20, idx.length); k++) {
+  for (let k = 0; k < Math.min(24, idx.length); k++) {
     const pix = idx[k]!;
     const px = pix % rw, py = Math.floor(pix / rw);
     const got = val(p.sampleDiff(px, py));
@@ -533,31 +581,36 @@ async function assertMismatched(
     checked++;
   }
   const refOk = checked > 0 && worst <= 0.03;
-  report(refOk, `[${name}] printed number == CPU abs metric (worst |diff|=${worst.toFixed(4)}, checked ${checked})`);
+  report(refOk, `[${name}] printed number == CPU abs metric under mapping (worst |diff|=${worst.toFixed(4)}, checked ${checked})`);
   ok = ok && refOk;
 
-  // (iv) DISPLAY: the blit must confine the diff to the top-left crop so colors
-  //      COINCIDE with the numbers. The crop is `(resultW*resultH)/(primaryW*
-  //      primaryH)` of the footprint (~32% here); the rest must be transparent
-  //      (pre-fix the blit stretched the result → ~100% opaque). At zoom 1 the
-  //      4:3 image fills the 4:3 canvas, so opaque frac ≈ crop frac, top-left.
+  // (iv) a probe BEYOND the result stride has no value → null (never a fake 0).
+  let outNonNull = 0, outChecked = 0;
+  for (const [px, py] of [[rw, 0], [0, rh], [rw + 5, rh + 5], [rw, rh]] as [number, number][]) {
+    outChecked++;
+    if (p.sampleDiff(px, py) !== null) outNonNull++;
+  }
+  const outOk = outNonNull === 0;
+  report(outOk, `[${name}] beyond-result sampleDiff is null: ${outNonNull}/${outChecked} non-null (must be 0)`);
+  ok = ok && outOk;
+
+  // (v) DISPLAY: the diff FILLS + CENTERS the frame at home (requirement 2 — no
+  //     dead band). At zoom 1 the result-aspect image is letterbox-fit into the
+  //     pane, so the diff spans the fit rect (opaque well above zero) with a
+  //     CENTERED centroid — the decisive contrast with the OLD top-left min-crop
+  //     stripe (centroid up-and-left of center, e.g. ~0.25). The centered
+  //     centroid is the discriminator; opaque just confirms the diff is present.
   const canvasEl = handle.canvas();
   if (canvasEl) {
-    // Let the blit paint a frame.
     await sleep(200);
-    const cropFrac = (resultW * resultH) / (primaryW * primaryH); // ~0.32 here
     const disp = await readCanvasOpaque(canvasEl);
-    // Robust to letterbox/toolbar (which only REDUCE the opaque fraction): the
-    // crop is ~32% of the footprint, so opaque must sit well below the pre-fix
-    // stretch (~0.85+, the whole image rect) yet be clearly present, with its
-    // centroid in the top-left (the crop's location).
-    const fracOk = disp.frac > 0.08 && disp.frac < 0.6;
-    const cornerOk = disp.cx < 0.5 && disp.cy < 0.5;
+    const fracOk = disp.frac > 0.4; // present + letterbox-fit (old crop sat lower AND off-center)
+    const centerOk = Math.abs(disp.cx - 0.5) < 0.12 && Math.abs(disp.cy - 0.5) < 0.15;
     report(
-      fracOk && cornerOk,
-      `[${name}] display opaque=${(disp.frac * 100).toFixed(1)}% (crop≈${(cropFrac * 100).toFixed(1)}% of footprint; pre-fix stretch ≈85%+), centroid=(${disp.cx.toFixed(2)},${disp.cy.toFixed(2)}) — top-left crop, transparent beyond`,
+      fracOk && centerOk,
+      `[${name}] display opaque=${(disp.frac * 100).toFixed(1)}% (fills frame), centroid=(${disp.cx.toFixed(2)},${disp.cy.toFixed(2)}) — centered, no dead band`,
     );
-    ok = ok && fracOk && cornerOk;
+    ok = ok && fracOk && centerOk;
   }
 
   return ok;
@@ -611,30 +664,43 @@ async function main(): Promise<void> {
     await sleep(300);
     ok = (await assertCase("d/mode-switch-to-flip", modeH2, smallCpu, smallW, smallH)) && ok;
 
-    // --- (e) THE REPORTED BUG: fg (160x120) vs ref (96x64) — different
-    // dimensions, min-cropped to 96x64. `abs` kernel. ---
+    // --- Mismatched-size operands (align/fit): fg (160x120) vs ref (96x64),
+    // `abs` kernel. Shared decoded sources for the three mapping variants. ---
     const fgW = 160, fgH = 120, refW = 96, refH = 64;
-    const cropW = Math.min(fgW, refW), cropH = Math.min(fgH, refH);
     const mmFg = makeU8Pair(fgW, fgH); // use its "pred" as the foreground
     const mmRef = makeU8Pair(refW, refH); // use its "ref" as the baseline
     const mmFgUrl = rgbaToDataUrl(mmFg.predRGBA, fgW, fgH);
     const mmRefUrl = rgbaToDataUrl(mmRef.refRGBA, refW, refH);
     const mmFgDec = await decodeUrl(mmFgUrl, fgW, fgH);
     const mmRefDec = await decodeUrl(mmRefUrl, refW, refH);
-    const mmCpuAbs = cpuAbsCrop(mmRefDec, refW, mmFgDec, fgW, cropW, cropH);
-    const mismatchH2 = mountPane({
-      id: "mismatched-abs",
-      imageUrl: mmFgUrl,
-      baselineUrl: mmRefUrl,
-      diffKernel: "absolute",
-    });
-    ok = (await assertMismatched("e/mismatched-160x120-vs-96x64", mismatchH2, fgW, fgH, cropW, cropH, mmCpuAbs)) && ok;
+
+    // (e) top-left crop (the historical reported-bug pair) — now DIFF-FRAMED on
+    //     the 96x64 overlap: numbers correct, display fills the frame.
+    const eTL = cpuAbsMapped(mmRefDec, refW, refH, mmFgDec, fgW, fgH, "top-left", "crop");
+    const tlH2 = mountPane({ id: "mismatched-abs-tl", imageUrl: mmFgUrl, baselineUrl: mmRefUrl, diffKernel: "absolute" });
+    ok = (await assertDiffFramed("e/mismatched-top-left-crop", tlH2, fgW, fgH, eTL.rw, eTL.rh, eTL.out)) && ok;
+
+    // (f) CENTER crop — same 96x64 overlap, but each source is sampled from its
+    //     CENTERED window (offsetB={32,28} into the 160x120 fg). Numbers must
+    //     match the CPU abs computed under the CENTER offsets, not top-left.
+    const eCtr = cpuAbsMapped(mmRefDec, refW, refH, mmFgDec, fgW, fgH, "center", "crop");
+    const ctrH2 = mountPane({ id: "mismatched-abs-center", imageUrl: mmFgUrl, baselineUrl: mmRefUrl, diffKernel: "absolute", align: "center" });
+    ok = (await assertDiffFramed("f/mismatched-center-crop", ctrH2, fgW, fgH, eCtr.rw, eCtr.rh, eCtr.out)) && ok;
+
+    // (g) FILL — no crop: RESULT = PRIMARY (fg) 160x120; ref is bilinearly
+    //     rescaled to it, fg maps 1:1. Numbers must match the CPU bilinear-fill
+    //     abs reference; framing = primary; display fills the frame.
+    const eFill = cpuAbsMapped(mmRefDec, refW, refH, mmFgDec, fgW, fgH, "top-left", "fill");
+    const fillH2 = mountPane({ id: "mismatched-abs-fill", imageUrl: mmFgUrl, baselineUrl: mmRefUrl, diffKernel: "absolute", fit: "fill" });
+    ok = (await assertDiffFramed("g/mismatched-fill", fillH2, fgW, fgH, eFill.rw, eFill.rh, eFill.out)) && ok;
 
     smallH2.unmount();
     bigH2.unmount();
     hdrH2.unmount();
     modeH2.unmount();
-    mismatchH2.unmount();
+    tlH2.unmount();
+    ctrH2.unmount();
+    fillH2.unmount();
 
     setOverallStatus(ok);
   } catch (err) {

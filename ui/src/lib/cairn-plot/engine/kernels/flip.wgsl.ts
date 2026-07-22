@@ -26,7 +26,7 @@
  * shared LDR pass pieces (`LAB_SHADER`, `COMBINE_SHADER`, filter constants,
  * `buildLdrFlipPasses`) that HDR-FLIP reuses per exposure.
  */
-import { VERTEX_WGSL, FLIP_COLOR_WGSL } from "./prelude.wgsl.ts";
+import { VERTEX_WGSL, FLIP_COLOR_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
 import { FLIP_CMAX } from "./flip-reference.ts";
 import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
 import type { BindGroupEntry } from "../types";
@@ -80,10 +80,14 @@ export function featureConstants(ppd: number): { r: number; sd: number; edgeNorm
 const YCXCZ_SHADER = `
 ${VERTEX_WGSL}
 ${FLIP_COLOR_WGSL}
+${SAMPLING_WGSL}
+${SOURCE_MAP_WGSL}
 @group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(5) var<uniform> u_map0: vec4<f32>; // offX, offY, fitFill, 0
+@group(0) @binding(8) var<uniform> u_map1: vec4<f32>; // resultW, resultH, 0, 0
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let px = vec2<i32>(in.position.xy);
-  let s = textureLoad(src, px, 0);
+  let s = mapSample(src, px, u_map0.x, u_map0.y, u_map1.x, u_map1.y, u_map0.z);
   return vec4<f32>(flip_rgb2ycxcz(s.rgb), 1.0);
 }
 `;
@@ -96,10 +100,14 @@ ${FLIP_COLOR_WGSL}
 export const YCXCZ_LINEAR_CLAMP_SHADER = `
 ${VERTEX_WGSL}
 ${FLIP_COLOR_WGSL}
+${SAMPLING_WGSL}
+${SOURCE_MAP_WGSL}
 @group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(5) var<uniform> u_map0: vec4<f32>; // offX, offY, fitFill, 0
+@group(0) @binding(8) var<uniform> u_map1: vec4<f32>; // resultW, resultH, 0, 0
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let px = vec2<i32>(in.position.xy);
-  let s = textureLoad(src, px, 0);
+  let s = mapSample(src, px, u_map0.x, u_map0.y, u_map1.x, u_map1.y, u_map0.z);
   return vec4<f32>(flip_linrgb2ycxcz(clamp(s.rgb, vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
 }
 `;
@@ -220,6 +228,19 @@ export function u(binding: number, arr: number[]): BindGroupEntry {
   return { binding, resource: { uniform: new Float32Array(arr) } };
 }
 
+/**
+ * Source-map uniform entries (`u_map0`, `u_map1`) for a FLIP front-end pass that
+ * reads ONE source (`which`), at logical bindings `logicalStart`/`+1`. Carries
+ * that source's alignment offset (crop) or the fill flag + RESULT dims — mirrors
+ * `SOURCE_MAP_WGSL`. Absent `ctx.sourceMap` ⇒ zero offsets / crop (identity, the
+ * legacy top-left mapping). */
+export function sourceMapUniforms(logicalStart: number, which: "a" | "b", ctx: KernelBuildCtx): BindGroupEntry[] {
+  const sm = ctx.sourceMap;
+  const off = sm ? (which === "a" ? sm.offsetA : sm.offsetB) : { x: 0, y: 0 };
+  const fill = sm?.fill ? 1 : 0;
+  return [u(logicalStart, [off.x, off.y, fill, 0]), u(logicalStart + 1, [ctx.width, ctx.height, 0, 0])];
+}
+
 /** Per-pass uniform builders for LAB (CSF-filter) and COMBINE passes, shared by
  *  LDR-FLIP (this file) and HDR-FLIP (`hdr-flip.ts`, per-exposure). */
 export function labUniforms(csf: ReturnType<typeof csfConstants>): (BindGroupEntry)[] {
@@ -240,6 +261,7 @@ export function buildLdrFlipPasses(
   ycxczShader: string,
   srcA: string,
   srcB: string,
+  ctx: KernelBuildCtx,
   suffix = "",
 ): { passes: KernelPass[]; flipRef: string } {
   const csf = csfConstants(ppd);
@@ -249,9 +271,12 @@ export function buildLdrFlipPasses(
   const lA = `labA${suffix}`;
   const lB = `labB${suffix}`;
   const flip = `flip${suffix}`;
+  // The front-end YCxCz passes read the SOURCES, so they carry the align/fit
+  // source-map uniforms (offsetA for srcA, offsetB for srcB). All later passes
+  // work over RESULT-resolution intermediates and are unaffected.
   const passes: KernelPass[] = [
-    { name: yA, shader: ycxczShader, inputs: [srcA], output: yA },
-    { name: yB, shader: ycxczShader, inputs: [srcB], output: yB },
+    { name: yA, shader: ycxczShader, inputs: [srcA], output: yA, uniforms: () => sourceMapUniforms(1, "a", ctx) },
+    { name: yB, shader: ycxczShader, inputs: [srcB], output: yB, uniforms: () => sourceMapUniforms(1, "b", ctx) },
     { name: lA, shader: LAB_SHADER, inputs: [yA], output: lA, uniforms: () => labUniforms(csf) },
     { name: lB, shader: LAB_SHADER, inputs: [yB], output: lB, uniforms: () => labUniforms(csf) },
     {
@@ -277,7 +302,7 @@ export const flipKernel: MultipassKernel = {
   params: { ppd: 67 },
   buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;
-    const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_SHADER, "srcA", "srcB");
+    const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_SHADER, "srcA", "srcB", ctx);
     return { passes, final: flipRef };
   },
 };
@@ -300,7 +325,7 @@ export const flipLdrForcedKernel: MultipassKernel = {
   params: { ppd: 67 },
   buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;
-    const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_LINEAR_CLAMP_SHADER, "srcA", "srcB");
+    const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_LINEAR_CLAMP_SHADER, "srcA", "srcB", ctx);
     return { passes, final: flipRef };
   },
 };

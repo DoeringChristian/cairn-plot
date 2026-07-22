@@ -32,9 +32,10 @@ import {
   type DisplayRange,
   type KernelBuildCtx,
 } from "./kernels";
-import { VERTEX_WGSL, SAMPLING_WGSL } from "./kernels/prelude.wgsl";
+import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl";
 import { computeMetrics, type DiffMetrics } from "./image-engine";
 import { type DiffCmapMode } from "./diff-cmap-mode";
+import { computeCompareMapping, mappingKey, type CompareMapping } from "./compare-align";
 
 export { resolveDiffCmapMode } from "./diff-cmap-mode";
 export type { DiffCmapMode } from "./diff-cmap-mode";
@@ -66,15 +67,20 @@ function getPipeline(device: Device, key: string, shaderWGSL: string, targetForm
 function pointwiseShader(kernelSource: string): string {
   return `
 ${VERTEX_WGSL}
+${SAMPLING_WGSL}
+${SOURCE_MAP_WGSL}
 @group(0) @binding(0) var texA: texture_2d<f32>;
 @group(0) @binding(3) var texB: texture_2d<f32>;
+@group(0) @binding(8) var<uniform> u_map: vec4<f32>;  // offAx, offAy, offBx, offBy
+@group(0) @binding(11) var<uniform> u_res: vec4<f32>; // resultW, resultH, fitFill, 0
 ${kernelSource}
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  let dimsA = vec2<i32>(textureDimensions(texA));
-  let dimsB = vec2<i32>(textureDimensions(texB));
+  // px is the RESULT/overlap-grid pixel. Each source is sampled through the
+  // align/fit mapping (integer texel offset per source under crop; normalized-uv
+  // bilinear rescale under fill) -- see SOURCE_MAP_WGSL / compare-align.ts.
   let px = vec2<i32>(in.position.xy);
-  let a = textureLoad(texA, clamp(px, vec2<i32>(0), dimsA - vec2<i32>(1)), 0);
-  let b = textureLoad(texB, clamp(px, vec2<i32>(0), dimsB - vec2<i32>(1)), 0);
+  let a = mapSample(texA, px, u_map.x, u_map.y, u_res.x, u_res.y, u_res.z);
+  let b = mapSample(texB, px, u_map.z, u_map.w, u_res.x, u_res.y, u_res.z);
   return kernel(a, b);
 }
 `;
@@ -101,22 +107,33 @@ export function computeDiff(
   texB: Texture,
   kernelId: string,
   params?: Record<string, number>,
+  mapping?: CompareMapping,
 ): Texture {
   const kernel = getDiffKernel(kernelId);
   if (!kernel) throw new Error(`computeDiff: unknown diff kernel "${kernelId}"`);
-  const width = Math.min(texA.width, texB.width);
-  const height = Math.min(texA.height, texB.height);
+  // The RESULT grid + per-source sample mapping. Absent ⇒ legacy top-left crop
+  // (result = min(A,B), zero offsets) — identical to the prior behavior.
+  const map =
+    mapping ??
+    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const width = map.result.w;
+  const height = map.result.h;
+  const fitFill = map.fit === "fill" ? 1 : 0;
   const resolved = resolveKernelParams(kernel, params);
   computeCount++;
 
   if (kernel.kind === "pointwise") {
     const result = device.createTexture(width, height, RESULT_FORMAT);
     const pipeline = getPipeline(device, `pw:${kernel.id}`, pointwiseShader(kernel.source), RESULT_FORMAT);
+    const uMap = new Float32Array([map.offsetA.x, map.offsetA.y, map.offsetB.x, map.offsetB.y]);
+    const uRes = new Float32Array([width, height, fitFill, 0]);
     let bg: BindGroup | undefined;
     try {
       bg = device.createBindGroup(pipeline, [
         { binding: 0, resource: texA },
         { binding: 1, resource: texB },
+        { binding: 2, resource: { uniform: uMap } },
+        { binding: 3, resource: { uniform: uRes } },
       ]);
       device.renderFullscreen(result, pipeline, bg);
     } finally {
@@ -126,7 +143,12 @@ export function computeDiff(
   }
 
   // Multi-pass: run the pass graph over pooled intermediates.
-  const ctx: KernelBuildCtx = { width, height, params: resolved };
+  const ctx: KernelBuildCtx = {
+    width,
+    height,
+    params: resolved,
+    sourceMap: { fill: map.fit === "fill", offsetA: map.offsetA, offsetB: map.offsetB },
+  };
   const graph = kernel.buildPasses(ctx);
   const textures = new Map<string, Texture>([
     ["srcA", texA],
@@ -290,10 +312,14 @@ export function diffCacheKey(
   contentKeyB: string,
   kernelId: string,
   params?: Record<string, number>,
+  mapping?: CompareMapping,
 ): string {
   const kernel = getDiffKernel(kernelId);
   const ph = kernel ? paramsHash(kernel, params) : "";
-  return `${contentKeyA}|${contentKeyB}|${kernelId}|${ph}`;
+  // align/fit change the RESULT grid + sampling, so they must key the cache —
+  // otherwise a re-diff at a new alignment would return a stale texture.
+  const mk = mapping ? mappingKey(mapping) : "";
+  return `${contentKeyA}|${contentKeyB}|${kernelId}|${ph}|${mk}`;
 }
 
 /**
@@ -310,17 +336,21 @@ export function ensureDiff(
   params: Record<string, number> | undefined,
   contentKeyA: string,
   contentKeyB: string,
+  mapping?: CompareMapping,
 ): DiffCacheEntry {
   const kernel = getDiffKernel(kernelId);
   if (!kernel) throw new Error(`ensureDiff: unknown diff kernel "${kernelId}"`);
   const cache = cacheFor(device);
-  const key = diffCacheKey(contentKeyA, contentKeyB, kernelId, params);
+  const map =
+    mapping ??
+    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const key = diffCacheKey(contentKeyA, contentKeyB, kernelId, params, map);
   const hit = cache.get(key);
   if (hit) return hit;
 
-  const texture = computeDiff(device, texA, texB, kernelId, params);
-  const width = Math.min(texA.width, texB.width);
-  const height = Math.min(texA.height, texB.height);
+  const texture = computeDiff(device, texA, texB, kernelId, params, map);
+  const width = map.result.w;
+  const height = map.result.h;
   const entry: DiffCacheEntry = {
     texture,
     width,
@@ -338,10 +368,11 @@ export async function ensureDiffScalars(
   entry: DiffCacheEntry,
   texA: Texture,
   texB: Texture,
+  mapping?: CompareMapping,
 ): Promise<DiffMetrics> {
   if (entry.scalars) return entry.scalars;
   if (!entry.scalarsPending) {
-    entry.scalarsPending = computeMetrics(device, texA, texB).then((m) => {
+    entry.scalarsPending = computeMetrics(device, texA, texB, mapping).then((m) => {
       entry.scalars = m;
       return m;
     });
