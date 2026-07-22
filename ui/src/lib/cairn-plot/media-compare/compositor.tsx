@@ -21,6 +21,7 @@ import PixelValueOverlay, {
 } from "../primitives/PixelValueOverlay";
 import { loadImageData } from "../image";
 import type { MediaCompareModeKind } from "./mode";
+import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import type { GpuComparePaneProps } from "./GpuComparePane";
 import { resolveRenderMode } from "../renderers/image-backend";
@@ -541,6 +542,11 @@ export interface CompositeMediaPaneProps {
   /** Initial diff KERNEL id (engine compare pane) — seeds `GpuComparePane`'s
    *  view-local kernel selection; falls back to `diffSubmode` when unset. */
   diffKernel?: string;
+  /** Mismatched-size diff operand handling (engine compare pane, diff modes):
+   *  `align` = overlap anchor (default "top-left"); `fit` = "crop" (default) |
+   *  "fill". Ignored in split/blend. */
+  align?: CompareAlign;
+  fit?: CompareFit;
   /** Fired when the engine pane's diff kernel changes (menu). */
   onDiffKernelChange?: (kernelId: string) => void;
   /** Fired when the engine pane's compare mode changes (split/blend/diff menu).
@@ -584,6 +590,8 @@ export function CompositeMediaPane({
   isReferencePane,
   diffSubmode,
   diffKernel,
+  align,
+  fit,
   onDiffKernelChange,
   onCompareModeChange,
   onRequestSide,
@@ -756,6 +764,8 @@ export function CompositeMediaPane({
         onSplitPositionChange={onSplitPositionChange}
         diffSubmode={diffSubmode}
         diffKernel={diffKernel}
+        align={align}
+        fit={fit}
         onDiffKernelChange={onDiffKernelChange}
         onCompareModeChange={onCompareModeChange}
         onRequestSide={onRequestSide}

@@ -58,6 +58,7 @@ import {
   type DiffCacheEntry,
 } from "../engine/diff-engine";
 import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId } from "../engine/kernels";
+import { computeCompareMapping, type CompareAlign, type CompareFit } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
 import type { Device, Surface, Texture } from "../engine/types";
@@ -121,6 +122,17 @@ export interface GpuComparePaneProps {
   /** diff submode + colormap (used only in `mode:"diff"`). */
   diffSubmode?: DiffMode;
   colormap?: Colormap;
+  /**
+   * Alignment anchor for MISMATCHED-size diff operands (`mode:"diff"`): where the
+   * smaller extent sits within the larger before the overlap crop. Ignored under
+   * `fit:"fill"` and in split/blend. Default `"top-left"` (legacy min-crop). */
+  align?: CompareAlign;
+  /**
+   * Mismatched-size handling in diff modes: `"crop"` (min-crop overlap, default)
+   * or `"fill"` (rescale both operands to the primary/foreground resolution — a
+   * common grid; `align` is irrelevant). Split/blend keep their per-source
+   * stretch regardless. */
+  fit?: CompareFit;
   /**
    * Diff KERNEL id (the diff-kernel registry — the six pointwise ids plus
    * `flip`). This is the pane's INITIAL diff kernel; internal state
@@ -256,6 +268,8 @@ export default function GpuComparePane({
   onSplitPositionChange,
   diffSubmode,
   colormap = "none",
+  align = "top-left",
+  fit = "crop",
   diffKernel: diffKernelProp,
   onDiffKernelChange,
   onCompareModeChange,
@@ -286,6 +300,10 @@ export default function GpuComparePane({
   const [engineFailed, setEngineFailed] = useState(false);
   const [ready, setReady] = useState(false);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  // Both source footprints (a = texA/reference, b = texB/foreground/primary).
+  // Drives the align/fit overlap mapping + the diff-mode home framing (which
+  // frames on the RESULT/overlap dims, not the primary — see `framingDims`).
+  const [srcDims, setSrcDims] = useState<{ a: { w: number; h: number }; b: { w: number; h: number } } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
   const [containerTick, setContainerTick] = useState(0);
   const [metrics, setMetrics] = useState<DiffMetrics | null>(null);
@@ -580,6 +598,7 @@ export default function GpuComparePane({
         const primary = fg ?? ref;
         if (!primary) {
           setDims(null);
+          setSrcDims(null);
           setPixelDataVersion((v) => v + 1);
           // Q24 fix: no explicit inline CSS size to drop — the canvas is
           // always `w-full h-full` of its wrapper (see `GpuImagePane`'s
@@ -592,8 +611,14 @@ export default function GpuComparePane({
         // `image/webgl-diff.ts`'s `computeDiffChannel(base.*, other.*, ...)`
         // where `base` = baselineUrl). texB = foreground/comparison ("B": right
         // side / alpha=1 / diff `b`).
-        res.texA = (ref ?? primary).make(res.device);
-        res.texB = (fg ?? primary).make(res.device);
+        const sideA = ref ?? primary;
+        const sideB = fg ?? primary;
+        res.texA = sideA.make(res.device);
+        res.texB = sideB.make(res.device);
+        setSrcDims({
+          a: { w: sideA.width, h: sideA.height },
+          b: { w: sideB.width, h: sideB.height },
+        });
 
         // Q22 fix: canvas backing-store / surface sizing is driven by the
         // render-pass effect below (display resolution x dpr), NOT the source
@@ -656,6 +681,29 @@ export default function GpuComparePane({
     [colormapState],
   );
 
+  // Align/fit overlap mapping for the two operands (primary = foreground = texB).
+  // Pure function of the source dims + align/fit (engine/compare-align.ts); it
+  // drives BOTH the diff compute (texel offsets / fill scaling), the metrics
+  // reduction and the home framing — one mapping, so display + TEV + metrics
+  // agree. Null until both sides have loaded.
+  const mapping = useMemo(
+    () => (srcDims ? computeCompareMapping(srcDims.a, srcDims.b, align, fit, "b") : null),
+    [srcDims, align, fit],
+  );
+
+  // The pane's FRAMING dims (home-fit extent, letterbox math, overlay grid, uv
+  // window basis). In a DIFF kernel the frame is the RESULT/overlap grid — under
+  // `fit:"crop"` that is `min(A,B)` (so the home view fills the viewport with the
+  // diff, no transparent dead band), under `fit:"fill"` it is the primary dims.
+  // Split/blend keep the PRIMARY dims (per-source stretch, out of scope). The uv
+  // window is recomputed from this LIVE basis every frame (`renderPass`), so a
+  // mode switch that changes the basis reframes to home cleanly — no stale zoom.
+  const framingDims = useMemo(() => {
+    if (!dims) return null;
+    if (compareMode === "diff" && mapping) return mapping.result;
+    return dims;
+  }, [compareMode, mapping, dims]);
+
   // ---- render pass -------------------------------------------------------
   // Extracted into a stable callback so the screenshot path
   // (`useImageController`'s `toPNG`) can force a fresh, SYNCHRONOUS repaint
@@ -664,9 +712,13 @@ export default function GpuComparePane({
   const renderPass = useCallback(() => {
     const r = resRef.current;
     if (!ready || !r || !r.surface || !r.texA || !r.texB || !dims) return;
+    // The uv-window basis is the FRAMING dims (diff+crop → overlap grid; else the
+    // primary dims) — so the home view fills the viewport with the diff and the
+    // overlay grid + letterbox all agree with the displayed content.
+    const fd = framingDims ?? dims;
     const paneEl = paneRef.current;
-    const box = paneEl ? paneEl.getBoundingClientRect() : { width: dims.w, height: dims.h };
-    const rawUv = viewportToUvRect({ zoom, pan }, box, dims.w, dims.h);
+    const box = paneEl ? paneEl.getBoundingClientRect() : { width: fd.w, height: fd.h };
+    const rawUv = viewportToUvRect({ zoom, pan }, box, fd.w, fd.h);
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
@@ -698,7 +750,7 @@ export default function GpuComparePane({
     // own box now matches it exactly (Q24), so no separate measurement is
     // needed.
     const filter: "nearest" | "linear" =
-      screenPxPerTexel(rawUv, box, dims.w, dims.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
+      screenPxPerTexel(rawUv, box, fd.w, fd.h) >= PIXEL_VALUE_MIN_SCREEN_PX ? "nearest" : "linear";
     const uv = rawUv;
     // C1 fix (whole-branch review): the render call is SYNCHRONOUS in this
     // effect; an uncaught throw would unmount this pane's whole subtree in
@@ -740,6 +792,9 @@ export default function GpuComparePane({
           diffParams,
           contentKeyRef,
           contentKeyFg,
+          // Align/fit overlap mapping — folds into the cache key + drives the
+          // per-source texel offsets / fill scaling in `computeDiff`.
+          mapping ?? undefined,
         );
         diffEntryRef.current = entry;
         renderDiffDisplay(r.device, r.surface, entry.texture, entry.displayRange, {
@@ -747,12 +802,11 @@ export default function GpuComparePane({
           cmapMode: diffCmapMode,
           colormap: diffColormap,
           filter,
-          // The RESULT is min-cropped to `min(A,B)`, top-left aligned inside the
-          // primary `dims` footprint the uv-window is expressed in — pass those
-          // dims so the blit shows the result 1:1 in the crop and leaves the rest
-          // transparent, coinciding with `sampleDiff` (which returns null beyond
-          // the crop). Equal-size pair → identity (unchanged).
-          sourceDims: dims,
+          // The pane now frames on the RESULT/overlap dims (`framingDims`), so the
+          // uv-window lives in RESULT space and the blit is a plain 1:1 sample of
+          // the result texture — no primary-footprint crop mapping needed (the
+          // 3126564 `sourceDims` hack is subsumed by the reframe). The whole home
+          // view is the diff; there is no transparent dead band.
           // Exposure/offset change the colormap SENSITIVITY (applied to the raw
           // metric BEFORE the LUT), display-only — never a diff recompute.
           exposureEV: displayEV,
@@ -782,6 +836,8 @@ export default function GpuComparePane({
   }, [
     ready,
     dims,
+    framingDims,
+    mapping,
     zoom,
     pan.x,
     pan.y,
@@ -823,17 +879,21 @@ export default function GpuComparePane({
     const texA = r.texA;
     const texB = r.texB;
     const entry = diffEntryRef.current;
+    // Diff metrics honor the align/fit mapping (overlap under crop, full common
+    // grid under fill) — the SAME mapping the displayed diff + TEV use. Split/
+    // blend keep the default (top-left min-crop) reduction (out of scope).
+    const metricsMapping = compareMode === "diff" ? mapping ?? undefined : undefined;
     const p =
       compareMode === "diff" && entry
-        ? ensureDiffScalars(r.device, entry, texA, texB)
-        : computeMetrics(r.device, texA, texB);
+        ? ensureDiffScalars(r.device, entry, texA, texB, metricsMapping)
+        : computeMetrics(r.device, texA, texB, metricsMapping);
     p.then((m) => {
       if (!cancelled) setMetrics(m);
     });
     return () => {
       cancelled = true;
     };
-  }, [ready, uploadVersion, hasBaseline, compareMode, diffKernel]);
+  }, [ready, uploadVersion, hasBaseline, compareMode, diffKernel, mapping]);
 
   // ---- diff RESULT readback (TEV per-pixel metric values) ----------------
   // In diff mode the overlay must show the METRIC value(s), NOT the source
@@ -874,7 +934,10 @@ export default function GpuComparePane({
     return () => {
       cancelled = true;
     };
-  }, [ready, compareMode, resolvedKernelId, uploadVersion]);
+    // `mapping` (align/fit) changes the cached diff entry `renderPass` selects, so
+    // re-read when it changes — otherwise the TEV numbers would keep the previous
+    // alignment's readback while the display shows the new one.
+  }, [ready, compareMode, resolvedKernelId, uploadVersion, mapping]);
 
   // ---- TEV samplers ------------------------------------------------------
   // A side is EITHER u8 (`ImageData`) or FLOAT (`CompareFloatSource`); the
@@ -924,11 +987,11 @@ export default function GpuComparePane({
   const sampleDiff = useMemo(() => {
     return (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
       const arr = diffSamplesRef.current;
-      // Index at the RESULT resolution (`min(A,B)`, top-left cropped), NOT the
-      // primary `dims`. The overlay grid runs over the primary source, but the
-      // readback is laid out at the result stride; a pixel OUTSIDE the crop has
-      // NO diff value, so return null (draw nothing) rather than a mis-indexed /
-      // `?? 0` fake zero — this is the reported bug for differently-sized pairs.
+      // Index at the RESULT/overlap resolution the readback is laid out in — the
+      // same grid the pane now FRAMES on (`framingDims`), so every in-frame pixel
+      // has a value. A probe beyond the result stride has NO diff value, so return
+      // null (draw nothing) rather than a mis-indexed / `?? 0` fake zero (the
+      // reported bug for differently-sized pairs).
       const rdims = diffResultDimsRef.current;
       if (!arr || !rdims) return null;
       const { w, h } = rdims;
@@ -965,11 +1028,24 @@ export default function GpuComparePane({
       get diffSamples() {
         return diffSamplesRef.current;
       },
+      // `dims` is the FRAMING/overlay grid (diff+crop → overlap dims, diff+fill /
+      // split/blend → primary dims) — the extent the TEV grid + home view use.
       get dims() {
+        return framingDims;
+      },
+      // The primary/foreground source footprint (pre-framing) — for harness
+      // assertions about how the overlap relates to the source sizes.
+      get primaryDims() {
         return dims;
       },
       get diffResultDims() {
         return diffResultDimsRef.current;
+      },
+      get align() {
+        return align;
+      },
+      get fit() {
+        return fit;
       },
       get resolvedKernelId() {
         return resolvedKernelId;
@@ -981,7 +1057,7 @@ export default function GpuComparePane({
     return () => {
       if (el) delete el.__cairnCompareProbe;
     };
-  }, [sampleDiff, sampleFg, sampleRef, dims, resolvedKernelId, compareMode]);
+  }, [sampleDiff, sampleFg, sampleRef, dims, framingDims, align, fit, resolvedKernelId, compareMode]);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
@@ -1100,7 +1176,7 @@ export default function GpuComparePane({
       zoom={zoom}
       pan={pan}
       onViewportChange={onViewportChange}
-      naturalDims={dims}
+      naturalDims={framingDims}
       checkerboard="pane"
       wrapperClassName="relative w-full h-full flex items-center justify-center"
       viewportPadding={0}
@@ -1134,15 +1210,15 @@ export default function GpuComparePane({
         render: ({ notation, setOverlayActive }) =>
           compareMode === "split" ? (
             <>
-              {hasBaseline && dims && (
+              {hasBaseline && framingDims && (
                 <div
                   className="absolute inset-0 overflow-hidden pointer-events-none"
                   style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
                 >
                   <PixelValueOverlay
                     imageElRef={canvasRef}
-                    naturalWidth={dims.w}
-                    naturalHeight={dims.h}
+                    naturalWidth={framingDims.w}
+                    naturalHeight={framingDims.h}
                     zoom={zoom}
                     pan={pan}
                     sourceWindow={overlayWindow}
@@ -1152,15 +1228,15 @@ export default function GpuComparePane({
                   />
                 </div>
               )}
-              {hasBaseline && dims && (
+              {hasBaseline && framingDims && (
                 <div
                   className="absolute inset-0 overflow-hidden pointer-events-none"
                   style={{ clipPath: `inset(0 0 0 ${splitPosition * 100}%)` }}
                 >
                   <PixelValueOverlay
                     imageElRef={canvasRef}
-                    naturalWidth={dims.w}
-                    naturalHeight={dims.h}
+                    naturalWidth={framingDims.w}
+                    naturalHeight={framingDims.h}
                     zoom={zoom}
                     pan={pan}
                     sourceWindow={overlayWindow}
@@ -1173,11 +1249,11 @@ export default function GpuComparePane({
               )}
             </>
           ) : (
-            dims && (
+            framingDims && (
               <PixelValueOverlay
                 imageElRef={canvasRef}
-                naturalWidth={dims.w}
-                naturalHeight={dims.h}
+                naturalWidth={framingDims.w}
+                naturalHeight={framingDims.h}
                 zoom={zoom}
                 pan={pan}
                 sourceWindow={overlayWindow}

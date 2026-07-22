@@ -512,6 +512,8 @@ function CompareView({ node }: { node: CompareNode }) {
         baselineFloat={reference.float}
         diffSubmode={diffKernel as DiffMode}
         diffKernel={diffKernel}
+        align={node.align}
+        fit={node.fit}
         onDiffKernelChange={setDiffKernel}
         onCompareModeChange={setViewMode}
         onRequestSide={() => setViewMode("side")}
