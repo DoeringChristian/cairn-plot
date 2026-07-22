@@ -69,6 +69,7 @@ import {
 import ImagePaneShell from "./ImagePaneShell";
 import { colormapToolbarButton } from "./use-image-controller";
 import { useResettableState } from "../hooks/use-resettable-state";
+import { useDeepFlatten } from "./use-deep-flatten";
 import {
   isHdrProps,
   shapeDims,
@@ -648,7 +649,6 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
 
 function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
   const {
-    hdr,
     tonemap = "srgb",
     exposure = 0,
     gamma,
@@ -661,6 +661,11 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
     pixelValueNotation = "decimal",
     toolbar = true,
   } = props;
+
+  // DEEP EXR depth slider: `hdr` is the live-flattened effective source; the
+  // depth slider + HOME reset ride the shell (absent for non-deep sources).
+  const deepFlatten = useDeepFlatten(props.hdr);
+  const hdr = deepFlatten.hdr;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -779,6 +784,10 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
+      // DEEP depth slider (absent for non-deep); HOME resets the cutoff to zMax.
+      depthSlider={deepFlatten.slider}
+      onReset={deepFlatten.reset}
+      extraModified={deepFlatten.isModified}
       label={label}
       showLabelChip={!!label}
     />

@@ -48,6 +48,13 @@ export interface HdrData {
    * `Uint16Array`). See `../image/half.ts`.
    */
   precision?: import("../image/half.ts").Precision;
+  /**
+   * Present ONLY for a DEEP EXR opened with live-flatten (the depth slider).
+   * `data` above is the FULL composite; the controller re-flattens live at a Z
+   * cutoff. The consuming pane MUST `dispose()` it on unmount. See
+   * `../image/decoders.ts` and `./use-deep-flatten.ts`.
+   */
+  deep?: import("../image/decoders.ts").DeepFlattenController;
 }
 
 /** The float-HDR prop shape (presence of `hdr` selects this backend path). */

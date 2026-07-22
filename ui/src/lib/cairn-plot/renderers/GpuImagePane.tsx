@@ -107,6 +107,7 @@ import type { ImageOperator, ImageParams } from "../engine/image-engine";
 import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
 import { colormapToolbarButton } from "./use-image-controller";
+import { useDeepFlatten } from "./use-deep-flatten";
 import {
   isHdrProps,
   shapeDims,
@@ -117,6 +118,10 @@ import {
   type ImageBackend,
   type ImageBackendProps,
 } from "./image-backend";
+
+// A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
+// (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
+const NULL_HDR: HdrData = { data: new Float32Array(0), shape: [0, 0], dtype: "<f4" };
 import { reportCapabilityLimit } from "../primitives/capability-notice";
 
 const OPERATORS: readonly ImageOperator[] = ["linear", "srgb", "reinhard", "aces"];
@@ -281,6 +286,13 @@ export function screenPxPerTexel(
 
 export default function GpuImagePane(props: ImageBackendProps) {
   const hdrMode = isHdrProps(props);
+
+  // DEEP EXR depth slider (HDR path only). `deepFlatten.hdr` is the effective
+  // (live Z-clipped) source the upload effect below reads; the slider + HOME
+  // reset ride the shell. Called unconditionally (rules-of-hooks) with a null
+  // HDR in the SDR branch, where it yields no slider and passes the source
+  // through untouched.
+  const deepFlatten = useDeepFlatten(hdrMode ? (props as HdrImageProps).hdr : NULL_HDR);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -489,7 +501,8 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!hdrMode || !paneReady) return;
-    const hdr = (props as HdrImageProps).hdr;
+    // The DEEP-aware effective source (live Z-clip re-flatten swaps its `data`).
+    const hdr = deepFlatten.hdr;
     hdrDataRef.current = hdr;
     const upload = hdrToRGBAFloat32(hdr);
     paneHandleRef.current?.setSource(upload);
@@ -499,7 +512,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
     setPixelDataVersion((v) => v + 1);
     setUploadVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, hdrMode ? (props as HdrImageProps).hdr : null]);
+  }, [hdrMode, paneReady, hdrMode ? deepFlatten.hdr : null]);
 
   // -----------------------------------------------------------------------
   // SDR mode: decode `imageUrl` (+ optional CPU colormap false-color, exact
@@ -835,8 +848,14 @@ export default function GpuImagePane(props: ImageBackendProps) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
-      onReset={resetColormapOverride}
-      extraModified={colormapOverride !== defaultColormapRef.current}
+      // DEEP depth slider (HDR deep sources only; undefined otherwise). Its
+      // reset/modified fold into the colormap ones so HOME clears both.
+      depthSlider={deepFlatten.slider}
+      onReset={() => {
+        resetColormapOverride();
+        deepFlatten.reset();
+      }}
+      extraModified={colormapOverride !== defaultColormapRef.current || deepFlatten.isModified}
       label={label}
       showLabelChip={!!label}
       isDraggable={isDraggable}

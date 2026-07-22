@@ -200,6 +200,10 @@ export interface ImagePaneShellProps {
    *  {@link ImageDisplayAdjust}). When omitted, the second slider row is absent.
    *  Only shown when the toolbar itself renders (`toolbar={true}`). */
   displayAdjust?: ImageDisplayAdjust;
+  /** DEEP EXR depth-cutoff slider (`useDeepFlatten`) — prepended to the slider
+   *  row when present. Its `reset()`/`isModified` ride the `onReset`/
+   *  `extraModified` contract below, exactly like the display-adjust sliders. */
+  depthSlider?: ToolbarSliderSpec;
   /** Extra host-pane reset run by HOME / double-click alongside the viewport +
    *  slider reset — a compare pane restores its colormap / view-mode / kernel
    *  to the descriptor defaults here. */
@@ -241,6 +245,7 @@ export default function ImagePaneShell({
   requestRender,
   leadingMenus,
   displayAdjust,
+  depthSlider,
   onReset,
   extraModified,
   label,
@@ -311,10 +316,13 @@ export default function ImagePaneShell({
   // BEFORE tonemap/gamma/colormap. Display-only — the pane feeds these into its
   // render pass, never a diff recompute.
   const sliders = useMemo<ToolbarSliderSpec[] | undefined>(() => {
-    if (!displayAdjust) return undefined;
+    // DEEP depth slider leads; the EXPOSURE/OFFSET display-adjust pair follows.
+    const rows: ToolbarSliderSpec[] = [];
+    if (depthSlider) rows.push(depthSlider);
+    if (!displayAdjust) return rows.length ? rows : undefined;
     const signed = (v: number, digits: number) =>
       `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}`;
-    return [
+    rows.push(
       {
         id: "exposure",
         icon: "sun",
@@ -341,8 +349,9 @@ export default function ImagePaneShell({
         onChange: displayAdjust.onOffsetChange,
         format: (v) => signed(v, 2),
       },
-    ];
-  }, [displayAdjust]);
+    );
+    return rows;
+  }, [displayAdjust, depthSlider]);
 
   // While the overlay is active, expose the notation toggle ("0–255"/"0–1") as
   // a LEADING toolbar button (leftmost so it never shifts the standard buttons).

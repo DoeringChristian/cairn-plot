@@ -75,7 +75,33 @@ export type DecodedImage =
       height: number;
       channels: number;
       precision: import("./half.ts").Precision;
+      /**
+       * Present ONLY for a DEEP EXR decoded with live-flatten enabled (the
+       * single-image depth slider — see `decodeImage(src, { deepLiveFlatten })`).
+       * `data` above is the FULL composite (Z ≤ zMax); {@link DeepFlattenController}
+       * re-flattens live at a chosen Z cutoff and must be `dispose()`d when the
+       * consuming pane unmounts (frees the retained wasm-side handle).
+       */
+      deep?: DeepFlattenController;
     };
+
+/**
+ * Live depth-flatten handle for a DEEP EXR. Retained wasm-side samples are
+ * re-composited (front-to-back OVER) at a chosen Z cutoff with no re-decode
+ * (sparse files) or a debounce-covered re-decode (dense files) — see
+ * `wasm/openexr/src/binding.cpp`. The buffer {@link flatten} returns has the
+ * SAME width/height/channels/precision as the initial decode.
+ */
+export interface DeepFlattenController {
+  /** Nearest sample Z (front of the volume). */
+  readonly zMin: number;
+  /** Farthest sample Z (full composite). */
+  readonly zMax: number;
+  /** Re-flatten including only samples with Z ≤ `zClip`. */
+  flatten(zClip: number): Promise<Float32Array | Uint16Array>;
+  /** Release the retained wasm-side handle (idempotent). Call on pane unmount. */
+  dispose(): void;
+}
 
 /** A decodable image source: a `url`, raw `bytes`, or both, plus format hints. */
 export interface ImageSource {
@@ -377,14 +403,32 @@ export function getDecoder(fmt: ImageFormat): ImageDecoder | null {
   return fmt === "unknown" ? null : REGISTRY[fmt];
 }
 
+/** Options for {@link decodeImage}. */
+export interface DecodeImageOptions {
+  /**
+   * For a DEEP `.exr` source, retain the samples behind a wasm handle and attach
+   * a {@link DeepFlattenController} to the result (`decoded.deep`) so a single-
+   * image pane can re-flatten live at a Z cutoff (the depth slider). The caller
+   * OWNS the handle and MUST `decoded.deep.dispose()` on unmount. Omit (the
+   * default) for a one-shot full composite with no retained handle — the right
+   * choice for generic/compare callers that never move the slider.
+   */
+  deepLiveFlatten?: boolean;
+}
+
 /**
  * Decode any supported image source into the canonical {@link DecodedImage}.
  * Dispatches through the registry keyed by {@link sniffFormat}. An `"unknown"`
  * format falls back to a best-effort browser-native decode (a URL/bytes the
  * browser can still render), else throws a clear error.
  */
-export async function decodeImage(src: ImageSource): Promise<DecodedImage> {
+export async function decodeImage(
+  src: ImageSource,
+  opts?: DecodeImageOptions,
+): Promise<DecodedImage> {
   const fmt = sniffFormat(src);
+  // The EXR decoder alone honours `deepLiveFlatten` (deep = an EXR feature).
+  if (fmt === "exr") return decodeExr(src, opts);
   const decoder = getDecoder(fmt);
   if (decoder) return decoder(src);
   // Unknown: if we have something the browser might render, try it; else fail.

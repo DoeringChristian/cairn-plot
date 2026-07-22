@@ -217,11 +217,12 @@ export async function resolveDataProps(
           throw new Error(`cairn-plot: failed to fetch image ${data.url} (${res.status})`);
         }
         const bytes = await res.arrayBuffer();
-        const decoded = await decodeImage({
-          bytes,
-          url: data.url,
-          mime: res.headers.get("content-type") ?? undefined,
-        });
+        // Single-image leaf → deep-live-flatten enabled so a deep EXR gets the
+        // depth slider (`decoded.deep`, threaded into the `hdr` prop below).
+        const decoded = await decodeImage(
+          { bytes, url: data.url, mime: res.headers.get("content-type") ?? undefined },
+          { deepLiveFlatten: true },
+        );
         const overlay = parseOverlay(data.metadata) ?? undefined;
         if (decoded.kind === "f32") {
           const shape =
@@ -234,6 +235,7 @@ export async function resolveDataProps(
               shape,
               dtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
               precision: decoded.precision,
+              deep: decoded.deep,
             },
             baselineUrl: null,
             overlay,
@@ -249,10 +251,11 @@ export async function resolveDataProps(
       // baseline follows the same rule. Browser-native formats (or no `format`)
       // fall through to the byte-identical URL fast path below.
       if (data.format && isRawBufferFormat(data.format) && data.hash) {
-        const decoded = await decodeImage({
-          bytes: await source.bytes(data.hash),
-          ext: data.format,
-        });
+        // Single-image leaf → deep-live-flatten enabled (depth slider).
+        const decoded = await decodeImage(
+          { bytes: await source.bytes(data.hash), ext: data.format },
+          { deepLiveFlatten: true },
+        );
         const baselineUrl = await resolveRawBufferBaseline(data, source);
         const overlay = parseOverlay(data.metadata) ?? undefined;
         if (decoded.kind === "f32") {
@@ -266,6 +269,7 @@ export async function resolveDataProps(
               shape,
               dtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
               precision: decoded.precision,
+              deep: decoded.deep,
             },
             baselineUrl,
             overlay,

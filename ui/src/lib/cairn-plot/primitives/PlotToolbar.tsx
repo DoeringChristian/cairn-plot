@@ -133,6 +133,13 @@ const ICON_PATHS: Record<string, ReactNode> = {
       <path d="M6 20l12-16" />
     </>
   ),
+  // Layers (DEEP depth slider) — stacked planes seen edge-on.
+  layers: (
+    <>
+      <path d="M12 3l9 5-9 5-9-5 9-5z" />
+      <path d="M3 13l9 5 9-5" />
+    </>
+  ),
 };
 
 function Icon({ name }: { name: string }) {

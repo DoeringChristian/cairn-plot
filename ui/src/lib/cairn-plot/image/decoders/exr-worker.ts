@@ -5,38 +5,58 @@
  * graph (this file + `exr-full.ts` + `vendor/exr-loader.js` + `fflate`) is
  * embedded as a self-contained inline blob — no separate asset, no CDN.
  *
- * Decode is WASM-first (Rust `exr` crate, inline base64) with the vendored TS
- * decoder as the fallback — see `exr-wasm.ts`. The WASM decoder is instantiated
- * ONCE per worker lifetime (memoized inside `loadExrDecoder`). All-HALF sources
- * come back as raw f16 bit patterns (`precision:"f16-bits"`), so the reply also
- * carries a `precision` tag telling the host how to reinterpret `data`.
+ * Decode is WASM-first (OpenEXR compiled to wasm, inline base64) with the
+ * vendored TS decoder as the fallback — see `exr-wasm.ts`. The WASM decoder is
+ * instantiated ONCE per worker lifetime (memoized inside `loadExrDecoder`).
+ * All-HALF sources come back as raw f16 bit patterns (`precision:"f16-bits"`),
+ * so replies carry a `precision` tag telling the host how to reinterpret `data`.
+ *
+ * ## Deep live-flatten (the depth slider)
+ * A DEEP EXR opened with `kind:"openDeep"` is parsed ONCE; its samples are
+ * RETAINED behind a wasm-side handle that stays alive in THIS worker across
+ * messages. The reply carries the full composite plus `deep:{handle,zMin,zMax}`.
+ * The host then drives the slider with `kind:"flattenDeep"` (re-composite at a
+ * Z cutoff, live) and releases the handle on pane unmount with `kind:"freeDeep"`.
  *
  * Protocol (one job per message; the dispatcher correlates by `id`):
- *   ← { id, buffer: ArrayBuffer }                                  (transferred in)
- *   → { id, ok: true, data, width, height, channels, precision }   (transferred out)
- *   → { id, ok: false, error: string }
+ *   ← { id, kind?:"decode", buffer }                                 (transferred in)
+ *   ← { id, kind:"openDeep", buffer }                                (transferred in)
+ *   ← { id, kind:"flattenDeep", handle, zClip }
+ *   ← { id, kind:"freeDeep", handle }
+ *   → { id, ok:true, data, width, height, channels, precision, deep? } (transferred out)
+ *   → { id, ok:true, freed:true }                                    (freeDeep ack)
+ *   → { id, ok:false, error }
  */
 import type { Precision } from "../half.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
+import { loadExrDecoder, type DecodedImage } from "./wasm-inline/wasm-exr-inline.ts";
 
-/** Inbound decode request. */
-export interface ExrWorkerRequest {
-  id: number;
-  buffer: ArrayBuffer;
+/** Inbound requests (discriminated by `kind`; absent `kind` = "decode"). */
+export type ExrWorkerRequest =
+  | { id: number; kind?: "decode"; buffer: ArrayBuffer }
+  | { id: number; kind: "openDeep"; buffer: ArrayBuffer }
+  | { id: number; kind: "flattenDeep"; handle: number; zClip: number }
+  | { id: number; kind: "freeDeep"; handle: number };
+
+/** A flat image payload shared by decode / openDeep / flattenDeep replies. */
+export interface ExrImagePayload {
+  data: ArrayBuffer;
+  width: number;
+  height: number;
+  channels: number;
+  /** How to reinterpret `data`: `"f16-bits"` → Uint16Array, `"f32"` → Float32Array. */
+  precision: Precision;
 }
 
-/** Outbound decode reply. */
+/** Outbound replies. */
 export type ExrWorkerResponse =
-  | {
+  | (ExrImagePayload & {
       id: number;
       ok: true;
-      data: ArrayBuffer;
-      width: number;
-      height: number;
-      channels: number;
-      /** How to reinterpret `data`: `"f16-bits"` → Uint16Array, `"f32"` → Float32Array. */
-      precision: Precision;
-    }
+      /** Present when the source was a live-flatten DEEP open. */
+      deep?: { handle: number; zMin: number; zMax: number };
+    })
+  | { id: number; ok: true; freed: true }
   | { id: number; ok: false; error: string };
 
 // Minimal dedicated-worker surface (the app tsconfig uses the DOM lib, not
@@ -50,29 +70,76 @@ interface WorkerScope {
 }
 const ctx = self as unknown as WorkerScope;
 
-ctx.addEventListener("message", (event) => {
-  const { id, buffer } = event.data;
-  decodeExrPreferWasm(buffer)
-    .then((decoded) => {
-      const out = decoded.data.buffer as ArrayBuffer;
+/** Copy a decoded (JS-owned) wasm-inline image into a transferable payload. */
+function toPayload(img: DecodedImage): ExrImagePayload {
+  const arr = img.precision === "f16-bits" ? img.halfBits! : img.floats!;
+  const buf = arr.buffer as ArrayBuffer;
+  return {
+    data: buf,
+    width: img.width,
+    height: img.height,
+    channels: img.channels,
+    precision: img.precision,
+  };
+}
+
+function fail(id: number, err: unknown): void {
+  ctx.postMessage({ id, ok: false, error: err instanceof Error ? err.message : String(err) });
+}
+
+async function handle(req: ExrWorkerRequest): Promise<void> {
+  const { id } = req;
+  const kind = req.kind ?? "decode";
+
+  if (kind === "flattenDeep") {
+    const { handle: h, zClip } = req as Extract<ExrWorkerRequest, { kind: "flattenDeep" }>;
+    const { flatten_deep } = await loadExrDecoder();
+    const payload = toPayload(flatten_deep(h, zClip));
+    ctx.postMessage({ id, ok: true, ...payload }, [payload.data]);
+    return;
+  }
+
+  if (kind === "freeDeep") {
+    const { handle: h } = req as Extract<ExrWorkerRequest, { kind: "freeDeep" }>;
+    const { free_deep } = await loadExrDecoder();
+    free_deep(h);
+    ctx.postMessage({ id, ok: true, freed: true });
+    return;
+  }
+
+  if (kind === "openDeep") {
+    const { buffer } = req as Extract<ExrWorkerRequest, { kind: "openDeep" }>;
+    const { open_deep, flatten_deep } = await loadExrDecoder();
+    const deep = open_deep(new Uint8Array(buffer));
+    if (deep) {
+      // Retained handle stays alive in this worker; initial image = full composite.
+      const payload = toPayload(flatten_deep(deep.handle, deep.zMax));
       ctx.postMessage(
-        {
-          id,
-          ok: true,
-          data: out,
-          width: decoded.width,
-          height: decoded.height,
-          channels: decoded.channels,
-          precision: decoded.precision,
-        },
-        [out], // zero-copy transfer of the decoded (f16-bits or f32) buffer
+        { id, ok: true, ...payload, deep: { handle: deep.handle, zMin: deep.zMin, zMax: deep.zMax } },
+        [payload.data],
       );
-    })
-    .catch((err) => {
-      ctx.postMessage({
-        id,
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+      return;
+    }
+    // Not a deep file → ordinary decode, no handle.
+    const decoded = await decodeExrPreferWasm(buffer);
+    const out = decoded.data.buffer as ArrayBuffer;
+    ctx.postMessage(
+      { id, ok: true, data: out, width: decoded.width, height: decoded.height, channels: decoded.channels, precision: decoded.precision },
+      [out],
+    );
+    return;
+  }
+
+  // Plain decode (also the deep FALLBACK: one-shot full composite, no handle).
+  const { buffer } = req as Extract<ExrWorkerRequest, { kind?: "decode" }>;
+  const decoded = await decodeExrPreferWasm(buffer);
+  const out = decoded.data.buffer as ArrayBuffer;
+  ctx.postMessage(
+    { id, ok: true, data: out, width: decoded.width, height: decoded.height, channels: decoded.channels, precision: decoded.precision },
+    [out],
+  );
+}
+
+ctx.addEventListener("message", (event) => {
+  handle(event.data).catch((err) => fail(event.data.id, err));
 });

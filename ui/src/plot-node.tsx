@@ -235,6 +235,10 @@ async function resolveFrame(
         );
       }
       const bytes = await res.arrayBuffer();
+      // NOTE: no `deepLiveFlatten` here — the DEPTH slider is RESTRICTED to
+      // single-image panes for now (folding zClip into the compare diff
+      // contentKey + re-flatten plumbing is disproportionate to the payoff). A
+      // deep EXR in Compare shows the FULL composite (Z ≤ zMax), same as before.
       const decoded = await decodeImage({
         bytes,
         url: data.url,

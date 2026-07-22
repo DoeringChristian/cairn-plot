@@ -4,7 +4,7 @@
  * clean fallback chain:
  *
  *   1. a PERSISTENT Web Worker running the WASM-first core
- *      (`exr-worker.ts` → `exr-wasm.ts`: Rust `exr` crate, TS decoder fallback),
+ *      (`exr-worker.ts` → `exr-wasm.ts`: OpenEXR wasm, TS decoder fallback),
  *      the normal browser path — all compressions (PIZ/PXR24/B44/DWA/…), result
  *      returned as a transferable (f16 bit patterns for all-HALF, else f32);
  *   2. if `Worker` is unavailable or the worker path fails to spin up, the SAME
@@ -12,25 +12,39 @@
  *   3. if that throws, the original pure-TS reader (`exr.ts`, NONE/ZIP/ZIPS) as
  *      a last-ditch net.
  *
- * Unsupported-by-everything variants surface the full decoder's explicit error.
+ * ## Deep live-flatten (the depth slider)
+ * `decodeExr(src, { deepLiveFlatten: true })` (the single-image LEAF path) opens
+ * a DEEP EXR with the samples RETAINED behind a wasm handle — living in the
+ * worker (or the main-thread module) — and attaches a `DeepFlattenController`
+ * (`decoded.deep`) whose `flatten(zClip)` re-composites live and `dispose()`
+ * frees the handle. Generic/compare callers omit the flag: deep files decode
+ * one-shot (full composite) with no retained handle.
  *
  * One worker is reused across decodes; jobs are correlated by id through a
  * pending map, each guarded by a timeout, with errors propagated back to the
  * awaiting promise.
  */
-import type { DecodedImage, ImageSource } from "../decoders.ts";
+import type {
+  DecodedImage,
+  DecodeImageOptions,
+  DeepFlattenController,
+  ImageSource,
+} from "../decoders.ts";
 import { decodeExr as decodeExrPure } from "./exr.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
-import type { ExrWorkerRequest, ExrWorkerResponse } from "./exr-worker.ts";
+import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
+import type { ExrImagePayload, ExrWorkerRequest, ExrWorkerResponse } from "./exr-worker.ts";
 
 // A decode should never hang the queue; cap it generously (large DWA/PIZ frames
-// can take a while, but not this long).
+// can take a while, but not this long). Deep re-flatten (dense files re-decode)
+// rides the same bound.
 const DECODE_TIMEOUT_MS = 30_000;
 
 type F32Image = Extract<DecodedImage, { kind: "f32" }>;
+type OkResponse = Extract<ExrWorkerResponse, { ok: true }>;
 
 interface PendingJob {
-  resolve: (img: F32Image) => void;
+  resolve: (msg: OkResponse) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -66,23 +80,8 @@ function onWorkerMessage(event: MessageEvent<ExrWorkerResponse>): void {
   if (!job) return;
   pending.delete(msg.id);
   clearTimeout(job.timer);
-  if (msg.ok) {
-    // The worker is WASM-first (`exr-wasm.ts`): all-HALF sources come back as
-    // raw f16 bit patterns (`precision:"f16-bits"` → reinterpret `data` as a
-    // Uint16Array, kept half through to the rgba16float upload); everything else
-    // (incl. the TS fallback) is genuine f32.
-    job.resolve({
-      kind: "f32",
-      data:
-        msg.precision === "f16-bits" ? new Uint16Array(msg.data) : new Float32Array(msg.data),
-      width: msg.width,
-      height: msg.height,
-      channels: msg.channels,
-      precision: msg.precision,
-    });
-  } else {
-    job.reject(new Error(msg.error));
-  }
+  if (msg.ok) job.resolve(msg);
+  else job.reject(new Error(msg.error));
 }
 
 /** Lazily create (once) the persistent inline-blob worker. */
@@ -108,21 +107,123 @@ function getWorker(): Promise<Worker> {
   return workerPromise;
 }
 
-/** Decode via the persistent worker, transferring a copy of the bytes in. */
-async function decodeViaWorker(bytes: ArrayBuffer): Promise<F32Image> {
+/** Send one correlated request to the persistent worker. */
+async function requestWorker(
+  make: (id: number) => ExrWorkerRequest,
+  transfer: Transferable[],
+): Promise<OkResponse> {
   const worker = await getWorker();
   const id = nextId++;
-  // Copy so we never detach the caller's ArrayBuffer by transferring it.
-  const buffer = bytes.slice(0);
-  return new Promise<F32Image>((resolve, reject) => {
+  return new Promise<OkResponse>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
       resetWorker(new Error("cairn-plot decodeImage: EXR decode timed out"));
     }, DECODE_TIMEOUT_MS);
     pending.set(id, { resolve, reject, timer });
-    const req: ExrWorkerRequest = { id, buffer };
-    worker.postMessage(req, [buffer]);
+    worker.postMessage(make(id), transfer);
   });
+}
+
+/** A flat image payload (worker reply) → the canonical f32 DecodedImage. */
+function payloadToImage(msg: ExrImagePayload): F32Image {
+  return {
+    kind: "f32",
+    data: msg.precision === "f16-bits" ? new Uint16Array(msg.data) : new Float32Array(msg.data),
+    width: msg.width,
+    height: msg.height,
+    channels: msg.channels,
+    precision: msg.precision,
+  };
+}
+
+/** Decode via the persistent worker, transferring a copy of the bytes in. */
+async function decodeViaWorker(bytes: ArrayBuffer): Promise<F32Image> {
+  const buffer = bytes.slice(0); // copy so we never detach the caller's buffer
+  const msg = await requestWorker((id) => ({ id, buffer }), [buffer]);
+  return payloadToImage(msg as ExrImagePayload);
+}
+
+/** Build a worker-backed deep controller (flatten/free posted to the worker). */
+function workerDeepController(
+  handle: number,
+  zMin: number,
+  zMax: number,
+): DeepFlattenController {
+  let disposed = false;
+  return {
+    zMin,
+    zMax,
+    async flatten(zClip: number) {
+      const msg = await requestWorker((id) => ({ id, kind: "flattenDeep", handle, zClip }), []);
+      const p = msg as ExrImagePayload;
+      return p.precision === "f16-bits" ? new Uint16Array(p.data) : new Float32Array(p.data);
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      // Fire-and-forget; a worker reset before this lands is harmless (the wasm
+      // instance — and its handles — is gone with it).
+      void requestWorker((id) => ({ id, kind: "freeDeep", handle }), []).catch(() => {});
+    },
+  };
+}
+
+/** Build a main-thread deep controller (flatten/free on the local wasm module). */
+async function mainThreadDeepController(
+  handle: number,
+  zMin: number,
+  zMax: number,
+): Promise<DeepFlattenController> {
+  const { flatten_deep, free_deep } = await loadExrDecoder();
+  let disposed = false;
+  return {
+    zMin,
+    zMax,
+    async flatten(zClip: number) {
+      const img = flatten_deep(handle, zClip);
+      return img.precision === "f16-bits" ? img.halfBits! : img.floats!;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      free_deep(handle);
+    },
+  };
+}
+
+/**
+ * Deep-aware decode: open the source with the samples retained and attach a
+ * `deep` controller when it IS a deep EXR (else a plain image, no handle).
+ * Runs in the worker when available, else on the main-thread module (node).
+ */
+async function decodeDeepAware(bytes: ArrayBuffer): Promise<DecodedImage> {
+  if (canUseWorker()) {
+    const buffer = bytes.slice(0);
+    const msg = await requestWorker((id) => ({ id, kind: "openDeep", buffer }), [buffer]);
+    const image = payloadToImage(msg as ExrImagePayload);
+    const deep = (msg as Extract<OkResponse, { deep?: unknown }>).deep as
+      | { handle: number; zMin: number; zMax: number }
+      | undefined;
+    if (!deep) return image;
+    return { ...image, deep: workerDeepController(deep.handle, deep.zMin, deep.zMax) };
+  }
+  // No Worker (node): open + retain on the main-thread module.
+  const { open_deep, flatten_deep } = await loadExrDecoder();
+  const opened = open_deep(new Uint8Array(bytes));
+  if (!opened) return decodeExrPreferWasm(bytes.slice(0)); // not deep
+  const flat = flatten_deep(opened.handle, opened.zMax);
+  const image: F32Image = {
+    kind: "f32",
+    data: flat.precision === "f16-bits" ? flat.halfBits! : flat.floats!,
+    width: flat.width,
+    height: flat.height,
+    channels: flat.channels,
+    precision: flat.precision,
+  };
+  return {
+    ...image,
+    deep: await mainThreadDeepController(opened.handle, opened.zMin, opened.zMax),
+  };
 }
 
 /** Full decode: worker when possible, else the same WASM-first core on the main thread. */
@@ -145,12 +246,26 @@ async function decodeFull(src: ImageSource): Promise<DecodedImage> {
  * Registry entry: decode an EXR source. Tries the full worker-backed decoder,
  * then the pure-TS reader as a fallback; the full decoder's error wins when both
  * fail (it covers the most variants, so its message is the most informative).
+ *
+ * With `{ deepLiveFlatten: true }` a deep source additionally retains its samples
+ * and attaches `decoded.deep` (the depth slider) — see the module doc.
  */
-export async function decodeExr(src: ImageSource): Promise<DecodedImage> {
+export async function decodeExr(
+  src: ImageSource,
+  opts?: DecodeImageOptions,
+): Promise<DecodedImage> {
   if (!src.bytes) {
     throw new Error(
       "cairn-plot decodeImage: the exr decoder needs raw bytes (src.bytes), got only a url",
     );
+  }
+  if (opts?.deepLiveFlatten) {
+    try {
+      return await decodeDeepAware(src.bytes);
+    } catch {
+      // Deep-aware path failed (worker crash / broken retained read) → fall
+      // through to the ordinary one-shot decode chain below (no slider).
+    }
   }
   try {
     return await decodeFull(src);
