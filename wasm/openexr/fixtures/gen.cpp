@@ -156,9 +156,14 @@ static void writeDeep(const std::string& path, int w, int h) {
       counts[y][x] = n;
       Rp[y][x] = new float[n]; Gp[y][x] = new float[n]; Bp[y][x] = new float[n];
       Ap[y][x] = new float[n]; Zp[y][x] = new float[n];
-      // Back sample (larger Z) written FIRST to prove the decoder sorts by Z.
+      // Back sample (larger Z) written FIRST (s0, Z=10) to prove the decoder
+      // sorts by Z, not file order. The FRONT sample (s1, Z=1) is semi-transparent
+      // (a=0.5) and the BACK is opaque (a=1) so the back DOES contribute to a full
+      // composite — making the depth-slider test meaningful: clipping between the
+      // two (e.g. zClip=7) drops the back and yields ONLY the front (a=0.5), which
+      // DIFFERS from the full flatten (a=1). Single-sample pixels sit at Z=5.
       for (unsigned int s = 0; s < n; ++s) {
-        float a = (n == 2 && s == 0) ? 0.5f : 1.0f;  // front sample semi-transparent
+        float a = (n == 2 && s == 1) ? 0.5f : 1.0f;  // front sample (s1, Z=1) semi-transparent
         Rp[y][x][s] = a * wave(x, y, s);
         Gp[y][x][s] = a * wave(x, y, s + 1);
         Bp[y][x][s] = a * wave(x, y, s + 2);
@@ -167,6 +172,55 @@ static void writeDeep(const std::string& path, int w, int h) {
       }
     }
 
+  DeepScanLineOutputFile file(path.c_str(), hd);
+  DeepFrameBuffer fb;
+  fb.insertSampleCountSlice(Slice(UINT, (char*)&counts[0][0], sizeof(unsigned int),
+                                  sizeof(unsigned int) * w));
+  auto add = [&](const char* n, Array2D<float*>& p) {
+    fb.insert(n, DeepSlice(FLOAT, (char*)&p[0][0], sizeof(float*),
+                           sizeof(float*) * w, sizeof(float)));
+  };
+  add("R", Rp); add("G", Gp); add("B", Bp); add("A", Ap); add("Z", Zp);
+  file.setFrameBuffer(fb);
+  file.writePixels(h);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      delete[] Rp[y][x]; delete[] Gp[y][x]; delete[] Bp[y][x];
+      delete[] Ap[y][x]; delete[] Zp[y][x];
+    }
+}
+
+// Large DENSE deep scanline (uncommitted) for the retained-vs-redecode
+// benchmark — Trunks-scale foliage density: a variable 1..K samples/pixel so
+// the retained CSR far exceeds the flat image (the case that must fall back to
+// cache-bytes + redecode). Front-to-back varying Z; premultiplied.
+static void writeDeepDense(const std::string& path, int w, int h, int maxSamples) {
+  Header hd(w, h);
+  hd.setType(DEEPSCANLINE);
+  hd.compression() = ZIPS_COMPRESSION;
+  hd.channels().insert("R", Channel(FLOAT));
+  hd.channels().insert("G", Channel(FLOAT));
+  hd.channels().insert("B", Channel(FLOAT));
+  hd.channels().insert("A", Channel(FLOAT));
+  hd.channels().insert("Z", Channel(FLOAT));
+
+  Array2D<unsigned int> counts(h, w);
+  Array2D<float*> Rp(h, w), Gp(h, w), Bp(h, w), Ap(h, w), Zp(h, w);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      unsigned int n = 1u + (unsigned int)((x * 7 + y * 13) % maxSamples);
+      counts[y][x] = n;
+      Rp[y][x] = new float[n]; Gp[y][x] = new float[n]; Bp[y][x] = new float[n];
+      Ap[y][x] = new float[n]; Zp[y][x] = new float[n];
+      for (unsigned int s = 0; s < n; ++s) {
+        float a = 0.3f;  // semi-transparent so many samples contribute
+        Rp[y][x][s] = a * wave(x, y, s);
+        Gp[y][x][s] = a * wave(x, y, s + 1);
+        Bp[y][x][s] = a * wave(x, y, s + 2);
+        Ap[y][x][s] = a;
+        Zp[y][x][s] = 1.0f + 2.0f * (float)s;  // ascending Z per sample
+      }
+    }
   DeepScanLineOutputFile file(path.c_str(), hd);
   DeepFrameBuffer fb;
   fb.insertSampleCountSlice(Slice(UINT, (char*)&counts[0][0], sizeof(unsigned int),
@@ -195,5 +249,7 @@ int main(int argc, char** argv) {
   writeHtj2k(p("htj2k-half-64x48.exr"), 64, 48);
   writeDeep(p("deep-rgba-32x32.exr"), 32, 32);
   writeFlatHalf(p("rgb-piz-half-1024x1024.exr"), 1024, 1024, PIZ_COMPRESSION);
+  // Trunks-scale dense deep for the retained-vs-redecode benchmark (uncommitted).
+  writeDeepDense(p("deep-dense-512x512.exr"), 512, 512, 12);
   return 0;
 }

@@ -4,6 +4,11 @@ export interface CairnOpenExrModule {
   _free(p: number): void;
   _cairn_exr_decode(ptr: number, len: number): number;
   _cairn_exr_free(r: number): void;
+  // DEEP live-flatten ABI (depth slider) — see wasm/openexr/src/binding.cpp.
+  _cairn_exr_open_deep(ptr: number, len: number): number;
+  _cairn_exr_flatten_deep(handle: number, zClip: number): number;
+  _cairn_exr_free_open_deep(r: number): void;
+  _cairn_exr_free_deep(handle: number): void;
   HEAPU8: Uint8Array;
   HEAPU16: Uint16Array;
   HEAP32: Int32Array;

@@ -40,6 +40,11 @@ export interface CairnOpenExrModule {
   _free(p: number): void;
   _cairn_exr_decode(ptr: number, len: number): number;
   _cairn_exr_free(r: number): void;
+  // DEEP live-flatten ABI (depth slider) — see wasm/openexr/src/binding.cpp.
+  _cairn_exr_open_deep(ptr: number, len: number): number;
+  _cairn_exr_flatten_deep(handle: number, zClip: number): number;
+  _cairn_exr_free_open_deep(r: number): void;
+  _cairn_exr_free_deep(handle: number): void;
   HEAPU8: Uint8Array;
   HEAPU16: Uint16Array;
   HEAP32: Int32Array;
@@ -109,15 +114,31 @@ export interface DecodedImage {
   free(): void;
 }
 
+/**
+ * A retained DEEP EXR (depth slider). \`handle\` is an opaque wasm-side pointer to
+ * the retained samples — pass it to \`flatten_deep(handle, zClip)\` (live, no
+ * re-decode) and \`free_deep(handle)\` when the pane unmounts. \`zMin\`/\`zMax\` bound
+ * the slider; a non-deep file yields \`null\` from \`open_deep\` (host falls back to
+ * the ordinary \`decode_exr\`).
+ */
+export interface DeepImageOpen {
+  readonly handle: number;
+  readonly width: number;
+  readonly height: number;
+  readonly channels: number;
+  readonly zMin: number;
+  readonly zMax: number;
+  readonly totalSamples: number;
+}
+
 // Result struct field order — CONTRACT with wasm/openexr/src/binding.cpp.
 const F = { status: 0, width: 1, height: 2, channels: 3, precision: 4, data: 5, dataLen: 6, errCode: 7, errMsg: 8 };
+// DeepOpenResult field order (z_min/z_max are FLOATs → read from HEAPF32).
+const DF = { status: 0, handle: 1, width: 2, height: 3, channels: 4, zMin: 5, zMax: 6, total: 7, errCode: 8, errMsg: 9 };
 
-/** Read one decode result out of the module heap into a JS-owned DecodedImage. */
-function readResult(mod: CairnOpenExrModule, bytes: Uint8Array): DecodedImage {
-  const inPtr = mod._malloc(bytes.length);
-  mod.HEAPU8.set(bytes, inPtr);
-  const rPtr = mod._cairn_exr_decode(inPtr, bytes.length);
-  mod._free(inPtr);
+/** Read a DecodeResult* out of the module heap into a JS-owned DecodedImage
+ *  (copies the payload out of wasm memory, then frees the wasm-side result). */
+function readDecodeResult(mod: CairnOpenExrModule, rPtr: number): DecodedImage {
   const H = mod.HEAP32;
   const base = rPtr >> 2;
   if (H[base + F.status] !== 0) {
@@ -155,16 +176,79 @@ function readResult(mod: CairnOpenExrModule, bytes: Uint8Array): DecodedImage {
   };
 }
 
+/** Decode EXR bytes (one-shot; deep files are flattened at full composite). */
+function readResult(mod: CairnOpenExrModule, bytes: Uint8Array): DecodedImage {
+  const inPtr = mod._malloc(bytes.length);
+  mod.HEAPU8.set(bytes, inPtr);
+  const rPtr = mod._cairn_exr_decode(inPtr, bytes.length);
+  mod._free(inPtr);
+  return readDecodeResult(mod, rPtr);
+}
+
+/** Open + RETAIN a DEEP EXR behind a wasm-side handle. Returns \`null\` when the
+ *  file is NOT deep (the caller then uses \`decode_exr\`); throws on a genuinely
+ *  broken deep file. */
+function openDeep(mod: CairnOpenExrModule, bytes: Uint8Array): DeepImageOpen | null {
+  const inPtr = mod._malloc(bytes.length);
+  mod.HEAPU8.set(bytes, inPtr);
+  const rPtr = mod._cairn_exr_open_deep(inPtr, bytes.length);
+  mod._free(inPtr);
+  const H = mod.HEAP32;
+  const Hf = mod.HEAPF32;
+  const base = rPtr >> 2;
+  if (H[base + DF.status] !== 0) {
+    const code = mod.UTF8ToString(H[base + DF.errCode]!);
+    const msg = mod.UTF8ToString(H[base + DF.errMsg]!);
+    mod._cairn_exr_free_open_deep(rPtr);
+    if (code === "not-deep") return null; // not a deep file → caller uses decode_exr
+    const err = new Error(msg) as Error & { code: string };
+    err.name = "CairnExrDecodeError";
+    err.code = code;
+    throw err;
+  }
+  const out: DeepImageOpen = {
+    handle: H[base + DF.handle]! >>> 0,
+    width: H[base + DF.width]!,
+    height: H[base + DF.height]!,
+    channels: H[base + DF.channels]!,
+    zMin: Hf[base + DF.zMin]!,
+    zMax: Hf[base + DF.zMax]!,
+    totalSamples: H[base + DF.total]! >>> 0,
+  };
+  mod._cairn_exr_free_open_deep(rPtr);
+  return out;
+}
+
+/** Flatten a retained deep handle at a Z cutoff (samples with Z ≤ \`zClip\`), live. */
+function flattenDeep(mod: CairnOpenExrModule, handle: number, zClip: number): DecodedImage {
+  const rPtr = mod._cairn_exr_flatten_deep(handle, zClip);
+  return readDecodeResult(mod, rPtr);
+}
+
+/** Release a retained deep handle (frees its retained samples / cached bytes). */
+function freeDeep(mod: CairnOpenExrModule, handle: number): void {
+  mod._cairn_exr_free_deep(handle);
+}
+
 let ready: Promise<CairnOpenExrModule> | null = null;
+
+/** The decoder surface returned by {@link loadExrDecoder}. */
+export interface ExrDecoder {
+  decode_exr: (bytes: Uint8Array) => DecodedImage;
+  /** Open + retain a deep EXR (null when not deep). */
+  open_deep: (bytes: Uint8Array) => DeepImageOpen | null;
+  /** Flatten a retained deep handle at a Z cutoff (\`Infinity\` = full composite). */
+  flatten_deep: (handle: number, zClip: number) => DecodedImage;
+  /** Free a retained deep handle. */
+  free_deep: (handle: number) => void;
+  DecodedImage: unknown;
+}
 
 /**
  * Instantiate the OpenEXR decoder once (idempotent) from the embedded bytes and
- * return \`decode_exr\`. No network / filesystem access.
+ * return the decode surface. No network / filesystem access.
  */
-export async function loadExrDecoder(): Promise<{
-  decode_exr: (bytes: Uint8Array) => DecodedImage;
-  DecodedImage: unknown;
-}> {
+export async function loadExrDecoder(): Promise<ExrDecoder> {
   const pending =
     ready ??
     (ready = createOpenExrModule({
@@ -180,7 +264,13 @@ export async function loadExrDecoder(): Promise<{
       },
     }));
   const mod = await pending;
-  return { decode_exr: (bytes: Uint8Array) => readResult(mod, bytes), DecodedImage: class {} };
+  return {
+    decode_exr: (bytes: Uint8Array) => readResult(mod, bytes),
+    open_deep: (bytes: Uint8Array) => openDeep(mod, bytes),
+    flatten_deep: (handle: number, zClip: number) => flattenDeep(mod, handle, zClip),
+    free_deep: (handle: number) => freeDeep(mod, handle),
+    DecodedImage: class {},
+  };
 }
 `;
 
