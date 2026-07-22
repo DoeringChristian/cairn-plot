@@ -100,18 +100,30 @@ emcmake cmake -S "$OPENEXR_SRC" -B "$BUILD/openexr" -G "Unix Makefiles" \
 cmake --build "$BUILD/openexr" --target install -j"$(sysctl -n hw.ncpu)"
 
 echo "=== [3/3] link binding → cairn_openexr.mjs + .wasm ==="
-# Static libs installed under $PREFIX/lib. Discover them (names vary by version:
-# OpenEXR-3_4, Imath-3_2, etc.) and link all. Emscripten's minimal ES6 glue
-# (FILESYSTEM=0) supplies the wasm's runtime imports (memory growth, abort);
-# the .wasm stays a SEPARATE file so the inline packager can deflate it and the
-# glue instantiates from `wasmBinary` (no fetch — CSP/file:// safe).
-LIBS=$(ls "$PREFIX"/lib/*.a)
+# Static libs installed under $PREFIX/lib (names carry the version: OpenEXR-3_4,
+# Imath-3_2, …). The vendored OpenJPH (FORCE_INTERNAL) is NOT installed to the
+# prefix, so grab it from the build tree. Order is dependency-first (consumers
+# before providers): OpenEXRCore's HTJ2K (internal_ht) needs OpenJPH. Emscripten's
+# minimal ES6 glue (FILESYSTEM=0) supplies the wasm's runtime imports (memory
+# growth, abort); the .wasm stays a SEPARATE file so the inline packager can
+# deflate it and the glue instantiates from `wasmBinary` (no fetch — CSP-safe).
+OJPH_LIB="$BUILD/openexr/external/OpenJPH/src/core/libopenjph.a"
+[ -f "$OJPH_LIB" ] || { echo "missing $OJPH_LIB" >&2; exit 1; }
+LIBS=(
+  "$PREFIX"/lib/libOpenEXRUtil-*.a
+  "$PREFIX"/lib/libOpenEXR-*.a
+  "$PREFIX"/lib/libOpenEXRCore-*.a
+  "$OJPH_LIB"
+  "$PREFIX"/lib/libIlmThread-*.a
+  "$PREFIX"/lib/libIex-*.a
+  "$PREFIX"/lib/libImath-*.a
+)
 em++ $CFLAGS_COMMON -std=c++17 \
   -I"$PREFIX/include" \
   -I"$PREFIX/include/Imath" \
   -I"$PREFIX/include/OpenEXR" \
   "$HERE/src/binding.cpp" \
-  $LIBS \
+  "${LIBS[@]}" \
   -o "$BUILD/cairn_openexr.mjs" \
   -sMODULARIZE=1 \
   -sEXPORT_ES6=1 \

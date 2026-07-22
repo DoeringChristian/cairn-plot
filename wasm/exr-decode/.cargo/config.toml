@@ -1,9 +1,0 @@
-# WASM build flags for this crate ONLY (crate-local .cargo/config.toml is picked
-# up when cargo/wasm-pack is invoked with this crate as the working directory).
-#
-# +simd128 turns on the WebAssembly SIMD proposal (baseline in all modern
-# browsers + Node >= 16.4). The exr crate's inflate / PIZ wavelet inner loops
-# benefit; harmless where unused. Native `cargo test` is unaffected because this
-# only targets wasm32.
-[target.wasm32-unknown-unknown]
-rustflags = ["-C", "target-feature=+simd128"]
