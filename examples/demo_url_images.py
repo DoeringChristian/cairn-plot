@@ -3,15 +3,16 @@
 Demonstrates ``cp.Image(url=...)``: the emitted HTML keeps the URL verbatim
 (nothing is embedded), and the BROWSER fetches + sniffs + decodes the blob at
 view time — including formats a browser can't ``<img>``-decode, like OpenEXR
-(decoded by cairn-plot's built-in pure-TS reader: single-part scanline,
-HALF/FLOAT channels, NONE/ZIP/ZIPS compression).
+(decoded WASM-first by the upstream OpenEXR C++ library compiled to WebAssembly,
+off the main thread in a Web Worker — every compression incl. HTJ2K, scanline &
+tiled, deep, multi-part, and luminance-chroma).
 
 Sources are the ASWF openexr-images sample repo (served with CORS ``*``):
 
 * ``WideColorGamut.exr`` — ZIP-compressed RGB → decodes and renders in the
   float-HDR pane (tone-map/exposure controls live).
-* ``Desk.exr`` — PIZ-compressed → decoded by the vendored FULL decoder
-  (PIZ/PXR24/B44/DWA), off the main thread in a Web Worker.
+* ``Desk.exr`` — PIZ-compressed → decoded by the same OpenEXR WASM module,
+  off the main thread in a Web Worker.
 
 NOTE: viewing needs NETWORK access (the whole point — the images are
 referenced, not baked), so this stays a separate example: the offline demo
@@ -40,17 +41,17 @@ def build_report() -> "cp.Report":
             "(content-type → extension → magic bytes) and decodes it.\n"
         )
         .md(
-            "### ZIP EXR (supported) — `TestImages/WideColorGamut.exr`\n"
-            "ZIP-compressed RGB half-float; decoded by the built-in EXR reader "
-            "(native `DecompressionStream` + predictor/interleave inversion) into "
-            "the float-HDR pane — tone-map and exposure are live."
+            "### ZIP EXR — `TestImages/WideColorGamut.exr`\n"
+            "ZIP-compressed RGB half-float; decoded by the OpenEXR WASM module "
+            "into the float-HDR pane — tone-map and exposure are live."
         )
         .add(cp.Image(url=f"{ASWF}/TestImages/WideColorGamut.exr", tonemap="aces"))
         .md(
             "### PIZ EXR — `ScanLines/Desk.exr`\n"
             "PIZ (wavelet+Huffman — OpenEXR's historic default) is decoded by the "
-            "vendored full EXR decoder, running **off the main thread** in a Web "
-            "Worker. The full decoder also covers PXR24, B44(A), and DWAA/DWAB."
+            "OpenEXR WASM module, running **off the main thread** in a Web Worker. "
+            "The same module covers every EXR compression, incl. PXR24, B44(A), "
+            "DWAA/DWAB, and HTJ2K."
         )
         .add(cp.Image(url=f"{ASWF}/ScanLines/Desk.exr"))
         .md(

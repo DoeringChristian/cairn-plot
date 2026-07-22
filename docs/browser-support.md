@@ -134,21 +134,37 @@ limit.
 
 ## EXR decoding (WASM-accelerated)
 
-OpenEXR sources are decoded **WASM-first**: a small Rust decoder (the pure-Rust
-`exr` crate, compiled to WebAssembly and shipped inline as base64 — no fetch, so
-it works on `file://` and under strict CSP) runs inside the same persistent Web
-Worker that already handles EXR off the main thread. It covers the full classic
-compression set — NONE, RLE, ZIP(S), PIZ, PXR24, B44/B44A **and DWAA/DWAB** — and
-returns all-`HALF` sources as raw f16 bit patterns that stay half-precision all
-the way to the `rgba16float` GPU upload (no eager widening to f32). The decoder
-is instantiated once per worker lifetime.
+OpenEXR sources are decoded **WASM-first** by the upstream **OpenEXR C++ library**
+(v3.4.9 + Imath v3.2.2, with libdeflate v1.25 and OpenJPH 0.26.3 for HTJ2K),
+compiled to WebAssembly with Emscripten (single-threaded — no COOP/COEP needed —
+`-msimd128`, wasm exceptions) and shipped inline as base64 (no fetch, so it works
+on `file://` and under strict CSP). It runs inside the same persistent Web Worker
+that already handles EXR off the main thread, and is instantiated once per worker
+lifetime.
 
-The previous **TypeScript decoder remains the fallback**, used automatically when
-the WASM path can't handle an input: HTJ2K compression or luminance-chroma
-(Y/RY/BY) channel layouts (which the WASM decoder reports as typed errors), or
-if the WASM module fails to instantiate on a given browser. Beneath both sits the
-original pure-TS reader (NONE/ZIP/ZIPS) as a last-ditch net. The decode result is
-identical either way, so this acceleration is transparent to page authors.
+Because it is the reference implementation, it decodes **literally every EXR**:
+
+- **All compressions** — NONE, RLE, ZIP(S), PIZ, PXR24, B44/B44A, DWAA/DWAB, **and
+  HTJ2K** (High-Throughput JPEG 2000, via OpenJPH).
+- **Scanline and tiled** images (all mip/rip levels; the largest level is read).
+- **Luminance-chroma** (Y/RY/BY) — reconstructed natively to RGBA (stays `HALF`).
+- **Deep** (`deepscanline`/`deeptile`) — flattened for display by sorting each
+  pixel's samples front-to-back by Z and compositing with premultiplied OVER.
+- **Multi-part** files — part 0 is decoded (explicit part selection is a follow-up).
+
+All-`HALF` sources (including luma-chroma and deep composites) come back as raw
+f16 bit patterns that stay half-precision all the way to the `rgba16float` GPU
+upload (no eager widening to f32); mixed/`FLOAT`/`UINT` sources come back as f32.
+
+The pure-**TypeScript decoder remains a fallback**, used automatically only if the
+WASM module fails to instantiate on a given browser, or for the rare channel
+layout the binding does not compact (not R,G,B(,A), not a single channel, not
+luma-chroma). In practice nothing displayable errors anymore. The decode result
+is identical either way, so this acceleration is transparent to page authors.
+
+Fixture provenance and size/benchmark numbers live under `wasm/openexr/`
+(`build.sh` pins every source tag; `fixtures/gen.cpp` generates the committed
+coverage crops).
 
 Each banner states the limitation, gives a one-line hint on how to enable the
 capability (browser-specific for messages 1–2, OS-specific for message 3), and
