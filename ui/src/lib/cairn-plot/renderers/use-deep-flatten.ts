@@ -50,10 +50,21 @@ export interface DeepFlattenState {
   isModified: boolean;
 }
 
-export function useDeepFlatten(hdr: HdrData): DeepFlattenState {
+/**
+ * `onZClip` selects GPU mode: instead of the coalesced wasm re-flatten, EVERY
+ * cutoff change (uncoalesced — the GPU composite is sub-frame) calls `onZClip`,
+ * which the GPU pane wires to `paneHandle.setDeepZClip(z)` + a repaint. In that
+ * mode `hdr` is returned unchanged (the pane drives its own texture via the GPU
+ * composite pass). Omit it for the CPU/wasm path.
+ */
+export function useDeepFlatten(
+  hdr: HdrData,
+  onZClip?: (zClip: number) => void,
+): DeepFlattenState {
   const deep = hdr.deep;
   const zMin = deep?.zMin ?? 0;
   const zMax = deep?.zMax ?? 0;
+  const gpuMode = onZClip != null;
 
   // Z cutoff, seeded at zMax (full composite). Reset/isModified drive the shell.
   const [zClip, setZClip, zMeta] = useResettableState<number>(zMax);
@@ -115,22 +126,29 @@ export function useDeepFlatten(hdr: HdrData): DeepFlattenState {
     };
   }, [deep]);
 
-  // Drive the re-flatten as the cutoff changes — no debounce, coalesced. At (or
-  // above) zMax the full composite already IS `hdr.data`, so drop the override
-  // (and stop wanting any in-flight clipped result).
+  // Drive the re-composite as the cutoff changes.
+  //  - GPU mode: hand every cutoff straight to `onZClip` (uniform write + pass +
+  //    blit — sub-frame, so no debounce/coalescing needed).
+  //  - CPU/wasm mode: coalesced re-flatten (latest-wins, one in flight). At (or
+  //    above) zMax the full composite already IS `hdr.data`, so drop the override.
   useEffect(() => {
     if (!deep) return;
     wantRef.current = zClip;
+    if (gpuMode) {
+      onZClip(zClip);
+      return;
+    }
     if (zClip >= zMax) {
       setFlatData(null);
       return;
     }
     request(zClip);
-  }, [deep, zClip, zMax, request]);
+  }, [deep, zClip, zMax, request, gpuMode, onZClip]);
 
   const effectiveHdr = useMemo<HdrData>(
-    () => (deep && flatData != null ? { ...hdr, data: flatData } : hdr),
-    [hdr, deep, flatData],
+    // GPU mode drives its own texture (composite pass), so `hdr` passes through.
+    () => (deep && !gpuMode && flatData != null ? { ...hdr, data: flatData } : hdr),
+    [hdr, deep, gpuMode, flatData],
   );
 
   // Log mapping only when the volume spans a large dynamic range AND zMin is

@@ -36,6 +36,7 @@ export type ExrWorkerRequest =
   | { id: number; kind?: "decode"; buffer: ArrayBuffer }
   | { id: number; kind: "openDeep"; buffer: ArrayBuffer }
   | { id: number; kind: "flattenDeep"; handle: number; zClip: number }
+  | { id: number; kind: "deepGpuCsr"; handle: number }
   | { id: number; kind: "freeDeep"; handle: number };
 
 /** A flat image payload shared by decode / openDeep / flattenDeep replies. */
@@ -48,6 +49,16 @@ export interface ExrImagePayload {
   precision: Precision;
 }
 
+/** Z-sorted deep samples for GPU upload (transferable buffers). */
+export interface ExrGpuCsrPayload {
+  width: number;
+  height: number;
+  total: number;
+  offsets: ArrayBuffer; // Uint32Array bytes (pixels+1)
+  colors: ArrayBuffer; // Float32Array bytes (4*total)
+  zs: ArrayBuffer; // Float32Array bytes (total)
+}
+
 /** Outbound replies. */
 export type ExrWorkerResponse =
   | (ExrImagePayload & {
@@ -56,6 +67,7 @@ export type ExrWorkerResponse =
       /** Present when the source was a live-flatten DEEP open. */
       deep?: { handle: number; zMin: number; zMax: number };
     })
+  | { id: number; ok: true; gpuCsr: ExrGpuCsrPayload }
   | { id: number; ok: true; freed: true }
   | { id: number; ok: false; error: string };
 
@@ -96,6 +108,20 @@ async function handle(req: ExrWorkerRequest): Promise<void> {
     const { flatten_deep } = await loadExrDecoder();
     const payload = toPayload(flatten_deep(h, zClip));
     ctx.postMessage({ id, ok: true, ...payload }, [payload.data]);
+    return;
+  }
+
+  if (kind === "deepGpuCsr") {
+    const { handle: h } = req as Extract<ExrWorkerRequest, { kind: "deepGpuCsr" }>;
+    const { deep_gpu_csr } = await loadExrDecoder();
+    const csr = deep_gpu_csr(h);
+    const offsets = csr.offsets.buffer as ArrayBuffer;
+    const colors = csr.colors.buffer as ArrayBuffer;
+    const zs = csr.zs.buffer as ArrayBuffer;
+    ctx.postMessage(
+      { id, ok: true, gpuCsr: { width: csr.width, height: csr.height, total: csr.total, offsets, colors, zs } },
+      [offsets, colors, zs],
+    );
     return;
   }
 

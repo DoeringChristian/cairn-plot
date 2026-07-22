@@ -287,17 +287,27 @@ export function screenPxPerTexel(
 export default function GpuImagePane(props: ImageBackendProps) {
   const hdrMode = isHdrProps(props);
 
-  // DEEP EXR depth slider (HDR path only). `deepFlatten.hdr` is the effective
-  // (live Z-clipped) source the upload effect below reads; the slider + HOME
-  // reset ride the shell. Called unconditionally (rules-of-hooks) with a null
-  // HDR in the SDR branch, where it yields no slider and passes the source
-  // through untouched.
-  const deepFlatten = useDeepFlatten(hdrMode ? (props as HdrImageProps).hdr : NULL_HDR);
-
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const imgWrapperRef = useRef<HTMLDivElement | null>(null);
   const paneHandleRef = useRef<PaneHandle | null>(null);
+
+  // DEEP EXR depth slider. A deep source drives the REAL-TIME GPU composite
+  // (samples uploaded once to GPU storage buffers, re-composited per cutoff on
+  // the GPU — see `pool.setDeepSource`/`setDeepZClip`). `deepFlatten` still owns
+  // the slider / HOME reset; in GPU mode (`onDeepZClip` supplied) it hands every
+  // cutoff straight to the composite + repaint (no wasm flatten, no CPU upload).
+  // Called unconditionally (rules-of-hooks) with a null HDR in the SDR branch.
+  const renderPassRef = useRef<(() => void) | null>(null);
+  const deepActive = hdrMode && !!(props as HdrImageProps).hdr?.deep;
+  const onDeepZClip = useCallback((z: number) => {
+    paneHandleRef.current?.setDeepZClip(z);
+    renderPassRef.current?.();
+  }, []);
+  const deepFlatten = useDeepFlatten(
+    hdrMode ? (props as HdrImageProps).hdr : NULL_HDR,
+    deepActive ? onDeepZClip : undefined,
+  );
   // True once the acquire effect below has resolved a real HDR (rgba16float/
   // display-p3/extended-tonemap) surface for this pane — see `useHdr`'s
   // computation just below. Read by the render effect to decide `hdrOut`
@@ -500,7 +510,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // HDR mode: decode/retain source, upload on identity change.
   // -----------------------------------------------------------------------
   useEffect(() => {
-    if (!hdrMode || !paneReady) return;
+    if (!hdrMode || !paneReady || deepActive) return; // deep → GPU-composite effect below
     // The DEEP-aware effective source (live Z-clip re-flatten swaps its `data`).
     const hdr = deepFlatten.hdr;
     hdrDataRef.current = hdr;
@@ -512,7 +522,38 @@ export default function GpuImagePane(props: ImageBackendProps) {
     setPixelDataVersion((v) => v + 1);
     setUploadVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, hdrMode ? deepFlatten.hdr : null]);
+  }, [hdrMode, paneReady, deepActive, hdrMode ? deepFlatten.hdr : null]);
+
+  // DEEP GPU-composite upload: fetch the Z-sorted samples ONCE, upload them to
+  // GPU storage buffers, and composite the full image (zClip = zMax) into the
+  // pane's source texture. Depth-slider ticks thereafter re-composite on the GPU
+  // via `onDeepZClip` (no wasm, no re-upload) — the real-time path. Runs only
+  // while the source is deep AND the pane is a live WebGPU HDR pane.
+  useEffect(() => {
+    if (!hdrMode || !paneReady || !deepActive) return;
+    const hdr = (props as HdrImageProps).hdr;
+    const deep = hdr.deep!;
+    hdrDataRef.current = hdr; // TEV overlay reads the full-composite values
+    let cancelled = false;
+    deep
+      .getGpuCsr()
+      .then((csr) => {
+        if (cancelled) return;
+        paneHandleRef.current?.setDeepSource(csr, deep.zMax);
+        setNaturalDims((prev) =>
+          prev && prev.w === csr.width && prev.h === csr.height ? prev : { w: csr.width, h: csr.height },
+        );
+        setPixelDataVersion((v) => v + 1);
+        setUploadVersion((v) => v + 1);
+      })
+      .catch((err) => {
+        if (!cancelled) console.warn("[cairn] deep GPU CSR upload failed:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hdrMode, paneReady, deepActive, hdrMode ? (props as HdrImageProps).hdr.deep : null]);
 
   // -----------------------------------------------------------------------
   // SDR mode: decode `imageUrl` (+ optional CPU colormap false-color, exact
@@ -704,6 +745,10 @@ export default function GpuImagePane(props: ImageBackendProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, tonemapName, gamma, hdrMode, sdrColormap, dpr]);
+
+  // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
+  // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
+  renderPassRef.current = renderPass;
 
   useEffect(() => {
     renderPass();

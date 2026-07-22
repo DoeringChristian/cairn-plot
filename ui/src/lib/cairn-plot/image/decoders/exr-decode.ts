@@ -28,12 +28,18 @@ import type {
   DecodedImage,
   DecodeImageOptions,
   DeepFlattenController,
+  DeepGpuCsrData,
   ImageSource,
 } from "../decoders.ts";
 import { decodeExr as decodeExrPure } from "./exr.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
-import type { ExrImagePayload, ExrWorkerRequest, ExrWorkerResponse } from "./exr-worker.ts";
+import type {
+  ExrGpuCsrPayload,
+  ExrImagePayload,
+  ExrWorkerRequest,
+  ExrWorkerResponse,
+} from "./exr-worker.ts";
 
 // A decode should never hang the queue; cap it generously (large DWA/PIZ frames
 // can take a while, but not this long). Deep re-flatten (dense files re-decode)
@@ -158,6 +164,18 @@ function workerDeepController(
       const p = msg as ExrImagePayload;
       return p.precision === "f16-bits" ? new Uint16Array(p.data) : new Float32Array(p.data);
     },
+    async getGpuCsr(): Promise<DeepGpuCsrData> {
+      const msg = await requestWorker((id) => ({ id, kind: "deepGpuCsr", handle }), []);
+      const g = (msg as Extract<OkResponse, { gpuCsr: ExrGpuCsrPayload }>).gpuCsr;
+      return {
+        width: g.width,
+        height: g.height,
+        total: g.total,
+        offsets: new Uint32Array(g.offsets),
+        colors: new Float32Array(g.colors),
+        zs: new Float32Array(g.zs),
+      };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -174,7 +192,7 @@ async function mainThreadDeepController(
   zMin: number,
   zMax: number,
 ): Promise<DeepFlattenController> {
-  const { flatten_deep, free_deep } = await loadExrDecoder();
+  const { flatten_deep, free_deep, deep_gpu_csr } = await loadExrDecoder();
   let disposed = false;
   return {
     zMin,
@@ -182,6 +200,17 @@ async function mainThreadDeepController(
     async flatten(zClip: number) {
       const img = flatten_deep(handle, zClip);
       return img.precision === "f16-bits" ? img.halfBits! : img.floats!;
+    },
+    async getGpuCsr(): Promise<DeepGpuCsrData> {
+      const csr = deep_gpu_csr(handle);
+      return {
+        width: csr.width,
+        height: csr.height,
+        total: csr.total,
+        offsets: csr.offsets,
+        colors: csr.colors,
+        zs: csr.zs,
+      };
     },
     dispose() {
       if (disposed) return;

@@ -97,10 +97,27 @@ export interface DeepFlattenController {
   readonly zMin: number;
   /** Farthest sample Z (full composite). */
   readonly zMax: number;
-  /** Re-flatten including only samples with Z ≤ `zClip`. */
+  /** Re-flatten including only samples with Z ≤ `zClip` (CPU/wasm path — the
+   *  coalesced fallback for non-WebGPU / CPU-backed panes). */
   flatten(zClip: number): Promise<Float32Array | Uint16Array>;
+  /** Export the Z-sorted samples for GPU upload (the real-time GPU depth-
+   *  composite path). One round-trip; the GPU then owns the data. */
+  getGpuCsr(): Promise<DeepGpuCsrData>;
   /** Release the retained wasm-side handle (idempotent). Call on pane unmount. */
   dispose(): void;
+}
+
+/** Z-sorted deep samples for GPU upload (see `wasm/openexr` `DeepGpuCsr`). */
+export interface DeepGpuCsrData {
+  readonly width: number;
+  readonly height: number;
+  readonly total: number;
+  /** pixels+1 prefix sums. */
+  readonly offsets: Uint32Array;
+  /** 4·total premultiplied RGBA (one vec4 per sample). */
+  readonly colors: Float32Array;
+  /** total per-sample Z, ascending within each pixel. */
+  readonly zs: Float32Array;
 }
 
 /** A decodable image source: a `url`, raw `bytes`, or both, plus format hints. */
