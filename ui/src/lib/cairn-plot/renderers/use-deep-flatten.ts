@@ -1,26 +1,28 @@
 /**
- * `useDeepFlatten` — the DEEP EXR depth-slider controller shared by both image
+ * `useDeepFlatten` — the DEEP EXR depth-WINDOW controller shared by both image
  * backends (CPU + GPU HDR paths).
  *
  * A deep source arrives as an `HdrData` whose `data` is the FULL composite plus
- * a `deep` {@link DeepFlattenController} (retained wasm-side samples). This hook:
- *   - seeds the Z cutoff at `zMax` (full composite) via `useResettableState`, so
- *     HOME/double-click reset it through the shell's existing reset/extraModified
- *     contract;
- *   - re-flattens in REAL TIME as the cutoff moves — NO debounce. A pure
- *     latest-wins / one-in-flight coalescer (`./coalesce.ts`) keeps at most one
- *     `deep.flatten(zClip)` running; while it runs only the LATEST cutoff is
- *     remembered, and the newest buffer is uploaded rAF-aligned. The slider
- *     thumb + Z read-out track the pointer instantly (they read `zClip` state
- *     directly, decoupled from the async flatten);
- *   - exposes a `ToolbarSliderSpec` for the shell's slider row (double-click
- *     manual entry + out-of-range typing come free). The slider is LINEAR in Z
- *     unless the volume spans > 1e3× (`zMax/zMin`), where it maps LOG10 so the
- *     near field isn't crushed — the read-out shows the true Z either way;
+ * a `deep` {@link DeepFlattenController} (retained wasm-side samples). This hook
+ * exposes a depth WINDOW `[zNear, zFar]` (default `[zMin, zMax]` = full
+ * composite) and:
+ *   - two `ToolbarSliderSpec`s (Z-NEAR + Z-FAR) seeded via `useResettableState`
+ *     so HOME/double-click reset both through the shell's reset/extraModified
+ *     contract. The sliders clamp against each other (`zNear ≤ zFar`); manual
+ *     out-of-range entry is allowed per the slider-entry convention. LINEAR in Z
+ *     unless the volume spans > 1e3× (`zMax/zMin`), where each maps LOG10;
+ *   - real-time re-composite as either edge moves — NO debounce. On GPU
+ *     (`onWindow` supplied) every change is a uniform write + pass + blit
+ *     (sub-frame); on CPU it's a coalesced (latest-wins, one-in-flight) wasm
+ *     re-flatten with an rAF-aligned upload;
+ *   - `selectRegion(x0,y0,x1,y1)` — the region-select action: query the samples'
+ *     Z range inside an image-pixel rect and set the window to it (padded by a
+ *     tiny epsilon so boundary samples survive the float compare). An empty
+ *     region is a no-op (returns `{ ok:false }` with a message);
  *   - `dispose()`s the retained handle on unmount / source change.
  *
- * Non-deep sources (no `hdr.deep`) return the `hdr` untouched and `slider:
- * undefined`, so the pane shows no depth row.
+ * Non-deep sources (no `hdr.deep`) return the `hdr` untouched, `sliders:
+ * undefined`, `hasDeep:false`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HdrData } from "./image-backend";
@@ -28,7 +30,7 @@ import type { ToolbarSliderSpec } from "../controls/ToolbarConfig";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { IDLE_COALESCE, requestCoalesce, resolveCoalesce, type CoalesceState } from "./coalesce";
 
-/** Dynamic-range threshold above which the slider maps Z on a log10 scale. */
+/** Dynamic-range threshold above which the sliders map Z on a log10 scale. */
 const LOG_SCALE_RATIO = 1e3;
 
 /** rAF shim so the upload aligns to a frame (fallback for non-DOM envs). */
@@ -39,65 +41,82 @@ const raf: (cb: () => void) => number =
 const cancelRaf: (h: number) => void =
   typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : (h) => clearTimeout(h);
 
+/** Result of a region-select query. */
+export interface RegionSelectResult {
+  ok: boolean;
+  message?: string;
+}
+
 export interface DeepFlattenState {
-  /** The effective `HdrData` — the prop `hdr`, or a Z-clipped re-flatten of it. */
+  /** The effective `HdrData` — the prop `hdr`, or a windowed re-flatten of it. */
   hdr: HdrData;
-  /** The depth slider for the toolbar (absent for non-deep sources). */
-  slider?: ToolbarSliderSpec;
-  /** Restore the cutoff to `zMax` (full composite) — wired to the shell HOME. */
+  /** The Z-NEAR + Z-FAR sliders for the toolbar (absent for non-deep sources). */
+  sliders?: ToolbarSliderSpec[];
+  /** True when the source is deep (the region-select button shows). */
+  hasDeep: boolean;
+  /** Query the Z range of samples inside an image-pixel rect and set the window
+   *  to it (epsilon-padded). Empty region ⇒ no-op (`{ ok:false, message }`). */
+  selectRegion(x0: number, y0: number, x1: number, y1: number): Promise<RegionSelectResult>;
+  /** Restore the window to `[zMin, zMax]` (full composite) — wired to shell HOME. */
   reset(): void;
-  /** True while the cutoff is below `zMax` (enables the shell HOME button). */
+  /** True while the window is narrower than `[zMin, zMax]` (enables shell HOME). */
   isModified: boolean;
 }
 
-/**
- * `onZClip` selects GPU mode: instead of the coalesced wasm re-flatten, EVERY
- * cutoff change (uncoalesced — the GPU composite is sub-frame) calls `onZClip`,
- * which the GPU pane wires to `paneHandle.setDeepZClip(z)` + a repaint. In that
- * mode `hdr` is returned unchanged (the pane drives its own texture via the GPU
- * composite pass). Omit it for the CPU/wasm path.
- */
 export function useDeepFlatten(
   hdr: HdrData,
-  onZClip?: (zClip: number) => void,
+  onWindow?: (zNear: number, zFar: number) => void,
 ): DeepFlattenState {
   const deep = hdr.deep;
   const zMin = deep?.zMin ?? 0;
   const zMax = deep?.zMax ?? 0;
-  const gpuMode = onZClip != null;
+  const gpuMode = onWindow != null;
 
-  // Z cutoff, seeded at zMax (full composite). Reset/isModified drive the shell.
-  const [zClip, setZClip, zMeta] = useResettableState<number>(zMax);
-  // Re-flattened buffer for the current cutoff (null ⇒ show the full composite).
+  // Window edges, seeded at the full range. Reset/isModified drive the shell.
+  const [zNear, setZNear, nearMeta] = useResettableState<number>(zMin);
+  const [zFar, setZFar, farMeta] = useResettableState<number>(zMax);
+  // Windowed buffer for the current cutoff (null ⇒ show the full composite).
   const [flatData, setFlatData] = useState<HdrData["data"] | null>(null);
 
-  // Live refs so the (stable) launcher never closes over stale values.
+  // Live refs so the (stable) launcher / clamps never read stale values.
   const deepRef = useRef(deep);
   deepRef.current = deep;
+  const zMinRef = useRef(zMin);
+  zMinRef.current = zMin;
   const zMaxRef = useRef(zMax);
   zMaxRef.current = zMax;
-  // The most-recent cutoff the user WANTS shown — an in-flight flatten for any
-  // other value is stale and its result is dropped (latest-wins).
-  const wantRef = useRef(zClip);
+  const zNearRef = useRef(zNear);
+  zNearRef.current = zNear;
+  const zFarRef = useRef(zFar);
+  zFarRef.current = zFar;
+
+  // Latest wanted window + a version stamp; a resolved flatten for a superseded
+  // version is dropped (latest-wins).
+  const wantRef = useRef<{ near: number; far: number; ver: number }>({ near: zNear, far: zFar, ver: 0 });
+  const verRef = useRef(0);
+  const isFullRef = useRef(true);
   const coalesceRef = useRef<CoalesceState>(IDLE_COALESCE);
   const rafRef = useRef<number | null>(null);
 
-  // Launch one flatten; on resolve upload (rAF-aligned) only if still wanted,
-  // then chain the latest pending cutoff (if any) — the coalescer's one-in-flight
-  // guarantee. Stable across renders (reads everything through refs).
-  const launch = useCallback((value: number) => {
+  // Cross-clamped setters: enforce zNear ≤ zFar (manual out-of-[zMin,zMax] entry
+  // is otherwise allowed, per the slider-entry convention).
+  const setNear = useCallback((v: number) => setZNear(Math.min(v, zFarRef.current)), [setZNear]);
+  const setFar = useCallback((v: number) => setZFar(Math.max(v, zNearRef.current)), [setZFar]);
+
+  // Launch one CPU re-flatten of the LATEST window; apply (rAF-aligned) only if
+  // still the wanted version, then chain if a newer request landed.
+  const launch = useCallback(() => {
     const d = deepRef.current;
     if (!d) return;
+    const { near, far, ver } = wantRef.current;
     const done = () => {
       const step = resolveCoalesce(coalesceRef.current);
       coalesceRef.current = step.state;
-      if (step.launch != null) launch(step.launch);
+      if (step.launch != null) launch();
     };
-    d.flatten(value)
+    d.flatten(near, far)
       .then((buf) => {
-        // Apply only if this is still the wanted cutoff AND it's a real clip
-        // (returning to zMax shows the prop's full composite, not this buffer).
-        if (wantRef.current === value && value < zMaxRef.current) {
+        if (wantRef.current.ver === ver && !isFullRef.current) {
           if (rafRef.current != null) cancelRaf(rafRef.current);
           rafRef.current = raf(() => {
             rafRef.current = null;
@@ -109,14 +128,12 @@ export function useDeepFlatten(
       .catch(done);
   }, []);
 
-  const request = useCallback(
-    (value: number) => {
-      const step = requestCoalesce(coalesceRef.current, value);
-      coalesceRef.current = step.state;
-      if (step.launch != null) launch(step.launch);
-    },
-    [launch],
-  );
+  const request = useCallback(() => {
+    // The window itself rides `wantRef`; the coalescer just gates one-in-flight.
+    const step = requestCoalesce(coalesceRef.current, 1);
+    coalesceRef.current = step.state;
+    if (step.launch != null) launch();
+  }, [launch]);
 
   // Dispose the retained handle + cancel any pending upload on unmount / source change.
   useEffect(() => {
@@ -126,74 +143,112 @@ export function useDeepFlatten(
     };
   }, [deep]);
 
-  // Drive the re-composite as the cutoff changes.
-  //  - GPU mode: hand every cutoff straight to `onZClip` (uniform write + pass +
-  //    blit — sub-frame, so no debounce/coalescing needed).
-  //  - CPU/wasm mode: coalesced re-flatten (latest-wins, one in flight). At (or
-  //    above) zMax the full composite already IS `hdr.data`, so drop the override.
+  // Re-composite as the window changes.
+  //  - GPU mode: hand the window straight to `onWindow` (uniform + pass + blit).
+  //  - CPU mode: full window ⇒ show the prop composite; else coalesced re-flatten.
   useEffect(() => {
     if (!deep) return;
-    wantRef.current = zClip;
+    const full = zNear <= zMin && zFar >= zMax;
+    isFullRef.current = full;
+    verRef.current += 1;
+    wantRef.current = { near: zNear, far: zFar, ver: verRef.current };
     if (gpuMode) {
-      onZClip(zClip);
+      onWindow(zNear, zFar);
       return;
     }
-    if (zClip >= zMax) {
+    if (full) {
       setFlatData(null);
       return;
     }
-    request(zClip);
-  }, [deep, zClip, zMax, request, gpuMode, onZClip]);
+    request();
+  }, [deep, zNear, zFar, zMin, zMax, request, gpuMode, onWindow]);
 
   const effectiveHdr = useMemo<HdrData>(
-    // GPU mode drives its own texture (composite pass), so `hdr` passes through.
     () => (deep && !gpuMode && flatData != null ? { ...hdr, data: flatData } : hdr),
     [hdr, deep, gpuMode, flatData],
   );
 
-  // Log mapping only when the volume spans a large dynamic range AND zMin is
-  // positive (log needs a positive floor).
   const useLog = deep != null && zMin > 0 && zMax / zMin > LOG_SCALE_RATIO;
 
-  const slider = useMemo<ToolbarSliderSpec | undefined>(() => {
+  const sliders = useMemo<ToolbarSliderSpec[] | undefined>(() => {
     if (!deep || !(zMax > zMin)) return undefined;
-    const fmtZ = (z: number) => (Math.abs(z) >= 1000 || Math.abs(z) < 0.01 ? z.toExponential(2) : z.toFixed(3));
-    if (useLog) {
-      // Slider operates in log10(Z) space; value/onChange/format convert to true Z.
-      const lo = Math.log10(zMin);
-      const hi = Math.log10(zMax);
+    const fmtZ = (z: number) =>
+      Math.abs(z) >= 1000 || (Math.abs(z) < 0.01 && z !== 0) ? z.toExponential(2) : z.toFixed(3);
+    const mk = (
+      id: string,
+      label: string,
+      title: string,
+      value: number,
+      onChange: (v: number) => void,
+    ): ToolbarSliderSpec => {
+      if (useLog) {
+        const lo = Math.log10(zMin);
+        const hi = Math.log10(zMax);
+        return {
+          id,
+          icon: "layers",
+          label,
+          title: `${title} (log scale). Double-click to type a Z.`,
+          min: lo,
+          max: hi,
+          step: (hi - lo) / 200,
+          value: Math.log10(Math.max(zMin, Math.min(value, zMax))),
+          onChange: (v: number) => onChange(10 ** v),
+          format: (v: number) => fmtZ(10 ** v),
+        };
+      }
       return {
-        id: "depth",
+        id,
         icon: "layers",
-        label: "Z",
-        title:
-          "Depth cutoff — composite only samples with Z ≤ this (log scale). Double-click to type a Z.",
-        min: lo,
-        max: hi,
-        step: (hi - lo) / 200,
-        value: Math.log10(Math.max(zMin, Math.min(zClip, zMax))),
-        onChange: (v: number) => setZClip(10 ** v),
-        format: (v: number) => fmtZ(10 ** v),
+        label,
+        title: `${title}. Double-click to type a Z.`,
+        min: zMin,
+        max: zMax,
+        step: (zMax - zMin) / 200,
+        value,
+        onChange,
+        format: fmtZ,
       };
-    }
-    return {
-      id: "depth",
-      icon: "layers",
-      label: "Z",
-      title: "Depth cutoff — composite only samples with Z ≤ this. Double-click to type a Z.",
-      min: zMin,
-      max: zMax,
-      step: (zMax - zMin) / 200,
-      value: zClip,
-      onChange: (v: number) => setZClip(v),
-      format: (v: number) => fmtZ(v),
     };
-  }, [deep, zMin, zMax, zClip, useLog, setZClip]);
+    return [
+      mk("depth-near", "ZN", "Depth window NEAR — composite only samples with Z ≥ this", zNear, setNear),
+      mk("depth-far", "ZF", "Depth window FAR — composite only samples with Z ≤ this", zFar, setFar),
+    ];
+  }, [deep, zMin, zMax, zNear, zFar, useLog, setNear, setFar]);
+
+  const selectRegion = useCallback(
+    async (x0: number, y0: number, x1: number, y1: number): Promise<RegionSelectResult> => {
+      const d = deepRef.current;
+      if (!d) return { ok: false, message: "no deep source" };
+      let zr;
+      try {
+        zr = await d.zRangeInRect(x0, y0, x1, y1);
+      } catch {
+        return { ok: false, message: "region query failed" };
+      }
+      if (zr.count === 0) return { ok: false, message: "no samples in region" };
+      // Pad by a tiny epsilon so boundary samples aren't lost to float compare.
+      const span = zMaxRef.current - zMinRef.current;
+      const eps = Math.max(Math.abs(span) * 1e-4, 1e-4);
+      setZNear(zr.zMin - eps);
+      setZFar(zr.zMax + eps);
+      return { ok: true };
+    },
+    [setZNear, setZFar],
+  );
 
   const reset = useCallback(() => {
-    zMeta.reset();
+    nearMeta.reset();
+    farMeta.reset();
     setFlatData(null);
-  }, [zMeta]);
+  }, [nearMeta, farMeta]);
 
-  return { hdr: effectiveHdr, slider, reset, isModified: zMeta.isModified };
+  return {
+    hdr: effectiveHdr,
+    sliders,
+    hasDeep: deep != null,
+    selectRegion,
+    reset,
+    isModified: nearMeta.isModified || farMeta.isModified,
+  };
 }

@@ -70,8 +70,9 @@
  * `sample` callback receives the current notation as an argument, so it stays
  * stateless w.r.t. notation.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
+import { screenRectToTexelRect, type SourceWindow } from "./region-select";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
 import type { ToolbarButtonSpec, ToolbarSliderSpec } from "../controls/ToolbarConfig";
@@ -200,10 +201,21 @@ export interface ImagePaneShellProps {
    *  {@link ImageDisplayAdjust}). When omitted, the second slider row is absent.
    *  Only shown when the toolbar itself renders (`toolbar={true}`). */
   displayAdjust?: ImageDisplayAdjust;
-  /** DEEP EXR depth-cutoff slider (`useDeepFlatten`) — prepended to the slider
-   *  row when present. Its `reset()`/`isModified` ride the `onReset`/
-   *  `extraModified` contract below, exactly like the display-adjust sliders. */
-  depthSlider?: ToolbarSliderSpec;
+  /** DEEP EXR depth-WINDOW sliders (Z-NEAR + Z-FAR, `useDeepFlatten`) —
+   *  prepended to the slider row when present. Their `reset()`/`isModified` ride
+   *  the `onReset`/`extraModified` contract below, like the display-adjust ones. */
+  depthSliders?: ToolbarSliderSpec[];
+  /** DEEP region-select ("select depth from region"): when present, a leading
+   *  marquee toolbar button activates a one-shot crosshair drag on the pane; on
+   *  release the drawn rect is mapped to image texels and passed here. Returns a
+   *  result so an empty region can surface a brief message. Only wired for the
+   *  `single` overlay variant (deep image panes). */
+  onRegionSelect?: (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+  ) => Promise<{ ok: boolean; message?: string }>;
   /** Extra pane-supplied slider rows APPENDED after the EXPOSURE/OFFSET pair
    *  (e.g. the HDR PEAK slider, shown only while an extended roll-off operator
    *  is selected). The pane owns their value/reset — their `reset`/`isModified`
@@ -250,8 +262,9 @@ export default function ImagePaneShell({
   requestRender,
   leadingMenus,
   displayAdjust,
-  depthSlider,
+  depthSliders,
   extraSliders,
+  onRegionSelect,
   onReset,
   extraModified,
   label,
@@ -264,6 +277,25 @@ export default function ImagePaneShell({
   // self-contained; the toggle shows only while the overlay is active.
   const [notation, setNotation] = useState<PixelValueNotation>(notationSeed);
   const [overlayActive, setOverlayActive] = useState(false);
+  // DEEP region-select ("select depth from region") — a one-shot marquee mode +
+  // a brief message slot (empty region / no samples). Only the `single` overlay
+  // variant exposes the displayElRef/sourceWindow the screen→texel map needs.
+  const [regionActive, setRegionActive] = useState(false);
+  const [regionMsg, setRegionMsg] = useState<string | null>(null);
+  const singleOverlay = "render" in overlay ? null : overlay;
+  const regionAvailable = !!onRegionSelect && !!singleOverlay;
+  const handleRegionSelect = useCallback(
+    async (x0: number, y0: number, x1: number, y1: number) => {
+      setRegionActive(false);
+      if (!onRegionSelect) return;
+      const res = await onRegionSelect(x0, y0, x1, y1);
+      if (!res.ok) {
+        setRegionMsg(res.message ?? "no samples in region");
+        setTimeout(() => setRegionMsg(null), 1800);
+      }
+    },
+    [onRegionSelect],
+  );
 
   const { containerProps: viewportProps } = useImageViewport({
     containerRef: paneRef,
@@ -325,7 +357,7 @@ export default function ImagePaneShell({
     // DEEP depth slider leads; the EXPOSURE/OFFSET display-adjust pair follows;
     // any pane-supplied extra rows (e.g. the HDR PEAK slider) come last.
     const rows: ToolbarSliderSpec[] = [];
-    if (depthSlider) rows.push(depthSlider);
+    if (depthSliders) rows.push(...depthSliders);
     if (!displayAdjust) {
       if (extraSliders) rows.push(...extraSliders);
       return rows.length ? rows : undefined;
@@ -362,20 +394,35 @@ export default function ImagePaneShell({
     );
     if (extraSliders) rows.push(...extraSliders);
     return rows;
-  }, [displayAdjust, depthSlider, extraSliders]);
+  }, [displayAdjust, depthSliders, extraSliders]);
 
   // While the overlay is active, expose the notation toggle ("0–255"/"0–1") as
   // a LEADING toolbar button (leftmost so it never shifts the standard buttons).
+  const regionButton = useMemo<ToolbarButtonSpec | null>(
+    () =>
+      regionAvailable
+        ? {
+            id: "region-depth",
+            icon: "select",
+            title: "Select depth from region — drag a rectangle to set the Z window to the samples it covers (Esc to cancel)",
+            active: regionActive,
+            onClick: () => setRegionActive((v) => !v),
+          }
+        : null,
+    [regionAvailable, regionActive],
+  );
+
   const toolbarConfig = useMemo(
     () => ({
       ...IMAGE_TOOLBAR_CONFIG,
       leadingButtons: [
         ...(leadingMenus ?? []),
+        ...(regionButton ? [regionButton] : []),
         ...(overlayActive ? [notationToolbarButton(notation, setNotation)] : []),
       ],
       sliders,
     }),
-    [overlayActive, notation, leadingMenus, sliders],
+    [overlayActive, notation, leadingMenus, regionButton, sliders],
   );
 
   const checkerClass = " cairn-checkerboard";
@@ -433,11 +480,129 @@ export default function ImagePaneShell({
         {!toolbar && overlayActive && (
           <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
+        {regionActive && singleOverlay && naturalDims && (
+          <RegionSelectLayer
+            imageElRef={singleOverlay.displayElRef}
+            naturalDims={naturalDims}
+            sourceWindow={singleOverlay.sourceWindow}
+            onSelect={handleRegionSelect}
+            onExit={() => setRegionActive(false)}
+          />
+        )}
+        {regionMsg && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 rounded bg-black/70 px-2 py-1 text-xs text-white pointer-events-none">
+            {regionMsg}
+          </div>
+        )}
       </div>
       {showLabelChip && (
         <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
       )}
       {extraChips}
+    </div>
+  );
+}
+
+/**
+ * The DEEP region-select marquee: a one-shot crosshair drag over the pane that
+ * maps the drawn screen rect to an image-texel rect (reusing the overlay's
+ * screen→texel math, `./region-select.ts`) and hands it to `onSelect`. Escape
+ * (or a zero-size click) cancels via `onExit`. Rendered ABOVE the surface, so it
+ * pre-empts the viewport's pan/zoom pointer handlers while active.
+ */
+function RegionSelectLayer({
+  imageElRef,
+  naturalDims,
+  sourceWindow,
+  onSelect,
+  onExit,
+}: {
+  imageElRef: RefObject<HTMLElement | null>;
+  naturalDims: { w: number; h: number };
+  sourceWindow?: SourceWindow;
+  onSelect: (x0: number, y0: number, x1: number, y1: number) => void;
+  onExit: () => void;
+}) {
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+
+  // Escape cancels the mode.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onExit();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onExit]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    startRef.current = { x: e.clientX, y: e.clientY };
+    setBand({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
+  }, []);
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    const s = startRef.current;
+    if (!s) return;
+    setBand({ x0: s.x, y0: s.y, x1: e.clientX, y1: e.clientY });
+  }, []);
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      const s = startRef.current;
+      startRef.current = null;
+      setBand(null);
+      const imgEl = imageElRef.current;
+      if (!s || !imgEl) {
+        onExit();
+        return;
+      }
+      // A near-zero drag (a click) → cancel rather than select one texel.
+      if (Math.abs(e.clientX - s.x) < 3 && Math.abs(e.clientY - s.y) < 3) {
+        onExit();
+        return;
+      }
+      const box = imgEl.getBoundingClientRect();
+      const rect = screenRectToTexelRect(s.x, s.y, e.clientX, e.clientY, {
+        box,
+        naturalWidth: naturalDims.w,
+        naturalHeight: naturalDims.h,
+        sourceWindow,
+      });
+      if (!rect) {
+        onExit();
+        return;
+      }
+      onSelect(rect.x0, rect.y0, rect.x1, rect.y1);
+    },
+    [imageElRef, naturalDims, sourceWindow, onSelect, onExit],
+  );
+
+  const layerRect = layerRef.current?.getBoundingClientRect();
+  const bandStyle =
+    band && layerRect
+      ? {
+          left: Math.min(band.x0, band.x1) - layerRect.left,
+          top: Math.min(band.y0, band.y1) - layerRect.top,
+          width: Math.abs(band.x1 - band.x0),
+          height: Math.abs(band.y1 - band.y0),
+        }
+      : null;
+
+  return (
+    <div
+      ref={layerRef}
+      className="absolute inset-0 z-20"
+      style={{ cursor: "crosshair", touchAction: "none" }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      {bandStyle && (
+        <div
+          className="absolute border-2 border-dashed border-sky-400 bg-sky-400/15 pointer-events-none"
+          style={bandStyle}
+        />
+      )}
     </div>
   );
 }

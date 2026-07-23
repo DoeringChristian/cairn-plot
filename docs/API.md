@@ -160,8 +160,12 @@ picked per mount by `resolveRenderMode(...)`.
   the TEV display offset, added after exposure (before the tone-map operator).
 
 For a **deep** `.exr` (`deepscanline`/`deeptile`), a single-image pane also gets a
-toolbar **DEPTH (Z) slider** that live-flattens only the samples with Z ≤ the
-cutoff (linear, or log10 when `zMax/zMin > 1e3`); HOME restores the full composite.
+toolbar **DEPTH WINDOW** — Z-NEAR + Z-FAR sliders that live-composite only the
+samples with `zNear ≤ Z ≤ zFar` (linear, or log10 when `zMax/zMin > 1e3`) — and a
+**"select depth from region"** marquee button: drag a rectangle over the image and
+the window snaps to the Z range the samples under it occupy (Esc cancels; an empty
+region is a no-op). HOME restores the full composite. On WebGPU panes the window is
+a real-time GPU composite; the CPU/non-WebGPU fallback re-flattens in wasm.
 
 An **HDR/float** image pane (`imagehdr`) gets a leading toolbar **TONEMAP menu**
 that switches the tone-map operator view-locally (SDR panes have no such menu:

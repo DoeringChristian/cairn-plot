@@ -150,13 +150,15 @@ Because it is the reference implementation, it decodes **literally every EXR**:
 - **Luminance-chroma** (Y/RY/BY) — reconstructed natively to RGBA (stays `HALF`).
 - **Deep** (`deepscanline`/`deeptile`) — flattened for display by sorting each
   pixel's samples front-to-back by Z and compositing with premultiplied OVER. A
-  single-image deep pane also shows a toolbar **DEPTH slider** that cuts off
-  compositing beyond a chosen Z (only samples with Z ≤ the cutoff). On a
-  GPU-backed pane the samples are uploaded to GPU storage buffers once and
-  re-composited per cutoff by a fragment pass (`compositeDeep`) — **real-time**
-  (≈0.2 ms/tick at 1080p Trunks scale), no re-decode; the CPU/non-WebGPU
-  fallback re-flattens in wasm (coalesced, latest-wins). HOME restores the full
-  composite.
+  single-image deep pane also shows a toolbar **DEPTH WINDOW** — Z-NEAR + Z-FAR
+  sliders that restrict compositing to samples with `zNear ≤ Z ≤ zFar` (default
+  the full range) — plus a **"select depth from region"** marquee button: drag a
+  rectangle and the window snaps to the Z range the samples inside that pixel
+  region occupy (Esc cancels; an empty region is a no-op). On a GPU-backed pane
+  the samples are uploaded to GPU storage buffers once and re-composited per
+  window by a fragment pass (`compositeDeep`) — **real-time** (≈0.2 ms/tick at
+  1080p Trunks scale), no re-decode; the CPU/non-WebGPU fallback re-flattens in
+  wasm (coalesced, latest-wins). HOME restores the full composite.
 - **Multi-part** files — part 0 is decoded (explicit part selection is a follow-up).
 
 All-`HALF` sources (including luma-chroma and deep composites) come back as raw

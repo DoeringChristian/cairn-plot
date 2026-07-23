@@ -29,6 +29,7 @@ import type {
   DecodeImageOptions,
   DeepFlattenController,
   DeepGpuCsrData,
+  DeepZRangeData,
   ImageSource,
 } from "../decoders.ts";
 import { decodeExr as decodeExrPure } from "./exr.ts";
@@ -159,8 +160,8 @@ function workerDeepController(
   return {
     zMin,
     zMax,
-    async flatten(zClip: number) {
-      const msg = await requestWorker((id) => ({ id, kind: "flattenDeep", handle, zClip }), []);
+    async flatten(zNear: number, zFar: number) {
+      const msg = await requestWorker((id) => ({ id, kind: "flattenDeep", handle, zNear, zFar }), []);
       const p = msg as ExrImagePayload;
       return p.precision === "f16-bits" ? new Uint16Array(p.data) : new Float32Array(p.data);
     },
@@ -175,6 +176,10 @@ function workerDeepController(
         colors: new Float32Array(g.colors),
         zs: new Float32Array(g.zs),
       };
+    },
+    async zRangeInRect(x0: number, y0: number, x1: number, y1: number): Promise<DeepZRangeData> {
+      const msg = await requestWorker((id) => ({ id, kind: "deepZRange", handle, x0, y0, x1, y1 }), []);
+      return (msg as Extract<OkResponse, { zRange: DeepZRangeData }>).zRange;
     },
     dispose() {
       if (disposed) return;
@@ -192,13 +197,13 @@ async function mainThreadDeepController(
   zMin: number,
   zMax: number,
 ): Promise<DeepFlattenController> {
-  const { flatten_deep, free_deep, deep_gpu_csr } = await loadExrDecoder();
+  const { flatten_deep, free_deep, deep_gpu_csr, deep_z_range_in_rect } = await loadExrDecoder();
   let disposed = false;
   return {
     zMin,
     zMax,
-    async flatten(zClip: number) {
-      const img = flatten_deep(handle, zClip);
+    async flatten(zNear: number, zFar: number) {
+      const img = flatten_deep(handle, zNear, zFar);
       return img.precision === "f16-bits" ? img.halfBits! : img.floats!;
     },
     async getGpuCsr(): Promise<DeepGpuCsrData> {
@@ -211,6 +216,10 @@ async function mainThreadDeepController(
         colors: csr.colors,
         zs: csr.zs,
       };
+    },
+    async zRangeInRect(x0: number, y0: number, x1: number, y1: number): Promise<DeepZRangeData> {
+      const zr = deep_z_range_in_rect(handle, x0, y0, x1, y1);
+      return { zMin: zr.zMin, zMax: zr.zMax, count: zr.count };
     },
     dispose() {
       if (disposed) return;
@@ -240,7 +249,7 @@ async function decodeDeepAware(bytes: ArrayBuffer): Promise<DecodedImage> {
   const { open_deep, flatten_deep } = await loadExrDecoder();
   const opened = open_deep(new Uint8Array(bytes));
   if (!opened) return decodeExrPreferWasm(bytes.slice(0)); // not deep
-  const flat = flatten_deep(opened.handle, opened.zMax);
+  const flat = flatten_deep(opened.handle, -Infinity, Infinity);
   const image: F32Image = {
     kind: "f32",
     data: flat.precision === "f16-bits" ? flat.halfBits! : flat.floats!,

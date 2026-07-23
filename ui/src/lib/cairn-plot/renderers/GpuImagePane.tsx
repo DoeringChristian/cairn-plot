@@ -297,21 +297,22 @@ export default function GpuImagePane(props: ImageBackendProps) {
   const imgWrapperRef = useRef<HTMLDivElement | null>(null);
   const paneHandleRef = useRef<PaneHandle | null>(null);
 
-  // DEEP EXR depth slider. A deep source drives the REAL-TIME GPU composite
-  // (samples uploaded once to GPU storage buffers, re-composited per cutoff on
-  // the GPU — see `pool.setDeepSource`/`setDeepZClip`). `deepFlatten` still owns
-  // the slider / HOME reset; in GPU mode (`onDeepZClip` supplied) it hands every
-  // cutoff straight to the composite + repaint (no wasm flatten, no CPU upload).
-  // Called unconditionally (rules-of-hooks) with a null HDR in the SDR branch.
+  // DEEP EXR depth WINDOW. A deep source drives the REAL-TIME GPU composite
+  // (samples uploaded once to GPU storage buffers, re-composited per window on
+  // the GPU — see `pool.setDeepSource`/`setDeepWindow`). `deepFlatten` still owns
+  // the sliders / region-select / HOME reset; in GPU mode (`onDeepWindow`
+  // supplied) it hands every window straight to the composite + repaint (no wasm
+  // flatten, no CPU upload). Called unconditionally (rules-of-hooks) with a null
+  // HDR in the SDR branch.
   const renderPassRef = useRef<(() => void) | null>(null);
   const deepActive = hdrMode && !!(props as HdrImageProps).hdr?.deep;
-  const onDeepZClip = useCallback((z: number) => {
-    paneHandleRef.current?.setDeepZClip(z);
+  const onDeepWindow = useCallback((zNear: number, zFar: number) => {
+    paneHandleRef.current?.setDeepWindow(zNear, zFar);
     renderPassRef.current?.();
   }, []);
   const deepFlatten = useDeepFlatten(
     hdrMode ? (props as HdrImageProps).hdr : NULL_HDR,
-    deepActive ? onDeepZClip : undefined,
+    deepActive ? onDeepWindow : undefined,
   );
   // True once the acquire effect below has resolved a real HDR (rgba16float/
   // display-p3/extended-tonemap) surface for this pane — see `useHdr`'s
@@ -568,9 +569,9 @@ export default function GpuImagePane(props: ImageBackendProps) {
   }, [hdrMode, paneReady, deepActive, hdrMode ? deepFlatten.hdr : null]);
 
   // DEEP GPU-composite upload: fetch the Z-sorted samples ONCE, upload them to
-  // GPU storage buffers, and composite the full image (zClip = zMax) into the
-  // pane's source texture. Depth-slider ticks thereafter re-composite on the GPU
-  // via `onDeepZClip` (no wasm, no re-upload) — the real-time path. Runs only
+  // GPU storage buffers, and composite the full window [zMin, zMax] into the
+  // pane's source texture. Depth-window ticks thereafter re-composite on the GPU
+  // via `onDeepWindow` (no wasm, no re-upload) — the real-time path. Runs only
   // while the source is deep AND the pane is a live WebGPU HDR pane.
   useEffect(() => {
     if (!hdrMode || !paneReady || !deepActive) return;
@@ -582,7 +583,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       .getGpuCsr()
       .then((csr) => {
         if (cancelled) return;
-        paneHandleRef.current?.setDeepSource(csr, deep.zMax);
+        paneHandleRef.current?.setDeepSource(csr, deep.zMin, deep.zMax);
         setNaturalDims((prev) =>
           prev && prev.w === csr.width && prev.h === csr.height ? prev : { w: csr.width, h: csr.height },
         );
@@ -977,9 +978,10 @@ export default function GpuImagePane(props: ImageBackendProps) {
             ]
           : undefined
       }
-      // DEEP depth slider (HDR deep sources only; undefined otherwise). Its
+      // DEEP depth-window sliders + region-select (HDR deep sources only). Their
       // reset/modified fold into the colormap/tonemap/peak ones so HOME clears all.
-      depthSlider={deepFlatten.slider}
+      depthSliders={deepFlatten.sliders}
+      onRegionSelect={deepActive ? deepFlatten.selectRegion : undefined}
       onReset={() => {
         resetColormapOverride();
         resetTonemapOverride();

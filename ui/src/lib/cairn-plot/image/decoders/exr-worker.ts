@@ -35,8 +35,9 @@ import { loadExrDecoder, type DecodedImage } from "./wasm-inline/wasm-exr-inline
 export type ExrWorkerRequest =
   | { id: number; kind?: "decode"; buffer: ArrayBuffer }
   | { id: number; kind: "openDeep"; buffer: ArrayBuffer }
-  | { id: number; kind: "flattenDeep"; handle: number; zClip: number }
+  | { id: number; kind: "flattenDeep"; handle: number; zNear: number; zFar: number }
   | { id: number; kind: "deepGpuCsr"; handle: number }
+  | { id: number; kind: "deepZRange"; handle: number; x0: number; y0: number; x1: number; y1: number }
   | { id: number; kind: "freeDeep"; handle: number };
 
 /** A flat image payload shared by decode / openDeep / flattenDeep replies. */
@@ -68,6 +69,7 @@ export type ExrWorkerResponse =
       deep?: { handle: number; zMin: number; zMax: number };
     })
   | { id: number; ok: true; gpuCsr: ExrGpuCsrPayload }
+  | { id: number; ok: true; zRange: { zMin: number; zMax: number; count: number } }
   | { id: number; ok: true; freed: true }
   | { id: number; ok: false; error: string };
 
@@ -104,10 +106,18 @@ async function handle(req: ExrWorkerRequest): Promise<void> {
   const kind = req.kind ?? "decode";
 
   if (kind === "flattenDeep") {
-    const { handle: h, zClip } = req as Extract<ExrWorkerRequest, { kind: "flattenDeep" }>;
+    const { handle: h, zNear, zFar } = req as Extract<ExrWorkerRequest, { kind: "flattenDeep" }>;
     const { flatten_deep } = await loadExrDecoder();
-    const payload = toPayload(flatten_deep(h, zClip));
+    const payload = toPayload(flatten_deep(h, zNear, zFar));
     ctx.postMessage({ id, ok: true, ...payload }, [payload.data]);
+    return;
+  }
+
+  if (kind === "deepZRange") {
+    const { handle: h, x0, y0, x1, y1 } = req as Extract<ExrWorkerRequest, { kind: "deepZRange" }>;
+    const { deep_z_range_in_rect } = await loadExrDecoder();
+    const zr = deep_z_range_in_rect(h, x0, y0, x1, y1);
+    ctx.postMessage({ id, ok: true, zRange: { zMin: zr.zMin, zMax: zr.zMax, count: zr.count } });
     return;
   }
 
@@ -139,7 +149,7 @@ async function handle(req: ExrWorkerRequest): Promise<void> {
     const deep = open_deep(new Uint8Array(buffer));
     if (deep) {
       // Retained handle stays alive in this worker; initial image = full composite.
-      const payload = toPayload(flatten_deep(deep.handle, deep.zMax));
+      const payload = toPayload(flatten_deep(deep.handle, -Infinity, Infinity));
       ctx.postMessage(
         { id, ok: true, ...payload, deep: { handle: deep.handle, zMin: deep.zMin, zMax: deep.zMax } },
         [payload.data],
