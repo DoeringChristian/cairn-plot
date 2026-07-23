@@ -163,9 +163,12 @@ For a **deep** `.exr` (`deepscanline`/`deeptile`), a single-image pane also gets
 toolbar **DEPTH WINDOW** — Z-NEAR + Z-FAR sliders that live-composite only the
 samples with `zNear ≤ Z ≤ zFar` (linear, or log10 when `zMax/zMin > 1e3`) — and a
 **"select depth from region"** marquee button: drag a rectangle over the image and
-the window snaps to the Z range the samples under it occupy (Esc cancels; an empty
-region is a no-op). HOME restores the full composite. On WebGPU panes the window is
-a real-time GPU composite; the CPU/non-WebGPU fallback re-flattens in wasm.
+the window snaps to the Z range the samples under it occupy (Esc cancels). The rect
+persists as an editable overlay anchored in image space (move/resize re-query the
+window live; the top-right × removes it). It's placeable anywhere — an empty region
+selects an EMPTY window (transparent; sliders show a crossed state). HOME restores
+the full composite. On WebGPU panes the window is a real-time GPU composite; the
+CPU/non-WebGPU fallback re-flattens in wasm.
 
 An **HDR/float** image pane (`imagehdr`) gets a leading toolbar **TONEMAP menu**
 that switches the tone-map operator view-locally (SDR panes have no such menu:
