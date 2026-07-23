@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { diffCellClassName, type CellComparison } from "../table-diff";
+import { columnAlignClasses } from "./table-align";
 
 export type ColumnType = "number" | "string" | "bool" | "other";
 
@@ -180,19 +181,43 @@ export default function Table({
               {visibleCols.map((c) => {
                 const col = columns[c]!;
                 const active = sort?.col === c;
-                const arrow = active ? (sort!.dir === "asc" ? " ▲" : " ▼") : "";
+                const arrow = active ? (sort!.dir === "asc" ? "▲" : "▼") : "";
+                // Header alignment mirrors the body cells (numeric → right) so a
+                // column's title sits directly above its values.
+                const a = columnAlignClasses(col.type);
+                const name = <span className="mono truncate">{col.name}</span>;
+                const arrowEl = (
+                  <span
+                    className={`shrink-0 text-accent ${a.arrowFirst ? "mr-0.5" : "ml-0.5"}`}
+                  >
+                    {arrow}
+                  </span>
+                );
                 return (
                   <th
                     key={c}
                     onClick={() => toggleSort(c)}
                     title={col.name}
-                    className="cursor-pointer select-none border-b border-border px-2 py-1 text-left font-semibold text-fg-muted hover:text-fg"
+                    className={`cursor-pointer select-none border-b border-border px-2 py-1 font-semibold text-fg-muted hover:text-fg ${
+                      a.align === "right" ? "text-right" : "text-left"
+                    }`}
                   >
                     {/* flex row: name truncates within the fixed column width,
-                        the sort arrow never gets clipped off. */}
-                    <span className="flex items-center">
-                      <span className="mono truncate">{col.name}</span>
-                      <span className="shrink-0 text-accent">{arrow}</span>
+                        the sort arrow never gets clipped off. For numeric
+                        (right-aligned) columns the arrow sits LEFT of the name
+                        so the name's right edge lines up with the numbers. */}
+                    <span className={a.header}>
+                      {a.arrowFirst ? (
+                        <>
+                          {arrowEl}
+                          {name}
+                        </>
+                      ) : (
+                        <>
+                          {name}
+                          {arrowEl}
+                        </>
+                      )}
                     </span>
                   </th>
                 );
@@ -205,10 +230,11 @@ export default function Table({
               return (
                 <tr key={ri} className="odd:bg-bg even:bg-bg-hover/40">
                   {visibleCols.map((c) => {
-                    const numeric = columns[c]?.type === "number";
                     const text = formatCell(row[c]);
                     const status = diffStatuses?.[ri]?.[c];
                     const diffCls = status ? diffCellClassName(status, invertDiff) : "";
+                    // Same alignment contract as the header (numeric → right).
+                    const cellCls = columnAlignClasses(columns[c]?.type).cell;
                     // Diff class is background-only (see table-diff.ts), so
                     // the default text color always applies regardless of
                     // diff status — no more mutual exclusivity needed.
@@ -216,9 +242,7 @@ export default function Table({
                       <td
                         key={c}
                         title={text}
-                        className={`truncate border-b border-border px-2 py-1 text-fg ${
-                          numeric ? "mono text-right" : ""
-                        } ${diffCls}`}
+                        className={`truncate border-b border-border px-2 py-1 text-fg ${cellCls} ${diffCls}`}
                       >
                         {text}
                       </td>
