@@ -981,7 +981,15 @@ export default function GpuImagePane(props: ImageBackendProps) {
       // DEEP depth-window sliders + region-select (HDR deep sources only). Their
       // reset/modified fold into the colormap/tonemap/peak ones so HOME clears all.
       depthSliders={deepFlatten.sliders}
-      onRegionSelect={deepActive ? deepFlatten.selectRegion : undefined}
+      regionSelect={
+        deepActive
+          ? {
+              rect: deepFlatten.region,
+              commit: deepFlatten.commitRegion,
+              remove: deepFlatten.removeRegion,
+            }
+          : undefined
+      }
       onReset={() => {
         resetColormapOverride();
         resetTonemapOverride();

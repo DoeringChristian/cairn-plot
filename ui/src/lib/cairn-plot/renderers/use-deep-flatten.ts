@@ -29,6 +29,7 @@ import type { HdrData } from "./image-backend";
 import type { ToolbarSliderSpec } from "../controls/ToolbarConfig";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { IDLE_COALESCE, requestCoalesce, resolveCoalesce, type CoalesceState } from "./coalesce";
+import type { TexelRect } from "./region-select";
 
 /** Dynamic-range threshold above which the sliders map Z on a log10 scale. */
 const LOG_SCALE_RATIO = 1e3;
@@ -54,10 +55,19 @@ export interface DeepFlattenState {
   sliders?: ToolbarSliderSpec[];
   /** True when the source is deep (the region-select button shows). */
   hasDeep: boolean;
-  /** Query the Z range of samples inside an image-pixel rect and set the window
-   *  to it (epsilon-padded). Empty region ⇒ no-op (`{ ok:false, message }`). */
-  selectRegion(x0: number, y0: number, x1: number, y1: number): Promise<RegionSelectResult>;
-  /** Restore the window to `[zMin, zMax]` (full composite) — wired to shell HOME. */
+  /** The persisted region rectangle (image texels), or `null`. View-local,
+   *  per-pane; kept visible after selection so it can be moved/resized. Note the
+   *  rect and the sliders may DIVERGE after a manual slider edit — the rect marks
+   *  the last queried region, the sliders the live window. */
+  region: TexelRect | null;
+  /** Query the Z range of samples inside an image-pixel rect and set BOTH the
+   *  window (epsilon-padded) AND the persisted rect to it. Empty region ⇒ no-op:
+   *  the previous window + rect are kept (`{ ok:false, message }`). Used by the
+   *  fresh marquee and by an edit release. */
+  commitRegion(x0: number, y0: number, x1: number, y1: number): Promise<RegionSelectResult>;
+  /** Remove the rect and reset ONLY the Z window to `[zMin, zMax]` (the × chip). */
+  removeRegion(): void;
+  /** Restore the window to `[zMin, zMax]` AND clear the rect — wired to shell HOME. */
   reset(): void;
   /** True while the window is narrower than `[zMin, zMax]` (enables shell HOME). */
   isModified: boolean;
@@ -77,6 +87,8 @@ export function useDeepFlatten(
   const [zFar, setZFar, farMeta] = useResettableState<number>(zMax);
   // Windowed buffer for the current cutoff (null ⇒ show the full composite).
   const [flatData, setFlatData] = useState<HdrData["data"] | null>(null);
+  // The persisted region rectangle (image texels) — view-local, per-pane.
+  const [region, setRegion] = useState<TexelRect | null>(null);
 
   // Live refs so the (stable) launcher / clamps never read stale values.
   const deepRef = useRef(deep);
@@ -216,7 +228,7 @@ export function useDeepFlatten(
     ];
   }, [deep, zMin, zMax, zNear, zFar, useLog, setNear, setFar]);
 
-  const selectRegion = useCallback(
+  const commitRegion = useCallback(
     async (x0: number, y0: number, x1: number, y1: number): Promise<RegionSelectResult> => {
       const d = deepRef.current;
       if (!d) return { ok: false, message: "no deep source" };
@@ -226,20 +238,32 @@ export function useDeepFlatten(
       } catch {
         return { ok: false, message: "region query failed" };
       }
+      // Empty region ⇒ keep the previous window AND rect (no-op).
       if (zr.count === 0) return { ok: false, message: "no samples in region" };
       // Pad by a tiny epsilon so boundary samples aren't lost to float compare.
       const span = zMaxRef.current - zMinRef.current;
       const eps = Math.max(Math.abs(span) * 1e-4, 1e-4);
       setZNear(zr.zMin - eps);
       setZFar(zr.zMax + eps);
+      setRegion({ x0, y0, x1, y1 }); // persist the rect (visible + editable)
       return { ok: true };
     },
     [setZNear, setZFar],
   );
 
+  // × chip: drop the rect and reset ONLY the Z window to the full range.
+  const removeRegion = useCallback(() => {
+    setRegion(null);
+    nearMeta.reset();
+    farMeta.reset();
+    setFlatData(null);
+  }, [nearMeta, farMeta]);
+
+  // HOME: full deep reset — window back to [zMin,zMax] AND the rect cleared.
   const reset = useCallback(() => {
     nearMeta.reset();
     farMeta.reset();
+    setRegion(null);
     setFlatData(null);
   }, [nearMeta, farMeta]);
 
@@ -247,7 +271,9 @@ export function useDeepFlatten(
     hdr: effectiveHdr,
     sliders,
     hasDeep: deep != null,
-    selectRegion,
+    region,
+    commitRegion,
+    removeRegion,
     reset,
     isModified: nearMeta.isModified || farMeta.isModified,
   };

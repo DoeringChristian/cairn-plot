@@ -807,7 +807,15 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       // DEEP depth-window sliders (Z-NEAR/Z-FAR) + region-select (absent for
       // non-deep); HOME resets the window to [zMin,zMax] and the tonemap override.
       depthSliders={deepFlatten.sliders}
-      onRegionSelect={deepFlatten.hasDeep ? deepFlatten.selectRegion : undefined}
+      regionSelect={
+        deepFlatten.hasDeep
+          ? {
+              rect: deepFlatten.region,
+              commit: deepFlatten.commitRegion,
+              remove: deepFlatten.removeRegion,
+            }
+          : undefined
+      }
       onReset={() => {
         deepFlatten.reset();
         tonemapMeta.reset();

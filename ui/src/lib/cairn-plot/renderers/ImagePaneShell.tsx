@@ -70,9 +70,16 @@
  * `sample` callback receives the current notation as an argument, so it stays
  * stateless w.r.t. notation.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, RefObject } from "react";
-import { screenRectToTexelRect, type SourceWindow } from "./region-select";
+import {
+  screenPerTexel,
+  screenRectToTexelRect,
+  texelRectToScreenRect,
+  type SourceWindow,
+  type TexelRect,
+} from "./region-select";
+import { applyRectEdit, RESIZE_HANDLES, type RegionHandle } from "./region-edit";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
 import type { ToolbarButtonSpec, ToolbarSliderSpec } from "../controls/ToolbarConfig";
@@ -205,17 +212,21 @@ export interface ImagePaneShellProps {
    *  prepended to the slider row when present. Their `reset()`/`isModified` ride
    *  the `onReset`/`extraModified` contract below, like the display-adjust ones. */
   depthSliders?: ToolbarSliderSpec[];
-  /** DEEP region-select ("select depth from region"): when present, a leading
-   *  marquee toolbar button activates a one-shot crosshair drag on the pane; on
-   *  release the drawn rect is mapped to image texels and passed here. Returns a
-   *  result so an empty region can surface a brief message. Only wired for the
-   *  `single` overlay variant (deep image panes). */
-  onRegionSelect?: (
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-  ) => Promise<{ ok: boolean; message?: string }>;
+  /** DEEP region-select ("select depth from region"). When present, a leading
+   *  marquee toolbar button activates a one-shot crosshair drag; on release the
+   *  drawn rect is mapped to image texels and `commit`ted. A committed `rect`
+   *  (image texels) then PERSISTS as an editable overlay anchored in image space
+   *  (moves/resizes with the viewport), whose edits re-`commit` and whose × chip
+   *  calls `remove`. Only wired for the `single` overlay variant (deep panes). */
+  regionSelect?: {
+    /** The persisted rect in image texels (null = none drawn yet). */
+    rect: { x0: number; y0: number; x1: number; y1: number } | null;
+    /** Query + snap the Z window to a texel rect (marquee release / edit
+     *  release). Empty region ⇒ `{ ok:false, message }` (previous state kept). */
+    commit: (x0: number, y0: number, x1: number, y1: number) => Promise<{ ok: boolean; message?: string }>;
+    /** ×: drop the rect + reset only the Z window to full. */
+    remove: () => void;
+  };
   /** Extra pane-supplied slider rows APPENDED after the EXPOSURE/OFFSET pair
    *  (e.g. the HDR PEAK slider, shown only while an extended roll-off operator
    *  is selected). The pane owns their value/reset — their `reset`/`isModified`
@@ -264,7 +275,7 @@ export default function ImagePaneShell({
   displayAdjust,
   depthSliders,
   extraSliders,
-  onRegionSelect,
+  regionSelect,
   onReset,
   extraModified,
   label,
@@ -277,24 +288,25 @@ export default function ImagePaneShell({
   // self-contained; the toggle shows only while the overlay is active.
   const [notation, setNotation] = useState<PixelValueNotation>(notationSeed);
   const [overlayActive, setOverlayActive] = useState(false);
-  // DEEP region-select ("select depth from region") — a one-shot marquee mode +
-  // a brief message slot (empty region / no samples). Only the `single` overlay
-  // variant exposes the displayElRef/sourceWindow the screen→texel map needs.
+  // DEEP region-select ("select depth from region") — a one-shot marquee draw
+  // mode + a brief message slot (empty region / no samples). Only the `single`
+  // overlay variant exposes the displayElRef/sourceWindow the mapping needs.
   const [regionActive, setRegionActive] = useState(false);
   const [regionMsg, setRegionMsg] = useState<string | null>(null);
   const singleOverlay = "render" in overlay ? null : overlay;
-  const regionAvailable = !!onRegionSelect && !!singleOverlay;
-  const handleRegionSelect = useCallback(
+  const regionAvailable = !!regionSelect && !!singleOverlay;
+  // Query + snap for a texel rect (fresh marquee OR a persisted-rect edit); a
+  // failed (empty) query surfaces a brief message and keeps the previous state.
+  const commitRegion = useCallback(
     async (x0: number, y0: number, x1: number, y1: number) => {
-      setRegionActive(false);
-      if (!onRegionSelect) return;
-      const res = await onRegionSelect(x0, y0, x1, y1);
+      if (!regionSelect) return;
+      const res = await regionSelect.commit(x0, y0, x1, y1);
       if (!res.ok) {
         setRegionMsg(res.message ?? "no samples in region");
         setTimeout(() => setRegionMsg(null), 1800);
       }
     },
-    [onRegionSelect],
+    [regionSelect],
   );
 
   const { containerProps: viewportProps } = useImageViewport({
@@ -480,13 +492,30 @@ export default function ImagePaneShell({
         {!toolbar && overlayActive && (
           <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
+        {/* Fresh-draw marquee (button active) — replaces any existing rect. */}
         {regionActive && singleOverlay && naturalDims && (
           <RegionSelectLayer
             imageElRef={singleOverlay.displayElRef}
             naturalDims={naturalDims}
             sourceWindow={singleOverlay.sourceWindow}
-            onSelect={handleRegionSelect}
+            onSelect={(x0, y0, x1, y1) => {
+              setRegionActive(false);
+              void commitRegion(x0, y0, x1, y1);
+            }}
             onExit={() => setRegionActive(false)}
+          />
+        )}
+        {/* Persisted, editable rect — anchored in image space (moves with zoom/pan). */}
+        {!regionActive && regionSelect?.rect && singleOverlay && naturalDims && (
+          <RegionRectOverlay
+            rect={regionSelect.rect}
+            imageElRef={singleOverlay.displayElRef}
+            naturalDims={naturalDims}
+            sourceWindow={singleOverlay.sourceWindow}
+            zoom={zoom}
+            pan={pan}
+            onCommit={commitRegion}
+            onRemove={() => regionSelect.remove()}
           />
         )}
         {regionMsg && (
@@ -603,6 +632,173 @@ function RegionSelectLayer({
           style={bandStyle}
         />
       )}
+    </div>
+  );
+}
+
+/** Handle → CSS cursor + fractional position along the rect (0..1 per axis). */
+const HANDLE_META: Record<Exclude<RegionHandle, "move">, { cursor: string; fx: number; fy: number }> = {
+  nw: { cursor: "nwse-resize", fx: 0, fy: 0 },
+  n: { cursor: "ns-resize", fx: 0.5, fy: 0 },
+  ne: { cursor: "nesw-resize", fx: 1, fy: 0 },
+  e: { cursor: "ew-resize", fx: 1, fy: 0.5 },
+  se: { cursor: "nwse-resize", fx: 1, fy: 1 },
+  s: { cursor: "ns-resize", fx: 0.5, fy: 1 },
+  sw: { cursor: "nesw-resize", fx: 0, fy: 1 },
+  w: { cursor: "ew-resize", fx: 0, fy: 0.5 },
+};
+
+/**
+ * The PERSISTED deep region rectangle: anchored in IMAGE-TEXEL space and mapped
+ * to screen every commit/viewport change (`texelRectToScreenRect`, the same
+ * object-contain/uvRect mapping the TEV overlay + marquee use — so it stays glued
+ * to the image pixels across zoom/pan/resize). Drag the interior to MOVE, the
+ * corner/edge handles to RESIZE (texel deltas = screen delta ÷ on-screen scale,
+ * clamped to the image + a min size — `region-edit.ts`), pointer-captured so the
+ * pane's pan gesture never fires mid-edit. On release the new rect re-queries the
+ * Z window (`onCommit`). The top-right × removes the rect + resets only the Z
+ * window (`onRemove`). The screen box is recomputed in a layout effect (post-DOM-
+ * commit) so it reads the transform the just-applied zoom/pan produced.
+ */
+function RegionRectOverlay({
+  rect,
+  imageElRef,
+  naturalDims,
+  sourceWindow,
+  zoom,
+  pan,
+  onCommit,
+  onRemove,
+}: {
+  rect: TexelRect;
+  imageElRef: RefObject<HTMLElement | null>;
+  naturalDims: { w: number; h: number };
+  sourceWindow?: SourceWindow;
+  zoom: number;
+  pan: { x: number; y: number };
+  onCommit: (x0: number, y0: number, x1: number, y1: number) => void;
+  onRemove: () => void;
+}) {
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  // Live rect during an edit (texels); null when idle → show the committed rect.
+  const [editing, setEditing] = useState<TexelRect | null>(null);
+  const dragRef = useRef<{ handle: RegionHandle; sx: number; sy: number; start: TexelRect } | null>(null);
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  const activeRect = editing ?? rect;
+
+  // Recompute the on-screen box AFTER the DOM commits (so getBoundingClientRect
+  // reflects the zoom/pan transform just applied). Re-runs on any viewport change.
+  useLayoutEffect(() => {
+    const compute = () => {
+      const img = imageElRef.current;
+      const layer = layerRef.current;
+      if (!img || !layer) return;
+      const imgBox = img.getBoundingClientRect();
+      const layerBox = layer.getBoundingClientRect();
+      const s = texelRectToScreenRect(activeRect, {
+        box: imgBox,
+        naturalWidth: naturalDims.w,
+        naturalHeight: naturalDims.h,
+        sourceWindow,
+      });
+      setBox({ left: s.left - layerBox.left, top: s.top - layerBox.top, width: s.width, height: s.height });
+    };
+    compute();
+    const img = imageElRef.current;
+    if (!img || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(compute);
+    ro.observe(img);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRect, naturalDims.w, naturalDims.h, sourceWindow, zoom, pan.x, pan.y]);
+
+  const beginDrag = useCallback(
+    (handle: RegionHandle) => (e: React.PointerEvent) => {
+      e.stopPropagation(); // never start a pan
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+      dragRef.current = { handle, sx: e.clientX, sy: e.clientY, start: activeRect };
+      setEditing(activeRect);
+    },
+    [activeRect],
+  );
+  const onDragMove = useCallback(
+    (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      const img = imageElRef.current;
+      if (!d || !img) return;
+      const scale = screenPerTexel({
+        box: img.getBoundingClientRect(),
+        naturalWidth: naturalDims.w,
+        naturalHeight: naturalDims.h,
+        sourceWindow,
+      });
+      const dx = (e.clientX - d.sx) / (scale || 1);
+      const dy = (e.clientY - d.sy) / (scale || 1);
+      setEditing(applyRectEdit(d.start, d.handle, dx, dy, { w: naturalDims.w, h: naturalDims.h }, 1));
+    },
+    [imageElRef, naturalDims.w, naturalDims.h, sourceWindow],
+  );
+  const endDrag = useCallback(() => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    const r = editing;
+    setEditing(null);
+    if (d && r) onCommit(r.x0, r.y0, r.x1, r.y1);
+  }, [editing, onCommit]);
+
+  if (!box) {
+    // First paint: mount the ref so the layout effect can measure.
+    return <div ref={layerRef} className="absolute inset-0 z-20 pointer-events-none" />;
+  }
+
+  return (
+    <div ref={layerRef} className="absolute inset-0 z-20 pointer-events-none" style={{ touchAction: "none" }}>
+      {/* The rect body — drag to MOVE. */}
+      <div
+        className="absolute border-2 border-sky-400 bg-sky-400/10 pointer-events-auto"
+        style={{ ...box, cursor: "move", touchAction: "none" }}
+        onPointerDown={beginDrag("move")}
+        onPointerMove={onDragMove}
+        onPointerUp={endDrag}
+      />
+      {/* Resize handles. Larger invisible hit box around a small visible dot. */}
+      {RESIZE_HANDLES.map((h) => {
+        const m = HANDLE_META[h];
+        return (
+          <div
+            key={h}
+            className="absolute pointer-events-auto flex items-center justify-center"
+            style={{
+              left: box.left + m.fx * box.width - 12,
+              top: box.top + m.fy * box.height - 12,
+              width: 24,
+              height: 24,
+              cursor: m.cursor,
+              touchAction: "none",
+            }}
+            onPointerDown={beginDrag(h)}
+            onPointerMove={onDragMove}
+            onPointerUp={endDrag}
+          >
+            <div className="w-2.5 h-2.5 rounded-sm bg-sky-400 border border-white/80" />
+          </div>
+        );
+      })}
+      {/* Remove × — top-right, theme-consistent chip, ≥40px hit area. */}
+      <button
+        type="button"
+        aria-label="Remove depth region"
+        title="Remove region (reset the depth window)"
+        className="absolute pointer-events-auto flex items-center justify-center rounded-full text-white"
+        style={{ left: box.left + box.width - 8, top: box.top - 32, width: 40, height: 40 }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={onRemove}
+      >
+        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-800/90 border border-white/70 text-[11px] leading-none">
+          ×
+        </span>
+      </button>
     </div>
   );
 }
