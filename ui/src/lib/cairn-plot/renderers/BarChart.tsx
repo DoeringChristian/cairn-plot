@@ -3,6 +3,7 @@ import { SERIES_COLORS } from "../types";
 import { formatNum } from "../format";
 import { niceTicks } from "../theme";
 import { Axis, type AxisTick } from "../primitives/Axis";
+import { barChartPads } from "./bar-layout";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
@@ -178,14 +179,16 @@ export default function BarChart({
   // labels each row with its run, but chips are shown there too for a
   // consistent way to read off run -> color.
   const showLegend = bars.length > 1;
-  const pad = {
-    top: showLegend ? 26 : 12,
-    bottom: 34,
+  // Pads sized to what renders: a top legend band only when the legend shows,
+  // and a bottom caption band only when there's a value label (see bar-layout).
+  const pad = barChartPads({
+    showLegend,
+    hasValueLabel: !!valueLabel,
     left: composed
       ? Math.max(60, rowLabel.length * 6.2 + 12)
       : Math.min(160, Math.max(60, longestLabel * 6.2 + 12)),
     right: 56,
-  };
+  });
   const plotW = w - pad.left - pad.right;
   const plotH = h - pad.top - pad.bottom;
 
