@@ -221,9 +221,12 @@ export interface ImagePaneShellProps {
   regionSelect?: {
     /** The persisted rect in image texels (null = none drawn yet). */
     rect: { x0: number; y0: number; x1: number; y1: number } | null;
-    /** Query + snap the Z window to a texel rect (marquee release / edit
-     *  release). Empty region ⇒ `{ ok:false, message }` (previous state kept). */
-    commit: (x0: number, y0: number, x1: number, y1: number) => Promise<{ ok: boolean; message?: string }>;
+    /** Live (coalesced) window update while drawing/moving/resizing — sets the Z
+     *  window from the rect's sample range (empty region ⇒ empty window). Does
+     *  NOT persist the rect. */
+    queryLive: (x0: number, y0: number, x1: number, y1: number) => void;
+    /** Finalize a rect (release): persist it + set the window. Empty is valid. */
+    commit: (x0: number, y0: number, x1: number, y1: number) => void;
     /** ×: drop the rect + reset only the Z window to full. */
     remove: () => void;
   };
@@ -289,25 +292,11 @@ export default function ImagePaneShell({
   const [notation, setNotation] = useState<PixelValueNotation>(notationSeed);
   const [overlayActive, setOverlayActive] = useState(false);
   // DEEP region-select ("select depth from region") — a one-shot marquee draw
-  // mode + a brief message slot (empty region / no samples). Only the `single`
-  // overlay variant exposes the displayElRef/sourceWindow the mapping needs.
+  // mode. Any region is valid (an empty one selects an empty Z window). Only the
+  // `single` overlay variant exposes the displayElRef/sourceWindow mapping needs.
   const [regionActive, setRegionActive] = useState(false);
-  const [regionMsg, setRegionMsg] = useState<string | null>(null);
   const singleOverlay = "render" in overlay ? null : overlay;
   const regionAvailable = !!regionSelect && !!singleOverlay;
-  // Query + snap for a texel rect (fresh marquee OR a persisted-rect edit); a
-  // failed (empty) query surfaces a brief message and keeps the previous state.
-  const commitRegion = useCallback(
-    async (x0: number, y0: number, x1: number, y1: number) => {
-      if (!regionSelect) return;
-      const res = await regionSelect.commit(x0, y0, x1, y1);
-      if (!res.ok) {
-        setRegionMsg(res.message ?? "no samples in region");
-        setTimeout(() => setRegionMsg(null), 1800);
-      }
-    },
-    [regionSelect],
-  );
 
   const { containerProps: viewportProps } = useImageViewport({
     containerRef: paneRef,
@@ -492,15 +481,17 @@ export default function ImagePaneShell({
         {!toolbar && overlayActive && (
           <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
-        {/* Fresh-draw marquee (button active) — replaces any existing rect. */}
-        {regionActive && singleOverlay && naturalDims && (
+        {/* Fresh-draw marquee (button active) — replaces any existing rect.
+            Live-queries the window as it's dragged; commit persists on release. */}
+        {regionActive && regionSelect && singleOverlay && naturalDims && (
           <RegionSelectLayer
             imageElRef={singleOverlay.displayElRef}
             naturalDims={naturalDims}
             sourceWindow={singleOverlay.sourceWindow}
+            onQueryLive={regionSelect.queryLive}
             onSelect={(x0, y0, x1, y1) => {
               setRegionActive(false);
-              void commitRegion(x0, y0, x1, y1);
+              regionSelect.commit(x0, y0, x1, y1);
             }}
             onExit={() => setRegionActive(false)}
           />
@@ -514,14 +505,10 @@ export default function ImagePaneShell({
             sourceWindow={singleOverlay.sourceWindow}
             zoom={zoom}
             pan={pan}
-            onCommit={commitRegion}
-            onRemove={() => regionSelect.remove()}
+            onQueryLive={regionSelect.queryLive}
+            onCommit={regionSelect.commit}
+            onRemove={regionSelect.remove}
           />
-        )}
-        {regionMsg && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 rounded bg-black/70 px-2 py-1 text-xs text-white pointer-events-none">
-            {regionMsg}
-          </div>
         )}
       </div>
       {showLabelChip && (
@@ -543,18 +530,35 @@ function RegionSelectLayer({
   imageElRef,
   naturalDims,
   sourceWindow,
+  onQueryLive,
   onSelect,
   onExit,
 }: {
   imageElRef: RefObject<HTMLElement | null>;
   naturalDims: { w: number; h: number };
   sourceWindow?: SourceWindow;
+  onQueryLive: (x0: number, y0: number, x1: number, y1: number) => void;
   onSelect: (x0: number, y0: number, x1: number, y1: number) => void;
   onExit: () => void;
 }) {
   const layerRef = useRef<HTMLDivElement | null>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+
+  // Map the current band to an image-texel rect (or null if off-image).
+  const bandToTexel = useCallback(
+    (ax: number, ay: number, bx: number, by: number) => {
+      const imgEl = imageElRef.current;
+      if (!imgEl) return null;
+      return screenRectToTexelRect(ax, ay, bx, by, {
+        box: imgEl.getBoundingClientRect(),
+        naturalWidth: naturalDims.w,
+        naturalHeight: naturalDims.h,
+        sourceWindow,
+      });
+    },
+    [imageElRef, naturalDims, sourceWindow],
+  );
 
   // Escape cancels the mode.
   useEffect(() => {
@@ -570,11 +574,17 @@ function RegionSelectLayer({
     startRef.current = { x: e.clientX, y: e.clientY };
     setBand({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
   }, []);
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    const s = startRef.current;
-    if (!s) return;
-    setBand({ x0: s.x, y0: s.y, x1: e.clientX, y1: e.clientY });
-  }, []);
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const s = startRef.current;
+      if (!s) return;
+      setBand({ x0: s.x, y0: s.y, x1: e.clientX, y1: e.clientY });
+      // Live-query the window as the marquee grows (coalesced upstream).
+      const rect = bandToTexel(s.x, s.y, e.clientX, e.clientY);
+      if (rect) onQueryLive(rect.x0, rect.y0, rect.x1, rect.y1);
+    },
+    [bandToTexel, onQueryLive],
+  );
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
       const s = startRef.current;
@@ -667,6 +677,7 @@ function RegionRectOverlay({
   sourceWindow,
   zoom,
   pan,
+  onQueryLive,
   onCommit,
   onRemove,
 }: {
@@ -676,6 +687,7 @@ function RegionRectOverlay({
   sourceWindow?: SourceWindow;
   zoom: number;
   pan: { x: number; y: number };
+  onQueryLive: (x0: number, y0: number, x1: number, y1: number) => void;
   onCommit: (x0: number, y0: number, x1: number, y1: number) => void;
   onRemove: () => void;
 }) {
@@ -735,9 +747,12 @@ function RegionRectOverlay({
       });
       const dx = (e.clientX - d.sx) / (scale || 1);
       const dy = (e.clientY - d.sy) / (scale || 1);
-      setEditing(applyRectEdit(d.start, d.handle, dx, dy, { w: naturalDims.w, h: naturalDims.h }, 1));
+      const next = applyRectEdit(d.start, d.handle, dx, dy, { w: naturalDims.w, h: naturalDims.h }, 1);
+      setEditing(next);
+      // Live-query the window as the rect moves/resizes (coalesced upstream).
+      onQueryLive(next.x0, next.y0, next.x1, next.y1);
     },
-    [imageElRef, naturalDims.w, naturalDims.h, sourceWindow],
+    [imageElRef, naturalDims.w, naturalDims.h, sourceWindow, onQueryLive],
   );
   const endDrag = useCallback(() => {
     const d = dragRef.current;

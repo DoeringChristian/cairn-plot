@@ -221,6 +221,7 @@ async function main(): Promise<void> {
     const bytes = await fetchBytes(FIXTURE_URL);
     const deep = dec.open_deep(bytes)!;
     const zMin = deep.zMin;
+    const zMax = deep.zMax;
     dec.free_deep(deep.handle);
 
     let ok = true;
@@ -230,6 +231,18 @@ async function main(): Promise<void> {
     ok = (await parityCase(device, dec, bytes, -Infinity, 7, "far-cutoff/z≤7")) && ok;
     ok = (await parityCase(device, dec, bytes, (zMin + 7) / 2, Infinity, "near-cutoff")) && ok;
     ok = (await parityCase(device, dec, bytes, 8, Infinity, "window[8,∞) back-only")) && ok;
+    // EMPTY window (crossed zNear > zFar): both paths composite nothing.
+    ok = (await parityCase(device, dec, bytes, zMax, zMin, "empty/crossed")) && ok;
+    {
+      // …and assert the GPU output really is fully transparent (not just == wasm).
+      const deepE = dec.open_deep(bytes)!;
+      const g = await gpuComposite(device, dec, deepE.handle, zMax, zMin);
+      dec.free_deep(deepE.handle);
+      const allZero = g.data.every((v) => v === 0);
+      g.target.destroy();
+      report(allZero, `[empty/crossed] GPU composite is fully transparent (all channels 0)`);
+      ok = allZero && ok;
+    }
 
     await timingCase(device, dec);
 

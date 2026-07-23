@@ -811,6 +811,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         deepFlatten.hasDeep
           ? {
               rect: deepFlatten.region,
+              queryLive: deepFlatten.queryRegionWindow,
               commit: deepFlatten.commitRegion,
               remove: deepFlatten.removeRegion,
             }

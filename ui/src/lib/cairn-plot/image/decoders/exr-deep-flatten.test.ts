@@ -184,7 +184,7 @@ test("deep_z_range_in_rect reports the Z range of samples in an image rect", asy
   free_deep(deep.handle);
 });
 
-test("deep_z_range_in_rect over an empty region reports count 0 (no-op signal)", async () => {
+test("deep_z_range_in_rect reports count 0 for an empty region (a VALID selection)", async () => {
   const { open_deep, deep_z_range_in_rect, free_deep } = await loadExrDecoder();
   // deep-holes-8x8: left half (x<4) has 1 sample at Z=3; right half is empty.
   const deep = open_deep(fixture("deep-holes-8x8.exr"))!;
@@ -193,6 +193,33 @@ test("deep_z_range_in_rect over an empty region reports count 0 (no-op signal)",
   assert.equal(left.zMax, 3);
   assert.equal(left.count, 32); // 4 columns × 8 rows
   const right = deep_z_range_in_rect(deep.handle, 4, 0, 7, 7);
-  assert.equal(right.count, 0); // empty region → host no-ops
+  assert.equal(right.count, 0); // empty region — the host maps this to an empty window
   free_deep(deep.handle);
+});
+
+test("an empty (crossed zNear > zFar) window composites fully transparent", async () => {
+  const { open_deep, flatten_deep, free_deep } = await loadExrDecoder();
+  // deep-holes-8x8 is a SINGLE-Z image (all samples at Z=3, so zMin==zMax==3):
+  // the host's empty sentinel there is the strictly-crossed [zMax+1, zMin-1] =
+  // [4, 2]. Must render nothing (every half is 0 = transparent black).
+  const deep = open_deep(fixture("deep-holes-8x8.exr"))!;
+  assert.equal(deep.zMin, 3);
+  assert.equal(deep.zMax, 3);
+  const empty = flatten_deep(deep.handle, 4, 2); // crossed ⇒ empty
+  const eh = empty.halfBits!;
+  assert.ok(
+    eh.every((v) => v === 0),
+    "crossed window on a single-Z image → fully transparent",
+  );
+  // A NON-empty window at Z=3 DOES show the left-half content (a sanity anchor).
+  const full = flatten_deep(deep.handle, -Infinity, Infinity);
+  const fh = full.halfBits!;
+  assert.ok(fh.some((v) => v !== 0), "full composite shows the populated pixels");
+  free_deep(deep.handle);
+
+  // And on the multi-Z fixture, any crossed window is transparent too.
+  const deep2 = open_deep(fixture("deep-rgba-32x32.exr"))!;
+  const empty2 = flatten_deep(deep2.handle, deep2.zMax, deep2.zMin); // [10, 1] crossed
+  assert.ok(empty2.halfBits!.every((v) => v === 0), "crossed window on multi-Z → transparent");
+  free_deep(deep2.handle);
 });

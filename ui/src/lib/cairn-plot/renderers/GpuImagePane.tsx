@@ -985,6 +985,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
         deepActive
           ? {
               rect: deepFlatten.region,
+              queryLive: deepFlatten.queryRegionWindow,
               commit: deepFlatten.commitRegion,
               remove: deepFlatten.removeRegion,
             }

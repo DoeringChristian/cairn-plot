@@ -42,12 +42,6 @@ const raf: (cb: () => void) => number =
 const cancelRaf: (h: number) => void =
   typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : (h) => clearTimeout(h);
 
-/** Result of a region-select query. */
-export interface RegionSelectResult {
-  ok: boolean;
-  message?: string;
-}
-
 export interface DeepFlattenState {
   /** The effective `HdrData` — the prop `hdr`, or a windowed re-flatten of it. */
   hdr: HdrData;
@@ -60,16 +54,19 @@ export interface DeepFlattenState {
    *  rect and the sliders may DIVERGE after a manual slider edit — the rect marks
    *  the last queried region, the sliders the live window. */
   region: TexelRect | null;
-  /** Query the Z range of samples inside an image-pixel rect and set BOTH the
-   *  window (epsilon-padded) AND the persisted rect to it. Empty region ⇒ no-op:
-   *  the previous window + rect are kept (`{ ok:false, message }`). Used by the
-   *  fresh marquee and by an edit release. */
-  commitRegion(x0: number, y0: number, x1: number, y1: number): Promise<RegionSelectResult>;
+  /** Live (coalesced) window update while a rect is being drawn/moved/resized:
+   *  query the samples' Z range in the rect and set the window (real range, or
+   *  the EMPTY sentinel `zNear > zFar` when the region holds no samples — a valid
+   *  selection that composites nothing). Does NOT persist the rect. */
+  queryRegionWindow(x0: number, y0: number, x1: number, y1: number): void;
+  /** Finalize a rect (drag release): PERSIST it and set the window from it. An
+   *  empty region is valid — the rect is placed and the window goes empty. */
+  commitRegion(x0: number, y0: number, x1: number, y1: number): void;
   /** Remove the rect and reset ONLY the Z window to `[zMin, zMax]` (the × chip). */
   removeRegion(): void;
   /** Restore the window to `[zMin, zMax]` AND clear the rect — wired to shell HOME. */
   reset(): void;
-  /** True while the window is narrower than `[zMin, zMax]` (enables shell HOME). */
+  /** True while the window differs from `[zMin, zMax]` (enables shell HOME). */
   isModified: boolean;
 }
 
@@ -110,10 +107,11 @@ export function useDeepFlatten(
   const coalesceRef = useRef<CoalesceState>(IDLE_COALESCE);
   const rafRef = useRef<number | null>(null);
 
-  // Cross-clamped setters: enforce zNear ≤ zFar (manual out-of-[zMin,zMax] entry
-  // is otherwise allowed, per the slider-entry convention).
-  const setNear = useCallback((v: number) => setZNear(Math.min(v, zFarRef.current)), [setZNear]);
-  const setFar = useCallback((v: number) => setZFar(Math.max(v, zNearRef.current)), [setZFar]);
+  // Sliders set the edges DIRECTLY — no cross-clamp. A crossed window
+  // (zNear > zFar) is a VALID empty selection (composites nothing), matching an
+  // empty region; manual out-of-[zMin,zMax] entry is allowed per the convention.
+  const setNear = setZNear;
+  const setFar = setZFar;
 
   // Launch one CPU re-flatten of the LATEST window; apply (rAF-aligned) only if
   // still the wanted version, then chain if a newer request landed.
@@ -228,27 +226,74 @@ export function useDeepFlatten(
     ];
   }, [deep, zMin, zMax, zNear, zFar, useLog, setNear, setFar]);
 
-  const commitRegion = useCallback(
-    async (x0: number, y0: number, x1: number, y1: number): Promise<RegionSelectResult> => {
-      const d = deepRef.current;
-      if (!d) return { ok: false, message: "no deep source" };
-      let zr;
-      try {
-        zr = await d.zRangeInRect(x0, y0, x1, y1);
-      } catch {
-        return { ok: false, message: "region query failed" };
+  // Set the Z window from a region's sample range. A NON-EMPTY region → the
+  // ε-padded [zMin, zMax] (padded so boundary samples survive the float compare).
+  // An EMPTY region (count 0) is a VALID selection → the empty sentinel
+  // zNear > zFar (STRICTLY crossed even for a single-Z image where zMin==zMax),
+  // which composites nothing (transparent) on both the GPU and wasm paths — no
+  // extra flag/uniform needed, the existing window path already renders it. The
+  // rect is placeable anywhere.
+  const applyWindowFromZRange = useCallback(
+    (zr: { zMin: number; zMax: number; count: number }) => {
+      if (zr.count === 0) {
+        const lo = zMinRef.current;
+        const hi = zMaxRef.current;
+        const pad = hi > lo ? 0 : 1; // ensure a strict cross even when hi==lo
+        setZNear(hi + pad);
+        setZFar(lo - pad);
+        return;
       }
-      // Empty region ⇒ keep the previous window AND rect (no-op).
-      if (zr.count === 0) return { ok: false, message: "no samples in region" };
-      // Pad by a tiny epsilon so boundary samples aren't lost to float compare.
       const span = zMaxRef.current - zMinRef.current;
       const eps = Math.max(Math.abs(span) * 1e-4, 1e-4);
       setZNear(zr.zMin - eps);
       setZFar(zr.zMax + eps);
-      setRegion({ x0, y0, x1, y1 }); // persist the rect (visible + editable)
-      return { ok: true };
     },
     [setZNear, setZFar],
+  );
+
+  // A SEPARATE latest-wins / one-in-flight coalescer for the region Z-range query
+  // (independent of the flatten coalescer) so a live drag can re-query every move
+  // without piling up worker round-trips. `queryRectRef` holds the latest rect.
+  const queryRectRef = useRef<TexelRect | null>(null);
+  const queryCoalesceRef = useRef<CoalesceState>(IDLE_COALESCE);
+  const queryLaunch = useCallback(() => {
+    const d = deepRef.current;
+    const rect = queryRectRef.current;
+    const done = () => {
+      const step = resolveCoalesce(queryCoalesceRef.current);
+      queryCoalesceRef.current = step.state;
+      if (step.launch != null) queryLaunch();
+    };
+    if (!d || !rect) {
+      done();
+      return;
+    }
+    d.zRangeInRect(rect.x0, rect.y0, rect.x1, rect.y1)
+      .then((zr) => {
+        applyWindowFromZRange(zr);
+        done();
+      })
+      .catch(done);
+  }, [applyWindowFromZRange]);
+
+  // Live, coalesced window update (drawing / moving / resizing) — does NOT persist.
+  const queryRegionWindow = useCallback(
+    (x0: number, y0: number, x1: number, y1: number) => {
+      queryRectRef.current = { x0, y0, x1, y1 };
+      const step = requestCoalesce(queryCoalesceRef.current, 1);
+      queryCoalesceRef.current = step.state;
+      if (step.launch != null) queryLaunch();
+    },
+    [queryLaunch],
+  );
+
+  // Finalize (drag release): PERSIST the rect + set its window (empty is valid).
+  const commitRegion = useCallback(
+    (x0: number, y0: number, x1: number, y1: number) => {
+      setRegion({ x0, y0, x1, y1 });
+      queryRegionWindow(x0, y0, x1, y1);
+    },
+    [queryRegionWindow],
   );
 
   // × chip: drop the rect and reset ONLY the Z window to the full range.
@@ -272,6 +317,7 @@ export function useDeepFlatten(
     sliders,
     hasDeep: deep != null,
     region,
+    queryRegionWindow,
     commitRegion,
     removeRegion,
     reset,
