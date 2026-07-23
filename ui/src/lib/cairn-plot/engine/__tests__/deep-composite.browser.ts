@@ -99,26 +99,34 @@ async function gpuComposite(
   device: Device,
   dec: Decoder,
   handle: number,
-  zClip: number,
+  zNear: number,
+  zFar: number,
 ): Promise<{ data: Float32Array; width: number; height: number; target: Texture }> {
   const csr = dec.deep_gpu_csr(handle);
   const buffers = device.createDeepSampleBuffers!(csr);
   const target = device.createTexture(csr.width, csr.height, "rgba16float");
-  device.compositeDeep!(buffers, target, zClip);
+  device.compositeDeep!(buffers, target, zNear, zFar);
   const out = (await device.readback(target)) as Float32Array;
   buffers.destroy();
   return { data: out, width: csr.width, height: csr.height, target };
 }
 
-/** Compare GPU composite vs wasm flatten at `zClip` within f16 tolerance. */
-async function parityCase(device: Device, dec: Decoder, bytes: Uint8Array, zClip: number, label: string): Promise<boolean> {
+/** Compare GPU composite vs wasm flatten over the window [zNear,zFar] within f16 tolerance. */
+async function parityCase(
+  device: Device,
+  dec: Decoder,
+  bytes: Uint8Array,
+  zNear: number,
+  zFar: number,
+  label: string,
+): Promise<boolean> {
   const deep = dec.open_deep(bytes);
   if (!deep) {
     report(false, `[${label}] open_deep returned null (not deep?)`);
     return false;
   }
-  const gpu = await gpuComposite(device, dec, deep.handle, zClip);
-  const wasm = dec.flatten_deep(deep.handle, zClip);
+  const gpu = await gpuComposite(device, dec, deep.handle, zNear, zFar);
+  const wasm = dec.flatten_deep(deep.handle, zNear, zFar);
   dec.free_deep(deep.handle);
   const half = wasm.halfBits!;
   const n = gpu.width * gpu.height * 4;
@@ -134,7 +142,7 @@ async function parityCase(device: Device, dec: Decoder, bytes: Uint8Array, zClip
   }
   gpu.target.destroy();
   const ok = bad === 0;
-  report(ok, `[${label}] zClip=${zClip}: GPU vs wasm maxDiff=${maxDiff.toExponential(2)} over-eps=${bad}/${n}`);
+  report(ok, `[${label}] window=[${zNear},${zFar}]: GPU vs wasm maxDiff=${maxDiff.toExponential(2)} over-eps=${bad}/${n}`);
   return ok;
 }
 
@@ -172,7 +180,7 @@ async function timingCase(device: Device, dec: Decoder): Promise<void> {
   for (let i = 0; i < 40; i++) {
     const z = deep.zMin + (deep.zMax - deep.zMin) * (i / 40);
     const t0 = performance.now();
-    device.compositeDeep!(buffers, target, z);
+    device.compositeDeep!(buffers, target, -Infinity, z);
     issue.push(performance.now() - t0);
   }
   info(`[timing] compositeDeep ISSUE (main thread) median = ${median(issue).toFixed(3)} ms`);
@@ -188,7 +196,7 @@ async function timingCase(device: Device, dec: Decoder): Promise<void> {
       const t0 = performance.now();
       for (let i = 0; i < n; i++) {
         const z = deep.zMin + (deep.zMax - deep.zMin) * ((i + 1) / (n + 1));
-        device.compositeDeep!(buffers, target, z);
+        device.compositeDeep!(buffers, target, -Infinity, z);
       }
       await device.readback(target); // one sync point flushes all n composites
       runs.push(performance.now() - t0);
@@ -213,13 +221,15 @@ async function main(): Promise<void> {
     const bytes = await fetchBytes(FIXTURE_URL);
     const deep = dec.open_deep(bytes)!;
     const zMin = deep.zMin;
-    const zMax = deep.zMax;
     dec.free_deep(deep.handle);
 
     let ok = true;
-    ok = (await parityCase(device, dec, bytes, zMax, "full/zMax")) && ok;
-    ok = (await parityCase(device, dec, bytes, 7, "mid/z=7")) && ok;
-    ok = (await parityCase(device, dec, bytes, (zMin + 7) / 2, "near-front")) && ok;
+    // Full composite, a far cutoff, a near cutoff, and a true WINDOW that
+    // excludes both the front (Z=1) and the single (Z=5) — GPU vs wasm each.
+    ok = (await parityCase(device, dec, bytes, -Infinity, Infinity, "full")) && ok;
+    ok = (await parityCase(device, dec, bytes, -Infinity, 7, "far-cutoff/z≤7")) && ok;
+    ok = (await parityCase(device, dec, bytes, (zMin + 7) / 2, Infinity, "near-cutoff")) && ok;
+    ok = (await parityCase(device, dec, bytes, 8, Infinity, "window[8,∞) back-only")) && ok;
 
     await timingCase(device, dec);
 

@@ -854,14 +854,15 @@ export async function createWebGPUDevice(): Promise<Device> {
       );
     },
 
-    compositeDeep(buffers: DeepSampleBuffers, target: Texture, zClip: number): void {
+    compositeDeep(buffers: DeepSampleBuffers, target: Texture, zNear: number, zFar: number): void {
       const b = buffers as WGPUDeepSampleBuffers;
       const t = target as WGPUTexture;
       const { pipeline } = getDeepCompositePipeline();
+      // params = (width, height, zFar, zNear) — see deep-composite.wgsl.ts.
       gpuDevice.queue.writeBuffer(
         b.paramsBuffer,
         0,
-        new Float32Array([b.width, b.height, zClip, 0]),
+        new Float32Array([b.width, b.height, zFar, zNear]),
       );
       const encoder = gpuDevice.createCommandEncoder();
       const pass = encoder.beginRenderPass({

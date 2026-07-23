@@ -35,7 +35,7 @@
  * browser harness asserts this within f16 tolerance).
  */
 export const deepCompositeWGSL = /* wgsl */ `
-struct Params { dims: vec4<f32> }; // x=width, y=height, z=zClip, w=unused
+struct Params { dims: vec4<f32> }; // x=width, y=height, z=zFar, w=zNear
 
 @group(0) @binding(0) var<storage, read> offsets: array<u32>;
 @group(0) @binding(1) var<storage, read> colors: array<vec4<f32>>;
@@ -63,11 +63,15 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
   let idx = y * w + x;
   let start = offsets[idx];
   let end = offsets[idx + 1u];
-  let zClip = params.dims.z;
-  // Front-to-back OVER over premultiplied samples: acc += (1 - acc.a) * sample.
+  let zFar = params.dims.z;
+  let zNear = params.dims.w;
+  // Front-to-back OVER over the Z WINDOW [zNear, zFar]: skip samples nearer than
+  // zNear, break past zFar (samples ascending in Z). acc += (1 - acc.a) * sample.
   var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
   for (var s: u32 = start; s < end; s = s + 1u) {
-    if (zs[s] > zClip) { break; } // samples ascending in Z ⇒ the rest are farther
+    let z = zs[s];
+    if (z < zNear) { continue; }
+    if (z > zFar) { break; }
     let c = colors[s];
     let wgt = 1.0 - acc.a;
     acc = acc + wgt * c;

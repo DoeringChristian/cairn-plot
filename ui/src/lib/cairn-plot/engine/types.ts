@@ -70,12 +70,12 @@ export interface Device {
    */
   createDeepSampleBuffers?(spec: DeepGpuCsrSpec): DeepSampleBuffers;
   /**
-   * Composite retained deep samples at a Z cutoff into `target` (an
-   * `rgba16float` texture, front-to-back OVER of samples with Z ≤ `zClip`) —
-   * a uniform write + one fullscreen fragment pass. Pairs with
-   * {@link createDeepSampleBuffers}.
+   * Composite retained deep samples over the Z WINDOW [`zNear`, `zFar`] into
+   * `target` (an `rgba16float` texture, front-to-back OVER of samples with
+   * `zNear ≤ Z ≤ zFar`) — a uniform write + one fullscreen fragment pass. Pairs
+   * with {@link createDeepSampleBuffers}. `zNear = -Infinity` = single far cutoff.
    */
-  compositeDeep?(buffers: DeepSampleBuffers, target: Texture, zClip: number): void;
+  compositeDeep?(buffers: DeepSampleBuffers, target: Texture, zNear: number, zFar: number): void;
   readback(source: Surface | Texture): Promise<Uint8Array | Float32Array>;
   /**
    * GPU-side parallel reduction (Task 7) over the `[0,width)x[0,height)`
