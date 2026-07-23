@@ -154,7 +154,12 @@ Because it is the reference implementation, it decodes **literally every EXR**:
   sliders that restrict compositing to samples with `zNear ≤ Z ≤ zFar` (default
   the full range) — plus a **"select depth from region"** marquee button: drag a
   rectangle and the window snaps to the Z range the samples inside that pixel
-  region occupy (Esc cancels; an empty region is a no-op). On a GPU-backed pane
+  region occupy (Esc cancels; an empty region is a no-op). The rectangle then
+  **persists**, anchored in image space (it moves/resizes with the viewport); drag
+  it to move, its corner/edge handles to resize (each edit re-queries the window),
+  and its top-right **×** removes it and resets only the Z window. HOME clears the
+  rect + window; a manual slider edit keeps the rect (the two may diverge). On a
+  GPU-backed pane
   the samples are uploaded to GPU storage buffers once and re-composited per
   window by a fragment pass (`compositeDeep`) — **real-time** (≈0.2 ms/tick at
   1080p Trunks scale), no re-decode; the CPU/non-WebGPU fallback re-flattens in

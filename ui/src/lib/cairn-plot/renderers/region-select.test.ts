@@ -7,7 +7,11 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { screenToTexel, screenRectToTexelRect } from "./region-select.ts";
+import {
+  screenToTexel,
+  screenRectToTexelRect,
+  texelRectToScreenRect,
+} from "./region-select.ts";
 
 // A 100x50 source displayed object-contain into a 200x200 box at client (10,20):
 // scale = min(200/100, 200/50) = 2 (width-limited), dispW=200, dispH=100,
@@ -66,4 +70,36 @@ test("screenToTexel honors a GPU sourceWindow crop (uvRect)", () => {
   });
   assert.ok(Math.abs(t.x - 50) < 1e-9);
   assert.ok(Math.abs(t.y - 0) < 1e-9);
+});
+
+test("persisted rect stays GLUED to the image region across a zoom change", () => {
+  // The same image-texel rect, mapped through the image element's box at TWO
+  // zoom levels (a CPU pane grows the element's box with the CSS transform).
+  const rect = { x0: 10, y0: 10, x1: 40, y1: 30 };
+  const box1 = { left: 10, top: 20, width: 200, height: 200 }; // 1x
+  const box2 = { left: -50, top: 0, width: 400, height: 400 }; // 2x zoom + pan
+  const p1 = { box: box1, naturalWidth: 100, naturalHeight: 50 };
+  const p2 = { box: box2, naturalWidth: 100, naturalHeight: 50 };
+
+  const s1 = texelRectToScreenRect(rect, p1);
+  const s2 = texelRectToScreenRect(rect, p2);
+
+  // The screen rects DIFFER (the 2x zoom doubles the on-screen size)…
+  assert.ok(Math.abs(s2.width / s1.width - 2) < 1e-9, "screen width scales with zoom");
+  assert.ok(Math.abs(s2.height / s1.height - 2) < 1e-9, "screen height scales with zoom");
+
+  // …yet BOTH map back to the exact same image texels — the rect is glued to the
+  // image region, not to fixed screen coordinates. The drawn box spans the FULL
+  // pixels [x0, x1+1), so the far corner decodes to texel x1+1/y1+1.
+  for (const [s, p] of [
+    [s1, p1],
+    [s2, p2],
+  ] as const) {
+    const a = screenToTexel(s.left, s.top, p);
+    const b = screenToTexel(s.left + s.width, s.top + s.height, p);
+    assert.equal(Math.round(a.x), rect.x0);
+    assert.equal(Math.round(a.y), rect.y0);
+    assert.equal(Math.round(b.x) - 1, rect.x1);
+    assert.equal(Math.round(b.y) - 1, rect.y1);
+  }
 });
