@@ -42,12 +42,14 @@ export interface CairnOpenExrModule {
   _cairn_exr_free(r: number): void;
   // DEEP live-flatten ABI (depth slider) — see wasm/openexr/src/binding.cpp.
   _cairn_exr_open_deep(ptr: number, len: number): number;
-  _cairn_exr_flatten_deep(handle: number, zClip: number): number;
+  _cairn_exr_flatten_deep(handle: number, zNear: number, zFar: number): number;
   _cairn_exr_free_open_deep(r: number): void;
   _cairn_exr_free_deep(handle: number): void;
   _cairn_exr_set_deep_budget(bytes: number): void;
   _cairn_exr_deep_gpu_csr(handle: number): number;
   _cairn_exr_free_gpu_csr(r: number): void;
+  _cairn_exr_deep_z_range_in_rect(handle: number, x0: number, y0: number, x1: number, y1: number): number;
+  _cairn_exr_free_z_range(r: number): void;
   HEAPU8: Uint8Array;
   HEAPU16: Uint16Array;
   HEAP32: Int32Array;
@@ -134,6 +136,14 @@ export interface DeepImageOpen {
   readonly totalSamples: number;
 }
 
+/** Z range of the samples inside an image-pixel rect (region-select → depth
+ *  window). \`count === 0\` means the region held no samples (host no-ops). */
+export interface DeepZRange {
+  readonly zMin: number;
+  readonly zMax: number;
+  readonly count: number;
+}
+
 /**
  * A deep image's per-pixel Z-SORTED samples, laid out for direct upload to
  * WebGPU storage buffers (the GPU depth-composite path). \`offsets\` are the
@@ -155,6 +165,8 @@ const F = { status: 0, width: 1, height: 2, channels: 3, precision: 4, data: 5, 
 const DF = { status: 0, handle: 1, width: 2, height: 3, channels: 4, zMin: 5, zMax: 6, total: 7, errCode: 8, errMsg: 9 };
 // DeepGpuCsr field order — CONTRACT with wasm/openexr/src/binding.cpp.
 const GF = { status: 0, offsets: 1, colors: 2, z: 3, total: 4, width: 5, height: 6, errCode: 7, errMsg: 8 };
+// DeepZRange field order (z_min/z_max are FLOATs → read from HEAPF32).
+const ZR = { status: 0, zMin: 1, zMax: 2, count: 3, errCode: 4, errMsg: 5 };
 
 /** Read a DecodeResult* out of the module heap into a JS-owned DecodedImage
  *  (copies the payload out of wasm memory, then frees the wasm-side result). */
@@ -239,15 +251,52 @@ function openDeep(mod: CairnOpenExrModule, bytes: Uint8Array): DeepImageOpen | n
   return out;
 }
 
-/** Flatten a retained deep handle at a Z cutoff (samples with Z ≤ \`zClip\`), live. */
-function flattenDeep(mod: CairnOpenExrModule, handle: number, zClip: number): DecodedImage {
-  const rPtr = mod._cairn_exr_flatten_deep(handle, zClip);
+/** Flatten a retained deep handle over the Z WINDOW [\`zNear\`, \`zFar\`], live.
+ *  \`zNear = -Infinity\` ⇒ the legacy single far-cutoff. */
+function flattenDeep(
+  mod: CairnOpenExrModule,
+  handle: number,
+  zNear: number,
+  zFar: number,
+): DecodedImage {
+  const rPtr = mod._cairn_exr_flatten_deep(handle, zNear, zFar);
   return readDecodeResult(mod, rPtr);
 }
 
 /** Release a retained deep handle (frees its retained samples / cached bytes). */
 function freeDeep(mod: CairnOpenExrModule, handle: number): void {
   mod._cairn_exr_free_deep(handle);
+}
+
+/** Z range of the samples inside an image-pixel rect (region-select). */
+function deepZRangeInRect(
+  mod: CairnOpenExrModule,
+  handle: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): DeepZRange {
+  const rPtr = mod._cairn_exr_deep_z_range_in_rect(handle, x0, y0, x1, y1);
+  const H = mod.HEAP32;
+  const Hf = mod.HEAPF32;
+  const base = rPtr >> 2;
+  if (H[base + ZR.status] !== 0) {
+    const code = mod.UTF8ToString(H[base + ZR.errCode]!);
+    const msg = mod.UTF8ToString(H[base + ZR.errMsg]!);
+    mod._cairn_exr_free_z_range(rPtr);
+    const err = new Error(msg) as Error & { code: string };
+    err.name = "CairnExrDecodeError";
+    err.code = code;
+    throw err;
+  }
+  const out: DeepZRange = {
+    zMin: Hf[base + ZR.zMin]!,
+    zMax: Hf[base + ZR.zMax]!,
+    count: H[base + ZR.count]! >>> 0,
+  };
+  mod._cairn_exr_free_z_range(rPtr);
+  return out;
 }
 
 /** Export a retained deep handle's Z-sorted samples for GPU upload. Copies the
@@ -292,14 +341,17 @@ export interface ExrDecoder {
   decode_exr: (bytes: Uint8Array) => DecodedImage;
   /** Open + retain a deep EXR (null when not deep). */
   open_deep: (bytes: Uint8Array) => DeepImageOpen | null;
-  /** Flatten a retained deep handle at a Z cutoff (\`Infinity\` = full composite). */
-  flatten_deep: (handle: number, zClip: number) => DecodedImage;
+  /** Flatten a retained deep handle over the Z window [\`zNear\`, \`zFar\`].
+   *  \`zNear = -Infinity, zFar = Infinity\` = full composite. */
+  flatten_deep: (handle: number, zNear: number, zFar: number) => DecodedImage;
   /** Free a retained deep handle. */
   free_deep: (handle: number) => void;
   /** Set the global deep-retention LRU byte budget (default 512 MB). */
   set_deep_budget: (bytes: number) => void;
   /** Export a deep handle's Z-sorted samples for GPU upload (storage buffers). */
   deep_gpu_csr: (handle: number) => DeepGpuCsr;
+  /** Z range of the samples inside an image-pixel rect (region-select). */
+  deep_z_range_in_rect: (handle: number, x0: number, y0: number, x1: number, y1: number) => DeepZRange;
   DecodedImage: unknown;
 }
 
@@ -326,10 +378,12 @@ export async function loadExrDecoder(): Promise<ExrDecoder> {
   return {
     decode_exr: (bytes: Uint8Array) => readResult(mod, bytes),
     open_deep: (bytes: Uint8Array) => openDeep(mod, bytes),
-    flatten_deep: (handle: number, zClip: number) => flattenDeep(mod, handle, zClip),
+    flatten_deep: (handle: number, zNear: number, zFar: number) => flattenDeep(mod, handle, zNear, zFar),
     free_deep: (handle: number) => freeDeep(mod, handle),
     set_deep_budget: (bytes: number) => mod._cairn_exr_set_deep_budget(bytes),
     deep_gpu_csr: (handle: number) => deepGpuCsr(mod, handle),
+    deep_z_range_in_rect: (handle: number, x0: number, y0: number, x1: number, y1: number) =>
+      deepZRangeInRect(mod, handle, x0, y0, x1, y1),
     DecodedImage: class {},
   };
 }

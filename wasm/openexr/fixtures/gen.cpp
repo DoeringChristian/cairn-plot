@@ -190,6 +190,53 @@ static void writeDeep(const std::string& path, int w, int h) {
     }
 }
 
+// Deep scanline with EMPTY pixels (holes) — for the region-select z-range test's
+// count=0 (empty region) path. Left half (x<4) has one sample at Z=3; right half
+// (x>=4) has ZERO samples (a genuine hole).
+static void writeDeepHoles(const std::string& path, int w, int h) {
+  Header hd(w, h);
+  hd.setType(DEEPSCANLINE);
+  hd.compression() = ZIPS_COMPRESSION;
+  hd.channels().insert("R", Channel(FLOAT));
+  hd.channels().insert("G", Channel(FLOAT));
+  hd.channels().insert("B", Channel(FLOAT));
+  hd.channels().insert("A", Channel(FLOAT));
+  hd.channels().insert("Z", Channel(FLOAT));
+
+  Array2D<unsigned int> counts(h, w);
+  Array2D<float*> Rp(h, w), Gp(h, w), Bp(h, w), Ap(h, w), Zp(h, w);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      unsigned int n = (x < w / 2) ? 1u : 0u;  // right half is empty
+      counts[y][x] = n;
+      Rp[y][x] = n ? new float[n] : nullptr;
+      Gp[y][x] = n ? new float[n] : nullptr;
+      Bp[y][x] = n ? new float[n] : nullptr;
+      Ap[y][x] = n ? new float[n] : nullptr;
+      Zp[y][x] = n ? new float[n] : nullptr;
+      if (n) {
+        Rp[y][x][0] = wave(x, y, 0); Gp[y][x][0] = wave(x, y, 1);
+        Bp[y][x][0] = wave(x, y, 2); Ap[y][x][0] = 1.0f; Zp[y][x][0] = 3.0f;
+      }
+    }
+  DeepScanLineOutputFile file(path.c_str(), hd);
+  DeepFrameBuffer fb;
+  fb.insertSampleCountSlice(Slice(UINT, (char*)&counts[0][0], sizeof(unsigned int),
+                                  sizeof(unsigned int) * w));
+  auto add = [&](const char* n, Array2D<float*>& p) {
+    fb.insert(n, DeepSlice(FLOAT, (char*)&p[0][0], sizeof(float*),
+                           sizeof(float*) * w, sizeof(float)));
+  };
+  add("R", Rp); add("G", Gp); add("B", Bp); add("A", Ap); add("Z", Zp);
+  file.setFrameBuffer(fb);
+  file.writePixels(h);
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      delete[] Rp[y][x]; delete[] Gp[y][x]; delete[] Bp[y][x];
+      delete[] Ap[y][x]; delete[] Zp[y][x];
+    }
+}
+
 // Large DENSE deep scanline (uncommitted) for the retained-vs-redecode
 // benchmark — Trunks-scale foliage density: a variable 1..K samples/pixel so
 // the retained CSR far exceeds the flat image (the case that must fall back to
@@ -248,6 +295,7 @@ int main(int argc, char** argv) {
   writeTiledHalf(p("tiled-zip-half-64x48.exr"), 64, 48);
   writeHtj2k(p("htj2k-half-64x48.exr"), 64, 48);
   writeDeep(p("deep-rgba-32x32.exr"), 32, 32);
+  writeDeepHoles(p("deep-holes-8x8.exr"), 8, 8);
   writeFlatHalf(p("rgb-piz-half-1024x1024.exr"), 1024, 1024, PIZ_COMPRESSION);
   // Trunks-scale dense deep for the retained-vs-redecode benchmark (uncommitted).
   writeDeepDense(p("deep-dense-512x512.exr"), 512, 512, 12);

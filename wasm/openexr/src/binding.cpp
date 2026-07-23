@@ -107,6 +107,19 @@ struct DeepGpuCsr {
   int32_t err_code;     // malloc'd C string (or 0)
   int32_t err_msg;      // malloc'd C string (or 0)
 };
+
+// Z range of the samples inside an image-pixel RECT (region-select → depth
+// window). z_min/z_max are FLOATs (HEAPF32 words 1,2); `count` is the number of
+// samples found (0 ⇒ empty region, the host then no-ops). Field order is a
+// CONTRACT with wasm-exr-inline.ts.
+struct DeepZRange {
+  int32_t status;    // 0 = ok, 1 = error
+  float   z_min;     // HEAPF32 word 1
+  float   z_max;     // HEAPF32 word 2
+  int32_t count;     // samples in the rect (0 = empty)
+  int32_t err_code;  // malloc'd C string (or 0)
+  int32_t err_msg;   // malloc'd C string (or 0)
+};
 }
 
 static const int PREC_F16BITS = 0;
@@ -503,11 +516,12 @@ void readDeepInto(MultiPartInputFile& mfile, const Header& h, bool tiled,
 }
 
 // Composite the retained handle front-to-back with the OVER operator, INCLUDING
-// only samples whose Z ≤ zClip (when Z is present), into a flat premultiplied
-// f16 RGBA(A) image. Samples are sorted ascending by Z first, so once a sample
-// exceeds zClip every later one does too (early break). Missing Z ⇒ all samples
-// in file order (zClip has no effect, matching a non-depth deep image).
-DecodeResult* flattenHandle(const DeepHandle& hd, float zClip) {
+// only samples whose Z is inside the WINDOW [zNear, zFar] (when Z is present),
+// into a flat premultiplied f16 RGBA(A) image. Samples are sorted ascending by
+// Z first, so samples nearer than zNear are skipped and once a sample exceeds
+// zFar every later one does too (early break). zNear = -inf ⇒ the legacy single
+// far-cutoff behavior (bit-exact). Missing Z ⇒ all samples in file order.
+DecodeResult* flattenHandle(const DeepHandle& hd, float zNear, float zFar) {
   int width = hd.width, height = hd.height, ch = hd.channels;
   size_t pixels = (size_t)width * height;
   bool hasA = hd.hasA, hasZ = hd.hasZ;
@@ -528,7 +542,11 @@ DecodeResult* flattenHandle(const DeepHandle& hd, float zClip) {
     float aR = 0, aG = 0, aB = 0, aA = 0;
     for (unsigned int k = 0; k < n; ++k) {
       int s = order[k];
-      if (hasZ && hd.Z[off + s] > zClip) break;  // sorted ⇒ rest are farther
+      if (hasZ) {
+        float z = hd.Z[off + s];
+        if (z < zNear) continue;      // nearer than the window front — skip
+        if (z > zFar) break;          // sorted ⇒ rest are farther than the window
+      }
       float sa = hasA ? hd.A[off + s] : 1.0f;
       float w = 1.0f - aA;  // front-to-back OVER, associated alpha
       aR += w * hd.R[off + s];
@@ -586,7 +604,8 @@ DecodeResult* decodeDeep(MultiPartInputFile& mfile, const Header& h,
   DecodeResult* err = prepareDeepHandle(h, hd);
   if (err) return err;
   readDeepInto(mfile, h, tiled, hd);
-  return flattenHandle(hd, std::numeric_limits<float>::infinity());
+  return flattenHandle(hd, -std::numeric_limits<float>::infinity(),
+                       std::numeric_limits<float>::infinity());
 }
 
 // Export a handle's samples PER-PIXEL Z-SORTED into GPU-upload-ready arrays:
@@ -632,6 +651,39 @@ DeepGpuCsr* emitGpuCsr(const DeepHandle& hd) {
   r->total = (int32_t)total;
   r->width = hd.width;
   r->height = hd.height;
+  return r;
+}
+
+// Z range of all samples inside the image-pixel rect [x0,x1]×[y0,y1] (inclusive,
+// clamped to the image; args are swapped if inverted). Returns count=0 for an
+// empty region. Missing Z ⇒ all samples treated as Z=0.
+DeepZRange* zRangeInRect(const DeepHandle& hd, int x0, int y0, int x1, int y1) {
+  if (x1 < x0) std::swap(x0, x1);
+  if (y1 < y0) std::swap(y0, y1);
+  x0 = std::max(0, std::min(x0, hd.width - 1));
+  x1 = std::max(0, std::min(x1, hd.width - 1));
+  y0 = std::max(0, std::min(y0, hd.height - 1));
+  y1 = std::max(0, std::min(y1, hd.height - 1));
+  float lo = 0, hi = 0;
+  int32_t count = 0;
+  for (int y = y0; y <= y1; ++y) {
+    for (int x = x0; x <= x1; ++x) {
+      size_t i = (size_t)y * hd.width + x;
+      uint32_t off = hd.offsets[i];
+      unsigned int n = hd.offsets[i + 1] - off;
+      for (unsigned int s = 0; s < n; ++s) {
+        float z = hd.hasZ ? hd.Z[off + s] : 0.0f;
+        if (count == 0) { lo = z; hi = z; }
+        else { if (z < lo) lo = z; if (z > hi) hi = z; }
+        ++count;
+      }
+    }
+  }
+  DeepZRange* r = static_cast<DeepZRange*>(std::calloc(1, sizeof(DeepZRange)));
+  r->status = 0;
+  r->z_min = lo;
+  r->z_max = hi;
+  r->count = count;
   return r;
 }
 
@@ -743,14 +795,16 @@ DeepOpenResult* cairn_exr_open_deep(const uint8_t* bytes, int len) {
   }
 }
 
-// Flatten a retained deep handle at a Z cutoff into a flat f16 RGBA DecodeResult
-// (freed via cairn_exr_free like any decode). zClip = +inf ⇒ full composite.
-DecodeResult* cairn_exr_flatten_deep(DeepHandle* hd, float zClip) {
+// Flatten a retained deep handle over the Z WINDOW [zNear, zFar] into a flat
+// f16 RGBA DecodeResult (freed via cairn_exr_free like any decode).
+// zNear = -inf, zFar = +inf ⇒ full composite; zNear = -inf alone ⇒ the legacy
+// single far-cutoff (bit-exact).
+DecodeResult* cairn_exr_flatten_deep(DeepHandle* hd, float zNear, float zFar) {
   try {
     if (!hd) return makeError("decode-error", "cairn-exr: null deep handle");
     if (hd->retained) {
       deepTouch(hd);  // mark most-recently-used for the LRU
-      return flattenHandle(*hd, zClip);
+      return flattenHandle(*hd, zNear, zFar);
     }
     // Evicted (or over-budget) handle: re-decode the samples from the cached
     // bytes into a scratch handle, flatten, discard.
@@ -763,7 +817,7 @@ DecodeResult* cairn_exr_flatten_deep(DeepHandle* hd, float zClip) {
     DecodeResult* perr = prepareDeepHandle(h, scratch);
     if (perr) return perr;
     readDeepInto(mfile, h, type == DEEPTILE, scratch);
-    return flattenHandle(scratch, zClip);
+    return flattenHandle(scratch, zNear, zFar);
   } catch (const std::exception& e) {
     return makeError("decode-error", std::string("cairn-exr: ") + e.what());
   } catch (...) {
@@ -812,6 +866,48 @@ void cairn_exr_free_gpu_csr(DeepGpuCsr* r) {
   if (r->offsets_ptr) std::free(reinterpret_cast<void*>((intptr_t)r->offsets_ptr));
   if (r->colors_ptr) std::free(reinterpret_cast<void*>((intptr_t)r->colors_ptr));
   if (r->z_ptr) std::free(reinterpret_cast<void*>((intptr_t)r->z_ptr));
+  if (r->err_code) std::free(reinterpret_cast<void*>((intptr_t)r->err_code));
+  if (r->err_msg) std::free(reinterpret_cast<void*>((intptr_t)r->err_msg));
+  std::free(r);
+}
+
+static DeepZRange* makeZRangeError(const std::string& code, const std::string& msg) {
+  DeepZRange* r = static_cast<DeepZRange*>(std::calloc(1, sizeof(DeepZRange)));
+  r->status = 1;
+  r->err_code = (int32_t)reinterpret_cast<intptr_t>(dupCStr(code));
+  r->err_msg = (int32_t)reinterpret_cast<intptr_t>(dupCStr(msg));
+  return r;
+}
+
+// Z range of samples inside an image-pixel rect (region-select → depth window).
+// Works on an evicted handle too (one-shot re-decode — it's a discrete action).
+DeepZRange* cairn_exr_deep_z_range_in_rect(DeepHandle* hd, int x0, int y0, int x1, int y1) {
+  try {
+    if (!hd) return makeZRangeError("decode-error", "cairn-exr: null deep handle");
+    if (hd->retained) return zRangeInRect(*hd, x0, y0, x1, y1);
+    MemIStream stream(reinterpret_cast<const char*>(hd->fileBytes.data()),
+                      (uint64_t)hd->fileBytes.size());
+    MultiPartInputFile mfile(stream);
+    const Header& h = mfile.header(0);
+    std::string type = h.hasType() ? h.type() : std::string(SCANLINEIMAGE);
+    DeepHandle scratch;
+    DecodeResult* perr = prepareDeepHandle(h, scratch);
+    if (perr) {
+      cairn_exr_free(perr);
+      return makeZRangeError("unsupported-channel-layout", "cairn-exr: deep z-range layout");
+    }
+    readDeepInto(mfile, h, type == DEEPTILE, scratch);
+    return zRangeInRect(scratch, x0, y0, x1, y1);
+  } catch (const std::exception& e) {
+    return makeZRangeError("decode-error", std::string("cairn-exr: ") + e.what());
+  } catch (...) {
+    return makeZRangeError("decode-error", "cairn-exr: unknown deep z-range failure");
+  }
+}
+
+// Free a DeepZRange struct (+ any error strings).
+void cairn_exr_free_z_range(DeepZRange* r) {
+  if (!r) return;
   if (r->err_code) std::free(reinterpret_cast<void*>((intptr_t)r->err_code));
   if (r->err_msg) std::free(reinterpret_cast<void*>((intptr_t)r->err_msg));
   std::free(r);

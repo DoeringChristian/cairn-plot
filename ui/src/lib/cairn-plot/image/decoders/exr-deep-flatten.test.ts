@@ -55,21 +55,25 @@ test("open_deep returns null for a non-deep EXR (host falls back to decode_exr)"
   assert.equal(open_deep(fixture("rgb-zip-half-64x48.exr")), null);
 });
 
-test("flatten_deep(zMax) matches the one-shot decode_exr bit-for-bit", async () => {
+test("full window flatten_deep matches the one-shot decode_exr bit-for-bit", async () => {
   const { decode_exr, open_deep, flatten_deep, free_deep } = await loadExrDecoder();
   const full = decode_exr(fixture("deep-rgba-32x32.exr"));
   const deep = open_deep(fixture("deep-rgba-32x32.exr"))!;
-  const flat = flatten_deep(deep.handle, deep.zMax);
-  assert.equal(flat.precision, "f16-bits");
-  assert.deepEqual(Array.from(flat.halfBits!), Array.from(full.halfBits!));
+  // (-inf, +inf) and the exact [zMin, zMax] window BOTH include every sample →
+  // both must reproduce the one-shot full composite bit-for-bit.
+  const openWin = flatten_deep(deep.handle, -Infinity, Infinity);
+  const exactWin = flatten_deep(deep.handle, deep.zMin, deep.zMax);
+  assert.equal(openWin.precision, "f16-bits");
+  assert.deepEqual(Array.from(openWin.halfBits!), Array.from(full.halfBits!));
+  assert.deepEqual(Array.from(exactWin.halfBits!), Array.from(full.halfBits!));
   free_deep(deep.handle);
 });
 
-test("flatten_deep with zClip between front and back yields ONLY the front", async () => {
+test("flatten_deep far cutoff (window ending mid-Z) yields ONLY the front", async () => {
   const { open_deep, flatten_deep, free_deep } = await loadExrDecoder();
   const deep = open_deep(fixture("deep-rgba-32x32.exr"))!;
-  const full = flatten_deep(deep.handle, deep.zMax); // both samples
-  const clip = flatten_deep(deep.handle, 7); // drops the back (Z=10), keeps front (Z=1) + single (Z=5)
+  const full = flatten_deep(deep.handle, -Infinity, Infinity); // both samples
+  const clip = flatten_deep(deep.handle, -Infinity, 7); // drops back (Z=10); keeps front (Z=1) + single (Z=5)
   const fh = full.halfBits!;
   const ch = clip.halfBits!;
 
@@ -108,10 +112,10 @@ test("evicted (over-budget → redecode) handle flattens identically to retained
     // Force the global LRU budget to 0 → every retained handle (incl. this one)
     // is evicted to redecode-from-cached-bytes mode. Correctness must not change.
     set_deep_budget(0);
-    const flat = flatten_deep(deep.handle, deep.zMax);
+    const flat = flatten_deep(deep.handle, -Infinity, Infinity);
     assert.deepEqual(Array.from(flat.halfBits!), Array.from(full.halfBits!));
-    // A mid-Z cut still yields only the front (α 0.5) on 2-sample pixels.
-    const clip = flatten_deep(deep.handle, 7);
+    // A mid-Z far cut still yields only the front (α 0.5) on 2-sample pixels.
+    const clip = flatten_deep(deep.handle, -Infinity, 7);
     const ch = clip.halfBits!;
     let checked = 0;
     for (let y = 0; y < H; y++) {
@@ -126,4 +130,69 @@ test("evicted (over-budget → redecode) handle flattens identically to retained
     free_deep(deep.handle);
     set_deep_budget(512 * 1024 * 1024); // restore default for other tests
   }
+});
+
+test("flatten_deep window EXCLUDING the front composites only the back", async () => {
+  const { open_deep, flatten_deep, free_deep } = await loadExrDecoder();
+  const deep = open_deep(fixture("deep-rgba-32x32.exr"))!;
+  // Window [8, +inf): drops the front (Z=1) AND the single (Z=5); keeps only the
+  // back (Z=10, opaque) on 2-sample pixels.
+  const back = flatten_deep(deep.handle, 8, Infinity);
+  const front = flatten_deep(deep.handle, -Infinity, 7); // front (+ single) only
+  const bh = back.halfBits!;
+  const fh = front.halfBits!;
+  let two = 0;
+  let one = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      if (twoSample(x, y)) {
+        two++;
+        // Back sample is opaque → alpha 1.0; and it DIFFERS from the front-only
+        // window (alpha 0.5), so the near cutoff genuinely dropped the front.
+        assert.ok(Math.abs(h2f(bh[i + 3]!) - 1.0) < 1e-3, `back-only α≈1 at (${x},${y})`);
+        assert.ok(Math.abs(h2f(fh[i + 3]!) - 0.5) < 1e-3, `front-only α≈0.5 at (${x},${y})`);
+      } else {
+        one++;
+        // Single sample sits at Z=5 (< 8) → excluded by [8,∞) → fully empty.
+        assert.equal(h2f(bh[i + 3]!), 0, `single pixel (${x},${y}) excluded → α 0`);
+      }
+    }
+  }
+  assert.ok(two > 0 && one > 0);
+  free_deep(deep.handle);
+});
+
+test("deep_z_range_in_rect reports the Z range of samples in an image rect", async () => {
+  const { open_deep, deep_z_range_in_rect, free_deep } = await loadExrDecoder();
+  const deep = open_deep(fixture("deep-rgba-32x32.exr"))!;
+  // Full frame → the whole volume [zMin, zMax] = [1, 10], every sample counted.
+  const full = deep_z_range_in_rect(deep.handle, 0, 0, W - 1, H - 1);
+  assert.equal(full.zMin, 1);
+  assert.equal(full.zMax, 10);
+  assert.equal(full.count, deep.totalSamples);
+  // A single 2-sample pixel (0,0): samples at Z=1 and Z=10.
+  const two = deep_z_range_in_rect(deep.handle, 0, 0, 0, 0);
+  assert.equal(two.zMin, 1);
+  assert.equal(two.zMax, 10);
+  assert.equal(two.count, 2);
+  // A single 1-sample pixel (1,0) (Z=5): a degenerate [5,5] range.
+  const one = deep_z_range_in_rect(deep.handle, 1, 0, 1, 0);
+  assert.equal(one.zMin, 5);
+  assert.equal(one.zMax, 5);
+  assert.equal(one.count, 1);
+  free_deep(deep.handle);
+});
+
+test("deep_z_range_in_rect over an empty region reports count 0 (no-op signal)", async () => {
+  const { open_deep, deep_z_range_in_rect, free_deep } = await loadExrDecoder();
+  // deep-holes-8x8: left half (x<4) has 1 sample at Z=3; right half is empty.
+  const deep = open_deep(fixture("deep-holes-8x8.exr"))!;
+  const left = deep_z_range_in_rect(deep.handle, 0, 0, 3, 7);
+  assert.equal(left.zMin, 3);
+  assert.equal(left.zMax, 3);
+  assert.equal(left.count, 32); // 4 columns × 8 rows
+  const right = deep_z_range_in_rect(deep.handle, 4, 0, 7, 7);
+  assert.equal(right.count, 0); // empty region → host no-ops
+  free_deep(deep.handle);
 });
