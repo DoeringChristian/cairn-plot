@@ -38,6 +38,38 @@ export interface TexelRect {
   y1: number;
 }
 
+/** The object-contain fit for a mapping: on-screen scale + image top-left. */
+interface Fit {
+  scale: number;
+  imgLeft: number;
+  imgTop: number;
+  srcOriginX: number;
+  srcOriginY: number;
+}
+
+function computeFit(p: ScreenToTexelParams): Fit {
+  const sw = p.sourceWindow ?? FULL_WINDOW;
+  const srcOriginX = sw.x * p.naturalWidth;
+  const srcOriginY = sw.y * p.naturalHeight;
+  const visibleW = sw.w * p.naturalWidth;
+  const visibleH = sw.h * p.naturalHeight;
+  const scale = Math.min(p.box.width / visibleW, p.box.height / visibleH);
+  const dispW = visibleW * scale;
+  const dispH = visibleH * scale;
+  return {
+    scale,
+    imgLeft: p.box.left + (p.box.width - dispW) / 2,
+    imgTop: p.box.top + (p.box.height - dispH) / 2,
+    srcOriginX,
+    srcOriginY,
+  };
+}
+
+/** On-screen pixels per source texel (object-contain scale). */
+export function screenPerTexel(p: ScreenToTexelParams): number {
+  return computeFit(p).scale;
+}
+
 /**
  * Map a client-space point to a source texel (fractional; may fall outside
  * `[0,naturalWidth) × [0,naturalHeight)` when the point is off the image). Mirrors
@@ -48,20 +80,35 @@ export function screenToTexel(
   clientY: number,
   p: ScreenToTexelParams,
 ): { x: number; y: number } {
-  const sw = p.sourceWindow ?? FULL_WINDOW;
-  const srcOriginX = sw.x * p.naturalWidth;
-  const srcOriginY = sw.y * p.naturalHeight;
-  const visibleW = sw.w * p.naturalWidth;
-  const visibleH = sw.h * p.naturalHeight;
-  const scale = Math.min(p.box.width / visibleW, p.box.height / visibleH);
-  const dispW = visibleW * scale;
-  const dispH = visibleH * scale;
-  const imgLeft = p.box.left + (p.box.width - dispW) / 2;
-  const imgTop = p.box.top + (p.box.height - dispH) / 2;
+  const f = computeFit(p);
   return {
-    x: srcOriginX + (clientX - imgLeft) / scale,
-    y: srcOriginY + (clientY - imgTop) / scale,
+    x: f.srcOriginX + (clientX - f.imgLeft) / f.scale,
+    y: f.srcOriginY + (clientY - f.imgTop) / f.scale,
   };
+}
+
+/** Inverse of {@link screenToTexel}: a source texel → its client-space point. */
+export function texelToScreen(tx: number, ty: number, p: ScreenToTexelParams): { x: number; y: number } {
+  const f = computeFit(p);
+  return {
+    x: f.imgLeft + (tx - f.srcOriginX) * f.scale,
+    y: f.imgTop + (ty - f.srcOriginY) * f.scale,
+  };
+}
+
+/**
+ * Map an INCLUSIVE integer texel rect to its client-space screen box. Texel
+ * `x0..x1` covers pixel centers, so the drawn box spans `[x0, x1+1)` texels
+ * (the full pixels), giving a rect that stays glued to the image region under
+ * any zoom/pan (the mapping already encodes the live viewport via `box`).
+ */
+export function texelRectToScreenRect(
+  rect: TexelRect,
+  p: ScreenToTexelParams,
+): { left: number; top: number; width: number; height: number } {
+  const a = texelToScreen(rect.x0, rect.y0, p);
+  const b = texelToScreen(rect.x1 + 1, rect.y1 + 1, p);
+  return { left: a.x, top: a.y, width: b.x - a.x, height: b.y - a.y };
 }
 
 const clampInt = (v: number, lo: number, hi: number): number =>
