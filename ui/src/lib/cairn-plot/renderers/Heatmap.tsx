@@ -3,9 +3,10 @@ import type { ColormapName } from "../types";
 import { getColormapLUT } from "../colormaps";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
-import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
+import PlotColorbar from "../primitives/PlotColorbar";
+import { colorbarReservedRight } from "../primitives/colorbar-layout";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
 import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
 import { useChartController } from "./use-chart-controller";
@@ -35,7 +36,9 @@ export interface HeatmapProps {
   className?: string;
 }
 
-const PAD = { top: 14, right: 64, bottom: 34, left: 46 };
+// `right` is reserved dynamically per-render (see `padRight`) to fit the
+// colorbar's formatted labels + caption; only top/left/bottom are fixed here.
+const PAD = { top: 14, bottom: 34, left: 46 };
 
 export default function Heatmap({
   matrix,
@@ -121,7 +124,14 @@ export default function Heatmap({
   }, [matrix, colormap, lo, hi, logColor, originTop, rows, cols, size]);
 
   const { w, h } = size;
-  const plotW = Math.max(0, w - PAD.left - PAD.right);
+  // Reserve the RIGHT pad to fit the colorbar's formatted tick labels (+ the
+  // optional caption) instead of a fixed constant — full-precision numbers
+  // (e.g. "-0.98999") used to overflow the old 64px band past the svg edge.
+  const padRight = colorbarReservedRight(
+    [formatNum(lo), formatNum(hi)],
+    !!valueLabel,
+  );
+  const plotW = Math.max(0, w - PAD.left - padRight);
   const plotH = Math.max(0, h - PAD.top - PAD.bottom);
 
   // Continuous cell-index viewport. x ∈ [0, cols] (columns, 0 = left edge),
@@ -188,16 +198,6 @@ export default function Heatmap({
     setHover({ x: cx, y: cy, anchor: anchorFromRect(e, rect) });
   };
 
-  const gradientStops = useMemo(() => {
-    const lut = getColormapLUT(colormap);
-    const stops: string[] = [];
-    for (let i = 0; i <= 256; i += 32) {
-      const idx = Math.min(255, i);
-      stops.push(`rgb(${lut[idx * 3]},${lut[idx * 3 + 1]},${lut[idx * 3 + 2]})`);
-    }
-    return stops;
-  }, [colormap]);
-
   const plotRect = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
   const eps = 0.5;
   // Cell-center ticks over the VISIBLE index range, mapped through the live
@@ -239,54 +239,18 @@ export default function Heatmap({
             <Axis orientation="left" plot={plotRect} ticks={yAxisTicks} title={yLabel} />
             <Axis orientation="bottom" plot={plotRect} ticks={xAxisTicks} title={xLabel} />
             <PlotFrame x={PAD.left} y={PAD.top} width={plotW} height={plotH} />
-            {/* Colorbar */}
-            <defs>
-              <linearGradient id="heatmap-cbar" x1="0" y1="1" x2="0" y2="0">
-                {gradientStops.map((c, i) => (
-                  <stop
-                    key={i}
-                    offset={`${(i / (gradientStops.length - 1)) * 100}%`}
-                    stopColor={c}
-                  />
-                ))}
-              </linearGradient>
-            </defs>
-            <rect
-              x={w - PAD.right + 12}
-              y={PAD.top}
-              width={10}
+            <PlotColorbar
+              colormap={colormap}
+              plotRight={PAD.left + plotW}
+              top={PAD.top}
               height={plotH}
-              fill="url(#heatmap-cbar)"
-              stroke={AXIS.lineColor}
+              reservedRight={padRight}
+              labels={[
+                { text: formatNum(lo), frac: 0 },
+                { text: formatNum(hi), frac: 1 },
+              ]}
+              title={valueLabel}
             />
-            <text
-              x={w - PAD.right + 26}
-              y={PAD.top + 6}
-              className="mono fill-fg-subtle"
-              style={{ fontSize: AXIS.tickFontSize }}
-            >
-              {formatNum(hi)}
-            </text>
-            <text
-              x={w - PAD.right + 26}
-              y={PAD.top + plotH}
-              className="mono fill-fg-subtle"
-              style={{ fontSize: AXIS.tickFontSize }}
-            >
-              {formatNum(lo)}
-            </text>
-            {valueLabel && (
-              <text
-                x={w - 6}
-                y={PAD.top + plotH / 2}
-                textAnchor="middle"
-                className="fill-fg-muted"
-                style={{ fontSize: AXIS.titleFontSize }}
-                transform={`rotate(90, ${w - 6}, ${PAD.top + plotH / 2})`}
-              >
-                {valueLabel}
-              </text>
-            )}
           </svg>
         </>
       )}

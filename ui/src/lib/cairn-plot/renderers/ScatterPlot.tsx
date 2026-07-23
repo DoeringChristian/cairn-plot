@@ -10,12 +10,13 @@ import {
 import { SERIES_COLORS, type ScatterPoint, type ColormapName } from "../types";
 import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
-import { colormapColor } from "../colormaps/sample";
 import { getColormapLUT } from "../colormaps/lut";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
-import { AXIS, niceTicks, paddedDomain } from "../theme";
+import { niceTicks, paddedDomain } from "../theme";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
+import PlotColorbar from "../primitives/PlotColorbar";
+import { colorbarReservedRight } from "../primitives/colorbar-layout";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
 import {
@@ -74,7 +75,6 @@ export default function ScatterPlot({
   className,
 }: ScatterPlotProps) {
   const rawId = useId();
-  const gradientId = `scatter-cbar-${rawId.replace(/:/g, "")}`;
   const { ref: containerRef, size } = useContainerSize();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<TooltipAnchor | null>(null);
@@ -147,11 +147,26 @@ export default function ScatterPlot({
 
   const { w, h } = size;
   const hasColorbar = !!colorLabel;
+  // Colorbar tick labels (min / mid / max), formatted up front so the RIGHT
+  // pad can be reserved to fit them — a fixed pad let full-precision numbers
+  // overflow the band and collide with the caption. `frac`: 0=bottom … 1=top.
+  const colorbarLabels = hasColorbar
+    ? [
+        { text: formatNum(colorDomain.min), frac: 0 },
+        { text: formatNum((colorDomain.min + colorDomain.max) / 2), frac: 0.5 },
+        { text: formatNum(colorDomain.max), frac: 1 },
+      ]
+    : [];
   const pad = {
     top: 20,
     bottom: 40,
     left: 55,
-    right: hasColorbar ? 70 : 30,
+    right: hasColorbar
+      ? colorbarReservedRight(
+          colorbarLabels.map((l) => l.text),
+          !!colorLabel,
+        )
+      : 30,
   };
   const plotW = w - pad.left - pad.right;
   const plotH = h - pad.top - pad.bottom;
@@ -285,8 +300,8 @@ export default function ScatterPlot({
 
   const clipId = `scatter-clip-${rawId.replace(/:/g, "")}`;
   // Resolve the colormap LUT ONCE (it's cached) and index it inline per point —
-  // `colormapColor` allocated + parsed a fresh string call for every marker.
-  // The few colorbar gradient stops below still use `colormapColor`.
+  // a per-marker `colormapColor` call allocated + parsed a fresh string each
+  // time. The colorbar gradient is drawn by the shared `PlotColorbar`.
   const cmapLut = getColormapLUT(colormap);
   return (
     <div
@@ -395,67 +410,17 @@ export default function ScatterPlot({
           })}
           </g>
 
-          {hasColorbar && (() => {
-            const barX = w - pad.right + 10;
-            const barW = 12;
-            const cMid = (colorDomain.min + colorDomain.max) / 2;
-            return (
-              <>
-                <defs>
-                  <linearGradient id={gradientId} x1="0" y1="1" x2="0" y2="0">
-                    <stop offset="0%" stopColor={colormapColor(colormap, 0)} />
-                    <stop offset="50%" stopColor={colormapColor(colormap, 0.5)} />
-                    <stop offset="100%" stopColor={colormapColor(colormap, 1)} />
-                  </linearGradient>
-                </defs>
-                <rect
-                  x={barX}
-                  y={pad.top}
-                  width={barW}
-                  height={plotH}
-                  fill={`url(#${gradientId})`}
-                  stroke={AXIS.lineColor}
-                />
-                <text
-                  x={barX + barW + 4}
-                  y={pad.top + plotH + 3}
-                  textAnchor="start"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
-                  {formatNum(colorDomain.min)}
-                </text>
-                <text
-                  x={barX + barW + 4}
-                  y={pad.top + plotH / 2 + 3}
-                  textAnchor="start"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
-                  {formatNum(cMid)}
-                </text>
-                <text
-                  x={barX + barW + 4}
-                  y={pad.top + 3}
-                  textAnchor="start"
-                  className="mono fill-fg-subtle"
-                  style={{ fontSize: AXIS.tickFontSize }}
-                >
-                  {formatNum(colorDomain.max)}
-                </text>
-                <text
-                  x={barX + barW + 18}
-                  y={pad.top + plotH / 2}
-                  textAnchor="middle"
-                  className="fill-fg-muted"
-                  style={{ fontSize: AXIS.titleFontSize }}
-                  transform={`rotate(90, ${barX + barW + 18}, ${pad.top + plotH / 2})`}
-                >
-                  {colorLabel}
-                </text>
-              </>
-            );
-          })()}
+          {hasColorbar && (
+            <PlotColorbar
+              colormap={colormap}
+              plotRight={pad.left + plotW}
+              top={pad.top}
+              height={plotH}
+              reservedRight={pad.right}
+              labels={colorbarLabels}
+              title={colorLabel}
+            />
+          )}
         </svg>
       )}
 
