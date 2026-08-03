@@ -4,6 +4,7 @@ import { useScene3D, type Scene3DBounds, type Scene3DCameraMode, type Scene3DSyn
 import { Scene3DCanvas } from "./Scene3DCanvas";
 import { getColormapLUT } from "../colormaps";
 import type { ColormapName } from "../types";
+import PaneUnavailable from "../primitives/PaneUnavailable";
 
 export type VolumeRenderMode = "mip" | "iso";
 export type VolumeBackground = "dark" | "light";
@@ -82,20 +83,6 @@ function supportsWebGL2(): boolean {
     _webgl2Support = false;
   }
   return _webgl2Support;
-}
-
-function VolumeUnavailablePlaceholder({ className }: { className?: string }) {
-  return (
-    <div className={className ?? "relative h-full w-full"}>
-      <div className="flex h-full w-full flex-col items-center justify-center gap-1 rounded bg-bg-hover p-4 text-center">
-        <div className="text-sm font-semibold text-fg">WebGL2 unavailable</div>
-        <div className="text-xs text-fg-muted">
-          Volume rendering needs WebGL2 (raymarched 3D textures), which this
-          browser or GPU doesn&apos;t support.
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /**
@@ -495,7 +482,13 @@ function VolumeViewerInner({
  */
 export default function VolumeViewer(props: VolumeViewerProps) {
   if (!supportsWebGL2()) {
-    return <VolumeUnavailablePlaceholder className={props.className} />;
+    return (
+      <PaneUnavailable
+        className={props.className}
+        title="WebGL2 unavailable"
+        body="Volume rendering needs WebGL2 (raymarched 3D textures), which this browser or GPU doesn't support."
+      />
+    );
   }
   return <VolumeViewerInner {...props} />;
 }
