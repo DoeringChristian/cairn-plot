@@ -39,6 +39,7 @@
  *     `{zoom:1, pan:{x:0,y:0}}` (both panes, via `onViewportChange`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { labelLuminance } from "../image/luminance";
 import type { Colormap, DiffMode, Interpolation } from "../types";
 import { getSharedDevice } from "../engine/device";
 import { forceEngineFailRequested } from "../engine/test-hooks";
@@ -1037,7 +1038,7 @@ export default function GpuComparePane({
       const r = d.data[i]!;
       const g = d.data[i + 1]!;
       const b = d.data[i + 2]!;
-      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      const luminance = labelLuminance(r, g, b);
       return buildChannelSample(r === g && g === b ? [r] : [r, g, b], "uint8", notationArg, luminance);
     };
   const sampleFg = useMemo(() => makeSampler(fgDataRef, fgFloatRef), []);

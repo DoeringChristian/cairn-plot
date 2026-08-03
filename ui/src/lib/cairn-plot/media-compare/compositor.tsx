@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { labelLuminance } from "../image/luminance";
 import type {
   Colormap,
   DiffMode,
@@ -228,7 +229,7 @@ export function MediaComparePane({
       const r = d.data[i]!;
       const g = d.data[i + 1]!;
       const b = d.data[i + 2]!;
-      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      const luminance = labelLuminance(r, g, b);
       if (r === g && g === b) {
         return { lines: [formatChannelValue(r, "uint8", notation)], luminance };
       }

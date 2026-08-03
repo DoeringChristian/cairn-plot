@@ -39,6 +39,7 @@
  * fallback) use the default `toolbar={true}`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import PaneUnavailable from "../primitives/PaneUnavailable";
 import type { Colormap, DiffMode } from "../types";
 import { useGammaFilter, GammaFilterSvg } from "../media-compare/post-processing";
 import ImageOverlay from "./ImageOverlay";
@@ -248,6 +249,7 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
     if (el) displayElRef.current = el;
   }, []);
   const [diffReady, setDiffReady] = useState(false);
+  const [webglUnavailable, setWebglUnavailable] = useState(false);
   const [falseColorReady, setFalseColorReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{
     w: number;
@@ -397,6 +399,7 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   );
 
   useEffect(() => {
+    setWebglUnavailable(false);
     if (!showDiff) {
       setDiffReady(false);
       return;
@@ -473,9 +476,9 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       }
 
       if (renderMode === "gpu") {
-        console.error(
-          "[cairn] WebGL 2 unavailable — set render mode to 'Auto' or 'CPU'",
-        );
+        // Forced-GPU mode with no WebGL2: show the shared placeholder instead
+        // of a silent blank pane (the third divergence PaneUnavailable unifies).
+        if (!cancelled) setWebglUnavailable(true);
         return;
       }
       let diffData = computeDiff(
@@ -536,6 +539,11 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
 
   const surface = !imageUrl ? (
     <span className="text-xs text-fg-muted">no image</span>
+  ) : showDiff && webglUnavailable ? (
+    <PaneUnavailable
+      title="WebGL 2 unavailable"
+      body="GPU render mode needs WebGL 2 here — switch render mode to Auto or CPU."
+    />
   ) : showDiff ? (
     <>
       {!diffReady && (
