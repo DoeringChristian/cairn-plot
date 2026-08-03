@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ColormapName } from "../types";
 import { getColormapLUT } from "../colormaps";
+import { formatNum } from "../format";
 
 // Historical hardcoded tick tables (byte range / signed-diff range), kept
 // verbatim so existing call sites (ImageGalleryCard) render byte-for-byte
@@ -20,10 +21,11 @@ const DIFF_TICKS = [
   { pos: 100, label: "−1.0" },
 ];
 
+// Tick labels share the chart-wide `formatNum` rules so an image colorbar and a
+// chart colorbar render numbers identically; `minus` keeps this bar's
+// historical typographic MINUS SIGN (U+2212) instead of an ASCII hyphen.
 function defaultFormat(v: number): string {
-  const rounded = Math.round(v * 100) / 100;
-  const s = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
-  return s.replace("-", "−");
+  return formatNum(v, { minus: true });
 }
 
 export default function Colorbar({

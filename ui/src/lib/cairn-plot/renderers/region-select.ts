@@ -4,12 +4,15 @@
  *
  * This is the SAME object-contain letterbox math `primitives/PixelValueOverlay`
  * uses to place per-pixel numbers (image element's on-screen rect → source
- * texel), factored out so the region marquee and the overlay agree and so it can
- * be unit-tested without a DOM. Given the displayed image element's
+ * texel): the overlay derives its screen↔texel mapping from {@link computeFit}
+ * here (see its `draw()`), so the region marquee and the overlay provably
+ * agree, and so it can be unit-tested without a DOM. Given the displayed image
+ * element's
  * `getBoundingClientRect()` box, the source dimensions, and the displayed
  * `[0,1]` crop window (the GPU pane's uvRect; the whole image otherwise), it maps
  * a client-space point to a (possibly fractional / out-of-range) source texel.
  */
+import { clampInt } from "../util/clamp.ts";
 
 /** The displayed [0,1] crop of the source that fills `box` (GPU uvRect). */
 export interface SourceWindow {
@@ -38,16 +41,27 @@ export interface TexelRect {
   y1: number;
 }
 
-/** The object-contain fit for a mapping: on-screen scale + image top-left. */
-interface Fit {
+/**
+ * The object-contain fit for a mapping: on-screen scale, the displayed image's
+ * top-left in CLIENT space, the source-texel origin of the displayed crop, and
+ * the crop's size in source texels. `PixelValueOverlay` consumes this directly
+ * (translating `imgLeft/imgTop` into its own canvas-local space) so its
+ * screen↔texel math is literally the region marquee's.
+ */
+export interface Fit {
   scale: number;
   imgLeft: number;
   imgTop: number;
   srcOriginX: number;
   srcOriginY: number;
+  /** Displayed crop size in source texels (`sourceWindow.w/h * natural…`). */
+  visibleW: number;
+  visibleH: number;
 }
 
-function computeFit(p: ScreenToTexelParams): Fit {
+/** The object-contain fit of `sourceWindow` into `box` — the shared primitive
+ *  behind every screen↔texel mapping here and in the pixel-value overlay. */
+export function computeFit(p: ScreenToTexelParams): Fit {
   const sw = p.sourceWindow ?? FULL_WINDOW;
   const srcOriginX = sw.x * p.naturalWidth;
   const srcOriginY = sw.y * p.naturalHeight;
@@ -62,6 +76,8 @@ function computeFit(p: ScreenToTexelParams): Fit {
     imgTop: p.box.top + (p.box.height - dispH) / 2,
     srcOriginX,
     srcOriginY,
+    visibleW,
+    visibleH,
   };
 }
 
@@ -110,9 +126,6 @@ export function texelRectToScreenRect(
   const b = texelToScreen(rect.x1 + 1, rect.y1 + 1, p);
   return { left: a.x, top: a.y, width: b.x - a.x, height: b.y - a.y };
 }
-
-const clampInt = (v: number, lo: number, hi: number): number =>
-  Math.max(lo, Math.min(hi, Math.floor(v)));
 
 /**
  * Map two client-space corner points to an integer, image-clamped texel rect

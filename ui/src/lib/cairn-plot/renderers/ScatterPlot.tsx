@@ -11,6 +11,7 @@ import { SERIES_COLORS, type ScatterPoint, type ColormapName } from "../types";
 import type { ParetoDirection } from "../transforms/pareto";
 import { computeParetoFront } from "../transforms/pareto";
 import { getColormapLUT } from "../colormaps/lut";
+import { lutRow, normToT } from "../colormaps/lut-sample";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import { niceTicks, paddedDomain } from "../theme";
@@ -361,11 +362,12 @@ export default function ScatterPlot({
             const cy = toY(pt.y);
             let color: string;
             if (colorLabel && pt.color != null) {
-              const t =
-                (pt.color - colorDomain.min) /
-                (colorDomain.max - colorDomain.min);
-              const ci = Math.max(0, Math.min(255, Math.round(t * 255)));
-              color = `rgb(${cmapLut[ci * 3]},${cmapLut[ci * 3 + 1]},${cmapLut[ci * 3 + 2]})`;
+              // Shared value→LUT-row mapping (canonical zero-span/NaN handling);
+              // index the resolved LUT inline — no extra alloc beyond the one
+              // rgb() string this SVG fill needs.
+              const ci =
+                lutRow(normToT(pt.color, colorDomain.min, colorDomain.max)) * 3;
+              color = `rgb(${cmapLut[ci]},${cmapLut[ci + 1]},${cmapLut[ci + 2]})`;
             } else {
               color = colors[i % colors.length];
             }

@@ -8,9 +8,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  computeFit,
   screenToTexel,
+  texelToScreen,
   screenRectToTexelRect,
   texelRectToScreenRect,
+  type ScreenToTexelParams,
 } from "./region-select.ts";
 
 // A 100x50 source displayed object-contain into a 200x200 box at client (10,20):
@@ -101,5 +104,78 @@ test("persisted rect stays GLUED to the image region across a zoom change", () =
     assert.equal(Math.round(a.y), rect.y0);
     assert.equal(Math.round(b.x) - 1, rect.x1);
     assert.equal(Math.round(b.y) - 1, rect.y1);
+  }
+});
+
+// --- PixelValueOverlay fit parity -----------------------------------------
+// The overlay used to recompute the object-contain fit inline; it now derives
+// its per-pixel placement from `computeFit` here. These lock the numerical
+// identity across a grid of zoom/pan states (encoded as varying `box` for the
+// CSS-transform panes and `sourceWindow` crops for the GPU panes): the overlay's
+// pixel-center formula `imgLeft + (px - srcOriginX + 0.5)*scale` must equal
+// `texelToScreen(px+0.5, py+0.5)`, and its clip-window inverse must equal
+// `screenToTexel`.
+
+/** The overlay's own per-pixel-center formula, fed straight from `computeFit`
+ *  (client space; the component only subtracts its canvas rect afterwards). */
+function overlayPixelCenter(px: number, py: number, params: ScreenToTexelParams) {
+  const f = computeFit(params);
+  return {
+    x: f.imgLeft + (px - f.srcOriginX + 0.5) * f.scale,
+    y: f.imgTop + (py - f.srcOriginY + 0.5) * f.scale,
+  };
+}
+
+test("overlay pixel-center mapping is identical to region-select's texelToScreen", () => {
+  const grid: ScreenToTexelParams[] = [];
+  // Zoom/pan via the image element's on-screen box (CPU/CSS-transform panes).
+  for (const width of [120, 200, 480]) {
+    for (const height of [90, 200, 500]) {
+      for (const [left, top] of [
+        [0, 0],
+        [10, 20],
+        [-60, -15],
+      ] as const) {
+        grid.push({ box: { left, top, width, height }, naturalWidth: 100, naturalHeight: 50 });
+        // …and the SAME with a GPU crop (sourceWindow) — the other zoom axis.
+        grid.push({
+          box: { left, top, width, height },
+          naturalWidth: 100,
+          naturalHeight: 50,
+          sourceWindow: { x: 0.25, y: 0.1, w: 0.5, h: 0.7 },
+        });
+      }
+    }
+  }
+  for (const params of grid) {
+    for (const px of [0, 1, 37, 99]) {
+      for (const py of [0, 25, 49]) {
+        const overlay = overlayPixelCenter(px, py, params);
+        const shared = texelToScreen(px + 0.5, py + 0.5, params);
+        assert.ok(Math.abs(overlay.x - shared.x) < 1e-9, `x @ (${px},${py})`);
+        assert.ok(Math.abs(overlay.y - shared.y) < 1e-9, `y @ (${px},${py})`);
+      }
+    }
+  }
+});
+
+test("overlay fit round-trips through screenToTexel (clip-window inverse)", () => {
+  const params: ScreenToTexelParams = {
+    box: { left: -60, top: -15, width: 480, height: 500 },
+    naturalWidth: 100,
+    naturalHeight: 50,
+    sourceWindow: { x: 0.25, y: 0.1, w: 0.5, h: 0.7 },
+  };
+  // A texel → its screen point (overlay draw dir) → back to the texel: identity,
+  // so the overlay's forward placement and its clip-window inverse agree.
+  for (const [tx, ty] of [
+    [25, 5],
+    [40.5, 20.5],
+    [70, 40],
+  ] as const) {
+    const screen = texelToScreen(tx, ty, params);
+    const back = screenToTexel(screen.x, screen.y, params);
+    assert.ok(Math.abs(back.x - tx) < 1e-9);
+    assert.ok(Math.abs(back.y - ty) < 1e-9);
   }
 });

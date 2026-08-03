@@ -35,6 +35,8 @@
  * to a GPU fragment shader (see `HdrImagePane`'s module doc).
  */
 
+import { clamp01 } from "../util/clamp.ts";
+
 export type RgbTriple = [number, number, number];
 
 /**
@@ -52,8 +54,6 @@ export type TonemapOperator =
   | "extended" //          Extended · Linear    — unclamped pass-through
   | "extended-reinhard" // Extended · Reinhard  — peak/white-point roll-off
   | "extended-aces"; //    Extended · ACES      — ACES fit rescaled to the peak
-
-const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 /** Per-channel Reinhard tone curve: x / (1 + x). Maps [0,∞) → [0,1), 1 → 0.5. */
 const reinhardCurve = (x: number): number => {
