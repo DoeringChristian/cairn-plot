@@ -219,6 +219,41 @@ function Divider() {
 }
 
 /**
+ * Dismiss an open popover on an outside pointer-down or Escape. Both the
+ * `ToolbarMenu` dropdown and the `OverflowMenu` popover need the identical
+ * self-contained wiring (capture-phase document listeners, torn down when the
+ * popover closes/unmounts), so it lives here once. `onClose` is read through a
+ * ref so the effect re-subscribes only when `open` flips — matching the
+ * hand-rolled `[open]`-dep effects this replaces.
+ */
+function useDismissOnOutsideOrEscape(
+  open: boolean,
+  ref: React.RefObject<HTMLElement | null>,
+  onClose: () => void,
+): void {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const onDocPointer = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCloseRef.current();
+      }
+    };
+    document.addEventListener("pointerdown", onDocPointer, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointer, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open, ref]);
+}
+
+/**
  * The MENU (dropdown) variant of a leading toolbar button. Self-contained: it
  * owns its open/highlight state and closes on select / outside-click / Escape,
  * with arrow-key + Enter keyboarding. The button face shows the current
@@ -264,24 +299,7 @@ function ToolbarMenu({
 
   // Close on outside-click / Escape while open (self-contained — no parent
   // wiring). Both listeners are torn down when the menu closes/unmounts.
-  useEffect(() => {
-    if (!open) return;
-    const onDocPointer = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onDocPointer, true);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("pointerdown", onDocPointer, true);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
+  useDismissOnOutsideOrEscape(open, rootRef, () => setOpen(false));
 
   const onButtonKeyDown = (e: React.KeyboardEvent) => {
     if (!open) {
@@ -610,24 +628,7 @@ function OverflowMenu({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDocPointer = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onDocPointer, true);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("pointerdown", onDocPointer, true);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
+  useDismissOnOutsideOrEscape(open, rootRef, () => setOpen(false));
 
   return (
     <div ref={rootRef} className="relative inline-flex" onPointerDown={(e) => e.stopPropagation()}>
