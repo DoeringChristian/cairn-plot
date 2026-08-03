@@ -1,0 +1,708 @@
+#!/usr/bin/env node
+// @ts-check
+/**
+ * Headless WebGPU parity-harness runner for cairn-plot.
+ *
+ * WHAT IT GUARDS. The `*.browser.ts` harnesses under
+ * `src/lib/cairn-plot/engine/__tests__/` are WebGPU↔TS *parity proofs*: each
+ * renders on the GPU (WGSL) and asserts the readback equals what the CPU/TS
+ * source of truth computes — tonemap curves (image-pass), HDR-out activation
+ * (hdr-output), FLIP/SSIM perceptual metrics, deep-EXR compositing, backend
+ * readback, device singleton. jsdom has no WebGPU, so none can be a `*.test.ts`
+ * unit test; historically each said "open in Chrome by hand", so `npm test`
+ * (which globs only `*.test.ts`) never ran them and the parity proofs only
+ * executed when a human remembered. This runner makes them a headless,
+ * CI-gated check — it drives every one to completion on a real/software GPU.
+ *
+ * The other `*.browser.ts` harnesses (media-compare / renderers / primitives)
+ * are INTERACTION harnesses: they mount live React panes and settle only in
+ * response to real layout + pointer/keyboard gestures, so headless navigation
+ * alone never completes them. They stay human-run and are listed (not run)
+ * unless `--all` is passed. Default = the engine parity set.
+ *
+ * WHAT IT DOES.
+ *   1. Discovers every `*.browser.html` harness page and the `*.browser.ts`
+ *      sources its `<script src>` bundles come from.
+ *   2. Bundles those sources to sibling `*.browser.bundle.js` via esbuild (the
+ *      exact artifact each page's `<script type=module>` already loads; the
+ *      bundles are gitignored and regenerated here).
+ *   3. Serves the `ui/` root over http (module scripts are blocked on file://,
+ *      and deep-composite resolves a committed .exr fixture from import.meta.url
+ *      relative to that root).
+ *   4. Launches ONE headless Chromium with WebGPU enabled and drives each page
+ *      over the DevTools Protocol (raw ws, no npm deps): navigate, then poll the
+ *      `#status` element — every harness sets it to exactly "PASS"/"FAIL" when
+ *      done (and on a thrown error). Reads back the `#result` lines for output.
+ *   5. Exits nonzero if ANY harness FAILs, TIMEs out, or errors.
+ *
+ * WEBGPU IN CI (the crux). Tries, in order:
+ *   (a) `--enable-unsafe-webgpu --enable-features=Vulkan` (real adapter);
+ *   (b) software fallback `--use-webgpu-adapter=swiftshader --use-angle=swiftshader`
+ *       (Linux CI SwiftShader/Dawn);
+ *   (c) if NO adapter can be obtained, the run SKIPS LOUDLY — prints a banner
+ *       and emits a GitHub `::warning::` annotation naming every parity proof
+ *       that did not run, and exits 0. It never silently passes.
+ *
+ * Dependency-free: plain Node (>=22, for the global `WebSocket`) + esbuild
+ * (always installed — it is Vite's own bundler dependency) + a headless
+ * Chromium invocation. No new npm dependency is added.
+ *
+ * Usage:   node scripts/test-harness.mjs            (or: npm run test:harness)
+ * Flags:   --only <substr>     run only harnesses whose id contains <substr>
+ *          --root <dir>        harness search root (default: src/lib/cairn-plot)
+ *          --keep-bundles      do not delete generated .browser.bundle.js on exit
+ * Env:     CHROME_BIN          path to a Chromium-family browser (else auto)
+ *          HARNESS_TIMEOUT_MS  per-harness completion timeout (default 60000)
+ *          HARNESS_SKIP        comma list of harness-id substrings to SKIP-LOUD
+ */
+
+import { build as esbuild } from "esbuild";
+import { spawn } from "node:child_process";
+import {
+  existsSync,
+  accessSync,
+  constants,
+  readdirSync,
+  readFileSync,
+  statSync,
+  rmSync,
+  mkdtempSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve, join, relative, extname } from "node:path";
+import { tmpdir } from "node:os";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const UI_ROOT = resolve(__dirname, ".."); // scripts/ -> ui/
+
+// ── CLI / env ───────────────────────────────────────────────────────────────
+const argv = process.argv.slice(2);
+function flag(name) {
+  const i = argv.indexOf(name);
+  return i >= 0 ? (argv[i + 1] ?? "") : undefined;
+}
+const ONLY = flag("--only");
+const SEARCH_ROOT = resolve(UI_ROOT, flag("--root") ?? "src/lib/cairn-plot");
+const KEEP_BUNDLES = argv.includes("--keep-bundles");
+// `--all` also drives the INTERACTION harnesses (media-compare / renderers /
+// primitives). Those mount live React panes and settle their `#status` only in
+// response to real layout + pointer/keyboard gestures, so they DO NOT complete
+// under headless navigation alone (verified: every one times out). They stay
+// human-run; the default set is the engine WGSL↔TS parity proofs — exactly the
+// harnesses the finding flagged as invisible to CI — which all settle headlessly.
+const RUN_ALL = argv.includes("--all");
+
+/** A parity proof (headless-drivable) vs an interaction harness (human-run). */
+function isParityHarness(h) {
+  return h.htmlPath.split("\\").join("/").includes("/engine/__tests__/");
+}
+const HARNESS_TIMEOUT_MS = Number(process.env.HARNESS_TIMEOUT_MS) || 60_000;
+const SKIP_SUBSTR = (process.env.HARNESS_SKIP ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const RED = (s) => `\x1b[31m${s}\x1b[0m`;
+const GREEN = (s) => `\x1b[32m${s}\x1b[0m`;
+const YELLOW = (s) => `\x1b[33m${s}\x1b[0m`;
+const BOLD = (s) => `\x1b[1m${s}\x1b[0m`;
+const DIM = (s) => `\x1b[2m${s}\x1b[0m`;
+
+function die(msg) {
+  console.error(RED(`\ntest:harness FAILED — ${msg}\n`));
+  process.exit(1);
+}
+
+/** GitHub Actions workflow-command annotation (loud, survives log folding). */
+function ghAnnotate(level, msg) {
+  // Only meaningful on CI; harmless (just a line) locally.
+  const line = msg.replace(/\r?\n/g, "%0A");
+  console.log(`::${level}::${line}`);
+}
+
+// ── 1. Discover harness pages ─────────────────────────────────────────────────
+function walk(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) {
+      if (name === "node_modules" || name === ".git") continue;
+      walk(p, out);
+    } else if (name.endsWith(".browser.html")) {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * @typedef {{ id:string, htmlPath:string, dir:string, urlPath:string,
+ *             sources:string[] }} Harness
+ */
+
+/** @returns {Harness[]} */
+function discoverHarnesses() {
+  const pages = walk(SEARCH_ROOT).sort();
+  /** @type {Harness[]} */
+  const harnesses = [];
+  for (const htmlPath of pages) {
+    const html = readFileSync(htmlPath, "utf-8");
+    const dir = dirname(htmlPath);
+    const id = relative(SEARCH_ROOT, htmlPath).replace(/\.browser\.html$/, "");
+    // Every `<script ... src="./X.browser.bundle.js">` maps to source X.browser.ts
+    const sources = [];
+    for (const m of html.matchAll(
+      /<script\b[^>]*\bsrc\s*=\s*["']\.\/([^"'?]+\.browser\.bundle\.js)(?:\?[^"']*)?["']/gi,
+    )) {
+      const bundle = m[1];
+      const src = join(dir, bundle.replace(/\.bundle\.js$/, ".ts"));
+      if (!existsSync(src)) die(`${htmlPath}\n  references ${bundle} but ${src} does not exist`);
+      sources.push(src);
+    }
+    const urlPath = "/" + relative(UI_ROOT, htmlPath).split("\\").join("/");
+    harnesses.push({ id, htmlPath, dir, urlPath, sources });
+  }
+  return harnesses;
+}
+
+// ── 2. Bundle sources with esbuild ────────────────────────────────────────────
+async function bundleAll(harnesses) {
+  const sources = [...new Set(harnesses.flatMap((h) => h.sources))];
+  if (sources.length === 0) return [];
+  console.log(`• bundling ${sources.length} harness source(s) via esbuild`);
+  const outfiles = [];
+  await Promise.all(
+    sources.map(async (src) => {
+      const outfile = src.replace(/\.ts$/, ".bundle.js");
+      await esbuild({
+        entryPoints: [src],
+        bundle: true,
+        format: "esm",
+        platform: "browser",
+        target: "es2022",
+        outfile,
+        logLevel: "silent",
+        // Inline .wasm/.exr etc. that harnesses import via new URL(...import.meta.url)
+        // are left as URL references resolved against the served ui/ root.
+        loader: { ".wasm": "file" },
+      }).catch((err) => {
+        die(`esbuild failed on ${relative(UI_ROOT, src)}:\n${err.message ?? err}`);
+      });
+      outfiles.push(outfile);
+    }),
+  );
+  return outfiles;
+}
+
+// ── 3. Static file server rooted at ui/ ───────────────────────────────────────
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".png": "image/png",
+  ".exr": "application/octet-stream",
+  ".map": "application/json; charset=utf-8",
+};
+function startServer(rootDir) {
+  return new Promise((resolveServer) => {
+    const server = createServer((req, res) => {
+      try {
+        const urlPath = decodeURIComponent((req.url || "/").split("?")[0]);
+        // Synthetic probe page — a real http (localhost = secure) origin so
+        // navigator.gpu is exposed (about:blank / data: URLs do not expose it).
+        if (urlPath === "/__webgpu_probe__") {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end("<!doctype html><meta charset=utf-8><title>probe</title><body></body>");
+          return;
+        }
+        const filePath = resolve(rootDir, "." + urlPath);
+        if (!filePath.startsWith(rootDir)) {
+          res.writeHead(403).end("forbidden");
+          return;
+        }
+        if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
+          res.writeHead(404).end("not found");
+          return;
+        }
+        res.writeHead(200, {
+          "content-type": MIME[extname(filePath)] || "application/octet-stream",
+          // COOP/COEP so cross-origin-isolated features (SharedArrayBuffer used
+          // by some wasm decoders) work if a harness needs them.
+          "cross-origin-opener-policy": "same-origin",
+          "cross-origin-embedder-policy": "require-corp",
+          "cross-origin-resource-policy": "cross-origin",
+        });
+        res.end(readFileSync(filePath));
+      } catch (err) {
+        res.writeHead(500).end(String(err));
+      }
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const port = /** @type {any} */ (server.address()).port;
+      resolveServer({ server, port });
+    });
+  });
+}
+
+// ── 4. Chromium launch + minimal DevTools-Protocol client ─────────────────────
+function isExecutable(p) {
+  try {
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function findChrome() {
+  if (process.env.CHROME_BIN) {
+    if (isExecutable(process.env.CHROME_BIN)) return process.env.CHROME_BIN;
+    die(`CHROME_BIN="${process.env.CHROME_BIN}" is not executable.`);
+  }
+  const mac = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  ];
+  const lin = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/opt/google/chrome/chrome",
+  ];
+  for (const c of process.platform === "darwin" ? mac : lin) if (isExecutable(c)) return c;
+  die(
+    "no Chromium-family browser found. Set CHROME_BIN=/path/to/chrome or install " +
+      "Google Chrome / Chromium.",
+  );
+}
+
+/** Base flags shared by every launch attempt. */
+const BASE_FLAGS = [
+  "--headless=new",
+  "--no-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu-sandbox",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--disable-background-networking",
+];
+
+/**
+ * WebGPU launch strategies, tried in order until an adapter is obtained.
+ * @type {{name:string, flags:string[]}[]}
+ */
+const GPU_STRATEGIES = [
+  {
+    name: "hardware/native (--enable-unsafe-webgpu --enable-features=Vulkan)",
+    flags: ["--enable-unsafe-webgpu", "--enable-features=Vulkan"],
+  },
+  {
+    name: "software (SwiftShader/Dawn: --use-webgpu-adapter=swiftshader --use-angle=swiftshader)",
+    flags: [
+      "--enable-unsafe-webgpu",
+      "--enable-features=Vulkan",
+      "--use-webgpu-adapter=swiftshader",
+      "--use-angle=swiftshader",
+    ],
+  },
+];
+
+class CDP {
+  /** @param {string} wsUrl */
+  constructor(wsUrl) {
+    this.ws = new WebSocket(wsUrl);
+    this.nextId = 1;
+    /** @type {Map<number,{resolve:Function,reject:Function}>} */
+    this.pending = new Map();
+    this.ready = new Promise((res, rej) => {
+      this.ws.addEventListener("open", () => res(undefined), { once: true });
+      this.ws.addEventListener("error", (e) => rej(new Error("ws error: " + (e.message || e.type))), {
+        once: true,
+      });
+    });
+    this.ws.addEventListener("message", (ev) => {
+      const msg = JSON.parse(typeof ev.data === "string" ? ev.data : ev.data.toString());
+      if (msg.id && this.pending.has(msg.id)) {
+        const { resolve: r, reject: j } = this.pending.get(msg.id);
+        this.pending.delete(msg.id);
+        if (msg.error) j(new Error(msg.error.message || JSON.stringify(msg.error)));
+        else r(msg.result);
+      }
+    });
+  }
+  /** @param {string} method @param {object} [params] @param {string} [sessionId] */
+  send(method, params = {}, sessionId) {
+    const id = this.nextId++;
+    const payload = { id, method, params };
+    if (sessionId) payload.sessionId = sessionId;
+    return new Promise((res, rej) => {
+      this.pending.set(id, { resolve: res, reject: rej });
+      this.ws.send(JSON.stringify(payload));
+    });
+  }
+  close() {
+    try {
+      this.ws.close();
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+async function launchChrome(chrome, gpuFlags) {
+  const userDataDir = mkdtempSync(join(tmpdir(), "cairn-harness-"));
+  const args = [
+    ...BASE_FLAGS,
+    ...gpuFlags,
+    `--user-data-dir=${userDataDir}`,
+    "--remote-debugging-port=0",
+    "about:blank",
+  ];
+  const proc = spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  proc.stderr.on("data", (d) => (stderr += d.toString()));
+
+  // Chrome writes the chosen port to <user-data-dir>/DevToolsActivePort (line 1).
+  const portFile = join(userDataDir, "DevToolsActivePort");
+  const deadline = Date.now() + 15_000;
+  let port = 0;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) {
+      throw new Error(`Chrome exited (${proc.exitCode}) during startup:\n${stderr.slice(-2000)}`);
+    }
+    if (existsSync(portFile)) {
+      const first = readFileSync(portFile, "utf-8").split("\n")[0].trim();
+      if (first) {
+        port = Number(first);
+        break;
+      }
+    }
+    await sleep(50);
+  }
+  if (!port) throw new Error(`Chrome did not report a debugging port.\n${stderr.slice(-2000)}`);
+
+  const verRes = await fetch(`http://127.0.0.1:${port}/json/version`);
+  const ver = await verRes.json();
+  const cdp = new CDP(ver.webSocketDebuggerUrl);
+  await cdp.ready;
+  return { proc, cdp, userDataDir, stderr: () => stderr };
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Best-effort recursive remove — Chrome may still be flushing the profile dir. */
+function safeRmDir(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch {
+    /* leftover temp profile dir is harmless */
+  }
+}
+
+/** Open `url` in a fresh target, run `fn(sessionId)`, then close the target. */
+async function withPage(cdp, url, fn) {
+  const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
+  const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+  try {
+    await cdp.send("Page.enable", {}, sessionId);
+    await cdp.send("Runtime.enable", {}, sessionId);
+    await cdp.send("Page.navigate", { url }, sessionId);
+    return await fn(sessionId);
+  } finally {
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+}
+
+/** Evaluate an expression in the page and return its by-value result. */
+async function evalInPage(cdp, sessionId, expression, awaitPromise = false) {
+  const r = await cdp.send(
+    "Runtime.evaluate",
+    { expression, returnByValue: true, awaitPromise },
+    sessionId,
+  );
+  if (r.exceptionDetails) {
+    throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
+  }
+  return r.result?.value;
+}
+
+/** Probe whether this Chrome instance can obtain a WebGPU adapter. */
+async function probeAdapter(cdp, baseUrl) {
+  return withPage(cdp, `${baseUrl}/__webgpu_probe__`, async (sessionId) => {
+    await sleep(200);
+    return await evalInPage(
+      cdp,
+      sessionId,
+      `(async () => {
+         if (!navigator.gpu) return { ok:false, why:'no navigator.gpu' };
+         try {
+           const a = await navigator.gpu.requestAdapter();
+           if (!a) return { ok:false, why:'requestAdapter() returned null' };
+           const i = a.info || (a.requestAdapterInfo ? await a.requestAdapterInfo() : {});
+           return { ok:true, info: { vendor:i.vendor, architecture:i.architecture, description:i.description } };
+         } catch (e) { return { ok:false, why:String(e && e.message || e) }; }
+       })()`,
+      true,
+    );
+  });
+}
+
+/** Drive one harness page to completion; poll #status until PASS/FAIL or timeout. */
+async function runHarness(cdp, baseUrl, harness) {
+  const url = baseUrl + harness.urlPath;
+  return withPage(cdp, url, async (sessionId) => {
+    const start = Date.now();
+    const poll = `(() => {
+      const s = document.getElementById('status');
+      const status = s ? (s.textContent || '').trim() : '';
+      const res = document.getElementById('result');
+      return { status, verdict: /^(PASS|FAIL)$/.test(status) ? status.toLowerCase() : null,
+               result: res ? (res.innerText || '') : '' };
+    })()`;
+    while (Date.now() - start < HARNESS_TIMEOUT_MS) {
+      let snap;
+      try {
+        snap = await evalInPage(cdp, sessionId, poll);
+      } catch {
+        // navigation may not have committed yet; retry
+        await sleep(100);
+        continue;
+      }
+      if (snap && snap.verdict) {
+        return {
+          verdict: snap.verdict, // 'pass' | 'fail'
+          ms: Date.now() - start,
+          result: snap.result,
+        };
+      }
+      await sleep(150);
+    }
+    // timeout: grab whatever the page managed to render
+    let tail = "";
+    try {
+      tail = await evalInPage(
+        cdp,
+        sessionId,
+        `(document.getElementById('result')||{}).innerText || ''`,
+      );
+    } catch {
+      /* noop */
+    }
+    return { verdict: "timeout", ms: Date.now() - start, result: tail };
+  });
+}
+
+// ── 5. Report / main ──────────────────────────────────────────────────────────
+function indent(text, pad = "        ") {
+  return String(text)
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => pad + DIM(l))
+    .join("\n");
+}
+
+async function main() {
+  console.log(BOLD("\ncairn-plot WebGPU parity-harness runner\n"));
+
+  let harnesses = discoverHarnesses();
+  if (ONLY) harnesses = harnesses.filter((h) => h.id.includes(ONLY));
+  if (harnesses.length === 0) die(`no *.browser.html harnesses found under ${SEARCH_ROOT}`);
+
+  // Interaction harnesses are human-run (see isParityHarness / RUN_ALL notes).
+  // With a custom --root (e.g. the self-test), treat everything as runnable.
+  const customRoot = SEARCH_ROOT !== resolve(UI_ROOT, "src/lib/cairn-plot");
+  const interactionSkips = [];
+  if (!RUN_ALL && !customRoot) {
+    harnesses = harnesses.filter((h) => {
+      if (!isParityHarness(h)) {
+        interactionSkips.push(h.id);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Partition explicit skips (loud).
+  const loudSkips = [];
+  harnesses = harnesses.filter((h) => {
+    if (SKIP_SUBSTR.some((s) => h.id.includes(s))) {
+      loudSkips.push(h.id);
+      return false;
+    }
+    return true;
+  });
+
+  console.log(`• running ${harnesses.length} parity harness page(s):`);
+  for (const h of harnesses) console.log(`    ${h.id}`);
+  if (interactionSkips.length) {
+    console.log(
+      YELLOW(
+        `• ${interactionSkips.length} interaction harness(es) NOT run (human-run; ` +
+          `need live layout + gestures — pass --all to attempt):`,
+      ),
+    );
+    for (const id of interactionSkips) console.log(YELLOW(`    ${id}`));
+  }
+  if (loudSkips.length) {
+    console.log(YELLOW(`• HARNESS_SKIP excludes: ${loudSkips.join(", ")}`));
+  }
+  console.log("");
+
+  const generated = await bundleAll(harnesses);
+  const cleanup = () => {
+    if (!KEEP_BUNDLES) for (const f of generated) rmSync(f, { force: true });
+  };
+
+  const { server, port: serverPort } = await startServer(UI_ROOT);
+  const baseUrl = `http://127.0.0.1:${serverPort}`;
+
+  const chrome = findChrome();
+  console.log(`• chrome: ${chrome}`);
+
+  // Try each GPU strategy until an adapter is available.
+  // HARNESS_ASSUME_GPU=1 bypasses the WebGPU adapter probe (used by the runner's
+  // own self-test, whose fake harnesses use no WebGPU) so the drive/parse/exit
+  // path can be exercised deterministically on a GPU-less machine.
+  const assumeGpu = process.env.HARNESS_ASSUME_GPU === "1";
+  let launched = null;
+  let adapter = null;
+  let strategyUsed = "";
+  for (const strat of GPU_STRATEGIES) {
+    console.log(`• launching Chromium — ${strat.name}`);
+    let l;
+    try {
+      l = await launchChrome(chrome, strat.flags);
+    } catch (err) {
+      console.log(YELLOW(`    launch failed: ${err.message}`));
+      continue;
+    }
+    let a;
+    if (assumeGpu) {
+      a = { ok: true, info: { vendor: "(probe bypassed: HARNESS_ASSUME_GPU=1)" } };
+    } else {
+      try {
+        a = await probeAdapter(l.cdp, baseUrl);
+      } catch (err) {
+        a = { ok: false, why: `probe threw: ${err.message}` };
+      }
+    }
+    if (a && a.ok) {
+      launched = l;
+      adapter = a;
+      strategyUsed = assumeGpu ? strat.name + " [probe bypassed]" : strat.name;
+      break;
+    }
+    console.log(YELLOW(`    no WebGPU adapter (${a && a.why}) — trying next strategy`));
+    l.cdp.close();
+    l.proc.kill("SIGKILL");
+    safeRmDir(l.userDataDir);
+  }
+
+  // (c) SKIP-LOUDLY: no adapter anywhere.
+  if (!launched) {
+    cleanup();
+    server.close();
+    const names = harnesses.map((h) => h.id).join(", ");
+    console.log("");
+    console.log(YELLOW(BOLD("╔══════════════════════════════════════════════════════════════╗")));
+    console.log(YELLOW(BOLD("║  WEBGPU UNAVAILABLE — PARITY HARNESSES SKIPPED (NOT PASSED)  ║")));
+    console.log(YELLOW(BOLD("╚══════════════════════════════════════════════════════════════╝")));
+    console.log(
+      YELLOW(
+        `This runner could not obtain a WebGPU adapter via any strategy on this\n` +
+          `runner. The following WGSL↔TS parity proofs DID NOT RUN and are\n` +
+          `unverified by this job:\n  ${names}\n`,
+      ),
+    );
+    ghAnnotate(
+      "warning",
+      `WebGPU unavailable on this runner — ${harnesses.length} cairn-plot parity ` +
+        `harness(es) SKIPPED (not verified): ${names}. ` +
+        `Install a Chromium with a working WebGPU adapter (hardware or SwiftShader/Dawn).`,
+    );
+    // Skip-loudly is not a failure of the code under test — exit 0.
+    process.exit(0);
+  }
+
+  const { cdp, proc, userDataDir, stderr } = launched;
+  console.log(GREEN(`• WebGPU OK via ${strategyUsed}`));
+  console.log(`    adapter: ${JSON.stringify(adapter.info)}\n`);
+
+  // Run harnesses sequentially (each gets its own target + fresh GPU device).
+  const rows = [];
+  for (const h of harnesses) {
+    process.stdout.write(`  running ${h.id} … `);
+    let r;
+    try {
+      r = await runHarness(cdp, baseUrl, h);
+    } catch (err) {
+      r = { verdict: "error", ms: 0, result: String(err.message || err) };
+    }
+    const tag =
+      r.verdict === "pass"
+        ? GREEN("PASS")
+        : r.verdict === "fail"
+          ? RED("FAIL")
+          : r.verdict === "timeout"
+            ? YELLOW("TIMEOUT")
+            : RED("ERROR");
+    console.log(`${tag} ${DIM(`(${r.ms}ms)`)}`);
+    if (r.verdict !== "pass" && r.result) console.log(indent(r.result));
+    rows.push({ id: h.id, ...r });
+  }
+
+  // Teardown.
+  cdp.close();
+  proc.kill("SIGKILL");
+  safeRmDir(userDataDir);
+  cleanup();
+  server.close();
+  void stderr;
+
+  // Summary.
+  const passed = rows.filter((r) => r.verdict === "pass");
+  const failed = rows.filter((r) => r.verdict !== "pass");
+  console.log("");
+  console.log(BOLD(`Harness summary — ${rows.length} harness(es), strategy: ${strategyUsed}`));
+  for (const r of rows) {
+    const tag =
+      r.verdict === "pass"
+        ? GREEN("PASS   ")
+        : r.verdict === "fail"
+          ? RED("FAIL   ")
+          : r.verdict === "timeout"
+            ? YELLOW("TIMEOUT")
+            : RED("ERROR  ");
+    console.log(`  ${tag} ${r.id}`);
+  }
+  if (loudSkips.length) {
+    console.log("");
+    for (const id of loudSkips) console.log(YELLOW(`  SKIP    ${id} (HARNESS_SKIP)`));
+    ghAnnotate("warning", `Explicitly skipped harness(es) (HARNESS_SKIP): ${loudSkips.join(", ")}`);
+  }
+  console.log("");
+
+  if (failed.length === 0) {
+    console.log(GREEN(BOLD(`✓ all ${passed.length} parity harness(es) passed`)) + "\n");
+    process.exit(0);
+  } else {
+    for (const r of failed) {
+      ghAnnotate("error", `cairn-plot parity harness ${r.verdict.toUpperCase()}: ${r.id}`);
+    }
+    console.log(
+      RED(BOLD(`✗ ${failed.length} of ${rows.length} harness(es) did not pass`)) + "\n",
+    );
+    process.exit(1);
+  }
+}
+
+main().catch((err) => die(err.stack || String(err)));
