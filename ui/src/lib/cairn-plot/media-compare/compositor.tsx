@@ -21,6 +21,9 @@ import PixelValueOverlay, {
 } from "../primitives/PixelValueOverlay";
 import { loadImageData } from "../image";
 import RefBadge from "../primitives/RefBadge";
+import LabelChip from "../primitives/LabelChip";
+import PaneUnavailable from "../primitives/PaneUnavailable";
+import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
@@ -328,30 +331,11 @@ export function MediaComparePane({
             </div>
           </div>
           {mode === "split" && (
-            <div
-              className="cairn-plot-split-divider absolute top-0 bottom-0 z-20 flex items-center justify-center"
-              style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize", touchAction: "none" }}
-              onDoubleClick={() => onSplitPositionChange?.(0.5)}
-              onPointerDown={(ev) => {
-                ev.stopPropagation();
-                ev.preventDefault();
-                const el = ev.currentTarget;
-                try { el.setPointerCapture(ev.pointerId); } catch { /* best-effort */ }
-                const container = el.parentElement!;
-                const rect = container.getBoundingClientRect();
-                const onMoveEvt = (me: PointerEvent) => {
-                  onSplitPositionChange?.(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
-                };
-                const onUpEvt = () => {
-                  window.removeEventListener("pointermove", onMoveEvt);
-                  window.removeEventListener("pointerup", onUpEvt);
-                };
-                window.addEventListener("pointermove", onMoveEvt);
-                window.addEventListener("pointerup", onUpEvt);
-              }}
-            >
-              <div className="w-1 h-full bg-accent/80 rounded-full pointer-events-none" />
-            </div>
+            <SplitDivider
+              splitPosition={splitPosition}
+              onChange={onSplitPositionChange}
+              onReset={() => onSplitPositionChange?.(0.5)}
+            />
           )}
         </div>
         {/* Per-pixel value overlay. In SPLIT mode each side samples its OWN
@@ -421,15 +405,17 @@ export function MediaComparePane({
           distinctly visible left of the divider. Hidden in `blend` (fused).
           Shared `RefBadge` — identical element/corner in every compare mode. */}
       {mode === "split" && <RefBadge />}
-      <span
-        className={`absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable && !modifierActive ? " cairn-drag-grip" : ""}`}
-        draggable={isDraggable && !modifierActive}
+      {/* Bottom-RIGHT label chip (clear of the top-left RefBadge). Drag is
+          suppressed while a viewport modifier key is held (so the key-drag pans
+          instead of grabbing the chip), but the grip stays visible — hence the
+          explicit `grip` (its default would follow `draggable`). */}
+      <LabelChip
+        label={label}
+        corner="bottom-right"
+        isDraggable={isDraggable && !modifierActive}
+        grip
         onDragStart={onDragStart}
-        style={{ cursor: isDraggable && !modifierActive ? "grab" : undefined }}
-      >
-        <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" />
-        {label}
-      </span>
+      />
     </div>
   );
 }
@@ -497,10 +483,13 @@ export interface CompareFloatSource {
  * legacy CPU panes take only URL sources. Never a blank pane (Task point 3).
  */
 export function CompareFloatUnsupportedError() {
+  // A capability FACT (this browser/GPU has no WebGPU compare for float
+  // sources), not an error — neutral-muted styling via the shared placeholder.
   return (
-    <div className="card p-4 text-sm text-red-400 h-full flex items-center justify-center text-center">
-      Plot error: float URL sources need the GPU compare (WebGPU) — unavailable here
-    </div>
+    <PaneUnavailable
+      title="GPU compare unavailable"
+      body="Float image sources need the GPU compare (WebGPU), which isn't available in this browser."
+    />
   );
 }
 
