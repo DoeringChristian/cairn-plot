@@ -8,9 +8,13 @@
  * the GPU kernel is cross-verified against the CPU reference in the browser
  * harness (`engine/__tests__/ssim.browser.ts`).
  *
- * ## Pass graph (all intermediates rgba16float, source resolution)
- *   momA  : srcA/srcB (sRGB) -> luminance Ya,Yb -> vec4(Ya, Yb, Ya^2, Yb^2).
- *   momB  : srcA/srcB (sRGB) -> luminance Ya,Yb -> vec4(Ya*Yb, 0, 0, 0).
+ * ## Pass graph (all intermediates rgba16float, RESULT resolution)
+ * The moment passes are the ONLY ones that read the sources, so they apply the
+ * compare align/fit source-map (`mapSample`: aligned integer texel per source
+ * under crop, bilinear rescale under fill) — exactly like the pointwise and FLIP
+ * front-ends. Every later pass runs over RESULT-resolution intermediates.
+ *   momA  : srcA/srcB (sRGB, mapped) -> luminance Ya,Yb -> vec4(Ya, Yb, Ya^2, Yb^2).
+ *   momB  : srcA/srcB (sRGB, mapped) -> luminance Ya,Yb -> vec4(Ya*Yb, 0, 0, 0).
  *   blurHA/blurVA : separable 11-tap Gaussian (sigma=1.5, reflect) of momA ->
  *                   (ux, uy, E[x^2], E[y^2]).
  *   blurHB/blurVB : same separable Gaussian of momB -> (E[xy], .., .., ..).
@@ -33,7 +37,7 @@
  * float sources (`flip.wgsl.ts` `YCXCZ_LINEAR_CLAMP_SHADER`). SSIM's dynamic
  * range L is therefore 1, consistent with `data_range=1`.
  */
-import { VERTEX_WGSL } from "./prelude.wgsl.ts";
+import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
 import { SSIM_K1, SSIM_K2, SSIM_L, SSIM_SIGMA, SSIM_RADIUS } from "./ssim-reference.ts";
 import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
 import type { BindGroupEntry } from "../types";
@@ -50,35 +54,48 @@ fn ssim_luma(srgb: vec3<f32>) -> f32 {
 }
 `;
 
-// Moment pass A: (Ya, Yb, Ya^2, Yb^2).
-const MOMENT_A_SHADER = `
+// Shared moment front-end: sample BOTH operands through the compare align/fit
+// mapping (`mapSample`) — the RESULT-grid pixel maps to the aligned integer
+// texel per source under crop, or a bilinear rescale under fill. This is the
+// SAME source-map every other source-reading kernel applies (pointwise's
+// `pointwiseShader`, FLIP's `YCXCZ_SHADER`); the moment passes are the only
+// SSIM passes that read the sources, so they carry it and every later pass runs
+// over RESULT-resolution intermediates unaffected. `u_map` = (offAx, offAy,
+// offBx, offBy); `u_res` = (resultW, resultH, fitFill, 0) — identical layout to
+// `pointwiseShader`. Absent a mapping ⇒ zero offsets / crop (identity, the
+// legacy top-left behavior).
+const MOMENT_FRONTEND_WGSL = `
 ${VERTEX_WGSL}
 ${LUMA_WGSL}
+${SAMPLING_WGSL}
+${SOURCE_MAP_WGSL}
 @group(0) @binding(0) var srcA: texture_2d<f32>;
 @group(0) @binding(3) var srcB: texture_2d<f32>;
-@fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  let dimsA = vec2<i32>(textureDimensions(srcA));
-  let dimsB = vec2<i32>(textureDimensions(srcB));
+@group(0) @binding(8) var<uniform> u_map: vec4<f32>;  // offAx, offAy, offBx, offBy
+@group(0) @binding(11) var<uniform> u_res: vec4<f32>; // resultW, resultH, fitFill, 0
+fn ssim_moment_luma(in: VSOut) -> vec2<f32> {
   let px = vec2<i32>(in.position.xy);
-  let ya = ssim_luma(textureLoad(srcA, clamp(px, vec2<i32>(0), dimsA - vec2<i32>(1)), 0).rgb);
-  let yb = ssim_luma(textureLoad(srcB, clamp(px, vec2<i32>(0), dimsB - vec2<i32>(1)), 0).rgb);
-  return vec4<f32>(ya, yb, ya * ya, yb * yb);
+  let a = mapSample(srcA, px, u_map.x, u_map.y, u_res.x, u_res.y, u_res.z);
+  let b = mapSample(srcB, px, u_map.z, u_map.w, u_res.x, u_res.y, u_res.z);
+  return vec2<f32>(ssim_luma(a.rgb), ssim_luma(b.rgb));
+}
+`;
+
+// Moment pass A: (Ya, Yb, Ya^2, Yb^2).
+const MOMENT_A_SHADER = `
+${MOMENT_FRONTEND_WGSL}
+@fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let y = ssim_moment_luma(in);
+  return vec4<f32>(y.x, y.y, y.x * y.x, y.y * y.y);
 }
 `;
 
 // Moment pass B: (Ya*Yb, 0, 0, 0).
 const MOMENT_B_SHADER = `
-${VERTEX_WGSL}
-${LUMA_WGSL}
-@group(0) @binding(0) var srcA: texture_2d<f32>;
-@group(0) @binding(3) var srcB: texture_2d<f32>;
+${MOMENT_FRONTEND_WGSL}
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  let dimsA = vec2<i32>(textureDimensions(srcA));
-  let dimsB = vec2<i32>(textureDimensions(srcB));
-  let px = vec2<i32>(in.position.xy);
-  let ya = ssim_luma(textureLoad(srcA, clamp(px, vec2<i32>(0), dimsA - vec2<i32>(1)), 0).rgb);
-  let yb = ssim_luma(textureLoad(srcB, clamp(px, vec2<i32>(0), dimsB - vec2<i32>(1)), 0).rgb);
-  return vec4<f32>(ya * yb, 0.0, 0.0, 0.0);
+  let y = ssim_moment_luma(in);
+  return vec4<f32>(y.x * y.y, 0.0, 0.0, 0.0);
 }
 `;
 
@@ -148,6 +165,21 @@ function u(binding: number, arr: number[]): BindGroupEntry {
   return { binding, resource: { uniform: new Float32Array(arr) } };
 }
 
+/**
+ * Source-map uniform entries for the moment passes, which read BOTH operands:
+ * `u_map` (logical 2 → native 8) carries offsetA + offsetB, `u_res` (logical 3
+ * → native 11) carries the RESULT grid + fill flag — the same layout
+ * `pointwiseShader` uses. Absent `ctx.sourceMap` ⇒ zero offsets / crop
+ * (identity, the legacy top-left mapping).
+ */
+function momentUniforms(ctx: KernelBuildCtx): BindGroupEntry[] {
+  const sm = ctx.sourceMap;
+  const offA = sm ? sm.offsetA : { x: 0, y: 0 };
+  const offB = sm ? sm.offsetB : { x: 0, y: 0 };
+  const fill = sm?.fill ? 1 : 0;
+  return [u(2, [offA.x, offA.y, offB.x, offB.y]), u(3, [ctx.width, ctx.height, fill, 0])];
+}
+
 /** A horizontal + vertical separable-Gaussian blur sub-graph over `input`. */
 function blurPasses(input: string, prefix: string): { passes: KernelPass[]; out: string } {
   const h = `${prefix}H`;
@@ -174,8 +206,8 @@ export const ssimKernel: MultipassKernel = {
     const blurA = blurPasses("momA", "statsA");
     const blurB = blurPasses("momB", "statsB");
     const passes: KernelPass[] = [
-      { name: "momA", shader: MOMENT_A_SHADER, inputs: ["srcA", "srcB"], output: "momA" },
-      { name: "momB", shader: MOMENT_B_SHADER, inputs: ["srcA", "srcB"], output: "momB" },
+      { name: "momA", shader: MOMENT_A_SHADER, inputs: ["srcA", "srcB"], output: "momA", uniforms: momentUniforms },
+      { name: "momB", shader: MOMENT_B_SHADER, inputs: ["srcA", "srcB"], output: "momB", uniforms: momentUniforms },
       ...blurA.passes,
       ...blurB.passes,
       {

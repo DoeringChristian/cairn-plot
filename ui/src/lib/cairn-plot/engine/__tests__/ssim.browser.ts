@@ -23,6 +23,7 @@
 import { getSharedDevice } from "../device";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { ssim } from "../kernels/ssim-reference";
+import { computeCompareMapping, type CompareAlign, type CompareFit } from "../compare-align";
 import type { Device, Texture } from "../types";
 
 function report(pass: boolean, message: string): void {
@@ -64,6 +65,71 @@ function makePair(w: number, h: number, seed: number): { ref: Float32Array; test
   return { ref, test };
 }
 
+// A distinct, smoothly-STRUCTURED natural-ish sRGB image (low-frequency
+// sinusoids, seed-varied frequency/phase) — NOT white noise, so it has real
+// local structure that survives the Gaussian and yields a non-trivial SSIM map.
+// Used for the mismatched-size cases: two different-size, DISTINCT-structure
+// operands, so a wrong source-map (the bug: one operand edge-clamped instead of
+// aligned/rescaled) would visibly diverge from the reference. (length w*h*3)
+function makeImage(w: number, h: number, seed: number): Float32Array {
+  const img = new Float32Array(w * h * 3);
+  let s = seed >>> 0;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  const fx = 2 + rnd() * 4, fy = 2 + rnd() * 4, ph = rnd() * 6.283;
+  const fx2 = 1 + rnd() * 3, fy2 = 1 + rnd() * 3;
+  const PI = Math.PI;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const u = w > 1 ? x / (w - 1) : 0;
+      const v = h > 1 ? y / (h - 1) : 0;
+      const r = 0.5 + 0.4 * Math.sin(fx * PI * u + ph) * Math.cos(fy * PI * v);
+      const g = 0.5 + 0.4 * Math.cos(fx2 * PI * v + ph) * Math.sin(fy2 * PI * u);
+      const b = 0.5 + 0.3 * Math.sin((fx + fy) * PI * (u + v) * 0.5);
+      const i = (y * w + x) * 3;
+      img[i] = clamp01(r); img[i + 1] = clamp01(g); img[i + 2] = clamp01(b);
+    }
+  }
+  return img;
+}
+
+const clampI = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+// CPU replica of SOURCE_MAP_WGSL's `mapSample`: resample a source (w*h*3) onto
+// the RESULT grid so the reference SSIM sees exactly what the GPU moment passes
+// sample. CROP = integer texel `result + offset` (clamped); FILL = bilinear over
+// the full source at uv `(px+0.5)/result` (matching SAMPLING_WGSL's
+// `sampleBilinearOf`). Returns a result-grid sRGB array (resW*resH*3).
+function mapSourceToResult(
+  src: Float32Array, sw: number, sh: number,
+  resW: number, resH: number, offX: number, offY: number, fill: boolean,
+): Float32Array {
+  const out = new Float32Array(resW * resH * 3);
+  const at = (xx: number, yy: number, c: number) => src[(yy * sw + xx) * 3 + c]!;
+  for (let y = 0; y < resH; y++) {
+    for (let x = 0; x < resW; x++) {
+      const o = (y * resW + x) * 3;
+      if (fill) {
+        const tx = ((x + 0.5) / resW) * sw - 0.5;
+        const ty = ((y + 0.5) / resH) * sh - 0.5;
+        const bx = Math.floor(tx), by = Math.floor(ty);
+        const fxr = tx - bx, fyr = ty - by;
+        const x0 = clampI(bx, 0, sw - 1), x1 = clampI(bx + 1, 0, sw - 1);
+        const y0 = clampI(by, 0, sh - 1), y1 = clampI(by + 1, 0, sh - 1);
+        for (let c = 0; c < 3; c++) {
+          const top = at(x0, y0, c) * (1 - fxr) + at(x1, y0, c) * fxr;
+          const bot = at(x0, y1, c) * (1 - fxr) + at(x1, y1, c) * fxr;
+          out[o + c] = top * (1 - fyr) + bot * fyr;
+        }
+      } else {
+        const sx = clampI(x + offX, 0, sw - 1), sy = clampI(y + offY, 0, sh - 1);
+        out[o] = at(sx, sy, 0); out[o + 1] = at(sx, sy, 1); out[o + 2] = at(sx, sy, 2);
+      }
+    }
+  }
+  return out;
+}
+
 function uploadRGBA(device: Device, rgb: Float32Array, w: number, h: number): Texture {
   const tex = device.createTexture(w, h, "rgba32float");
   const data = new Float32Array(w * h * 4);
@@ -78,6 +144,16 @@ function uploadRGBA(device: Device, rgb: Float32Array, w: number, h: number): Te
 }
 
 const TOL = 2e-2; // GPU (rgba16float intermediates) vs CPU (f64) reference
+
+// Distinct-operand (mismatched-size) tolerance. The mismatched cases compare two
+// INDEPENDENT natural-structure images (mean 1-SSIM ≈ 1 — near/below SSIM=0,
+// where the (A1·A2)/(B1·B2) ratio is most sensitive to the rgba16float moment
+// storage), so the GPU-vs-f64 worst-pixel floor is ~0.02–0.025, vs ~0.003 for
+// the correlated equal-size pairs above. This is pure f16 precision, NOT a
+// mapping error: the CROP cases below sample exact INTEGER texels (mapSample's
+// crop path == the CPU replica bit-for-bit), yet still sit at ~0.019 — a wrong
+// source-map on these anticorrelated operands would diverge by O(1), not 0.02.
+const TOL_MISMATCH = 3.5e-2;
 
 async function runSsimCase(device: Device, w: number, h: number, seed: number): Promise<boolean> {
   const { ref, test } = makePair(w, h, seed);
@@ -104,6 +180,56 @@ async function runSsimCase(device: Device, w: number, h: number, seed: number): 
   }
   const ok = worst <= TOL;
   report(ok, `[ssim ${w}x${h}] worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL}) mean(1-SSIM)=${(sum / (w * h)).toFixed(4)}`);
+  return ok;
+}
+
+/**
+ * MISMATCHED-size parity: two DISTINCT-structure operands at different
+ * resolutions, compared under a real align/fit mapping (non-top-left crop or
+ * fill). The GPU moment passes must apply the SAME source-map the reference does
+ * (`mapSourceToResult`); this is the case the equal-size fixtures never exercised
+ * and the SSIM source-map bug (one operand edge-clamped → the error map shows
+ * only the other operand's structure) lived in.
+ */
+async function runMismatchCase(
+  device: Device,
+  aw: number, ah: number, bw: number, bh: number,
+  align: CompareAlign, fit: CompareFit, seedA: number, seedB: number,
+): Promise<boolean> {
+  const a = makeImage(aw, ah, seedA);
+  const b = makeImage(bw, bh, seedB);
+  const texA = uploadRGBA(device, a, aw, ah);
+  const texB = uploadRGBA(device, b, bw, bh);
+  const map = computeCompareMapping({ w: aw, h: ah }, { w: bw, h: bh }, align, fit, "b");
+  const result = computeDiff(device, texA, texB, "ssim", undefined, map);
+  const gpu = await device.readback(result);
+  texA.destroy();
+  texB.destroy();
+  result.destroy();
+  const tag = `[ssim ${aw}x${ah} vs ${bw}x${bh} ${fit}/${align}]`;
+  if (!(gpu instanceof Float32Array)) {
+    report(false, `${tag} readback should be Float32Array`);
+    return false;
+  }
+  const { w: rw, h: rh } = map.result;
+  const fill = map.fit === "fill";
+  const mappedA = mapSourceToResult(a, aw, ah, rw, rh, map.offsetA.x, map.offsetA.y, fill);
+  const mappedB = mapSourceToResult(b, bw, bh, rw, rh, map.offsetB.x, map.offsetB.y, fill);
+  const cpu = ssim(mappedA, mappedB, rw, rh);
+  let worst = 0;
+  let sumErr = 0;
+  for (let i = 0; i < rw * rh; i++) {
+    const g = gpu[i * 4]!;
+    const expected = 1 - cpu.ssim[i]!;
+    const d = Math.abs(g - expected);
+    if (d > worst) worst = d;
+    sumErr += 1 - cpu.ssim[i]!;
+  }
+  const ok = worst <= TOL_MISMATCH;
+  report(
+    ok,
+    `${tag} result ${rw}x${rh} worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL_MISMATCH}) mean(1-SSIM)=${(sumErr / (rw * rh)).toFixed(3)}`,
+  );
   return ok;
 }
 
@@ -144,6 +270,12 @@ async function main(): Promise<void> {
     ok = (await runSsimCase(device, 14, 14, 1)) && ok;
     ok = (await runSsimCase(device, 18, 16, 7)) && ok;
     ok = (await runSsimCase(device, 24, 20, 42)) && ok;
+    // Mismatched-size parity (the SSIM source-map bug's home): non-top-left crop
+    // (exercises the per-source alignment OFFSET) and fill (exercises the
+    // bilinear rescale of the non-primary operand).
+    ok = (await runMismatchCase(device, 24, 20, 18, 16, "center", "crop", 3, 8)) && ok;
+    ok = (await runMismatchCase(device, 24, 20, 18, 16, "bottom-right", "crop", 5, 11)) && ok;
+    ok = (await runMismatchCase(device, 24, 20, 16, 16, "top-left", "fill", 6, 13)) && ok;
     ok = (await runCacheContract(device)) && ok;
     setOverallStatus(ok);
   } catch (err) {
