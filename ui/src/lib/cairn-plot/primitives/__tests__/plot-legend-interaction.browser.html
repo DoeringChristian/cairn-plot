@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PlotLegend / scalar-legend interaction harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      .pane { border: 1px solid #333; padding: 8px; margin: 8px 0; background: #1b1b1b; }
+      h2 { font-size: 13px; color: #9cf; margin: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Unified interactive legend — toggle / isolate / scalar extras</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <h2>PlotLegend (base)</h2>
+    <div id="plain" class="pane"></div>
+    <h2>scalar-legend (visibility mode)</h2>
+    <div id="scalar" class="pane"></div>
+    <h2>scalar-legend (legacy select mode)</h2>
+    <div id="legacy" class="pane"></div>
+    <script type="module" src="./plot-legend-interaction.browser.bundle.js?v=1"></script>
+  </body>
+</html>
