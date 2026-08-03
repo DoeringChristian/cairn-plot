@@ -7,9 +7,9 @@
  */
 import type { ColormapName } from "../types";
 import { getColormapLUT } from "./lut.ts";
+import { sampleLutByte } from "./lut-sample.ts";
 
 export function colormapColor(name: ColormapName, t: number): string {
-  const lut = getColormapLUT(name);
-  const i = Math.max(0, Math.min(255, Math.round(t * 255)));
-  return `rgb(${lut[i * 3]},${lut[i * 3 + 1]},${lut[i * 3 + 2]})`;
+  const [r, g, b] = sampleLutByte(getColormapLUT(name), t);
+  return `rgb(${r},${g},${b})`;
 }

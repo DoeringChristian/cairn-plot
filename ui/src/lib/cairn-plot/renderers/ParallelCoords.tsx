@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import type { ParallelColumn, ParallelRow, ColormapName } from "../types";
 import { normalizeValue } from "../transforms/normalize";
 import { colormapColor } from "../colormaps/sample";
+import { lutRow } from "../colormaps/lut-sample";
 import { getColormapLUT } from "../colormaps/lut";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
@@ -234,8 +235,11 @@ export default function ParallelCoords({
               : null;
             let color = "#656d76";
             if (colorT != null) {
-              const ci = Math.max(0, Math.min(255, Math.round(colorT * 255)));
-              color = `rgb(${cmapLut[ci * 3]},${cmapLut[ci * 3 + 1]},${cmapLut[ci * 3 + 2]})`;
+              // `colorT` already normalized (via `normalizeValue`, zero-span→0.5);
+              // `lutRow` is the shared clamp+round to a LUT row. Index inline —
+              // no alloc beyond the one rgb() string this polyline stroke needs.
+              const ci = lutRow(colorT) * 3;
+              color = `rgb(${cmapLut[ci]},${cmapLut[ci + 1]},${cmapLut[ci + 2]})`;
             }
             const isHovered = hoveredId === row.id;
             const isSelected = selectedIds?.has(row.id);

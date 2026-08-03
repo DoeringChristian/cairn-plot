@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ColormapName } from "../types";
 import { getColormapLUT } from "../colormaps";
+import { lutRow, normToT } from "../colormaps/lut-sample";
 import { useContainerSize } from "../hooks/use-container-size";
 import { formatNum } from "../format";
 import Tooltip from "../primitives/Tooltip";
@@ -100,23 +101,26 @@ export default function Heatmap({
     if (!ctx) return;
     const img = ctx.createImageData(cols, rows);
     const lut = getColormapLUT(colormap);
-    const range = hi - lo || 1;
-    const logDen = logColor ? Math.log1p(range) : 1;
+    const logDen = logColor ? Math.log1p(hi - lo) : 1;
     for (let y = 0; y < rows; y++) {
       const row = matrix[y]!;
       const outY = originTop ? y : rows - 1 - y;
       for (let x = 0; x < cols; x++) {
         const v = row[x]!;
-        let t: number;
-        if (!Number.isFinite(v)) t = 0;
-        else if (logColor) t = Math.log1p(Math.max(0, v - lo)) / (logDen || 1);
-        else t = (v - lo) / range;
-        let idx = Math.round(Math.max(0, Math.min(1, t)) * 255);
-        idx = Math.max(0, Math.min(255, idx));
+        // The log path is Heatmap-specific (a `log1p` compression of the
+        // above-floor magnitude, NOT the shared `log10` domain normalize), so
+        // it stays inline; the LINEAR path + all degenerate-domain handling go
+        // through the shared `normToT`, and `lutRow` is the one clamp+round.
+        const t = logColor
+          ? Number.isFinite(v)
+            ? Math.log1p(Math.max(0, v - lo)) / (logDen || 1)
+            : 0
+          : normToT(v, lo, hi);
+        const idx = lutRow(t) * 3;
         const p = (outY * cols + x) * 4;
-        img.data[p] = lut[idx * 3]!;
-        img.data[p + 1] = lut[idx * 3 + 1]!;
-        img.data[p + 2] = lut[idx * 3 + 2]!;
+        img.data[p] = lut[idx]!;
+        img.data[p + 1] = lut[idx + 1]!;
+        img.data[p + 2] = lut[idx + 2]!;
         img.data[p + 3] = 255;
       }
     }

@@ -1,5 +1,6 @@
 import type { ColormapName } from "../types";
 import { getColormapLUT } from "../colormaps";
+import { lutRow, normToT } from "../colormaps/lut-sample";
 import { SERIES_COLORS } from "../types";
 
 /** Options shared by the strided color helpers below. */
@@ -32,14 +33,13 @@ export function valuesToColors(
   const colors = out ?? new Float32Array(nPoints * 3);
   const lut = getColormapLUT(colormap);
   const [min, max] = domain;
-  const span = max - min || 1;
   for (let i = 0; i < nPoints; i++) {
-    const v = values[i * stride + offset]!;
-    const t = Math.max(0, Math.min(1, (v - min) / span));
-    const idx = Math.min(255, Math.max(0, Math.round(t * 255)));
-    colors[i * 3] = lut[idx * 3]! / 255;
-    colors[i * 3 + 1] = lut[idx * 3 + 1]! / 255;
-    colors[i * 3 + 2] = lut[idx * 3 + 2]! / 255;
+    // Shared value→LUT-row mapping (canonical zero-span/NaN/±Inf handling);
+    // index the LUT inline to keep this hot loop allocation-free.
+    const idx = lutRow(normToT(values[i * stride + offset]!, min, max)) * 3;
+    colors[i * 3] = lut[idx]! / 255;
+    colors[i * 3 + 1] = lut[idx + 1]! / 255;
+    colors[i * 3 + 2] = lut[idx + 2]! / 255;
   }
   return colors;
 }
