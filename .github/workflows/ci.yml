@@ -105,3 +105,39 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: npm run smoke:plot
+
+  harness:
+    name: test:harness (WebGPU WGSL↔TS parity proofs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          chrome-version: stable
+      - name: install ui deps
+        working-directory: ui
+        run: npm ci
+      # Proves the RUNNER itself fails/exits-nonzero on a FAIL harness. Hermetic
+      # (synthetic PASS+FAIL pages, WebGPU probe bypassed) — no GPU needed.
+      - name: runner self-test
+        working-directory: ui
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: npm run test:harness:selftest
+      # Drives the engine WGSL↔TS parity harnesses headlessly. The runner tries
+      # a hardware WebGPU adapter, then the SwiftShader/Dawn software adapter; if
+      # NEITHER is available it SKIPS LOUDLY (annotated ::warning:: naming the
+      # unrun proofs) and exits 0 — it never silently passes. A real FAIL in any
+      # harness exits nonzero and fails this job.
+      - name: run parity harnesses
+        working-directory: ui
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: npm run test:harness
