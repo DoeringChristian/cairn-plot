@@ -1,31 +1,54 @@
 // ---------------------------------------------------------------------------
-// LabelChip — the bottom-left draggable label chip shared by every viewport
-// pane (image + all 3D types). Extracted (WS-VC5 review nit from VC4) from
-// two byte-identical copies: `renderers/ImagePane.tsx`'s inline `<span>` and
-// `viewport/pointcloud-viewport.tsx`'s own `LabelChip` (which had already
-// flagged itself as a "good extraction target for VC5" — see that file's
-// history). Markup/classes are UNCHANGED from both — this is a pure
-// dedup, not a redesign (spec §7 appendix: "bottom-left draggable label...
-// card-owned, uniform (3D inherits)").
+// LabelChip — the ONE label chip shared by every pane that names a source: the
+// viewport panes' bottom-LEFT draggable label (image + all 3D types, via
+// `ImagePaneShell`) AND the compare panes' bottom-RIGHT label (media-compare
+// CPU `MediaComparePane` + GPU `GpuComparePane`). Corner differs on purpose —
+// the compare panes carry a top-left `RefBadge`, so their label sits bottom-
+// RIGHT to stay clear of it, while the plain viewport panes keep it bottom-
+// LEFT. This is ONE component (same markup/classes), not one corner.
+//
+// Previously THREE divergent copies existed (the reported dedup bug):
+//   1. this shared chip (bottom-left, grip iff draggable, `aria-hidden` grip),
+//   2. `compositor.tsx`'s inline `<span>` (bottom-right, grip ALWAYS, drag
+//      gated `isDraggable && !modifierActive`), and
+//   3. `GpuComparePane.tsx`'s inline `<span>` (bottom-right, no grip, static).
+// All now route through here; each site keeps its exact drag semantics by
+// passing an already-computed `draggable` (the caller folds in `modifierActive`)
+// and choosing `grip` explicitly.
 // ---------------------------------------------------------------------------
+
+/** Which corner the chip pins to. Viewport panes → bottom-left; compare panes →
+ *  bottom-right (clear of the top-left `RefBadge`). */
+export type LabelChipCorner = "bottom-left" | "bottom-right";
 
 export default function LabelChip({
   label,
-  isDraggable,
+  corner = "bottom-left",
+  isDraggable = false,
+  grip = isDraggable,
   onDragStart,
 }: {
   label: string;
+  corner?: LabelChipCorner;
+  /** Whether the chip is draggable RIGHT NOW — drives the `draggable` attr, the
+   *  grab cursor and the `cairn-drag-grip` class. Callers that gate on a live
+   *  modifier key (compositor) pass the already-combined value. */
   isDraggable?: boolean;
+  /** Show the grip handle icon. Defaults to `isDraggable`; the compositor pane
+   *  passes `true` to keep the grip visible even while a modifier key
+   *  temporarily suppresses dragging. */
+  grip?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
 }) {
+  const cornerClass = corner === "bottom-right" ? "bottom-1 right-1" : "bottom-1 left-1";
   return (
     <span
-      className={`absolute bottom-1 left-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
+      className={`absolute ${cornerClass} z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
       draggable={isDraggable}
       onDragStart={onDragStart}
       style={{ cursor: isDraggable ? "grab" : undefined }}
     >
-      {isDraggable && (
+      {grip && (
         <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" aria-hidden="true" />
       )}
       {label}

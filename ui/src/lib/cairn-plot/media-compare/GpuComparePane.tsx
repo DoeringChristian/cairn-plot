@@ -79,6 +79,8 @@ import PixelValueOverlay, {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import RefBadge from "../primitives/RefBadge";
+import LabelChip from "../primitives/LabelChip";
+import SplitDivider from "./SplitDivider";
 // C1 fix (whole-branch review) — the LEGACY compare panes, used as the
 // fallback when the engine fails to activate/render (see `engineFailed`
 // state below). Safe to import here: this file only ever ships inside the
@@ -1205,36 +1207,23 @@ export default function GpuComparePane({
       />
       {/* Full-height, gapless split divider — drives the `split` uniform. */}
       {compareMode === "split" && (
-        <div
-          className="cairn-plot-split-divider absolute top-0 bottom-0 z-20 flex items-center justify-center"
-          style={{ left: `${splitPosition * 100}%`, transform: "translateX(-50%)", cursor: "col-resize", touchAction: "none" }}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            onSplitPositionChange?.(0.5);
-          }}
-          onPointerDown={(ev) => {
-            ev.stopPropagation();
-            ev.preventDefault();
-            const el = ev.currentTarget;
-            try { el.setPointerCapture(ev.pointerId); } catch { /* best-effort */ }
-            const container = el.parentElement!;
-            const rect = container.getBoundingClientRect();
-            const onMoveEvt = (me: PointerEvent) => {
-              onSplitPositionChange?.(Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width)));
-            };
-            const onUpEvt = () => {
-              window.removeEventListener("pointermove", onMoveEvt);
-              window.removeEventListener("pointerup", onUpEvt);
-            };
-            window.addEventListener("pointermove", onMoveEvt);
-            window.addEventListener("pointerup", onUpEvt);
-          }}
-        >
-          <div className="w-1 h-full bg-accent/80 rounded-full pointer-events-none" />
-        </div>
+        <SplitDivider
+          splitPosition={splitPosition}
+          onChange={onSplitPositionChange}
+          onReset={() => onSplitPositionChange?.(0.5)}
+        />
       )}
     </>
   );
+
+  // Bottom-RIGHT chip stack (floor-up). The label chip, present iff `label`,
+  // occupies the floor (bottom-1); the metrics readout stacks directly ABOVE it
+  // (bottom-7) when the label is there, otherwise it takes the floor itself.
+  // Finding 2: the chip's presence AND the metrics' vertical offset both derive
+  // from this ONE flag, so the offset can never silently drift out of sync with
+  // the chip beneath it.
+  const labelChipPresent = !!label;
+  const metricsBottomClass = labelChipPresent ? "bottom-7" : "bottom-1";
 
   return (
     <ImagePaneShell
@@ -1345,19 +1334,18 @@ export default function GpuComparePane({
               `side` shows its own `RefBadge` on the reference pane. Shared
               `RefBadge` — identical element/corner in every compare mode. */}
           {compareMode === "split" && <RefBadge />}
-          {label ? (
-            <span className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
-              {label}
-            </span>
-          ) : null}
+          {/* Bottom-RIGHT label chip (static; the compare pane's label is never
+              draggable), routed through the shared LabelChip. */}
+          {labelChipPresent ? <LabelChip label={label} corner="bottom-right" /> : null}
           {metrics && (
             <span
               // §requirement C: the diff metrics live in the LOWER-RIGHT corner.
-              // When a label chip also occupies bottom-right (`label` truthy,
-              // bottom-1 right-1), stack the metrics directly ABOVE it (bottom-7);
-              // otherwise pin it to bottom-1. z-30 keeps it ABOVE the split
+              // When the label chip occupies the floor, the metrics stack directly
+              // ABOVE it; otherwise they take the floor. The offset derives from
+              // `labelChipPresent` (the SAME flag that renders the chip), so it
+              // can't drift out of sync (Finding 2). z-30 keeps it ABOVE the split
               // divider (z-20) so dragging the divider never occludes it.
-              className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${label ? "bottom-7" : "bottom-1"}`}
+              className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}`}
               data-gpu-compare-metrics
             >
               MSE {metrics.mse.toExponential(2)} · PSNR {Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB · MAE{" "}
