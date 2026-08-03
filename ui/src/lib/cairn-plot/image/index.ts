@@ -3,6 +3,11 @@ export { webglRenderDiffToCanvas, isWebGL2Available, type WebGLDiffOptions } fro
 export { getRenderMode, setRenderMode, type RenderMode } from "./render-mode";
 export { getCachedImageData, setCachedImageData } from "./cache";
 export {
+  labelLuminance,
+  LABEL_LUMINANCE_DARK_THRESHOLD,
+  REC709_LUMINANCE_WEIGHTS,
+} from "./luminance";
+export {
   TONEMAP_OPERATORS,
   DEFAULT_TONEMAP,
   getTonemapOperator,

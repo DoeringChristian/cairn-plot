@@ -25,15 +25,28 @@ export interface PlotLegendProps {
   visibility: SeriesVisibility;
   /** Optional trailing content per chip (e.g. ScalarPlot's promote button). */
   chipTrailing?: (item: LegendItem) => React.ReactNode;
+  /**
+   * Per-chip opacity override. Defaults to the Plotly dim (hidden → 0.35, else
+   * 1). ScalarPlot overrides it so a run-selection also dims the non-selected
+   * chips while their visibility stays on.
+   */
+  chipOpacity?: (item: LegendItem, hidden: boolean) => number;
+  /** Swatch bar height in px (default 3). */
+  swatchHeight?: (item: LegendItem) => number;
+  /** Swatch bar corner radius in px (default 1). */
+  swatchRadius?: number;
   className?: string;
 }
 
-const HIDDEN_OPACITY = 0.35;
+export const HIDDEN_OPACITY = 0.35;
 
 export default function PlotLegend({
   items,
   visibility,
   chipTrailing,
+  chipOpacity,
+  swatchHeight,
+  swatchRadius = 1,
   className,
 }: PlotLegendProps) {
   if (items.length === 0) return null;
@@ -43,6 +56,11 @@ export default function PlotLegend({
     >
       {items.map((item) => {
         const hidden = visibility.isHidden(item.key);
+        const opacity = chipOpacity
+          ? chipOpacity(item, hidden)
+          : hidden
+            ? HIDDEN_OPACITY
+            : 1;
         return (
           <li
             key={item.key}
@@ -51,7 +69,7 @@ export default function PlotLegend({
             <button
               type="button"
               className="inline-flex items-center gap-1 hover:text-fg"
-              style={{ opacity: hidden ? HIDDEN_OPACITY : 1 }}
+              style={{ opacity }}
               onClick={() => visibility.toggle(item.key)}
               onDoubleClick={(e) => {
                 // Suppress the paired single-click's toggle so a dblclick is a
@@ -67,8 +85,8 @@ export default function PlotLegend({
                 style={{
                   display: "inline-block",
                   width: 10,
-                  height: 3,
-                  borderRadius: 1,
+                  height: swatchHeight ? swatchHeight(item) : 3,
+                  borderRadius: swatchRadius,
                   background: item.color,
                   marginRight: 2,
                 }}

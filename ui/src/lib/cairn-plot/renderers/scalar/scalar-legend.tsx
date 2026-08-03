@@ -1,6 +1,16 @@
 // Internal satellite of ScalarPlot. Exported for ScalarPlot's use only —
 // intentionally NOT re-exported from the public cairn-plot barrels.
+//
+// The interactive (visibility) legend — swatch+label rows with click-toggle /
+// double-click-isolate — is the shared `PlotLegend` primitive. This wrapper
+// adds ScalarPlot's extras: the promote/demote trailing button, the
+// selection-aware dim, the selected-swatch emphasis, and the LEGACY
+// select-on-click mode kept for hosts that pass no `visibility`.
 
+import PlotLegend, {
+  HIDDEN_OPACITY,
+  type LegendItem,
+} from "../../primitives/PlotLegend";
 import type { PromotedSeriesConfig } from "../../types";
 import type { SeriesVisibility } from "../../hooks/use-series-visibility";
 
@@ -32,20 +42,56 @@ export function CustomLegend({
    */
   visibility?: SeriesVisibility;
 }) {
+  const hasSel = selectedKeys != null && selectedKeys.size > 0;
+
+  // The promote/demote button trails every chip in both modes.
+  const promoteButton = (key: string) => {
+    const isPromoted = !!promoted[key];
+    return (
+      <button
+        type="button"
+        onClick={() => onToggle(key)}
+        className={`ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-xs hover:bg-bg-hover ${
+          isPromoted ? "text-accent" : "text-fg-muted"
+        }`}
+        title={isPromoted ? "Demote (single Y axis)" : "Promote to own Y axis"}
+      >
+        <i className="fa-solid fa-arrows-up-down" aria-hidden="true" />
+      </button>
+    );
+  };
+
+  // Interactive (visibility) mode → the shared PlotLegend primitive drives the
+  // toggle/isolate interaction; the scalar-specific visuals ride the override
+  // hooks. Opacity: hidden always wins (Plotly dim); otherwise fall back to the
+  // selection-dim (non-selected series dim while a run is selected). The
+  // selected series keeps the taller (3px) squared-off swatch.
+  if (visibility) {
+    return (
+      <PlotLegend
+        items={series as LegendItem[]}
+        visibility={visibility}
+        chipTrailing={(item) => promoteButton(item.key)}
+        chipOpacity={(item, hidden) =>
+          hidden
+            ? HIDDEN_OPACITY
+            : hasSel && !selectedKeys!.has(item.key)
+              ? HIDDEN_OPACITY
+              : 1
+        }
+        swatchHeight={(item) => (selectedKeys?.has(item.key) ? 3 : 2)}
+        swatchRadius={0}
+      />
+    );
+  }
+
+  // Legacy select-on-click mode (no visibility API): a chip click selects the
+  // run; no toggle/isolate.
   return (
     <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1">
       {series.map((s) => {
-        const isPromoted = !!promoted[s.key];
         const isSelected = selectedKeys?.has(s.key) ?? false;
-        const hasSel = selectedKeys != null && selectedKeys.size > 0;
-        const isHidden = visibility?.isHidden(s.key) ?? false;
-        // Opacity: hidden always wins (Plotly dim); otherwise fall back to the
-        // selection-dim behavior for the legacy select-on-click mode.
-        const opacity = isHidden
-          ? 0.35
-          : hasSel && !isSelected
-            ? 0.35
-            : 1;
+        const opacity = hasSel && !isSelected ? HIDDEN_OPACITY : 1;
         return (
           <li
             key={s.key}
@@ -55,27 +101,9 @@ export function CustomLegend({
               type="button"
               className="inline-flex items-center gap-1 hover:text-fg"
               style={{ opacity }}
-              onClick={
-                visibility
-                  ? () => visibility.toggle(s.key)
-                  : onSelect
-                    ? () => onSelect(s.key)
-                    : undefined
-              }
-              onDoubleClick={
-                visibility
-                  ? (e) => {
-                      e.preventDefault();
-                      visibility.isolate(s.key);
-                    }
-                  : undefined
-              }
-              aria-pressed={visibility ? !isHidden : isSelected}
-              title={
-                visibility
-                  ? "Click to hide/show. Double-click to isolate."
-                  : "Click to select this run"
-              }
+              onClick={onSelect ? () => onSelect(s.key) : undefined}
+              aria-pressed={isSelected}
+              title="Click to select this run"
             >
               <span
                 aria-hidden="true"
@@ -87,31 +115,9 @@ export function CustomLegend({
                   marginRight: 2,
                 }}
               />
-              <span
-                style={{
-                  textDecoration: isHidden ? "line-through" : undefined,
-                }}
-              >
-                {s.label}
-              </span>
+              <span>{s.label}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => onToggle(s.key)}
-              className={`ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-xs hover:bg-bg-hover ${
-                isPromoted ? "text-accent" : "text-fg-muted"
-              }`}
-              title={
-                isPromoted
-                  ? "Demote (single Y axis)"
-                  : "Promote to own Y axis"
-              }
-            >
-              <i
-                className="fa-solid fa-arrows-up-down"
-                aria-hidden="true"
-              />
-            </button>
+            {promoteButton(s.key)}
           </li>
         );
       })}

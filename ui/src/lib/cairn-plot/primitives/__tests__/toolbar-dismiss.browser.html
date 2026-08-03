@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PlotToolbar dismissal-hook harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      h2 { font-size: 13px; color: #9cf; margin: 4px 0; }
+      /* wide → leading MENU renders inline; narrow (240px) → folds to "⋯". */
+      #wide { position: relative; width: 520px; height: 60px; overflow: hidden; background: #1b1b1b; border: 1px solid #333; }
+      #narrow { position: relative; width: 240px; height: 60px; overflow: hidden; background: #1b1b1b; border: 1px solid #333; }
+      #outside { margin-top: 12px; padding: 12px; width: 200px; background: #223; border: 1px solid #446; }
+    </style>
+  </head>
+  <body>
+    <h1>useDismissOnOutsideOrEscape — ToolbarMenu &amp; OverflowMenu</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <h2>Wide toolbar (inline leading MENU)</h2>
+    <div id="wide" class="group"></div>
+    <h2>Narrow toolbar (folded "⋯" OverflowMenu)</h2>
+    <div id="narrow" class="group"></div>
+    <div id="outside">outside click target</div>
+    <script type="module" src="./toolbar-dismiss.browser.bundle.js?v=1"></script>
+  </body>
+</html>

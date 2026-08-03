@@ -49,6 +49,7 @@ import {
   getRenderMode,
   getCachedImageData,
   setCachedImageData,
+  labelLuminance,
 } from "../image";
 import { applyColormap, getColormapLUT } from "../colormaps";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
@@ -386,7 +387,7 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
         lg = dd.data[j + 1]!;
         lb = dd.data[j + 2]!;
       }
-      const luminance = (0.299 * lr + 0.587 * lg + 0.114 * lb) / 255;
+      const luminance = labelLuminance(lr, lg, lb);
       // A false-colored (colormap) or grayscale pixel prints one untinted line;
       // a true multi-channel pixel prints three channel-tinted lines.
       const single = colormap !== "none" || (r === g && g === b);
@@ -746,11 +747,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       let luminance = 0.5;
       if (disp && disp.width === d.w && disp.height === d.h) {
         const j = (py * d.w + px) * 4;
-        luminance =
-          (0.299 * disp.data[j]! +
-            0.587 * disp.data[j + 1]! +
-            0.114 * disp.data[j + 2]!) /
-          255;
+        luminance = labelLuminance(disp.data[j]!, disp.data[j + 1]!, disp.data[j + 2]!);
       }
       const values =
         c === 1 ? [readV(base)] : [readV(base), readV(base + 1), readV(base + 2)];
