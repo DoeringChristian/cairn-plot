@@ -40,6 +40,12 @@ import type { ToolbarConfig, ToolbarButtonSpec } from "../controls/ToolbarConfig
 import { adaptiveMaxZoom, type Viewport } from "../hooks/use-image-viewport";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../primitives/plot-to-png";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
+import { COLORMAP_OPTIONS } from "../colormaps/lut";
+import {
+  SDR_TONEMAP_OPERATORS,
+  HDR_TONEMAP_OPERATORS,
+  type TonemapOperator,
+} from "../image/tonemap";
 
 const HOME: Viewport = { zoom: 1, pan: { x: 0, y: 0 } };
 /** Per-button click factor for the toolbar's +/- zoom (coarser than the
@@ -84,19 +90,17 @@ export function notationToolbarButton(
 
 /**
  * The registered colormaps as a toolbar-menu option list (diff-kernels
- * toolbar-selection track). Order + ids mirror `types.ts`'s `Colormap` union
- * (`colormaps/lut.ts`'s `COLORMAP_STOPS` keys, plus the `"none"` passthrough);
- * `"none"` shows the raw image / grayscale diff. Kept here (not in the toolbar
- * primitive) so the panes' shared image-controller module owns the one canonical
- * list both single-image backends and the compare pane's diff colormap draw from.
+ * toolbar-selection track). DERIVED from `colormaps/lut.ts`'s canonical
+ * `COLORMAP_OPTIONS` (itself derived from the `COLORMAP_STOPS` registry + its
+ * label map) with the image-only `"none"` raw/grayscale passthrough prepended —
+ * so this list can never drift from the actual LUT registry. `"none"` shows the
+ * raw image / grayscale diff. Kept here (not in the toolbar primitive) so the
+ * panes' shared image-controller module owns the one canonical list both
+ * single-image backends and the compare pane's diff colormap draw from.
  */
 export const COLORMAP_MENU_OPTIONS: { id: string; label: string }[] = [
   { id: "none", label: "None" },
-  { id: "viridis", label: "Viridis" },
-  { id: "plasma", label: "Plasma" },
-  { id: "magma", label: "Magma" },
-  { id: "red-green", label: "Red–Green" },
-  { id: "red-blue", label: "Red–Blue" },
+  ...COLORMAP_OPTIONS,
 ];
 
 /**
@@ -118,29 +122,37 @@ export function colormapToolbarButton(
   };
 }
 
+/** Human labels for the tone-map menu, keyed by operator. `Record<TonemapOperator,
+ *  …>` is exhaustive, so adding an operator to the `TonemapOperator` union
+ *  without a label here is a COMPILE error — labels can't drift from the set. */
+const TONEMAP_LABELS: Record<TonemapOperator, string> = {
+  linear: "Linear",
+  srgb: "sRGB",
+  reinhard: "Reinhard",
+  aces: "ACES",
+  extended: "Extended · Linear",
+  "extended-reinhard": "Extended · Reinhard",
+  "extended-aces": "Extended · ACES",
+};
+
 /**
  * The user-selectable SDR tone-map operators as a toolbar-menu option list (the
- * menu's ALWAYS-shown first group). Order + ids mirror `image/tonemap.ts`'s
- * `SDR_TONEMAP_OPERATORS`. The `extended*` operators are NOT here — they form
+ * menu's ALWAYS-shown first group). DERIVED from `image/tonemap.ts`'s
+ * `SDR_TONEMAP_OPERATORS` group array (single source, pinned by tonemap.test.ts)
+ * + the label map — so the menu can't drift from the operator set. The
+ * `extended*` operators are NOT here — they form
  * {@link EXTENDED_TONEMAP_MENU_OPTIONS}, appended by {@link tonemapToolbarButton}
  * only on a pane whose real HDR surface engaged.
  */
-export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] = [
-  { id: "linear", label: "Linear" },
-  { id: "srgb", label: "sRGB" },
-  { id: "reinhard", label: "Reinhard" },
-  { id: "aces", label: "ACES" },
-];
+export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] =
+  SDR_TONEMAP_OPERATORS.map((id) => ({ id, label: TONEMAP_LABELS[id] }));
 
 /** The HDR-out operator group ("extended" family), appended to the TONEMAP menu
- *  only when the pane's true-HDR surface engaged. Ids mirror
- *  `image/tonemap.ts`'s `HDR_TONEMAP_OPERATORS`; the roll-off pair
- *  (extended-reinhard/-aces) reveals the PEAK slider when selected. */
-export const EXTENDED_TONEMAP_MENU_OPTIONS: { id: string; label: string }[] = [
-  { id: "extended", label: "Extended · Linear" },
-  { id: "extended-reinhard", label: "Extended · Reinhard" },
-  { id: "extended-aces", label: "Extended · ACES" },
-];
+ *  only when the pane's true-HDR surface engaged. DERIVED from
+ *  `image/tonemap.ts`'s `HDR_TONEMAP_OPERATORS` group array + the label map; the
+ *  roll-off pair (extended-reinhard/-aces) reveals the PEAK slider when selected. */
+export const EXTENDED_TONEMAP_MENU_OPTIONS: { id: string; label: string }[] =
+  HDR_TONEMAP_OPERATORS.map((id) => ({ id, label: TONEMAP_LABELS[id] }));
 
 /**
  * A tone-map operator dropdown as a toolbar LEADING button (menu variant),
