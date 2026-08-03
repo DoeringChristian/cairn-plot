@@ -78,6 +78,7 @@ import PixelValueOverlay, {
   type PixelSample,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
+import RefBadge from "../primitives/RefBadge";
 // C1 fix (whole-branch review) — the LEGACY compare panes, used as the
 // fallback when the engine fails to activate/render (see `engineFailed`
 // state below). Safe to import here: this file only ever ships inside the
@@ -1328,16 +1329,13 @@ export default function GpuComparePane({
       }}
       extraChips={
         <>
-          {/* REF chip (Change 1): shown ONLY when BOTH images are visible on
-              screen — i.e. `split`/slide (the left-of-divider side IS the
-              reference). Hidden for `blend` (images fused, no distinct reference
-              side) and every `diff` kernel (a derived error map has no reference
-              side). `side` shows its own REF chip on the reference pane. */}
-          {compareMode === "split" && (
-            <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-              REF
-            </span>
-          )}
+          {/* REF badge: shown ONLY when BOTH images are visible on screen —
+              i.e. `split`/slide (the left-of-divider side IS the reference).
+              Hidden for `blend` (images fused, no distinct reference side) and
+              every `diff` kernel (a derived error map has no reference side).
+              `side` shows its own `RefBadge` on the reference pane. Shared
+              `RefBadge` — identical element/corner in every compare mode. */}
+          {compareMode === "split" && <RefBadge />}
           {label ? (
             <span className="absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm">
               {label}

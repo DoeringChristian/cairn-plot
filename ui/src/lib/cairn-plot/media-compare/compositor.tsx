@@ -20,6 +20,7 @@ import PixelValueOverlay, {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import { loadImageData } from "../image";
+import RefBadge from "../primitives/RefBadge";
 import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
@@ -416,13 +417,10 @@ export function MediaComparePane({
           <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
       </div>
-      {/* REF chip (Change 1): only in `split`/slide, where the reference side is
-          distinctly visible left of the divider. Hidden in `blend` (fused). */}
-      {mode === "split" && (
-        <span className="absolute top-1 left-1 z-10 rounded bg-accent/20 px-1 py-0.5 text-[10px] text-accent backdrop-blur-sm">
-          REF
-        </span>
-      )}
+      {/* REF badge: only in `split`/slide, where the reference side is
+          distinctly visible left of the divider. Hidden in `blend` (fused).
+          Shared `RefBadge` — identical element/corner in every compare mode. */}
+      {mode === "split" && <RefBadge />}
       <span
         className={`absolute bottom-1 right-1 z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable && !modifierActive ? " cairn-drag-grip" : ""}`}
         draggable={isDraggable && !modifierActive}
@@ -707,11 +705,15 @@ export function CompositeMediaPane({
         />
       );
     };
+    // Reference pane carries NO bottom-left label chip — its identity is the
+    // shared top-left `RefBadge` on the wrapper below (unified with split/slide
+    // + 3D). Empty label suppresses the chip in every backend now that the CPU
+    // SDR path also gates on `!!label`.
     const refPane = renderSidePane({
       hdr: baselineHdr,
       url: baselineUrl,
       isBaseline: true,
-      paneLabel: "REF",
+      paneLabel: "",
     });
     const fgPane = renderSidePane({
       hdr: imageHdr,
@@ -728,6 +730,7 @@ export function CompositeMediaPane({
       <div className="flex gap-0.5 h-full">
         <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
           {refPane}
+          <RefBadge />
         </div>
         <div className="relative flex-1 min-w-0 overflow-hidden">{fgPane}</div>
       </div>

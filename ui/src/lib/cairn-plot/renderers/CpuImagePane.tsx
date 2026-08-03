@@ -636,7 +636,11 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       // (`GpuImagePane`) applies both in-shader, and the CPU HDR path recomputes
       // its tone-map pass — so `displayAdjust` is wired there, just not here.
       label={label}
-      showLabelChip
+      // Gate on a non-empty label (matching the CPU HDR path + `GpuImagePane`),
+      // so an empty label renders NO chip. The `side`-compare reference pane
+      // relies on this: it passes `label=""` and shows the shared top-left
+      // `RefBadge` instead of a bottom-left "REF" label chip.
+      showLabelChip={!!label}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
     />

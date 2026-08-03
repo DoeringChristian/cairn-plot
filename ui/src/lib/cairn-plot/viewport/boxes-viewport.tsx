@@ -11,7 +11,7 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { LabelChip } from "../primitives";
+import { LabelChip, RefBadge } from "../primitives";
 import type { ColormapName } from "../types";
 import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
@@ -274,7 +274,7 @@ export function BoxesSideBySideView({
           cameraMode={view.cameraMode}
           sync={pairedSync}
         />
-        <LabelChip label="REF" />
+        <RefBadge />
       </div>
       <div className="relative flex-1 min-w-0 overflow-hidden rounded bg-bg">
         {item ? (
