@@ -24,6 +24,11 @@
  */
 import { useCallback, useEffect, useRef } from "react";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
+import { formatNum } from "../format";
+import {
+  computeFit,
+  type ScreenToTexelParams,
+} from "../renderers/region-select";
 
 /** A source pixel covering at least this many screen px triggers the overlay. */
 export const PIXEL_VALUE_MIN_SCREEN_PX = 30;
@@ -50,12 +55,14 @@ export type PixelValueNotation = "decimal" | "int";
  *  scene value where 1.0 is SDR white (the HDR pipeline). */
 export type PixelValueScale = "uint8" | "unit";
 
-/** Compact float formatting: 3 sig figs, scientific for tiny/huge magnitudes. */
+/**
+ * Compact float formatting for one printed channel value: 3 sig figs,
+ * scientific for tiny/huge magnitudes. Delegates to the chart-wide `formatNum`
+ * (at `precision: 3`) so the TEV per-pixel numbers and chart tooltips/colorbars
+ * obey the SAME rounding + exponential-threshold rules.
+ */
 function formatFloat(v: number): string {
-  if (!Number.isFinite(v)) return "0";
-  const a = Math.abs(v);
-  if (a !== 0 && (a < 1e-3 || a >= 1e4)) return v.toExponential(1);
-  return String(Number(v.toPrecision(3)));
+  return formatNum(v, { precision: 3 });
 }
 
 /**
@@ -222,30 +229,33 @@ export default function PixelValueOverlay({
 
     // The DISPLAYED sub-image, in source pixels: `sourceWindow` (default the
     // whole image) selects a `[0,1]`-normalized crop of
-    // `[naturalWidth, naturalHeight]` — object-contain fits THIS crop into
-    // `box` (not necessarily the full natural size; see the prop doc for why
-    // GPU panes need this).
-    const srcOriginX = sourceWindow.x * naturalWidth;
-    const srcOriginY = sourceWindow.y * naturalHeight;
-    const visibleW = sourceWindow.w * naturalWidth;
-    const visibleH = sourceWindow.h * naturalHeight;
+    // `[naturalWidth, naturalHeight]`. The object-contain fit of THIS crop into
+    // `box` is the SAME `computeFit` the region marquee uses (renderers/
+    // region-select) — we consume it here so the overlay's per-pixel placement
+    // and the marquee's texel mapping can never drift apart.
+    const fitParams: ScreenToTexelParams = {
+      box,
+      naturalWidth,
+      naturalHeight,
+      sourceWindow,
+    };
+    const fit = computeFit(fitParams);
+    const { srcOriginX, srcOriginY, visibleW, visibleH, scale } = fit;
     if (visibleW <= 0 || visibleH <= 0) {
       reportActive(false);
       return;
     }
 
-    // object-contain fit: image region + screen px per source pixel.
-    const scale = Math.min(box.width / visibleW, box.height / visibleH);
+    // screen px per source pixel (== the trigger metric).
     if (scale < PIXEL_VALUE_MIN_SCREEN_PX) {
       reportActive(false); // below threshold: nothing drawn.
       return;
     }
 
-    const dispW = visibleW * scale;
-    const dispH = visibleH * scale;
-    // image top-left in canvas-local (CSS px) coords.
-    const imgLeft = box.left + (box.width - dispW) / 2 - canvasRect.left;
-    const imgTop = box.top + (box.height - dispH) / 2 - canvasRect.top;
+    // Same client-space image top-left as `computeFit` (`fit.imgLeft/imgTop`),
+    // rebased into this canvas's local (CSS px) coords.
+    const imgLeft = fit.imgLeft - canvasRect.left;
+    const imgTop = fit.imgTop - canvasRect.top;
 
     // Visible source-pixel window (clip to both the crop and the canvas viewport).
     const x0 = Math.max(Math.floor(srcOriginX), Math.floor(srcOriginX + (0 - imgLeft) / scale));
