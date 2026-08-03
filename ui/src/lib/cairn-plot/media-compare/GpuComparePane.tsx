@@ -60,7 +60,7 @@ import {
 } from "../engine/diff-engine";
 import { formatSsim } from "../engine/ssim-metric";
 import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId } from "../engine/kernels";
-import { computeCompareMapping, type CompareAlign, type CompareFit } from "../engine/compare-align";
+import { computeCompareMapping, mappingKey, type CompareAlign, type CompareFit } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
 import type { Device, Surface, Texture } from "../engine/types";
@@ -699,6 +699,12 @@ export default function GpuComparePane({
     () => (srcDims ? computeCompareMapping(srcDims.a, srcDims.b, align, fit, "b") : null),
     [srcDims, align, fit],
   );
+  // PRIMITIVE identity of the mapping (its cache key) — used as the effect DEP so
+  // a mapping object recomputed to the SAME value (e.g. `srcDims` re-set on a
+  // parent re-render) does NOT re-fire the source-data effects. Guards against a
+  // render-storm spuriously restarting the SSIM/metrics work (the SSIM-hang
+  // failure mode); the guard in `ensureSsimScalar` is the hard backstop.
+  const mappingSig = useMemo(() => (mapping ? mappingKey(mapping) : "none"), [mapping]);
 
   // Content-identity cache keys for the diff / SSIM caches (per SOURCE content,
   // NOT texture-object identity): a float side keys on its ORIGINAL source URL
@@ -945,7 +951,10 @@ export default function GpuComparePane({
     return () => {
       cancelled = true;
     };
-  }, [ready, uploadVersion, hasBaseline, compareMode, mapping, contentKeyRef, contentKeyFg]);
+    // `mappingSig` (primitive) instead of `mapping` (object): a value-identical
+    // mapping recomputed on a re-render must NOT restart the SSIM work.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, uploadVersion, hasBaseline, compareMode, mappingSig, contentKeyRef, contentKeyFg]);
 
   // ---- diff RESULT readback (TEV per-pixel metric values) ----------------
   // In diff mode the overlay must show the METRIC value(s), NOT the source
