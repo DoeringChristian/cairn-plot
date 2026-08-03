@@ -84,7 +84,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
-import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
+import { loadImageData, getCachedImageData, setCachedImageData, labelLuminance } from "../image";
 import { HALF_ONE, halfToFloat } from "../image/half";
 import ImageOverlay from "./ImageOverlay";
 import {
@@ -95,6 +95,7 @@ import {
 } from "../primitives/PixelValueOverlay";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
+import { useResettableState } from "../hooks/use-resettable-state";
 import { acquirePane, releasePane, type PaneHandle, type SourceUpload } from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
 import type { ImageParams } from "../engine/image-engine";
@@ -363,18 +364,17 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // when the prop changes (e.g. the app card's colormap control) so the pane
   // stays a controlled surface until the user overrides it locally.
   const propColormap: Colormap = hdrMode ? "none" : ((props as SdrImageProps).colormap ?? "none");
-  const [colormapOverride, setColormapOverride] = useState<Colormap>(propColormap);
+  // Descriptor default captured at mount (via `useResettableState`'s seed
+  // capture); HOME restores the view-local colormap override to it (and
+  // `isModified` enables it while off-default) — same contract as
+  // CpuImagePane / the compare pane. Re-seeds to the live prop when the app
+  // card's colormap control changes (controlled surface until user overrides).
+  const [colormapOverride, setColormapOverride, colormapMeta] =
+    useResettableState<Colormap>(propColormap);
   useEffect(() => {
     setColormapOverride(propColormap);
-  }, [propColormap]);
+  }, [propColormap, setColormapOverride]);
   const sdrColormap = hdrMode ? "none" : colormapOverride;
-  // Descriptor default captured at mount; HOME restores the view-local
-  // colormap override to it (and enables while it's off-default) — same
-  // contract as the compare pane's mode/colormap/kernel reset.
-  const defaultColormapRef = useRef(propColormap);
-  const resetColormapOverride = useCallback(() => {
-    setColormapOverride(defaultColormapRef.current);
-  }, []);
 
   // TONE-MAP operator (HDR/float panes only). The view-local override is a
   // NULLABLE "user explicitly picked X"; `null` means "follow the effective
@@ -402,9 +402,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // (extended-reinhard/-aces). View-local, display-only — fed into the render
   // pass; the slider is shown ONLY while such an operator is in effect (see the
   // shell props below). Default 4; HOME restores it. Never a source re-upload.
-  const [peak, setPeak] = useState(EXTENDED_TONEMAP_PEAK_DEFAULT);
-  const peakModified = peak !== EXTENDED_TONEMAP_PEAK_DEFAULT;
-  const resetPeak = useCallback(() => setPeak(EXTENDED_TONEMAP_PEAK_DEFAULT), []);
+  const [peak, setPeak, peakMeta] = useResettableState(EXTENDED_TONEMAP_PEAK_DEFAULT);
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only state — fed straight into the render pass below (the GPU shader
@@ -849,7 +847,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       const r = vd.data[i]!;
       const g = vd.data[i + 1]!;
       const b = vd.data[i + 2]!;
-      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      const luminance = labelLuminance(r, g, b);
       // A false-colored (colormap) or grayscale pixel prints one untinted line;
       // a true multi-channel pixel prints three channel-tinted lines.
       const single = sdrColormap !== "none" || (r === g && g === b);
@@ -992,15 +990,15 @@ export default function GpuImagePane(props: ImageBackendProps) {
           : undefined
       }
       onReset={() => {
-        resetColormapOverride();
+        colormapMeta.reset();
         resetTonemapOverride();
-        resetPeak();
+        peakMeta.reset();
         deepFlatten.reset();
       }}
       extraModified={
-        colormapOverride !== defaultColormapRef.current ||
+        colormapMeta.isModified ||
         tonemapModified ||
-        peakModified ||
+        peakMeta.isModified ||
         deepFlatten.isModified
       }
       label={label}
