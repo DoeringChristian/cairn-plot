@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { colormapColor } from "./sample.ts";
-import { getColormapLUT } from "./lut.ts";
+import { getColormapLUT, COLORMAP_NAMES } from "./lut.ts";
 
 // The endpoints/midpoint are exactly the LUT samples at i = round(t*255):
 // t=0 → LUT[0] (first stop), t=1 → LUT[255] (last stop). Values derived
@@ -49,9 +49,11 @@ test("colormapColor clamps t to [0, 1]", () => {
   assert.equal(colormapColor("plasma", 2), colormapColor("plasma", 1));
 });
 
-// The string is exactly the LUT triple at the sampled index, for any map.
+// The string is exactly the LUT triple at the sampled index, for EVERY
+// registered colormap — iterate the canonical `COLORMAP_NAMES` export rather
+// than a hand-copied list, so a new colormap is covered automatically.
 test("colormapColor matches the underlying LUT sample", () => {
-  for (const name of ["plasma", "viridis", "magma", "red-green", "red-blue"] as const) {
+  for (const name of COLORMAP_NAMES) {
     const lut = getColormapLUT(name);
     for (const t of [0, 0.25, 0.5, 0.75, 1]) {
       const i = Math.round(t * 255);

@@ -88,9 +88,34 @@ export function kernelIdForPublicName(publicName: string): string | undefined {
   return undefined;
 }
 
-/** The flat public-name list (Python `mode=` diff enum + toolbar menu order). */
+/**
+ * Auto-dispatch-only kernel public names — reached ONLY by `resolveDiffKernelId`
+ * under a user-facing mode, never offered as a `cp.Compare(mode=)` value or a
+ * menu entry. `hdr-flip` (`flip_hdr`) is dispatched from the public `flip` mode
+ * on FLOAT sources; users never name it directly. Excluded from
+ * {@link listDiffKernelPublicNames} so that list == the PUBLIC compare-mode set
+ * (== Python `_COMPARE_KERNEL_MODES` keys == `schema/cairn-plot-contracts.json`'s
+ * `compareKernelPublicNames`).
+ *
+ * NAMESPACE NOTE (menu token vs kernel id): the user-facing tokens (`flip`,
+ * `flip_ldr`, `abs`, …) are a DIFFERENT namespace from the internal kernel ids
+ * (`flip`, `flip-ldr-forced`, `absolute`, …). `flip_ldr` (menu token) resolves
+ * to the `flip-ldr-forced` kernel id CLIENT-SIDE via `resolveDiffKernelId` on
+ * float sources (and to plain `flip` on u8). Python's `_COMPARE_KERNEL_MODES`
+ * maps each public token → the descriptor `diffSubmode` it carries.
+ */
+const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr"]);
+
+/**
+ * The flat PUBLIC compare-mode name list (the `cp.Compare(mode=)` diff enum),
+ * minus the auto-dispatch-only names (see {@link AUTO_DISPATCH_ONLY_PUBLIC_NAMES}).
+ * Pinned to `schema/cairn-plot-contracts.json` by `contracts.test.ts` and mirrored
+ * by Python `_COMPARE_KERNEL_MODES` (a pytest asserts the two match as sets).
+ */
 export function listDiffKernelPublicNames(): string[] {
-  return listDiffKernels().map((k) => k.publicName);
+  return listDiffKernels()
+    .map((k) => k.publicName)
+    .filter((name) => !AUTO_DISPATCH_ONLY_PUBLIC_NAMES.has(name));
 }
 
 export * from "./kernel-registry.ts";
