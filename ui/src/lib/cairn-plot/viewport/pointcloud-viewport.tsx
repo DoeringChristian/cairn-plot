@@ -20,7 +20,8 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { LabelChip, RefBadge } from "../primitives";
+import { LabelChip, RefBadge, ViewportCaption } from "../primitives";
+import ViewportPlaceholder from "./ViewportPlaceholder";
 import type { ColormapName } from "../types";
 import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
@@ -174,11 +175,7 @@ export function PointCloudSingleView({
   onFrame?: (canvas: HTMLCanvasElement) => void;
 }) {
   if (!item) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted">
-        no point cloud logged yet
-      </div>
-    );
+    return <ViewportPlaceholder variant="empty">no point cloud logged yet</ViewportPlaceholder>;
   }
   const { arrays, meta } = item;
   return (
@@ -200,6 +197,12 @@ export function PointCloudSingleView({
           onFrame={onFrame}
         />
       </div>
+      {/* Per-pane metadata caption (WS-3DR dedup: closes the gap where
+          pointcloud alone never restored its caption after WS-VC5). Point
+          count + channel layout ("xyz" / "xyzc" / "xyzrgb") — the color info
+          this artifact carries, mirroring boxes' "N boxes · kind" tone. See
+          `ViewportCaption` for the shared chip. */}
+      <ViewportCaption text={`${meta.n_points.toLocaleString()} points · ${meta.channels}`} />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -278,9 +281,7 @@ export function PointCloudSideBySideView({
             sync={pairedSync}
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-fg-muted">
-            no point cloud logged yet
-          </div>
+          <ViewportPlaceholder variant="empty">no point cloud logged yet</ViewportPlaceholder>
         )}
         <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
       </div>
@@ -311,21 +312,17 @@ export function PointCloudNativeDiffPane({
   const view = resolveViewConfig(settings);
 
   if (!data || !reference) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
-        loading…
-      </div>
-    );
+    return <ViewportPlaceholder variant="loading">loading…</ViewportPlaceholder>;
   }
 
   const topologyOk = data.meta.n_points === reference.meta.n_points;
   if (!topologyOk) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <ViewportPlaceholder variant="error">
         Point-count mismatch: {data.meta.n_points.toLocaleString()} vs{" "}
         {reference.meta.n_points.toLocaleString()} points — native diff modes need the same point
         count (index-corresponding).
-      </div>
+      </ViewportPlaceholder>
     );
   }
 
@@ -349,10 +346,10 @@ export function PointCloudNativeDiffPane({
 
   if (!deltaValues) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <ViewportPlaceholder variant="error">
         No property values logged on this cloud to diff — pick a property, or use "Diff: position"
         instead.
-      </div>
+      </ViewportPlaceholder>
     );
   }
 
