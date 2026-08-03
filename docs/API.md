@@ -47,7 +47,14 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 #### `cp.Compare` mismatched-size operands: `align=` / `fit=`
 In diff modes, `prediction`/`reference` need not share a resolution. `align=`
 and `fit=` control how they're reconciled before the diff (and its metrics —
-MSE/PSNR/MAE) are computed; both are ignored outside diff modes.
+MSE/PSNR/MAE/SSIM) are computed; both are ignored outside diff modes.
+
+The compare pane's metrics chip reads **MSE · PSNR · MAE · SSIM** in every mode
+(not only the `ssim` kernel). SSIM is the mean structural similarity (mean of
+`SSIM = 1 − (1 − SSIM)`) over the same mapped/compared region as the other
+metrics — `1.0000` for identical inputs. All are source-data metrics: they track
+the sources and the align/fit region, and are unaffected by EV/offset/colormap or
+which diff kernel is displayed.
 
 | `fit=` | Meaning |
 | --- | --- |

@@ -401,8 +401,10 @@ export async function computeMetrics(
  * pixel `(x,y)` to the source's RGB (normalized) via an integer texel offset
  * (crop) or normalized-uv bilinear rescale (fill), writing into `out[0..2]`.
  * Keeps `computeMetrics` byte-consistent with the GPU diff / TEV mapping.
+ * Exported so the SSIM scalar's CPU fallback (`diff-engine.ts`
+ * `ensureSsimScalar` → `ssim-reference.ts`) samples the SAME mapped region.
  */
-function makeCpuMapSampler(
+export function makeCpuMapSampler(
   data: Uint8Array | Float32Array,
   srcW: number,
   srcH: number,

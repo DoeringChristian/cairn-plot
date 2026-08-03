@@ -33,9 +33,11 @@ import {
   type KernelBuildCtx,
 } from "./kernels";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl";
-import { computeMetrics, type DiffMetrics } from "./image-engine";
+import { computeMetrics, makeCpuMapSampler, type DiffMetrics } from "./image-engine";
 import { type DiffCmapMode } from "./diff-cmap-mode";
 import { computeCompareMapping, mappingKey, type CompareMapping } from "./compare-align";
+import { meanSsimFromErrorMap } from "./ssim-metric";
+import { ssimFromLuminance, ssimLuminance } from "./kernels/ssim-reference";
 
 export { resolveDiffCmapMode } from "./diff-cmap-mode";
 export type { DiffCmapMode } from "./diff-cmap-mode";
@@ -199,6 +201,14 @@ export interface DiffCacheEntry {
   scalars?: DiffMetrics;
   scalarsPending?: Promise<DiffMetrics>;
   /**
+   * Lazily-computed + cached MEAN SSIM (metrics chip). Present only on the
+   * `ssim` kernel's entry — the mean of `SSIM = 1 − (1−SSIM)` over the RESULT
+   * grid (this entry's `width*height`, the mapped/compared region). Memoized so
+   * repeat metric-effect runs don't re-average the readback.
+   */
+  ssimMean?: number;
+  ssimMeanPending?: Promise<number>;
+  /**
    * Lazily-read-back RGBA-float samples of the diff RESULT texture (row-major at
    * result resolution, 4 floats/pixel, top-left origin — same coord convention
    * the TEV overlay samples). Computed on demand the first time the overlay needs
@@ -360,6 +370,97 @@ export function ensureDiff(
   };
   cache.set(key, entry);
   return entry;
+}
+
+/**
+ * Mean SSIM scalar for the metrics chip. Mean SSIM = 1 − mean(1 − SSIM) over the
+ * SAME mapped/compared region the other metrics reduce over (overlap under crop,
+ * common grid under fill — passed via `mapping`, or the legacy top-left min-crop
+ * when omitted). Sourced cheapest-first:
+ *   (a) diff + `ssim` already displayed → the `ssim` RESULT is already cached
+ *       (`ensureDiff` hit) and its readback already retained (the TEV path), so
+ *       this call averages it for ZERO extra GPU work.
+ *   (b) any OTHER GPU mode (split/blend, or a different diff kernel) → run the
+ *       `ssim` kernel ONCE through the content+mapping-keyed diff cache, then
+ *       average — a one-shot compute the cache then holds.
+ *   (c) the GPU `ssim` path throws (a device without the multipass kernel /
+ *       readback) → CPU `ssim-reference.ts` over the source readbacks, mapped
+ *       identically (`makeCpuMapSampler`). Async either way — the caller shows
+ *       `SSIM —` until it resolves and never blocks.
+ * The result is memoized on the `ssim` entry (`ssimMean`); the CPU fallback is
+ * not cached (it only runs on a degraded device where there is no entry).
+ */
+export async function ensureSsimScalar(
+  device: Device,
+  texA: Texture,
+  texB: Texture,
+  contentKeyA: string,
+  contentKeyB: string,
+  mapping?: CompareMapping,
+): Promise<number> {
+  try {
+    // (a)/(b): the content+mapping cache key makes this ONE compute across the
+    // pane's lifetime; in diff+ssim it returns the very entry already displayed.
+    const entry = ensureDiff(device, texA, texB, "ssim", undefined, contentKeyA, contentKeyB, mapping);
+    if (entry.ssimMean !== undefined) return entry.ssimMean;
+    if (!entry.ssimMeanPending) {
+      entry.ssimMeanPending = ensureDiffResultReadback(device, entry).then((samples) => {
+        const m = meanSsimFromErrorMap(samples, entry.width, entry.height);
+        entry.ssimMean = m;
+        return m;
+      });
+    }
+    return await entry.ssimMeanPending;
+  } catch {
+    // (c) Defensive CPU fallback (mirrors computeMetrics' readback fallback).
+    return ssimScalarReference(device, texA, texB, mapping);
+  }
+}
+
+/**
+ * CPU mean-SSIM over the mapped region via the pinned reference
+ * (`ssim-reference.ts`), reading back both source textures and resampling each
+ * onto the RESULT grid with the SAME mapping the GPU moment passes apply
+ * (`makeCpuMapSampler`). Averages the FULL-region SSIM map (not skimage's
+ * interior crop) so it covers the same region as the other metrics.
+ */
+async function ssimScalarReference(
+  device: Device,
+  texA: Texture,
+  texB: Texture,
+  mapping?: CompareMapping,
+): Promise<number> {
+  const map =
+    mapping ??
+    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const width = map.result.w;
+  const height = map.result.h;
+  const n = width * height;
+  if (n <= 0) return NaN;
+  const a = await device.readback(texA);
+  const b = await device.readback(texB);
+  const normA = a instanceof Uint8Array ? 255 : 1;
+  const normB = b instanceof Uint8Array ? 255 : 1;
+  const fill = map.fit === "fill";
+  const sampleA = makeCpuMapSampler(a, texA.width, texA.height, normA, map.offsetA, fill, width, height);
+  const sampleB = makeCpuMapSampler(b, texB.width, texB.height, normB, map.offsetB, fill, width, height);
+  const lumX = new Float64Array(n);
+  const lumY = new Float64Array(n);
+  const va = [0, 0, 0];
+  const vb = [0, 0, 0];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      sampleA(x, y, va);
+      sampleB(x, y, vb);
+      const i = y * width + x;
+      lumX[i] = ssimLuminance(va[0]!, va[1]!, va[2]!);
+      lumY[i] = ssimLuminance(vb[0]!, vb[1]!, vb[2]!);
+    }
+  }
+  const { ssim } = ssimFromLuminance(lumX, lumY, width, height);
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += ssim[i]!;
+  return sum / n;
 }
 
 /** Lazily compute + cache the entry's MSE/PSNR/MAE (over the two sources). */

@@ -53,10 +53,12 @@ import {
   ensureDiff,
   ensureDiffScalars,
   ensureDiffResultReadback,
+  ensureSsimScalar,
   renderDiffDisplay,
   resolveDiffCmapMode,
   type DiffCacheEntry,
 } from "../engine/diff-engine";
+import { formatSsim } from "../engine/ssim-metric";
 import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId } from "../engine/kernels";
 import { computeCompareMapping, type CompareAlign, type CompareFit } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
@@ -307,6 +309,13 @@ export default function GpuComparePane({
   const [uploadVersion, setUploadVersion] = useState(0);
   const [containerTick, setContainerTick] = useState(0);
   const [metrics, setMetrics] = useState<DiffMetrics | null>(null);
+  // Mean-SSIM scalar for the metrics chip — resolved ASYNCHRONOUSLY (its own
+  // state, separate from `metrics`, so MSE/PSNR/MAE never wait on it and the
+  // chip shows `SSIM —` until it settles). `null` = still resolving / no
+  // comparison region. Source-data metric like the others: recomputed only when
+  // the sources or the align/fit mapped region change (never EV/offset/colormap/
+  // kernel switches). See the effect below.
+  const [ssimScalar, setSsimScalar] = useState<number | null>(null);
   // The DISPLAYED uv window, for `PixelValueOverlay`'s
   // `sourceWindow` — same reasoning as `GpuImagePane`'s `overlayWindow`.
   const [overlayWindow, setOverlayWindow] = useState({ x: 0, y: 0, w: 1, h: 1 });
@@ -691,6 +700,14 @@ export default function GpuComparePane({
     [srcDims, align, fit],
   );
 
+  // Content-identity cache keys for the diff / SSIM caches (per SOURCE content,
+  // NOT texture-object identity): a float side keys on its ORIGINAL source URL
+  // (`*Float.contentKey`), NOT the decoded bytes, so a remount with the same URL
+  // is a cache hit. Shared by `renderPass` (display diff entry) and the SSIM
+  // scalar effect (its `ssim` entry) so both address the same cache.
+  const contentKeyRef = baselineFloat?.contentKey ?? baselineUrl ?? imageFloat?.contentKey ?? imageUrl ?? "none";
+  const contentKeyFg = imageFloat?.contentKey ?? imageUrl ?? baselineFloat?.contentKey ?? baselineUrl ?? "none";
+
   // The pane's FRAMING dims (home-fit extent, letterbox math, overlay grid, uv
   // window basis). In a DIFF kernel the frame is the RESULT/overlap grid — under
   // `fit:"crop"` that is `min(A,B)` (so the home view fills the viewport with the
@@ -764,12 +781,9 @@ export default function GpuComparePane({
         // SOURCE content, NOT the viewport/exposure/colormap — then blit it
         // through the uv-window. Zoom/pan/exposure/colormap only re-run the
         // blit below; `ensureDiff` is a cache hit and does NOT recompute.
-        // Content key: for a float side the ORIGINAL source URL
-        // (`*Float.contentKey`) is the cache key, NOT the decoded bytes — so a
-        // remount with the same URL is a cache hit, same as a URL side. (Task
-        // point (b): "the URL string remains the content key".)
-        const contentKeyRef = baselineFloat?.contentKey ?? baselineUrl ?? imageFloat?.contentKey ?? imageUrl ?? "none";
-        const contentKeyFg = imageFloat?.contentKey ?? imageUrl ?? baselineFloat?.contentKey ?? baselineUrl ?? "none";
+        // Content keys (`contentKeyRef`/`contentKeyFg`, component scope): for a
+        // float side the ORIGINAL source URL is the cache key, NOT the decoded
+        // bytes — so a remount with the same URL is a cache hit.
         // Auto-dispatch the selected mode to a concrete kernel by source type
         // (float → HDR-FLIP / forced-LDR; u8 → LDR-FLIP). HDR-FLIP needs the
         // reference-derived exposure range in its params so they enter the cache
@@ -855,6 +869,8 @@ export default function GpuComparePane({
     baselineUrl,
     imageFloat,
     baselineFloat,
+    contentKeyRef,
+    contentKeyFg,
     dpr,
   ]);
 
@@ -894,6 +910,42 @@ export default function GpuComparePane({
       cancelled = true;
     };
   }, [ready, uploadVersion, hasBaseline, compareMode, diffKernel, mapping]);
+
+  // ---- mean-SSIM scalar (metrics chip; source-data metric) ---------------
+  // Shown in the chip in EVERY mode (not just the `ssim` diff kernel). Sourced
+  // by `ensureSsimScalar` cheapest-first: diff+ssim reuses the already-cached
+  // RESULT readback (zero extra GPU); any other mode runs the `ssim` kernel once
+  // through the content+mapping-keyed diff cache (one-shot); a degraded device
+  // falls back to the CPU reference — all async, so the chip renders `SSIM —`
+  // until it settles and never blocks MSE/PSNR/MAE.
+  //
+  // Update semantics MATCH the other metrics: it depends on the SOURCES + the
+  // align/fit mapped region ONLY — NOT `diffKernel` (SSIM is kernel-independent),
+  // and NOT EV/offset/colormap (none are deps). The region follows the SAME
+  // convention as the other metrics: the align/fit `mapping` in diff mode, the
+  // default top-left min-crop (undefined) in split/blend.
+  useEffect(() => {
+    const r = resRef.current;
+    if (!ready || !r || !r.texA || !r.texB || !hasBaseline) {
+      setSsimScalar(null);
+      return;
+    }
+    let cancelled = false;
+    // Re-resolving (sources or mapped region changed): show `SSIM —` meanwhile.
+    setSsimScalar(null);
+    const metricsMapping = compareMode === "diff" ? mapping ?? undefined : undefined;
+    ensureSsimScalar(r.device, r.texA, r.texB, contentKeyRef, contentKeyFg, metricsMapping)
+      .then((m) => {
+        if (!cancelled) setSsimScalar(m);
+      })
+      .catch(() => {
+        // Leave the scalar blank (`SSIM —`) — display-only, never fatal.
+        if (!cancelled) setSsimScalar(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, uploadVersion, hasBaseline, compareMode, mapping, contentKeyRef, contentKeyFg]);
 
   // ---- diff RESULT readback (TEV per-pixel metric values) ----------------
   // In diff mode the overlay must show the METRIC value(s), NOT the source
@@ -1053,11 +1105,19 @@ export default function GpuComparePane({
       get compareMode() {
         return compareMode;
       },
+      // The mean-SSIM scalar the chip shows (null while resolving) + its chip
+      // string — so the harness can assert the wired value/formatting.
+      get ssimScalar() {
+        return ssimScalar;
+      },
+      get ssimText() {
+        return formatSsim(ssimScalar);
+      },
     };
     return () => {
       if (el) delete el.__cairnCompareProbe;
     };
-  }, [sampleDiff, sampleFg, sampleRef, dims, framingDims, align, fit, resolvedKernelId, compareMode]);
+  }, [sampleDiff, sampleFg, sampleRef, dims, framingDims, align, fit, resolvedKernelId, compareMode, ssimScalar]);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
@@ -1294,7 +1354,7 @@ export default function GpuComparePane({
               data-gpu-compare-metrics
             >
               MSE {metrics.mse.toExponential(2)} · PSNR {Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB · MAE{" "}
-              {metrics.mae.toExponential(2)}
+              {metrics.mae.toExponential(2)} · SSIM {formatSsim(ssimScalar)}
             </span>
           )}
         </>

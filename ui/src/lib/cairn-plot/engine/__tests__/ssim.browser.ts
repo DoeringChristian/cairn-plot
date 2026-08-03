@@ -21,8 +21,9 @@
  * commands as the sibling *.browser.ts).
  */
 import { getSharedDevice } from "../device";
-import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
+import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { ssim } from "../kernels/ssim-reference";
+import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
 import { computeCompareMapping, type CompareAlign, type CompareFit } from "../compare-align";
 import type { Device, Texture } from "../types";
 
@@ -145,6 +146,12 @@ function uploadRGBA(device: Device, rgb: Float32Array, w: number, h: number): Te
 
 const TOL = 2e-2; // GPU (rgba16float intermediates) vs CPU (f64) reference
 
+// Mean-SSIM (scalar chip) tolerance: averaging the 1-SSIM map over the region
+// cancels most of the per-pixel rgba16float noise, so the MEAN sits far inside
+// the per-pixel floor. Kept comfortably above the observed residual.
+const TOL_MEAN = 5e-3;
+const TOL_MEAN_MISMATCH = 1.2e-2;
+
 // Distinct-operand (mismatched-size) tolerance. The mismatched cases compare two
 // INDEPENDENT natural-structure images (mean 1-SSIM ≈ 1 — near/below SSIM=0,
 // where the (A1·A2)/(B1·B2) ratio is most sensitive to the rgba16float moment
@@ -170,17 +177,60 @@ async function runSsimCase(device: Device, w: number, h: number, seed: number): 
   }
   const cpu = ssim(ref, test, w, h);
   let worst = 0;
-  let sum = 0;
+  let cpuSsimSum = 0;
   for (let i = 0; i < w * h; i++) {
     const g = gpu[i * 4]!; // 1-SSIM written to all channels
     const expected = 1 - cpu.ssim[i]!;
     const d = Math.abs(g - expected);
     if (d > worst) worst = d;
-    sum += g;
+    cpuSsimSum += cpu.ssim[i]!;
   }
   const ok = worst <= TOL;
-  report(ok, `[ssim ${w}x${h}] worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL}) mean(1-SSIM)=${(sum / (w * h)).toFixed(4)}`);
-  return ok;
+  report(ok, `[ssim ${w}x${h}] worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL})`);
+  // Scalar mean-SSIM (chip): the SHIPPED reduction (`meanSsimFromErrorMap` over
+  // the GPU readback) must match mean(SSIM) of the CPU reference over the same
+  // full region.
+  const gpuMean = meanSsimFromErrorMap(gpu, w, h);
+  const cpuMean = cpuSsimSum / (w * h);
+  const meanOk = Math.abs(gpuMean - cpuMean) <= TOL_MEAN;
+  report(
+    meanOk,
+    `[ssim ${w}x${h}] mean SSIM GPU=${gpuMean.toFixed(4)} CPU=${cpuMean.toFixed(4)} |Δ|=${Math.abs(gpuMean - cpuMean).toFixed(4)} (tol ${TOL_MEAN})`,
+  );
+  return ok && meanOk;
+}
+
+/**
+ * The SHIPPED scalar path end-to-end: `ensureSsimScalar` over uploaded textures
+ * (the exact call `GpuComparePane` makes for its metrics chip). Asserts (1) an
+ * IDENTICAL pair yields an exact `"1.0000"` displayed (task point 4), and (2) a
+ * perturbed pair's scalar matches the CPU reference mean within tolerance.
+ */
+async function runScalarCase(device: Device, w: number, h: number, seed: number): Promise<boolean> {
+  const { ref, test } = makePair(w, h, seed);
+  const texRef = uploadRGBA(device, ref, w, h);
+  const texTest = uploadRGBA(device, test, w, h);
+
+  // (1) identical → displayed value is an exact 1.0000.
+  const same = await ensureSsimScalar(device, texRef, texRef, `id#${seed}`, `id#${seed}`);
+  const sameText = formatSsim(same);
+  const identicalOk = sameText === "1.0000";
+  report(identicalOk, `[ssim-scalar ${w}x${h}] identical mean=${same.toFixed(6)} displayed="${sameText}" (want "1.0000")`);
+
+  // (2) perturbed → matches the CPU reference mean over the full region.
+  const scalar = await ensureSsimScalar(device, texRef, texTest, `ref#${seed}`, `test#${seed}`);
+  const cpu = ssim(ref, test, w, h);
+  let cpuSum = 0;
+  for (let i = 0; i < w * h; i++) cpuSum += cpu.ssim[i]!;
+  const cpuMean = cpuSum / (w * h);
+  const scalarOk = Math.abs(scalar - cpuMean) <= TOL_MEAN;
+  report(
+    scalarOk,
+    `[ssim-scalar ${w}x${h}] ensureSsimScalar=${scalar.toFixed(4)} CPU=${cpuMean.toFixed(4)} |Δ|=${Math.abs(scalar - cpuMean).toFixed(4)} (tol ${TOL_MEAN})`,
+  );
+  texRef.destroy();
+  texTest.destroy();
+  return identicalOk && scalarOk;
 }
 
 /**
@@ -217,20 +267,27 @@ async function runMismatchCase(
   const mappedB = mapSourceToResult(b, bw, bh, rw, rh, map.offsetB.x, map.offsetB.y, fill);
   const cpu = ssim(mappedA, mappedB, rw, rh);
   let worst = 0;
-  let sumErr = 0;
+  let cpuSsimSum = 0;
   for (let i = 0; i < rw * rh; i++) {
     const g = gpu[i * 4]!;
     const expected = 1 - cpu.ssim[i]!;
     const d = Math.abs(g - expected);
     if (d > worst) worst = d;
-    sumErr += 1 - cpu.ssim[i]!;
+    cpuSsimSum += cpu.ssim[i]!;
   }
   const ok = worst <= TOL_MISMATCH;
+  report(ok, `${tag} result ${rw}x${rh} worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL_MISMATCH})`);
+  // Scalar mean-SSIM over the MAPPED region matches the CPU-replicated mapping's
+  // mean (task point 4: "mean over a mismatched-size mapped region matches the
+  // CPU-replicated mapping"). Same reduction the chip ships.
+  const gpuMean = meanSsimFromErrorMap(gpu, rw, rh);
+  const cpuMean = cpuSsimSum / (rw * rh);
+  const meanOk = Math.abs(gpuMean - cpuMean) <= TOL_MEAN_MISMATCH;
   report(
-    ok,
-    `${tag} result ${rw}x${rh} worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL_MISMATCH}) mean(1-SSIM)=${(sumErr / (rw * rh)).toFixed(3)}`,
+    meanOk,
+    `${tag} mean SSIM GPU=${gpuMean.toFixed(4)} CPU=${cpuMean.toFixed(4)} |Δ|=${Math.abs(gpuMean - cpuMean).toFixed(4)} (tol ${TOL_MEAN_MISMATCH})`,
   );
-  return ok;
+  return ok && meanOk;
 }
 
 async function runCacheContract(device: Device): Promise<boolean> {
@@ -276,6 +333,10 @@ async function main(): Promise<void> {
     ok = (await runMismatchCase(device, 24, 20, 18, 16, "center", "crop", 3, 8)) && ok;
     ok = (await runMismatchCase(device, 24, 20, 18, 16, "bottom-right", "crop", 5, 11)) && ok;
     ok = (await runMismatchCase(device, 24, 20, 16, 16, "top-left", "fill", 6, 13)) && ok;
+    // Scalar chip path (ensureSsimScalar): identical → exactly 1.0000, and a
+    // perturbed pair matches the CPU reference mean.
+    ok = (await runScalarCase(device, 16, 16, 5)) && ok;
+    ok = (await runScalarCase(device, 22, 18, 23)) && ok;
     ok = (await runCacheContract(device)) && ok;
     setOverallStatus(ok);
   } catch (err) {
