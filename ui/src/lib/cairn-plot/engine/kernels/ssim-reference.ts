@@ -73,6 +73,23 @@ function reflectIndex(i: number, n: number): number {
   return p;
 }
 
+/**
+ * A cooperative yield: hands the main thread back to the event loop (a
+ * macrotask, so the browser can paint / the page stays responsive) between
+ * heavy scanline batches. `setTimeout(0)` in the browser / Node; a plain
+ * resolved promise (microtask) only where no timer exists. Injectable so tests
+ * can observe / count the yields deterministically.
+ */
+export type YieldFn = () => Promise<void>;
+export const defaultYield: YieldFn = () =>
+  new Promise<void>((resolve) => {
+    if (typeof setTimeout === "function") setTimeout(resolve, 0);
+    else Promise.resolve().then(resolve);
+  });
+
+/** Rows processed synchronously between cooperative yields (bounds the sync slice). */
+export const SSIM_CHUNK_ROWS = 64;
+
 /** Separable Gaussian blur (two 1D passes, reflect boundary) of a W*H plane. */
 function gaussianBlur(plane: Float64Array, W: number, H: number, w: Float64Array, radius: number): Float64Array {
   // Horizontal pass.
@@ -186,4 +203,92 @@ export function ssimFromLuminance(x: Float64Array, y: Float64Array, W: number, H
   }
   const mssim = count > 0 ? sum / count : NaN;
   return { ssim: map, mssim };
+}
+
+// ===========================================================================
+// Chunked / non-blocking variant (used by the metrics-chip CPU fallback).
+//
+// The synchronous `ssimFromLuminance` above runs five separable Gaussian blurs
+// over the whole plane in one un-yielded burst — hundreds of ms for a ~1 MP
+// region, which HARD-BLOCKS the main thread (the reported SSIM hang). The
+// helpers below compute the SAME statistics but `await yield_()` between every
+// `SSIM_CHUNK_ROWS`-row batch, so the browser can paint and the page stays
+// responsive while the chip settles (it shows `SSIM —` meanwhile). The math is
+// identical to the synchronous path — this is purely a scheduling change.
+// ===========================================================================
+
+/** One separable-Gaussian pass (horizontal or vertical) that yields between row batches. */
+async function gaussianBlurChunked(
+  plane: Float64Array,
+  W: number,
+  H: number,
+  w: Float64Array,
+  radius: number,
+  yield_: YieldFn,
+): Promise<Float64Array> {
+  const tmp = new Float64Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let acc = 0;
+      for (let k = -radius, ki = 0; k <= radius; k++, ki++) acc += w[ki]! * plane[y * W + reflectIndex(x + k, W)]!;
+      tmp[y * W + x] = acc;
+    }
+    if ((y + 1) % SSIM_CHUNK_ROWS === 0) await yield_();
+  }
+  const out = new Float64Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let acc = 0;
+      for (let k = -radius, ki = 0; k <= radius; k++, ki++) acc += w[ki]! * tmp[reflectIndex(y + k, H) * W + x]!;
+      out[y * W + x] = acc;
+    }
+    if ((y + 1) % SSIM_CHUNK_ROWS === 0) await yield_();
+  }
+  return out;
+}
+
+/**
+ * FULL-region mean SSIM (mean over ALL `W*H` pixels — the convention the metrics
+ * chip uses, NOT skimage's interior-crop `mssim`) from two luminance planes,
+ * computed with cooperative yields so it never blocks the main thread. Bit-for-
+ * bit equal to `1 − mean(1 − SSIM)` over the synchronous `ssimFromLuminance`
+ * map; only the scheduling differs. `yield_` defaults to a macrotask yield.
+ */
+export async function ssimMeanFromLuminanceChunked(
+  x: Float64Array,
+  y: Float64Array,
+  W: number,
+  H: number,
+  yield_: YieldFn = defaultYield,
+): Promise<number> {
+  const N = W * H;
+  if (N <= 0) return NaN;
+  const w = gaussianKernel1d(SSIM_SIGMA, SSIM_RADIUS);
+  const xx = new Float64Array(N);
+  const yy = new Float64Array(N);
+  const xy = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    xx[i] = x[i]! * x[i]!;
+    yy[i] = y[i]! * y[i]!;
+    xy[i] = x[i]! * y[i]!;
+  }
+  const ux = await gaussianBlurChunked(x, W, H, w, SSIM_RADIUS, yield_);
+  const uy = await gaussianBlurChunked(y, W, H, w, SSIM_RADIUS, yield_);
+  const uxx = await gaussianBlurChunked(xx, W, H, w, SSIM_RADIUS, yield_);
+  const uyy = await gaussianBlurChunked(yy, W, H, w, SSIM_RADIUS, yield_);
+  const uxy = await gaussianBlurChunked(xy, W, H, w, SSIM_RADIUS, yield_);
+  const C1 = (SSIM_K1 * SSIM_L) ** 2;
+  const C2 = (SSIM_K2 * SSIM_L) ** 2;
+  let sum = 0;
+  for (let i = 0; i < N; i++) {
+    const vx = uxx[i]! - ux[i]! * ux[i]!;
+    const vy = uyy[i]! - uy[i]! * uy[i]!;
+    const vxy = uxy[i]! - ux[i]! * uy[i]!;
+    const A1 = 2 * ux[i]! * uy[i]! + C1;
+    const A2 = 2 * vxy + C2;
+    const B1 = ux[i]! * ux[i]! + uy[i]! * uy[i]! + C1;
+    const B2 = vx + vy + C2;
+    sum += (A1 * A2) / (B1 * B2);
+  }
+  return sum / N;
 }

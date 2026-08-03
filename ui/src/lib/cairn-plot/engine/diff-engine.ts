@@ -37,7 +37,8 @@ import { computeMetrics, makeCpuMapSampler, type DiffMetrics } from "./image-eng
 import { type DiffCmapMode } from "./diff-cmap-mode";
 import { computeCompareMapping, mappingKey, type CompareMapping } from "./compare-align";
 import { meanSsimFromErrorMap } from "./ssim-metric";
-import { ssimFromLuminance, ssimLuminance } from "./kernels/ssim-reference";
+import { ssimMeanFromLuminanceChunked, ssimLuminance, defaultYield, SSIM_CHUNK_ROWS } from "./kernels/ssim-reference";
+import { guardedSsimScalar } from "./ssim-scalar-guard";
 
 export { resolveDiffCmapMode } from "./diff-cmap-mode";
 export type { DiffCmapMode } from "./diff-cmap-mode";
@@ -226,10 +227,15 @@ const DEFAULT_MAX_BYTES = 256 * 1024 * 1024; // 256 MB
 class DiffCache {
   private readonly map = new Map<string, DiffCacheEntry>(); // insertion-order = LRU order
   private totalBytes = 0;
-  constructor(
-    private readonly maxEntries = DEFAULT_MAX_ENTRIES,
-    private readonly maxBytes = DEFAULT_MAX_BYTES,
-  ) {}
+  // Explicit fields (NOT constructor parameter-properties) so this module stays
+  // importable under Node's `--experimental-strip-types` strip-only mode, which
+  // `npm test` uses (parameter-properties emit runtime code and are rejected).
+  private readonly maxEntries: number;
+  private readonly maxBytes: number;
+  constructor(maxEntries = DEFAULT_MAX_ENTRIES, maxBytes = DEFAULT_MAX_BYTES) {
+    this.maxEntries = maxEntries;
+    this.maxBytes = maxBytes;
+  }
 
   get(key: string): DiffCacheEntry | undefined {
     const e = this.map.get(key);
@@ -390,7 +396,34 @@ export function ensureDiff(
  * The result is memoized on the `ssim` entry (`ssimMean`); the CPU fallback is
  * not cached (it only runs on a degraded device where there is no entry).
  */
-export async function ensureSsimScalar(
+// One-in-flight + result guard for the mean-SSIM scalar — the hard backstop for
+// the reported SSIM hang. `ensureDiff` already memoized the GPU-SUCCESS path;
+// the guard additionally collapses the CPU-throw path (previously uncached +
+// unguarded) and defeats a render-storm that re-fires the metrics effect: ALL
+// calls for a given (sources, mapped region) share ONE in-flight compute, so
+// even an infinite loop triggers at most one SSIM computation per content+
+// mapping. See `ssim-scalar-guard.ts`.
+export { getSsimComputeCount } from "./ssim-scalar-guard";
+
+function ssimScalarCacheKey(contentKeyA: string, contentKeyB: string, mapping?: CompareMapping): string {
+  return `${contentKeyA}|${contentKeyB}|${mapping ? mappingKey(mapping) : ""}`;
+}
+
+export function ensureSsimScalar(
+  device: Device,
+  texA: Texture,
+  texB: Texture,
+  contentKeyA: string,
+  contentKeyB: string,
+  mapping?: CompareMapping,
+): Promise<number> {
+  return guardedSsimScalar(device, ssimScalarCacheKey(contentKeyA, contentKeyB, mapping), () =>
+    computeSsimScalar(device, texA, texB, contentKeyA, contentKeyB, mapping),
+  );
+}
+
+/** The actual cheapest-first SSIM scalar computation, run at most once per key by the guard. */
+async function computeSsimScalar(
   device: Device,
   texA: Texture,
   texB: Texture,
@@ -413,6 +446,8 @@ export async function ensureSsimScalar(
     return await entry.ssimMeanPending;
   } catch {
     // (c) Defensive CPU fallback (mirrors computeMetrics' readback fallback).
+    // CHUNKED so it never blocks the main thread synchronously — it yields
+    // between scanline batches while the chip shows `SSIM —`.
     return ssimScalarReference(device, texA, texB, mapping);
   }
 }
@@ -456,11 +491,12 @@ async function ssimScalarReference(
       lumX[i] = ssimLuminance(va[0]!, va[1]!, va[2]!);
       lumY[i] = ssimLuminance(vb[0]!, vb[1]!, vb[2]!);
     }
+    // Yield between scanline batches so the luminance sampling can't block.
+    if ((y + 1) % SSIM_CHUNK_ROWS === 0) await defaultYield();
   }
-  const { ssim } = ssimFromLuminance(lumX, lumY, width, height);
-  let sum = 0;
-  for (let i = 0; i < n; i++) sum += ssim[i]!;
-  return sum / n;
+  // Full-region mean SSIM via the CHUNKED (yielding) blur path — same math as
+  // the synchronous reference, but it hands the main thread back between batches.
+  return ssimMeanFromLuminanceChunked(lumX, lumY, width, height);
 }
 
 /** Lazily compute + cache the entry's MSE/PSNR/MAE (over the two sources). */
