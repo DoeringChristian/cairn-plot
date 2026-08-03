@@ -10,6 +10,7 @@
  * unit-tested.
  */
 import type { TexelRect } from "./region-select";
+import { clamp } from "../util/clamp.ts";
 
 /** Which part of the rect a pointer grabbed. `move` = the interior. */
 export type RegionHandle =
@@ -34,8 +35,6 @@ export const RESIZE_HANDLES: readonly Exclude<RegionHandle, "move">[] = [
   "sw",
   "w",
 ];
-
-const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 
 /**
  * Apply a texel-space edit to `rect`. `handle:"move"` translates (size
