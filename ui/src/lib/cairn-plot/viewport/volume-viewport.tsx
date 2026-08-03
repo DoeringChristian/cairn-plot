@@ -6,7 +6,8 @@ import VolumeViewer, {
 import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
 import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../three/diff";
 import type { PropertyMeta } from "../three/properties";
-import { LabelChip, RefBadge } from "../primitives";
+import { LabelChip, RefBadge, ViewportCaption } from "../primitives";
+import ViewportPlaceholder from "./ViewportPlaceholder";
 import type { ColormapName } from "../types";
 import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
@@ -133,11 +134,7 @@ export function VolumeSingleView({
   colorRange?: [number, number] | null;
 }) {
   if (!item) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted">
-        no volume logged yet
-      </div>
-    );
+    return <ViewportPlaceholder variant="empty">no volume logged yet</ViewportPlaceholder>;
   }
   const { arrays, meta } = item;
   const [vmin, vmax] = colorRange ?? [meta.vmin, meta.vmax];
@@ -166,18 +163,13 @@ export function VolumeSingleView({
           />
         </div>
       </div>
-      {/* Per-pane metadata caption (restored — dropped when WS-VC5 migrated
-          off the bespoke VolumeCard; boxes3d kept its equivalent through the
-          migration, mesh's/volume's didn't). Mirrors the pre-VC5
-          VolumeCard.tsx caption verbatim (voxel shape + this pane's OWN
-          blob's data range — not the card-unified `colorRange`, so the
-          caption always reflects what's actually in this artifact).
-          Pinned top-left (not bottom-left) so it never collides with the
-          bottom-left draggable `LabelChip` — see mesh-viewport.tsx's
-          identical fix for the shared rationale. */}
-      <div className="pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm">
-        {`${meta.shape.join("×")} · vmin ${meta.vmin.toFixed(3)} · vmax ${meta.vmax.toFixed(3)}`}
-      </div>
+      {/* Per-pane metadata caption — voxel shape + this pane's OWN blob's data
+          range (not the card-unified `colorRange`, so the caption always
+          reflects what's actually in this artifact). See `ViewportCaption`
+          for the shared chip. */}
+      <ViewportCaption
+        text={`${meta.shape.join("×")} · vmin ${meta.vmin.toFixed(3)} · vmax ${meta.vmax.toFixed(3)}`}
+      />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -258,9 +250,7 @@ export function VolumeSideBySideView({
             colorRange={colorRange}
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-fg-muted">
-            no volume logged yet
-          </div>
+          <ViewportPlaceholder variant="empty">no volume logged yet</ViewportPlaceholder>
         )}
       </div>
     </div>
@@ -286,11 +276,7 @@ export function VolumeNativeDiffPane({
   const view = resolveVolumeViewConfig(settings);
 
   if (!data || !reference) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
-        loading…
-      </div>
-    );
+    return <ViewportPlaceholder variant="loading">loading…</ViewportPlaceholder>;
   }
 
   const topologyOk =
@@ -299,10 +285,10 @@ export function VolumeNativeDiffPane({
     data.meta.shape[2] === reference.meta.shape[2];
   if (!topologyOk) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <ViewportPlaceholder variant="error">
         Shape mismatch: {data.meta.shape.join("×")} vs {reference.meta.shape.join("×")} — native
         diff needs matching voxel grid shape.
-      </div>
+      </ViewportPlaceholder>
     );
   }
 

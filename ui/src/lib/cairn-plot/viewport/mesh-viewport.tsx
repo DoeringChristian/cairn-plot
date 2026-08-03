@@ -18,7 +18,8 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { LabelChip, RefBadge } from "../primitives";
+import { LabelChip, RefBadge, ViewportCaption } from "../primitives";
+import ViewportPlaceholder from "./ViewportPlaceholder";
 import type { ColormapName } from "../types";
 import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
@@ -155,11 +156,7 @@ export function MeshSingleView({
   colorRange?: [number, number] | null;
 }) {
   if (!item) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted">
-        no mesh logged yet
-      </div>
-    );
+    return <ViewportPlaceholder variant="empty">no mesh logged yet</ViewportPlaceholder>;
   }
   const { arrays, meta } = item;
   const active = resolveActiveProperty(arrays.properties, view.property, meta.properties ?? null);
@@ -198,18 +195,11 @@ export function MeshSingleView({
           />
         </div>
       </div>
-      {/* Per-pane metadata caption (restored — dropped when WS-VC5 migrated
-          off the bespoke MeshCard; boxes3d kept its equivalent
-          ("N of M boxes · kind") through the migration, mesh's/volume's
-          didn't). Mirrors the pre-VC5 MeshCard.tsx caption verbatim
-          (vertex/face counts + the active property name, when any).
-          Pinned top-left (not bottom-left, `absolute`/`pointer-events-none`
-          like `LabelChip`) so it never collides with the bottom-left
-          draggable `LabelChip` — both used to sit in that same corner. */}
-      <div className="pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm">
-        {`${meta.n_vertices.toLocaleString()} verts · ${meta.n_faces.toLocaleString()} faces`}
-        {active.name ? ` · ${active.name}` : ""}
-      </div>
+      {/* Per-pane metadata caption — vertex/face counts + the active property
+          name (when any). See `ViewportCaption` for the shared chip. */}
+      <ViewportCaption
+        text={`${meta.n_vertices.toLocaleString()} verts · ${meta.n_faces.toLocaleString()} faces${active.name ? ` · ${active.name}` : ""}`}
+      />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -330,9 +320,7 @@ export function MeshSideBySideView({
             />
           );
         })() : (
-          <div className="flex h-full items-center justify-center text-sm text-fg-muted">
-            no mesh logged yet
-          </div>
+          <ViewportPlaceholder variant="empty">no mesh logged yet</ViewportPlaceholder>
         )}
         <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
       </div>
@@ -361,23 +349,19 @@ export function MeshNativeDiffPane({
   const view = resolveViewConfig(settings);
 
   if (!data || !reference) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
-        loading…
-      </div>
-    );
+    return <ViewportPlaceholder variant="loading">loading…</ViewportPlaceholder>;
   }
 
   const topologyOk =
     data.meta.n_vertices === reference.meta.n_vertices && data.meta.n_faces === reference.meta.n_faces;
   if (!topologyOk) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <ViewportPlaceholder variant="error">
         Topology mismatch: {data.meta.n_vertices.toLocaleString()} vs{" "}
         {reference.meta.n_vertices.toLocaleString()} vertices,{" "}
         {data.meta.n_faces.toLocaleString()} vs {reference.meta.n_faces.toLocaleString()} faces — native
         diff modes need matching mesh topology (same vertex/face counts).
-      </div>
+      </ViewportPlaceholder>
     );
   }
 
@@ -403,9 +387,9 @@ export function MeshNativeDiffPane({
 
   if (!deltaValues) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <ViewportPlaceholder variant="error">
         No property values logged on this mesh to diff — pick a property, or use "Diff: geometry" instead.
-      </div>
+      </ViewportPlaceholder>
     );
   }
 

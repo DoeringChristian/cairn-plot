@@ -11,7 +11,8 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../three/properties";
-import { LabelChip, RefBadge } from "../primitives";
+import { LabelChip, RefBadge, ViewportCaption } from "../primitives";
+import ViewportPlaceholder from "./ViewportPlaceholder";
 import type { ColormapName } from "../types";
 import type { MediaCompareModeKind } from "../media-compare/mode";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
@@ -145,11 +146,7 @@ export function BoxesSingleView({
   const [visibleCount, setVisibleCount] = useState<number | null>(null);
 
   if (!item) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted">
-        no boxes logged yet
-      </div>
-    );
+    return <ViewportPlaceholder variant="empty">no boxes logged yet</ViewportPlaceholder>;
   }
 
   const { arrays, meta } = item;
@@ -196,12 +193,11 @@ export function BoxesSingleView({
           />
         </div>
       </div>
-      {/* Pinned top-left (not bottom-left) so it never collides with the
-          bottom-left draggable `LabelChip` — see mesh-viewport.tsx's
-          identical fix for the shared rationale. */}
-      <div className="pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm">
-        {`${(visibleCount ?? meta.n_boxes).toLocaleString()} of ${meta.n_boxes.toLocaleString()} boxes · ${meta.kind}`}
-      </div>
+      {/* Per-pane metadata caption — visible/total box counts + kind. See
+          `ViewportCaption` for the shared chip. */}
+      <ViewportCaption
+        text={`${(visibleCount ?? meta.n_boxes).toLocaleString()} of ${meta.n_boxes.toLocaleString()} boxes · ${meta.kind}`}
+      />
       <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
     </div>
   );
@@ -288,9 +284,7 @@ export function BoxesSideBySideView({
             colorRange={colorRange}
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-fg-muted">
-            no boxes logged yet
-          </div>
+          <ViewportPlaceholder variant="empty">no boxes logged yet</ViewportPlaceholder>
         )}
       </div>
     </div>
@@ -317,11 +311,7 @@ export function BoxesNativeDiffPane({
   const view = resolveBoxesViewConfig(settings);
 
   if (!data || !reference) {
-    return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-fg-muted motion-safe:animate-pulse">
-        loading…
-      </div>
-    );
+    return <ViewportPlaceholder variant="loading">loading…</ViewportPlaceholder>;
   }
 
   const primaryDepth = data.arrays.depth;
@@ -332,11 +322,11 @@ export function BoxesNativeDiffPane({
     Array.from(primaryDepth).every((d, i) => d === referenceDepth[i]);
   if (!topologyOk) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <ViewportPlaceholder variant="error">
         Topology mismatch: {data.meta.n_boxes.toLocaleString()} vs{" "}
         {reference.meta.n_boxes.toLocaleString()} boxes (or differing per-box depth) — native diff
         needs matched box count + depth.
-      </div>
+      </ViewportPlaceholder>
     );
   }
 
@@ -350,9 +340,9 @@ export function BoxesNativeDiffPane({
 
   if (!activeA.values || !activeB.values) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded bg-bg p-4 text-center text-sm text-fg-muted">
+      <ViewportPlaceholder variant="error">
         No property values logged on these boxes to diff — pick a property with values on both series.
-      </div>
+      </ViewportPlaceholder>
     );
   }
 
