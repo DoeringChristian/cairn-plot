@@ -84,9 +84,24 @@ Brave-specific gotchas:
   *Feature Flags* → enable **WebGPU** (enable the Develop menu first under
   Settings → Advanced).
 - **HDR output**: Apple displays are EDR-capable and macOS engages EDR
-  automatically, but Safari's WebGPU canvas tone-mapping support is still
-  maturing — run the console check and cairn-plot's HDR demo to see what
-  your Safari version delivers; the SDR fallback covers the rest.
+  automatically. Current Safari 26 builds honor canvas
+  `toneMapping: { mode: "extended" }` (confirmed empirically: cairn-plot's
+  probe engages the true-HDR path and output exceeds SDR white). Older
+  Safari versions silently drop the option; the probe diagnoses that and
+  the SDR fallback covers them.
+
+## Cross-browser HDR consistency
+
+Under **Extended · Linear** the browser decides how unclamped values meet
+the display — headroom clipping and reference-white handling are not
+standardized, so the *same* HDR image can legitimately render differently
+in Chrome vs Safari even with both correctly in HDR mode (each clips at its
+own estimate of display headroom, which on macOS also shifts with the
+brightness slider). When cross-browser consistency matters, pick
+**Extended · Reinhard** or **Extended · ACES** with the same PEAK value:
+the display mapping then happens in cairn-plot's own shader
+(GPU↔CPU parity-tested), and browsers converge up to their clip point
+above the chosen peak.
 
 ## What cairn-plot does per capability
 
