@@ -371,12 +371,14 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     results.set(caseLabel, r);
   }
 
-  // Extended HDR roll-off operators (peak-parameterized) — hdrOut float target,
-  // so values above 1.0 survive. Each is checked GPU-vs-TS through the SAME
+  // Extended HDR operators (peak-parameterized) — hdrOut float target, so
+  // values above 1.0 survive. Each is checked GPU-vs-TS through the SAME
   // `applyTonemapOperatorTriple` the shader's `applyOperator` mirrors, at a
   // non-default peak to exercise the P uniform. GRADIENT_PIXELS includes 3.0
-  // (HDR), so extended-reinhard/-aces produce >1 display-linear light.
-  for (const op of ["extended-reinhard", "extended-aces"] as ImageOperator[]) {
+  // (HDR), so extended-reinhard/-aces produce >1 display-linear light; for
+  // extended-clamp (managed linear) every gradient value is < 6, so this pins
+  // the GPU identity region (operatorId=7 routed correctly, y=x below P).
+  for (const op of ["extended-clamp", "extended-reinhard", "extended-aces"] as ImageOperator[]) {
     const caseLabel = `${label}/hdrOut/${op}/peak=6`;
     const params: ImageParams = {
       exposureEV: 0,
@@ -384,6 +386,24 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
       isScalar: false,
       hdrOut: true,
       peak: 6,
+      uv: uvFull,
+    };
+    results.set(caseLabel, await runHdrOutCase(device, caseLabel, GRADIENT_PIXELS, params));
+  }
+
+  {
+    // Extended · Linear (managed) HARD-CEILING region on the GPU: peak=2 so the
+    // gradient's 3.0 pixel clips to exactly 2.0 (min(3,2)) while 0/0.25/1 pass
+    // through unchanged — proving the shader's `extendedClampCurve` min() runs,
+    // not just the identity branch. GPU-vs-TS via the same
+    // `applyTonemapOperatorTriple`.
+    const caseLabel = `${label}/hdrOut/extended-clamp/peak=2-ceiling`;
+    const params: ImageParams = {
+      exposureEV: 0,
+      operator: "extended-clamp",
+      isScalar: false,
+      hdrOut: true,
+      peak: 2,
       uv: uvFull,
     };
     results.set(caseLabel, await runHdrOutCase(device, caseLabel, GRADIENT_PIXELS, params));

@@ -131,6 +131,7 @@ const TONEMAP_LABELS: Record<TonemapOperator, string> = {
   reinhard: "Reinhard",
   aces: "ACES",
   extended: "Extended · Linear",
+  "extended-clamp": "Extended · Linear (managed)",
   "extended-reinhard": "Extended · Reinhard",
   "extended-aces": "Extended · ACES",
 };

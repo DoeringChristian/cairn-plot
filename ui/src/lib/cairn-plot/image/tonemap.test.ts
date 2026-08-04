@@ -17,8 +17,10 @@ import {
   SDR_TONEMAP_OPERATORS,
   HDR_TONEMAP_OPERATORS,
   EXTENDED_ROLLOFF_OPERATORS,
+  EXTENDED_PEAK_OPERATORS,
   isHdrTonemap,
   tonemapHasPeak,
+  extendedClampCurve,
   extendedReinhardCurve,
   extendedAcesCurve,
   applyTonemapOperatorTriple,
@@ -91,6 +93,9 @@ test("toSdrTonemap: SDR pass-through, extended*→SDR counterpart, else srgb", (
   // Extended operators fall back to their SDR counterparts (used when a pane
   // requested HDR but the surface never engaged).
   assert.equal(toSdrTonemap("extended"), "linear");
+  // Managed linear degrades to the plain SDR clamp01 ("linear"), its natural
+  // SDR counterpart.
+  assert.equal(toSdrTonemap("extended-clamp"), "linear");
   assert.equal(toSdrTonemap("extended-reinhard"), "reinhard");
   assert.equal(toSdrTonemap("extended-aces"), "aces");
   // SDR menu domain excludes every extended operator.
@@ -100,12 +105,24 @@ test("toSdrTonemap: SDR pass-through, extended*→SDR counterpart, else srgb", (
 });
 
 test("isHdrTonemap / tonemapHasPeak classify the operator groups", () => {
-  assert.deepEqual([...HDR_TONEMAP_OPERATORS], ["extended", "extended-reinhard", "extended-aces"]);
+  // Menu order: Linear · Linear (managed) · Reinhard · ACES.
+  assert.deepEqual(
+    [...HDR_TONEMAP_OPERATORS],
+    ["extended", "extended-clamp", "extended-reinhard", "extended-aces"],
+  );
   for (const op of HDR_TONEMAP_OPERATORS) assert.ok(isHdrTonemap(op));
   for (const op of SDR_TONEMAP_OPERATORS) assert.ok(!isHdrTonemap(op));
   assert.ok(!isHdrTonemap(undefined));
-  // Only the roll-off pair reads the PEAK parameter (extended·Linear does not).
+  // The roll-off pair are the SOFT-shoulder operators (managed clamp is a hard
+  // clip, so it is NOT a roll-off).
   assert.deepEqual([...EXTENDED_ROLLOFF_OPERATORS], ["extended-reinhard", "extended-aces"]);
+  // The PEAK parameter is read by the roll-off pair PLUS managed linear
+  // (extended-clamp) — raw extended·Linear has no peak.
+  assert.deepEqual(
+    [...EXTENDED_PEAK_OPERATORS],
+    ["extended-clamp", "extended-reinhard", "extended-aces"],
+  );
+  assert.ok(tonemapHasPeak("extended-clamp"));
   assert.ok(tonemapHasPeak("extended-reinhard"));
   assert.ok(tonemapHasPeak("extended-aces"));
   assert.ok(!tonemapHasPeak("extended"));
@@ -119,11 +136,14 @@ test("resolveEffectiveTonemap: SDR fallback when not engaged; HDR verbatim + ext
   assert.equal(resolveEffectiveTonemap(undefined, false), "srgb");
   assert.equal(resolveEffectiveTonemap("garbage", false), "srgb");
   assert.equal(resolveEffectiveTonemap("extended", false), "linear");
+  assert.equal(resolveEffectiveTonemap("extended-clamp", false), "linear");
   assert.equal(resolveEffectiveTonemap("extended-reinhard", false), "reinhard");
   assert.equal(resolveEffectiveTonemap("extended-aces", false), "aces");
   // Engaged → an explicit HDR descriptor is honored verbatim; an SDR/unset
-  // descriptor defaults to "extended" (Extended · Linear).
+  // descriptor defaults to "extended" (Extended · Linear) — NOT the managed
+  // clamp: managed is an explicit opt-in, raw fidelity is the default.
   assert.equal(resolveEffectiveTonemap("extended", true), "extended");
+  assert.equal(resolveEffectiveTonemap("extended-clamp", true), "extended-clamp");
   assert.equal(resolveEffectiveTonemap("extended-reinhard", true), "extended-reinhard");
   assert.equal(resolveEffectiveTonemap("extended-aces", true), "extended-aces");
   assert.equal(resolveEffectiveTonemap("aces", true), "extended");
@@ -191,11 +211,41 @@ test("extendedAcesCurve: monotone, ≈x for x≪1 (slope 1), →P asymptote", ()
   approx(extendedAcesCurve(1000, 8), 8, 1e-6);
 });
 
+test("extendedClampCurve: identity below P (exact), hard ceiling at/above P (exact), monotone", () => {
+  const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
+  // EXACT identity for 0 <= x <= P (no curvature, no float drift — plain min).
+  approx(extendedClampCurve(0, P), 0);
+  assert.equal(extendedClampCurve(0.001, P), 0.001);
+  assert.equal(extendedClampCurve(1, P), 1);
+  assert.equal(extendedClampCurve(2.5, P), 2.5);
+  assert.equal(extendedClampCurve(P, P), P); // at the ceiling: y = P exactly
+  // EXACT hard ceiling at/above P.
+  assert.equal(extendedClampCurve(P, P), 4);
+  assert.equal(extendedClampCurve(5, P), 4);
+  assert.equal(extendedClampCurve(1e9, P), 4);
+  // Negative input pre-clamps to 0.
+  assert.equal(extendedClampCurve(-3, P), 0);
+  // Monotone non-decreasing across the HDR range (flat once past P).
+  let prev = -1;
+  for (let x = 0; x <= 32; x += 0.25) {
+    const y = extendedClampCurve(x, P);
+    assert.ok(y >= prev, `extended-clamp not monotone at ${x}`);
+    prev = y;
+  }
+  // Peak scales the ceiling: a larger P raises the clip point proportionally.
+  assert.equal(extendedClampCurve(6, 8), 6); // below 8 → identity
+  assert.equal(extendedClampCurve(10, 8), 8); // above 8 → clamped to 8
+});
+
 test("applyTonemapOperatorTriple dispatches SDR + extended(peak) operators", () => {
   const hi: RgbTriple = [2, 2, 2];
   // SDR / pass-through operators ignore peak and match TONEMAP_OPERATORS.
   assert.deepEqual(applyTonemapOperatorTriple(hi, "aces", 4), TONEMAP_OPERATORS.aces!(hi));
   assert.deepEqual(applyTonemapOperatorTriple(hi, "extended", 4), [2, 2, 2]);
+  // Managed clamp is identity below P (2 < 4 → passes through unchanged).
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended-clamp", 4), [2, 2, 2]);
+  // ...and hard-clips above P.
+  assert.deepEqual(applyTonemapOperatorTriple([8, 8, 8], "extended-clamp", 4), [4, 4, 4]);
   // Extended roll-off operators apply the peak curve per channel.
   const r = extendedReinhardCurve(2, 4);
   assert.deepEqual(applyTonemapOperatorTriple(hi, "extended-reinhard", 4), [r, r, r]);

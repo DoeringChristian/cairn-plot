@@ -97,11 +97,53 @@ the display — headroom clipping and reference-white handling are not
 standardized, so the *same* HDR image can legitimately render differently
 in Chrome vs Safari even with both correctly in HDR mode (each clips at its
 own estimate of display headroom, which on macOS also shifts with the
-brightness slider). When cross-browser consistency matters, pick
-**Extended · Reinhard** or **Extended · ACES** with the same PEAK value:
-the display mapping then happens in cairn-plot's own shader
-(GPU↔CPU parity-tested), and browsers converge up to their clip point
-above the chosen peak.
+brightness slider).
+
+When cross-browser consistency matters, the operator to pick depends on what
+you want to preserve:
+
+- **Linearity matters** (e.g. inspecting raw values, side-by-side numeric
+  comparison): pick **Extended · Linear (managed)** (`extended-clamp`). It is a
+  pure identity below the PEAK and a hard clip *at* the PEAK, done in
+  cairn-plot's own shader (GPU↔CPU parity-tested) rather than by the browser —
+  so every HDR browser renders identically below `P`, with the same slope-1
+  linear response the raw **Extended · Linear** gives, minus the per-browser
+  headroom guesswork. This is the **best answer when the display response must
+  be linear and identical across browsers.**
+- **Highlight roll-off is fine** (photographic look, no hard clip): pick
+  **Extended · Reinhard** or **Extended · ACES** with the same PEAK value — the
+  display mapping again happens in cairn-plot's shader, and browsers converge up
+  to their clip point above the chosen peak, but the brightest values roll off
+  smoothly toward `P` instead of clipping.
+
+The raw **Extended · Linear** (`extended`) remains the default because it
+preserves the panel's *full* native headroom (values above `P` are not
+discarded) — at the cost of the cross-browser divergence above. `extended-clamp`
+trades that extra headroom for determinism; it is an explicit opt-in, not the
+default.
+
+### Follow-up: seeding the PEAK default from display headroom
+
+The PEAK default is a fixed **4** (×SDR white). Ideally it would be seeded from
+the display's actual HDR headroom, but as of 2026 **no browser exposes a numeric
+display-headroom value prompt-free**:
+
+- **`ScreenDetailed.highDynamicRangeHeadroom`** (Chromium Window Management API,
+  `window.getScreenDetails()`) is the only numeric headroom signal, but
+  `getScreenDetails()` is **gated behind the `window-management` permission
+  prompt** — so it can't seed a default without interrupting the user, and is
+  Chromium-only.
+- **Safari / WebKit** expose **no** display-headroom API (numeric or otherwise).
+- The prompt-free signals — CSS media queries `dynamic-range: high` /
+  `video-dynamic-range: high` and `color-gamut` — are **coarse booleans only**
+  (HDR-capable yes/no), not a numeric headroom, so they can gate *whether* to
+  offer HDR but can't set a peak.
+
+Because everything numeric needs a prompt, cairn-plot does **not** wire a
+permission prompt and keeps the fixed default 4; **Extended · Linear (managed)**
+with an explicit PEAK is the deterministic path in the meantime. If a prompt-free
+numeric headroom API ships (in any browser), seed the PEAK default from it
+(rounded to the `0.5` slider step, clamped to `[1, 16]`, fallback 4).
 
 ## What cairn-plot does per capability
 

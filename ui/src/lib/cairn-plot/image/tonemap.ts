@@ -51,9 +51,10 @@ export type TonemapOperator =
   | "reinhard"
   | "aces"
   // HDR-OUT family (selectable only when the extended surface engaged):
-  | "extended" //          Extended · Linear    — unclamped pass-through
-  | "extended-reinhard" // Extended · Reinhard  — peak/white-point roll-off
-  | "extended-aces"; //    Extended · ACES      — ACES fit rescaled to the peak
+  | "extended" //          Extended · Linear           — unclamped pass-through
+  | "extended-clamp" //    Extended · Linear (managed) — identity below P, hard ceiling at P
+  | "extended-reinhard" // Extended · Reinhard         — peak/white-point roll-off
+  | "extended-aces"; //    Extended · ACES             — ACES fit rescaled to the peak
 
 /** Per-channel Reinhard tone curve: x / (1 + x). Maps [0,∞) → [0,1), 1 → 0.5. */
 const reinhardCurve = (x: number): number => {
@@ -89,6 +90,28 @@ export const EXTENDED_TONEMAP_PEAK_DEFAULT = 4;
 export const EXTENDED_TONEMAP_PEAK_MIN = 1;
 export const EXTENDED_TONEMAP_PEAK_MAX = 16;
 export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
+
+/**
+ * Extended · Linear (MANAGED) with a display peak P: `y = min(max(x, 0), P)` —
+ * a pure identity below `P` (slope exactly 1, values pass through unchanged) and
+ * a HARD CEILING at `P`. Per channel, `x` pre-clamped to `[0,∞)`. Invariants
+ * (tested): `y = x` exactly for `0 ≤ x ≤ P`; `y = P` exactly for `x ≥ P`;
+ * monotone non-decreasing.
+ *
+ * This is the CROSS-BROWSER-DETERMINISTIC counterpart to `extended` (Extended ·
+ * Linear): `extended` hands raw unclamped values to the browser/OS compositor,
+ * which clips each unclamped value at ITS OWN estimate of display headroom — so
+ * Chrome and Safari render the same HDR image differently. `extended-clamp`
+ * instead does the clip in OUR shader at a shared `P` (the PEAK slider), so
+ * every browser that honors extended tone mapping converges below `P`. It is
+ * HDR-out like the other extended operators (emits display-linear light in
+ * `[0, P]`); mirrored verbatim in `engine/shaders/image.wgsl.ts`'s
+ * `extendedClampCurve` and checked by the GPU↔TS parity harness.
+ */
+export function extendedClampCurve(x: number, peak: number): number {
+  const v = x < 0 ? 0 : x;
+  return v > peak ? peak : v;
+}
 
 /**
  * Extended Reinhard with a display peak P: `y = x/(1 + x/P)` — the plain
@@ -176,17 +199,31 @@ export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
 
 /**
  * The HDR-out tone-map operators (the "extended" family) — the menu's second
- * group, offered ONLY when the pane's real HDR surface engaged.
+ * group, offered ONLY when the pane's real HDR surface engaged. Order is the
+ * menu order: Linear · Linear (managed) · Reinhard · ACES — `extended-clamp`
+ * (managed linear) sits next to `extended` because it is its cross-browser-
+ * deterministic sibling (identity below P, hard ceiling at P in OUR shader).
  */
 export const HDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
   "extended",
+  "extended-clamp",
   "extended-reinhard",
   "extended-aces",
 ];
 
-/** The extended operators that take a PEAK parameter (the roll-off pair) — the
- *  ones whose selection reveals the PEAK slider. `extended` (Linear) has none. */
+/** The extended operators whose curve ROLLS OFF toward the peak (a soft
+ *  shoulder): Reinhard/ACES. `extended-clamp` is peak-parameterized too but is a
+ *  HARD clip, not a roll-off, so it is NOT here — see {@link EXTENDED_PEAK_OPERATORS}. */
 export const EXTENDED_ROLLOFF_OPERATORS: readonly TonemapOperator[] = [
+  "extended-reinhard",
+  "extended-aces",
+];
+
+/** Every extended operator that READS the PEAK parameter — the roll-off pair
+ *  PLUS `extended-clamp` (managed linear, whose ceiling IS the peak). Selecting
+ *  any of these reveals the PEAK slider. `extended` (raw Linear) has no peak. */
+export const EXTENDED_PEAK_OPERATORS: readonly TonemapOperator[] = [
+  "extended-clamp",
   "extended-reinhard",
   "extended-aces",
 ];
@@ -196,16 +233,20 @@ export function isHdrTonemap(name: string | undefined | null): name is TonemapOp
   return !!name && (HDR_TONEMAP_OPERATORS as readonly string[]).includes(name);
 }
 
-/** True when the operator reads the PEAK parameter (extended-reinhard/-aces),
- *  i.e. the PEAK slider should be visible. */
+/** True when the operator reads the PEAK parameter (extended-clamp/-reinhard/
+ *  -aces), i.e. the PEAK slider should be visible. */
 export function tonemapHasPeak(name: string | undefined | null): boolean {
-  return !!name && (EXTENDED_ROLLOFF_OPERATORS as readonly string[]).includes(name);
+  return !!name && (EXTENDED_PEAK_OPERATORS as readonly string[]).includes(name);
 }
 
 /** Each extended operator's SDR counterpart — the fallback used when a pane
  *  requests an HDR operator but the HDR surface does NOT engage. */
 const EXTENDED_TO_SDR: Record<string, TonemapOperator> = {
   extended: "linear",
+  // Managed linear degrades to the plain SDR clamp01 (`linear`): its natural
+  // SDR counterpart — a hard clip into [0,1] is exactly what "linear" is once
+  // the peak collapses to display white.
+  "extended-clamp": "linear",
   "extended-reinhard": "reinhard",
   "extended-aces": "aces",
 };
@@ -222,14 +263,21 @@ export function getTonemapOperator(
  * roll-off ones) to an RGB triple — the single dispatch the GPU shader's
  * `applyOperator` mirrors and the parity harness checks. For `linear`/`srgb`/
  * `reinhard`/`aces`/`extended` it delegates to {@link TONEMAP_OPERATORS} (peak
- * ignored); for `extended-reinhard`/`extended-aces` it applies the peak curve
- * per channel.
+ * ignored); for `extended-clamp`/`extended-reinhard`/`extended-aces` it applies
+ * the peak curve per channel.
  */
 export function applyTonemapOperatorTriple(
   rgb: RgbTriple,
   operator: string,
   peak: number,
 ): RgbTriple {
+  if (operator === "extended-clamp") {
+    return [
+      extendedClampCurve(rgb[0], peak),
+      extendedClampCurve(rgb[1], peak),
+      extendedClampCurve(rgb[2], peak),
+    ];
+  }
   if (operator === "extended-reinhard") {
     return [
       extendedReinhardCurve(rgb[0], peak),
