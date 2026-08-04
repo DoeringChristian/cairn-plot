@@ -191,6 +191,7 @@ shows the operator **actually in effect**, and HOME restores it.
 | SDR | `reinhard` (Reinhard) | `x / (1 + x)` | → `[0,1)` |
 | SDR | `aces` (ACES) | Narkowicz `clamp((x(2.51x+0.03))/(x(2.43x+0.59)+0.14), 0, 1)` | → `[0,1]` |
 | HDR | `extended` (Extended · Linear) | `x` (unclamped pass-through) | → `[0,∞)` |
+| HDR | `extended-clamp` (Extended · Linear (managed)) | `min(max(x, 0), P)` (identity below `P`, hard ceiling at `P`) | → `[0, P]` |
 | HDR | `extended-reinhard` (Extended · Reinhard) | `x/(1 + x/P)` | → `P` asymptote, slope 1 at 0 |
 | HDR | `extended-aces` (Extended · ACES) | `P·aces(x·S/P)`, `S = 0.14/0.03` | → `P` asymptote, slope 1 at 0 |
 
@@ -198,18 +199,34 @@ The **SDR group** always shows. The **HDR group** (`extended*`) appears **only**
 when the pane's true-HDR surface engages (WebGPU `rgba16float` + Chrome extended
 canvas tone-mapping, on an HDR display); those operators emit display-linear
 light in `[0, P]` (not `[0,1]`) that the OS compositor maps to the panel's peak.
+The group's menu order is **Linear · Linear (managed) · Reinhard · ACES**.
 `P` is the **PEAK** slider (×SDR white; range `1..16`, default `4`, step `0.5`),
-shown only while `extended-reinhard`/`extended-aces` is selected. `S = 0.14/0.03`
+shown while `extended-clamp`/`extended-reinhard`/`extended-aces` is selected
+(all three read `P`; raw `extended` has no peak). `S = 0.14/0.03`
 normalizes Extended · ACES so its slope at 0 is exactly 1 (identity-like at low
 `x`) and it saturates at `P`. (**Follow-up:** a browser-exposed display headroom,
-once standardized, would seed the PEAK default.)
+once standardized, would seed the PEAK default — no current browser exposes a
+numeric headroom prompt-free; see `docs/browser-support.md`.)
+
+**`extended` vs `extended-clamp` (why both).** Both are linear (slope 1) below
+the peak, but they differ in **who clips**. `extended` (Extended · Linear) hands
+the raw unclamped value to the browser/OS compositor, which clips each value at
+**its own estimate of display headroom** — so the *same* image renders
+differently in Chrome vs Safari (empirically confirmed). `extended-clamp`
+(Extended · Linear (managed)) instead does the clip in **cairn-plot's own
+shader** at the shared PEAK `P` (GPU↔CPU parity-tested), so every HDR browser
+converges below `P`. `extended` stays the **default-in-effect** (raw fidelity);
+`extended-clamp` is an **explicit opt-in** for when cross-browser linearity
+matters.
 
 **Default-in-effect + fallback** (`image/tonemap.ts`'s `resolveEffectiveTonemap`,
 pure + unit-tested):
 - Not engaged → the descriptor's `tonemap=` coerced to SDR (`extended`→`linear`,
-  `extended-reinhard`→`reinhard`, `extended-aces`→`aces`; Python default `srgb`).
+  `extended-clamp`→`linear`, `extended-reinhard`→`reinhard`, `extended-aces`→`aces`;
+  Python default `srgb`).
 - Engaged → an explicit `extended*` `tonemap=` is honored **verbatim**; any SDR /
-  unset descriptor defaults to **`extended`** (Extended · Linear). Selecting an
+  unset descriptor defaults to **`extended`** (Extended · Linear) — **not** the
+  managed clamp (managed is an explicit choice). Selecting an
   SDR operator on an engaged pane **tone-maps into SDR range** (previewing the
   SDR rendition on the HDR display): the render path drops `hdrOut` and runs the
   operator + output-encode.

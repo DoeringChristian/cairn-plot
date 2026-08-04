@@ -30,7 +30,7 @@
  *
  *   logical binding 2 (`u_bind2: vec4<f32>`, native binding 2*3+2=8):
  *     .x = exposureEV        (f32, EV stops)
- *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended)
+ *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended,5=extended-reinhard,6=extended-aces,7=extended-clamp)
  *     .z = gamma               (f32; <=0 means "unset" -> sRGB OETF encode)
  *     .w = isScalar            (f32, 0/1 boolean flag)
  *   logical binding 3 (`u_bind3: vec4<f32>`, native binding 3*3+2=11):
@@ -45,9 +45,9 @@
  *     = offset (f32, TEV display offset — added to the scene value AFTER
  *       exposure and BEFORE colormap/tonemap/encode; default 0 = identity)
  *   logical binding 7 (`u_bind7: f32`, native binding 7*3+2=23):
- *     = peak (f32, PEAK white ×SDR white for the extended roll-off operators
- *       `extended-reinhard`(5)/`extended-aces`(6); default 4, ignored by the
- *       others)
+ *     = peak (f32, PEAK white ×SDR white for the peak-parameterized extended
+ *       operators `extended-reinhard`(5)/`extended-aces`(6)/`extended-clamp`(7);
+ *       default 4, ignored by the others)
  *
  * ## Out-of-bounds -> fully transparent (Q18)
  * `uvRect` (`u_bind3`) is the zoom/pan WINDOW in source-space `[0,1]`; when
@@ -167,9 +167,10 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // Defaults to 0 (the bind-group builder zero-fills any binding the caller omits),
 // so an image with no offset renders bit-for-bit as before.
 @group(0) @binding(20) var<uniform> u_bind6: f32;
-// Logical binding 7 (uniform f32: PEAK white, ×SDR white — for the extended
-// roll-off operators extended-reinhard(5)/extended-aces(6)) -> native binding
-// 7*3+2 = 23. Defaults to 0 when the caller omits it (zero-filled); the engine
+// Logical binding 7 (uniform f32: PEAK white, ×SDR white — for the peak-
+// parameterized extended operators extended-reinhard(5)/extended-aces(6)/
+// extended-clamp(7)) -> native binding 7*3+2 = 23. Defaults to 0 when the caller
+// omits it (zero-filled); the engine
 // always writes EXTENDED_TONEMAP_PEAK_DEFAULT (4), and the roll-off curves guard
 // peak<=0 anyway.
 @group(0) @binding(23) var<uniform> u_bind7: f32;
@@ -227,6 +228,17 @@ fn extendedAcesCurve(x: f32, peak: f32) -> f32 {
   return p * acesCurve((v * ACES_IDENTITY_SCALE) / p);
 }
 
+// Extended · Linear (MANAGED) with display peak P: y = min(max(x,0), P) —
+// identity below P, hard ceiling at P. Mirrors image/tonemap.ts's
+// extendedClampCurve exactly. This is the cross-browser-deterministic sibling of
+// operator 4 (extended / raw Linear): 4 hands raw values to the compositor which
+// clips at its own headroom estimate; this clips in-shader at the shared P.
+fn extendedClampCurve(x: f32, peak: f32) -> f32 {
+  let v = max(x, 0.0);
+  let p = max(peak, 1e-6);
+  return min(v, p);
+}
+
 // Manual bilinear blend of the 4 texels surrounding 'uv' (source-space
 // [0,1]) — see module doc comment's "Source filtering" section for why this
 // is hand-rolled instead of a real Sampler+textureSample. 'uv' is assumed
@@ -253,12 +265,14 @@ fn sampleBilinearF(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
 }
 
 // operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (Extended·Linear),
-// 5=extended-reinhard, 6=extended-aces (matches OPERATOR_ID in image-engine.ts /
-// TONEMAP_OPERATORS + the extended curves in image/tonemap.ts). linear/srgb are
-// the SAME clamp — the sRGB OETF lives in outputEncodeF, not here. 4 (extended)
-// is a pure identity — no compression, no clamp — deliberately preserving values
-// above 1.0 for a real HDR (hdrOut) target. 5/6 are the peak-parameterized HDR
-// roll-off operators (see image/tonemap.ts's doc comments).
+// 5=extended-reinhard, 6=extended-aces, 7=extended-clamp (Extended·Linear
+// managed) (matches OPERATOR_ID in image-engine.ts / TONEMAP_OPERATORS + the
+// extended curves in image/tonemap.ts). linear/srgb are the SAME clamp — the
+// sRGB OETF lives in outputEncodeF, not here. 4 (extended) is a pure identity —
+// no compression, no clamp — deliberately preserving values above 1.0 for a real
+// HDR (hdrOut) target. 5/6 are the peak-parameterized HDR roll-off operators;
+// 7 is the peak-parameterized HARD clamp (managed linear) — all three read
+// the peak uniform (see image/tonemap.ts's doc comments).
 fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
   if (operatorId == 2) {
     return vec3<f32>(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z));
@@ -274,6 +288,9 @@ fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
   }
   if (operatorId == 6) {
     return vec3<f32>(extendedAcesCurve(rgb.x, peak), extendedAcesCurve(rgb.y, peak), extendedAcesCurve(rgb.z, peak));
+  }
+  if (operatorId == 7) {
+    return vec3<f32>(extendedClampCurve(rgb.x, peak), extendedClampCurve(rgb.y, peak), extendedClampCurve(rgb.z, peak));
   }
   // 0 (linear) and 1 (srgb), and any unrecognized id, fall back to the clamp.
   return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));

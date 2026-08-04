@@ -956,8 +956,10 @@ export default function GpuImagePane(props: ImageBackendProps) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
-      // PEAK slider — shown ONLY while an extended roll-off operator
-      // (extended-reinhard/-aces) is in effect; it feeds the P uniform.
+      // PEAK slider — shown ONLY while a peak-parameterized extended operator
+      // (extended-reinhard/-aces roll-off, OR extended-clamp managed linear) is
+      // in effect; it feeds the P uniform (roll-off shoulder, or the managed
+      // hard ceiling).
       extraSliders={
         hdrMode && tonemapHasPeak(effectiveTonemap)
           ? [
@@ -965,7 +967,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
                 id: "peak",
                 label: "PK",
                 title:
-                  "Peak white (×SDR white) — HDR roll-off shoulder for the extended Reinhard/ACES operators. Double-click to type a value.",
+                  "Peak white (×SDR white) — HDR shoulder for the extended Reinhard/ACES operators, or the managed-linear hard ceiling for Extended · Linear (managed). Double-click to type a value.",
                 min: EXTENDED_TONEMAP_PEAK_MIN,
                 max: EXTENDED_TONEMAP_PEAK_MAX,
                 step: EXTENDED_TONEMAP_PEAK_STEP,

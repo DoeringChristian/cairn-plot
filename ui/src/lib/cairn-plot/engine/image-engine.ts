@@ -41,7 +41,8 @@ export type ImageOperator =
   | "aces"
   | "extended"
   | "extended-reinhard"
-  | "extended-aces";
+  | "extended-aces"
+  | "extended-clamp";
 
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
@@ -86,7 +87,8 @@ export interface ImageParams {
 }
 
 /** Matches TONEMAP_OPERATORS' key order in image/tonemap.ts — see image.wgsl.ts's doc comment.
- *  Ids 5/6 are the peak-parameterized extended roll-off operators. */
+ *  Ids 5/6/7 are the peak-parameterized extended operators (roll-off pair + the
+ *  managed hard-clamp `extended-clamp`). */
 const OPERATOR_ID: Record<ImageOperator, number> = {
   linear: 0,
   srgb: 1,
@@ -95,6 +97,7 @@ const OPERATOR_ID: Record<ImageOperator, number> = {
   extended: 4,
   "extended-reinhard": 5,
   "extended-aces": 6,
+  "extended-clamp": 7,
 };
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
