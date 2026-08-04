@@ -19,6 +19,11 @@
  * on the shape below.
  */
 import type { DataSource } from "./data-sources";
+import {
+  getRuntimeEntry,
+  runtimeArtifactUrl,
+  type RuntimeStoreEntry,
+} from "./runtime-store.ts";
 
 /** One stored blob: its MIME type and base64-encoded bytes.
  *
@@ -127,7 +132,18 @@ export function createLocalDataSource(
     return entry;
   };
   return {
+    // JS-side RUNTIME registry consulted BEFORE the base64 store — a hash
+    // registered by the `window.cairnPlot` builder rides by reference (`bytes`
+    // → the `ArrayBuffer` verbatim; `artifactUrl` → a `blob:` URL; a float
+    // buffer → `runtime()` → the `hdr` prop). Absent (no `window`, or a baked
+    // Python hash) falls through to the existing base64 paths, so every
+    // existing page/test is unaffected.
+    runtime(hash: string): RuntimeStoreEntry | undefined {
+      return getRuntimeEntry(hash);
+    },
     artifactUrl(hash: string): string {
+      const rt = getRuntimeEntry(hash);
+      if (rt) return runtimeArtifactUrl(hash, rt);
       const { mime, b64, encoding } = get(hash);
       // A `data:` URL inlines the base64 verbatim, so it only works for RAW
       // entries. The emitter only ever deflates `application/octet-stream`
@@ -142,6 +158,14 @@ export function createLocalDataSource(
       return `data:${mime};base64,${b64}`;
     },
     async bytes(hash: string): Promise<ArrayBuffer> {
+      const rt = getRuntimeEntry(hash);
+      if (rt) {
+        if (rt.kind === "bytes") return rt.bytes;
+        throw new Error(
+          `cairn-plot runtime blob ${hash} is a float entry; resolve it via the ` +
+            `imagehdr path (DataSource.runtime()), not bytes().`,
+        );
+      }
       return inflateEntry(get(hash));
     },
   };

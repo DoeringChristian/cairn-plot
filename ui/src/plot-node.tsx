@@ -36,6 +36,7 @@ import {
   type Interpolation,
 } from "./lib/cairn-plot";
 import type { Viewport as ImageViewport } from "./lib/cairn-plot/hooks/use-image-viewport";
+import { f16BitsToFloat32 } from "./lib/cairn-plot/image/half";
 import {
   resolveDataProps,
   type CompareNode,
@@ -283,6 +284,27 @@ async function resolveFrame(
     // HDR arrays. The store hash is the stable diff-cache content key. No `meta`
     // needed — shape/channels come from the npy header itself.
     if (!data.hash) return { url: null };
+    // RUNTIME fast path (JS-authored compare): a float buffer registered by
+    // `window.cairnPlot` rides by reference into the GPU compare pane, skipping
+    // the `.npy` encode/parse. `f16-bits` (a `Uint16Array`) is expanded to
+    // float32 for the `rgba32float` upload the compare pane takes.
+    const rt = source.runtime?.(data.hash);
+    if (rt && rt.kind === "float") {
+      const height = rt.shape[0] ?? 0;
+      const width = rt.shape[1] ?? 0;
+      const channels = rt.shape.length >= 3 ? (rt.shape[2] ?? 1) : 1;
+      if (!width || !height) return { url: null };
+      const data32 =
+        rt.precision === "f16-bits"
+          ? f16BitsToFloat32(rt.data as Uint16Array)
+          : rt.data instanceof Float32Array
+            ? rt.data
+            : Float32Array.from(rt.data);
+      return {
+        url: null,
+        float: { data: data32, width, height, channels, contentKey: data.hash },
+      };
+    }
     const npy = parseNpy(await source.bytes(data.hash));
     const height = npy.shape[0] ?? 0;
     const width = npy.shape[1] ?? 0;

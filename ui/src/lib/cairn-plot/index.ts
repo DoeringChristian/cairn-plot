@@ -222,6 +222,16 @@ export {
   registerPlotStore,
   loadPlotStoreFromDom,
   PLOT_STORE_SCRIPT_ID,
+  registerRuntimeEntries,
+  getRuntimeEntry,
+  getRuntimeStore,
+  mintRuntimeHash,
+} from "./viewport";
+export type {
+  RuntimeStore,
+  RuntimeStoreEntry,
+  RuntimeBytesEntry,
+  RuntimeFloatEntry,
 } from "./viewport";
 export type {
   PlotStore,

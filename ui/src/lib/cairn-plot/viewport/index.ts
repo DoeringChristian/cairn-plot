@@ -78,6 +78,20 @@ export {
   type PlotStoreEntry,
 } from "./local-store";
 
+// JS-side RUNTIME blob registry — the zero-base64 companion to the LOCAL store,
+// consulted first by `createLocalDataSource`. Eager-safe (a plain Map + globals).
+export {
+  registerRuntimeEntries,
+  getRuntimeEntry,
+  getRuntimeStore,
+  mintRuntimeHash,
+  runtimeArtifactUrl,
+  type RuntimeStore,
+  type RuntimeStoreEntry,
+  type RuntimeBytesEntry,
+  type RuntimeFloatEntry,
+} from "./runtime-store";
+
 // NOTE: pointcloud-viewport.tsx (WS-VC4) is DELIBERATELY not re-exported
 // from this barrel (or cairn-plot/index.ts's, both of which are imported
 // eagerly by non-lazy call sites such as VisualContentCard.tsx). It pulls

@@ -33,6 +33,7 @@
 import type { ImageOverlayData } from "../types";
 import type { ImageViewportItem } from "./image-viewport";
 import type { ViewportDataArgs, ViewportDataResult } from "./types";
+import type { RuntimeStoreEntry } from "./runtime-store";
 import { parseNpy, parseNpz } from "../transforms";
 import type { PropertyMap } from "../three/properties";
 import { extractProperties } from "../three/properties";
@@ -52,6 +53,17 @@ import { extractProperties } from "../three/properties";
 export interface DataSource {
   artifactUrl(hash: string): string;
   bytes(hash: string): Promise<ArrayBuffer>;
+  /**
+   * OPTIONAL: the in-memory RUNTIME entry for `hash`, when the source keeps a
+   * JS-side runtime registry (the LOCAL source does; the ENDPOINT source does
+   * not). Present ONLY for JS-authored plots (`window.cairnPlot`), where it lets
+   * a resolver hand a `Float32Array`/`ImageData`-derived value straight to a
+   * renderer BY REFERENCE — skipping the base64/`.npy` encode the Python-baked
+   * path takes. `undefined` (or the method absent) means "not a runtime hash;
+   * resolve via `artifactUrl`/`bytes`", so every existing call site is
+   * unaffected.
+   */
+  runtime?(hash: string): RuntimeStoreEntry | undefined;
 }
 
 /**

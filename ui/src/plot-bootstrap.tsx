@@ -28,12 +28,17 @@ import {
   createEndpointDataSource,
   createLocalDataSource,
   loadPlotStoreFromDom,
+  registerPlotStore,
+  registerRuntimeEntries,
   type DataSource,
+  type PlotStore,
+  type RuntimeStoreEntry,
 } from "./lib/cairn-plot";
 import { useEmitAutoHeight } from "./lib/cairn-plot/hooks";
 import { type PlotDescriptor } from "./plot-descriptor";
-import { registerRenderer } from "./plot-registry";
+import { registerRenderer, getRenderer } from "./plot-registry";
 import { PlotNodeView, SharedPlotContext } from "./plot-node";
+import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
 const DESCRIPTOR_MIME = "application/cairn-plot+json";
@@ -51,11 +56,61 @@ declare global {
      * at runtime. GENERIC: figure today, three.js 3D in Phase D — same hook.
      */
     __cairnPlotRegisterRenderer?: (name: string, component: ComponentType<any>) => void;
+    /**
+     * Whether a renderer name is registered — the read companion to
+     * `__cairnPlotRegisterRenderer`. The JS builder's 3D gate consults it to tell
+     * "three.js addon loaded" from "missing" without importing the registry
+     * module (keeps the builder DOM/`.tsx`-free).
+     */
+    __cairnPlotHasRenderer?: (name: string) => boolean;
     /** Include-once guard the `figure` addon sets after it registers. */
     __cairnPlotFigureLoaded?: boolean;
     /** Include-once guard the three.js 3D addon sets after it registers. */
     __cairnPlotThreeLoaded?: boolean;
+    /**
+     * The JS builder surface (`cairnPlot.line(...)` etc.), installed by the core
+     * bundle so an HTML page can author plots entirely in JavaScript. Mirrors the
+     * Python `cairn_plot` builder API.
+     */
+    cairnPlot?: CairnPlot;
+    /**
+     * Render a descriptor OBJECT (not a `<script>` blob) into `el`, registering
+     * its base64 store + in-memory runtime entries first. The seam the JS builder
+     * handles (`PlotHandle.mount`/`.toElement`) render through.
+     */
+    __cairnPlotMountObject?: Mounter;
   }
+}
+
+/**
+ * Mount a descriptor OBJECT into `el` — the JS-builder counterpart to
+ * `mountOne` (which reads a DOM `<script>` blob). Registers the plot's base64
+ * store + in-memory RUNTIME entries (JS data by reference) BEFORE rendering, so
+ * `PlotApp`'s `createLocalDataSource` resolves both. Returns an `unmount` handle.
+ */
+export const mountDescriptorObject: Mounter = (el, descriptor, data) => {
+  if (data.store) registerPlotStore(data.store as PlotStore);
+  if (data.runtime && data.runtime.length) {
+    registerRuntimeEntries(data.runtime as Array<[string, RuntimeStoreEntry]>);
+  }
+  const root = ReactDOM.createRoot(el);
+  root.render(
+    <React.StrictMode>
+      <PlotApp descriptor={descriptor} />
+    </React.StrictMode>,
+  );
+  return { unmount: () => root.unmount() };
+};
+
+/**
+ * Install `window.cairnPlot` (the JS builder surface) + the
+ * `window.__cairnPlotMountObject` runtime it renders through. Idempotent. Called
+ * by the core entry (and the server entry) alongside `installCairnPlotBootstrap`.
+ */
+export function installCairnPlotApi(): void {
+  if (window.__cairnPlotMountObject) return;
+  window.__cairnPlotMountObject = mountDescriptorObject;
+  window.cairnPlot = createCairnPlot(mountDescriptorObject);
 }
 
 /**
@@ -212,6 +267,10 @@ export function installCairnPlotBootstrap(): void {
   // Expose the addon → core seam BEFORE marking the bundle loaded, so an addon
   // IIFE (emitted after core) can always find it (O2 / generic for Phase D).
   window.__cairnPlotRegisterRenderer = registerRenderer;
+  window.__cairnPlotHasRenderer = (name: string) => getRenderer(name) !== undefined;
+  // Install the JS builder surface (`window.cairnPlot`) + its mount runtime, so
+  // an HTML page can author plots entirely in JavaScript the moment core loads.
+  installCairnPlotApi();
   window.__cairnPlotBundleLoaded = true;
 
   // Drain anything queued before the bundle loaded, then swap the queue for a

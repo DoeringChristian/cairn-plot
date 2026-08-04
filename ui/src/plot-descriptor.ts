@@ -349,6 +349,19 @@ export async function resolveDataProps(
       if (!data.hash) {
         throw new Error("imghdr DataSpec has no hash to resolve.");
       }
+      // RUNTIME fast path (JS-authored plots): a `Float32Array`/`Uint16Array`
+      // registered by `window.cairnPlot` rides straight into the `hdr` prop BY
+      // REFERENCE — no `.npy` encode on the way in, no `parseNpy` on the way out
+      // (the Python-baked path takes both). `runtime()` is absent on the
+      // ENDPOINT source and returns `undefined` for a baked LOCAL hash, so the
+      // parseNpy path below stays the default.
+      const rt = source.runtime?.(data.hash);
+      if (rt && rt.kind === "float") {
+        return {
+          hdr: { data: rt.data, shape: rt.shape, dtype: rt.dtype, precision: rt.precision },
+          meta: data.meta,
+        };
+      }
       const buf = await source.bytes(data.hash);
       const npy = parseNpy(buf);
       return {
