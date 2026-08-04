@@ -14,6 +14,7 @@
     "sync:plot-assets": "node scripts/sync-plot-assets.mjs",
     "check:plot-assets": "node scripts/sync-plot-assets.mjs --check",
     "smoke:plot": "node scripts/smoke-plot-gallery.mjs",
+    "smoke:js": "node scripts/smoke-js-api.mjs",
     "test:harness": "node scripts/test-harness.mjs",
     "test:harness:selftest": "node scripts/test-harness-selftest.mjs"
   },

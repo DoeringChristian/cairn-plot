@@ -100,11 +100,16 @@ jobs:
           npm ci
           npm run build:plot-inline
           npm run sync:plot-assets
-      - name: smoke render (22/22 sections)
+      - name: smoke render (24/24 sections)
         working-directory: ui
         env:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: npm run smoke:plot
+      - name: smoke render (JS builder surface — examples/demo_js_api.html)
+        working-directory: ui
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: npm run smoke:js
 
   harness:
     name: test:harness (WebGPU WGSL↔TS parity proofs)

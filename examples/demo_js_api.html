@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cairn-plot — JS / HTML API demo</title>
+    <!--
+      Self-contained demo of the FIRST-CLASS JS builder surface (`window.cairnPlot`),
+      the JS twin of the Python `cairn_plot` builders. The page is authored ENTIRELY
+      in JavaScript below — no Python, no server. It loads the committed offline
+      bundles relative to this file:
+
+        - core.iife.js      the always-present renderers + `window.cairnPlot`
+        - gpu-image.iife.js  the WebGPU/WebGL2 image + compare engine (for the
+                             image + abs-diff panes)
+
+      Open it straight from disk (file://) or serve the repo root. The smoke gate
+      `ui/scripts/smoke-js-api.mjs` renders this exact file headlessly.
+    -->
+    <link rel="stylesheet" href="../ui/dist/plot-inline/style.css" />
+    <style>
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 { font-size: 1.4rem; }
+      section { margin: 28px 0; }
+      section > h2 { font-size: 1rem; margin: 0 0 6px; }
+      .plot { min-height: 260px; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; }
+      code { background: rgba(128, 128, 128, 0.15); padding: 1px 4px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>cairn-plot — JS / HTML API</h1>
+    <p>
+      Every plot below is authored in JavaScript via <code>cairnPlot.*</code> — the
+      same builder surface as Python's <code>cairn_plot</code>. Data rides by
+      reference (the HDR image is a <code>Float32Array</code>, no base64).
+    </p>
+
+    <section id="sec-line">
+      <h2>Line — <code>cairnPlot.line({loss, val}, x)</code></h2>
+      <div class="plot" id="p-line"></div>
+    </section>
+
+    <section id="sec-scatter">
+      <h2>Scatter with colormap — <code>cairnPlot.scatter(xs, ys, {color, colormap})</code></h2>
+      <div class="plot" id="p-scatter"></div>
+    </section>
+
+    <section id="sec-image">
+      <h2>HDR image from a Float32Array — <code>cairnPlot.image(f32, {shape, tonemap})</code></h2>
+      <div class="plot" id="p-image"></div>
+    </section>
+
+    <section id="sec-compare">
+      <h2>Compare (abs diff) — <code>cairnPlot.compare(a, b, {mode: "abs"})</code></h2>
+      <div class="plot" id="p-compare"></div>
+    </section>
+
+    <section id="sec-grid">
+      <h2>Grid — <code>cairnPlot.grid([[line, bar]])</code></h2>
+      <div class="plot" id="p-grid"></div>
+    </section>
+
+    <script src="../ui/dist/plot-inline/core.iife.js"></script>
+    <script src="../ui/dist/plot-inline/gpu-image.iife.js"></script>
+    <script>
+      const cp = window.cairnPlot;
+
+      // ── Line: two named series against a shared x-axis ───────────────────
+      const steps = Array.from({ length: 40 }, (_, i) => i);
+      const loss = steps.map((i) => 2 * Math.exp(-i / 12) + 0.05 * Math.sin(i));
+      const val = steps.map((i) => 2.2 * Math.exp(-i / 15) + 0.08);
+      cp.line({ loss, val }, steps).mount("#p-line");
+
+      // ── Scatter: per-point color mapped through the viridis colorbar ─────
+      const n = 200;
+      const xs = Array.from({ length: n }, () => Math.random() * 10);
+      const ys = xs.map((x) => Math.sin(x) + Math.random() * 0.4);
+      const color = xs.map((x) => x);
+      cp.scatter(xs, ys, {
+        color,
+        colormap: "viridis",
+        xLabel: "x",
+        yLabel: "sin(x) + noise",
+        colorLabel: "x",
+      }).mount("#p-scatter");
+
+      // ── HDR image: a Float32Array gradient with values well above 1.0 ────
+      function hdrGradient(h, w, scale) {
+        const data = new Float32Array(h * w * 3);
+        let k = 0;
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            data[k++] = (x / w) * scale; // R ramps horizontally (into HDR)
+            data[k++] = (y / h) * scale; // G ramps vertically
+            data[k++] = ((x + y) / (w + h)) * scale * 0.5; // B
+          }
+        }
+        return { data, shape: [h, w, 3] };
+      }
+      const img = hdrGradient(96, 128, 4.0);
+      cp.image(img.data, { shape: img.shape, tonemap: "aces", exposure: 0 }).mount("#p-image");
+
+      // ── Compare (abs diff): two u8 images differing by a shifted blob ────
+      function canvasImage(w, h, cx) {
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d");
+        const grad = ctx.createLinearGradient(0, 0, w, h);
+        grad.addColorStop(0, "#1b3a6b");
+        grad.addColorStop(1, "#7fc2e8");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.beginPath();
+        ctx.arc(cx, h / 2, h / 5, 0, Math.PI * 2);
+        ctx.fill();
+        return c;
+      }
+      const a = canvasImage(160, 120, 60);
+      const b = canvasImage(160, 120, 100);
+      cp.compare(cp.image(a), cp.image(b), { mode: "abs", colormap: "magma" }).mount("#p-compare");
+
+      // ── Grid: a line + a bar chart side by side ──────────────────────────
+      cp.grid(
+        [[cp.line([3, 1, 4, 1, 5, 9, 2, 6]), cp.bar([5, 3, 8, 2], { labels: ["a", "b", "c", "d"] })]],
+        { gap: 12 },
+      ).mount("#p-grid");
+    </script>
+  </body>
+</html>
