@@ -43,6 +43,42 @@ def test_compare_kernel_public_names_match_contract() -> None:
     assert set(_COMPARE_KERNEL_MODES.keys()) == set(CONTRACT["compareKernelPublicNames"])
 
 
+# The shared builder-name set (camelCase in the contract) → the PascalCase
+# `cairn_plot` composable each mirrors. Both faces are pinned to the SAME
+# `builders` list in the contract, so neither can add/drop a builder without
+# updating the JSON (and the other face's guard failing).
+_BUILDER_TO_COMPONENT = {
+    "line": "Line",
+    "scatter": "Scatter",
+    "bar": "Bar",
+    "histogram": "Histogram",
+    "heatmap": "Heatmap",
+    "parallelCoordinates": "ParallelCoordinates",
+    "image": "Image",
+    "table": "Table",
+    "compare": "Compare",
+    "grid": "Grid",
+    "mesh": "Mesh",
+    "pointcloud": "PointCloud",
+    "volume": "Volume",
+    "boxes": "Boxes",
+}
+
+
+def test_builders_match_contract() -> None:
+    # The contract's `builders` list == the composables we map to Python classes.
+    assert set(CONTRACT["builders"]) == set(_BUILDER_TO_COMPONENT)
+
+
+def test_every_contract_builder_has_a_python_composable() -> None:
+    import cairn_plot as cp
+
+    for name, component in _BUILDER_TO_COMPONENT.items():
+        assert hasattr(cp, component), (
+            f"contract builder {name!r} maps to cairn_plot.{component}, which is missing"
+        )
+
+
 def test_api_doc_lists_every_contract_name() -> None:
     # Cheap doc-drift guard: docs/API.md must mention every contract name, so its
     # human-facing colormap / tonemap / kernel lists can't silently fall behind.
