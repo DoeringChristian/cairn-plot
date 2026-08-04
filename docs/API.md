@@ -108,6 +108,91 @@ naming that extra.
 
 ---
 
+## HTML / JS builder surface — `window.cairnPlot`
+
+The core bundle (`core.iife.js`) installs `window.cairnPlot`, a first-class JS
+builder surface that mirrors the Python `cairn_plot` builders one-to-one. It is
+also ESM-exported (`import { cairnPlot, createCairnPlot } from ".../builder"`).
+Author a page entirely in JavaScript; the descriptor it lowers to is identical
+to the Python emit's, validated by the same
+[`schema/cairn-plot-contracts.json`](../schema/cairn-plot-contracts.json).
+
+### Builders
+Each returns a **handle** with `.mount(elOrSelector)` and `.toElement()`
+(a detached `<div>`); `.descriptor` / `.node` / `.store` / `.runtime` expose the
+lowered data.
+
+| Builder | Signature | Python twin |
+| --- | --- | --- |
+| `cairnPlot.line` | `line(y \| {name: y}, x?, { label })` | `cp.Line` |
+| `cairnPlot.scatter` | `scatter(xs, ys, { color, colormap, labels, xLabel, yLabel, colorLabel, xLog, yLog })` | `cp.Scatter` |
+| `cairnPlot.bar` | `bar(values, { labels, colors, valueLabel, logX })` | `cp.Bar` |
+| `cairnPlot.histogram` | `histogram(x?, { bins, counts, edges, logY })` | `cp.Histogram` |
+| `cairnPlot.heatmap` | `heatmap(z, { colormap, zmin, zmax, logColor, originTop, xLabel, yLabel, valueLabel })` | `cp.Heatmap` |
+| `cairnPlot.parallelCoordinates` | `parallelCoordinates(dimensions, { colormap })` | `cp.ParallelCoordinates` |
+| `cairnPlot.image` | `image(data, { shape, hdr, tonemap, exposure, gamma, colormap, interpolation, showAxes, brightness, contrast, offset, flipSign, pixelValueNotation })` | `cp.Image` |
+| `cairnPlot.table` | `table(rows \| { cols })` | `cp.Table` |
+| `cairnPlot.compare` | `compare(a, b, { mode, colormap, align, fit, splitPosition, blendAlpha, ... })` | `cp.Compare` |
+| `cairnPlot.grid` | `grid([[...handles]], { cols, colWidths, rowHeights, gap, shared })` | `cp.Grid` |
+| `cairnPlot.mesh` / `.pointcloud` / `.volume` / `.boxes` | `(...)` — **throw** a clear error naming `three.iife.js` when the three.js addon isn't loaded (registry-gated; JS 3D data baking is a follow-up — bake via Python for now). | `cp.Mesh` / … |
+
+`image(data, ...)` routing (JS-idiomatic; same validation rules as Python):
+- a numeric buffer (`Float32Array` / `Float64Array` / `Uint16Array` f16 bits /
+  nested number arrays) → the **float-HDR** path (`imagehdr` renderer). A flat
+  TypedArray needs `{ shape: [H, W(, C)] }`; nested arrays infer it. The buffer
+  rides **by reference** through the runtime store — no `.npy` encode, no base64.
+- encoded container bytes (`ArrayBuffer` / `Uint8Array`) → an 8-bit `image`,
+  served as a `blob:` URL (no base64);
+- `ImageData` / `<canvas>` → an 8-bit `image` (canvas → data URL, the one encode);
+- `{ url }` (or a URL string) → a `url` DataSpec verbatim, or the fetch+decode
+  `image.url` seam for `.exr`/`.npy`/`.npz` (or `{ hdr: true }`).
+
+The allowed `colormap` / `tonemap` / compare `mode` sets are the same
+cross-language contract Python enforces; bad values throw the same way.
+
+### Jeri → cairnPlot migration
+[Jeri](https://github.com/tomseago/jeri)'s `renderViewer(el, { image })` — an
+HDR image viewer keyed by a Float32Array + shape — maps directly onto
+`cairnPlot.image`:
+
+```js
+// Jeri
+import { renderViewer } from "jeri";
+renderViewer(document.getElementById("view"), {
+  image: { data: floats, width: W, height: H, channels: 3 },
+});
+
+// cairnPlot — the Float32Array rides by reference, tone-mapped client-side
+window.cairnPlot
+  .image(floats, { shape: [H, W, 3], tonemap: "aces", exposure: 0 })
+  .mount("#view");
+
+// A/B comparison (Jeri's two-image diff) → cairnPlot.compare:
+window.cairnPlot
+  .compare(
+    window.cairnPlot.image(refFloats, { shape: [H, W, 3] }),
+    window.cairnPlot.image(predFloats, { shape: [H, W, 3] }),
+    { mode: "abs", colormap: "magma" },
+  )
+  .mount("#diff");
+```
+
+Unlike Jeri, the pane ships the full cairn-plot toolbar (tone-map menu, exposure,
+zoom/pan, TEV-style pixel readout, and the compare mode/kernel switcher).
+
+### Runtime store (zero-base64 seam)
+JS-provided data is registered in an in-memory `window.__cairnPlotRuntimeStore`
+(hash → `{ kind: "bytes", bytes, mime }` or `{ kind: "float", data, shape, dtype,
+precision }`). `createLocalDataSource` consults it **before** the base64 store, so
+the committed descriptor schema is untouched (a runtime hash is an opaque string).
+A float buffer routes straight into the `imagehdr` `hdr` prop by reference. See
+[`lib/cairn-plot/viewport/runtime-store.ts`](../ui/src/lib/cairn-plot/viewport/runtime-store.ts).
+
+> Out of scope (follow-up): a tabs/selector container, and JS-side 3D data baking
+> (the 3D builders gate on the three addon but leave data baking to Python).
+
+---
+
 ## TypeScript / runtime — the `ui` renderer package
 
 The renderer package is **not published to npm**; its canonical distributable is
@@ -129,6 +214,10 @@ Addons cannot `import` from core; they attach at runtime via the registry seam.
 ### Runtime seams (`window`)
 | Seam | Role |
 | --- | --- |
+| `cairnPlot` | The JS builder surface (`cairnPlot.line(...)` etc.) — installed by core; mirrors the Python `cairn_plot` builders. |
+| `__cairnPlotMountObject(el, descriptor, { store, runtime })` | Render a descriptor OBJECT into `el` (the seam `PlotHandle.mount`/`.toElement` render through); registers the base64 store + in-memory runtime entries first. |
+| `__cairnPlotRuntimeStore` | In-memory `Map<hash, RuntimeStoreEntry>` for JS-provided data (bytes/float) — consulted before the base64 store, zero base64. |
+| `__cairnPlotHasRenderer(name)` | Read companion to `__cairnPlotRegisterRenderer` — the builder's 3D gate uses it to tell "three addon loaded" from "missing". |
 | `__cairnPlotBootstrap(divId, descId)` | Mount one plot: div `#divId` from the descriptor JSON in `#descId`. |
 | `__cairnPlotQueue` | Pre-load mount queue (GA-style `push`); drained + replaced with an immediate-mount shim once core loads. |
 | `__cairnPlotRegisterRenderer(name, component)` | Core→addon seam: an addon IIFE registers its renderer by name (`"figure"`, `"image"`, 3D types). |

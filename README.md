@@ -85,8 +85,41 @@ python examples/demo_url_images.py --open     # URL-referenced EXR images (needs
 
 ## HTML / JS library
 
-The renderer bundles live under `ui/` (a TS/React library). Build the
-self-contained bundles with:
+The same renderers expose a **first-class JS builder surface** —
+`window.cairnPlot` — that mirrors the Python `cairn_plot` builders one-to-one.
+Load the offline `core` bundle and author plots entirely in JavaScript; no
+Python, no server, no CDN:
+
+```html
+<link rel="stylesheet" href="core/style.css" />
+<script src="core/core.iife.js"></script>  <!-- installs window.cairnPlot -->
+<div id="loss"></div>
+<div id="pred"></div>
+<script>
+  const cp = window.cairnPlot;
+
+  // Same builders as Python — line/scatter/bar/histogram/heatmap/
+  // parallelCoordinates/image/table/compare/grid (+ 3D via the three addon).
+  cp.line({ loss: [2, 1.3, 0.9, 0.7], val: [2.1, 1.5, 1.1, 1.0] }).mount("#loss");
+
+  // HDR image straight from a Float32Array — rides by reference, no base64:
+  const data = new Float32Array(64 * 64 * 3); /* fill with HDR values … */
+  cp.image(data, { shape: [64, 64, 3], tonemap: "aces" }).mount("#pred");
+</script>
+```
+
+Every builder returns a handle with `.mount(elOrSelector)` and `.toElement()`
+(a detached `<div>`). Inputs accept plain arrays, nested arrays, TypedArrays,
+`ImageData`, `<canvas>`, and `{ url }`; JS-provided pixels ride through an
+in-memory runtime store **by reference** (no base64 round-trip). Validation
+(colormaps / tone-maps / compare kernels) uses the same cross-language contract
+as Python. See [`examples/demo_js_api.html`](examples/demo_js_api.html) for a
+self-contained page and [`docs/API.md`](docs/API.md#html--js-builder-surface)
+for the full JS surface (incl. a Jeri → `cairnPlot` migration snippet).
+
+The bundles are include-once guarded and register renderers into a shared core
+bootstrap, so a page carries `core` once plus only the addons its plots need.
+Build them under `ui/` (a TS/React library):
 
 ```bash
 cd ui
@@ -94,9 +127,6 @@ npm install
 npm run build:plot-inline     # → ui/dist/plot-inline/{core,figure,three,gpu-image}.iife.js + style.css
 npm run sync:plot-assets      # copy them into the Python package data (src/cairn_plot/_assets)
 ```
-
-The bundles are include-once guarded and register renderers into a shared core
-bootstrap, so a page carries `core` once plus only the addons its plots need.
 
 ## Development
 
@@ -112,7 +142,8 @@ npm run typecheck            # tsc -b --noEmit
 npm test                     # node --test over the lib's *.test.ts
 npm run check:plot-schema    # TS PlotDescriptor ↔ committed JSON schema
 npm run check:plot-boundary  # the library must not import app code
-npm run smoke:plot           # headless-Chromium gallery render check
+npm run smoke:plot           # headless-Chromium gallery render check (Python emit)
+npm run smoke:js             # headless-Chromium render check (window.cairnPlot JS face)
 ```
 
 ## License
