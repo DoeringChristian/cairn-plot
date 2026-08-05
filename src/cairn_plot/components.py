@@ -821,8 +821,8 @@ def _image_hdr_props(
     """Build the ``imagehdr`` renderer props (real HDR tone-map, NOT the 8-bit
     CSS-filter ``processing`` block). ``exposure`` defaults to ``0`` (always
     emitted). ``tonemap`` is OPTIONAL and EMITTED ONLY when set — an unset
-    ``tonemap`` lets the client pick the surface default (``linear`` with the
-    managed PEAK when the real HDR surface engages, ``srgb`` on an SDR surface).
+    ``tonemap`` lets the client pick the surface default (``srgb`` on every
+    surface; on an engaged HDR surface with the managed PEAK ceiling).
     ``gamma`` / ``peak`` are OPTIONAL and included only when explicitly passed,
     so the renderer's defaults stay in effect. ``showAxes`` / ``interpolation``
     are the two extra ``HdrImagePane`` props honoured.

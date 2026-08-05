@@ -115,7 +115,7 @@ what you want to preserve:
   shader and browsers converge, but the brightest values roll off smoothly toward
   `P` instead of clipping.
 
-A finite `P` is the **default** (managed determinism — Linear at `P = 4`). Type
+A finite `P` is the **default** (managed determinism — sRGB at `P = 4`). Type
 `P = inf` when you instead want the panel's *full* native headroom (values above
 `P` are handed raw to the browser and not clipped by us) — at the cost of the
 cross-browser divergence above.
