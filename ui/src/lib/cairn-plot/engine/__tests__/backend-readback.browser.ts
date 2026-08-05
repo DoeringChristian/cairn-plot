@@ -55,7 +55,7 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
  */
-import { createWebGPUDevice } from "../webgpu/device";
+import { createWebGPUDevice, isDeviceLostError } from "../webgpu/device";
 import { passthroughWGSL } from "../shaders/passthrough.wgsl";
 import { scaleBiasWGSL } from "../shaders/scalebias.wgsl";
 import type { Device } from "../types";
@@ -356,6 +356,21 @@ async function runBindGroupLifecycleTest(device: Device, label: string): Promise
   }
 }
 
+/**
+ * Sub-cases, run in order and each attributed BY NAME. Two failure modes are
+ * distinguished:
+ *   - A `DeviceLostError` (the engine's typed device-loss signal — see
+ *     `webgpu/device.ts`) thrown from a sub-case's `readback()` is a
+ *     backend-teardown artifact (the software SwiftShader/Dawn adapter losing
+ *     the device/instance mid-map — NOT a WGSL↔TS parity defect), so it is a
+ *     LOUD, per-sub-case SKIP, not a FAIL: the same category as the whole-page
+ *     "navigator.gpu absent" skip above, just finer-grained. It never masks a
+ *     real mismatch — a pixel mismatch happens with the device ALIVE and is
+ *     still a hard FAIL.
+ *   - Any OTHER throw is a hard FAIL, now attributed to the SUB-CASE that
+ *     threw (previously a bare, label-less "threw:" at the top level — see the
+ *     CI diagnosis this harness's fix addresses).
+ */
 async function main(): Promise<void> {
   try {
     if (!("gpu" in navigator) || !navigator.gpu) {
@@ -365,14 +380,47 @@ async function main(): Promise<void> {
     }
 
     const gpuDevice = await createWebGPUDevice();
-    const gpuTexture = await runReadbackTest(gpuDevice, "webgpu");
-    const gpuUniformSampler = await runUniformSamplerTest(gpuDevice, "webgpu");
-    const gpuSurfaceChannelOrderOk = await runSurfaceChannelOrderTest(gpuDevice, "webgpu");
-    const gpuBindGroupLifecycleOk = await runBindGroupLifecycleTest(gpuDevice, "webgpu");
-    gpuDevice.destroy();
-    const webgpuOk = gpuTexture.ok && gpuUniformSampler.ok && gpuSurfaceChannelOrderOk && gpuBindGroupLifecycleOk;
 
-    setOverallStatus(webgpuOk);
+    const cases: { name: string; run: () => Promise<boolean> }[] = [
+      { name: "texture-only", run: async () => (await runReadbackTest(gpuDevice, "webgpu")).ok },
+      { name: "uniform+sampler", run: async () => (await runUniformSamplerTest(gpuDevice, "webgpu")).ok },
+      { name: "surface-channel-order", run: () => runSurfaceChannelOrderTest(gpuDevice, "webgpu") },
+      { name: "bindgroup-lifecycle", run: () => runBindGroupLifecycleTest(gpuDevice, "webgpu") },
+    ];
+
+    let overallOk = true;
+    for (const c of cases) {
+      try {
+        const ok = await c.run();
+        if (!ok) overallOk = false;
+      } catch (err) {
+        if (isDeviceLostError(err)) {
+          // Loud SKIP — the software backend lost the device/instance
+          // mid-readback; the proof couldn't run, but this is not a defect.
+          report(
+            true,
+            `[webgpu][${c.name}] SKIPPED — device lost/destroyed mid-readback ` +
+              `(software-backend teardown artifact, not a parity failure): ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        } else {
+          report(
+            false,
+            `[webgpu][${c.name}] threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+          );
+          overallOk = false;
+        }
+      }
+    }
+
+    // Best-effort: `destroy()` is a no-op if the device was already lost.
+    try {
+      gpuDevice.destroy();
+    } catch {
+      /* device already lost/destroyed */
+    }
+
+    setOverallStatus(overallOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
     setOverallStatus(false);

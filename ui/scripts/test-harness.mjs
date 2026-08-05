@@ -54,6 +54,12 @@
  * Env:     CHROME_BIN          path to a Chromium-family browser (else auto)
  *          HARNESS_TIMEOUT_MS  per-harness completion timeout (default 60000)
  *          HARNESS_SKIP        comma list of harness-id substrings to SKIP-LOUD
+ *          HARNESS_FORCE_STRATEGY  pin GPU strategy selection to one strategy
+ *              instead of trying (a) then (b) — `swiftshader`/`software`/`sw`/
+ *              `dawn` forces the software SwiftShader/Dawn adapter CI actually
+ *              runs (the ONLY way to reproduce a CI-only software-WebGPU
+ *              failure on a box with a hardware adapter); `hardware`/`native`/
+ *              `hw` forces the real adapter. No fallback to other strategies.
  */
 
 import { build as esbuild } from "esbuild";
@@ -296,14 +302,17 @@ const BASE_FLAGS = [
 
 /**
  * WebGPU launch strategies, tried in order until an adapter is obtained.
- * @type {{name:string, flags:string[]}[]}
+ * `key` is a stable, lowercase handle for `HARNESS_FORCE_STRATEGY` (below).
+ * @type {{key:string, name:string, flags:string[]}[]}
  */
 const GPU_STRATEGIES = [
   {
+    key: "hardware",
     name: "hardware/native (--enable-unsafe-webgpu --enable-features=Vulkan)",
     flags: ["--enable-unsafe-webgpu", "--enable-features=Vulkan"],
   },
   {
+    key: "swiftshader",
     name: "software (SwiftShader/Dawn: --use-webgpu-adapter=swiftshader --use-angle=swiftshader)",
     flags: [
       "--enable-unsafe-webgpu",
@@ -313,6 +322,41 @@ const GPU_STRATEGIES = [
     ],
   },
 ];
+
+/**
+ * `HARNESS_FORCE_STRATEGY` pins strategy selection to a single strategy
+ * instead of trying them in order — the ONLY way to reproduce a CI-only
+ * (software-WebGPU-only) failure on a dev box whose hardware adapter would
+ * otherwise be picked first (strategy (a) always wins locally, so the
+ * SwiftShader/Dawn path CI actually runs is never exercised by a plain local
+ * run). Accepted aliases (case-insensitive): `hardware`/`native`/`hw` and
+ * `swiftshader`/`software`/`sw`/`dawn`. When set and no strategy matches (or
+ * the forced adapter can't be obtained), the runner does NOT silently fall
+ * through to another strategy — it skip-loudly/exits per the normal
+ * no-adapter path, so a forced run can never masquerade as a different
+ * backend.
+ */
+const FORCE_STRATEGY = (process.env.HARNESS_FORCE_STRATEGY ?? "").trim().toLowerCase();
+const STRATEGY_ALIASES = {
+  hardware: "hardware",
+  native: "hardware",
+  hw: "hardware",
+  swiftshader: "swiftshader",
+  software: "swiftshader",
+  sw: "swiftshader",
+  dawn: "swiftshader",
+};
+function selectStrategies() {
+  if (!FORCE_STRATEGY) return GPU_STRATEGIES;
+  const wantKey = STRATEGY_ALIASES[FORCE_STRATEGY];
+  if (!wantKey) {
+    die(
+      `HARNESS_FORCE_STRATEGY="${FORCE_STRATEGY}" is not a known strategy. ` +
+        `Use one of: ${Object.keys(STRATEGY_ALIASES).join(", ")}.`,
+    );
+  }
+  return GPU_STRATEGIES.filter((s) => s.key === wantKey);
+}
 
 class CDP {
   /** @param {string} wsUrl */
@@ -573,10 +617,19 @@ async function main() {
   // own self-test, whose fake harnesses use no WebGPU) so the drive/parse/exit
   // path can be exercised deterministically on a GPU-less machine.
   const assumeGpu = process.env.HARNESS_ASSUME_GPU === "1";
+  const strategies = selectStrategies();
+  if (FORCE_STRATEGY) {
+    console.log(
+      YELLOW(
+        `• HARNESS_FORCE_STRATEGY=${FORCE_STRATEGY} — pinned to strategy "${strategies[0]?.key}" ` +
+          `(no fallback to other strategies)`,
+      ),
+    );
+  }
   let launched = null;
   let adapter = null;
   let strategyUsed = "";
-  for (const strat of GPU_STRATEGIES) {
+  for (const strat of strategies) {
     console.log(`• launching Chromium — ${strat.name}`);
     let l;
     try {
@@ -657,7 +710,19 @@ async function main() {
             : RED("ERROR");
     console.log(`${tag} ${DIM(`(${r.ms}ms)`)}`);
     if (r.verdict !== "pass" && r.result) console.log(indent(r.result));
-    rows.push({ id: h.id, ...r });
+    // A harness can PASS while loudly SKIPPING a sub-case (e.g. the engine
+    // reported a `DeviceLostError` mid-readback — the software backend gave up
+    // on the device, which is not a parity defect). Surface those lines even
+    // on PASS so a chronically-skipped proof can never go green *invisibly* —
+    // the runner's "never silently passes" contract applied at sub-case grain.
+    const skipLines = (r.verdict === "pass" && r.result ? r.result : "")
+      .split("\n")
+      .filter((l) => /SKIPPED/i.test(l));
+    if (skipLines.length) {
+      for (const l of skipLines) console.log("        " + YELLOW(l.trim()));
+      ghAnnotate("warning", `${h.id}: sub-case(s) SKIPPED — ${skipLines.map((l) => l.trim()).join(" | ")}`);
+    }
+    rows.push({ id: h.id, ...r, skipped: skipLines.length });
   }
 
   // Teardown.

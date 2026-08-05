@@ -88,6 +88,21 @@
  * memoizes this into a page-wide singleton. `destroy()` releases the
  * `GPUDevice` (`device.destroy()`); a destroyed device cannot be reused —
  * callers must not call any other method on this `Device` afterward.
+ *
+ * ## Device-loss-safe readback
+ * `readback()` and `reduceDiffSumSquaredAbs()` end in a staging-buffer
+ * `mapAsync` that spans a task boundary — a window in which the device (or
+ * its Dawn instance) can be lost/destroyed on a slow or software backend
+ * (SwiftShader/Dawn), or in production on tab-discard / GPU reset / a
+ * `destroy()` racing an in-flight readback. WebGPU rejects the pending map
+ * with an `AbortError` when that happens; `mapReadBufferGuarded` catches it
+ * and normalizes it into a typed {@link DeviceLostError} (enriched with the
+ * loss reason from a single per-device `gpuDevice.lost` watcher), so callers
+ * never see a raw, backend-specific `AbortError` (and floating-promise
+ * readbacks — e.g. `diff-engine.ts`'s retained samples — don't surface an
+ * unhandled rejection on teardown). `readback()` additionally keeps its
+ * `source` reachable across the map await so liveness-based GC cannot reclaim
+ * a detached-canvas surface's context (and its Dawn instance) mid-map.
  */
 import type {
   Device,
@@ -105,6 +120,81 @@ import type { DeepSampleBuffers, DeepGpuCsrSpec } from "../types";
 import { configureHDRSurface, configureSDRSurface, type SurfaceConfigResult } from "./surface";
 import { reduceWGSL } from "../shaders/reduce.wgsl";
 import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl";
+
+/**
+ * Thrown by `readback()`/`reduceDiffSumSquaredAbs()` when the GPU device (or
+ * its owning Dawn instance) is lost or destroyed WHILE a staging-buffer
+ * `mapAsync` is still pending. WebGPU surfaces that condition as a bare
+ * `DOMException {name:"AbortError"}` whose message varies by backend and
+ * teardown path — e.g. `"Buffer was unmapped before mapping was resolved."`
+ * (device `destroy()` mid-map) or, on the SwiftShader/Dawn software backend,
+ * `"A valid external Instance reference no longer exists."` (the canvas
+ * context's Dawn instance getting reclaimed mid-map). None of these are a
+ * readback/parity DEFECT — they mean the backend gave up on the device
+ * mid-readback — so this typed error lets callers (and the parity harness)
+ * distinguish "the device went away" from "the bytes were wrong" instead of
+ * leaking a raw, opaque `AbortError`. `readback()` in production is also
+ * called in floating-promise form (e.g. `diff-engine.ts`'s retained-sample
+ * readback), where a raw rejection would surface as an unhandled rejection on
+ * teardown/tab-discard; a typed, documented error is the clean contract.
+ */
+export class DeviceLostError extends Error {
+  /** Discriminant that survives cross-bundle `instanceof` uncertainty. */
+  readonly deviceLost = true as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "DeviceLostError";
+  }
+}
+
+/** Robust `instanceof`-independent check for {@link DeviceLostError}. */
+export function isDeviceLostError(err: unknown): err is DeviceLostError {
+  return (
+    err instanceof DeviceLostError ||
+    (typeof err === "object" && err !== null && (err as { deviceLost?: unknown }).deviceLost === true)
+  );
+}
+
+/** Single memoized `gpuDevice.lost` watcher — see `mapReadBufferGuarded`. */
+interface DeviceLostRef {
+  info?: GPUDeviceLostInfo;
+}
+
+/**
+ * `await buffer.mapAsync(READ)`, but SAFE against the device being lost or
+ * destroyed while the map is pending. On a slow/software backend the device
+ * (or its Dawn instance) can disappear mid-map — WebGPU then REJECTS the
+ * pending map with a `DOMException {name:"AbortError"}` (empirically reliable
+ * on Dawn/Chromium: all pending maps are rejected on device loss, they do NOT
+ * hang), which without this guard escapes raw and backend-specific. Here we
+ * catch that rejection and normalize it into a typed {@link DeviceLostError},
+ * enriched with the `GPUDeviceLostInfo` reason when the paired `gpuDevice.lost`
+ * watcher (`lostRef`, populated by a SINGLE per-device `.lost.then`, not one
+ * reaction per readback — avoids leaking a reaction onto the long-lived
+ * `.lost` promise for per-frame readback callers) has already resolved. Any
+ * OTHER map rejection (a genuine validation/state error, which should never
+ * happen for a freshly-created `MAP_READ` staging buffer) is rethrown
+ * unchanged.
+ */
+async function mapReadBufferGuarded(
+  buffer: GPUBuffer,
+  lostRef: DeviceLostRef,
+): Promise<void> {
+  try {
+    await buffer.mapAsync(GPUMapMode.READ);
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    if (name === "AbortError") {
+      const info = lostRef.info;
+      throw new DeviceLostError(
+        `webgpu readback: buffer map aborted — device lost or destroyed mid-readback` +
+          (info ? ` (reason=${String(info.reason)}${info.message ? `: ${info.message}` : ""})` : "") +
+          `: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
 
 function gpuFormatFor(format: TextureFormat): GPUTextureFormat {
   switch (format) {
@@ -536,6 +626,22 @@ export async function createWebGPUDevice(): Promise<Device> {
 
   let destroyed = false;
 
+  // Single per-device `lost` watcher: records the `GPUDeviceLostInfo` once, so
+  // `mapReadBufferGuarded` can enrich a `DeviceLostError` with the loss reason
+  // WITHOUT attaching a fresh `.lost.then`/`Promise.race` reaction per
+  // readback (which would accumulate on the never-settling `.lost` promise for
+  // per-frame readback callers). `gpuDevice.lost` resolves (never rejects) on
+  // loss, including via `destroy()`.
+  const lostRef: DeviceLostRef = {};
+  gpuDevice.lost.then(
+    (info) => {
+      lostRef.info = info;
+    },
+    () => {
+      /* `.lost` never rejects, but be defensive */
+    },
+  );
+
   // Memoized (one per GPUDevice) probe of whether THIS BROWSER can configure a
   // canvas with `toneMapping:{mode:"extended"}` — the true-HDR canvas path.
   // `capabilities.hdr` above is hardcoded `true` for the WebGPU backend and is
@@ -921,7 +1027,20 @@ export async function createWebGPUDevice(): Promise<Device> {
       );
       gpuDevice.queue.submit([encoder.finish()]);
 
-      await readBuffer.mapAsync(GPUMapMode.READ);
+      // Guard the map against device/instance teardown mid-readback (see
+      // `mapReadBufferGuarded` / `DeviceLostError`). On failure, drop the
+      // staging buffer (best-effort — it may already be invalid) so we don't
+      // leak it, and let the typed error propagate.
+      try {
+        await mapReadBufferGuarded(readBuffer, lostRef);
+      } catch (err) {
+        try {
+          readBuffer.destroy();
+        } catch {
+          /* buffer already invalid after device loss — best effort */
+        }
+        throw err;
+      }
       const mapped = new Uint8Array(readBuffer.getMappedRange());
       const tight = new Uint8Array(unpaddedBytesPerRow * height);
       for (let row = 0; row < height; row++) {
@@ -931,6 +1050,17 @@ export async function createWebGPUDevice(): Promise<Device> {
       }
       readBuffer.unmap();
       readBuffer.destroy();
+
+      // Keep `source` (and, for a Surface, its private `GPUCanvasContext`)
+      // reachable ACROSS the map await above. V8's liveness-based GC can
+      // otherwise collect a local that is never read again after its last
+      // use — and a detached-canvas surface's context is not read again once
+      // `sourceTexture`/`needsBGRASwap` are captured. Collecting the context
+      // mid-map can tear down the Dawn "external Instance" the pending map
+      // depends on (the SwiftShader/Dawn "A valid external Instance reference
+      // no longer exists." abort) — referencing `source` here extends its
+      // liveness past the await so that teardown can't happen underneath us.
+      void source;
 
       if (format === "rgba8unorm") {
         if (needsBGRASwap) {
@@ -995,7 +1125,20 @@ export async function createWebGPUDevice(): Promise<Device> {
       encoder.copyBufferToBuffer(partialBuffer, 0, readBuffer, 0, partialSize);
       gpuDevice.queue.submit([encoder.finish()]);
 
-      await readBuffer.mapAsync(GPUMapMode.READ);
+      // Same device-loss guard as `readback()` — a lost/destroyed device
+      // mid-map yields a typed `DeviceLostError`, not a raw `AbortError`.
+      try {
+        await mapReadBufferGuarded(readBuffer, lostRef);
+      } catch (err) {
+        for (const b of [readBuffer, partialBuffer, dimsBuffer]) {
+          try {
+            b.destroy();
+          } catch {
+            /* already invalid after device loss — best effort */
+          }
+        }
+        throw err;
+      }
       const mapped = new Float32Array(readBuffer.getMappedRange());
       const partial = mapped.slice(); // copy out before unmap invalidates `mapped`
       readBuffer.unmap();
