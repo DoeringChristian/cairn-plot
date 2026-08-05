@@ -55,6 +55,8 @@ export type { NpyArray, HistogramData } from "./transforms";
 // Image processing
 export { getRenderMode, setRenderMode } from "./image";
 export type { RenderMode } from "./image";
+// Content-addressing under live/redirecting query URLs (final post-redirect URL).
+export { resolveFinalUrl } from "./image";
 
 // Multi-format image decoder registry (browser-native + raw npy/npz; EXR
 // deferred). The DataSpec-resolution seam (`plot-descriptor.ts`) routes

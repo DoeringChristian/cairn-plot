@@ -2,6 +2,7 @@ export { computeDiff, loadImageData, DIFF_MODE_LABELS, type DiffMode } from "./d
 export { webglRenderDiffToCanvas, isWebGL2Available, type WebGLDiffOptions } from "./webgl-diff";
 export { getRenderMode, setRenderMode, type RenderMode } from "./render-mode";
 export { getCachedImageData, setCachedImageData } from "./cache";
+export { resolveFinalUrl } from "./final-url";
 export {
   labelLuminance,
   LABEL_LUMINANCE_DARK_THRESHOLD,

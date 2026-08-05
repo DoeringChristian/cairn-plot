@@ -26,6 +26,7 @@ import {
   decodedU8ToDataUrl,
   parseNpy,
   parseOverlay,
+  resolveFinalUrl,
   resolveImageViewportItems,
   type ColormapName,
   type CompareFloatSource,
@@ -218,7 +219,12 @@ async function resolveFrame(
   source: DataSource,
 ): Promise<ResolvedCompareFrame> {
   if (data.kind === "url") {
-    return { url: data.src, overlay: parseOverlay(data.metadata) ?? undefined };
+    // Resolve to the FINAL post-redirect URL so a live/redirecting query URL
+    // keys the GPU diff cache (via this frame's `url`) on the content-addressed
+    // digest, not the mutable request URL. Non-redirecting/`data:` URLs resolve
+    // to themselves; a CORS-blocked fetch falls back to the raw URL.
+    const url = await resolveFinalUrl(data.src);
+    return { url, overlay: parseOverlay(data.metadata) ?? undefined };
   }
   if (data.kind === "image") {
     // Direct-URL CLIENT-DECODE seam — the compare mirror of the image LEAF's
@@ -229,7 +235,7 @@ async function resolveFrame(
     // uint8/browser-native buffers become an `imageUrl` PNG data URL (the
     // existing texture path). CORS applies to the fetch.
     if (data.url) {
-      const res = await fetch(data.url);
+      const res = await fetch(data.url, { redirect: "follow" });
       if (!res.ok) {
         throw new Error(
           `cairn-plot: failed to fetch compare image ${data.url} (${res.status})`,
@@ -255,9 +261,13 @@ async function resolveFrame(
             height: decoded.height,
             channels: decoded.channels,
             precision: decoded.precision,
-            // The ORIGINAL source URL is the stable diff-cache content key —
-            // NOT the decoded bytes — so a rerender with the same URL is a hit.
-            contentKey: data.url,
+            // The FINAL post-redirect URL (`res.url`, the content-addressed
+            // digest for a live query URL) is the stable diff-cache content key
+            // — NOT the decoded bytes, and NOT the mutable request URL — so a
+            // rerender of the SAME content is a hit while a re-resolved query
+            // URL that now points at a different digest is a miss (no stale
+            // diff). Equals `data.url` for a non-redirecting URL.
+            contentKey: res.url || data.url,
           },
           overlay,
         };

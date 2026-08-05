@@ -233,6 +233,19 @@ A plot is mounted from a **tree** descriptor — `{ root: PlotNode, mode?, endpo
 shape (the pre-G1 flat form is gone). `mode: "local"` reads the page's inlined
 content-addressed store; `mode: "endpoint"` fetches artifacts from a server origin.
 
+**Live / redirecting URLs are content-addressed via the final URL.** A `url`
+DataSpec (or `cp.Image(url=…)`) may point at a *live query URL* whose bytes
+change over time — a server endpoint that `302`-redirects to a
+content-addressed blob (e.g. `/api/query?run=latest&tag=…` → `/api/artifacts/{digest}`).
+The image/diff caches key on the URL string, so before a URL reaches the panes
+it is resolved to its **final post-redirect URL** (`res.url`, the digest) via
+`resolveFinalUrl` (`lib/cairn-plot/image/final-url.ts`). Two "latest" resolutions
+that land on different digests therefore get different cache identities (no stale
+pixels); identical content across queries shares one digest (free dedup). A
+non-redirecting or `data:`/`blob:` URL resolves to itself (unchanged), and a
+CORS-blocked probe falls back to the raw URL so cross-origin `<img src>` rendering
+still works.
+
 ### Renderer registry seam
 `plot-registry.tsx` exposes the in-bundle registry the bootstrap and addons use:
 - `registerRenderer(name, component)` — register a renderer by name.

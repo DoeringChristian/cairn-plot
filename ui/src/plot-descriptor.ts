@@ -28,6 +28,7 @@ import {
   decodeImage,
   decodedU8ToDataUrl,
   isRawBufferFormat,
+  resolveFinalUrl,
   type DataSource,
 } from "./lib/cairn-plot";
 
@@ -295,12 +296,21 @@ export async function resolveDataProps(
       };
     }
     case "url": {
-      // Raw URL passthrough: the `src`/`referenceSrc` are used verbatim (no
-      // DataSource hash lookup). Source-agnostic like `image`; the overlay
-      // `metadata` is parsed the same way `resolveImageViewportItems` does.
+      // Raw URL passthrough: the `src`/`referenceSrc` flow into the panes (and
+      // the URL-keyed image/diff caches) as the render identity. To stay
+      // content-addressed under a live/redirecting query URL — whose bytes move
+      // as "latest" re-resolves — resolve each to its FINAL post-redirect URL
+      // (`res.url`, the content-addressed digest) FIRST, so the caches key on
+      // the digest, not the mutable request URL. Non-redirecting / `data:` URLs
+      // resolve to themselves (byte-for-byte unchanged); a CORS-blocked fetch
+      // falls back to the raw URL so `<img src>`-only rendering still works.
+      const [imageUrl, baselineUrl] = await Promise.all([
+        resolveFinalUrl(data.src),
+        data.referenceSrc ? resolveFinalUrl(data.referenceSrc) : Promise.resolve(null),
+      ]);
       return {
-        imageUrl: data.src,
-        baselineUrl: data.referenceSrc ?? null,
+        imageUrl,
+        baselineUrl,
         overlay: parseOverlay(data.metadata) ?? undefined,
       };
     }
