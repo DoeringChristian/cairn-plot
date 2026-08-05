@@ -358,3 +358,36 @@ viewport contract, colormaps, tonemap operators, transforms, and the image-backe
 contract above. (`Figure` is intentionally *not* re-exported here — import it from
 `renderers/Figure` so Plotly stays out of the eager chunk.) These are stable for
 in-repo composition and the `cairn` monorepo submodule consumer.
+
+#### media-compare seams (`lib/cairn-plot/media-compare`)
+The unified visual-media comparison core. A host card supplies the app bindings
+(react-query fetching, run/series identity, persistence); cairn-plot owns the
+renderer-shaped seams below, all reachable from the pure barrel:
+
+- **Reference resolution** — `resolveArtifactAtStep`, `resolveArtifactPointAtStep`
+  (point-returning sibling, for metadata reads), `resolveGlobalPositionalReference`,
+  and `resolveReferenceHashes(policy, data, ctx)`: the pure global-vs-per-run +
+  external + series-same-step DISPATCH (the app hook fetches candidate data, then
+  hands it here to decide which reference each pane shows).
+  Types: `ReferenceResolutionPolicy` · `ReferenceResolutionData` ·
+  `ReferenceResolutionContext` · `ResolvedReferenceHashes` · `MissingArtifactMode`.
+- **Compare settings** — `MediaCompareSettings` (the renderer-owned subset of a
+  card's persisted settings; a host intersects it with its own app-typed fields),
+  `DEFAULT_MEDIA_COMPARE_SETTINGS`, the labelled option lists
+  (`CORE_COMPARE_MODE_OPTIONS`, `DIFF_SUBMODE_OPTIONS`, `PIXEL_DIFF_COLORMAP_OPTIONS`,
+  `DIFF_COLORMAP_OPTIONS`), and `enumerateCompareModeOptions(caps)` — "list the
+  valid compare modes for these capabilities" (core kinds + capability-gated native
+  kinds). The form UI stays host-side.
+- **Offscreen compare** — `useOffscreenSnapshot` (live `<canvas>` → coalesced PNG
+  data URL) and `OffscreenComparePanes` (renders two hidden 3D mirrors into the ONE
+  shared compositor, camera-sync + orbit/zoom overlay; parameterized by a
+  caller-supplied `render` callback per side). `OffscreenComparePanes` imports
+  `three`, so its runtime value is **not** re-exported through the barrel (which is
+  core-reachable, and core ships no three) — import it directly from
+  `media-compare/OffscreenComparePanes`; only its types cross the barrel.
+- **Cross-type bridge** — `hasForeignFrameBridge(objectType, loaders)` +
+  `CrossTypeForeignFrame` (renders a foreign 3D type's reference off-screen to a
+  `FrameSource` for image↔3D compare). The per-type loader registry is injected by
+  the host via `ForeignFrameLoaders`; cairn-plot hard-codes no app chunk paths.
+- **Cross-type diff alignment** — `alignFrameSourcesForDiff` resamples + letterboxes
+  two mismatched-size frames onto one raster before the pixel-diff pipeline.
