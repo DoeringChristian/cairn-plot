@@ -15,20 +15,24 @@ import {
   toSdrTonemap,
   resolveEffectiveTonemap,
   SDR_TONEMAP_OPERATORS,
+  SDR_DISPLAY_TRANSFER_OPERATORS,
   HDR_TONEMAP_OPERATORS,
   EXTENDED_ROLLOFF_OPERATORS,
   EXTENDED_PEAK_OPERATORS,
   isHdrTonemap,
   tonemapHasPeak,
+  tonemapHasGamma,
+  resolveEncodeGamma,
+  TONEMAP_GAMMA_DEFAULT,
   extendedClampCurve,
   extendedReinhardCurve,
   extendedAcesCurve,
   applyTonemapOperatorTriple,
-  ACES_IDENTITY_SCALE,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   applyExposure,
   applyExposureOffset,
   srgbOetf,
+  srgbEotf,
   outputEncode,
   type RgbTriple,
 } from "./tonemap.ts";
@@ -187,16 +191,14 @@ test("extendedReinhardCurve: monotone, ≈x for x≪1, →P asymptote", () => {
   approx(extendedReinhardCurve(1, 4), 0.8);
 });
 
-test("extendedAcesCurve: monotone, ≈x for x≪1 (slope 1), →P asymptote", () => {
+test("extendedAcesCurve: P·aces(x/P) — P=1 ≡ narkowicz, monotone, →P asymptote", () => {
   const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
   approx(extendedAcesCurve(0, P), 0);
-  // Low-x slope is exactly 1 (the ACES_IDENTITY_SCALE normalization). ACES
-  // curvature lifts midtones, so "≈x" only holds as x→0 (check a very small x);
-  // the slope at 1e-5 pins the normalization directly.
-  approx(extendedAcesCurve(1e-5, P), 1e-5, 1e-8);
-  const slope = extendedAcesCurve(1e-5, P) / 1e-5;
-  approx(slope, 1, 1e-3);
-  assert.equal(ACES_IDENTITY_SCALE, 0.14 / 0.03);
+  // Peak-parameterized as the CANONICAL curve scaled to P: y = P·aces(x/P).
+  // Spot-check the closed form directly.
+  for (const x of [0.1, 0.5, 1, 2, 8]) {
+    approx(extendedAcesCurve(x, P), P * acesFit(x / P), 1e-12);
+  }
   // Monotone increasing.
   let prev = -1;
   for (let x = 0; x <= 64; x += 0.5) {
@@ -209,6 +211,87 @@ test("extendedAcesCurve: monotone, ≈x for x≪1 (slope 1), →P asymptote", ()
   approx(extendedAcesCurve(1000, P), P, 1e-6);
   // Peak scales: a larger P raises the asymptote proportionally.
   approx(extendedAcesCurve(1000, 8), 8, 1e-6);
+});
+
+// Narkowicz 2015 ACES fit reference (matches acesCurve in tonemap.ts) — used to
+// pin extendedAcesCurve's P·aces(x/P) closed form above.
+function acesFit(x: number): number {
+  const v = x < 0 ? 0 : x;
+  const num = v * (2.51 * v + 0.03);
+  const den = v * (2.43 * v + 0.59) + 0.14;
+  return Math.min(1, Math.max(0, num / den));
+}
+
+// =====================================================================
+// OPERATOR-FAMILY INVARIANT (the structural rule): every operator is ONE
+// peak-parameterized curve, and the SDR variant IS the extended variant with
+// P=1. These goldens LOCK that — any drift where an SDR operator stops equaling
+// its extended sibling at P=1 fails here.
+// =====================================================================
+test("INVARIANT: SDR operator ≡ extended curve at P=1 (only difference is the clip point P)", () => {
+  for (let x = -0.5; x <= 8; x += 0.13) {
+    // Linear = clamp(x,0,P): SDR linear (clamp01) === extended-clamp at P=1.
+    assert.equal(TONEMAP_OPERATORS.linear!([x, x, x] as RgbTriple)[0], extendedClampCurve(x, 1));
+    // Reinhard = x/(1+x/P): SDR reinhard === extended-reinhard at P=1.
+    approx(TONEMAP_OPERATORS.reinhard!([x, x, x] as RgbTriple)[0], extendedReinhardCurve(x, 1), 1e-12);
+    // ACES = P·aces(x/P): SDR aces === extended-aces at P=1 (the FIX — the old
+    // S=0.14/0.03 input scaling broke this).
+    approx(TONEMAP_OPERATORS.aces!([x, x, x] as RgbTriple)[0], extendedAcesCurve(x, 1), 1e-12);
+  }
+});
+
+test("Gamma operator: RANGE-MAP is the clamp; γ lives in the encode (resolveEncodeGamma)", () => {
+  // The operator itself is the SAME clamp as linear/srgb (range-map to [0,1]).
+  assert.deepEqual(TONEMAP_OPERATORS.gamma!([-0.5, 0.5, 2] as RgbTriple), [0, 0.5, 1]);
+  assert.equal(tonemapHasGamma("gamma"), true);
+  assert.equal(tonemapHasGamma("srgb"), false);
+  assert.equal(tonemapHasGamma("linear"), false);
+  // resolveEncodeGamma maps the operator to the output-encode `gamma` param:
+  //   gamma → γ ; linear → 1 (identity) ; everything else → undefined (sRGB).
+  assert.equal(resolveEncodeGamma("gamma", 2.2), 2.2);
+  assert.equal(resolveEncodeGamma("gamma", 0), TONEMAP_GAMMA_DEFAULT); // guard
+  assert.equal(resolveEncodeGamma("linear", 2.2), 1);
+  assert.equal(resolveEncodeGamma("srgb", 2.2), undefined);
+  assert.equal(resolveEncodeGamma("reinhard", 2.2), undefined);
+  assert.equal(resolveEncodeGamma("aces", 2.2), undefined);
+  // gamma is in the SDR group (menu order Linear · sRGB · Gamma · Reinhard ·
+  // ACES) and passes through toSdrTonemap unchanged.
+  assert.ok(SDR_TONEMAP_OPERATORS.includes("gamma"));
+  assert.equal(toSdrTonemap("gamma"), "gamma");
+});
+
+test("Gamma DISPLAY value goldens (tev): pow(clamp01(x), 1/γ)", () => {
+  // The full display value for the Gamma operator = outputEncode(clamp01(x), γ).
+  // 0.5^(1/2.2) ≈ 0.7297 (the brief's golden); DISTINCT from sRGB's 0.5→0.7354.
+  const g = (x: number, gamma: number) => outputEncode(TONEMAP_OPERATORS.gamma!([x, x, x] as RgbTriple)[0], gamma);
+  approx(g(0.5, 2.2), 0.729740, 1e-5); // brief golden ≈ 0.7297
+  approx(g(0.5, 2.2), Math.pow(0.5, 1 / 2.2), 1e-12);
+  assert.ok(Math.abs(g(0.5, 2.2) - srgbOetf(0.5)) > 1e-3, "Gamma 2.2 ≠ sRGB (approximate only)");
+  // A non-default γ (the brief asks for a second golden).
+  approx(g(0.5, 1.8), Math.pow(0.5, 1 / 1.8), 1e-12);
+  approx(g(0.25, 2.0), 0.5, 1e-12); // sqrt
+  // Endpoints are fixed points of any γ.
+  approx(g(0, 2.2), 0);
+  approx(g(1, 2.2), 1);
+});
+
+test("srgbEotf ∘ srgbOetf round-trips (linearize an 8-bit sRGB source)", () => {
+  approx(srgbEotf(0), 0);
+  approx(srgbEotf(1), 1);
+  // Exact inverse of srgbOetf across the range.
+  for (let x = 0; x <= 1; x += 0.037) approx(srgbEotf(srgbOetf(x)), x, 1e-12);
+  // Byte-exact round-trip for all 256 8-bit sRGB code values (the SDR-pane
+  // decode→…→re-encode identity the default `srgb` operator relies on).
+  for (let b = 0; b <= 255; b++) {
+    const v = b / 255;
+    assert.equal(Math.round(srgbOetf(srgbEotf(v)) * 255), b);
+  }
+});
+
+test("SDR_DISPLAY_TRANSFER_OPERATORS: the 8-bit pane's menu subset (sRGB · Gamma · Linear)", () => {
+  assert.deepEqual([...SDR_DISPLAY_TRANSFER_OPERATORS], ["srgb", "gamma", "linear"]);
+  // Subset of the full SDR group (no reinhard/aces on an already-[0,1] source).
+  for (const op of SDR_DISPLAY_TRANSFER_OPERATORS) assert.ok(SDR_TONEMAP_OPERATORS.includes(op));
 });
 
 test("extendedClampCurve: identity below P (exact), hard ceiling at/above P (exact), monotone", () => {

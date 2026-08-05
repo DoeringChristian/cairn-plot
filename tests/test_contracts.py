@@ -21,6 +21,7 @@ from cairn_plot.components import (
     _COLORMAPS,
     _COMPARE_KERNEL_MODES,
     _HDR_TONEMAP_OPERATORS,
+    _SDR_DISPLAY_TRANSFERS,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,10 @@ def test_colormaps_match_contract() -> None:
 
 def test_tonemap_operators_match_contract() -> None:
     assert set(_HDR_TONEMAP_OPERATORS) == set(CONTRACT["tonemapOperators"])
+
+
+def test_display_transfers_match_contract() -> None:
+    assert set(_SDR_DISPLAY_TRANSFERS) == set(CONTRACT["displayTransfers"])
 
 
 def test_compare_kernel_public_names_match_contract() -> None:
@@ -83,6 +88,6 @@ def test_api_doc_lists_every_contract_name() -> None:
     # Cheap doc-drift guard: docs/API.md must mention every contract name, so its
     # human-facing colormap / tonemap / kernel lists can't silently fall behind.
     api = (ROOT / "docs" / "API.md").read_text()
-    for group in ("colormaps", "tonemapOperators", "compareKernelPublicNames"):
+    for group in ("colormaps", "tonemapOperators", "displayTransfers", "compareKernelPublicNames"):
         for name in CONTRACT[group]:
             assert name in api, f"docs/API.md is missing contract name {name!r} ({group})"

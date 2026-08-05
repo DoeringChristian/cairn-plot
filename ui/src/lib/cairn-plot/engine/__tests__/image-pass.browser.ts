@@ -62,6 +62,7 @@ import {
   applyExposure,
   applyTonemapOperatorTriple,
   outputEncode,
+  srgbEotf,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
 } from "../../image/tonemap";
@@ -136,10 +137,15 @@ const BOUNDARY_LUT = buildBoundaryColormap();
  * `params.isScalar`.
  */
 function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float32Array): RgbTriple {
+  // 0) [SDR display-transfer path] sRGB-DECODE the source to linear FIRST
+  //    (mirrors image.wgsl.ts's srgbDecode branch).
+  const decoded: RgbTriple = params.srgbDecode
+    ? [srgbEotf(px[0]!), srgbEotf(px[1]!), srgbEotf(px[2]!)]
+    : [px[0]!, px[1]!, px[2]!];
   const exposed: RgbTriple = [
-    applyExposure(px[0]!, params.exposureEV),
-    applyExposure(px[1]!, params.exposureEV),
-    applyExposure(px[2]!, params.exposureEV),
+    applyExposure(decoded[0], params.exposureEV),
+    applyExposure(decoded[1], params.exposureEV),
+    applyExposure(decoded[2], params.exposureEV),
   ];
 
   let rgb = exposed;
@@ -326,6 +332,56 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/gamma-override`;
     const params: ImageParams = { exposureEV: 0, operator: "aces", gamma: 2.2, isScalar: false, hdrOut: false, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GRADIENT_PIXELS, params, undefined));
+  }
+
+  // Gamma DISPLAY OPERATOR (tev "Gamma"): operator "gamma" (id 8) is the SAME
+  // clamp RANGE-MAP as linear/srgb; the γ power curve `pow(x, 1/γ)` is applied at
+  // the output-encode stage via the gamma uniform. Two γ (default 2.2 + a
+  // non-default 1.8) — golden 0.5^(1/2.2) ≈ 0.7297 is exercised via the 0.5
+  // pixel below (checked GPU-vs-TS through the real outputEncode).
+  const GAMMA_PIXELS: number[][] = [
+    [0.0, 0.0, 0.0, 1.0],
+    [0.25, 0.25, 0.25, 1.0],
+    [0.5, 0.5, 0.5, 1.0],
+    [1.0, 1.0, 1.0, 1.0],
+  ];
+  for (const g of [2.2, 1.8]) {
+    const caseLabel = `${label}/operator=gamma/γ=${g}`;
+    const params: ImageParams = { exposureEV: 0, operator: "gamma", gamma: g, isScalar: false, hdrOut: false, uv: uvFull };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GAMMA_PIXELS, params, undefined));
+  }
+
+  {
+    // Menu "Linear" = clamp + IDENTITY encode (gamma:1) — the raw-linear/tev
+    // gamma-1 look, DISTINCT from "srgb" (which sRGB-encodes). Verifies the
+    // renderer's operator→encode mapping (resolveEncodeGamma linear→1).
+    const caseLabel = `${label}/operator=linear-identity`;
+    const params: ImageParams = { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv: uvFull };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GAMMA_PIXELS, params, undefined));
+  }
+
+  // 8-BIT DISPLAY-TRANSFER path (srgbDecode:true): the source pixels are sRGB
+  // CODE values; the shader sRGB-DECODEs them to linear FIRST, then applies the
+  // transfer. SRGB_CODE_PIXELS holds sRGB-encoded gradient values.
+  const SRGB_CODE_PIXELS: number[][] = [
+    [0.0, 0.0, 0.0, 1.0],
+    [0.25, 0.25, 0.25, 1.0],
+    [0.5, 0.5, 0.5, 1.0],
+    [0.735, 0.735, 0.735, 1.0], // ≈ srgbOetf(0.5)
+  ];
+  {
+    // sRGB transfer on an 8-bit source = decode then re-encode = IDENTITY
+    // round-trip (recovers the input sRGB code, within 1/255).
+    const caseLabel = `${label}/srgbDecode/operator=srgb-roundtrip`;
+    const params: ImageParams = { exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
+  }
+  {
+    // Gamma transfer on an 8-bit source: sRGB-DECODE → pow(x, 1/γ). CPU/GPU
+    // parity through the same srgbEotf + outputEncode.
+    const caseLabel = `${label}/srgbDecode/operator=gamma/γ=2.2`;
+    const params: ImageParams = { exposureEV: 0, operator: "gamma", gamma: 2.2, isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
   }
 
   {

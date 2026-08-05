@@ -79,6 +79,15 @@ export interface SdrImageProps {
   isBaseline?: boolean;
   diffMode?: "none" | DiffMode;
   interpolation?: Interpolation;
+  /** DISPLAY-TRANSFER selection for the plain 8-bit path (tev's sRGB · Gamma ·
+   *  Linear). Seeds the pane's leading transfer menu; default `"srgb"` (identity
+   *  round-trip on an already-sRGB source). Ignored when a `colormap` is active
+   *  (the false-color LUT output is already display-ready). DISTINCT from the
+   *  8-bit CSS-filter `processing.gamma` (a separate brightness-style knob). */
+  tonemap?: string;
+  /** Default γ for the Gamma display transfer (used only when `tonemap:"gamma"`),
+   *  the exponent in `display = clamp(value)^(1/γ)`. Default 2.2. */
+  gamma?: number;
   colormap?: Colormap;
   showAxes?: boolean;
   processing?: ImageProcessing;
