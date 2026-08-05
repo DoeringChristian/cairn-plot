@@ -1,0 +1,80 @@
+/**
+ * Compare-settings enumeration + option-list contract (the pure half absorbed
+ * from `card-kit/CompareSettingsPanel.tsx` + `visual-compare-settings.ts`).
+ *
+ *   node --experimental-strip-types --test \
+ *     src/lib/cairn-plot/media-compare/compare-settings.test.ts
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  CORE_COMPARE_MODE_OPTIONS,
+  DIFF_SUBMODE_OPTIONS,
+  PIXEL_DIFF_COLORMAP_OPTIONS,
+  DIFF_COLORMAP_OPTIONS,
+  DEFAULT_MEDIA_COMPARE_SETTINGS,
+  enumerateCompareModeOptions,
+} from "./compare-settings.ts";
+import { MEDIA_COMPARE_MODE_KINDS } from "./mode.ts";
+
+test("CORE_COMPARE_MODE_OPTIONS covers exactly the five core kinds", () => {
+  const values = CORE_COMPARE_MODE_OPTIONS.map((o) => o.value).sort();
+  assert.deepEqual(values, [...MEDIA_COMPARE_MODE_KINDS].sort());
+  for (const o of CORE_COMPARE_MODE_OPTIONS) {
+    assert.ok(o.label.length > 0, `${o.value} has a label`);
+  }
+});
+
+test("diff option lists are non-empty and well-formed", () => {
+  for (const list of [DIFF_SUBMODE_OPTIONS, PIXEL_DIFF_COLORMAP_OPTIONS, DIFF_COLORMAP_OPTIONS]) {
+    assert.ok(list.length > 0);
+    for (const o of list) assert.ok(o.value && o.label);
+  }
+  // The two native-diff colormaps are exactly red-green + viridis.
+  assert.deepEqual(
+    DIFF_COLORMAP_OPTIONS.map((o) => o.value).sort(),
+    ["red-green", "viridis"],
+  );
+});
+
+test("enumerate: no native modes → the five core kinds, all enabled", () => {
+  const opts = enumerateCompareModeOptions({ nativeModes: [], topologyOk: true });
+  assert.equal(opts.length, 5);
+  assert.ok(opts.every((o) => !o.native && !o.disabled));
+  assert.deepEqual(opts.map((o) => o.value).sort(), [...MEDIA_COMPARE_MODE_KINDS].sort());
+});
+
+test("enumerate: core kinds always precede native and are never disabled", () => {
+  const nativeModes = [
+    { value: "diff-property", label: "Diff (property)" },
+    { value: "diff-geometry", label: "Diff (geometry)" },
+  ] as const;
+
+  const ok = enumerateCompareModeOptions({ nativeModes, topologyOk: true });
+  assert.equal(ok.length, 7, "5 core + 2 native");
+  // First five are core, enabled, non-native.
+  assert.ok(ok.slice(0, 5).every((o) => !o.native && !o.disabled));
+  // Trailing native modes enabled when topology holds.
+  assert.ok(ok.slice(5).every((o) => o.native && !o.disabled));
+  assert.deepEqual(ok.slice(5).map((o) => o.value), ["diff-property", "diff-geometry"]);
+});
+
+test("enumerate: native modes are disabled when topology mismatches; core stay enabled", () => {
+  const nativeModes = [{ value: "diff-position", label: "Diff (position)" }] as const;
+  const bad = enumerateCompareModeOptions({ nativeModes, topologyOk: false });
+  const core = bad.filter((o) => !o.native);
+  const native = bad.filter((o) => o.native);
+  assert.ok(core.every((o) => !o.disabled), "core kinds never gated on topology");
+  assert.ok(native.every((o) => o.disabled), "native kinds disabled on topology mismatch");
+});
+
+test("DEFAULT_MEDIA_COMPARE_SETTINGS carries neutral compare baselines", () => {
+  assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.mode, "side");
+  assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.diffMode, "none");
+  assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.splitPosition, 0.5);
+  assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.blendAlpha, 0.5);
+  // The default diff colormap is a valid native-diff colormap option.
+  assert.ok(
+    DIFF_COLORMAP_OPTIONS.some((o) => o.value === DEFAULT_MEDIA_COMPARE_SETTINGS.diffColormap),
+  );
+});
