@@ -163,8 +163,8 @@ test("resolveEffectiveTonemap: UNIFIED — canonical operator passes through; su
   // UNSET default is surface-dependent: Linear on an engaged HDR surface (managed
   // determinism, PEAK default 4 — replaces the old raw-extended default), sRGB on
   // SDR (the bit-exact round-trip for an 8-bit source).
-  assert.equal(resolveEffectiveTonemap(undefined, true), "linear");
-  assert.equal(resolveEffectiveTonemap(null, true), "linear");
+  assert.equal(resolveEffectiveTonemap(undefined, true), "srgb");
+  assert.equal(resolveEffectiveTonemap(null, true), "srgb");
   assert.equal(resolveEffectiveTonemap(undefined, false), "srgb");
   assert.equal(resolveEffectiveTonemap(null, false), "srgb");
 });
@@ -556,14 +556,15 @@ test("UNIFIED goldens: HDR Gamma is UNCLAMPED (above-white survives), P>1 clips 
 });
 
 test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap", () => {
-  // UNSET descriptor: engaged → Linear + managed PEAK(4) extended-clamp; SDR → sRGB, P=1.
-  const hdrDefault = resolveEffectiveTonemap(undefined, true); // "linear"
-  assert.equal(hdrDefault, "linear");
+  // UNSET descriptor: sRGB on EVERY surface (user decision — tev's default).
+  // Engaged HDR → extended sRGB encode with the managed PEAK(4) ceiling.
+  const hdrDefault = resolveEffectiveTonemap(undefined, true); // "srgb"
+  assert.equal(hdrDefault, "srgb");
   assert.deepEqual(resolveRenderTonemap(hdrDefault, EXTENDED_TONEMAP_PEAK_DEFAULT, true, 2.2), {
     operator: "extended-clamp",
     hdrOut: true,
     peak: 4,
-    gamma: 1,
+    gamma: undefined,
   });
   const sdrDefault = resolveEffectiveTonemap(undefined, false); // "srgb"
   assert.equal(sdrDefault, "srgb");

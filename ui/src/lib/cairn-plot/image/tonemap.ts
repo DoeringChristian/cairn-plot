@@ -406,11 +406,12 @@ export function aliasPeakHint(name: string | undefined | null): number | undefin
  *
  *   - An explicit descriptor `tonemap=` is honored, {@link canonicalizeTonemap}d
  *     to one of the 5 (a deprecated `extended*` alias resolves to its curve).
- *   - An UNSET descriptor defaults by surface: `"linear"` on an engaged HDR
- *     surface (managed determinism — the PEAK default is 4, so the raw-extended
- *     default of the pre-unification build is REPLACED by managed Linear · P=4;
- *     manual PEAK=∞ recovers the raw browser-clipped look), `"srgb"` on SDR (the
- *     bit-exact round-trip for an already-sRGB 8-bit source).
+ *   - An UNSET descriptor defaults to `"srgb"` on EVERY surface (user
+ *     decision): on SDR it is the bit-exact round-trip for an already-sRGB
+ *     8-bit source; on an engaged HDR surface it is the extended sRGB encode
+ *     with the managed PEAK ceiling (default P=4) — the tev-default rendition.
+ *     Manual PEAK=∞ recovers the raw browser-clipped look; Linear stays one
+ *     menu click away.
  *
  * Pure (no DOM / GPU) so it is unit-tested directly. The panes layer a
  * view-local override on top of this default; HOME clears the override back to
@@ -420,7 +421,8 @@ export function resolveEffectiveTonemap(
   descriptorTonemap: string | undefined | null,
   hdrSurfaceEngaged: boolean,
 ): TonemapOperator {
-  if (descriptorTonemap == null) return hdrSurfaceEngaged ? "linear" : "srgb";
+  void hdrSurfaceEngaged; // one default for every surface (see doc above)
+  if (descriptorTonemap == null) return "srgb";
   return canonicalizeTonemap(descriptorTonemap);
 }
 
