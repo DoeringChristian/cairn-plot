@@ -606,9 +606,9 @@ def main() -> None:
     )
 
     if args.open:
-        import webbrowser
+        from _open import open_in_browser
 
-        webbrowser.open(out.as_uri())
+        open_in_browser(out)
     else:
         opener = "open" if sys.platform == "darwin" else "xdg-open"
         print(f"Open it:  {opener} {out}")

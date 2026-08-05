@@ -95,9 +95,9 @@ def main() -> None:
     size_kb = path.stat().st_size // 1024
     print(f"Rendered URL-image demo → {path}  ({size_kb} KB; needs network to view)")
     if args.open:
-        import webbrowser
+        from _open import open_in_browser
 
-        webbrowser.open(path.as_uri())
+        open_in_browser(path)
     else:
         print(f"Open it:  open {path}")
 
