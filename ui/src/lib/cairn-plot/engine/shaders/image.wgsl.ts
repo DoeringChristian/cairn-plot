@@ -54,6 +54,11 @@
  *     = srgbDecode (f32, 0/1 — sRGB-DECODE the sampled source to linear BEFORE
  *       exposure; set for an 8-bit sRGB source on the SDR display-transfer path,
  *       0 for the HDR/float path)
+ *   logical binding 9 (`u_bind9: f32`, native binding 9*3+2=29):
+ *     = hdrEncodeLegacy (f32, 0/1 — TEMPORARY A/B seam: when 1 AND hdrOut,
+ *       restores the OLD raw-scene-linear behavior instead of the extended
+ *       output-encode; default 0 = correct extended encode. See the fs_main
+ *       hdrOut branch + ImageParams.hdrEncodeLegacy.)
  *
  * ## Out-of-bounds -> fully transparent (Q18)
  * `uvRect` (`u_bind3`) is the zoom/pan WINDOW in source-space `[0,1]`; when
@@ -110,6 +115,18 @@
  * `undefined`, so "unset" is encoded as `gamma <= 0`, matching
  * `image-engine.ts`'s `ImageParams.gamma?: number` -> uniform packing, which
  * writes `0` for an absent/non-positive `gamma`).
+ *
+ * ## HDR-out (extended) encode porting (verbatim from `image/tonemap.ts`)
+ * On the `hdrOut` path the fragment runs the EXTENDED transfer encode
+ * (`extendedOutputEncodeF` -> `extendedSrgbOetf` / `extendedGammaEncode`),
+ * porting `image/tonemap.ts`'s `extendedOutputEncode` term-for-term: the SAME
+ * sRGB / power curves as the SDR encoders but UNCLAMPED (no `clamp(x,0,1)`, so
+ * values past 1 survive as extended brightness) and MIRRORED through the origin
+ * for negatives (`sign(x)*f(|x|)`). This is REQUIRED, not optional: a float16
+ * `srgb`/`display-p3` canvas stores TRANSFER-ENCODED (non-linear) signals per
+ * W3C ColorWeb-CG (`hdr_html_canvas_element` + `canvas-color-space`), so writing
+ * raw scene-linear values (the old behavior, now only under the TEMPORARY
+ * `hdrEncodeLegacy` A/B seam) renders too dark/contrasty.
  *
  * ## Colormap LUT (scalar-image path)
  * `t_bind1` is a `256x1 rgba32float` texture (or a 1x1 placeholder when
@@ -186,6 +203,13 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // (zero-filled when the caller omits it) — the HDR/float path leaves it off, so
 // a scene-linear source is untouched and every existing case renders as before.
 @group(0) @binding(26) var<uniform> u_bind8: f32;
+// Logical binding 9 (uniform f32: hdrEncodeLegacy, 0/1) -> native binding 9*3+2 = 29.
+// *** TEMPORARY A/B SEAM (remove once the extended encode is visually validated
+// on a real HDR display against tev). *** When 1 AND hdrOut, the shader RESTORES
+// the OLD raw-scene-linear behavior (skips the extended output-encode) so the
+// user can flip ?hdrEncode=legacy to compare old-vs-new on their HDR panel.
+// Default 0 (zero-filled when the caller omits it) = the CORRECT extended encode.
+@group(0) @binding(29) var<uniform> u_bind9: f32;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -215,6 +239,34 @@ fn outputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
     return clamp(pow(clamp(x, 0.0, 1.0), 1.0 / gamma), 0.0, 1.0);
   }
   return srgbOetf(x);
+}
+
+// --- EXTENDED output-encode (HDR-out / extended-surface transfer) — ported
+// BYTE-IDENTICALLY from image/tonemap.ts's extendedSrgbOetf / extendedGammaEncode
+// / extendedOutputEncode. See that file's doc block for WHY: a float16 canvas in
+// "srgb"/"display-p3" (the hdrOut surface) stores TRANSFER-ENCODED (non-linear)
+// signals per W3C ColorWeb-CG, so the hdrOut path must ENCODE the display-linear
+// light the operator produced, not hand over raw scene-linear values. Same
+// piecewise sRGB / power curves as the SDR encoders but UNCLAMPED (values past 1
+// survive as extended brightness) and MIRRORED through the origin for negatives
+// (sign(x)*f(|x|)). ---
+
+fn extendedSrgbOetf(x: f32) -> f32 {
+  let a = abs(x);
+  let s = sign(x);
+  if (a <= 0.0031308) { return s * 12.92 * a; }
+  return s * (1.055 * pow(a, 1.0 / 2.4) - 0.055);
+}
+
+fn extendedGammaEncode(x: f32, gamma: f32) -> f32 {
+  let a = abs(x);
+  let s = sign(x);
+  return s * pow(a, 1.0 / gamma);
+}
+
+fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
+  if (hasGamma) { return extendedGammaEncode(x, gamma); }
+  return extendedSrgbOetf(x);
 }
 
 fn reinhardCurve(x: f32) -> f32 {
@@ -356,6 +408,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let offset = u_bind6;
   let peak = u_bind7;
   let srgbDecode = u_bind8 > 0.5;
+  let hdrEncodeLegacy = u_bind9 > 0.5;
 
   // 0) [SDR display-transfer path] sRGB-DECODE the sampled 8-bit source to
   //    linear light so exposure/offset + the chosen transfer operate on linear
@@ -386,11 +439,26 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   //    the extended roll-off operators, which stay HDR-out).
   rgb = applyOperator(rgb, operatorId, peak);
 
-  // 4) output-encode (skipped for an HDR-linear target).
-  if (hdrOut) {
-    return vec4<f32>(rgb, 1.0);
-  }
+  // 4) output-encode.
   let hasGamma = gamma > 0.0;
+  if (hdrOut) {
+    // EXTENDED HDR surface (rgba16float, srgb/display-p3): the canvas stores
+    // TRANSFER-ENCODED (non-linear) signals per W3C ColorWeb-CG, so ENCODE the
+    // display-linear light the operator produced — the extended (unclamped,
+    // origin-mirrored) sRGB OETF, or the extended power curve for the Gamma
+    // operator (hasGamma). Values above 1 / below 0 survive as extended
+    // brightness. See extendedOutputEncodeF + image/tonemap.ts's doc block.
+    // TEMPORARY A/B: hdrEncodeLegacy restores the OLD raw-scene-linear write.
+    if (hdrEncodeLegacy) {
+      return vec4<f32>(rgb, 1.0);
+    }
+    return vec4<f32>(
+      extendedOutputEncodeF(rgb.r, gamma, hasGamma),
+      extendedOutputEncodeF(rgb.g, gamma, hasGamma),
+      extendedOutputEncodeF(rgb.b, gamma, hasGamma),
+      1.0,
+    );
+  }
   return vec4<f32>(
     outputEncodeF(rgb.r, gamma, hasGamma),
     outputEncodeF(rgb.g, gamma, hasGamma),

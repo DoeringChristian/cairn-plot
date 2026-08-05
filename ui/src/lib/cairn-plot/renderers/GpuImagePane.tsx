@@ -301,6 +301,19 @@ export function screenPxPerTexel(
   return Math.min(box.width / visibleW, box.height / visibleH);
 }
 
+// *** TEMPORARY A/B SEAM (remove after HDR-display visual validation). ***
+// `?hdrEncode=legacy` in the page URL restores the OLD raw-scene-linear hdrOut
+// write (no extended output-encode) so the user can flip old-vs-new on a real
+// HDR panel against tev. Any other value (or absent) = the CORRECT extended
+// encode. Read once at module load; flip the query param and reload to switch.
+const HDR_ENCODE_LEGACY: boolean = (() => {
+  try {
+    return new URLSearchParams(window.location.search).get("hdrEncode") === "legacy";
+  } catch {
+    return false;
+  }
+})();
+
 export default function GpuImagePane(props: ImageBackendProps) {
   const hdrMode = isHdrProps(props);
 
@@ -784,20 +797,20 @@ export default function GpuImagePane(props: ImageBackendProps) {
     // `"extended"` (a pure identity — see `image/tonemap.ts`'s doc on that
     // entry): with a real HDR surface (`hdrOut:true` -> `rgba16float` +
     // `toneMapping:'extended'`, `engine/webgpu/surface.ts`'s
-    // `configureHDRSurface`) there is nothing to compress — Chrome's extended
-    // tone-mapping mode expects raw scene-linear values and maps them to the
-    // panel's peak brightness itself; `gamma` is then irrelevant (the shader's
-    // output-encode stage, its only reader, is skipped when `hdrOut` is set).
-    // The default (`"extended"`, Extended·Linear) is a pure identity — with a
-    // real HDR surface (`hdrOut:true` -> `rgba16float` + `toneMapping:'extended'`,
-    // `engine/webgpu/surface.ts`'s `configureHDRSurface`) there is nothing to
-    // compress. The two roll-off siblings (extended-reinhard/-aces) are ALSO
-    // HDR-out — they emit display-linear light up to `peak` for the surface to
-    // map. So `hdrOut` is set for ANY extended operator (`isHdrTonemap`), guarded
-    // by `useHdrRef` so a stale extended pick can never request HDR-out on a
-    // non-HDR surface. `gamma` is irrelevant on that path (the output-encode
-    // stage, its only reader, is skipped when `hdrOut` is set). If the user
-    // instead selects an SDR operator on such a pane, `hdrOut` drops to false and
+    // `configureHDRSurface`) there is no tone COMPRESSION to do — the operator
+    // is an identity — but the shader STILL runs the EXTENDED output-encode: a
+    // float16 srgb/display-p3 canvas stores TRANSFER-ENCODED (non-linear)
+    // signals per W3C ColorWeb-CG, so the display-linear light is encoded with
+    // the unclamped extended sRGB OETF (values past 1 survive as extended
+    // brightness) — NOT written raw. The two roll-off siblings (extended-
+    // reinhard/-aces) are ALSO HDR-out — they emit display-linear light up to
+    // `peak`, then the same extended encode. So `hdrOut` is set for ANY extended
+    // operator (`isHdrTonemap`), guarded by `useHdrRef` so a stale extended pick
+    // can never request HDR-out on a non-HDR surface. `gamma` selects the
+    // extended encode's transfer (sRGB OETF unless the Gamma operator is active).
+    // (`hdrEncodeLegacy`, the ?hdrEncode=legacy A/B seam, restores the OLD raw
+    // write for visual validation.) If the user instead selects an SDR operator
+    // on such a pane, `hdrOut` drops to false and
     // the operator + output-encode run — tone-mapping INTO SDR range to preview
     // the SDR rendition on the HDR display. `peak` is read only by the roll-off
     // operators (ignored otherwise).
@@ -808,11 +821,14 @@ export default function GpuImagePane(props: ImageBackendProps) {
           offset: displayOffset,
           operator: effectiveTonemap,
           // The output-encode transfer, selected by the operator in effect
-          // (gamma → γ, linear → identity, else sRGB OETF). Irrelevant on the
-          // hdrOut path (encode skipped). See image/tonemap.ts's resolveEncodeGamma.
+          // (gamma → γ, linear → identity, else sRGB OETF). On the hdrOut path it
+          // now selects the EXTENDED encode's transfer (extended sRGB OETF unless
+          // the Gamma operator is active). See image/tonemap.ts's resolveEncodeGamma.
           gamma: resolveEncodeGamma(effectiveTonemap, tonemapGamma),
           isScalar: false,
           hdrOut,
+          // TEMPORARY A/B seam (?hdrEncode=legacy) — see HDR_ENCODE_LEGACY above.
+          hdrEncodeLegacy: HDR_ENCODE_LEGACY,
           peak,
           uv,
           filter,

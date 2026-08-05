@@ -19,7 +19,12 @@
  *      see `image/tonemap.ts`'s doc comment on that entry — so values above
  *      1.0 survive this stage on purpose when paired with `hdrOut:true` and
  *      a real HDR (`rgba16float`/`toneMapping:'extended'`) target.)
- *   5. encode:    out = hdrOut ? rgb : outputEncode(rgb, gamma)
+ *   5. encode:    out = hdrOut ? extendedOutputEncode(rgb, gamma)
+ *                              : outputEncode(rgb, gamma)
+ *      (the hdrOut branch runs the EXTENDED, unclamped transfer encode — a
+ *      float16 srgb/display-p3 canvas stores NON-LINEAR signals per W3C
+ *      ColorWeb-CG; the TEMPORARY `hdrEncodeLegacy` A/B seam restores the old
+ *      raw-scene-linear write. See image/tonemap.ts's extendedOutputEncode.)
  *
  * ## Not wired into any renderer/bundle entry point yet
  * Per the Task 5 brief: this module (and its shaders) may be imported by a
@@ -60,8 +65,19 @@ export interface ImageParams {
   colormap?: Float32Array;
   /** When true, `rgb.r` (post-exposure) indexes `colormap` instead of being tone-mapped directly. */
   isScalar: boolean;
-  /** When true, skip the output-encode stage and write display-linear float straight to `target`. */
+  /** When true, run the EXTENDED output-encode (unclamped, origin-mirrored sRGB
+   *  OETF / power curve) and write the transfer-encoded float to `target` — the
+   *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
+   *  raw scene-linear; per W3C ColorWeb-CG a float16 srgb/display-p3 canvas
+   *  stores non-linear signals, so the encode is required. See image/tonemap.ts's
+   *  extendedOutputEncode doc block.) */
   hdrOut: boolean;
+  /** *** TEMPORARY A/B seam (remove after HDR-display visual validation). ***
+   *  When true AND `hdrOut`, restore the OLD raw-scene-linear behavior (skip the
+   *  extended encode) so the user can flip `?hdrEncode=legacy` and compare
+   *  old-vs-new on a real HDR panel against tev. Unset = false = correct encode;
+   *  every non-hdrOut path ignores it, so omitting it renders bit-for-bit as before. */
+  hdrEncodeLegacy?: boolean;
   /** When true, sRGB-DECODE the sampled source to linear BEFORE exposure — an
    *  8-bit sRGB source going through the SDR display-transfer pipeline (tev-style
    *  decode→exposure→operator→encode). Unset = false: the HDR/float path leaves a
@@ -195,6 +211,9 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const peakVec = new Float32Array([params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT]);
   // u_bind8 = srgbDecode flag (default 0 = no decode; the HDR/float path).
   const srgbDecodeVec = new Float32Array([params.srgbDecode ? 1 : 0]);
+  // u_bind9 = hdrEncodeLegacy flag (TEMPORARY A/B; default 0 = correct extended
+  // encode). Only read on the hdrOut path — see image.wgsl.ts's fs_main.
+  const hdrEncodeLegacyVec = new Float32Array([params.hdrEncodeLegacy ? 1 : 0]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -208,6 +227,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 6, resource: { uniform: offsetVec } },
       { binding: 7, resource: { uniform: peakVec } },
       { binding: 8, resource: { uniform: srgbDecodeVec } },
+      { binding: 9, resource: { uniform: hdrEncodeLegacyVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

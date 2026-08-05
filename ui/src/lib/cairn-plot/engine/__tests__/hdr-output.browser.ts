@@ -25,7 +25,13 @@
  *
  * CASES:
  *   1. HDR path: `operator:"extended"`, `hdrOut:true`, target `rgba16float`.
- *      A pixel of (4,4,4,1) survives readback as ~(4,4,4,1) — NOT clamped.
+ *      A pixel of (4,4,4,1) survives readback ABOVE 1.0 (extended brightness,
+ *      NOT clamped) but TRANSFER-ENCODED — extendedSrgbOetf(4)≈1.8248, NOT the
+ *      raw 4.0. This is the display-profile fix: a float16 srgb/display-p3
+ *      canvas stores non-linear signals per W3C ColorWeb-CG, so the hdrOut path
+ *      ENCODES rather than writing raw scene-linear.
+ *   1b. LEGACY A/B seam: the SAME with `hdrEncodeLegacy:true` reads back RAW
+ *      ~4.0 (the OLD behavior, restored by `?hdrEncode=legacy` for visual A/B).
  *   2. SDR path: `operator:"srgb"` (GpuImagePane's SDR-fallback default),
  *      `hdrOut:false`, target `rgba8unorm` (a real display-surface format).
  *      The SAME (4,4,4,1) source pixel clamps+encodes to byte 255 on every
@@ -49,6 +55,7 @@
  */
 import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams } from "../image-engine";
+import { extendedSrgbOetf } from "../../image/tonemap";
 import type { Device, Texture } from "../types";
 
 function report(pass: boolean, message: string): void {
@@ -83,7 +90,9 @@ function buildBrightSrcTexture(device: Device): Texture {
 
 const UV_FULL = { x: 0, y: 0, w: 1, h: 1 };
 
-/** Case 1 — HDR path: renders to a real rgba16float target with operator:"extended" + hdrOut:true. */
+/** Case 1 — HDR path: renders to a real rgba16float target with operator:"extended" + hdrOut:true.
+ *  Post-fix: the (4,4,4) source reads back ENCODED — extendedSrgbOetf(4)≈1.8248,
+ *  still >1.0 (extended brightness preserved) but NOT the raw 4.0. */
 async function runHdrCase(device: Device): Promise<boolean> {
   const src = buildBrightSrcTexture(device);
   const target = device.createTexture(1, 1, "rgba16float");
@@ -97,16 +106,38 @@ async function runHdrCase(device: Device): Promise<boolean> {
     report(false, `[hdr] readback() should return Float32Array for rgba16float, got ${(out as { constructor: { name: string } }).constructor.name}`);
     return false;
   }
+  const expected = extendedSrgbOetf(4); // ≈1.8248
   let ok = true;
   for (let c = 0; c < 3; c++) {
     const v = out[c]!;
-    const chOk = Math.abs(v - 4) <= 0.05; // float16 round-trip tolerance
+    const chOk = Math.abs(v - expected) <= 0.02; // float16 round-trip tolerance near 1.8
     if (!chOk) ok = false;
-    report(chOk, `[hdr] ch[${c}] expected~=4.0 (unclamped) actual=${v.toFixed(4)}`);
+    report(chOk, `[hdr] ch[${c}] expected~=${expected.toFixed(4)} (ENCODED, not raw 4.0) actual=${v.toFixed(4)}`);
   }
   const survivedPast1 = out[0]! > 1.0 && out[1]! > 1.0 && out[2]! > 1.0;
-  report(survivedPast1, `[hdr] pixel value survives PAST 1.0 (not clamped) — rgb=(${out[0]!.toFixed(3)}, ${out[1]!.toFixed(3)}, ${out[2]!.toFixed(3)})`);
-  return ok && survivedPast1;
+  report(survivedPast1, `[hdr] value survives PAST 1.0 (extended brightness, not clamped) — rgb=(${out[0]!.toFixed(3)}, ${out[1]!.toFixed(3)}, ${out[2]!.toFixed(3)})`);
+  const notRawLinear = Math.abs(out[0]! - 4.0) > 1.0;
+  report(notRawLinear, `[hdr] value is ENCODED (${out[0]!.toFixed(3)}), NOT raw scene-linear 4.0 — the display-profile fix`);
+  return ok && survivedPast1 && notRawLinear;
+}
+
+/** Case 1b — LEGACY A/B seam: hdrEncodeLegacy:true restores the OLD raw write (~4.0). */
+async function runHdrLegacyCase(device: Device): Promise<boolean> {
+  const src = buildBrightSrcTexture(device);
+  const target = device.createTexture(1, 1, "rgba16float");
+  const params: ImageParams = { exposureEV: 0, operator: "extended", isScalar: false, hdrOut: true, hdrEncodeLegacy: true, uv: UV_FULL };
+  renderImage(device, target, src, params);
+  const out = await device.readback(target);
+  src.destroy();
+  target.destroy();
+
+  if (!(out instanceof Float32Array)) {
+    report(false, `[hdr-legacy] readback() should return Float32Array, got ${(out as { constructor: { name: string } }).constructor.name}`);
+    return false;
+  }
+  const isRaw = Math.abs(out[0]! - 4.0) <= 0.05;
+  report(isRaw, `[hdr-legacy] ?hdrEncode=legacy restores RAW scene-linear 4.0 (actual=${out[0]!.toFixed(4)})`);
+  return isRaw;
 }
 
 /** Case 2 — SDR path: renders the SAME source pixel to a real rgba8unorm target with operator:"srgb" + hdrOut:false. */
@@ -148,9 +179,10 @@ async function main(): Promise<void> {
     }
 
     const hdrOk = await runHdrCase(device);
+    const hdrLegacyOk = await runHdrLegacyCase(device);
     const sdrOk = await runSdrCase(device);
-    const allOk = hdrOk && sdrOk;
-    report(allOk, `HDR value (>1.0, unclamped) and SDR value (clamped to 255) are OBJECTIVELY DIFFERENT — HDR output is real, not SDR-tonemapped-in-disguise`);
+    const allOk = hdrOk && hdrLegacyOk && sdrOk;
+    report(allOk, `HDR value (>1.0, extended-ENCODED) and SDR value (clamped to 255) are OBJECTIVELY DIFFERENT — HDR output is real, not SDR-tonemapped-in-disguise; legacy seam restores raw`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `Uncaught error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);

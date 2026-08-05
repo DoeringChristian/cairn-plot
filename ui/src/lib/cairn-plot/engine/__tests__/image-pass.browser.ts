@@ -38,9 +38,14 @@
  *   9. `uv` viewport window (zoom/pan): samples only a sub-rect of a wider
  *      source texture, proving the windowing math (not just full-frame
  *      sampling) is wired correctly.
- *   10. `hdrOut: true` to an `rgba32float` target — output-encode is
- *      SKIPPED; compared as floats (looser epsilon; no 8-bit quantization
- *      to absorb GPU-vs-CPU float32/float64 precision differences).
+ *   10. `hdrOut: true` to an `rgba32float` target — the EXTENDED output-encode
+ *      runs (a float16 srgb/display-p3 canvas stores transfer-encoded signals
+ *      per W3C ColorWeb-CG); compared as floats (looser epsilon; no 8-bit
+ *      quantization to absorb GPU-vs-CPU float32/float64 precision diffs).
+ *   11. `hdrOut` ENCODE PROOF: a raw-linear input reads back ENCODED, NOT equal
+ *      to the raw value (the fix), and the TEMPORARY `hdrEncodeLegacy` seam
+ *      reads it back RAW (the old behavior) — asserts the render-target holds
+ *      encoded values under the default hdrOut path.
  *
  * RUNNING:
  *   1. Bundle this file to plain JS:
@@ -62,6 +67,7 @@ import {
   applyExposure,
   applyTonemapOperatorTriple,
   outputEncode,
+  extendedOutputEncode,
   srgbEotf,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
@@ -163,7 +169,18 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
     params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,
   );
 
-  if (params.hdrOut) return toned;
+  if (params.hdrOut) {
+    // TEMPORARY A/B seam: legacy = the OLD raw-scene-linear write (no encode).
+    if (params.hdrEncodeLegacy) return toned;
+    // The extended-surface path ENCODES (not skips): a float16 srgb/display-p3
+    // canvas stores transfer-encoded signals per W3C ColorWeb-CG. Extended
+    // (unclamped, origin-mirrored) sRGB OETF / power curve.
+    return [
+      extendedOutputEncode(toned[0], params.gamma),
+      extendedOutputEncode(toned[1], params.gamma),
+      extendedOutputEncode(toned[2], params.gamma),
+    ];
+  }
   return [outputEncode(toned[0], params.gamma), outputEncode(toned[1], params.gamma), outputEncode(toned[2], params.gamma)];
 }
 
@@ -425,6 +442,38 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const params: ImageParams = { exposureEV: 0.5, operator: "aces", isScalar: false, hdrOut: true, uv: uvFull };
     const r = await runHdrOutCase(device, caseLabel, GRADIENT_PIXELS, params);
     results.set(caseLabel, r);
+  }
+
+  {
+    // ENCODE PROOF (the display-profile fix): under hdrOut the render-target must
+    // hold TRANSFER-ENCODED values (extended sRGB OETF), NOT raw scene-linear. A
+    // single 4.0 pixel with operator "extended" (identity): the render-target
+    // reads back extendedSrgbOetf(4)≈1.8248 (encoded, still >1 = extended
+    // brightness) — DISTINCT from the raw 4.0. runHdrOutCase already asserts the
+    // value equals computeExpectedRGB (now the extended encode); here we ALSO
+    // assert it is NOT the raw-linear value, and that the TEMPORARY
+    // hdrEncodeLegacy seam restores the raw 4.0.
+    const caseLabel = `${label}/hdrOut/encode-proof`;
+    const BRIGHT: number[][] = [[4, 4, 4, 1]];
+    const encParams: ImageParams = { exposureEV: 0, operator: "extended", isScalar: false, hdrOut: true, uv: uvFull };
+    const encoded = await runHdrOutCase(device, `${caseLabel}/encoded`, BRIGHT, encParams);
+    results.set(`${caseLabel}/encoded`, encoded);
+    if (encoded.out instanceof Float32Array) {
+      const v = encoded.out[0]!;
+      const isEncoded = Math.abs(v - 1.8247963) <= 0.01 && Math.abs(v - 4.0) > 1.0;
+      report(isEncoded, `[${caseLabel}] hdrOut render-target is ENCODED (${v.toFixed(4)}≈1.8248), NOT raw-linear 4.0`);
+      if (!isEncoded) results.set(`${caseLabel}/assert`, { label: caseLabel, ok: false, out: null });
+    }
+    // Legacy A/B seam: raw scene-linear survives (old behavior).
+    const legacyParams: ImageParams = { ...encParams, hdrEncodeLegacy: true };
+    const legacy = await runHdrOutCase(device, `${caseLabel}/legacy`, BRIGHT, legacyParams);
+    results.set(`${caseLabel}/legacy`, legacy);
+    if (legacy.out instanceof Float32Array) {
+      const v = legacy.out[0]!;
+      const isRaw = Math.abs(v - 4.0) <= 0.05;
+      report(isRaw, `[${caseLabel}/legacy] ?hdrEncode=legacy restores RAW scene-linear (${v.toFixed(4)}≈4.0)`);
+      if (!isRaw) results.set(`${caseLabel}/legacy-assert`, { label: caseLabel, ok: false, out: null });
+    }
   }
 
   // Extended HDR operators (peak-parameterized) — hdrOut float target, so

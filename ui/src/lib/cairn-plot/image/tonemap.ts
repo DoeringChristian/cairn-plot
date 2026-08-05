@@ -431,6 +431,80 @@ export function outputEncode(x: number, gamma?: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// EXTENDED output-encode (the HDR-out / extended-surface transfer).
+//
+// WHY THIS EXISTS. When a pane engages its true-HDR surface (`hdrOut:true` —
+// `rgba16float` canvas, `toneMapping:'extended'`, colorSpace `srgb`/`display-p3`
+// — see `engine/webgpu/surface.ts`'s `configureHDRSurface` + `GpuImagePane`'s
+// `useHdr`), the shader used to SKIP the output-encode and write RAW
+// SCENE-LINEAR values to the canvas. That is WRONG. Per the W3C ColorWeb-CG
+// specs (`hdr_html_canvas_element` + `canvas-color-space`), a float16 canvas in
+// `"srgb"`/`"display-p3"` stores TRANSFER-ENCODED (NON-LINEAR) signals — a
+// stored 0.5 is encoded 0.5 (≈0.214 LINEAR light), and values ABOVE 1 (extended
+// brightness) and BELOW 0 are legal. The separate `"srgb-linear"` color space
+// is the one that stores linear light. So the extended surface needs the SAME
+// transfer encode the SDR path applies — just UNCLAMPED so values past 1 (and
+// below 0) survive to the compositor as extended brightness.
+//
+// These mirror the SDR encoders above (`srgbOetf` / `outputEncode`) but:
+//   - apply the piecewise curve to ALL magnitudes (no `clamp01` on the input),
+//     valid for `x > 1` (the extended-sRGB regime), and
+//   - MIRROR through the origin for negatives — `sign(x)·f(|x|)` — per the
+//     extended-sRGB (scRGB / bt.2100-adjacent) convention.
+// Ported BYTE-IDENTICALLY into `engine/shaders/image.wgsl.ts`
+// (`extendedSrgbOetf` / `extendedGammaEncode` / `extendedOutputEncodeF`); the
+// GPU↔TS parity harness (`engine/__tests__/hdr-output.browser.ts`) checks them.
+// ---------------------------------------------------------------------------
+
+/**
+ * EXTENDED sRGB OETF (scene-linear → non-linear extended-sRGB code). The
+ * standard sRGB piecewise curve applied to ALL magnitudes (NOT clamped to
+ * [0,1]) and mirrored through the origin: `sign(x)·oetf(|x|)`. For `|x| > 1`
+ * this keeps the `1.055·|x|^(1/2.4) − 0.055` branch, so an above-white
+ * scene-linear value maps to an above-1 encoded value the extended HDR canvas
+ * renders as extended brightness. Continuous with {@link srgbOetf} on [0,1]
+ * (`extendedSrgbOetf(1) === 1`).
+ *
+ * Goldens (tonemap.test.ts): `extendedSrgbOetf(0.5) ≈ 0.735357`;
+ * `extendedSrgbOetf(4) = 1.055·4^(1/2.4) − 0.055 ≈ 1.824796`;
+ * `extendedSrgbOetf(-0.5) ≈ -0.735357` (negative mirror).
+ */
+export function extendedSrgbOetf(x: number): number {
+  const a = Math.abs(x);
+  const s = Math.sign(x);
+  if (a <= 0.0031308) return s * 12.92 * a;
+  return s * (1.055 * Math.pow(a, 1 / 2.4) - 0.055);
+}
+
+/**
+ * EXTENDED power (gamma) encode: `sign(x)·|x|^(1/γ)` — the UNCLAMPED,
+ * origin-mirrored analog of the SDR `pow(x,1/γ)` transfer, used on the HDR-out
+ * path when the Gamma display operator is in effect (tev "Gamma" on an HDR
+ * surface). Unlike {@link outputEncode}'s gamma branch it does NOT clamp, so an
+ * above-white value stays above 1 after encode; `γ` defaults are the caller's
+ * (`resolveEncodeGamma`).
+ */
+export function extendedGammaEncode(x: number, gamma: number): number {
+  const g = gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT;
+  const a = Math.abs(x);
+  const s = Math.sign(x);
+  return s * Math.pow(a, 1 / g);
+}
+
+/**
+ * OUTPUT-ENCODE for the HDR-out (extended) surface — the extended analog of
+ * {@link outputEncode}, selected by the SAME `gamma` convention: a positive
+ * `gamma` uses {@link extendedGammaEncode} (the Gamma operator's transfer),
+ * otherwise {@link extendedSrgbOetf}. NEVER clamps (the whole point of the
+ * extended surface is that values above 1 / below 0 survive). Mirrors
+ * `image.wgsl.ts`'s `extendedOutputEncodeF`.
+ */
+export function extendedOutputEncode(x: number, gamma?: number): number {
+  if (typeof gamma === "number" && gamma > 0) return extendedGammaEncode(x, gamma);
+  return extendedSrgbOetf(x);
+}
+
+// ---------------------------------------------------------------------------
 // Gamma(γ) display-transfer operator — the tev "Gamma" mode as a first-class
 // tone-map operator. See the `gamma` entry in `TONEMAP_OPERATORS` for the
 // mechanism: the operator's RANGE-MAP is the plain clamp; the γ power curve is

@@ -34,6 +34,9 @@ import {
   srgbOetf,
   srgbEotf,
   outputEncode,
+  extendedSrgbOetf,
+  extendedGammaEncode,
+  extendedOutputEncode,
   type RgbTriple,
 } from "./tonemap.ts";
 
@@ -372,4 +375,53 @@ test("outputEncode: sRGB OETF by default (all operators), gamma overrides", () =
   approx(outputEncode(0.25, 2), 0.5);
   // gamma<=0 falls back to sRGB (not identity)
   approx(outputEncode(0.3, 0), srgbOetf(0.3));
+});
+
+// ---------------------------------------------------------------------------
+// EXTENDED output-encode (the HDR-out / extended-surface transfer). Goldens
+// pinned so the WGSL port (image.wgsl.ts's extendedSrgbOetf / extendedGammaEncode
+// / extendedOutputEncodeF) stays byte-identical.
+// ---------------------------------------------------------------------------
+
+test("extendedSrgbOetf: golden values (0.5, 4.0, negative mirror, continuity)", () => {
+  // 0.5 -> 1.055*0.5^(1/2.4)-0.055 ≈ 0.7353569 (same as srgbOetf on [0,1]).
+  approx(extendedSrgbOetf(0.5), 1.055 * Math.pow(0.5, 1 / 2.4) - 0.055, 1e-12);
+  approx(extendedSrgbOetf(0.5), 0.7353569830524495, 1e-12);
+  // ABOVE 1 (the whole point): 4.0 -> 1.055*4^(1/2.4)-0.055 ≈ 1.8247963 — an
+  // encoded value > 1 the extended HDR canvas renders as extended brightness.
+  // (NB: the task brief's "≈1.848" is a typo for the formula it quotes; the
+  // formula 1.055*4^(1/2.4)-0.055 evaluates to 1.8247963.)
+  approx(extendedSrgbOetf(4.0), 1.055 * Math.pow(4, 1 / 2.4) - 0.055, 1e-12);
+  approx(extendedSrgbOetf(4.0), 1.8247962952761159, 1e-9);
+  // Continuous with srgbOetf at white and origin.
+  approx(extendedSrgbOetf(1.0), 1.0, 1e-12);
+  approx(extendedSrgbOetf(0.0), 0.0, 1e-12);
+  // Negative mirror: sign(x)*oetf(|x|).
+  approx(extendedSrgbOetf(-0.5), -extendedSrgbOetf(0.5), 1e-12);
+  approx(extendedSrgbOetf(-4.0), -1.8247962952761159, 1e-9);
+  // Linear segment below the split point (magnitude-based).
+  approx(extendedSrgbOetf(0.002), 12.92 * 0.002, 1e-12);
+  approx(extendedSrgbOetf(-0.002), -12.92 * 0.002, 1e-12);
+  // Matches the SDR srgbOetf exactly on [0,1] (where srgbOetf does not clamp).
+  for (let x = 0; x <= 1; x += 0.05) approx(extendedSrgbOetf(x), srgbOetf(x), 1e-12);
+});
+
+test("extendedGammaEncode: unclamped, origin-mirrored power curve", () => {
+  // sign(x)*|x|^(1/γ), unclamped (values past 1 survive).
+  approx(extendedGammaEncode(4.0, 2.2), Math.pow(4, 1 / 2.2), 1e-12);
+  approx(extendedGammaEncode(0.25, 2.0), 0.5, 1e-12);
+  approx(extendedGammaEncode(1.0, 2.2), 1.0, 1e-12);
+  // Negative mirror.
+  approx(extendedGammaEncode(-0.25, 2.0), -0.5, 1e-12);
+});
+
+test("extendedOutputEncode: gamma convention mirrors outputEncode (unclamped)", () => {
+  // No/<=0 gamma → extended sRGB OETF.
+  approx(extendedOutputEncode(4.0), extendedSrgbOetf(4.0), 1e-12);
+  approx(extendedOutputEncode(0.3, 0), extendedSrgbOetf(0.3), 1e-12);
+  // Positive gamma → extended power curve.
+  approx(extendedOutputEncode(4.0, 2.2), extendedGammaEncode(4.0, 2.2), 1e-12);
+  // NEVER clamps (unlike SDR outputEncode, which clamps to [0,1]).
+  assert.ok(extendedOutputEncode(4.0) > 1.0, "extended encode preserves >1 (extended brightness)");
+  assert.ok(outputEncode(4.0) <= 1.0, "SDR outputEncode clamps to [0,1] (contrast)");
 });
