@@ -63,6 +63,11 @@ export interface HdrImageProps {
   tonemap?: string;
   exposure?: number;
   gamma?: number;
+  /** Default PEAK ceiling `P` (×SDR white) — the UNIFIED HDR mode: every operator
+   *  clips at `P` (SDR = `P=1`, `P>1` extends onto an HDR surface, `P=∞`/`Infinity`
+   *  = raw browser-clipped). Seeds the pane's PEAK slider; unset → the pane default
+   *  (4 on an engaged HDR surface). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
+  peak?: number;
   showAxes?: boolean;
   label?: string;
   interpolation?: Interpolation;

@@ -92,35 +92,33 @@ Brave-specific gotchas:
 
 ## Cross-browser HDR consistency
 
-Under **Extended · Linear** the browser decides how unclamped values meet
-the display — headroom clipping and reference-white handling are not
-standardized, so the *same* HDR image can legitimately render differently
-in Chrome vs Safari even with both correctly in HDR mode (each clips at its
-own estimate of display headroom, which on macOS also shifts with the
-brightness slider).
+The **PEAK ceiling `P`** governs cross-browser consistency directly (see the
+unified tone-map model in `API.md`). At **`P = ∞`** (double-click PEAK, type
+`inf`) the browser decides how unclamped values meet the display — headroom
+clipping and reference-white handling are not standardized, so the *same* HDR
+image can legitimately render differently in Chrome vs Safari even with both
+correctly in HDR mode (each clips at its own estimate of display headroom, which
+on macOS also shifts with the brightness slider).
 
-When cross-browser consistency matters, the operator to pick depends on what
-you want to preserve:
+When cross-browser consistency matters, pick a **finite `P`** and the curve for
+what you want to preserve:
 
 - **Linearity matters** (e.g. inspecting raw values, side-by-side numeric
-  comparison): pick **Extended · Linear (managed)** (`extended-clamp`). It is a
-  pure identity below the PEAK and a hard clip *at* the PEAK, done in
-  cairn-plot's own shader (GPU↔CPU parity-tested) rather than by the browser —
-  so every HDR browser renders identically below `P`, with the same slope-1
-  linear response the raw **Extended · Linear** gives, minus the per-browser
-  headroom guesswork. This is the **best answer when the display response must
-  be linear and identical across browsers.**
-- **Highlight roll-off is fine** (photographic look, no hard clip): pick
-  **Extended · Reinhard** or **Extended · ACES** with the same PEAK value — the
-  display mapping again happens in cairn-plot's shader, and browsers converge up
-  to their clip point above the chosen peak, but the brightest values roll off
-  smoothly toward `P` instead of clipping.
+  comparison): **Linear** at a finite `P`. It is a pure identity below `P` and a
+  hard clip *at* `P`, done in cairn-plot's own shader (GPU↔CPU parity-tested)
+  rather than by the browser — so every HDR browser renders identically below
+  `P`, with a slope-1 linear response, minus the per-browser headroom guesswork.
+  This is the **best answer when the display response must be linear and
+  identical across browsers.**
+- **Highlight roll-off is fine** (photographic look, no hard clip): **Reinhard**
+  or **ACES** at the same `P` — the display mapping again happens in cairn-plot's
+  shader and browsers converge, but the brightest values roll off smoothly toward
+  `P` instead of clipping.
 
-The raw **Extended · Linear** (`extended`) remains the default because it
-preserves the panel's *full* native headroom (values above `P` are not
-discarded) — at the cost of the cross-browser divergence above. `extended-clamp`
-trades that extra headroom for determinism; it is an explicit opt-in, not the
-default.
+A finite `P` is the **default** (managed determinism — Linear at `P = 4`). Type
+`P = inf` when you instead want the panel's *full* native headroom (values above
+`P` are handed raw to the browser and not clipped by us) — at the cost of the
+cross-browser divergence above.
 
 ### Follow-up: seeding the PEAK default from display headroom
 

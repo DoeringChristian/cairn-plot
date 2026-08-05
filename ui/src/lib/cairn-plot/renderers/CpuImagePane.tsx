@@ -973,10 +973,12 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
-      // TONEMAP menu (HDR/float pane). CPU tone-maps to 8-bit, so no
-      // "Extended (HDR)" option (includeExtended=false). HOME restores the default.
+      // TONEMAP menu (HDR/float pane) — the ONE unified 5-operator group. The
+      // CPU fallback tone-maps to an 8-bit surface (never engages true HDR), so
+      // it is the SDR rendition by construction (P=1, no PEAK slider). HOME
+      // restores the default.
       leadingMenus={[
-        tonemapToolbarButton(tonemapOp, (id) => setTonemapOp(id as TonemapOperator), false),
+        tonemapToolbarButton(tonemapOp, (id) => setTonemapOp(id as TonemapOperator)),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change).

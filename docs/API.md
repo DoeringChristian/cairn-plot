@@ -279,71 +279,67 @@ colored / display-ready, so it is never re-encoded. This is DISTINCT from the
 `cp.Image(..., gamma=)` on an 8-bit source feeds the **display-transfer γ**, not
 `processing.gamma`, so a value is never applied twice.
 
-**Operator-family invariant.** Every operator is ONE peak-parameterized curve;
-the SDR variant IS the extended variant with **P = 1** (the only difference is
-the clip point). `linear` = `clamp(x, 0, P)` (SDR P=1; `extended-clamp` = the
-PEAK slider; raw `extended` = P=∞ / browser). `reinhard` = `x/(1+x/P)` (SDR P=1).
-`aces` = `P·aces(x/P)` — reworked so `extended-aces(x, P=1) ≡ aces(x)` **exactly**
-(the old `P·aces(x·S/P)`, `S=0.14/0.03`, low-x-slope-1 normalization broke this).
-`gamma`/`srgb` are output-encode **transfers** (clamp at P, then encode). Locked
-by `image/tonemap.ts`'s P=1-equivalence goldens and inherited by the GPU↔CPU
-parity harness. The Gamma display value golden: `0.5^(1/2.2) ≈ 0.7297` (distinct
-from sRGB's `0.5 → 0.7354` — a 2.2 power curve only approximates the sRGB OETF).
+**Unified surface — pick a curve, pick a ceiling.** There is ONE operator menu
+(`linear · srgb · gamma · reinhard · aces`) and the **PEAK** slider `P` is the
+**mode**: every operator respects `P` as its ceiling, so *the only difference
+between SDR and HDR is where you clip*. **SDR is just `P = 1`**; `P > 1` extends
+onto a real HDR surface; `P = ∞` (double-click the PEAK read-out and type `inf`)
+hands the raw value to the browser. The old two-group menu (an "Extended · *"
+duplicate of each curve) is **gone** — that duplication is exactly what the
+`P = 1` invariant exists to kill.
 
-**Operators** (per channel; `x` = exposure/offset-applied scene-linear light):
+**Operators** (per channel; `x` = exposure/offset-applied scene-linear light; the
+range-map clips at `P`, then the output-encode transfer runs):
 
-| Group | Operator (menu label) | Formula | Range |
+| Operator (menu label) | Range-map (ceiling `P`) | Encode transfer | `P = 1` (SDR) |
 |---|---|---|---|
-| SDR | `linear` (Linear) | `clamp(x, 0, 1)` | → `[0,1]` |
-| SDR | `srgb` (sRGB) | `clamp(x, 0, 1)`, then the sRGB OETF at output-encode | → `[0,1]` |
-| SDR | `gamma` (Gamma) | `clamp(x, 0, 1)`, then `pow(x, 1/γ)` at output-encode (tev "Gamma"; γ default 2.2, slider ~0.5–4) | → `[0,1]` |
-| SDR | `reinhard` (Reinhard) | `x / (1 + x)` | → `[0,1)` |
-| SDR | `aces` (ACES) | Narkowicz `clamp((x(2.51x+0.03))/(x(2.43x+0.59)+0.14), 0, 1)` | → `[0,1]` |
-| HDR | `extended` (Extended · Linear) | `x` (unclamped pass-through) | → `[0,∞)` |
-| HDR | `extended-clamp` (Extended · Linear (managed)) | `min(max(x, 0), P)` (identity below `P`, hard ceiling at `P`) | → `[0, P]` |
-| HDR | `extended-reinhard` (Extended · Reinhard) | `x/(1 + x/P)` | → `P` asymptote, slope 1 at 0 |
-| HDR | `extended-aces` (Extended · ACES) | `P·aces(x·S/P)`, `S = 0.14/0.03` | → `P` asymptote, slope 1 at 0 |
+| `linear` (Linear) | `clamp(x, 0, P)` | identity (raw linear) | `clamp(x,0,1)` |
+| `srgb` (sRGB) | `clamp(x, 0, P)` | (extended) sRGB OETF | `clamp01` then sRGB OETF |
+| `gamma` (Gamma) | `clamp(x, 0, P)` | `sign·|x|^(1/γ)` (γ default 2.2, slider ~0.5–4) | `pow(clamp01(x), 1/γ)` |
+| `reinhard` (Reinhard) | `x / (1 + x/P)` | (extended) sRGB OETF | `x/(1+x)` |
+| `aces` (ACES) | `P·aces(x/P)` (Narkowicz) | (extended) sRGB OETF | `aces(x)` |
 
-The **SDR group** always shows. The **HDR group** (`extended*`) appears **only**
-when the pane's true-HDR surface engages (WebGPU `rgba16float` + Chrome extended
-canvas tone-mapping, on an HDR display); those operators emit display-linear
-light in `[0, P]` (not `[0,1]`) that the OS compositor maps to the panel's peak.
-The group's menu order is **Linear · Linear (managed) · Reinhard · ACES**.
-`P` is the **PEAK** slider (×SDR white; range `1..16`, default `4`, step `0.5`),
-shown while `extended-clamp`/`extended-reinhard`/`extended-aces` is selected
-(all three read `P`; raw `extended` has no peak). `S = 0.14/0.03`
-normalizes Extended · ACES so its slope at 0 is exactly 1 (identity-like at low
-`x`) and it saturates at `P`. (**Follow-up:** a browser-exposed display headroom,
-once standardized, would seed the PEAK default — no current browser exposes a
-numeric headroom prompt-free; see `docs/browser-support.md`.)
+**Operator-family invariant.** Each operator is ONE peak-parameterized curve, and
+its SDR rendition IS the same curve at `P = 1`. `aces = P·aces(x/P)` is reworked
+so `aces(x, P=1) ≡ aces(x)` **exactly** (the old `P·aces(x·S/P)`, `S=0.14/0.03`,
+slope-1 normalization broke this). Locked by `image/tonemap.ts`'s
+`resolveRenderTonemap` P=1-equivalence goldens and inherited by the GPU↔CPU parity
+harness. The Gamma display golden at `P=1`: `0.5^(1/2.2) ≈ 0.7297` (distinct from
+sRGB's `0.5 → 0.7354` — a 2.2 power curve only approximates the sRGB OETF); at
+`P>1`, above-white survives — `gamma`, `x=4`, `P=8` → `4^(1/2.2) ≈ 1.878` (an
+encoded value **above 1** the HDR canvas renders as extended brightness).
 
-**`extended` vs `extended-clamp` (why both).** Both are linear (slope 1) below
-the peak, but they differ in **who clips**. `extended` (Extended · Linear) hands
-the raw unclamped value to the browser/OS compositor, which clips each value at
-**its own estimate of display headroom** — so the *same* image renders
-differently in Chrome vs Safari (empirically confirmed). `extended-clamp`
-(Extended · Linear (managed)) instead does the clip in **cairn-plot's own
-shader** at the shared PEAK `P` (GPU↔CPU parity-tested), so every HDR browser
-converges below `P`. `extended` stays the **default-in-effect** (raw fidelity);
-`extended-clamp` is an **explicit opt-in** for when cross-browser linearity
-matters.
+**PEAK (`P`, the HDR mode).** Slider ×SDR white; range `1..16`, default `4`, step
+`0.5`; shown **whenever the real HDR surface engages** (Linear/sRGB/Gamma
+hard-clip at `P`; Reinhard/ACES roll off toward `P`). Double-click to type any
+value, including `inf`. `P = ∞` makes Linear/sRGB/Gamma **raw browser-clipped
+extended** (each browser clips at its own headroom estimate — the *same* image
+then renders differently in Chrome vs Safari); Reinhard degenerates to
+pass-through; ACES has no meaningful `∞` (`P·aces(x/P) → 0`), so its ceiling
+clamps to the slider max. Finite `P > 1` clips in **cairn-plot's own shader**
+(GPU↔CPU parity-tested), so every HDR browser converges below `P` — the managed,
+deterministic choice. On a **non-HDR surface** PEAK is hidden and `P` is forced
+to 1: the same operators, SDR by construction (this IS the degrade rule).
+(**Follow-up:** a browser-exposed display headroom, once standardized, would seed
+the PEAK default; see `docs/browser-support.md`.)
 
-**Default-in-effect + fallback** (`image/tonemap.ts`'s `resolveEffectiveTonemap`,
-pure + unit-tested):
-- Not engaged → the descriptor's `tonemap=` coerced to SDR (`extended`→`linear`,
-  `extended-clamp`→`linear`, `extended-reinhard`→`reinhard`, `extended-aces`→`aces`;
-  Python default `srgb`).
-- Engaged → an explicit `extended*` `tonemap=` is honored **verbatim**; any SDR /
-  unset descriptor defaults to **`extended`** (Extended · Linear) — **not** the
-  managed clamp (managed is an explicit choice). Selecting an
-  SDR operator on an engaged pane **tone-maps into SDR range** (previewing the
-  SDR rendition on the HDR display): the render path drops `hdrOut` and runs the
-  operator + output-encode.
+**Default-in-effect** (`image/tonemap.ts`'s `resolveEffectiveTonemap` +
+`resolveRenderTonemap`, pure + unit-tested): an explicit `tonemap=` is honored
+(canonicalized to one of the 5). An **unset** `tonemap=` defaults by surface —
+**Linear with the managed PEAK (`P = 4`)** on an engaged HDR surface (this
+**replaces** the pre-unification raw-`extended` default; type `P = inf` to recover
+the raw browser-clipped look), and **sRGB** on SDR (the bit-exact 8-bit
+round-trip). `peak=` (a float) seeds the slider; unset → `1` on SDR / `4` on HDR.
 
-The CPU backend never engages a real HDR surface, so it never offers the HDR
-group (its `extended*` descriptors resolve to the SDR fallback). **Follow-up:**
-`cp.Compare` panes (split/blend/diff of HDR sources) do not yet expose a TONEMAP
-menu.
+**Deprecated aliases.** The pre-unification `tonemap=` names still validate and
+resolve to a `(operator, peak)` pair (so old code keeps working): `extended` →
+`linear` + `P=∞`; `extended-clamp` → `linear`; `extended-reinhard` → `reinhard`;
+`extended-aces` → `aces`; `extended-gamma` → `gamma`. They are contract-listed as
+`tonemapOperatorAliases` (distinct from the canonical 5 `tonemapOperators`).
+
+The CPU backend never engages a real HDR surface, so it is always the SDR
+rendition (`P = 1`, no PEAK slider). **Follow-up:** `cp.Compare` panes
+(split/blend/diff of HDR sources) do not yet expose a TONEMAP menu.
 
 #### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end

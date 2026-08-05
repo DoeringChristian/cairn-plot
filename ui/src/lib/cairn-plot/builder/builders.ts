@@ -81,9 +81,16 @@ function imageDisplayProps(o: Opts): Opts {
 }
 
 function imageHdrProps(o: Opts): Opts {
-  const tm = o.tonemap != null ? checkTonemap(String(o.tonemap)) : "srgb";
-  const props: Opts = { tonemap: tm, exposure: o.exposure != null ? num(o.exposure) : 0 };
+  // UNIFIED surface: emit `tonemap` only when set (unset → the client's surface
+  // default: Linear + managed PEAK on HDR, sRGB on SDR). A `gamma=` without a
+  // `tonemap=` selects the Gamma operator (mirrors Python). `peak` (P) is the
+  // HDR mode; every operator clips at it.
+  const tm =
+    o.tonemap != null ? checkTonemap(String(o.tonemap)) : o.gamma != null ? "gamma" : undefined;
+  const props: Opts = { exposure: o.exposure != null ? num(o.exposure) : 0 };
+  if (tm != null) props.tonemap = tm;
   if (o.gamma != null) props.gamma = num(o.gamma);
+  if (o.peak != null) props.peak = num(o.peak);
   if (o.interpolation != null) props.interpolation = o.interpolation;
   if (o.showAxes != null) props.showAxes = Boolean(o.showAxes);
   if (o.pixelValueNotation != null) props.pixelValueNotation = checkPixelValueNotation(String(o.pixelValueNotation));

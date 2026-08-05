@@ -275,17 +275,46 @@ export function tonemapHasPeak(name: string | undefined | null): boolean {
   return !!name && (EXTENDED_PEAK_OPERATORS as readonly string[]).includes(name);
 }
 
-/** Each extended operator's SDR counterpart — the fallback used when a pane
- *  requests an HDR operator but the HDR surface does NOT engage. */
+/**
+ * UNIFIED-MODEL alias table (the ONE place the pre-unification operator names
+ * resolve to a canonical curve). Under the unified surface there is exactly ONE
+ * operator menu — `linear · srgb · gamma · reinhard · aces` — and the PEAK
+ * slider `P` is the MODE: every operator respects `P` as its ceiling, so an SDR
+ * pane is just `P = 1`. The old HDR-out names (`extended*`) are kept ACCEPTED as
+ * DEPRECATED ALIASES that map to a (canonical operator, peak-hint) pair:
+ *   - `extended`          → `linear`   + peak ∞ (raw browser-clipped pass-through)
+ *   - `extended-clamp`    → `linear`   + peak (managed ceiling = the PEAK slider)
+ *   - `extended-reinhard` → `reinhard` + peak
+ *   - `extended-aces`     → `aces`     + peak
+ *   - `extended-gamma`    → `gamma`    + peak
+ * This same table is the DEGRADE rule: on a non-HDR surface (or `P = 1`) the
+ * canonical operator IS the SDR rendition by construction. See
+ * {@link canonicalizeTonemap} / {@link aliasPeakHint} / {@link resolveRenderTonemap}.
+ */
 const EXTENDED_TO_SDR: Record<string, TonemapOperator> = {
   extended: "linear",
-  // Managed linear degrades to the plain SDR clamp01 (`linear`): its natural
-  // SDR counterpart — a hard clip into [0,1] is exactly what "linear" is once
-  // the peak collapses to display white.
+  // Managed linear resolves to the plain clamp (`linear`): a hard clip to the
+  // ceiling is exactly what "linear" is — the ceiling is P, collapsing to
+  // display white at P=1.
   "extended-clamp": "linear",
   "extended-reinhard": "reinhard",
   "extended-aces": "aces",
+  "extended-gamma": "gamma",
 };
+
+/**
+ * The DEPRECATED pre-unification operator names, kept ACCEPTED as aliases (both
+ * faces validate against the canonical 5 ∪ these). Pinned to the contract's
+ * `tonemapOperatorAliases` by `contracts.test.ts` (TS) + `test_contracts.py`
+ * (Python). Each resolves via {@link EXTENDED_TO_SDR} / {@link aliasPeakHint}.
+ */
+export const DEPRECATED_TONEMAP_ALIASES: readonly string[] = [
+  "extended",
+  "extended-clamp",
+  "extended-reinhard",
+  "extended-aces",
+  "extended-gamma",
+];
 
 /** Resolve an operator name to its function, falling back to the default. */
 export function getTonemapOperator(
@@ -347,19 +376,41 @@ export function toSdrTonemap(name: string | undefined | null): TonemapOperator {
 }
 
 /**
+ * CANONICALIZE any operator name (canonical, a deprecated `extended*` alias, or
+ * garbage) to one of the 5 unified display operators — the SINGLE menu set. A
+ * deprecated alias maps to its curve ({@link EXTENDED_TO_SDR}); a canonical name
+ * passes through; anything else → `DEFAULT_TONEMAP` ("srgb"). This is exactly
+ * {@link toSdrTonemap} (the SDR rendition of an operator is the operator itself
+ * under the unified model — the ceiling `P` is what varies, not the curve name),
+ * exported under an intent-revealing name shared with the Python side.
+ */
+export const canonicalizeTonemap = toSdrTonemap;
+
+/**
+ * The PEAK `P` a deprecated alias IMPLIES when it seeds a fresh pane's slider:
+ * only raw `extended` (Extended · Linear) implies an UNBOUNDED ceiling (∞ — hand
+ * the raw value to the browser); every other alias / canonical operator carries
+ * no hint, so the pane's default PEAK ({@link EXTENDED_TONEMAP_PEAK_DEFAULT})
+ * applies. Returns `undefined` for "no hint".
+ */
+export function aliasPeakHint(name: string | undefined | null): number | undefined {
+  return name === "extended" ? EXTENDED_TONEMAP_PEAK_UNBOUNDED : undefined;
+}
+
+/**
  * The tone-map operator ACTUALLY IN EFFECT for an image pane — the value the
- * TONEMAP toolbar menu shows, and the pane's HOME-reset target:
+ * (single) TONEMAP toolbar menu shows, and the pane's HOME-reset target. Under
+ * the UNIFIED model this is TRIVIAL: the operator (curve) is surface-independent
+ * — only the PEAK ceiling `P` differs between SDR and HDR (see
+ * {@link resolveRenderTonemap}). So:
  *
- *   - When the pane's true-HDR surface engaged (`rgba16float` + extended canvas
- *     tone-mapping active — `GpuImagePane`'s `useHdr`): if the descriptor
- *     explicitly asked for an HDR operator (`extended`/`extended-reinhard`/
- *     `extended-aces`), it is honored VERBATIM; otherwise the descriptor's SDR
- *     `tonemap=` is BYPASSED and the default-in-effect is `"extended"`
- *     (Extended · Linear).
- *   - Otherwise (SDR surface) the effective operator is the descriptor's
- *     `tonemap=` coerced to an SDR operator via {@link toSdrTonemap} — so an
- *     `extended*` descriptor falls back to its SDR counterpart (Python default
- *     "srgb").
+ *   - An explicit descriptor `tonemap=` is honored, {@link canonicalizeTonemap}d
+ *     to one of the 5 (a deprecated `extended*` alias resolves to its curve).
+ *   - An UNSET descriptor defaults by surface: `"linear"` on an engaged HDR
+ *     surface (managed determinism — the PEAK default is 4, so the raw-extended
+ *     default of the pre-unification build is REPLACED by managed Linear · P=4;
+ *     manual PEAK=∞ recovers the raw browser-clipped look), `"srgb"` on SDR (the
+ *     bit-exact round-trip for an already-sRGB 8-bit source).
  *
  * Pure (no DOM / GPU) so it is unit-tested directly. The panes layer a
  * view-local override on top of this default; HOME clears the override back to
@@ -369,10 +420,8 @@ export function resolveEffectiveTonemap(
   descriptorTonemap: string | undefined | null,
   hdrSurfaceEngaged: boolean,
 ): TonemapOperator {
-  if (hdrSurfaceEngaged) {
-    return isHdrTonemap(descriptorTonemap) ? descriptorTonemap : "extended";
-  }
-  return toSdrTonemap(descriptorTonemap);
+  if (descriptorTonemap == null) return hdrSurfaceEngaged ? "linear" : "srgb";
+  return canonicalizeTonemap(descriptorTonemap);
 }
 
 /** Apply an exposure of `ev` stops in scene-linear space: v * 2**ev. */
@@ -547,4 +596,86 @@ export function resolveEncodeGamma(
   if (operator === "gamma") return gammaValue > 0 ? gammaValue : TONEMAP_GAMMA_DEFAULT;
   if (operator === "linear") return 1;
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// UNIFIED render translation — "pick a curve, pick a ceiling".
+//
+// The USER-FACING surface is ONE 5-operator menu + the PEAK slider `P`. This
+// translator maps a (display operator, P, surface, γ) tuple onto the render
+// pass's ENGINE operator + `hdrOut` + `peak` + encode `gamma`, reusing the
+// engine's existing peak-parameterized operators (image-engine.ts's
+// `ImageOperator` / image.wgsl.ts). It is the SINGLE place the unified model is
+// expressed; pure so `tonemap.test.ts` pins the whole operator × peak × surface
+// matrix. Invariant: at `P = 1` (and on any non-HDR surface) it returns the
+// plain SDR operator with `hdrOut:false` — the legacy SDR rendition BYTE-FOR-BYTE.
+// ---------------------------------------------------------------------------
+
+/** The PEAK at/above which the ceiling is UNBOUNDED (`P = ∞`): Linear/sRGB/Gamma
+ *  degrade to RAW browser-clipped extended (engine operator `extended` — no
+ *  in-shader ceiling), and Reinhard degenerates to pass-through. Manual slider
+ *  entry of `inf` yields `Infinity`; ANY non-finite peak counts as unbounded. */
+export const EXTENDED_TONEMAP_PEAK_UNBOUNDED = Infinity;
+
+/** The engine render parameters a display operator + ceiling resolve to. */
+export interface RenderTonemapParams {
+  /** Engine `ImageOperator` name to hand the render pass. */
+  operator: string;
+  /** Whether the EXTENDED (HDR-out) encode + surface path runs. */
+  hdrOut: boolean;
+  /** GPU-safe (always FINITE) peak uniform. */
+  peak: number;
+  /** Output-encode gamma (`undefined` → sRGB OETF, `1` → identity, `γ` → power). */
+  gamma: number | undefined;
+}
+
+/**
+ * Translate a UNIFIED display operator (one of the 5, or a deprecated alias) at
+ * ceiling `P` on a given surface into the engine render params. See the section
+ * doc. `peak` is the PEAK slider value (`Infinity`/non-finite = unbounded);
+ * `gammaValue` is the shared γ state (used only by the Gamma operator).
+ *
+ * Surface/ceiling rules:
+ *  - Non-HDR surface OR `P ≤ 1` → SDR path: the canonical operator verbatim,
+ *    `hdrOut:false`, `peak` forced to 1. This IS the degrade rule.
+ *  - HDR surface, finite `P > 1` → the peak-parameterized extended operator
+ *    (`linear/srgb/gamma`→`extended-clamp` clamp(x,0,P); `reinhard`→
+ *    `extended-reinhard`; `aces`→`extended-aces`), `hdrOut:true`. The encode
+ *    transfer is carried by `gamma` exactly as on SDR (identity/sRGB/power), so
+ *    `P=1` and `P>1` share one curve family.
+ *  - HDR surface, `P = ∞` → Linear/sRGB/Gamma become RAW `extended` (browser
+ *    clips); Reinhard degenerates to `extended` pass-through; ACES has no
+ *    meaningful `∞` (its `P·aces(x/P)` collapses toward 0), so its ceiling is
+ *    CLAMPED to {@link EXTENDED_TONEMAP_PEAK_MAX} and it rolls off there.
+ */
+export function resolveRenderTonemap(
+  displayOperator: string | undefined | null,
+  peak: number,
+  hdrSurfaceEngaged: boolean,
+  gammaValue: number,
+): RenderTonemapParams {
+  const op = canonicalizeTonemap(displayOperator);
+  const encGamma = resolveEncodeGamma(op, gammaValue);
+  if (!hdrSurfaceEngaged || (Number.isFinite(peak) && peak <= 1)) {
+    return { operator: op, hdrOut: false, peak: 1, gamma: encGamma };
+  }
+  const unbounded = !Number.isFinite(peak);
+  switch (op) {
+    case "reinhard":
+      return unbounded
+        ? { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: undefined }
+        : { operator: "extended-reinhard", hdrOut: true, peak, gamma: undefined };
+    case "aces":
+      return {
+        operator: "extended-aces",
+        hdrOut: true,
+        peak: unbounded ? EXTENDED_TONEMAP_PEAK_MAX : peak,
+        gamma: undefined,
+      };
+    default:
+      // linear / srgb / gamma — one CLAMP range-map, three encode transfers.
+      return unbounded
+        ? { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: encGamma }
+        : { operator: "extended-clamp", hdrOut: true, peak, gamma: encGamma };
+  }
 }

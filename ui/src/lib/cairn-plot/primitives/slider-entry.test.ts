@@ -45,8 +45,22 @@ test("parseSliderEntry: invalid input → null (never a NaN)", () => {
   assert.equal(parseSliderEntry("abc"), null);
   assert.equal(parseSliderEntry("1.2.3"), null);
   assert.equal(parseSliderEntry("NaN"), null);
-  assert.equal(parseSliderEntry("Infinity"), null);
   assert.equal(parseSliderEntry("--5"), null);
+});
+
+test("parseSliderEntry: infinity tokens → ±Infinity (PEAK slider's P=∞)", () => {
+  // The PEAK slider treats P=∞ as "no ceiling" (raw browser-clipped extended).
+  assert.equal(parseSliderEntry("inf"), Infinity);
+  assert.equal(parseSliderEntry("INF"), Infinity);
+  assert.equal(parseSliderEntry("infinity"), Infinity);
+  assert.equal(parseSliderEntry("Infinity"), Infinity);
+  assert.equal(parseSliderEntry("∞"), Infinity);
+  assert.equal(parseSliderEntry("+inf"), Infinity);
+  assert.equal(parseSliderEntry("-inf"), -Infinity);
+  assert.equal(parseSliderEntry("−inf"), -Infinity); // Unicode minus
+  // NOT an infinity token — must still parse as a finite number or revert.
+  assert.equal(parseSliderEntry("info"), null);
+  assert.equal(parseSliderEntry("8"), 8);
 });
 
 test("commitSliderEntry: valid input commits the parsed value", () => {

@@ -16,10 +16,14 @@
  *  - accepts a Unicode minus sign `−` (U+2212, what the read-out formats with),
  *  - accepts a leading `+`.
  *
- * Returns the finite number, or `null` when the text is empty or does not parse
- * to a finite number (so the caller can REVERT — a `NaN`/`Infinity` is NEVER
- * committed). There is intentionally NO clamping: an out-of-range value is
- * returned verbatim (out-of-range is legal for these display-adjust sliders).
+ * Returns the number, or `null` when the text is empty or does not parse to a
+ * real number (so the caller can REVERT — a `NaN` is NEVER committed). There is
+ * intentionally NO clamping: an out-of-range value is returned verbatim
+ * (out-of-range is legal for these display-adjust sliders).
+ *
+ * INFINITY is accepted (`inf` / `infinity` / `∞`, any sign): the image pane's
+ * PEAK slider treats `P = ∞` as "no ceiling" (raw browser-clipped extended),
+ * which is a legal, meaningful entry. Only `NaN` / unparseable text reverts.
  */
 export function parseSliderEntry(raw: string): number | null {
   const trimmed = raw.trim();
@@ -28,8 +32,12 @@ export function parseSliderEntry(raw: string): number | null {
   // (A single scalar value — no thousands grouping — so only the first comma is
   // treated as the decimal point.)
   const normalized = trimmed.replace(/−/g, "-").replace(",", ".");
+  // Infinity tokens (case-insensitive): `inf`/`infinity`/`∞`, optional sign.
+  const infMatch = /^([+-]?)(inf(?:inity)?|∞)$/i.exec(normalized);
+  if (infMatch) return infMatch[1] === "-" ? -Infinity : Infinity;
   const n = Number(normalized);
-  if (!Number.isFinite(n)) return null;
+  // Reject NaN (unparseable); ±Infinity from `Number("Infinity")` is allowed.
+  if (Number.isNaN(n)) return null;
   return n;
 }
 

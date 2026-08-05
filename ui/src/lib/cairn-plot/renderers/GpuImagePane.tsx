@@ -114,10 +114,10 @@ import {
 } from "./use-image-controller";
 import {
   resolveEffectiveTonemap,
-  tonemapHasPeak,
+  resolveRenderTonemap,
+  aliasPeakHint,
   tonemapHasGamma,
   resolveEncodeGamma,
-  isHdrTonemap,
   toSdrTonemap,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MIN,
@@ -422,11 +422,18 @@ export default function GpuImagePane(props: ImageBackendProps) {
     tonemapOverride !== null && tonemapOverride !== effectiveDefaultTonemap;
   const resetTonemapOverride = useCallback(() => setTonemapOverride(null), []);
 
-  // PEAK white (×SDR white) for the extended roll-off operators
-  // (extended-reinhard/-aces). View-local, display-only — fed into the render
-  // pass; the slider is shown ONLY while such an operator is in effect (see the
-  // shell props below). Default 4; HOME restores it. Never a source re-upload.
-  const [peak, setPeak, peakMeta] = useResettableState(EXTENDED_TONEMAP_PEAK_DEFAULT);
+  // PEAK white (×SDR white) — the UNIFIED HDR MODE control. On an engaged HDR
+  // surface it is ALWAYS shown and every operator respects it as its ceiling `P`
+  // (SDR is just `P = 1`); view-local, display-only, fed into the render pass via
+  // `resolveRenderTonemap`. Default 4 (managed determinism); seeded to ∞ only for
+  // the deprecated raw `extended` alias (recovering its browser-clipped look).
+  // HOME restores the seed. Never a source re-upload.
+  const propPeak = hdrMode ? (props as HdrImageProps).peak : undefined;
+  const [peak, setPeak, peakMeta] = useResettableState(
+    propPeak != null && propPeak > 0
+      ? propPeak
+      : (aliasPeakHint(propTonemap) ?? EXTENDED_TONEMAP_PEAK_DEFAULT),
+  );
 
   // Gamma(γ) for the Gamma display operator (HDR panes AND the SDR display-
   // transfer path). View-local; the slider is shown ONLY while the Gamma
@@ -793,43 +800,30 @@ export default function GpuImagePane(props: ImageBackendProps) {
     const uv = rawUv;
     // TONE-MAP operator = the operator ACTUALLY in effect (`effectiveTonemap`,
     // the toolbar menu's value): the view-local override if the user picked one,
-    // else the effective default. On an HDR-engaged pane that default is
-    // `"extended"` (a pure identity — see `image/tonemap.ts`'s doc on that
-    // entry): with a real HDR surface (`hdrOut:true` -> `rgba16float` +
-    // `toneMapping:'extended'`, `engine/webgpu/surface.ts`'s
-    // `configureHDRSurface`) there is no tone COMPRESSION to do — the operator
-    // is an identity — but the shader STILL runs the EXTENDED output-encode: a
-    // float16 srgb/display-p3 canvas stores TRANSFER-ENCODED (non-linear)
-    // signals per W3C ColorWeb-CG, so the display-linear light is encoded with
-    // the unclamped extended sRGB OETF (values past 1 survive as extended
-    // brightness) — NOT written raw. The two roll-off siblings (extended-
-    // reinhard/-aces) are ALSO HDR-out — they emit display-linear light up to
-    // `peak`, then the same extended encode. So `hdrOut` is set for ANY extended
-    // operator (`isHdrTonemap`), guarded by `useHdrRef` so a stale extended pick
-    // can never request HDR-out on a non-HDR surface. `gamma` selects the
-    // extended encode's transfer (sRGB OETF unless the Gamma operator is active).
-    // (`hdrEncodeLegacy`, the ?hdrEncode=legacy A/B seam, restores the OLD raw
-    // write for visual validation.) If the user instead selects an SDR operator
-    // on such a pane, `hdrOut` drops to false and
-    // the operator + output-encode run — tone-mapping INTO SDR range to preview
-    // the SDR rendition on the HDR display. `peak` is read only by the roll-off
-    // operators (ignored otherwise).
-    const hdrOut = useHdrRef.current && isHdrTonemap(effectiveTonemap);
+    // else the effective default (Linear on an engaged HDR surface, sRGB on SDR).
+    //
+    // UNIFIED translation: the display operator + PEAK ceiling `P` + whether the
+    // real HDR surface engaged (`useHdrRef`, guarding a stale pick from requesting
+    // HDR-out on a non-HDR surface) resolve to the engine operator + `hdrOut` +
+    // finite `peak` + encode `gamma`. `P` is the live slider on an engaged
+    // surface; forced to 1 (SDR rendition) otherwise. See resolveRenderTonemap.
+    const rt = resolveRenderTonemap(
+      effectiveTonemap,
+      useHdrRef.current ? peak : 1,
+      useHdrRef.current,
+      tonemapGamma,
+    );
     const params: ImageParams = hdrMode
       ? {
           exposureEV: exposure + displayEV,
           offset: displayOffset,
-          operator: effectiveTonemap,
-          // The output-encode transfer, selected by the operator in effect
-          // (gamma → γ, linear → identity, else sRGB OETF). On the hdrOut path it
-          // now selects the EXTENDED encode's transfer (extended sRGB OETF unless
-          // the Gamma operator is active). See image/tonemap.ts's resolveEncodeGamma.
-          gamma: resolveEncodeGamma(effectiveTonemap, tonemapGamma),
+          operator: rt.operator as ImageParams["operator"],
+          gamma: rt.gamma,
           isScalar: false,
-          hdrOut,
+          hdrOut: rt.hdrOut,
           // TEMPORARY A/B seam (?hdrEncode=legacy) — see HDR_ENCODE_LEGACY above.
           hdrEncodeLegacy: HDR_ENCODE_LEGACY,
-          peak,
+          peak: rt.peak,
           uv,
           filter,
         }
@@ -1008,14 +1002,14 @@ export default function GpuImagePane(props: ImageBackendProps) {
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
-      // HDR: a view-local TONEMAP menu (the operator in effect). Its SDR group
-      // (Linear/sRGB/Reinhard/ACES) always shows; the HDR group (Extended ·
-      // Linear/Reinhard/ACES) is appended only when the real HDR surface engaged
-      // (`hdrEngaged`). SDR: a COLORMAP menu instead (HDR has no colormap prop,
-      // SDR pixels are already encoded so have no tone-map stage).
+      // HDR: a view-local TONEMAP menu (the operator in effect) — ONE unified
+      // group (Linear · sRGB · Gamma · Reinhard · ACES). No separate "Extended ·"
+      // entries: the PEAK slider is the HDR mode (see extraSliders). SDR: a
+      // COLORMAP menu instead (HDR has no colormap prop, SDR pixels are already
+      // encoded so have no tone-map stage).
       leadingMenus={
         hdrMode
-          ? [tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator), hdrEngaged)]
+          ? [tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator))]
           : sdrPlain
             ? // Plain 8-bit: colormap menu + the tev display-transfer menu
               // (sRGB · Gamma · Linear). Picking a colormap swaps in the false-
@@ -1035,45 +1029,46 @@ export default function GpuImagePane(props: ImageBackendProps) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
-      // PEAK slider — shown ONLY while a peak-parameterized extended operator
-      // (extended-reinhard/-aces roll-off, OR extended-clamp managed linear) is
-      // in effect; it feeds the P uniform (roll-off shoulder, or the managed
-      // hard ceiling).
-      extraSliders={
-        hdrMode && tonemapHasPeak(effectiveTonemap)
+      // UNIFIED sliders: PEAK is the HDR MODE — shown WHENEVER the real HDR
+      // surface engaged (every operator respects `P` as its ceiling; SDR forces
+      // P=1 and hides it). γ rides alongside it, shown while the Gamma operator
+      // (HDR) or the Gamma display-transfer (plain SDR) is in effect — so a
+      // Gamma-on-HDR pane shows BOTH PK and γ. Their reset/modified state folds
+      // into HOME so a single reset clears operator + P + γ.
+      extraSliders={[
+        ...(hdrMode && hdrEngaged
           ? [
               {
                 id: "peak",
                 label: "PK",
                 title:
-                  "Peak white (×SDR white) — HDR shoulder for the extended Reinhard/ACES operators, or the managed-linear hard ceiling for Extended · Linear (managed). Double-click to type a value.",
+                  "Peak white (×SDR white) — the HDR ceiling P every operator clips at (Linear/sRGB/Gamma hard-clip at P; Reinhard/ACES roll off toward P). P=1 reproduces the SDR rendition exactly; double-click to type a value, including 'inf' for the raw browser-clipped extended look.",
                 min: EXTENDED_TONEMAP_PEAK_MIN,
                 max: EXTENDED_TONEMAP_PEAK_MAX,
                 step: EXTENDED_TONEMAP_PEAK_STEP,
                 value: peak,
                 onChange: setPeak,
-                format: (v: number) => `${v.toFixed(1)}×`,
+                format: (v: number) => (Number.isFinite(v) ? `${v.toFixed(1)}×` : "∞"),
               },
             ]
-          : // γ slider — shown ONLY while the Gamma operator/transfer is in effect
-            // (HDR pane's tone-map menu, or the plain-SDR display-transfer menu).
-            (hdrMode ? tonemapHasGamma(effectiveTonemap) : sdrPlain && tonemapHasGamma(sdrTransfer))
-            ? [
-                {
-                  id: "gamma",
-                  label: "γ",
-                  title:
-                    "Display gamma γ for the Gamma transfer — display = clamp(value)^(1/γ), tev-style. Default 2.2 (close to sRGB, not identical). Double-click to type a value.",
-                  min: TONEMAP_GAMMA_MIN,
-                  max: TONEMAP_GAMMA_MAX,
-                  step: TONEMAP_GAMMA_STEP,
-                  value: tonemapGamma,
-                  onChange: setTonemapGamma,
-                  format: (v: number) => v.toFixed(1),
-                },
-              ]
-            : undefined
-      }
+          : []),
+        ...((hdrMode ? tonemapHasGamma(effectiveTonemap) : sdrPlain && tonemapHasGamma(sdrTransfer))
+          ? [
+              {
+                id: "gamma",
+                label: "γ",
+                title:
+                  "Display gamma γ for the Gamma transfer — display = clamp(value)^(1/γ), tev-style. Default 2.2 (close to sRGB, not identical). Double-click to type a value.",
+                min: TONEMAP_GAMMA_MIN,
+                max: TONEMAP_GAMMA_MAX,
+                step: TONEMAP_GAMMA_STEP,
+                value: tonemapGamma,
+                onChange: setTonemapGamma,
+                format: (v: number) => v.toFixed(1),
+              },
+            ]
+          : []),
+      ]}
       // DEEP depth-window sliders + region-select (HDR deep sources only). Their
       // reset/modified fold into the colormap/tonemap/peak ones so HOME clears all.
       depthSliders={deepFlatten.sliders}

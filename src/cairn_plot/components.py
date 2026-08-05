@@ -771,23 +771,34 @@ def _check_pixel_value_notation(value: str) -> str:
     return value
 
 
-# SDR operators (always valid) + the HDR-out "extended" family. The extended
-# operators are used VERBATIM by the client when its true-HDR surface engages;
-# when it does NOT engage, the client falls back to their SDR counterpart
-# (extended→linear, extended-clamp→linear, extended-reinhard→reinhard,
-# extended-aces→aces). See `image/tonemap.ts`'s `resolveEffectiveTonemap` /
-# `toSdrTonemap`.
-_HDR_TONEMAP_OPERATORS = (
+# UNIFIED tone-map surface. There is ONE operator set (a curve); the PEAK
+# ceiling ``P`` is the mode — every operator respects ``P`` as its clip point, so
+# an SDR pane is just ``P = 1``. ``_TONEMAP_OPERATORS`` is the canonical set
+# (``↔`` contract ``tonemapOperators``); ``_TONEMAP_ALIASES`` are the DEPRECATED
+# pre-unification names, kept ACCEPTED and resolved by the client to a
+# ``(operator, peak)`` pair (``↔`` contract ``tonemapOperatorAliases``):
+#   extended          → linear   + peak ∞ (raw browser-clipped pass-through)
+#   extended-clamp    → linear   + peak (managed ceiling = the PEAK slider)
+#   extended-reinhard → reinhard + peak
+#   extended-aces     → aces     + peak
+#   extended-gamma    → gamma    + peak
+# See ``image/tonemap.ts``'s ``resolveEffectiveTonemap`` / ``resolveRenderTonemap``.
+_TONEMAP_OPERATORS = (
     "linear",
     "srgb",
     "gamma",
     "reinhard",
     "aces",
+)
+_TONEMAP_ALIASES = (
     "extended",
     "extended-clamp",
     "extended-reinhard",
     "extended-aces",
+    "extended-gamma",
 )
+# The names ``cp.Image(tonemap=)`` accepts on the HDR path: canonical ∪ aliases.
+_HDR_TONEMAP_OPERATORS = _TONEMAP_OPERATORS + _TONEMAP_ALIASES
 
 # The DISPLAY-TRANSFER operators valid on an SDR / 8-bit image (tev applies the
 # same selector to LDR images): sRGB (default) · Gamma(γ) · Linear. A subset of
@@ -802,43 +813,48 @@ def _image_hdr_props(
     tonemap: str | None = None,
     exposure: float | None = None,
     gamma: float | None = None,
+    peak: float | None = None,
     interpolation: str | None = None,
     show_axes: bool | None = None,
     pixel_value_notation: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``imagehdr`` renderer props (real HDR tone-map, NOT the 8-bit
-    CSS-filter ``processing`` block). ``tonemap`` defaults to ``"srgb"`` and
-    ``exposure`` to ``0`` (always emitted). ``gamma`` is an OPTIONAL override —
-    it is included ONLY when the caller explicitly passes it, so the renderer's
-    correct sRGB output-encode (HDR-A M1) stays the default. ``showAxes`` /
-    ``interpolation`` are the two extra ``HdrImagePane`` props honoured.
+    CSS-filter ``processing`` block). ``exposure`` defaults to ``0`` (always
+    emitted). ``tonemap`` is OPTIONAL and EMITTED ONLY when set — an unset
+    ``tonemap`` lets the client pick the surface default (``linear`` with the
+    managed PEAK when the real HDR surface engages, ``srgb`` on an SDR surface).
+    ``gamma`` / ``peak`` are OPTIONAL and included only when explicitly passed,
+    so the renderer's defaults stay in effect. ``showAxes`` / ``interpolation``
+    are the two extra ``HdrImagePane`` props honoured.
 
-    ``tonemap`` also accepts the HDR-out ``"extended"`` family
-    (``extended`` · ``extended-clamp`` · ``extended-reinhard`` ·
-    ``extended-aces``): these are used verbatim when the client's true-HDR
-    surface engages, and fall back to their SDR counterpart otherwise
-    (``extended``/``extended-clamp``→``linear``, ``extended-reinhard``→
-    ``reinhard``, ``extended-aces``→``aces``). ``extended-clamp`` is
-    *Extended · Linear (managed)*: identity below the PEAK, hard-clipped at the
-    PEAK in cairn-plot's own shader, so every HDR browser converges (unlike
-    ``extended``, whose raw values each browser clips at its own headroom
-    estimate); when HDR is not engaged it degrades to ``linear`` (SDR
-    ``clamp01``, its natural SDR counterpart)."""
-    # Default: "srgb"; but if a `gamma=` was given WITHOUT an explicit tonemap,
-    # select the Gamma operator (so `cp.Image(hdr, gamma=2.2)` means "display
-    # with gamma 2.2", matching the pre-operator gamma-override intent). `gamma`
-    # is otherwise the Gamma operator's γ default and is ignored by the others.
-    tm = tonemap if tonemap is not None else ("gamma" if gamma is not None else "srgb")
-    if tm not in _HDR_TONEMAP_OPERATORS:
+    UNIFIED model: ``tonemap`` is one of ``{linear, srgb, gamma, reinhard,
+    aces}`` and ``peak`` (``P``, ×SDR white) is the HDR MODE — every operator
+    clips at ``P`` (Linear/sRGB/Gamma hard-clip, Reinhard/ACES roll off), so
+    ``P = 1`` is the SDR rendition and ``P > 1`` extends onto an HDR surface. The
+    DEPRECATED ``"extended"`` family (``extended`` · ``extended-clamp`` ·
+    ``extended-reinhard`` · ``extended-aces`` · ``extended-gamma``) is still
+    ACCEPTED and resolved by the client to a ``(operator, peak)`` pair
+    (``extended``→``linear`` + ``P=∞``; ``extended-clamp``→``linear``;
+    ``extended-reinhard``→``reinhard``; ``extended-aces``→``aces``;
+    ``extended-gamma``→``gamma``)."""
+    # An explicit tonemap is emitted verbatim (client canonicalizes aliases). If
+    # only `gamma=` was given, select the Gamma operator (so `cp.Image(hdr,
+    # gamma=2.2)` means "display with gamma 2.2"). Otherwise emit NO tonemap and
+    # let the client apply its surface default.
+    tm = tonemap if tonemap is not None else ("gamma" if gamma is not None else None)
+    if tm is not None and tm not in _HDR_TONEMAP_OPERATORS:
         raise ValueError(
             f"cp.Image(tonemap={tm!r}) must be one of {_HDR_TONEMAP_OPERATORS!r}."
         )
     props: dict[str, Any] = {
-        "tonemap": tm,
         "exposure": float(exposure) if exposure is not None else 0.0,
     }
+    if tm is not None:
+        props["tonemap"] = tm
     if gamma is not None:
         props["gamma"] = float(gamma)
+    if peak is not None:
+        props["peak"] = float(peak)
     if interpolation is not None:
         props["interpolation"] = interpolation
     if show_axes is not None:
@@ -939,6 +955,7 @@ class Image(Component):
         tonemap: str | None = None,
         exposure: float | None = None,
         gamma: float | None = None,
+        peak: float | None = None,
         brightness: float | None = None,
         contrast: float | None = None,
         offset: float | None = None,
@@ -984,7 +1001,7 @@ class Image(Component):
             use_hdr = hdr if hdr is not None else ext in ("exr", "npy", "npz")
             if use_hdr:
                 self._props = _image_hdr_props(
-                    tonemap=tonemap, exposure=exposure, gamma=gamma,
+                    tonemap=tonemap, exposure=exposure, gamma=gamma, peak=peak,
                     interpolation=interpolation, show_axes=show_axes,
                     pixel_value_notation=pixel_value_notation,
                 )
@@ -1056,7 +1073,7 @@ class Image(Component):
                     ignored,
                 )
             self._props = _image_hdr_props(
-                tonemap=tonemap, exposure=exposure, gamma=gamma,
+                tonemap=tonemap, exposure=exposure, gamma=gamma, peak=peak,
                 interpolation=interpolation, show_axes=show_axes,
                 pixel_value_notation=pixel_value_notation,
             )

@@ -44,7 +44,6 @@ import { COLORMAP_OPTIONS } from "../colormaps/lut";
 import {
   SDR_TONEMAP_OPERATORS,
   SDR_DISPLAY_TRANSFER_OPERATORS,
-  HDR_TONEMAP_OPERATORS,
   type TonemapOperator,
 } from "../image/tonemap";
 
@@ -139,48 +138,40 @@ const TONEMAP_LABELS: Record<TonemapOperator, string> = {
 };
 
 /**
- * The user-selectable SDR tone-map operators as a toolbar-menu option list (the
- * menu's ALWAYS-shown first group). DERIVED from `image/tonemap.ts`'s
- * `SDR_TONEMAP_OPERATORS` group array (single source, pinned by tonemap.test.ts)
- * + the label map — so the menu can't drift from the operator set. The
- * `extended*` operators are NOT here — they form
- * {@link EXTENDED_TONEMAP_MENU_OPTIONS}, appended by {@link tonemapToolbarButton}
- * only on a pane whose real HDR surface engaged.
+ * The user-selectable tone-map operators as a toolbar-menu option list — the
+ * pane's ONE operator group (Linear · sRGB · Gamma · Reinhard · ACES). DERIVED
+ * from `image/tonemap.ts`'s `SDR_TONEMAP_OPERATORS` group array (single source,
+ * pinned by tonemap.test.ts) + the label map, so the menu can't drift from the
+ * operator set. Under the UNIFIED model there is no separate "Extended · *"
+ * group — the PEAK slider is the HDR mode (see {@link tonemapToolbarButton}).
+ * The `TONEMAP_LABELS` map still carries labels for the deprecated `extended*`
+ * aliases (the `TonemapOperator` union retains them) but they are never shown.
  */
 export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] =
   SDR_TONEMAP_OPERATORS.map((id) => ({ id, label: TONEMAP_LABELS[id] }));
-
-/** The HDR-out operator group ("extended" family), appended to the TONEMAP menu
- *  only when the pane's true-HDR surface engaged. DERIVED from
- *  `image/tonemap.ts`'s `HDR_TONEMAP_OPERATORS` group array + the label map; the
- *  roll-off pair (extended-reinhard/-aces) reveals the PEAK slider when selected. */
-export const EXTENDED_TONEMAP_MENU_OPTIONS: { id: string; label: string }[] =
-  HDR_TONEMAP_OPERATORS.map((id) => ({ id, label: TONEMAP_LABELS[id] }));
 
 /**
  * A tone-map operator dropdown as a toolbar LEADING button (menu variant),
  * shown on HDR/float image panes only (SDR panes show already-encoded 8-bit
  * pixels, so they have no tone-map stage to switch). `value` is the operator
  * ACTUALLY in effect (see `image/tonemap.ts`'s `resolveEffectiveTonemap`);
- * `onSelect` receives the picked id. `includeExtended` appends the HDR-out
- * operator group ({@link EXTENDED_TONEMAP_MENU_OPTIONS}) — pass it ONLY when the
- * pane's real HDR surface engaged (`rgba16float` + extended canvas tone-mapping
- * active); on an HDR-engaged pane, picking an SDR operator instead previews the
- * SDR rendition. Like the colormap button, it's a leading (leftmost) control so
- * its presence never shifts the corner-anchored zoom/pan/reset buttons.
+ * `onSelect` receives the picked id.
+ *
+ * UNIFIED model: there is ONE operator group ({@link TONEMAP_MENU_OPTIONS} —
+ * Linear · sRGB · Gamma · Reinhard · ACES). There are NO separate "Extended · *"
+ * entries: the PEAK slider `P` is the MODE (every operator respects it as its
+ * ceiling; SDR is just `P = 1`), so the old two-group menu — which duplicated
+ * each curve — is gone. Like the colormap button, it's a leading (leftmost)
+ * control so its presence never shifts the corner-anchored zoom/pan/reset buttons.
  */
 export function tonemapToolbarButton(
   value: string,
   onSelect: (id: string) => void,
-  includeExtended: boolean,
 ): ToolbarButtonSpec {
-  const options = includeExtended
-    ? [...TONEMAP_MENU_OPTIONS, ...EXTENDED_TONEMAP_MENU_OPTIONS]
-    : TONEMAP_MENU_OPTIONS;
   return {
     id: "tonemap",
     title: "Tone-mapping operator",
-    menu: { options, value, onSelect },
+    menu: { options: TONEMAP_MENU_OPTIONS, value, onSelect },
   };
 }
 

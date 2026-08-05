@@ -10,7 +10,7 @@
  * sets without a contract guard failing.
  */
 import { COLORMAP_NAMES } from "../colormaps/lut.ts";
-import { SDR_TONEMAP_OPERATORS, HDR_TONEMAP_OPERATORS } from "../image/tonemap.ts";
+import { SDR_TONEMAP_OPERATORS, DEPRECATED_TONEMAP_ALIASES } from "../image/tonemap.ts";
 
 /** Named scalar colormaps a color-by-value chart accepts (mirrors Python
  *  `_COLORMAPS`). */
@@ -20,11 +20,19 @@ export const CHART_COLORMAPS: readonly string[] = COLORMAP_NAMES;
  *  (mirrors Python `_IMAGE_COLORMAPS`). */
 export const IMAGE_COLORMAPS: readonly string[] = ["none", ...COLORMAP_NAMES];
 
-/** HDR tone-map operators (SDR set + the HDR-out `extended` family) — mirrors
- *  Python `_HDR_TONEMAP_OPERATORS`. */
-export const TONEMAP_OPERATORS: readonly string[] = [
-  ...SDR_TONEMAP_OPERATORS,
-  ...HDR_TONEMAP_OPERATORS,
+/** The canonical tone-map operator set — the UNIFIED 5-operator menu (mirrors
+ *  Python `_TONEMAP_OPERATORS`, ↔ contract `tonemapOperators`). */
+export const TONEMAP_OPERATORS: readonly string[] = SDR_TONEMAP_OPERATORS;
+
+/** The DEPRECATED pre-unification `extended*` names, still ACCEPTED by
+ *  `checkTonemap` and resolved client-side to a (operator, peak) pair (mirrors
+ *  Python `_TONEMAP_ALIASES`, ↔ contract `tonemapOperatorAliases`). */
+export const TONEMAP_OPERATOR_ALIASES: readonly string[] = DEPRECATED_TONEMAP_ALIASES;
+
+/** Every `tonemap=` name the builder accepts: canonical ∪ deprecated aliases. */
+export const TONEMAP_ACCEPTED: readonly string[] = [
+  ...TONEMAP_OPERATORS,
+  ...TONEMAP_OPERATOR_ALIASES,
 ];
 
 /** Public `compare(mode=)` diff-kernel short names → the registry kernel id
@@ -72,7 +80,7 @@ function oneOf(name: string, value: string, allowed: readonly string[]): string 
 
 export const checkChartColormap = (v: string): string => oneOf("colormap", v, CHART_COLORMAPS);
 export const checkImageColormap = (v: string): string => oneOf("colormap", v, IMAGE_COLORMAPS);
-export const checkTonemap = (v: string): string => oneOf("tonemap", v, TONEMAP_OPERATORS);
+export const checkTonemap = (v: string): string => oneOf("tonemap", v, TONEMAP_ACCEPTED);
 export const checkCompareMode = (v: string): string => oneOf("mode", v, COMPARE_PUBLIC_MODES);
 export const checkAlign = (v: string): string => oneOf("align", v, COMPARE_ALIGNS);
 export const checkFit = (v: string): string => oneOf("fit", v, COMPARE_FITS);

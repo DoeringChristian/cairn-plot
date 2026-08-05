@@ -26,7 +26,7 @@ import { COLORMAP_NAMES } from "./colormaps/lut.ts";
 import {
   SDR_TONEMAP_OPERATORS,
   SDR_DISPLAY_TRANSFER_OPERATORS,
-  HDR_TONEMAP_OPERATORS,
+  DEPRECATED_TONEMAP_ALIASES,
 } from "./image/tonemap.ts";
 import { listDiffKernelPublicNames } from "./engine/kernels/index.ts";
 
@@ -36,6 +36,7 @@ const contractPath = resolve(here, "../../../../schema/cairn-plot-contracts.json
 const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
   colormaps: string[];
   tonemapOperators: string[];
+  tonemapOperatorAliases: string[];
   displayTransfers: string[];
   compareKernelPublicNames: string[];
 };
@@ -46,9 +47,16 @@ test("colormaps: COLORMAP_NAMES matches the contract", () => {
   assert.deepEqual(sorted(COLORMAP_NAMES), sorted(contract.colormaps));
 });
 
-test("tonemapOperators: SDR + HDR group arrays match the contract", () => {
-  const ts = [...SDR_TONEMAP_OPERATORS, ...HDR_TONEMAP_OPERATORS];
-  assert.deepEqual(sorted(ts), sorted(contract.tonemapOperators));
+test("tonemapOperators: the canonical 5-operator menu set matches the contract", () => {
+  // UNIFIED model: the single operator group IS the contract's canonical set.
+  assert.deepEqual(sorted(SDR_TONEMAP_OPERATORS), sorted(contract.tonemapOperators));
+});
+
+test("tonemapOperatorAliases: the deprecated extended* aliases match the contract", () => {
+  assert.deepEqual(
+    sorted(DEPRECATED_TONEMAP_ALIASES),
+    sorted(contract.tonemapOperatorAliases),
+  );
 });
 
 test("displayTransfers: SDR_DISPLAY_TRANSFER_OPERATORS matches the contract", () => {

@@ -6,7 +6,8 @@ contracts.test.ts` pins the TS sources to. So neither language can drift the
 colormap / HDR tone-map / public compare-kernel sets without failing a guard:
 
   - `_COLORMAPS`               ↔ contract `colormaps`
-  - `_HDR_TONEMAP_OPERATORS`   ↔ contract `tonemapOperators`
+  - `_TONEMAP_OPERATORS`       ↔ contract `tonemapOperators`
+  - `_TONEMAP_ALIASES`         ↔ contract `tonemapOperatorAliases`
   - `_COMPARE_KERNEL_MODES`    ↔ contract `compareKernelPublicNames`
 
 Comparisons are set-based (the JSON's order is documentation only). A cheap
@@ -20,7 +21,8 @@ from pathlib import Path
 from cairn_plot.components import (
     _COLORMAPS,
     _COMPARE_KERNEL_MODES,
-    _HDR_TONEMAP_OPERATORS,
+    _TONEMAP_OPERATORS,
+    _TONEMAP_ALIASES,
     _SDR_DISPLAY_TRANSFERS,
 )
 
@@ -33,7 +35,11 @@ def test_colormaps_match_contract() -> None:
 
 
 def test_tonemap_operators_match_contract() -> None:
-    assert set(_HDR_TONEMAP_OPERATORS) == set(CONTRACT["tonemapOperators"])
+    assert set(_TONEMAP_OPERATORS) == set(CONTRACT["tonemapOperators"])
+
+
+def test_tonemap_operator_aliases_match_contract() -> None:
+    assert set(_TONEMAP_ALIASES) == set(CONTRACT["tonemapOperatorAliases"])
 
 
 def test_display_transfers_match_contract() -> None:
@@ -88,6 +94,12 @@ def test_api_doc_lists_every_contract_name() -> None:
     # Cheap doc-drift guard: docs/API.md must mention every contract name, so its
     # human-facing colormap / tonemap / kernel lists can't silently fall behind.
     api = (ROOT / "docs" / "API.md").read_text()
-    for group in ("colormaps", "tonemapOperators", "displayTransfers", "compareKernelPublicNames"):
+    for group in (
+        "colormaps",
+        "tonemapOperators",
+        "tonemapOperatorAliases",
+        "displayTransfers",
+        "compareKernelPublicNames",
+    ):
         for name in CONTRACT[group]:
             assert name in api, f"docs/API.md is missing contract name {name!r} ({group})"
