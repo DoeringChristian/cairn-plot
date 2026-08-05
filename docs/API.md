@@ -267,9 +267,28 @@ the full composite. On WebGPU panes the window is a real-time GPU composite; the
 CPU/non-WebGPU fallback re-flattens in wasm.
 
 An **HDR/float** image pane (`imagehdr`) gets a leading toolbar **TONEMAP menu**
-that switches the tone-map operator view-locally (SDR panes have no such menu:
-their 8-bit pixels are already encoded, so there is no tone-map stage). The menu
-shows the operator **actually in effect**, and HOME restores it.
+that switches the tone-map operator view-locally. The menu shows the operator
+**actually in effect**, and HOME restores it. An **SDR/8-bit** image pane gets a
+leading **display-transfer menu** too (tev applies its selector to LDR images):
+**sRGB** (default) · **Gamma** · **Linear** — the client sRGB-DECODEs the 8-bit
+source to linear, then re-encodes via the chosen transfer (sRGB is a bit-exact
+identity round-trip; Gamma reveals a **γ** slider; Linear shows raw linear). It
+appears only on the plain path — a **colormap** SDR image is already false-
+colored / display-ready, so it is never re-encoded. This is DISTINCT from the
+8-bit CSS-filter `processing.gamma` (a separate legacy brightness-style knob):
+`cp.Image(..., gamma=)` on an 8-bit source feeds the **display-transfer γ**, not
+`processing.gamma`, so a value is never applied twice.
+
+**Operator-family invariant.** Every operator is ONE peak-parameterized curve;
+the SDR variant IS the extended variant with **P = 1** (the only difference is
+the clip point). `linear` = `clamp(x, 0, P)` (SDR P=1; `extended-clamp` = the
+PEAK slider; raw `extended` = P=∞ / browser). `reinhard` = `x/(1+x/P)` (SDR P=1).
+`aces` = `P·aces(x/P)` — reworked so `extended-aces(x, P=1) ≡ aces(x)` **exactly**
+(the old `P·aces(x·S/P)`, `S=0.14/0.03`, low-x-slope-1 normalization broke this).
+`gamma`/`srgb` are output-encode **transfers** (clamp at P, then encode). Locked
+by `image/tonemap.ts`'s P=1-equivalence goldens and inherited by the GPU↔CPU
+parity harness. The Gamma display value golden: `0.5^(1/2.2) ≈ 0.7297` (distinct
+from sRGB's `0.5 → 0.7354` — a 2.2 power curve only approximates the sRGB OETF).
 
 **Operators** (per channel; `x` = exposure/offset-applied scene-linear light):
 
@@ -277,6 +296,7 @@ shows the operator **actually in effect**, and HOME restores it.
 |---|---|---|---|
 | SDR | `linear` (Linear) | `clamp(x, 0, 1)` | → `[0,1]` |
 | SDR | `srgb` (sRGB) | `clamp(x, 0, 1)`, then the sRGB OETF at output-encode | → `[0,1]` |
+| SDR | `gamma` (Gamma) | `clamp(x, 0, 1)`, then `pow(x, 1/γ)` at output-encode (tev "Gamma"; γ default 2.2, slider ~0.5–4) | → `[0,1]` |
 | SDR | `reinhard` (Reinhard) | `x / (1 + x)` | → `[0,1)` |
 | SDR | `aces` (ACES) | Narkowicz `clamp((x(2.51x+0.03))/(x(2.43x+0.59)+0.14), 0, 1)` | → `[0,1]` |
 | HDR | `extended` (Extended · Linear) | `x` (unclamped pass-through) | → `[0,∞)` |

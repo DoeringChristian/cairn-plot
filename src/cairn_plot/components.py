@@ -780,6 +780,7 @@ def _check_pixel_value_notation(value: str) -> str:
 _HDR_TONEMAP_OPERATORS = (
     "linear",
     "srgb",
+    "gamma",
     "reinhard",
     "aces",
     "extended",
@@ -787,6 +788,13 @@ _HDR_TONEMAP_OPERATORS = (
     "extended-reinhard",
     "extended-aces",
 )
+
+# The DISPLAY-TRANSFER operators valid on an SDR / 8-bit image (tev applies the
+# same selector to LDR images): sRGB (default) · Gamma(γ) · Linear. A subset of
+# _HDR_TONEMAP_OPERATORS — the compression operators (reinhard/aces/extended*)
+# are HDR-only (an 8-bit source is already in [0,1]). The client sRGB-DECODEs the
+# 8-bit source to linear, then re-encodes via the chosen transfer.
+_SDR_DISPLAY_TRANSFERS = ("srgb", "gamma", "linear")
 
 
 def _image_hdr_props(
@@ -816,7 +824,11 @@ def _image_hdr_props(
     ``extended``, whose raw values each browser clips at its own headroom
     estimate); when HDR is not engaged it degrades to ``linear`` (SDR
     ``clamp01``, its natural SDR counterpart)."""
-    tm = tonemap if tonemap is not None else "srgb"
+    # Default: "srgb"; but if a `gamma=` was given WITHOUT an explicit tonemap,
+    # select the Gamma operator (so `cp.Image(hdr, gamma=2.2)` means "display
+    # with gamma 2.2", matching the pre-operator gamma-override intent). `gamma`
+    # is otherwise the Gamma operator's γ default and is ignored by the others.
+    tm = tonemap if tonemap is not None else ("gamma" if gamma is not None else "srgb")
     if tm not in _HDR_TONEMAP_OPERATORS:
         raise ValueError(
             f"cp.Image(tonemap={tm!r}) must be one of {_HDR_TONEMAP_OPERATORS!r}."
@@ -833,6 +845,39 @@ def _image_hdr_props(
         props["showAxes"] = bool(show_axes)
     if pixel_value_notation is not None:
         props["pixelValueNotation"] = _check_pixel_value_notation(pixel_value_notation)
+    return props
+
+
+def _image_sdr_transfer_props(
+    *, tonemap: str | None = None, gamma: float | None = None
+) -> dict[str, Any]:
+    """Build the DISPLAY-TRANSFER props for an 8-bit image (tev's sRGB · Gamma ·
+    Linear selector). Emitted as TOP-LEVEL ``tonemap`` / ``gamma`` (distinct from
+    the legacy CSS-filter ``processing`` block): the client sRGB-DECODEs the 8-bit
+    source to linear, then re-encodes via the chosen transfer. Returns ``{}`` when
+    neither is set (the client default ``srgb`` — an identity round-trip). A
+    ``gamma=`` without a ``tonemap=`` selects the Gamma operator; the value is the
+    Gamma transfer's γ (``display = clamp(value)^(1/γ)``), ignored by ``srgb`` /
+    ``linear``.
+
+    NOTE (γ wiring — deliberately NON-conflated with ``processing.gamma``): on the
+    8-bit path ``gamma=`` feeds THIS display transfer, NOT the CSS-filter
+    ``processing.gamma`` (the caller passes ``gamma=None`` to
+    ``_image_display_props`` when a transfer is engaged), so a value is never
+    applied twice. ``processing.gamma`` remains the separate legacy brightness-
+    style knob (default 1.0)."""
+    if tonemap is None and gamma is None:
+        return {}
+    tm = tonemap if tonemap is not None else ("gamma" if gamma is not None else "srgb")
+    if tm not in _SDR_DISPLAY_TRANSFERS:
+        raise ValueError(
+            f"cp.Image(tonemap={tm!r}) on an 8-bit image must be one of "
+            f"{_SDR_DISPLAY_TRANSFERS!r} — Reinhard/ACES and the extended family "
+            "are HDR-only (a float array with values outside [0,1], or hdr=True)."
+        )
+    props: dict[str, Any] = {"tonemap": tm}
+    if gamma is not None:
+        props["gamma"] = float(gamma)
     return props
 
 
@@ -937,11 +982,6 @@ class Image(Component):
             stem = url.split("?", 1)[0].split("#", 1)[0]
             ext = stem.rsplit(".", 1)[-1].lower() if "." in stem else ""
             use_hdr = hdr if hdr is not None else ext in ("exr", "npy", "npz")
-            if tonemap is not None and not use_hdr:
-                raise ValueError(
-                    "cp.Image(url=..., tonemap=...) is HDR-only: pass hdr=True or a "
-                    "float/exr URL (.exr/.npy/.npz)."
-                )
             if use_hdr:
                 self._props = _image_hdr_props(
                     tonemap=tonemap, exposure=exposure, gamma=gamma,
@@ -950,12 +990,18 @@ class Image(Component):
                 )
                 self._renderer = "imagehdr"
             else:
+                # 8-bit: tonemap/gamma select the tev DISPLAY TRANSFER (validated
+                # against the SDR subset); gamma routes to the transfer, not the
+                # CSS `processing` block (so it is never applied twice).
+                transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma)
                 self._props = _image_display_props(
-                    exposure=exposure, gamma=gamma, brightness=brightness,
+                    exposure=exposure, gamma=(None if transfer else gamma),
+                    brightness=brightness,
                     contrast=contrast, offset=offset, flip_sign=flip_sign,
                     colormap=colormap, interpolation=interpolation,
                     show_axes=show_axes, pixel_value_notation=pixel_value_notation,
                 )
+                self._props.update(transfer)
                 self._renderer = "image"
             self._data: dict[str, Any] = {"kind": "image", "hash": None, "url": url}
             self._data_mode = data_mode
@@ -983,11 +1029,10 @@ class Image(Component):
                 want_hdr = True
             elif data.size and (float(data.min()) < 0.0 or float(data.max()) > 1.0):
                 want_hdr = True  # auto-detect: genuine HDR range
-        if tonemap is not None and not want_hdr:
-            raise ValueError(
-                "cp.Image(tonemap=...) is HDR-only: pass a float numpy array "
-                "with values outside [0,1], or hdr=True to force the HDR path."
-            )
+        # On the 8-bit path, tonemap= selects the tev DISPLAY TRANSFER (sRGB /
+        # Gamma / Linear only — validated in `_image_sdr_transfer_props`); the
+        # compression operators (reinhard/aces/extended*) are still HDR-only and
+        # rejected there, so no early gate is needed here.
 
         if want_hdr:
             if data_mode == "endpoint":
@@ -1046,13 +1091,18 @@ class Image(Component):
             self._data_mode = "local"
             return
 
-        # ── 8-bit path (unchanged) ───────────────────────────────────────
+        # ── 8-bit path ───────────────────────────────────────────────────
+        # tonemap/gamma select the tev DISPLAY TRANSFER (sRGB · Gamma · Linear);
+        # gamma routes to the transfer, not the CSS `processing` block.
+        transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma)
         self._props = _image_display_props(
-            exposure=exposure, gamma=gamma, brightness=brightness,
+            exposure=exposure, gamma=(None if transfer else gamma),
+            brightness=brightness,
             contrast=contrast, offset=offset, flip_sign=flip_sign,
             colormap=colormap, interpolation=interpolation, show_axes=show_axes,
             pixel_value_notation=pixel_value_notation,
         )
+        self._props.update(transfer)
 
         if _is_data_ref(data):
             ai = _artifact_info_of(data)

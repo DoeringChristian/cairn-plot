@@ -43,6 +43,7 @@ import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
 import { COLORMAP_OPTIONS } from "../colormaps/lut";
 import {
   SDR_TONEMAP_OPERATORS,
+  SDR_DISPLAY_TRANSFER_OPERATORS,
   HDR_TONEMAP_OPERATORS,
   type TonemapOperator,
 } from "../image/tonemap";
@@ -128,6 +129,7 @@ export function colormapToolbarButton(
 const TONEMAP_LABELS: Record<TonemapOperator, string> = {
   linear: "Linear",
   srgb: "sRGB",
+  gamma: "Gamma",
   reinhard: "Reinhard",
   aces: "ACES",
   extended: "Extended · Linear",
@@ -179,6 +181,37 @@ export function tonemapToolbarButton(
     id: "tonemap",
     title: "Tone-mapping operator",
     menu: { options, value, onSelect },
+  };
+}
+
+/**
+ * The DISPLAY-TRANSFER options for an SDR / 8-bit image pane (menu order
+ * sRGB · Gamma · Linear). DERIVED from `image/tonemap.ts`'s
+ * `SDR_DISPLAY_TRANSFER_OPERATORS` + the shared label map, so it can't drift.
+ * tev applies the same transfer selector to LDR images: the pane sRGB-DECODEs
+ * the 8-bit source to linear, then re-encodes via the chosen transfer (sRGB is
+ * the default, a round-trip identity; Gamma reveals the γ slider; Linear shows
+ * raw linear).
+ */
+export const SDR_DISPLAY_TRANSFER_MENU_OPTIONS: { id: string; label: string }[] =
+  SDR_DISPLAY_TRANSFER_OPERATORS.map((id) => ({ id, label: TONEMAP_LABELS[id] }));
+
+/**
+ * A DISPLAY-TRANSFER dropdown as a toolbar LEADING button (menu variant) for an
+ * SDR / 8-bit image pane — the tev-style sRGB · Gamma · Linear selector. `value`
+ * is the transfer in effect; `onSelect` receives the picked id. Same leading
+ * placement as the HDR tone-map menu so it never shifts the corner buttons; the
+ * γ slider (revealed while Gamma is selected) rides `extraSliders`, mirroring
+ * the HDR pane's PEAK-slider precedent.
+ */
+export function displayTransferToolbarButton(
+  value: string,
+  onSelect: (id: string) => void,
+): ToolbarButtonSpec {
+  return {
+    id: "tonemap",
+    title: "Display transfer (sRGB · Gamma · Linear)",
+    menu: { options: SDR_DISPLAY_TRANSFER_MENU_OPTIONS, value, onSelect },
   };
 }
 

@@ -30,8 +30,10 @@
  *
  *   logical binding 2 (`u_bind2: vec4<f32>`, native binding 2*3+2=8):
  *     .x = exposureEV        (f32, EV stops)
- *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended,5=extended-reinhard,6=extended-aces,7=extended-clamp)
- *     .z = gamma               (f32; <=0 means "unset" -> sRGB OETF encode)
+ *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended,5=extended-reinhard,6=extended-aces,7=extended-clamp,8=gamma)
+ *     .z = gamma               (f32; <=0 means "unset" -> sRGB OETF encode; the
+ *                               renderer packs it per operator via resolveEncodeGamma:
+ *                               gamma-op -> γ, linear-op -> 1 (identity), else 0/unset)
  *     .w = isScalar            (f32, 0/1 boolean flag)
  *   logical binding 3 (`u_bind3: vec4<f32>`, native binding 3*3+2=11):
  *     .xy = uvRect.xy (window origin, [0,1] source-space)
@@ -48,6 +50,10 @@
  *     = peak (f32, PEAK white ×SDR white for the peak-parameterized extended
  *       operators `extended-reinhard`(5)/`extended-aces`(6)/`extended-clamp`(7);
  *       default 4, ignored by the others)
+ *   logical binding 8 (`u_bind8: f32`, native binding 8*3+2=26):
+ *     = srgbDecode (f32, 0/1 — sRGB-DECODE the sampled source to linear BEFORE
+ *       exposure; set for an 8-bit sRGB source on the SDR display-transfer path,
+ *       0 for the HDR/float path)
  *
  * ## Out-of-bounds -> fully transparent (Q18)
  * `uvRect` (`u_bind3`) is the zoom/pan WINDOW in source-space `[0,1]`; when
@@ -174,6 +180,12 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // always writes EXTENDED_TONEMAP_PEAK_DEFAULT (4), and the roll-off curves guard
 // peak<=0 anyway.
 @group(0) @binding(23) var<uniform> u_bind7: f32;
+// Logical binding 8 (uniform f32: srgbDecode, 0/1) -> native binding 8*3+2 = 26.
+// When 1, sRGB-DECODE the sampled source to linear light BEFORE exposure (an
+// 8-bit sRGB source going through the display-transfer pipeline). Default 0
+// (zero-filled when the caller omits it) — the HDR/float path leaves it off, so
+// a scene-linear source is untouched and every existing case renders as before.
+@group(0) @binding(26) var<uniform> u_bind8: f32;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -183,6 +195,19 @@ fn srgbOetf(x: f32) -> f32 {
     return 12.92 * v;
   }
   return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
+// sRGB EOTF (sRGB code -> linear) — the exact inverse of srgbOetf. Mirrors
+// image/tonemap.ts's srgbEotf. Used to LINEARIZE an 8-bit sRGB source at the
+// front of the pipeline when srgbDecode (u_bind8) is set (SDR display-transfer
+// panes), so exposure/offset + the chosen transfer operate on linear light,
+// tev-style.
+fn srgbEotf(x: f32) -> f32 {
+  let v = clamp(x, 0.0, 1.0);
+  if (v <= 0.04045) {
+    return v / 12.92;
+  }
+  return pow((v + 0.055) / 1.055, 2.4);
 }
 
 fn outputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
@@ -217,15 +242,16 @@ fn extendedReinhardCurve(x: f32, peak: f32) -> f32 {
   return v / (1.0 + v / p);
 }
 
-// The reciprocal of acesCurve's slope at 0 (0.03/0.14) — makes the low-x slope
-// of extendedAcesCurve exactly 1 (identity-like). Matches ACES_IDENTITY_SCALE.
-const ACES_IDENTITY_SCALE: f32 = 0.14 / 0.03;
-
-// ACES fit rescaled to the peak: y = P * acesCurve(x * S / P). Saturates at P.
+// ACES fit peak-parameterized as the CANONICAL curve scaled to P: y = P*aces(x/P).
+// Mirrors image/tonemap.ts's extendedAcesCurve EXACTLY. INVARIANT: at P=1 this
+// is 1*aces(x/1) = aces(x) — the SDR ACES operator exactly, so the only
+// difference between SDR and extended ACES is the peak P (parity-tested). Keeps
+// y→P as x→∞ and monotone. (Replaces the earlier P*aces(x*S/P), S=0.14/0.03,
+// which normalized the low-x slope to 1 but broke the P=1 equivalence.)
 fn extendedAcesCurve(x: f32, peak: f32) -> f32 {
   let v = max(x, 0.0);
   let p = max(peak, 1e-6);
-  return p * acesCurve((v * ACES_IDENTITY_SCALE) / p);
+  return p * acesCurve(v / p);
 }
 
 // Extended · Linear (MANAGED) with display peak P: y = min(max(x,0), P) —
@@ -266,9 +292,11 @@ fn sampleBilinearF(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
 
 // operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (Extended·Linear),
 // 5=extended-reinhard, 6=extended-aces, 7=extended-clamp (Extended·Linear
-// managed) (matches OPERATOR_ID in image-engine.ts / TONEMAP_OPERATORS + the
-// extended curves in image/tonemap.ts). linear/srgb are the SAME clamp — the
-// sRGB OETF lives in outputEncodeF, not here. 4 (extended) is a pure identity —
+// managed), 8=gamma (matches OPERATOR_ID in image-engine.ts / TONEMAP_OPERATORS +
+// the extended curves in image/tonemap.ts). linear/srgb/gamma are the SAME clamp
+// (the RANGE-MAP) — the display transfer (sRGB OETF, identity, or the gamma power
+// curve) lives in outputEncodeF, selected by the gamma uniform the renderer
+// packs per operator (see image/tonemap.ts's resolveEncodeGamma). 4 (extended) is a pure identity —
 // no compression, no clamp — deliberately preserving values above 1.0 for a real
 // HDR (hdrOut) target. 5/6 are the peak-parameterized HDR roll-off operators;
 // 7 is the peak-parameterized HARD clamp (managed linear) — all three read
@@ -327,11 +355,20 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let hdrOut = u_bind4 > 0.5;
   let offset = u_bind6;
   let peak = u_bind7;
+  let srgbDecode = u_bind8 > 0.5;
+
+  // 0) [SDR display-transfer path] sRGB-DECODE the sampled 8-bit source to
+  //    linear light so exposure/offset + the chosen transfer operate on linear
+  //    values (tev-style). Off for the HDR/float path (scene-linear already).
+  var src = sampled.rgb;
+  if (srgbDecode) {
+    src = vec3<f32>(srgbEotf(src.r), srgbEotf(src.g), srgbEotf(src.b));
+  }
 
   // 1) exposure + offset (TEV convention), in scene-linear space:
   //    v * 2^EV + offset. Offset is additive AFTER exposure, BEFORE the
   //    colormap / tone-map / output-encode stages below.
-  var rgb = sampled.rgb * exp2(exposureEV) + vec3<f32>(offset);
+  var rgb = src * exp2(exposureEV) + vec3<f32>(offset);
 
   // 2) scalar image + colormap LUT (GPU-only pipeline stage; see module doc).
   if (isScalar) {

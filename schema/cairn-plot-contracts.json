@@ -10,12 +10,18 @@
   "tonemapOperators": [
     "linear",
     "srgb",
+    "gamma",
     "reinhard",
     "aces",
     "extended",
     "extended-clamp",
     "extended-reinhard",
     "extended-aces"
+  ],
+  "displayTransfers": [
+    "srgb",
+    "gamma",
+    "linear"
   ],
   "compareKernelPublicNames": [
     "signed",

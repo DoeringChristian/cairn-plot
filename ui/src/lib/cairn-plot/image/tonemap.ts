@@ -48,6 +48,7 @@ export type RgbTriple = [number, number, number];
 export type TonemapOperator =
   | "linear"
   | "srgb"
+  | "gamma" //             Gamma(γ) display transfer — pow(clamp01(x), 1/γ), tev-style
   | "reinhard"
   | "aces"
   // HDR-OUT family (selectable only when the extended surface engaged):
@@ -131,23 +132,29 @@ export function extendedReinhardCurve(x: number, peak: number): number {
 }
 
 /**
- * The exact reciprocal of `acesCurve`'s slope at 0 (`acesCurve'(0) = 0.03/0.14`).
- * Scaling the ACES input by this makes `extendedAcesCurve`'s low-`x` slope
- * exactly 1 (identity-like), the normalization the feature brief requires.
- */
-export const ACES_IDENTITY_SCALE = 0.14 / 0.03;
-
-/**
- * ACES fit rescaled to a peak P: `y = P · acesFit(x · S / P)`, where
- * `acesFit = acesCurve` (Narkowicz, clamped to `[0,1]`) and
- * `S = ACES_IDENTITY_SCALE = 0.14/0.03`. Per channel, `x` pre-clamped to
- * `[0,∞)`. The `S/P` input scale makes it `y ≈ x` for `x ≪ 1` (low-`x` slope
- * `= P · acesCurve'(0) · S/P = 1`) and `y → P` asymptotically (`acesCurve`
- * saturates at 1, so `y → P·1 = P`), monotonically between.
+ * ACES fit peak-parameterized as the CANONICAL curve scaled to a peak P:
+ * `y = P · acesCurve(x / P)`, where `acesCurve` is the Narkowicz 2015 fit
+ * (clamped to `[0,1]`). Per channel, `x` pre-clamped to `[0,∞)`.
+ *
+ * INVARIANT (the operator-family consistency rule): at `P = 1` this is
+ * `1 · acesCurve(x/1) = acesCurve(x)` — the SDR ACES operator EXACTLY, so the
+ * ONLY difference between the SDR and extended ACES is the peak `P` (the clip
+ * point), tested by `tonemap.test.ts`'s P=1-equivalence goldens. It also
+ * satisfies `y → P` as `x → ∞` (acesCurve saturates at 1, so `y → P·1 = P`)
+ * and is monotone increasing.
+ *
+ * NOTE: this REPLACES the earlier `P · acesCurve(x · S / P)` form (with
+ * `S = 0.14/0.03`), which normalized the low-`x` slope to exactly 1 but BROKE
+ * the P=1 equivalence (`acesCurve(x·S) ≠ acesCurve(x)`). The `x/P` form keeps
+ * the invariant exact at ALL `x` (SDR = extended at P=1 identically), sharing
+ * the Narkowicz low-`x` slope (`acesCurve'(0) = 0.03/0.14`) between the SDR and
+ * extended curves rather than a separate slope-1 normalization — which is what
+ * "the only difference is the clip point P" means.
  */
 export function extendedAcesCurve(x: number, peak: number): number {
   const v = x < 0 ? 0 : x;
-  return peak * acesCurve((v * ACES_IDENTITY_SCALE) / peak);
+  const p = peak > 0 ? peak : 1;
+  return p * acesCurve(v / p);
 }
 
 export const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = {
@@ -156,6 +163,16 @@ export const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = 
   // Identity tone-map: the HDR→[0,1] step is a clamp; the sRGB OETF is applied
   // by the OUTPUT-ENCODE stage (`outputEncode` with tonemap==="srgb").
   srgb: ([r, g, b]) => [clamp01(r), clamp01(g), clamp01(b)],
+  // Gamma(γ) DISPLAY TRANSFER (tev "Gamma" mode): the RANGE-MAP step is the
+  // SAME clamp to [0,1] (= extended-clamp / linear at P=1); the γ power curve
+  // `pow(clamp01(x), 1/γ)` is applied by the OUTPUT-ENCODE stage instead of the
+  // sRGB OETF. The renderer drives that by passing the `gamma` output-encode
+  // parameter = γ ONLY when this operator is in effect (see
+  // `resolveEncodeGamma`); for every other operator the encode is the sRGB OETF
+  // (or identity for `linear`). So the operator function itself is the clamp,
+  // exactly like `linear`/`srgb` — the γ lives in the encode stage, matching the
+  // existing split (operator compresses, output-encode is the transfer).
+  gamma: ([r, g, b]) => [clamp01(r), clamp01(g), clamp01(b)],
   // Reinhard, per-channel (v1 choice; luminance-based Reinhard is a possible
   // future operator). Naturally lands in [0,1) so the clamp is a no-op safety.
   reinhard: ([r, g, b]) => [reinhardCurve(r), reinhardCurve(g), reinhardCurve(b)],
@@ -193,8 +210,27 @@ export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
 export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
   "linear",
   "srgb",
+  "gamma",
   "reinhard",
   "aces",
+];
+
+/**
+ * The DISPLAY-TRANSFER operators offered on an SDR / 8-bit image pane (menu
+ * order: sRGB · Gamma · Linear). These are the pure encodes — each is a
+ * RANGE-MAP clamp to `[0,1]` (`P=1`) paired with a transfer at the output-encode
+ * stage: `srgb` → sRGB OETF (the DEFAULT, an identity round-trip for an
+ * already-sRGB 8-bit source); `gamma` → `pow(x, 1/γ)`; `linear` → identity (raw
+ * linear to the display). tev applies the same transfer selector to LDR images.
+ * The compression operators (`reinhard`/`aces`) are NOT offered on an 8-bit pane
+ * (its pixels are already in `[0,1]`), so this is a subset of
+ * {@link SDR_TONEMAP_OPERATORS}. See `renderers/GpuImagePane`/`CpuImagePane` for
+ * the sRGB-DECODE-first pipeline the 8-bit source runs through first.
+ */
+export const SDR_DISPLAY_TRANSFER_OPERATORS: readonly TonemapOperator[] = [
+  "srgb",
+  "gamma",
+  "linear",
 ];
 
 /**
@@ -363,6 +399,20 @@ export function srgbOetf(x: number): number {
 }
 
 /**
+ * The standard sRGB electro-optical transfer function (sRGB code → linear) —
+ * the exact inverse of {@link srgbOetf}. Used to LINEARIZE an already-sRGB-
+ * encoded 8-bit source at the FRONT of the display pipeline (tev-style: an SDR
+ * pane decodes the stored value to linear light, applies exposure/offset, then
+ * re-encodes via the selected transfer operator). `srgbOetf(srgbEotf(v)) === v`
+ * to within 8-bit rounding across all 256 code values (verified: 0 byte drift),
+ * so the default `srgb` operator is a bit-exact round-trip on an 8-bit source.
+ */
+export function srgbEotf(x: number): number {
+  const v = clamp01(x);
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+/**
  * OUTPUT-ENCODE: map DISPLAY-LINEAR [0,1] → display code value [0,1].
  *
  * Display encoding is INDEPENDENT of the tone-map operator: every operator
@@ -378,4 +428,49 @@ export function outputEncode(x: number, gamma?: number): number {
     return clamp01(Math.pow(clamp01(x), 1 / gamma));
   }
   return srgbOetf(x);
+}
+
+// ---------------------------------------------------------------------------
+// Gamma(γ) display-transfer operator — the tev "Gamma" mode as a first-class
+// tone-map operator. See the `gamma` entry in `TONEMAP_OPERATORS` for the
+// mechanism: the operator's RANGE-MAP is the plain clamp; the γ power curve is
+// applied at the OUTPUT-ENCODE stage via the existing `gamma` parameter, which
+// the renderer supplies ONLY while this operator is in effect.
+// ---------------------------------------------------------------------------
+
+/** Default γ for the Gamma operator (≈ the sRGB OETF's effective exponent, so
+ *  "Gamma 2.2" looks CLOSE to "sRGB" but not identical — the sRGB OETF is only
+ *  approximately a 2.2 power curve; this matches tev). */
+export const TONEMAP_GAMMA_DEFAULT = 2.2;
+/** Gamma slider bounds (double-click to type an exact value). */
+export const TONEMAP_GAMMA_MIN = 0.5;
+export const TONEMAP_GAMMA_MAX = 4.0;
+export const TONEMAP_GAMMA_STEP = 0.1;
+
+/** True when `op` is the Gamma operator (drives the γ slider's visibility, the
+ *  same conditional-slider precedent `tonemapHasPeak` sets for PEAK). */
+export function tonemapHasGamma(name: string | undefined | null): boolean {
+  return name === "gamma";
+}
+
+/**
+ * The `gamma` value the OUTPUT-ENCODE stage must receive for a given operator —
+ * the ONE place the operator→encode-transfer mapping lives, mirrored by the
+ * GPU shader's uniform packing:
+ *   - `gamma`  → `γ` (the encode does `pow(x, 1/γ)` instead of the sRGB OETF).
+ *   - `linear` → `1` (the encode does `pow(x, 1) = x`, i.e. IDENTITY — raw
+ *                linear to the display, tev's "Linear"/gamma-1 look; distinct
+ *                from `srgb`, which sRGB-encodes).
+ *   - everything else (`srgb`/`reinhard`/`aces`/`extended*`) → `undefined`
+ *                (the encode uses the sRGB OETF; skipped entirely when `hdrOut`).
+ * Returns `undefined` to mean "no gamma override → sRGB OETF", matching
+ * `outputEncode`/`ImageParams.gamma`'s `undefined` convention.
+ */
+export function resolveEncodeGamma(
+  operator: string | undefined | null,
+  gammaValue: number,
+): number | undefined {
+  if (operator === "gamma") return gammaValue > 0 ? gammaValue : TONEMAP_GAMMA_DEFAULT;
+  if (operator === "linear") return 1;
+  return undefined;
 }

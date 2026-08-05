@@ -23,7 +23,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { COLORMAP_NAMES } from "./colormaps/lut.ts";
-import { SDR_TONEMAP_OPERATORS, HDR_TONEMAP_OPERATORS } from "./image/tonemap.ts";
+import {
+  SDR_TONEMAP_OPERATORS,
+  SDR_DISPLAY_TRANSFER_OPERATORS,
+  HDR_TONEMAP_OPERATORS,
+} from "./image/tonemap.ts";
 import { listDiffKernelPublicNames } from "./engine/kernels/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -32,6 +36,7 @@ const contractPath = resolve(here, "../../../../schema/cairn-plot-contracts.json
 const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
   colormaps: string[];
   tonemapOperators: string[];
+  displayTransfers: string[];
   compareKernelPublicNames: string[];
 };
 
@@ -44,6 +49,10 @@ test("colormaps: COLORMAP_NAMES matches the contract", () => {
 test("tonemapOperators: SDR + HDR group arrays match the contract", () => {
   const ts = [...SDR_TONEMAP_OPERATORS, ...HDR_TONEMAP_OPERATORS];
   assert.deepEqual(sorted(ts), sorted(contract.tonemapOperators));
+});
+
+test("displayTransfers: SDR_DISPLAY_TRANSFER_OPERATORS matches the contract", () => {
+  assert.deepEqual(sorted(SDR_DISPLAY_TRANSFER_OPERATORS), sorted(contract.displayTransfers));
 });
 
 test("compareKernelPublicNames: listDiffKernelPublicNames() matches the contract", () => {

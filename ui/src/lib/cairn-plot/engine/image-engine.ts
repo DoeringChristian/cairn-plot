@@ -37,6 +37,7 @@ import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../image/tonemap";
 export type ImageOperator =
   | "linear"
   | "srgb"
+  | "gamma"
   | "reinhard"
   | "aces"
   | "extended"
@@ -61,6 +62,11 @@ export interface ImageParams {
   isScalar: boolean;
   /** When true, skip the output-encode stage and write display-linear float straight to `target`. */
   hdrOut: boolean;
+  /** When true, sRGB-DECODE the sampled source to linear BEFORE exposure — an
+   *  8-bit sRGB source going through the SDR display-transfer pipeline (tev-style
+   *  decode→exposure→operator→encode). Unset = false: the HDR/float path leaves a
+   *  scene-linear source untouched, so omitting it renders bit-for-bit as before. */
+  srgbDecode?: boolean;
   /** Peak white (×SDR white) for the extended roll-off operators
    *  (`extended-reinhard`/`extended-aces`). Unset defaults to
    *  `EXTENDED_TONEMAP_PEAK_DEFAULT` (4); ignored by every other operator. */
@@ -98,6 +104,10 @@ const OPERATOR_ID: Record<ImageOperator, number> = {
   "extended-reinhard": 5,
   "extended-aces": 6,
   "extended-clamp": 7,
+  // 8 = gamma: the RANGE-MAP is the same clamp as linear/srgb (the shader's
+  // applyOperator falls through to clamp for id 8); the γ power curve is applied
+  // at the output-encode stage via the `gamma` param (resolveEncodeGamma).
+  gamma: 8,
 };
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
@@ -183,6 +193,8 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // u_bind7 = PEAK white (×SDR white) for the extended roll-off operators
   // (ids 5/6). Default 4 when unset; ignored by every other operator.
   const peakVec = new Float32Array([params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT]);
+  // u_bind8 = srgbDecode flag (default 0 = no decode; the HDR/float path).
+  const srgbDecodeVec = new Float32Array([params.srgbDecode ? 1 : 0]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -195,6 +207,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 5, resource: { uniform: filterFlag } },
       { binding: 6, resource: { uniform: offsetVec } },
       { binding: 7, resource: { uniform: peakVec } },
+      { binding: 8, resource: { uniform: srgbDecodeVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

@@ -62,6 +62,13 @@ import {
   toSdrTonemap,
   applyExposureOffset,
   outputEncode,
+  srgbEotf,
+  resolveEncodeGamma,
+  tonemapHasGamma,
+  TONEMAP_GAMMA_DEFAULT,
+  TONEMAP_GAMMA_MIN,
+  TONEMAP_GAMMA_MAX,
+  TONEMAP_GAMMA_STEP,
   type RgbTriple,
   type TonemapOperator,
 } from "../image/tonemap";
@@ -71,7 +78,11 @@ import {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
-import { colormapToolbarButton, tonemapToolbarButton } from "./use-image-controller";
+import {
+  colormapToolbarButton,
+  tonemapToolbarButton,
+  displayTransferToolbarButton,
+} from "./use-image-controller";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -158,6 +169,34 @@ export function tonemapToImageData(
   return new ImageData(out, w, h);
 }
 
+/**
+ * Apply an SDR DISPLAY TRANSFER (tev sRGB · Gamma · Linear) to an already-sRGB
+ * 8-bit `ImageData`, returning a new `ImageData`. Mirrors the GPU shader's plain-
+ * SDR path (`srgbDecode → clamp → output-encode`) at EV=0/offset=0, so the CPU
+ * fallback matches `GpuImagePane` to within 8-bit rounding:
+ *   linear = srgbEotf(v/255) → clamp01 → out = 255·outputEncode(linear, gEnc)
+ * where `gEnc = resolveEncodeGamma(operator, γ)` (gamma → γ, linear → 1/identity,
+ * srgb → undefined/sRGB OETF). For `srgb` this is a bit-exact round-trip (so the
+ * pane keeps the plain `<img>` there — no recompute); this runs for gamma/linear.
+ * Alpha passes through unchanged.
+ */
+export function sdrTransferToImageData(
+  src: ImageData,
+  operator: string,
+  gamma?: number,
+): ImageData {
+  const gEnc = resolveEncodeGamma(operator, gamma ?? TONEMAP_GAMMA_DEFAULT);
+  const out = new Uint8ClampedArray(src.data.length);
+  const d = src.data;
+  for (let i = 0; i < d.length; i += 4) {
+    out[i] = 255 * outputEncode(srgbEotf(d[i]! / 255), gEnc);
+    out[i + 1] = 255 * outputEncode(srgbEotf(d[i + 1]! / 255), gEnc);
+    out[i + 2] = 255 * outputEncode(srgbEotf(d[i + 2]! / 255), gEnc);
+    out[i + 3] = d[i + 3]!;
+  }
+  return new ImageData(out, src.width, src.height);
+}
+
 // ---------------------------------------------------------------------------
 // SDR branch — the former ImagePane body (decode/colormap/diff effects ported
 // verbatim), rendering its display element through the shared shell.
@@ -171,6 +210,8 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
     diffMode = "none",
     interpolation = "auto",
     colormap: colormapProp = "none",
+    tonemap: tonemapProp,
+    gamma: gammaProp,
     showAxes = false,
     processing = DEFAULT_PROCESSING,
     zoom: zoomProp = 1,
@@ -200,8 +241,33 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
     setColormap(colormapProp);
   }, [colormapProp, setColormap]);
 
+  // SDR DISPLAY TRANSFER (tev sRGB · Gamma · Linear) — the plain-image display
+  // menu. Seeded from the descriptor `tonemap=` prop coerced to a display
+  // transfer (default "srgb"); HOME restores it. The γ for the Gamma transfer
+  // rides `tonemapGamma` (slider shown only while Gamma is active — PEAK
+  // precedent). sRGB is the identity round-trip (plain `<img>`); gamma/linear
+  // recompute into a canvas (see the transfer effect / surface below).
+  const seedSdrTransfer = ((): TonemapOperator => {
+    const t = toSdrTonemap(tonemapProp);
+    return t === "gamma" || t === "linear" ? t : "srgb";
+  })();
+  const [sdrTransfer, setSdrTransfer, sdrTransferMeta] =
+    useResettableState<TonemapOperator>(seedSdrTransfer);
+  useEffect(() => {
+    setSdrTransfer(seedSdrTransfer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tonemapProp]);
+  const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
+    gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT,
+  );
+  useEffect(() => {
+    if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
+  }, [gammaProp, setTonemapGamma]);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
+  const transferRef = useRef<HTMLCanvasElement | null>(null);
+  const [transferReady, setTransferReady] = useState(false);
   // The shared shell attaches these (see `ImagePaneShell`); the CPU backend
   // has no render-pass effect that reads them, but the shell needs them for
   // the viewport/controller wiring and the PixelAxes container.
@@ -243,6 +309,10 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   }, []);
   const setFalseColorEl = useCallback((el: HTMLCanvasElement | null) => {
     falseColorRef.current = el;
+    if (el) displayElRef.current = el;
+  }, []);
+  const setTransferEl = useCallback((el: HTMLCanvasElement | null) => {
+    transferRef.current = el;
     if (el) displayElRef.current = el;
   }, []);
   const setImgEl = useCallback((el: HTMLImageElement | null) => {
@@ -339,6 +409,42 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useFalseColor, imageUrl, colormap]);
+
+  // PLAIN-image display transfer (tev Gamma/Linear). Only when NOT diffing and
+  // NOT colormapped (the false-color LUT output is already display-ready), and
+  // only for a NON-sRGB transfer (sRGB is a bit-exact round-trip → keep the plain
+  // <img>). Recomputes the pixels through `sdrTransferToImageData` (the CPU mirror
+  // of the GPU plain-SDR shader path) into `transferRef`.
+  const useDisplayTransfer =
+    imageUrl != null && !showDiff && !useFalseColor && sdrTransfer !== "srgb";
+
+  useEffect(() => {
+    if (!useDisplayTransfer || !imageUrl) {
+      setTransferReady(false);
+      return;
+    }
+    let cancelled = false;
+    setTransferReady(false);
+    loadImageData(imageUrl).then((src) => {
+      if (cancelled || !src) return;
+      const mapped = sdrTransferToImageData(src, sdrTransfer, tonemapGamma);
+      const c = transferRef.current;
+      if (!c) return;
+      c.width = mapped.width;
+      c.height = mapped.height;
+      const ctx = c.getContext("2d");
+      if (ctx) ctx.putImageData(mapped, 0, 0);
+      dispDataRef.current = mapped;
+      bumpPixelData();
+      setNaturalDims({ w: mapped.width, h: mapped.height });
+      onNaturalSize?.(mapped.width, mapped.height);
+      setTransferReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useDisplayTransfer, imageUrl, sdrTransfer, tonemapGamma]);
 
   const updateDims = useCallback((w: number, h: number) => {
     setNaturalDims((prev) =>
@@ -578,6 +684,23 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
         }}
       />
     </>
+  ) : useDisplayTransfer ? (
+    <>
+      {!transferReady && (
+        <span className="text-xs text-fg-muted motion-safe:animate-pulse">
+          applying transfer...
+        </span>
+      )}
+      <canvas
+        ref={setTransferEl}
+        className="w-full h-full object-contain block"
+        style={{
+          display: transferReady ? "block" : "none",
+          imageRendering: imgRendering,
+          ...invertStyle,
+        }}
+      />
+    </>
   ) : (
     <img
       ref={setImgEl}
@@ -632,11 +755,43 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={exportCanvasRef}
-      // SDR single-image: a view-local COLORMAP menu (shown only when the
-      // toolbar renders — `toolbar={true}` backend-seam mounts).
-      leadingMenus={[colormapToolbarButton(colormap, (id) => setColormap(id as Colormap))]}
-      onReset={colormapMeta.reset}
-      extraModified={colormapMeta.isModified}
+      // SDR single-image: a view-local COLORMAP menu + (on the plain path) the
+      // tev DISPLAY-TRANSFER menu (sRGB · Gamma · Linear). The transfer menu is
+      // hidden once a colormap is active (false-color output is display-ready).
+      leadingMenus={
+        colormap === "none"
+          ? [
+              colormapToolbarButton(colormap, (id) => setColormap(id as Colormap)),
+              displayTransferToolbarButton(sdrTransfer, (id) => setSdrTransfer(id as TonemapOperator)),
+            ]
+          : [colormapToolbarButton(colormap, (id) => setColormap(id as Colormap))]
+      }
+      // γ slider — shown only while the Gamma transfer is in effect on the plain
+      // path (PEAK-slider precedent).
+      extraSliders={
+        colormap === "none" && tonemapHasGamma(sdrTransfer)
+          ? [
+              {
+                id: "gamma",
+                label: "γ",
+                title:
+                  "Display gamma γ for the Gamma transfer — display = clamp(value)^(1/γ), tev-style. Default 2.2 (close to sRGB, not identical). Double-click to type a value.",
+                min: TONEMAP_GAMMA_MIN,
+                max: TONEMAP_GAMMA_MAX,
+                step: TONEMAP_GAMMA_STEP,
+                value: tonemapGamma,
+                onChange: setTonemapGamma,
+                format: (v: number) => v.toFixed(1),
+              },
+            ]
+          : undefined
+      }
+      onReset={() => {
+        colormapMeta.reset();
+        sdrTransferMeta.reset();
+        gammaMeta.reset();
+      }}
+      extraModified={colormapMeta.isModified || sdrTransferMeta.isModified || gammaMeta.isModified}
       // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
       // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
       // (or a colormap/diff `<canvas>`), with no scene-linear pixel-recompute
@@ -695,6 +850,16 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
     setTonemapOp(toSdrTonemap(tonemap));
   }, [tonemap, setTonemapOp]);
 
+  // Gamma(γ) for the Gamma operator (the γ slider is shown only while Gamma is in
+  // effect — the PEAK-slider precedent). Seeded from the descriptor `gamma=`,
+  // else the default 2.2; HOME restores it.
+  const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
+    gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT,
+  );
+  useEffect(() => {
+    if (gamma && gamma > 0) setTonemapGamma(gamma);
+  }, [gamma, setTonemapGamma]);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -716,7 +881,15 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
     if (!canvas) return;
     let imageData: ImageData;
     try {
-      imageData = tonemapToImageData(hdr, tonemapOp, exposure + displayEV, gamma, displayOffset);
+      imageData = tonemapToImageData(
+        hdr,
+        tonemapOp,
+        exposure + displayEV,
+        // The output-encode transfer selected by the operator in effect
+        // (gamma → γ, linear → identity, else sRGB OETF). See resolveEncodeGamma.
+        resolveEncodeGamma(tonemapOp, tonemapGamma),
+        displayOffset,
+      );
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
       return;
@@ -735,7 +908,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemapOp, exposure, gamma, displayEV, displayOffset]);
+  }, [hdr, tonemapOp, exposure, tonemapGamma, displayEV, displayOffset]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -813,6 +986,26 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
+      // γ slider — shown ONLY while the Gamma operator is in effect (the same
+      // conditional-slider precedent PEAK uses on the GPU pane).
+      extraSliders={
+        tonemapHasGamma(tonemapOp)
+          ? [
+              {
+                id: "gamma",
+                label: "γ",
+                title:
+                  "Display gamma γ for the Gamma transfer — display = clamp(value)^(1/γ), tev-style. Default 2.2 (close to sRGB, not identical). Double-click to type a value.",
+                min: TONEMAP_GAMMA_MIN,
+                max: TONEMAP_GAMMA_MAX,
+                step: TONEMAP_GAMMA_STEP,
+                value: tonemapGamma,
+                onChange: setTonemapGamma,
+                format: (v: number) => v.toFixed(1),
+              },
+            ]
+          : undefined
+      }
       // DEEP depth-window sliders (Z-NEAR/Z-FAR) + region-select (absent for
       // non-deep); HOME resets the window to [zMin,zMax] and the tonemap override.
       depthSliders={deepFlatten.sliders}
@@ -829,8 +1022,9 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       onReset={() => {
         deepFlatten.reset();
         tonemapMeta.reset();
+        gammaMeta.reset();
       }}
-      extraModified={deepFlatten.isModified || tonemapMeta.isModified}
+      extraModified={deepFlatten.isModified || tonemapMeta.isModified || gammaMeta.isModified}
       label={label}
       showLabelChip={!!label}
     />
