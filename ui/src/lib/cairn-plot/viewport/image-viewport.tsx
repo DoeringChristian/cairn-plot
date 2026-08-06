@@ -68,6 +68,16 @@ export interface ImageViewportSettings {
   showAxes?: boolean;
   overlay?: ImageOverlaySettings;
   pixelValueNotation?: "decimal" | "int";
+  /** Host-controlled tone-map operator (unified 5-op set) — seeds the pane's
+   *  tone-map view when the toolbar is hidden. Threaded to `CompositeMediaPane`'s
+   *  `tonemap`. Unset ⇒ the pane's surface default. */
+  tonemap?: string;
+  /** Host-controlled PEAK ceiling `P` (HDR mode). Threaded to `peak`. */
+  peak?: number;
+  /** Host-controlled Gamma-operator exponent γ (used only when `tonemap:"gamma"`)
+   *  — DISTINCT from `gamma` above (the CSS-filter knob). Threaded to
+   *  `CompositeMediaPane`'s `tonemap_gamma`. */
+  tonemapGamma?: number;
 }
 
 function toProcessing(s: ImageViewportSettings): ImageProcessing {
@@ -143,6 +153,9 @@ export function ImageViewportPane({
       baselineFloat={refFloat}
       alignForDiff={crossTypeAlignForDiff}
       isReferencePane={isBaseline}
+      tonemap={settings.tonemap}
+      peak={settings.peak}
+      tonemap_gamma={settings.tonemapGamma}
       diffSubmode={diffMode}
       diffKernel={diffKernel}
       onDiffKernelChange={onDiffKernelChange}

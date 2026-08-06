@@ -545,6 +545,22 @@ export interface CompositeMediaPaneProps {
   showAxes?: boolean;
   processing?: ImageProcessing;
 
+  /** Host-controlled tone-map OPERATOR (unified 5-op set: linear · srgb · gamma
+   *  · reinhard · aces) seeded onto the composited / side / single panes — the
+   *  host-menu surface when the toolbar is hidden (`toolbar={false}`). Forwarded
+   *  to `GpuComparePane` / `CpuImagePane` (both already accept it); the CPU
+   *  2D-canvas backend is the P=1 SDR-only hardware exception. Unset ⇒ each
+   *  pane's own surface default (sRGB on SDR, Linear+managed PEAK on HDR). */
+  tonemap?: string;
+  /** Host-controlled PEAK ceiling `P` (the HDR mode, ×SDR white) — every operator
+   *  clips at `P`. Unset ⇒ the pane default (1 on SDR / 4 on an engaged HDR
+   *  surface). Forwarded to the engine panes; the CPU backend forces `P=1`. */
+  peak?: number;
+  /** Host-controlled Gamma-operator exponent γ (used only when `tonemap:"gamma"`).
+   *  DISTINCT from `processing.gamma`, the separate CSS-filter brightness knob, so
+   *  the two never double-apply. Unset ⇒ the operator default (2.2). */
+  tonemap_gamma?: number;
+
   zoom: number;
   pan: { x: number; y: number };
   onViewportChange?: (v: ImageViewport) => void;
@@ -592,6 +608,9 @@ export function CompositeMediaPane({
   interpolation,
   showAxes,
   processing,
+  tonemap,
+  peak,
+  tonemap_gamma,
   zoom,
   pan,
   onViewportChange,
@@ -667,6 +686,11 @@ export function CompositeMediaPane({
           <CpuImagePane
             toolbar={false}
             hdr={opts.hdr}
+            tonemap={tonemap}
+            peak={peak}
+            gamma={tonemap_gamma}
+            exposure={processing?.exposure ?? 0}
+            offset={processing?.offset ?? 0}
             interpolation={interpolation}
             showAxes={paneShowAxes}
             zoom={zoom}
@@ -770,6 +794,9 @@ export function CompositeMediaPane({
         onCompareModeChange={onCompareModeChange}
         onRequestSide={onRequestSide}
         colormap={colormap}
+        tonemap={tonemap}
+        peak={peak}
+        gamma={tonemap_gamma}
         zoom={zoom}
         pan={pan}
         onViewportChange={onViewportChange}
@@ -816,6 +843,9 @@ export function CompositeMediaPane({
       diffMode={effectiveMode === "diff" ? diffSubmode : "none"}
       interpolation={interpolation}
       colormap={colormap}
+      tonemap={tonemap}
+      peak={peak}
+      gamma={tonemap_gamma}
       showAxes={showAxes ?? false}
       processing={processing}
       zoom={zoom}
