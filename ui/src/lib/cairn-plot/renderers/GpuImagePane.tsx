@@ -492,16 +492,21 @@ export default function GpuImagePane(props: ImageBackendProps) {
         const browserHasExtendedToneMapping = device.probeExtendedToneMapping?.() ?? false;
         const hasHighDynamicRangeDisplay =
           typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
-        // UNIFIED (§B): the extended surface engages for ANY source — the
+        // UNIFIED (§B): the extended surface engages for ANY LIGHT source — the
         // `&& hdrMode` cap is GONE. Once an 8-bit source is sRGB-DECODED to
         // scene-linear (the plain-SDR path), the SAME operator × PEAK pipeline can
         // push EV+n past SDR white on a real HDR display ("unified no matter what
         // the input data was"), so a plain-SDR pane engages the surface exactly
-        // like a float-HDR pane. Only the two hardware signals gate it now; the
-        // per-frame render still forces P=1 / hdrOut:false whenever the surface
-        // did NOT engage (see resolveRenderTonemap), and a COLORMAPPED SDR pane
-        // renders its already-display-ready false-color as a passthrough.
-        const useHdr = browserHasExtendedToneMapping && hasHighDynamicRangeDisplay;
+        // like a float-HDR pane. Two hardware signals gate it, PLUS the source
+        // being LIGHT: a DESCRIPTOR-COLORMAPPED SDR pane (`propColormap` set at
+        // mount) is a FALSE-COLOR visualization, not light — its sRGB LUT output
+        // must stay a pixel-exact passthrough on an sRGB surface, so engaging the
+        // display-p3 extended surface (which would shift its colors toward P3) is
+        // suppressed. A plain 8-bit source (light) engages; the render still forces
+        // P=1 / hdrOut:false whenever the surface did NOT engage (resolveRenderTonemap).
+        const sourceIsLight = hdrMode || propColormap === "none";
+        const useHdr =
+          browserHasExtendedToneMapping && hasHighDynamicRangeDisplay && sourceIsLight;
         useHdrRef.current = useHdr;
         setHdrEngaged(useHdr);
         // This pane WANTED HDR (true-float `imagehdr` content) but is getting an
