@@ -335,6 +335,12 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
    * driven, a separate mechanism, unaffected by this).
    */
   colorRange?: [number, number] | null;
+  /** Host seam ("Host-controlled panes", docs/API.md): render the pane WITHOUT
+   *  its `PlotToolbar` chrome when `false`, so the host can drive the view from
+   *  its own menu (via `settings`/`view`). Default `true`. ImageViewport threads
+   *  it to `CompositeMediaPane`'s composited toolbar; a viewport type with no
+   *  toolbar simply ignores it. */
+  toolbar?: boolean;
 }
 
 /**

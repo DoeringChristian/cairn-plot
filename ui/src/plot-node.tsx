@@ -378,6 +378,10 @@ function CompareView({ node }: { node: CompareNode }) {
     (props.colormap as ColormapName | undefined) ??
     (shared?.colormap as ColormapName | undefined) ??
     "viridis";
+  // Host seam (`cp.Compare(toolbar=False)`): drop this compare's chrome so a host
+  // can drive it from its own menu. Gates BOTH the side-view owner toolbar below
+  // AND the composited `GpuComparePane` shell toolbar (via `CompositeMediaPane`).
+  const toolbar = (props.toolbar as boolean | undefined) ?? true;
 
   // View-mode state (Change 2): CompareView OWNS the side ⇄ slide ⇄ blend ⇄
   // kernel selection — the layer that owns which layout renders (the 2-pane
@@ -476,9 +480,10 @@ function CompareView({ node }: { node: CompareNode }) {
   if (viewMode === "side") {
     return (
       <ChartBox>
-        <div ref={sideRef} className="relative h-full w-full group">
-          <PlotToolbar controller={sideController} config={sideToolbarConfig} />
+        <div ref={sideRef} className={`relative h-full w-full${toolbar ? " group" : ""}`}>
+          {toolbar && <PlotToolbar controller={sideController} config={sideToolbarConfig} />}
           <CompositeMediaPane
+            toolbar={toolbar}
             mode="side"
             imageUrl={foreground.url}
             baselineUrl={reference.url}
@@ -511,6 +516,7 @@ function CompareView({ node }: { node: CompareNode }) {
   return (
     <ChartBox>
       <CompositeMediaPane
+        toolbar={toolbar}
         mode={viewMode}
         imageUrl={foreground.url}
         baselineUrl={reference.url}

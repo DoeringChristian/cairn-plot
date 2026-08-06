@@ -564,6 +564,14 @@ export interface CompositeMediaPaneProps {
 
   /** Initial notation for the pixel-value overlay (user-toggleable in-pane). */
   pixelValueNotation?: PixelValueNotation;
+
+  /** Host seam — hide the composited-pane toolbar (`GpuComparePane`'s shell
+   *  toolbar / the diff CPU fallback's) when `false`, so a host can drive the
+   *  compare view from its own menu. Default `true`. The per-side CPU panes in
+   *  `side` mode are always toolbar-less (their chrome is the compare owner's),
+   *  so this only reaches the composited pane. Threaded from `cp.Compare(
+   *  toolbar=False)` via `CompareView` / the `ImageViewport` module. */
+  toolbar?: boolean;
 }
 
 export function CompositeMediaPane({
@@ -597,6 +605,7 @@ export function CompositeMediaPane({
   overlay,
   overlaySettings,
   pixelValueNotation,
+  toolbar = true,
 }: CompositeMediaPaneProps) {
   // A "reference side" is either a URL baseline or a decoded float baseline; a
   // float side has no `baselineUrl` string, so gate on BOTH (the old
@@ -744,6 +753,7 @@ export function CompositeMediaPane({
   if (GpuCompare && hasBaseline && engineComposited) {
     return (
       <GpuCompare
+        toolbar={toolbar}
         imageUrl={imageUrl}
         baselineUrl={baselineUrl}
         imageFloat={imageFloat}

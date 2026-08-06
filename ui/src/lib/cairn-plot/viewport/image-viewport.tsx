@@ -123,6 +123,7 @@ export function ImageViewportPane({
   onDragStart,
   crossTypeReferenceUrl,
   crossTypeAlignForDiff,
+  toolbar,
 }: ViewportPaneProps<ImageViewportItem, ImageViewState, ImageViewportSettings>) {
   const processing = toProcessing(settings);
   // The float side may arrive EITHER as an explicit prop (a host that resolves
@@ -134,6 +135,7 @@ export function ImageViewportPane({
   const refFloat = baselineFloat ?? reference?.float ?? undefined;
   return (
     <CrossTypeCompositeMediaPane
+      toolbar={toolbar}
       mode={mode}
       imageUrl={data?.url ?? null}
       baselineUrl={reference?.url ?? crossTypeReferenceUrl ?? null}

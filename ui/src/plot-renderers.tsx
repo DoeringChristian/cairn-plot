@@ -352,6 +352,7 @@ function ImageStandalone(p: P) {
   const Pane = resolveImageRenderer(resolveRenderMode(p.renderMode));
   return (
     <Pane
+      toolbar={p.toolbar}
       imageUrl={p.imageUrl ?? null}
       baselineUrl={p.baselineUrl ?? null}
       diffMode={p.diffMode ?? "none"}
@@ -392,9 +393,11 @@ function ImageHdrStandalone(p: P) {
   return (
     <ChartBox height={height}>
       <Pane
+        toolbar={rest.toolbar}
         hdr={rest.hdr}
         tonemap={rest.tonemap ?? "srgb"}
         exposure={rest.exposure ?? 0}
+        offset={rest.offset}
         gamma={rest.gamma}
         showAxes={rest.showAxes ?? false}
         label={rest.label ?? ""}
