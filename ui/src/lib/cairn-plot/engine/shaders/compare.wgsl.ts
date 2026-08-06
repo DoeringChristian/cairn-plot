@@ -26,7 +26,14 @@
  *   3 unif imageParams: exposureEV, operatorId, gamma, isScalar   @binding(11)
  *   4 unif uvRect: xy, wh                                         @binding(14)
  *   5 unif composeParams: split, alpha, hdrOut, filterMode        @binding(17)
- *   6 unif extraParams: offset, _, _, _ (TEV display offset)       @binding(20)
+ *   6 unif extraParams: offset, peak, srgbDecodeA, srgbDecodeB     @binding(20)
+ *
+ * UNIFIED tone-map: `processSide` runs the SAME operator × peak × surface
+ * pipeline as `shaders/image.wgsl.ts` (extended operators, PEAK ceiling, the
+ * extended output encode on `hdrOut`). `peak` (extraParams.y) is the HDR
+ * ceiling; `srgbDecodeA`/`srgbDecodeB` (extraParams.z/.w) sRGB-DECODE a u8 side
+ * to scene-linear PER SIDE (a float side passes 0) so mixed u8/float operands are
+ * both compared in linear light — see `image/tonemap.ts`'s `resolveRenderTonemap`.
  */
 import { VERTEX_WGSL, SAMPLING_WGSL, TONEMAP_WGSL } from "../kernels/prelude.wgsl";
 
@@ -42,7 +49,7 @@ ${TONEMAP_WGSL}
 @group(0) @binding(11) var<uniform> u_img: vec4<f32>;     // exposureEV, operatorId, gamma, isScalar
 @group(0) @binding(14) var<uniform> u_uv: vec4<f32>;      // uvRect.xy, uvRect.wh
 @group(0) @binding(17) var<uniform> u_compose: vec4<f32>; // split, alpha, hdrOut, filterMode
-@group(0) @binding(20) var<uniform> u_extra: vec4<f32>;   // offset, _, _, _ (TEV display offset; default 0)
+@group(0) @binding(20) var<uniform> u_extra: vec4<f32>;   // offset, peak, srgbDecodeA, srgbDecodeB
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
@@ -71,9 +78,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let isScalar = u_img.w > 0.5;
   let hdrOut = u_compose.z > 0.5;
   let offset = u_extra.x;
+  let peak = u_extra.y;
+  let srgbDecodeA = u_extra.z > 0.5;
+  let srgbDecodeB = u_extra.w > 0.5;
 
-  let colorA = processSide(lut, sampledA, exposureEV, offset, operatorId, gamma, isScalar, hdrOut);
-  let colorB = processSide(lut, sampledB, exposureEV, offset, operatorId, gamma, isScalar, hdrOut);
+  let colorA = processSide(lut, sampledA, exposureEV, offset, operatorId, gamma, isScalar, hdrOut, peak, srgbDecodeA);
+  let colorB = processSide(lut, sampledB, exposureEV, offset, operatorId, gamma, isScalar, hdrOut, peak, srgbDecodeB);
 
   let split = u_compose.x;
   let alpha = u_compose.y;

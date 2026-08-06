@@ -84,15 +84,26 @@ export interface SdrImageProps {
   isBaseline?: boolean;
   diffMode?: "none" | DiffMode;
   interpolation?: Interpolation;
-  /** DISPLAY-TRANSFER selection for the plain 8-bit path (tev's sRGB · Gamma ·
-   *  Linear). Seeds the pane's leading transfer menu; default `"srgb"` (identity
-   *  round-trip on an already-sRGB source). Ignored when a `colormap` is active
-   *  (the false-color LUT output is already display-ready). DISTINCT from the
-   *  8-bit CSS-filter `processing.gamma` (a separate brightness-style knob). */
+  /** TONE-MAP operator for the plain 8-bit path (§B UNIFIED — the SAME 5-operator
+   *  set as the HDR pane: linear · srgb · gamma · reinhard · aces). The GPU pane
+   *  sRGB-DECODEs the 8-bit source to scene-linear, then runs the unified operator
+   *  × PEAK pipeline (reinhard/aces are meaningful post-decode, and PEAK>1 extends
+   *  onto an HDR surface). Seeds the pane's leading tonemap menu; default `"srgb"`
+   *  (identity round-trip on an already-sRGB source). Ignored when a `colormap` is
+   *  active (the false-color LUT output is already display-ready). DISTINCT from the
+   *  8-bit CSS-filter `processing.gamma` (a separate brightness-style knob). NOTE:
+   *  the CPU backend (2D canvas) is the P=1 hardware exception — SDR rendition
+   *  only, no extended output. */
   tonemap?: string;
-  /** Default γ for the Gamma display transfer (used only when `tonemap:"gamma"`),
-   *  the exponent in `display = clamp(value)^(1/γ)`. Default 2.2. */
+  /** Default γ for the Gamma operator (used only when `tonemap:"gamma"`), the
+   *  exponent in `display = clamp(value)^(1/γ)`. Default 2.2. */
   gamma?: number;
+  /** Default PEAK ceiling `P` (×SDR white) for the plain 8-bit path — the UNIFIED
+   *  HDR mode (§B), identical to {@link HdrImageProps.peak}: every operator clips
+   *  at `P` (SDR = `P=1`, `P>1` extends onto an HDR surface). Seeds the pane's PEAK
+   *  slider (shown only when the extended surface engages); unset → the pane
+   *  default (4). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
+  peak?: number;
   colormap?: Colormap;
   showAxes?: boolean;
   processing?: ImageProcessing;

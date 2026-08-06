@@ -66,7 +66,22 @@ import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
 import type { Device, Surface, Texture } from "../engine/types";
 import { getColormapLUT } from "../colormaps";
 import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
-import { colormapToolbarButton } from "../renderers/use-image-controller";
+import { colormapToolbarButton, tonemapToolbarButton } from "../renderers/use-image-controller";
+import {
+  resolveEffectiveTonemap,
+  resolveRenderTonemap,
+  aliasPeakHint,
+  tonemapHasGamma,
+  EXTENDED_TONEMAP_PEAK_DEFAULT,
+  EXTENDED_TONEMAP_PEAK_MIN,
+  EXTENDED_TONEMAP_PEAK_MAX,
+  EXTENDED_TONEMAP_PEAK_STEP,
+  TONEMAP_GAMMA_DEFAULT,
+  TONEMAP_GAMMA_MIN,
+  TONEMAP_GAMMA_MAX,
+  TONEMAP_GAMMA_STEP,
+  type TonemapOperator,
+} from "../image/tonemap";
 import { loadImageData } from "../image";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
@@ -169,6 +184,20 @@ export interface GpuComparePaneProps {
   interpolation?: Interpolation;
   label?: string;
   pixelValueNotation?: PixelValueNotation;
+
+  /**
+   * UNIFIED tone-map (§A) — the SAME operator × PEAK model as the single-image
+   * pane, applied to the split/blend COMPOSE pass (both operands through one
+   * display mapping). These SEED the pane's view-local toolbar controls; unset →
+   * the client surface default (`srgb`). `tonemap` is one of the 5 canonical
+   * operators (linear · srgb · gamma · reinhard · aces) or a deprecated
+   * `extended*` alias; `peak` (P, ×SDR white) is the HDR ceiling; `gamma` is the
+   * Gamma operator's γ. Ignored in DIFF mode (error values aren't light — the
+   * diff colormap path has no tone-map stage). See `image/tonemap.ts`.
+   */
+  tonemap?: string;
+  peak?: number;
+  gamma?: number;
 }
 
 /** Uint8 256x3 LUT -> Float32 256x4 (RGBA, [0,1]) for `CompareParams.diffColormap`. */
@@ -285,6 +314,9 @@ export default function GpuComparePane({
   interpolation = "auto",
   label = "",
   pixelValueNotation = "decimal",
+  tonemap: tonemapProp,
+  peak: peakProp,
+  gamma: gammaProp,
 }: GpuComparePaneProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   // Attached by the shared shell (see `ImagePaneShell`); this pane measures
@@ -304,11 +336,23 @@ export default function GpuComparePane({
   // this component's render body. A pane never blanks.
   const [engineFailed, setEngineFailed] = useState(false);
   const [ready, setReady] = useState(false);
+  // True once the acquisition resolves a real extended-HDR surface for this
+  // compare canvas (§A). The ref is the render pass's source of truth (settled
+  // before the first pass); the state drives the toolbar (PEAK slider visibility).
+  // Probed the SAME way the single-image pane does (probeExtendedToneMapping +
+  // `dynamic-range: high`) so slide/split/blend tone-map exactly like it.
+  const useHdrRef = useRef(false);
+  const [hdrEngaged, setHdrEngaged] = useState(false);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   // Both source footprints (a = texA/reference, b = texB/foreground/primary).
   // Drives the align/fit overlap mapping + the diff-mode home framing (which
   // frames on the RESULT/overlap dims, not the primary — see `framingDims`).
   const [srcDims, setSrcDims] = useState<{ a: { w: number; h: number }; b: { w: number; h: number } } | null>(null);
+  // Per-side "is 8-bit sRGB" flag (§A): a u8 side must be sRGB-DECODED to
+  // scene-linear before the unified operator×PEAK compose (a float side is
+  // already scene-linear). texA = reference/A, texB = foreground/B. Set together
+  // with `srcDims` in the load effect so the render pass never disagrees.
+  const [srcU8, setSrcU8] = useState<{ a: boolean; b: boolean }>({ a: false, b: false });
   const [uploadVersion, setUploadVersion] = useState(0);
   const [containerTick, setContainerTick] = useState(0);
   const [metrics, setMetrics] = useState<DiffMetrics | null>(null);
@@ -381,6 +425,32 @@ export default function GpuComparePane({
     setColormapState(colormap);
   }, [colormap, setColormapState]);
 
+  // UNIFIED TONE-MAP (§A) — the SAME operator × PEAK model as the single-image
+  // pane, applied to the split/blend COMPOSE pass (both operands through one
+  // display mapping). View-local: the override is a NULLABLE "user picked X"
+  // (null = follow the effective default `resolveEffectiveTonemap`, which is
+  // `srgb` on every surface). Hidden/inert in DIFF mode (error values aren't
+  // light). Re-seeds to "follow default" when the descriptor prop changes.
+  const [tonemapOverride, setTonemapOverride] = useState<TonemapOperator | null>(null);
+  useEffect(() => {
+    setTonemapOverride(null);
+  }, [tonemapProp]);
+  const effectiveDefaultTonemap = resolveEffectiveTonemap(tonemapProp, hdrEngaged);
+  const effectiveTonemap: TonemapOperator = tonemapOverride ?? effectiveDefaultTonemap;
+  const tonemapModified =
+    tonemapOverride !== null && tonemapOverride !== effectiveDefaultTonemap;
+  // PEAK white (×SDR white) — the UNIFIED HDR mode; shown on an engaged surface in
+  // split/blend. Seeded to ∞ only for the deprecated raw `extended` alias. γ rides
+  // alongside for the Gamma operator. Both view-local; HOME restores the seed.
+  const [peak, setPeak, peakMeta] = useResettableState(
+    peakProp != null && peakProp > 0
+      ? peakProp
+      : (aliasPeakHint(tonemapProp) ?? EXTENDED_TONEMAP_PEAK_DEFAULT),
+  );
+  const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
+    gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT,
+  );
+
   // HOME / double-click reset restores every VIEW-LOCAL selection to its
   // descriptor default — mode, colormap AND kernel — alongside the shell's own
   // viewport + EV/OFFSET reset (user requirement: home = fully neutral pane).
@@ -397,6 +467,11 @@ export default function GpuComparePane({
     setCompareMode(compareModeMeta.default);
     setColormapState(colormapMeta.default);
     setDiffKernel(diffKernelMeta.default);
+    // §A: HOME also clears the unified tone-map selection (operator + P + γ) so a
+    // single reset fully neutralizes the pane, matching the single-image pane.
+    setTonemapOverride(null);
+    peakMeta.reset();
+    gammaMeta.reset();
   }, [
     setCompareMode,
     setColormapState,
@@ -404,10 +479,17 @@ export default function GpuComparePane({
     compareModeMeta.default,
     colormapMeta.default,
     diffKernelMeta.default,
+    peakMeta,
+    gammaMeta,
   ]);
   // Home enables when any view-local selection is off its descriptor default.
   const viewSelectionsModified =
-    compareModeMeta.isModified || colormapMeta.isModified || diffKernelMeta.isModified;
+    compareModeMeta.isModified ||
+    colormapMeta.isModified ||
+    diffKernelMeta.isModified ||
+    tonemapModified ||
+    peakMeta.isModified ||
+    gammaMeta.isModified;
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only in EVERY mode. Split/blend: fed into the compose pass (`color *
@@ -445,9 +527,15 @@ export default function GpuComparePane({
     const menus: ToolbarButtonSpec[] = [modeMenu];
     if (compareMode === "diff") {
       menus.push(colormapToolbarButton(colormapState, (id) => setColormapState(id as Colormap)));
+    } else {
+      // §A: split/blend get the SAME unified 5-operator TONEMAP menu the
+      // single-image pane has (the PEAK slider is the HDR mode — see
+      // extraSliders). Diff shows the colormap menu instead (error values aren't
+      // light, so they route through colormaps, not a tone-map operator).
+      menus.push(tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator)));
     }
     return menus;
-  }, [compareMode, diffKernel, colormapState, setDiffKernel, setCompareMode, onRequestSide]);
+  }, [compareMode, diffKernel, colormapState, effectiveTonemap, setDiffKernel, setCompareMode, onRequestSide]);
 
   // TEV per-side source pixels. u8 sides keep their raw `ImageData`; FLOAT sides
   // (`.exr`/`imghdr`) have NO 8-bit `ImageData` (decoded to `rgba32float`), so
@@ -499,7 +587,20 @@ export default function GpuComparePane({
           if (forceEngineFailRequested()) {
             throw new Error("cairn-plot engine: forced compare-pane activation failure (?forceEngineFail test hook)");
           }
-          const surface = device.createSurface(canvas, { hdr: false });
+          // §A: probe the extended-HDR surface the SAME way the single-image pane
+          // does — the browser's extended-tone-mapping canvas path AND the OS/
+          // display actually being in HDR mode. When both hold, the split/blend
+          // compose pass can push above-white operands past SDR white (unified
+          // operator × PEAK). Diff mode still renders its colormap on this surface
+          // unchanged (values in [0,1]). A stale operator pick can't force HDR-out
+          // on a non-HDR surface: the render pass forces P=1 / hdrOut:false then.
+          const browserHasExtendedToneMapping = device.probeExtendedToneMapping?.() ?? false;
+          const hasHighDynamicRangeDisplay =
+            typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
+          const useHdr = browserHasExtendedToneMapping && hasHighDynamicRangeDisplay;
+          useHdrRef.current = useHdr;
+          setHdrEngaged(useHdr);
+          const surface = device.createSurface(canvas, { hdr: useHdr });
           resRef.current = { device, surface, texA: null, texB: null };
           setReady(true);
         } catch (err) {
@@ -631,6 +732,9 @@ export default function GpuComparePane({
           a: { w: sideA.width, h: sideA.height },
           b: { w: sideB.width, h: sideB.height },
         });
+        // A URL side carries an `ImageData` (u8, sRGB-encoded → decode); a float
+        // side has `imageData:null` (scene-linear → no decode). See `srcU8`.
+        setSrcU8({ a: sideA.imageData != null, b: sideB.imageData != null });
 
         // Q22 fix: canvas backing-store / surface sizing is driven by the
         // render-pass effect below (display resolution x dpr), NOT the source
@@ -836,13 +940,31 @@ export default function GpuComparePane({
           offset: displayOffset,
         });
       } else {
+        // UNIFIED tone-map (§A): split/blend run the SAME operator × PEAK × surface
+        // pipeline as the single-image pane — the display operator + PEAK ceiling P
+        // + whether the extended surface engaged (`useHdrRef`, guarding a stale pick
+        // from requesting HDR-out on a non-HDR surface) resolve to the engine
+        // operator + hdrOut + finite peak + encode gamma. Each u8 side is
+        // sRGB-DECODED to scene-linear first (`srgbDecodeA/B`), a float side is not
+        // — so mixed u8/float operands are both composited in linear light. P is
+        // the live slider on an engaged surface; forced to 1 (SDR rendition)
+        // otherwise. Exposure/offset already slot BEFORE the operator in the shader.
+        const rt = resolveRenderTonemap(
+          effectiveTonemap,
+          useHdrRef.current ? peak : 1,
+          useHdrRef.current,
+          tonemapGamma,
+        );
         const params: CompareParams = {
           exposureEV: displayEV,
           offset: displayOffset,
-          operator: "linear",
-          gamma: 1,
+          operator: rt.operator as CompareParams["operator"],
+          gamma: rt.gamma,
           isScalar: false,
-          hdrOut: false,
+          hdrOut: rt.hdrOut,
+          peak: rt.peak,
+          srgbDecodeA: srcU8.a,
+          srgbDecodeB: srcU8.b,
           uv,
           filter,
           mode: compareMode,
@@ -869,6 +991,10 @@ export default function GpuComparePane({
     blendAlpha,
     displayEV,
     displayOffset,
+    effectiveTonemap,
+    peak,
+    tonemapGamma,
+    srcU8,
     diffKernel,
     resolvedKernelId,
     hdrExposures,
@@ -1122,11 +1248,20 @@ export default function GpuComparePane({
       get ssimText() {
         return formatSsim(ssimScalar);
       },
+      // §A unified tone-map seam: the operator in effect + whether the extended
+      // HDR surface engaged (drives the PEAK slider) — so a harness can assert the
+      // compose pane tone-maps like the single-image pane.
+      get effectiveTonemap() {
+        return effectiveTonemap;
+      },
+      get hdrEngaged() {
+        return hdrEngaged;
+      },
     };
     return () => {
       if (el) delete el.__cairnCompareProbe;
     };
-  }, [sampleDiff, sampleFg, sampleRef, dims, framingDims, align, fit, resolvedKernelId, compareMode, ssimScalar]);
+  }, [sampleDiff, sampleFg, sampleRef, dims, framingDims, align, fit, resolvedKernelId, compareMode, ssimScalar, effectiveTonemap, hdrEngaged]);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
@@ -1255,6 +1390,47 @@ export default function GpuComparePane({
         onExposureChange: setDisplayEV,
         onOffsetChange: setDisplayOffset,
       }}
+      // UNIFIED sliders (§A): PEAK is the HDR MODE — shown WHENEVER the real HDR
+      // surface engaged AND the mode is split/blend (every operator respects `P`
+      // as its ceiling; SDR forces P=1). γ rides alongside while the Gamma
+      // operator is in effect. Both are HIDDEN in diff mode (the diff colormap
+      // path has no tone-map stage). Their reset/modified fold into HOME
+      // (resetViewSelections / viewSelectionsModified) so one reset clears
+      // operator + P + γ.
+      extraSliders={[
+        ...(hdrEngaged && compareMode !== "diff"
+          ? [
+              {
+                id: "peak",
+                label: "PK",
+                title:
+                  "Peak white (×SDR white) — the HDR ceiling P every operator clips at (Linear/sRGB/Gamma hard-clip at P; Reinhard/ACES roll off toward P). P=1 reproduces the SDR rendition exactly; double-click to type a value, including 'inf' for the raw browser-clipped extended look.",
+                min: EXTENDED_TONEMAP_PEAK_MIN,
+                max: EXTENDED_TONEMAP_PEAK_MAX,
+                step: EXTENDED_TONEMAP_PEAK_STEP,
+                value: peak,
+                onChange: setPeak,
+                format: (v: number) => (Number.isFinite(v) ? `${v.toFixed(1)}×` : "∞"),
+              },
+            ]
+          : []),
+        ...(compareMode !== "diff" && tonemapHasGamma(effectiveTonemap)
+          ? [
+              {
+                id: "gamma",
+                label: "γ",
+                title:
+                  "Display gamma γ for the Gamma transfer — display = clamp(value)^(1/γ), tev-style. Default 2.2 (close to sRGB, not identical). Double-click to type a value.",
+                min: TONEMAP_GAMMA_MIN,
+                max: TONEMAP_GAMMA_MAX,
+                step: TONEMAP_GAMMA_STEP,
+                value: tonemapGamma,
+                onChange: setTonemapGamma,
+                format: (v: number) => v.toFixed(1),
+              },
+            ]
+          : []),
+      ]}
       label=""
       showLabelChip={false}
       // Per-side TEV overlays. split -> each side clipped at the divider, LEFT
