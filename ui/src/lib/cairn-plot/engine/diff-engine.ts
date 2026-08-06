@@ -34,6 +34,7 @@ import {
 } from "./kernels";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl";
 import { computeMetrics, makeCpuMapSampler, type DiffMetrics } from "./image-engine";
+import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
 import { computeCompareMapping, mappingKey, type CompareMapping } from "./compare-align";
 import { meanSsimFromErrorMap } from "./ssim-metric";
@@ -190,132 +191,13 @@ export function computeDiff(
 }
 
 // ===========================================================================
-// Result cache: content-keyed LRU with a VRAM budget.
+// Result cache: content-keyed LRU with a VRAM budget. The cache itself lives in
+// `./diff-cache.ts` (extracted so it is unit-testable under Node's type-stripper
+// without this module's WebGPU/kernels graph — see `diff-cache.test.ts`). Its
+// entry/byte caps are deliberately sized so a multi-pane compare card never
+// thrashes; see `DEFAULT_MAX_ENTRIES` there.
 // ===========================================================================
-export interface DiffCacheEntry {
-  texture: Texture;
-  width: number;
-  height: number;
-  displayRange: DisplayRange;
-  bytes: number;
-  /** Lazily-computed + cached MSE/PSNR/MAE over the SOURCES (kernel-independent). */
-  scalars?: DiffMetrics;
-  scalarsPending?: Promise<DiffMetrics>;
-  /**
-   * Lazily-computed + cached MEAN SSIM (metrics chip). Present only on the
-   * `ssim` kernel's entry — the mean of `SSIM = 1 − (1−SSIM)` over the RESULT
-   * grid (this entry's `width*height`, the mapped/compared region). Memoized so
-   * repeat metric-effect runs don't re-average the readback.
-   */
-  ssimMean?: number;
-  ssimMeanPending?: Promise<number>;
-  /**
-   * Lazily-read-back RGBA-float samples of the diff RESULT texture (row-major at
-   * result resolution, 4 floats/pixel, top-left origin — same coord convention
-   * the TEV overlay samples). Computed on demand the first time the overlay needs
-   * a per-pixel metric value and cached here, so zoom/pan/colormap NEVER re-read
-   * and `getDiffComputeCount()` never moves. Dropped when the entry is evicted
-   * (the whole entry — texture + this array — is released together).
-   */
-  resultSamples?: Float32Array;
-  resultSamplesPending?: Promise<Float32Array>;
-}
-
-const DEFAULT_MAX_ENTRIES = 8;
-const DEFAULT_MAX_BYTES = 256 * 1024 * 1024; // 256 MB
-
-class DiffCache {
-  private readonly map = new Map<string, DiffCacheEntry>(); // insertion-order = LRU order
-  private totalBytes = 0;
-  // Explicit fields (NOT constructor parameter-properties) so this module stays
-  // importable under Node's `--experimental-strip-types` strip-only mode, which
-  // `npm test` uses (parameter-properties emit runtime code and are rejected).
-  private readonly maxEntries: number;
-  private readonly maxBytes: number;
-  constructor(maxEntries = DEFAULT_MAX_ENTRIES, maxBytes = DEFAULT_MAX_BYTES) {
-    this.maxEntries = maxEntries;
-    this.maxBytes = maxBytes;
-  }
-
-  get(key: string): DiffCacheEntry | undefined {
-    const e = this.map.get(key);
-    if (e) {
-      // bump to most-recently-used
-      this.map.delete(key);
-      this.map.set(key, e);
-    }
-    return e;
-  }
-
-  set(key: string, entry: DiffCacheEntry): void {
-    const existing = this.map.get(key);
-    if (existing) {
-      this.totalBytes -= existing.bytes;
-      existing.texture.destroy();
-      this.map.delete(key);
-    }
-    this.map.set(key, entry);
-    this.totalBytes += entry.bytes;
-    this.evict();
-  }
-
-  /**
-   * Charge a lazily-read-back RESULT `Float32Array` against the byte budget once
-   * it resolves: its `byteLength` (a full-frame RGBA-f32 array, ~33MB for a 2K
-   * frame) is added to BOTH the entry's accounted bytes and the running total,
-   * then re-evicted — so up to `maxEntries` uncounted readbacks can't accumulate
-   * invisibly. Eviction subtracts `entry.bytes` (now texture + readback), so the
-   * charge is released with the entry. No-op if the entry was already evicted
-   * (its budget is gone — double-charging would corrupt the total).
-   */
-  accountReadbackBytes(entry: DiffCacheEntry, bytes: number): void {
-    let resident = false;
-    for (const e of this.map.values()) {
-      if (e === entry) {
-        resident = true;
-        break;
-      }
-    }
-    if (!resident) return;
-    entry.bytes += bytes;
-    this.totalBytes += bytes;
-    this.evict();
-  }
-
-  private evict(): void {
-    while (this.map.size > this.maxEntries || this.totalBytes > this.maxBytes) {
-      const oldestKey = this.map.keys().next().value as string | undefined;
-      if (oldestKey === undefined) break;
-      const e = this.map.get(oldestKey)!;
-      // Never evict the single entry that is over budget on its own — keep at
-      // least one so the current view still has a result.
-      if (this.map.size === 1) break;
-      this.map.delete(oldestKey);
-      this.totalBytes -= e.bytes;
-      e.texture.destroy();
-    }
-  }
-
-  clear(): void {
-    for (const e of this.map.values()) e.texture.destroy();
-    this.map.clear();
-    this.totalBytes = 0;
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-}
-
-const caches = new WeakMap<Device, DiffCache>();
-function cacheFor(device: Device): DiffCache {
-  let c = caches.get(device);
-  if (!c) {
-    c = new DiffCache();
-    caches.set(device, c);
-  }
-  return c;
-}
+export type { DiffCacheEntry };
 
 function paramsHash(kernel: DiffKernel, params?: Record<string, number>): string {
   const resolved = resolveKernelParams(kernel, params);
@@ -551,7 +433,7 @@ export function diffCacheSize(device: Device): number {
 
 /** Test/teardown: drop + destroy all cached entries for a device. */
 export function clearDiffCache(device: Device): void {
-  caches.get(device)?.clear();
+  cacheFor(device).clear();
 }
 
 // ===========================================================================
