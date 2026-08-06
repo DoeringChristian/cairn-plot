@@ -30,8 +30,6 @@
  *      raw 4.0. This is the display-profile fix: a float16 srgb/display-p3
  *      canvas stores non-linear signals per W3C ColorWeb-CG, so the hdrOut path
  *      ENCODES rather than writing raw scene-linear.
- *   1b. LEGACY A/B seam: the SAME with `hdrEncodeLegacy:true` reads back RAW
- *      ~4.0 (the OLD behavior, restored by `?hdrEncode=legacy` for visual A/B).
  *   2. SDR path: `operator:"srgb"` (GpuImagePane's SDR-fallback default),
  *      `hdrOut:false`, target `rgba8unorm` (a real display-surface format).
  *      The SAME (4,4,4,1) source pixel clamps+encodes to byte 255 on every
@@ -121,25 +119,6 @@ async function runHdrCase(device: Device): Promise<boolean> {
   return ok && survivedPast1 && notRawLinear;
 }
 
-/** Case 1b — LEGACY A/B seam: hdrEncodeLegacy:true restores the OLD raw write (~4.0). */
-async function runHdrLegacyCase(device: Device): Promise<boolean> {
-  const src = buildBrightSrcTexture(device);
-  const target = device.createTexture(1, 1, "rgba16float");
-  const params: ImageParams = { exposureEV: 0, operator: "extended", isScalar: false, hdrOut: true, hdrEncodeLegacy: true, uv: UV_FULL };
-  renderImage(device, target, src, params);
-  const out = await device.readback(target);
-  src.destroy();
-  target.destroy();
-
-  if (!(out instanceof Float32Array)) {
-    report(false, `[hdr-legacy] readback() should return Float32Array, got ${(out as { constructor: { name: string } }).constructor.name}`);
-    return false;
-  }
-  const isRaw = Math.abs(out[0]! - 4.0) <= 0.05;
-  report(isRaw, `[hdr-legacy] ?hdrEncode=legacy restores RAW scene-linear 4.0 (actual=${out[0]!.toFixed(4)})`);
-  return isRaw;
-}
-
 /** Case 2 — SDR path: renders the SAME source pixel to a real rgba8unorm target with operator:"srgb" + hdrOut:false. */
 async function runSdrCase(device: Device): Promise<boolean> {
   const src = buildBrightSrcTexture(device);
@@ -179,10 +158,9 @@ async function main(): Promise<void> {
     }
 
     const hdrOk = await runHdrCase(device);
-    const hdrLegacyOk = await runHdrLegacyCase(device);
     const sdrOk = await runSdrCase(device);
-    const allOk = hdrOk && hdrLegacyOk && sdrOk;
-    report(allOk, `HDR value (>1.0, extended-ENCODED) and SDR value (clamped to 255) are OBJECTIVELY DIFFERENT — HDR output is real, not SDR-tonemapped-in-disguise; legacy seam restores raw`);
+    const allOk = hdrOk && sdrOk;
+    report(allOk, `HDR value (>1.0, extended-ENCODED) and SDR value (clamped to 255) are OBJECTIVELY DIFFERENT — HDR output is real, not SDR-tonemapped-in-disguise`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `Uncaught error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);

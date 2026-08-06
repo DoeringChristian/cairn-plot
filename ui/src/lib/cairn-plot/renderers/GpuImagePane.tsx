@@ -301,19 +301,6 @@ export function screenPxPerTexel(
   return Math.min(box.width / visibleW, box.height / visibleH);
 }
 
-// *** TEMPORARY A/B SEAM (remove after HDR-display visual validation). ***
-// `?hdrEncode=legacy` in the page URL restores the OLD raw-scene-linear hdrOut
-// write (no extended output-encode) so the user can flip old-vs-new on a real
-// HDR panel against tev. Any other value (or absent) = the CORRECT extended
-// encode. Read once at module load; flip the query param and reload to switch.
-const HDR_ENCODE_LEGACY: boolean = (() => {
-  try {
-    return new URLSearchParams(window.location.search).get("hdrEncode") === "legacy";
-  } catch {
-    return false;
-  }
-})();
-
 export default function GpuImagePane(props: ImageBackendProps) {
   const hdrMode = isHdrProps(props);
 
@@ -821,8 +808,6 @@ export default function GpuImagePane(props: ImageBackendProps) {
           gamma: rt.gamma,
           isScalar: false,
           hdrOut: rt.hdrOut,
-          // TEMPORARY A/B seam (?hdrEncode=legacy) — see HDR_ENCODE_LEGACY above.
-          hdrEncodeLegacy: HDR_ENCODE_LEGACY,
           peak: rt.peak,
           uv,
           filter,
