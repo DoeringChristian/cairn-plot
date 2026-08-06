@@ -68,6 +68,55 @@ test("enumerate: native modes are disabled when topology mismatches; core stay e
   assert.ok(native.every((o) => o.disabled), "native kinds disabled on topology mismatch");
 });
 
+const ENGINE_KERNELS = [
+  { value: "absolute", label: "Absolute" },
+  { value: "hdr-flip", label: "FLIP (perceptual)" },
+  { value: "ssim", label: "SSIM" },
+] as const;
+
+test("enumerate: no engine kernels → the core+native list is unchanged", () => {
+  const withoutExtras = enumerateCompareModeOptions({ nativeModes: [], topologyOk: true });
+  const withEmpty = enumerateCompareModeOptions({ nativeModes: [], topologyOk: true }, {});
+  assert.deepEqual(withEmpty, withoutExtras);
+  assert.ok(withEmpty.every((o) => !o.kernel));
+});
+
+test("enumerate: engine kernels append after core+native, GPU-enabled by default", () => {
+  const opts = enumerateCompareModeOptions(
+    { nativeModes: [], topologyOk: true },
+    { engineKernels: ENGINE_KERNELS },
+  );
+  assert.equal(opts.length, 5 + ENGINE_KERNELS.length);
+  const kernels = opts.filter((o) => o.kernel);
+  assert.equal(kernels.length, ENGINE_KERNELS.length);
+  // Kernels trail the five core kinds and are enabled (GPU assumed available).
+  assert.deepEqual(opts.slice(5).map((o) => o.value), ["absolute", "hdr-flip", "ssim"]);
+  assert.ok(kernels.every((o) => o.kernel && !o.native && !o.disabled));
+});
+
+test("enumerate: engine kernels are DISABLED when the GPU is unavailable", () => {
+  const opts = enumerateCompareModeOptions(
+    { nativeModes: [], topologyOk: true },
+    { engineKernels: ENGINE_KERNELS, gpuAvailable: false },
+  );
+  const kernels = opts.filter((o) => o.kernel);
+  assert.ok(kernels.every((o) => o.disabled), "engine kernels gated off without WebGPU");
+  // Core kinds stay enabled regardless of GPU.
+  assert.ok(opts.filter((o) => !o.kernel).every((o) => !o.disabled));
+});
+
+test("enumerate: core, native, and engine kernels coexist in order", () => {
+  const nativeModes = [{ value: "diff-geometry", label: "Diff (geometry)" }] as const;
+  const opts = enumerateCompareModeOptions(
+    { nativeModes, topologyOk: true },
+    { engineKernels: ENGINE_KERNELS },
+  );
+  assert.equal(opts.length, 5 + 1 + ENGINE_KERNELS.length);
+  assert.ok(opts.slice(0, 5).every((o) => !o.native && !o.kernel));
+  assert.equal(opts[5]!.native, true);
+  assert.ok(opts.slice(6).every((o) => o.kernel));
+});
+
 test("DEFAULT_MEDIA_COMPARE_SETTINGS carries neutral compare baselines", () => {
   assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.mode, "side");
   assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.diffMode, "none");

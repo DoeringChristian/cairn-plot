@@ -39,8 +39,14 @@
  * fallback) use the default `toolbar={true}`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RefObject } from "react";
 import PaneUnavailable from "../primitives/PaneUnavailable";
-import type { Colormap, DiffMode } from "../types";
+import type { Colormap, DiffMode, Interpolation } from "../types";
+import { autoImageRendering, containScreenPxPerTexel } from "./interp-auto";
+// The ONE shared magnification threshold — the SAME constant `GpuImagePane`
+// reads for its nearest/linear sampler switch (and `PixelValueOverlay` for its
+// per-pixel numbers), so the CPU pane's `pixelated` flip stays in lockstep.
+import { PIXEL_VALUE_MIN_SCREEN_PX } from "../primitives/PixelValueOverlay";
 import { useGammaFilter, GammaFilterSvg } from "../media-compare/post-processing";
 import ImageOverlay from "./ImageOverlay";
 import {
@@ -194,6 +200,50 @@ export function sdrTransferToImageData(
     out[i + 3] = d[i + 3]!;
   }
   return new ImageData(out, src.width, src.height);
+}
+
+/**
+ * Resolve the CSS `image-rendering` for a CPU image pane, applying the SHARED
+ * auto-interpolation threshold (`interp-auto.ts`) so `interpolation === "auto"`
+ * snaps to `pixelated` at the SAME zoom the GPU pane switches to `nearest` —
+ * once one source texel covers `PIXEL_VALUE_MIN_SCREEN_PX` screen px. An
+ * explicit `pixelated`/`crisp-edges` bypasses the threshold (returned verbatim,
+ * matching the pre-threshold behavior). The CPU backend zooms by physically
+ * scaling its wrapper (`transform: scale(zoom)`), so the on-screen texel size is
+ * the UNSCALED layout box (measured via `ResizeObserver`) × `zoom`. Shared by
+ * both the SDR and HDR CPU branches.
+ */
+function useAutoImageRendering(
+  wrapperRef: RefObject<HTMLDivElement | null>,
+  zoom: number,
+  naturalDims: { w: number; h: number } | null,
+  interpolation: Interpolation,
+): "pixelated" | "crisp-edges" | undefined {
+  const [layoutBox, setLayoutBox] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[entries.length - 1]?.contentRect;
+      if (!cr) return;
+      setLayoutBox((prev) =>
+        prev && prev.width === cr.width && prev.height === cr.height
+          ? prev
+          : { width: cr.width, height: cr.height },
+      );
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [wrapperRef]);
+
+  if (interpolation !== "auto") return interpolation;
+  if (!layoutBox || !naturalDims) return undefined;
+  const screenPxPerTexel = containScreenPxPerTexel(
+    { width: layoutBox.width * zoom, height: layoutBox.height * zoom },
+    naturalDims.w,
+    naturalDims.h,
+  );
+  return autoImageRendering(screenPxPerTexel, PIXEL_VALUE_MIN_SCREEN_PX);
 }
 
 // ---------------------------------------------------------------------------
@@ -605,8 +655,10 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   // -----------------------------------------------------------------------
   // Render (display-element branch verbatim from ImagePane; frame = shell)
   // -----------------------------------------------------------------------
-  const imgRendering =
-    interpolation === "auto" ? undefined : interpolation;
+  // Auto-interpolation: snap to `pixelated` when magnified past the shared
+  // texel-size threshold (GPU-pane parity), else the browser default. Explicit
+  // pixelated/crisp-edges bypass it. See `useAutoImageRendering`.
+  const imgRendering = useAutoImageRendering(wrapperRef, zoomProp, naturalDims, interpolation);
   const invertStyle = flipSign ? { filter: "invert(1)" } : {};
 
   const overlayNode =
@@ -909,7 +961,8 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
     [hdr, dims],
   );
 
-  const imgRendering = interpolation === "auto" ? undefined : interpolation;
+  // Auto-interpolation: shared threshold (GPU-pane parity); see the SDR branch.
+  const imgRendering = useAutoImageRendering(wrapperRef, zoom, dims, interpolation);
 
   return (
     <ImagePaneShell
