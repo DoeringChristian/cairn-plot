@@ -130,9 +130,9 @@ lowered data.
 | `cairnPlot.histogram` | `histogram(x?, { bins, counts, edges, logY })` | `cp.Histogram` |
 | `cairnPlot.heatmap` | `heatmap(z, { colormap, zmin, zmax, logColor, originTop, xLabel, yLabel, valueLabel })` | `cp.Heatmap` |
 | `cairnPlot.parallelCoordinates` | `parallelCoordinates(dimensions, { colormap })` | `cp.ParallelCoordinates` |
-| `cairnPlot.image` | `image(data, { shape, hdr, tonemap, exposure, gamma, colormap, interpolation, showAxes, brightness, contrast, offset, flipSign, pixelValueNotation })` | `cp.Image` |
+| `cairnPlot.image` | `image(data, { shape, hdr, tonemap, exposure, gamma, peak, colormap, interpolation, showAxes, brightness, contrast, offset, flipSign, pixelValueNotation, toolbar })` | `cp.Image` |
 | `cairnPlot.table` | `table(rows \| { cols })` | `cp.Table` |
-| `cairnPlot.compare` | `compare(a, b, { mode, colormap, align, fit, splitPosition, blendAlpha, ... })` | `cp.Compare` |
+| `cairnPlot.compare` | `compare(a, b, { mode, colormap, align, fit, splitPosition, blendAlpha, toolbar, ... })` | `cp.Compare` |
 | `cairnPlot.grid` | `grid([[...handles]], { cols, colWidths, rowHeights, gap, shared })` | `cp.Grid` |
 | `cairnPlot.mesh` / `.pointcloud` / `.volume` / `.boxes` | `(...)` — **throw** a clear error naming `three.iife.js` when the three.js addon isn't loaded (registry-gated; JS 3D data baking is a follow-up — bake via Python for now). | `cp.Mesh` / … |
 
@@ -376,6 +376,52 @@ values aren't light). **Side** mode is two independent single-image panes, which
 already carry the menu. Parity: a slide compose with an operator applied is
 byte-identical to a single-pane render of the same operand (GPU harness,
 `renderCompose(split:0) === renderImage`).
+
+### Host-controlled panes (`toolbar=` + the controlled-props contract)
+
+A host (e.g. cairn) can hide a pane's `PlotToolbar` and drive the whole view from
+its **own** menu. `cp.Image(toolbar=False)` / `cp.Compare(toolbar=False)` (and the
+JS `image(data, { toolbar:false })` / `compare(a, b, { toolbar:false })`) emit
+`props.toolbar = false`; the default `True` is omitted (minimal descriptor). The
+flag is a validated bool and rides the shared `ImageBackendProps.toolbar` seam, so
+**all three panes** (`CpuImagePane`, `GpuImagePane`, `GpuComparePane`) hide it
+identically.
+
+**Hidden-toolbar convention.** With `toolbar=false` the shell (`ImagePaneShell`)
+renders **no `PlotToolbar` and no hover `group`**; the ONLY floating affordance
+kept is the pixel-notation toggle chip (`0–255 ⇄ 0–1`), and only while the TEV
+pixel-value overlay is active. Zoom/pan (wheel + drag), the double-click HOME
+reset, and the TEV overlay all keep working — the toolbar was chrome, not the
+interaction. This is the long-standing CPU-pane convention, now unified across
+every backend and formalized as the host seam.
+
+**Controlled-props contract (the host-menu surface).** With the toolbar gone, the
+host drives every control by *setting the descriptor prop*; each pane RE-SEEDS
+from its prop on change, so the prop is the controlled value:
+
+| Control | Prop (all shapes) | How it's controlled | Notes |
+|---|---|---|---|
+| Colormap | `colormap` | re-seeds view-local override | image (SDR) + compare (diff LUT) |
+| Tone-map operator | `tonemap` | re-seeds (follow-default) | unified 5-operator set |
+| Peak (HDR ceiling `P`) | `peak` | re-seeds view-local | shown only on an engaged HDR surface |
+| Gamma (γ) | `gamma` | re-seeds view-local | the Gamma operator's exponent |
+| Base exposure (EV) | `exposure` | read straight from props | render EV = `exposure` + toolbar slider (additive; HOME zeroes only the slider) |
+| Base offset | `offset` | read straight from props | render offset = `offset` + toolbar slider (additive) |
+| Compare mode | `mode` / view-mode | re-seeds + `onCompareModeChange` | side · slide · blend · diff |
+| Diff kernel | `diffSubmode` / `diffKernel` | re-seeds + `onDiffKernelChange` | the pointwise ids + `flip`/`ssim` |
+| Split position | `splitPosition` | controlled + `onSplitPositionChange` | slide mode |
+| Blend alpha | `blendAlpha` | controlled | blend mode |
+| Interpolation / axes / notation | `interpolation` / `showAxes` / `pixelValueNotation` | read straight from props | — |
+
+Notes on EV/offset: the toolbar's **EV/OFF sliders are additive runtime
+adjustments** layered on the controlled base `exposure`/`offset`; HOME resets only
+the slider (to 0), so the descriptor base persists. With the toolbar hidden the
+host sets EV/offset entirely through `exposure`/`offset`. The **CPU 2D-canvas**
+plain-`<img>` SDR path has no scene-linear recompute stage, so it does NOT apply
+base EV/offset there (documented graceful degradation — the WebGPU backend and the
+CPU HDR tone-map path both do); a colormapped SDR pane forces a raw passthrough, so
+EV/offset don't apply there either. Deep-EXR depth sliders + region-select are
+**data-driven** (present only for a deep source), not host-menu controls.
 
 #### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end
