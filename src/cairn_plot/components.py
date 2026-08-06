@@ -755,6 +755,29 @@ def _image_display_props(
     return props
 
 
+def _check_toolbar(value: bool | None) -> bool | None:
+    """Validate the ``toolbar`` host-seam kwarg (``cp.Image`` / ``cp.Compare``).
+
+    ``None`` (unset) keeps the renderer default (toolbar shown); ``False`` hides
+    the pane's ``PlotToolbar`` so a host drives the view from its own menu;
+    ``True`` is the explicit default. Must be a real bool — ``0``/``1``/``"no"``
+    are rejected so a typo can't silently drop the toolbar."""
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"toolbar must be a bool (True/False), got {type(value).__name__}"
+        )
+    return value
+
+
+def _toolbar_prop(toolbar: bool | None) -> dict[str, Any]:
+    """The ``{"toolbar": False}`` fragment to merge into a node's ``props`` — only
+    when the toolbar is explicitly DISABLED. Shown (``True``) / unset (``None``)
+    emit nothing, so the descriptor stays minimal and the client default wins."""
+    return {"toolbar": False} if toolbar is False else {}
+
+
 _PIXEL_VALUE_NOTATIONS = ("decimal", "int")
 
 
@@ -815,6 +838,7 @@ def _image_hdr_props(
     *,
     tonemap: str | None = None,
     exposure: float | None = None,
+    offset: float | None = None,
     gamma: float | None = None,
     peak: float | None = None,
     interpolation: str | None = None,
@@ -854,6 +878,11 @@ def _image_hdr_props(
     }
     if tm is not None:
         props["tonemap"] = tm
+    # Base OFFSET — the display-offset counterpart of `exposure` (the controlled
+    # host-menu surface; the toolbar's OFF slider adds on top). Emitted only when
+    # explicitly set, so the renderer's 0 default stays in effect otherwise.
+    if offset is not None:
+        props["offset"] = float(offset)
     if gamma is not None:
         props["gamma"] = float(gamma)
     if peak is not None:
@@ -941,9 +970,10 @@ class Image(Component):
       the SDR set ``{linear,srgb,reinhard,aces}`` OR the HDR-out ``extended``
       family ``{extended,extended-clamp,extended-reinhard,extended-aces}``
       (default ``srgb``),
-      ``exposure`` (EV stops), and an OPTIONAL ``gamma`` override;
+      ``exposure`` (base EV stops), ``offset`` (base additive offset, applied
+      after exposure), and an OPTIONAL ``gamma`` override;
       ``showAxes``/``interpolation`` are honoured;
-      ``colormap``/``brightness``/``contrast``/``offset``/``flip_sign`` are
+      ``colormap``/``brightness``/``contrast``/``flip_sign`` are
       8-bit-only and ignored (with a note) on the HDR path. The viewer also gets
       a leading toolbar **TONEMAP menu** to switch the operator interactively;
       ``tonemap=`` sets its default. When the client's true-HDR surface engages
@@ -964,6 +994,12 @@ class Image(Component):
     NOTE: a ``run[tag]`` handle always takes the 8-bit path — the tracking
     ingest clamps images to 8-bit, so no float artifact exists yet. Real HDR is
     from raw float arrays only, for now.
+
+    HOST-CONTROLLED PANES: pass ``toolbar=False`` to render the pane WITHOUT its
+    ``PlotToolbar`` (so cairn can show its OWN menu). Every view control then stays
+    drivable through the descriptor props — ``colormap`` / ``tonemap`` / ``exposure``
+    (base EV) / ``offset`` / ``gamma`` / ``peak`` — which the pane re-seeds on every
+    change. See the "Host-controlled panes" section of ``docs/API.md``.
     """
 
     _label = "image"
@@ -987,6 +1023,7 @@ class Image(Component):
         interpolation: str | None = None,
         show_axes: bool | None = None,
         pixel_value_notation: str | None = None,
+        toolbar: bool | None = None,
     ) -> None:
         import json as _json
 
@@ -1001,6 +1038,12 @@ class Image(Component):
         )
 
         _check_data_mode(data_mode)
+        # Host seam ("Host-controlled panes"): `toolbar=False` hides the pane's
+        # PlotToolbar so a host (cairn) can drive the view from its own menu via the
+        # controlled props (colormap/tonemap/exposure/gamma/peak). Validated bool;
+        # emitted (as `props.toolbar=false`) ONLY when disabled — omitted at the
+        # default. See `_toolbar_prop` / `to_node` below.
+        self._toolbar = _check_toolbar(toolbar)
         self._source: Any = None
         self._store: dict[str, dict[str, str]] = {}
         self._data_mode = data_mode
@@ -1024,8 +1067,8 @@ class Image(Component):
             use_hdr = hdr if hdr is not None else ext in ("exr", "npy", "npz")
             if use_hdr:
                 self._props = _image_hdr_props(
-                    tonemap=tonemap, exposure=exposure, gamma=gamma, peak=peak,
-                    interpolation=interpolation, show_axes=show_axes,
+                    tonemap=tonemap, exposure=exposure, offset=offset, gamma=gamma,
+                    peak=peak, interpolation=interpolation, show_axes=show_axes,
                     pixel_value_notation=pixel_value_notation,
                 )
                 self._renderer = "imagehdr"
@@ -1084,23 +1127,26 @@ class Image(Component):
                     "a baked float array has no server reference. Use "
                     "data_mode='local' (bakes the .npy self-contained)."
                 )
+            # `offset` is NO LONGER 8-bit-only — the HDR pane applies it as the
+            # base display-offset (controlled counterpart of `exposure`), so it is
+            # honoured, not ignored.
             ignored = [
                 n for n, v in (
                     ("colormap", colormap), ("brightness", brightness),
-                    ("contrast", contrast), ("offset", offset),
+                    ("contrast", contrast),
                     ("flip_sign", flip_sign),
                 ) if v is not None
             ]
             if ignored:
                 log.warning(
                     "cp.Image HDR path ignores 8-bit-only args %s "
-                    "(the imagehdr renderer honours tonemap/exposure/gamma/"
+                    "(the imagehdr renderer honours tonemap/exposure/offset/gamma/"
                     "showAxes/interpolation).",
                     ignored,
                 )
             self._props = _image_hdr_props(
-                tonemap=tonemap, exposure=exposure, gamma=gamma, peak=peak,
-                interpolation=interpolation, show_axes=show_axes,
+                tonemap=tonemap, exposure=exposure, offset=offset, gamma=gamma,
+                peak=peak, interpolation=interpolation, show_axes=show_axes,
                 pixel_value_notation=pixel_value_notation,
             )
             # M2: guarantee C-contiguous float32 (halves size vs float64; the
@@ -1190,8 +1236,12 @@ class Image(Component):
         node: dict[str, Any] = {
             "kind": "plot", "renderer": self._renderer, "data": self._data
         }
-        if self._props:
-            node["props"] = dict(self._props)
+        # Merge the host-seam `toolbar:false` (only when disabled) onto whatever
+        # display props the routed pipeline built.
+        props = dict(self._props or {})
+        props.update(_toolbar_prop(self._toolbar))
+        if props:
+            node["props"] = props
         return node
 
     def _collect_store(self) -> dict[str, dict[str, str]]:
@@ -1830,7 +1880,12 @@ class Compare(Component):
     smaller extent sits within the larger before the overlap crop is taken
     (default ``"top-left"``), and ``fit`` picks ``"crop"`` (min-crop overlap,
     default) vs ``"fill"`` (rescale both operands to a common grid — the
-    primary/foreground resolution — making ``align`` moot)."""
+    primary/foreground resolution — making ``align`` moot).
+
+    HOST-CONTROLLED PANES: ``toolbar=False`` hides the compare pane's toolbar so a
+    host drives the view from its own menu; ``mode`` / diff kernel / ``colormap`` /
+    ``split_position`` / ``blend_alpha`` remain controllable via the descriptor. See
+    the "Host-controlled panes" section of ``docs/API.md``."""
 
     _label = "compare"
 
@@ -1854,9 +1909,11 @@ class Compare(Component):
         interpolation: str | None = None,
         show_axes: bool | None = None,
         pixel_value_notation: str | None = None,
+        toolbar: bool | None = None,
         props: dict[str, Any] | None = None,
     ) -> None:
         self._mode = mode
+        toolbar = _check_toolbar(toolbar)
         if mode not in _COMPARE_PUBLIC_MODES:
             raise ValueError(
                 f"cp.Compare(mode=...) must be one of {_COMPARE_PUBLIC_MODES!r}, "
@@ -1901,6 +1958,10 @@ class Compare(Component):
             # Carried as `diffSubmode` (the kernel id) — the pane initializes its
             # diff kernel from this; the toolbar menu (next track) preselects it.
             built["diffSubmode"] = diff_kernel
+        # Host seam ("Host-controlled panes"): `toolbar=False` hides the compare
+        # pane's toolbar so a host drives mode/kernel/colormap/split/blend from its
+        # own menu. Emitted only when disabled (a hand-passed `props` still wins).
+        built.update(_toolbar_prop(toolbar))
         if props:
             built.update(props)
         self._props = built or None
