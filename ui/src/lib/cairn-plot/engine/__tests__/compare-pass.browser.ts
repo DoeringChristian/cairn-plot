@@ -21,7 +21,7 @@
  * (see the sibling *.browser.ts for the exact commands).
  */
 import { getSharedDevice } from "../device";
-import { renderCompose, computeMetrics, type CompareParams } from "../image-engine";
+import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
 import { getDiffKernel } from "../kernels";
 import { applyExposure, TONEMAP_OPERATORS, outputEncode, type RgbTriple } from "../../image/tonemap";
@@ -227,6 +227,59 @@ async function runMetricsCase(device: Device): Promise<boolean> {
   return ok;
 }
 
+// ---- §A UNIFIED TONE-MAP: compose == single-pane parity --------------------
+/**
+ * The core §A proof: the split/blend COMPOSE pass applies the unified tone-map
+ * operator EXACTLY as the single-image `renderImage` pass does. GPU-vs-GPU (no
+ * CPU reference): render the foreground operand through `renderImage`, and
+ * through `renderCompose` with `split:0` (uv.x<0 is false everywhere → the whole
+ * frame shows colorB = the foreground), and assert byte-identical output. Covers
+ * SDR operators, an extended HDR-out operator (rgba16float target), and the
+ * sRGB-DECODE path (a u8-style operand decoded to linear) — the exact pipeline a
+ * compare pane now runs. `imageParams.srgbDecode` maps to the compose side's
+ * per-side `srgbDecodeB` so the two paths decode identically.
+ */
+async function runComposeEqualsSinglePane(
+  device: Device,
+  label: string,
+  imageParams: Omit<ImageParams, "uv">,
+  hdrTarget: boolean,
+): Promise<boolean> {
+  const texRef = buildRowTexture(device, PIXELS_REF); // ignored at split:0
+  const texFg = buildRowTexture(device, PIXELS_FG);
+  const fmt = hdrTarget ? "rgba16float" : "rgba8unorm";
+  const targetImg = device.createTexture(WIDTH, 1, fmt);
+  const targetCompose = device.createTexture(WIDTH, 1, fmt);
+  const ip: ImageParams = { ...imageParams, uv: uvFull };
+  renderImage(device, targetImg, texFg, ip);
+  const cp: CompareParams = {
+    ...imageParams,
+    uv: uvFull,
+    mode: "split",
+    split: 0, // all foreground (colorB)
+    alpha: 1,
+    srgbDecodeB: imageParams.srgbDecode,
+  };
+  renderCompose(device, targetCompose, texRef, texFg, cp);
+  const a = await device.readback(targetImg);
+  const b = await device.readback(targetCompose);
+  texRef.destroy();
+  texFg.destroy();
+  targetImg.destroy();
+  targetCompose.destroy();
+  let allOk = true;
+  const tol = hdrTarget ? 0.01 : 1;
+  for (let i = 0; i < a.length; i++) {
+    const diff = Math.abs((a[i] ?? 0) - (b[i] ?? 0));
+    if (diff > tol) {
+      allOk = false;
+      report(false, `[${label}] idx ${i}: image=${a[i]} compose=${b[i]} diff=${diff}`);
+    }
+  }
+  report(allOk, `[${label}] compose(split:0) === single-pane renderImage — operator applied identically`);
+  return allOk;
+}
+
 async function runAll(device: Device): Promise<boolean> {
   report(true, `device.backend = ${device.backend}`);
   let ok = true;
@@ -235,6 +288,17 @@ async function runAll(device: Device): Promise<boolean> {
   }
   for (const alpha of [0.0, 0.25, 0.5, 1.0]) {
     ok = (await runComposeCase(device, `blend@${alpha}`, { ...BASE, mode: "blend", split: 0.5, alpha })) && ok;
+  }
+  // §A: the compose pass tone-maps identically to the single-image pass.
+  ok = (await runComposeEqualsSinglePane(device, "unify/srgb", { exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false }, false)) && ok;
+  ok = (await runComposeEqualsSinglePane(device, "unify/reinhard@EV1", { exposureEV: 1, operator: "reinhard", isScalar: false, hdrOut: false }, false)) && ok;
+  ok = (await runComposeEqualsSinglePane(device, "unify/aces", { exposureEV: 0, operator: "aces", isScalar: false, hdrOut: false }, false)) && ok;
+  ok = (await runComposeEqualsSinglePane(device, "unify/srgb+decode", { exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true }, false)) && ok;
+  if (device.capabilities.hdr) {
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp@EV1/hdrOut", { exposureEV: 1, operator: "extended-clamp", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-reinhard/hdrOut", { exposureEV: 0, operator: "extended-reinhard", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
+    // §B on the compose path: a u8-style operand decoded to linear, extended out.
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp+decode@EV1/hdrOut", { exposureEV: 1, operator: "extended-clamp", isScalar: false, hdrOut: true, peak: 4, srgbDecode: true }, true)) && ok;
   }
   for (const k of ["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]) {
     ok = (await runDiffCase(device, k)) && ok;

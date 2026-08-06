@@ -53,7 +53,7 @@
  */
 import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams } from "../image-engine";
-import { extendedSrgbOetf } from "../../image/tonemap";
+import { extendedSrgbOetf, srgbEotf } from "../../image/tonemap";
 import type { Device, Texture } from "../types";
 
 function report(pass: boolean, message: string): void {
@@ -144,6 +144,47 @@ async function runSdrCase(device: Device): Promise<boolean> {
   return ok;
 }
 
+/** Case 3 (§B UNIFIED) — an 8-bit SDR SOURCE through the FULL unified pipeline:
+ *  a u8 255-white pixel, sRGB-DECODED to scene-linear (srgbDecode:true), at EV+1,
+ *  operator "extended-clamp" (peak 4), hdrOut:true, target rgba16float. Proves an
+ *  8-bit source genuinely EXCEEDS SDR white on an HDR display ("unified no matter
+ *  what the input data was"): 255 → srgbEotf(1.0)=1.0 linear → EV+1 → 2.0 linear
+ *  (below the P=4 ceiling) → extendedSrgbOetf(2.0)≈1.353 (encoded, ABOVE 1.0). */
+async function runSdrExtendedCase(device: Device): Promise<boolean> {
+  const src = device.createTexture(1, 1, "rgba8unorm");
+  src.write(new Uint8Array([255, 255, 255, 255]));
+  const target = device.createTexture(1, 1, "rgba16float");
+  const params: ImageParams = {
+    exposureEV: 1,
+    operator: "extended-clamp",
+    isScalar: false,
+    hdrOut: true,
+    srgbDecode: true,
+    peak: 4,
+    uv: UV_FULL,
+  };
+  renderImage(device, target, src, params);
+  const out = await device.readback(target);
+  src.destroy();
+  target.destroy();
+  if (!(out instanceof Float32Array)) {
+    report(false, `[sdr-ext] readback should be Float32Array for rgba16float`);
+    return false;
+  }
+  const decodedLinear = srgbEotf(1.0); // = 1.0
+  const expected = extendedSrgbOetf(decodedLinear * 2 ** 1); // extendedSrgbOetf(2.0)
+  let ok = true;
+  for (let c = 0; c < 3; c++) {
+    const v = out[c]!;
+    const chOk = Math.abs(v - expected) <= 0.02;
+    if (!chOk) ok = false;
+    report(chOk, `[sdr-ext] ch[${c}] expected~=${expected.toFixed(4)} actual=${v.toFixed(4)}`);
+  }
+  const survivedPast1 = out[0]! > 1.0;
+  report(survivedPast1, `[sdr-ext] u8 255-white at EV+1 encodes ABOVE SDR white (${out[0]!.toFixed(3)}) — an 8-bit source reaches extended output`);
+  return ok && survivedPast1;
+}
+
 async function main(): Promise<void> {
   try {
     const device = await getSharedDevice();
@@ -159,8 +200,9 @@ async function main(): Promise<void> {
 
     const hdrOk = await runHdrCase(device);
     const sdrOk = await runSdrCase(device);
-    const allOk = hdrOk && sdrOk;
-    report(allOk, `HDR value (>1.0, extended-ENCODED) and SDR value (clamped to 255) are OBJECTIVELY DIFFERENT — HDR output is real, not SDR-tonemapped-in-disguise`);
+    const sdrExtOk = await runSdrExtendedCase(device);
+    const allOk = hdrOk && sdrOk && sdrExtOk;
+    report(allOk, `HDR value (>1.0, extended-ENCODED), SDR value (clamped to 255), and 8-bit-source-extended value (>1.0) are all as expected — HDR output is real AND unified across source bit depth (§B)`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `Uncaught error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
