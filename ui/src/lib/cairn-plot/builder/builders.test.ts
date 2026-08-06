@@ -161,3 +161,27 @@ test("3D builders throw naming the three.js addon when it isn't loaded", () => {
     assert.throws(() => (cp as any)[name]({}), /three\.iife\.js/);
   }
 });
+
+// ── host seam: `toolbar` passthrough (mirrors Python cp.Image/cp.Compare) ────
+test("image/compare emit props.toolbar=false only when explicitly disabled", () => {
+  const f32 = new Float32Array([0, 0.25, 0.5, 0.75, 1, 0.5]);
+  // SDR image
+  const sdr = cp.image(f32, { shape: [2, 3], toolbar: false });
+  assert.equal((sdr.node as any).props.toolbar, false);
+  // HDR image (offset is a controlled base prop too)
+  const hdr = cp.image(f32, { shape: [2, 3], tonemap: "aces", toolbar: false, offset: 0.2 });
+  assert.equal((hdr.node as any).props.toolbar, false);
+  assert.equal((hdr.node as any).props.offset, 0.2);
+  // compare
+  const cmp = cp.compare(cp.image(f32, { shape: [2, 3] }), cp.image(f32, { shape: [2, 3] }), {
+    mode: "slide",
+    toolbar: false,
+  });
+  assert.equal((cmp.node as any).props.toolbar, false);
+
+  // Default (unset / true) emits NOTHING — the client shows the toolbar.
+  const dflt = cp.image(f32, { shape: [2, 3] });
+  assert.equal((dflt.node as any).props?.toolbar, undefined);
+  const dfltTrue = cp.image(f32, { shape: [2, 3], toolbar: true });
+  assert.equal((dfltTrue.node as any).props?.toolbar, undefined);
+});

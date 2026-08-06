@@ -89,6 +89,8 @@ function imageHdrProps(o: Opts): Opts {
     o.tonemap != null ? checkTonemap(String(o.tonemap)) : o.gamma != null ? "gamma" : undefined;
   const props: Opts = { exposure: o.exposure != null ? num(o.exposure) : 0 };
   if (tm != null) props.tonemap = tm;
+  // Base OFFSET — display-offset counterpart of `exposure` (controlled surface).
+  if (o.offset != null) props.offset = num(o.offset);
   if (o.gamma != null) props.gamma = num(o.gamma);
   if (o.peak != null) props.peak = num(o.peak);
   if (o.interpolation != null) props.interpolation = o.interpolation;
@@ -240,6 +242,9 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
         hdr: opts.hdr as boolean | undefined,
       });
       const props = shaped.renderer === "imagehdr" ? imageHdrProps(opts) : imageDisplayProps(opts);
+      // Host seam: emit `toolbar:false` only when explicitly disabled (omitted at
+      // the default `true`), mirroring Python `cp.Image(toolbar=...)`.
+      if (opts.toolbar === false) props.toolbar = false;
       return handle(leaf(shaped.renderer, shaped.data, props), shaped.runtime);
     },
 
@@ -271,6 +276,9 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       if (opts.splitPosition != null) built.splitPosition = num(opts.splitPosition);
       if (opts.blendAlpha != null) built.blendAlpha = num(opts.blendAlpha);
       if (diffKernel != null) built.diffSubmode = diffKernel;
+      // Host seam: `toolbar:false` only when explicitly disabled (mirrors Python
+      // `cp.Compare(toolbar=...)`); omitted at the default `true`.
+      if (opts.toolbar === false) built.toolbar = false;
       if (opts.props && typeof opts.props === "object") Object.assign(built, opts.props);
       const node: PlotNode = {
         kind: "compare",
