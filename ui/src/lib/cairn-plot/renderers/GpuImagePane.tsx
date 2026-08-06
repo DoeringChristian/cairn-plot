@@ -110,15 +110,12 @@ import ImagePaneShell from "./ImagePaneShell";
 import {
   colormapToolbarButton,
   tonemapToolbarButton,
-  displayTransferToolbarButton,
 } from "./use-image-controller";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
   aliasPeakHint,
   tonemapHasGamma,
-  resolveEncodeGamma,
-  toSdrTonemap,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MIN,
   EXTENDED_TONEMAP_PEAK_MAX,
@@ -387,22 +384,26 @@ export default function GpuImagePane(props: ImageBackendProps) {
   }, [propColormap, setColormapOverride]);
   const sdrColormap = hdrMode ? "none" : colormapOverride;
 
-  // TONE-MAP operator (HDR/float panes only). The view-local override is a
-  // NULLABLE "user explicitly picked X"; `null` means "follow the effective
-  // default". The default itself is resolved by `resolveEffectiveTonemap`
-  // (`image/tonemap.ts`) from the descriptor `tonemap=` prop AND the async
-  // `hdrEngaged` gate — so it can't be a static mount-captured seed (unlike the
-  // colormap default above): when the true-HDR surface engages, the effective
-  // default flips to "extended", and the menu / HOME target follow it. Re-seeds
-  // to "follow default" when the descriptor prop changes (controlled surface).
-  const propTonemap = hdrMode ? (props as HdrImageProps).tonemap : undefined;
+  // TONE-MAP operator — the UNIFIED 5-operator menu, now shown on BOTH the HDR
+  // (float) pane AND the plain-SDR (8-bit, no colormap) pane (§B: "all 5
+  // operators legal no matter what the input data was"). The view-local override
+  // is a NULLABLE "user explicitly picked X"; `null` means "follow the effective
+  // default". The default is resolved by `resolveEffectiveTonemap`
+  // (`image/tonemap.ts`) from the descriptor `tonemap=` prop (both prop shapes
+  // carry one) — under the unified model this is `srgb` on every surface (an
+  // identity round-trip on an already-sRGB 8-bit source; the managed-PEAK
+  // extended sRGB when the HDR surface engages). Re-seeds to "follow default"
+  // when the descriptor prop changes (controlled surface). A COLORMAPPED SDR pane
+  // hides this menu (its false-color LUT output is already display-ready).
+  const propTonemap = hdrMode
+    ? (props as HdrImageProps).tonemap
+    : (props as SdrImageProps).tonemap;
   const [tonemapOverride, setTonemapOverride] = useState<TonemapOperator | null>(null);
   useEffect(() => {
     setTonemapOverride(null);
   }, [propTonemap]);
   // The operator ACTUALLY in effect (menu value + render operator): the override
-  // when the user picked one, else the effective default. `hdrEngaged` drives
-  // both the default and whether "extended" is a legal value at all.
+  // when the user picked one, else the effective default.
   const effectiveDefaultTonemap = resolveEffectiveTonemap(propTonemap, hdrEngaged);
   const effectiveTonemap: TonemapOperator = tonemapOverride ?? effectiveDefaultTonemap;
   const tonemapModified =
@@ -415,7 +416,9 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // `resolveRenderTonemap`. Default 4 (managed determinism); seeded to ∞ only for
   // the deprecated raw `extended` alias (recovering its browser-clipped look).
   // HOME restores the seed. Never a source re-upload.
-  const propPeak = hdrMode ? (props as HdrImageProps).peak : undefined;
+  const propPeak = hdrMode
+    ? (props as HdrImageProps).peak
+    : (props as SdrImageProps).peak;
   const [peak, setPeak, peakMeta] = useResettableState(
     propPeak != null && propPeak > 0
       ? propPeak
@@ -437,22 +440,11 @@ export default function GpuImagePane(props: ImageBackendProps) {
     if (propGamma && propGamma > 0) setTonemapGamma(propGamma);
   }, [propGamma, setTonemapGamma]);
 
-  // SDR / 8-bit display-transfer selection (tev's sRGB · Gamma · Linear). Only
-  // meaningful on the PLAIN SDR path (no colormap — a false-color LUT is already
-  // display-ready and must NOT be re-encoded). Seeded from the descriptor
-  // `tonemap=` prop coerced to an SDR display transfer (default "srgb"), re-seeded
-  // on prop change; HOME restores it.
-  const propSdrTonemap = hdrMode ? undefined : (props as SdrImageProps).tonemap;
-  const seedSdrTransfer = ((): TonemapOperator => {
-    const t = toSdrTonemap(propSdrTonemap);
-    return t === "gamma" || t === "linear" ? t : "srgb";
-  })();
-  const [sdrTransfer, setSdrTransfer, sdrTransferMeta] =
-    useResettableState<TonemapOperator>(seedSdrTransfer);
-  useEffect(() => {
-    setSdrTransfer(seedSdrTransfer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propSdrTonemap]);
+  // (SDR display-transfer state removed — §B: the plain-SDR pane now shares the
+  // SAME unified operator state as the HDR pane, `effectiveTonemap` above, and
+  // the same PEAK/γ sliders. The old 3-operator sRGB·Gamma·Linear subset is gone;
+  // reinhard/aces are meaningful post-sRGB-decode, and PEAK extends the whole set
+  // onto an HDR surface.)
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only state — fed straight into the render pass below (the GPU shader
@@ -500,8 +492,21 @@ export default function GpuImagePane(props: ImageBackendProps) {
         const browserHasExtendedToneMapping = device.probeExtendedToneMapping?.() ?? false;
         const hasHighDynamicRangeDisplay =
           typeof matchMedia !== "undefined" && matchMedia("(dynamic-range: high)").matches;
+        // UNIFIED (§B): the extended surface engages for ANY LIGHT source — the
+        // `&& hdrMode` cap is GONE. Once an 8-bit source is sRGB-DECODED to
+        // scene-linear (the plain-SDR path), the SAME operator × PEAK pipeline can
+        // push EV+n past SDR white on a real HDR display ("unified no matter what
+        // the input data was"), so a plain-SDR pane engages the surface exactly
+        // like a float-HDR pane. Two hardware signals gate it, PLUS the source
+        // being LIGHT: a DESCRIPTOR-COLORMAPPED SDR pane (`propColormap` set at
+        // mount) is a FALSE-COLOR visualization, not light — its sRGB LUT output
+        // must stay a pixel-exact passthrough on an sRGB surface, so engaging the
+        // display-p3 extended surface (which would shift its colors toward P3) is
+        // suppressed. A plain 8-bit source (light) engages; the render still forces
+        // P=1 / hdrOut:false whenever the surface did NOT engage (resolveRenderTonemap).
+        const sourceIsLight = hdrMode || propColormap === "none";
         const useHdr =
-          browserHasExtendedToneMapping && hasHighDynamicRangeDisplay && hdrMode;
+          browserHasExtendedToneMapping && hasHighDynamicRangeDisplay && sourceIsLight;
         useHdrRef.current = useHdr;
         setHdrEngaged(useHdr);
         // This pane WANTED HDR (true-float `imagehdr` content) but is getting an
@@ -800,37 +805,42 @@ export default function GpuImagePane(props: ImageBackendProps) {
       useHdrRef.current,
       tonemapGamma,
     );
-    const params: ImageParams = hdrMode
-      ? {
-          exposureEV: exposure + displayEV,
-          offset: displayOffset,
-          operator: rt.operator as ImageParams["operator"],
-          gamma: rt.gamma,
-          isScalar: false,
-          hdrOut: rt.hdrOut,
-          peak: rt.peak,
-          uv,
-          filter,
-        }
-      : {
-          // PLAIN SDR: the tev display-transfer pipeline — sRGB-DECODE the 8-bit
-          // source to linear (`srgbDecode`), apply exposure/offset in linear,
-          // then the selected transfer operator (sRGB default = identity round-
-          // trip; Gamma = pow(1/γ); Linear = raw). COLORMAPPED SDR: exposure/
-          // offset were folded into the LUT index in the CPU bake, and the
-          // false-color pixels are already display-ready — so it stays a raw
-          // passthrough (operator "linear", gamma 1 = identity, no decode), never
-          // re-encoded (avoids double-encoding the LUT output).
-          exposureEV: sdrPlain ? displayEV : 0,
-          offset: sdrPlain ? displayOffset : 0,
-          operator: sdrPlain ? sdrTransfer : "linear",
-          gamma: sdrPlain ? resolveEncodeGamma(sdrTransfer, tonemapGamma) : 1,
-          isScalar: false,
-          hdrOut: false,
-          srgbDecode: sdrPlain,
-          uv,
-          filter,
-        };
+    // UNIFIED render params (§A/§B). The HDR (float) pane AND the plain-SDR
+    // (8-bit, no colormap) pane run the SAME resolveRenderTonemap output — one
+    // operator × PEAK × surface model. The ONLY per-shape differences are:
+    //   - exposure base: HDR adds the descriptor `exposure`; SDR's is 0.
+    //   - srgbDecode: the 8-bit source is sRGB-DECODED to scene-linear first
+    //     (`!hdrMode`); a float source is already scene-linear.
+    // So an 8-bit 255-white pixel at EV+1 on an engaged HDR surface genuinely
+    // encodes past SDR white, exactly as a float 1.0 pixel would. A COLORMAPPED
+    // SDR image is the one exception — its false-color LUT output is already
+    // display-ready, so it stays a raw passthrough (operator "linear", gamma 1 =
+    // identity, no decode, hdrOut:false) to avoid double-encoding the LUT output.
+    const params: ImageParams =
+      hdrMode || sdrPlain
+        ? {
+            exposureEV: (hdrMode ? exposure : 0) + displayEV,
+            offset: displayOffset,
+            operator: rt.operator as ImageParams["operator"],
+            gamma: rt.gamma,
+            isScalar: false,
+            hdrOut: rt.hdrOut,
+            peak: rt.peak,
+            srgbDecode: !hdrMode,
+            uv,
+            filter,
+          }
+        : {
+            exposureEV: 0,
+            offset: 0,
+            operator: "linear",
+            gamma: 1,
+            isScalar: false,
+            hdrOut: false,
+            srgbDecode: false,
+            uv,
+            filter,
+          };
     // C1 fix (whole-branch review): `handle.render()` is called SYNCHRONOUSLY
     // in this effect, so an uncaught throw here would unmount this pane's
     // whole subtree in React 18. `engine/pool.ts`'s `attemptRender` already
@@ -849,7 +859,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrTransfer, sdrPlain, hdrMode, sdrColormap, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -983,22 +993,19 @@ export default function GpuImagePane(props: ImageBackendProps) {
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
-      // HDR: a view-local TONEMAP menu (the operator in effect) — ONE unified
-      // group (Linear · sRGB · Gamma · Reinhard · ACES). No separate "Extended ·"
-      // entries: the PEAK slider is the HDR mode (see extraSliders). SDR: a
-      // COLORMAP menu instead (HDR has no colormap prop, SDR pixels are already
-      // encoded so have no tone-map stage).
+      // UNIFIED TONEMAP menu (§B): the ONE 5-operator group (Linear · sRGB ·
+      // Gamma · Reinhard · ACES) is shown on the HDR (float) pane AND the plain
+      // 8-bit pane — the PEAK slider is the HDR mode (see extraSliders). A plain
+      // SDR pane pairs it with the COLORMAP menu; picking a colormap swaps in the
+      // false-color path, which HIDES the tonemap menu (its LUT output is already
+      // display-ready). The HDR pane has no colormap prop.
       leadingMenus={
         hdrMode
           ? [tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator))]
           : sdrPlain
-            ? // Plain 8-bit: colormap menu + the tev display-transfer menu
-              // (sRGB · Gamma · Linear). Picking a colormap swaps in the false-
-              // color path, which hides the transfer menu (its LUT output is
-              // already display-ready).
-              [
+            ? [
                 colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap)),
-                displayTransferToolbarButton(sdrTransfer, (id) => setSdrTransfer(id as TonemapOperator)),
+                tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator)),
               ]
             : [colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap))]
       }
@@ -1017,7 +1024,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       // Gamma-on-HDR pane shows BOTH PK and γ. Their reset/modified state folds
       // into HOME so a single reset clears operator + P + γ.
       extraSliders={[
-        ...(hdrMode && hdrEngaged
+        ...((hdrMode || sdrPlain) && hdrEngaged
           ? [
               {
                 id: "peak",
@@ -1033,7 +1040,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
               },
             ]
           : []),
-        ...((hdrMode ? tonemapHasGamma(effectiveTonemap) : sdrPlain && tonemapHasGamma(sdrTransfer))
+        ...((hdrMode || sdrPlain) && tonemapHasGamma(effectiveTonemap)
           ? [
               {
                 id: "gamma",
@@ -1068,7 +1075,6 @@ export default function GpuImagePane(props: ImageBackendProps) {
         resetTonemapOverride();
         peakMeta.reset();
         gammaMeta.reset();
-        sdrTransferMeta.reset();
         deepFlatten.reset();
       }}
       extraModified={
@@ -1076,7 +1082,6 @@ export default function GpuImagePane(props: ImageBackendProps) {
         tonemapModified ||
         peakMeta.isModified ||
         gammaMeta.isModified ||
-        sdrTransferMeta.isModified ||
         deepFlatten.isModified
       }
       label={label}

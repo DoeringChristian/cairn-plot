@@ -281,16 +281,20 @@ CPU/non-WebGPU fallback re-flattens in wasm.
 
 An **HDR/float** image pane (`imagehdr`) gets a leading toolbar **TONEMAP menu**
 that switches the tone-map operator view-locally. The menu shows the operator
-**actually in effect**, and HOME restores it. An **SDR/8-bit** image pane gets a
-leading **display-transfer menu** too (tev applies its selector to LDR images):
-**sRGB** (default) · **Gamma** · **Linear** — the client sRGB-DECODEs the 8-bit
-source to linear, then re-encodes via the chosen transfer (sRGB is a bit-exact
-identity round-trip; Gamma reveals a **γ** slider; Linear shows raw linear). It
-appears only on the plain path — a **colormap** SDR image is already false-
-colored / display-ready, so it is never re-encoded. This is DISTINCT from the
-8-bit CSS-filter `processing.gamma` (a separate legacy brightness-style knob):
-`cp.Image(..., gamma=)` on an 8-bit source feeds the **display-transfer γ**, not
-`processing.gamma`, so a value is never applied twice.
+**actually in effect**, and HOME restores it. An **SDR/8-bit** image pane (plain
+path, no colormap) gets the **SAME unified 5-operator TONEMAP menu** — *unified no
+matter what the input data was* — plus the **PEAK** slider when the HDR surface
+engages: the WebGPU pane sRGB-DECODEs the 8-bit source to scene-linear first, so
+`reinhard`/`aces` are meaningful post-decode and `P > 1` pushes an `EV+n` 8-bit
+image genuinely past SDR white on a real HDR display (verified by the GPU harness:
+a `255`-white pixel at `EV+1` under an extended operator encodes above SDR white).
+It appears only on the plain path — a **colormap** SDR image is already false-
+colored / display-ready, so it is never re-encoded. `cp.Image(..., gamma=)` on an
+8-bit source feeds the **operator γ** (the Gamma display transfer), DISTINCT from
+the 8-bit CSS-filter `processing.gamma` (a separate legacy brightness-style knob),
+so a value is never applied twice. The pure `sRGB · Gamma · Linear` display-
+transfer subset (contract `displayTransfers`) survives only on the **CPU** backend
+menu — the P=1 hardware exception below.
 
 **Unified surface — pick a curve, pick a ceiling.** There is ONE operator menu
 (`linear · srgb · gamma · reinhard · aces`) and the **PEAK** slider `P` is the
@@ -350,9 +354,28 @@ resolve to a `(operator, peak)` pair (so old code keeps working): `extended` →
 `extended-aces` → `aces`; `extended-gamma` → `gamma`. They are contract-listed as
 `tonemapOperatorAliases` (distinct from the canonical 5 `tonemapOperators`).
 
-The CPU backend never engages a real HDR surface, so it is always the SDR
-rendition (`P = 1`, no PEAK slider). **Follow-up:** `cp.Compare` panes
-(split/blend/diff of HDR sources) do not yet expose a TONEMAP menu.
+**CPU backend — the P=1 hardware exception.** The 2D-canvas backend cannot emit
+extended output (a `<canvas>` 2D context has no HDR/`rgba16float` surface), so it
+is ALWAYS the SDR rendition (`P = 1`, no PEAK slider) — the one hardware-truth
+exception to the unified model. Its capability notice never mislabels this: the
+`no-hdr-*` notices are reported only from the WebGPU pane (a resolved
+`getSharedDevice()`), and a WebGPU-less page renders the CPU pane, which reports
+nothing. A `peak > 1` requested on a CPU-rendered SDR source degrades to the
+clamped SDR look there while the WebGPU backend extends it.
+
+**`cp.Compare` panes — unified tone-map (§A).** The engine-backed compare pane's
+**slide / split / blend** modes now expose the SAME unified TONEMAP menu + PEAK/γ
+sliders as the single-image pane, wired through the SAME `resolveEffectiveTonemap`
+/ `resolveRenderTonemap` + HOME contract. Both operands run through ONE display
+mapping in the compose shader (each u8 side sRGB-DECODED to scene-linear per side,
+so mixed u8/float operands compare in linear light), and the pane engages the
+extended `rgba16float` surface (probed exactly like the single-image pane) when
+the browser + display support it. **DIFF** modes keep the menu **hidden** — a
+derived error map routes through **colormaps**, not a tone-map operator (error
+values aren't light). **Side** mode is two independent single-image panes, which
+already carry the menu. Parity: a slide compose with an operator applied is
+byte-identical to a single-pane render of the same operand (GPU harness,
+`renderCompose(split:0) === renderImage`).
 
 #### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end

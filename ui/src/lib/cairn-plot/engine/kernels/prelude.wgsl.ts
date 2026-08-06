@@ -91,6 +91,14 @@ fn mapSample(
 }
 `;
 
+// UNIFIED compose tone-map pipeline — the FULL operator × peak × surface model,
+// byte-identical to `shaders/image.wgsl.ts` (single-image path) so a compare
+// pane tone-maps EXACTLY as the single-image pane does. All of `srgbEotf`
+// (sRGB-DECODE), the extended roll-off/clamp operators (ids 4-7 + peak), and the
+// extended (unclamped, origin-mirrored) output encode are ported here verbatim
+// from `image.wgsl.ts`; the GPU↔TS parity harness (`compare-pass.browser.ts`)
+// pins the compose path to the SAME `image/tonemap.ts` reference the image path
+// uses. Keep the math in lockstep with `image.wgsl.ts` when either changes.
 export const TONEMAP_WGSL = `
 fn srgbOetf(x: f32) -> f32 {
   let v = clamp(x, 0.0, 1.0);
@@ -98,9 +106,39 @@ fn srgbOetf(x: f32) -> f32 {
   return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
 }
 
+// sRGB EOTF (sRGB code -> linear) — inverse of srgbOetf. LINEARIZES an 8-bit
+// sRGB compare side when srgbDecode is set (a u8 source going through the
+// display-transfer pipeline), so exposure/offset + the operator act on linear
+// light. A float side leaves srgbDecode off (already scene-linear).
+fn srgbEotf(x: f32) -> f32 {
+  let v = clamp(x, 0.0, 1.0);
+  if (v <= 0.04045) { return v / 12.92; }
+  return pow((v + 0.055) / 1.055, 2.4);
+}
+
 fn outputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
   if (hasGamma) { return clamp(pow(clamp(x, 0.0, 1.0), 1.0 / gamma), 0.0, 1.0); }
   return srgbOetf(x);
+}
+
+// EXTENDED output-encode (HDR-out / extended-surface transfer) — unclamped,
+// origin-mirrored sRGB OETF / power curve (values past 1 survive as extended
+// brightness). Mirrors image.wgsl.ts's extendedSrgbOetf/extendedGammaEncode/
+// extendedOutputEncodeF exactly.
+fn extendedSrgbOetf(x: f32) -> f32 {
+  let a = abs(x);
+  let s = sign(x);
+  if (a <= 0.0031308) { return s * 12.92 * a; }
+  return s * (1.055 * pow(a, 1.0 / 2.4) - 0.055);
+}
+fn extendedGammaEncode(x: f32, gamma: f32) -> f32 {
+  let a = abs(x);
+  let s = sign(x);
+  return s * pow(a, 1.0 / gamma);
+}
+fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
+  if (hasGamma) { return extendedGammaEncode(x, gamma); }
+  return extendedSrgbOetf(x);
 }
 
 fn reinhardCurve(x: f32) -> f32 { let v = max(x, 0.0); return v / (1.0 + v); }
@@ -110,21 +148,43 @@ fn acesCurve(x: f32) -> f32 {
   let den = v * (2.43 * v + 0.59) + 0.14;
   return clamp(num / den, 0.0, 1.0);
 }
-fn applyOperator(rgb: vec3<f32>, operatorId: i32) -> vec3<f32> {
+
+// Peak-parameterized extended operators (ids 5/6/7) — mirror image.wgsl.ts
+// exactly: Reinhard rescaled to asymptote P, ACES canonical-scaled to P, and the
+// managed hard clamp at P.
+fn extendedReinhardCurve(x: f32, peak: f32) -> f32 { let v = max(x, 0.0); let p = max(peak, 1e-6); return v / (1.0 + v / p); }
+fn extendedAcesCurve(x: f32, peak: f32) -> f32 { let v = max(x, 0.0); let p = max(peak, 1e-6); return p * acesCurve(v / p); }
+fn extendedClampCurve(x: f32, peak: f32) -> f32 { let v = max(x, 0.0); let p = max(peak, 1e-6); return min(v, p); }
+
+// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (pure identity),
+// 5=extended-reinhard, 6=extended-aces, 7=extended-clamp, 8=gamma (clamp; γ in
+// the encode). Ids 5/6/7 read the peak uniform. Matches image.wgsl.ts's
+// applyOperator + OPERATOR_ID in image-engine.ts.
+fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
   if (operatorId == 2) { return vec3<f32>(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z)); }
   if (operatorId == 3) { return vec3<f32>(acesCurve(rgb.x), acesCurve(rgb.y), acesCurve(rgb.z)); }
+  if (operatorId == 4) { return rgb; }
+  if (operatorId == 5) { return vec3<f32>(extendedReinhardCurve(rgb.x, peak), extendedReinhardCurve(rgb.y, peak), extendedReinhardCurve(rgb.z, peak)); }
+  if (operatorId == 6) { return vec3<f32>(extendedAcesCurve(rgb.x, peak), extendedAcesCurve(rgb.y, peak), extendedAcesCurve(rgb.z, peak)); }
+  if (operatorId == 7) { return vec3<f32>(extendedClampCurve(rgb.x, peak), extendedClampCurve(rgb.y, peak), extendedClampCurve(rgb.z, peak)); }
   return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Per-side exposure+offset -> [scalar LUT] -> operator -> encode. The lut is
-// only read when isScalar. offset is the TEV display offset, added AFTER
-// exposure and BEFORE the colormap/tonemap/encode stages (default 0 = identity).
-fn processSide(lut: texture_2d<f32>, sampled: vec4<f32>, exposureEV: f32, offset: f32, operatorId: i32, gamma: f32, isScalar: bool, hdrOut: bool) -> vec3<f32> {
-  var rgb = sampled.rgb * exp2(exposureEV) + vec3<f32>(offset);
+// Per-side [sRGB-DECODE] -> exposure+offset -> [scalar LUT] -> operator(peak) ->
+// encode. srgbDecode LINEARIZES a u8 side first (a float side passes it 0). The
+// lut is only read when isScalar. offset is the TEV display offset (added AFTER
+// exposure, BEFORE colormap/tonemap/encode). On hdrOut the EXTENDED (unclamped)
+// encode runs so values past P survive to the extended HDR surface.
+fn processSide(lut: texture_2d<f32>, sampled: vec4<f32>, exposureEV: f32, offset: f32, operatorId: i32, gamma: f32, isScalar: bool, hdrOut: bool, peak: f32, srgbDecode: bool) -> vec3<f32> {
+  var src = sampled.rgb;
+  if (srgbDecode) { src = vec3<f32>(srgbEotf(src.r), srgbEotf(src.g), srgbEotf(src.b)); }
+  var rgb = src * exp2(exposureEV) + vec3<f32>(offset);
   if (isScalar) { rgb = sampleLUT(lut, rgb.x); }
-  rgb = applyOperator(rgb, operatorId);
-  if (hdrOut) { return rgb; }
+  rgb = applyOperator(rgb, operatorId, peak);
   let hasGamma = gamma > 0.0;
+  if (hdrOut) {
+    return vec3<f32>(extendedOutputEncodeF(rgb.r, gamma, hasGamma), extendedOutputEncodeF(rgb.g, gamma, hasGamma), extendedOutputEncodeF(rgb.b, gamma, hasGamma));
+  }
   return vec3<f32>(outputEncodeF(rgb.r, gamma, hasGamma), outputEncodeF(rgb.g, gamma, hasGamma), outputEncodeF(rgb.b, gamma, hasGamma));
 }
 `;

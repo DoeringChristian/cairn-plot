@@ -245,6 +245,14 @@ export interface CompareParams extends ImageParams {
   split: number;
   /** Blend factor `[0,1]` for `mode:"blend"` — `mix(texA, texB, alpha)`. */
   alpha: number;
+  /** sRGB-DECODE the A side (reference/texA) to scene-linear BEFORE exposure —
+   *  set for a u8 sRGB operand so the unified operator×peak pipeline runs on
+   *  linear light; a float (scene-linear) operand leaves it off. Per-SIDE (not
+   *  the shared `ImageParams.srgbDecode`) because a compare pane can mix a u8 and
+   *  a float operand. Unset = false. */
+  srgbDecodeA?: boolean;
+  /** sRGB-DECODE the B side (foreground/texB) to scene-linear. See {@link srgbDecodeA}. */
+  srgbDecodeB?: boolean;
 }
 
 // One compiled pipeline per (Device, split|blend shader, target format).
@@ -305,8 +313,16 @@ export function renderCompose(
     params.hdrOut ? 1 : 0,
     params.filter === "nearest" ? 0 : 1,
   ]);
-  // u_extra: offset, _, _, _ (TEV display offset; default 0 = identity).
-  const extraVec = new Float32Array([params.offset ?? 0, 0, 0, 0]);
+  // u_extra: offset, peak, srgbDecodeA, srgbDecodeB. offset is the TEV display
+  // offset (default 0 = identity); peak is the PEAK white ceiling for the
+  // extended operators (default 4); srgbDecodeA/B sRGB-DECODE each u8 side to
+  // scene-linear (default 0 = a scene-linear/float side) — see CompareParams.
+  const extraVec = new Float32Array([
+    params.offset ?? 0,
+    params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,
+    params.srgbDecodeA ? 1 : 0,
+    params.srgbDecodeB ? 1 : 0,
+  ]);
 
   let bindGroup: BindGroup | undefined;
   try {
