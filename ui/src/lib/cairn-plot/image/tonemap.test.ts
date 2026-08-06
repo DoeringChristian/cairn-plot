@@ -555,6 +555,28 @@ test("UNIFIED goldens: HDR Gamma is UNCLAMPED (above-white survives), P>1 clips 
   approx(extendedOutputEncode(ranged2, rt2.gamma), Math.pow(2, 1 / 2.2), 1e-12);
 });
 
+test("UNIFIED §B: the render matrix is SOURCE-AGNOSTIC (u8-post-decode ≡ float)", () => {
+  // "Unified no matter what the input data was": resolveRenderTonemap takes only
+  // (operator, P, surface, γ) — NOT the source's bit depth. So an 8-bit source
+  // (sRGB-DECODED to scene-linear by the pane before this runs) and a float
+  // source resolve to the SAME engine params for the SAME operator/P/surface.
+  // The pane supplies srgbDecode:true for the u8 side; the operator × P pipeline
+  // downstream is IDENTICAL. Spot-check every operator on both surfaces.
+  for (const op of ["linear", "srgb", "gamma", "reinhard", "aces"]) {
+    // Non-HDR surface (or a pane whose extended surface never engaged) → P=1 SDR
+    // rendition, table-free: exactly the plain SDR operator (the DEGRADE rule).
+    const sdr = resolveRenderTonemap(op, 1, false, 2.2);
+    assert.equal(sdr.hdrOut, false);
+    assert.equal(sdr.peak, 1);
+    // Engaged HDR surface, P=4 → the SAME operator extends onto the surface, so
+    // an EV+n u8 source (once decoded) genuinely exceeds SDR white just like a
+    // float source would (hdrOut:true, finite peak carried to the shader).
+    const hdr = resolveRenderTonemap(op, 4, true, 2.2);
+    assert.equal(hdr.hdrOut, true);
+    assert.equal(hdr.peak, 4);
+  }
+});
+
 test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap", () => {
   // UNSET descriptor: sRGB on EVERY surface (user decision — tev's default).
   // Engaged HDR → extended sRGB encode with the managed PEAK(4) ceiling.

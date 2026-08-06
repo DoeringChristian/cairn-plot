@@ -98,17 +98,27 @@ def test_hdr_gamma_arg_auto_selects_gamma_operator() -> None:
 
 
 def test_sdr_display_transfer_set() -> None:
+    # The pure-encode subset (CPU display-transfer menu) — no longer the SDR
+    # restriction (§B), but still the documented pure-transfer set.
     assert set(_SDR_DISPLAY_TRANSFERS) == {"srgb", "gamma", "linear"}
 
 
 def test_sdr_transfer_props_defaults_empty() -> None:
-    # Neither tonemap nor gamma → no props (client default "srgb").
+    # Nothing set → no props (client default "srgb").
     assert _image_sdr_transfer_props() == {}
 
 
-@pytest.mark.parametrize("t", ["srgb", "gamma", "linear"])
-def test_sdr_transfer_accepts_display_transfers(t: str) -> None:
+# §B UNIFIED: an 8-bit source now accepts ALL 5 operators (reinhard/aces are
+# meaningful post-sRGB-decode; the client decodes to linear first).
+@pytest.mark.parametrize("t", ["srgb", "gamma", "linear", "reinhard", "aces"])
+def test_sdr_transfer_accepts_all_five_operators(t: str) -> None:
     assert _image_sdr_transfer_props(tonemap=t)["tonemap"] == t
+
+
+def test_sdr_transfer_matches_canonical_operator_set() -> None:
+    # The SDR-accepted set IS the canonical 5-operator set (unified, table-free).
+    for op in _TONEMAP_OPERATORS:
+        assert _image_sdr_transfer_props(tonemap=op)["tonemap"] == op
 
 
 def test_sdr_gamma_arg_auto_selects_and_routes_to_transfer() -> None:
@@ -116,10 +126,20 @@ def test_sdr_gamma_arg_auto_selects_and_routes_to_transfer() -> None:
     assert props == {"tonemap": "gamma", "gamma": 1.8}
 
 
-def test_sdr_transfer_rejects_hdr_only_operators() -> None:
-    # Reinhard/ACES/extended are HDR-only; an 8-bit image can't select them.
-    for op in ("reinhard", "aces", "extended", "extended-clamp"):
-        with pytest.raises(ValueError, match="HDR-only|must be one of"):
+def test_sdr_peak_is_emitted_only_when_set() -> None:
+    # PEAK (the unified HDR mode) plumbs through the 8-bit path too (§B): an 8-bit
+    # source can extend onto an HDR surface once sRGB-decoded to scene-linear.
+    assert "peak" not in _image_sdr_transfer_props(tonemap="reinhard")
+    assert _image_sdr_transfer_props(tonemap="aces", peak=4.0)["peak"] == 4.0
+    # peak alone (no tonemap) selects the default operator and carries the peak.
+    assert _image_sdr_transfer_props(peak=2.0) == {"tonemap": "srgb", "peak": 2.0}
+
+
+def test_sdr_transfer_rejects_extended_aliases_and_garbage() -> None:
+    # The deprecated extended* aliases are the HDR-out SPELLING — on an 8-bit
+    # source use peak= instead, so they (and true garbage) are rejected.
+    for op in ("extended", "extended-clamp", "extended-reinhard", "extended-nope"):
+        with pytest.raises(ValueError, match="must be one of"):
             _image_sdr_transfer_props(tonemap=op)
 
 

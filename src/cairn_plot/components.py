@@ -800,11 +800,14 @@ _TONEMAP_ALIASES = (
 # The names ``cp.Image(tonemap=)`` accepts on the HDR path: canonical ∪ aliases.
 _HDR_TONEMAP_OPERATORS = _TONEMAP_OPERATORS + _TONEMAP_ALIASES
 
-# The DISPLAY-TRANSFER operators valid on an SDR / 8-bit image (tev applies the
-# same selector to LDR images): sRGB (default) · Gamma(γ) · Linear. A subset of
-# _HDR_TONEMAP_OPERATORS — the compression operators (reinhard/aces/extended*)
-# are HDR-only (an 8-bit source is already in [0,1]). The client sRGB-DECODEs the
-# 8-bit source to linear, then re-encodes via the chosen transfer.
+# The pure DISPLAY-TRANSFER encodes: sRGB (default) · Gamma(γ) · Linear (``↔``
+# contract ``displayTransfers``, ``↔`` TS ``SDR_DISPLAY_TRANSFER_OPERATORS``).
+# UNIFIED model (§B): this is NO LONGER the SDR *restriction* — an 8-bit source
+# now accepts ALL 5 operators (``_TONEMAP_OPERATORS``) + ``peak`` (validated in
+# ``_image_sdr_transfer_props``), because the client sRGB-DECODEs it to linear
+# first so reinhard/aces are meaningful and PEAK extends onto an HDR surface. This
+# tuple survives only as the pure-encode subset the CPU 2D-canvas display-transfer
+# menu offers (the P=1 hardware exception — no extended output).
 _SDR_DISPLAY_TRANSFERS = ("srgb", "gamma", "linear")
 
 
@@ -865,35 +868,55 @@ def _image_hdr_props(
 
 
 def _image_sdr_transfer_props(
-    *, tonemap: str | None = None, gamma: float | None = None
+    *, tonemap: str | None = None, gamma: float | None = None,
+    peak: float | None = None,
 ) -> dict[str, Any]:
-    """Build the DISPLAY-TRANSFER props for an 8-bit image (tev's sRGB · Gamma ·
-    Linear selector). Emitted as TOP-LEVEL ``tonemap`` / ``gamma`` (distinct from
-    the legacy CSS-filter ``processing`` block): the client sRGB-DECODEs the 8-bit
-    source to linear, then re-encodes via the chosen transfer. Returns ``{}`` when
-    neither is set (the client default ``srgb`` — an identity round-trip). A
-    ``gamma=`` without a ``tonemap=`` selects the Gamma operator; the value is the
-    Gamma transfer's γ (``display = clamp(value)^(1/γ)``), ignored by ``srgb`` /
-    ``linear``.
+    """Build the UNIFIED tone-map props for an 8-bit image. Emitted as TOP-LEVEL
+    ``tonemap`` / ``gamma`` / ``peak`` (distinct from the legacy CSS-filter
+    ``processing`` block). Returns ``{}`` when nothing is set (the client default
+    ``srgb`` — an identity round-trip on an already-sRGB source).
+
+    UNIFIED model (§B — "unified no matter what the input data was"): an 8-bit
+    source is NOT restricted to the pure display transfers anymore. The client
+    sRGB-DECODEs it to scene-linear, so ALL 5 canonical operators
+    (``_TONEMAP_OPERATORS`` = linear · srgb · gamma · reinhard · aces) are
+    meaningful — reinhard/aces compress post-decode, and ``peak`` (``P``, ×SDR
+    white) extends the whole set onto a real HDR display when the client's
+    extended surface engages (``P=1`` = the SDR rendition; DEGRADE is table-free —
+    the P=1 rule handles a non-HDR surface, see ``image/tonemap.ts``'s
+    ``resolveRenderTonemap``). The deprecated ``extended*`` aliases are the HDR-out
+    SPELLING — on an 8-bit source use ``peak`` instead, so they are rejected here.
+
+    A ``gamma=`` without a ``tonemap=`` selects the Gamma operator; the value is
+    the Gamma transfer's γ (``display = clamp(value)^(1/γ)``), ignored by the
+    others. ``peak`` is emitted only when explicitly set.
 
     NOTE (γ wiring — deliberately NON-conflated with ``processing.gamma``): on the
-    8-bit path ``gamma=`` feeds THIS display transfer, NOT the CSS-filter
+    8-bit path ``gamma=`` feeds THIS operator, NOT the CSS-filter
     ``processing.gamma`` (the caller passes ``gamma=None`` to
     ``_image_display_props`` when a transfer is engaged), so a value is never
     applied twice. ``processing.gamma`` remains the separate legacy brightness-
-    style knob (default 1.0)."""
-    if tonemap is None and gamma is None:
+    style knob (default 1.0).
+
+    CPU-BACKEND NOTE: the 2D-canvas backend is the P=1 hardware exception — it
+    renders the SDR rendition only (it cannot emit extended output), so a
+    ``peak>1`` degrades to the clamped SDR look there while the WebGPU backend
+    extends it. See ``renderers/CpuImagePane.tsx``."""
+    if tonemap is None and gamma is None and peak is None:
         return {}
     tm = tonemap if tonemap is not None else ("gamma" if gamma is not None else "srgb")
-    if tm not in _SDR_DISPLAY_TRANSFERS:
+    if tm not in _TONEMAP_OPERATORS:
         raise ValueError(
-            f"cp.Image(tonemap={tm!r}) on an 8-bit image must be one of "
-            f"{_SDR_DISPLAY_TRANSFERS!r} — Reinhard/ACES and the extended family "
-            "are HDR-only (a float array with values outside [0,1], or hdr=True)."
+            f"cp.Image(tonemap={tm!r}) on an 8-bit image must be one of the 5 "
+            f"unified operators {_TONEMAP_OPERATORS!r}. The deprecated extended* "
+            "aliases are the HDR-out spelling — use peak= to extend onto an HDR "
+            "surface instead (P=1 is the SDR rendition)."
         )
     props: dict[str, Any] = {"tonemap": tm}
     if gamma is not None:
         props["gamma"] = float(gamma)
+    if peak is not None:
+        props["peak"] = float(peak)
     return props
 
 
@@ -1007,10 +1030,13 @@ class Image(Component):
                 )
                 self._renderer = "imagehdr"
             else:
-                # 8-bit: tonemap/gamma select the tev DISPLAY TRANSFER (validated
-                # against the SDR subset); gamma routes to the transfer, not the
-                # CSS `processing` block (so it is never applied twice).
-                transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma)
+                # 8-bit: tonemap/gamma/peak select the UNIFIED operator (all 5,
+                # validated); gamma routes to the operator, not the CSS
+                # `processing` block (so it is never applied twice). peak extends
+                # onto an HDR surface (§B).
+                transfer = _image_sdr_transfer_props(
+                    tonemap=tonemap, gamma=gamma, peak=peak
+                )
                 self._props = _image_display_props(
                     exposure=exposure, gamma=(None if transfer else gamma),
                     brightness=brightness,
@@ -1046,10 +1072,10 @@ class Image(Component):
                 want_hdr = True
             elif data.size and (float(data.min()) < 0.0 or float(data.max()) > 1.0):
                 want_hdr = True  # auto-detect: genuine HDR range
-        # On the 8-bit path, tonemap= selects the tev DISPLAY TRANSFER (sRGB /
-        # Gamma / Linear only — validated in `_image_sdr_transfer_props`); the
-        # compression operators (reinhard/aces/extended*) are still HDR-only and
-        # rejected there, so no early gate is needed here.
+        # On the 8-bit path, tonemap= selects the UNIFIED operator (all 5 —
+        # validated in `_image_sdr_transfer_props`); reinhard/aces are meaningful
+        # post-sRGB-decode and peak= extends onto an HDR surface (§B). Only the
+        # deprecated extended* aliases are rejected there, so no early gate here.
 
         if want_hdr:
             if data_mode == "endpoint":
@@ -1109,9 +1135,10 @@ class Image(Component):
             return
 
         # ── 8-bit path ───────────────────────────────────────────────────
-        # tonemap/gamma select the tev DISPLAY TRANSFER (sRGB · Gamma · Linear);
-        # gamma routes to the transfer, not the CSS `processing` block.
-        transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma)
+        # tonemap/gamma/peak select the UNIFIED operator (all 5); gamma routes to
+        # the operator, not the CSS `processing` block; peak extends onto an HDR
+        # surface (§B).
+        transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma, peak=peak)
         self._props = _image_display_props(
             exposure=exposure, gamma=(None if transfer else gamma),
             brightness=brightness,
