@@ -175,20 +175,51 @@ export interface CompareModeOption<M extends string = string> {
   label: string;
   /** True for a native (non-compositor) mode; false for a core kind. */
   native: boolean;
+  /** True for an ENGINE diff-KERNEL entry (a sub-kind of the `diff` mode, e.g.
+   *  `hdr-flip`/`ssim`) appended via `extras.engineKernels`; false for a core
+   *  or native mode. GPU-only, so gated by `extras.gpuAvailable`. */
+  kernel?: boolean;
   /** True when the mode is offered but not currently selectable (native mode
-   *  whose precondition fails). Core kinds are always selectable. */
+   *  whose precondition fails, or an engine kernel with no GPU). Core kinds are
+   *  always selectable. */
   disabled: boolean;
+}
+
+/**
+ * Optional extras for {@link enumerateCompareModeOptions} — the ENGINE diff
+ * kernels a host settings panel wants to enumerate alongside the core+native
+ * modes (so the panel can offer the FULL diff-kernel set, GPU-gated).
+ *
+ * The kernel list is passed IN by the caller (from the gpu-image addon's
+ * `listDiffMenuModes()`, or the `window.__cairnPlotDiffMenuModes` list
+ * `plot-node` reads) — this module NEVER imports `engine/kernels`, exactly
+ * mirroring how `compare-mode-menu.ts` stays engine-free, so it remains safe
+ * for the core bundle.
+ */
+export interface CompareModeExtras {
+  /** Engine diff-kernel entries appended after the core+native modes. Empty /
+   *  omitted = none (the addon not loaded / no WebGPU), i.e. the original
+   *  core+native list. */
+  engineKernels?: ReadonlyArray<LabelledOption<string>>;
+  /** Whether the WebGPU compare engine is available — engine kernels are
+   *  GPU-only, so they enumerate as `disabled` when false. Defaults to `true`
+   *  (the caller already gated by only supplying `engineKernels` when the addon
+   *  published them). */
+  gpuAvailable?: boolean;
 }
 
 /**
  * Enumerate the ordered compare-mode options for the given capabilities: the
  * five core (image-space) kinds first — always enabled — then each native
- * kind, disabled when `topologyOk` is false. This is exactly the option list
- * the compare-mode `<Select>` renders; the app panel maps it to its own
- * `<Select>` option shape and adds the disabled-reason description.
+ * kind, disabled when `topologyOk` is false, then (when `extras.engineKernels`
+ * is supplied) each engine diff KERNEL, disabled when `extras.gpuAvailable` is
+ * false. This is exactly the option list the compare-mode `<Select>` renders;
+ * the app panel maps it to its own `<Select>` option shape and adds the
+ * disabled-reason description.
  */
 export function enumerateCompareModeOptions<M extends string = string>(
   caps: CompareModeCapabilities<M>,
+  extras?: CompareModeExtras,
 ): Array<CompareModeOption<M>> {
   const core: Array<CompareModeOption<M>> = CORE_COMPARE_MODE_OPTIONS.map((o) => ({
     value: o.value as unknown as M,
@@ -202,5 +233,13 @@ export function enumerateCompareModeOptions<M extends string = string>(
     native: true,
     disabled: !caps.topologyOk,
   }));
-  return [...core, ...native];
+  const gpuAvailable = extras?.gpuAvailable ?? true;
+  const kernels: Array<CompareModeOption<M>> = (extras?.engineKernels ?? []).map((o) => ({
+    value: o.value as unknown as M,
+    label: o.label,
+    native: false,
+    kernel: true,
+    disabled: !gpuAvailable,
+  }));
+  return [...core, ...native, ...kernels];
 }

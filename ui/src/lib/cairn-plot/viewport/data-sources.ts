@@ -34,9 +34,30 @@ import type { ImageOverlayData } from "../types";
 import type { ImageViewportItem } from "./image-viewport";
 import type { ViewportDataArgs, ViewportDataResult } from "./types";
 import type { RuntimeStoreEntry } from "./runtime-store";
-import { parseNpy, parseNpz } from "../transforms";
-import type { PropertyMap } from "../three/properties";
-import { extractProperties } from "../three/properties";
+// Explicit `.ts` module path (not the `../transforms` barrel) so this module —
+// and its float-decode helpers — load under Node's type-stripping test runner
+// (a directory/barrel import is unsupported there); mirrors `image/decoders.ts`.
+// `parse-npy` is a self-contained DOM-free leaf, safe as a static import;
+// `parse-npz` (the `DecompressionStream` inflate path) is loaded LAZILY at its
+// call sites below — again matching `image/decoders.ts` — so the eager module
+// graph (and this file's own float-decode unit test) stays clean.
+import { parseNpy } from "../transforms/parse-npy.ts";
+import type { parseNpz as ParseNpzFn } from "../transforms/parse-npz.ts";
+
+/** Lazily load the `.npz` parser (see the import note above). */
+async function loadParseNpz(): Promise<typeof ParseNpzFn> {
+  return (await import("../transforms/parse-npz.ts")).parseNpz;
+}
+import type { PropertyMap } from "../three/properties.ts";
+import { extractProperties } from "../three/properties.ts";
+import {
+  decodeImage,
+  decodedU8ToDataUrl,
+  isRawBufferFormat,
+  sniffFormat,
+  type DecodedImage,
+} from "../image/decoders.ts";
+import type { CompareFloatSource } from "../media-compare/compositor";
 
 /**
  * Resolves a content-addressed artifact hash to fetchable data. Two shapes
@@ -111,6 +132,158 @@ export function resolveImageViewportItems(
 }
 
 // ---------------------------------------------------------------------------
+// HDR/float decode seam — the ONE decode-to-CompareFloatSource core shared by
+// the compare DESCRIPTOR resolver (`plot-node.tsx`'s `resolveFrame`) and the
+// viewport ADAPTER's float-resolving resolver (`resolveImageViewportItemsAsync`
+// below). Both need the SAME "fetch a URL, decode it, and route float samples
+// to a `CompareFloatSource` (the GPU/HDR path) vs 8-bit bytes to a browser-
+// decodable `imageUrl`" mapping, so it lives here once rather than copy-pasted.
+// Pure `image/decoders` + `image/half` types underneath — no `api/*`, no
+// react-query — so it stays inside the cairn-plot boundary.
+// ---------------------------------------------------------------------------
+
+/** The result of decoding one image source: EITHER a browser-decodable `url`
+ *  (the 8-bit `<img>` path) OR a decoded `float` source (EXR / float `.npy`,
+ *  the GPU/HDR path). Exactly one is populated. */
+export interface ResolvedImageSource {
+  /** A browser-decodable URL for the SDR `<img>` path — `null` when the source
+   *  decoded to float (`float` is set instead). */
+  url: string | null;
+  /** Decoded float samples for the GPU/HDR compare path — absent for 8-bit. */
+  float?: CompareFloatSource;
+}
+
+/**
+ * Map an already-DECODED float image → the `CompareFloatSource` the GPU/HDR
+ * compare panes upload. Pure and DOM-free (the piece that unit-tests without a
+ * browser); `contentKey` is the STABLE diff-cache key (the source URL / store
+ * hash, NOT the float bytes). Carries the `precision` tag through so an F16
+ * (`f16-bits`) buffer stays half-precision to the `rgba16float` upload.
+ */
+export function decodedFloatToCompareSource(
+  decoded: Extract<DecodedImage, { kind: "f32" }>,
+  contentKey: string,
+): CompareFloatSource {
+  return {
+    data: decoded.data,
+    width: decoded.width,
+    height: decoded.height,
+    channels: decoded.channels,
+    precision: decoded.precision,
+    contentKey,
+  };
+}
+
+/**
+ * Fetch + decode an image source into a {@link ResolvedImageSource}. Mirrors
+ * (and is now consumed by) `plot-node.tsx`'s `resolveFrame` client-decode seam:
+ * fetch the bytes (following redirects — the FINAL url is the content key),
+ * normalize through `decodeImage` (sniffed by Content-Type → URL ext → magic
+ * bytes), and route `f32` → a `CompareFloatSource` (uploaded as
+ * `rgba16float`/`rgba32float`, diffing in TRUE float values) vs `u8` → a PNG
+ * `data:` URL (the existing texture path). Pass `bytes` to decode an
+ * already-fetched buffer (skips the network — the unit-test path). CORS applies
+ * to the fetch.
+ */
+export async function decodeImageSource(input: {
+  url?: string;
+  bytes?: ArrayBuffer;
+  mime?: string;
+}): Promise<ResolvedImageSource> {
+  let bytes = input.bytes;
+  let mime = input.mime;
+  let contentKey = input.url ?? "";
+  if (!bytes) {
+    if (!input.url) {
+      throw new Error("cairn-plot: decodeImageSource needs a url or bytes");
+    }
+    const res = await fetch(input.url, { redirect: "follow" });
+    if (!res.ok) {
+      throw new Error(`cairn-plot: failed to fetch image ${input.url} (${res.status})`);
+    }
+    bytes = await res.arrayBuffer();
+    mime = mime ?? res.headers.get("content-type") ?? undefined;
+    // The FINAL post-redirect url is the stable diff-cache content key (a live
+    // query url that redirects to a content-addressed digest keys on the digest).
+    contentKey = res.url || input.url;
+  }
+  const decoded = await decodeImage({ bytes, url: input.url, mime });
+  if (decoded.kind === "f32") {
+    return { url: null, float: decodedFloatToCompareSource(decoded, contentKey) };
+  }
+  return { url: decodedU8ToDataUrl(decoded) };
+}
+
+/** True when a `{url, mime}` hint names a RAW-BUFFER image format the browser
+ *  can't `<img>`-decode (`.exr` / `.npy` / `.npz`) — i.e. one that must go
+ *  through {@link decodeImageSource} (and MAY yield a float source). A
+ *  browser-native format (png/jpeg/webp/avif/gif) or an un-sniffable
+ *  extension-less URL returns false, so the ordinary `<img>` URL path is left
+ *  untouched (no needless re-fetch/re-encode). */
+export function isFloatCandidateArtifact(hint: { url?: string; mime?: string }): boolean {
+  return isRawBufferFormat(sniffFormat({ url: hint.url, mime: hint.mime }));
+}
+
+/**
+ * The ASYNC, float-aware counterpart of {@link resolveImageViewportItems}: the
+ * SAME hash → `{url, overlay}` mapping, plus — for any pane whose URL/MIME
+ * sniffs to a raw-buffer format (`.exr` / float `.npy`) — a fetch (via
+ * `source.bytes`, so the endpoint AND local sources both work) + decode through
+ * {@link decodeImageSource}, attaching a decoded `float: CompareFloatSource` to
+ * the item (and clearing its `url`, since a float buffer has no
+ * browser-decodable URL). Browser-native panes (png/jpeg/…) and un-sniffable
+ * extension-less URLs pass through UNCHANGED — the exact `{url, overlay}` the
+ * sync resolver produces (no extra fetch/decode) — so this is a strict superset
+ * a host can adopt to get true-HDR panes/compare with no other change.
+ *
+ * Detection uses the per-pane `args.mimes`/`args.referenceMimes` (the host's
+ * `artifact_mime`) when supplied, else the artifact URL's extension + magic
+ * bytes. `isLoading` is false because every decode is awaited before returning.
+ */
+export async function resolveImageViewportItemsAsync(
+  args: Pick<
+    ViewportDataArgs,
+    "hashes" | "referenceHashes" | "metadata" | "mimes" | "referenceMimes"
+  >,
+  source: DataSource,
+  parseOverlay: (raw: string | null | undefined) => ImageOverlayData | null,
+): Promise<ViewportDataResult<ImageViewportItem>> {
+  const { hashes, referenceHashes, metadata, mimes, referenceMimes } = args;
+  const [items, referenceItems] = await Promise.all([
+    Promise.all(
+      hashes.map((h, i) =>
+        resolveOneImageItem(h, source, mimes?.[i], parseOverlay(metadata?.[i])),
+      ),
+    ),
+    Promise.all(
+      referenceHashes.map((h, i) => resolveOneImageItem(h, source, referenceMimes?.[i], null)),
+    ),
+  ]);
+  return { items, referenceItems, isLoading: false };
+}
+
+/** Resolve ONE artifact hash to an {@link ImageViewportItem}, decoding a
+ *  raw-buffer float artifact (`.exr` / float `.npy`) to a `CompareFloatSource`.
+ *  A browser-native / un-sniffable artifact stays the plain `{url, overlay}`
+ *  (no fetch). Shared by the foreground + reference passes of
+ *  {@link resolveImageViewportItemsAsync}. */
+async function resolveOneImageItem(
+  hash: string | null,
+  source: DataSource,
+  mime: string | null | undefined,
+  overlay: ImageOverlayData | null,
+): Promise<ImageViewportItem | null> {
+  if (!hash) return null;
+  const url = source.artifactUrl(hash);
+  if (!isFloatCandidateArtifact({ url, mime: mime ?? undefined })) return { url, overlay };
+  const bytes = await source.bytes(hash);
+  const resolved = await decodeImageSource({ url, bytes, mime: mime ?? undefined });
+  return resolved.float
+    ? { url: null, overlay, float: resolved.float }
+    : { url: resolved.url, overlay };
+}
+
+// ---------------------------------------------------------------------------
 // pointcloud — fetch + parse a single point-cloud artifact. Mirrors
 // `PointCloudVisualCard.tsx`'s pre-extraction `fetchPointCloudArrays`
 // exactly, just resolving bytes via `source.bytes` instead of
@@ -135,6 +308,7 @@ export async function fetchPointCloudArrays(
 ): Promise<PointCloudArrays> {
   const buf = await source.bytes(hash);
   if (looksLikeNpz(buf)) {
+    const parseNpz = await loadParseNpz();
     const npz = await parseNpz(buf);
     if (!npz.points) throw new Error("point cloud npz missing 'points'");
     return { data: Float32Array.from(npz.points.data), properties: extractProperties(npz) };
@@ -166,6 +340,7 @@ export interface MeshArrays {
 }
 
 export async function fetchMeshArrays(hash: string, source: DataSource): Promise<MeshArrays> {
+  const parseNpz = await loadParseNpz();
   const npz = await parseNpz(await source.bytes(hash));
   if (!npz.positions || !npz.faces) {
     throw new Error("mesh blob missing positions/faces");
@@ -187,6 +362,7 @@ export async function fetchMeshArrays(hash: string, source: DataSource): Promise
 // shape/vmin/vmax/spacing/origin/bounds live in the inline `meta`.
 // ---------------------------------------------------------------------------
 export async function fetchVolumeArray(hash: string, source: DataSource): Promise<Float32Array> {
+  const parseNpz = await loadParseNpz();
   const npz = await parseNpz(await source.bytes(hash));
   if (!npz.data) throw new Error("volume artifact is missing its 'data' array");
   // The shared parser returns Float64Array for uniform downstream math;
@@ -206,6 +382,7 @@ export interface BoxesArrays {
 }
 
 export async function fetchBoxesArrays(hash: string, source: DataSource): Promise<BoxesArrays> {
+  const parseNpz = await loadParseNpz();
   const npz = await parseNpz(await source.bytes(hash));
   if (!npz.mins || !npz.maxs || !npz.depth) {
     throw new Error("boxes blob missing mins/maxs/depth");

@@ -6,6 +6,7 @@ import type {
   Colormap,
 } from "../types";
 import { CrossTypeCompositeMediaPane } from "../media-compare/compositor";
+import type { CompareFloatSource } from "../media-compare/compositor";
 import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -31,6 +32,16 @@ import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "./types
 export interface ImageViewportItem {
   url: string | null;
   overlay?: ImageOverlayData | null;
+  /**
+   * DECODED float samples for a true-HDR artifact (`.exr` / float `.npy`) —
+   * populated by `resolveImageViewportItemsAsync` (viewport/data-sources.ts)
+   * when the artifact decodes to float; `url` is `null` in that case (a float
+   * buffer has no browser-decodable URL). Absent for the ordinary 8-bit
+   * `<img>` URL path (the synchronous `resolveImageViewportItems` never sets
+   * it). The Pane hands this to `CompositeMediaPane`'s `imageFloat`, so an EXR
+   * artifact gets HDR panes/compare (rgba16float, HDR-FLIP, tonemap menu).
+   */
+  float?: CompareFloatSource | null;
 }
 
 /** ImageViewport's `TView`: the "image2d" member of the shared `ViewState`
@@ -91,11 +102,17 @@ function toProcessing(s: ImageViewportSettings): ImageProcessing {
 export function ImageViewportPane({
   data,
   reference,
+  imageFloat,
+  baselineFloat,
   settings,
   view,
   onViewChange,
   mode,
   diffMode,
+  diffKernel,
+  onDiffKernelChange,
+  onCompareModeChange,
+  onRequestSide,
   splitPosition,
   onSplitPositionChange,
   blendAlpha,
@@ -108,14 +125,27 @@ export function ImageViewportPane({
   crossTypeAlignForDiff,
 }: ViewportPaneProps<ImageViewportItem, ImageViewState, ImageViewportSettings>) {
   const processing = toProcessing(settings);
+  // The float side may arrive EITHER as an explicit prop (a host that resolves
+  // it card-side) OR carried on the resolved item itself (the async adapter,
+  // `resolveImageViewportItemsAsync`). The explicit prop wins; the item's own
+  // `float` is the fallback so the current card — which passes only `data`/
+  // `reference` items — gets HDR panes/compare with no extra wiring.
+  const fgFloat = imageFloat ?? data?.float ?? undefined;
+  const refFloat = baselineFloat ?? reference?.float ?? undefined;
   return (
     <CrossTypeCompositeMediaPane
       mode={mode}
       imageUrl={data?.url ?? null}
       baselineUrl={reference?.url ?? crossTypeReferenceUrl ?? null}
+      imageFloat={fgFloat}
+      baselineFloat={refFloat}
       alignForDiff={crossTypeAlignForDiff}
       isReferencePane={isBaseline}
       diffSubmode={diffMode}
+      diffKernel={diffKernel}
+      onDiffKernelChange={onDiffKernelChange}
+      onCompareModeChange={onCompareModeChange}
+      onRequestSide={onRequestSide}
       colormap={settings.colormap ?? "none"}
       interpolation={settings.interpolation ?? "auto"}
       showAxes={settings.showAxes ?? false}

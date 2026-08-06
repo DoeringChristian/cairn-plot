@@ -1,5 +1,6 @@
 import type { ColormapName, DiffMode } from "../types";
 import type { MediaCompareModeKind } from "../media-compare/mode";
+import type { CompareFloatSource } from "../media-compare/compositor";
 
 // ---------------------------------------------------------------------------
 // Viewport — the pluggable-rendering contract behind VisualContentCard.
@@ -180,6 +181,19 @@ export interface ViewportDataArgs {
    *  default) means "not resolved by the card"; a type that has no use for
    *  it (image) simply ignores this field. */
   referenceMetadata?: (string | null | undefined)[];
+  /** OPTIONAL per-pane MIME type of the foreground artifact (index-aligned with
+   *  `hashes`), when the host knows it (the app's `SequencePoint.artifact_mime`).
+   *  Read ONLY by the async float-resolving resolver
+   *  (`resolveImageViewportItemsAsync`) to detect `.exr`/float-`.npy` artifacts
+   *  behind extension-less artifact URLs — a `.png`/`.jpg` mime keeps the plain
+   *  `<img>` URL path untouched. `undefined`/absent = detect from the URL
+   *  extension + magic bytes alone (the synchronous `resolveImageViewportItems`
+   *  ignores this field entirely). */
+  mimes?: (string | null | undefined)[];
+  /** OPTIONAL per-pane MIME type of the RESOLVED REFERENCE artifact
+   *  (index-aligned with `referenceHashes`) — the reference-side counterpart of
+   *  {@link mimes}. Same detect-only role; ignored by the sync resolver. */
+  referenceMimes?: (string | null | undefined)[];
 }
 
 /** Result of `ViewportModule.useData` — `items`/`referenceItems` are
@@ -206,6 +220,20 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   data: TData | null;
   /** This pane's resolved baseline/reference content, if any. */
   reference?: TData | null;
+  /**
+   * DECODED float foreground source (`.exr`/float-`.npy`) — the true-HDR
+   * alternative to a browser-decodable URL. When present the compositor uploads
+   * it as an `rgba16float`/`rgba32float` texture (HDR-FLIP auto-dispatch, the
+   * tonemap menu) instead of the 8-bit `<img>` path. Threaded straight to
+   * `CompositeMediaPane`'s `imageFloat`. For image, the resolver
+   * (`resolveImageViewportItemsAsync`) also carries this on the item itself
+   * (`ImageViewportItem.float`); the Pane prefers this explicit prop, then the
+   * item's own `float`. `null`/absent = the URL path applies (unchanged).
+   */
+  imageFloat?: CompareFloatSource | null;
+  /** DECODED float BASELINE/reference source — the reference-side counterpart of
+   *  {@link imageFloat}. Threaded to `CompositeMediaPane`'s `baselineFloat`. */
+  baselineFloat?: CompareFloatSource | null;
   settings: TSettings;
   view: TView;
   onViewChange: (v: TView) => void;
@@ -218,6 +246,20 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   /** Diff sub-mode — always a concrete `DiffMode` (the resolved submode,
    *  e.g. "absolute"), used only when the effective mode is "diff". */
   diffMode: DiffMode;
+  /** Initial diff KERNEL id (engine compare pane) — seeds the compositor's
+   *  view-local kernel selection so a host can PERSIST the user's kernel choice
+   *  (e.g. `hdr-flip`, `ssim`) across mounts. Threaded to `CompositeMediaPane`'s
+   *  `diffKernel`; falls back to `diffMode` when unset. */
+  diffKernel?: string;
+  /** Fired when the engine compare pane's diff kernel changes (its MODE menu) —
+   *  lets the host persist the new kernel. Threaded to `onDiffKernelChange`. */
+  onDiffKernelChange?: (kernelId: string) => void;
+  /** Fired when the engine compare pane's compare mode changes (split/blend/diff
+   *  menu). Threaded to `onCompareModeChange`. */
+  onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
+  /** Fired when the user picks "Side" in the engine compare pane's MODE menu.
+   *  Threaded to `onRequestSide`. */
+  onRequestSide?: () => void;
   /** A card-native (non-compositor) mode name, when `mode` doesn't apply —
    *  reserved for VC4's geometry diffs; unused by ImageViewport. */
   nativeMode?: string;

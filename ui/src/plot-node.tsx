@@ -22,8 +22,7 @@ import React, {
 import {
   Colorbar,
   CompositeMediaPane,
-  decodeImage,
-  decodedU8ToDataUrl,
+  decodeImageSource,
   parseNpy,
   parseOverlay,
   resolveFinalUrl,
@@ -235,44 +234,15 @@ async function resolveFrame(
     // uint8/browser-native buffers become an `imageUrl` PNG data URL (the
     // existing texture path). CORS applies to the fetch.
     if (data.url) {
-      const res = await fetch(data.url, { redirect: "follow" });
-      if (!res.ok) {
-        throw new Error(
-          `cairn-plot: failed to fetch compare image ${data.url} (${res.status})`,
-        );
-      }
-      const bytes = await res.arrayBuffer();
-      // NOTE: no `deepLiveFlatten` here — the DEPTH slider is RESTRICTED to
-      // single-image panes for now (folding zClip into the compare diff
-      // contentKey + re-flatten plumbing is disproportionate to the payoff). A
-      // deep EXR in Compare shows the FULL composite (Z ≤ zMax), same as before.
-      const decoded = await decodeImage({
-        bytes,
-        url: data.url,
-        mime: res.headers.get("content-type") ?? undefined,
-      });
+      // Shared decode-to-CompareFloatSource seam (viewport/data-sources.ts):
+      // fetch (redirect-following, final url = content key), sniff, and route
+      // float → a `CompareFloatSource` (`rgba*float`, true float diff) vs u8 →
+      // a PNG `data:` URL (the texture path). NOTE: no `deepLiveFlatten` here —
+      // the DEPTH slider is RESTRICTED to single-image panes for now, so a deep
+      // EXR in Compare shows the FULL composite (Z ≤ zMax), same as before.
+      const resolved = await decodeImageSource({ url: data.url });
       const overlay = parseOverlay(data.metadata) ?? undefined;
-      if (decoded.kind === "f32") {
-        return {
-          url: null,
-          float: {
-            data: decoded.data,
-            width: decoded.width,
-            height: decoded.height,
-            channels: decoded.channels,
-            precision: decoded.precision,
-            // The FINAL post-redirect URL (`res.url`, the content-addressed
-            // digest for a live query URL) is the stable diff-cache content key
-            // — NOT the decoded bytes, and NOT the mutable request URL — so a
-            // rerender of the SAME content is a hit while a re-resolved query
-            // URL that now points at a different digest is a miss (no stale
-            // diff). Equals `data.url` for a non-redirecting URL.
-            contentKey: res.url || data.url,
-          },
-          overlay,
-        };
-      }
-      return { url: decodedU8ToDataUrl(decoded), overlay };
+      return { url: resolved.url, float: resolved.float, overlay };
     }
     const res = resolveImageViewportItems(
       {

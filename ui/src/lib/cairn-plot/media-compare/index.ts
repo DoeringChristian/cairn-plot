@@ -44,6 +44,7 @@ export {
   DIFF_COLORMAP_OPTIONS,
   type CompareModeCapabilities,
   type CompareModeOption,
+  type CompareModeExtras,
   enumerateCompareModeOptions,
 } from "./compare-settings";
 

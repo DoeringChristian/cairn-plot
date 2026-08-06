@@ -404,9 +404,15 @@ renderer-shaped seams below, all reachable from the pure barrel:
   card's persisted settings; a host intersects it with its own app-typed fields),
   `DEFAULT_MEDIA_COMPARE_SETTINGS`, the labelled option lists
   (`CORE_COMPARE_MODE_OPTIONS`, `DIFF_SUBMODE_OPTIONS`, `PIXEL_DIFF_COLORMAP_OPTIONS`,
-  `DIFF_COLORMAP_OPTIONS`), and `enumerateCompareModeOptions(caps)` — "list the
-  valid compare modes for these capabilities" (core kinds + capability-gated native
-  kinds). The form UI stays host-side.
+  `DIFF_COLORMAP_OPTIONS`), and `enumerateCompareModeOptions(caps, extras?)` — "list
+  the valid compare modes for these capabilities" (core kinds + capability-gated
+  native kinds, and — when `extras.engineKernels` is supplied — the ENGINE diff
+  KERNELS, GPU-gated by `extras.gpuAvailable`). The kernel list is passed IN by the
+  caller (from the gpu-image addon's `listDiffMenuModes()` / the
+  `window.__cairnPlotDiffMenuModes` list), so this module stays engine-free like
+  `compare-mode-menu.ts`; each engine option is flagged `kernel: true` (and
+  `disabled` when the GPU is unavailable) so a settings panel can enumerate the
+  FULL set. The form UI stays host-side.
 - **Offscreen compare** — `useOffscreenSnapshot` (live `<canvas>` → coalesced PNG
   data URL) and `OffscreenComparePanes` (renders two hidden 3D mirrors into the ONE
   shared compositor, camera-sync + orbit/zoom overlay; parameterized by a
@@ -420,3 +426,44 @@ renderer-shaped seams below, all reachable from the pure barrel:
   the host via `ForeignFrameLoaders`; cairn-plot hard-codes no app chunk paths.
 - **Cross-type diff alignment** — `alignFrameSourcesForDiff` resamples + letterboxes
   two mismatched-size frames onto one raster before the pixel-diff pipeline.
+
+#### Viewport adapter — HDR float artifacts (`lib/cairn-plot/viewport/data-sources.ts`)
+The image `ViewportModule` turns per-pane artifact hashes into render-ready
+`ImageViewportItem`s. Two resolvers share ONE decode seam:
+
+- `resolveImageViewportItems(args, source, parseOverlay)` — the synchronous
+  hash → `{ url, overlay }` mapping (an `<img src>` URL, no fetch). Unchanged.
+- `resolveImageViewportItemsAsync(args, source, parseOverlay)` — the **async,
+  float-aware** superset. For any pane whose URL/MIME sniffs to a raw-buffer
+  format (`.exr` / float `.npy` — detect from `args.mimes`/`args.referenceMimes`,
+  the host's `artifact_mime`, else the URL extension + magic bytes) it fetches
+  (via `source.bytes`) and decodes, attaching a decoded
+  `float: CompareFloatSource` to the item (`ImageViewportItem.float`) and
+  clearing its `url`. Browser-native panes (png/jpeg/…) and extension-less URLs
+  pass through UNCHANGED (no extra fetch/decode), so it is a strict superset a
+  host adopts to get true-HDR panes/compare (rgba16float, HDR-FLIP
+  auto-dispatch, tonemap menu).
+
+The decode itself is the shared `decodeImageSource({ url?, bytes?, mime? })` →
+`{ url, float? }` seam (also consumed by `plot-node.tsx`'s `resolveFrame`): fetch
+(redirect-following; the final URL is the diff-cache content key), sniff via
+`decodeImage`, and route `f32` → a `CompareFloatSource` vs `u8` → a PNG `data:`
+URL. `decodedFloatToCompareSource(decoded, contentKey)` is the pure
+`DecodedImage` (f32) → `CompareFloatSource` map (carries the `precision` tag);
+`isFloatCandidateArtifact({ url?, mime? })` is the raw-buffer-format detection
+gate. `ImageViewportPane` threads `imageFloat`/`baselineFloat` (explicit props,
+else the item's own `float`) to `CompositeMediaPane`, plus the compare-kernel
+callbacks `diffKernel` · `onDiffKernelChange` · `onCompareModeChange` ·
+`onRequestSide` (all new on `ViewportPaneProps`) so a host can persist the diff
+kernel choice.
+
+#### Auto image-interpolation threshold (`lib/cairn-plot/renderers/interp-auto.ts`)
+Both image backends snap magnification to nearest/pixelated at the SAME zoom —
+once one source texel covers `PIXEL_VALUE_MIN_SCREEN_PX` screen px (the point
+`PixelValueOverlay` starts drawing per-pixel numbers). `GpuImagePane` flips its
+sampler `nearest`/`linear`; `CpuImagePane` now flips CSS `image-rendering`
+`pixelated`/default via the shared pure rule `autoImageRendering(screenPxPerTexel,
+threshold)` + `containScreenPxPerTexel(box, naturalW, naturalH)`. The threshold
+is passed in (the ONE `PIXEL_VALUE_MIN_SCREEN_PX` constant both panes import),
+not duplicated. Applies to both the SDR and HDR CPU branches; an explicit
+`pixelated`/`crisp-edges` bypasses it.
