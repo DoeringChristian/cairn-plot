@@ -56,6 +56,8 @@ import {
   ensureSsimScalar,
   renderDiffDisplay,
   resolveDiffCmapMode,
+  getDiffComputeCount,
+  diffCacheSize,
   type DiffCacheEntry,
 } from "../engine/diff-engine";
 import { formatSsim } from "../engine/ssim-metric";
@@ -841,17 +843,22 @@ export default function GpuComparePane({
   const contentKeyFg = imageFloat?.contentKey ?? imageUrl ?? baselineFloat?.contentKey ?? baselineUrl ?? "none";
 
   // The pane's FRAMING dims (home-fit extent, letterbox math, overlay grid, uv
-  // window basis). In a DIFF kernel the frame is the RESULT/overlap grid — under
-  // `fit:"crop"` that is `min(A,B)` (so the home view fills the viewport with the
-  // diff, no transparent dead band), under `fit:"fill"` it is the primary dims.
-  // Split/blend keep the PRIMARY dims (per-source stretch, out of scope). The uv
-  // window is recomputed from this LIVE basis every frame (`renderPass`), so a
-  // mode switch that changes the basis reframes to home cleanly — no stale zoom.
-  const framingDims = useMemo(() => {
-    if (!dims) return null;
-    if (compareMode === "diff" && mapping) return mapping.result;
-    return dims;
-  }, [compareMode, mapping, dims]);
+  // window basis) = the PRIMARY/foreground source footprint, in EVERY mode.
+  //
+  // A diff kernel used to reframe home on the RESULT/overlap grid (fit:crop →
+  // `min(A,B)`) so the diff filled the viewport. But that basis is PER-PANE — a
+  // run-comparison grid where the runs' images (or the shared baseline) differ in
+  // size gives each pane a different overlap, hence a different home scale, so
+  // sibling panes in one synced card came up at DIFFERENT default zooms (the
+  // reported "stupid" bug) and a pane's zoom JUMPED when toggling diff on/off.
+  // Framing on the primary footprint instead makes the diff home fit the SAME
+  // extent normal/split/blend do: same-size operands are pixel-identical to the
+  // old behavior (min(A,B) == primary), and unequal operands now frame their
+  // whole foreground consistently (each fits its cell exactly as in normal mode),
+  // with the min-cropped diff RESULT mapped into that footprint's top-left by the
+  // blit's `sourceDims` (transparent beyond the overlap — matching `sampleDiff`,
+  // which returns null there). One basis for all panes ⇒ uniform default zoom.
+  const framingDims = dims;
 
   // ---- render pass -------------------------------------------------------
   // Extracted into a stable callback so the screenshot path
@@ -948,11 +955,15 @@ export default function GpuComparePane({
           cmapMode: diffCmapMode,
           colormap: diffColormap,
           filter,
-          // The pane now frames on the RESULT/overlap dims (`framingDims`), so the
-          // uv-window lives in RESULT space and the blit is a plain 1:1 sample of
-          // the result texture — no primary-footprint crop mapping needed (the
-          // 3126564 `sourceDims` hack is subsumed by the reframe). The whole home
-          // view is the diff; there is no transparent dead band.
+          // The pane frames on the PRIMARY footprint (`framingDims` = `dims`), so
+          // the uv-window lives in PRIMARY space. The diff RESULT is min-cropped to
+          // `min(A,B)` and top-left aligned inside that footprint, so hand the
+          // primary dims as `sourceDims`: the blit maps uv → primary pixel and shows
+          // the result 1:1 in the crop's top-left, leaving the region beyond the
+          // overlap transparent (coinciding with `sampleDiff`, which returns null
+          // there — never a fake "0"). An equal-size pair has result == primary, so
+          // this collapses to the identity 1:1 sample (unchanged behavior).
+          sourceDims: fd,
           // Exposure/offset change the colormap SENSITIVITY (applied to the raw
           // metric BEFORE the LUT), display-only — never a diff recompute.
           exposureEV: displayEV,
@@ -1194,11 +1205,12 @@ export default function GpuComparePane({
   const sampleDiff = useMemo(() => {
     return (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
       const arr = diffSamplesRef.current;
-      // Index at the RESULT/overlap resolution the readback is laid out in — the
-      // same grid the pane now FRAMES on (`framingDims`), so every in-frame pixel
-      // has a value. A probe beyond the result stride has NO diff value, so return
-      // null (draw nothing) rather than a mis-indexed / `?? 0` fake zero (the
-      // reported bug for differently-sized pairs).
+      // Index at the RESULT/overlap resolution the readback is laid out in. The
+      // pane frames on the PRIMARY footprint, so `px`/`py` arrive in PRIMARY-pixel
+      // coords; the diff RESULT is min-cropped top-left inside it, so a probe
+      // within the crop maps 1:1 to the result stride and a probe BEYOND it (px/py
+      // >= result w/h) has NO diff value → return null (draw nothing) rather than a
+      // mis-indexed / `?? 0` fake zero (the reported bug for differently-sized pairs).
       const rdims = diffResultDimsRef.current;
       if (!arr || !rdims) return null;
       const { w, h } = rdims;
@@ -1259,6 +1271,12 @@ export default function GpuComparePane({
       get compareMode() {
         return compareMode;
       },
+      // Global diff-engine instrumentation (per-device compute count + resident
+      // cache-entry count). Exposed here so a harness / the app-shaped repro can
+      // assert the compute-decoupling invariant (count flat across pan/zoom/
+      // settings) and observe cache pressure. Mirrors the engine test-seam.
+      computeCount: () => getDiffComputeCount(),
+      cacheSize: () => (resRef.current ? diffCacheSize(resRef.current.device) : 0),
       // The mean-SSIM scalar the chip shows (null while resolving) + its chip
       // string — so the harness can assert the wired value/formatting.
       get ssimScalar() {
