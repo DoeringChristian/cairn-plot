@@ -19,8 +19,13 @@
  *    most). Redraws on zoom / pan / resize / source-data change.
  *  - `pointer-events: none` so wheel-zoom, drag-pan and the split divider under
  *    it keep working untouched.
- *  - Auto-contrast: text colour is chosen per pixel from the displayed pixel's
- *    luminance (black on light, white on dark) with an opposite-colour halo.
+ *  - Legibility (TEV convention): text colours are FIXED intensity — the R/G/B
+ *    channel tints and the neutral single-value colour never change with the
+ *    pixel under them — and every glyph is drawn over a single CONSTANT soft
+ *    dark drop shadow. Because the tints are bright and fixed, they read on dark
+ *    pixels unaided; the dark shadow supplies the edge on bright pixels. (This
+ *    replaced the old per-pixel adaptive black-on-light / white-on-dark flip
+ *    plus opposite-luminance halo stroke.)
  */
 import { useCallback, useEffect, useRef } from "react";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
@@ -34,12 +39,27 @@ import {
 export const PIXEL_VALUE_MIN_SCREEN_PX = 30;
 
 /**
- * Per-channel tint colours for R / G / B digits. Vivid but bright enough to
- * stay readable on any pixel background — the contrast halo drawn behind them
- * (an opposite-luminance stroke) guarantees legibility even when a channel's
- * tint matches the underlying pixel (e.g. a red digit over a red pixel).
+ * Per-channel tint colours for R / G / B digits. Vivid, FIXED intensity: they
+ * are the same on every pixel (TEV convention) and read on dark backgrounds
+ * unaided. The constant dark drop shadow drawn behind every glyph (see `draw()`)
+ * supplies the edge that keeps them legible on bright pixels — even when a
+ * channel's tint matches the underlying pixel (e.g. a red digit over a red one).
  */
 export const CHANNEL_COLORS = ["#ff5a5a", "#39d353", "#5b9bff"] as const;
+
+/**
+ * Fixed fill for a single-value (grayscale / colormapped / scalar-metric) line —
+ * the neutral counterpart to {@link CHANNEL_COLORS}. Constant intensity like TEV:
+ * a bright near-white that reads on dark pixels, kept legible on bright pixels by
+ * the same constant dark shadow. (Replaced the old per-pixel black/white flip.)
+ */
+export const NEUTRAL_LABEL_COLOR = "#ffffff";
+
+/** Constant soft dark drop shadow behind every glyph (TEV's legibility device):
+ *  colour, and blur / vertical offset as fractions of the glyph height. */
+const LABEL_SHADOW_COLOR = "rgba(0,0,0,0.9)";
+const LABEL_SHADOW_BLUR_FRAC = 0.15;
+const LABEL_SHADOW_OFFSET_FRAC = 0.06;
 
 /**
  * How the overlay prints a channel value.
@@ -86,13 +106,12 @@ export function formatChannelValue(
 export interface PixelSample {
   /** One text line per value (e.g. `["255","128","0"]` or `["1.23e+02"]`). */
   lines: string[];
-  /** Displayed-pixel luminance in [0,1], used to pick a legible text colour. */
-  luminance: number;
   /**
-   * Optional per-line fill colours (index-aligned to `lines`). A non-null
-   * entry tints that line (channel-coloured R/G/B digits); `null`/`undefined`
-   * falls back to per-pixel auto-contrast (black on light, white on dark).
-   * The legibility halo is always contrast-based, independent of this.
+   * Optional per-line fill colours (index-aligned to `lines`). A non-null entry
+   * tints that line (channel-coloured R/G/B digits); `null`/`undefined` falls
+   * back to the fixed {@link NEUTRAL_LABEL_COLOR}. All fills are fixed-intensity
+   * (TEV convention); the constant dark shadow behind the glyphs — drawn the
+   * same regardless of this — is what keeps them legible on any background.
    */
   colors?: (string | null)[];
 }
@@ -103,21 +122,19 @@ export interface PixelSample {
  * lines" convention lives. Every pane sampler (CPU SDR/HDR, GPU compare u8/float/
  * diff) formats through here so int↔decimal + channel-tinting stay identical.
  *
- *  - `values.length === 1` → one line, no `colors` (per-pixel auto-contrast).
+ *  - `values.length === 1` → one line, no `colors` (fixed neutral fill).
  *  - otherwise → one line per value, each tinted by its `CHANNEL_COLORS` slot.
  */
 export function buildChannelSample(
   values: number[],
   scale: PixelValueScale,
   notation: PixelValueNotation,
-  luminance: number,
 ): PixelSample {
   if (values.length === 1) {
-    return { lines: [formatChannelValue(values[0]!, scale, notation)], luminance };
+    return { lines: [formatChannelValue(values[0]!, scale, notation)] };
   }
   return {
     lines: values.map((v) => formatChannelValue(v, scale, notation)),
-    luminance,
     colors: values.map((_, i) => CHANNEL_COLORS[i] ?? null),
   };
 }
@@ -136,8 +153,8 @@ export interface PixelValueOverlayProps {
   /** Viewport — used only to retrigger a redraw when the user zooms/pans. */
   zoom: number;
   pan: { x: number; y: number };
-  /** Per-pixel value/luminance accessor over the RAW source buffer. The current
-   *  notation is passed so the sampler formats its lines consistently. */
+  /** Per-pixel value accessor over the RAW source buffer. The current notation
+   *  is passed so the sampler formats its lines consistently. */
   sample: PixelSampler;
   /** Notation for the printed values (`decimal` = 1.0 white / `int` = 255 white). */
   notation?: PixelValueNotation;
@@ -288,7 +305,6 @@ export default function PixelValueOverlay({
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.lineJoin = "round";
     const pad = scale * 0.14;
     const avail = scale - pad * 2;
 
@@ -313,19 +329,21 @@ export default function PixelValueOverlay({
         const cx = imgLeft + (px - srcOriginX + 0.5) * scale;
         const cy = imgTop + (py - srcOriginY + 0.5) * scale;
         const lineH = fontH * 1.15;
-        const dark = s.luminance <= 0.55;
-        const autoFill = dark ? "#ffffff" : "#000000";
         ctx.font = `${fontH}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-        ctx.lineWidth = Math.max(1.4, fontH * 0.16);
-        // Halo/outline is always the opposite-luminance stroke so channel-tinted
-        // digits stay readable on ANY pixel background.
-        ctx.strokeStyle = dark ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.9)";
+        // TEV convention: fixed-intensity fills over a single CONSTANT soft dark
+        // shadow (no per-pixel colour flip, no opposite-luminance halo stroke).
+        // The shadow — scaled with the glyph so it stays proportional at any
+        // zoom — is the ONLY legibility device: the bright fills read on dark
+        // pixels unaided; this dark edge carries them on bright pixels.
+        ctx.shadowColor = LABEL_SHADOW_COLOR;
+        ctx.shadowBlur = Math.max(2, fontH * LABEL_SHADOW_BLUR_FRAC);
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = Math.max(1, fontH * LABEL_SHADOW_OFFSET_FRAC);
 
         let ly = cy - (lc * lineH) / 2 + lineH / 2;
         for (let k = 0; k < s.lines.length; k++) {
           const ln = s.lines[k]!;
-          ctx.strokeText(ln, cx, ly);
-          ctx.fillStyle = s.colors?.[k] ?? autoFill;
+          ctx.fillStyle = s.colors?.[k] ?? NEUTRAL_LABEL_COLOR;
           ctx.fillText(ln, cx, ly);
           ly += lineH;
         }

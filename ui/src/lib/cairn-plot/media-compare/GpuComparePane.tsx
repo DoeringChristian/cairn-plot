@@ -39,7 +39,6 @@
  *     `{zoom:1, pan:{x:0,y:0}}` (both panes, via `onViewportChange`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { labelLuminance } from "../image/luminance";
 import type { Colormap, DiffMode, Interpolation } from "../types";
 import { getSharedDevice } from "../engine/device";
 import { forceEngineFailRequested } from "../engine/test-hooks";
@@ -1025,12 +1024,11 @@ export default function GpuComparePane({
           fl.precision === "f16-bits"
             ? (k: number) => halfToFloat(data[k] ?? 0)
             : (k: number) => data[k] ?? 0;
-        const luminance = 0.5; // GPU-rendered: no CPU-tonemapped buffer retained
         const values =
           channels === 1
             ? [readV(base)]
             : [readV(base), readV(base + 1), readV(base + 2)];
-        return buildChannelSample(values, "unit", notationArg, luminance);
+        return buildChannelSample(values, "unit", notationArg);
       }
       const d = dataRef.current;
       if (!d || px < 0 || py < 0 || px >= d.width || py >= d.height) return null;
@@ -1038,8 +1036,7 @@ export default function GpuComparePane({
       const r = d.data[i]!;
       const g = d.data[i + 1]!;
       const b = d.data[i + 2]!;
-      const luminance = labelLuminance(r, g, b);
-      return buildChannelSample(r === g && g === b ? [r] : [r, g, b], "uint8", notationArg, luminance);
+      return buildChannelSample(r === g && g === b ? [r] : [r, g, b], "uint8", notationArg);
     };
   const sampleFg = useMemo(() => makeSampler(fgDataRef, fgFloatRef), []);
   const sampleRef = useMemo(() => makeSampler(refDataRef, refFloatRef), []);
@@ -1063,14 +1060,13 @@ export default function GpuComparePane({
       if (px < 0 || py < 0 || px >= w || py >= h) return null;
       const base = (py * w + px) * 4;
       const output = getDiffKernel(resolvedKernelId)?.output ?? "per-channel";
-      const luminance = 0.5; // GPU-rendered diff: no CPU-tonemapped buffer retained
       // FLIP & friends ("scalar") replicate the metric across R/G/B — read R and
       // print one untinted line; per-channel kernels print three tinted lines.
       const values =
         output === "scalar"
           ? [arr[base] ?? 0]
           : [arr[base] ?? 0, arr[base + 1] ?? 0, arr[base + 2] ?? 0];
-      return buildChannelSample(values, "unit", notationArg, luminance);
+      return buildChannelSample(values, "unit", notationArg);
     };
     // Reads `diffResultDimsRef`/`diffSamplesRef` live, so it depends only on the
     // kernel identity (which selects `output`), not on `dims`.

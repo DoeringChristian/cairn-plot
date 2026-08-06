@@ -137,7 +137,7 @@ export type ImagePaneOverlaySpec =
   | {
       /** The displayed `<img>`/`<canvas>` whose live rect the overlay reads. */
       readonly displayElRef: RefObject<HTMLElement | null>;
-      /** Per-pixel value/luminance accessor over the RAW source buffer. */
+      /** Per-pixel value accessor over the RAW source buffer. */
       readonly sample: PixelSampler;
       /** Bumped when the underlying source buffer changes (forces a redraw). */
       readonly version: number;

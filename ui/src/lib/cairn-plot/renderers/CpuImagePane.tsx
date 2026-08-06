@@ -50,7 +50,6 @@ import {
   getRenderMode,
   getCachedImageData,
   setCachedImageData,
-  labelLuminance,
 } from "../image";
 import { applyColormap, getColormapLUT } from "../colormaps";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
@@ -275,15 +274,15 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
   // -----------------------------------------------------------------------
-  // TEV-style per-pixel value overlay — source buffers.
+  // TEV-style per-pixel value overlay — source buffer.
   //   valueDataRef: RAW source pixels (the numbers we print).
-  //   dispDataRef:  the pixels actually SHOWN (for auto-contrast luminance).
   // The displayed element (img|canvas) is tracked via `displayElRef` so the
-  // overlay can read its live on-screen rect (post zoom/pan).
+  // overlay can read its live on-screen rect (post zoom/pan). (The overlay's
+  // text colours are fixed-intensity now, so no displayed-pixel luminance
+  // buffer is retained — see `primitives/PixelValueOverlay`.)
   // -----------------------------------------------------------------------
   const displayElRef = useRef<HTMLElement | null>(null);
   const valueDataRef = useRef<ImageData | null>(null);
-  const dispDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
   const bumpPixelData = useCallback(() => setPixelDataVersion((v) => v + 1), []);
 
@@ -365,7 +364,6 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
         fc.height = cached.height;
         const fctx = fc.getContext("2d");
         if (fctx) fctx.putImageData(cached, 0, 0);
-        dispDataRef.current = cached;
         bumpPixelData();
         setNaturalDims({ w: cached.width, h: cached.height });
         onNaturalSize?.(cached.width, cached.height);
@@ -397,7 +395,6 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       fc.height = mapped.height;
       const fctx = fc.getContext("2d");
       if (fctx) fctx.putImageData(mapped, 0, 0);
-      dispDataRef.current = mapped;
       bumpPixelData();
       setNaturalDims({ w: mapped.width, h: mapped.height });
       onNaturalSize?.(mapped.width, mapped.height);
@@ -434,7 +431,6 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       c.height = mapped.height;
       const ctx = c.getContext("2d");
       if (ctx) ctx.putImageData(mapped, 0, 0);
-      dispDataRef.current = mapped;
       bumpPixelData();
       setNaturalDims({ w: mapped.width, h: mapped.height });
       onNaturalSize?.(mapped.width, mapped.height);
@@ -455,13 +451,10 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   }, []);
 
   // Decode the RAW source image once per url so the pixel-value overlay can
-  // read true pixel values (independent of the display mode). In plain/diff
-  // modes the shown pixels equal the source, so luminance reads from it too;
-  // the colormap effect overrides `dispDataRef` with the mapped pixels.
+  // read true pixel values (independent of the display mode).
   useEffect(() => {
     if (!imageUrl) {
       valueDataRef.current = null;
-      dispDataRef.current = null;
       bumpPixelData();
       return;
     }
@@ -469,13 +462,12 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
     loadImageData(imageUrl).then((d) => {
       if (cancelled) return;
       valueDataRef.current = d;
-      if (colormap === "none") dispDataRef.current = d;
       bumpPixelData();
     });
     return () => {
       cancelled = true;
     };
-  }, [imageUrl, colormap, bumpPixelData]);
+  }, [imageUrl, bumpPixelData]);
 
   const samplePixel = useCallback(
     (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
@@ -485,21 +477,10 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       const r = vd.data[i]!;
       const g = vd.data[i + 1]!;
       const b = vd.data[i + 2]!;
-      // Luminance from the DISPLAYED pixels when available (colormap-mapped),
-      // else from the raw source (plain path shows the source unchanged).
-      const dd = dispDataRef.current;
-      let lr = r, lg = g, lb = b;
-      if (dd && dd.width === vd.width && dd.height === vd.height) {
-        const j = (py * dd.width + px) * 4;
-        lr = dd.data[j]!;
-        lg = dd.data[j + 1]!;
-        lb = dd.data[j + 2]!;
-      }
-      const luminance = labelLuminance(lr, lg, lb);
       // A false-colored (colormap) or grayscale pixel prints one untinted line;
       // a true multi-channel pixel prints three channel-tinted lines.
       const single = colormap !== "none" || (r === g && g === b);
-      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notation, luminance);
+      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notation);
     },
     [colormap],
   );
@@ -864,8 +845,6 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
-  // Retained tone-mapped pixels — used for the overlay's auto-contrast.
-  const dispDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
@@ -901,7 +880,6 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.putImageData(imageData, 0, 0);
-    dispDataRef.current = imageData;
     setPixelDataVersion((v) => v + 1);
     setDims((prev) =>
       prev && prev.w === imageData.width && prev.h === imageData.height
@@ -924,15 +902,9 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         hdr.precision === "f16-bits"
           ? (k: number) => halfToFloat(src[k] ?? 0)
           : (k: number) => src[k] ?? 0;
-      const disp = dispDataRef.current;
-      let luminance = 0.5;
-      if (disp && disp.width === d.w && disp.height === d.h) {
-        const j = (py * d.w + px) * 4;
-        luminance = labelLuminance(disp.data[j]!, disp.data[j + 1]!, disp.data[j + 2]!);
-      }
       const values =
         c === 1 ? [readV(base)] : [readV(base), readV(base + 1), readV(base + 2)];
-      return buildChannelSample(values, "unit", notation, luminance);
+      return buildChannelSample(values, "unit", notation);
     },
     [hdr, dims],
   );

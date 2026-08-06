@@ -84,7 +84,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
-import { loadImageData, getCachedImageData, setCachedImageData, labelLuminance } from "../image";
+import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
 import { HALF_ONE, halfToFloat } from "../image/half";
 import ImageOverlay from "./ImageOverlay";
 import {
@@ -896,14 +896,11 @@ export default function GpuImagePane(props: ImageBackendProps) {
           hdr.precision === "f16-bits"
             ? (k: number) => halfToFloat(src[k] ?? 0)
             : (k: number) => src[k] ?? 0;
-        // Luminance approximated at 0.5 (mid-grey) — matches HdrImagePane's
-        // fallback when no CPU-tonemapped buffer is retained (GPU-rendered).
-        const luminance = 0.5;
         const values =
           c === 1
             ? [readV(base)]
             : [readV(base), readV(base + 1), readV(base + 2)];
-        return buildChannelSample(values, "unit", notationArg, luminance);
+        return buildChannelSample(values, "unit", notationArg);
       }
       const vd = sdrImageDataRef.current;
       if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
@@ -911,11 +908,10 @@ export default function GpuImagePane(props: ImageBackendProps) {
       const r = vd.data[i]!;
       const g = vd.data[i + 1]!;
       const b = vd.data[i + 2]!;
-      const luminance = labelLuminance(r, g, b);
       // A false-colored (colormap) or grayscale pixel prints one untinted line;
       // a true multi-channel pixel prints three channel-tinted lines.
       const single = sdrColormap !== "none" || (r === g && g === b);
-      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notationArg, luminance);
+      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notationArg);
     },
     [hdrMode, naturalDims, sdrColormap],
   );
