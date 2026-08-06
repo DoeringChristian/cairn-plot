@@ -25,8 +25,12 @@
  *     and the matching `…-viewport` attrs). Boolean-valued attrs (the `…-ready`
  *     ones) render as `"true"`/`"false"` exactly as before.
  *   - the `group` class + the `PlotToolbar` render both key off `toolbar`
- *     (the CPU shims pass `toolbar={false}` for their legacy chrome; the GPU
- *     panes always pass `true`).
+ *     (the OFFICIAL host seam — `false` hides the toolbar so a host can drive the
+ *     view from its own menu; default `true`). ALL THREE panes take a
+ *     `toolbar?: boolean` prop that funnels here, so the hidden-toolbar convention
+ *     is identical everywhere: NO `PlotToolbar`, NO hover `group`, and the ONLY
+ *     floating affordance kept is the `PixelNotationToggle` chip while the TEV
+ *     overlay is active (below). See docs/API.md "Host-controlled panes".
  *
  * Refs — the pane OWNS `paneRef` (the padded viewport box, measured by the GPU
  * render passes for uvRect/backing-store sizing, and by `useImageViewport` /
@@ -158,8 +162,11 @@ export interface ImagePaneShellProps {
   paneAttrs: PaneDataAttrs;
   /** `data-*` markers for the viewport (pointer/wheel) element. */
   viewportAttrs: PaneDataAttrs;
-  /** Render the `PlotToolbar` (and add the `group` hover class). The CPU shims
-   *  pass `false` for their legacy chrome; the GPU panes always pass `true`. */
+  /** Render the `PlotToolbar` (and add the `group` hover class). The OFFICIAL
+   *  host seam: `false` hides the toolbar (host-driven view) — the shell then
+   *  renders only the floating `PixelNotationToggle` while the TEV overlay is
+   *  active. All three panes forward their own `toolbar?: boolean` here. Default
+   *  at the pane boundary is `true`; the shell prop is required (panes resolve it). */
   toolbar: boolean;
 
   // --- refs (pane-owned; the shell only attaches them) ---------------------

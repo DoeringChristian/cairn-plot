@@ -30,13 +30,19 @@
  * transform (`wrapperStyle`), the checkerboard-on-the-padded-pane placement,
  * and its `<img>`/`<canvas>` surface.
  *
- * ## `toolbar` (shim compatibility)
- * The legacy `ImagePane.tsx`/`HdrImagePane.tsx` shims forward here with
- * `toolbar={false}`, preserving the exact pre-unification chrome for app-card
- * consumers (`media-compare/compositor.tsx` etc.): no `PlotToolbar`, the
- * free-floating `PixelNotationToggle` chip instead of the toolbar's leading
- * button. Backend-seam mounts (`resolveImageRenderer` / `GpuImagePane`'s C1
- * fallback) use the default `toolbar={true}`.
+ * ## `toolbar` (the shared host seam)
+ * `toolbar?: boolean` (default `true`) is now an OFFICIAL host seam on the shared
+ * `ImageBackendProps` contract — the SAME prop `GpuImagePane`/`GpuComparePane`
+ * accept, so all three panes hide the toolbar identically. When `false` the shell
+ * renders NO `PlotToolbar` (and no hover `group`); the ONLY floating affordance
+ * kept is the `PixelNotationToggle` chip while the TEV overlay is active — the
+ * long-standing CPU convention, now unified across every pane (see
+ * `ImagePaneShell`). The app-card compositor (`media-compare/compositor.tsx`)
+ * still forwards `toolbar={false}` for its per-side chrome; a host that wants its
+ * own menu passes `toolbar={false}` from `cp.Image(toolbar=False)` and drives the
+ * view through the controlled props (colormap / tonemap / peak / gamma / base
+ * exposure+offset). Backend-seam mounts (`resolveImageRenderer` /
+ * `GpuImagePane`'s C1 fallback) use the default `toolbar={true}`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
@@ -854,6 +860,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
   const {
     tonemap = "srgb",
     exposure = 0,
+    offset: baseOffset = 0,
     gamma,
     showAxes = false,
     label = "",
@@ -919,7 +926,9 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         // The output-encode transfer selected by the operator in effect
         // (gamma → γ, linear → identity, else sRGB OETF). See resolveEncodeGamma.
         resolveEncodeGamma(tonemapOp, tonemapGamma),
-        displayOffset,
+        // Base offset (controlled) + the additive runtime OFF slider. HOME zeroes
+        // only `displayOffset`, so the descriptor `offset` persists.
+        baseOffset + displayOffset,
       );
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
@@ -938,7 +947,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemapOp, exposure, tonemapGamma, displayEV, displayOffset]);
+  }, [hdr, tonemapOp, exposure, baseOffset, tonemapGamma, displayEV, displayOffset]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).

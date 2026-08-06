@@ -198,6 +198,13 @@ export interface GpuComparePaneProps {
   tonemap?: string;
   peak?: number;
   gamma?: number;
+
+  /** Host seam: render WITHOUT the shell `PlotToolbar` (the shell keeps only the
+   *  free-floating pixel-notation toggle while the TEV overlay is active) when
+   *  `false`, so a host can drive the compare view from its own menu via the
+   *  controlled props above (mode / diffKernel / colormap / tonemap / peak / gamma
+   *  / split / blend). Default `true`. See `renderers/ImagePaneShell`'s `toolbar`. */
+  toolbar?: boolean;
 }
 
 /** Uint8 256x3 LUT -> Float32 256x4 (RGBA, [0,1]) for `CompareParams.diffColormap`. */
@@ -317,6 +324,7 @@ export default function GpuComparePane({
   tonemap: tonemapProp,
   peak: peakProp,
   gamma: gammaProp,
+  toolbar = true,
 }: GpuComparePaneProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   // Attached by the shared shell (see `ImagePaneShell`); this pane measures
@@ -442,14 +450,25 @@ export default function GpuComparePane({
   // PEAK white (×SDR white) — the UNIFIED HDR mode; shown on an engaged surface in
   // split/blend. Seeded to ∞ only for the deprecated raw `extended` alias. γ rides
   // alongside for the Gamma operator. Both view-local; HOME restores the seed.
-  const [peak, setPeak, peakMeta] = useResettableState(
+  const seedPeak = (): number =>
     peakProp != null && peakProp > 0
       ? peakProp
-      : (aliasPeakHint(tonemapProp) ?? EXTENDED_TONEMAP_PEAK_DEFAULT),
-  );
+      : (aliasPeakHint(tonemapProp) ?? EXTENDED_TONEMAP_PEAK_DEFAULT);
+  const [peak, setPeak, peakMeta] = useResettableState(seedPeak());
   const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
     gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT,
   );
+  // Re-seed PEAK / γ on prop change so they stay CONTROLLED surfaces (host-menu
+  // contract) — the descriptor drives them until a local menu pick overrides
+  // (impossible while the toolbar is hidden). Mirrors the colormap/tonemap/kernel
+  // re-seed effects above; the single-image pane has the same pair.
+  useEffect(() => {
+    setPeak(seedPeak());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peakProp, tonemapProp]);
+  useEffect(() => {
+    if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
+  }, [gammaProp, setTonemapGamma]);
 
   // HOME / double-click reset restores every VIEW-LOCAL selection to its
   // descriptor default — mode, colormap AND kernel — alongside the shell's own
@@ -1288,6 +1307,7 @@ export default function GpuComparePane({
     if (compareMode === "diff") {
       return (
         <CpuImagePane
+          toolbar={toolbar}
           imageUrl={imageUrl}
           baselineUrl={baselineUrl}
           // FLIP is GPU-only (spec: CPU compare keeps its pointwise modes) —
@@ -1361,7 +1381,7 @@ export default function GpuComparePane({
     <ImagePaneShell
       paneAttrs={{ "data-gpu-compare-pane": "", "data-gpu-compare-ready": ready }}
       viewportAttrs={{ "data-gpu-compare-viewport": "" }}
-      toolbar
+      toolbar={toolbar}
       paneRef={paneRef}
       wrapperRef={wrapperRef}
       zoom={zoom}

@@ -61,7 +61,18 @@ export interface HdrData {
 export interface HdrImageProps {
   hdr: HdrData;
   tonemap?: string;
+  /** Base exposure in EV stops (`color * 2^EV`), applied in scene-linear BEFORE
+   *  the tone-map operator. The CONTROLLED surface for the host-menu EV: the
+   *  toolbar's EV slider is an ADDITIVE runtime adjustment ON TOP of this base
+   *  (render EV = `exposure + sliderEV`), and HOME resets only the slider (to 0),
+   *  so `exposure` persists. With the toolbar hidden (`toolbar={false}`) the host
+   *  drives EV entirely through this prop. Default 0. */
   exposure?: number;
+  /** Base additive OFFSET, applied AFTER exposure (before the operator) — the
+   *  offset counterpart of {@link exposure}. Same controlled/additive contract:
+   *  the toolbar's OFF slider adds on top and HOME zeroes only the slider. Default
+   *  0 (unset ⇒ no base offset). Host-driven when `toolbar={false}`. */
+  offset?: number;
   gamma?: number;
   /** Default PEAK ceiling `P` (×SDR white) — the UNIFIED HDR mode: every operator
    *  clips at `P` (SDR = `P=1`, `P>1` extends onto an HDR surface, `P=∞`/`Infinity`
@@ -75,6 +86,13 @@ export interface HdrImageProps {
   pan?: { x: number; y: number };
   onViewportChange?: (v: ImageViewport) => void;
   pixelValueNotation?: PixelValueNotation;
+  /** Host seam (§ "Host-controlled panes", docs/API.md): render WITHOUT the
+   *  `PlotToolbar` chrome when `false`, so a host can drive the view from its own
+   *  menu via the controlled props above. Default `true`. See `ImagePaneShell`'s
+   *  `toolbar` for the exact hidden-toolbar convention (no toolbar, no hover
+   *  `group`, only the free-floating pixel-notation toggle while the TEV overlay
+   *  is active). */
+  toolbar?: boolean;
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
@@ -104,6 +122,16 @@ export interface SdrImageProps {
    *  slider (shown only when the extended surface engages); unset → the pane
    *  default (4). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
   peak?: number;
+  /** Base exposure in EV stops for the WebGPU 8-bit pipeline (`GpuImagePane`'s
+   *  plain-SDR path sRGB-decodes to scene-linear, then applies `color * 2^EV`) —
+   *  the controlled EV surface, additive with the toolbar's runtime EV slider (see
+   *  {@link HdrImageProps.exposure}). Default 0. NOTE: the CPU 2D-canvas backend
+   *  has no scene-linear recompute stage on the plain-SDR `<img>` path, so it does
+   *  NOT apply this (documented graceful degradation — the WebGPU backend does). */
+  exposure?: number;
+  /** Base additive OFFSET for the WebGPU 8-bit pipeline (offset counterpart of
+   *  {@link exposure}). Default 0. Same CPU-backend caveat. */
+  offset?: number;
   colormap?: Colormap;
   showAxes?: boolean;
   processing?: ImageProcessing;
@@ -118,6 +146,9 @@ export interface SdrImageProps {
   overlay?: ImageOverlayData;
   overlaySettings?: ImageOverlaySettings;
   pixelValueNotation?: PixelValueNotation;
+  /** Host seam — hide the `PlotToolbar` when `false` (default `true`); see
+   *  {@link HdrImageProps.toolbar} and `ImagePaneShell`. */
+  toolbar?: boolean;
 }
 
 /**

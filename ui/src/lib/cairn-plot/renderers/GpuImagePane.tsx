@@ -367,6 +367,10 @@ export default function GpuImagePane(props: ImageBackendProps) {
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
   const onViewportChange = props.onViewportChange;
+  // Host seam: `toolbar={false}` hides the PlotToolbar (the shell then renders
+  // the free-floating pixel-notation toggle only), so a host can drive the view
+  // from its own menu via the controlled props below. Default true.
+  const toolbar = props.toolbar ?? true;
   // Colormap: the `colormap` prop SEEDS a view-local override so the toolbar
   // COLORMAP menu can switch it in-pane (diff-kernels toolbar track). Re-seeds
   // when the prop changes (e.g. the app card's colormap control) so the pane
@@ -419,11 +423,19 @@ export default function GpuImagePane(props: ImageBackendProps) {
   const propPeak = hdrMode
     ? (props as HdrImageProps).peak
     : (props as SdrImageProps).peak;
-  const [peak, setPeak, peakMeta] = useResettableState(
+  const seedPeak = (): number =>
     propPeak != null && propPeak > 0
       ? propPeak
-      : (aliasPeakHint(propTonemap) ?? EXTENDED_TONEMAP_PEAK_DEFAULT),
-  );
+      : (aliasPeakHint(propTonemap) ?? EXTENDED_TONEMAP_PEAK_DEFAULT);
+  const [peak, setPeak, peakMeta] = useResettableState(seedPeak());
+  // Re-seed on `peak`/`tonemap` prop change so PEAK stays a CONTROLLED surface
+  // (host-menu contract) — the descriptor value drives it until the user picks a
+  // new one locally (impossible while the toolbar is hidden). Mirrors the
+  // colormap/tonemap/gamma re-seed effects.
+  useEffect(() => {
+    setPeak(seedPeak());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propPeak, propTonemap]);
 
   // Gamma(γ) for the Gamma display operator (HDR panes AND the SDR display-
   // transfer path). View-local; the slider is shown ONLY while the Gamma
@@ -733,7 +745,18 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // Render pass — on demand: mount (via uploadVersion bump above) +
   // viewport/exposure/operator/gamma/container-resize change. NOT per frame.
   // -----------------------------------------------------------------------
-  const exposure = hdrMode ? ((props as HdrImageProps).exposure ?? 0) : 0;
+  // Base exposure/offset — the CONTROLLED EV/offset surface (host-menu contract):
+  // read straight from props (always current, so trivially controllable), and the
+  // toolbar's EV/OFF sliders (`displayEV`/`displayOffset`) are ADDITIVE runtime
+  // adjustments on top (HOME zeroes only the sliders, so the base persists). Both
+  // prop shapes now carry `exposure`/`offset`; the plain-SDR pipeline applies them
+  // in-shader exactly like the HDR path (the colormapped SDR passthrough does not).
+  const baseExposure = hdrMode
+    ? ((props as HdrImageProps).exposure ?? 0)
+    : ((props as SdrImageProps).exposure ?? 0);
+  const baseOffset = hdrMode
+    ? ((props as HdrImageProps).offset ?? 0)
+    : ((props as SdrImageProps).offset ?? 0);
   // The plain (non-colormap) SDR path runs the tev display-transfer pipeline
   // (sRGB-DECODE → exposure → operator → encode); a colormapped SDR image is
   // already false-colored / display-ready, so it stays a raw passthrough.
@@ -819,8 +842,8 @@ export default function GpuImagePane(props: ImageBackendProps) {
     const params: ImageParams =
       hdrMode || sdrPlain
         ? {
-            exposureEV: (hdrMode ? exposure : 0) + displayEV,
-            offset: displayOffset,
+            exposureEV: baseExposure + displayEV,
+            offset: baseOffset + displayOffset,
             operator: rt.operator as ImageParams["operator"],
             gamma: rt.gamma,
             isScalar: false,
@@ -859,7 +882,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, exposure, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -963,7 +986,7 @@ export default function GpuImagePane(props: ImageBackendProps) {
     <ImagePaneShell
       paneAttrs={{ "data-gpu-image-pane": "", "data-gpu-backend-ready": paneReady }}
       viewportAttrs={{ "data-gpu-image-viewport": "" }}
-      toolbar
+      toolbar={toolbar}
       paneRef={paneRef}
       wrapperRef={imgWrapperRef}
       zoom={zoom}
