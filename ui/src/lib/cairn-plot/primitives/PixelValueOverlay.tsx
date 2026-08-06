@@ -1,10 +1,13 @@
 /**
  * PixelValueOverlay — a TEV-style per-pixel numeric value overlay.
  *
- * When the user zooms in far enough that ONE source pixel covers enough screen
- * space to fit a short number (>= `PIXEL_VALUE_MIN_SCREEN_PX`), this draws each
- * VISIBLE pixel's value(s) centred on the pixel — exactly like the EXR/HDR
- * viewer TEV. Below the threshold it draws nothing (zero cost).
+ * When the user zooms in far enough that ONE source pixel covers at least
+ * `PIXEL_VALUE_MIN_SCREEN_PX` screen px, this draws each VISIBLE pixel's
+ * value(s) centred on the pixel — exactly like the EXR/HDR viewer TEV. Below
+ * that threshold it draws nothing (zero cost). The threshold is a single
+ * screen-px-per-texel figure (see `pixelValueNumbersVisible`), independent of
+ * the string, notation, and channel count, so numbers pop in ALL AT ONCE at one
+ * zoom level — never shorter values before longer ones.
  *
  * Design (self-contained; data-in-props):
  *  - It is a single absolutely-positioned <canvas> laid OVER the image, OUTSIDE
@@ -14,6 +17,11 @@
  *    never reconstruct the transform math ourselves.
  *  - object-contain letterboxing is applied to that box to find the actual
  *    image region and the per-source-pixel screen size (== the trigger metric).
+ *  - Font size (TEV convention): ONE size per zoom, derived from the on-screen
+ *    pixel-cell size and channel count ALONE (see `pixel-value-size.ts`), never
+ *    the string. So every number at a given zoom is identical in height and the
+ *    0–255 ⇄ 0–1 notation toggle never resizes the digits; long HDR floats
+ *    overflow their cell centred, TEV-style, rather than being shrunk to fit.
  *  - Only the on-screen pixel window is iterated (clipped to the canvas rect),
  *    so the drawn count is bounded (each pixel is >= ~30px, so a few hundred at
  *    most). Redraws on zoom / pan / resize / source-data change.
@@ -34,9 +42,19 @@ import {
   computeFit,
   type ScreenToTexelParams,
 } from "../renderers/region-select";
+import {
+  pixelValueFontHeight,
+  pixelValueNumbersVisible,
+  PIXEL_VALUE_LINE_H_FRAC,
+  PIXEL_VALUE_MIN_FONT_PX,
+  PIXEL_VALUE_MIN_SCREEN_PX,
+} from "./pixel-value-size";
 
-/** A source pixel covering at least this many screen px triggers the overlay. */
-export const PIXEL_VALUE_MIN_SCREEN_PX = 30;
+// Re-exported here (its historical home) so the GPU panes that gate their
+// nearest/linear sampling on it keep importing it from `PixelValueOverlay`; the
+// value + its docs now live in `pixel-value-size.ts` next to the pure
+// visibility rule (`pixelValueNumbersVisible`) it defines.
+export { PIXEL_VALUE_MIN_SCREEN_PX };
 
 /**
  * Per-channel tint colours for R / G / B digits. Vivid, FIXED intensity: they
@@ -263,8 +281,12 @@ export default function PixelValueOverlay({
       return;
     }
 
-    // screen px per source pixel (== the trigger metric).
-    if (scale < PIXEL_VALUE_MIN_SCREEN_PX) {
+    // The SINGLE global visibility gate: `scale` (screen px per source pixel)
+    // alone decides whether numbers appear — never any string's width, never
+    // the channel count — so at a given zoom every cell in view draws or none
+    // does (numbers pop in ALL AT ONCE, not shorter values first). See
+    // `pixelValueNumbersVisible`.
+    if (!pixelValueNumbersVisible(scale)) {
       reportActive(false); // below threshold: nothing drawn.
       return;
     }
@@ -305,8 +327,6 @@ export default function PixelValueOverlay({
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const pad = scale * 0.14;
-    const avail = scale - pad * 2;
 
     for (let py = y0; py < y1; py++) {
       for (let px = x0; px < x1; px++) {
@@ -317,18 +337,25 @@ export default function PixelValueOverlay({
         const s = sample(px, py, notation);
         if (!s || s.lines.length === 0) continue;
         const lc = s.lines.length;
-        let maxChars = 1;
-        for (const ln of s.lines) if (ln.length > maxChars) maxChars = ln.length;
 
-        // Fit font to both the height (stacked lines) and width (longest line).
-        const byHeight = avail / (lc * 1.15);
-        const byWidth = (avail / (maxChars * 0.62)) || byHeight;
-        const fontH = Math.min(byHeight, byWidth, 24);
-        if (fontH < 6) continue; // too small to be legible — skip this pixel.
+        // TEV convention: ONE font size per zoom, from the on-screen cell size
+        // (`scale`) and channel count (`lc`) ALONE — never the string length.
+        // So "0" and "0.73496" render identically and toggling notation never
+        // resizes the digits. Long values overflow the cell centred (see
+        // pixel-value-size.ts); they are NOT clipped/ellipsized here.
+        const fontH = pixelValueFontHeight(scale, lc);
+        // Forward-safety only (NOT a per-string gate): `fontH` here depends
+        // solely on `scale` and `lc`, so for the supported 1- and 3-line
+        // layouts it is already ≥ the minimum at the single visibility
+        // threshold above (asserted in pixel-value-size.test.ts) and this never
+        // fires — it would only skip a hypothetical taller stack (>3 lines)
+        // whose lines cannot fit legibly yet. It can never drop SOME cells of a
+        // layout while keeping others, since every cell shares this `fontH`.
+        if (fontH < PIXEL_VALUE_MIN_FONT_PX) continue;
 
         const cx = imgLeft + (px - srcOriginX + 0.5) * scale;
         const cy = imgTop + (py - srcOriginY + 0.5) * scale;
-        const lineH = fontH * 1.15;
+        const lineH = fontH * PIXEL_VALUE_LINE_H_FRAC;
         ctx.font = `${fontH}px ui-monospace, SFMono-Regular, Menlo, monospace`;
         // TEV convention: fixed-intensity fills over a single CONSTANT soft dark
         // shadow (no per-pixel colour flip, no opposite-luminance halo stroke).
