@@ -17,11 +17,12 @@
  *    never reconstruct the transform math ourselves.
  *  - object-contain letterboxing is applied to that box to find the actual
  *    image region and the per-source-pixel screen size (== the trigger metric).
- *  - Font size (TEV convention): ONE size per zoom, derived from the on-screen
- *    pixel-cell size and channel count ALONE (see `pixel-value-size.ts`), never
- *    the string. So every number at a given zoom is identical in height and the
- *    0–255 ⇄ 0–1 notation toggle never resizes the digits; long HDR floats
- *    overflow their cell centred, TEV-style, rather than being shrunk to fit.
+ *  - Font size: ONE size for the whole frame (every number identical in height),
+ *    derived from the on-screen pixel-cell size, the channel count, and the
+ *    WIDEST value in view (measured in pass 1; see `pixel-value-size.ts`) — so
+ *    the size shrinks just enough that even the longest number sits INSIDE the
+ *    pixel it describes rather than spilling across the boundary onto its
+ *    neighbours. It never depends on which string a given cell draws.
  *  - Only the on-screen pixel window is iterated (clipped to the canvas rect),
  *    so the drawn count is bounded (each pixel is >= ~30px, so a few hundred at
  *    most). Redraws on zoom / pan / resize / source-data change.
@@ -305,6 +306,43 @@ export default function PixelValueOverlay({
       reportActive(false);
       return;
     }
+
+    // Pass 1 — collect the visible samples and measure the frame's widest line
+    // and tallest stack. The font size is derived from these (never from any one
+    // cell's own string), so every number in the frame renders at the SAME size
+    // yet the size is chosen so the LONGEST value still fits INSIDE its pixel —
+    // no number spills across the pixel boundary onto its neighbours (the
+    // alignment regression this restores). Samples are cached here so pass 2 does
+    // not re-`sample()`; the window is bounded (each cell ≥ PIXEL_VALUE_MIN_SCREEN_PX
+    // so a few hundred cells at most).
+    const cells: { px: number; py: number; s: PixelSample }[] = [];
+    let maxLineChars = 1;
+    let maxLineCount = 1;
+    for (let py = y0; py < y1; py++) {
+      for (let px = x0; px < x1; px++) {
+        if (px < 0 || py < 0 || px >= naturalWidth || py >= naturalHeight) continue;
+        const s = sample(px, py, notation);
+        if (!s || s.lines.length === 0) continue;
+        if (s.lines.length > maxLineCount) maxLineCount = s.lines.length;
+        for (const ln of s.lines) if (ln.length > maxLineChars) maxLineChars = ln.length;
+        cells.push({ px, py, s });
+      }
+    }
+    if (cells.length === 0) {
+      reportActive(false);
+      return;
+    }
+
+    // The ONE font height for the whole frame — sized to the widest value in
+    // view (`maxLineChars`) so it is CONTAINED, and to the tallest stack
+    // (`maxLineCount`) so an RGB triple fits vertically. Below the legibility
+    // floor the numbers are too small to read: draw nothing (all-or-nothing,
+    // matching the single visibility threshold — never a partial frame).
+    const fontH = pixelValueFontHeight(scale, maxLineCount, maxLineChars);
+    if (fontH < PIXEL_VALUE_MIN_FONT_PX) {
+      reportActive(false);
+      return;
+    }
     reportActive(true); // zoomed in far enough — numbers are being drawn.
 
     // Q19: clip ALL drawing to the DISPLAYED IMAGE's own on-screen rect — the
@@ -328,52 +366,32 @@ export default function PixelValueOverlay({
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    for (let py = y0; py < y1; py++) {
-      for (let px = x0; px < x1; px++) {
-        // Q19: only draw a pixel INSIDE the actual image bounds — never a
-        // pixel `sample()` might (incorrectly, for some future caller) still
-        // return a value for outside `[0,naturalWidth) x [0,naturalHeight)`.
-        if (px < 0 || py < 0 || px >= naturalWidth || py >= naturalHeight) continue;
-        const s = sample(px, py, notation);
-        if (!s || s.lines.length === 0) continue;
-        const lc = s.lines.length;
+    // Uniform for the whole frame (the size is fixed above), so the font and the
+    // TEV convention's single CONSTANT soft dark shadow — fixed-intensity fills
+    // over one dark drop shadow, no per-pixel colour flip / halo stroke — are
+    // set ONCE, not per cell. The shadow scales with the glyph so it stays
+    // proportional at any zoom; the bright fills read on dark pixels unaided and
+    // this dark edge carries them on bright pixels.
+    const lineH = fontH * PIXEL_VALUE_LINE_H_FRAC;
+    ctx.font = `${fontH}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.shadowColor = LABEL_SHADOW_COLOR;
+    ctx.shadowBlur = Math.max(2, fontH * LABEL_SHADOW_BLUR_FRAC);
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = Math.max(1, fontH * LABEL_SHADOW_OFFSET_FRAC);
 
-        // TEV convention: ONE font size per zoom, from the on-screen cell size
-        // (`scale`) and channel count (`lc`) ALONE — never the string length.
-        // So "0" and "0.73496" render identically and toggling notation never
-        // resizes the digits. Long values overflow the cell centred (see
-        // pixel-value-size.ts); they are NOT clipped/ellipsized here.
-        const fontH = pixelValueFontHeight(scale, lc);
-        // Forward-safety only (NOT a per-string gate): `fontH` here depends
-        // solely on `scale` and `lc`, so for the supported 1- and 3-line
-        // layouts it is already ≥ the minimum at the single visibility
-        // threshold above (asserted in pixel-value-size.test.ts) and this never
-        // fires — it would only skip a hypothetical taller stack (>3 lines)
-        // whose lines cannot fit legibly yet. It can never drop SOME cells of a
-        // layout while keeping others, since every cell shares this `fontH`.
-        if (fontH < PIXEL_VALUE_MIN_FONT_PX) continue;
-
-        const cx = imgLeft + (px - srcOriginX + 0.5) * scale;
-        const cy = imgTop + (py - srcOriginY + 0.5) * scale;
-        const lineH = fontH * PIXEL_VALUE_LINE_H_FRAC;
-        ctx.font = `${fontH}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-        // TEV convention: fixed-intensity fills over a single CONSTANT soft dark
-        // shadow (no per-pixel colour flip, no opposite-luminance halo stroke).
-        // The shadow — scaled with the glyph so it stays proportional at any
-        // zoom — is the ONLY legibility device: the bright fills read on dark
-        // pixels unaided; this dark edge carries them on bright pixels.
-        ctx.shadowColor = LABEL_SHADOW_COLOR;
-        ctx.shadowBlur = Math.max(2, fontH * LABEL_SHADOW_BLUR_FRAC);
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = Math.max(1, fontH * LABEL_SHADOW_OFFSET_FRAC);
-
-        let ly = cy - (lc * lineH) / 2 + lineH / 2;
-        for (let k = 0; k < s.lines.length; k++) {
-          const ln = s.lines[k]!;
-          ctx.fillStyle = s.colors?.[k] ?? NEUTRAL_LABEL_COLOR;
-          ctx.fillText(ln, cx, ly);
-          ly += lineH;
-        }
+    // Pass 2 — draw the cached samples, each centred on the pixel it describes
+    // (`cx`/`cy` = the texel centre in canvas-local px, the same transform the
+    // region marquee uses; see region-select.test.ts).
+    for (const { px, py, s } of cells) {
+      const lc = s.lines.length;
+      const cx = imgLeft + (px - srcOriginX + 0.5) * scale;
+      const cy = imgTop + (py - srcOriginY + 0.5) * scale;
+      let ly = cy - (lc * lineH) / 2 + lineH / 2;
+      for (let k = 0; k < s.lines.length; k++) {
+        const ln = s.lines[k]!;
+        ctx.fillStyle = s.colors?.[k] ?? NEUTRAL_LABEL_COLOR;
+        ctx.fillText(ln, cx, ly);
+        ly += lineH;
       }
     }
     ctx.restore(); // matches the ctx.save()/clip() above.
