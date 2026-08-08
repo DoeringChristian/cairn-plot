@@ -458,7 +458,18 @@ export default function ImagePaneShell({
     ) : null;
 
   return (
-    <div className={`relative flex flex-col h-full${toolbar ? " group" : ""}`} {...paneAttrs}>
+    // `isolate` (isolation: isolate) makes this pane root its OWN stacking
+    // context, so every z-index INSIDE it (the `z-10` pixel-value overlay
+    // canvas, the `z-20` notation toggle, `z-30`/`z-50` toolbar menus) is
+    // resolved LOCALLY and can never compete with the embedding host's chrome.
+    // Without it, the overlay canvas's `z-10` lives in the host's root stacking
+    // context: once the pane scrolls up under a host `position: sticky` header
+    // whose z-index is <= 10 (or auto), the overlay text paints OVER that header
+    // (the reported "numbers on top of the sticky header" bug). Clipping alone
+    // (`overflow-hidden` on the inner viewport) does NOT fix this — the clipped
+    // box itself slides under the header, so the fix must be stacking, not
+    // clipping. The library stays well-behaved regardless of the host's CSS.
+    <div className={`relative isolate flex flex-col h-full${toolbar ? " group" : ""}`} {...paneAttrs}>
       {header}
       {toolbar && <PlotToolbar controller={controller} config={toolbarConfig} />}
       <div
