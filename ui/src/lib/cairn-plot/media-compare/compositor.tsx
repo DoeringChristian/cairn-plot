@@ -262,7 +262,11 @@ export function MediaComparePane({
   });
 
   return (
-    <div className="relative flex flex-col h-full">
+    // `isolate`: own stacking context so the pixel-value overlay's `z-10`
+    // canvas can never paint over the embedding host's sticky header (same
+    // rationale as `ImagePaneShell`'s root — the library must be a well-behaved
+    // embeddable component regardless of the host's z-index/CSS).
+    <div className="relative isolate flex flex-col h-full">
       <GammaFilterSvg id={gammaFilterId} gamma={gamma} offset={offset} />
 
       <div

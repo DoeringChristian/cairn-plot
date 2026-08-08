@@ -1,27 +1,26 @@
 /**
  * Pure font-size derivation for the TEV `PixelValueOverlay`.
  *
- * TEV convention (the whole point of this module): at a given zoom every
- * per-pixel number renders at the SAME font size — the size is a function of
- * the on-screen pixel-cell size (`scale`, CSS px per source pixel) and the
- * number of stacked lines (`lineCount`, 1 for grayscale / 3 for RGB) ALONE.
- * It never depends on the string being drawn, so "0" and "0.73496" are the
- * same height, and toggling the 0–255 ⇄ 0–1 notation (which changes the digit
- * count) never changes the size.
+ * ONE size per view (the whole point of this module): the overlay draws every
+ * per-pixel number at a SINGLE font size, a function of the on-screen
+ * pixel-cell size (`scale`, CSS px per source pixel), the number of stacked
+ * lines (`lineCount`, 1 for grayscale / 3 for RGB), and the longest line
+ * currently IN VIEW (`refChars`). It never depends on which individual string a
+ * given cell draws, so at a given zoom "0" and "0.73496" are the same height —
+ * the overlay computes `refChars` once for the whole frame (the max over the
+ * visible cells) and passes it to every cell.
  *
- * Two budgets bound the size; both are string-INDEPENDENT:
- *  - vertical: the stacked lines must fit the cell's usable height — this is
- *    the hard constraint that keeps a 3-channel stack inside its pixel at the
- *    zoom where numbers first appear.
- *  - horizontal: a FIXED reference width of {@link PIXEL_VALUE_REF_CHARS}
- *    monospace characters must fit the cell. Because the reference is a
- *    constant (not the actual string length), the size is uniform; a value
- *    LONGER than the reference simply overflows the cell, centred and
- *    symmetric — exactly how TEV draws long HDR floats. We deliberately do NOT
- *    clip or ellipsize per cell: the digits ARE the content, and hiding them
- *    would be worse than a slight, symmetric spill (which only shows up at
- *    zooms where neighbouring cells are large anyway). The overlay's existing
- *    image-rect clip still stops any spill from bleeding onto the checkerboard.
+ * Two budgets bound the size:
+ *  - vertical: the stacked lines must fit the cell's usable height — the hard
+ *    constraint that keeps a 3-channel stack inside its pixel at the zoom where
+ *    numbers first appear.
+ *  - horizontal: `refChars` monospace characters must fit the cell WIDTH. The
+ *    overlay passes the widest value in view, so the size shrinks just enough
+ *    that even the LONGEST number sits INSIDE the pixel it describes — never
+ *    spilling across pixel boundaries onto its neighbours (the regression this
+ *    restores). `refChars` defaults to {@link PIXEL_VALUE_REF_CHARS} for callers
+ *    that only know a cell's channel count; the overlay always supplies the
+ *    measured value.
  */
 
 /**
@@ -43,11 +42,11 @@ export const PIXEL_VALUE_LINE_H_FRAC = 1.15;
 /** Monospace glyph advance as a fraction of the font height (width estimate). */
 export const PIXEL_VALUE_CHAR_W_FRAC = 0.62;
 /**
- * FIXED reference character count the cell is sized to hold. A constant — NOT
- * the drawn string's length — so every number at a given zoom is identical in
- * size (the exact user complaint being fixed). Typical values (≤ this many
- * chars, e.g. "255", "0.50", "12.3") sit inside their cell; genuinely long
- * outliers (e.g. "1.23e+02") overflow slightly, centred, TEV-style.
+ * DEFAULT reference character count a cell is sized to hold, used only when a
+ * caller does not pass an explicit `refChars` to {@link pixelValueFontHeight}.
+ * The overlay ALWAYS passes the longest value actually in view instead (so the
+ * widest number is contained inside its pixel); this constant is the fallback
+ * for the visibility-coherence check (where no specific string is in hand).
  */
 export const PIXEL_VALUE_REF_CHARS = 4;
 /** Upper clamp on the font height (CSS px) so numbers never get comically big. */
@@ -56,16 +55,24 @@ export const PIXEL_VALUE_MAX_FONT_PX = 24;
 export const PIXEL_VALUE_MIN_FONT_PX = 6;
 
 /**
- * The ONE font height (CSS px) for every number in a cell of on-screen size
- * `scale`, holding `lineCount` stacked lines. Depends only on `scale` and
- * `lineCount` — never on the string — so all numbers at a given zoom (and a
- * given channel count) render identically. Returns `0` for a degenerate cell.
+ * The ONE font height (CSS px) the overlay uses for EVERY number in the current
+ * frame: a cell of on-screen size `scale` holding `lineCount` stacked lines,
+ * sized so a `refChars`-character line fits the cell WIDTH. The overlay passes
+ * the widest value in view for `refChars`, so the returned height keeps even the
+ * longest number inside the pixel it labels (never overflowing onto neighbours)
+ * while staying uniform across the frame. `refChars` defaults to
+ * {@link PIXEL_VALUE_REF_CHARS}. Returns `0` for a degenerate cell.
  */
-export function pixelValueFontHeight(scale: number, lineCount: number): number {
+export function pixelValueFontHeight(
+  scale: number,
+  lineCount: number,
+  refChars: number = PIXEL_VALUE_REF_CHARS,
+): number {
   if (scale <= 0 || lineCount <= 0) return 0;
+  const chars = Math.max(1, refChars);
   const avail = scale * (1 - 2 * PIXEL_VALUE_PAD_FRAC);
   const byHeight = avail / (lineCount * PIXEL_VALUE_LINE_H_FRAC);
-  const byWidth = avail / (PIXEL_VALUE_REF_CHARS * PIXEL_VALUE_CHAR_W_FRAC);
+  const byWidth = avail / (chars * PIXEL_VALUE_CHAR_W_FRAC);
   return Math.min(byHeight, byWidth, PIXEL_VALUE_MAX_FONT_PX);
 }
 
