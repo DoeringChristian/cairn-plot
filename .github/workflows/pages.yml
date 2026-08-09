@@ -51,6 +51,10 @@ jobs:
           uv run python examples/demo_cairn_plot.py -o site/gallery.html
           uv run python examples/report_cairn_plot.py -o site/report.html
           uv run python examples/demo_url_images.py -o site/url-images.html
+          # The pick-&-compare demo is authored as a JS/HTML page (window.cairnPlot)
+          # referencing the just-built bundles; inline them into ONE self-contained
+          # file for the gallery (interactive, fully client-side, no network).
+          node ui/scripts/inline-html.mjs examples/demo_compare_upload.html site/compare.html
           cp docs/pages-index.html site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

@@ -54,6 +54,10 @@ push to `main` and publishes it via GitHub Pages
   (compare/diff kernels, FLIP + HDR-FLIP validation, synced viewports)
 - [**URL images** — client-side EXR decoding](https://doeringchristian.github.io/cairn-plot/url-images.html)
   (needs network when viewed)
+- [**Pick & compare** — two images from your own device](https://doeringchristian.github.io/cairn-plot/compare.html)
+  (interactive: choose two local PNG/JPG/EXR/… images and compare them —
+  side/wipe/blend or pixel-diff incl. FLIP/SSIM; fully client-side, nothing
+  uploaded)
 
 Each page is one fully self-contained HTML file — save it from the browser for
 offline use, or regenerate locally with the example scripts below.
@@ -116,6 +120,16 @@ in-memory runtime store **by reference** (no base64 round-trip). Validation
 as Python. See [`examples/demo_js_api.html`](examples/demo_js_api.html) for a
 self-contained page and [`docs/API.md`](docs/API.md#html--js-builder-surface)
 for the full JS surface (incl. a Jeri → `cairnPlot` migration snippet).
+
+[`examples/demo_compare_upload.html`](examples/demo_compare_upload.html) is a
+JS-authored, fully client-side tool: pick two images from your own device
+(phone camera roll, Files, or disk) and compare them with `cairnPlot.compare`
+— no server, no upload, no network. It reads each file into a `blob:` URL and
+decodes it in-browser (browser-native PNG/JPEG plus OpenEXR/`.hdr`/`.pfm` and
+float `.npy`/`.npz`). Build the bundles first (`cd ui && npm run
+build:plot-inline`), then open it from disk; the GitHub Pages build inlines the
+bundles into one self-contained file via
+[`ui/scripts/inline-html.mjs`](ui/scripts/inline-html.mjs).
 
 The bundles are include-once guarded and register renderers into a shared core
 bootstrap, so a page carries `core` once plus only the addons its plots need.
