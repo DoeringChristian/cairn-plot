@@ -63,7 +63,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
-import { type HdrData } from "../image-backend";
+import { hdrSource, urlSource, type HdrData } from "../image-backend";
 import GpuComparePane from "../../media-compare/GpuComparePane";
 
 const h = React.createElement;
@@ -163,7 +163,7 @@ async function runSdrImageCase(): Promise<boolean> {
   const root = createRoot(container);
   root.render(
     h(GpuImagePane, {
-      imageUrl: RED_PNG_DATA_URL,
+      source: urlSource(RED_PNG_DATA_URL),
       label: "sdr-fallback-test",
     }),
   );
@@ -204,7 +204,7 @@ async function runHdrImageCase(): Promise<boolean> {
 
   const hdr: HdrData = { data: new Float32Array([0.1, 0.4, 0.7, 1.0]), shape: [2, 2], dtype: "<f4" };
   const root = createRoot(container);
-  root.render(h(GpuImagePane, { hdr, tonemap: "srgb", exposure: 0, label: "hdr-fallback-test" }));
+  root.render(h(GpuImagePane, { source: hdrSource(hdr), tonemap: "srgb", exposure: 0, label: "hdr-fallback-test" }));
 
   await sleep(1000);
 

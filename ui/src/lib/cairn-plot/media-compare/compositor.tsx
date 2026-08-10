@@ -28,7 +28,7 @@ import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import type { GpuComparePaneProps } from "./GpuComparePane";
-import { resolveRenderMode } from "../renderers/image-backend";
+import { resolveRenderMode, hdrSource, urlSource } from "../renderers/image-backend";
 
 declare global {
   interface Window {
@@ -689,7 +689,7 @@ export function CompositeMediaPane({
         return (
           <CpuImagePane
             toolbar={false}
-            hdr={opts.hdr}
+            source={hdrSource(opts.hdr)}
             tonemap={tonemap}
             peak={peak}
             gamma={tonemap_gamma}
@@ -708,7 +708,7 @@ export function CompositeMediaPane({
       return (
         <CpuImagePane
           toolbar={false}
-          imageUrl={opts.url}
+          source={urlSource(opts.url)}
           baselineUrl={null}
           isBaseline={opts.isBaseline}
           diffMode="none"
@@ -841,7 +841,7 @@ export function CompositeMediaPane({
   return (
     <CpuImagePane
       toolbar={false}
-      imageUrl={imageUrl}
+      source={urlSource(imageUrl)}
       baselineUrl={baselineUrl}
       isBaseline={isReferencePane}
       diffMode={effectiveMode === "diff" ? diffSubmode : "none"}

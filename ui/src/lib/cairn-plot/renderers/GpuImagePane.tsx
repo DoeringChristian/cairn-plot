@@ -129,6 +129,7 @@ import {
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
   isHdrProps,
+  useLegacyImageProps,
   shapeDims,
   finite,
   type HdrData,
@@ -298,7 +299,12 @@ export function screenPxPerTexel(
   return Math.min(box.width / visibleW, box.height / visibleH);
 }
 
-export default function GpuImagePane(props: ImageBackendProps) {
+export default function GpuImagePane(backendProps: ImageBackendProps) {
+  // The ONE unified `source` fans out (keyed on `source.dtype`) into the two
+  // internal dtype-keyed representations the body below consumes — so the body
+  // (and its `isHdrProps(props)` dispatch) is unchanged. `backendProps` is
+  // forwarded verbatim to the CPU fallback (which reconstructs it the same way).
+  const props = useLegacyImageProps(backendProps);
   const hdrMode = isHdrProps(props);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -954,11 +960,9 @@ export default function GpuImagePane(props: ImageBackendProps) {
   // runs unconditionally (rules-of-hooks) but before this component paints
   // its own GPU canvas.
   if (engineFailed) {
-    return hdrMode ? (
-      <CpuImagePane {...(props as HdrImageProps)} />
-    ) : (
-      <CpuImagePane {...(props as SdrImageProps)} />
-    );
+    // Forward the UNIFIED props verbatim — CpuImagePane accepts the same
+    // `ImageBackendProps` and reconstructs its own internal representation.
+    return <CpuImagePane {...backendProps} />;
   }
 
   // The image quad is placed inside the FULL-viewport canvas by

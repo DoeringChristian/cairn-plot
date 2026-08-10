@@ -17,9 +17,17 @@ export { default as ScalarPlot, type ScalarPlotProps } from "./ScalarPlot";
 export { default as CpuImagePane, type CpuImagePaneProps, tonemapToImageData } from "./CpuImagePane";
 export {
   isHdrProps,
+  isFloatSource,
+  useLegacyImageProps,
+  hdrSource,
+  urlSource,
   resolveRenderMode,
   type ImageBackend,
   type ImageBackendProps,
+  type DecodedSource,
+  type FloatSource,
+  type Uint8Source,
+  type LegacyImageProps,
   type HdrImageProps,
   type SdrImageProps,
   type HdrData,

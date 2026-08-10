@@ -111,6 +111,7 @@ import SplitDivider from "./SplitDivider";
 // `GpuComparePaneProps` as a TYPE (`import type`), which TS/esbuild fully
 // erase, so this is not a runtime import cycle.
 import CpuImagePane from "../renderers/CpuImagePane";
+import { urlSource } from "../renderers/image-backend";
 import ImagePaneShell from "../renderers/ImagePaneShell";
 import {
   MediaComparePane,
@@ -1326,7 +1327,7 @@ export default function GpuComparePane({
       return (
         <CpuImagePane
           toolbar={toolbar}
-          imageUrl={imageUrl}
+          source={urlSource(imageUrl)}
           baselineUrl={baselineUrl}
           // FLIP is GPU-only (spec: CPU compare keeps its pointwise modes) —
           // if the GPU pane fell back, map the selected kernel to a valid CPU

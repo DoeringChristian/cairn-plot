@@ -125,11 +125,24 @@ export { ScalarPlot } from "./renderers";
 // Image backends: the CPU pane + the interchangeable-backend contract
 // (`GpuImagePane` is addon-loaded via the runtime registry seam, not re-exported
 // here). `tonemapToImageData` is the pure HDR-float → `ImageData` tone-mapper.
-export { CpuImagePane, tonemapToImageData, isHdrProps, resolveRenderMode } from "./renderers";
+export {
+  CpuImagePane,
+  tonemapToImageData,
+  isHdrProps,
+  isFloatSource,
+  useLegacyImageProps,
+  hdrSource,
+  urlSource,
+  resolveRenderMode,
+} from "./renderers";
 export type {
   CpuImagePaneProps,
   ImageBackend,
   ImageBackendProps,
+  DecodedSource,
+  FloatSource,
+  Uint8Source,
+  LegacyImageProps,
   HdrImageProps,
   SdrImageProps,
   HdrData,

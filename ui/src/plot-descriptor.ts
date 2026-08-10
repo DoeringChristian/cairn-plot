@@ -225,24 +225,7 @@ export async function resolveDataProps(
           { deepLiveFlatten: true },
         );
         const overlay = parseOverlay(data.metadata) ?? undefined;
-        if (decoded.kind === "f32") {
-          const shape =
-            decoded.channels === 1
-              ? [decoded.height, decoded.width]
-              : [decoded.height, decoded.width, decoded.channels];
-          return {
-            hdr: {
-              data: decoded.data,
-              shape,
-              dtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
-              precision: decoded.precision,
-              deep: decoded.deep,
-            },
-            baselineUrl: null,
-            overlay,
-          };
-        }
-        return { imageUrl: decodedU8ToDataUrl(decoded), baselineUrl: null, overlay };
+        return { source: decodedToSource(decoded), baselineUrl: null, overlay };
       }
       // Multi-format DECODER seam. When `format` names a RAW-buffer image
       // (`.npy`/`.npz`), the browser can't decode it via `<img>`, so fetch the
@@ -259,24 +242,7 @@ export async function resolveDataProps(
         );
         const baselineUrl = await resolveRawBufferBaseline(data, source);
         const overlay = parseOverlay(data.metadata) ?? undefined;
-        if (decoded.kind === "f32") {
-          const shape =
-            decoded.channels === 1
-              ? [decoded.height, decoded.width]
-              : [decoded.height, decoded.width, decoded.channels];
-          return {
-            hdr: {
-              data: decoded.data,
-              shape,
-              dtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
-              precision: decoded.precision,
-              deep: decoded.deep,
-            },
-            baselineUrl,
-            overlay,
-          };
-        }
-        return { imageUrl: decodedU8ToDataUrl(decoded), baselineUrl, overlay };
+        return { source: decodedToSource(decoded), baselineUrl, overlay };
       }
       const res = resolveImageViewportItems(
         {
@@ -290,7 +256,7 @@ export async function resolveDataProps(
       const item = res.items[0] ?? null;
       const ref = res.referenceItems[0] ?? null;
       return {
-        imageUrl: item?.url ?? null,
+        source: { dtype: "uint8", url: item?.url ?? null },
         baselineUrl: ref?.url ?? null,
         overlay: item?.overlay ?? undefined,
       };
@@ -309,7 +275,7 @@ export async function resolveDataProps(
         data.referenceSrc ? resolveFinalUrl(data.referenceSrc) : Promise.resolve(null),
       ]);
       return {
-        imageUrl,
+        source: { dtype: "uint8", url: imageUrl },
         baselineUrl,
         overlay: parseOverlay(data.metadata) ?? undefined,
       };
@@ -368,18 +334,49 @@ export async function resolveDataProps(
       const rt = source.runtime?.(data.hash);
       if (rt && rt.kind === "float") {
         return {
-          hdr: { data: rt.data, shape: rt.shape, dtype: rt.dtype, precision: rt.precision },
+          source: {
+            dtype: "float",
+            data: rt.data,
+            shape: rt.shape,
+            numpyDtype: rt.dtype,
+            precision: rt.precision,
+          },
           meta: data.meta,
         };
       }
       const buf = await source.bytes(data.hash);
       const npy = parseNpy(buf);
       return {
-        hdr: { data: npy.data, shape: npy.shape, dtype: npy.dtype },
+        source: { dtype: "float", data: npy.data, shape: npy.shape, numpyDtype: npy.dtype },
         meta: data.meta,
       };
     }
   }
+}
+
+/**
+ * Normalize a {@link DecodedImage} into the ONE unified {@link DecodedSource}
+ * the image renderer consumes: `f32` → a float source (shape derived from
+ * width/height/channels; `precision` preserved for the F16 pipeline; deep-flatten
+ * controller threaded through), `u8` → a uint8 source carrying a PNG data URL
+ * (the byte-exact `<img>` / SDR-surface path).
+ */
+function decodedToSource(decoded: import("./lib/cairn-plot").DecodedImage) {
+  if (decoded.kind === "f32") {
+    const shape =
+      decoded.channels === 1
+        ? [decoded.height, decoded.width]
+        : [decoded.height, decoded.width, decoded.channels];
+    return {
+      dtype: "float",
+      data: decoded.data,
+      shape,
+      numpyDtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
+      precision: decoded.precision,
+      deep: decoded.deep,
+    };
+  }
+  return { dtype: "uint8", url: decodedU8ToDataUrl(decoded) };
 }
 
 /**

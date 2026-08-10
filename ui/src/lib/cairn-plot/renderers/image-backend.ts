@@ -14,6 +14,7 @@
  * (and the seam) import them from one spot with no import cycle onto either
  * pane component.
  */
+import { useMemo } from "react";
 import type {
   Colormap,
   DiffMode,
@@ -24,6 +25,8 @@ import type {
 } from "../types";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
+import type { Precision } from "../image/half.ts";
+import type { DeepFlattenController } from "../image/decoders.ts";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`
@@ -152,22 +155,200 @@ export interface SdrImageProps {
 }
 
 /**
- * The shared prop union BOTH image backends accept. `HdrImageProps`
- * (float-HDR) | `SdrImageProps` (8-bit `imageUrl`), discriminated by
- * the presence of `hdr`.
+ * The two INTERNAL, dtype-keyed pane representations. Formerly the public
+ * backend union; now a pane-private detail reconstructed from the ONE unified
+ * {@link ImageBackendProps} by {@link useLegacyImageProps}. Kept (and still
+ * exported for back-compat) because both panes' bodies dispatch on
+ * {@link isHdrProps} and the "SDR-`rgba8unorm`-surface vs float-`rgba16float`-
+ * surface" choice is exactly this internal split, keyed on the decoded source's
+ * dtype (design §3).
  */
-export type ImageBackendProps = HdrImageProps | SdrImageProps;
+export type LegacyImageProps = HdrImageProps | SdrImageProps;
+
+/** Discriminant on the INTERNAL union: `true` for the float-HDR pane path. */
+export function isHdrProps(p: LegacyImageProps): p is HdrImageProps {
+  return "hdr" in p && (p as HdrImageProps).hdr != null;
+}
+
+// ---------------------------------------------------------------------------
+// The ONE unified, dtype-tagged decoded-source prop (design §3). Both backends
+// consume THIS shape; the CPU/GPU split and the surface-format choice are
+// INTERNAL, keyed on `source.dtype`.
+// ---------------------------------------------------------------------------
+
+/** A decoded FLOAT source (EXR / float `.npy` / PFM / float-by-reference). */
+export interface FloatSource {
+  dtype: "float";
+  /** Row-major samples; read per {@link precision} (see `../image/half.ts`). */
+  data: Float64Array | Float32Array | Uint16Array;
+  /** `[H,W]` | `[H,W,C]` with `C∈{1,3,4}`. */
+  shape: number[];
+  /** How to interpret `data`: `"f32"` (values) or `"f16-bits"` (binary16 bits). */
+  precision?: Precision;
+  /** Informational numpy dtype string (e.g. `"<f4"`). */
+  numpyDtype?: string;
+  /** Present only for a DEEP EXR opened with live-flatten (the depth slider). */
+  deep?: DeepFlattenController;
+}
+
+/** A decoded UINT8 (SDR) source — a URL/data-URL the browser `<img>`-decodes
+ *  (browser-native passthrough OR a uint8 `.npy` re-encoded to a PNG data URL).
+ *  Kept as a URL so the byte-exact `<img>` path + URL-keyed caches survive. */
+export interface Uint8Source {
+  dtype: "uint8";
+  url: string | null;
+}
+
+/** The ONE decoded-source shape, tagged by dtype (design §3). */
+export type DecodedSource = FloatSource | Uint8Source;
 
 /**
- * The interchangeable image-backend interface: a component accepting the
- * shared {@link ImageBackendProps}. Both `CpuImagePane` and `GpuImagePane` are
- * assignable to this type; `resolveImageRenderer(mode)` returns one of them.
+ * The ONE unified prop shape BOTH image backends accept. Carries the decoded
+ * `source` (dtype-tagged) plus the FULL display-control set — each pane applies
+ * what is meaningful for its surface (an SDR surface honours colormap/diff/
+ * processing; a float surface honours tonemap/exposure/offset/peak/gamma; both
+ * honour the common view controls). No `imageUrl` vs `hdr` fork.
+ */
+export interface ImageBackendProps {
+  /** The decoded image, tagged by dtype (`float` | `uint8`). */
+  source: DecodedSource;
+  // — display controls (full set) —
+  colormap?: Colormap;
+  tonemap?: string;
+  exposure?: number;
+  offset?: number;
+  peak?: number;
+  gamma?: number;
+  diffMode?: "none" | DiffMode;
+  processing?: ImageProcessing;
+  interpolation?: Interpolation;
+  // — SDR compare / overlay plumbing —
+  baselineUrl?: string | null;
+  isBaseline?: boolean;
+  overlay?: ImageOverlayData;
+  overlaySettings?: ImageOverlaySettings;
+  onNaturalSize?: (w: number, h: number) => void;
+  isDraggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  className?: string;
+  // — common view controls —
+  showAxes?: boolean;
+  label?: string;
+  zoom?: number;
+  pan?: { x: number; y: number };
+  onViewportChange?: (v: ImageViewport) => void;
+  pixelValueNotation?: PixelValueNotation;
+  /** Host seam — hide the `PlotToolbar` when `false` (default `true`). */
+  toolbar?: boolean;
+}
+
+/**
+ * The interchangeable image-backend interface: a component accepting the ONE
+ * {@link ImageBackendProps}. Both `CpuImagePane` and `GpuImagePane` are
+ * assignable; `resolveImageRenderer(mode)` returns one of them.
  */
 export type ImageBackend = (props: ImageBackendProps) => JSX.Element;
 
-/** Discriminant: `true` when these props select the float-HDR backend path. */
-export function isHdrProps(p: ImageBackendProps): p is HdrImageProps {
-  return "hdr" in p && (p as HdrImageProps).hdr != null;
+/** `true` when the unified props carry a FLOAT source (the HDR surface path). */
+export function isFloatSource(p: ImageBackendProps): boolean {
+  return p.source.dtype === "float";
+}
+
+/** Wrap a decoded float `HdrData` as the unified {@link FloatSource}. */
+export function hdrSource(hdr: HdrData): FloatSource {
+  return {
+    dtype: "float",
+    data: hdr.data,
+    shape: hdr.shape,
+    numpyDtype: hdr.dtype,
+    precision: hdr.precision,
+    deep: hdr.deep,
+  };
+}
+
+/** Wrap a URL/data-URL as the unified uint8 (SDR) {@link Uint8Source}. */
+export function urlSource(url: string | null): Uint8Source {
+  return { dtype: "uint8", url };
+}
+
+/**
+ * Reconstruct a pane's INTERNAL {@link LegacyImageProps} from the ONE unified
+ * {@link ImageBackendProps}, keyed on `source.dtype`. This is the ONE place the
+ * unified shape fans out into the two dtype-keyed internal representations the
+ * pane bodies already consume — so those ~1000-line bodies stay unchanged. The
+ * float `hdr` wrapper is memoized on the (stable, resolve-once) `source` so its
+ * identity is preserved across renders — the decode/upload/deep-flatten effects
+ * depend on it. A hook (uses `useMemo`); call it once at the top of each pane.
+ */
+export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
+  const src = p.source;
+  // Memoize on the UNDERLYING stable fields (data/shape/precision/deep), NOT the
+  // `source` wrapper identity — call sites (the compare side panes) may build a
+  // fresh wrapper each render around a stable `data`/`deep`, and the decode/
+  // upload/deep-flatten effects that key on `hdr` must not thrash.
+  const floatData = src.dtype === "float" ? src.data : null;
+  const floatShape = src.dtype === "float" ? src.shape : null;
+  const floatPrecision = src.dtype === "float" ? src.precision : undefined;
+  const floatNumpyDtype = src.dtype === "float" ? src.numpyDtype : undefined;
+  const floatDeep = src.dtype === "float" ? src.deep : undefined;
+  const hdr = useMemo<HdrData | null>(
+    () =>
+      floatData
+        ? {
+            data: floatData,
+            shape: floatShape ?? [],
+            dtype: floatNumpyDtype ?? "<f4",
+            precision: floatPrecision,
+            deep: floatDeep,
+          }
+        : null,
+    [floatData, floatShape, floatPrecision, floatNumpyDtype, floatDeep],
+  );
+  if (hdr) {
+    return {
+      hdr,
+      tonemap: p.tonemap,
+      exposure: p.exposure,
+      offset: p.offset,
+      gamma: p.gamma,
+      peak: p.peak,
+      showAxes: p.showAxes,
+      label: p.label,
+      interpolation: p.interpolation,
+      zoom: p.zoom,
+      pan: p.pan,
+      onViewportChange: p.onViewportChange,
+      pixelValueNotation: p.pixelValueNotation,
+      toolbar: p.toolbar,
+    };
+  }
+  return {
+    imageUrl: src.dtype === "uint8" ? src.url : null,
+    baselineUrl: p.baselineUrl,
+    isBaseline: p.isBaseline,
+    diffMode: p.diffMode,
+    interpolation: p.interpolation,
+    tonemap: p.tonemap,
+    gamma: p.gamma,
+    peak: p.peak,
+    exposure: p.exposure,
+    offset: p.offset,
+    colormap: p.colormap,
+    showAxes: p.showAxes,
+    processing: p.processing,
+    zoom: p.zoom,
+    pan: p.pan,
+    onViewportChange: p.onViewportChange,
+    onNaturalSize: p.onNaturalSize,
+    label: p.label ?? "",
+    isDraggable: p.isDraggable,
+    onDragStart: p.onDragStart,
+    className: p.className,
+    overlay: p.overlay,
+    overlaySettings: p.overlaySettings,
+    pixelValueNotation: p.pixelValueNotation,
+    toolbar: p.toolbar,
+  };
 }
 
 // ---------------------------------------------------------------------------

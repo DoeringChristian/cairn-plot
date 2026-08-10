@@ -337,7 +337,7 @@ async function runZoomFillCase(): Promise<boolean> {
     const [viewport, setViewport] = React.useState<ImageViewport>({ zoom: 1, pan: { x: 0, y: 0 } });
     setViewportFn = setViewport;
     return h(GpuImagePane, {
-      imageUrl: greenUrl,
+      source: { dtype: "uint8", url: greenUrl },
       colormap: "none",
       zoom: viewport.zoom,
       pan: viewport.pan,
