@@ -12,12 +12,14 @@
 import React, {
   Suspense,
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import {
   Colorbar,
@@ -47,6 +49,12 @@ import {
   type SharedProps,
 } from "./plot-descriptor";
 import { getRenderer, onRegister } from "./plot-registry";
+import {
+  getSelectionStore,
+  paneSyncGroups,
+  type SelectionMode,
+  type SelectionStore,
+} from "./lib/cairn-plot/viewport/selection-store";
 import {
   ChartBox,
   ChartFillContext,
@@ -97,6 +105,38 @@ function useSharedPlot(): SharedPlotCtx {
   return ctx;
 }
 
+// ---------------------------------------------------------------------------
+// Multi-viewport SELECTION (see viewport/selection-store.ts). Every `GridView`
+// provides a `PlotSelectionContext` scoped to ITS OWN sibling panes: the
+// per-grid `SelectionStore` plus a base id for the grid's selection-driven sync
+// groups. A `SelectionCell` wraps each grid cell — it draws the accent ring on
+// the selected pane, turns a click into a store mutation (plain = replace,
+// shift/ctrl/meta = toggle), and derives the per-pane sync group ids the leaf
+// consumes: while ≥2 panes are selected, every selected pane joins the SAME
+// `sel-…-vp` (viewport) and `sel-…-st` (settings) groups so zoom/pan and
+// display-setting changes broadcast across the group. The first-selected pane
+// is the ANCHOR whose current view + settings a newly-added member adopts.
+// ---------------------------------------------------------------------------
+interface PlotSelectionCtx {
+  store: SelectionStore;
+  /** Base id for this grid's selection-driven sync groups (`${base}-vp` /
+   *  `${base}-st`). Distinct from the static `shared.sync.viewport` group. */
+  selectionGroupBase: string;
+}
+const PlotSelectionContext = createContext<PlotSelectionCtx | null>(null);
+
+/** Per-cell overrides the enclosing `SelectionCell` hands its leaf: the
+ *  selection-derived viewport/settings sync group ids + which pane is the group
+ *  anchor. `undefined` on a field means "no override" (the leaf falls back to
+ *  the grid-wide static `viewportSyncGroupId`). Only populated while this cell's
+ *  pane is part of a ≥2 selection. */
+interface PaneSyncCtx {
+  viewportSyncGroupId?: string;
+  settingsSyncGroupId?: string;
+  syncIsAnchor?: boolean;
+}
+const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
+
 function Message({ text, error }: { text: string; error?: boolean }) {
   return (
     <div className={`card p-4 text-sm ${error ? "text-red-400" : "text-fg-muted"}`}>
@@ -113,10 +153,15 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 // ---------------------------------------------------------------------------
 function LeafView({ node }: { node: PlotLeafNode }) {
   const { source, shared, viewportSyncGroupId } = useSharedPlot();
+  // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
+  const paneSync = useContext(PaneSyncContext);
+  // Only the async-resolved DATA props live in state; the shared-block +
+  // selection-sync props are merged at RENDER time (below) so a selection change
+  // (which flips the sync group ids) re-renders WITHOUT re-fetching the data.
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "ready"; props: Record<string, unknown> }
+    | { status: "ready"; dataProps: Record<string, unknown> }
   >({ status: "loading" });
   const [, bumpRegistry] = useState(0);
 
@@ -126,20 +171,7 @@ function LeafView({ node }: { node: PlotLeafNode }) {
       try {
         const dataProps = await resolveDataProps(node.data, source);
         if (cancelled) return;
-        const sharedProps: Record<string, unknown> = {};
-        if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
-        if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
-        // Viewport sync (`shared.sync.viewport`) — threaded down as one group
-        // id every synced leaf picks up: `image`/`imagehdr` adapters via
-        // `useSyncedImageViewport`, and 2D chart adapters via
-        // `ChartSyncBoundary` → `useChartViewport` (see `plot-renderers.tsx`).
-        // Harmless on leaves that don't sync (an unused prop), same as
-        // `colormap`/`colorRange` above.
-        if (viewportSyncGroupId) sharedProps.viewportSyncGroupId = viewportSyncGroupId;
-        setState({
-          status: "ready",
-          props: { ...sharedProps, ...(node.props ?? {}), ...dataProps },
-        });
+        setState({ status: "ready", dataProps });
       } catch (err) {
         if (cancelled) return;
         setState({
@@ -151,7 +183,26 @@ function LeafView({ node }: { node: PlotLeafNode }) {
     return () => {
       cancelled = true;
     };
-  }, [node, source, shared, viewportSyncGroupId]);
+  }, [node, source]);
+
+  // Merge the shared block + the live sync group ids over the resolved data
+  // props at render (leaf `node.props` win over `shared`, data props win over
+  // all). The viewport-sync group id is the selection override when this pane is
+  // in a ≥2 selection, else the grid-wide static `shared.sync.viewport` group;
+  // the settings-sync group + anchor flag come only from an active selection.
+  const mergedProps = useMemo<Record<string, unknown>>(() => {
+    if (state.status !== "ready") return {};
+    const sharedProps: Record<string, unknown> = {};
+    if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
+    if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
+    const vpGroup = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
+    if (vpGroup) sharedProps.viewportSyncGroupId = vpGroup;
+    if (paneSync?.settingsSyncGroupId) {
+      sharedProps.settingsSyncGroupId = paneSync.settingsSyncGroupId;
+    }
+    if (paneSync?.syncIsAnchor) sharedProps.syncIsAnchor = true;
+    return { ...sharedProps, ...(node.props ?? {}), ...state.dataProps };
+  }, [state, shared, viewportSyncGroupId, paneSync, node.props]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -184,7 +235,7 @@ function LeafView({ node }: { node: PlotLeafNode }) {
   const Renderer = getRenderer(node.renderer);
   return Renderer ? (
     <Suspense fallback={<Message text="Loading renderer…" />}>
-      <Renderer {...state.props} />
+      <Renderer {...mergedProps} />
     </Suspense>
   ) : (
     <Message text="Loading renderer…" />
@@ -561,6 +612,111 @@ function trackList(
   return sizes.map((s) => (typeof s === "number" ? `${s}fr` : s)).join(" ");
 }
 
+/** Beyond this pointer travel a press is treated as a DRAG (pan / compare-split),
+ *  not a selection click. */
+const SELECTION_CLICK_SLOP_PX = 5;
+const EMPTY_SELECTION: readonly string[] = [];
+
+/**
+ * Wraps one grid cell with selection behaviour: draws the accent ring on the
+ * selected pane, turns a stationary click into a selection mutation (plain =
+ * replace, shift/ctrl/meta = toggle), and provides the per-pane sync overrides
+ * its leaf consumes while ≥2 panes are selected. A `selectable={false}` cell (or
+ * a non-leaf child) ignores clicks and never rings. The click detection reads
+ * pointer events in the CAPTURE phase (so it still sees them while the inner
+ * pane pointer-captures for a pan) but never preventDefault/stopPropagation — so
+ * drag-to-pan, wheel/pinch zoom and compare drag-to-split are untouched; only a
+ * near-stationary press (< slop) counts as a select.
+ */
+function SelectionCell({
+  paneId,
+  selectable,
+  fill,
+  children,
+}: {
+  paneId: string;
+  selectable: boolean;
+  fill: boolean;
+  children: React.ReactNode;
+}) {
+  const sel = useContext(PlotSelectionContext);
+  const store = sel?.store ?? null;
+
+  const subscribe = useCallback(
+    (cb: () => void) => (store ? store.subscribe(cb) : () => {}),
+    [store],
+  );
+  const getSnapshot = useCallback(
+    () => (store ? store.getSelected() : EMPTY_SELECTION),
+    [store],
+  );
+  const selected = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
+  const isSelected = selectable && selected.includes(paneId);
+  // Sync groups (null unless this pane is one of ≥2 selected) — the shared
+  // derivation `paneSyncGroups` is the same one the integration test asserts on.
+  const groups = store && selectable ? paneSyncGroups(store, paneId, sel!.selectionGroupBase) : null;
+
+  const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
+  const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
+    // A press that STARTS on an interactive control (toolbar button, slider,
+    // menu item, link) drives that control — never a selection. Recorded at
+    // down so a control click is excluded even if the pointer drifts a little.
+    const onControl = !!(e.target as Element | null)?.closest?.(
+      'button, input, select, textarea, a, [role="menu"], [role="menuitem"], [contenteditable="true"]',
+    );
+    downRef.current = { x: e.clientX, y: e.clientY, onControl };
+  }, []);
+  const onPointerUpCapture = useCallback(
+    (e: React.PointerEvent) => {
+      const d = downRef.current;
+      downRef.current = null;
+      if (!d || d.onControl || !store) return;
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > SELECTION_CLICK_SLOP_PX) return;
+      const mode: SelectionMode = e.shiftKey || e.ctrlKey || e.metaKey ? "toggle" : "replace";
+      store.select(paneId, mode);
+    },
+    [store, paneId],
+  );
+
+  const style: React.CSSProperties = {
+    minWidth: 0,
+    position: "relative",
+    ...(fill ? { height: "100%" } : null),
+  };
+  if (isSelected) {
+    // A ring via `outline` (negative offset → sits INSIDE the cell) never shifts
+    // layout, and the accent token themes it for light/dark.
+    style.outline = "2px solid var(--color-accent)";
+    style.outlineOffset = "-2px";
+    style.borderRadius = "4px";
+  }
+
+  const paneSync = useMemo<PaneSyncCtx | null>(
+    () =>
+      groups
+        ? {
+            viewportSyncGroupId: groups.viewportGroupId,
+            settingsSyncGroupId: groups.settingsGroupId,
+            syncIsAnchor: groups.isAnchor,
+          }
+        : null,
+    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor],
+  );
+
+  return (
+    <div
+      style={style}
+      data-plot-pane-id={paneId}
+      data-selected={isSelected ? "true" : undefined}
+      onPointerDownCapture={selectable ? onPointerDownCapture : undefined}
+      onPointerUpCapture={selectable ? onPointerUpCapture : undefined}
+    >
+      <PaneSyncContext.Provider value={paneSync}>{children}</PaneSyncContext.Provider>
+    </div>
+  );
+}
+
 function GridView({ node }: { node: GridNode }) {
   const { source, shared: parentShared } = useSharedPlot();
   // Image viewport sync (`shared.sync.viewport`, SharedProps in
@@ -595,16 +751,33 @@ function GridView({ node }: { node: GridNode }) {
   // re-seeds the context below (`node.shared && node.shared !== parentShared`).
   const viewportSyncGroupId = node.shared?.sync?.viewport ? `plot-grid-viewport-${localId}` : null;
 
+  // Selection is scoped per GRID instance (its own sibling panes) — one store +
+  // one sync-group base per `useId()`, provided unconditionally so selection
+  // works on ANY grid, independent of the static `shared.sync.viewport` opt-in.
+  const selectionCtx = useMemo<PlotSelectionCtx>(
+    () => ({ store: getSelectionStore(localId), selectionGroupBase: `plot-sel-${localId}` }),
+    [localId],
+  );
+
   const grid = (
-    <ChartFillContext.Provider value={fill}>
-      <div style={gridStyle}>
-        {children.map((child, i) => (
-          <div key={i} style={fill ? { height: "100%", minWidth: 0 } : { minWidth: 0 }}>
-            <PlotNodeView node={child} />
-          </div>
-        ))}
-      </div>
-    </ChartFillContext.Provider>
+    <PlotSelectionContext.Provider value={selectionCtx}>
+      <ChartFillContext.Provider value={fill}>
+        <div style={gridStyle}>
+          {children.map((child, i) => {
+            const paneId = `${localId}::${i}`;
+            const selectable =
+              child.kind === "grid"
+                ? false
+                : (child.props?.selectable as boolean | undefined) !== false;
+            return (
+              <SelectionCell key={i} paneId={paneId} selectable={selectable} fill={fill}>
+                <PlotNodeView node={child} />
+              </SelectionCell>
+            );
+          })}
+        </div>
+      </ChartFillContext.Provider>
+    </PlotSelectionContext.Provider>
   );
 
   const body =
