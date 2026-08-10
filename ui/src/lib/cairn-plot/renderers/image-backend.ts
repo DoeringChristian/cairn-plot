@@ -240,6 +240,17 @@ export interface ImageBackendProps {
   pixelValueNotation?: PixelValueNotation;
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`). */
   toolbar?: boolean;
+  // — multi-viewport SELECTION settings sync (viewport/image-settings-sync.ts) —
+  /** When set (this pane is part of a ≥2 selection), the pane links its
+   *  view-local display-setting overrides (colormap/tonemap/gamma/peak/exposure/
+   *  offset) to this group: a local control change broadcasts to the group, and
+   *  peers' changes apply here. Threaded down by `plot-node.tsx`'s
+   *  `SelectionCell`; absent = no settings sync. */
+  settingsSyncGroupId?: string;
+  /** True when this pane is the selection ANCHOR — it seeds the group with its
+   *  full current settings when the group forms, so members adopt the anchor's
+   *  settings (design req 5). */
+  syncIsAnchor?: boolean;
 }
 
 /**

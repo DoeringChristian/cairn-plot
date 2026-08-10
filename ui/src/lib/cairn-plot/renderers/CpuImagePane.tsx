@@ -89,6 +89,8 @@ import {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
+import { useSyncedImageSettings } from "./use-synced-image-settings";
+import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
   colormapToolbarButton,
   tonemapToolbarButton,
@@ -259,7 +261,13 @@ function useAutoImageRendering(
 // verbatim), rendering its display element through the shared shell.
 // ---------------------------------------------------------------------------
 
-function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
+function CpuSdrImagePane(
+  props: SdrImageProps & {
+    toolbar?: boolean;
+    settingsSyncGroupId?: string;
+    syncIsAnchor?: boolean;
+  },
+) {
   const {
     imageUrl,
     baselineUrl = null,
@@ -320,6 +328,50 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
   useEffect(() => {
     if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
   }, [gammaProp, setTonemapGamma]);
+
+  // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
+  // CPU SDR path syncs colormap, the display-transfer operator and its γ (the
+  // controls it actually owns; it has no in-pane exposure/offset — see the
+  // graceful-degradation note at the sliders).
+  const applyRemoteSettings = useCallback(
+    (patch: ImageSyncSettings) => {
+      if (patch.colormap !== undefined) setColormap(patch.colormap as Colormap);
+      if (patch.tonemap !== undefined) setSdrTransfer(patch.tonemap as TonemapOperator);
+      if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
+    },
+    [setColormap, setSdrTransfer, setTonemapGamma],
+  );
+  const settingsSnapshot = useCallback(
+    (): ImageSyncSettings => ({ colormap, tonemap: sdrTransfer, tonemapGamma }),
+    [colormap, sdrTransfer, tonemapGamma],
+  );
+  const publishSettings = useSyncedImageSettings(
+    props.settingsSyncGroupId,
+    !!props.syncIsAnchor,
+    settingsSnapshot,
+    applyRemoteSettings,
+  );
+  const changeColormap = useCallback(
+    (id: Colormap) => {
+      setColormap(id);
+      publishSettings({ colormap: id });
+    },
+    [setColormap, publishSettings],
+  );
+  const changeSdrTransfer = useCallback(
+    (id: TonemapOperator) => {
+      setSdrTransfer(id);
+      publishSettings({ tonemap: id });
+    },
+    [setSdrTransfer, publishSettings],
+  );
+  const changeGamma = useCallback(
+    (v: number) => {
+      setTonemapGamma(v);
+      publishSettings({ tonemapGamma: v });
+    },
+    [setTonemapGamma, publishSettings],
+  );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
@@ -802,10 +854,10 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
       leadingMenus={
         colormap === "none"
           ? [
-              colormapToolbarButton(colormap, (id) => setColormap(id as Colormap)),
-              displayTransferToolbarButton(sdrTransfer, (id) => setSdrTransfer(id as TonemapOperator)),
+              colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap)),
+              displayTransferToolbarButton(sdrTransfer, (id) => changeSdrTransfer(id as TonemapOperator)),
             ]
-          : [colormapToolbarButton(colormap, (id) => setColormap(id as Colormap))]
+          : [colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap))]
       }
       // γ slider — shown only while the Gamma transfer is in effect on the plain
       // path (PEAK-slider precedent).
@@ -821,7 +873,7 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
                 max: TONEMAP_GAMMA_MAX,
                 step: TONEMAP_GAMMA_STEP,
                 value: tonemapGamma,
-                onChange: setTonemapGamma,
+                onChange: changeGamma,
                 format: (v: number) => v.toFixed(1),
               },
             ]
@@ -858,7 +910,13 @@ function CpuSdrImagePane(props: SdrImageProps & { toolbar?: boolean }) {
 // compare-diff / processing here — asymmetric by design (see module doc).
 // ---------------------------------------------------------------------------
 
-function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
+function CpuHdrImagePane(
+  props: HdrImageProps & {
+    toolbar?: boolean;
+    settingsSyncGroupId?: string;
+    syncIsAnchor?: boolean;
+  },
+) {
   const {
     tonemap = "srgb",
     exposure = 0,
@@ -913,6 +971,61 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
   // change already does), never a diff. The display EV ADDS to the prop exposure.
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
+
+  // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
+  // CPU HDR path syncs the tone-map operator, its γ, and exposure/offset.
+  const applyRemoteSettings = useCallback(
+    (patch: ImageSyncSettings) => {
+      if (patch.tonemap !== undefined) setTonemapOp(patch.tonemap as TonemapOperator);
+      if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
+      if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
+      if (patch.offset !== undefined) setDisplayOffset(patch.offset);
+    },
+    [setTonemapOp, setTonemapGamma],
+  );
+  const settingsSnapshot = useCallback(
+    (): ImageSyncSettings => ({
+      tonemap: tonemapOp,
+      tonemapGamma,
+      exposureEV: displayEV,
+      offset: displayOffset,
+    }),
+    [tonemapOp, tonemapGamma, displayEV, displayOffset],
+  );
+  const publishSettings = useSyncedImageSettings(
+    props.settingsSyncGroupId,
+    !!props.syncIsAnchor,
+    settingsSnapshot,
+    applyRemoteSettings,
+  );
+  const changeTonemap = useCallback(
+    (id: TonemapOperator) => {
+      setTonemapOp(id);
+      publishSettings({ tonemap: id });
+    },
+    [setTonemapOp, publishSettings],
+  );
+  const changeGamma = useCallback(
+    (v: number) => {
+      setTonemapGamma(v);
+      publishSettings({ tonemapGamma: v });
+    },
+    [setTonemapGamma, publishSettings],
+  );
+  const changeExposure = useCallback(
+    (ev: number) => {
+      setDisplayEV(ev);
+      publishSettings({ exposureEV: ev });
+    },
+    [publishSettings],
+  );
+  const changeOffset = useCallback(
+    (off: number) => {
+      setDisplayOffset(off);
+      publishSettings({ offset: off });
+    },
+    [publishSettings],
+  );
 
   // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma /
   // display-adjust.
@@ -1014,15 +1127,15 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
       // it is the SDR rendition by construction (P=1, no PEAK slider). HOME
       // restores the default.
       leadingMenus={[
-        tonemapToolbarButton(tonemapOp, (id) => setTonemapOp(id as TonemapOperator)),
+        tonemapToolbarButton(tonemapOp, (id) => changeTonemap(id as TonemapOperator)),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change).
       displayAdjust={{
         exposureEV: displayEV,
         offset: displayOffset,
-        onExposureChange: setDisplayEV,
-        onOffsetChange: setDisplayOffset,
+        onExposureChange: changeExposure,
+        onOffsetChange: changeOffset,
       }}
       // γ slider — shown ONLY while the Gamma operator is in effect (the same
       // conditional-slider precedent PEAK uses on the GPU pane).
@@ -1038,7 +1151,7 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
                 max: TONEMAP_GAMMA_MAX,
                 step: TONEMAP_GAMMA_STEP,
                 value: tonemapGamma,
-                onChange: setTonemapGamma,
+                onChange: changeGamma,
                 format: (v: number) => v.toFixed(1),
               },
             ]
@@ -1086,10 +1199,16 @@ export type CpuImagePaneProps = ImageBackendProps;
  */
 export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Element {
   const props = useLegacyImageProps(backendProps);
+  // The selection settings-sync fields ride ALONGSIDE the reconstructed legacy
+  // props (they aren't part of the dtype-keyed `LegacyImageProps` shape).
+  const sync = {
+    settingsSyncGroupId: backendProps.settingsSyncGroupId,
+    syncIsAnchor: backendProps.syncIsAnchor,
+  };
   return isHdrProps(props) ? (
-    <CpuHdrImagePane {...props} />
+    <CpuHdrImagePane {...props} {...sync} />
   ) : (
-    <CpuSdrImagePane {...props} />
+    <CpuSdrImagePane {...props} {...sync} />
   );
 }
 

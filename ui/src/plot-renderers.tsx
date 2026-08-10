@@ -306,19 +306,38 @@ function HeatmapStandalone(p: P) {
 function useSyncedImageViewport(
   groupId: string | null | undefined,
   seed: ImageViewport,
+  isAnchor = false,
 ): [ImageViewport, (v: ImageViewport) => void] {
   const [viewport, setViewport] = useState<ImageViewport>(seed);
   const sourceIdRef = useRef<string>();
   if (!sourceIdRef.current) sourceIdRef.current = makeImageViewportSyncSourceId();
+  // Current viewport in a ref so the anchor-seed effect can publish it without
+  // itself re-running on every viewport change.
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
 
   useEffect(() => {
     if (!groupId) return;
-    const last = getLastImageViewportState(groupId);
-    if (last) setViewport(last);
+    // A NON-anchor adopts the group's last-published viewport on join; the
+    // anchor never adopts (it seeds the group below), so a stale viewport from a
+    // prior selection session can't snap the anchor back.
+    if (!isAnchor) {
+      const last = getLastImageViewportState(groupId);
+      if (last) setViewport(last);
+    }
     return subscribeImageViewportState(groupId, sourceIdRef.current!, (state) => {
       setViewport(state);
     });
-  }, [groupId]);
+  }, [groupId, isAnchor]);
+
+  // When THIS pane becomes the anchor of a freshly-formed selection group, seed
+  // the group with its current viewport so newly-added members adopt the
+  // anchor's view (design req 5) instead of a stale last-published state.
+  useEffect(() => {
+    if (groupId && isAnchor) {
+      publishImageViewportState(groupId, sourceIdRef.current!, viewportRef.current);
+    }
+  }, [groupId, isAnchor]);
 
   const onViewportChange = useCallback(
     (v: ImageViewport) => {
@@ -340,10 +359,13 @@ function useSyncedImageViewport(
 // (threaded from a grid's `shared.sync.viewport` — see `plot-node.tsx`) links
 // this viewport to every other synced pane in the same grid.
 function ImageStandalone(p: P) {
-  const [viewport, onViewportChange] = useSyncedImageViewport(p.viewportSyncGroupId, {
-    zoom: p.zoom ?? 1,
-    pan: p.pan ?? { x: 0, y: 0 },
-  });
+  // `p.syncIsAnchor` + the selection-derived sync group ids are threaded down by
+  // `plot-node.tsx`'s `SelectionCell` while ≥2 panes are selected (else absent).
+  const [viewport, onViewportChange] = useSyncedImageViewport(
+    p.viewportSyncGroupId,
+    { zoom: p.zoom ?? 1, pan: p.pan ?? { x: 0, y: 0 } },
+    !!p.syncIsAnchor,
+  );
   // resolveImageRenderer: the backend for this mount (GpuImagePane or
   // CpuImagePane — both satisfy the ONE `ImageBackendProps` contract, so the
   // swap is a drop-in replacement), chosen by the user-settable render mode:
@@ -386,6 +408,8 @@ function ImageStandalone(p: P) {
       zoom={viewport.zoom}
       pan={viewport.pan}
       onViewportChange={onViewportChange}
+      settingsSyncGroupId={p.settingsSyncGroupId}
+      syncIsAnchor={!!p.syncIsAnchor}
     />
   );
   // A FLOAT source gets a sizing ChartBox (as the former HDR adapter did) so it

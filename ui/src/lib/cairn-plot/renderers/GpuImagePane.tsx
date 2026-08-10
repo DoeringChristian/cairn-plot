@@ -107,6 +107,8 @@ import type { ImageParams } from "../engine/image-engine";
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
 import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
+import { useSyncedImageSettings } from "./use-synced-image-settings";
+import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
   colormapToolbarButton,
   tonemapToolbarButton,
@@ -471,6 +473,85 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // is 0 so it's the only exposure. Never triggers a source re-upload.
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
+
+  // -----------------------------------------------------------------------
+  // Multi-viewport SELECTION: display-settings sync. When this pane joins a ≥2
+  // selection (`props.settingsSyncGroupId` set), a local control change
+  // broadcasts to the group and peers' changes apply to our override state; the
+  // anchor seeds the group with its full current settings. The wrapped
+  // `change*` handlers below are the ONE publish site per control; the render
+  // JSX wires them into the menus/sliders. See `use-synced-image-settings.ts`.
+  // -----------------------------------------------------------------------
+  const applyRemoteSettings = useCallback(
+    (patch: ImageSyncSettings) => {
+      if (patch.colormap !== undefined) setColormapOverride(patch.colormap as Colormap);
+      if (patch.tonemap !== undefined) setTonemapOverride(patch.tonemap as TonemapOperator);
+      if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
+      if (patch.peak !== undefined) setPeak(patch.peak);
+      if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
+      if (patch.offset !== undefined) setDisplayOffset(patch.offset);
+    },
+    [setColormapOverride, setTonemapOverride, setTonemapGamma, setPeak],
+  );
+  const settingsSnapshot = useCallback(
+    (): ImageSyncSettings => ({
+      colormap: sdrColormap,
+      tonemap: effectiveTonemap,
+      tonemapGamma,
+      peak,
+      exposureEV: displayEV,
+      offset: displayOffset,
+    }),
+    [sdrColormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
+  );
+  const publishSettings = useSyncedImageSettings(
+    props.settingsSyncGroupId,
+    !!props.syncIsAnchor,
+    settingsSnapshot,
+    applyRemoteSettings,
+  );
+  const changeColormap = useCallback(
+    (id: Colormap) => {
+      setColormapOverride(id);
+      publishSettings({ colormap: id });
+    },
+    [setColormapOverride, publishSettings],
+  );
+  const changeTonemap = useCallback(
+    (id: TonemapOperator) => {
+      setTonemapOverride(id);
+      publishSettings({ tonemap: id });
+    },
+    [publishSettings],
+  );
+  const changeExposure = useCallback(
+    (ev: number) => {
+      setDisplayEV(ev);
+      publishSettings({ exposureEV: ev });
+    },
+    [publishSettings],
+  );
+  const changeOffset = useCallback(
+    (off: number) => {
+      setDisplayOffset(off);
+      publishSettings({ offset: off });
+    },
+    [publishSettings],
+  );
+  const changePeak = useCallback(
+    (v: number) => {
+      setPeak(v);
+      publishSettings({ peak: v });
+    },
+    [setPeak, publishSettings],
+  );
+  const changeGamma = useCallback(
+    (v: number) => {
+      setTonemapGamma(v);
+      publishSettings({ tonemapGamma: v });
+    },
+    [setTonemapGamma, publishSettings],
+  );
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
   // re-fire that sizing whenever `devicePixelRatio` itself changes (moving
@@ -1028,21 +1109,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // display-ready). The HDR pane has no colormap prop.
       leadingMenus={
         hdrMode
-          ? [tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator))]
+          ? [tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator))]
           : sdrPlain
             ? [
-                colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap)),
-                tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator)),
+                colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap)),
+                tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)),
               ]
-            : [colormapToolbarButton(sdrColormap, (id) => setColormapOverride(id as Colormap))]
+            : [colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap))]
       }
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths), so no source re-upload / diff recompute.
       displayAdjust={{
         exposureEV: displayEV,
         offset: displayOffset,
-        onExposureChange: setDisplayEV,
-        onOffsetChange: setDisplayOffset,
+        onExposureChange: changeExposure,
+        onOffsetChange: changeOffset,
       }}
       // UNIFIED sliders: PEAK is the HDR MODE — shown WHENEVER the real HDR
       // surface engaged (every operator respects `P` as its ceiling; SDR forces
@@ -1062,7 +1143,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
                 max: EXTENDED_TONEMAP_PEAK_MAX,
                 step: EXTENDED_TONEMAP_PEAK_STEP,
                 value: peak,
-                onChange: setPeak,
+                onChange: changePeak,
                 format: (v: number) => (Number.isFinite(v) ? `${v.toFixed(1)}×` : "∞"),
               },
             ]
@@ -1078,7 +1159,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
                 max: TONEMAP_GAMMA_MAX,
                 step: TONEMAP_GAMMA_STEP,
                 value: tonemapGamma,
-                onChange: setTonemapGamma,
+                onChange: changeGamma,
                 format: (v: number) => v.toFixed(1),
               },
             ]
