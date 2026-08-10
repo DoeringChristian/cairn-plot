@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cairn-plot — pick &amp; compare two images</title>
+    <!--
+      Pick TWO images from THIS device (phone camera roll, Files, or desktop
+      disk) and compare them with cairn-plot — 100% client-side. Nothing is
+      uploaded: each picked file is read straight into a `blob:` URL via
+      `URL.createObjectURL(file)` and decoded IN THE BROWSER by cairn-plot's
+      decoder registry (browser-native PNG/JPEG/WebP/GIF; OpenEXR/.hdr/.pfm and
+      float `.npy`/`.npz` via the bundled WASM/worker decoders). No server, no
+      network, no CDN.
+
+      The page is authored ENTIRELY in JavaScript against the first-class JS
+      builder surface `window.cairnPlot` — the same builders as Python's
+      `cairn_plot` — using ONLY the documented API:
+        cairnPlot.image(data, opts)  and  cairnPlot.compare(a, b, opts)
+
+      It loads the committed offline bundles relative to this file:
+        - core.iife.js       the renderers + `window.cairnPlot`
+        - gpu-image.iife.js  the WebGPU/WebGL2 image + compare engine
+      Build them first (`cd ui && npm run build:plot-inline`) then open this file
+      straight from disk (file://). The GitHub Pages build inlines the bundles
+      into ONE self-contained file (see ui/scripts/inline-html.mjs).
+    -->
+    <link rel="stylesheet" href="../ui/dist/plot-inline/style.css" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --card: #161b22;
+        --border: #30363d;
+        --accent: #4493f8;
+        --field: #0d1117;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #ffffff;
+          --fg: #1f2328;
+          --muted: #57606a;
+          --card: #f6f8fa;
+          --border: #d0d7de;
+          --accent: #0969da;
+          --field: #ffffff;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 2rem 1rem 4rem;
+        font: 16px/1.6 -apple-system, system-ui, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      main { max-width: 60rem; margin: 0 auto; }
+      h1 {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 1.5rem;
+        margin: 0 0 0.25rem;
+      }
+      .lede { color: var(--muted); margin: 0.25rem 0 1.5rem; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.85em;
+        background: color-mix(in srgb, var(--muted) 22%, transparent);
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+      }
+      a { color: var(--accent); }
+
+      /* Pickers */
+      .pickers {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+      }
+      @media (max-width: 34rem) {
+        .pickers { grid-template-columns: 1fr; }
+      }
+      .picker {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.9rem 1rem;
+      }
+      .picker h2 {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 0 0 0.6rem;
+      }
+      /* Native file input is hidden; the <label> is the tap target (big, so it
+         works well on a phone — opens the camera roll / Files picker). */
+      input[type="file"] {
+        position: absolute;
+        width: 1px; height: 1px;
+        padding: 0; margin: -1px; overflow: hidden;
+        clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+      }
+      .pick-btn {
+        display: block;
+        width: 100%;
+        text-align: center;
+        cursor: pointer;
+        padding: 0.7rem 1rem;
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        color: var(--accent);
+        background: transparent;
+        font-weight: 600;
+        font-size: 0.95rem;
+        user-select: none;
+      }
+      .pick-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+      .filename {
+        margin: 0.55rem 0 0;
+        font-size: 0.82rem;
+        color: var(--muted);
+        word-break: break-all;
+        min-height: 1.2em;
+      }
+      .filename.set { color: var(--fg); }
+
+      /* Controls */
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1.1rem;
+        align-items: flex-end;
+        margin: 1.25rem 0 0.5rem;
+      }
+      .ctl { display: flex; flex-direction: column; gap: 0.25rem; }
+      .ctl label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+      }
+      select, .btn {
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 0.4rem 0.6rem;
+        color: var(--fg);
+        background: var(--field);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+      }
+      .btn { cursor: pointer; }
+      .btn:hover { border-color: var(--accent); }
+      .spacer { flex: 1 1 auto; }
+
+      /* Output */
+      #out {
+        margin-top: 1rem;
+        min-height: 320px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .hint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 320px;
+        padding: 2rem;
+        text-align: center;
+        color: var(--muted);
+      }
+      .note {
+        margin-top: 1.5rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .error {
+        margin-top: 1rem;
+        padding: 0.75rem 1rem;
+        border: 1px solid #f85149;
+        border-radius: 8px;
+        color: #f85149;
+        background: color-mix(in srgb, #f85149 10%, transparent);
+        white-space: pre-wrap;
+      }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Pick &amp; compare two images</h1>
+      <p class="lede">
+        Choose two images from <strong>this device</strong> and compare them
+        with cairn-plot — side&#8209;by&#8209;side, a wipe slider, a blend, or a
+        pixel&#8209;diff (incl. perceptual FLIP / SSIM). Everything runs
+        <strong>locally in your browser</strong>: nothing is uploaded and no
+        network is used. Works with <code>.png</code> / <code>.jpg</code> /
+        <code>.webp</code> / <code>.gif</code> and HDR
+        <code>.exr</code> / <code>.hdr</code> / <code>.pfm</code> / float
+        <code>.npy</code> / <code>.npz</code>.
+      </p>
+
+      <div class="pickers">
+        <div class="picker">
+          <h2>Reference (A)</h2>
+          <label class="pick-btn" for="file-a">Choose image A…</label>
+          <input
+            id="file-a"
+            type="file"
+            accept="image/*,.exr,.hdr,.pfm,.npy,.npz"
+          />
+          <p class="filename" id="name-a">No image chosen</p>
+        </div>
+        <div class="picker">
+          <h2>Comparison (B)</h2>
+          <label class="pick-btn" for="file-b">Choose image B…</label>
+          <input
+            id="file-b"
+            type="file"
+            accept="image/*,.exr,.hdr,.pfm,.npy,.npz"
+          />
+          <p class="filename" id="name-b">No image chosen</p>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="ctl">
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <optgroup label="View">
+              <option value="side">Side by side</option>
+              <option value="slide">Wipe slider</option>
+              <option value="blend">Blend</option>
+            </optgroup>
+            <optgroup label="Difference">
+              <option value="abs">Absolute diff</option>
+              <option value="signed">Signed diff</option>
+              <option value="square">Squared diff</option>
+              <option value="rel_abs">Relative abs</option>
+              <option value="rel_signed">Relative signed</option>
+              <option value="rel_square">Relative squared</option>
+              <option value="flip">FLIP (perceptual)</option>
+              <option value="flip_ldr">FLIP (LDR)</option>
+              <option value="ssim">SSIM (1 − SSIM)</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="ctl">
+          <label for="colormap">Diff colormap</label>
+          <select id="colormap">
+            <option value="magma">Magma</option>
+            <option value="viridis">Viridis</option>
+            <option value="plasma">Plasma</option>
+            <option value="red-green">Red–Green</option>
+            <option value="red-blue">Red–Blue</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+        <div class="ctl">
+          <label for="tonemap">HDR tone-map</label>
+          <select id="tonemap">
+            <option value="auto">Auto</option>
+            <option value="aces">ACES</option>
+            <option value="reinhard">Reinhard</option>
+            <option value="srgb">sRGB</option>
+            <option value="gamma">Gamma</option>
+            <option value="linear">Linear</option>
+          </select>
+        </div>
+        <div class="ctl">
+          <label for="fit">Size fit</label>
+          <select id="fit">
+            <option value="crop">Crop</option>
+            <option value="fill">Fill</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn" id="swap" type="button" title="Swap A and B">⇄ Swap</button>
+        <button class="btn" id="sample" type="button">Try a sample pair</button>
+        <button class="btn" id="clear" type="button">Clear</button>
+      </div>
+
+      <div id="error" class="error hidden"></div>
+
+      <div id="out">
+        <div class="hint" id="hint">
+          Choose image A and image B above to compare them. Pick just one to
+          preview it on its own.
+        </div>
+      </div>
+
+      <p class="note">
+        Tip: mismatched resolutions are reconciled automatically before a diff
+        (see the <em>Size fit</em> control); the compare toolbar adds zoom/pan,
+        a pixel read-out, exposure, and the mode/kernel switcher. FLIP and SSIM
+        need WebGPU — a notice appears in-pane if your browser lacks it. Built
+        with <a href="https://github.com/doeringchristian/cairn-plot">cairn-plot</a>.
+      </p>
+    </main>
+
+    <script src="../ui/dist/plot-inline/core.iife.js"></script>
+    <script src="../ui/dist/plot-inline/gpu-image.iife.js"></script>
+    <script>
+      (function () {
+        "use strict";
+        var cp = window.cairnPlot;
+        var out = document.getElementById("out");
+        var hint = document.getElementById("hint");
+        var errBox = document.getElementById("error");
+        var modeSel = document.getElementById("mode");
+        var colormapSel = document.getElementById("colormap");
+        var tonemapSel = document.getElementById("tonemap");
+        var fitSel = document.getElementById("fit");
+
+        if (!cp || typeof cp.compare !== "function") {
+          showError(
+            "cairn-plot did not load. Build the bundles first:\n" +
+              "  cd ui && npm run build:plot-inline\n" +
+              "then reopen this page.",
+          );
+          return;
+        }
+
+        // Each slot holds the picked file's live blob: URL (kept alive until the
+        // slot is replaced — the compare panes re-fetch it on every re-render).
+        var slots = { a: null, b: null };
+        var mounted = null; // current MountedPlot, torn down before each re-render
+
+        function showError(msg) {
+          errBox.textContent = msg;
+          errBox.classList.remove("hidden");
+        }
+        function clearError() {
+          errBox.textContent = "";
+          errBox.classList.add("hidden");
+        }
+
+        function setSlotFromFile(key, file) {
+          releaseSlot(key);
+          slots[key] = {
+            name: file.name || "(unnamed)",
+            url: URL.createObjectURL(file),
+          };
+          var nameEl = document.getElementById("name-" + key);
+          nameEl.textContent = slots[key].name;
+          nameEl.classList.add("set");
+        }
+
+        function setSlotFromUrl(key, name, url) {
+          releaseSlot(key);
+          // Sample images use data: URLs (nothing to revoke) — flag so we don't.
+          slots[key] = { name: name, url: url, keep: true };
+          var nameEl = document.getElementById("name-" + key);
+          nameEl.textContent = name;
+          nameEl.classList.add("set");
+        }
+
+        function releaseSlot(key) {
+          var s = slots[key];
+          if (s && s.url && !s.keep && s.url.indexOf("blob:") === 0) {
+            URL.revokeObjectURL(s.url);
+          }
+          slots[key] = null;
+        }
+
+        // A cairnPlot.image handle for one slot. ONE unified call — cairn-plot
+        // decides float-vs-uint8 from the CONTENT (no hdr flag): a raw-buffer blob
+        // (EXR/.hdr/.pfm/.npy) is fetched, magic-sniffed, and decoded to float; a
+        // browser-native blob decodes to u8. The tone-map is a display choice
+        // applied after decode — "auto" lets the renderer pick its surface default
+        // (sRGB for SDR, linear+managed-peak for HDR); any other value overrides.
+        function imageFor(slot) {
+          var opts = {};
+          if (tonemapSel.value && tonemapSel.value !== "auto") {
+            opts.tonemap = tonemapSel.value;
+          }
+          return cp.image({ url: slot.url }, opts);
+        }
+
+        function render() {
+          clearError();
+          if (mounted) {
+            try { mounted.unmount(); } catch (e) { /* ignore */ }
+            mounted = null;
+          }
+          out.replaceChildren();
+
+          var a = slots.a;
+          var b = slots.b;
+          if (!a && !b) {
+            out.appendChild(hint);
+            return;
+          }
+
+          var target = document.createElement("div");
+          out.appendChild(target);
+
+          try {
+            var handle;
+            if (a && b) {
+              handle = cp.compare(imageFor(a), imageFor(b), {
+                mode: modeSel.value,
+                colormap: colormapSel.value,
+                fit: fitSel.value,
+                align: "center",
+              });
+            } else {
+              // Only one chosen → preview it on its own.
+              handle = imageFor(a || b);
+            }
+            mounted = handle.mount(target);
+          } catch (e) {
+            out.replaceChildren();
+            out.appendChild(hint);
+            showError("Could not render: " + (e && e.message ? e.message : e));
+          }
+        }
+
+        // ── Wire the pickers + controls ──────────────────────────────────────
+        document.getElementById("file-a").addEventListener("change", function (ev) {
+          if (ev.target.files && ev.target.files[0]) {
+            setSlotFromFile("a", ev.target.files[0]);
+            render();
+          }
+        });
+        document.getElementById("file-b").addEventListener("change", function (ev) {
+          if (ev.target.files && ev.target.files[0]) {
+            setSlotFromFile("b", ev.target.files[0]);
+            render();
+          }
+        });
+
+        [modeSel, colormapSel, tonemapSel, fitSel].forEach(function (el) {
+          el.addEventListener("change", render);
+        });
+
+        document.getElementById("swap").addEventListener("click", function () {
+          var tmp = slots.a;
+          slots.a = slots.b;
+          slots.b = tmp;
+          syncName("a");
+          syncName("b");
+          render();
+        });
+
+        function syncName(key) {
+          var s = slots[key];
+          var nameEl = document.getElementById("name-" + key);
+          nameEl.textContent = s ? s.name : "No image chosen";
+          nameEl.classList.toggle("set", !!s);
+        }
+
+        document.getElementById("clear").addEventListener("click", function () {
+          releaseSlot("a");
+          releaseSlot("b");
+          syncName("a");
+          syncName("b");
+          document.getElementById("file-a").value = "";
+          document.getElementById("file-b").value = "";
+          modeSel.value = "side";
+          render();
+        });
+
+        // ── Sample pair (fully local: two canvases drawn client-side, one with
+        //    a shifted highlight so the diff modes light up) ──────────────────
+        function sampleDataUrl(shiftPx) {
+          var w = 320, h = 220;
+          var c = document.createElement("canvas");
+          c.width = w; c.height = h;
+          var ctx = c.getContext("2d");
+          var grad = ctx.createLinearGradient(0, 0, w, h);
+          grad.addColorStop(0, "#1b3a6b");
+          grad.addColorStop(1, "#7fc2e8");
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = "rgba(255,255,255,0.92)";
+          ctx.beginPath();
+          ctx.arc(w / 2 + shiftPx, h / 2, h / 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255,196,64,0.95)";
+          ctx.fillRect(30 + shiftPx, 24, 60, 40);
+          return c.toDataURL("image/png");
+        }
+        document.getElementById("sample").addEventListener("click", function () {
+          setSlotFromUrl("a", "sample-A.png", sampleDataUrl(0));
+          setSlotFromUrl("b", "sample-B.png (shifted)", sampleDataUrl(14));
+          if (modeSel.value === "side") modeSel.value = "slide";
+          render();
+        });
+      })();
+    </script>
+  </body>
+</html>
