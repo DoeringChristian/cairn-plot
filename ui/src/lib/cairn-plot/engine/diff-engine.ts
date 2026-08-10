@@ -496,7 +496,13 @@ ${SAMPLING_WGSL}
     let avg = (disp.r + disp.g + disp.b) / 3.0;
     var idx = avg;
     if (cmapModeId == 2) { idx = 0.5 + avg * 0.5; } // "positive"
-    outColor = sampleLUT(lut, idx);
+    // Mirror the source filter: when the diff RESULT is sampled bilinearly
+    // (moderate zoom), interpolate the LUT too — otherwise the smooth diff
+    // magnitude snaps to one of 256 discrete colormap bins, banding the
+    // false-color image into blocky per-texel cells (the colormap-interp bug).
+    // At the pixelated zoom the nearest fetch keeps crisp per-texel color.
+    if (filterLinear) { outColor = sampleLUTLinear(lut, idx); }
+    else { outColor = sampleLUT(lut, idx); }
   } else {
     outColor = disp;
   }

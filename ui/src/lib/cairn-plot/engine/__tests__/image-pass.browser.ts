@@ -315,6 +315,11 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   }
 
   {
+    // Scalar + colormap, texel-aligned + `filter:"nearest"` — this pins the
+    // NEAREST LUT contract (crisp per-texel color, the pixelated-zoom path). The
+    // computeExpectedRGB reference uses the round-half-up nearest index, so
+    // forcing `nearest` here keeps it byte-exact; the LINEAR (smooth-zoom) LUT
+    // path is covered by the dedicated blend case below.
     const caseLabel = `${label}/scalar+colormap`;
     const params: ImageParams = {
       exposureEV: 0,
@@ -322,6 +327,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
       isScalar: true,
       hdrOut: false,
       uv: uvFull,
+      filter: "nearest",
       colormap: VIRIDIS_FLOAT_LUT,
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SCALAR_PIXELS, params, VIRIDIS_FLOAT_LUT));
@@ -329,7 +335,10 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
 
   {
     // LUT-index rounding parity boundary case — see CASES item 7 above and
-    // BOUNDARY_LUT/BOUNDARY_SCALAR_PIXELS's doc comments.
+    // BOUNDARY_LUT/BOUNDARY_SCALAR_PIXELS's doc comments. `filter:"nearest"`:
+    // the round-half-up index contract is the NEAREST-path (pixelated-zoom)
+    // behavior; the LINEAR path deliberately blends adjacent entries instead
+    // (see the linear-blend case below).
     const caseLabel = `${label}/lut-rounding-boundary`;
     const params: ImageParams = {
       exposureEV: 0,
@@ -337,9 +346,56 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
       isScalar: true,
       hdrOut: false,
       uv: uvFull,
+      filter: "nearest",
       colormap: BOUNDARY_LUT,
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, BOUNDARY_SCALAR_PIXELS, params, BOUNDARY_LUT));
+  }
+
+  {
+    // REGRESSION (colormap-interpolation bug): with a colormap active and
+    // `filter:"linear"` (moderate zoom), an output pixel sampled BETWEEN two
+    // source texels must be a LUT BLEND, not either texel's exact colormapped
+    // color. Before the fix the interpolated scalar snapped to ONE nearest LUT
+    // entry, so the false-color image showed blocky per-texel cells even though
+    // the plain (non-LUT) path was smooth at the same zoom.
+    //
+    // Source = 2 texels [127/255, 128/255]; BOUNDARY_LUT is alternating
+    // black/white so lut[127]=white(1), lut[128]=black(0) differ maximally. A
+    // 3-wide output samples its MIDDLE pixel at source-uv 0.5 → bilinear scalar
+    // 127.5/255 → idxF 127.5. LINEAR LUT blends white+black by 0.5 = 0.5, sRGB-
+    // encoded ≈ byte 188 — strictly BETWEEN the two texels' colors (0 and 255).
+    // The OLD nearest code returned lut[128]=0 (a solid block).
+    const caseLabel = `${label}/scalar+colormap/linear-blends-lut`;
+    const src = buildSrcTexture(device, [
+      [127 / 255, 0, 0, 1.0],
+      [128 / 255, 0, 0, 1.0],
+    ]);
+    const target = device.createTexture(3, 1, "rgba8unorm");
+    renderImage(device, target, src, {
+      exposureEV: 0,
+      operator: "linear",
+      isScalar: true,
+      hdrOut: false,
+      uv: uvFull,
+      filter: "linear",
+      colormap: BOUNDARY_LUT,
+    });
+    const out = await device.readback(target);
+    src.destroy();
+    target.destroy();
+    let ok = out instanceof Uint8Array;
+    if (out instanceof Uint8Array) {
+      const mid = out[1 * 4 + 0]!; // middle output pixel, R channel
+      const isBlend = mid > 20 && mid < 235; // strictly between black(0) and white(255)
+      const nearExpected = Math.abs(mid - 188) <= 3; // sRGB(0.5) ≈ 188
+      ok = isBlend && nearExpected;
+      report(isBlend, `[${caseLabel}] middle pixel is a LUT blend (0<${mid}<255, not a nearest snap)`);
+      report(nearExpected, `[${caseLabel}] middle pixel ≈188 (sRGB-encoded 0.5 blend), got ${mid}`);
+    } else {
+      report(false, `[${caseLabel}] readback should be Uint8Array`);
+    }
+    results.set(caseLabel, { label: caseLabel, ok, out: out instanceof Uint8Array ? out : null });
   }
 
   {

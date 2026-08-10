@@ -8,7 +8,7 @@
  * Contents:
  *   - `VERTEX_WGSL`    — the fullscreen-triangle vertex stage (same Y-flip
  *     convention as `shaders/image.wgsl.ts` / `passthrough.wgsl.ts`).
- *   - `SAMPLING_WGSL`  — bilinear/nearest source sampling + nearest LUT lookup.
+ *   - `SAMPLING_WGSL`  — bilinear/nearest source sampling + nearest/linear LUT lookup.
  *   - `TONEMAP_WGSL`   — sRGB OETF + tone-map operators + `processSide`
  *     (the per-side exposure→[scalar LUT]→operator→encode pipeline, verbatim
  *     from `shaders/compare.wgsl.ts`, used by the split/blend compose shaders).
@@ -59,11 +59,31 @@ fn sampleBilinearOf(tex: texture_2d<f32>, uv: vec2<f32>, dims: vec2<f32>) -> vec
   return mix(top, bot, frac.y);
 }
 
-// Nearest-texelFetch LUT lookup, round-half-up index (see image.wgsl.ts).
+// Colormap LUT lookup, nearest and linear variants (see image.wgsl.ts's
+// sampleLutNearestF/sampleLutLinearF doc). Callers pick the variant with the
+// SAME filterMode flag that selects nearest vs. bilinear source sampling, so a
+// colormapped result shares one interpolation decision with the plain path:
+//  - NEAREST (round-half-up index) at the pixelated zoom — crisp per-texel color.
+//  - LINEAR (blend adjacent entries by the fractional index) at moderate zoom —
+//    so a bilinearly-interpolated scalar yields a smooth color rather than
+//    snapping to one of 256 discrete bins (the per-texel banding / blocky
+//    corners bug). At a texel-aligned 8-bit scalar the fraction is 0, so LINEAR
+//    degenerates to the exact NEAREST entry.
 fn sampleLUT(lut: texture_2d<f32>, valueUnit: f32) -> vec3<f32> {
   let idxF = clamp(valueUnit, 0.0, 1.0) * 255.0;
   let idx = clamp(i32(floor(idxF + 0.5)), 0, 255);
   return textureLoad(lut, vec2<i32>(idx, 0), 0).rgb;
+}
+
+fn sampleLUTLinear(lut: texture_2d<f32>, valueUnit: f32) -> vec3<f32> {
+  let idxF = clamp(valueUnit, 0.0, 1.0) * 255.0;
+  let base = floor(idxF);
+  let i0 = clamp(i32(base), 0, 255);
+  let i1 = min(i0 + 1, 255);
+  let frac = idxF - base;
+  let c0 = textureLoad(lut, vec2<i32>(i0, 0), 0).rgb;
+  let c1 = textureLoad(lut, vec2<i32>(i1, 0), 0).rgb;
+  return mix(c0, c1, frac);
 }
 `;
 
@@ -175,11 +195,17 @@ fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
 // lut is only read when isScalar. offset is the TEV display offset (added AFTER
 // exposure, BEFORE colormap/tonemap/encode). On hdrOut the EXTENDED (unclamped)
 // encode runs so values past P survive to the extended HDR surface.
-fn processSide(lut: texture_2d<f32>, sampled: vec4<f32>, exposureEV: f32, offset: f32, operatorId: i32, gamma: f32, isScalar: bool, hdrOut: bool, peak: f32, srgbDecode: bool) -> vec3<f32> {
+fn processSide(lut: texture_2d<f32>, sampled: vec4<f32>, exposureEV: f32, offset: f32, operatorId: i32, gamma: f32, isScalar: bool, hdrOut: bool, peak: f32, srgbDecode: bool, filterLinear: bool) -> vec3<f32> {
   var src = sampled.rgb;
   if (srgbDecode) { src = vec3<f32>(srgbEotf(src.r), srgbEotf(src.g), srgbEotf(src.b)); }
   var rgb = src * exp2(exposureEV) + vec3<f32>(offset);
-  if (isScalar) { rgb = sampleLUT(lut, rgb.x); }
+  // LUT lookup mirrors the source filter (see sampleLUT/sampleLUTLinear doc):
+  // bilinear source sampling -> linear LUT, nearest -> nearest, so colormapped
+  // compare sides interpolate exactly like the plain single-image path.
+  if (isScalar) {
+    if (filterLinear) { rgb = sampleLUTLinear(lut, rgb.x); }
+    else { rgb = sampleLUT(lut, rgb.x); }
+  }
   rgb = applyOperator(rgb, operatorId, peak);
   let hasGamma = gamma > 0.0;
   if (hdrOut) {
