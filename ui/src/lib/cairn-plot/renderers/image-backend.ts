@@ -96,6 +96,11 @@ export interface HdrImageProps {
    *  `group`, only the free-floating pixel-notation toggle while the TEV overlay
    *  is active). */
   toolbar?: boolean;
+  /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
+   *  Threaded through `useLegacyImageProps` so the pane body reads it here. */
+  settingsSyncGroupId?: string;
+  /** True when this pane is the selection ANCHOR (see {@link ImageBackendProps}). */
+  syncIsAnchor?: boolean;
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
@@ -152,6 +157,11 @@ export interface SdrImageProps {
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`); see
    *  {@link HdrImageProps.toolbar} and `ImagePaneShell`. */
   toolbar?: boolean;
+  /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
+   *  Threaded through `useLegacyImageProps` so the pane body reads it here. */
+  settingsSyncGroupId?: string;
+  /** True when this pane is the selection ANCHOR (see {@link ImageBackendProps}). */
+  syncIsAnchor?: boolean;
 }
 
 /**
@@ -331,6 +341,8 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       onViewportChange: p.onViewportChange,
       pixelValueNotation: p.pixelValueNotation,
       toolbar: p.toolbar,
+      settingsSyncGroupId: p.settingsSyncGroupId,
+      syncIsAnchor: p.syncIsAnchor,
     };
   }
   return {
@@ -359,6 +371,8 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     overlaySettings: p.overlaySettings,
     pixelValueNotation: p.pixelValueNotation,
     toolbar: p.toolbar,
+    settingsSyncGroupId: p.settingsSyncGroupId,
+    syncIsAnchor: p.syncIsAnchor,
   };
 }
 
