@@ -107,6 +107,39 @@ export class SelectionStore {
   }
 }
 
+/** The selection-derived sync groups a pane joins. `null` when the pane is not
+ *  part of a ≥2 selection (a lone selection is a highlight, not a sync group). */
+export interface PaneSyncGroups {
+  /** Shared viewport (zoom/pan) group id — all active members use the same one. */
+  viewportGroupId: string;
+  /** Shared display-settings group id. */
+  settingsGroupId: string;
+  /** Whether this pane is the group ANCHOR (first-selected) — it seeds the
+   *  group's view + settings so newly-added members adopt them. */
+  isAnchor: boolean;
+}
+
+/**
+ * The single source of truth (shared by `plot-node.tsx`'s `SelectionCell` and
+ * the sync integration test) for a pane's selection-driven sync groups: a pane
+ * syncs iff it is one of ≥2 selected panes; the whole active group shares the
+ * `${base}-vp` / `${base}-st` group ids, and the first-selected member is the
+ * anchor. `base` is the grid's `selectionGroupBase`.
+ */
+export function paneSyncGroups(
+  store: SelectionStore,
+  paneId: string,
+  base: string,
+): PaneSyncGroups | null {
+  const selected = store.getSelected();
+  if (selected.length < 2 || !selected.includes(paneId)) return null;
+  return {
+    viewportGroupId: `${base}-vp`,
+    settingsGroupId: `${base}-st`,
+    isAnchor: selected[0] === paneId,
+  };
+}
+
 const stores = new Map<string, SelectionStore>();
 
 /** The `SelectionStore` for a grid id, created on first use. One store per

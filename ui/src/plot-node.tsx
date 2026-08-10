@@ -51,6 +51,7 @@ import {
 import { getRenderer, onRegister } from "./plot-registry";
 import {
   getSelectionStore,
+  paneSyncGroups,
   type SelectionMode,
   type SelectionStore,
 } from "./lib/cairn-plot/viewport/selection-store";
@@ -652,10 +653,9 @@ function SelectionCell({
   const selected = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const isSelected = selectable && selected.includes(paneId);
-  // Sync only engages once ≥2 panes are jointly selected (a lone selection is
-  // just a highlight); the first-selected pane is the group anchor.
-  const selectionActive = isSelected && selected.length >= 2;
-  const isAnchor = selectionActive && selected[0] === paneId;
+  // Sync groups (null unless this pane is one of ≥2 selected) — the shared
+  // derivation `paneSyncGroups` is the same one the integration test asserts on.
+  const groups = store && selectable ? paneSyncGroups(store, paneId, sel!.selectionGroupBase) : null;
 
   const downRef = useRef<{ x: number; y: number } | null>(null);
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
@@ -686,14 +686,17 @@ function SelectionCell({
     style.borderRadius = "4px";
   }
 
-  const paneSync = useMemo<PaneSyncCtx | null>(() => {
-    if (!selectionActive || !sel) return null;
-    return {
-      viewportSyncGroupId: `${sel.selectionGroupBase}-vp`,
-      settingsSyncGroupId: `${sel.selectionGroupBase}-st`,
-      syncIsAnchor: isAnchor,
-    };
-  }, [selectionActive, sel, isAnchor]);
+  const paneSync = useMemo<PaneSyncCtx | null>(
+    () =>
+      groups
+        ? {
+            viewportSyncGroupId: groups.viewportGroupId,
+            settingsSyncGroupId: groups.settingsGroupId,
+            syncIsAnchor: groups.isAnchor,
+          }
+        : null,
+    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor],
+  );
 
   return (
     <div
