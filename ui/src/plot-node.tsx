@@ -657,15 +657,21 @@ function SelectionCell({
   // derivation `paneSyncGroups` is the same one the integration test asserts on.
   const groups = store && selectable ? paneSyncGroups(store, paneId, sel!.selectionGroupBase) : null;
 
-  const downRef = useRef<{ x: number; y: number } | null>(null);
+  const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
-    downRef.current = { x: e.clientX, y: e.clientY };
+    // A press that STARTS on an interactive control (toolbar button, slider,
+    // menu item, link) drives that control — never a selection. Recorded at
+    // down so a control click is excluded even if the pointer drifts a little.
+    const onControl = !!(e.target as Element | null)?.closest?.(
+      'button, input, select, textarea, a, [role="menu"], [role="menuitem"], [contenteditable="true"]',
+    );
+    downRef.current = { x: e.clientX, y: e.clientY, onControl };
   }, []);
   const onPointerUpCapture = useCallback(
     (e: React.PointerEvent) => {
       const d = downRef.current;
       downRef.current = null;
-      if (!d || !store) return;
+      if (!d || d.onControl || !store) return;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > SELECTION_CLICK_SLOP_PX) return;
       const mode: SelectionMode = e.shiftKey || e.ctrlKey || e.metaKey ? "toggle" : "replace";
       store.select(paneId, mode);
