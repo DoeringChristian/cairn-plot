@@ -16,7 +16,7 @@
  *    the fetch+decode `image.url` seam (`.exr`/`.npy` HDR), by reference.
  */
 import { mintRuntimeHash, type RuntimeStoreEntry } from "../viewport/runtime-store.ts";
-import { isRawBufferFormat, sniffFormat } from "../image/decoders.ts";
+import { isBrowserNativeFormat, sniffFormat } from "../image/decoders.ts";
 import type { DataSpec } from "../../../plot-descriptor.ts";
 
 export interface ShapedImage {
@@ -162,13 +162,16 @@ export function shapeImageData(input: unknown, opts: ImageDataOpts = {}): Shaped
         ? (input as { url: string }).url
         : null;
   if (urlStr != null) {
-    // Route by the ONE format registry (the single source of truth), NOT a local
-    // extension set. A raw-buffer format (exr/npy/npz/pfm — plus the fail-loud
-    // hdr) can't be `<img>`-decoded, so it takes the client fetch+decode seam
-    // (`kind:"image"` + url); the decoder alone decides float-vs-uint8 from the
-    // content (§1). Anything else — a browser-native ext OR an unknown/ext-less
-    // URL — stays a verbatim `<img>` passthrough (lighter, no fetch, byte-exact).
-    if (isRawBufferFormat(sniffFormat({ url: urlStr }))) {
+    // Route to MATCH Python (`cp.Image(url=…)` decodes ANY URL): the verbatim
+    // `<img>` fast-path is reserved for a KNOWN browser-native ext
+    // (png/jpeg/webp/avif/gif — lighter, no fetch, byte-exact). EVERYTHING else —
+    // a raw-buffer ext (exr/npy/npz/pfm/hdr) OR an unknown/extensionless/blob URL
+    // whose bytes might still be EXR/npy — takes the client fetch+magic-sniff+
+    // decode seam (`kind:"image"` + url); the decoder alone decides float-vs-uint8
+    // from the CONTENT (§1). Routing unknown URLs here (not to a verbatim `<img>`
+    // that would choke on EXR bytes) closes the JS/Python asymmetry and makes the
+    // content-first fallback in `decoders.ts` reachable from JS.
+    if (!isBrowserNativeFormat(sniffFormat({ url: urlStr }))) {
       return { float: false, data: { kind: "image", hash: null, url: urlStr }, runtime: [] };
     }
     return { float: false, data: { kind: "url", src: urlStr }, runtime: [] };

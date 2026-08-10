@@ -299,3 +299,59 @@ test("EXR dispatches to the bundled reader (rejects malformed bytes, not a stub)
 test("raw decoders require bytes, not just a url", async () => {
   await assert.rejects(decodeImage({ url: "https://x/y.npy" }), /needs raw bytes/);
 });
+
+// ---------------------------------------------------------------------------
+// Content-first fallback: an extensionless/blob URL is fetched ONCE, its magic
+// bytes decide the format, then it decodes — the JS builder now routes such
+// URLs here (parity with Python's decode-any-URL). See `data.ts` routing.
+// ---------------------------------------------------------------------------
+test("decodeImage content-first: fetch-mocked extensionless URL sniffs npy magic and decodes", async () => {
+  const buf = makeNpy("<f4", [2, 2], [0, 0.5, 1, 2]);
+  const orig = globalThis.fetch;
+  let fetched = 0;
+  let fetchedUrl = "";
+  globalThis.fetch = (async (url: any) => {
+    fetched++;
+    fetchedUrl = String(url);
+    return {
+      ok: true,
+      headers: { get: () => null }, // no content-type — magic bytes are the authority
+      arrayBuffer: async () => buf,
+    } as unknown as Response;
+  }) as typeof fetch;
+  try {
+    // No ext, no mime → sniffFormat is "unknown", so decodeImage takes the
+    // content-first branch: fetch the bytes, sniff the magic (npy), decode.
+    assert.equal(sniffFormat({ url: "https://example.com/blob-xyz" }), "unknown");
+    const decoded = await decodeImage({ url: "https://example.com/blob-xyz" });
+    assert.equal(fetched, 1, "must fetch exactly once (bytes threaded back into src)");
+    assert.equal(fetchedUrl, "https://example.com/blob-xyz");
+    assert.equal(decoded.kind, "f32");
+    assert.equal(decoded.width, 2);
+    assert.equal(decoded.height, 2);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test("decodeImage content-first: extensionless URL with EXR magic reaches the EXR reader", async () => {
+  // A truncated EXR (magic only) proves ROUTING: content-first fetch → sniff exr
+  // → the real EXR reader (which then rejects the truncated body). Not a stub.
+  const exrMagic = new Uint8Array([0x76, 0x2f, 0x31, 0x01]).buffer;
+  const orig = globalThis.fetch;
+  let fetched = 0;
+  globalThis.fetch = (async () => {
+    fetched++;
+    return {
+      ok: true,
+      headers: { get: () => null },
+      arrayBuffer: async () => exrMagic,
+    } as unknown as Response;
+  }) as typeof fetch;
+  try {
+    await assert.rejects(decodeImage({ url: "blob:https://x/deadbeef" }));
+    assert.equal(fetched, 1, "content-first fetched the blob URL once");
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
