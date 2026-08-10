@@ -41,7 +41,7 @@ export { SERIES_COLORS, overlayClassColor } from "./types";
 export { DEFAULT_OVERLAY_SETTINGS } from "./types";
 
 // Colormaps
-export { DIVERGING_COLORMAPS, getColormapLUT } from "./colormaps";
+export { COLORMAP_NAMES, COLORMAP_OPTIONS, DIVERGING_COLORMAPS, getColormapLUT } from "./colormaps";
 
 // npy/npz parsing + histogram transforms
 export {
