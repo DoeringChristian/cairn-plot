@@ -156,3 +156,33 @@ def test_sdr_image_gamma_routes_to_transfer_not_processing() -> None:
     assert props.get("gamma") == 2.2
     # processing block (if present) must NOT carry the gamma (default 1.0 there).
     assert props.get("processing", {}).get("gamma", 1.0) == 1.0
+
+
+def test_url_image_exposure_offset_are_top_level_not_processing() -> None:
+    # FIX 1: cp.Image(url=".exr", exposure=-1) — the client decodes a float URL to
+    # a FLOAT source, which discards the CSS-filter `processing` block. So
+    # exposure/offset MUST be emitted TOP-LEVEL (in-shader) or they are silently
+    # dropped (~2x too bright). BOTH surfaces (uint8 + float) read them top-level.
+    import cairn_plot as cp
+
+    exr = cp.Image(url="render.exr", exposure=-1.0, offset=0.1, tonemap="aces")
+    props = exr._props
+    assert props.get("exposure") == -1.0, "exposure must be top-level"
+    assert props.get("offset") == 0.1, "offset must be top-level"
+    assert props.get("tonemap") == "aces"
+    # never ALSO in the CSS-filter processing block (would double-apply).
+    proc = props.get("processing", {})
+    assert proc.get("exposure", 0.0) == 0.0
+    assert proc.get("offset", 0.0) == 0.0
+    # a URL source keeps the ONE "image" renderer + fetch/decode data seam.
+    assert exr._data == {"kind": "image", "hash": None, "url": "render.exr"}
+
+    # uint8 URL (.png) + exposure: applied ONCE, top-level (not dropped/doubled).
+    png = cp.Image(url="photo.png", exposure=-1.0)
+    assert png._props.get("exposure") == -1.0
+    assert png._props.get("processing", {}).get("exposure", 0.0) == 0.0
+
+    # With no exposure/offset the keys are absent (renderer defaults hold).
+    plain = cp.Image(url="render.exr", tonemap="aces")
+    assert "exposure" not in plain._props
+    assert "offset" not in plain._props

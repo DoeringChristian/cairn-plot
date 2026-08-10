@@ -1065,14 +1065,23 @@ class Image(Component):
             if not isinstance(url, str):
                 raise ValueError("cp.Image(url=...) must be a string URL.")
             transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma, peak=peak)
+            # `exposure`/`offset` are lifted TOP-LEVEL (in-shader), NOT routed into
+            # the CSS-filter `processing` block (hence exposure=None/offset=None
+            # here): the unified FLOAT surface discards `processing`, so a float URL
+            # (.exr/.npy/…) would silently drop them. BOTH surfaces read them
+            # top-level. Same "lift out of processing" mechanism as `gamma`.
             self._props = _image_display_props(
-                exposure=exposure, gamma=(None if transfer else gamma),
+                exposure=None, gamma=(None if transfer else gamma),
                 brightness=brightness,
-                contrast=contrast, offset=offset, flip_sign=flip_sign,
+                contrast=contrast, offset=None, flip_sign=flip_sign,
                 colormap=colormap, interpolation=interpolation,
                 show_axes=show_axes, pixel_value_notation=pixel_value_notation,
             )
             self._props.update(transfer)
+            if exposure is not None:
+                self._props["exposure"] = float(exposure)
+            if offset is not None:
+                self._props["offset"] = float(offset)
             self._renderer = "image"
             self._data: dict[str, Any] = {"kind": "image", "hash": None, "url": url}
             self._data_mode = data_mode

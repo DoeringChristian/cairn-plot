@@ -60,20 +60,26 @@ const num = (v: unknown): number => Number(v);
 // image config props (mirrors Python `_image_display_props` / `_image_hdr_props`)
 // ---------------------------------------------------------------------------
 
-function imageDisplayProps(o: Opts, suppressGamma = false): Opts {
+function imageDisplayProps(o: Opts, suppressGamma = false, suppressExposureOffset = false): Opts {
   const props: Opts = {};
   const { exposure, gamma, brightness, contrast, offset, flipSign, colormap, interpolation, showAxes, pixelValueNotation } = o;
   // `gamma` is suppressed here when a UNIFIED tone-map transfer is engaged, so
   // the Gamma operator's γ is never ALSO applied as the CSS-filter
   // `processing.gamma` (mirrors Python `_image_display_props` gamma=None wiring).
   const gammaForProcessing = suppressGamma ? null : gamma;
-  if ([exposure, gammaForProcessing, brightness, contrast, offset, flipSign].some((v) => v != null)) {
+  // `exposure`/`offset` are suppressed here on the UNIFIED non-float path, where
+  // they are lifted TOP-LEVEL (in-shader) instead — the float surface discards
+  // `processing`, so routing them here silently drops them for a float URL. Same
+  // "lift out of processing" mechanism as `suppressGamma`.
+  const exposureForProcessing = suppressExposureOffset ? null : exposure;
+  const offsetForProcessing = suppressExposureOffset ? null : offset;
+  if ([exposureForProcessing, gammaForProcessing, brightness, contrast, offsetForProcessing, flipSign].some((v) => v != null)) {
     props.processing = {
       brightness: brightness != null ? num(brightness) : 0,
       contrast: contrast != null ? num(contrast) : 0,
       gamma: gammaForProcessing != null ? num(gammaForProcessing) : 1,
-      exposure: exposure != null ? num(exposure) : 0,
-      offset: offset != null ? num(offset) : 0,
+      exposure: exposureForProcessing != null ? num(exposureForProcessing) : 0,
+      offset: offsetForProcessing != null ? num(offsetForProcessing) : 0,
       flipSign: flipSign != null ? Boolean(flipSign) : false,
     };
   }
@@ -272,8 +278,16 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
         props = imageHdrProps(opts);
       } else {
         const transfer = imageSdrTransferProps(opts);
-        props = imageDisplayProps(opts, Object.keys(transfer).length > 0);
+        props = imageDisplayProps(opts, Object.keys(transfer).length > 0, /* suppressExposureOffset */ true);
         Object.assign(props, transfer);
+        // Emit `exposure`/`offset` TOP-LEVEL (in-shader), NOT into the CSS-filter
+        // `processing` block. The unified FLOAT surface discards `processing`, so
+        // a float URL (.exr/.npy/…) would silently drop them; BOTH surfaces read
+        // them top-level (SdrImageProps for uint8, the HDR reconstruction for
+        // float). Suppressed from `processing` above so they are never applied
+        // twice. Mirrors how `gamma` is lifted via `suppressGamma`.
+        if (opts.exposure != null) props.exposure = num(opts.exposure);
+        if (opts.offset != null) props.offset = num(opts.offset);
       }
       // Host seam: emit `toolbar:false` only when explicitly disabled (omitted at
       // the default `true`), mirroring Python `cp.Image(toolbar=...)`.
