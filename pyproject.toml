@@ -32,12 +32,19 @@ media = [
     "plotly>=5.18",
     "pillow>=10.0.0",
 ]
-# Test/dev tooling. `media` is pulled in so the plotly-gated tests + examples
-# run rather than skip.
+# LaTeX math in `cp.Report` markdown ($…$ / $$…$$) rendered to native MathML.
+# Pure-Python (no system LaTeX, no C extension); lazy-imported only when a
+# report actually contains math, so the base install stays dependency-free.
+math = [
+    "latex2mathml>=3.77",
+]
+# Test/dev tooling. `media` + `math` are pulled in so the plotly-gated tests +
+# examples run rather than skip, and the MathML tests exercise the real backend.
 dev = [
     "pytest>=8.0",
     "plotly>=5.18",
     "pillow>=10.0.0",
+    "latex2mathml>=3.77",
     "flip-evaluator>=1.7",  # official NVIDIA FLIP — validation example + kernel test fixtures
 ]
 

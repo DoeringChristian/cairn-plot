@@ -241,6 +241,24 @@
   font-size: 0.82rem;
 }
 
+/* ---- math (native MathML — no JS/CSS/font runtime) ----------------------- */
+/* Browsers render <math> natively; this is only a layout nudge. Inline math
+   sits on the text baseline; a display block (`$$…$$`) centers with breathing
+   room and scrolls (never overflows the column) if very wide. A failed/absent
+   equation degrades to `<code class="math-unrendered">` (inherits code style). */
+.cairn-report .cairn-prose math {
+  font-size: 1.05em;
+}
+.cairn-report .cairn-prose math[display="inline"] {
+  vertical-align: baseline;
+}
+.cairn-report .cairn-prose math[display="block"] {
+  display: block;
+  margin: 1rem 0;
+  text-align: center;
+  overflow-x: auto;
+}
+
 /* ---- lists, quotes, rules ------------------------------------------------ */
 
 .cairn-report .cairn-prose ul,

@@ -57,13 +57,147 @@ _HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
 # keeps a bare `---` (a horizontal rule) from matching.
 _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$")
 
+# --- LaTeX math (rendered to native MathML at save-time; see _render_math) ---
+#
+# Inline `$…$` math — with a deliberate CURRENCY rule so prose like `$5 and $10`
+# is NOT eaten as math: a `$…$` span is math ONLY when the opening `$` is
+#   * not escaped (`\$`) and not the second `$` of a `$$` (negative lookbehind),
+#   * immediately followed by a NON-space, `(?!\s)`,
+# and the closing `$` is
+#   * immediately preceded by a NON-space and NON-backslash, `(?<![\s\\])`
+#     (so an escaped `\$` can neither open nor close a span),
+#   * not followed by another `$` (so `$$` blocks are left to the block pass),
+# with the whole span balanced on ONE line (`[^$\n]`). `$5 and $10` fails the
+# `(?<![\s\\])` before the closing `$` (the char before it is a space), so it
+# stays literal — and it can't reach across an escaped `\$` further along the
+# line either. `$x^2$` matches. Block `$$…$$` is handled per-line (below).
+_MATH_DOLLAR_RE = re.compile(r"(?<![\\$])\$(?!\s)([^$\n]+?)(?<![\s\\])\$(?!\$)")
+# Inline `\(…\)` alias (common in markdown-math).
+_MATH_PAREN_RE = re.compile(r"\\\((.+?)\\\)")
+# Block/display delimiters (own line/paragraph): `$$…$$` and its `\[…\]` alias.
+_BLOCK_MATH_DELIMS = (("$$", "$$"), ("\\[", "\\]"))
+# The optional pure-Python LaTeX->MathML backend + the pip hint named in the
+# one-time "math present but backend missing" warning.
+_MATH_EXTRA = "math"
+_MATH_PIP_HINT = "pip install 'cairn-plot[math]'"
+
+
+@functools.lru_cache(maxsize=1)
+def _math_converter() -> Any:
+    """The lazy-imported pure-Python LaTeX->MathML converter (``latex2mathml``),
+    or ``None`` if the optional ``math`` extra is not installed.
+
+    Lazy + cached so the base install stays dependency-free (the import only
+    happens once a report actually contains math), and so the "backend missing"
+    warning fires exactly ONCE per process."""
+    try:
+        from latex2mathml.converter import convert  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001 - any import failure -> graceful degrade
+        log.warning(
+            "cairn-plot report: LaTeX math ($…$ / $$…$$) is present but the optional "
+            "MathML backend is not installed; equations render as literal text. "
+            "Install it with `%s`.",
+            _MATH_PIP_HINT,
+        )
+        return None
+    return convert
+
+
+def _latex_to_mathml(latex: str, display: str) -> str | None:
+    """LaTeX -> a namespaced MathML string, or ``None`` when the backend is
+    absent or this specific equation fails to parse (logged, never raised)."""
+    convert = _math_converter()
+    if convert is None:
+        return None
+    try:
+        return convert(latex, display=display)
+    except Exception as exc:  # noqa: BLE001 - a bad equation must not kill a report
+        log.warning(
+            "cairn-plot report: could not render LaTeX %r as MathML (%s: %s); "
+            "falling back to literal text.",
+            latex,
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+
+def _render_math(latex: str, display: str) -> str:
+    """A math span -> verbatim MathML (trusted converter output, injected raw),
+    or a visible ``<code class="math-unrendered">`` fallback (backend absent or
+    equation unparseable) — degrade gracefully, never crash the report."""
+    latex = latex.strip()
+    mathml = _latex_to_mathml(latex, display)
+    if mathml is not None:
+        return mathml
+    delim = "$$" if display == "block" else "$"
+    return f'<code class="math-unrendered">{_html.escape(delim + latex + delim)}</code>'
+
+
+def _match_block_math(lines: list[str], i: int) -> tuple[str, int] | None:
+    """If the block starting at ``lines[i]`` is a ``$$…$$`` / ``\\[…\\]`` display
+    equation — single-line or spanning lines until the closing delimiter — return
+    ``(latex, next_index)``; else ``None`` (an unterminated open falls through to
+    normal prose)."""
+    stripped = lines[i].strip()
+    for open_d, close_d in _BLOCK_MATH_DELIMS:
+        if not stripped.startswith(open_d):
+            continue
+        rest = stripped[len(open_d):]
+        # Single-line: `$$ … $$` closing on the same line.
+        if len(rest.strip()) >= len(close_d) and rest.rstrip().endswith(close_d):
+            inner = rest.rstrip()[: -len(close_d)]
+            return inner.strip(), i + 1
+        # Multi-line: collect until a line ending with the closing delimiter.
+        buf: list[str] = [rest] if rest.strip() else []
+        j = i + 1
+        n = len(lines)
+        while j < n:
+            lj = lines[j].rstrip()
+            if lj.strip().endswith(close_d):
+                pre = lj[: lj.rindex(close_d)]
+                if pre.strip():
+                    buf.append(pre)
+                return "\n".join(buf).strip(), j + 1
+            buf.append(lines[j])
+            j += 1
+        return None  # unterminated
+    return None
+
 
 def _inline_markdown(text: str) -> str:
+    """Inline spans -> HTML. Code and math spans are extracted to placeholders
+    FIRST — before ``html.escape`` and before emphasis — so LaTeX (`x_i`, `a^2`,
+    `\\frac{..}{..}`, `<`/`>`/`&`) and backtick contents survive verbatim; the
+    remaining prose runs the normal escape+emphasis pipeline, then the rendered
+    (already-safe) spans are substituted back in."""
+    tokens: dict[str, str] = {}
+
+    def _stash(rendered: str) -> str:
+        # `\x00`/`\x01` sentinels survive html.escape (it only touches & < > " ')
+        # and match no emphasis/link pattern.
+        key = f"\x00m{len(tokens)}\x01"
+        tokens[key] = rendered
+        return key
+
+    # (1) Code spans first — their content is literal (never math nor emphasis),
+    #     so `` `$x$` `` stays a literal `$x$`.
+    text = _CODE_RE.sub(lambda m: _stash(f"<code>{_html.escape(m.group(1))}</code>"), text)
+    # (2) Math spans next (before escape/emphasis). `\(…\)` then `$…$`.
+    text = _MATH_PAREN_RE.sub(lambda m: _stash(_render_math(m.group(1), "inline")), text)
+    text = _MATH_DOLLAR_RE.sub(lambda m: _stash(_render_math(m.group(1), "inline")), text)
+
+    # (3) Normal pipeline on the remaining prose.
     escaped = _html.escape(text)
     escaped = _LINK_RE.sub(r'<a href="\2">\1</a>', escaped)
     escaped = _BOLD_RE.sub(r"<strong>\1</strong>", escaped)
     escaped = _ITALIC_RE.sub(r"<em>\1</em>", escaped)
-    escaped = _CODE_RE.sub(r"<code>\1</code>", escaped)
+    # An escaped literal dollar `\$` renders as a plain `$` (and never opened math).
+    escaped = escaped.replace("\\$", "$")
+
+    # (4) Substitute the rendered code/math spans back in verbatim.
+    for key, rendered in tokens.items():
+        escaped = escaped.replace(key, rendered)
     return escaped
 
 
@@ -135,9 +269,11 @@ def _markdown_to_html(source: str) -> str:
     Block constructs: ATX headers (``#``..``######``), paragraphs, unordered
     (``-``/``*``) and ordered (``1.``) lists with one level of nested
     indentation, fenced ```` ``` ```` code blocks, GFM pipe tables (a header row
-    + a ``---|---`` separator row), ``>`` blockquotes, and ``---``/``***``/
-    ``___`` horizontal rules. Inline spans: ``[text](url)`` links,
-    ``**bold**``, ``*italic*``, and ``` `code` ```. Not a full CommonMark
+    + a ``---|---`` separator row), ``>`` blockquotes, ``---``/``***``/
+    ``___`` horizontal rules, and ``$$…$$`` / ``\\[…\\]`` display-math blocks
+    (rendered to native MathML). Inline spans: ``[text](url)`` links,
+    ``**bold**``, ``*italic*``, ``` `code` ```, and ``$…$`` / ``\\(…\\)`` math.
+    Not a full CommonMark
     implementation — good enough for report prose. Raw HTML is never passed
     through here (use ``cp.Report.html(...)`` for verbatim markup); everything
     is HTML-escaped before inline spans are applied."""
@@ -167,6 +303,17 @@ def _markdown_to_html(source: str) -> str:
             i += 1  # step past the closing fence (or past EOF)
             code = _html.escape("\n".join(code_lines))
             parts.append(f"<pre><code>{code}</code></pre>")
+            continue
+
+        # Block/display math — a `$$…$$` or `\[…\]` equation as its own
+        # paragraph (single-line or spanning lines), emitted as ONE block-level
+        # `<math display="block">`. Checked before headers/tables/rules so a
+        # `$$…$$` line is never mistaken for prose.
+        block_math = _match_block_math(lines, i)
+        if block_math is not None:
+            flush_para()
+            latex, i = block_math
+            parts.append(_render_math(latex, "block"))
             continue
 
         if not stripped:
