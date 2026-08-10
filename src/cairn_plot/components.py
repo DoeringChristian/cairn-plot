@@ -952,21 +952,22 @@ def _image_sdr_transfer_props(
 class Image(Component):
     """A single-view image plot.
 
-    Two pipelines share one leaf, routed by the data:
+    ONE renderer ("image"), ONE leaf. The float-vs-uint8 SURFACE is an internal
+    detail of that renderer, keyed on the DECODED SOURCE's dtype — never a
+    separate renderer id and never an ``hdr=`` flag (there is none). Data routing:
 
-    * **8-bit** (``image`` renderer, the default) — mounts the pure ``ImagePane``.
-      ``data`` accepts a ``run[tag]`` image artifact (LOCAL bakes the bytes into
-      the content-addressed store; ENDPOINT emits an ``image`` DataSpec by
-      reference), a raw image (``PIL.Image`` / numpy array / PNG-JPEG ``bytes``,
-      baked LOCAL only), or a raw URL ``str`` (a ``url`` DataSpec). ``exposure``/
-      ``gamma``/``brightness``/``contrast``/``offset``/``flip_sign``/``colormap``
-      map to the display-space ``processing`` CSS-filter block.
-    * **float-HDR** (``imagehdr`` renderer) — a genuine float array is baked to a
-      float ``.npy`` (``imghdr`` DataSpec) and tone-mapped client-side. Entered
-      when ``data`` is a **float** numpy array AND (``hdr=True`` OR (``hdr`` unset
-      AND the array has values outside ``[0,1]``)). ``hdr=False`` forces the
-      8-bit clamp path; a uint8 array or a float array in ``[0,1]`` (``hdr``
-      unset) stays 8-bit. HDR props route to the real tone-map: ``tonemap`` ∈
+    * **uint8 / 8-bit source** (the default) — ``data`` accepts a ``run[tag]``
+      image artifact (LOCAL bakes the bytes into the content-addressed store;
+      ENDPOINT emits an ``image`` DataSpec by reference), a raw image
+      (``PIL.Image`` / numpy array / PNG-JPEG ``bytes``, baked LOCAL only), or a
+      raw URL ``str`` (a ``url`` DataSpec). ``brightness``/``contrast``/
+      ``flip_sign`` map to the display-space ``processing`` CSS-filter block;
+      ``tonemap``/``gamma``/``peak`` select the unified operator (all 5, top-level).
+    * **float source** — a genuine float numpy array is ALWAYS baked to a float
+      ``.npy`` (``imghdr`` DataSpec) and tone-mapped client-side (1.0 = display
+      white, values >1 preserved as headroom). There is NO ``max>1``/``min<0``
+      auto-HDR heuristic: an in-``[0,1]`` float and an EXR share the ONE float
+      pipeline. Float props route to the real tone-map: ``tonemap`` ∈
       the SDR set ``{linear,srgb,reinhard,aces}`` OR the HDR-out ``extended``
       family ``{extended,extended-clamp,extended-reinhard,extended-aces}``
       (default ``srgb``),
@@ -974,7 +975,7 @@ class Image(Component):
       after exposure), and an OPTIONAL ``gamma`` override;
       ``showAxes``/``interpolation`` are honoured;
       ``colormap``/``brightness``/``contrast``/``flip_sign`` are
-      8-bit-only and ignored (with a note) on the HDR path. The viewer also gets
+      8-bit-only and ignored (with a note) on the float path. The viewer also gets
       a leading toolbar **TONEMAP menu** to switch the operator interactively;
       ``tonemap=`` sets its default. When the client's true-HDR surface engages
       (WebGPU ``rgba16float`` + extended canvas tone-mapping on an HDR display)
@@ -1010,7 +1011,6 @@ class Image(Component):
         *,
         url: str | None = None,
         data_mode: str = "local",
-        hdr: bool | None = None,
         tonemap: str | None = None,
         exposure: float | None = None,
         gamma: float | None = None,
@@ -1051,44 +1051,38 @@ class Image(Component):
 
         # ── URL source (client fetch + sniff + decode) ───────────────────
         # `cp.Image(url=...)` references the blob BY URL instead of embedding it:
-        # the emitted descriptor keeps the URL verbatim, and the client fetches
-        # + decodes it (handles exr/npy/… a browser can't <img>-decode). The
-        # renderer is chosen here (fixed at emit time): explicit `hdr=` wins,
-        # else the URL extension (.exr/.npy/.npz → the float-HDR renderer, which
-        # consumes the `hdr` prop the url decode yields; otherwise the 8-bit
-        # `image` renderer, which consumes the `imageUrl` data URL).
+        # the emitted descriptor keeps the URL verbatim, and the client fetches +
+        # decodes it through the ONE decoder (handles exr/npy/pfm/… a browser
+        # can't <img>-decode). There is NO renderer fork and NO extension check
+        # here: ONE renderer ("image") consumes the ONE dtype-tagged decoded
+        # source, and the decoder decides float-vs-uint8 from the content (§1).
+        # The tone-map props are emitted as the unified SDR-transfer set (all 5
+        # operators + peak), meaningful on both surfaces client-side; gamma routes
+        # to the operator, not the CSS `processing` block (never applied twice).
         if url is not None:
             if data is not None:
                 raise ValueError("cp.Image: pass EITHER data or url, not both.")
             if not isinstance(url, str):
                 raise ValueError("cp.Image(url=...) must be a string URL.")
-            stem = url.split("?", 1)[0].split("#", 1)[0]
-            ext = stem.rsplit(".", 1)[-1].lower() if "." in stem else ""
-            use_hdr = hdr if hdr is not None else ext in ("exr", "npy", "npz")
-            if use_hdr:
-                self._props = _image_hdr_props(
-                    tonemap=tonemap, exposure=exposure, offset=offset, gamma=gamma,
-                    peak=peak, interpolation=interpolation, show_axes=show_axes,
-                    pixel_value_notation=pixel_value_notation,
-                )
-                self._renderer = "imagehdr"
-            else:
-                # 8-bit: tonemap/gamma/peak select the UNIFIED operator (all 5,
-                # validated); gamma routes to the operator, not the CSS
-                # `processing` block (so it is never applied twice). peak extends
-                # onto an HDR surface (§B).
-                transfer = _image_sdr_transfer_props(
-                    tonemap=tonemap, gamma=gamma, peak=peak
-                )
-                self._props = _image_display_props(
-                    exposure=exposure, gamma=(None if transfer else gamma),
-                    brightness=brightness,
-                    contrast=contrast, offset=offset, flip_sign=flip_sign,
-                    colormap=colormap, interpolation=interpolation,
-                    show_axes=show_axes, pixel_value_notation=pixel_value_notation,
-                )
-                self._props.update(transfer)
-                self._renderer = "image"
+            transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma, peak=peak)
+            # `exposure`/`offset` are lifted TOP-LEVEL (in-shader), NOT routed into
+            # the CSS-filter `processing` block (hence exposure=None/offset=None
+            # here): the unified FLOAT surface discards `processing`, so a float URL
+            # (.exr/.npy/…) would silently drop them. BOTH surfaces read them
+            # top-level. Same "lift out of processing" mechanism as `gamma`.
+            self._props = _image_display_props(
+                exposure=None, gamma=(None if transfer else gamma),
+                brightness=brightness,
+                contrast=contrast, offset=None, flip_sign=flip_sign,
+                colormap=colormap, interpolation=interpolation,
+                show_axes=show_axes, pixel_value_notation=pixel_value_notation,
+            )
+            self._props.update(transfer)
+            if exposure is not None:
+                self._props["exposure"] = float(exposure)
+            if offset is not None:
+                self._props["offset"] = float(offset)
+            self._renderer = "image"
             self._data: dict[str, Any] = {"kind": "image", "hash": None, "url": url}
             self._data_mode = data_mode
             return
@@ -1096,31 +1090,17 @@ class Image(Component):
         if data is None:
             raise ValueError("cp.Image requires `data` (or `url=`).")
 
-        # ── HDR routing ──────────────────────────────────────────────────
-        # HDR applies only to a raw float ndarray (never a DataRef/URL/bytes/
-        # PIL). `hdr=True` forces it for any float array; `hdr is None`
-        # auto-detects genuine HDR range (values outside [0,1]); `hdr=False`
-        # forces the 8-bit clamp path.
+        # ── Float routing ────────────────────────────────────────────────
+        # A raw float ndarray ALWAYS takes the unified float pipeline (baked to a
+        # float `.npy`, the `imghdr` DataSpec). There is NO `max>1`/`min<0`
+        # auto-HDR heuristic and NO `hdr=` flag — every float renders through the
+        # same client pipeline (1.0 = display white, values >1 preserved as
+        # headroom via the default sRGB operator + managed PEAK), so an in-[0,1]
+        # float and an EXR share one path (§4). (Never a DataRef/URL/bytes/PIL —
+        # those stay the 8-bit path below.)
         is_float_ndarray = isinstance(data, np.ndarray) and data.dtype.kind == "f"
-        if hdr is True and not is_float_ndarray:
-            raise ValueError(
-                "cp.Image(hdr=True) requires a float numpy array (dtype kind "
-                f"'f'); got {type(data).__name__}"
-                + (f" of dtype {data.dtype}" if isinstance(data, np.ndarray) else "")
-                + "."
-            )
-        want_hdr = False
-        if is_float_ndarray and hdr is not False:
-            if hdr is True:
-                want_hdr = True
-            elif data.size and (float(data.min()) < 0.0 or float(data.max()) > 1.0):
-                want_hdr = True  # auto-detect: genuine HDR range
-        # On the 8-bit path, tonemap= selects the UNIFIED operator (all 5 —
-        # validated in `_image_sdr_transfer_props`); reinhard/aces are meaningful
-        # post-sRGB-decode and peak= extends onto an HDR surface (§B). Only the
-        # deprecated extended* aliases are rejected there, so no early gate here.
 
-        if want_hdr:
+        if is_float_ndarray:
             if data_mode == "endpoint":
                 raise ValueError(
                     "cp.Image(float_hdr, data_mode='endpoint') is unsupported: "
@@ -1139,8 +1119,8 @@ class Image(Component):
             ]
             if ignored:
                 log.warning(
-                    "cp.Image HDR path ignores 8-bit-only args %s "
-                    "(the imagehdr renderer honours tonemap/exposure/offset/gamma/"
+                    "cp.Image float path ignores 8-bit-only args %s "
+                    "(the float surface honours tonemap/exposure/offset/gamma/"
                     "showAxes/interpolation).",
                     ignored,
                 )
@@ -1176,7 +1156,7 @@ class Image(Component):
             hash_ = _content_hash(raw)
             self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             self._data: dict[str, Any] = {"kind": "imghdr", "hash": hash_, "meta": meta}
-            self._renderer = "imagehdr"
+            self._renderer = "image"
             self._data_mode = "local"
             return
 

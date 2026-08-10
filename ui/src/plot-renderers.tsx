@@ -345,70 +345,52 @@ function ImageStandalone(p: P) {
     pan: p.pan ?? { x: 0, y: 0 },
   });
   // resolveImageRenderer: the backend for this mount (GpuImagePane or
-  // CpuImagePane — both satisfy the shared `ImageBackendProps` contract, so
-  // the swap below is a drop-in replacement), chosen by the user-settable
-  // render mode: explicit `renderMode` from the descriptor/spec →
-  // `window.__cairnPlotRenderMode` → `?render=cpu|gpu|auto` → "auto".
+  // CpuImagePane — both satisfy the ONE `ImageBackendProps` contract, so the
+  // swap is a drop-in replacement), chosen by the user-settable render mode:
+  // explicit `renderMode` → `window.__cairnPlotRenderMode` → `?render=` → "auto".
   const Pane = resolveImageRenderer(resolveRenderMode(p.renderMode));
-  return (
+  // The ONE dtype-tagged decoded source arrives resolved from `resolveDataProps`.
+  // Back-compat: a legacy `imageUrl`/`hdr` prop (e.g. a hand-built descriptor)
+  // is normalized to a `source` here so a single code path renders both.
+  const source =
+    p.source ??
+    (p.hdr
+      ? {
+          dtype: "float" as const,
+          data: p.hdr.data,
+          shape: p.hdr.shape,
+          numpyDtype: p.hdr.dtype,
+          precision: p.hdr.precision,
+          deep: p.hdr.deep,
+        }
+      : { dtype: "uint8" as const, url: p.imageUrl ?? null });
+  const pane = (
     <Pane
+      source={source}
       toolbar={p.toolbar}
-      imageUrl={p.imageUrl ?? null}
       baselineUrl={p.baselineUrl ?? null}
       diffMode={p.diffMode ?? "none"}
       interpolation={p.interpolation ?? "auto"}
       colormap={p.colormap ?? "none"}
+      tonemap={p.tonemap}
+      exposure={p.exposure}
+      offset={p.offset}
+      peak={p.peak}
+      gamma={p.gamma}
+      processing={p.processing}
       showAxes={p.showAxes ?? false}
       label={p.label ?? ""}
       overlay={p.overlay}
       overlaySettings={p.overlaySettings}
-      processing={p.processing}
       pixelValueNotation={p.pixelValueNotation}
       zoom={viewport.zoom}
       pan={viewport.pan}
       onViewportChange={onViewportChange}
     />
   );
-}
-
-// --- HdrImagePane: float-HDR image, tone-mapped client-side (canvas only) ---
-// Data (`hdr`) arrives already-resolved from the `imghdr` DataSpec; the config
-// props (`tonemap`/`exposure`/`gamma`) come from the descriptor. Wrapped in a
-// ChartBox so it has a sizing box on a bare standalone page (like the charts) —
-// the pane fills its container. NO static three.js / Plotly / engine import:
-// this file stays in the CORE bundle; the GPU pane below (Task 8) is only
-// ever reached through the runtime `window.__cairnPlotGpuImagePane` seam, so
-// core.iife.js never carries the engine even though this adapter can render
-// through it.
-function ImageHdrStandalone(p: P) {
-  const { height, ...rest } = p;
-  const [viewport, onViewportChange] = useSyncedImageViewport(rest.viewportSyncGroupId, {
-    zoom: rest.zoom ?? 1,
-    pan: rest.pan ?? { x: 0, y: 0 },
-  });
-  // resolveImageRenderer: the backend for this mount (shared
-  // `ImageBackendProps` contract, same render-mode resolution as
-  // `ImageStandalone` above).
-  const Pane = resolveImageRenderer(resolveRenderMode(rest.renderMode));
-  return (
-    <ChartBox height={height}>
-      <Pane
-        toolbar={rest.toolbar}
-        hdr={rest.hdr}
-        tonemap={rest.tonemap ?? "srgb"}
-        exposure={rest.exposure ?? 0}
-        offset={rest.offset}
-        gamma={rest.gamma}
-        showAxes={rest.showAxes ?? false}
-        label={rest.label ?? ""}
-        interpolation={rest.interpolation ?? "auto"}
-        pixelValueNotation={rest.pixelValueNotation}
-        zoom={viewport.zoom}
-        pan={viewport.pan}
-        onViewportChange={onViewportChange}
-      />
-    </ChartBox>
-  );
+  // A FLOAT source gets a sizing ChartBox (as the former HDR adapter did) so it
+  // fills a bare standalone page; a uint8/URL image is content/aspect-sized.
+  return source.dtype === "float" ? <ChartBox height={p.height}>{pane}</ChartBox> : pane;
 }
 
 function TableStandalone(p: P) {
@@ -437,7 +419,6 @@ export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
   histogram: HistogramStandalone,
   heatmap: HeatmapStandalone,
   image: ImageStandalone,
-  imagehdr: ImageHdrStandalone,
   table: TableStandalone,
 };
 

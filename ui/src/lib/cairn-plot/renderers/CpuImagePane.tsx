@@ -98,12 +98,14 @@ import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
   isHdrProps,
+  useLegacyImageProps,
   shapeDims,
   finite,
   type HdrData,
   type HdrImageProps,
   type SdrImageProps,
   type ImageBackend,
+  type ImageBackendProps,
 } from "./image-backend";
 import type { ImageProcessing } from "../types";
 
@@ -1071,17 +1073,19 @@ function CpuHdrImagePane(props: HdrImageProps & { toolbar?: boolean }) {
 // Public component.
 // ---------------------------------------------------------------------------
 
-/** `ImageBackendProps` plus the shim-only chrome flag (see module doc). */
-export type CpuImagePaneProps =
-  | (HdrImageProps & { toolbar?: boolean })
-  | (SdrImageProps & { toolbar?: boolean });
+/** The unified backend prop shape this pane accepts (kept as a public alias). */
+export type CpuImagePaneProps = ImageBackendProps;
 
 /**
  * One of the two interchangeable image backends (the CPU/2D-canvas one — see
- * `GpuImagePane` for the WebGPU other); both accept `ImageBackendProps` and
- * are assignable to `ImageBackend`.
+ * `GpuImagePane` for the WebGPU other); both accept the ONE
+ * {@link ImageBackendProps} and are assignable to `ImageBackend`. The unified
+ * `source` fans out (keyed on `source.dtype`) into the two internal pane
+ * representations via {@link useLegacyImageProps}; the sub-panes below are
+ * unchanged.
  */
-export default function CpuImagePane(props: CpuImagePaneProps): JSX.Element {
+export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Element {
+  const props = useLegacyImageProps(backendProps);
   return isHdrProps(props) ? (
     <CpuHdrImagePane {...props} />
   ) : (

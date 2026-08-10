@@ -5,8 +5,8 @@
  * (`src/cairn_plot/components.py`), JS-idiomatically:
  *
  *  - a numeric buffer (`Float32Array` / `Float64Array` / `Uint16Array` f16 bits
- *    / nested number arrays) → the true float-HDR path: a `RuntimeFloatEntry`
- *    rides BY REFERENCE into the `imagehdr` renderer's `hdr` prop (the same pane
+ *    / nested number arrays) → the float path: a `RuntimeFloatEntry` rides BY
+ *    REFERENCE into the ONE image renderer's FLOAT `source` (the same pane
  *    Python's `.npy` baking reaches), zero encode/decode;
  *  - already-encoded container bytes (`ArrayBuffer` / `Uint8Array` + MIME) → a
  *    `RuntimeBytesEntry` served as a `blob:` URL (no base64), 8-bit `image`;
@@ -16,16 +16,24 @@
  *    the fetch+decode `image.url` seam (`.exr`/`.npy` HDR), by reference.
  */
 import { mintRuntimeHash, type RuntimeStoreEntry } from "../viewport/runtime-store.ts";
+import { isBrowserNativeFormat, sniffFormat } from "../image/decoders.ts";
 import type { DataSpec } from "../../../plot-descriptor.ts";
 
 export interface ShapedImage {
   data: DataSpec;
-  renderer: "image" | "imagehdr";
+  /**
+   * True when the AUTHORED INPUT is genuinely float (a `Float32Array`/
+   * `Float64Array`/`Uint16Array`-f16 buffer or a nested numeric array) — the
+   * only case the builder can be SURE is float without decoding. Drives the
+   * authoring-time choice of HDR-style vs display-style config props (§3's
+   * "the pane applies what's meaningful"). NOT an extension check: a URL is
+   * always `false` here because content decides float-vs-uint8 at decode time
+   * (§1), never the caller.
+   */
+  float: boolean;
   /** Runtime-store entries the descriptor's hash(es) reference. */
   runtime: Array<[string, RuntimeStoreEntry]>;
 }
-
-const HDR_URL_EXTS = new Set(["exr", "npy", "npz", "hdr", "pfm"]);
 
 function isTypedFloat(x: unknown): x is Float32Array | Float64Array {
   return x instanceof Float32Array || x instanceof Float64Array;
@@ -94,7 +102,7 @@ function hdrEntry(
   const dtype = precision === "f16-bits" ? "<f2" : "<f4";
   const hash = mintRuntimeHash();
   return {
-    renderer: "imagehdr",
+    float: true,
     data: { kind: "imghdr", hash, meta: floatMeta(shape, data) },
     runtime: [[hash, { kind: "float", data, shape, dtype, precision }]],
   };
@@ -130,19 +138,20 @@ function canvasToUrlSpec(canvas: HTMLCanvasElement | OffscreenCanvas): ShapedIma
             "cairnPlot: image(OffscreenCanvas) needs a 2D HTMLCanvasElement; draw it onto a <canvas> first",
           );
         })();
-  return { renderer: "image", data: { kind: "url", src: url }, runtime: [] };
+  return { float: false, data: { kind: "url", src: url }, runtime: [] };
 }
 
 /** Options accepted by `image()` that affect DATA shaping (renderer config is
  *  handled by the builder). */
 export interface ImageDataOpts {
   shape?: number[];
-  hdr?: boolean;
 }
 
 /**
  * Shape an `image()` DATA argument into a `DataSpec` + runtime entries. `opts`
- * carries `shape` (required for a flat TypedArray) and `hdr` (force HDR).
+ * carries `shape` (required for a flat TypedArray). The float-vs-uint8 codec of
+ * a URL/bytes source is the DECODER's decision (content-first, §1), never a
+ * caller-visible flag — there is no `hdr` option.
  */
 export function shapeImageData(input: unknown, opts: ImageDataOpts = {}): ShapedImage {
   // ── URL / {url} ────────────────────────────────────────────────────────
@@ -153,19 +162,19 @@ export function shapeImageData(input: unknown, opts: ImageDataOpts = {}): Shaped
         ? (input as { url: string }).url
         : null;
   if (urlStr != null) {
-    const stem = urlStr.split("?")[0]!.split("#")[0]!;
-    const ext = stem.includes(".") ? stem.split(".").pop()!.toLowerCase() : "";
-    const useHdr = opts.hdr ?? HDR_URL_EXTS.has(ext);
-    if (useHdr) {
-      // fetch + client-decode seam (handles .exr/.npy the browser can't <img>).
-      return {
-        renderer: "imagehdr",
-        data: { kind: "image", hash: null, url: urlStr },
-        runtime: [],
-      };
+    // Route to MATCH Python (`cp.Image(url=…)` decodes ANY URL): the verbatim
+    // `<img>` fast-path is reserved for a KNOWN browser-native ext
+    // (png/jpeg/webp/avif/gif — lighter, no fetch, byte-exact). EVERYTHING else —
+    // a raw-buffer ext (exr/npy/npz/pfm/hdr) OR an unknown/extensionless/blob URL
+    // whose bytes might still be EXR/npy — takes the client fetch+magic-sniff+
+    // decode seam (`kind:"image"` + url); the decoder alone decides float-vs-uint8
+    // from the CONTENT (§1). Routing unknown URLs here (not to a verbatim `<img>`
+    // that would choke on EXR bytes) closes the JS/Python asymmetry and makes the
+    // content-first fallback in `decoders.ts` reachable from JS.
+    if (!isBrowserNativeFormat(sniffFormat({ url: urlStr }))) {
+      return { float: false, data: { kind: "image", hash: null, url: urlStr }, runtime: [] };
     }
-    // Plain browser-native URL: verbatim <img> passthrough (lighter, no fetch).
-    return { renderer: "image", data: { kind: "url", src: urlStr }, runtime: [] };
+    return { float: false, data: { kind: "url", src: urlStr }, runtime: [] };
   }
 
   // ── ImageData ──────────────────────────────────────────────────────────
@@ -203,7 +212,7 @@ export function shapeImageData(input: unknown, opts: ImageDataOpts = {}): Shaped
     const mime = sniffMime(new Uint8Array(buf));
     const hash = mintRuntimeHash();
     return {
-      renderer: "image",
+      float: false,
       data: { kind: "image", hash },
       runtime: [[hash, { kind: "bytes", bytes: buf, mime }]],
     };

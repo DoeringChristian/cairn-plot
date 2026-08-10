@@ -163,7 +163,7 @@ export function createLocalDataSource(
         if (rt.kind === "bytes") return rt.bytes;
         throw new Error(
           `cairn-plot runtime blob ${hash} is a float entry; resolve it via the ` +
-            `imagehdr path (DataSource.runtime()), not bytes().`,
+            `float-source path (DataSource.runtime()), not bytes().`,
         );
       }
       return inflateEntry(get(hash));

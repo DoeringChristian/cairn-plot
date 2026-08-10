@@ -185,3 +185,52 @@ test("image/compare emit props.toolbar=false only when explicitly disabled", () 
   const dfltTrue = cp.image(f32, { shape: [2, 3], toolbar: true });
   assert.equal((dfltTrue.node as any).props?.toolbar, undefined);
 });
+
+// ── FIX 1: exposure/offset lifted TOP-LEVEL on the non-float (URL) path ──────
+test("URL image emits exposure/offset TOP-LEVEL, not into the CSS processing block", () => {
+  // FLOAT URL (.exr): the client decodes it to a FLOAT source, which discards
+  // `processing` — exposure/offset MUST ride top-level or they are silently
+  // dropped (~2× too bright). tonemap/gamma/peak already survived; this is the gap.
+  const exr = cp.image({ url: "render.exr" }, { exposure: -1, offset: 0.1, tonemap: "aces" });
+  const p = (exr.node as any).props;
+  assert.equal(p.exposure, -1, "exposure must be top-level");
+  assert.equal(p.offset, 0.1, "offset must be top-level");
+  assert.equal(p.tonemap, "aces");
+  // and NEVER also in the CSS-filter `processing` block (would double-apply).
+  assert.equal(p.processing?.exposure, undefined);
+  assert.equal(p.processing?.offset, undefined);
+  // a float URL routes to the fetch+decode seam (not a verbatim <img>).
+  assert.equal((exr.node as any).data.kind, "image");
+
+  // UINT8 URL (.png) + exposure: still applied, now top-level/in-shader — applied
+  // ONCE (not dropped, not doubled by ALSO living in `processing`).
+  const png = cp.image({ url: "photo.png" }, { exposure: -1 });
+  const pp = (png.node as any).props;
+  assert.equal(pp.exposure, -1);
+  assert.equal(pp.processing, undefined);
+  // a known browser-native ext keeps the verbatim <img> fast path.
+  assert.equal((png.node as any).data.kind, "url");
+
+  // Sanity: with NO exposure/offset the keys are absent (renderer defaults hold).
+  const plain = cp.image({ url: "render.exr" }, { tonemap: "aces" });
+  assert.equal((plain.node as any).props.exposure, undefined);
+  assert.equal((plain.node as any).props.offset, undefined);
+});
+
+// ── FIX 2: URL decode routing matches Python (unknown/ext-less → decode seam) ─
+test("URL routing: known browser-native ext → verbatim <img>; raw-buffer/unknown → decode seam", () => {
+  // Known browser-native ext → verbatim <img> fast path (no fetch, byte-exact).
+  assert.equal((cp.image({ url: "a.png" }).node as any).data.kind, "url");
+  assert.equal((cp.image({ url: "b.jpg" }).node as any).data.kind, "url");
+  assert.equal((cp.image({ url: "c.webp" }).node as any).data.kind, "url");
+  // Known raw-buffer ext → client fetch+decode seam.
+  assert.equal((cp.image({ url: "r.exr" }).node as any).data.kind, "image");
+  assert.equal((cp.image({ url: "r.npy" }).node as any).data.kind, "image");
+  // Unknown / extensionless / blob URL → decode seam too (content decides), NOT a
+  // verbatim <img> that would choke on EXR bytes — mirrors Python's decode-any-URL.
+  for (const u of ["https://x/no-ext", "blob:https://x/abcd-1234", "https://x/img?id=5"]) {
+    const d = (cp.image({ url: u }).node as any).data;
+    assert.equal(d.kind, "image", `${u} must route to the decode seam`);
+    assert.equal(d.url, u);
+  }
+});

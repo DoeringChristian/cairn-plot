@@ -72,7 +72,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
-import { type HdrData } from "../image-backend";
+import { hdrSource, type HdrData } from "../image-backend";
 import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../engine/pool";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 
@@ -190,7 +190,7 @@ async function runSingleCase(): Promise<boolean> {
       "div",
       { style: { width: "300px", height: "300px" } },
       h(GpuImagePane, {
-        hdr,
+        source: hdrSource(hdr),
         tonemap: operator,
         exposure: exposureEV,
         zoom: viewport.zoom,
@@ -304,7 +304,7 @@ async function runPoolCapCase(): Promise<boolean> {
     container.appendChild(paneEl);
     const hdr: HdrData = { data: new Float32Array([0.1 * i, 0.2, 0.3, 0.4]), shape: [2, 2], dtype: "<f4" };
     const root = createRoot(paneEl);
-    root.render(h(GpuImagePane, { hdr, tonemap: "srgb", exposure: 0, label: `pane-${i}` }));
+    root.render(h(GpuImagePane, { source: hdrSource(hdr), tonemap: "srgb", exposure: 0, label: `pane-${i}` }));
     roots.push(root);
   }
 
@@ -370,7 +370,7 @@ async function runParkAwareRenderCase(): Promise<boolean> {
     const [exposure, setExposure] = React.useState(initialExposure);
     setExposureFns[index] = setExposure;
     return h(GpuImagePane, {
-      hdr: buildHdrN(),
+      source: hdrSource(buildHdrN()),
       tonemap: operator,
       exposure,
       label: `park-pane-${index}`,

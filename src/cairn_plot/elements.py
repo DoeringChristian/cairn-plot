@@ -108,9 +108,11 @@ def _node_has_three(node: Any) -> bool:
     return False
 
 
-# The 2D image renderer names (the types the `gpu-image` engine addon can
-# accelerate — Task 8 of the WebGPU engine, Sub-project 1).
-_IMAGE_RENDERERS = frozenset({"image", "imagehdr"})
+# The 2D image renderer name (the type the `gpu-image` engine addon can
+# accelerate — Task 8 of the WebGPU engine, Sub-project 1). Unified: there is
+# ONE image renderer now ("image") — float-vs-uint8 is an internal, decoded-
+# source-dtype detail of that one renderer, no longer a separate "imagehdr" id.
+_IMAGE_RENDERERS = frozenset({"image"})
 
 
 def _node_has_image(node: Any) -> bool:
