@@ -21,12 +21,20 @@
  *     RGBA→4, Y/single→1). Falls back to the pure-TS `decoders/exr.ts` reader
  *     (NONE/ZIP/ZIPS) when no Worker is available; genuinely unsupported inputs
  *     surface a clear error.
+ *   - pfm → the pure PFM (Portable Float Map) reader (`decodePfm`): ASCII header
+ *     + raw float32 raster; yields `f32` (PF→3, Pf→1).
+ *   - hdr → Radiance RGBE is ROUTED so it fails at the ONE registry point, but
+ *     has no decoder yet (the RLE reader is deferred); it throws a clear
+ *     "unsupported" error rather than silently mis-rendering.
  *   - unknown → best-effort browser-native decode, else a clear error.
  *
  * Format is sniffed by {@link sniffFormat}: explicit `mime` wins, then `ext`,
- * then magic bytes (PNG/JPEG/GIF/WEBP/AVIF/EXR/NPY/NPZ). The sniffer and the
- * raw-buffer decoders are pure and unit-tested; the browser-native path needs a
- * DOM and is exercised only through the registry-dispatch tests.
+ * then magic bytes (PNG/JPEG/GIF/WEBP/AVIF/EXR/PFM/RADIANCE/NPY/NPZ). This is a
+ * HINT-first-then-content policy: a known mime/ext routes with no fetch, but
+ * {@link decodeImage} falls back to fetching bytes + magic-sniffing when the
+ * hint is absent/unknown for a URL-only source (blob: / mislabeled). The sniffer
+ * and raw-buffer decoders are pure and unit-tested; the browser-native path
+ * needs a DOM and is exercised only through the registry-dispatch tests.
  */
 
 // `parse-npy` is a self-contained leaf module — a static import keeps this
@@ -153,16 +161,24 @@ export type ImageFormat =
   | "npy"
   | "npz"
   | "exr"
+  | "pfm"
+  | "hdr"
   | "unknown";
 
 /** A decoder: source → canonical {@link DecodedImage}. */
 export type ImageDecoder = (src: ImageSource) => Promise<DecodedImage>;
 
-/** Formats decoded from a raw buffer (need `bytes`, not just a `url`). */
+/** Formats decoded from a raw buffer (need `bytes`, not just a `url`). These are
+ *  the formats a browser can NOT `<img>`-decode, so a URL for one must be
+ *  fetched + run through our own decoder. `hdr` (Radiance RGBE) has no decoder
+ *  yet — it is listed here so a `.hdr` URL routes to the registry and fails
+ *  LOUDLY at the one dispatch point rather than silently mis-rendering. */
 const RAW_BUFFER_FORMATS: ReadonlySet<ImageFormat> = new Set<ImageFormat>([
   "npy",
   "npz",
   "exr",
+  "pfm",
+  "hdr",
 ]);
 
 /** Formats the browser can decode natively via `<img>`/`createImageBitmap`. */
@@ -197,6 +213,9 @@ const MIME_TO_FORMAT: Record<string, ImageFormat> = {
   "image/gif": "gif",
   "image/x-exr": "exr",
   "image/aces": "exr",
+  "image/x-pfm": "pfm",
+  "image/vnd.radiance": "hdr",
+  "image/x-hdr": "hdr",
   "application/x-npy": "npy",
   "application/npy": "npy",
   "application/x-npz": "npz",
@@ -214,6 +233,8 @@ const EXT_TO_FORMAT: Record<string, ImageFormat> = {
   npy: "npy",
   npz: "npz",
   exr: "exr",
+  pfm: "pfm",
+  hdr: "hdr",
 };
 
 /** Normalize a raw ext/format token: strip a leading dot + query, lowercase. */
@@ -248,6 +269,12 @@ const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // PK\x03\x04 (npz is a zip)
 const RIFF_MAGIC = [0x52, 0x49, 0x46, 0x46]; // RIFF
 const WEBP_TAG = [0x57, 0x45, 0x42, 0x50]; // WEBP (bytes 8..11)
 const AVIF_FTYP = [0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69]; // "ftypavi" at byte 4
+const RADIANCE_MAGIC = [0x23, 0x3f]; // "#?" — Radiance/RGBE (.hdr) header start
+
+/** True when `b` is an ASCII whitespace byte (space/tab/CR/LF). */
+function isAsciiWs(b: number): boolean {
+  return b === 0x20 || b === 0x09 || b === 0x0a || b === 0x0d;
+}
 
 /** Sniff the format from magic bytes alone; `"unknown"` if none match. */
 export function sniffMagic(buffer: ArrayBuffer): ImageFormat {
@@ -258,6 +285,18 @@ export function sniffMagic(buffer: ArrayBuffer): ImageFormat {
   if (matches(bytes, 0, JPEG_MAGIC)) return "jpeg";
   if (matches(bytes, 0, GIF_MAGIC)) return "gif";
   if (matches(bytes, 0, EXR_MAGIC)) return "exr";
+  // PFM: "PF" (color) / "Pf" (grayscale) followed by ASCII whitespace. The
+  // trailing-whitespace check disambiguates from other "P.."-prefixed data.
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0x50 &&
+    (bytes[1] === 0x46 || bytes[1] === 0x66) &&
+    isAsciiWs(bytes[2]!)
+  ) {
+    return "pfm";
+  }
+  // Radiance RGBE (.hdr): the header starts with "#?" (e.g. "#?RADIANCE").
+  if (matches(bytes, 0, RADIANCE_MAGIC)) return "hdr";
   if (matches(bytes, 0, RIFF_MAGIC) && matches(bytes, 8, WEBP_TAG)) return "webp";
   // AVIF: an ISO-BMFF `ftyp` box with an `avif`/`avis` brand at byte 4.
   if (matches(bytes, 4, AVIF_FTYP)) return "avif";
@@ -349,6 +388,84 @@ async function decodeNpz(src: ImageSource): Promise<DecodedImage> {
   return npyArrayToDecoded(members[key]!);
 }
 
+// ---------------------------------------------------------------------------
+// PFM (Portable Float Map) — a trivial ASCII-header + raw-float32 raster.
+// Header: `PF`|`Pf` (color=3ch / grayscale=1ch), then `<width> <height>`, then
+// a `<scale>` whose SIGN is the byte order (negative = little-endian) and whose
+// magnitude is an informational scale factor; a single whitespace byte then the
+// raw float32 samples, stored BOTTOM-ROW-FIRST (flipped to top-first here).
+// ---------------------------------------------------------------------------
+
+/** Decode a PFM buffer into the canonical float {@link DecodedImage}. Pure. */
+export function decodePfm(buffer: ArrayBuffer): DecodedImage {
+  const bytes = new Uint8Array(buffer);
+  let pos = 0;
+  const readToken = (): string => {
+    while (pos < bytes.length && isAsciiWs(bytes[pos]!)) pos++;
+    const start = pos;
+    while (pos < bytes.length && !isAsciiWs(bytes[pos]!)) pos++;
+    let s = "";
+    for (let i = start; i < pos; i++) s += String.fromCharCode(bytes[i]!);
+    return s;
+  };
+  const magic = readToken();
+  const channels = magic === "PF" ? 3 : magic === "Pf" ? 1 : 0;
+  if (!channels) {
+    throw new Error(`cairn-plot decodeImage: not a PFM file (bad magic "${magic}")`);
+  }
+  const width = Number.parseInt(readToken(), 10);
+  const height = Number.parseInt(readToken(), 10);
+  const scaleStr = readToken();
+  const scale = Number.parseFloat(scaleStr);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error(`cairn-plot decodeImage: invalid PFM dimensions (${width}x${height})`);
+  }
+  if (!Number.isFinite(scale) || scale === 0) {
+    throw new Error(`cairn-plot decodeImage: invalid PFM scale ("${scaleStr}")`);
+  }
+  // Exactly one whitespace byte terminates the header; the raster starts next.
+  const dataStart = pos + 1;
+  const littleEndian = scale < 0;
+  const count = width * height * channels;
+  const need = dataStart + count * 4;
+  if (buffer.byteLength < need) {
+    throw new Error(
+      `cairn-plot decodeImage: PFM raster truncated (need ${need} bytes, have ${buffer.byteLength})`,
+    );
+  }
+  const dv = new DataView(buffer, dataStart);
+  const rowLen = width * channels;
+  const out = new Float32Array(count);
+  // PFM stores the BOTTOM row first; flip vertically to the top-first convention
+  // used by every other DecodedImage (numpy/ImageData row-major, top row first).
+  // The `scale` magnitude is honoured only for endianness (its sign); values are
+  // returned as stored so an all-in-range PFM displays 1.0 = white unscaled.
+  for (let y = 0; y < height; y++) {
+    const dstRow = y * rowLen;
+    const srcRow = (height - 1 - y) * rowLen;
+    for (let i = 0; i < rowLen; i++) {
+      out[dstRow + i] = dv.getFloat32((srcRow + i) * 4, littleEndian);
+    }
+  }
+  return { kind: "f32", data: out, width, height, channels, precision: "f32" };
+}
+
+async function decodePfmSource(src: ImageSource): Promise<DecodedImage> {
+  return decodePfm(requireBytes(src, "pfm"));
+}
+
+/**
+ * Radiance RGBE (`.hdr`) is ROUTED (so it fails at the ONE registry point) but
+ * has no decoder yet — the run-length-encoded RGBE reader is deferred. Fail
+ * LOUDLY with an actionable message rather than silently mis-rendering.
+ */
+async function decodeRadianceHdr(_src: ImageSource): Promise<DecodedImage> {
+  throw new Error(
+    "cairn-plot decodeImage: Radiance .hdr (RGBE) is not supported yet — " +
+      "convert to .exr, .pfm, or a float .npy. (The RLE RGBE decoder is not implemented.)",
+  );
+}
+
 function requireBytes(src: ImageSource, fmt: ImageFormat): ArrayBuffer {
   if (!src.bytes) {
     throw new Error(
@@ -424,6 +541,8 @@ const REGISTRY: Record<Exclude<ImageFormat, "unknown">, ImageDecoder> = {
   npy: decodeNpy,
   npz: decodeNpz,
   exr: decodeExr,
+  pfm: decodePfmSource,
+  hdr: decodeRadianceHdr,
 };
 
 /** Look up the decoder registered for a sniffed format (`null` for unknown). */
@@ -454,7 +573,30 @@ export async function decodeImage(
   src: ImageSource,
   opts?: DecodeImageOptions,
 ): Promise<DecodedImage> {
-  const fmt = sniffFormat(src);
+  let fmt = sniffFormat(src);
+  // CONTENT-FIRST fallback. The mime/ext fast-path above is a HINT: a known
+  // extension routes straight to its decoder with no fetch (a `.png` to the
+  // browser codec, a `.exr` to the EXR decoder). But when the hint is absent or
+  // unknown (a `blob:` URL, a query-only endpoint, a mislabeled file) and we
+  // hold only a URL, fetch the bytes ONCE and let the magic-byte sniffer decide
+  // — content is the authority. The fetched bytes are threaded into `src` so the
+  // dispatch below (and any browser-native fallback) reuses them, never fetching
+  // twice.
+  if (fmt === "unknown" && src.url && !src.bytes) {
+    const res = await fetch(src.url);
+    if (!res.ok) {
+      throw new Error(
+        `cairn-plot decodeImage: failed to fetch ${src.url} (${res.status})`,
+      );
+    }
+    const bytes = await res.arrayBuffer();
+    src = {
+      ...src,
+      bytes,
+      mime: src.mime ?? (res.headers.get("content-type") ?? undefined),
+    };
+    fmt = sniffFormat(src);
+  }
   // The EXR decoder alone honours `deepLiveFlatten` (deep = an EXR feature).
   if (fmt === "exr") return decodeExr(src, opts);
   const decoder = getDecoder(fmt);

@@ -19,11 +19,41 @@ import {
   getDecoder,
   decodeImage,
   npyArrayToDecoded,
+  decodePfm,
   isRawBufferFormat,
   isBrowserNativeFormat,
   type ImageFormat,
 } from "./decoders.ts";
 import { parseNpy } from "../transforms/parse-npy.ts";
+
+// ---------------------------------------------------------------------------
+// A minimal PFM (Portable Float Map) encoder for building test buffers.
+// `rows` is TOP-first (row 0 = top); PFM stores bottom-first, so we flip here so
+// the decoder's flip round-trips back to the same top-first order.
+// ---------------------------------------------------------------------------
+function makePfm(
+  channels: 1 | 3,
+  width: number,
+  height: number,
+  rowsTopFirst: number[],
+  littleEndian = true,
+): ArrayBuffer {
+  const magic = channels === 3 ? "PF" : "Pf";
+  const scale = littleEndian ? -1.0 : 1.0;
+  const header = `${magic}\n${width} ${height}\n${scale}\n`;
+  const rowLen = width * channels;
+  const count = width * height * channels;
+  const buf = new ArrayBuffer(header.length + count * 4);
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < header.length; i++) bytes[i] = header.charCodeAt(i);
+  const dv = new DataView(buf, header.length);
+  for (let y = 0; y < height; y++) {
+    const src = y * rowLen;
+    const dst = (height - 1 - y) * rowLen; // store bottom-first
+    for (let i = 0; i < rowLen; i++) dv.setFloat32((dst + i) * 4, rowsTopFirst[src + i]!, littleEndian);
+  }
+  return buf;
+}
 
 // ---------------------------------------------------------------------------
 // A minimal `.npy` v1.0 encoder for building test buffers.
@@ -99,6 +129,14 @@ test("sniffMagic detects RIFF/WEBP and ISO-BMFF/AVIF", () => {
   assert.equal(sniffMagic(avif.buffer), "avif");
 });
 
+test("sniffMagic detects PFM (PF/Pf + whitespace) and Radiance .hdr", () => {
+  assert.equal(sniffMagic(new Uint8Array([0x50, 0x46, 0x0a]).buffer), "pfm"); // "PF\n"
+  assert.equal(sniffMagic(new Uint8Array([0x50, 0x66, 0x20]).buffer), "pfm"); // "Pf "
+  // "PF" not followed by whitespace is NOT pfm.
+  assert.equal(sniffMagic(new Uint8Array([0x50, 0x46, 0x41]).buffer), "unknown");
+  assert.equal(sniffMagic(new Uint8Array([0x23, 0x3f, 0x52, 0x41]).buffer), "hdr"); // "#?RA"
+});
+
 test("sniffMagic returns unknown for unrecognized bytes", () => {
   assert.equal(sniffMagic(new Uint8Array([0x00, 0x01, 0x02, 0x03]).buffer), "unknown");
 });
@@ -138,7 +176,7 @@ test("sniffFormat: falls back to magic bytes last", () => {
 // Format-class predicates.
 // ---------------------------------------------------------------------------
 test("isRawBufferFormat / isBrowserNativeFormat classify correctly", () => {
-  for (const f of ["npy", "npz", "exr", ".npy", "NPZ"]) {
+  for (const f of ["npy", "npz", "exr", ".npy", "NPZ", "pfm", "hdr"]) {
     assert.equal(isRawBufferFormat(f), true, `${f} should be raw-buffer`);
   }
   for (const f of ["png", "jpg", "jpeg", "webp", "avif", "gif"]) {
@@ -162,6 +200,40 @@ test("npy uint8 [H,W] decodes to a u8 payload", () => {
     assert.ok(decoded.data instanceof Uint8ClampedArray);
     assert.deepEqual(Array.from(decoded.data as Uint8ClampedArray), [10, 20, 30, 40, 50, 60]);
   }
+});
+
+test("decodePfm: grayscale (Pf) round-trips top-first, little-endian", () => {
+  // 3 wide × 2 high, top row [1,2,3], bottom row [4,5,6].
+  const buf = makePfm(1, 3, 2, [1, 2, 3, 4, 5, 6], true);
+  const decoded = decodePfm(buf);
+  assert.equal(decoded.kind, "f32");
+  if (decoded.kind === "f32") {
+    assert.equal(decoded.width, 3);
+    assert.equal(decoded.height, 2);
+    assert.equal(decoded.channels, 1);
+    assert.equal(decoded.precision, "f32");
+    assert.deepEqual(Array.from(decoded.data as Float32Array), [1, 2, 3, 4, 5, 6]);
+  }
+});
+
+test("decodePfm: color (PF) big-endian, 3 channels, values >1 preserved", () => {
+  const vals = [0.5, 1.0, 2.5, 0.0, 4.0, 8.0]; // 1x2, 3ch
+  const buf = makePfm(3, 1, 2, vals, false);
+  const decoded = decodePfm(buf);
+  assert.equal(decoded.kind, "f32");
+  if (decoded.kind === "f32") {
+    assert.equal(decoded.channels, 3);
+    assert.deepEqual(Array.from(decoded.data as Float32Array), vals);
+  }
+});
+
+test("decodeImage routes pfm bytes to the float payload; hdr fails loudly", async () => {
+  const buf = makePfm(1, 2, 1, [1, 2], true);
+  const decoded = await decodeImage({ bytes: buf, ext: "pfm" });
+  assert.equal(decoded.kind, "f32");
+  // Radiance .hdr is routed but unimplemented — must throw a clear error.
+  const hdrBytes = new Uint8Array([0x23, 0x3f, 0x52, 0x41, 0x44]).buffer; // "#?RAD"
+  await assert.rejects(() => decodeImage({ bytes: hdrBytes, ext: "hdr" }), /Radiance/);
 });
 
 test("npy float32 [H,W,C] decodes to an f32 payload with channels", () => {
