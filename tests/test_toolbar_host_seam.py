@@ -78,7 +78,10 @@ def _hdr() -> np.ndarray:
 
 def test_image_hdr_toolbar_false_emits_prop() -> None:
     node = cp.Image(_hdr(), toolbar=False).to_node()
-    assert node["renderer"] == "imagehdr"
+    # Unified: ONE renderer id ("image") — a float array is the float SURFACE of
+    # that one renderer (DataSpec kind "imghdr"), not a separate renderer.
+    assert node["renderer"] == "image"
+    assert node["data"]["kind"] == "imghdr"
     assert node["props"]["toolbar"] is False
 
 
