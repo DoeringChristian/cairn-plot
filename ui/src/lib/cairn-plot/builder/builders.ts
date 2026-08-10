@@ -60,14 +60,18 @@ const num = (v: unknown): number => Number(v);
 // image config props (mirrors Python `_image_display_props` / `_image_hdr_props`)
 // ---------------------------------------------------------------------------
 
-function imageDisplayProps(o: Opts): Opts {
+function imageDisplayProps(o: Opts, suppressGamma = false): Opts {
   const props: Opts = {};
   const { exposure, gamma, brightness, contrast, offset, flipSign, colormap, interpolation, showAxes, pixelValueNotation } = o;
-  if ([exposure, gamma, brightness, contrast, offset, flipSign].some((v) => v != null)) {
+  // `gamma` is suppressed here when a UNIFIED tone-map transfer is engaged, so
+  // the Gamma operator's γ is never ALSO applied as the CSS-filter
+  // `processing.gamma` (mirrors Python `_image_display_props` gamma=None wiring).
+  const gammaForProcessing = suppressGamma ? null : gamma;
+  if ([exposure, gammaForProcessing, brightness, contrast, offset, flipSign].some((v) => v != null)) {
     props.processing = {
       brightness: brightness != null ? num(brightness) : 0,
       contrast: contrast != null ? num(contrast) : 0,
-      gamma: gamma != null ? num(gamma) : 1,
+      gamma: gammaForProcessing != null ? num(gammaForProcessing) : 1,
       exposure: exposure != null ? num(exposure) : 0,
       offset: offset != null ? num(offset) : 0,
       flipSign: flipSign != null ? Boolean(flipSign) : false,
@@ -77,6 +81,25 @@ function imageDisplayProps(o: Opts): Opts {
   if (interpolation != null) props.interpolation = interpolation;
   if (showAxes != null) props.showAxes = Boolean(showAxes);
   if (pixelValueNotation != null) props.pixelValueNotation = checkPixelValueNotation(String(pixelValueNotation));
+  return props;
+}
+
+/**
+ * UNIFIED tone-map props for a NON-float (uint8/URL) image — emitted TOP-LEVEL
+ * (`tonemap`/`gamma`/`peak`), distinct from the CSS-filter `processing` block.
+ * Mirrors Python `_image_sdr_transfer_props`: the client sRGB-decodes the 8-bit
+ * source to scene-linear, so all 5 operators + `peak` are meaningful. Returns
+ * `{}` when nothing is set (client default `srgb`, an identity round-trip). A
+ * `gamma=` without a `tonemap=` selects the Gamma operator. Keeping this on the
+ * non-float path preserves `tonemap`/`peak` for a raw-buffer URL image (which no
+ * longer routes to a separate HDR renderer) instead of silently dropping them.
+ */
+function imageSdrTransferProps(o: Opts): Opts {
+  if (o.tonemap == null && o.gamma == null && o.peak == null) return {};
+  const tm = o.tonemap != null ? checkTonemap(String(o.tonemap)) : o.gamma != null ? "gamma" : "srgb";
+  const props: Opts = { tonemap: tm };
+  if (o.gamma != null) props.gamma = num(o.gamma);
+  if (o.peak != null) props.peak = num(o.peak);
   return props;
 }
 
@@ -239,13 +262,23 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
     image(data, opts = {}) {
       const shaped: ShapedImage = shapeImageData(data, {
         shape: opts.shape as number[] | undefined,
-        hdr: opts.hdr as boolean | undefined,
       });
-      const props = shaped.renderer === "imagehdr" ? imageHdrProps(opts) : imageDisplayProps(opts);
+      // ONE renderer ("image"). Prop STYLE keys on the AUTHORED input type, not
+      // the extension: genuinely-float input (buffers/nested) gets the HDR-style
+      // controls (top-level tonemap/exposure/offset/gamma/peak); every other
+      // input gets the display block + the unified SDR tone-map transfer.
+      let props: Opts;
+      if (shaped.float) {
+        props = imageHdrProps(opts);
+      } else {
+        const transfer = imageSdrTransferProps(opts);
+        props = imageDisplayProps(opts, Object.keys(transfer).length > 0);
+        Object.assign(props, transfer);
+      }
       // Host seam: emit `toolbar:false` only when explicitly disabled (omitted at
       // the default `true`), mirroring Python `cp.Image(toolbar=...)`.
       if (opts.toolbar === false) props.toolbar = false;
-      return handle(leaf(shaped.renderer, shaped.data, props), shaped.runtime);
+      return handle(leaf("image", shaped.data, props), shaped.runtime);
     },
 
     table(rows) {
