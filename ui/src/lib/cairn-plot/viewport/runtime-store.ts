@@ -104,7 +104,7 @@ export function runtimeArtifactUrl(hash: string, entry: RuntimeStoreEntry): stri
   if (entry.kind !== "bytes") {
     throw new Error(
       `cairn-plot runtime blob ${hash} is a float entry; resolve it via the ` +
-        `imagehdr path (DataSource.runtime()), not artifactUrl().`,
+        `float-source path (DataSource.runtime()), not artifactUrl().`,
     );
   }
   const cached = objectUrlCache.get(hash);

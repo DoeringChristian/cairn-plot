@@ -5,8 +5,8 @@
  * (`src/cairn_plot/components.py`), JS-idiomatically:
  *
  *  - a numeric buffer (`Float32Array` / `Float64Array` / `Uint16Array` f16 bits
- *    / nested number arrays) → the true float-HDR path: a `RuntimeFloatEntry`
- *    rides BY REFERENCE into the `imagehdr` renderer's `hdr` prop (the same pane
+ *    / nested number arrays) → the float path: a `RuntimeFloatEntry` rides BY
+ *    REFERENCE into the ONE image renderer's FLOAT `source` (the same pane
  *    Python's `.npy` baking reaches), zero encode/decode;
  *  - already-encoded container bytes (`ArrayBuffer` / `Uint8Array` + MIME) → a
  *    `RuntimeBytesEntry` served as a `blob:` URL (no base64), 8-bit `image`;
