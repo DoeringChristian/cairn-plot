@@ -82,8 +82,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let srgbDecodeA = u_extra.z > 0.5;
   let srgbDecodeB = u_extra.w > 0.5;
 
-  let colorA = processSide(lut, sampledA, exposureEV, offset, operatorId, gamma, isScalar, hdrOut, peak, srgbDecodeA);
-  let colorB = processSide(lut, sampledB, exposureEV, offset, operatorId, gamma, isScalar, hdrOut, peak, srgbDecodeB);
+  let colorA = processSide(lut, sampledA, exposureEV, offset, operatorId, gamma, isScalar, hdrOut, peak, srgbDecodeA, filterLinear);
+  let colorB = processSide(lut, sampledB, exposureEV, offset, operatorId, gamma, isScalar, hdrOut, peak, srgbDecodeB, filterLinear);
 
   let split = u_compose.x;
   let alpha = u_compose.y;

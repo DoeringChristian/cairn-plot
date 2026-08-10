@@ -128,13 +128,21 @@
  * `buildColormapTexture`) holding a `256x4` RGBA-float lookup table. When
  * `isScalar` is set, the scalar value is taken from `rgb.x` AFTER exposure
  * is applied (matching the brief's pipeline order: `v*=2^exposureEV; if
- * (isScalar) v.rgb = colormapLUT(v.r)`), clamped to `[0,1]`, scaled to
- * `[0,255]`, rounded via `floor(idxF + 0.5)` (deterministic round-half-UP,
- * matching the CPU/test reference's `Math.round` — NOT the shader-native
- * `round()`, which is round-half-to-EVEN in WGSL and implementation-defined
- * in GLSL, so either could disagree with `Math.round`, and with each other,
- * exactly at `k+0.5` index boundaries), clamped to `[0,255]`, and used as an
- * EXACT integer texel-fetch index (nearest, no interpolation) — this is a
+ * (isScalar) v.rgb = colormapLUT(v.r)`) and mapped through the LUT by
+ * `sampleLutNearestF` / `sampleLutLinearF`, SELECTED by the same `filterMode`
+ * (`u_bind5`) that picks nearest vs. bilinear SOURCE sampling. Nearest source
+ * sampling (pixelated zoom) uses the NEAREST index: `clamp(rgb.x,0,1)*255`
+ * rounded via `floor(idxF + 0.5)` (deterministic round-half-UP, matching the
+ * CPU/test reference's `Math.round` — NOT the shader-native `round()`, which is
+ * round-half-to-EVEN in WGSL and implementation-defined in GLSL, so either could
+ * disagree with `Math.round`, and each other, exactly at `k+0.5` boundaries), an
+ * EXACT integer texel-fetch. Bilinear source sampling (moderate zoom) uses the
+ * LINEAR lookup: blend the two adjacent LUT entries by the fractional index, so
+ * an interpolated scalar yields a smooth color instead of snapping to one of 256
+ * discrete bins (which reintroduces per-texel banding even though the source
+ * scalar is smooth — the colormap bug this pairing fixes). At a texel-aligned
+ * 8-bit scalar the fractional index is 0, so LINEAR degenerates to the exact
+ * NEAREST entry and the byte-exact parity cases are unaffected. This is a
  * new GPU-only pipeline stage (no
  * existing CPU renderer applies a colormap at this point in the pipeline;
  * `colormaps/apply.ts`'s `applyColormap` operates on already-8-bit,
@@ -146,9 +154,10 @@
  * Both `t_bind0` (source image) and `t_bind1` (LUT) are read via
  * `textureLoad` — see `passthrough.wgsl.ts`'s doc comment for why
  * (`unfilterable-float` sample type avoids the `float32-filterable` feature
- * requirement). The LUT is a NEAREST lookup by design (256 discrete entries,
- * no interpolation), so `textureLoad`'s exact-texel semantics are correct
- * for it, not just convenient.
+ * requirement). The LUT lookup is composed from `textureLoad` fetches: a single
+ * exact fetch on the nearest path, and a two-tap blend of adjacent entries on
+ * the linear path (`sampleLutLinearF`) — both need only `textureLoad`'s
+ * exact-texel semantics, no filterable-float sampler.
  */
 export const imageWGSL = `
 struct VSOut {
@@ -329,6 +338,41 @@ fn sampleBilinearF(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
   return mix(top, bot, frac.y);
 }
 
+// Colormap LUT lookup, two variants selected by the SAME filter flag (u_bind5)
+// that picks nearest/bilinear source sampling — so a colormapped image shares
+// ONE interpolation decision with the plain path, never diverging.
+//
+//  sampleLutNearestF: the crisp per-texel mapping. Round-half-UP index (matches
+//    the CPU Math.round reference — WGSL round() is round-half-to-EVEN), exact
+//    texel fetch. Used at the pixelated zoom (source sampled nearest), where
+//    each source texel is a solid on-screen block anyway.
+//  sampleLutLinearF: blends the TWO adjacent LUT entries by the fractional
+//    index. Used at moderate zoom (source sampled bilinearly). Without this a
+//    bilinearly-interpolated scalar still SNAPS to one of 256 discrete LUT bins,
+//    reintroducing stair-step banding whose iso-value contours follow the texel
+//    grid — the "sharp corners that should not be there" the plain (non-LUT)
+//    path never shows. Interpolating the scalar across texels AND interpolating
+//    the LUT across its entries is the intended smooth false-color pipeline.
+// At a texel-aligned 8-bit scalar (idxF integer, frac==0) the linear variant
+// degenerates to the exact entry, so the two agree wherever the source is
+// texel-aligned.
+fn sampleLutNearestF(valueUnit: f32) -> vec3<f32> {
+  let idxF = clamp(valueUnit, 0.0, 1.0) * 255.0;
+  let idx = clamp(i32(floor(idxF + 0.5)), 0, 255);
+  return textureLoad(t_bind1, vec2<i32>(idx, 0), 0).rgb;
+}
+
+fn sampleLutLinearF(valueUnit: f32) -> vec3<f32> {
+  let idxF = clamp(valueUnit, 0.0, 1.0) * 255.0;
+  let base = floor(idxF);
+  let i0 = clamp(i32(base), 0, 255);
+  let i1 = min(i0 + 1, 255);
+  let frac = idxF - base;
+  let c0 = textureLoad(t_bind1, vec2<i32>(i0, 0), 0).rgb;
+  let c1 = textureLoad(t_bind1, vec2<i32>(i1, 0), 0).rgb;
+  return mix(c0, c1, frac);
+}
+
 // operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (Extended·Linear),
 // 5=extended-reinhard, 6=extended-aces, 7=extended-clamp (Extended·Linear
 // managed), 8=gamma (matches OPERATOR_ID in image-engine.ts / TONEMAP_OPERATORS +
@@ -410,15 +454,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   var rgb = src * exp2(exposureEV) + vec3<f32>(offset);
 
   // 2) scalar image + colormap LUT (GPU-only pipeline stage; see module doc).
+  //    The LUT lookup mirrors the SOURCE filter: bilinear source sampling pairs
+  //    with a LINEAR LUT lookup (interpolate the scalar across texels, THEN
+  //    interpolate the LUT across its entries — the smooth false-color path),
+  //    nearest source sampling pairs with the crisp round-half-up NEAREST index.
+  //    Keying both off the one filterLinear flag keeps colormapped rendering
+  //    from diverging from the plain path's interpolation at any zoom.
   if (isScalar) {
-    let idxF = clamp(rgb.x, 0.0, 1.0) * 255.0;
-    // Deterministic round-half-up (matches CPU Math.round for non-negative
-    // inputs) — WGSL's round() is round-half-to-EVEN, which disagrees with
-    // Math.round (and with GLSL's implementation-defined round()) exactly at
-    // k+0.5 boundaries. See image.glsl.ts for the mirrored fix.
-    let idx = clamp(i32(floor(idxF + 0.5)), 0, 255);
-    let lutColor = textureLoad(t_bind1, vec2<i32>(idx, 0), 0);
-    rgb = lutColor.rgb;
+    if (filterLinear) {
+      rgb = sampleLutLinearF(rgb.x);
+    } else {
+      rgb = sampleLutNearestF(rgb.x);
+    }
   }
 
   // 3) tone-map operator: HDR [0,inf) -> display-linear [0,1] (or [0,peak] for
