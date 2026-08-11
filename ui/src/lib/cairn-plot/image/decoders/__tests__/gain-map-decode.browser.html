@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>gain-map decode harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>image gain-map decode — real Adobe hdr-gain-map JPEG → FLOAT</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <!--
+      Loads the ESM bundle produced from gain-map-decode.browser.ts. Serve from
+      the ui/ ROOT so the fixture URL (resolved from import.meta.url) is
+      reachable. The `.bundle.js` is gitignored — regenerate via the runner or
+      the esbuild command in the .ts header.
+    -->
+    <script type="module" src="./gain-map-decode.browser.bundle.js"></script>
+  </body>
+</html>
