@@ -53,6 +53,17 @@ import { parseNpy, type NpyArray } from "../transforms/parse-npy.ts";
 // unavailable. The dispatcher's eager module graph is DOM-free (the worker is
 // loaded lazily via `?worker&inline`), so the node-test import stays clean.
 import { decodeExr } from "./decoders/exr-decode.ts";
+// The gain-map parsers/reconstruction are PURE and DOM-free (byte-walking +
+// float math), so this static import keeps the node-test module graph clean.
+// The DOM half (decoding the two sub-JPEGs to pixels) stays in `decodeJpeg`.
+import {
+  hasGainMapSignature,
+  parseMpfSecondImage,
+  extractXmp,
+  parseGainMapMetadata,
+  reconstructHdrFromGainMap,
+  type RgbaImage,
+} from "./decoders/gain-map.ts";
 
 // ---------------------------------------------------------------------------
 // Canonical payload + source contracts.
@@ -499,17 +510,110 @@ async function decodeBrowserNative(src: ImageSource): Promise<DecodedImage> {
   } else {
     throw new Error("cairn-plot decodeImage: source has neither bytes nor url");
   }
+  const imageData = await blobToImageData(blob);
+  return { kind: "u8", data: imageData, width: imageData.width, height: imageData.height };
+}
+
+/** Decode a `Blob` (any browser-native codec) to RGBA `ImageData`. DOM-only. */
+async function blobToImageData(blob: Blob): Promise<ImageData> {
+  if (typeof createImageBitmap !== "function") {
+    throw new Error(
+      "cairn-plot decodeImage: browser-native decode needs a DOM (createImageBitmap unavailable)",
+    );
+  }
   const bitmap = await createImageBitmap(blob);
   try {
     const width = bitmap.width;
     const height = bitmap.height;
     const ctx = get2dContext(width, height);
     ctx.drawImage(bitmap, 0, 0);
-    const imageData = ctx.getImageData(0, 0, width, height);
-    return { kind: "u8", data: imageData, width, height };
+    return ctx.getImageData(0, 0, width, height);
   } finally {
     bitmap.close?.();
   }
+}
+
+// ---------------------------------------------------------------------------
+// JPEG decode: base SDR (browser-native uint8) with an HDR gain-map branch.
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode a JPEG. A PLAIN JPEG follows the existing browser-native uint8 path
+ * UNCHANGED. An HDR **gain-map** JPEG (Adobe / ISO 21496-1 `hdr-gain-map`, and
+ * Google Ultra HDR — both declare the same XMP namespace) is instead
+ * reconstructed to a linear-light FLOAT {@link DecodedImage} from its base +
+ * gain map, so it flows through cairn-plot's HDR/float surface (>1.0 headroom
+ * preserved). See `decoders/gain-map.ts` for the pipeline + spec formula.
+ *
+ * GRACEFUL DEGRADATION (non-negotiable): any gain-map parse/reconstruction
+ * failure (missing/bad MPF, no gain sub-image, malformed XMP, base-is-HDR which
+ * we do not reconstruct) falls back to the SDR base as uint8 with a
+ * `console.warn` — this NEVER throws out of `decodeImage`.
+ */
+async function decodeJpeg(src: ImageSource): Promise<DecodedImage> {
+  // We need the raw bytes to detect/parse a gain map. If the source is URL-only,
+  // fetch ONCE here and reuse the same bytes for the browser-native base decode
+  // (no double fetch). If the fetch itself fails, let decodeBrowserNative report.
+  let bytes = src.bytes;
+  if (!bytes && src.url) {
+    try {
+      const res = await fetch(src.url);
+      if (res.ok) bytes = await res.arrayBuffer();
+    } catch {
+      /* fall through: decodeBrowserNative(src) will surface the fetch error */
+    }
+  }
+  if (!bytes) return decodeBrowserNative(src);
+  const withBytes: ImageSource = { ...src, bytes };
+  const u8 = new Uint8Array(bytes);
+  // CHEAP branch check: no hdr-gain-map namespace ⇒ the existing uint8 path.
+  if (!hasGainMapSignature(u8)) return decodeBrowserNative(withBytes);
+  try {
+    const decoded = await tryDecodeGainMapJpeg(bytes, u8, src.mime);
+    if (decoded) return decoded;
+  } catch (err) {
+    console.warn("cairn-plot decodeImage: HDR gain-map reconstruction failed; using SDR base.", err);
+  }
+  // Any non-throwing miss (e.g. base-is-HDR, no MPF entry) → SDR base uint8.
+  return decodeBrowserNative(withBytes);
+}
+
+/**
+ * Attempt the gain-map reconstruction. Returns a FLOAT {@link DecodedImage} on
+ * success, or `null` to signal a clean fall-back to the SDR base (an expected
+ * miss, e.g. no MPF sub-image or `BaseRenditionIsHDR`). Throws only on genuinely
+ * unexpected failures (the caller converts those to a warn + base fallback).
+ */
+async function tryDecodeGainMapJpeg(
+  bytes: ArrayBuffer,
+  u8: Uint8Array,
+  mime: string | undefined,
+): Promise<DecodedImage | null> {
+  const range = parseMpfSecondImage(u8);
+  if (!range) return null; // no embedded gain-map sub-image → SDR base.
+  // The gain-map metadata lives in the gain-map sub-image's XMP (the primary
+  // XMP typically carries only hdrgm:Version). Parse the sub-image's XMP.
+  const gainBytes = bytes.slice(range.offset, range.offset + range.size);
+  const gainU8 = new Uint8Array(gainBytes);
+  const xml = extractXmp(gainU8) ?? extractXmp(u8);
+  if (!xml) return null;
+  const meta = parseGainMapMetadata(xml);
+  if (!meta) return null;
+  // Base-is-HDR reconstructs SDR from the base (opposite direction); we only do
+  // the SDR-base → HDR path. Fall back to the (HDR-encoded) base as uint8.
+  if (meta.baseRenditionIsHdr) return null;
+  const jpegType = mime ?? "image/jpeg";
+  const [base, gain]: [RgbaImage, RgbaImage] = await Promise.all([
+    blobToImageData(new Blob([bytes], { type: jpegType })).then(imageDataToRgba),
+    blobToImageData(new Blob([gainBytes], { type: "image/jpeg" })).then(imageDataToRgba),
+  ]);
+  const data = reconstructHdrFromGainMap(base, gain, meta);
+  return { kind: "f32", data, width: base.width, height: base.height, channels: 3, precision: "f32" };
+}
+
+/** Adapt an `ImageData` to the pure reconstruction's {@link RgbaImage} shape. */
+function imageDataToRgba(img: ImageData): RgbaImage {
+  return { data: img.data, width: img.width, height: img.height };
 }
 
 function get2dContext(width: number, height: number): CanvasRenderingContext2D {
@@ -534,7 +638,7 @@ function get2dContext(width: number, height: number): CanvasRenderingContext2D {
 
 const REGISTRY: Record<Exclude<ImageFormat, "unknown">, ImageDecoder> = {
   png: decodeBrowserNative,
-  jpeg: decodeBrowserNative,
+  jpeg: decodeJpeg,
   webp: decodeBrowserNative,
   avif: decodeBrowserNative,
   gif: decodeBrowserNative,
