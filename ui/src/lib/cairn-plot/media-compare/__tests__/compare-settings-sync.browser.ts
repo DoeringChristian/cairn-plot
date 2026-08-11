@@ -1,0 +1,308 @@
+/**
+ * COMPARE↔COMPARE settings-sync — LIVE, self-driving Chromium harness.
+ *
+ * The bug this guards: when multiple compare/diff panes were selected together,
+ * ONLY zoom/pan synced (the viewport bus). The compare panes' OWN settings —
+ * compare mode, diff kernel, colormap, tone-map, split position — did NOT sync,
+ * because `GpuComparePane` never subscribed to the shared SETTINGS bus at all.
+ * The fix wires `GpuComparePane` onto the SAME settings-sync path the image
+ * panes use (`useSyncedImageSettings` + `image-settings-sync` bus + the
+ * broadened `ImageSyncSettings` payload). This harness proves it end-to-end.
+ *
+ * It mounts TWO independent `PlotApp` roots (the gallery shape — two separate
+ * mounts, NOT one `cp.Grid`), each a single engine-backed compare pane, selects
+ * BOTH (a plain click on A + a shift-click on B — the page-wide selection),
+ * then drives a REAL control change on pane A through the pane's exposed
+ * `__cairnCompareProbe` change* wrappers (the exact functions its menus/sliders
+ * call) and asserts pane B's state follows:
+ *   - compare MODE  (split → blend → diff → split)
+ *   - diff KERNEL   (absolute → squared)
+ *   - COLORMAP      (none → viridis)
+ *   - TONEMAP       (srgb → aces)
+ *   - SPLIT position (0.5 → 0.3)
+ *
+ * The engine compare pane needs WebGPU, so this is a Chromium page (like the
+ * sibling engine harnesses). It is SELF-DRIVING (`data-cairn-harness`), so
+ * `npm run test:harness` runs it in the DEFAULT set; when no WebGPU adapter is
+ * available the runner skips-loud (exit 0), never a false pass.
+ *
+ * RUNNING (standalone):
+ *   npx esbuild \
+ *     src/lib/cairn-plot/media-compare/__tests__/compare-settings-sync.browser.ts \
+ *     --bundle --format=esm --jsx=automatic \
+ *     --outfile=src/lib/cairn-plot/media-compare/__tests__/compare-settings-sync.browser.bundle.js
+ *   then serve ui/ and open the .browser.html (or just: npm run test:harness
+ *   --only compare-settings-sync, which bundles + drives it headlessly).
+ * The generated .bundle.js is gitignored — regenerate on change.
+ */
+import { createRoot, type Root } from "react-dom/client";
+import { createElement } from "react";
+import { PlotApp } from "../../../../plot-bootstrap";
+import { registerCoreRenderers } from "../../../../plot-renderers";
+import type { PlotDescriptor } from "../../../../plot-descriptor";
+import GpuComparePane from "../GpuComparePane";
+import { listDiffMenuModes } from "../../engine/kernels";
+import {
+  getGlobalSelectionStore,
+  paneSyncGroups,
+  GLOBAL_SELECTION_BASE,
+  __resetGlobalSelectionStoreForTest,
+} from "../../viewport/selection-store";
+
+/** The subset of `GpuComparePane`'s `__cairnCompareProbe` this harness drives. */
+interface CompareSyncProbe {
+  compareMode: string;
+  colormap: string;
+  diffKernel: string;
+  splitPosition: number;
+  effectiveTonemap: string;
+  changeCompareMode: (m: "split" | "blend" | "diff") => void;
+  changeDiffKernel: (id: string) => void;
+  changeColormap: (id: string) => void;
+  changeTonemap: (id: string) => void;
+  changeSplit: (p: number) => void;
+}
+
+function report(pass: boolean, message: string): void {
+  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
+  // eslint-disable-next-line no-console
+  console[pass ? "log" : "error"](line);
+  const el = document.getElementById("result");
+  if (el) {
+    const p = document.createElement("div");
+    p.textContent = line;
+    p.style.color = pass ? "#6f6" : "#f66";
+    el.appendChild(p);
+  }
+}
+
+function setOverallStatus(pass: boolean): void {
+  const el = document.getElementById("status");
+  if (el) {
+    el.textContent = pass ? "PASS" : "FAIL";
+    el.style.color = pass ? "#6f6" : "#f66";
+  }
+  document.title = pass ? "COMPARE SETTINGS SYNC PASS" : "COMPARE SETTINGS SYNC FAIL";
+}
+
+const consoleErrors: string[] = [];
+const origConsoleError = console.error.bind(console);
+console.error = (...args: unknown[]) => {
+  consoleErrors.push(args.map(String).join(" "));
+  origConsoleError(...args);
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function waitFor(predicate: () => boolean, timeoutMs = 8000, stepMs = 25): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await sleep(stepMs);
+  }
+  return predicate();
+}
+
+/** A tiny non-blank PNG data URL, so each compare side is a real URL image
+ *  (no WebGPU-float upload needed for the sources). */
+function makeImageUrl(color: string): string {
+  const c = document.createElement("canvas");
+  c.width = 16;
+  c.height = 16;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(4, 4, 8, 8);
+  return c.toDataURL("image/png");
+}
+
+/** A standalone compare descriptor (two URL frames composited). `mode` starts
+ *  in a COMPOSITED mode so the engine `GpuComparePane` mounts (side would be a
+ *  2-cell layout with no compare pane). */
+function compareDescriptor(fg: string, ref: string): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "compare",
+      mode: "split",
+      a: { kind: "url", src: makeImageUrl(fg) },
+      b: { kind: "url", src: makeImageUrl(ref) },
+      props: { toolbar: true },
+    },
+  } as PlotDescriptor;
+}
+
+/** Stationary press (select gesture). `shift` = additive multi-select. */
+function clickPane(el: Element, shift = false): void {
+  const r = el.getBoundingClientRect();
+  const x = Math.round(r.left + r.width / 2);
+  const y = Math.round(r.top + r.height / 2);
+  const opts = (extra: object) => ({
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    pointerType: "mouse",
+    button: 0,
+    clientX: x,
+    clientY: y,
+    ...extra,
+  });
+  el.dispatchEvent(new PointerEvent("pointerdown", opts({})));
+  el.dispatchEvent(new PointerEvent("pointerup", opts({ shiftKey: shift })));
+}
+
+function frames(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-plot-pane-id][data-selectable="true"]'),
+  );
+}
+/** The outer `data-gpu-compare-pane` root of each mounted compare pane (one per
+ *  mount, in document order = [A, B]). */
+function comparePaneRoots(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-gpu-compare-pane]"));
+}
+/** The probe/kernel seams live on the pane's INNER `paneRef` element (the padded
+ *  viewport box), NOT the outer `data-gpu-compare-pane` root — so walk each
+ *  pane's own subtree for whichever descendant carries `__cairnCompareProbe`. */
+function probeOf(root: HTMLElement | undefined): CompareSyncProbe | undefined {
+  if (!root) return undefined;
+  type SeamEl = HTMLElement & { __cairnCompareProbe?: CompareSyncProbe };
+  if ((root as SeamEl).__cairnCompareProbe) return (root as SeamEl).__cairnCompareProbe;
+  for (const n of Array.from(root.querySelectorAll("*")) as SeamEl[]) {
+    if (n.__cairnCompareProbe) return n.__cairnCompareProbe;
+  }
+  return undefined;
+}
+
+async function run(): Promise<boolean> {
+  let ok = true;
+  registerCoreRenderers();
+  __resetGlobalSelectionStoreForTest();
+
+  // Route split/blend/diff through the ENGINE compare pane, and mount eagerly.
+  const w = window as unknown as Record<string, unknown>;
+  w.__cairnPlotRenderMode = "gpu";
+  w.__cairnPlotUseGpuImage = true;
+  w.__cairnPlotGpuComparePane = GpuComparePane;
+  w.__cairnPlotDiffMenuModes = listDiffMenuModes();
+  w.__cairnPlotEagerMount = true;
+
+  const roots: Root[] = [];
+  const mount = (divId: string, d: PlotDescriptor) => {
+    const el = document.getElementById(divId)!;
+    const root = createRoot(el);
+    root.render(createElement(PlotApp, { descriptor: d }));
+    roots.push(root);
+  };
+  mount("mount-a", compareDescriptor("#c0392b", "#2980b9"));
+  mount("mount-b", compareDescriptor("#27ae60", "#8e44ad"));
+
+  // Both engine compare panes mount AND expose their probe (needs a real GPU
+  // surface — if this never settles the runner reports TIMEOUT, not a false pass).
+  const panesReady = await waitFor(
+    () => comparePaneRoots().length === 2 && comparePaneRoots().every((p) => !!probeOf(p)),
+    15000,
+  );
+  report(panesReady, `two engine compare panes mount and expose a probe (got ${comparePaneRoots().length})`);
+  ok = ok && panesReady;
+  if (!panesReady) {
+    roots.forEach((r) => r.unmount());
+    return false;
+  }
+
+  const [fa, fb] = frames();
+  const framesOk = frames().length === 2 && !!fa && !!fb;
+  report(framesOk, `two selectable pane frames present (got ${frames().length})`);
+  ok = ok && framesOk;
+  if (!framesOk) {
+    roots.forEach((r) => r.unmount());
+    return false;
+  }
+  const idA = fa.getAttribute("data-plot-pane-id")!;
+  const idB = fb.getAttribute("data-plot-pane-id")!;
+
+  // --- select BOTH panes (plain click A, shift-click B) --------------------
+  clickPane(fa);
+  clickPane(fb, true);
+  const store = getGlobalSelectionStore();
+  const bothSelected = await waitFor(
+    () => fa.getAttribute("data-selected") === "true" && fb.getAttribute("data-selected") === "true",
+  );
+  report(bothSelected, "both compare panes are selected together");
+  ok = ok && bothSelected;
+
+  // They share ONE settings-sync group; A (first-selected) is the anchor.
+  const gA = paneSyncGroups(store, idA, GLOBAL_SELECTION_BASE);
+  const gB = paneSyncGroups(store, idB, GLOBAL_SELECTION_BASE);
+  const sharedGroup = !!gA && !!gB && gA.settingsGroupId === gB.settingsGroupId;
+  report(sharedGroup, `both share ONE settings sync group (${gA?.settingsGroupId})`);
+  report(gA?.isAnchor === true && gB?.isAnchor === false, "A is the group anchor, B is not");
+  ok = ok && sharedGroup;
+
+  // Pane A is the anchor — drive A, assert B follows. Re-read the probe each
+  // poll (the pane recreates the probe object on every render).
+  const A = () => probeOf(comparePaneRoots()[0])!;
+  const B = () => probeOf(comparePaneRoots()[1])!;
+
+  // --- 1. compare MODE: split → blend --------------------------------------
+  A().changeCompareMode("blend");
+  const modeBlend = await waitFor(() => B().compareMode === "blend");
+  report(modeBlend, `MODE sync: A→blend, B follows (B.compareMode=${B().compareMode})`);
+  ok = ok && modeBlend;
+
+  // --- 2. compare MODE: blend → diff ---------------------------------------
+  A().changeCompareMode("diff");
+  const modeDiff = await waitFor(() => B().compareMode === "diff");
+  report(modeDiff, `MODE sync: A→diff, B follows (B.compareMode=${B().compareMode})`);
+  ok = ok && modeDiff;
+
+  // --- 3. diff KERNEL: absolute → squared ----------------------------------
+  A().changeDiffKernel("squared");
+  const kernelOk = await waitFor(() => B().diffKernel === "squared");
+  report(kernelOk, `KERNEL sync: A→squared, B follows (B.diffKernel=${B().diffKernel})`);
+  ok = ok && kernelOk;
+
+  // --- 4. COLORMAP: none → viridis (colormap menu is live in diff mode) -----
+  A().changeColormap("viridis");
+  const cmapOk = await waitFor(() => B().colormap === "viridis");
+  report(cmapOk, `COLORMAP sync: A→viridis, B follows (B.colormap=${B().colormap})`);
+  ok = ok && cmapOk;
+
+  // --- 5. back to split, then TONEMAP: srgb → aces (tonemap is split/blend) --
+  A().changeCompareMode("split");
+  const backSplit = await waitFor(() => B().compareMode === "split");
+  report(backSplit, `MODE sync: A→split, B follows (B.compareMode=${B().compareMode})`);
+  ok = ok && backSplit;
+
+  A().changeTonemap("aces");
+  const tmOk = await waitFor(() => B().effectiveTonemap === "aces");
+  report(tmOk, `TONEMAP sync: A→aces, B follows (B.effectiveTonemap=${B().effectiveTonemap})`);
+  ok = ok && tmOk;
+
+  // --- 6. SPLIT position: 0.5 → 0.3 ----------------------------------------
+  A().changeSplit(0.3);
+  const splitOk = await waitFor(() => Math.abs(B().splitPosition - 0.3) < 1e-6);
+  report(splitOk, `SPLIT sync: A→0.3, B follows (B.splitPosition=${B().splitPosition})`);
+  ok = ok && splitOk;
+
+  roots.forEach((r) => r.unmount());
+  return ok;
+}
+
+async function main(): Promise<void> {
+  report(true, "harness module loaded (boot marker)");
+  try {
+    const ok = await run();
+    const noErrors = consoleErrors.length === 0;
+    report(noErrors, `no console.error during the run (got ${consoleErrors.length})`);
+    for (const e of consoleErrors.slice()) report(false, `console.error: ${e}`);
+    setOverallStatus(ok && noErrors);
+  } catch (err) {
+    report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    setOverallStatus(false);
+  }
+}
+
+void main();
