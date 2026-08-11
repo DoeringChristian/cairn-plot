@@ -26,10 +26,21 @@
  * bundle guard, and is unit-testable without a DOM/React harness.
  */
 
-/** The subset of image display settings that sync across a selected group. All
- *  fields optional — a publish carries only the control(s) that changed; the
- *  bus merges them into the group's accumulated snapshot. */
+/** The subset of display settings that sync across a selected group. All fields
+ *  optional — a publish carries only the control(s) that changed; the bus merges
+ *  them into the group's accumulated snapshot.
+ *
+ *  The payload is a SUPERSET spanning BOTH pane types that share the one bus:
+ *  the IMAGE fields (colormap/tonemap/…/offset) are consumed by image panes AND
+ *  compare panes (shared display look), while the COMPARE-ONLY fields
+ *  (`compareMode`/`diffKernel`/`splitPosition`/`blendAlpha`) are consumed ONLY by
+ *  compare panes. This is PARTIAL-APPLY by construction: a subscriber applies
+ *  only the keys it owns (an image pane's apply reads no `compareMode`, so a
+ *  compare-mode patch is a no-op for it; a compare pane reads both sets), so
+ *  cross-type selections sync the shared look while compare-only keys stay
+ *  effective only where they mean something. */
 export interface ImageSyncSettings {
+  // Shared display fields — applied by image AND compare panes.
   colormap?: string;
   tonemap?: string;
   tonemapGamma?: number;
@@ -37,6 +48,16 @@ export interface ImageSyncSettings {
   exposureEV?: number;
   offset?: number;
   interpolation?: string;
+  // Compare-only fields — applied ONLY by compare panes (image panes ignore
+  // them; their apply function reads none of these keys).
+  /** Composited compare mode: "side" | "split" | "blend" | "diff". */
+  compareMode?: string;
+  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). */
+  diffKernel?: string;
+  /** Split-divider position in [0,1]. */
+  splitPosition?: number;
+  /** Blend-mode alpha in [0,1]. */
+  blendAlpha?: number;
 }
 
 interface SettingsStateDetail {
