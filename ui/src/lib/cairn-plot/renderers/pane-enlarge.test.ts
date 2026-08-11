@@ -65,6 +65,24 @@ test("focus is restored to the trigger on close", () => {
   assert.match(shell, /prev\.focus\?\.\(\)/);
 });
 
+test("Bug 3: page scroll is locked while enlarged and restored on close", () => {
+  // Save the prior body.overflow, set it to hidden while open, restore on cleanup.
+  assert.match(shell, /const prevOverflow = body\.style\.overflow/);
+  assert.match(shell, /body\.style\.overflow = "hidden"/);
+  assert.match(shell, /body\.style\.overflow = prevOverflow/);
+});
+
+test("Bug 4: the ✕ close button lives in the backdrop, OUTSIDE the pane frame", () => {
+  // The frame closes (`</div>` after the overlay mount) BEFORE the ✕ button —
+  // i.e. the button is a child of the backdrop, not the frame.
+  const closeIdx = shell.indexOf('data-cairn-plot-enlarge-close');
+  const frameIdx = shell.indexOf('data-cairn-plot-enlarge-frame');
+  const overlayMountIdx = shell.indexOf('ref={overlayMountRef}');
+  assert.ok(closeIdx > frameIdx, "the ✕ is declared after the frame element");
+  assert.ok(closeIdx > overlayMountIdx, "the ✕ is declared after the pane's overlay mount (outside the frame)");
+  assert.match(shell, /data-cairn-plot-enlarge-close=""/);
+});
+
 test("the pane subtree is reparented, not remounted (canvas/context survives)", () => {
   // One stable content host created imperatively and portaled into ONCE.
   assert.match(shell, /contentHostRef\.current = el/);

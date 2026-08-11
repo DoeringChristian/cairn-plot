@@ -307,6 +307,9 @@ function findChrome() {
 /** Base flags shared by every launch attempt. */
 const BASE_FLAGS = [
   "--headless=new",
+  // Deterministic, generous viewport so layout-geometry harnesses (e.g. the
+  // enlarge overlay's gutter-placed ✕) get a stable window.innerWidth/Height.
+  "--window-size=1600,1000",
   "--no-sandbox",
   "--disable-dev-shm-usage",
   "--disable-gpu-sandbox",
