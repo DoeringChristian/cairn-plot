@@ -130,18 +130,11 @@
       .controls {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.75rem 1.1rem;
-        align-items: flex-end;
+        gap: 0.75rem;
+        align-items: center;
         margin: 1.25rem 0 0.5rem;
       }
-      .ctl { display: flex; flex-direction: column; gap: 0.25rem; }
-      .ctl label {
-        font-size: 0.72rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--muted);
-      }
-      select, .btn {
+      .btn {
         font: inherit;
         font-size: 0.9rem;
         padding: 0.4rem 0.6rem;
@@ -149,10 +142,9 @@
         background: var(--field);
         border: 1px solid var(--border);
         border-radius: 7px;
+        cursor: pointer;
       }
-      .btn { cursor: pointer; }
       .btn:hover { border-color: var(--accent); }
-      .spacer { flex: 1 1 auto; }
 
       /* Output */
       #out {
@@ -226,57 +218,6 @@
       </div>
 
       <div class="controls">
-        <div class="ctl">
-          <label for="mode">Mode</label>
-          <select id="mode">
-            <optgroup label="View">
-              <option value="side">Side by side</option>
-              <option value="slide">Wipe slider</option>
-              <option value="blend">Blend</option>
-            </optgroup>
-            <optgroup label="Difference">
-              <option value="abs">Absolute diff</option>
-              <option value="signed">Signed diff</option>
-              <option value="square">Squared diff</option>
-              <option value="rel_abs">Relative abs</option>
-              <option value="rel_signed">Relative signed</option>
-              <option value="rel_square">Relative squared</option>
-              <option value="flip">FLIP (perceptual)</option>
-              <option value="flip_ldr">FLIP (LDR)</option>
-              <option value="ssim">SSIM (1 − SSIM)</option>
-            </optgroup>
-          </select>
-        </div>
-        <div class="ctl">
-          <label for="colormap">Diff colormap</label>
-          <select id="colormap">
-            <option value="magma">Magma</option>
-            <option value="viridis">Viridis</option>
-            <option value="plasma">Plasma</option>
-            <option value="red-green">Red–Green</option>
-            <option value="red-blue">Red–Blue</option>
-            <option value="none">None</option>
-          </select>
-        </div>
-        <div class="ctl">
-          <label for="tonemap">HDR tone-map</label>
-          <select id="tonemap">
-            <option value="auto">Auto</option>
-            <option value="aces">ACES</option>
-            <option value="reinhard">Reinhard</option>
-            <option value="srgb">sRGB</option>
-            <option value="gamma">Gamma</option>
-            <option value="linear">Linear</option>
-          </select>
-        </div>
-        <div class="ctl">
-          <label for="fit">Size fit</label>
-          <select id="fit">
-            <option value="crop">Crop</option>
-            <option value="fill">Fill</option>
-          </select>
-        </div>
-        <div class="spacer"></div>
         <button class="btn" id="swap" type="button" title="Swap A and B">⇄ Swap</button>
         <button class="btn" id="sample" type="button">Try a sample pair</button>
         <button class="btn" id="clear" type="button">Clear</button>
@@ -292,11 +233,13 @@
       </div>
 
       <p class="note">
-        Tip: mismatched resolutions are reconciled automatically before a diff
-        (see the <em>Size fit</em> control); the compare toolbar adds zoom/pan,
-        a pixel read-out, exposure, and the mode/kernel switcher. FLIP and SSIM
-        need WebGPU — a notice appears in-pane if your browser lacks it. Built
-        with <a href="https://github.com/doeringchristian/cairn-plot">cairn-plot</a>.
+        Tip: every display control lives on the pane's own toolbar — the
+        compare mode (side / slide / blend / diff), the diff kernel and
+        colormap, tone-map, exposure, zoom/pan, and a pixel read-out.
+        Mismatched resolutions are reconciled automatically before a diff. FLIP
+        and SSIM need WebGPU — a notice appears in-pane if your browser lacks
+        it. Built with
+        <a href="https://github.com/doeringchristian/cairn-plot">cairn-plot</a>.
       </p>
     </main>
 
@@ -309,10 +252,6 @@
         var out = document.getElementById("out");
         var hint = document.getElementById("hint");
         var errBox = document.getElementById("error");
-        var modeSel = document.getElementById("mode");
-        var colormapSel = document.getElementById("colormap");
-        var tonemapSel = document.getElementById("tonemap");
-        var fitSel = document.getElementById("fit");
 
         if (!cp || typeof cp.compare !== "function") {
           showError(
@@ -368,15 +307,11 @@
         // A cairnPlot.image handle for one slot. ONE unified call — cairn-plot
         // decides float-vs-uint8 from the CONTENT (no hdr flag): a raw-buffer blob
         // (EXR/.hdr/.pfm/.npy) is fetched, magic-sniffed, and decoded to float; a
-        // browser-native blob decodes to u8. The tone-map is a display choice
-        // applied after decode — "auto" lets the renderer pick its surface default
-        // (sRGB for SDR, linear+managed-peak for HDR); any other value overrides.
+        // browser-native blob decodes to u8. All display controls — tone-map,
+        // colormap, compare mode/kernel, exposure, zoom/pan — live on the pane's
+        // OWN toolbar; the page adds no duplicate selectors.
         function imageFor(slot) {
-          var opts = {};
-          if (tonemapSel.value && tonemapSel.value !== "auto") {
-            opts.tonemap = tonemapSel.value;
-          }
-          return cp.image({ url: slot.url }, opts);
+          return cp.image({ url: slot.url });
         }
 
         function render() {
@@ -400,12 +335,9 @@
           try {
             var handle;
             if (a && b) {
-              handle = cp.compare(imageFor(a), imageFor(b), {
-                mode: modeSel.value,
-                colormap: colormapSel.value,
-                fit: fitSel.value,
-                align: "center",
-              });
+              // No mode/colormap/fit here — the compare pane's toolbar drives
+              // side/slide/blend/diff, the kernel, and the diff colormap live.
+              handle = cp.compare(imageFor(a), imageFor(b), { align: "center" });
             } else {
               // Only one chosen → preview it on its own.
               handle = imageFor(a || b);
@@ -432,10 +364,6 @@
           }
         });
 
-        [modeSel, colormapSel, tonemapSel, fitSel].forEach(function (el) {
-          el.addEventListener("change", render);
-        });
-
         document.getElementById("swap").addEventListener("click", function () {
           var tmp = slots.a;
           slots.a = slots.b;
@@ -459,7 +387,6 @@
           syncName("b");
           document.getElementById("file-a").value = "";
           document.getElementById("file-b").value = "";
-          modeSel.value = "side";
           render();
         });
 
@@ -486,7 +413,6 @@
         document.getElementById("sample").addEventListener("click", function () {
           setSlotFromUrl("a", "sample-A.png", sampleDataUrl(0));
           setSlotFromUrl("b", "sample-B.png (shifted)", sampleDataUrl(14));
-          if (modeSel.value === "side") modeSel.value = "slide";
           render();
         });
       })();
