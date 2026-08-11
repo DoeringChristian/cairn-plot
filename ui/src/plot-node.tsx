@@ -703,18 +703,18 @@ function PaneSelectionFrame({
     ...(fill ? { height: "100%" } : null),
   };
   if (isSelected) {
-    // Bug 1: match the 3D viewports' existing ring EXACTLY so the selection/link
-    // look is identical across 2D and 3D. Reference: `Scene3DCanvas.tsx`'s active
-    // ring — `pointer-events-none absolute inset-0 rounded border border-accent/50`,
-    // i.e. a 1px accent-at-50% ring, 4px (`rounded`) radius, NO glow. We render it
-    // as an `outline` (with a -1px offset so it sits ON the frame edge like that
-    // 1px border, and never shifts layout) using the SAME `rgb(var(--color-accent-rgb)
-    // / 0.5)` expression the `border-accent/50` utility compiles to — so the
-    // computed color is byte-identical. Bug 2: raise the selected cell
+    // A CLEARLY VISIBLE selection ring: a full-opacity accent outline plus a soft
+    // accent glow so it reads over busy image/3D content (a 1px 50%-opacity border
+    // — the 3D canvas's decorative chrome — is far too faint to serve as a
+    // selection indicator; that made selection look absent). Every selected pane
+    // (2D and 3D) uses THIS shared ring via `PaneSelectionFrame`, so the look is
+    // consistent everywhere. `outline` + negative offset never shifts layout;
+    // `--color-accent` is the always-defined token. Bug 2: raise the selected cell
     // (`z-index`) so its ring paints ABOVE later grid siblings (never occluded).
-    style.outline = "1px solid rgb(var(--color-accent-rgb) / 0.5)";
-    style.outlineOffset = "-1px";
+    style.outline = "2px solid var(--color-accent)";
+    style.outlineOffset = "-2px";
     style.borderRadius = "4px";
+    style.boxShadow = "0 0 0 1px var(--color-accent), 0 0 8px 1px rgb(var(--color-accent-rgb) / 0.45)";
     style.zIndex = 1;
   }
 

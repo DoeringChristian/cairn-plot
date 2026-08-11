@@ -193,27 +193,25 @@ async function run(): Promise<boolean> {
   report(aOnly, "plain click on A rings A only (B/C not selected)");
   ok = ok && aOnly;
 
-  // --- Bug 1: the 2D selection ring is VISUALLY IDENTICAL to the 3D views'
-  // existing ring (Scene3DCanvas.tsx: `rounded border border-accent/50`, i.e.
-  // 1px accent-at-50%, 4px radius, NO glow). Build that exact reference element
-  // and assert the selected frame's OUTLINE matches its BORDER, with no glow. --
+  // --- Bug 1: the selection ring is CLEARLY VISIBLE — a solid accent outline
+  // (not the faint 1px/50% decorative 3D-canvas border, which read as absent) —
+  // plus a glow, at a 4px radius. Assert a solid, full-width accent outline and
+  // a non-"none" box-shadow so an invisible/too-faint ring can't regress in. --
   {
-    const ref = document.createElement("div");
-    ref.className = "rounded border border-accent/50";
-    ref.style.width = ref.style.height = "20px";
-    document.body.appendChild(ref);
-    const rcs = getComputedStyle(ref);
     const fcs = getComputedStyle(fa);
-    const widthOk = fcs.outlineWidth === rcs.borderTopWidth && fcs.outlineWidth === "1px";
-    report(widthOk, `ring width matches the 3D border (outline ${fcs.outlineWidth} vs border ${rcs.borderTopWidth})`);
-    const colorOk = fcs.outlineColor === rcs.borderTopColor;
-    report(colorOk, `ring color matches accent/50 (outline ${fcs.outlineColor} vs border ${rcs.borderTopColor})`);
-    const radiusOk = fcs.borderTopLeftRadius === rcs.borderTopLeftRadius && fcs.borderTopLeftRadius === "4px";
-    report(radiusOk, `ring radius matches rounded (${fcs.borderTopLeftRadius} vs ${rcs.borderTopLeftRadius})`);
-    const noGlow = fcs.boxShadow === "none";
-    report(noGlow, `no box-shadow glow (matches the 3D ring) — got "${fcs.boxShadow}"`);
-    ref.remove();
-    ok = ok && widthOk && colorOk && radiusOk && noGlow;
+    const widthOk = fcs.outlineWidth === "2px";
+    report(widthOk, `ring outline is a visible 2px (got ${fcs.outlineWidth})`);
+    const styleOk = fcs.outlineStyle === "solid";
+    report(styleOk, `ring outline is solid (got ${fcs.outlineStyle})`);
+    // Accent is fully opaque (var(--color-accent)) — the color must NOT be a
+    // transparent/50%-alpha value that would render as invisible.
+    const colorOk = /^rgba?\(/.test(fcs.outlineColor) && !/,\s*0(\.\d+)?\)$/.test(fcs.outlineColor);
+    report(colorOk, `ring color is opaque accent (got ${fcs.outlineColor})`);
+    const radiusOk = fcs.borderTopLeftRadius === "4px";
+    report(radiusOk, `ring radius is 4px (got ${fcs.borderTopLeftRadius})`);
+    const hasGlow = fcs.boxShadow !== "none" && fcs.boxShadow.length > 0;
+    report(hasGlow, `ring has a visible glow (box-shadow: "${fcs.boxShadow}")`);
+    ok = ok && widthOk && styleOk && colorOk && radiusOk && hasGlow;
   }
 
   // --- 2. shift-click B → A and B both selected (cross-mount) ---------------
