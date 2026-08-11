@@ -140,6 +140,14 @@ const ICON_PATHS: Record<string, ReactNode> = {
       <path d="M3 13l9 5 9-5" />
     </>
   ),
+  // Expand (ENLARGE) — four corner arrows pointing outward.
+  expand: (
+    <path d="M15 3h6v6M21 3l-7 7M9 21H3v-6M3 21l7-7" />
+  ),
+  // Compress (EXIT ENLARGE) — four corner arrows pointing inward.
+  compress: (
+    <path d="M20 4l-6 6m0-6v6h6M4 20l6-6m0 6v-6H4" />
+  ),
 };
 
 function Icon({ name }: { name: string }) {
