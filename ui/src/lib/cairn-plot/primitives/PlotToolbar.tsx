@@ -21,7 +21,8 @@
  * default; it now means "edit". Reset is on the HOME (reset) button, which
  * zeroes both sliders.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties, ReactNode } from "react";
 import type { DragMode, PlotController } from "../controls/types";
 import type {
@@ -33,6 +34,17 @@ import type {
 import { downloadBlob } from "./plot-to-png";
 import { computeToolbarFold, selectedMenuIndex } from "./toolbar-fold";
 import { commitSliderEntry, sliderEntryDraft } from "./slider-entry";
+import { computeAnchoredPosition, type PopoverAlign } from "./toolbar-popover";
+import { useOriginTheme } from "./themed-portal";
+
+// z-index for the body-portaled TRANSIENT popovers (the `ToolbarMenu` dropdown
+// and the folded `OverflowMenu` panel). Pane roots are `isolation: isolate`, so
+// an in-pane `z-*` can never lift a dropdown above a SIBLING pane; the popovers
+// must escape to `document.body` at a high z to float over neighbouring panes.
+// One tier BELOW the enlarge overlay's 2147483000 (see ImagePaneShell) so an
+// open fullscreen overlay still covers a stray dropdown, but far above all
+// in-pane chrome (toolbar z-30, split divider z-20, pixel overlay z-10).
+const TOOLBAR_POPOVER_Z = 2147482000;
 
 export interface PlotToolbarProps {
   /** The imperative facade this modebar drives (the only real input). */
@@ -231,20 +243,35 @@ function Divider() {
  * `ToolbarMenu` dropdown and the `OverflowMenu` popover need the identical
  * self-contained wiring (capture-phase document listeners, torn down when the
  * popover closes/unmounts), so it lives here once. `onClose` is read through a
- * ref so the effect re-subscribes only when `open` flips — matching the
- * hand-rolled `[open]`-dep effects this replaces.
+ * ref so the effect re-subscribes only when `open` flips.
+ *
+ * Accepts a LIST of "inside" refs, not one: now that the open popover is
+ * PORTALED to `document.body` (to escape the pane's isolated stacking context),
+ * it is no longer a DOM descendant of the trigger root — so a click inside the
+ * portaled menu would look like an "outside" click and dismiss it. Callers pass
+ * BOTH the trigger-root ref AND the portaled-menu ref; a pointer-down inside
+ * EITHER counts as "inside" and does not close. The refs are read through a ref
+ * too, so the effect still re-subscribes only when `open` flips.
  */
 function useDismissOnOutsideOrEscape(
   open: boolean,
-  ref: React.RefObject<HTMLElement | null>,
+  refs:
+    | React.RefObject<HTMLElement | null>
+    | ReadonlyArray<React.RefObject<HTMLElement | null>>,
   onClose: () => void,
 ): void {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const refsRef = useRef<ReadonlyArray<React.RefObject<HTMLElement | null>>>([]);
+  refsRef.current = Array.isArray(refs)
+    ? refs
+    : [refs as React.RefObject<HTMLElement | null>];
   useEffect(() => {
     if (!open) return;
     const onDocPointer = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current();
+      const target = e.target as Node;
+      const inside = refsRef.current.some((r) => r.current?.contains(target));
+      if (!inside) onCloseRef.current();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -258,17 +285,72 @@ function useDismissOnOutsideOrEscape(
       document.removeEventListener("pointerdown", onDocPointer, true);
       document.removeEventListener("keydown", onKey, true);
     };
-  }, [open, ref]);
+  }, [open]);
+}
+
+/**
+ * Position a body-portaled popover at its trigger, keeping it anchored as the
+ * page scrolls/resizes. Returns the fixed `left`/`top` (viewport space), or
+ * `null` before the first measure (the popover renders `visibility:hidden`
+ * until positioned, so it never flashes at 0,0). Runs in `useLayoutEffect` so
+ * the position is committed BEFORE paint; measures the popover's own rect for
+ * the flip-above decision (see {@link computeAnchoredPosition}). A
+ * CAPTURE-phase `scroll` listener catches scrolls on ANY ancestor so the
+ * popover follows its trigger instead of detaching.
+ */
+function useAnchoredPopoverPosition(
+  open: boolean,
+  triggerRef: React.RefObject<HTMLElement | null>,
+  popoverRef: React.RefObject<HTMLElement | null>,
+  align: PopoverAlign,
+): { left: number; top: number } | null {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open || typeof window === "undefined") {
+      setPos(null);
+      return;
+    }
+    const reposition = () => {
+      const trigger = triggerRef.current;
+      const popover = popoverRef.current;
+      if (!trigger || !popover) return;
+      const t = trigger.getBoundingClientRect();
+      const p = popover.getBoundingClientRect();
+      const next = computeAnchoredPosition(
+        t,
+        { width: p.width, height: p.height },
+        { width: window.innerWidth, height: window.innerHeight },
+        align,
+      );
+      setPos({ left: next.left, top: next.top });
+    };
+    reposition();
+    // `true` = capture phase: also fires for scrolls on any scrollable ancestor
+    // (a scrolled pane container), not just the window, so the popover tracks.
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open, triggerRef, popoverRef, align]);
+  return pos;
 }
 
 /**
  * The MENU (dropdown) variant of a leading toolbar button. Self-contained: it
  * owns its open/highlight state and closes on select / outside-click / Escape,
  * with arrow-key + Enter keyboarding. The button face shows the current
- * option's label (or the spec's `icon`) + a caret; the option list is
- * absolutely positioned below it (`z-40`, above the `z-30` toolbar) and styled
- * like the tooltip chrome (rounded / bordered / elevated bg / shadow). No
- * portal / no external dependency — it lives in the toolbar's own DOM subtree.
+ * option's label (or the spec's `icon`) + a caret.
+ *
+ * The OPEN option list is PORTALED to `document.body` as a `position:fixed`
+ * box, positioned at the trigger (below by default, flipping above when it
+ * wouldn't fit) — NOT rendered inline in the toolbar. Inline it would be
+ * `position:absolute` inside the pane's `isolation:isolate` root, so an option
+ * list taller than the pane had its overflow painted over by the next pane
+ * below; the body portal escapes every pane's stacking context (mirroring the
+ * enlarge overlay). Chrome is unchanged (tooltip-like: rounded / bordered /
+ * elevated bg / shadow, `max-h-64` scroll) — only its containing block moves.
  */
 function ToolbarMenu({
   icon,
@@ -283,6 +365,11 @@ function ToolbarMenu({
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const pos = useAnchoredPopoverPosition(open, rootRef, listRef, "left");
+  // Carry the pane's theme onto the body-portaled list (it can't inherit the
+  // pane's tokens from document.body — see themed-portal).
+  const theme = useOriginTheme(open, rootRef);
 
   const selectedIndex = selectedMenuIndex(options, value);
   const face = icon ? undefined : (options[selectedIndex]?.label ?? "");
@@ -306,8 +393,10 @@ function ToolbarMenu({
   );
 
   // Close on outside-click / Escape while open (self-contained — no parent
-  // wiring). Both listeners are torn down when the menu closes/unmounts.
-  useDismissOnOutsideOrEscape(open, rootRef, () => setOpen(false));
+  // wiring). The list is portaled OUT of the trigger root, so "inside" must
+  // include the portaled list too (both refs) — otherwise a click on an option
+  // would read as an outside click and dismiss before `choose` runs.
+  useDismissOnOutsideOrEscape(open, [rootRef, listRef], () => setOpen(false));
 
   const onButtonKeyDown = (e: React.KeyboardEvent) => {
     if (!open) {
@@ -354,40 +443,56 @@ function ToolbarMenu({
         {face ? <span aria-hidden="true">{face}</span> : <Icon name={icon ?? ""} />}
         <Icon name="caret" />
       </button>
-      {open && (
-        <ul
-          role="listbox"
-          className={[
-            // Above the toolbar (z-30); tooltip-like chrome.
-            "absolute left-0 top-full z-40 mt-1 min-w-[7rem] max-h-64 overflow-auto",
-            "rounded border border-border bg-bg-elevated py-0.5 shadow-md",
-          ].join(" ")}
-        >
-          {options.map((opt, i) => {
-            const isSelected = opt.id === value;
-            const isHi = i === highlight;
-            return (
-              <li key={opt.id} role="option" aria-selected={isSelected}>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    choose(opt.id);
-                  }}
-                  onPointerEnter={() => setHighlight(i)}
-                  className={[
-                    "block w-full text-left px-2 py-1 text-[11px] whitespace-nowrap",
-                    isHi ? "bg-bg-hover" : "",
-                    isSelected ? "text-accent font-medium" : "text-fg",
-                  ].join(" ")}
-                >
-                  {opt.label}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ul
+            ref={listRef}
+            role="listbox"
+            data-theme={theme["data-theme"]}
+            // PORTALED to body → fixed at the trigger (see the hook). The high z
+            // floats it above sibling panes' isolated stacking contexts; the
+            // chrome (rounded / bordered / elevated / max-h scroll) is unchanged.
+            // `theme.className` adds `cairn-plot-doc` so the token utilities match.
+            className={`${theme.className} min-w-[7rem] max-h-64 overflow-auto rounded border border-border bg-bg-elevated py-0.5 shadow-md`}
+            style={{
+              position: "fixed",
+              zIndex: TOOLBAR_POPOVER_Z,
+              left: pos?.left ?? 0,
+              top: pos?.top ?? 0,
+              // Hidden until the first measure so it never flashes at (0,0).
+              visibility: pos ? "visible" : "hidden",
+              // Origin theme: resolved --color-* vars + color-scheme.
+              ...theme.style,
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {options.map((opt, i) => {
+              const isSelected = opt.id === value;
+              const isHi = i === highlight;
+              return (
+                <li key={opt.id} role="option" aria-selected={isSelected}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      choose(opt.id);
+                    }}
+                    onPointerEnter={() => setHighlight(i)}
+                    className={[
+                      "block w-full text-left px-2 py-1 text-[11px] whitespace-nowrap",
+                      isHi ? "bg-bg-hover" : "",
+                      isSelected ? "text-accent font-medium" : "text-fg",
+                    ].join(" ")}
+                  >
+                    {opt.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -635,8 +740,13 @@ function OverflowMenu({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // Right-anchored (the "⋯" sits at the pane's top-right corner). Portaled to
+  // body for the same isolated-stacking-context reason as `ToolbarMenu`.
+  const pos = useAnchoredPopoverPosition(open, rootRef, panelRef, "right");
+  const theme = useOriginTheme(open, rootRef);
 
-  useDismissOnOutsideOrEscape(open, rootRef, () => setOpen(false));
+  useDismissOnOutsideOrEscape(open, [rootRef, panelRef], () => setOpen(false));
 
   return (
     <div ref={rootRef} className="relative inline-flex" onPointerDown={(e) => e.stopPropagation()}>
@@ -658,13 +768,26 @@ function OverflowMenu({
       >
         <Icon name="ellipsis" />
       </button>
-      {open && (
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
         <div
+          ref={panelRef}
           role="menu"
-          className={[
-            "absolute right-0 top-full z-40 mt-1 min-w-[10rem] max-h-80 overflow-auto",
-            "rounded border border-border bg-bg-elevated py-1 shadow-md",
-          ].join(" ")}
+          data-theme={theme["data-theme"]}
+          // PORTALED to body → fixed, right-anchored at the trigger (see hook),
+          // high z to float above sibling panes. Chrome + max-h scroll unchanged.
+          // `theme.className` adds `cairn-plot-doc` so the token utilities match.
+          className={`${theme.className} min-w-[10rem] max-h-80 overflow-auto rounded border border-border bg-bg-elevated py-1 shadow-md`}
+          style={{
+            position: "fixed",
+            zIndex: TOOLBAR_POPOVER_Z,
+            left: pos?.left ?? 0,
+            top: pos?.top ?? 0,
+            visibility: pos ? "visible" : "hidden",
+            ...theme.style,
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           {leading.map((b) =>
             b.menu ? (
@@ -734,7 +857,8 @@ function OverflowMenu({
               <ToolbarSlider spec={s} />
             </div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

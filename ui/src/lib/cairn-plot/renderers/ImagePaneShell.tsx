@@ -104,6 +104,7 @@ import {
   IMAGE_TOOLBAR_CONFIG,
   notationToolbarButton,
 } from "./use-image-controller";
+import { useOriginTheme } from "../primitives/themed-portal";
 
 const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 
@@ -386,6 +387,15 @@ export default function ImagePaneShell({
   // making its list unscrollable. Locking the scroll root already stops the page
   // from moving, while scrollable overlay descendants keep working normally.
   const backdropRef = useRef<HTMLDivElement | null>(null);
+  // The overlay is portaled to document.body, so it can't inherit the pane's
+  // theme tokens (dark/light) when the app scopes the theme on a container div
+  // rather than <html>. Snapshot the pane's theme onto the overlay so the
+  // enlarged view follows its origin pane (shared helper — same fix as the
+  // toolbar's portaled menus). Read the theme from `inlineMountRef` — it stays
+  // put in the ORIGINAL tree (inside the theme scope); `paneRef`'s element is
+  // reparented INTO the body-level overlay while enlarged, so reading it would
+  // resolve tokens against document.body (the wrong, default theme).
+  const enlargeTheme = useOriginTheme(enlarged, inlineMountRef);
   useEffect(() => {
     if (!enlarged || typeof document === "undefined") return;
     const scroller = (document.scrollingElement as HTMLElement | null) ?? document.body;
@@ -688,7 +698,11 @@ export default function ImagePaneShell({
             // the overlay must escape all host chrome unconditionally. The dim
             // scrim + blur are inline too; only the fade transition is a class,
             // gated on `motion-safe` (prefers-reduced-motion ⇒ no animation).
-            className="motion-safe:transition-opacity"
+            // `enlargeTheme.className` adds `cairn-plot-doc` so the framed pane's
+            // token utilities match; its data-theme/vars/color-scheme make the
+            // enlarged view follow the ORIGIN pane's theme (dark/light).
+            className={`${enlargeTheme.className} motion-safe:transition-opacity`}
+            data-theme={enlargeTheme["data-theme"]}
             style={{
               position: "fixed",
               inset: 0,
@@ -705,6 +719,8 @@ export default function ImagePaneShell({
               backdropFilter: "blur(2px)",
               WebkitBackdropFilter: "blur(2px)",
               pointerEvents: "auto",
+              // Origin pane's resolved --color-* vars + color-scheme.
+              ...enlargeTheme.style,
             }}
             data-cairn-plot-enlarge-backdrop=""
             role="presentation"
