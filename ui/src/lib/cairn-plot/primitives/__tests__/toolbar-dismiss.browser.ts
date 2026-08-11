@@ -110,8 +110,10 @@ function pressEscape(): void {
 }
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// The leading `ToolbarMenu` (expanded) uses the listbox a11y pattern
+// (`aria-haspopup="listbox"`); the folded `OverflowMenu` uses `="menu"`.
 const menuTrigger = (root: HTMLElement) =>
-  root.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]');
+  root.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]');
 const overflowTrigger = (root: HTMLElement) =>
   root.querySelector<HTMLButtonElement>('button[aria-label="More controls"]');
 const expanded = (btn: HTMLButtonElement | null) => btn?.getAttribute("aria-expanded") === "true";
@@ -134,8 +136,11 @@ async function main(): Promise<void> {
     await wait(40);
     gate(expanded(menuTrigger(wide)), "[menu] opens on click");
 
-    // pointer-down INSIDE must NOT close
-    const listbox = wide.querySelector<HTMLElement>('ul[role="listbox"]');
+    // pointer-down INSIDE must NOT close. The open list is now PORTALED to
+    // document.body (it escapes the pane's isolated stacking context), so it is
+    // no longer a descendant of `wide` — query the document for it.
+    const listbox = document.querySelector<HTMLElement>('ul[role="listbox"]');
+    gate(!!listbox && listbox.parentElement === document.body, "[menu] open list is portaled to document.body");
     if (listbox) firePointerAt(listbox);
     await wait(40);
     gate(expanded(menuTrigger(wide)), "[menu] inside pointer-down keeps it open");

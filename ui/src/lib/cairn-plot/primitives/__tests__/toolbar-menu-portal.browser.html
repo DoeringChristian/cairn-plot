@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PlotToolbar menu-portal Z-order + theme harness</title>
+    <!-- Real compiled Tailwind CSS (committed copy of dist/plot-inline/style.css)
+         so the dropdown chrome (min-w / max-h / bg / border tokens) resolves. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- `data-cairn-harness="self-driving"` opts this page into the DEFAULT
+         `npm run test:harness` run: it dispatches its own click / Escape and
+         asserts (a) the body-portaled fixed dropdown is not occluded by the pane
+         below and (b) the portal follows its origin pane's theme — settling
+         #status headlessly (no WebGPU, no external driving). -->
+    <meta name="cairn-harness" data-cairn-harness="self-driving" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      h2 { font-size: 13px; color: #9cf; margin: 8px 0 4px; }
+      /* Panes are their OWN stacking context (exactly like a real cairn-plot pane
+         root — `isolation:isolate` was added to stop the pixel-value overlay
+         bleeding over the host header). Pane A is SHORT so its (tall) toolbar
+         dropdown overflows into pane B's area. */
+      .pane, .pane-light {
+        position: relative;
+        isolation: isolate;
+        overflow: hidden;
+        width: 360px;
+        background: #1b1b1b;
+        border: 1px solid #333;
+      }
+      #paneA { height: 56px; }
+      #paneB { height: 260px; }
+      #paneL { height: 120px; background: #f0f0f0; }
+      /* Pane B's opaque fill — if the dropdown were occluded, elementFromPoint
+         over pane B would return THIS instead of a menu option. */
+      #paneB-fill { position: absolute; inset: 0; background: #3a2030; z-index: 0; }
+      #outside { margin-top: 12px; padding: 12px; width: 200px; background: #223; border: 1px solid #446; }
+
+      /* EMBEDDER theme scoping: the theme lives on a CONTAINER div (NOT <html>),
+         so a body-level portal cannot inherit it — the exact scenario the shared
+         themed-portal helper fixes. Each scope defines the token vars explicitly
+         (mirrors an app defining its palette on its own root), so the two portals
+         opened from these panes must render with DIFFERENT (origin-matched)
+         themes even though both mount under the same <body>. */
+      .scope-dark {
+        color-scheme: dark;
+        --color-bg: #0d1117; --color-bg-rgb: 13 17 23;
+        --color-bg-elevated: #161b22; --color-bg-elevated-rgb: 22 27 34;
+        --color-bg-hover: #21262d; --color-bg-hover-rgb: 33 38 45;
+        --color-fg: #e6edf3; --color-fg-rgb: 230 237 243;
+        --color-fg-muted: #9198a1; --color-fg-muted-rgb: 145 152 161;
+        --color-fg-subtle: #6e7681; --color-fg-subtle-rgb: 110 118 129;
+        --color-border: #30363d; --color-border-rgb: 48 54 61;
+        --color-border-subtle: #21262d; --color-border-subtle-rgb: 33 38 45;
+        --color-accent: #4493f8; --color-accent-rgb: 68 147 248;
+        --color-accent-hover: #58a6ff; --color-accent-hover-rgb: 88 166 255;
+      }
+      .scope-light {
+        color-scheme: light;
+        --color-bg: #ffffff; --color-bg-rgb: 255 255 255;
+        --color-bg-elevated: #f6f8fa; --color-bg-elevated-rgb: 246 248 250;
+        --color-bg-hover: #ebedf0; --color-bg-hover-rgb: 235 237 240;
+        --color-fg: #1f2328; --color-fg-rgb: 31 35 40;
+        --color-fg-muted: #656d76; --color-fg-muted-rgb: 101 109 118;
+        --color-fg-subtle: #8b949e; --color-fg-subtle-rgb: 139 148 158;
+        --color-border: #d0d7de; --color-border-rgb: 208 215 222;
+        --color-border-subtle: #e8ebef; --color-border-subtle-rgb: 232 235 239;
+        --color-accent: #0969da; --color-accent-rgb: 9 105 218;
+        --color-accent-hover: #0550ae; --color-accent-hover-rgb: 5 80 174;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>PlotToolbar — dropdown Z-order (portal escapes the pane's isolated stacking context) + theme follows origin</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+
+    <!-- DARK-scoped embedder: occlusion + dark-theme assertions. -->
+    <div id="dark-scope" class="cairn-plot-doc scope-dark" data-theme="dark">
+      <h2>Dark scope — Pane A (short; its open dropdown overflows into Pane B)</h2>
+      <div id="paneA" class="pane group"></div>
+      <h2>Dark scope — Pane B (below A — must NOT paint over A's open dropdown)</h2>
+      <div id="paneB" class="pane group"><div id="paneB-fill"></div></div>
+    </div>
+
+    <!-- LIGHT-scoped embedder: the SAME body, a portal that must render LIGHT. -->
+    <div id="light-scope" class="cairn-plot-doc scope-light" data-theme="light">
+      <h2>Light scope — Pane L (its dropdown must render with LIGHT tokens)</h2>
+      <div id="paneL" class="pane-light group"></div>
+    </div>
+
+    <div id="outside">outside click target</div>
+    <script type="module" src="./toolbar-menu-portal.browser.bundle.js?v=1"></script>
+  </body>
+</html>

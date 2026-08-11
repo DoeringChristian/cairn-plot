@@ -149,6 +149,19 @@ async function run(): Promise<boolean> {
   container.style.width = "1000px";
   container.style.height = "680px";
   container.style.background = "#222";
+  // EMBEDDER theme scope on a CONTAINER (not <html>): the theme cannot be
+  // inherited by the body-portaled enlarge overlay, so it must be carried over
+  // by the shared themed-portal helper. Define DARK tokens here and assert the
+  // enlarged frame follows them (below).
+  container.classList.add("cairn-plot-doc");
+  container.setAttribute("data-theme", "dark");
+  container.style.colorScheme = "dark";
+  for (const [k, v] of Object.entries({
+    "--color-bg": "#0d1117", "--color-bg-rgb": "13 17 23",
+    "--color-bg-elevated": "#161b22", "--color-bg-elevated-rgb": "22 27 34",
+    "--color-fg": "#e6edf3", "--color-fg-rgb": "230 237 243",
+    "--color-border": "#30363d", "--color-border-rgb": "48 54 61",
+  })) container.style.setProperty(k, v);
   document.body.appendChild(container);
   // A tall spacer so the document is genuinely scrollable — makes the Bug 3
   // page-scroll-lock assertion meaningful (a wheel COULD move the page if the
@@ -317,6 +330,18 @@ async function run(): Promise<boolean> {
   const isIsolated = cs.isolation === "isolate";
   report(isIsolated, `overlay establishes its own stacking context (isolation: ${cs.isolation})`);
   ok = ok && isIsolated;
+
+  // Theme follows the ORIGIN pane: the container is DARK-scoped, so the
+  // body-portaled overlay must carry the dark tokens. The centered frame uses
+  // `bg-bg-elevated`; assert its computed background is the DARK elevated token
+  // (22 27 34) — the shared themed-portal helper copied the pane's vars over.
+  const enlargeFrame = backdrop.querySelector("[data-cairn-plot-enlarge-frame]") as HTMLElement;
+  const frameBg = getComputedStyle(enlargeFrame).backgroundColor.replace(/\s+/g, " ").trim();
+  const scopeClass = backdrop.classList.contains("cairn-plot-doc");
+  report(scopeClass, `overlay carries the cairn-plot-doc scope class (${scopeClass})`);
+  const frameDark = frameBg === "rgb(22, 27, 34)";
+  report(frameDark, `enlarged frame follows the origin pane's DARK theme (bg ${frameBg})`);
+  ok = ok && scopeClass && frameDark;
 
   // Covers ~the viewport.
   const brect = backdrop.getBoundingClientRect();

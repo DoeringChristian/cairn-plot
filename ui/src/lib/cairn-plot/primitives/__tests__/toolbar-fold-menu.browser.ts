@@ -188,17 +188,18 @@ function openOverflow(): boolean {
   return true;
 }
 
-/** Open a leading menu by its aria-label / title, whether it renders as the
- *  expanded absolute `<ToolbarMenu>` (aria-label button) OR the folded inline
- *  expandable row (also an `aria-label`-carrying button). Collapse any OTHER
- *  open group first so only this one's options are in the DOM. */
+// The folded OVERFLOW panel (and the expanded `ToolbarMenu` listbox) are now
+// PORTALED to document.body — they escape the pane's isolated stacking context.
+// So the panel's CONTENT (leading-menu group buttons, option rows, sliders) is
+// no longer a descendant of `container` (the "⋯" TRIGGER still is). Query the
+// document for that portaled content.
 function openMenu(label: string): boolean {
-  container.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"][aria-expanded="true"]').forEach((b) => {
+  document.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"][aria-expanded="true"]').forEach((b) => {
     if (b.getAttribute("aria-label") !== label && b.getAttribute("aria-label") !== "More controls") fire(b);
   });
   const btn =
-    container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) ??
-    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+    document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) ??
+    Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
       (b.getAttribute("aria-label") ?? b.textContent ?? "").includes(label),
     ) ??
     null;
@@ -207,10 +208,11 @@ function openMenu(label: string): boolean {
   return true;
 }
 
-/** Every currently-rendered option button (both listbox <ul> and inline rows). */
+/** Every currently-rendered option button (both listbox <ul> and inline rows).
+ *  Searched on the document since the popover is portaled to body. */
 function optionButtons(): HTMLButtonElement[] {
-  const listbox = Array.from(container.querySelectorAll<HTMLButtonElement>('ul[role="listbox"] button'));
-  const inline = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-menu-option]'));
+  const listbox = Array.from(document.querySelectorAll<HTMLButtonElement>('ul[role="listbox"] button'));
+  const inline = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-menu-option]'));
   return listbox.length ? listbox : inline;
 }
 
@@ -246,7 +248,7 @@ function hitTestOptions(): HitReport {
  *  scroll fold. Scroll each into the popover's view before hit-testing — a
  *  scrollable-but-reachable control is "usable". */
 function slidersHittable(): { total: number; hittable: number } {
-  const ranges = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="range"]'));
+  const ranges = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="range"]'));
   let hittable = 0;
   for (const s of ranges) {
     s.scrollIntoView({ block: "center" });
@@ -260,7 +262,7 @@ function slidersHittable(): { total: number; hittable: number } {
 /** Double-click the first folded slider's range input to switch it to manual
  *  numeric entry (the double-click bubbles to the wrapping <label>). */
 function editFirstSlider(): boolean {
-  const range = container.querySelector<HTMLInputElement>('input[type="range"]');
+  const range = document.querySelector<HTMLInputElement>('input[type="range"]');
   if (!range) return false;
   range.scrollIntoView({ block: "center" });
   for (const t of ["pointerdown", "mousedown", "mouseup", "click", "dblclick"] as const) {
@@ -269,9 +271,10 @@ function editFirstSlider(): boolean {
   return true;
 }
 
-/** Count the manual-entry text inputs currently mounted in the toolbar. */
+/** Count the manual-entry text inputs currently mounted in the toolbar
+ *  (portaled popover ⇒ query the document). */
 function entryFields(): number {
-  return container.querySelectorAll('input.cairn-plot-toolbar-slider-entry').length;
+  return document.querySelectorAll('input.cairn-plot-toolbar-slider-entry').length;
 }
 
 window.__toolbarHarness = {
