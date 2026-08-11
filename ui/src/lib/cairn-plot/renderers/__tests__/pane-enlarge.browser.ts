@@ -156,7 +156,8 @@ async function run(): Promise<boolean> {
   const spacer = document.createElement("div");
   spacer.style.height = "3000px";
   document.body.appendChild(spacer);
-  const prevBodyOverflow = document.body.style.overflow;
+  const scroller = (document.scrollingElement as HTMLElement | null) ?? document.body;
+  const prevScrollerOverflow = scroller.style.overflow;
 
   let latestViewport: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
   // Externally-driven viewport setter (registered by the Harness) so the Bug 5
@@ -381,21 +382,35 @@ async function run(): Promise<boolean> {
     ok = ok && btnPresent && outsideFrame && noOverlap && toolbarClear;
   }
 
-  // --- Bug 3: while the overlay is open the page must NOT scroll. Body scroll
-  // is locked; a wheel (no Alt) over the backdrop moves neither the page nor
-  // window.scrollY; closing restores the prior scroll behaviour. --------------
+  // --- Bug 3: while the overlay is open the PAGE must NOT scroll (the scroll
+  // ROOT is locked, and window.scrollY doesn't move on a wheel) — BUT a
+  // scrollable element INSIDE the overlay (e.g. the diff-mode menu) must still
+  // scroll (the overlay must NOT blanket-preventDefault wheel). --------------
   {
-    const bodyLocked = document.body.style.overflow === "hidden";
-    report(bodyLocked, `page scroll is locked while enlarged (body.overflow="${document.body.style.overflow}")`);
+    const scrollerEl = (document.scrollingElement as HTMLElement | null) ?? document.body;
+    const rootLocked = scrollerEl.style.overflow === "hidden";
+    report(rootLocked, `page scroll root is locked while enlarged (overflow="${scrollerEl.style.overflow}")`);
     const beforeY = window.scrollY;
-    backdrop.dispatchEvent(
-      new WheelEvent("wheel", { deltaY: 600, bubbles: true, cancelable: true }),
-    );
     window.dispatchEvent(new WheelEvent("wheel", { deltaY: 600, bubbles: true, cancelable: true }));
     await sleep(60);
     const noScroll = window.scrollY === beforeY;
     report(noScroll, `a plain wheel did not scroll the page (scrollY ${beforeY} -> ${window.scrollY})`);
-    ok = ok && bodyLocked && noScroll;
+
+    // A scrollable element inside the overlay must still receive/scroll on wheel:
+    // the overlay must NOT cancel wheel that bubbles from in-overlay UI. Assert a
+    // cancelable wheel dispatched inside the backdrop is NOT defaultPrevented.
+    const inner = document.createElement("div");
+    inner.style.cssText = "height:40px;overflow:auto";
+    const tall = document.createElement("div");
+    tall.style.height = "400px";
+    inner.appendChild(tall);
+    backdrop.appendChild(inner);
+    const ev = new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true });
+    inner.dispatchEvent(ev);
+    const innerScrollable = !ev.defaultPrevented;
+    report(innerScrollable, `wheel inside the overlay is NOT swallowed (defaultPrevented=${ev.defaultPrevented})`);
+    inner.remove();
+    ok = ok && rootLocked && noScroll && innerScrollable;
   }
 
   // --- Case 3a: Escape closes; inline pane resumes -------------------------
@@ -409,8 +424,8 @@ async function run(): Promise<boolean> {
   ok = ok && backInline;
 
   // Bug 3: page scroll is RESTORED exactly on close (back to its prior value).
-  const scrollRestored = document.body.style.overflow === prevBodyOverflow;
-  report(scrollRestored, `page scroll restored on close (body.overflow back to "${document.body.style.overflow}")`);
+  const scrollRestored = scroller.style.overflow === prevScrollerOverflow;
+  report(scrollRestored, `page scroll restored on close (scroll-root overflow back to "${scroller.style.overflow}")`);
   ok = ok && scrollRestored;
 
   const inlineStillLive = await waitNonBlank(inlineCanvas);

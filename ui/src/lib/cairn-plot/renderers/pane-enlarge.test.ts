@@ -65,11 +65,15 @@ test("focus is restored to the trigger on close", () => {
   assert.match(shell, /prev\.focus\?\.\(\)/);
 });
 
-test("Bug 3: page scroll is locked while enlarged and restored on close", () => {
-  // Save the prior body.overflow, set it to hidden while open, restore on cleanup.
-  assert.match(shell, /const prevOverflow = body\.style\.overflow/);
-  assert.match(shell, /body\.style\.overflow = "hidden"/);
-  assert.match(shell, /body\.style\.overflow = prevOverflow/);
+test("Bug 3: page scroll-root is locked while enlarged and restored on close", () => {
+  // Lock the real scroll root (document.scrollingElement) — set overflow hidden
+  // while open, restore on cleanup.
+  assert.match(shell, /document\.scrollingElement/);
+  assert.match(shell, /scroller\.style\.overflow = "hidden"/);
+  assert.match(shell, /scroller\.style\.overflow = prevOverflow/);
+  // Must NOT blanket-preventDefault wheel (that swallowed in-overlay scrolling,
+  // e.g. the diff-mode menu) — no wheel listener that cancels the event.
+  assert.doesNotMatch(shell, /addEventListener\(\s*["']wheel["']/);
 });
 
 test("Bug 4: the ✕ close button lives in the backdrop, OUTSIDE the pane frame", () => {

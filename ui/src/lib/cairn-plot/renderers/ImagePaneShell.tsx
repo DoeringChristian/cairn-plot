@@ -377,25 +377,25 @@ export default function ImagePaneShell({
   }, [enlarged]);
 
   // Bug 3: while the overlay is open the page behind it must NOT scroll. Lock
-  // page scroll (save + restore the prior `body.overflow`) for the overlay's
-  // lifetime; Alt-wheel zoom INSIDE the pane still works (that path
-  // preventDefaults in `useImageViewport`), and the page never moves. Restored
-  // exactly on close AND on unmount-while-open (the effect cleanup).
+  // the page's REAL scroll root (`document.scrollingElement`, usually <html> in
+  // standards mode — NOT necessarily <body>) + disable scroll-chaining, for the
+  // overlay's lifetime; restored exactly on close AND on unmount-while-open.
+  //
+  // Do NOT `preventDefault` wheel on the backdrop: that swallowed wheel events
+  // bubbling up from scrollable UI INSIDE the overlay (e.g. the diff-mode menu),
+  // making its list unscrollable. Locking the scroll root already stops the page
+  // from moving, while scrollable overlay descendants keep working normally.
   const backdropRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!enlarged || typeof document === "undefined") return;
-    const body = document.body;
-    const prevOverflow = body.style.overflow;
-    body.style.overflow = "hidden";
-    // Belt-and-suspenders: swallow a plain (non-zoom) wheel over the backdrop so
-    // no scrollable ancestor moves the page either. The pane's own Alt/pinch
-    // zoom already stops propagation before this sees it, so zoom is untouched.
-    const backdrop = backdropRef.current;
-    const onWheel = (e: WheelEvent) => e.preventDefault();
-    backdrop?.addEventListener("wheel", onWheel, { passive: false });
+    const scroller = (document.scrollingElement as HTMLElement | null) ?? document.body;
+    const prevOverflow = scroller.style.overflow;
+    const prevOverscroll = scroller.style.overscrollBehavior;
+    scroller.style.overflow = "hidden";
+    scroller.style.overscrollBehavior = "none";
     return () => {
-      body.style.overflow = prevOverflow;
-      backdrop?.removeEventListener("wheel", onWheel);
+      scroller.style.overflow = prevOverflow;
+      scroller.style.overscrollBehavior = prevOverscroll;
     };
   }, [enlarged]);
 
