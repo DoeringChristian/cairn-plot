@@ -283,11 +283,11 @@ def build_report() -> cp.Report:
             cp.Image(small_a), cp.Image(small_b), mode="slide", split_position=0.5
         )
     )
-    rep.md("### All modes — side · split · blend · diff")
+    rep.md("### All modes — slide · blend · diff")
     rep.grid(
         [
             [
-                cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
+                cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend"),
                 cp.Compare(
                     cp.Image(img_a), cp.Image(img_b), mode="slide", split_position=0.5
                 ),

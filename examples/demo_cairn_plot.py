@@ -282,9 +282,10 @@ def build_gallery() -> list[tuple[str, object]]:
     img_a = _gradient_image(120, 80)
     img_b = _gradient_image(120, 80, shift=0.18)  # a shifted variant to compare
     items.append((
-        "Compare — all modes (side · split · blend · diff)",
+        "Compare — all modes (slide · blend · diff)",
         cp.Grid(
-            [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="side"),
+            [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide",
+                         split_position=0.25),
               cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide",
                          split_position=0.5)],
              [cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend",

@@ -318,7 +318,6 @@
         "mode": {
           "type": "string",
           "enum": [
-            "side",
             "split",
             "blend",
             "diff"
@@ -371,7 +370,7 @@
         "b"
       ],
       "additionalProperties": false,
-      "description": "Two DataSpec frames composited into one pane (side/split/blend/diff). `side` renders the two frames as a plain 2-pane side-by-side (the former component-level 2-cell Grid, now owned by the compare stack so it is client-switchable via the view-mode menu); `split`/`blend`/`diff` composite them through the shared compositor / GPU compare pane."
+      "description": "Two DataSpec frames composited into one pane (split/blend/diff). `split`/`blend`/`diff` composite them through the shared compositor / GPU compare pane."
     }
   }
 }
