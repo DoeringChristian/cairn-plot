@@ -1442,6 +1442,20 @@ export default function GpuComparePane({
       get overlayWindow() {
         return overlayWindow;
       },
+      // Read back the ACTUAL rendered surface pixels (RGBA, row-major, backing-
+      // store size). Renders a fresh frame first, then `device.readback` copies
+      // the surface's current texture — the headless-reliable path (a WebGPU
+      // canvas's presented swapchain reads back blank via `createImageBitmap`).
+      // Lets the number-alignment harness confirm a per-side number sits on the
+      // real rendered pixel. Returns raw bytes; the in-page harness scans them.
+      readbackSurface: async () => {
+        const r = resRef.current;
+        const canvas = canvasRef.current;
+        if (!r || !r.surface || !canvas) return null;
+        renderPass(); // fresh synchronous frame into the surface's current texture
+        const data = await r.device.readback(r.surface);
+        return { data, width: canvas.width, height: canvas.height };
+      },
       get align() {
         return align;
       },
@@ -1520,6 +1534,7 @@ export default function GpuComparePane({
     sampleDiff,
     sampleFg,
     sampleRef,
+    renderPass,
     dims,
     framingDims,
     srcDims,
