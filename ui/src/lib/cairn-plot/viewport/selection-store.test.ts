@@ -10,7 +10,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SelectionStore, getSelectionStore } from "./selection-store.ts";
+import {
+  SelectionStore,
+  getGlobalSelectionStore,
+  nextSelectionPaneId,
+  __resetGlobalSelectionStoreForTest,
+} from "./selection-store.ts";
 
 test("plain click selects ONLY that pane (replaces prior selection)", () => {
   const s = new SelectionStore();
@@ -93,10 +98,37 @@ test("prune drops ids of unmounted panes", () => {
   assert.deepEqual([...s.getSelected()], ["a", "c"]);
 });
 
-test("getSelectionStore returns one store per grid id", () => {
-  const g1 = getSelectionStore("grid-x");
-  const g2 = getSelectionStore("grid-x");
-  const g3 = getSelectionStore("grid-y");
-  assert.equal(g1, g2, "same grid id → same store");
-  assert.notEqual(g1, g3, "different grid id → different store (scoped selection)");
+test("remove drops a single unmounting pane id (never adds)", () => {
+  const s = new SelectionStore();
+  s.select("a", "replace");
+  s.select("b", "toggle");
+  let fires = 0;
+  s.subscribe(() => fires++);
+  s.remove("a"); // a's pane unmounts
+  assert.deepEqual([...s.getSelected()], ["b"]);
+  assert.equal(fires, 1);
+  s.remove("a"); // already gone → no-op, no emit, no re-add
+  assert.deepEqual([...s.getSelected()], ["b"]);
+  assert.equal(fires, 1, "removing an absent id is a no-op");
+});
+
+test("getGlobalSelectionStore returns ONE page-wide store (all mounts share it)", () => {
+  __resetGlobalSelectionStoreForTest();
+  const a = getGlobalSelectionStore();
+  const b = getGlobalSelectionStore();
+  assert.equal(a, b, "every mount obtains the same document-scoped store");
+  a.select("pane-1", "replace");
+  assert.deepEqual(
+    [...getGlobalSelectionStore().getSelected()],
+    ["pane-1"],
+    "a selection made via one handle is visible through the singleton",
+  );
+  __resetGlobalSelectionStoreForTest();
+  assert.equal(getGlobalSelectionStore().count(), 0, "reset yields a fresh empty store");
+});
+
+test("nextSelectionPaneId is process-unique across mounts (no useId collision)", () => {
+  const ids = new Set<string>();
+  for (let i = 0; i < 100; i++) ids.add(nextSelectionPaneId());
+  assert.equal(ids.size, 100, "every generated pane id is distinct");
 });

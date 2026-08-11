@@ -144,7 +144,7 @@ function walk(dir, out = []) {
 
 /**
  * @typedef {{ id:string, htmlPath:string, dir:string, urlPath:string,
- *             sources:string[] }} Harness
+ *             sources:string[], selfDriving:boolean }} Harness
  */
 
 /** @returns {Harness[]} */
@@ -156,6 +156,12 @@ function discoverHarnesses() {
     const html = readFileSync(htmlPath, "utf-8");
     const dir = dirname(htmlPath);
     const id = relative(SEARCH_ROOT, htmlPath).replace(/\.browser\.html$/, "");
+    // A harness that dispatches its OWN gestures (and sets #status to PASS/FAIL
+    // without any external driving) opts into the DEFAULT run by declaring
+    // `data-cairn-harness="self-driving"` in its HTML — so a non-WebGPU DOM proof
+    // (e.g. page-wide selection) is gated by CI just like the engine parity
+    // proofs, unlike the gesture-dependent interaction harnesses.
+    const selfDriving = /data-cairn-harness\s*=\s*["']self-driving["']/i.test(html);
     // Every `<script ... src="./X.browser.bundle.js">` maps to source X.browser.ts
     const sources = [];
     for (const m of html.matchAll(
@@ -167,7 +173,7 @@ function discoverHarnesses() {
       sources.push(src);
     }
     const urlPath = "/" + relative(UI_ROOT, htmlPath).split("\\").join("/");
-    harnesses.push({ id, htmlPath, dir, urlPath, sources });
+    harnesses.push({ id, htmlPath, dir, urlPath, sources, selfDriving });
   }
   return harnesses;
 }
@@ -576,7 +582,10 @@ async function main() {
   const interactionSkips = [];
   if (!RUN_ALL && !customRoot) {
     harnesses = harnesses.filter((h) => {
-      if (!isParityHarness(h)) {
+      // The default set = engine WGSL↔TS parity proofs PLUS any SELF-DRIVING
+      // harness (dispatches its own gestures, settles headlessly). Only the
+      // gesture-DEPENDENT interaction harnesses are deferred to `--all`.
+      if (!isParityHarness(h) && !h.selfDriving) {
         interactionSkips.push(h.id);
         return false;
       }
