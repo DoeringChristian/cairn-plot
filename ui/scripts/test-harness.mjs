@@ -189,6 +189,15 @@ async function bundleAll(harnesses) {
         target: "es2022",
         outfile,
         logLevel: "silent",
+        // Harnesses that import React components (`*.tsx`, e.g. the pane
+        // harnesses) need the automatic JSX runtime: the project's root
+        // tsconfig.json is a references-only stub esbuild does not resolve
+        // through to `tsconfig.app.json`'s `"jsx": "react-jsx"`, so without this
+        // esbuild falls back to the classic `React.createElement` factory and
+        // the component modules throw "React is not defined" at eval (the same
+        // gotcha the gpu-image-pane harness's RUNNING doc calls out). Engine
+        // parity harnesses import no JSX, so this is a no-op for them.
+        jsx: "automatic",
         // Inline .wasm/.exr etc. that harnesses import via new URL(...import.meta.url)
         // are left as URL references resolved against the served ui/ root.
         loader: { ".wasm": "file" },

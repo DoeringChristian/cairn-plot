@@ -3,6 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <title>ImagePaneShell enlarge harness</title>
+    <!-- Real compiled Tailwind CSS (a committed copy of dist/plot-inline/style.css)
+         so the pane's own w-full/h-full/flex layout resolves — exactly what a
+         host page loads. The enlarge OVERLAY chrome itself uses inline geometry
+         and needs no CSS; this is only for the pane's internal layout. -->
+    <link rel="stylesheet" href="./harness-style.css" />
     <style>
       body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
       #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
@@ -17,6 +22,6 @@
     <!-- Self-driving: mounts a pane, clicks enlarge, asserts the body-portaled
          fixed/high-z/isolate overlay contains the moved (non-blank) canvas, then
          Escape + backdrop-click close it. (`?v=` is a manual cache-bust.) -->
-    <script type="module" src="./pane-enlarge.browser.bundle.js?v=1"></script>
+    <script type="module" src="./pane-enlarge.browser.bundle.js?v=3"></script>
   </body>
 </html>

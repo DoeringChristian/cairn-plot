@@ -639,8 +639,30 @@ export default function ImagePaneShell({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed inset-0 isolate z-[2147483000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-8 motion-safe:transition-opacity"
-            style={{ pointerEvents: "auto" }}
+            // Structural geometry is INLINE (not Tailwind classes) so the
+            // overlay is fixed / full-viewport / high-z / its own stacking
+            // context REGARDLESS of the host's CSS (resets, missing utilities) —
+            // the overlay must escape all host chrome unconditionally. The dim
+            // scrim + blur are inline too; only the fade transition is a class,
+            // gated on `motion-safe` (prefers-reduced-motion ⇒ no animation).
+            className="motion-safe:transition-opacity"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 2147483000,
+              isolation: "isolate",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "clamp(8px, 2.5vw, 40px)",
+              // Dim scrim — a dark veil reads as "dim" in both light + dark
+              // themes (the conventional modal backdrop); the framed pane below
+              // carries the theme-aware surface tokens.
+              background: "rgba(0, 0, 0, 0.6)",
+              backdropFilter: "blur(2px)",
+              WebkitBackdropFilter: "blur(2px)",
+              pointerEvents: "auto",
+            }}
             data-cairn-plot-enlarge-backdrop=""
             role="presentation"
             onPointerDown={(e) => {
@@ -650,7 +672,15 @@ export default function ImagePaneShell({
             }}
           >
             <div
-              className="relative flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated shadow-2xl w-full h-full"
+              className="rounded-lg border border-border bg-bg-elevated shadow-2xl"
+              style={{
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+                width: "100%",
+                height: "100%",
+                overflow: "hidden",
+              }}
               role="dialog"
               aria-modal="true"
               aria-label={label ? `Enlarged: ${label}` : "Enlarged view"}
@@ -662,7 +692,19 @@ export default function ImagePaneShell({
                 type="button"
                 aria-label="Exit fullscreen (Esc)"
                 title="Exit fullscreen (Esc)"
-                className="absolute right-2 top-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-bg-elevated/90 text-fg-muted shadow-sm hover:text-fg hover:bg-bg-hover focus:outline-none focus:ring-2 focus:ring-accent"
+                className="border border-border bg-bg-elevated/90 text-fg-muted shadow-sm hover:text-fg hover:bg-bg-hover focus:outline-none focus:ring-2 focus:ring-accent"
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: 8,
+                  zIndex: 10,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 32,
+                  height: 32,
+                  borderRadius: 9999,
+                }}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setEnlarged(false)}
               >
@@ -681,8 +723,18 @@ export default function ImagePaneShell({
                 </svg>
               </button>
               {/* Empty in React's view — the content host is appendChild'd here
-                  while enlarged. `min-h-0`/`min-w-0` let the pane fill it. */}
-              <div ref={overlayMountRef} className="relative flex-1 min-h-0 min-w-0 flex flex-col" />
+                  while enlarged. `flex:1` + `min-*:0` let the pane fill + clamp. */}
+              <div
+                ref={overlayMountRef}
+                style={{
+                  position: "relative",
+                  flex: "1 1 0%",
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              />
             </div>
           </div>,
           document.body,

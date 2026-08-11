@@ -15,10 +15,11 @@
  *
  *   npm run test:harness -- --all --only pane-enlarge
  *
- * It mounts an HDR `GpuImagePane`. When a WebGPU adapter exists this is the
- * real GPU canvas; when none does, `GpuImagePane` falls back to `CpuImagePane`
- * (a 2D `<canvas>` for HDR) — either way the SHARED `ImagePaneShell` enlarge
- * path is exercised against a real, non-blank canvas.
+ * It mounts an HDR `CpuImagePane` (a real 2D `<canvas>`, no WebGPU/wasm) — the
+ * enlarge path is entirely in the SHARED `ImagePaneShell`, so this exercises the
+ * exact same code every pane (CPU/GPU image + GPU compare) inherits, against a
+ * real, non-blank canvas. The WebGPU pane's identical behaviour (canvas context
+ * surviving the reparent) is verified interactively in a foreground browser.
  *
  * CASES:
  *   1. The enlarge toolbar button mounts; the pane canvas renders non-blank.
@@ -36,7 +37,15 @@
  */
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GpuImagePane from "../GpuImagePane";
+// The enlarge feature lives entirely in the SHARED `ImagePaneShell` (every image
+// + compare pane renders through it), so it is exercised faithfully via the
+// lightweight `CpuImagePane` — no WebGPU/wasm/worker imports, so the module
+// graph evaluates cleanly under the runner's headless, cross-origin-isolated
+// context (unlike the heavy `GpuImagePane` graph, which is human-run). A 2D
+// canvas ALSO loses its backing store if remounted, so the "canvas survives the
+// reparent" proof is just as meaningful here; the WebGPU pane is verified
+// interactively in a foreground browser.
+import CpuImagePane from "../CpuImagePane";
 import { hdrSource, type HdrData } from "../image-backend";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 
@@ -131,10 +140,13 @@ function paneCanvas(scope: ParentNode): HTMLCanvasElement | null {
 
 async function run(): Promise<boolean> {
   let ok = true;
+  // Wide enough that the toolbar stays EXPANDED (not folded into the "⋯"
+  // overflow), so the enlarge button is directly present — representative of a
+  // real pane one would enlarge.
   const container = document.createElement("div");
   container.id = "harness-enlarge";
-  container.style.width = "360px";
-  container.style.height = "300px";
+  container.style.width = "1000px";
+  container.style.height = "680px";
   container.style.background = "#222";
   document.body.appendChild(container);
 
@@ -144,7 +156,7 @@ async function run(): Promise<boolean> {
 
   function Harness() {
     const [viewport, setViewport] = React.useState<ImageViewport>(latestViewport);
-    return h(GpuImagePane, {
+    return h(CpuImagePane, {
       source: hdrSource(hdr),
       tonemap: "srgb",
       exposure: 0.5,
@@ -287,6 +299,7 @@ async function run(): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
+  report(true, "harness module loaded (boot marker)");
   try {
     const ok = await run();
     const noErrors = consoleErrors.length === 0;
