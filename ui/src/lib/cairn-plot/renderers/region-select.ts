@@ -113,6 +113,96 @@ export function texelToScreen(tx: number, ty: number, p: ScreenToTexelParams): {
 }
 
 /**
+ * The fill-stretch placement of a SAMPLED source of `sourceDims` inside the
+ * framing quad that {@link computeFit} establishes for `p` — the shared math the
+ * TEV overlay uses to place per-texel numbers when the sampled source's
+ * resolution differs from the FRAMING dims (`p.naturalWidth/Height`).
+ *
+ * The framing quad (the on-screen rect where the full framing image renders,
+ * letterbox + zoom/pan baked into `p.box`/`p.sourceWindow`) is ONE object-contain
+ * fit. WITHIN that quad, whichever source is sampled is spread across its OWN
+ * `sourceDims.w × sourceDims.h` grid: the compare split/blend shader samples both
+ * operands through ONE normalized uv window, each scaled by its own
+ * `textureDimensions`, so a mismatched-resolution side fills the SAME quad with
+ * its own texel count (and its cells go rectangular when the two aspects differ).
+ *
+ * When `sourceDims` is omitted or equals the framing dims (the single-image pane
+ * and the compare foreground/primary side) this collapses EXACTLY to the
+ * isotropic {@link computeFit}/{@link texelToScreen} mapping — `sxPerTexel ===
+ * syPerTexel === scale`, and {@link sourceTexelCenter} equals the overlay's
+ * historical `imgLeft + (px - srcOriginX + 0.5) * scale`.
+ */
+export interface SourceFit {
+  /** Framing px per FRAMING texel (isotropic) — drives the letterbox/quad. */
+  scale: number;
+  /** Framing-quad top-left in `p.box`'s client space. */
+  quadLeft: number;
+  quadTop: number;
+  /** On-screen size of the FULL framing image (the quad extent). */
+  quadW: number;
+  quadH: number;
+  /** Screen px per SAMPLED-source texel (per axis; equal iff aspects match). */
+  sxPerTexel: number;
+  syPerTexel: number;
+  /** The sampled source's grid resolution (== framing dims when unspecified). */
+  gridW: number;
+  gridH: number;
+  /** Framing crop size in framing texels (`computeFit`'s `visibleW/H`). */
+  visibleW: number;
+  visibleH: number;
+}
+
+/** Fill-stretch fit of `sourceDims` into `computeFit(p)`'s framing quad. See
+ *  {@link SourceFit}. `sourceDims` defaults to the framing dims (identity). */
+export function computeSourceFit(
+  p: ScreenToTexelParams,
+  sourceDims?: { w: number; h: number },
+): SourceFit {
+  const f = computeFit(p);
+  const gridW = sourceDims?.w ?? p.naturalWidth;
+  const gridH = sourceDims?.h ?? p.naturalHeight;
+  // The framing quad, expressed as its top-left + on-screen extent. `srcOriginX`
+  // is the crop origin in framing texels, so `imgLeft - srcOriginX*scale` is
+  // where framing texel 0 sits (== the full image's left edge on screen).
+  const quadLeft = f.imgLeft - f.srcOriginX * f.scale;
+  const quadTop = f.imgTop - f.srcOriginY * f.scale;
+  const quadW = p.naturalWidth * f.scale;
+  const quadH = p.naturalHeight * f.scale;
+  return {
+    scale: f.scale,
+    quadLeft,
+    quadTop,
+    quadW,
+    quadH,
+    sxPerTexel: gridW > 0 ? quadW / gridW : f.scale,
+    syPerTexel: gridH > 0 ? quadH / gridH : f.scale,
+    gridW,
+    gridH,
+    visibleW: f.visibleW,
+    visibleH: f.visibleH,
+  };
+}
+
+/**
+ * A sampled-source texel's CENTER → its client-space screen point, under the
+ * fill-stretch model (generalizes the overlay's `imgLeft + (px - srcOriginX +
+ * 0.5) * scale` to a source whose resolution differs from the framing dims).
+ * `px`/`py` are integer texel indices; `sourceDims` defaults to the framing dims.
+ */
+export function sourceTexelCenter(
+  px: number,
+  py: number,
+  p: ScreenToTexelParams,
+  sourceDims?: { w: number; h: number },
+): { x: number; y: number } {
+  const sf = computeSourceFit(p, sourceDims);
+  return {
+    x: sf.quadLeft + (px + 0.5) * sf.sxPerTexel,
+    y: sf.quadTop + (py + 0.5) * sf.syPerTexel,
+  };
+}
+
+/**
  * Map an INCLUSIVE integer texel rect to its client-space screen box. Texel
  * `x0..x1` covers pixel centers, so the drawn box spans `[x0, x1+1)` texels
  * (the full pixels), giving a rect that stays glued to the image region under

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>split TEV number alignment harness</title>
+    <!-- Committed compiled Tailwind CSS (same file the sibling geometry /
+         settings-sync harnesses link). The pane uses w-full/h-full/flex
+         utilities for layout; without them the pixel geometry asserted below is
+         meaningless. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      #mismatch-harness, #large-harness { margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>media-compare/GpuComparePane — Slide/split TEV per-side number alignment</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <!-- Self-driving (see <html data-cairn-harness>): drives the pane via React
+         state (no gestures), so `npm run test:harness` runs it in the DEFAULT
+         set. Needs WebGPU; the runner skips-loud when no adapter is present. -->
+    <script type="module" src="./gpu-compare-split-numbers.browser.bundle.js"></script>
+  </body>
+</html>
