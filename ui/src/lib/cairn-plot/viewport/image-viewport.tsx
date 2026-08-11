@@ -122,7 +122,6 @@ export function ImageViewportPane({
   diffKernel,
   onDiffKernelChange,
   onCompareModeChange,
-  onRequestSide,
   splitPosition,
   onSplitPositionChange,
   blendAlpha,
@@ -160,7 +159,6 @@ export function ImageViewportPane({
       diffKernel={diffKernel}
       onDiffKernelChange={onDiffKernelChange}
       onCompareModeChange={onCompareModeChange}
-      onRequestSide={onRequestSide}
       colormap={settings.colormap ?? "none"}
       interpolation={settings.interpolation ?? "auto"}
       showAxes={settings.showAxes ?? false}
@@ -191,7 +189,7 @@ export function ImageViewportPane({
  * `image/webgl-diff.ts`) and no card-imposed pane cap today.
  */
 export const imageViewportCapabilities: ViewportCapabilities<never> = {
-  coreModes: ["normal", "side", "split", "blend", "diff"],
+  coreModes: ["normal", "split", "blend", "diff"],
   nativeModes: [],
   hasSteps: true,
   postProcessing: true,

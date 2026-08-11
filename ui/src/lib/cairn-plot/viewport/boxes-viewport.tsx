@@ -461,7 +461,7 @@ export function boxesActiveColorbar(args: {
  * `webglContextsPerPane: 1` WebGL budget parity).
  */
 export const boxesViewportCapabilities: ViewportCapabilities<BoxesNativeMode> = {
-  coreModes: ["normal", "side", "split", "blend", "diff"],
+  coreModes: ["normal", "split", "blend", "diff"],
   nativeModes: [
     {
       mode: "diff-property",

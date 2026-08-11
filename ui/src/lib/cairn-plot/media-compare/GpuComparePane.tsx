@@ -175,16 +175,9 @@ export interface GpuComparePaneProps {
   onDiffKernelChange?: (kernelId: string) => void;
   /** Fired when the pane's compare MODE changes via its MODE menu (split ⇄
    *  blend ⇄ diff). Lets an owner above this pane (`CompareView`) keep its
-   *  lifted view-mode state in sync so a later side ⇄ compare round-trip
-   *  re-seeds to the last selection. Optional — the pane stays self-contained
+   *  lifted view-mode state in sync. Optional — the pane stays self-contained
    *  (owns `compareMode`) when unwired (the browser harness path). */
   onCompareModeChange?: (mode: CompareMode) => void;
-  /** Fired when the user picks "Side" in the MODE menu. `side` is NOT an engine
-   *  composite (`CompareMode` is split/blend/diff only — the shader has no side
-   *  pass); the 2-pane side-by-side lives ABOVE this pane in `CompareView`, so
-   *  selecting it delegates UP instead of mutating internal state. Absent ⇒ the
-   *  "Side" entry is omitted from the menu. */
-  onRequestSide?: () => void;
 
   zoom: number;
   pan: { x: number; y: number };
@@ -337,7 +330,6 @@ export default function GpuComparePane({
   diffKernel: diffKernelProp,
   onDiffKernelChange,
   onCompareModeChange,
-  onRequestSide,
   zoom,
   pan,
   onViewportChange,
@@ -431,15 +423,14 @@ export default function GpuComparePane({
   // Compare MODE selection (spec §toolbar). The `mode` prop seeds the initial
   // composition (slide/blend/diff); internal state then owns it so the toolbar
   // MODE menu can switch it VIEW-LOCALLY (slide ⇄ blend ⇄ a diff kernel) without
-  // a descriptor round-trip. NOTE: `"side"` is NOT reachable here — it's a
-  // 2-cell grid composed ABOVE this pane by `CompositeMediaPane`, so the menu
-  // scopes to slide · blend · kernels (see the menu build below).
+  // a descriptor round-trip. The menu scopes to slide · blend · kernels (see the
+  // menu build below).
   const [compareMode, setCompareModeState, compareModeMeta] = useResettableState<CompareMode>(mode);
   useEffect(() => {
     setCompareModeState(mode);
   }, [mode, setCompareModeState]);
   // Set the compare mode AND notify an owner above (so `CompareView` can keep
-  // its lifted view-mode state coherent for side ⇄ compare round-trips). Menu
+  // its lifted view-mode state coherent). Menu
   // selections go through here; the prop-driven `useEffect` above does NOT
   // (that mirrors an owner change already made upstream — no echo back).
   const setCompareMode = useCallback(
@@ -571,11 +562,9 @@ export default function GpuComparePane({
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
       // Compare-only keys — image panes ignore these (partial-apply). Mode/kernel
-      // go through the echo setters so `CompareView`'s lifted state follows; a
-      // "side" mode delegates UP (this pane has no side pass and would unmount).
+      // go through the echo setters so `CompareView`'s lifted state follows.
       if (patch.compareMode !== undefined) {
-        if (patch.compareMode === "side") onRequestSide?.();
-        else setCompareMode(patch.compareMode as CompareMode);
+        setCompareMode(patch.compareMode as CompareMode);
       }
       if (patch.diffKernel !== undefined) setDiffKernel(patch.diffKernel);
       if (patch.splitPosition !== undefined) onSplitPositionChange?.(patch.splitPosition);
@@ -590,7 +579,6 @@ export default function GpuComparePane({
       setDiffKernel,
       onSplitPositionChange,
       onBlendAlphaChange,
-      onRequestSide,
     ],
   );
   const settingsSnapshot = useCallback(
@@ -702,15 +690,11 @@ export default function GpuComparePane({
   const leadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
     // `listDiffMenuModes()` collapses the FLIP family to one "FLIP (perceptual)"
     // entry (`flip`, auto-dispatched LDR/HDR by source type) + "FLIP (LDR
-    // forced)" (`flip_ldr`) — HDR-FLIP is never listed separately. "Side" (the
-    // 2-pane layout owned by `CompareView` ABOVE this pane) leads the menu only
-    // when an owner wired `onRequestSide` — selecting it delegates UP (the
-    // shader has no side pass) rather than touching internal state.
+    // forced)" (`flip_ldr`) — HDR-FLIP is never listed separately.
     const modeMenu = buildCompareModeMenu({
       mode: compareMode,
       kernel: diffKernel,
       kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
-      onSide: onRequestSide,
       onSlide: () => changeCompareMode("split"),
       onBlend: () => changeCompareMode("blend"),
       onKernel: (id) => {
@@ -729,7 +713,7 @@ export default function GpuComparePane({
       menus.push(tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)));
     }
     return menus;
-  }, [compareMode, diffKernel, colormapState, effectiveTonemap, changeDiffKernel, changeCompareMode, changeColormap, changeTonemap, onRequestSide]);
+  }, [compareMode, diffKernel, colormapState, effectiveTonemap, changeDiffKernel, changeCompareMode, changeColormap, changeTonemap]);
 
   // TEV per-side source pixels. u8 sides keep their raw `ImageData`; FLOAT sides
   // (`.exr`/`imghdr`) have NO 8-bit `ImageData` (decoded to `rgba32float`), so
@@ -1777,8 +1761,7 @@ export default function GpuComparePane({
               i.e. `split`/slide (the left-of-divider side IS the reference).
               Hidden for `blend` (images fused, no distinct reference side) and
               every `diff` kernel (a derived error map has no reference side).
-              `side` shows its own `RefBadge` on the reference pane. Shared
-              `RefBadge` — identical element/corner in every compare mode. */}
+              Shared `RefBadge` — identical element/corner in every compare mode. */}
           {compareMode === "split" && <RefBadge />}
           {/* Bottom-RIGHT label chip (static; the compare pane's label is never
               draggable), routed through the shared LabelChip. */}

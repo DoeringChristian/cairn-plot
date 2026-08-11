@@ -17,10 +17,11 @@ import type { MediaCompareModeKind } from "./mode";
 //   1. Any active diff (`diffMode !== "none"`) wins — this is the sanctioned
 //      "split+diff (or side+diff) collapses to diff" delta from the spec.
 //   2. Otherwise compareMode "split"/"blend" map directly.
-//   3. Otherwise "side-by-side" (or unset) maps to "side" when the old
+//   3. Otherwise "side-by-side" (or unset) maps to "split" when the old
 //      per-run reference scope was active (that combination visually showed
-//      two panes), else "normal" (single pane, reference tracked but not
-//      shown/diffed).
+//      two panes; the removed side-by-side view now migrates to the surviving
+//      "split"/slide comparison), else "normal" (single pane, reference
+//      tracked but not shown/diffed).
 // ---------------------------------------------------------------------------
 
 export interface LegacyModeInputs {
@@ -34,7 +35,7 @@ export function migrateLegacyMode(input: LegacyModeInputs): MediaCompareModeKind
   if (diffMode !== "none") return "diff";
   if (compareMode === "split") return "split";
   if (compareMode === "blend") return "blend";
-  return referenceMode === "per-run" ? "side" : "normal";
+  return referenceMode === "per-run" ? "split" : "normal";
 }
 
 // ---------------------------------------------------------------------------
@@ -61,9 +62,9 @@ export const LEGACY_MODE_MIGRATION_TABLE: Array<{
     expected: "normal",
   },
   {
-    description: "no diff, side-by-side, per-run reference -> two visible panes",
+    description: "no diff, side-by-side, per-run reference -> legacy side migrates to split (surviving comparison)",
     input: { diffMode: "none", compareMode: "side-by-side", referenceMode: "per-run" },
-    expected: "side",
+    expected: "split",
   },
   {
     description: "no diff, split compare, global reference",

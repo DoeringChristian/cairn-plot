@@ -25,7 +25,7 @@ import type { CompareFloatSource } from "../media-compare/compositor";
 // ---------------------------------------------------------------------------
 
 /**
- * Type-agnostic frame the compositor consumes for side/split/blend/diff
+ * Type-agnostic frame the compositor consumes for split/blend/diff
  * compositing (and, in WS-VC6, cross-type compare). The image path yields
  * `{kind:"url"}` today (an artifact URL — zero-copy, no snapshot needed); the
  * 3D path (WS-VC4/5) will yield `{kind:"canvas"}` (live/offscreen WebGL
@@ -237,7 +237,7 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   settings: TSettings;
   view: TView;
   onViewChange: (v: TView) => void;
-  /** The active core mode (drives compositor dispatch: normal/side/split/
+  /** The active core mode (drives compositor dispatch: normal/split/
    *  blend/diff — mirrors `CompositeMediaPaneProps.mode`). `reference == null`
    *  always forces "normal" behavior regardless of `mode` (same rule as
    *  `CompositeMediaPane` today) — the module, not the card, applies that
@@ -257,9 +257,6 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   /** Fired when the engine compare pane's compare mode changes (split/blend/diff
    *  menu). Threaded to `onCompareModeChange`. */
   onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
-  /** Fired when the user picks "Side" in the engine compare pane's MODE menu.
-   *  Threaded to `onRequestSide`. */
-  onRequestSide?: () => void;
   /** A card-native (non-compositor) mode name, when `mode` doesn't apply —
    *  reserved for VC4's geometry diffs; unused by ImageViewport. */
   nativeMode?: string;
@@ -308,7 +305,7 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
    *  cross-type-frame.tsx`). `undefined`/`null` = no cross-type reference for
    *  this pane (the normal same-type `reference` field applies, if any); the
    *  module then falls back to its native reference handling unchanged.
-   *  Only meaningful for the image-space compositor modes (side/split/blend/
+   *  Only meaningful for the image-space compositor modes (split/blend/
    *  diff) — native (geometry) `nativeModes` never receive this and stay
    *  same-type by construction (their `enabledFor` sees a `null` `reference`
    *  item, so they self-disable). */

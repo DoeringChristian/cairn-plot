@@ -11,7 +11,6 @@ import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-i
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
 import CpuImagePane from "../renderers/CpuImagePane";
-import type { HdrData } from "../renderers/image-backend";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PixelNotationToggle,
@@ -28,7 +27,7 @@ import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import type { GpuComparePaneProps } from "./GpuComparePane";
-import { resolveRenderMode, hdrSource, urlSource } from "../renderers/image-backend";
+import { resolveRenderMode, urlSource } from "../renderers/image-backend";
 
 declare global {
   interface Window {
@@ -426,14 +425,13 @@ export function MediaComparePane({
 // CompositeMediaPane — the single compositor entry point.
 //
 // Given a foreground (prediction) source and a reference (baseline) source,
-// renders whichever of the five core modes is active: normal (single pane,
-// reference tracked but not shown) | side (two plain panes) | split/blend
-// (MediaComparePane above) | diff (delegates to ImagePane's existing
-// pixel-diff pipeline — cairn-plot/image/diff.ts + webgl-diff.ts, NOT
-// duplicated here). This is what ImageGalleryCard's per-pane rendering now
-// calls instead of its own renderSideBySidePane/renderOverlayPane/plain
-// switch (spec-visual-compare.md quality bar #2 — one compositor, written
-// once).
+// renders whichever of the four core modes is active: normal (single pane,
+// reference tracked but not shown) | split/blend (MediaComparePane above) |
+// diff (delegates to ImagePane's existing pixel-diff pipeline —
+// cairn-plot/image/diff.ts + webgl-diff.ts, NOT duplicated here). This is what
+// ImageGalleryCard's per-pane rendering now calls instead of its own
+// renderOverlayPane/plain switch (spec-visual-compare.md quality bar #2 — one
+// compositor, written once).
 //
 // `baselineUrl == null` always forces "normal" regardless of `mode` — a mode
 // selection with no resolved reference has nothing to compare against. The
@@ -495,25 +493,6 @@ export function CompareFloatUnsupportedError() {
   );
 }
 
-/**
- * A decoded float compare side (`{data,width,height,channels}`) → the
- * `HdrData` shape `CpuImagePane`'s float-HDR path consumes (`[H,W]` gray /
- * `[H,W,C]`). Used by the `side` layout so a float side renders through the CPU
- * HDR pane — which carries its OWN float-formatted TEV pixel overlay — instead
- * of erroring (a float side in the side-by-side needs no GPU).
- */
-function compareFloatToHdrData(src: CompareFloatSource): HdrData {
-  return {
-    data: src.data,
-    shape:
-      src.channels === 1
-        ? [src.height, src.width]
-        : [src.height, src.width, src.channels],
-    dtype: src.precision === "f16-bits" ? "<f2" : "<f4",
-    precision: src.precision,
-  };
-}
-
 export interface CompositeMediaPaneProps {
   mode: MediaCompareModeKind;
   imageUrl: string | null;
@@ -541,16 +520,13 @@ export interface CompositeMediaPaneProps {
   /** Fired when the engine pane's compare mode changes (split/blend/diff menu).
    *  Lets `CompareView` keep its lifted view-mode state in sync. */
   onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
-  /** Fired when the user picks "Side" in the engine pane's MODE menu — routes
-   *  back UP to `CompareView`, which owns the side-by-side layout. */
-  onRequestSide?: () => void;
   colormap: Colormap;
   interpolation: Interpolation;
   showAxes?: boolean;
   processing?: ImageProcessing;
 
   /** Host-controlled tone-map OPERATOR (unified 5-op set: linear · srgb · gamma
-   *  · reinhard · aces) seeded onto the composited / side / single panes — the
+   *  · reinhard · aces) seeded onto the composited / single panes — the
    *  host-menu surface when the toolbar is hidden (`toolbar={false}`). Forwarded
    *  to `GpuComparePane` / `CpuImagePane` (both already accept it); the CPU
    *  2D-canvas backend is the P=1 SDR-only hardware exception. Unset ⇒ each
@@ -581,8 +557,7 @@ export interface CompositeMediaPaneProps {
    *  (`GpuComparePane`) so a selected compare pane joins the ONE shared settings
    *  bus (mode / kernel / colormap / tonemap / … sync), the same bus the image
    *  panes use. Threaded from `PaneSyncContext` via `CompareView`. Only the
-   *  engine-composited (split/blend/diff) pane participates; the `side` layout's
-   *  per-side CPU panes do not carry settings sync (they are a different layout). */
+   *  engine-composited (split/blend/diff) pane participates. */
   settingsSyncGroupId?: string;
   syncIsAnchor?: boolean;
 
@@ -599,9 +574,7 @@ export interface CompositeMediaPaneProps {
 
   /** Host seam — hide the composited-pane toolbar (`GpuComparePane`'s shell
    *  toolbar / the diff CPU fallback's) when `false`, so a host can drive the
-   *  compare view from its own menu. Default `true`. The per-side CPU panes in
-   *  `side` mode are always toolbar-less (their chrome is the compare owner's),
-   *  so this only reaches the composited pane. Threaded from `cp.Compare(
+   *  compare view from its own menu. Default `true`. Threaded from `cp.Compare(
    *  toolbar=False)` via `CompareView` / the `ImageViewport` module. */
   toolbar?: boolean;
 }
@@ -619,7 +592,6 @@ export function CompositeMediaPane({
   fit,
   onDiffKernelChange,
   onCompareModeChange,
-  onRequestSide,
   colormap,
   interpolation,
   showAxes,
@@ -655,134 +627,17 @@ export function CompositeMediaPane({
   useGpuCompareReadyTick();
   const GpuCompare = resolveGpuComparePane();
 
-  // Memoize the float→HdrData conversions on source identity so a zoom/pan
-  // re-render (new zoom/pan props, same float sources) does NOT re-wrap the
-  // full-frame buffer — `CpuImagePane` keys its CPU tone-map memo on the `hdr`
-  // object identity, so a fresh wrapper each render would re-run a whole-frame
-  // tone-map on every viewport tick. Only the `side` branch consumes these.
-  const baselineHdr = useMemo(
-    () => (baselineFloat ? compareFloatToHdrData(baselineFloat) : null),
-    [baselineFloat],
-  );
-  const imageHdr = useMemo(
-    () => (imageFloat ? compareFloatToHdrData(imageFloat) : null),
-    [imageFloat],
-  );
-
-  // The engine pane composites only split/blend/diff (side is a 2-cell grid
-  // above this pane; normal is a single image).
+  // The engine pane composites only split/blend/diff (normal is a single image).
   const engineComposited =
     effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff";
-
-  // Side-by-side: two independent panes — reference (left, REF chip) and
-  // prediction (right). Handled BEFORE the float guard because `side` needs NO
-  // engine: each side renders through `CpuImagePane`, picking its float-HDR path
-  // (`hdr=…`, which carries its own float-formatted TEV pixel overlay) when that
-  // side resolved to a `CompareFloatSource`, else the 8-bit `imageUrl` path. So
-  // a float side shows tone-mapped pixels + float TEV numbers here instead of
-  // erroring. The REF chip sits on the reference pane (Change 2 pt 5).
-  if (effectiveMode === "side") {
-    // ONE pane renderer for both sides: a float side renders through the CPU
-    // HDR path (which carries its own float TEV overlay); a URL side renders the
-    // RAW 8-bit image with NO baseline/colormap (side-by-side never diffs or
-    // false-colors — `colormap` here is the compare's DIFF colormap, which would
-    // wash the prediction by luminance). Reference vs prediction differ only in
-    // `isBaseline`/label and the prediction-only drag/overlay/onNaturalSize.
-    const renderSidePane = (opts: {
-      hdr: HdrData | null;
-      url: string | null;
-      isBaseline: boolean;
-      paneLabel: string;
-      draggable?: boolean;
-      onDrag?: (e: React.DragEvent) => void;
-      onNat?: (w: number, h: number) => void;
-      paneOverlay?: ImageOverlayData;
-      paneOverlaySettings?: ImageOverlaySettings;
-    }) => {
-      const paneShowAxes = opts.isBaseline ? false : (showAxes ?? false);
-      if (opts.hdr) {
-        return (
-          <CpuImagePane
-            toolbar={false}
-            source={hdrSource(opts.hdr)}
-            tonemap={tonemap}
-            peak={peak}
-            gamma={tonemap_gamma}
-            exposure={processing?.exposure ?? 0}
-            offset={processing?.offset ?? 0}
-            interpolation={interpolation}
-            showAxes={paneShowAxes}
-            zoom={zoom}
-            pan={pan}
-            onViewportChange={onViewportChange}
-            label={opts.paneLabel}
-            pixelValueNotation={pixelValueNotation}
-          />
-        );
-      }
-      return (
-        <CpuImagePane
-          toolbar={false}
-          source={urlSource(opts.url)}
-          baselineUrl={null}
-          isBaseline={opts.isBaseline}
-          diffMode="none"
-          interpolation={interpolation}
-          colormap="none"
-          showAxes={paneShowAxes}
-          processing={processing}
-          zoom={zoom}
-          pan={pan}
-          onViewportChange={onViewportChange}
-          isDraggable={opts.draggable}
-          onDragStart={opts.onDrag}
-          onNaturalSize={opts.onNat}
-          label={opts.paneLabel}
-          overlay={opts.paneOverlay}
-          overlaySettings={opts.paneOverlaySettings}
-          pixelValueNotation={pixelValueNotation}
-        />
-      );
-    };
-    // Reference pane carries NO bottom-left label chip — its identity is the
-    // shared top-left `RefBadge` on the wrapper below (unified with split/slide
-    // + 3D). Empty label suppresses the chip in every backend now that the CPU
-    // SDR path also gates on `!!label`.
-    const refPane = renderSidePane({
-      hdr: baselineHdr,
-      url: baselineUrl,
-      isBaseline: true,
-      paneLabel: "",
-    });
-    const fgPane = renderSidePane({
-      hdr: imageHdr,
-      url: imageUrl,
-      isBaseline: false,
-      paneLabel: label,
-      draggable: isDraggable,
-      onDrag: onDragStart,
-      onNat: onNaturalSize,
-      paneOverlay: overlay,
-      paneOverlaySettings: overlaySettings,
-    });
-    return (
-      <div className="flex gap-0.5 h-full">
-        <div className="relative flex-1 min-w-0 overflow-hidden border border-accent/20 rounded">
-          {refPane}
-          <RefBadge />
-        </div>
-        <div className="relative flex-1 min-w-0 overflow-hidden">{fgPane}</div>
-      </div>
-    );
-  }
 
   // Float sides are GPU-only for the COMPOSITED modes (`rgba32float` upload —
   // the legacy CPU split/blend/diff panes take only URL sources). If the engine
   // pane isn't available, or the effective mode isn't one it composites, surface
-  // the standard clear error — never a blank pane (Task point 3). (`side` above
-  // already handled float via the CPU HDR pane.) `useGpuCompareReadyTick` above
-  // still forces a re-render once the gpu-image addon finishes initializing, so
-  // on a WebGPU browser this resolves to the real GPU pane below once ready.
+  // the standard clear error — never a blank pane (Task point 3).
+  // `useGpuCompareReadyTick` above still forces a re-render once the gpu-image
+  // addon finishes initializing, so on a WebGPU browser this resolves to the
+  // real GPU pane below once ready.
   if (hasFloatSide && (!GpuCompare || !engineComposited)) {
     return <CompareFloatUnsupportedError />;
   }
@@ -814,7 +669,6 @@ export function CompositeMediaPane({
         fit={fit}
         onDiffKernelChange={onDiffKernelChange}
         onCompareModeChange={onCompareModeChange}
-        onRequestSide={onRequestSide}
         colormap={colormap}
         tonemap={tonemap}
         peak={peak}
@@ -888,7 +742,7 @@ export function CompositeMediaPane({
 // CrossTypeCompositeMediaPane — a thin wrapper around `CompositeMediaPane`
 // (NOT a second compare path) for WS-VC6's cross-type `diff`.
 //
-// Every other mode (normal/side/split/blend) works on the raw `imageUrl`/
+// Every other mode (normal/split/blend) works on the raw `imageUrl`/
 // `baselineUrl` unchanged — CSS `object-fit: contain` already handles
 // mismatched aspect visually. `diff` does per-pixel math, so when
 // `alignForDiff` is set (only ever true for a cross-type pane — see

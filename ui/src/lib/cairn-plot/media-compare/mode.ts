@@ -4,18 +4,17 @@ import type { Colormap, DiffMode } from "../types";
 // The unified visual-media comparison mode.
 //
 // Every visual-media card (image today; mesh/pointcloud/boxes3d/volume in
-// WS-VC2) picks ONE of these five core modes — never a combination. This is
-// the "exclusive mode" contract from spec-visual-compare.md: split+diff (or
-// side+diff, etc.) are no longer independently combinable axes. A previously
-// "diff-colored side-by-side" configuration now IS the "diff" mode.
+// WS-VC2) picks ONE of these four core modes — never a combination. This is
+// the "exclusive mode" contract from spec-visual-compare.md: split+diff is no
+// longer an independently combinable axis. A previously "diff-colored" overlay
+// configuration now IS the "diff" mode.
 // ---------------------------------------------------------------------------
 
-/** The five core modes, shared by every media-compare card. */
-export type MediaCompareModeKind = "normal" | "side" | "split" | "blend" | "diff";
+/** The four core modes, shared by every media-compare card. */
+export type MediaCompareModeKind = "normal" | "split" | "blend" | "diff";
 
 export const MEDIA_COMPARE_MODE_KINDS: readonly MediaCompareModeKind[] = [
   "normal",
-  "side",
   "split",
   "blend",
   "diff",
@@ -35,8 +34,8 @@ export function isCoreCompareMode(mode: string): mode is MediaCompareModeKind {
  *   type MeshCompareMode = MediaCompareMode<"diff-property" | "diff-geometry">;
  *   type PointCloudCompareMode = MediaCompareMode<"diff-property" | "diff-position" | "density">;
  *
- * The shared compositor (`compositor.tsx`) only knows how to render the five
- * core kinds (normal/side/split/blend/diff — image-space, works on any
+ * The shared compositor (`compositor.tsx`) only knows how to render the four
+ * core kinds (normal/split/blend/diff — image-space, works on any
  * rendered canvas per spec). Card-native kinds are NOT run through the
  * compositor; the card renders them itself (e.g. a per-vertex delta pass)
  * and is responsible for disabling them when preconditions fail (mismatched
