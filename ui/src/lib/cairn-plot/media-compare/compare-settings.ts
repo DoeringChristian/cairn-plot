@@ -73,7 +73,7 @@ export interface MediaCompareSettings {
   /** Pins the series-same-step baseline to one fixed step instead of tracking
    *  the primary's current step 1:1. */
   refFixedStep?: number;
-  /** Opt-in for cross-type (image<->3D) pixel `diff` (side/split/blend cross-
+  /** Opt-in for cross-type (image<->3D) pixel `diff` (split/blend cross-
    *  type are offered unconditionally; `diff` additionally resamples both
    *  rasters, so it's gated behind this explicit confirmation). */
   crossTypeDiffOptIn?: boolean;
@@ -105,7 +105,7 @@ export interface MediaCompareSettings {
  * rest are left optional/`undefined` (their absence IS the default).
  */
 export const DEFAULT_MEDIA_COMPARE_SETTINGS = {
-  mode: "side",
+  mode: "split",
   diffMode: "none",
   diffColormap: "red-green",
   splitPosition: 0.5,
@@ -121,11 +121,10 @@ export interface LabelledOption<V extends string> {
   label: string;
 }
 
-/** The five core (image-space) media-compare kinds, labelled once. */
+/** The four core (image-space) media-compare kinds, labelled once. */
 export const CORE_COMPARE_MODE_OPTIONS: ReadonlyArray<LabelledOption<MediaCompareModeKind>> = [
-  { value: "side", label: "Side by side (default)" },
   { value: "normal", label: "Normal (primary only)" },
-  { value: "split", label: "Split (image-space)" },
+  { value: "split", label: "Slide (image-space, default)" },
   { value: "blend", label: "Blend (image-space)" },
   { value: "diff", label: "Pixel diff (image-space)" },
 ];
@@ -210,7 +209,7 @@ export interface CompareModeExtras {
 
 /**
  * Enumerate the ordered compare-mode options for the given capabilities: the
- * five core (image-space) kinds first — always enabled — then each native
+ * four core (image-space) kinds first — always enabled — then each native
  * kind, disabled when `topologyOk` is false, then (when `extras.engineKernels`
  * is supplied) each engine diff KERNEL, disabled when `extras.gpuAvailable` is
  * false. This is exactly the option list the compare-mode `<Select>` renders;

@@ -27,21 +27,19 @@ def test_view_modes_lower_to_descriptor():
     assert blend["mode"] == "blend"
 
 
-def test_side_lowers_to_compare_node():
-    # `side` now emits a COMPARE node (mode="side"), NOT a 2-cell grid — so the
-    # view-mode menu can switch it client-side. a=reference, b=prediction,
-    # baselineIndex=0 (the REF pane), matching the other compare modes.
-    side = cp.Compare(_img(), _img(), mode="side").to_node()
-    assert side["kind"] == "compare"
-    assert side["mode"] == "side"
-    assert side["baselineIndex"] == 0
-    assert side["a"] is not None and side["b"] is not None
+def test_default_mode_is_slide():
+    # The removed side-by-side view is gone; the default is now "slide" (split).
+    node = cp.Compare(_img(), _img()).to_node()
+    assert node["kind"] == "compare"
+    assert node["mode"] == "split"
+    assert node["baselineIndex"] == 0
 
 
-def test_side_requires_image_leaves():
-    # side is a compare node now, so non-image operands raise (use cp.Grid).
-    with pytest.raises(TypeError):
-        cp.Compare(cp.Line([1, 2, 3]), _img(), mode="side")
+def test_side_mode_rejected():
+    # `side` is no longer a valid mode — it raises "unknown mode" rather than
+    # silently emitting a dead descriptor mode.
+    with pytest.raises(ValueError):
+        cp.Compare(_img(), _img(), mode="side")
 
 
 @pytest.mark.parametrize(

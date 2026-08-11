@@ -132,17 +132,16 @@ def _check_image_colormap(value: str) -> str:
     return value
 
 
-# The compare compositor's INTERNAL descriptor modes — ALL now lower to a
-# `compare` node (`"side"` included, so the view-mode menu can switch it
-# client-side; it renders the 2-pane side-by-side VISUAL owned by the compare
-# stack rather than a component-level Grid).
-_COMPARE_NODE_MODES = ("side", "split", "blend", "diff")
+# The compare compositor's INTERNAL descriptor modes — each lowers to a
+# `compare` node composited through the shared compare stack / GPU compare pane.
+_COMPARE_NODE_MODES = ("split", "blend", "diff")
 
 # The PUBLIC flat `cp.Compare(mode=...)` enum (diff-kernels spec). View modes +
 # the diff-kernel short names; each kernel short name maps to a registry kernel
 # id (== the descriptor `diffSubmode`, mirrored by the TS `listDiffKernels()`
-# `publicName`s). `"slide"` is the public name for the internal `"split"`.
-_COMPARE_VIEW_MODES = {"side", "slide", "blend"}
+# `publicName`s). `"slide"` is the public name for the internal `"split"` and is
+# the default view.
+_COMPARE_VIEW_MODES = {"slide", "blend"}
 _COMPARE_KERNEL_MODES = {
     "signed": "signed",
     "abs": "absolute",
@@ -160,7 +159,7 @@ _COMPARE_KERNEL_MODES = {
     # ERROR field 1 - SSIM. GPU-only kernel (like FLIP); registry drop-in.
     "ssim": "ssim",
 }
-_COMPARE_PUBLIC_MODES = ("side", "slide", "blend", *_COMPARE_KERNEL_MODES.keys())
+_COMPARE_PUBLIC_MODES = ("slide", "blend", *_COMPARE_KERNEL_MODES.keys())
 
 # Mismatched-size operand handling for `cp.Compare(align=..., fit=...)` (diff
 # modes): `align` = where the smaller extent sits within the larger before the
@@ -1835,11 +1834,10 @@ class Compare(Component):
 
     Flat ``mode`` enum:
 
-    * View compositions: ``"side"`` (2-pane side-by-side), ``"slide"`` (draggable
-      divider), ``"blend"`` (opacity mix). ``"side"`` lowers to a ``compare`` node
-      with ``mode="side"`` (NOT a component-level Grid) so the view-mode menu can
-      switch it client-side; it still renders the 2-pane side-by-side visual, now
-      owned by the compare stack.
+    * View compositions: ``"slide"`` (draggable divider — the DEFAULT) and
+      ``"blend"`` (opacity mix). ``"slide"`` lowers to a ``compare`` node with
+      ``mode="split"``; the view-mode menu can switch between the compositions
+      client-side.
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
       ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
       a ``compare`` node with ``mode="diff"`` and the kernel id as ``diffSubmode``
@@ -1852,9 +1850,9 @@ class Compare(Component):
     clipping highlights) and is identical to ``"flip"`` on u8 sources.
 
     ``reference`` is always the baseline (``baselineIndex=0``; the ``REF`` chip);
-    ``diff = prediction vs reference``. ALL modes (``side`` included) require both
-    operands be image-like (``cp.Image`` / an image ``run[tag]``); for arbitrary
-    non-image cells side by side, use ``cp.Grid([...], cols=2)`` directly.
+    ``diff = prediction vs reference``. ALL modes require both operands be
+    image-like (``cp.Image`` / an image ``run[tag]``); for arbitrary non-image
+    cells side by side, use ``cp.Grid([...], cols=2)`` directly.
 
     For mismatched-size operands in diff modes, ``align`` picks where the
     smaller extent sits within the larger before the overlap crop is taken
@@ -1874,7 +1872,7 @@ class Compare(Component):
         prediction: Any,
         reference: Any,
         *,
-        mode: str = "side",
+        mode: str = "slide",
         align: str = "top-left",
         fit: str = "crop",
         split_position: float | None = None,
@@ -1910,13 +1908,11 @@ class Compare(Component):
         self._align = align
         self._fit = fit
         # Lower the flat public mode → internal descriptor mode (+ diff kernel).
-        if mode == "side":
-            internal_mode = "side"
-            diff_kernel: str | None = None
-        elif mode == "slide":
-            internal_mode, diff_kernel = "split", None
+        diff_kernel: str | None = None
+        if mode == "slide":
+            internal_mode = "split"
         elif mode == "blend":
-            internal_mode, diff_kernel = "blend", None
+            internal_mode = "blend"
         else:
             internal_mode, diff_kernel = "diff", _COMPARE_KERNEL_MODES[mode]
         self._internal_mode = internal_mode
@@ -1946,11 +1942,10 @@ class Compare(Component):
             built.update(props)
         self._props = built or None
 
-        # ALL modes (side included) lower to a `compare` node now — `side`
-        # renders the 2-pane side-by-side VISUAL owned by the compare stack
-        # (client-switchable via the view-mode menu) instead of a component-level
-        # Grid. `a` = reference/baseline (baselineIndex 0, texA / REF chip); `b`
-        # = prediction/foreground. Keeps the existing internal A/B semantics.
+        # Every mode lowers to a `compare` node composited through the compare
+        # stack (client-switchable via the view-mode menu). `a` = reference/
+        # baseline (baselineIndex 0, texA / REF chip); `b` = prediction/
+        # foreground. Keeps the existing internal A/B semantics.
         self._a = _as_component(reference)
         self._b = _as_component(prediction)
         if self._a._leaf_dataspec() is None or self._b._leaf_dataspec() is None:

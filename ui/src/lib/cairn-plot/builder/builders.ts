@@ -304,13 +304,12 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
     },
 
     compare(a, b, opts = {}) {
-      const mode = checkCompareMode(String(opts.mode ?? "side"));
+      const mode = checkCompareMode(String(opts.mode ?? "slide"));
       const align = checkAlign(String(opts.align ?? "top-left"));
       const fit = checkFit(String(opts.fit ?? "crop"));
-      let internalMode: "side" | "split" | "blend" | "diff";
+      let internalMode: "split" | "blend" | "diff";
       let diffKernel: string | null = null;
-      if (mode === "side") internalMode = "side";
-      else if (mode === "slide") internalMode = "split";
+      if (mode === "slide") internalMode = "split";
       else if (mode === "blend") internalMode = "blend";
       else {
         internalMode = "diff";

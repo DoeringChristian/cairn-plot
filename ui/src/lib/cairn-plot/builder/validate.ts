@@ -51,7 +51,7 @@ export const COMPARE_KERNEL_MODES: Readonly<Record<string, string>> = {
 };
 
 /** View compositions (mirrors Python `_COMPARE_VIEW_MODES`). */
-export const COMPARE_VIEW_MODES: readonly string[] = ["side", "slide", "blend"];
+export const COMPARE_VIEW_MODES: readonly string[] = ["slide", "blend"];
 
 /** The full public `compare(mode=)` enum (mirrors Python `_COMPARE_PUBLIC_MODES`). */
 export const COMPARE_PUBLIC_MODES: readonly string[] = [

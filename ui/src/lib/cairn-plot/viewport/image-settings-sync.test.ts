@@ -140,7 +140,7 @@ test("partial-apply: a compare patch is a no-op for an image-settings consumer",
   // reads the shared keys PLUS the compare-only keys.
   const compareState: Record<string, unknown> = {
     colormap: "gray",
-    compareMode: "side",
+    compareMode: "split",
     diffKernel: "absolute",
     splitPosition: 0.5,
   };

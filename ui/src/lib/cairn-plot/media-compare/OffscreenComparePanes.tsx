@@ -46,13 +46,11 @@ export type ComparePaneSource =
   | { kind: "frame"; frameSource: FrameSource };
 
 export interface OffscreenComparePanesProps {
-  /** One of the core "one-pane" media-compare kinds (side/split/blend/diff)
+  /** One of the core "one-pane" media-compare kinds (split/blend/diff)
    *  — "normal" doesn't need offscreen compositing (the card-level caller
-   *  renders the primary viewer directly for "normal"). "side" is included
-   *  for WS-VC6 cross-type (a foreign-type reference has no same-type
-   *  `SideBySideView`; routing "side" through this shared compositor too,
-   *  exactly like split/blend/diff, covers it for free). */
-  mode: Extract<MediaCompareModeKind, "side" | "split" | "blend" | "diff">;
+   *  renders the primary viewer directly for "normal"). Cross-type (WS-VC6)
+   *  references route through this shared compositor for split/blend/diff. */
+  mode: Extract<MediaCompareModeKind, "split" | "blend" | "diff">;
   primary: ComparePaneSource;
   reference: ComparePaneSource;
   diffSubmode: DiffMode;

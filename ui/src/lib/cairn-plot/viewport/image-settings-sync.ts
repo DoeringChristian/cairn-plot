@@ -50,7 +50,7 @@ export interface ImageSyncSettings {
   interpolation?: string;
   // Compare-only fields — applied ONLY by compare panes (image panes ignore
   // them; their apply function reads none of these keys).
-  /** Composited compare mode: "side" | "split" | "blend" | "diff". */
+  /** Composited compare mode: "split" | "blend" | "diff". */
   compareMode?: string;
   /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). */
   diffKernel?: string;

@@ -445,7 +445,7 @@ export function pointCloudActiveColorbar(args: {
  * budget mitigation.
  */
 export const pointCloudViewportCapabilities: ViewportCapabilities<PointCloudNativeMode> = {
-  coreModes: ["normal", "side", "split", "blend", "diff"],
+  coreModes: ["normal", "split", "blend", "diff"],
   nativeModes: [
     {
       mode: "diff-property",
