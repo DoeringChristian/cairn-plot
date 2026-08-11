@@ -573,6 +573,18 @@ export interface CompositeMediaPaneProps {
   splitPosition?: number;
   blendAlpha?: number;
   onSplitPositionChange?: (p: number) => void;
+  /** Fired when the engine pane's blend alpha changes (via a synced peer patch).
+   *  Lets `CompareView` hold blend alpha as lifted state. */
+  onBlendAlphaChange?: (a: number) => void;
+
+  /** Multi-pane SELECTION settings-sync — forwarded to the engine compare pane
+   *  (`GpuComparePane`) so a selected compare pane joins the ONE shared settings
+   *  bus (mode / kernel / colormap / tonemap / … sync), the same bus the image
+   *  panes use. Threaded from `PaneSyncContext` via `CompareView`. Only the
+   *  engine-composited (split/blend/diff) pane participates; the `side` layout's
+   *  per-side CPU panes do not carry settings sync (they are a different layout). */
+  settingsSyncGroupId?: string;
+  syncIsAnchor?: boolean;
 
   label: string;
   isDraggable?: boolean;
@@ -621,6 +633,9 @@ export function CompositeMediaPane({
   splitPosition,
   blendAlpha,
   onSplitPositionChange,
+  onBlendAlphaChange,
+  settingsSyncGroupId,
+  syncIsAnchor,
   label,
   isDraggable,
   onDragStart,
@@ -790,6 +805,9 @@ export function CompositeMediaPane({
         splitPosition={splitPosition ?? 0.5}
         blendAlpha={blendAlpha ?? 0.5}
         onSplitPositionChange={onSplitPositionChange}
+        onBlendAlphaChange={onBlendAlphaChange}
+        settingsSyncGroupId={settingsSyncGroupId}
+        syncIsAnchor={syncIsAnchor}
         diffSubmode={diffSubmode}
         diffKernel={diffKernel}
         align={align}

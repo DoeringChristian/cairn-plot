@@ -468,6 +468,13 @@ function CompareView({ node }: { node: CompareNode }) {
     (props.splitPosition as number | undefined) ?? 0.5,
   );
 
+  // Blend alpha, lifted to state so a settings-sync peer's patch can apply it
+  // (`GpuComparePane` has no in-pane blend slider — the value travels only via
+  // the anchor snapshot / a peer patch today). Seeded from the node prop.
+  const [blendAlpha, setBlendAlpha] = useState<number>(
+    (props.blendAlpha as number | undefined) ?? 0.5,
+  );
+
   // Own the live viewport (zoom/pan) so wheel-zoom + drag-pan work in the
   // compare view exactly like the single ImageStandalone pane. The compositor
   // forwards this SAME zoom/pan to BOTH panes, so split/blend/diff (and the two
@@ -553,7 +560,7 @@ function CompareView({ node }: { node: CompareNode }) {
             processing={processing}
             splitPosition={splitPos}
             onSplitPositionChange={setSplitPos}
-            blendAlpha={props.blendAlpha as number | undefined}
+            blendAlpha={blendAlpha}
             zoom={viewport.zoom}
             pan={viewport.pan}
             onViewportChange={setViewport}
@@ -592,7 +599,10 @@ function CompareView({ node }: { node: CompareNode }) {
         processing={processing}
         splitPosition={splitPos}
         onSplitPositionChange={setSplitPos}
-        blendAlpha={props.blendAlpha as number | undefined}
+        blendAlpha={blendAlpha}
+        onBlendAlphaChange={setBlendAlpha}
+        settingsSyncGroupId={paneSync?.settingsSyncGroupId}
+        syncIsAnchor={!!paneSync?.syncIsAnchor}
         zoom={viewport.zoom}
         pan={viewport.pan}
         onViewportChange={setViewport}

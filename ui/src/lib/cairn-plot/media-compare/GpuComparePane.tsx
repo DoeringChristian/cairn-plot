@@ -85,6 +85,8 @@ import {
   type TonemapOperator,
 } from "../image/tonemap";
 import { loadImageData } from "../image";
+import { useSyncedImageSettings } from "../renderers/use-synced-image-settings";
+import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { useResettableState } from "../hooks/use-resettable-state";
@@ -141,6 +143,10 @@ export interface GpuComparePaneProps {
   splitPosition: number;
   blendAlpha: number;
   onSplitPositionChange?: (p: number) => void;
+  /** Fired when the pane's blend alpha changes (today only via a synced peer's
+   *  patch — there is no in-pane blend slider). Lets an owner above (`CompareView`)
+   *  hold blend alpha as lifted state so a settings-sync patch can apply it. */
+  onBlendAlphaChange?: (a: number) => void;
 
   /** diff submode + colormap (used only in `mode:"diff"`). */
   diffSubmode?: DiffMode;
@@ -208,6 +214,19 @@ export interface GpuComparePaneProps {
    *  controlled props above (mode / diffKernel / colormap / tonemap / peak / gamma
    *  / split / blend). Default `true`. See `renderers/ImagePaneShell`'s `toolbar`. */
   toolbar?: boolean;
+
+  /**
+   * Multi-pane SELECTION settings-sync (mirrors the image panes'
+   * `settingsSyncGroupId`/`syncIsAnchor`, threaded from `PaneSyncContext` via
+   * `CompareView` → `CompositeMediaPane`). While this pane is one of ≥2 selected
+   * panes, a local control change (mode / kernel / colormap / tonemap / peak /
+   * gamma / exposure / offset / split) broadcasts to the group over the ONE
+   * shared settings bus, and a peer's patch applies to this pane's view-local
+   * state. Absent ⇒ no group, settings are purely local. `syncIsAnchor` marks
+   * the first-selected pane, which seeds the group with its full snapshot so a
+   * joining pane adopts it. See `renderers/use-synced-image-settings.ts`. */
+  settingsSyncGroupId?: string;
+  syncIsAnchor?: boolean;
 }
 
 /** Uint8 256x3 LUT -> Float32 256x4 (RGBA, [0,1]) for `CompareParams.diffColormap`. */
@@ -310,6 +329,7 @@ export default function GpuComparePane({
   splitPosition,
   blendAlpha,
   onSplitPositionChange,
+  onBlendAlphaChange,
   diffSubmode,
   colormap = "none",
   align = "top-left",
@@ -328,6 +348,8 @@ export default function GpuComparePane({
   peak: peakProp,
   gamma: gammaProp,
   toolbar = true,
+  settingsSyncGroupId,
+  syncIsAnchor,
 }: GpuComparePaneProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   // Attached by the shared shell (see `ImagePaneShell`); this pane measures
@@ -521,6 +543,156 @@ export default function GpuComparePane({
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
 
+  // -----------------------------------------------------------------------
+  // Multi-pane SELECTION: display-settings sync — the SAME hook + bus + payload
+  // the image panes use (`useSyncedImageSettings`), so a compare pane and an
+  // image pane genuinely share ONE settings-sync path. There is NO separate
+  // compare-sync mechanism.
+  //
+  //  - `settingsSnapshot()` is this pane's full current settings; the anchor
+  //    seeds the group with it on group formation.
+  //  - `applyRemoteSettings(patch)` applies a peer's patch to this pane's
+  //    view-local state. Shared keys (colormap/tonemap/…/offset) use the RAW
+  //    setters; the compare-only keys (compareMode/diffKernel/split/blend) route
+  //    through the ECHO setters (which notify `CompareView`'s lifted view-mode /
+  //    split state) — but NEVER through the publishing wrappers below, so a
+  //    remotely-applied change is never re-published (echo-guard, in addition to
+  //    the hook's own `sourceId` guard).
+  //  - The `change*` wrappers below are the ONE publish site per control; the
+  //    menus / sliders / divider wire them (replacing the raw setters).
+  // -----------------------------------------------------------------------
+  const applyRemoteSettings = useCallback(
+    (patch: ImageSyncSettings) => {
+      // Shared display keys — image panes apply these too (raw setters, no echo).
+      if (patch.colormap !== undefined) setColormapState(patch.colormap as Colormap);
+      if (patch.tonemap !== undefined) setTonemapOverride(patch.tonemap as TonemapOperator);
+      if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
+      if (patch.peak !== undefined) setPeak(patch.peak);
+      if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
+      if (patch.offset !== undefined) setDisplayOffset(patch.offset);
+      // Compare-only keys — image panes ignore these (partial-apply). Mode/kernel
+      // go through the echo setters so `CompareView`'s lifted state follows; a
+      // "side" mode delegates UP (this pane has no side pass and would unmount).
+      if (patch.compareMode !== undefined) {
+        if (patch.compareMode === "side") onRequestSide?.();
+        else setCompareMode(patch.compareMode as CompareMode);
+      }
+      if (patch.diffKernel !== undefined) setDiffKernel(patch.diffKernel);
+      if (patch.splitPosition !== undefined) onSplitPositionChange?.(patch.splitPosition);
+      if (patch.blendAlpha !== undefined) onBlendAlphaChange?.(patch.blendAlpha);
+    },
+    [
+      setColormapState,
+      setTonemapOverride,
+      setTonemapGamma,
+      setPeak,
+      setCompareMode,
+      setDiffKernel,
+      onSplitPositionChange,
+      onBlendAlphaChange,
+      onRequestSide,
+    ],
+  );
+  const settingsSnapshot = useCallback(
+    (): ImageSyncSettings => ({
+      colormap: colormapState,
+      tonemap: effectiveTonemap,
+      tonemapGamma,
+      peak,
+      exposureEV: displayEV,
+      offset: displayOffset,
+      compareMode,
+      diffKernel,
+      splitPosition,
+      blendAlpha,
+    }),
+    [
+      colormapState,
+      effectiveTonemap,
+      tonemapGamma,
+      peak,
+      displayEV,
+      displayOffset,
+      compareMode,
+      diffKernel,
+      splitPosition,
+      blendAlpha,
+    ],
+  );
+  const publishSettings = useSyncedImageSettings(
+    settingsSyncGroupId,
+    !!syncIsAnchor,
+    settingsSnapshot,
+    applyRemoteSettings,
+  );
+  // ONE publish site per control (a local menu pick / slider drag). Each sets the
+  // view-local state through its normal setter AND broadcasts just the changed
+  // key. `applyRemoteSettings` above deliberately does NOT call these, so a
+  // remote patch never echoes back.
+  const changeCompareMode = useCallback(
+    (next: CompareMode) => {
+      setCompareMode(next);
+      publishSettings({ compareMode: next });
+    },
+    [setCompareMode, publishSettings],
+  );
+  const changeDiffKernel = useCallback(
+    (id: string) => {
+      setDiffKernel(id);
+      publishSettings({ diffKernel: id });
+    },
+    [setDiffKernel, publishSettings],
+  );
+  const changeColormap = useCallback(
+    (id: Colormap) => {
+      setColormapState(id);
+      publishSettings({ colormap: id });
+    },
+    [setColormapState, publishSettings],
+  );
+  const changeTonemap = useCallback(
+    (id: TonemapOperator) => {
+      setTonemapOverride(id);
+      publishSettings({ tonemap: id });
+    },
+    [setTonemapOverride, publishSettings],
+  );
+  const changePeak = useCallback(
+    (v: number) => {
+      setPeak(v);
+      publishSettings({ peak: v });
+    },
+    [setPeak, publishSettings],
+  );
+  const changeGamma = useCallback(
+    (v: number) => {
+      setTonemapGamma(v);
+      publishSettings({ tonemapGamma: v });
+    },
+    [setTonemapGamma, publishSettings],
+  );
+  const changeExposure = useCallback(
+    (v: number) => {
+      setDisplayEV(v);
+      publishSettings({ exposureEV: v });
+    },
+    [publishSettings],
+  );
+  const changeOffset = useCallback(
+    (v: number) => {
+      setDisplayOffset(v);
+      publishSettings({ offset: v });
+    },
+    [publishSettings],
+  );
+  const changeSplit = useCallback(
+    (p: number) => {
+      onSplitPositionChange?.(p);
+      publishSettings({ splitPosition: p });
+    },
+    [onSplitPositionChange, publishSettings],
+  );
+
   // The two leading toolbar menus (rendered by `ImagePaneShell` → `PlotToolbar`).
   //   MODE — slide · blend · every registered diff kernel (flat list). Selecting
   //          a view mode sets `compareMode`; selecting a kernel switches to diff
@@ -539,25 +711,25 @@ export default function GpuComparePane({
       kernel: diffKernel,
       kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
       onSide: onRequestSide,
-      onSlide: () => setCompareMode("split"),
-      onBlend: () => setCompareMode("blend"),
+      onSlide: () => changeCompareMode("split"),
+      onBlend: () => changeCompareMode("blend"),
       onKernel: (id) => {
-        setCompareMode("diff");
-        setDiffKernel(id);
+        changeCompareMode("diff");
+        changeDiffKernel(id);
       },
     });
     const menus: ToolbarButtonSpec[] = [modeMenu];
     if (compareMode === "diff") {
-      menus.push(colormapToolbarButton(colormapState, (id) => setColormapState(id as Colormap)));
+      menus.push(colormapToolbarButton(colormapState, (id) => changeColormap(id as Colormap)));
     } else {
       // §A: split/blend get the SAME unified 5-operator TONEMAP menu the
       // single-image pane has (the PEAK slider is the HDR mode — see
       // extraSliders). Diff shows the colormap menu instead (error values aren't
       // light, so they route through colormaps, not a tone-map operator).
-      menus.push(tonemapToolbarButton(effectiveTonemap, (id) => setTonemapOverride(id as TonemapOperator)));
+      menus.push(tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)));
     }
     return menus;
-  }, [compareMode, diffKernel, colormapState, effectiveTonemap, setDiffKernel, setCompareMode, onRequestSide]);
+  }, [compareMode, diffKernel, colormapState, effectiveTonemap, changeDiffKernel, changeCompareMode, changeColormap, changeTonemap, onRequestSide]);
 
   // TEV per-side source pixels. u8 sides keep their raw `ImageData`; FLOAT sides
   // (`.exr`/`imghdr`) have NO 8-bit `ImageData` (decoded to `rgba32float`), so
@@ -1295,11 +1467,73 @@ export default function GpuComparePane({
       get hdrEngaged() {
         return hdrEngaged;
       },
+      // ---- settings-sync test seam ----------------------------------------
+      // Live view-local settings + the SAME publishing wrappers the menus /
+      // sliders / divider call, so the compare↔compare sync harness can drive a
+      // real control change on pane A and read pane B's adopted state. Driving
+      // these exercises the actual publish→bus→apply path (not a shortcut).
+      get colormap() {
+        return colormapState;
+      },
+      get diffKernel() {
+        return diffKernel;
+      },
+      get splitPosition() {
+        return splitPosition;
+      },
+      get blendAlpha() {
+        return blendAlpha;
+      },
+      get displayEV() {
+        return displayEV;
+      },
+      get displayOffset() {
+        return displayOffset;
+      },
+      get peak() {
+        return peak;
+      },
+      get tonemapGamma() {
+        return tonemapGamma;
+      },
+      changeCompareMode,
+      changeDiffKernel,
+      changeColormap,
+      changeTonemap,
+      changeExposure,
+      changeSplit,
     };
     return () => {
       if (el) delete el.__cairnCompareProbe;
     };
-  }, [sampleDiff, sampleFg, sampleRef, dims, framingDims, align, fit, resolvedKernelId, compareMode, ssimScalar, effectiveTonemap, hdrEngaged]);
+  }, [
+    sampleDiff,
+    sampleFg,
+    sampleRef,
+    dims,
+    framingDims,
+    align,
+    fit,
+    resolvedKernelId,
+    compareMode,
+    ssimScalar,
+    effectiveTonemap,
+    hdrEngaged,
+    colormapState,
+    diffKernel,
+    splitPosition,
+    blendAlpha,
+    displayEV,
+    displayOffset,
+    peak,
+    tonemapGamma,
+    changeCompareMode,
+    changeDiffKernel,
+    changeColormap,
+    changeTonemap,
+    changeExposure,
+    changeSplit,
+  ]);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
@@ -1380,8 +1614,8 @@ export default function GpuComparePane({
       {compareMode === "split" && (
         <SplitDivider
           splitPosition={splitPosition}
-          onChange={onSplitPositionChange}
-          onReset={() => onSplitPositionChange?.(0.5)}
+          onChange={changeSplit}
+          onReset={() => changeSplit(0.5)}
         />
       )}
     </>
@@ -1426,8 +1660,8 @@ export default function GpuComparePane({
       displayAdjust={{
         exposureEV: displayEV,
         offset: displayOffset,
-        onExposureChange: setDisplayEV,
-        onOffsetChange: setDisplayOffset,
+        onExposureChange: changeExposure,
+        onOffsetChange: changeOffset,
       }}
       // UNIFIED sliders (§A): PEAK is the HDR MODE — shown WHENEVER the real HDR
       // surface engaged AND the mode is split/blend (every operator respects `P`
@@ -1448,7 +1682,7 @@ export default function GpuComparePane({
                 max: EXTENDED_TONEMAP_PEAK_MAX,
                 step: EXTENDED_TONEMAP_PEAK_STEP,
                 value: peak,
-                onChange: setPeak,
+                onChange: changePeak,
                 format: (v: number) => (Number.isFinite(v) ? `${v.toFixed(1)}×` : "∞"),
               },
             ]
@@ -1464,7 +1698,7 @@ export default function GpuComparePane({
                 max: TONEMAP_GAMMA_MAX,
                 step: TONEMAP_GAMMA_STEP,
                 value: tonemapGamma,
-                onChange: setTonemapGamma,
+                onChange: changeGamma,
                 format: (v: number) => v.toFixed(1),
               },
             ]
