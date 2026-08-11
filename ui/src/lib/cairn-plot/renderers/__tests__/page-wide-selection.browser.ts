@@ -29,7 +29,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
-import type { PlotDescriptor } from "../../../../plot-descriptor";
+import type { PlotDescriptor, PlotNode } from "../../../../plot-descriptor";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,
@@ -102,6 +102,16 @@ function imageDescriptor(label: string, color: string): PlotDescriptor {
       props: { label, toolbar: true },
     },
   } as PlotDescriptor;
+}
+
+/** One image LEAF node for a `cp.Grid` cell (Bug 2's 2×2 grid). */
+function gridCell(label: string, color: string): PlotNode {
+  return {
+    kind: "plot",
+    renderer: "image",
+    data: { kind: "url", src: makeImageUrl(color) },
+    props: { label, toolbar: false },
+  } as unknown as PlotNode;
 }
 
 /** Dispatch a stationary press (down+up at the same point) on `el` — a SELECT
@@ -183,6 +193,29 @@ async function run(): Promise<boolean> {
   report(aOnly, "plain click on A rings A only (B/C not selected)");
   ok = ok && aOnly;
 
+  // --- Bug 1: the 2D selection ring is VISUALLY IDENTICAL to the 3D views'
+  // existing ring (Scene3DCanvas.tsx: `rounded border border-accent/50`, i.e.
+  // 1px accent-at-50%, 4px radius, NO glow). Build that exact reference element
+  // and assert the selected frame's OUTLINE matches its BORDER, with no glow. --
+  {
+    const ref = document.createElement("div");
+    ref.className = "rounded border border-accent/50";
+    ref.style.width = ref.style.height = "20px";
+    document.body.appendChild(ref);
+    const rcs = getComputedStyle(ref);
+    const fcs = getComputedStyle(fa);
+    const widthOk = fcs.outlineWidth === rcs.borderTopWidth && fcs.outlineWidth === "1px";
+    report(widthOk, `ring width matches the 3D border (outline ${fcs.outlineWidth} vs border ${rcs.borderTopWidth})`);
+    const colorOk = fcs.outlineColor === rcs.borderTopColor;
+    report(colorOk, `ring color matches accent/50 (outline ${fcs.outlineColor} vs border ${rcs.borderTopColor})`);
+    const radiusOk = fcs.borderTopLeftRadius === rcs.borderTopLeftRadius && fcs.borderTopLeftRadius === "4px";
+    report(radiusOk, `ring radius matches rounded (${fcs.borderTopLeftRadius} vs ${rcs.borderTopLeftRadius})`);
+    const noGlow = fcs.boxShadow === "none";
+    report(noGlow, `no box-shadow glow (matches the 3D ring) — got "${fcs.boxShadow}"`);
+    ref.remove();
+    ok = ok && widthOk && colorOk && radiusOk && noGlow;
+  }
+
   // --- 2. shift-click B → A and B both selected (cross-mount) ---------------
   clickPane(fb, true);
   const bothSel = await waitFor(() => isRinged(fa) && isRinged(fb) && !isRinged(fc));
@@ -212,7 +245,59 @@ async function run(): Promise<boolean> {
   report(cGroupGone, "a lone selection is NOT a sync group (no ≥2 members)");
   ok = ok && cGroupGone;
 
+  // --- Bug 2: two ADJACENT selected cells in ONE 2×2 grid — each selected
+  // cell must be RAISED (position:relative + a z-index) so its ring is never
+  // occluded by a later grid sibling. Tear down the standalone mounts first so
+  // only the grid's frames remain. -------------------------------------------
   roots.forEach((r) => r.unmount());
+  await sleep(30);
+  __resetGlobalSelectionStoreForTest();
+
+  const gridDesc: PlotDescriptor = {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: 2,
+      children: [
+        gridCell("g0", "#c0392b"),
+        gridCell("g1", "#27ae60"),
+        gridCell("g2", "#2980b9"),
+        gridCell("g3", "#8e44ad"),
+      ],
+    },
+  } as PlotDescriptor;
+  const gridRoot = createRoot(document.getElementById("mount-c")!);
+  gridRoot.render(createElement(PlotApp, { descriptor: gridDesc }));
+
+  const gridReady = await waitFor(() => frames().length === 4);
+  report(gridReady, `a 2×2 grid mounts four selectable cells (got ${frames().length})`);
+  ok = ok && gridReady;
+
+  if (gridReady) {
+    const cells = frames(); // DOM order: [0,1] top row, [2,3] bottom row
+    // Two horizontally-adjacent cells (top row).
+    clickPane(cells[0]);
+    clickPane(cells[1], true);
+    const bothRinged = await waitFor(() => isRinged(cells[0]) && isRinged(cells[1]));
+    report(bothRinged, "two adjacent grid cells are both selected");
+    ok = ok && bothRinged;
+
+    const raised = (el: HTMLElement) => {
+      const cs = getComputedStyle(el);
+      return cs.position === "relative" && cs.zIndex !== "auto" && Number(cs.zIndex) >= 1;
+    };
+    const bothRaised = raised(cells[0]) && raised(cells[1]);
+    report(
+      bothRaised,
+      `both selected cells are raised (z-index ${getComputedStyle(cells[0]).zIndex}/${getComputedStyle(cells[1]).zIndex}), so neither ring is occluded`,
+    );
+    // The unselected siblings stay at the default stacking (z-index:auto).
+    const unselAuto = getComputedStyle(cells[2]).zIndex === "auto";
+    report(unselAuto, `an unselected cell keeps the default stacking (z-index: ${getComputedStyle(cells[2]).zIndex})`);
+    ok = ok && bothRaised && unselAuto;
+  }
+
+  gridRoot.unmount();
   return ok;
 }
 
