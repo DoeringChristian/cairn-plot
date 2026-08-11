@@ -181,7 +181,7 @@ test("extended·Linear is a pure pass-through; SDR operators clamp HDR into [0,1
 });
 
 test("extendedReinhardCurve: monotone, ≈x for x≪1, →P asymptote", () => {
-  const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
+  const P = 4; // explicit peak — a curve-SHAPE test, independent of the default
   approx(extendedReinhardCurve(0, P), 0);
   // Identity-like at low x (slope exactly 1 at 0).
   approx(extendedReinhardCurve(0.001, P), 0.001, 5e-6);
@@ -206,7 +206,7 @@ test("extendedReinhardCurve: monotone, ≈x for x≪1, →P asymptote", () => {
 });
 
 test("extendedAcesCurve: P·aces(x/P) — P=1 ≡ narkowicz, monotone, →P asymptote", () => {
-  const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
+  const P = 4; // explicit peak — a curve-SHAPE test, independent of the default
   approx(extendedAcesCurve(0, P), 0);
   // Peak-parameterized as the CANONICAL curve scaled to P: y = P·aces(x/P).
   // Spot-check the closed form directly.
@@ -309,7 +309,7 @@ test("SDR_DISPLAY_TRANSFER_OPERATORS: the 8-bit pane's menu subset (sRGB · Gamm
 });
 
 test("extendedClampCurve: identity below P (exact), hard ceiling at/above P (exact), monotone", () => {
-  const P = EXTENDED_TONEMAP_PEAK_DEFAULT; // 4
+  const P = 4; // explicit peak — a curve-SHAPE test, independent of the default
   // EXACT identity for 0 <= x <= P (no curvature, no float drift — plain min).
   approx(extendedClampCurve(0, P), 0);
   assert.equal(extendedClampCurve(0.001, P), 0.001);
@@ -579,13 +579,13 @@ test("UNIFIED §B: the render matrix is SOURCE-AGNOSTIC (u8-post-decode ≡ floa
 
 test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap", () => {
   // UNSET descriptor: sRGB on EVERY surface (user decision — tev's default).
-  // Engaged HDR → extended sRGB encode with the managed PEAK(4) ceiling.
+  // Engaged HDR → extended sRGB encode with the managed PEAK ceiling (default).
   const hdrDefault = resolveEffectiveTonemap(undefined, true); // "srgb"
   assert.equal(hdrDefault, "srgb");
   assert.deepEqual(resolveRenderTonemap(hdrDefault, EXTENDED_TONEMAP_PEAK_DEFAULT, true, 2.2), {
     operator: "extended-clamp",
     hdrOut: true,
-    peak: 4,
+    peak: EXTENDED_TONEMAP_PEAK_DEFAULT,
     gamma: undefined,
   });
   const sdrDefault = resolveEffectiveTonemap(undefined, false); // "srgb"

@@ -84,10 +84,11 @@ const acesCurve = (x: number): number => {
 // image.wgsl.ts`'s `applyOperator`; the GPU-vs-TS parity harness checks them.
 // ---------------------------------------------------------------------------
 
-/** Peak-white slider bounds (×SDR white). Default 4, range 1..16, step 0.5.
+/** Peak-white slider bounds (×SDR white). Default 16, range 1..16, step 0.5.
  *  FOLLOW-UP: a browser-exposed display headroom (once standardized) would seed
- *  the default; until then it is a fixed 4. */
-export const EXTENDED_TONEMAP_PEAK_DEFAULT = 4;
+ *  the default; until then it is a fixed 16 (the max — preserve the most HDR
+ *  headroom by default). */
+export const EXTENDED_TONEMAP_PEAK_DEFAULT = 16;
 export const EXTENDED_TONEMAP_PEAK_MIN = 1;
 export const EXTENDED_TONEMAP_PEAK_MAX = 16;
 export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
