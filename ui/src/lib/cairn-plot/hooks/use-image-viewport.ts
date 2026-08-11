@@ -6,6 +6,9 @@ import {
   pointerDistance,
   pointerMidpoint,
 } from "../viewport/chart-viewport-math";
+import { reframeViewportForResize } from "../viewport/reframe";
+
+export { reframeViewportForResize };
 
 export interface Viewport {
   zoom: number;
@@ -319,4 +322,56 @@ export function useImageViewport(args: {
     },
     modifierActive,
   };
+}
+
+/**
+ * Observes `containerRef`'s box and, on a genuine size change, applies the
+ * center-preserving `reframeViewportForResize` via `onViewportChange` — so a
+ * zoomed/panned view keeps its centered texel (and its on-screen texel size)
+ * across enlarge enter/exit and ordinary window/container resizes, instead of
+ * jumping (the top-left-anchored-pan bug). The first observation only seeds the
+ * baseline box (no reframe). Uses `getBoundingClientRect` — the SAME box the
+ * wheel/pan handler measures — so the adjustment matches the user transform.
+ */
+export function useReframeViewportOnResize(args: {
+  containerRef: React.RefObject<HTMLElement | null>;
+  zoom: number;
+  pan: { x: number; y: number };
+  onViewportChange?: (v: Viewport) => void;
+  naturalWidth?: number;
+  naturalHeight?: number;
+}): void {
+  const { containerRef, zoom, pan, onViewportChange, naturalWidth, naturalHeight } = args;
+  // Latest inputs read imperatively from the observer (never re-subscribes).
+  const latest = useRef({ zoom, pan, onViewportChange, naturalWidth, naturalHeight });
+  latest.current = { zoom, pan, onViewportChange, naturalWidth, naturalHeight };
+  const lastBoxRef = useRef<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const seed = el.getBoundingClientRect();
+    lastBoxRef.current = { width: seed.width, height: seed.height };
+    const ro = new ResizeObserver(() => {
+      const rect = el.getBoundingClientRect();
+      const newBox = { width: rect.width, height: rect.height };
+      const oldBox = lastBoxRef.current;
+      if (!oldBox) {
+        lastBoxRef.current = newBox;
+        return;
+      }
+      // Ignore sub-pixel jitter (RO fires on fractional layout churn).
+      if (Math.abs(newBox.width - oldBox.width) < 0.5 && Math.abs(newBox.height - oldBox.height) < 0.5) {
+        return;
+      }
+      lastBoxRef.current = newBox;
+      const { onViewportChange: cb, zoom: z, pan: p, naturalWidth: nw, naturalHeight: nh } = latest.current;
+      if (!cb) return;
+      const next = reframeViewportForResize({ zoom: z, pan: p }, oldBox, newBox, nw, nh);
+      if (next.zoom !== z || next.pan.x !== p.x || next.pan.y !== p.y) cb(next);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+    // Re-subscribe only if the observed element identity changes.
+  }, [containerRef]);
 }
