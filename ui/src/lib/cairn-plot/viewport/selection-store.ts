@@ -1,12 +1,16 @@
 /**
- * Framework-free MULTI-VIEWPORT SELECTION store — one selection set per grid.
+ * Framework-free MULTI-VIEWPORT SELECTION store — ONE page-wide selection set.
  *
- * A grid (`plot-node.tsx`'s `GridView`) owns a `SelectionStore` keyed by its
- * stable grid id. Each sibling pane registers a stable `paneId` and can be
- * selected by a click. Selection is the switch that decides WHICH panes are in
- * a live sync group: while ≥2 panes are selected, the React layer threads a
- * shared viewport-sync group id (`image-viewport-sync.ts`) and settings-sync
- * group id (`image-settings-sync.ts`) into every selected pane, so zoom/pan and
+ * Every image/compare/chart pane on the page — a STANDALONE `PlotApp` mount OR a
+ * grid cell — obtains the SAME document-scoped store (`getGlobalSelectionStore`
+ * below) and registers a process-unique `paneId` (`nextSelectionPaneId`). A
+ * click selects a pane; a selection can span independent React roots (the
+ * gallery renders each plot as a separate mount), which a per-grid or per-root
+ * React context could never do — a module singleton can. Selection is the
+ * switch that decides WHICH panes are in a live sync group: while ≥2 panes are
+ * selected, the React layer threads a shared viewport-sync group id
+ * (`image-viewport-sync.ts`) and settings-sync group id
+ * (`image-settings-sync.ts`) into every selected pane, so zoom/pan and
  * display-setting changes broadcast across the whole selected group.
  *
  * Selection semantics (locked design):
@@ -84,6 +88,18 @@ export class SelectionStore {
   }
 
   /**
+   * Remove a single `id` (its pane is unmounting). No-op (no emit) when `id`
+   * isn't selected. Distinct from `toggle`: this is a lifecycle removal, so it
+   * can never ADD an id — a page-wide store must not keep a phantom member from
+   * an unmounted pane inflating the group past the ≥2 sync threshold.
+   */
+  remove(id: string): void {
+    if (!this.selected.includes(id)) return;
+    this.selected = this.selected.filter((x) => x !== id);
+    this.emit();
+  }
+
+  /**
    * Drop any selected ids not in `validIds` — called when panes unmount so a
    * stale id can never keep a phantom member in the group. No-op (no emit)
    * when every selected id is still present.
@@ -120,11 +136,12 @@ export interface PaneSyncGroups {
 }
 
 /**
- * The single source of truth (shared by `plot-node.tsx`'s `SelectionCell` and
- * the sync integration test) for a pane's selection-driven sync groups: a pane
- * syncs iff it is one of ≥2 selected panes; the whole active group shares the
- * `${base}-vp` / `${base}-st` group ids, and the first-selected member is the
- * anchor. `base` is the grid's `selectionGroupBase`.
+ * The single source of truth (shared by `plot-node.tsx`'s `PaneSelectionFrame`
+ * and the sync integration test) for a pane's selection-driven sync groups: a
+ * pane syncs iff it is one of ≥2 selected panes; the whole active group shares
+ * the `${base}-vp` / `${base}-st` group ids, and the first-selected member is
+ * the anchor. `base` is the page-wide {@link GLOBAL_SELECTION_BASE} (a per-grid
+ * base is no longer used — selection is page-wide, so there is one base).
  */
 export function paneSyncGroups(
   store: SelectionStore,
@@ -140,21 +157,43 @@ export function paneSyncGroups(
   };
 }
 
-const stores = new Map<string, SelectionStore>();
+// ---------------------------------------------------------------------------
+// DOCUMENT-scoped (page-wide) obtain path. The gallery mounts each plot as a
+// SEPARATE React root / `PlotApp`, so a per-grid or per-root React context
+// cannot span them — a MODULE singleton shared by every pane wrapper on the
+// page can, which is what makes a click in one mount and a shift-click in
+// another build ONE cross-mount selection.
+// ---------------------------------------------------------------------------
 
-/** The `SelectionStore` for a grid id, created on first use. One store per
- *  grid keeps selection scoped to a single grid's sibling panes (the design's
- *  explicit scope — cross-grid selection is a later extension). */
-export function getSelectionStore(gridId: string): SelectionStore {
-  let s = stores.get(gridId);
-  if (!s) {
-    s = new SelectionStore();
-    stores.set(gridId, s);
-  }
-  return s;
+/** The one base for the page-wide selection's sync groups (`${base}-vp` /
+ *  `${base}-st`). There is only ever ONE active selection set document-wide, so
+ *  a single base is correct — every ≥2-selected pane shares these two ids. */
+export const GLOBAL_SELECTION_BASE = "cp-global-sel";
+
+let globalStore: SelectionStore | null = null;
+
+/** The ONE page-wide selection store, created on first use and returned to
+ *  every pane wrapper regardless of which React root it mounted in. */
+export function getGlobalSelectionStore(): SelectionStore {
+  if (!globalStore) globalStore = new SelectionStore();
+  return globalStore;
 }
 
-/** Forget a grid's store (grid unmount) so it can't leak across a remount. */
-export function disposeSelectionStore(gridId: string): void {
-  stores.delete(gridId);
+/** Reset the page-wide store (tests only) so cases don't leak selection into
+ *  one another. Not used by product code. */
+export function __resetGlobalSelectionStoreForTest(): void {
+  globalStore = null;
+  paneSeq = 0;
+}
+
+// Monotonic pane-id source. React's `useId()` RESTARTS its counter per root
+// (`:r0:`, `:r1:`, …), so two independent gallery mounts would mint COLLIDING
+// pane ids and cross-contaminate the one global store. A process-wide counter
+// namespaces every pane uniquely across all mounts on the page.
+let paneSeq = 0;
+
+/** A process-unique, stable pane id (`cp-pane-N`). Call once per pane wrapper
+ *  (memoized in the component) so it survives re-renders. */
+export function nextSelectionPaneId(): string {
+  return `cp-pane-${paneSeq++}`;
 }

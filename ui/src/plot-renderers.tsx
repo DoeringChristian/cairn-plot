@@ -25,7 +25,6 @@
  * merged over the descriptor's config `props`; adapters spread that as `p`.
  */
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -47,13 +46,7 @@ import {
 } from "./lib/cairn-plot/renderers/image-backend";
 import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
-import type { Viewport as ImageViewport } from "./lib/cairn-plot/hooks/use-image-viewport";
-import {
-  getLastImageViewportState,
-  makeImageViewportSyncSourceId,
-  publishImageViewportState,
-  subscribeImageViewportState,
-} from "./lib/cairn-plot/viewport/image-viewport-sync";
+import { useSyncedImageViewport } from "./lib/cairn-plot/renderers/use-synced-image-viewport";
 import {
   ChartViewportSyncProvider,
   type ChartViewportSyncTarget,
@@ -281,74 +274,10 @@ function HeatmapStandalone(p: P) {
   );
 }
 
-/**
- * Owns a pane's local `{zoom,pan}` viewport state, optionally linked to a
- * `viewportSyncGroupId` (threaded down from a grid's `shared.sync.viewport` —
- * see `plot-node.tsx`'s `GridView`) via `image-viewport-sync.ts`'s group
- * pub/sub bus — the IMAGE mirror of the 3D `cameraSyncGroupId` mechanism
- * (`lib/camera-sync.ts` / `three/camera-sync.ts`). Shared by
- * `ImageStandalone`/`ImageHdrStandalone` so BOTH the WebGPU engine pane and
- * the legacy CPU panes (`ImagePane`/`HdrImagePane`/`GpuImagePane` are all
- * fully controlled via `zoom`/`pan`/`onViewportChange`, owning no viewport
- * state of their own) get sync for free — neither pane component needs to
- * know sync exists, only the adapter that already owns the viewport state.
- *
- * - Joining a group adopts the last-published state immediately, so a pane
- *   that mounts after its peers have already zoomed/panned doesn't snap them
- *   back to home.
- * - A LOCAL gesture (the pane's own `onViewportChange`, returned here) both
- *   updates local state and publishes to the group.
- * - A REMOTE update (another pane's publish, delivered via `subscribe`) only
- *   updates local state — it is never re-published, so there's no feedback
- *   loop (see `image-viewport-sync.ts`'s module doc for why no second
- *   "suppress while applying" guard is needed here, unlike the 3D bus).
- */
-function useSyncedImageViewport(
-  groupId: string | null | undefined,
-  seed: ImageViewport,
-  isAnchor = false,
-): [ImageViewport, (v: ImageViewport) => void] {
-  const [viewport, setViewport] = useState<ImageViewport>(seed);
-  const sourceIdRef = useRef<string>();
-  if (!sourceIdRef.current) sourceIdRef.current = makeImageViewportSyncSourceId();
-  // Current viewport in a ref so the anchor-seed effect can publish it without
-  // itself re-running on every viewport change.
-  const viewportRef = useRef(viewport);
-  viewportRef.current = viewport;
-
-  useEffect(() => {
-    if (!groupId) return;
-    // A NON-anchor adopts the group's last-published viewport on join; the
-    // anchor never adopts (it seeds the group below), so a stale viewport from a
-    // prior selection session can't snap the anchor back.
-    if (!isAnchor) {
-      const last = getLastImageViewportState(groupId);
-      if (last) setViewport(last);
-    }
-    return subscribeImageViewportState(groupId, sourceIdRef.current!, (state) => {
-      setViewport(state);
-    });
-  }, [groupId, isAnchor]);
-
-  // When THIS pane becomes the anchor of a freshly-formed selection group, seed
-  // the group with its current viewport so newly-added members adopt the
-  // anchor's view (design req 5) instead of a stale last-published state.
-  useEffect(() => {
-    if (groupId && isAnchor) {
-      publishImageViewportState(groupId, sourceIdRef.current!, viewportRef.current);
-    }
-  }, [groupId, isAnchor]);
-
-  const onViewportChange = useCallback(
-    (v: ImageViewport) => {
-      setViewport(v);
-      if (groupId) publishImageViewportState(groupId, sourceIdRef.current!, v);
-    },
-    [groupId],
-  );
-
-  return [viewport, onViewportChange];
-}
+// `useSyncedImageViewport` (the pane viewport ↔ selection-group sync hook) now
+// lives in `renderers/use-synced-image-viewport.ts` so both this module's
+// `ImageStandalone` and `plot-node.tsx`'s `CompareView` drive it from ONE
+// definition (imported above).
 
 // --- ImagePane: content/aspect-sized, fills required config with defaults ---
 // Like ScalarPlotStandalone, owns the interactive viewport locally: ImagePane's

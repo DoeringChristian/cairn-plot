@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>page-wide selection harness</title>
+    <!-- Real compiled Tailwind (committed copy of dist/plot-inline/style.css) so
+         the panes' own layout classes resolve, exactly like a host page. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- `data-cairn-harness="self-driving"` opts this page into the DEFAULT
+         `npm run test:harness` run: it dispatches its OWN pointer gestures and
+         settles #status headlessly (no WebGPU, no external driving), so CI gates
+         page-wide selection like the engine parity proofs. -->
+    <meta name="cairn-harness" data-cairn-harness="self-driving" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* Two INDEPENDENT mounts stacked vertically — mimics the gallery (each a
+         separate PlotApp root), NOT a single cp.Grid. */
+      .mount { width: 420px; height: 260px; margin: 10px 0; background: #222; }
+    </style>
+  </head>
+  <body>
+    <h1>plot-node.tsx — PAGE-WIDE selection (two separate mounts) harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="mount-a" class="mount"></div>
+    <div id="mount-b" class="mount"></div>
+    <div id="mount-c" class="mount"></div>
+    <script type="module" src="./page-wide-selection.browser.bundle.js?v=1"></script>
+  </body>
+</html>
