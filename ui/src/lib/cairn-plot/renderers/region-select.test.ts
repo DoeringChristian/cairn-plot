@@ -9,8 +9,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   computeFit,
+  computeSourceFit,
   screenToTexel,
   texelToScreen,
+  sourceTexelCenter,
   screenRectToTexelRect,
   texelRectToScreenRect,
   type ScreenToTexelParams,
@@ -157,6 +159,151 @@ test("overlay pixel-center mapping is identical to region-select's texelToScreen
       }
     }
   }
+});
+
+// --- fill-stretch per-side placement (compare split, mismatched resolution) --
+// `computeSourceFit`/`sourceTexelCenter` place a SAMPLED source of its OWN dims
+// inside the framing quad. The compare split shader samples both operands through
+// ONE normalized uv window, each scaled by its own `textureDimensions`, so the
+// non-primary (reference) side fills the framing quad with its own texel count —
+// exactly the fill-stretch model here.
+
+/** The compare split shader's OWN placement of a sampled source's texel center,
+ *  derived independently of `computeFit` — from the normalized uv window
+ *  (`viewportToUvRect`) + the box fraction the fragment maps to. Ground truth. */
+function viewportUvRect(
+  zoom: number,
+  pan: { x: number; y: number },
+  box: { width: number; height: number },
+  framingW: number,
+  framingH: number,
+) {
+  const s = Math.min(box.width / framingW, box.height / framingH);
+  const dispW = framingW * s;
+  const dispH = framingH * s;
+  const imgLeft = (box.width - dispW) / 2;
+  const imgTop = (box.height - dispH) / 2;
+  const z = Math.max(zoom, 1e-6);
+  return {
+    x: -imgLeft / dispW - pan.x / (z * dispW),
+    y: -imgTop / dispH - pan.y / (z * dispH),
+    w: box.width / (z * dispW),
+    h: box.height / (z * dispH),
+  };
+}
+function shaderTexelCenter(
+  box: { left: number; top: number; width: number; height: number },
+  uv: { x: number; y: number; w: number; h: number },
+  srcW: number,
+  srcH: number,
+  px: number,
+  py: number,
+) {
+  const fracX = ((px + 0.5) / srcW - uv.x) / uv.w;
+  const fracY = ((py + 0.5) / srcH - uv.y) / uv.h;
+  return { x: box.left + fracX * box.width, y: box.top + fracY * box.height };
+}
+
+test("sourceTexelCenter reduces to texelToScreen(px+0.5) when sourceDims omitted", () => {
+  const params: ScreenToTexelParams = {
+    box: { left: -30, top: 12, width: 640, height: 360 },
+    naturalWidth: 100,
+    naturalHeight: 70,
+    sourceWindow: { x: 0.2, y: 0.15, w: 0.4, h: 0.5 },
+  };
+  for (const px of [0, 3, 41, 99]) {
+    for (const py of [0, 20, 69]) {
+      const a = sourceTexelCenter(px, py, params);
+      const b = texelToScreen(px + 0.5, py + 0.5, params);
+      assert.ok(Math.abs(a.x - b.x) < 1e-9, `x @ (${px},${py})`);
+      assert.ok(Math.abs(a.y - b.y) < 1e-9, `y @ (${px},${py})`);
+      // sourceDims === framing dims is the identity, too.
+      const c = sourceTexelCenter(px, py, params, { w: 100, h: 70 });
+      assert.ok(Math.abs(a.x - c.x) < 1e-9);
+      assert.ok(Math.abs(a.y - c.y) < 1e-9);
+    }
+  }
+});
+
+test("sourceTexelCenter matches the split shader for a MISMATCHED-resolution side", () => {
+  // Foreground/primary (framing) = 100x70; reference = 64x48 (different aspect).
+  const framingW = 100;
+  const framingH = 70;
+  const refW = 64;
+  const refH = 48;
+  for (const zoom of [1, 2.5, 8]) {
+    for (const pan of [{ x: 0, y: 0 }, { x: -120, y: 40 }, { x: 300, y: -90 }]) {
+      const box = { left: 17, top: 9, width: 800, height: 300 };
+      const uv = viewportUvRect(zoom, pan, box, framingW, framingH);
+      const params: ScreenToTexelParams = {
+        box,
+        naturalWidth: framingW,
+        naturalHeight: framingH,
+        sourceWindow: uv,
+      };
+      for (const px of [0, 1, 31, 63]) {
+        for (const py of [0, 24, 47]) {
+          const got = sourceTexelCenter(px, py, params, { w: refW, h: refH });
+          const truth = shaderTexelCenter(box, uv, refW, refH, px, py);
+          assert.ok(Math.abs(got.x - truth.x) < 1e-6, `x @ (${px},${py}) z=${zoom}`);
+          assert.ok(Math.abs(got.y - truth.y) < 1e-6, `y @ (${px},${py}) z=${zoom}`);
+        }
+      }
+    }
+  }
+});
+
+test("the OLD primary-grid placement drifts off the reference pixels, growing with index", () => {
+  // Reproduces the reported bug numerically: placing the reference side's texel on
+  // the PRIMARY's grid (framing dims) — what the pane did before the fix — puts the
+  // number progressively further from the pixel the shader draws, worst at large
+  // resolution. The per-side `sourceDims` mapping removes it.
+  const framingW = 2048;
+  const framingH = 1536;
+  const refW = 2000; // slightly smaller reference (a common crop/resample mismatch)
+  const refH = 1500;
+  const box = { left: 0, top: 0, width: 1200, height: 900 };
+  // Zoom in enough that ~1 texel is many px (numbers are visible at this zoom).
+  const zoom = 60;
+  const pan = { x: -720, y: -540 };
+  const uv = viewportUvRect(zoom, pan, box, framingW, framingH);
+  const params: ScreenToTexelParams = { box, naturalWidth: framingW, naturalHeight: framingH, sourceWindow: uv };
+  const nearTexel = { x: 12, y: 9 };
+  const farTexel = { x: 1990, y: 1490 };
+  const errOld = (t: { x: number; y: number }) => {
+    // OLD: reference texel placed via the FRAMING (primary) grid — sourceDims omitted.
+    const old = sourceTexelCenter(t.x, t.y, params);
+    const truth = shaderTexelCenter(box, uv, refW, refH, t.x, t.y);
+    return Math.hypot(old.x - truth.x, old.y - truth.y);
+  };
+  const errNew = (t: { x: number; y: number }) => {
+    const fixed = sourceTexelCenter(t.x, t.y, params, { w: refW, h: refH });
+    const truth = shaderTexelCenter(box, uv, refW, refH, t.x, t.y);
+    return Math.hypot(fixed.x - truth.x, fixed.y - truth.y);
+  };
+  // The OLD placement drifts, and the drift GROWS with texel index.
+  assert.ok(errOld(farTexel) > errOld(nearTexel) + 5, `old drift grows: near=${errOld(nearTexel)} far=${errOld(farTexel)}`);
+  assert.ok(errOld(farTexel) > 20, `old far-corner drift is large: ${errOld(farTexel)}`);
+  // The FIXED placement sits on the shader's pixel center everywhere (sub-px).
+  assert.ok(errNew(nearTexel) < 1e-6, `new near err: ${errNew(nearTexel)}`);
+  assert.ok(errNew(farTexel) < 1e-6, `new far err: ${errNew(farTexel)}`);
+});
+
+test("computeSourceFit rectangular cells: per-axis screen-per-texel spans the quad", () => {
+  const params: ScreenToTexelParams = {
+    box: { left: 5, top: 5, width: 500, height: 500 },
+    naturalWidth: 100,
+    naturalHeight: 100,
+  };
+  const sf = computeSourceFit(params, { w: 40, h: 80 });
+  // The framing quad (full 100x100 image, object-contain into 500x500) is 500x500.
+  assert.ok(Math.abs(sf.quadW - 500) < 1e-9);
+  assert.ok(Math.abs(sf.quadH - 500) < 1e-9);
+  // Its own grid spreads across the SAME quad: 40 cols, 80 rows.
+  assert.ok(Math.abs(sf.sxPerTexel - 500 / 40) < 1e-9);
+  assert.ok(Math.abs(sf.syPerTexel - 500 / 80) < 1e-9);
+  assert.equal(sf.gridW, 40);
+  assert.equal(sf.gridH, 80);
 });
 
 test("overlay fit round-trips through screenToTexel (clip-window inverse)", () => {

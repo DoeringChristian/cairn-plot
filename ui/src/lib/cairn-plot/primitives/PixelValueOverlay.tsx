@@ -40,7 +40,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { formatNum } from "../format";
 import {
-  computeFit,
+  computeSourceFit,
   type ScreenToTexelParams,
 } from "../renderers/region-select";
 import {
@@ -202,6 +202,22 @@ export interface PixelValueOverlayProps {
    * per-pixel numbers would ever appear on a GPU pane, however far zoomed in.
    */
   sourceWindow?: { x: number; y: number; w: number; h: number };
+  /**
+   * The SAMPLED source's own grid resolution, when it differs from the FRAMING
+   * dims (`naturalWidth`/`naturalHeight`). Default = the framing dims (the
+   * single-image pane and the compare foreground/primary side — an isotropic,
+   * unchanged mapping).
+   *
+   * Needed by the compare split pane's NON-primary (reference) side: both
+   * operands are drawn stretched into the SAME framing quad (the shader samples
+   * each through one normalized uv window, scaled by its own
+   * `textureDimensions`), so the reference side fills that quad with ITS OWN
+   * texel count. Without this the reference numbers map through the primary's
+   * grid — misplaced whenever the two resolutions differ, drifting further off
+   * their pixels with texel index (worst at large resolution). See
+   * `renderers/region-select`'s {@link computeSourceFit}.
+   */
+  sourceDims?: { w: number; h: number };
 }
 
 const FULL_SOURCE_WINDOW = { x: 0, y: 0, w: 1, h: 1 };
@@ -217,6 +233,7 @@ export default function PixelValueOverlay({
   version = 0,
   onActiveChange,
   sourceWindow = FULL_SOURCE_WINDOW,
+  sourceDims,
 }: PixelValueOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(false);
@@ -266,42 +283,51 @@ export default function PixelValueOverlay({
     // The DISPLAYED sub-image, in source pixels: `sourceWindow` (default the
     // whole image) selects a `[0,1]`-normalized crop of
     // `[naturalWidth, naturalHeight]`. The object-contain fit of THIS crop into
-    // `box` is the SAME `computeFit` the region marquee uses (renderers/
-    // region-select) — we consume it here so the overlay's per-pixel placement
-    // and the marquee's texel mapping can never drift apart.
+    // `box` establishes the FRAMING QUAD (the on-screen rect the full framing
+    // image renders into) — the SAME `computeFit` the region marquee uses
+    // (renderers/region-select) — while `sourceDims` (default = the framing
+    // dims) is the SAMPLED source's own grid spread across that quad. Consuming
+    // the shared `computeSourceFit` keeps the overlay's per-pixel placement and
+    // the marquee's texel mapping from ever drifting apart, AND places a
+    // mismatched-resolution compare side on its own grid (fill-stretch — the
+    // split shader draws both operands into one quad, each scaled by its own
+    // `textureDimensions`).
     const fitParams: ScreenToTexelParams = {
       box,
       naturalWidth,
       naturalHeight,
       sourceWindow,
     };
-    const fit = computeFit(fitParams);
-    const { srcOriginX, srcOriginY, visibleW, visibleH, scale } = fit;
-    if (visibleW <= 0 || visibleH <= 0) {
+    const sf = computeSourceFit(fitParams, sourceDims);
+    const { sxPerTexel, syPerTexel, gridW, gridH, visibleW, visibleH } = sf;
+    if (visibleW <= 0 || visibleH <= 0 || gridW <= 0 || gridH <= 0) {
       reportActive(false);
       return;
     }
 
-    // The SINGLE global visibility gate: `scale` (screen px per source pixel)
-    // alone decides whether numbers appear — never any string's width, never
-    // the channel count — so at a given zoom every cell in view draws or none
-    // does (numbers pop in ALL AT ONCE, not shorter values first). See
+    // The framing quad rebased into this canvas's local (CSS px) coords. For the
+    // default (framing == sampled) case `sxPerTexel === syPerTexel === scale` and
+    // this reduces to the historical `imgLeft + (px - srcOriginX + 0.5)*scale`.
+    const quadLeft = sf.quadLeft - canvasRect.left;
+    const quadTop = sf.quadTop - canvasRect.top;
+
+    // The SINGLE global visibility gate. Rectangular cells (mismatched aspect):
+    // the TIGHTER axis governs legibility/containment; for square cells this is
+    // exactly `scale`. It alone decides whether numbers appear — never any
+    // string's width, never the channel count — so at a given zoom every cell in
+    // view draws or none does (numbers pop in ALL AT ONCE). See
     // `pixelValueNumbersVisible`.
-    if (!pixelValueNumbersVisible(scale)) {
+    const cellScale = Math.min(sxPerTexel, syPerTexel);
+    if (!pixelValueNumbersVisible(cellScale)) {
       reportActive(false); // below threshold: nothing drawn.
       return;
     }
 
-    // Same client-space image top-left as `computeFit` (`fit.imgLeft/imgTop`),
-    // rebased into this canvas's local (CSS px) coords.
-    const imgLeft = fit.imgLeft - canvasRect.left;
-    const imgTop = fit.imgTop - canvasRect.top;
-
-    // Visible source-pixel window (clip to both the crop and the canvas viewport).
-    const x0 = Math.max(Math.floor(srcOriginX), Math.floor(srcOriginX + (0 - imgLeft) / scale));
-    const x1 = Math.min(Math.ceil(srcOriginX + visibleW), Math.ceil(srcOriginX + (cssW - imgLeft) / scale));
-    const y0 = Math.max(Math.floor(srcOriginY), Math.floor(srcOriginY + (0 - imgTop) / scale));
-    const y1 = Math.min(Math.ceil(srcOriginY + visibleH), Math.ceil(srcOriginY + (cssH - imgTop) / scale));
+    // Visible SAMPLED-texel window (clip the sampled grid to the canvas viewport).
+    const x0 = Math.max(0, Math.floor((0 - quadLeft) / sxPerTexel));
+    const x1 = Math.min(gridW, Math.ceil((cssW - quadLeft) / sxPerTexel));
+    const y0 = Math.max(0, Math.floor((0 - quadTop) / syPerTexel));
+    const y1 = Math.min(gridH, Math.ceil((cssH - quadTop) / syPerTexel));
     if (x1 <= x0 || y1 <= y0) {
       reportActive(false);
       return;
@@ -320,7 +346,7 @@ export default function PixelValueOverlay({
     let maxLineCount = 1;
     for (let py = y0; py < y1; py++) {
       for (let px = x0; px < x1; px++) {
-        if (px < 0 || py < 0 || px >= naturalWidth || py >= naturalHeight) continue;
+        if (px < 0 || py < 0 || px >= gridW || py >= gridH) continue;
         const s = sample(px, py, notation);
         if (!s || s.lines.length === 0) continue;
         if (s.lines.length > maxLineCount) maxLineCount = s.lines.length;
@@ -338,7 +364,7 @@ export default function PixelValueOverlay({
     // (`maxLineCount`) so an RGB triple fits vertically. Below the legibility
     // floor the numbers are too small to read: draw nothing (all-or-nothing,
     // matching the single visibility threshold — never a partial frame).
-    const fontH = pixelValueFontHeight(scale, maxLineCount, maxLineChars);
+    const fontH = pixelValueFontHeight(cellScale, maxLineCount, maxLineChars);
     if (fontH < PIXEL_VALUE_MIN_FONT_PX) {
       reportActive(false);
       return;
@@ -346,18 +372,16 @@ export default function PixelValueOverlay({
     reportActive(true); // zoomed in far enough — numbers are being drawn.
 
     // Q19: clip ALL drawing to the DISPLAYED IMAGE's own on-screen rect — the
-    // intersection of the actual image bounds `[0,naturalWidth] x
-    // [0,naturalHeight]` with `sourceWindow`'s crop, mapped through the same
-    // `imgLeft/imgTop + (coord - srcOrigin) * scale` transform used below.
-    // `sourceWindow` alone (the crop rect) is NOT enough: when zoomed out
-    // past the image's native size (Q18), `sourceWindow` extends past
-    // `[0,1]` into the checkerboard border, so its on-screen box is BIGGER
-    // than the actual image — without this clip, a halo/stroke drawn near
-    // that border could bleed onto the checkerboard.
-    const imageLeft = imgLeft + (0 - srcOriginX) * scale;
-    const imageTop = imgTop + (0 - srcOriginY) * scale;
-    const imageRight = imgLeft + (naturalWidth - srcOriginX) * scale;
-    const imageBottom = imgTop + (naturalHeight - srcOriginY) * scale;
+    // FRAMING QUAD (where the full image renders; the sampled source fills the
+    // SAME quad). `sourceWindow` alone (the crop rect) is NOT enough: when zoomed
+    // out past the image's native size (Q18), `sourceWindow` extends past `[0,1]`
+    // into the checkerboard border, so its on-screen box is BIGGER than the
+    // actual image — without this clip, a halo/stroke drawn near that border
+    // could bleed onto the checkerboard.
+    const imageLeft = quadLeft;
+    const imageTop = quadTop;
+    const imageRight = quadLeft + sf.quadW;
+    const imageBottom = quadTop + sf.quadH;
     ctx.save();
     ctx.beginPath();
     ctx.rect(imageLeft, imageTop, imageRight - imageLeft, imageBottom - imageTop);
@@ -384,8 +408,8 @@ export default function PixelValueOverlay({
     // region marquee uses; see region-select.test.ts).
     for (const { px, py, s } of cells) {
       const lc = s.lines.length;
-      const cx = imgLeft + (px - srcOriginX + 0.5) * scale;
-      const cy = imgTop + (py - srcOriginY + 0.5) * scale;
+      const cx = quadLeft + (px + 0.5) * sxPerTexel;
+      const cy = quadTop + (py + 0.5) * syPerTexel;
       let ly = cy - (lc * lineH) / 2 + lineH / 2;
       for (let k = 0; k < s.lines.length; k++) {
         const ln = s.lines[k]!;
@@ -395,12 +419,12 @@ export default function PixelValueOverlay({
       }
     }
     ctx.restore(); // matches the ctx.save()/clip() above.
-  }, [imageElRef, naturalWidth, naturalHeight, sample, notation, reportActive, sourceWindow]);
+  }, [imageElRef, naturalWidth, naturalHeight, sample, notation, reportActive, sourceWindow, sourceDims]);
 
   // Redraw on viewport / data / notation / mount / dpr changes.
   useEffect(() => {
     draw();
-  }, [draw, zoom, pan.x, pan.y, version, notation, sourceWindow, dpr]);
+  }, [draw, zoom, pan.x, pan.y, version, notation, sourceWindow, sourceDims, dpr]);
 
   // Redraw on container resize (fit box changes -> pixel size changes).
   useEffect(() => {

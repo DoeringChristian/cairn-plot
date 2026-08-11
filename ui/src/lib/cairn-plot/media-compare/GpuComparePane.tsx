@@ -91,6 +91,7 @@ import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { screenPxPerTexel, viewportToUvRect } from "../renderers/GpuImagePane";
+import { sourceTexelCenter } from "../renderers/region-select";
 import PixelValueOverlay, {
   PIXEL_VALUE_MIN_SCREEN_PX,
   buildChannelSample,
@@ -1416,6 +1417,31 @@ export default function GpuComparePane({
       get diffResultDims() {
         return diffResultDimsRef.current;
       },
+      // Per-side TEV overlay texel→screen mapping (canvas-LOCAL CSS px), computed
+      // through the SAME `computeSourceFit` the split overlays draw with: `side`
+      // "a" = reference (texA), "b" = foreground (texB). The framing quad is the
+      // primary/foreground footprint; each side fills it with its OWN grid
+      // (`srcDims`). Lets the mismatched/large-resolution harness assert a known
+      // texel's number sits on its pixel center (within ~1px) on each side.
+      overlayTexelCenter: (side: "a" | "b", px: number, py: number) => {
+        const canvas = canvasRef.current;
+        if (!canvas || !framingDims) return null;
+        const box = canvas.getBoundingClientRect();
+        const srcd = side === "a" ? (srcDims?.a ?? framingDims) : (srcDims?.b ?? framingDims);
+        const c = sourceTexelCenter(
+          px,
+          py,
+          { box, naturalWidth: framingDims.w, naturalHeight: framingDims.h, sourceWindow: overlayWindow },
+          srcd,
+        );
+        return { x: c.x - box.left, y: c.y - box.top };
+      },
+      get srcDims() {
+        return srcDims;
+      },
+      get overlayWindow() {
+        return overlayWindow;
+      },
       get align() {
         return align;
       },
@@ -1496,6 +1522,8 @@ export default function GpuComparePane({
     sampleRef,
     dims,
     framingDims,
+    srcDims,
+    overlayWindow,
     align,
     fit,
     resolvedKernelId,
@@ -1711,6 +1739,14 @@ export default function GpuComparePane({
                     zoom={zoom}
                     pan={pan}
                     sourceWindow={overlayWindow}
+                    // The FRAMING quad is the primary/foreground footprint (both
+                    // operands are drawn stretched into it — the split shader
+                    // samples each through ONE normalized uv window, scaled by
+                    // its own `textureDimensions`). The REFERENCE (texA) side
+                    // fills that quad with ITS OWN grid, so its numbers must map
+                    // through texA's dims — not the primary's — or they drift off
+                    // their pixels whenever the two resolutions differ.
+                    sourceDims={srcDims?.a ?? framingDims}
                     sample={sampleRef}
                     notation={notation}
                     version={pixelDataVersion}
@@ -1729,6 +1765,10 @@ export default function GpuComparePane({
                     zoom={zoom}
                     pan={pan}
                     sourceWindow={overlayWindow}
+                    // Foreground (texB) IS the primary/framing footprint, so this
+                    // is the identity mapping — passed explicitly to mirror the
+                    // reference side above.
+                    sourceDims={srcDims?.b ?? framingDims}
                     sample={sampleFg}
                     notation={notation}
                     version={pixelDataVersion}
