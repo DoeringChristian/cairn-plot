@@ -703,14 +703,19 @@ function PaneSelectionFrame({
     ...(fill ? { height: "100%" } : null),
   };
   if (isSelected) {
-    // A ring via `outline` (negative offset → sits INSIDE the frame) never
-    // shifts layout; a soft accent glow (box-shadow, also layout-free) makes the
-    // selection unmistakable. Both use the theme's accent token (light + dark).
-    style.outline = "2.5px solid var(--color-accent)";
-    style.outlineOffset = "-2px";
-    style.borderRadius = "6px";
-    style.boxShadow =
-      "0 0 0 4px color-mix(in srgb, var(--color-accent) 32%, transparent)";
+    // Bug 1: match the 3D viewports' existing ring EXACTLY so the selection/link
+    // look is identical across 2D and 3D. Reference: `Scene3DCanvas.tsx`'s active
+    // ring — `pointer-events-none absolute inset-0 rounded border border-accent/50`,
+    // i.e. a 1px accent-at-50% ring, 4px (`rounded`) radius, NO glow. We render it
+    // as an `outline` (with a -1px offset so it sits ON the frame edge like that
+    // 1px border, and never shifts layout) using the SAME `rgb(var(--color-accent-rgb)
+    // / 0.5)` expression the `border-accent/50` utility compiles to — so the
+    // computed color is byte-identical. Bug 2: raise the selected cell
+    // (`z-index`) so its ring paints ABOVE later grid siblings (never occluded).
+    style.outline = "1px solid rgb(var(--color-accent-rgb) / 0.5)";
+    style.outlineOffset = "-1px";
+    style.borderRadius = "4px";
+    style.zIndex = 1;
   }
 
   const paneSync = useMemo<PaneSyncCtx | null>(

@@ -48,6 +48,7 @@ import { createRoot } from "react-dom/client";
 import CpuImagePane from "../CpuImagePane";
 import { hdrSource, type HdrData } from "../image-backend";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
+import { reframeViewportForResize } from "../../viewport/reframe";
 
 const h = React.createElement;
 
@@ -149,13 +150,28 @@ async function run(): Promise<boolean> {
   container.style.height = "680px";
   container.style.background = "#222";
   document.body.appendChild(container);
+  // A tall spacer so the document is genuinely scrollable — makes the Bug 3
+  // page-scroll-lock assertion meaningful (a wheel COULD move the page if the
+  // overlay did not lock it).
+  const spacer = document.createElement("div");
+  spacer.style.height = "3000px";
+  document.body.appendChild(spacer);
+  const prevBodyOverflow = document.body.style.overflow;
 
   let latestViewport: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
+  // Externally-driven viewport setter (registered by the Harness) so the Bug 5
+  // resize test can put the pane into a KNOWN zoomed/panned state. Seeded with a
+  // no-op so it is always callable.
+  const vpControl: { set: (v: ImageViewport) => void } = { set: () => {} };
   const hdr = buildHdr();
   const root = createRoot(container);
 
   function Harness() {
     const [viewport, setViewport] = React.useState<ImageViewport>(latestViewport);
+    vpControl.set = (v: ImageViewport) => {
+      latestViewport = v;
+      setViewport(v);
+    };
     return h(CpuImagePane, {
       source: hdrSource(hdr),
       tonemap: "srgb",
@@ -191,6 +207,80 @@ async function run(): Promise<boolean> {
   const inlineNonBlank = await waitNonBlank(inlineCanvas);
   report(inlineNonBlank, "inline pane canvas renders non-blank");
   ok = ok && inlineNonBlank;
+
+  // --- Bug 5: the world texel at the viewport CENTER (and its on-screen size)
+  // is preserved when the pane's container box changes. Drive the pane to a
+  // KNOWN zoomed/panned state, then grow + shrink the container and assert the
+  // shell's emitted viewport equals the center-preserving reframe, with the
+  // on-screen texel size `zoom * homeScale(box)` unchanged. Deterministic math,
+  // driven by a REAL layout change + the pane's own ResizeObserver. ----------
+  {
+    const NW = 4, NH = 4; // buildHdr() is a 4×4 source
+    const homeScale = (w: number, hgt: number) => Math.min(w / NW, hgt / NH);
+    const vpBox = () =>
+      (container.querySelector("[data-cpu-image-viewport]") as HTMLElement).getBoundingClientRect();
+    const near = (a: number, b: number, eps: number) => Math.abs(a - b) <= eps;
+
+    // Put the pane into a zoomed + panned state and let React commit.
+    vpControl.set({ zoom: 2.5, pan: { x: -40, y: 30 } });
+    await sleep(120);
+    const oldBox = vpBox();
+    const oldVp = { zoom: latestViewport.zoom, pan: { ...latestViewport.pan } };
+    const oldP = oldVp.zoom * homeScale(oldBox.width, oldBox.height);
+
+    // GROW the container (both axes, different aspect) and wait for the RO-driven
+    // reframe to emit a new viewport.
+    container.style.width = "1400px";
+    container.style.height = "560px";
+    const grew = await waitFor(
+      () => latestViewport.zoom !== oldVp.zoom || latestViewport.pan.x !== oldVp.pan.x,
+      3000,
+    );
+    await sleep(60);
+    const newBox = vpBox();
+    const expect = reframeViewportForResize(oldVp, { width: oldBox.width, height: oldBox.height }, { width: newBox.width, height: newBox.height }, NW, NH);
+    const newP = latestViewport.zoom * homeScale(newBox.width, newBox.height);
+    const centerHeld =
+      grew &&
+      near(latestViewport.zoom, expect.zoom, 1e-3) &&
+      near(latestViewport.pan.x, expect.pan.x, 0.75) &&
+      near(latestViewport.pan.y, expect.pan.y, 0.75);
+    report(
+      centerHeld,
+      `grow: center-preserving reframe (pan ${latestViewport.pan.x.toFixed(1)},${latestViewport.pan.y.toFixed(1)} ` +
+        `vs expected ${expect.pan.x.toFixed(1)},${expect.pan.y.toFixed(1)})`,
+    );
+    const scaleHeld = near(newP, oldP, 1e-3);
+    report(scaleHeld, `grow: on-screen texel size preserved (${oldP.toFixed(4)} -> ${newP.toFixed(4)} px/texel)`);
+    ok = ok && centerHeld && scaleHeld;
+
+    // SHRINK back and assert the same invariants (round-trip on both axes).
+    const midVp = { zoom: latestViewport.zoom, pan: { ...latestViewport.pan } };
+    const midBox = vpBox();
+    container.style.width = "1000px";
+    container.style.height = "680px";
+    const shrank = await waitFor(
+      () => latestViewport.zoom !== midVp.zoom || latestViewport.pan.x !== midVp.pan.x,
+      3000,
+    );
+    await sleep(60);
+    const backBox = vpBox();
+    const expectBack = reframeViewportForResize(midVp, { width: midBox.width, height: midBox.height }, { width: backBox.width, height: backBox.height }, NW, NH);
+    const backP = latestViewport.zoom * homeScale(backBox.width, backBox.height);
+    const centerHeld2 =
+      shrank &&
+      near(latestViewport.zoom, expectBack.zoom, 1e-3) &&
+      near(latestViewport.pan.x, expectBack.pan.x, 0.75) &&
+      near(latestViewport.pan.y, expectBack.pan.y, 0.75);
+    report(centerHeld2, "shrink: center-preserving reframe holds (round-trip)");
+    const scaleHeld2 = near(backP, oldP, 1e-2);
+    report(scaleHeld2, `shrink: texel size back to the original (${backP.toFixed(4)} vs ${oldP.toFixed(4)} px/texel)`);
+    ok = ok && centerHeld2 && scaleHeld2;
+
+    // Reset to HOME for the rest of the harness (enlarge cases).
+    vpControl.set({ zoom: 1, pan: { x: 0, y: 0 } });
+    await sleep(60);
+  }
 
   // --- Case 2: click enlarge -> body-level fixed/high-z/isolate overlay ----
   const enlargeBtn = container.querySelector(
@@ -261,6 +351,53 @@ async function run(): Promise<boolean> {
   report(stillNonBlank, "enlarged canvas is still non-blank (no context loss after reparent)");
   ok = ok && stillNonBlank;
 
+  // --- Bug 4: the ✕ sits OUTSIDE the framed viewport (in the backdrop gutter),
+  // so it never overlaps the pane's toolbar / chrome. ------------------------
+  {
+    const frame = backdrop.querySelector("[data-cairn-plot-enlarge-frame]") as HTMLElement;
+    const closeBtn = backdrop.querySelector("[data-cairn-plot-enlarge-close]") as HTMLButtonElement;
+    const btnPresent = !!closeBtn && closeBtn.getAttribute("aria-label") === "Exit fullscreen (Esc)";
+    report(btnPresent, "the ✕ close button is present and labelled");
+    // Structural: the ✕ is a child of the BACKDROP, NOT inside the pane frame.
+    const outsideFrame = !!frame && !!closeBtn && !frame.contains(closeBtn) && backdrop.contains(closeBtn);
+    report(outsideFrame, "the ✕ is in the backdrop, OUTSIDE the pane frame");
+    // Geometric: the ✕ rect does not intersect the pane frame (up-and-right of
+    // it, in the gutter) — so it cannot overlap the frame's toolbar.
+    const br = closeBtn?.getBoundingClientRect();
+    const fr = frame?.getBoundingClientRect();
+    const noOverlap =
+      !!br && !!fr &&
+      (br.right <= fr.left + 1 || br.left >= fr.right - 1 || br.bottom <= fr.top + 1 || br.top >= fr.bottom - 1);
+    report(
+      noOverlap,
+      `the ✕ rect does not overlap the pane frame (✕ @${Math.round(br?.left ?? 0)},${Math.round(br?.top ?? 0)}; frame top ${Math.round(fr?.top ?? 0)})`,
+    );
+    // The toolbar (inside the frame) is clear of the ✕.
+    const toolbar = frame?.querySelector(".cairn-plot-toolbar") as HTMLElement | null;
+    const tr = toolbar?.getBoundingClientRect();
+    const toolbarClear =
+      !tr || !br || br.right <= tr.left || br.left >= tr.right || br.bottom <= tr.top || br.top >= tr.bottom;
+    report(toolbarClear, "the ✕ does not overlap the pane toolbar");
+    ok = ok && btnPresent && outsideFrame && noOverlap && toolbarClear;
+  }
+
+  // --- Bug 3: while the overlay is open the page must NOT scroll. Body scroll
+  // is locked; a wheel (no Alt) over the backdrop moves neither the page nor
+  // window.scrollY; closing restores the prior scroll behaviour. --------------
+  {
+    const bodyLocked = document.body.style.overflow === "hidden";
+    report(bodyLocked, `page scroll is locked while enlarged (body.overflow="${document.body.style.overflow}")`);
+    const beforeY = window.scrollY;
+    backdrop.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 600, bubbles: true, cancelable: true }),
+    );
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 600, bubbles: true, cancelable: true }));
+    await sleep(60);
+    const noScroll = window.scrollY === beforeY;
+    report(noScroll, `a plain wheel did not scroll the page (scrollY ${beforeY} -> ${window.scrollY})`);
+    ok = ok && bodyLocked && noScroll;
+  }
+
   // --- Case 3a: Escape closes; inline pane resumes -------------------------
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   const overlayGone = await waitFor(() => !document.querySelector("[data-cairn-plot-enlarge-backdrop]"));
@@ -270,6 +407,11 @@ async function run(): Promise<boolean> {
   const backInline = await waitFor(() => !!paneCanvas(container) && container.contains(inlineCanvas));
   report(backInline, "the pane resumes inline (same canvas) after Escape");
   ok = ok && backInline;
+
+  // Bug 3: page scroll is RESTORED exactly on close (back to its prior value).
+  const scrollRestored = document.body.style.overflow === prevBodyOverflow;
+  report(scrollRestored, `page scroll restored on close (body.overflow back to "${document.body.style.overflow}")`);
+  ok = ok && scrollRestored;
 
   const inlineStillLive = await waitNonBlank(inlineCanvas);
   report(inlineStillLive, "inline canvas is still non-blank after exit (no context loss)");
@@ -295,6 +437,7 @@ async function run(): Promise<boolean> {
 
   root.unmount();
   container.remove();
+  spacer.remove();
   return ok;
 }
 

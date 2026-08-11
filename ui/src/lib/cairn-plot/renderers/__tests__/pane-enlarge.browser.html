@@ -8,6 +8,11 @@
          host page loads. The enlarge OVERLAY chrome itself uses inline geometry
          and needs no CSS; this is only for the pane's internal layout. -->
     <link rel="stylesheet" href="./harness-style.css" />
+    <!-- `data-cairn-harness="self-driving"` opts this page into the DEFAULT
+         `npm run test:harness` run: it dispatches its OWN click/Escape/wheel and
+         container-resize gestures and settles #status headlessly (no WebGPU, no
+         external driving), so CI gates the enlarge + viewport-reframe fixes. -->
+    <meta name="cairn-harness" data-cairn-harness="self-driving" />
     <style>
       body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
       #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }

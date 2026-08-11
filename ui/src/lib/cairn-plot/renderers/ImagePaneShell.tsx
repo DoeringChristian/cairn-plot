@@ -94,7 +94,11 @@ import PixelValueOverlay, {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import PlotToolbar from "../primitives/PlotToolbar";
-import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
+import {
+  useImageViewport,
+  useReframeViewportOnResize,
+  type Viewport as ImageViewport,
+} from "../hooks/use-image-viewport";
 import {
   useImageController,
   IMAGE_TOOLBAR_CONFIG,
@@ -314,9 +318,11 @@ export default function ImagePaneShell({
   // changed the content's tree position would tear down + recreate the
   // `<canvas>`, dropping its GL/GPU context + backing store (a blank/black pane
   // and a context-loss warning). Moving the DOM node instead preserves the
-  // canvas object (and thus its context) verbatim; the pane's own
-  // ResizeObserver then re-fits (HOME framing) to the new box, and all viewport
-  // state (zoom/pan/sliders) is untouched, so enter/exit is lossless.
+  // canvas object (and thus its context) verbatim. On the box change,
+  // `useReframeViewportOnResize` keeps the CENTER world texel (and its on-screen
+  // size) fixed — an untouched HOME view re-fits to fill the new box, a
+  // zoomed/panned view keeps its center rather than jumping — so enter/exit is
+  // lossless (sliders are untouched).
   const [enlarged, setEnlarged] = useState(false);
   // The stable wrapper that HOLDS the pane subtree; created once and reparented.
   // `display: contents` so it never adds a box of its own — the pane root's
@@ -370,6 +376,29 @@ export default function ImagePaneShell({
     };
   }, [enlarged]);
 
+  // Bug 3: while the overlay is open the page behind it must NOT scroll. Lock
+  // page scroll (save + restore the prior `body.overflow`) for the overlay's
+  // lifetime; Alt-wheel zoom INSIDE the pane still works (that path
+  // preventDefaults in `useImageViewport`), and the page never moves. Restored
+  // exactly on close AND on unmount-while-open (the effect cleanup).
+  const backdropRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!enlarged || typeof document === "undefined") return;
+    const body = document.body;
+    const prevOverflow = body.style.overflow;
+    body.style.overflow = "hidden";
+    // Belt-and-suspenders: swallow a plain (non-zoom) wheel over the backdrop so
+    // no scrollable ancestor moves the page either. The pane's own Alt/pinch
+    // zoom already stops propagation before this sees it, so zoom is untouched.
+    const backdrop = backdropRef.current;
+    const onWheel = (e: WheelEvent) => e.preventDefault();
+    backdrop?.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      body.style.overflow = prevOverflow;
+      backdrop?.removeEventListener("wheel", onWheel);
+    };
+  }, [enlarged]);
+
   // The enlarge toggle as a LEADING toolbar button (only rendered when the
   // toolbar itself renders — under `toolbar={false}` the host drives layout, so
   // enlarge is simply absent, matching every other toolbar button's seam). The
@@ -392,6 +421,19 @@ export default function ImagePaneShell({
     onViewportChange,
     // Q29: adaptive max-zoom — zoom until one source texel fills the viewport
     // (same cap the +/- buttons use).
+    naturalWidth: naturalDims?.w,
+    naturalHeight: naturalDims?.h,
+  });
+
+  // Bug 5: keep the world texel at the viewport CENTER (and its on-screen size)
+  // fixed when the pane's container box changes — entering/exiting the enlarge
+  // overlay OR a window/container resize — instead of the top-left-anchored pan
+  // letting the view jump. HOME (untouched) still re-fits to the new box.
+  useReframeViewportOnResize({
+    containerRef: paneRef,
+    zoom,
+    pan,
+    onViewportChange,
     naturalWidth: naturalDims?.w,
     naturalHeight: naturalDims?.h,
   });
@@ -639,6 +681,7 @@ export default function ImagePaneShell({
         typeof document !== "undefined" &&
         createPortal(
           <div
+            ref={backdropRef}
             // Structural geometry is INLINE (not Tailwind classes) so the
             // overlay is fixed / full-viewport / high-z / its own stacking
             // context REGARDLESS of the host's CSS (resets, missing utilities) —
@@ -687,41 +730,6 @@ export default function ImagePaneShell({
               data-cairn-plot-enlarge-frame=""
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <button
-                ref={closeButtonRef}
-                type="button"
-                aria-label="Exit fullscreen (Esc)"
-                title="Exit fullscreen (Esc)"
-                className="border border-border bg-bg-elevated/90 text-fg-muted shadow-sm hover:text-fg hover:bg-bg-hover focus:outline-none focus:ring-2 focus:ring-accent"
-                style={{
-                  position: "absolute",
-                  right: 8,
-                  top: 8,
-                  zIndex: 10,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 32,
-                  height: 32,
-                  borderRadius: 9999,
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => setEnlarged(false)}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="16"
-                  height="16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M6 6l12 12M18 6L6 18" />
-                </svg>
-              </button>
               {/* Empty in React's view — the content host is appendChild'd here
                   while enlarged. `flex:1` + `min-*:0` let the pane fill + clamp. */}
               <div
@@ -736,6 +744,47 @@ export default function ImagePaneShell({
                 }}
               />
             </div>
+            {/* Bug 4: the ✕ lives in the BACKDROP's top-right gutter (OUTSIDE the
+                centered pane frame), so it never sits over the pane's toolbar or
+                any pane chrome. Still visible, focusable, theme-aware; Escape and
+                a backdrop click also close. A pointer-down here stops propagation
+                so the backdrop's own "click to close" doesn't also fire. */}
+            <button
+              ref={closeButtonRef}
+              type="button"
+              aria-label="Exit fullscreen (Esc)"
+              title="Exit fullscreen (Esc)"
+              className="border border-border bg-bg-elevated/90 text-fg-muted shadow-sm hover:text-fg hover:bg-bg-hover focus:outline-none focus:ring-2 focus:ring-accent"
+              data-cairn-plot-enlarge-close=""
+              style={{
+                position: "absolute",
+                right: 6,
+                top: 6,
+                zIndex: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32,
+                height: 32,
+                borderRadius: 9999,
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setEnlarged(false)}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
           </div>,
           document.body,
         )}
