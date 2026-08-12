@@ -99,6 +99,63 @@ def _render_pair(w: int = 128, h: int = 96) -> tuple[np.ndarray, np.ndarray]:
     return prediction, reference
 
 
+def _detail_scene(w: int = 320, h: int = 240) -> np.ndarray:
+    """A detail-rich float RGB scene in ``[0, 1]`` designed for MANUAL (visual)
+    comparison — the kind of high-frequency content where blur, noise, and
+    resampling differences pop under the slide / flip tools:
+
+    * a **zone plate** (``sin(k·r²)`` chirp) — spatial frequency rises toward the
+      edges, the classic resolution / aliasing test target;
+    * a **radial hue wheel** (angle → color) tinting the chirp;
+    * a **sharp checkerboard** patch (hard edges a blur rounds off);
+    * a couple of bright disks (local highlights).
+    """
+    ys = np.linspace(-1.0, 1.0, h)[:, None] * np.ones((h, w))
+    xs = np.linspace(-1.0, 1.0, w)[None, :] * np.ones((h, w))
+    r2 = xs**2 + ys**2
+    chirp = 0.5 + 0.5 * np.sin(38.0 * r2)  # zone plate
+
+    # hue wheel → RGB (angle to a smooth rainbow), modulated by the chirp.
+    ang = (np.arctan2(ys, xs) + np.pi) / (2 * np.pi)  # 0..1
+    hue = np.stack(
+        [
+            0.5 + 0.5 * np.cos(2 * np.pi * (ang + 0.00)),
+            0.5 + 0.5 * np.cos(2 * np.pi * (ang + 0.33)),
+            0.5 + 0.5 * np.cos(2 * np.pi * (ang + 0.66)),
+        ],
+        axis=-1,
+    )
+    img = (0.35 + 0.65 * chirp[..., None]) * hue
+
+    # a sharp checkerboard patch in the top-left quadrant (hard edges).
+    gx, gy = np.meshgrid(np.arange(w), np.arange(h))
+    checker = (((gx // 8) + (gy // 8)) % 2).astype(np.float32)
+    mask = (gx < w // 3) & (gy < h // 3)
+    img[mask] = checker[mask, None] * np.array([1.0, 1.0, 1.0], np.float32)
+
+    # a couple of bright disks (local highlights).
+    for cx, cy in ((0.45, -0.35), (-0.5, 0.5)):
+        d2 = (xs - cx) ** 2 + (ys - cy) ** 2
+        img = img + np.exp(-d2 / 0.01)[..., None] * np.array([1.0, 0.95, 0.8], np.float32)
+
+    return np.clip(img, 0.0, 1.0).astype(np.float32)
+
+
+def _gaussian_blur(img: np.ndarray, sigma: float) -> np.ndarray:
+    """Numpy-only separable Gaussian blur (frequency-domain), per channel — used
+    to build a 'blurred prediction' from the sharp detail scene."""
+    if sigma <= 0:
+        return img
+    h, w = img.shape[:2]
+    fy = np.fft.fftfreq(h)[:, None]
+    fx = np.fft.fftfreq(w)[None, :]
+    g = np.exp(-2.0 * (np.pi * sigma) ** 2 * (fx**2 + fy**2))
+    out = np.empty_like(img, dtype=np.float32)
+    for c in range(img.shape[2]):
+        out[..., c] = np.real(np.fft.ifft2(np.fft.fft2(img[..., c]) * g))
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
 def _sphere_pointcloud(n: int) -> np.ndarray:
     """An ``(n, 6)`` colored point cloud (xyz on a unit sphere + rgb)."""
     rng = np.random.default_rng(7)
@@ -316,6 +373,38 @@ def build_gallery() -> list[tuple[str, object]]:
                     cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_square", colormap="red-green"),
                 ],
             ],
+        ),
+    ))
+
+    # ── detail-rich images for MANUAL comparison ─────────────────────────
+    # A high-frequency "zone plate + hue wheel + checker" scene (great for
+    # eyeballing resolution/blur/noise differences) against degraded
+    # predictions. Slide the divider (or press ←/→ to snap it) and switch the
+    # pane's MODE menu to blend/diff/FLIP to localise where each prediction
+    # loses detail. Standalone variants sit below so you can multi-SELECT any
+    # two panes on the page and hit "Compare" to diff arbitrary pairs.
+    # Build the variants in float (blur/noise math), then bake as compact uint8
+    # PNGs — the scene is display-range [0,1], so it needs no HDR/float pipeline.
+    _noise_rng = np.random.default_rng(11)
+    _scene = _detail_scene()
+    _u8 = lambda a: (np.clip(a, 0.0, 1.0) * 255).astype(np.uint8)
+    detail = _u8(_scene)
+    detail_blur = _u8(_gaussian_blur(_scene, sigma=1.6))
+    detail_noisy = _u8(_scene + _noise_rng.normal(0.0, 0.06, _scene.shape))
+    detail_dim = _u8(_scene * 0.8)
+    items.append((
+        "Manual comparison — detail-rich scene vs degraded predictions "
+        "(slide / ←→ / blend / diff · FLIP)",
+        cp.Grid(
+            [[cp.Compare(cp.Image(detail_blur, label="blurred"), cp.Image(detail, label="sharp"), mode="slide"),
+              cp.Compare(cp.Image(detail_noisy, label="noisy"), cp.Image(detail, label="clean"), mode="slide")]],
+        ),
+    ))
+    items.append((
+        "Manual comparison — standalone variants (select any two → Compare)",
+        cp.Grid(
+            [[cp.Image(detail, label="sharp"), cp.Image(detail_blur, label="blurred (σ1.6)")],
+             [cp.Image(detail_noisy, label="noisy (σ0.06)"), cp.Image(detail_dim, label="dim (×0.8)")]],
         ),
     ))
 
