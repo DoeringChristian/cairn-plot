@@ -444,6 +444,56 @@ export function applyExposureOffset(v: number, ev: number, offset: number): numb
   return v * 2 ** ev + offset;
 }
 
+/**
+ * NORMAL-MAP display remap: map one channel of a tangent/world-space normal
+ * stored in `[-1,1]` into the `[0,1]` display range via `v → (v+1)/2`, clamped.
+ * A normal `(nx,ny,nz)` in `[-1,1]³` thus shows as the familiar bluish RGB
+ * normal-map image (a flat `+Z` normal `(0,0,1)` → `(0.5,0.5,1.0)`).
+ *
+ * This is a DISPLAY-COLORSPACE mode, NOT a tone-map operator or a scalar
+ * colormap: when active it REPLACES the whole exposure → colormap → tone-map →
+ * output-encode chain (normals are geometry, not light — they are neither
+ * exposed nor gamma-encoded). It is the single source of truth the CPU pane
+ * (`tonemapToImageData`) calls and the WebGPU shader
+ * (`engine/shaders/image.wgsl.ts`) ports line-for-line, so both paths agree.
+ * Scoped to the FLOAT pipeline: a uint8 source is conventionally already
+ * `(n+1)/2`-encoded, so the remap is meaningful only for float `[-1,1]` data.
+ */
+export function normalMapEncode(v: number): number {
+  return clamp01((v + 1) * 0.5);
+}
+
+/**
+ * The selectable DISPLAY COLORSPACE for a float image pane. `"linear"` is the
+ * ordinary scene-linear → exposure/colormap/tone-map/encode pipeline (default);
+ * `"normal"` engages the {@link normalMapEncode} `[-1,1]→[0,1]` remap and
+ * bypasses that pipeline. Kept a small closed union so adding a mode is a
+ * compile-checked change across the shader/CPU/menu/Python surfaces. */
+export type ImageColorspace = "linear" | "normal";
+
+/** The canonical default colorspace (ordinary light pipeline). */
+export const DEFAULT_COLORSPACE: ImageColorspace = "linear";
+
+/** Human labels for the colorspace menu, keyed by mode (exhaustive — adding a
+ *  mode to {@link ImageColorspace} without a label is a compile error). */
+export const COLORSPACE_LABELS: Record<ImageColorspace, string> = {
+  linear: "Linear",
+  normal: "Normal map",
+};
+
+/** Colorspace options as a toolbar-menu list, derived from the label map. */
+export const COLORSPACE_MENU_OPTIONS: { id: string; label: string }[] = (
+  Object.keys(COLORSPACE_LABELS) as ImageColorspace[]
+).map((id) => ({ id, label: COLORSPACE_LABELS[id] }));
+
+/** Narrow an arbitrary string to a known {@link ImageColorspace}, falling back
+ *  to the default for any unrecognized value. */
+export function canonicalizeColorspace(
+  value: string | undefined | null,
+): ImageColorspace {
+  return value === "normal" ? "normal" : DEFAULT_COLORSPACE;
+}
+
 /** The standard sRGB opto-electronic transfer function (linear → sRGB code). */
 export function srgbOetf(x: number): number {
   const v = clamp01(x);

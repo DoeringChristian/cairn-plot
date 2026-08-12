@@ -68,6 +68,7 @@ import {
   outputEncode,
   extendedOutputEncode,
   srgbEotf,
+  normalMapEncode,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
 } from "../../image/tonemap";
@@ -142,6 +143,12 @@ const BOUNDARY_LUT = buildBoundaryColormap();
  * `params.isScalar`.
  */
 function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float32Array): RgbTriple {
+  // NORMAL-MAP colorspace short-circuit (mirrors image.wgsl.ts's u_bind9 branch):
+  // remap the source [-1,1]→[0,1] per channel and return it directly, skipping
+  // exposure/decode/colormap/tone-map/encode entirely.
+  if (params.colorspace === "normal") {
+    return [normalMapEncode(px[0]!), normalMapEncode(px[1]!), normalMapEncode(px[2]!)];
+  }
   // 0) [SDR display-transfer path] sRGB-DECODE the source to linear FIRST
   //    (mirrors image.wgsl.ts's srgbDecode branch).
   const decoded: RgbTriple = params.srgbDecode
@@ -312,6 +319,32 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/nonzero-EV`;
     const params: ImageParams = { exposureEV: 1.5, operator: "srgb", isScalar: false, hdrOut: false, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GRADIENT_PIXELS, params, undefined));
+  }
+
+  {
+    // NORMAL-MAP colorspace: a float source in [-1,1] is remapped ((v+1)/2,
+    // clamped) and written DIRECTLY — no exposure/tone-map/encode. The pixels span
+    // the endpoints, midpoint, a general normal, and OUT-of-range values (which the
+    // shader clamps). computeExpectedRGB short-circuits to normalMapEncode, so this
+    // pins the GPU u_bind9 branch byte-for-byte against the CPU/TS reference. The
+    // `operator` field is set but must be IGNORED while the colorspace is normal.
+    const caseLabel = `${label}/colorspace=normal`;
+    const NORMAL_PIXELS: number[][] = [
+      [-1.0, 0.0, 1.0, 1.0], // endpoints+mid → (0, 0.5, 1)
+      [0.0, 0.0, 1.0, 1.0], // flat +Z normal → (0.5, 0.5, 1)
+      [-0.5, 0.25, 0.5, 1.0], // general → (0.25, 0.625, 0.75)
+      [-2.0, 2.0, 0.0, 1.0], // out-of-range clamps → (0, 1, 0.5)
+    ];
+    const params: ImageParams = {
+      exposureEV: 3.0, // deliberately non-zero: must be ignored under normal mode
+      operator: "aces",
+      isScalar: false,
+      hdrOut: false,
+      uv: uvFull,
+      filter: "nearest",
+      colorspace: "normal",
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, NORMAL_PIXELS, params, undefined));
   }
 
   {

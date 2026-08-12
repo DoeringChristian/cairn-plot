@@ -44,6 +44,7 @@ import { COLORMAP_OPTIONS } from "../colormaps/lut";
 import {
   SDR_TONEMAP_OPERATORS,
   SDR_DISPLAY_TRANSFER_OPERATORS,
+  COLORSPACE_MENU_OPTIONS,
   type TonemapOperator,
 } from "../image/tonemap";
 
@@ -203,6 +204,26 @@ export function displayTransferToolbarButton(
     id: "tonemap",
     title: "Display transfer (sRGB · Gamma · Linear)",
     menu: { options: SDR_DISPLAY_TRANSFER_MENU_OPTIONS, value, onSelect },
+  };
+}
+
+/**
+ * A DISPLAY-COLORSPACE dropdown as a toolbar LEADING button (menu variant) for a
+ * FLOAT image pane — the `Linear` · `Normal map` selector. `value` is the mode in
+ * effect; `onSelect` receives the picked id. Picking `Normal map` engages the
+ * `[-1,1]→[0,1]` per-channel remap that lets a normal map be inspected directly
+ * (it REPLACES the tone-map / colormap transform while active — see
+ * `image/tonemap.ts`'s `normalMapEncode`). Same leading placement as the tone-map
+ * menu so its presence never shifts the corner-anchored zoom/pan/reset buttons.
+ */
+export function colorspaceToolbarButton(
+  value: string,
+  onSelect: (id: string) => void,
+): ToolbarButtonSpec {
+  return {
+    id: "colorspace",
+    title: "Display colorspace (Linear · Normal map)",
+    menu: { options: COLORSPACE_MENU_OPTIONS, value, onSelect },
   };
 }
 

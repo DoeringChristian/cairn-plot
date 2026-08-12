@@ -28,7 +28,7 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | `cp.Histogram` | Histogram. |
 | `cp.Heatmap` | Heatmap. `colormap=` (`viridis` · `plasma` · `magma` · `red-green` · `red-blue`; default `viridis`). |
 | `cp.ParallelCoordinates` | Parallel-coordinates plot. `colormap=` colors the lines by the last column (`viridis` · `plasma` · `magma` · `red-green` · `red-blue`; default `viridis`). |
-| `cp.Image` | Single image (`PIL`/ndarray/PNG-JPEG bytes, or `url=`). Float `.npy`/`.exr` → HDR renderer. `label=` adds a bottom-left caption (and, as a `cp.Compare` operand, captions its side). |
+| `cp.Image` | Single image (`PIL`/ndarray/PNG-JPEG bytes, or `url=`). Float `.npy`/`.exr` → HDR renderer. `colorspace="normal"` engages the float normal-map `v → (v+1)/2` display remap (see [Normal-map colorspace](#normal-map-display-colorspace)). `label=` adds a bottom-left caption (and, as a `cp.Compare` operand, captions its side). |
 | `cp.PointCloud` | 3D point cloud `(N,3\|4\|6)`. |
 | `cp.Mesh` | 3D mesh (`vertices`/`faces`). |
 | `cp.Volume` | 3D scalar grid `(D,H,W)`. |
@@ -130,7 +130,7 @@ lowered data.
 | `cairnPlot.histogram` | `histogram(x?, { bins, counts, edges, logY })` | `cp.Histogram` |
 | `cairnPlot.heatmap` | `heatmap(z, { colormap, zmin, zmax, logColor, originTop, xLabel, yLabel, valueLabel })` | `cp.Heatmap` |
 | `cairnPlot.parallelCoordinates` | `parallelCoordinates(dimensions, { colormap })` | `cp.ParallelCoordinates` |
-| `cairnPlot.image` | `image(data, { shape, hdr, tonemap, exposure, gamma, peak, colormap, interpolation, showAxes, brightness, contrast, offset, flipSign, pixelValueNotation, toolbar })` | `cp.Image` |
+| `cairnPlot.image` | `image(data, { shape, hdr, tonemap, colorspace, exposure, gamma, peak, colormap, interpolation, showAxes, brightness, contrast, offset, flipSign, pixelValueNotation, toolbar })` | `cp.Image` |
 | `cairnPlot.table` | `table(rows \| { cols })` | `cp.Table` |
 | `cairnPlot.compare` | `compare(a, b, { mode, colormap, align, fit, splitPosition, blendAlpha, toolbar, ... })` | `cp.Compare` |
 | `cairnPlot.grid` | `grid([[...handles]], { cols, colWidths, rowHeights, gap, shared })` | `cp.Grid` |
@@ -264,9 +264,12 @@ picked per mount by `resolveRenderMode(...)`.
 - `type RenderMode = "cpu" | "gpu" | "auto"`; `resolveRenderMode(explicit?)`.
 - `interface HdrData` — a parsed float image buffer (`data`, `shape`, `dtype`,
   `precision?`). See the F16 pipeline below for `precision`.
-- `tonemapToImageData(hdr, tonemap, exposure, gamma?, offset?)` — pure HDR-float →
-  `ImageData` tone-mapper (exported from `CpuImagePane`). `offset` (default 0) is
-  the TEV display offset, added after exposure (before the tone-map operator).
+- `tonemapToImageData(hdr, tonemap, exposure, gamma?, offset?, colorspace?)` — pure
+  HDR-float → `ImageData` tone-mapper (exported from `CpuImagePane`). `offset`
+  (default 0) is the TEV display offset, added after exposure (before the tone-map
+  operator). `colorspace` (default `"linear"`) selects the display colorspace:
+  `"normal"` short-circuits the whole pipeline to the normal-map `v → (v+1)/2`
+  remap (see below), matching the GPU shader's `u_bind9` branch byte-for-byte.
 
 For a **deep** `.exr` (`deepscanline`/`deeptile`), a single-image pane also gets a
 toolbar **DEPTH WINDOW** — Z-NEAR + Z-FAR sliders that live-composite only the
@@ -362,6 +365,32 @@ exception to the unified model. Its capability notice never mislabels this: the
 `getSharedDevice()`), and a WebGPU-less page renders the CPU pane, which reports
 nothing. A `peak > 1` requested on a CPU-rendered SDR source degrades to the
 clamped SDR look there while the WebGPU backend extends it.
+
+### Normal-map display colorspace
+
+`cp.Image(float_arr, colorspace="normal")` (and the JS `image(data, { colorspace:
+"normal" })`) selects a **display colorspace** — a distinct axis from the tone-map
+operator. `"linear"` (default) is the ordinary exposure → colormap → tone-map →
+encode pipeline; `"normal"` engages the **normal-map remap**: each RGB channel of
+the float source is mapped
+
+```
+v → clamp((v + 1) / 2, 0, 1)
+```
+
+so a tangent/world-space normal `(nx, ny, nz)` stored in `[-1,1]³` shows as the
+familiar bluish normal-map image — a flat `+Z` normal `(0,0,1)` renders as
+`(0.5, 0.5, 1.0)`. While `"normal"` is active it **replaces** the whole
+exposure/tone-map/output-encode chain (a normal is geometry, not light, so it is
+neither exposed nor gamma-encoded); the pane's leading toolbar swaps in a
+**COLORSPACE menu** (`Linear · Normal map`) — while it reads `Normal map` the
+tone-map menu and PEAK/γ sliders are hidden — and the mode **syncs** across a
+multi-pane selection like the colormap/tonemap controls. It is **FLOAT-only**:
+on an 8-bit source `colorspace="normal"` is ignored (with a warning), since a
+uint8 normal map is conventionally already `(n+1)/2`-encoded. The remap is the
+pure `normalMapEncode` in `image/tonemap.ts` (unit-tested), ported byte-for-byte
+by the WebGPU shader (`image.wgsl.ts`'s `u_bind9` branch, GPU-harness-proven) and
+the CPU `tonemapToImageData` fallback, so both display paths agree.
 
 **`cp.Compare` panes — unified tone-map (§A).** The engine-backed compare pane's
 **slide / split / blend** modes now expose the SAME unified TONEMAP menu + PEAK/γ
