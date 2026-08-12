@@ -89,6 +89,7 @@ import {
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
+import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
@@ -595,6 +596,13 @@ function CpuSdrImagePane(
     [colormap],
   );
 
+  // In-pane HISTOGRAM source — bins the RAW RGBA source (the same `valueDataRef`
+  // buffer the pixel-value overlay samples), not the colormapped display.
+  const histogramSource = useMemo(
+    () => u8HistogramSource(valueDataRef.current, pixelDataVersion),
+    [pixelDataVersion],
+  );
+
   useEffect(() => {
     setWebglUnavailable(false);
     if (!showDiff) {
@@ -885,6 +893,7 @@ function CpuSdrImagePane(
         gammaMeta.reset();
       }}
       extraModified={colormapMeta.isModified || sdrTransferMeta.isModified || gammaMeta.isModified}
+      histogram={histogramSource}
       // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
       // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
       // (or a colormap/diff `<canvas>`), with no scene-linear pixel-recompute
@@ -1085,6 +1094,19 @@ function CpuHdrImagePane(
     [hdr, dims],
   );
 
+  // In-pane HISTOGRAM source — bins the RAW float scene values. For a DEEP EXR,
+  // `getDeepCsr` exports the retained samples so the panel can list the cursor
+  // pixel's per-sample value + DEPTH (Z).
+  const histogramSource = useMemo(
+    () =>
+      floatHistogramSource(
+        hdr,
+        pixelDataVersion,
+        hdr.deep ? () => hdr.deep!.getGpuCsr() : undefined,
+      ),
+    [hdr, pixelDataVersion],
+  );
+
   // Auto-interpolation: shared threshold (GPU-pane parity); see the SDR branch.
   const imgRendering = useAutoImageRendering(wrapperRef, zoom, dims, interpolation);
 
@@ -1176,6 +1198,7 @@ function CpuHdrImagePane(
         gammaMeta.reset();
       }}
       extraModified={deepFlatten.isModified || tonemapMeta.isModified || gammaMeta.isModified}
+      histogram={histogramSource}
       label={label}
       showLabelChip={!!label}
     />
