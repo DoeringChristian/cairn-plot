@@ -42,6 +42,9 @@
 export interface ImageSyncSettings {
   // Shared display fields — applied by image AND compare panes.
   colormap?: string;
+  /** Display colorspace mode ("linear" | "normal") — the float-pane normal-map
+   *  remap toggle. Applied by float image panes; a no-op for others. */
+  colorspace?: string;
   tonemap?: string;
   tonemapGamma?: number;
   peak?: number;

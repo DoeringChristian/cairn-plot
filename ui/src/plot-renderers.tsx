@@ -324,6 +324,7 @@ function ImageStandalone(p: P) {
       interpolation={p.interpolation ?? "auto"}
       colormap={p.colormap ?? "none"}
       tonemap={p.tonemap}
+      colorspace={p.colorspace}
       exposure={p.exposure}
       offset={p.offset}
       peak={p.peak}

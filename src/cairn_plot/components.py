@@ -793,6 +793,24 @@ def _check_pixel_value_notation(value: str) -> str:
     return value
 
 
+# The selectable display COLORSPACE for a float image (↔ the TS `ImageColorspace`
+# union in `ui/.../image/tonemap.ts`). ``"linear"`` is the ordinary scene-linear
+# tone-map pipeline (default); ``"normal"`` engages the normal-map ``[-1,1]→[0,1]``
+# per-channel remap so a tangent/world-space normal map can be inspected directly.
+_IMAGE_COLORSPACES = ("linear", "normal")
+
+
+def _check_colorspace(value: str) -> str:
+    """Validate an image ``colorspace`` kwarg against the display-colorspace set.
+    ``"linear"`` (default) is the ordinary tone-map pipeline; ``"normal"`` engages
+    the normal-map ``v → (v+1)/2`` remap (FLOAT sources only — see ``cp.Image``)."""
+    if value not in _IMAGE_COLORSPACES:
+        raise ValueError(
+            f"colorspace must be one of {_IMAGE_COLORSPACES!r}, got {value!r}"
+        )
+    return value
+
+
 # UNIFIED tone-map surface. There is ONE operator set (a curve); the PEAK
 # ceiling ``P`` is the mode — every operator respects ``P`` as its clip point, so
 # an SDR pane is just ``P = 1``. ``_TONEMAP_OPERATORS`` is the canonical set
@@ -840,6 +858,7 @@ def _image_hdr_props(
     offset: float | None = None,
     gamma: float | None = None,
     peak: float | None = None,
+    colorspace: str | None = None,
     interpolation: str | None = None,
     show_axes: bool | None = None,
     pixel_value_notation: str | None = None,
@@ -886,6 +905,11 @@ def _image_hdr_props(
         props["gamma"] = float(gamma)
     if peak is not None:
         props["peak"] = float(peak)
+    # Display COLORSPACE — emitted ONLY for the non-default "normal" mode (the
+    # normal-map [-1,1]→[0,1] remap), so an ordinary float image stays byte-for-byte
+    # as before. "linear"/None is the default and omitted.
+    if colorspace is not None and _check_colorspace(colorspace) == "normal":
+        props["colorspace"] = "normal"
     if interpolation is not None:
         props["interpolation"] = interpolation
     if show_axes is not None:
@@ -972,7 +996,15 @@ class Image(Component):
       (default ``srgb``),
       ``exposure`` (base EV stops), ``offset`` (base additive offset, applied
       after exposure), and an OPTIONAL ``gamma`` override;
-      ``showAxes``/``interpolation`` are honoured;
+      ``colorspace="normal"`` engages the NORMAL-MAP display remap — each RGB
+      channel is mapped ``v → clamp((v+1)/2, 0, 1)`` so a tangent/world-space
+      normal in ``[-1,1]`` shows as the familiar bluish normal-map image (a flat
+      ``+Z`` normal ``(0,0,1)`` → ``(0.5,0.5,1.0)``). While active it REPLACES the
+      tone-map/exposure transform (normals are geometry, not light); the pane's
+      leading toolbar gains a **COLORSPACE menu** (Linear · Normal map) and
+      ``colorspace=`` sets its default. It is FLOAT-only — ignored (with a note) on
+      an 8-bit source, where a normal map is conventionally already
+      ``(n+1)/2``-encoded. ``showAxes``/``interpolation`` are honoured;
       ``colormap``/``brightness``/``contrast``/``flip_sign`` are
       8-bit-only and ignored (with a note) on the float path. The viewer also gets
       a leading toolbar **TONEMAP menu** to switch the operator interactively;
@@ -1020,6 +1052,7 @@ class Image(Component):
         exposure: float | None = None,
         gamma: float | None = None,
         peak: float | None = None,
+        colorspace: str | None = None,
         brightness: float | None = None,
         contrast: float | None = None,
         offset: float | None = None,
@@ -1056,6 +1089,13 @@ class Image(Component):
         # paths (url / float / 8-bit) via `to_node` below.
         if label is not None and not isinstance(label, str):
             raise ValueError("cp.Image(label=...) must be a string.")
+        # Display COLORSPACE — validated once up-front (raises on an unknown value).
+        # The normal-map ``"normal"`` remap is FLOAT-only: it is emitted on the float
+        # array path (and a URL, which may decode to float) and IGNORED (with a note)
+        # on an 8-bit source, where a normal map is conventionally already
+        # ``(n+1)/2``-encoded. See ``_image_hdr_props`` / ``_check_colorspace``.
+        if colorspace is not None:
+            _check_colorspace(colorspace)
         self._image_label = label
         self._source: Any = None
         self._store: dict[str, dict[str, str]] = {}
@@ -1095,6 +1135,11 @@ class Image(Component):
                 self._props["exposure"] = float(exposure)
             if offset is not None:
                 self._props["offset"] = float(offset)
+            # A URL may decode to a FLOAT source client-side (.exr/.npy/…), so the
+            # normal-map colorspace is emitted here too; the pane honours it only on
+            # the float path (a no-op for a uint8-decoded URL).
+            if colorspace is not None and _check_colorspace(colorspace) == "normal":
+                self._props["colorspace"] = "normal"
             self._renderer = "image"
             self._data: dict[str, Any] = {"kind": "image", "hash": None, "url": url}
             self._data_mode = data_mode
@@ -1139,8 +1184,8 @@ class Image(Component):
                 )
             self._props = _image_hdr_props(
                 tonemap=tonemap, exposure=exposure, offset=offset, gamma=gamma,
-                peak=peak, interpolation=interpolation, show_axes=show_axes,
-                pixel_value_notation=pixel_value_notation,
+                peak=peak, colorspace=colorspace, interpolation=interpolation,
+                show_axes=show_axes, pixel_value_notation=pixel_value_notation,
             )
             # M2: guarantee C-contiguous float32 (halves size vs float64; the
             # renderer's parseNpy reads C-order, ROW-MAJOR bytes).
@@ -1177,6 +1222,15 @@ class Image(Component):
         # tonemap/gamma/peak select the UNIFIED operator (all 5); gamma routes to
         # the operator, not the CSS `processing` block; peak extends onto an HDR
         # surface (§B).
+        # The normal-map colorspace is FLOAT-only (an 8-bit normal map is
+        # conventionally already `(n+1)/2`-encoded), so `colorspace="normal"` is
+        # ignored here with a note; `"linear"`/None is the default no-op.
+        if colorspace is not None and _check_colorspace(colorspace) == "normal":
+            log.warning(
+                "cp.Image: colorspace='normal' is a FLOAT-only display mode "
+                "(the [-1,1]->[0,1] normal-map remap); ignored on an 8-bit source "
+                "(a uint8 normal map is conventionally already (n+1)/2-encoded)."
+            )
         transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma, peak=peak)
         self._props = _image_display_props(
             exposure=exposure, gamma=(None if transfer else gamma),

@@ -71,8 +71,10 @@ import { f16BitsToFloat32, halfToFloat } from "../image/half";
 import {
   getTonemapOperator,
   toSdrTonemap,
+  canonicalizeColorspace,
   applyExposureOffset,
   outputEncode,
+  normalMapEncode,
   srgbEotf,
   resolveEncodeGamma,
   tonemapHasGamma,
@@ -82,6 +84,7 @@ import {
   TONEMAP_GAMMA_STEP,
   type RgbTriple,
   type TonemapOperator,
+  type ImageColorspace,
 } from "../image/tonemap";
 import {
   buildChannelSample,
@@ -96,6 +99,7 @@ import {
   colormapToolbarButton,
   tonemapToolbarButton,
   displayTransferToolbarButton,
+  colorspaceToolbarButton,
 } from "./use-image-controller";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
@@ -136,6 +140,7 @@ export function tonemapToImageData(
   exposure: number,
   gamma?: number,
   offset: number = 0,
+  colorspace: string = "linear",
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
   // F16 pipeline: this is the CPU tone-map FALLBACK path (used when the GPU
@@ -165,6 +170,18 @@ export function tonemapToImageData(
       g = finite(src[base + 1]!);
       b = finite(src[base + 2]!);
       a = finite(src[base + 3]!);
+    }
+
+    // NORMAL-MAP colorspace: remap the float source [-1,1]→[0,1] per channel and
+    // write it DIRECTLY, bypassing exposure/tone-map/output-encode (a normal is
+    // geometry, not light). Mirrors image.wgsl.ts's u_bind9 short-circuit exactly.
+    if (colorspace === "normal") {
+      const o = i * 4;
+      out[o] = 255 * normalMapEncode(r);
+      out[o + 1] = 255 * normalMapEncode(g);
+      out[o + 2] = 255 * normalMapEncode(b);
+      out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
+      continue;
     }
 
     // 1) exposure + offset (TEV) in scene-linear, 2) tone-map HDR→[0,1],
@@ -928,6 +945,7 @@ function CpuHdrImagePane(
 ) {
   const {
     tonemap = "srgb",
+    colorspace: colorspaceProp,
     exposure = 0,
     offset: baseOffset = 0,
     gamma,
@@ -969,6 +987,18 @@ function CpuHdrImagePane(
     if (gamma && gamma > 0) setTonemapGamma(gamma);
   }, [gamma, setTonemapGamma]);
 
+  // DISPLAY COLORSPACE ("linear" | "normal") — the normal-map remap toggle. View-
+  // local, seeded from the descriptor `colorspace=` prop and re-seeded on change
+  // (controlled surface, like the tonemap override). While "normal" the CPU tone-
+  // map pass short-circuits to the [-1,1]→[0,1] remap (see tonemapToImageData).
+  const [colorspace, setColorspace] = useState<ImageColorspace>(
+    canonicalizeColorspace(colorspaceProp),
+  );
+  useEffect(() => {
+    setColorspace(canonicalizeColorspace(colorspaceProp));
+  }, [colorspaceProp]);
+  const normalMapActive = colorspace === "normal";
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -986,6 +1016,7 @@ function CpuHdrImagePane(
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
       if (patch.tonemap !== undefined) setTonemapOp(patch.tonemap as TonemapOperator);
+      if (patch.colorspace !== undefined) setColorspace(canonicalizeColorspace(patch.colorspace));
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
@@ -995,11 +1026,12 @@ function CpuHdrImagePane(
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
       tonemap: tonemapOp,
+      colorspace,
       tonemapGamma,
       exposureEV: displayEV,
       offset: displayOffset,
     }),
-    [tonemapOp, tonemapGamma, displayEV, displayOffset],
+    [tonemapOp, colorspace, tonemapGamma, displayEV, displayOffset],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -1013,6 +1045,13 @@ function CpuHdrImagePane(
       publishSettings({ tonemap: id });
     },
     [setTonemapOp, publishSettings],
+  );
+  const changeColorspace = useCallback(
+    (id: string) => {
+      setColorspace(canonicalizeColorspace(id));
+      publishSettings({ colorspace: id });
+    },
+    [publishSettings],
   );
   const changeGamma = useCallback(
     (v: number) => {
@@ -1053,6 +1092,7 @@ function CpuHdrImagePane(
         // Base offset (controlled) + the additive runtime OFF slider. HOME zeroes
         // only `displayOffset`, so the descriptor `offset` persists.
         baseOffset + displayOffset,
+        colorspace,
       );
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
@@ -1071,7 +1111,7 @@ function CpuHdrImagePane(
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemapOp, exposure, baseOffset, tonemapGamma, displayEV, displayOffset]);
+  }, [hdr, tonemapOp, colorspace, exposure, baseOffset, tonemapGamma, displayEV, displayOffset]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -1149,7 +1189,12 @@ function CpuHdrImagePane(
       // it is the SDR rendition by construction (P=1, no PEAK slider). HOME
       // restores the default.
       leadingMenus={[
-        tonemapToolbarButton(tonemapOp, (id) => changeTonemap(id as TonemapOperator)),
+        colorspaceToolbarButton(colorspace, changeColorspace),
+        // Normal-map colorspace REPLACES the tone-map transform, so hide the
+        // (inert) tonemap menu while it is active.
+        ...(normalMapActive
+          ? []
+          : [tonemapToolbarButton(tonemapOp, (id) => changeTonemap(id as TonemapOperator))]),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change).
@@ -1162,7 +1207,7 @@ function CpuHdrImagePane(
       // γ slider — shown ONLY while the Gamma operator is in effect (the same
       // conditional-slider precedent PEAK uses on the GPU pane).
       extraSliders={
-        tonemapHasGamma(tonemapOp)
+        tonemapHasGamma(tonemapOp) && !normalMapActive
           ? [
               {
                 id: "gamma",

@@ -82,6 +82,12 @@ export interface HdrImageProps {
    *  = raw browser-clipped). Seeds the pane's PEAK slider; unset → the pane default
    *  (4 on an engaged HDR surface). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
   peak?: number;
+  /** Display COLORSPACE mode: `"linear"` (default, the ordinary tone-map pipeline)
+   *  or `"normal"` — engage the normal-map `[-1,1]→[0,1]` per-channel remap so a
+   *  tangent/world-space normal map can be inspected directly. While `"normal"` is
+   *  active it REPLACES the exposure/tone-map/output-encode chain. Seeds the pane's
+   *  leading COLORSPACE menu; host-driven when `toolbar={false}`. Float path only. */
+  colorspace?: string;
   showAxes?: boolean;
   label?: string;
   interpolation?: Interpolation;
@@ -225,6 +231,8 @@ export interface ImageBackendProps {
   // — display controls (full set) —
   colormap?: Colormap;
   tonemap?: string;
+  /** Display colorspace mode ("linear" | "normal") — float pane normal-map remap. */
+  colorspace?: string;
   exposure?: number;
   offset?: number;
   peak?: number;
@@ -329,6 +337,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     return {
       hdr,
       tonemap: p.tonemap,
+      colorspace: p.colorspace,
       exposure: p.exposure,
       offset: p.offset,
       gamma: p.gamma,
