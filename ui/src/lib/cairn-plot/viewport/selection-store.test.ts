@@ -62,6 +62,90 @@ test("anchor is the first-selected pane (insertion order stable)", () => {
   assert.equal(s.anchor(), "b", "next-in-order becomes anchor");
 });
 
+test("reference is the LAST-selected pane by default", () => {
+  const s = new SelectionStore();
+  s.select("a", "replace");
+  assert.equal(s.reference(), "a", "sole selection is its own reference");
+  s.select("b", "toggle");
+  s.select("c", "toggle");
+  assert.equal(s.anchor(), "a", "anchor stays the FIRST-selected");
+  assert.equal(s.reference(), "c", "reference is the LAST-selected");
+});
+
+test("reference falls back to the new last-selected when the reference is removed", () => {
+  const s = new SelectionStore();
+  s.select("a", "replace");
+  s.select("b", "toggle");
+  s.select("c", "toggle");
+  assert.equal(s.reference(), "c");
+  s.select("c", "toggle"); // toggle the reference back off
+  assert.equal(s.reference(), "b", "next-last-in-order becomes the reference");
+  s.remove("b");
+  assert.equal(s.reference(), "a");
+});
+
+test("setReference pins a selected pane as the reference (re-pick)", () => {
+  const s = new SelectionStore();
+  s.select("a", "replace");
+  s.select("b", "toggle");
+  s.select("c", "toggle");
+  assert.equal(s.reference(), "c");
+  s.setReference("a");
+  assert.equal(s.reference(), "a", "a is now pinned as the reference");
+  assert.equal(s.anchor(), "a", "anchor unaffected");
+  // A fresh add makes the new pane the reference (a subsequent add wins).
+  s.select("d", "toggle");
+  assert.equal(s.reference(), "d");
+});
+
+test("setReference ignores an unselected id and no-ops on the current reference", () => {
+  const s = new SelectionStore();
+  let fires = 0;
+  s.select("a", "replace");
+  s.select("b", "toggle");
+  s.subscribe(() => fires++);
+  s.setReference("zzz"); // not selected
+  assert.equal(fires, 0, "pinning an unselected id is a no-op");
+  s.setReference("b"); // b is already the (last-selected) reference
+  assert.equal(fires, 0, "pinning the current reference does not emit");
+  s.setReference("a"); // real change
+  assert.equal(s.reference(), "a");
+  assert.equal(fires, 1);
+});
+
+test("getSnapshot changes identity when the reference changes (not just the set)", () => {
+  const s = new SelectionStore();
+  s.select("a", "replace");
+  s.select("b", "toggle");
+  const before = s.getSnapshot();
+  assert.deepEqual([...before.selected], ["a", "b"]);
+  assert.equal(before.reference, "b");
+  s.setReference("a"); // set unchanged, reference moved
+  const after = s.getSnapshot();
+  assert.notEqual(after, before, "a reference-only change yields a new snapshot identity");
+  assert.equal(after.reference, "a");
+});
+
+test("clear drops the reference", () => {
+  const s = new SelectionStore();
+  s.select("a", "replace");
+  s.select("b", "toggle");
+  s.clear();
+  assert.equal(s.reference(), null);
+});
+
+test("requestStage delivers to stage listeners; unsubscribe stops it", () => {
+  const s = new SelectionStore();
+  const seen: string[] = [];
+  const off = s.onStageRequest((m) => seen.push(m));
+  s.requestStage("enlarge");
+  s.requestStage("compare");
+  assert.deepEqual(seen, ["enlarge", "compare"]);
+  off();
+  s.requestStage("enlarge");
+  assert.deepEqual(seen, ["enlarge", "compare"], "unsubscribed stage listener no longer fires");
+});
+
 test("subscribers fire on change and not on no-op", () => {
   const s = new SelectionStore();
   let fires = 0;

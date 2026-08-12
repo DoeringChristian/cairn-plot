@@ -57,6 +57,15 @@ import {
 } from "./lib/cairn-plot/viewport/selection-store";
 import { useSyncedImageViewport } from "./lib/cairn-plot/renderers/use-synced-image-viewport";
 import {
+  EnlargeInterceptContext,
+  type EnlargeIntercept,
+} from "./lib/cairn-plot/renderers/enlarge-intercept";
+import {
+  isImageCompatibleNode,
+  registerSelectionPane,
+  unregisterSelectionPane,
+} from "./selection-pane-registry";
+import {
   ChartBox,
   ChartFillContext,
   DEFAULT_CHART_HEIGHT,
@@ -568,15 +577,25 @@ const SELECTION_CLICK_SLOP_PX = 5;
  */
 function PaneSelectionFrame({
   selectable,
+  node,
   children,
 }: {
   selectable: boolean;
+  /** The pane's descriptor node — registered so the page-level selection stage
+   *  can rebuild this pane (as an enlarge grid cell or a compare operand). */
+  node: PlotNode;
   children: React.ReactNode;
 }) {
   // ONE page-wide store shared by every frame on the page (across all mounts).
   const store = getGlobalSelectionStore();
+  // The shared source/shared block this pane resolves against — captured into
+  // the registry so the stage can render a FRESH leaf under the same context.
+  const { source, shared } = useSharedPlot();
   // A process-unique, render-stable id for this pane instance.
   const [paneId] = useState(nextSelectionPaneId);
+  // The frame's own element — the theme ORIGIN the body-portaled stage/action
+  // bar copies tokens from (it stays in the page's theme scope).
+  const frameRef = useRef<HTMLDivElement | null>(null);
   // Grid cells fill their track (rowHeights → height:100%); standalone panes
   // don't. `ChartFillContext` (set by the enclosing `GridView`) tells us which.
   const fill = useContext(ChartFillContext);
@@ -585,12 +604,46 @@ function PaneSelectionFrame({
   const getSnapshot = useCallback(() => store.getSelected(), [store]);
   const selected = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
+  // Register this pane's render descriptor for the page-level stage, and keep it
+  // current as the node/source change. Unregister on unmount so the stage never
+  // rebuilds a gone pane.
+  useEffect(() => {
+    if (!selectable) return;
+    registerSelectionPane({
+      paneId,
+      node,
+      source,
+      shared,
+      imageCompatible: isImageCompatibleNode(node),
+      getElement: () => frameRef.current,
+    });
+    return () => unregisterSelectionPane(paneId);
+  }, [paneId, selectable, node, source, shared]);
+
   // Drop this pane from the selection when it unmounts (lazy-scroll teardown, a
   // grid remount, …) so a stale id never keeps a phantom member in a sync group.
   useEffect(() => {
     if (!selectable) return;
     return () => store.remove(paneId);
   }, [store, paneId, selectable]);
+
+  // ENLARGE-INTERCEPT: while this pane is one of ≥2 selected, its enlarge button
+  // opens the page-level ENLARGE stage (a grid of ALL selected panes) instead of
+  // the single-pane overlay. An UNselected pane (or a lone selection) falls
+  // through to today's single-pane enlarge. Decoupled from the stage — this only
+  // pokes the store's stage channel, which the overlay host listens on.
+  const enlargeIntercept = useMemo<EnlargeIntercept>(
+    () => ({
+      onEnlarge() {
+        if (selectable && store.count() >= 2 && store.isSelected(paneId)) {
+          store.requestStage("enlarge");
+          return true;
+        }
+        return false;
+      },
+    }),
+    [store, paneId, selectable],
+  );
 
   const isSelected = selectable && selected.includes(paneId);
   // Sync groups (null unless this pane is one of ≥2 selected) — the shared
@@ -656,6 +709,7 @@ function PaneSelectionFrame({
 
   return (
     <div
+      ref={frameRef}
       style={style}
       data-plot-pane-id={paneId}
       data-selectable={selectable ? "true" : "false"}
@@ -663,7 +717,11 @@ function PaneSelectionFrame({
       onPointerDownCapture={selectable ? onPointerDownCapture : undefined}
       onPointerUpCapture={selectable ? onPointerUpCapture : undefined}
     >
-      <PaneSyncContext.Provider value={paneSync}>{children}</PaneSyncContext.Provider>
+      <PaneSyncContext.Provider value={paneSync}>
+        <EnlargeInterceptContext.Provider value={enlargeIntercept}>
+          {children}
+        </EnlargeInterceptContext.Provider>
+      </PaneSyncContext.Provider>
     </div>
   );
 }
@@ -886,5 +944,9 @@ export function PlotNodeView({ node }: { node: PlotNode }) {
     default:
       return <Message text={`unknown node kind "${(node as PlotNode).kind}"`} error />;
   }
-  return <PaneSelectionFrame selectable={selectable}>{inner}</PaneSelectionFrame>;
+  return (
+    <PaneSelectionFrame selectable={selectable} node={node}>
+      {inner}
+    </PaneSelectionFrame>
+  );
 }
