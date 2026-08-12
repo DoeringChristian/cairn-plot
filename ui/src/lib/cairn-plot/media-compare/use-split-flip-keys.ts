@@ -6,13 +6,13 @@
 // Shared by BOTH compare panes (CPU `MediaComparePane` + `GpuComparePane`) so
 // the gesture is identical and lives in ONE place.
 //
-// Scope: listeners live on the PANE element (via `paneRef`), not `window`, so on
-// a page with many compare panes the arrows only flip the pane the user is
-// working in. The pane is made focusable (`tabindex=-1`, kept out of the tab
-// order) and focused on the first pointerdown — captured so even a press that
-// begins on the divider (which stops propagation) still focuses the pane. Once
-// focused, arrow keydowns bubble to the pane and flip the split. Arrows typed
-// into a toolbar input/menu are never hijacked.
+// Scope: a `window` keydown listener that acts ONLY when the user is POINTING AT
+// (`:hover`) or FOCUSED WITHIN this pane — no click-to-focus required, which is
+// the natural expectation (you're hovering the slider, you press an arrow). On a
+// page with many compare panes, only the pane under the cursor reacts. Arrows
+// typed into a text field / menu are never hijacked. The pane is made focusable
+// (`tabindex=-1`, out of the tab order) so the focus path also works for keyboard
+// users and deterministic tests.
 // ---------------------------------------------------------------------------
 import { useEffect } from "react";
 import type { RefObject } from "react";
@@ -23,40 +23,35 @@ export function useSplitFlipKeys(
   onSplitPositionChange?: (pos: number) => void,
 ): void {
   useEffect(() => {
+    if (mode !== "split" || !onSplitPositionChange) return;
+    if (typeof window === "undefined") return;
     const el = paneRef.current;
-    if (!el || mode !== "split" || !onSplitPositionChange) return;
+    // Focusable (out of the tab order) so the focus path works too; hover is the
+    // primary trigger and needs no tabindex.
+    const hadTabIndex = el?.hasAttribute("tabindex") ?? true;
+    if (el && !hadTabIndex) el.tabIndex = -1;
 
-    // Make the pane focusable without inserting it into the tab order.
-    const hadTabIndex = el.hasAttribute("tabindex");
-    if (!hadTabIndex) el.tabIndex = -1;
-
-    const focusPane = () => {
-      try {
-        el.focus({ preventScroll: true });
-      } catch {
-        /* best-effort */
-      }
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser/OS shortcuts alone
-      // Never steal arrows from a text field / editable control (e.g. a menu).
+      const pane = paneRef.current;
+      if (!pane) return;
       const active = document.activeElement as HTMLElement | null;
-      if (active && active !== el && active.closest?.('input, textarea, select, [contenteditable="true"]')) {
+      // Never steal arrows from a text field / editable control / open menu.
+      if (active?.closest?.('input, textarea, select, [contenteditable="true"], [role="listbox"], [role="menu"]')) {
         return;
       }
+      // Act on the pane the user is pointing at OR focused within.
+      const pointed = pane.matches(":hover");
+      const focused = active ? pane.contains(active) : false;
+      if (!pointed && !focused) return;
       e.preventDefault();
       onSplitPositionChange(e.key === "ArrowLeft" ? 0 : 1);
     };
-
-    // Capture the pointerdown so a press starting on the divider (which
-    // stopPropagations in the bubble phase) still focuses the pane.
-    el.addEventListener("pointerdown", focusPane, true);
-    el.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey);
     return () => {
-      el.removeEventListener("pointerdown", focusPane, true);
-      el.removeEventListener("keydown", onKey);
-      if (!hadTabIndex) el.removeAttribute("tabindex");
+      window.removeEventListener("keydown", onKey);
+      if (el && !hadTabIndex) el.removeAttribute("tabindex");
     };
   }, [paneRef, mode, onSplitPositionChange]);
 }

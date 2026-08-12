@@ -294,8 +294,15 @@ async function run(): Promise<boolean> {
   // which IS the pane's own paneRef). Because split position syncs across the
   // selected panes, B tracks the flip too.
   const paneAViewport = comparePaneRoots()[0]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
+  // The flip acts on the pane the user is pointing at (`:hover`) or focused
+  // within. Synthetic events can't set `:hover`, so drive the focus path: the
+  // hook makes the pane focusable (tabindex=-1); focus it, then key on window.
+  paneAViewport.focus();
+  const paneFocusable = document.activeElement === paneAViewport;
+  report(paneFocusable, `the split pane is focusable for the arrow-flip (activeElement matches: ${paneFocusable})`);
+  ok = ok && paneFocusable;
   const arrow = (key: "ArrowLeft" | "ArrowRight") =>
-    paneAViewport.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
   arrow("ArrowLeft");
   const flipLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6);
   report(flipLeft, `ArrowLeft snaps the split hard-left to 0 (A.splitPosition=${A().splitPosition})`);
