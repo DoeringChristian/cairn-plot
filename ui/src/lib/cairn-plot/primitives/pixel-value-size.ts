@@ -95,3 +95,38 @@ export function pixelValueFontHeight(
 export function pixelValueNumbersVisible(scale: number): boolean {
   return scale >= PIXEL_VALUE_MIN_SCREEN_PX;
 }
+
+/** A minimal axis-aligned rectangle (canvas-local CSS px). */
+export interface ClipRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * The DRAW-CLIP rectangle for the per-pixel numbers — the on-screen image rect
+ * (`imageRect`) EXPANDED by a margin on every side.
+ *
+ * Why the expansion (Bug 5): a number is drawn CENTRED on its texel, and an
+ * EDGE texel's centre sits only half a cell inside the image boundary — so the
+ * outer half of its glyph, and always its soft drop shadow, reach right up to
+ * (and just past) the image edge. Clipping to the EXACT image rect truncated
+ * those edge/corner numbers. The margin — one font-height, which comfortably
+ * covers a glyph's half-extent plus the shadow blur/offset — lets every edge and
+ * corner number render in full, while still bounding any spill to well under one
+ * cell (numbers only draw when a cell is ≥ {@link PIXEL_VALUE_MIN_SCREEN_PX}px,
+ * and the font never exceeds the cell), so it does not re-introduce a wide halo
+ * bleed onto the checkerboard border.
+ *
+ * Pure (no DOM) so the clip geometry is unit-testable directly.
+ */
+export function pixelValueClipRect(imageRect: ClipRect, fontH: number): ClipRect {
+  const pad = Math.max(2, fontH);
+  return {
+    left: imageRect.left - pad,
+    top: imageRect.top - pad,
+    right: imageRect.right + pad,
+    bottom: imageRect.bottom + pad,
+  };
+}

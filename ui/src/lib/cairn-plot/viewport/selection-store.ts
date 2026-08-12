@@ -29,6 +29,18 @@
 
 export type SelectionListener = () => void;
 
+/**
+ * The REFERENCE indicator colour — a distinct ORANGE, deliberately different
+ * from the blue `--color-accent` a regular SELECTED pane rings with, so the one
+ * pane every comparison is taken AGAINST reads as special at a glance. Used by
+ * BOTH the in-page `PaneSelectionFrame` (the reference pane among a ≥2
+ * selection) and the fullscreen stage's reference cell/chip. A literal (not a
+ * CSS token) so it resolves identically inside the body-portaled overlays,
+ * whose themed scope defines `--color-accent` but not a reference token.
+ */
+export const REFERENCE_COLOR = "#f59e0b";
+export const REFERENCE_COLOR_RGB = "245 158 11";
+
 /** How a click modifies the selection — derived from the pointer event's
  *  modifier keys by the React layer (`shift || ctrl || meta`). */
 export type SelectionMode = "replace" | "toggle";

@@ -46,6 +46,32 @@ import { useOriginTheme } from "./themed-portal";
 // in-pane chrome (toolbar z-30, split divider z-20, pixel overlay z-10).
 const TOOLBAR_POPOVER_Z = 2147482000;
 
+/**
+ * The z-index a body-portaled toolbar popover should use given its TRIGGER's
+ * position in the DOM. Default is {@link TOOLBAR_POPOVER_Z} — one tier BELOW a
+ * fullscreen overlay, so a stray dropdown on a normal page is covered by an open
+ * overlay (the historical intent).
+ *
+ * BUT a toolbar opened from a pane rendered INSIDE a fullscreen overlay (the
+ * selection STAGE, or the per-pane enlarge) must float ABOVE that overlay, or
+ * the menu opens BEHIND the stage backdrop and is unclickable (Bug 4). So we
+ * walk up from the trigger to the nearest fullscreen-overlay backdrop and, when
+ * found, return that overlay's own z-index plus a bump — generalising to ANY
+ * overlay tier (nested overlays included), since each backdrop carries its live
+ * z. Portaled to `document.body`, the popover is a sibling of the backdrop, so a
+ * higher z reliably paints it over the overlay.
+ */
+function overlayAwarePopoverZ(trigger: Element | null): number {
+  if (typeof window === "undefined" || !trigger) return TOOLBAR_POPOVER_Z;
+  const overlay = trigger.closest?.(
+    "[data-cairn-plot-stage-backdrop],[data-cairn-plot-enlarge-backdrop]",
+  );
+  if (!overlay) return TOOLBAR_POPOVER_Z;
+  const oz = parseInt(window.getComputedStyle(overlay).zIndex, 10);
+  if (!Number.isFinite(oz)) return TOOLBAR_POPOVER_Z;
+  return Math.max(TOOLBAR_POPOVER_Z, oz + 1000);
+}
+
 export interface PlotToolbarProps {
   /** The imperative facade this modebar drives (the only real input). */
   controller: PlotController;
@@ -457,7 +483,9 @@ function ToolbarMenu({
             className={`${theme.className} min-w-[7rem] max-h-64 overflow-auto rounded border border-border bg-bg-elevated py-0.5 shadow-md`}
             style={{
               position: "fixed",
-              zIndex: TOOLBAR_POPOVER_Z,
+              // Float above a fullscreen overlay when this toolbar lives inside
+              // one (Bug 4) — else the default tier below it.
+              zIndex: overlayAwarePopoverZ(rootRef.current),
               left: pos?.left ?? 0,
               top: pos?.top ?? 0,
               // Hidden until the first measure so it never flashes at (0,0).
@@ -781,7 +809,8 @@ function OverflowMenu({
           className={`${theme.className} min-w-[10rem] max-h-80 overflow-auto rounded border border-border bg-bg-elevated py-1 shadow-md`}
           style={{
             position: "fixed",
-            zIndex: TOOLBAR_POPOVER_Z,
+            // Float above a fullscreen overlay when inside one (Bug 4).
+            zIndex: overlayAwarePopoverZ(rootRef.current),
             left: pos?.left ?? 0,
             top: pos?.top ?? 0,
             visibility: pos ? "visible" : "hidden",
