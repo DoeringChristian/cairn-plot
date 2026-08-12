@@ -25,6 +25,7 @@
  * merged over the descriptor's config `props`; adapters spread that as `p`.
  */
 import {
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -52,7 +53,11 @@ import {
   type ChartViewportSyncTarget,
 } from "./lib/cairn-plot/viewport/use-chart-viewport";
 import { makeChartViewportSyncSourceId } from "./lib/cairn-plot/viewport/chart-viewport-sync";
-import { ChartBox } from "./plot-standalone-helpers";
+import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
+import {
+  ContentAspectFrame,
+  StagePackedContext,
+} from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import { registerRenderer } from "./plot-registry";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
@@ -288,6 +293,13 @@ function HeatmapStandalone(p: P) {
 // (threaded from a grid's `shared.sync.viewport` — see `plot-node.tsx`) links
 // this viewport to every other synced pane in the same grid.
 function ImageStandalone(p: P) {
+  // DEFAULT framing: size the pane's box to the image's CONTENT aspect within the
+  // available space (Part 1). Suppressed under the selection STAGE, which packs
+  // its cells to the content aspect itself (`StagePackedContext`) — there the pane
+  // just fills its already-content-aspect cell. `ChartFillContext` (set by a grid
+  // with `rowHeights`) decides fill-the-cell vs the standalone default height.
+  const stagePacked = useContext(StagePackedContext);
+  const fill = useContext(ChartFillContext);
   // `p.syncIsAnchor` + the selection-derived sync group ids are threaded down by
   // `plot-node.tsx`'s `SelectionCell` while ≥2 panes are selected (else absent).
   const [viewport, onViewportChange] = useSyncedImageViewport(
@@ -342,9 +354,19 @@ function ImageStandalone(p: P) {
       syncIsAnchor={!!p.syncIsAnchor}
     />
   );
-  // A FLOAT source gets a sizing ChartBox (as the former HDR adapter did) so it
-  // fills a bare standalone page; a uint8/URL image is content/aspect-sized.
-  return source.dtype === "float" ? <ChartBox height={p.height}>{pane}</ChartBox> : pane;
+  // Under the selection stage the cell is already sized to the content aspect —
+  // the pane fills it (no double framing).
+  if (stagePacked) return pane;
+  // Otherwise the pane's box tracks the CONTENT aspect within the available space.
+  // The OUTER frame keeps the pre-existing sizing so the component stays a
+  // well-behaved embeddable: it FILLS a grid cell (`fill`) or a host-sized box
+  // (a uint8/URL image previously rendered a bare, host-filling pane), and only a
+  // FLOAT image on a BARE page keeps the standalone default height (the old
+  // `ChartBox` behaviour). Within that box the drawable viewport shrink-wraps the
+  // image, so the empty letterbox/pillarbox bands are minimised.
+  const outerHeight: number | string =
+    fill || source.dtype !== "float" ? "100%" : (p.height ?? DEFAULT_CHART_HEIGHT);
+  return <ContentAspectFrame outerHeight={outerHeight}>{pane}</ContentAspectFrame>;
 }
 
 function TableStandalone(p: P) {

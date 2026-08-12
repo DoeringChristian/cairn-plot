@@ -321,9 +321,9 @@ async function run(): Promise<boolean> {
   const threeCells = await waitFor(() => stageCells().length === 3);
   report(threeCells, `the enlarge grid has 3 pane cells (got ${stageCells().length})`);
   const grid = bd.querySelector("[data-cairn-stage-grid]") as HTMLElement;
-  const templateCols = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length;
-  const twoCols = templateCols === 2;
-  report(twoCols, `the grid uses ~ceil(sqrt(3)) = 2 columns (got ${templateCols})`);
+  const packedCols = Number(grid.getAttribute("data-cairn-stage-cols"));
+  const twoCols = packedCols === 2;
+  report(twoCols, `the content-aspect pack uses ~ceil(sqrt(3)) = 2 columns (got ${packedCols})`);
   // Each cell rendered a fresh image pane.
   const cellsHaveImages = stageCells().every((c) => !!c.querySelector("img,canvas"));
   report(cellsHaveImages, "each enlarge cell rendered a fresh pane surface");
@@ -344,33 +344,47 @@ async function run(): Promise<boolean> {
   report(refCellOrange, `the reference cell outline is ORANGE (${refCellOutline})`);
   ok = ok && refCellOrange;
 
-  // === Bug 8 — the grid FILLS the overlay: cells reach the full height and each
-  //     pane FILLS its cell; the ref RING is on the CELL (not the whole overlay). ==
+  // === CONTENT-ASPECT PACKING (3 square images) — the cells are sized to the
+  //     CONTENT aspect (square, since the images are 8x8) and CLUSTERED centrally
+  //     with small gaps, rather than stretched to fill the grid quadrants. Each
+  //     pane still FILLS its (content-aspect) cell; the ref RING is on the CELL. ==
+  await waitFor(() => {
+    const c0 = stageCells()[0]?.getBoundingClientRect();
+    return !!c0 && c0.width > 40 && near(c0.width / c0.height, 1, 0.06);
+  }, 3000);
   {
     const g = stageGrid()!;
     const gRect = g.getBoundingClientRect();
-    const gInnerBottom = gRect.bottom - parseFloat(getComputedStyle(g).paddingBottom || "0");
     const cellRects = stageCells().map((c) => c.getBoundingClientRect());
-    const lowestBottom = Math.max(...cellRects.map((r) => r.bottom));
-    const cellsFillHeight = near(lowestBottom, gInnerBottom, 6);
-    report(
-      cellsFillHeight,
-      `the cells reach the grid's full height — NOT just the upper half (lowest ${lowestBottom.toFixed(0)} vs grid ${gInnerBottom.toFixed(0)})`,
-    );
-    // Each cell is substantial (well over a collapsed content height) and its pane
-    // frame fills the cell.
+    // Every cell carries the CONTENT aspect (≈ square) — NOT a stretched 1fr
+    // quadrant (which would be ~gridW/2 x gridH/2, aspect gridW/gridH ≠ 1).
+    const squareCells = cellRects.every((r) => r.height > 40 && near(r.width / r.height, 1, 0.06));
+    report(squareCells, `each cell is sized to the CONTENT aspect (square) — ${cellRects.map((r) => (r.width / r.height).toFixed(2)).join(", ")}`);
+    // Each pane frame still fills its (content-aspect) cell.
     const framesFillCells = stageCells().every((c) => {
       const cr = c.getBoundingClientRect();
       const fr = cellFrame(c)?.getBoundingClientRect();
-      return !!fr && cr.height > 80 && near(fr.height, cr.height, 6) && near(fr.width, cr.width, 6);
+      return !!fr && cr.height > 40 && near(fr.height, cr.height, 6) && near(fr.width, cr.width, 6);
     });
-    report(framesFillCells, "each cell's pane frame fills its cell (height/width match)");
-    // The ref ring is on the CELL: the ref cell's rect is one grid COLUMN wide
-    // (≈ half the grid), never the full overlay width.
+    report(framesFillCells, "each cell's pane frame fills its content-aspect cell (height/width match)");
+    // DENSE + CENTRAL clustering: the cluster does NOT span the full grid width —
+    // there are centring side margins (the "no stretched quadrants / empty cross"
+    // requirement) — and adjacent cells sit only a SMALL gap apart.
+    const minLeft = Math.min(...cellRects.map((r) => r.left));
+    const maxRight = Math.max(...cellRects.map((r) => r.right));
+    const clusterW = maxRight - minLeft;
+    const clustered = clusterW < gRect.width - 20;
+    report(clustered, `the cells cluster centrally — cluster ${clusterW.toFixed(0)}px is narrower than the stage ${gRect.width.toFixed(0)}px (side margins, not stretched)`);
+    // The two top-row cells are a SMALL gap (~8px) apart, not a fat 1fr gutter.
+    const row0 = cellRects.filter((r) => near(r.top, cellRects[0].top, 2)).sort((a, b) => a.left - b.left);
+    const hGap = row0.length >= 2 ? row0[1].left - row0[0].right : 8;
+    const smallGap = hGap >= 4 && hGap <= 16;
+    report(smallGap, `adjacent cells are a small gap apart (~8px, got ${hGap.toFixed(1)})`);
+    // The ref ring is on the CELL, never the full overlay width.
     const refCellRect = refCell.getBoundingClientRect();
     const ringOnCell = refCellRect.width < gRect.width - 20;
     report(ringOnCell, `the reference ring is on its CELL (${refCellRect.width.toFixed(0)}px), not the overlay (${gRect.width.toFixed(0)}px)`);
-    ok = ok && cellsFillHeight && framesFillCells && ringOnCell;
+    ok = ok && squareCells && framesFillCells && clustered && smallGap && ringOnCell;
   }
 
   // === Bug 6 — NO fixed "Set as reference" button (it had nowhere to sit that
@@ -605,24 +619,37 @@ async function run(): Promise<boolean> {
   if (enl2Up) {
     const g = stageGrid()!;
     const gRect = g.getBoundingClientRect();
-    const cs = getComputedStyle(g);
-    const gInnerH = gRect.height - parseFloat(cs.paddingTop || "0") - parseFloat(cs.paddingBottom || "0");
+    await waitFor(() => {
+      const c0 = stageCells()[0]?.getBoundingClientRect();
+      return !!c0 && c0.width > 40 && near(c0.width / c0.height, 1, 0.06);
+    }, 3000);
     const cells = stageCells();
-    // ONE row: every cell's height ≈ the full grid content height (fills, not the
-    // upper half — the exact defect Bug 8 describes).
-    const eachFillsHeight = cells.every((c) => near(c.getBoundingClientRect().height, gInnerH, 8));
-    report(eachFillsHeight, `each of the 2 cells fills the FULL overlay content height (~${gInnerH.toFixed(0)}px)`);
-    // Two columns: each cell is ~half the grid width (the ring is per-cell).
-    const eachHalfWidth = cells.every((c) => c.getBoundingClientRect().width < gRect.width * 0.75);
-    report(eachHalfWidth, "each cell occupies ~one column (ring lives on the cell, not the overlay)");
-    // The pane frame fills its cell.
+    const cellRects = cells.map((c) => c.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    // CONTENT-ASPECT: two square cells (8x8 images), NOT two half-width slabs
+    // stretched to the full overlay height.
+    const squareCells = cellRects.every((r) => r.height > 40 && near(r.width / r.height, 1, 0.06));
+    report(squareCells, `each of the 2 cells is content-aspect (square) — ${cellRects.map((r) => (r.width / r.height).toFixed(2)).join(", ")}`);
+    // One row, clustered CENTRALLY with a small gap (side margins on the stage).
+    const oneRow = near(cellRects[0].top, cellRects[1].top, 2);
+    report(oneRow, "the 2 cells sit in one row");
+    // Central clustering leaves a centring margin on the NON-binding axis (here
+    // the square cells fill the width, so the margin is vertical) — the cluster
+    // never stretches to fill BOTH axes.
+    const clusterW = cellRects[1].right - cellRects[0].left;
+    const clusterH = Math.max(...cellRects.map((r) => r.bottom)) - Math.min(...cellRects.map((r) => r.top));
+    const clustered = clusterW < gRect.width - 20 || clusterH < gRect.height - 20;
+    report(clustered, `the 2 cells cluster centrally (margin on ≥1 axis: cluster ${clusterW.toFixed(0)}x${clusterH.toFixed(0)} vs stage ${gRect.width.toFixed(0)}x${gRect.height.toFixed(0)})`);
+    const hGap = cellRects[1].left - cellRects[0].right;
+    const smallGap = hGap >= 4 && hGap <= 16;
+    report(smallGap, `the 2 cells are a small gap apart (~8px, got ${hGap.toFixed(1)})`);
+    // The pane frame fills its content-aspect cell.
     const panesFill = cells.every((c) => {
       const cr = c.getBoundingClientRect();
       const fr = cellFrame(c)?.getBoundingClientRect();
       return !!fr && near(fr.height, cr.height, 6) && near(fr.width, cr.width, 6);
     });
     report(panesFill, "each 2-image cell's pane fills the cell");
-    ok = ok && eachFillsHeight && eachHalfWidth && panesFill;
+    ok = ok && squareCells && oneRow && clustered && smallGap && panesFill;
 
     // === Bug 7 (enlarge) — re-pick the reference IN the enlarge grid: the ORANGE
     //     ref badge MOVES to the clicked cell, live (no reopen). =================
