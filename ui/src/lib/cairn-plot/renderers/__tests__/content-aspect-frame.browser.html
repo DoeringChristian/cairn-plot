@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>content-aspect image framing harness</title>
+    <!-- Real compiled Tailwind so the panes' own layout classes resolve. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- Self-driving: dispatches nothing, just mounts + measures, and settles
+         #status headlessly so `npm run test:harness` gates content-aspect framing. -->
+    <meta name="cairn-harness" data-cairn-harness="self-driving" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* Two deliberately NON-content-aspect host boxes: a LANDSCAPE 420x240 box
+         (aspect 1.75) that will hold a SQUARE image, and the same box holding a
+         WIDE 2:1 image. The pane's drawable viewport must track the CONTENT aspect
+         inside each box (small empty bands), NOT fill the box and letterbox. -->
+      .host { width: 420px; height: 240px; margin: 10px 0; background: #222; }
+    </style>
+  </head>
+  <body>
+    <h1>ContentAspectFrame — content-aspect image framing harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="mount-square" class="host"></div>
+    <div id="mount-wide" class="host"></div>
+    <script type="module" src="./content-aspect-frame.browser.bundle.js?v=1"></script>
+  </body>
+</html>
