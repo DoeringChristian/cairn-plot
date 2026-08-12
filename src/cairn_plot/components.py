@@ -995,6 +995,12 @@ class Image(Component):
     ingest clamps images to 8-bit, so no float artifact exists yet. Real HDR is
     from raw float arrays only, for now.
 
+    ``label`` is an optional per-image CAPTION (emitted as ``props.label`` on
+    every data path). It renders as a bottom-left ``LabelChip`` on the pane, and
+    when the image is a ``cp.Compare`` operand its caption feeds the compare
+    pane's per-side labels (reference bottom-left, foreground bottom-right in
+    slide/blend; folded into the diff caption in a diff mode).
+
     HOST-CONTROLLED PANES: pass ``toolbar=False`` to render the pane WITHOUT its
     ``PlotToolbar`` (so cairn can show its OWN menu). Every view control then stays
     drivable through the descriptor props — ``colormap`` / ``tonemap`` / ``exposure``
@@ -1023,6 +1029,7 @@ class Image(Component):
         show_axes: bool | None = None,
         pixel_value_notation: str | None = None,
         toolbar: bool | None = None,
+        label: str | None = None,
     ) -> None:
         import json as _json
 
@@ -1043,6 +1050,13 @@ class Image(Component):
         # emitted (as `props.toolbar=false`) ONLY when disabled — omitted at the
         # default. See `_toolbar_prop` / `to_node` below.
         self._toolbar = _check_toolbar(toolbar)
+        # Per-image CAPTION (`props.label`) — a short name shown as a bottom-left
+        # `LabelChip` on the pane, and threaded into `cp.Compare`'s per-side
+        # labels when this image is a compare operand. Emitted on ALL three data
+        # paths (url / float / 8-bit) via `to_node` below.
+        if label is not None and not isinstance(label, str):
+            raise ValueError("cp.Image(label=...) must be a string.")
+        self._image_label = label
         self._source: Any = None
         self._store: dict[str, dict[str, str]] = {}
         self._data_mode = data_mode
@@ -1219,6 +1233,11 @@ class Image(Component):
         # display props the routed pipeline built.
         props = dict(self._props or {})
         props.update(_toolbar_prop(self._toolbar))
+        # The per-image caption rides on `props.label` in EVERY data path (url /
+        # float / 8-bit) — the pane renders it as a bottom-left `LabelChip` and
+        # `cp.Compare` reads it off the lowered node for its per-side labels.
+        if self._image_label is not None:
+            props["label"] = self._image_label
         if props:
             node["props"] = props
         return node
@@ -1722,6 +1741,16 @@ class Boxes(Component):
 # ---------------------------------------------------------------------------
 
 
+def _leaf_label_of(comp: Component) -> str | None:
+    """The caption a compare OPERAND contributes (its lowered ``props.label``),
+    or ``None`` when it has none. Read off the lowered node so it works for any
+    label-carrying leaf (today only :class:`Image`), not just a known type."""
+    node = comp.to_node()
+    props = node.get("props") or {}
+    lbl = props.get("label")
+    return lbl if isinstance(lbl, str) and lbl else None
+
+
 def _as_component(obj: Any) -> Component:
     if isinstance(obj, Component):
         return obj
@@ -1968,8 +1997,21 @@ class Compare(Component):
             node["align"] = self._align
         if self._fit != "crop":
             node["fit"] = self._fit
-        if self._props:
-            node["props"] = self._props
+        # Thread each side's own caption onto the compare node, matched to the
+        # a/b slots (`a` = reference/baseline, `b` = prediction/foreground). The
+        # pane derives which is reference from `baselineIndex` and renders the
+        # reference label bottom-left, the foreground label bottom-right (slide/
+        # blend), or folds them into the diff caption. A hand-passed `props`
+        # value still wins (`setdefault`).
+        props = dict(self._props or {})
+        label_a = _leaf_label_of(self._a)
+        label_b = _leaf_label_of(self._b)
+        if label_a is not None:
+            props.setdefault("labelA", label_a)
+        if label_b is not None:
+            props.setdefault("labelB", label_b)
+        if props:
+            node["props"] = props
         return node
 
     def _collect_store(self) -> dict[str, dict[str, str]]:

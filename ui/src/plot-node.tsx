@@ -494,6 +494,16 @@ function CompareView({ node }: { node: CompareNode }) {
   const reference = baseIdx === 0 ? state.a : state.b;
   const foreground = baseIdx === 0 ? state.b : state.a;
 
+  // Per-side captions, matched to the a/b slots (`props.labelA`/`labelB`); the
+  // reference/foreground split follows `baselineIndex`, exactly like the frames
+  // above. The legacy single `props.label` (older descriptors) still names the
+  // FOREGROUND caption for back-compat, but a per-side label takes precedence.
+  const labelA = typeof props.labelA === "string" ? (props.labelA as string) : undefined;
+  const labelB = typeof props.labelB === "string" ? (props.labelB as string) : undefined;
+  const legacyLabel = typeof props.label === "string" ? (props.label as string) : undefined;
+  const referenceLabel = baseIdx === 0 ? labelA : labelB;
+  const foregroundLabel = (baseIdx === 0 ? labelB : labelA) ?? legacyLabel;
+
   const interpolation = (props.interpolation as Interpolation | undefined) ?? "auto";
   const showAxes = (props.showAxes as boolean | undefined) ?? false;
   const processing = props.processing as ImageProcessing | undefined;
@@ -532,6 +542,8 @@ function CompareView({ node }: { node: CompareNode }) {
         pan={viewport.pan}
         onViewportChange={setViewport}
         label=""
+        referenceLabel={referenceLabel}
+        foregroundLabel={foregroundLabel}
         overlay={foreground.overlay}
         pixelValueNotation={pixelValueNotation}
       />

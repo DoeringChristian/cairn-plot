@@ -91,10 +91,11 @@ function useRegistryVersion(): number {
 // Descriptor helpers.
 // ---------------------------------------------------------------------------
 
-/** The pane's display label (its `props.label`), falling back to the id. */
-function paneLabel(pane: RegisteredPane): string {
+/** The pane's REAL user caption (`props.label`) or undefined — NO id fallback, so
+ *  a caption-less pane contributes no ugly "cp-pane-1" chip in the compare grid. */
+function paneUserLabel(pane: RegisteredPane): string | undefined {
   const l = pane.node.kind !== "grid" ? pane.node.props?.label : undefined;
-  return typeof l === "string" && l ? l : pane.paneId;
+  return typeof l === "string" && l ? l : undefined;
 }
 
 /** Mark a node non-selectable so the FRESH stage leaf never mutates the page
@@ -187,14 +188,23 @@ function buildCompareCells(
     const fg = getRegisteredPane(pair.foregroundId);
     const fgSpec = fg ? operandDataSpec(fg.node) : null;
     if (!fg || !fgSpec) continue;
-    // cp.Compare(nonRef, ref): a = foreground, b = reference (baseline).
+    // cp.Compare(nonRef, ref): a = foreground, b = reference (baseline). Thread
+    // each pane's REAL caption to the matching slot (`labelA`=a=foreground,
+    // `labelB`=b=reference) — the pane shows reference bottom-left, foreground
+    // bottom-right (slide/blend) or folds them into the diff caption. No id
+    // fallback: a caption-less pane contributes no chip.
     const node: CompareNode = {
       kind: "compare",
       mode: "split",
       a: fgSpec,
       b: refSpec,
       baselineIndex: 1,
-      props: { toolbar: true, selectable: false, label: paneLabel(fg) },
+      props: {
+        toolbar: true,
+        selectable: false,
+        ...(paneUserLabel(fg) ? { labelA: paneUserLabel(fg) } : {}),
+        ...(paneUserLabel(ref) ? { labelB: paneUserLabel(ref) } : {}),
+      },
     };
     cells.push({
       key: `${pair.foregroundId}__vs__${plan.referenceId}`,

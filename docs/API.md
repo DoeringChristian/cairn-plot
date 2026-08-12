@@ -28,7 +28,7 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | `cp.Histogram` | Histogram. |
 | `cp.Heatmap` | Heatmap. `colormap=` (`viridis` · `plasma` · `magma` · `red-green` · `red-blue`; default `viridis`). |
 | `cp.ParallelCoordinates` | Parallel-coordinates plot. `colormap=` colors the lines by the last column (`viridis` · `plasma` · `magma` · `red-green` · `red-blue`; default `viridis`). |
-| `cp.Image` | Single image (`PIL`/ndarray/PNG-JPEG bytes, or `url=`). Float `.npy`/`.exr` → HDR renderer. |
+| `cp.Image` | Single image (`PIL`/ndarray/PNG-JPEG bytes, or `url=`). Float `.npy`/`.exr` → HDR renderer. `label=` adds a bottom-left caption (and, as a `cp.Compare` operand, captions its side). |
 | `cp.PointCloud` | 3D point cloud `(N,3\|4\|6)`. |
 | `cp.Mesh` | 3D mesh (`vertices`/`faces`). |
 | `cp.Volume` | 3D scalar grid `(D,H,W)`. |
@@ -73,7 +73,7 @@ which diff kernel is displayed.
 Thin fronts over the capitalized components, mirroring the `cairn.plot` surface.
 Case-sensitive and distinct from the capitalized names and the recipes.
 
-`cp.scalar(data)` · `cp.line(y, x=None, label=None)` · `cp.image(data=None, url=None)`
+`cp.scalar(data)` · `cp.line(y, x=None, label=None)` · `cp.image(data=None, url=None, label=None)`
 · `cp.figure(fig)` · `cp.table(data)` · `cp.mesh(v, faces=None)` · `cp.pointcloud(a)`
 · `cp.volume(a)` · `cp.boxes(mins, maxs=None)`
 

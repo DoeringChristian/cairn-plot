@@ -129,7 +129,10 @@ function compareDescriptor(fg: string, ref: string): PlotDescriptor {
       mode: "split",
       a: { kind: "url", src: makeImageUrl(fg) },
       b: { kind: "url", src: makeImageUrl(ref) },
-      props: { toolbar: true },
+      // Per-side captions (baselineIndex defaults to 0 → a = reference, b =
+      // foreground): reference "REF_CAP" bottom-left, foreground "FG_CAP"
+      // bottom-right in slide; folded into the diff caption in diff mode.
+      props: { toolbar: true, labelA: "REF_CAP", labelB: "FG_CAP" },
     },
   } as PlotDescriptor;
 }
@@ -312,6 +315,56 @@ async function run(): Promise<boolean> {
   const peerTrackedFlip = await waitFor(() => Math.abs(B().splitPosition - 1) < 1e-6);
   report(peerTrackedFlip, `the flip syncs to the peer pane (B.splitPosition=${B().splitPosition})`);
   ok = ok && flipLeft && flipRight && peerTrackedFlip;
+
+  // --- 8. PER-SIDE CAPTIONS — cp.Image(label=...) shown in the compare pane ---
+  // Return pane A to split, then assert the REFERENCE caption sits bottom-LEFT
+  // and the FOREGROUND caption bottom-RIGHT (the divider passes over them). Then
+  // switch to diff and assert the ONE "<metric> · <fg> compared to <ref>" caption.
+  const paneARoot = comparePaneRoots()[0]!;
+  const chipByText = (root: HTMLElement, text: string): HTMLElement | null =>
+    Array.from(root.querySelectorAll<HTMLElement>("span")).find(
+      (s) => (s.textContent ?? "").trim() === text && !s.querySelector("span"),
+    ) ?? null;
+  const inLeftHalf = (el: HTMLElement, root: HTMLElement): boolean => {
+    const r = el.getBoundingClientRect();
+    const rr = root.getBoundingClientRect();
+    return r.left + r.width / 2 < rr.left + rr.width / 2;
+  };
+  A().changeCompareMode("split");
+  await waitFor(() => A().compareMode === "split");
+  await waitFor(() => !!chipByText(paneARoot, "REF_CAP") && !!chipByText(paneARoot, "FG_CAP"), 3000);
+  const refChip = chipByText(paneARoot, "REF_CAP");
+  const fgChip = chipByText(paneARoot, "FG_CAP");
+  const bothPresent = !!refChip && !!fgChip;
+  report(bothPresent, `slide: BOTH per-side captions render (ref=${!!refChip}, fg=${!!fgChip})`);
+  // Reference is pinned to the LEFT gutter, foreground to the RIGHT — so the
+  // reference caption's left edge is strictly left of the foreground caption's.
+  const refLeftOfFg =
+    bothPresent && refChip!.getBoundingClientRect().left < fgChip!.getBoundingClientRect().left;
+  report(refLeftOfFg, "slide: the REFERENCE caption sits left of the FOREGROUND caption");
+  // And the reference caption hugs the left half (its own corner).
+  const refInLeft = !!refChip && inLeftHalf(refChip, paneARoot);
+  report(refInLeft, "slide: the reference caption hugs the bottom-LEFT gutter");
+  ok = ok && bothPresent && refLeftOfFg && refInLeft;
+
+  // Diff mode: one caption "<metric> · FG_CAP compared to REF_CAP" (bottom-left).
+  A().changeCompareMode("diff");
+  await waitFor(() => A().compareMode === "diff");
+  const diffChip = await waitFor(
+    () => Array.from(paneARoot.querySelectorAll<HTMLElement>("span")).some((s) =>
+      /FG_CAP compared to REF_CAP/.test(s.textContent ?? ""),
+    ),
+    3000,
+  );
+  report(diffChip, "diff: a single '<metric> · FG_CAP compared to REF_CAP' caption is shown");
+  const diffCaptionEl = Array.from(paneARoot.querySelectorAll<HTMLElement>("span")).find((s) =>
+    /FG_CAP compared to REF_CAP/.test(s.textContent ?? ""),
+  );
+  const diffHasMetric = !!diffCaptionEl && /·/.test(diffCaptionEl.textContent ?? "");
+  const diffLeft = !!diffCaptionEl && inLeftHalf(diffCaptionEl, paneARoot);
+  report(diffHasMetric, `diff caption names the metric (has '·'): "${diffCaptionEl?.textContent ?? ""}"`);
+  report(diffLeft, "diff caption sits bottom-LEFT (clear of the bottom-right metrics)");
+  ok = ok && diffChip && diffHasMetric && diffLeft;
 
   roots.forEach((r) => r.unmount());
   return ok;

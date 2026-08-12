@@ -69,28 +69,29 @@ test("every compare pane routes its label through the shared LabelChip", () => {
   }
 });
 
-// Finding 2: the metrics chip's vertical offset must derive from the SAME flag
-// that renders the bottom-right label chip, so it can't silently drift. The
-// label presence and the offset both key off `labelChipPresent`; the metrics
-// className must reference the derived `metricsBottomClass`, never an
-// independent `label ? "bottom-7" : "bottom-1"` re-test.
-test("GpuComparePane folds the metrics offset into the shared chip-stack flag", () => {
+// Finding 2: the metrics chip's vertical offset must derive from the SAME value
+// that renders the bottom-RIGHT (foreground) caption chip, so it can't silently
+// drift. Both key off `rightCaption`; the metrics className references the
+// derived `metricsBottomClass`, never an independent `bottom-7 : bottom-1` re-test.
+test("GpuComparePane folds the metrics offset into the shared caption-stack flag", () => {
   const src = read("media-compare/GpuComparePane.tsx");
+  // The bottom-right caption chip presence and the metrics offset both key off
+  // `rightCaption` (the one foreground-caption value).
   assert.match(
     src,
-    /const labelChipPresent = !!label;/,
-    "one source of truth for the label chip's presence",
+    /const metricsBottomClass = rightCaption \?/,
+    "metrics offset must derive from the same rightCaption value that renders the chip",
   );
   assert.match(
     src,
-    /const metricsBottomClass = labelChipPresent \?/,
-    "metrics offset must derive from labelChipPresent",
+    /rightCaption \? <LabelChip[^>]*corner="bottom-right"/,
+    "the bottom-right caption chip is gated on the SAME rightCaption value",
   );
   assert.match(src, /\$\{metricsBottomClass\}/, "metrics span uses the derived offset");
   // No independent re-test of `label` for the offset (the silent-break shape).
   assert.doesNotMatch(
     src,
-    /label\s*\?\s*"bottom-7"/,
+    /\blabel\s*\?\s*"bottom-7"/,
     "metrics offset must not independently re-test `label`",
   );
 });

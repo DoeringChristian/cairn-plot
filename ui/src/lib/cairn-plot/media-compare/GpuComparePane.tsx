@@ -102,6 +102,7 @@ import RefBadge from "../primitives/RefBadge";
 import LabelChip from "../primitives/LabelChip";
 import SplitDivider from "./SplitDivider";
 import { useSplitFlipKeys } from "./use-split-flip-keys";
+import { compareCaptions } from "./compare-captions";
 // C1 fix (whole-branch review) — the LEGACY compare panes, used as the
 // fallback when the engine fails to activate/render (see `engineFailed`
 // state below). Safe to import here: this file only ever ships inside the
@@ -187,6 +188,11 @@ export interface GpuComparePaneProps {
 
   interpolation?: Interpolation;
   label?: string;
+  /** Per-side captions (`cp.Image(label=...)`): reference bottom-left, foreground
+   *  bottom-right in slide/blend; folded into the diff caption in diff mode.
+   *  Computed against the pane's LIVE mode/kernel so it tracks menu changes. */
+  referenceLabel?: string;
+  foregroundLabel?: string;
   pixelValueNotation?: PixelValueNotation;
 
   /**
@@ -337,6 +343,8 @@ export default function GpuComparePane({
   onViewportChange,
   interpolation = "auto",
   label = "",
+  referenceLabel,
+  foregroundLabel,
   pixelValueNotation = "decimal",
   tonemap: tonemapProp,
   peak: peakProp,
@@ -1661,8 +1669,17 @@ export default function GpuComparePane({
   // Finding 2: the chip's presence AND the metrics' vertical offset both derive
   // from this ONE flag, so the offset can never silently drift out of sync with
   // the chip beneath it.
-  const labelChipPresent = !!label;
-  const metricsBottomClass = labelChipPresent ? "bottom-7" : "bottom-1";
+  // Per-side captions, computed against the LIVE compareMode + diffKernel (so the
+  // caption tracks interactive menu changes). Reference bottom-left, foreground
+  // bottom-right in slide/blend; ONE bottom-left "<metric> · <fg> compared to
+  // <ref>" caption in diff. The legacy single `label` falls back to the
+  // foreground caption. See `compareCaptions`.
+  const caps = compareCaptions({ mode: compareMode, diffKernel, referenceLabel, foregroundLabel });
+  const leftCaption = caps.left;
+  const rightCaption = caps.right ?? (label || undefined);
+  // The metrics chip shares the bottom-RIGHT corner with the foreground caption;
+  // when that caption occupies the floor the metrics stack directly above it.
+  const metricsBottomClass = rightCaption ? "bottom-7" : "bottom-1";
 
   return (
     <ImagePaneShell
@@ -1825,9 +1842,12 @@ export default function GpuComparePane({
               every `diff` kernel (a derived error map has no reference side).
               Shared `RefBadge` — identical element/corner in every compare mode. */}
           {compareMode === "split" && <RefBadge />}
-          {/* Bottom-RIGHT label chip (static; the compare pane's label is never
-              draggable), routed through the shared LabelChip. */}
-          {labelChipPresent ? <LabelChip label={label} corner="bottom-right" /> : null}
+          {/* Per-side captions (static; a compare pane's labels are never
+              draggable): REFERENCE bottom-left, FOREGROUND bottom-right in slide/
+              blend, or the single "<metric> · <fg> compared to <ref>" caption
+              bottom-left in diff. Routed through the shared LabelChip. */}
+          {leftCaption ? <LabelChip label={leftCaption} corner="bottom-left" /> : null}
+          {rightCaption ? <LabelChip label={rightCaption} corner="bottom-right" /> : null}
           {metrics && (
             <span
               // §requirement C: the diff metrics live in the LOWER-RIGHT corner.

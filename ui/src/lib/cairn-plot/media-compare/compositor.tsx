@@ -22,6 +22,7 @@ import { loadImageData } from "../image";
 import RefBadge from "../primitives/RefBadge";
 import LabelChip from "../primitives/LabelChip";
 import { useSplitFlipKeys } from "./use-split-flip-keys";
+import { compareCaptions } from "./compare-captions";
 import PaneUnavailable from "../primitives/PaneUnavailable";
 import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
@@ -131,6 +132,10 @@ export interface MediaComparePaneProps {
   interpolation?: Interpolation;
 
   label?: string;
+  /** Per-side captions (`cp.Image(label=...)`): reference bottom-left, foreground
+   *  bottom-right in slide/blend. Supersede the legacy single `label`. */
+  referenceLabel?: string;
+  foregroundLabel?: string;
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
 
@@ -161,6 +166,8 @@ export function MediaComparePane({
   processing = DEFAULT_PROCESSING,
   interpolation = "auto",
   label = "",
+  referenceLabel,
+  foregroundLabel,
   isDraggable = false,
   onDragStart,
   overlay,
@@ -411,17 +418,29 @@ export function MediaComparePane({
           distinctly visible left of the divider. Hidden in `blend` (fused).
           Shared `RefBadge` — identical element/corner in every compare mode. */}
       {mode === "split" && <RefBadge />}
-      {/* Bottom-RIGHT label chip (clear of the top-left RefBadge). Drag is
-          suppressed while a viewport modifier key is held (so the key-drag pans
-          instead of grabbing the chip), but the grip stays visible — hence the
-          explicit `grip` (its default would follow `draggable`). */}
-      <LabelChip
-        label={label}
-        corner="bottom-right"
-        isDraggable={isDraggable && !modifierActive}
-        grip
-        onDragStart={onDragStart}
-      />
+      {/* Per-side captions: REFERENCE bottom-left (static), FOREGROUND bottom-
+          right (draggable, keeping the old single-label semantics). Drag is
+          suppressed while a viewport modifier key is held so the key-drag pans
+          instead of grabbing the chip; the grip stays visible (explicit `grip`).
+          The legacy single `label` falls back to the foreground caption. */}
+      {(() => {
+        const caps = compareCaptions({ mode, referenceLabel, foregroundLabel });
+        const rightLabel = caps.right ?? (label || undefined);
+        return (
+          <>
+            {caps.left && <LabelChip label={caps.left} corner="bottom-left" />}
+            {rightLabel && (
+              <LabelChip
+                label={rightLabel}
+                corner="bottom-right"
+                isDraggable={isDraggable && !modifierActive}
+                grip
+                onDragStart={onDragStart}
+              />
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -567,6 +586,10 @@ export interface CompositeMediaPaneProps {
   syncIsAnchor?: boolean;
 
   label: string;
+  /** Per-side captions (`cp.Image(label=...)`): reference bottom-left, foreground
+   *  bottom-right in slide/blend; folded into the diff caption in diff mode. */
+  referenceLabel?: string;
+  foregroundLabel?: string;
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onNaturalSize?: (w: number, h: number) => void;
@@ -614,6 +637,8 @@ export function CompositeMediaPane({
   settingsSyncGroupId,
   syncIsAnchor,
   label,
+  referenceLabel,
+  foregroundLabel,
   isDraggable,
   onDragStart,
   onNaturalSize,
@@ -683,6 +708,8 @@ export function CompositeMediaPane({
         onViewportChange={onViewportChange}
         interpolation={interpolation}
         label={label}
+        referenceLabel={referenceLabel}
+        foregroundLabel={foregroundLabel}
         pixelValueNotation={pixelValueNotation}
       />
     );
@@ -703,6 +730,8 @@ export function CompositeMediaPane({
         processing={processing}
         interpolation={interpolation}
         label={label}
+        referenceLabel={referenceLabel}
+        foregroundLabel={foregroundLabel}
         isDraggable={isDraggable}
         onDragStart={onDragStart}
         overlay={overlay}
@@ -735,7 +764,13 @@ export function CompositeMediaPane({
       isDraggable={isDraggable}
       onDragStart={onDragStart}
       onNaturalSize={onNaturalSize}
-      label={label}
+      label={
+        // diff → the "<metric> · <fg> compared to <ref>" caption (bottom-left);
+        // normal (single image) → the foreground caption. Falls back to `label`.
+        (effectiveMode === "diff"
+          ? compareCaptions({ mode: "diff", diffKernel: diffSubmode, referenceLabel, foregroundLabel }).left
+          : foregroundLabel) ?? label
+      }
       overlay={overlay}
       overlaySettings={overlaySettings}
       pixelValueNotation={pixelValueNotation}
