@@ -80,7 +80,7 @@
  * pan, an exposure/operator change, or the double-click reset on a
  * cap-parked-but-visible pane always paints a live, correct frame.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
@@ -107,6 +107,7 @@ import type { ImageParams } from "../engine/image-engine";
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
 import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
+import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
@@ -1021,6 +1022,20 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     [hdrMode, naturalDims, sdrColormap],
   );
 
+  // In-pane HISTOGRAM source — bins the RAW retained buffer (float scene values
+  // in HDR mode, RGBA source bytes in SDR mode), NOT the display pixels. For a
+  // DEEP EXR, `getDeepCsr` exports the samples for the per-pixel depth read-out.
+  const histogramSource = useMemo(() => {
+    if (hdrMode) {
+      const hdr = hdrDataRef.current;
+      if (!hdr) return undefined;
+      const deep = (props as HdrImageProps).hdr?.deep;
+      return floatHistogramSource(hdr, pixelDataVersion, deep ? () => deep.getGpuCsr() : undefined);
+    }
+    return u8HistogramSource(sdrImageDataRef.current, pixelDataVersion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hdrMode, pixelDataVersion]);
+
   // -----------------------------------------------------------------------
   // Render.
   // -----------------------------------------------------------------------
@@ -1101,6 +1116,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
+      histogram={histogramSource}
       // UNIFIED TONEMAP menu (§B): the ONE 5-operator group (Linear · sRGB ·
       // Gamma · Reinhard · ACES) is shown on the HDR (float) pane AND the plain
       // 8-bit pane — the PEAK slider is the HDR mode (see extraSliders). A plain

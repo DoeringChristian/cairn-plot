@@ -80,10 +80,14 @@ import type { CSSProperties, ReactNode, RefObject } from "react";
 import {
   screenPerTexel,
   screenRectToTexelRect,
+  screenToTexel,
   texelRectToScreenRect,
   type SourceWindow,
   type TexelRect,
 } from "./region-select";
+import ImageHistogramOverlay, {
+  type HistogramSource,
+} from "../primitives/ImageHistogramOverlay";
 import { applyRectEdit, RESIZE_HANDLES, type RegionHandle } from "./region-edit";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
@@ -257,6 +261,15 @@ export interface ImagePaneShellProps {
    *  the descriptor) — folded into the HOME button's enabled state. */
   extraModified?: boolean;
 
+  // --- in-pane histogram ---------------------------------------------------
+  /** When supplied, a HISTOGRAM toggle button is added to the toolbar and, once
+   *  enabled, a small multi-channel histogram panel is pinned to the pane's
+   *  top-right (below the toolbar). The pane closes `readChannel` over its own
+   *  decoded buffer (no server); see `primitives/ImageHistogramOverlay.tsx`.
+   *  Only wired for the `single` overlay variant (the cursor read-out reuses its
+   *  displayElRef/sourceWindow screen→texel mapping). Absent = no histogram. */
+  histogram?: HistogramSource;
+
   // --- chips ---------------------------------------------------------------
   label: string;
   showLabelChip: boolean;
@@ -295,6 +308,7 @@ export default function ImagePaneShell({
   regionSelect,
   onReset,
   extraModified,
+  histogram,
   label,
   showLabelChip,
   isDraggable = false,
@@ -311,6 +325,41 @@ export default function ImagePaneShell({
   const [regionActive, setRegionActive] = useState(false);
   const singleOverlay = "render" in overlay ? null : overlay;
   const regionAvailable = !!regionSelect && !!singleOverlay;
+
+  // In-pane HISTOGRAM: an optional multi-channel histogram panel toggled from
+  // the toolbar. Available only for the `single` overlay variant (its
+  // displayElRef/sourceWindow give the cursor read-out's screen→texel mapping).
+  const histogramAvailable = !!histogram && !!singleOverlay;
+  const [histogramOpen, setHistogramOpen] = useState(false);
+  const [histCursor, setHistCursor] = useState<{ px: number; py: number } | null>(null);
+
+  // Track the texel under the cursor for the histogram's per-pixel read-out,
+  // reusing the SHARED `screenToTexel` mapping (region-select) — the same math
+  // the TEV overlay + marquee use, not a second sampler. Active only while the
+  // panel is open, so it costs nothing otherwise.
+  const trackHistCursor = useCallback(
+    (e: React.PointerEvent) => {
+      if (!histogramOpen || !histogramAvailable || !singleOverlay || !naturalDims) return;
+      const el = singleOverlay.displayElRef.current;
+      if (!el) return;
+      const box = el.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) return;
+      const t = screenToTexel(e.clientX, e.clientY, {
+        box,
+        naturalWidth: naturalDims.w,
+        naturalHeight: naturalDims.h,
+        sourceWindow: singleOverlay.sourceWindow,
+      });
+      const px = Math.floor(t.x);
+      const py = Math.floor(t.y);
+      if (px < 0 || py < 0 || px >= naturalDims.w || py >= naturalDims.h) {
+        setHistCursor((prev) => (prev === null ? prev : null));
+        return;
+      }
+      setHistCursor((prev) => (prev && prev.px === px && prev.py === py ? prev : { px, py }));
+    },
+    [histogramOpen, histogramAvailable, singleOverlay, naturalDims],
+  );
 
   // ENLARGE (fullscreen overlay). The shell keeps the pane's ENTIRE subtree in
   // ONE stable container element (`contentHostRef`) and only MOVES that element
@@ -506,18 +555,36 @@ export default function ImagePaneShell({
     [regionAvailable, regionActive],
   );
 
+  // HISTOGRAM toggle — a LEADING toolbar button (like enlarge) shown whenever a
+  // histogram source is available. Portaled menus stay above; the panel it opens
+  // sits below the toolbar seam (see ImageHistogramOverlay).
+  const histogramButton = useMemo<ToolbarButtonSpec | null>(
+    () =>
+      histogramAvailable
+        ? {
+            id: "histogram",
+            icon: "chart",
+            title: histogramOpen ? "Hide histogram" : "Show channel histogram",
+            active: histogramOpen,
+            onClick: () => setHistogramOpen((v) => !v),
+          }
+        : null,
+    [histogramAvailable, histogramOpen],
+  );
+
   const toolbarConfig = useMemo(
     () => ({
       ...IMAGE_TOOLBAR_CONFIG,
       leadingButtons: [
         enlargeButton,
+        ...(histogramButton ? [histogramButton] : []),
         ...(leadingMenus ?? []),
         ...(regionButton ? [regionButton] : []),
         ...(overlayActive ? [notationToolbarButton(notation, setNotation)] : []),
       ],
       sliders,
     }),
-    [overlayActive, notation, leadingMenus, regionButton, sliders, enlargeButton],
+    [overlayActive, notation, leadingMenus, regionButton, histogramButton, sliders, enlargeButton],
   );
 
   const checkerClass = " cairn-checkerboard";
@@ -567,9 +634,13 @@ export default function ImagePaneShell({
         className={paneClass}
         style={{ padding: viewportPadding, ...viewportProps.style }}
         onPointerDown={viewportProps.onPointerDown}
-        onPointerMove={viewportProps.onPointerMove}
+        onPointerMove={(e) => {
+          viewportProps.onPointerMove?.(e);
+          trackHistCursor(e);
+        }}
         onPointerUp={viewportProps.onPointerUp}
         onPointerCancel={viewportProps.onPointerCancel}
+        onPointerLeave={() => setHistCursor((prev) => (prev === null ? prev : null))}
         onDoubleClick={resetViewport}
         {...viewportAttrs}
       >
@@ -616,6 +687,15 @@ export default function ImagePaneShell({
             onQueryLive={regionSelect.queryLive}
             onCommit={regionSelect.commit}
             onRemove={regionSelect.remove}
+          />
+        )}
+        {/* In-pane HISTOGRAM panel — pinned top-right below the toolbar seam;
+            pointer-events scoped to the panel (see ImageHistogramOverlay). */}
+        {histogramOpen && histogram && singleOverlay && naturalDims && (
+          <ImageHistogramOverlay
+            source={histogram}
+            cursor={histCursor}
+            onClose={() => setHistogramOpen(false)}
           />
         )}
       </div>

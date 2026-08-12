@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>in-pane histogram harness</title>
+    <!-- Real compiled Tailwind (committed dist/plot-inline/style.css) so the
+         pane + panel layout classes resolve exactly like a host page. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- Opt into the DEFAULT `npm run test:harness` run: it dispatches its OWN
+         gestures and settles #status headlessly (uses hardware WebGPU on this
+         Mac; falls back to the CPU backend if no adapter). -->
+    <meta name="cairn-harness" data-cairn-harness="self-driving" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      #mount { width: 480px; height: 360px; background: #222; }
+    </style>
+  </head>
+  <body>
+    <h1>ImagePaneShell — in-pane HISTOGRAM overlay harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="mount"></div>
+    <script type="module" src="./pane-histogram.browser.bundle.js?v=1"></script>
+  </body>
+</html>

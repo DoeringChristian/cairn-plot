@@ -186,6 +186,15 @@ const ICON_PATHS: Record<string, ReactNode> = {
   compress: (
     <path d="M20 4l-6 6m0-6v6h6M4 20l6-6m0 6v-6H4" />
   ),
+  // Chart (HISTOGRAM toggle) — three ascending bars on a baseline.
+  chart: (
+    <>
+      <path d="M3 21h18" />
+      <rect x="5" y="12" width="3.5" height="7" />
+      <rect x="10.25" y="8" width="3.5" height="11" />
+      <rect x="15.5" y="4" width="3.5" height="15" />
+    </>
+  ),
 };
 
 function Icon({ name }: { name: string }) {
