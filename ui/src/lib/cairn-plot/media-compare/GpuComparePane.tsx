@@ -101,6 +101,7 @@ import PixelValueOverlay, {
 import RefBadge from "../primitives/RefBadge";
 import LabelChip from "../primitives/LabelChip";
 import SplitDivider from "./SplitDivider";
+import { useSplitFlipKeys } from "./use-split-flip-keys";
 // C1 fix (whole-branch review) — the LEGACY compare panes, used as the
 // fallback when the engine fails to activate/render (see `engineFailed`
 // state below). Safe to import here: this file only ever ships inside the
@@ -681,6 +682,12 @@ export default function GpuComparePane({
     },
     [onSplitPositionChange, publishSettings],
   );
+
+  // Split ("slide") mode: Left/Right arrow snaps the divider hard to one edge,
+  // flipping between the two images (scoped to the pane the key lands in). Uses
+  // `changeSplit` — the SAME handler the divider drives — so the flip also
+  // publishes to the settings-sync bus (peers track it), not just the local prop.
+  useSplitFlipKeys(paneRef, compareMode, changeSplit);
 
   // The two leading toolbar menus (rendered by `ImagePaneShell` → `PlotToolbar`).
   //   MODE — slide · blend · every registered diff kernel (flat list). Selecting

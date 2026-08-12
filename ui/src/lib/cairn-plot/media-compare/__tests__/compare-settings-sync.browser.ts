@@ -287,6 +287,25 @@ async function run(): Promise<boolean> {
   report(splitOk, `SPLIT sync: A→0.3, B follows (B.splitPosition=${B().splitPosition})`);
   ok = ok && splitOk;
 
+  // --- 7. SPLIT flip via Left/Right arrow keys (slide mode) -----------------
+  // In split mode the arrows snap the divider hard to an edge, flipping between
+  // the two images. The listener lives on the PANE element (not window), so the
+  // keydown is dispatched on pane A's viewport box (`data-gpu-compare-viewport`,
+  // which IS the pane's own paneRef). Because split position syncs across the
+  // selected panes, B tracks the flip too.
+  const paneAViewport = comparePaneRoots()[0]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
+  const arrow = (key: "ArrowLeft" | "ArrowRight") =>
+    paneAViewport.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  arrow("ArrowLeft");
+  const flipLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6);
+  report(flipLeft, `ArrowLeft snaps the split hard-left to 0 (A.splitPosition=${A().splitPosition})`);
+  arrow("ArrowRight");
+  const flipRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
+  report(flipRight, `ArrowRight snaps the split hard-right to 1 (A.splitPosition=${A().splitPosition})`);
+  const peerTrackedFlip = await waitFor(() => Math.abs(B().splitPosition - 1) < 1e-6);
+  report(peerTrackedFlip, `the flip syncs to the peer pane (B.splitPosition=${B().splitPosition})`);
+  ok = ok && flipLeft && flipRight && peerTrackedFlip;
+
   roots.forEach((r) => r.unmount());
   return ok;
 }

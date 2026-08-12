@@ -21,6 +21,7 @@ import PixelValueOverlay, {
 import { loadImageData } from "../image";
 import RefBadge from "../primitives/RefBadge";
 import LabelChip from "../primitives/LabelChip";
+import { useSplitFlipKeys } from "./use-split-flip-keys";
 import PaneUnavailable from "../primitives/PaneUnavailable";
 import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
@@ -259,6 +260,10 @@ export function MediaComparePane({
     pan,
     onViewportChange,
   });
+
+  // Split ("slide") mode: Left/Right arrow snaps the divider hard to one edge,
+  // flipping between the two images (scoped to the hovered/focused pane).
+  useSplitFlipKeys(paneRef, mode, onSplitPositionChange);
 
   return (
     // `isolate`: own stacking context so the pixel-value overlay's `z-10`
