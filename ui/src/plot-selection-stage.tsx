@@ -152,8 +152,6 @@ interface StageCellSpec {
   reprPaneId: string;
   /** Whether THIS cell IS the reference (enlarge stage badges its ref cell). */
   isReference: boolean;
-  /** Compare stage: the shared reference's label, shown as a "vs REF" chip. */
-  refLabel?: string;
 }
 
 /** Build the ENLARGE grid cells — one per selected (registered) pane. */
@@ -183,7 +181,6 @@ function buildCompareCells(
   const ref = getRegisteredPane(plan.referenceId);
   const refSpec = ref ? operandDataSpec(ref.node) : null;
   if (!ref || !refSpec) return { cells: [], referenceId: plan.referenceId };
-  const refLabel = paneLabel(ref);
 
   const cells: StageCellSpec[] = [];
   for (const pair of plan.pairs) {
@@ -206,7 +203,6 @@ function buildCompareCells(
       shared: fg.shared,
       reprPaneId: pair.foregroundId,
       isReference: false,
-      refLabel,
     });
   }
   return { cells, referenceId: plan.referenceId };
@@ -330,26 +326,6 @@ function StageCell({
           }}
         >
           REF
-        </span>
-      )}
-      {spec.refLabel != null && (
-        <span
-          data-cairn-stage-ref-chip=""
-          style={{
-            position: "absolute",
-            top: 6,
-            left: 6,
-            zIndex: 2,
-            padding: "2px 7px",
-            borderRadius: 9999,
-            fontSize: 11,
-            fontWeight: 600,
-            background: "rgba(0,0,0,0.55)",
-            color: "#fff",
-            pointerEvents: "none",
-          }}
-        >
-          vs REF: {spec.refLabel}
         </span>
       )}
 

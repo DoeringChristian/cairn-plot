@@ -529,14 +529,17 @@ async function run(): Promise<boolean> {
   const reprPanes = stageCells().map((c) => c.getAttribute("data-stage-repr-pane"));
   const noRefInCells = !reprPanes.includes(idC);
   report(noRefInCells, "the reference (C) is NOT one of the comparison cells (it's the baseline)");
-  const compareChip = !!cbd.querySelector("[data-cairn-stage-ref-chip]");
-  report(compareChip, "each comparison badges the reference (REF chip)");
+  // No stage-level "vs REF" chip on comparison cells: it sat at the same top-left
+  // corner as the compare pane's OWN reference marker and overlapped it. The
+  // compare pane labels its reference side itself.
+  const noStageChip = !cbd.querySelector("[data-cairn-stage-ref-chip]");
+  report(noStageChip, "comparison cells carry NO overlapping stage 'vs REF' chip (compare pane labels its own ref)");
   // The comparison panes actually rendered (CPU split → <img>s).
   const compHasSurface = await waitFor(
     () => stageCells().length === 2 && stageCells().every((c) => !!c.querySelector("img,canvas")),
   );
   report(compHasSurface, "each comparison cell rendered its compare pane");
-  ok = ok && twoComparisons && !!modeIsCompare && noRefInCells && compareChip && compHasSurface;
+  ok = ok && twoComparisons && !!modeIsCompare && noRefInCells && noStageChip && compHasSurface;
 
   // --- 4. Re-pick the reference IN the grid → comparisons rebuild ------------
   const reprBefore = new Set(reprPanes);
