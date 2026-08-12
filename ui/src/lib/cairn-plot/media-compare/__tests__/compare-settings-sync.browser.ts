@@ -297,24 +297,39 @@ async function run(): Promise<boolean> {
   // which IS the pane's own paneRef). Because split position syncs across the
   // selected panes, B tracks the flip too.
   const paneAViewport = comparePaneRoots()[0]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
-  // The flip acts on the pane the user is pointing at (`:hover`) or focused
-  // within. Synthetic events can't set `:hover`, so drive the focus path: the
-  // hook makes the pane focusable (tabindex=-1); focus it, then key on window.
-  paneAViewport.focus();
-  const paneFocusable = document.activeElement === paneAViewport;
-  report(paneFocusable, `the split pane is focusable for the arrow-flip (activeElement matches: ${paneFocusable})`);
-  ok = ok && paneFocusable;
   const arrow = (key: "ArrowLeft" | "ArrowRight") =>
     window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+
+  // PRIMARY path — HOVER (what users actually do): the pointer is over the pane,
+  // NOT focused. Ensure focus is elsewhere, hover the pane (pointerenter), then
+  // key on window. This is the path the first cut got wrong (it required focus).
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  const notFocused = !paneAViewport.contains(document.activeElement);
+  report(notFocused, "arrow-flip HOVER path: pane is NOT focused before the gesture");
+  paneAViewport.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
   arrow("ArrowLeft");
-  const flipLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6);
-  report(flipLeft, `ArrowLeft snaps the split hard-left to 0 (A.splitPosition=${A().splitPosition})`);
+  const hoverFlipLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6);
+  report(hoverFlipLeft, `HOVER ArrowLeft snaps split→0 without focus (A.splitPosition=${A().splitPosition})`);
   arrow("ArrowRight");
-  const flipRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
-  report(flipRight, `ArrowRight snaps the split hard-right to 1 (A.splitPosition=${A().splitPosition})`);
+  const hoverFlipRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
+  report(hoverFlipRight, `HOVER ArrowRight snaps split→1 without focus (A.splitPosition=${A().splitPosition})`);
+  ok = ok && notFocused && hoverFlipLeft && hoverFlipRight;
+
+  // Leaving the pane stops it reacting; and the FOCUS path still works too.
+  paneAViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+  A().changeSplit(0.4);
+  await waitFor(() => Math.abs(A().splitPosition - 0.4) < 1e-6);
+  arrow("ArrowLeft"); // not hovered, not focused → ignored
+  await sleep(60);
+  const ignoredWhenAway = Math.abs(A().splitPosition - 0.4) < 1e-6;
+  report(ignoredWhenAway, `arrows are IGNORED when the pointer left the pane (A.splitPosition=${A().splitPosition})`);
+  paneAViewport.focus();
+  arrow("ArrowRight");
+  const focusFlip = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
+  report(focusFlip, `FOCUS path still flips (A.splitPosition=${A().splitPosition})`);
   const peerTrackedFlip = await waitFor(() => Math.abs(B().splitPosition - 1) < 1e-6);
   report(peerTrackedFlip, `the flip syncs to the peer pane (B.splitPosition=${B().splitPosition})`);
-  ok = ok && flipLeft && flipRight && peerTrackedFlip;
+  ok = ok && ignoredWhenAway && focusFlip && peerTrackedFlip;
 
   // --- 8. PER-SIDE CAPTIONS — cp.Image(label=...) shown in the compare pane ---
   // Return pane A to split, then assert the REFERENCE caption sits bottom-LEFT
