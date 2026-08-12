@@ -38,6 +38,7 @@ import { useEmitAutoHeight } from "./lib/cairn-plot/hooks";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { registerRenderer, getRenderer } from "./plot-registry";
 import { PlotNodeView, SharedPlotContext } from "./plot-node";
+import { ensureSelectionOverlayHost } from "./plot-selection-stage";
 import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
@@ -173,6 +174,13 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) {
   const containerRef = useRef<HTMLDivElement>(null);
   useEmitAutoHeight(containerRef);
+
+  // Ensure the ONE page-wide selection overlay host (the floating action bar +
+  // the enlarge/compare fullscreen stage) is mounted. Idempotent + page-global,
+  // so a gallery of many independent `PlotApp` roots still gets exactly one.
+  useEffect(() => {
+    ensureSelectionOverlayHost();
+  }, []);
 
   const [state, setState] = React.useState<
     | { status: "loading" }

@@ -74,7 +74,7 @@
  * `sample` callback receives the current notation as an argument, so it stays
  * stateless w.r.t. notation.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, ReactNode, RefObject } from "react";
 import {
@@ -104,7 +104,8 @@ import {
   IMAGE_TOOLBAR_CONFIG,
   notationToolbarButton,
 } from "./use-image-controller";
-import { useOriginTheme } from "../primitives/themed-portal";
+import FullscreenOverlayShell from "../primitives/FullscreenOverlayShell";
+import { EnlargeInterceptContext } from "./enlarge-intercept";
 
 const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 
@@ -337,10 +338,6 @@ export default function ImagePaneShell({
   // The two mount points the content host moves between.
   const inlineMountRef = useRef<HTMLDivElement | null>(null);
   const overlayMountRef = useRef<HTMLDivElement | null>(null);
-  // Focus restoration: the element focused when enlarge opened (the toolbar's
-  // enlarge button) is refocused on close, per the a11y contract.
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const prevFocusRef = useRef<HTMLElement | null>(null);
 
   // Reparent the content host into the overlay (when enlarged) or the inline
   // slot (otherwise), on every toggle AND on mount. `appendChild` MOVES the
@@ -353,61 +350,13 @@ export default function ImagePaneShell({
     if (target && host.parentNode !== target) target.appendChild(host);
   }, [enlarged]);
 
-  // Escape closes the overlay + focus management. Capture the previously focused
-  // element on open, focus the ✕ button, and restore focus to the trigger on
-  // close (keyboard accessibility).
-  useEffect(() => {
-    if (!enlarged) return;
-    prevFocusRef.current = (document.activeElement as HTMLElement | null) ?? null;
-    // Focus the close button after the overlay commits.
-    closeButtonRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setEnlarged(false);
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      // Restore focus to the trigger (the enlarge toolbar button) on close.
-      const prev = prevFocusRef.current;
-      prevFocusRef.current = null;
-      if (prev && prev.isConnected) prev.focus?.();
-    };
-  }, [enlarged]);
-
-  // Bug 3: while the overlay is open the page behind it must NOT scroll. Lock
-  // the page's REAL scroll root (`document.scrollingElement`, usually <html> in
-  // standards mode — NOT necessarily <body>) + disable scroll-chaining, for the
-  // overlay's lifetime; restored exactly on close AND on unmount-while-open.
-  //
-  // Do NOT `preventDefault` wheel on the backdrop: that swallowed wheel events
-  // bubbling up from scrollable UI INSIDE the overlay (e.g. the diff-mode menu),
-  // making its list unscrollable. Locking the scroll root already stops the page
-  // from moving, while scrollable overlay descendants keep working normally.
-  const backdropRef = useRef<HTMLDivElement | null>(null);
-  // The overlay is portaled to document.body, so it can't inherit the pane's
-  // theme tokens (dark/light) when the app scopes the theme on a container div
-  // rather than <html>. Snapshot the pane's theme onto the overlay so the
-  // enlarged view follows its origin pane (shared helper — same fix as the
-  // toolbar's portaled menus). Read the theme from `inlineMountRef` — it stays
-  // put in the ORIGINAL tree (inside the theme scope); `paneRef`'s element is
-  // reparented INTO the body-level overlay while enlarged, so reading it would
-  // resolve tokens against document.body (the wrong, default theme).
-  const enlargeTheme = useOriginTheme(enlarged, inlineMountRef);
-  useEffect(() => {
-    if (!enlarged || typeof document === "undefined") return;
-    const scroller = (document.scrollingElement as HTMLElement | null) ?? document.body;
-    const prevOverflow = scroller.style.overflow;
-    const prevOverscroll = scroller.style.overscrollBehavior;
-    scroller.style.overflow = "hidden";
-    scroller.style.overscrollBehavior = "none";
-    return () => {
-      scroller.style.overflow = prevOverflow;
-      scroller.style.overscrollBehavior = prevOverscroll;
-    };
-  }, [enlarged]);
+  // ENLARGE-INTERCEPT: while this pane is part of a page-wide ≥2 selection, its
+  // enlarge button opens the page-level SELECTION STAGE (a grid of ALL selected
+  // panes) instead of this single-pane overlay. The wrapping
+  // `PaneSelectionFrame` provides the intercept; the pane itself stays
+  // selection-agnostic. `onEnlarge()` returning `true` means "handled — the
+  // multi stage opened", so we skip the local single-pane enlarge.
+  const enlargeIntercept = useContext(EnlargeInterceptContext);
 
   // The enlarge toggle as a LEADING toolbar button (only rendered when the
   // toolbar itself renders — under `toolbar={false}` the host drives layout, so
@@ -419,9 +368,14 @@ export default function ImagePaneShell({
       icon: enlarged ? "compress" : "expand",
       title: enlarged ? "Exit fullscreen (Esc)" : "Enlarge (fullscreen)",
       active: enlarged,
-      onClick: () => setEnlarged((v) => !v),
+      onClick: () => {
+        // Opening (not closing): let a ≥2-selection intercept take over with the
+        // multi-pane stage; only fall through to the local overlay if unhandled.
+        if (!enlarged && enlargeIntercept?.onEnlarge()) return;
+        setEnlarged((v) => !v);
+      },
     }),
-    [enlarged],
+    [enlarged, enlargeIntercept],
   );
 
   const { containerProps: viewportProps } = useImageViewport({
@@ -681,129 +635,32 @@ export default function ImagePaneShell({
           reparent. */}
       <div ref={inlineMountRef} className="relative flex flex-col h-full min-h-0 min-w-0" />
 
-      {/* Fullscreen ENLARGE overlay — body-portaled so it sits ABOVE all host
-          chrome (the CORRECT use of a high z-index on a fixed, body-level
-          overlay, unlike the pixel-overlay leak). It establishes its OWN
-          stacking context (`isolate`); the dim backdrop closes on click, and the
-          ✕ button / Escape also close. Transitions are gated on `motion-safe`,
-          so `prefers-reduced-motion` users get none. */}
-      {enlarged &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            ref={backdropRef}
-            // Structural geometry is INLINE (not Tailwind classes) so the
-            // overlay is fixed / full-viewport / high-z / its own stacking
-            // context REGARDLESS of the host's CSS (resets, missing utilities) —
-            // the overlay must escape all host chrome unconditionally. The dim
-            // scrim + blur are inline too; only the fade transition is a class,
-            // gated on `motion-safe` (prefers-reduced-motion ⇒ no animation).
-            // `enlargeTheme.className` adds `cairn-plot-doc` so the framed pane's
-            // token utilities match; its data-theme/vars/color-scheme make the
-            // enlarged view follow the ORIGIN pane's theme (dark/light).
-            className={`${enlargeTheme.className} motion-safe:transition-opacity`}
-            data-theme={enlargeTheme["data-theme"]}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 2147483000,
-              isolation: "isolate",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "clamp(8px, 2.5vw, 40px)",
-              // Dim scrim — a dark veil reads as "dim" in both light + dark
-              // themes (the conventional modal backdrop); the framed pane below
-              // carries the theme-aware surface tokens.
-              background: "rgba(0, 0, 0, 0.6)",
-              backdropFilter: "blur(2px)",
-              WebkitBackdropFilter: "blur(2px)",
-              pointerEvents: "auto",
-              // Origin pane's resolved --color-* vars + color-scheme.
-              ...enlargeTheme.style,
-            }}
-            data-cairn-plot-enlarge-backdrop=""
-            role="presentation"
-            onPointerDown={(e) => {
-              // Only a click on the backdrop itself closes (the frame stops
-              // propagation below), so clicks inside the pane never dismiss it.
-              if (e.target === e.currentTarget) setEnlarged(false);
-            }}
-          >
-            <div
-              className="rounded-lg border border-border bg-bg-elevated shadow-2xl"
-              style={{
-                position: "relative",
-                display: "flex",
-                flexDirection: "column",
-                width: "100%",
-                height: "100%",
-                overflow: "hidden",
-              }}
-              role="dialog"
-              aria-modal="true"
-              aria-label={label ? `Enlarged: ${label}` : "Enlarged view"}
-              data-cairn-plot-enlarge-frame=""
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              {/* Empty in React's view — the content host is appendChild'd here
-                  while enlarged. `flex:1` + `min-*:0` let the pane fill + clamp. */}
-              <div
-                ref={overlayMountRef}
-                style={{
-                  position: "relative",
-                  flex: "1 1 0%",
-                  minHeight: 0,
-                  minWidth: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              />
-            </div>
-            {/* Bug 4: the ✕ lives in the BACKDROP's top-right gutter (OUTSIDE the
-                centered pane frame), so it never sits over the pane's toolbar or
-                any pane chrome. Still visible, focusable, theme-aware; Escape and
-                a backdrop click also close. A pointer-down here stops propagation
-                so the backdrop's own "click to close" doesn't also fire. */}
-            <button
-              ref={closeButtonRef}
-              type="button"
-              aria-label="Exit fullscreen (Esc)"
-              title="Exit fullscreen (Esc)"
-              className="border border-border bg-bg-elevated/90 text-fg-muted shadow-sm hover:text-fg hover:bg-bg-hover focus:outline-none focus:ring-2 focus:ring-accent"
-              data-cairn-plot-enlarge-close=""
-              style={{
-                position: "absolute",
-                right: 6,
-                top: 6,
-                zIndex: 1,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 32,
-                height: 32,
-                borderRadius: 9999,
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => setEnlarged(false)}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>
-          </div>,
-          document.body,
-        )}
+      {/* Fullscreen ENLARGE overlay — the SHARED body-portaled chrome (backdrop,
+          ✕, Escape, backdrop-click, scroll-lock, themed portal). The pane's own
+          subtree (its live `<canvas>`) is appendChild'd into the mount below —
+          NOT re-rendered — so the GPU/2D context survives. Theme is read from
+          `inlineMountRef`, which stays in the ORIGINAL tree (inside the theme
+          scope) rather than the reparented pane. */}
+      <FullscreenOverlayShell
+        open={enlarged}
+        onClose={() => setEnlarged(false)}
+        originRef={inlineMountRef}
+        ariaLabel={label ? `Enlarged: ${label}` : "Enlarged view"}
+      >
+        {/* Empty in React's view — the content host is appendChild'd here while
+            enlarged. `flex:1` + `min-*:0` let the pane fill + clamp. */}
+        <div
+          ref={overlayMountRef}
+          style={{
+            position: "relative",
+            flex: "1 1 0%",
+            minHeight: 0,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        />
+      </FullscreenOverlayShell>
 
       {/* The pane subtree, portaled ONCE into the stable content host (which is
           reparented between the inline slot and the overlay). The canvas/engine
