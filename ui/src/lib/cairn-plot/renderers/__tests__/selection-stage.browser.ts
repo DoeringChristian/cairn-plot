@@ -131,6 +131,48 @@ function stageCells(): HTMLElement[] {
   return bd ? Array.from(bd.querySelectorAll<HTMLElement>("[data-cairn-stage-cell]")) : [];
 }
 
+// --- geometry / outcome helpers (the point of THIS harness — not "el exists") ---
+function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
+  return !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
+}
+/** ~equal within a few px (layout rounding / sub-pixel). */
+function near(a: number, b: number, tol = 4): boolean {
+  return Math.abs(a - b) <= tol;
+}
+/** The stage grid's inner content box (padding-box). */
+function stageGrid(): HTMLElement | null {
+  const bd = stageBackdrop();
+  return bd ? bd.querySelector<HTMLElement>("[data-cairn-stage-grid]") : null;
+}
+/** The pane FRAME rendered inside a stage cell (fills the cell when Bug 8 fixed). */
+function cellFrame(cell: HTMLElement): HTMLElement | null {
+  return cell.querySelector<HTMLElement>("[data-plot-pane-id]");
+}
+/** A stage cell's colormap toolbar menu button (CPU image pane). */
+function cmapButton(cell: HTMLElement): HTMLButtonElement | null {
+  return cell.querySelector<HTMLButtonElement>('button[aria-label="Colormap"]');
+}
+/** The pane toolbar inside a stage cell (top-right, `role="toolbar"`). */
+function cellToolbar(cell: HTMLElement): HTMLElement | null {
+  return cell.querySelector<HTMLElement>('[role="toolbar"]');
+}
+/** Open a toolbar menu button and resolve its portaled listbox. */
+async function openListbox(btn: HTMLButtonElement): Promise<HTMLUListElement | null> {
+  btn.click();
+  await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 2000);
+  return document.querySelector<HTMLUListElement>('ul[role="listbox"]');
+}
+function normColor(c: string): string {
+  return c.replace(/\s+/g, " ").trim();
+}
+const ORANGE = "rgb(245, 158, 11)"; // REFERENCE_COLOR (#f59e0b)
+/** The repr-pane id of the CURRENT stage's reference cell (the orange-ringed one). */
+function bd2RefRepr(): string | null {
+  const bd = stageBackdrop();
+  const ref = bd?.querySelector<HTMLElement>('[data-cairn-stage-cell][data-cairn-stage-ref="true"]');
+  return ref?.getAttribute("data-stage-repr-pane") ?? null;
+}
+
 async function run(): Promise<boolean> {
   let ok = true;
   registerCoreRenderers();
@@ -178,6 +220,22 @@ async function run(): Promise<boolean> {
   const refIsLast = store.reference() === idC;
   report(refIsLast, `the LAST-selected pane (C) is the reference (${store.reference()})`);
   ok = ok && refIsLast;
+
+  // --- Bug 2 (page) — the REFERENCE pane rings ORANGE; a non-ref selected pane
+  //     rings in the (non-orange) blue accent. Assert COMPUTED outline colour, not
+  //     mere presence, and the `data-reference` marker on exactly the ref pane. ---
+  await sleep(30);
+  const refFrameMarked = await waitFor(() => fc.getAttribute("data-reference") === "true");
+  const nonRefUnmarked = fa.getAttribute("data-reference") == null;
+  report(refFrameMarked, "the reference pane (C) carries data-reference=true");
+  report(nonRefUnmarked, "a non-reference selected pane (A) is NOT marked reference");
+  const refOutline = normColor(getComputedStyle(fc).outlineColor);
+  const selOutline = normColor(getComputedStyle(fa).outlineColor);
+  const refIsOrange = refOutline === ORANGE;
+  const selIsNotOrange = selOutline !== ORANGE && selOutline !== "" && selOutline !== "rgba(0, 0, 0, 0)";
+  report(refIsOrange, `reference pane outline is ORANGE (${refOutline})`);
+  report(selIsNotOrange, `non-reference selected pane outline is the blue accent, NOT orange (${selOutline})`);
+  ok = ok && refFrameMarked && nonRefUnmarked && refIsOrange && selIsNotOrange;
 
   // --- 1. the action bar appears with count 3 + Enlarge + Compare ------------
   const barReady = await waitFor(() => !!actionBar());
@@ -251,6 +309,99 @@ async function run(): Promise<boolean> {
   const refChip = !!bd.querySelector("[data-cairn-stage-ref-chip]");
   report(refChip, "the reference cell shows a REF chip");
   ok = ok && threeCells && twoCols && cellsHaveImages && oneRef && refReprIsC && refChip;
+
+  // === Bug 2 (stage) — the reference CELL rings ORANGE (not the blue accent). ===
+  const refCell = bd.querySelector<HTMLElement>('[data-cairn-stage-cell][data-cairn-stage-ref="true"]')!;
+  const refCellOutline = normColor(getComputedStyle(refCell).outlineColor);
+  const refCellOrange = refCellOutline === ORANGE;
+  report(refCellOrange, `the reference cell outline is ORANGE (${refCellOutline})`);
+  ok = ok && refCellOrange;
+
+  // === Bug 8 — the grid FILLS the overlay: cells reach the full height and each
+  //     pane FILLS its cell; the ref RING is on the CELL (not the whole overlay). ==
+  {
+    const g = stageGrid()!;
+    const gRect = g.getBoundingClientRect();
+    const gInnerBottom = gRect.bottom - parseFloat(getComputedStyle(g).paddingBottom || "0");
+    const cellRects = stageCells().map((c) => c.getBoundingClientRect());
+    const lowestBottom = Math.max(...cellRects.map((r) => r.bottom));
+    const cellsFillHeight = near(lowestBottom, gInnerBottom, 6);
+    report(
+      cellsFillHeight,
+      `the cells reach the grid's full height — NOT just the upper half (lowest ${lowestBottom.toFixed(0)} vs grid ${gInnerBottom.toFixed(0)})`,
+    );
+    // Each cell is substantial (well over a collapsed content height) and its pane
+    // frame fills the cell.
+    const framesFillCells = stageCells().every((c) => {
+      const cr = c.getBoundingClientRect();
+      const fr = cellFrame(c)?.getBoundingClientRect();
+      return !!fr && cr.height > 80 && near(fr.height, cr.height, 6) && near(fr.width, cr.width, 6);
+    });
+    report(framesFillCells, "each cell's pane frame fills its cell (height/width match)");
+    // The ref ring is on the CELL: the ref cell's rect is one grid COLUMN wide
+    // (≈ half the grid), never the full overlay width.
+    const refCellRect = refCell.getBoundingClientRect();
+    const ringOnCell = refCellRect.width < gRect.width - 20;
+    report(ringOnCell, `the reference ring is on its CELL (${refCellRect.width.toFixed(0)}px), not the overlay (${gRect.width.toFixed(0)}px)`);
+    ok = ok && cellsFillHeight && framesFillCells && ringOnCell;
+  }
+
+  // === Bug 6 — the "Set as reference" button does NOT overlap the pane toolbar. ==
+  {
+    const nonRef = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
+    const setRef = nonRef.querySelector<HTMLElement>("[data-cairn-stage-set-ref]")!;
+    const tb = cellToolbar(nonRef);
+    const setRefRect = setRef.getBoundingClientRect();
+    const tbRect = tb?.getBoundingClientRect();
+    const noOverlap = !!tbRect && !rectsIntersect(setRefRect, tbRect);
+    report(!!tb, "the stage cell has a pane toolbar to avoid");
+    report(noOverlap, `Set-as-reference (${setRefRect.top.toFixed(0)},${setRefRect.left.toFixed(0)}) does NOT intersect the toolbar rect`);
+    const setRefVisible = setRefRect.width > 0 && setRefRect.height > 0;
+    report(setRefVisible, "the Set-as-reference button is still visible/laid-out");
+    ok = ok && noOverlap && setRefVisible;
+  }
+
+  // === Bug 3 + Bug 4 — settings SYNC across the stage + a toolbar menu opened
+  //     INSIDE the stage floats ABOVE the backdrop (reachable/clickable). Drive a
+  //     REAL colormap change on cell A and assert (a) the menu was on top and (b)
+  //     cell B's colormap FOLLOWS. ==============================================
+  {
+    const cells = stageCells();
+    const cellA = cells[0]!;
+    const cellB = cells[1]!;
+    const btnA = cmapButton(cellA);
+    const btnB = cmapButton(cellB);
+    if (btnA && btnB) {
+      const faceBefore = (btnB.textContent ?? "").trim();
+      const ul = await openListbox(btnA);
+      report(!!ul, "a stage cell's colormap menu opens (portaled listbox present)");
+      if (ul) {
+        // Bug 4 — the portaled menu paints ABOVE the stage backdrop: elementFromPoint
+        // at a menu OPTION returns that option, not the stage backdrop underneath.
+        const opts = Array.from(ul.querySelectorAll<HTMLButtonElement>('li[role="option"] button'));
+        const target = opts.find((o) => (o.textContent ?? "").trim() !== faceBefore) ?? opts[1] ?? opts[0]!;
+        const menuZ = Number(getComputedStyle(ul).zIndex);
+        const bdZ = Number(getComputedStyle(stageBackdrop()!).zIndex);
+        const zAbove = menuZ > bdZ;
+        report(zAbove, `the in-stage menu z (${menuZ}) is ABOVE the stage backdrop z (${bdZ})`);
+        const tr = target.getBoundingClientRect();
+        const hit = document.elementFromPoint(Math.round(tr.left + tr.width / 2), Math.round(tr.top + tr.height / 2));
+        const hitIsMenu = !!hit && !!hit.closest('ul[role="listbox"]');
+        report(hitIsMenu, `elementFromPoint at a menu item hits the MENU, not the stage backdrop (${hit?.tagName ?? "null"})`);
+        const wantLabel = (target.textContent ?? "").trim();
+        target.click();
+        // Bug 3 — cell B's colormap menu face follows cell A's pick (shared group).
+        const bFollowed = await waitFor(() => (cmapButton(cellB)?.textContent ?? "").trim() === wantLabel, 3000);
+        report(bFollowed, `changing colormap on cell A → cell B follows ("${faceBefore}" → "${wantLabel}")`);
+        ok = ok && zAbove && hitIsMenu && bFollowed;
+      } else {
+        ok = false;
+      }
+    } else {
+      report(false, "stage cells expose a colormap toolbar menu (needed for Bug 3/4)");
+      ok = false;
+    }
+  }
 
   // Close the enlarge stage (✕), bar comes back.
   (bd.querySelector("[data-cairn-plot-stage-close]") as HTMLButtonElement).click();
@@ -337,6 +488,102 @@ async function run(): Promise<boolean> {
     ((document.scrollingElement as HTMLElement | null) ?? document.body).style.overflow !== "hidden";
   report(scrollRestored, "page scroll is restored on close");
   ok = ok && closedByEsc && scrollRestored;
+
+  // === Bug 8 (2 images) — Enlarge → cells FILL the overlay in ONE row; each cell
+  //     rect height ≈ the grid content height; the pane fills its cell. ===========
+  // Drop to a 2-selection (toggle C off — it is not the current reference).
+  clickPane(fc, true);
+  const twoSel = await waitFor(() => store.count() === 2);
+  report(twoSel, `dropped to a 2-pane selection (count ${store.count()})`);
+  const bar2 = await waitFor(() => !!actionBar());
+  report(bar2, "the action bar is back for the 2-selection");
+  (actionBar()!.querySelector('[data-cairn-action="enlarge"]') as HTMLButtonElement).click();
+  const enl2Up = await waitFor(() => !!stageBackdrop() && stageCells().length === 2);
+  report(enl2Up, `Enlarge with 2 images → a 2-cell grid (got ${stageCells().length})`);
+  if (enl2Up) {
+    const g = stageGrid()!;
+    const gRect = g.getBoundingClientRect();
+    const cs = getComputedStyle(g);
+    const gInnerH = gRect.height - parseFloat(cs.paddingTop || "0") - parseFloat(cs.paddingBottom || "0");
+    const cells = stageCells();
+    // ONE row: every cell's height ≈ the full grid content height (fills, not the
+    // upper half — the exact defect Bug 8 describes).
+    const eachFillsHeight = cells.every((c) => near(c.getBoundingClientRect().height, gInnerH, 8));
+    report(eachFillsHeight, `each of the 2 cells fills the FULL overlay content height (~${gInnerH.toFixed(0)}px)`);
+    // Two columns: each cell is ~half the grid width (the ring is per-cell).
+    const eachHalfWidth = cells.every((c) => c.getBoundingClientRect().width < gRect.width * 0.75);
+    report(eachHalfWidth, "each cell occupies ~one column (ring lives on the cell, not the overlay)");
+    // The pane frame fills its cell.
+    const panesFill = cells.every((c) => {
+      const cr = c.getBoundingClientRect();
+      const fr = cellFrame(c)?.getBoundingClientRect();
+      return !!fr && near(fr.height, cr.height, 6) && near(fr.width, cr.width, 6);
+    });
+    report(panesFill, "each 2-image cell's pane fills the cell");
+    ok = ok && eachFillsHeight && eachHalfWidth && panesFill;
+
+    // === Bug 7 (enlarge) — re-pick the reference IN the enlarge grid: the ORANGE
+    //     ref badge MOVES to the clicked cell, live (no reopen). =================
+    const refBefore = bd2RefRepr();
+    const nonRefCell = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
+    const newRef = nonRefCell.getAttribute("data-stage-repr-pane")!;
+    (nonRefCell.querySelector("[data-cairn-stage-set-ref]") as HTMLButtonElement).click();
+    const badgeMoved = await waitFor(() => bd2RefRepr() === newRef && store.reference() === newRef, 3000);
+    report(badgeMoved, `enlarge re-pick moved the reference badge live (${refBefore} → ${bd2RefRepr()})`);
+    // The newly-referenced cell now rings orange.
+    const newRefCell = stageCells().find((c) => c.getAttribute("data-stage-repr-pane") === newRef)!;
+    const newRefOrange = normColor(getComputedStyle(newRefCell).outlineColor) === ORANGE;
+    report(newRefOrange, "the re-picked cell now rings ORANGE");
+    ok = ok && badgeMoved && newRefOrange;
+
+    (stageBackdrop()!.querySelector("[data-cairn-plot-stage-close]") as HTMLButtonElement).click();
+    await waitFor(() => !stageBackdrop());
+  } else {
+    ok = false;
+  }
+
+  // === Bug 8 (2 images, compare) — Compare → ONE comparison pane that fills the
+  //     WHOLE overlay content area. ===============================================
+  const bar3 = await waitFor(() => !!actionBar());
+  report(bar3, "the action bar returns before Compare (2 images)");
+  (actionBar()!.querySelector('[data-cairn-action="compare"]') as HTMLButtonElement).click();
+  const cmp1Up = await waitFor(() => !!stageBackdrop() && stageCells().length === 1);
+  report(cmp1Up, `Compare with 2 images → a single comparison pane (got ${stageCells().length})`);
+  if (cmp1Up) {
+    const g = stageGrid()!;
+    const gRect = g.getBoundingClientRect();
+    const cs = getComputedStyle(g);
+    const gInnerH = gRect.height - parseFloat(cs.paddingTop || "0") - parseFloat(cs.paddingBottom || "0");
+    const gInnerW = gRect.width - parseFloat(cs.paddingLeft || "0") - parseFloat(cs.paddingRight || "0");
+    const cell = stageCells()[0]!;
+    const cr = cell.getBoundingClientRect();
+    const fillsArea = near(cr.height, gInnerH, 8) && near(cr.width, gInnerW, 8);
+    report(fillsArea, `the single compare pane FILLS the overlay content area (${cr.width.toFixed(0)}x${cr.height.toFixed(0)} vs ${gInnerW.toFixed(0)}x${gInnerH.toFixed(0)})`);
+    const fr = cellFrame(cell)?.getBoundingClientRect();
+    const paneFills = !!fr && near(fr.height, cr.height, 6);
+    report(paneFills, "the compare pane frame fills its cell");
+    ok = ok && fillsArea && paneFills;
+    (stageBackdrop()!.querySelector("[data-cairn-plot-stage-close]") as HTMLButtonElement).click();
+    await waitFor(() => !stageBackdrop());
+  } else {
+    ok = false;
+  }
+
+  // === Bug 1 — CLICK EMPTY SPACE deselects: the selection clears and the action
+  //     bar disappears. ==========================================================
+  {
+    const beforeCount = store.count();
+    report(beforeCount >= 2, `a selection exists before the empty-space click (count ${beforeCount})`);
+    // A stationary press whose target is the bare document body (no pane, no UI).
+    const opts = { bubbles: true, cancelable: true, pointerId: 7, pointerType: "mouse", button: 0, clientX: 3, clientY: 3 };
+    document.body.dispatchEvent(new PointerEvent("pointerdown", opts));
+    document.body.dispatchEvent(new PointerEvent("pointerup", opts));
+    const cleared = await waitFor(() => store.count() === 0, 2000);
+    report(cleared, `clicking empty space cleared the selection (count ${store.count()})`);
+    const barGone = await waitFor(() => !actionBar(), 2000);
+    report(barGone, "the action bar disappeared after deselect");
+    ok = ok && cleared && barGone;
+  }
 
   roots.forEach((r) => r.unmount());
   __resetSelectionOverlayHostForTest();
