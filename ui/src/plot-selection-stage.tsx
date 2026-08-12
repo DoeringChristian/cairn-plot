@@ -221,11 +221,18 @@ const REPICK_SLOP_PX = 5;
 function StageCell({
   spec,
   onPickReference,
+  viewportSyncGroupId,
   settingsSyncGroupId,
   isAnchor,
 }: {
   spec: StageCellSpec;
   onPickReference: () => void;
+  /** Shared VIEWPORT-sync group so zoom/pan on ONE cell broadcasts to every cell
+   *  in the stage — the same mechanism the page-wide selection uses (via
+   *  `PaneSyncContext.viewportSyncGroupId`). Omitting this was the "duplication":
+   *  the stage rebuilt the sync context but dropped the viewport group, so only
+   *  display settings synced, not zoom/pan. */
+  viewportSyncGroupId: string;
   /** Shared settings-sync group so a colormap/tonemap/diff-mode change on ONE
    *  cell broadcasts to every cell in the stage (Bug 3). */
   settingsSyncGroupId: string;
@@ -267,6 +274,9 @@ function StageCell({
     style.outlineOffset = "-2px";
     style.boxShadow = `0 0 0 1px ${REFERENCE_COLOR}, 0 0 8px 1px rgb(${REFERENCE_COLOR_RGB} / 0.5)`;
     style.zIndex = 1;
+  } else {
+    // The whole non-reference cell is the click-to-set-reference target.
+    style.cursor = "pointer";
   }
 
   // Fill the cell (`height:100%`) so N cells stretch to fill the overlay height
@@ -275,13 +285,14 @@ function StageCell({
   // shared settings-sync group threads through the `PaneSyncContext` — the
   // non-selectable stage leaf passes it through to its inner leaf/compare.
   const paneSync = useMemo(
-    () => ({ settingsSyncGroupId, syncIsAnchor: isAnchor }),
-    [settingsSyncGroupId, isAnchor],
+    () => ({ viewportSyncGroupId, settingsSyncGroupId, syncIsAnchor: isAnchor }),
+    [viewportSyncGroupId, settingsSyncGroupId, isAnchor],
   );
 
   return (
     <div
       style={style}
+      title={spec.isReference ? undefined : "Click to set as the reference"}
       data-cairn-stage-cell=""
       data-cairn-stage-ref={spec.isReference ? "true" : "false"}
       data-stage-repr-pane={spec.reprPaneId}
@@ -342,36 +353,11 @@ function StageCell({
         </span>
       )}
 
-      {/* Re-pick affordance for any NON-reference cell. */}
-      {!spec.isReference && (
-        <button
-          type="button"
-          data-cairn-stage-set-ref=""
-          title="Make this the reference"
-          onClick={(e) => {
-            e.stopPropagation();
-            onPickReference();
-          }}
-          className="border border-border bg-bg-elevated/90 text-fg-muted hover:text-fg hover:bg-bg-hover focus:outline-none focus:ring-2 focus:ring-accent"
-          style={{
-            // BOTTOM-CENTRE, clear of the pane toolbar (top-right) and the REF
-            // chip (top-left) — Bug 6: at top-right it sat exactly under the
-            // toolbar and was unreachable.
-            position: "absolute",
-            bottom: 6,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 2,
-            padding: "2px 8px",
-            borderRadius: 9999,
-            fontSize: 11,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          Set as reference
-        </button>
-      )}
+      {/* No explicit "set reference" button: the WHOLE non-reference cell is the
+          click target (see `onPointerUpCapture`), discoverable via the pointer
+          cursor + tooltip below. An absolutely-positioned button had nowhere to
+          live that didn't collide with pane chrome — top-right = toolbar,
+          bottom = the compare metrics/label chips. */}
     </div>
   );
 }
@@ -383,15 +369,23 @@ function StageCell({
 function SelectionStage({
   mode,
   entries,
+  imageCount,
   requestedReference,
   originRef,
   onClose,
+  onSwitchMode,
 }: {
   mode: StageMode;
   entries: RegisteredPane[];
+  /** How many of the selected panes can be compared (image-compatible). Compare
+   *  needs ≥2; below that the toggle's Compare segment is disabled. */
+  imageCount: number;
   requestedReference: string | null;
   originRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
+  /** Switch the live stage to the other mode (enlarge ⇄ compare) without
+   *  closing — the reference pin + selection carry over. */
+  onSwitchMode: (mode: StageMode) => void;
 }) {
   const store = getGlobalSelectionStore();
 
@@ -403,11 +397,12 @@ function SelectionStage({
   const cells = built.cells;
   const cols = gridColumns(cells.length);
 
-  // ONE settings-sync group for the whole stage — stable across ref re-picks /
-  // cell rebuilds within a single open stage — so a display-setting change on any
-  // cell (colormap / tonemap / exposure / peak / diff mode) broadcasts to every
-  // other cell (Bug 3). Distinct from the page-wide selection group; the stage
-  // renders FRESH leaves, so it needs its own bus.
+  // TWO stage-wide sync groups — stable across ref re-picks / cell rebuilds
+  // within a single open stage — so any zoom/pan (viewport) or display-setting
+  // (colormap / tonemap / exposure / peak / diff mode) change on one cell
+  // broadcasts to every other cell. Same mechanism the page-wide selection uses;
+  // distinct ids because the stage renders FRESH leaves off its own buses.
+  const viewportSyncGroupId = useId();
   const settingsSyncGroupId = useId();
 
   return (
@@ -420,38 +415,109 @@ function SelectionStage({
       frameAttr="data-cairn-plot-stage-frame"
       closeAttr="data-cairn-plot-stage-close"
     >
-      <div
-        data-cairn-stage-grid=""
-        data-cairn-stage-mode={mode}
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          gridAutoRows: "1fr",
-          gap: 8,
-          width: "100%",
-          height: "100%",
-          minHeight: 0,
-          padding: 8,
-          overflow: "auto",
-        }}
-      >
-        {cells.length === 0 ? (
-          <div className="text-fg-muted" style={{ padding: 16, fontSize: 13 }}>
-            Nothing to {mode === "compare" ? "compare" : "enlarge"}.
-          </div>
-        ) : (
-          cells.map((spec, i) => (
-            <StageCell
-              key={spec.key}
-              spec={spec}
-              onPickReference={() => store.setReference(spec.reprPaneId)}
-              settingsSyncGroupId={settingsSyncGroupId}
-              isAnchor={i === 0}
-            />
-          ))
-        )}
+      <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", minHeight: 0 }}>
+        <StageModeToggle mode={mode} imageCount={imageCount} onSwitchMode={onSwitchMode} />
+        <div
+          data-cairn-stage-grid=""
+          data-cairn-stage-mode={mode}
+          style={{
+            flex: "1 1 0%",
+            display: "grid",
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            gridAutoRows: "1fr",
+            gap: 8,
+            width: "100%",
+            minHeight: 0,
+            padding: 8,
+            overflow: "auto",
+          }}
+        >
+          {cells.length === 0 ? (
+            <div className="text-fg-muted" style={{ padding: 16, fontSize: 13 }}>
+              Nothing to {mode === "compare" ? "compare" : "enlarge"}.
+            </div>
+          ) : (
+            cells.map((spec, i) => (
+              <StageCell
+                key={spec.key}
+                spec={spec}
+                onPickReference={() => store.setReference(spec.reprPaneId)}
+                viewportSyncGroupId={viewportSyncGroupId}
+                settingsSyncGroupId={settingsSyncGroupId}
+                isAnchor={i === 0}
+              />
+            ))
+          )}
+        </div>
       </div>
     </FullscreenOverlayShell>
+  );
+}
+
+/** The in-stage segmented control that toggles the live stage between ENLARGE
+ *  and COMPARE. Answers "I picked a reference in enlarge — now compare against
+ *  it": switching to Compare rebuilds the grid as each non-reference vs the
+ *  (carried-over) reference. Compare is disabled below 2 image-compatible panes.
+ *  Reuses the same segmented styling as the pre-stage action bar. */
+function StageModeToggle({
+  mode,
+  imageCount,
+  onSwitchMode,
+}: {
+  mode: StageMode;
+  imageCount: number;
+  onSwitchMode: (mode: StageMode) => void;
+}) {
+  const compareDisabled = imageCount < 2;
+  const seg = (m: StageMode, label: string, disabled: boolean, title: string) => {
+    const active = mode === m;
+    return (
+      <button
+        type="button"
+        data-cairn-stage-mode-btn={m}
+        data-active={active ? "true" : "false"}
+        disabled={disabled}
+        title={title}
+        onClick={() => !disabled && !active && onSwitchMode(m)}
+        className={
+          active
+            ? "bg-accent text-white"
+            : "text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:cursor-not-allowed"
+        }
+        style={{
+          padding: "4px 14px",
+          borderRadius: 9999,
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: disabled || active ? "default" : "pointer",
+          border: "none",
+          background: active ? undefined : "transparent",
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div
+      data-cairn-stage-toolbar=""
+      style={{ display: "flex", justifyContent: "center", padding: "8px 8px 0", flex: "0 0 auto" }}
+    >
+      <div
+        className="rounded-full border border-border bg-bg-elevated shadow-sm"
+        style={{ display: "flex", alignItems: "center", gap: 2, padding: 3, borderRadius: 9999 }}
+      >
+        {seg("enlarge", "Enlarge", false, "Show every selected pane enlarged")}
+        {seg(
+          "compare",
+          "Compare",
+          compareDisabled,
+          compareDisabled
+            ? "Select at least 2 image panes to compare against the reference"
+            : "Compare each selected image against the reference (last-selected)",
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -618,9 +684,16 @@ function SelectionOverlayRoot() {
         <SelectionStage
           mode={stage}
           entries={entries}
+          imageCount={imageCount}
           requestedReference={snap.reference}
           originRef={originRef}
           onClose={() => setStage(null)}
+          onSwitchMode={(m) => {
+            // Guard the same invariant the action bar does: never enter compare
+            // without ≥2 image-compatible panes (the toggle disables it too).
+            if (m === "compare" && imageCount < 2) return;
+            setStage(m);
+          }}
         />
       )}
       {showBar && (

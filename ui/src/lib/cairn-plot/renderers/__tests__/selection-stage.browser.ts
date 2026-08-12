@@ -132,9 +132,6 @@ function stageCells(): HTMLElement[] {
 }
 
 // --- geometry / outcome helpers (the point of THIS harness — not "el exists") ---
-function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
-  return !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top);
-}
 /** ~equal within a few px (layout rounding / sub-pixel). */
 function near(a: number, b: number, tol = 4): boolean {
   return Math.abs(a - b) <= tol;
@@ -152,10 +149,6 @@ function cellFrame(cell: HTMLElement): HTMLElement | null {
 function cmapButton(cell: HTMLElement): HTMLButtonElement | null {
   return cell.querySelector<HTMLButtonElement>('button[aria-label="Colormap"]');
 }
-/** The pane toolbar inside a stage cell (top-right, `role="toolbar"`). */
-function cellToolbar(cell: HTMLElement): HTMLElement | null {
-  return cell.querySelector<HTMLElement>('[role="toolbar"]');
-}
 /** Open a toolbar menu button and resolve its portaled listbox. */
 async function openListbox(btn: HTMLButtonElement): Promise<HTMLUListElement | null> {
   btn.click();
@@ -164,6 +157,40 @@ async function openListbox(btn: HTMLButtonElement): Promise<HTMLUListElement | n
 }
 function normColor(c: string): string {
   return c.replace(/\s+/g, " ").trim();
+}
+/** Re-pick a stage cell's reference via the whole-cell click gesture (a
+ *  stationary pointerdown+pointerup on the cell background) — the affordance
+ *  that replaced the removed "Set as reference" button. Clicks a spot away from
+ *  the toolbar so the gesture is not swallowed as an on-control press. */
+function repickViaCellClick(cell: HTMLElement): void {
+  const r = cell.getBoundingClientRect();
+  const x = Math.round(r.left + r.width / 2);
+  const y = Math.round(r.bottom - 8); // low in the cell — clear of the top-right toolbar
+  const opts = {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    pointerType: "mouse",
+    button: 0,
+    clientX: x,
+    clientY: y,
+  };
+  cell.dispatchEvent(new PointerEvent("pointerdown", opts));
+  cell.dispatchEvent(new PointerEvent("pointerup", opts));
+}
+/** The stage's mode-toggle segment button for a given mode. */
+function stageModeBtn(mode: "enlarge" | "compare"): HTMLButtonElement | null {
+  const bd = stageBackdrop();
+  return bd?.querySelector<HTMLButtonElement>(`[data-cairn-stage-mode-btn="${mode}"]`) ?? null;
+}
+/** The CPU image pane's transformed wrapper (`transform: translate(pan) scale(zoom)`)
+ *  inside a stage cell — the DOM signal a zoom/pan is applied to. */
+function zoomWrapper(cell: HTMLElement): HTMLElement | null {
+  const pane = cell.querySelector<HTMLElement>("[data-cpu-image-pane]");
+  if (!pane) return null;
+  return Array.from(pane.querySelectorAll<HTMLElement>("*")).find((el) =>
+    /scale\(/.test(el.style.transform),
+  ) ?? null;
 }
 const ORANGE = "rgb(245, 158, 11)"; // REFERENCE_COLOR (#f59e0b)
 /** The repr-pane id of the CURRENT stage's reference cell (the orange-ringed one). */
@@ -346,19 +373,92 @@ async function run(): Promise<boolean> {
     ok = ok && cellsFillHeight && framesFillCells && ringOnCell;
   }
 
-  // === Bug 6 — the "Set as reference" button does NOT overlap the pane toolbar. ==
+  // === Bug 6 — NO fixed "Set as reference" button (it had nowhere to sit that
+  // didn't collide with pane chrome: toolbar top, compare metrics bottom). The
+  // WHOLE non-reference cell is the click target (cursor:pointer). ==
   {
     const nonRef = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
-    const setRef = nonRef.querySelector<HTMLElement>("[data-cairn-stage-set-ref]")!;
-    const tb = cellToolbar(nonRef);
-    const setRefRect = setRef.getBoundingClientRect();
-    const tbRect = tb?.getBoundingClientRect();
-    const noOverlap = !!tbRect && !rectsIntersect(setRefRect, tbRect);
-    report(!!tb, "the stage cell has a pane toolbar to avoid");
-    report(noOverlap, `Set-as-reference (${setRefRect.top.toFixed(0)},${setRefRect.left.toFixed(0)}) does NOT intersect the toolbar rect`);
-    const setRefVisible = setRefRect.width > 0 && setRefRect.height > 0;
-    report(setRefVisible, "the Set-as-reference button is still visible/laid-out");
-    ok = ok && noOverlap && setRefVisible;
+    const noButton = !nonRef.querySelector("[data-cairn-stage-set-ref]");
+    report(noButton, "no absolutely-positioned Set-as-reference button (removed — collided with toolbar/metrics)");
+    const clickable = getComputedStyle(nonRef).cursor === "pointer";
+    report(clickable, `the non-reference cell itself is the click target (cursor: ${getComputedStyle(nonRef).cursor})`);
+    ok = ok && noButton && clickable;
+  }
+
+  // === MODE TOGGLE — the in-stage segmented control switches the LIVE stage
+  //     enlarge ⇄ compare (so "I picked a reference, now compare against it"
+  //     works WITHOUT reopening). Enlarge is active; Compare is enabled (3 image
+  //     panes). Switch to compare (2 comparison cells) and back to enlarge. ======
+  {
+    const enlargeSeg = stageModeBtn("enlarge");
+    const compareSeg = stageModeBtn("compare");
+    const togglePresent = !!enlargeSeg && !!compareSeg;
+    report(togglePresent, "the stage shows an Enlarge/Compare mode toggle");
+    const enlargeActive = enlargeSeg?.getAttribute("data-active") === "true";
+    const compareEnabled = !!compareSeg && !compareSeg.disabled;
+    report(enlargeActive, "Enlarge is the active toggle segment in the enlarge stage");
+    report(compareEnabled, "Compare is enabled in the toggle (3 image-compatible panes)");
+    ok = ok && togglePresent && enlargeActive && compareEnabled;
+    if (compareSeg && enlargeSeg) {
+      compareSeg.click();
+      const switched = await waitFor(
+        () =>
+          !!stageBackdrop()?.querySelector('[data-cairn-stage-grid][data-cairn-stage-mode="compare"]') &&
+          stageCells().length === 2,
+        3000,
+      );
+      report(switched, "the toggle switches the live stage into COMPARE (2 comparison cells) — no reopen");
+      // Switch back so the rest of the enlarge assertions have their 3 leaves.
+      stageModeBtn("enlarge")!.click();
+      const back = await waitFor(
+        () =>
+          !!stageBackdrop()?.querySelector('[data-cairn-stage-grid][data-cairn-stage-mode="enlarge"]') &&
+          stageCells().length === 3,
+        3000,
+      );
+      report(back, "the toggle switches back to ENLARGE (3 cells restored)");
+      ok = ok && switched && back;
+    }
+  }
+
+  // === VIEWPORT SYNC — the fix for "viewports not synced in multi-enlarge".
+  //     Drive a REAL ctrl+wheel zoom on cell A's viewport and assert cell B zooms
+  //     to the SAME transform: the stage cells now share ONE viewportSyncGroupId
+  //     (the group the stage previously dropped while keeping only settings). ====
+  {
+    const cells = stageCells();
+    const vpA = cells[0]?.querySelector<HTMLElement>("[data-cpu-image-viewport]") ?? null;
+    const wrapA = cells[0] ? zoomWrapper(cells[0]) : null;
+    const wrapB = cells[1] ? zoomWrapper(cells[1]) : null;
+    if (vpA && wrapA && wrapB) {
+      const beforeB = getComputedStyle(wrapB).transform;
+      const r = vpA.getBoundingClientRect();
+      const cx = Math.round(r.left + r.width / 2);
+      const cy = Math.round(r.top + r.height / 2);
+      for (let i = 0; i < 4; i++) {
+        vpA.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: -120,
+            ctrlKey: true, // the zoom signature the viewport handler requires
+            bubbles: true,
+            cancelable: true,
+            clientX: cx,
+            clientY: cy,
+          }),
+        );
+        await sleep(20);
+      }
+      const propagated = await waitFor(() => getComputedStyle(wrapB).transform !== beforeB, 3000);
+      report(propagated, "ctrl+wheel zoom on enlarge cell A PROPAGATES to cell B (viewport sync)");
+      const tA = getComputedStyle(wrapA).transform;
+      const tB = getComputedStyle(wrapB).transform;
+      const synced = tA === tB && tA !== "matrix(1, 0, 0, 1, 0, 0)" && tA !== "none";
+      report(synced, `both enlarge cells share the SAME zoomed viewport transform (A=${tA}, B=${tB})`);
+      ok = ok && propagated && synced;
+    } else {
+      report(false, "could not locate the CPU image viewport/wrapper for the viewport-sync probe");
+      ok = false;
+    }
   }
 
   // === Bug 3 + Bug 4 — settings SYNC across the stage + a toolbar menu opened
@@ -440,9 +540,8 @@ async function run(): Promise<boolean> {
 
   // --- 4. Re-pick the reference IN the grid → comparisons rebuild ------------
   const reprBefore = new Set(reprPanes);
-  const setRefBtn = stageCells()[0].querySelector("[data-cairn-stage-set-ref]") as HTMLButtonElement;
   const newRefId = stageCells()[0].getAttribute("data-stage-repr-pane")!;
-  setRefBtn.click();
+  repickViaCellClick(stageCells()[0]);
   const refChanged = await waitFor(() => store.reference() === newRefId);
   report(refChanged, `clicking a cell's REF affordance re-designates the reference (now ${store.reference()})`);
   const rebuilt = await waitFor(() => {
@@ -527,7 +626,7 @@ async function run(): Promise<boolean> {
     const refBefore = bd2RefRepr();
     const nonRefCell = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
     const newRef = nonRefCell.getAttribute("data-stage-repr-pane")!;
-    (nonRefCell.querySelector("[data-cairn-stage-set-ref]") as HTMLButtonElement).click();
+    repickViaCellClick(nonRefCell);
     const badgeMoved = await waitFor(() => bd2RefRepr() === newRef && store.reference() === newRef, 3000);
     report(badgeMoved, `enlarge re-pick moved the reference badge live (${refBefore} → ${bd2RefRepr()})`);
     // The newly-referenced cell now rings orange.
