@@ -214,7 +214,7 @@ def build_report() -> cp.Report:
         "false-color views."
     )
     rep.md("### Image — baked inline")
-    rep.add(cp.Image(_gradient_image(96, 64)))
+    rep.add(cp.Image(_gradient_image(96, 64), label="gradient"))
     base = _gradient_image(120, 80)
     rep.md(
         "### Image processing — exposure · colormap · gamma sweep\n\n"
@@ -222,11 +222,12 @@ def build_report() -> cp.Report:
     )
     rep.grid(
         [
-            [cp.Image(base, exposure=-2.0), cp.Image(base), cp.Image(base, exposure=2.0)],
+            [cp.Image(base, exposure=-2.0, label="EV −2"), cp.Image(base, label="EV 0"),
+             cp.Image(base, exposure=2.0, label="EV +2")],
             [
-                cp.Image(base, gamma=0.5),
-                cp.Image(base, colormap="viridis"),
-                cp.Image(base, gamma=2.2),
+                cp.Image(base, gamma=0.5, label="γ 0.5"),
+                cp.Image(base, colormap="viridis", label="viridis"),
+                cp.Image(base, gamma=2.2, label="γ 2.2"),
             ],
         ]
     )
@@ -245,10 +246,10 @@ def build_report() -> cp.Report:
     rep.grid(
         [
             [
-                cp.Image(hdr, tonemap="linear"),
-                cp.Image(hdr, tonemap="srgb"),
-                cp.Image(hdr, tonemap="reinhard"),
-                cp.Image(hdr, tonemap="aces"),
+                cp.Image(hdr, tonemap="linear", label="linear"),
+                cp.Image(hdr, tonemap="srgb", label="srgb"),
+                cp.Image(hdr, tonemap="reinhard", label="reinhard"),
+                cp.Image(hdr, tonemap="aces", label="aces"),
             ]
         ]
     )
@@ -256,10 +257,10 @@ def build_report() -> cp.Report:
     rep.grid(
         [
             [
-                cp.Image(hdr, tonemap="srgb", exposure=-2.0),
-                cp.Image(hdr, tonemap="srgb", exposure=0.0),
-                cp.Image(hdr, tonemap="srgb", exposure=2.0),
-                cp.Image(hdr, tonemap="aces", exposure=2.0),
+                cp.Image(hdr, tonemap="srgb", exposure=-2.0, label="srgb · EV −2"),
+                cp.Image(hdr, tonemap="srgb", exposure=0.0, label="srgb · EV 0"),
+                cp.Image(hdr, tonemap="srgb", exposure=2.0, label="srgb · EV +2"),
+                cp.Image(hdr, tonemap="aces", exposure=2.0, label="aces · EV +2"),
             ]
         ]
     )
@@ -280,25 +281,25 @@ def build_report() -> cp.Report:
     rep.md("### Zoomable split w/ TEV-style pixel values (small image)")
     rep.add(
         cp.Compare(
-            cp.Image(small_a), cp.Image(small_b), mode="slide", split_position=0.5
+            cp.Image(small_a, label="prediction"), cp.Image(small_b, label="reference"), mode="slide", split_position=0.5
         )
     )
     rep.md("### All modes — slide · blend · diff")
     rep.grid(
         [
             [
-                cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend"),
+                cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="blend"),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="slide", split_position=0.5
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="slide", split_position=0.5
                 ),
             ],
             [
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="blend", blend_alpha=0.5
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="blend", blend_alpha=0.5
                 ),
                 cp.Compare(
-                    cp.Image(img_a),
-                    cp.Image(img_b),
+                    cp.Image(img_a, label="prediction"),
+                    cp.Image(img_b, label="reference"),
                     mode="signed",
                     colormap="red-blue",
                 ),
@@ -316,24 +317,24 @@ def build_report() -> cp.Report:
         [
             [
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="signed", colormap="red-blue",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="abs", colormap="viridis",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs", colormap="viridis",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="square", colormap="viridis",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="square", colormap="viridis",
                 ),
             ],
             [
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="rel_signed", colormap="red-blue",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_signed", colormap="red-blue",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="rel_abs", colormap="viridis",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_abs", colormap="viridis",
                 ),
                 cp.Compare(
-                    cp.Image(img_a), cp.Image(img_b), mode="rel_square", colormap="red-green",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_square", colormap="red-green",
                 ),
             ],
         ]
@@ -368,15 +369,15 @@ def build_report() -> cp.Report:
         [
             [
                 cp.Compare(
-                    cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
+                    cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
                     colormap="viridis",
                 ),
                 cp.Compare(
-                    cp.Image(flip_pred), cp.Image(flip_ref), mode="ssim",
+                    cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="ssim",
                     colormap="viridis",
                 ),
                 cp.Compare(
-                    cp.Image(flip_pred), cp.Image(flip_ref), mode="abs",
+                    cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="abs",
                     colormap="viridis",
                 ),
             ]
@@ -411,9 +412,9 @@ def build_report() -> cp.Report:
         rep.grid(
             [
                 [
-                    cp.Image(_official_u8),
+                    cp.Image(_official_u8, label="official FLIP"),
                     cp.Compare(
-                        cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
+                        cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
                         # magma to match the official flip-evaluator's magma-colored map.
                         colormap="magma",
                     ),
@@ -455,11 +456,11 @@ def build_report() -> cp.Report:
         [
             [
                 cp.Compare(
-                    cp.Image(hdr_pred), cp.Image(hdr_ref), mode="flip",
+                    cp.Image(hdr_pred, label="prediction"), cp.Image(hdr_ref, label="reference"), mode="flip",
                     colormap="viridis",
                 ),
                 cp.Compare(
-                    cp.Image(hdr_pred), cp.Image(hdr_ref), mode="flip_ldr",
+                    cp.Image(hdr_pred, label="prediction"), cp.Image(hdr_ref, label="reference"), mode="flip_ldr",
                     colormap="viridis",
                 ),
             ]
@@ -480,7 +481,7 @@ def build_report() -> cp.Report:
     sync_b = _gradient_image(160, 120, shift=0.3)
     rep.md("### Synced image controls — zoom/pan linked")
     rep.grid(
-        [[cp.Image(sync_a), cp.Image(sync_b)]],
+        [[cp.Image(sync_a, label="view A"), cp.Image(sync_b, label="view B")]],
         shared=cp.Shared(sync={"viewport": True}),
     )
     sx = np.linspace(0, 20, 120)
@@ -539,7 +540,7 @@ def build_report() -> cp.Report:
     rep.grid(
         [
             [cp.Line(np.exp(-steps / 12)), cp.Bar([2, 5, 3], labels=["x", "y", "z"])],
-            [cp.Image(_gradient_image(80, 60)), cp.Histogram(rng.normal(size=500), bins=20)],
+            [cp.Image(_gradient_image(80, 60), label="gradient"), cp.Histogram(rng.normal(size=500), bins=20)],
         ],
         col_widths=[0.6, 0.4],
     )

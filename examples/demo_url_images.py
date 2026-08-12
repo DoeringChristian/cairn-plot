@@ -45,7 +45,7 @@ def build_report() -> "cp.Report":
             "ZIP-compressed RGB half-float; decoded by the OpenEXR WASM module "
             "into the float-HDR pane — tone-map and exposure are live."
         )
-        .add(cp.Image(url=f"{ASWF}/TestImages/WideColorGamut.exr", tonemap="aces"))
+        .add(cp.Image(url=f"{ASWF}/TestImages/WideColorGamut.exr", tonemap="aces", label="WideColorGamut"))
         .md(
             "### PIZ EXR — `ScanLines/Desk.exr`\n"
             "PIZ (wavelet+Huffman — OpenEXR's historic default) is decoded by the "
@@ -53,7 +53,7 @@ def build_report() -> "cp.Report":
             "The same module covers every EXR compression, incl. PXR24, B44(A), "
             "DWAA/DWAB, and HTJ2K."
         )
-        .add(cp.Image(url=f"{ASWF}/ScanLines/Desk.exr"))
+        .add(cp.Image(url=f"{ASWF}/ScanLines/Desk.exr", label="Desk"))
         .md(
             "### URL comparison — `SquaresSwirls.exr` vs `WideColorGamut.exr`\n"
             "Both operands are URL-referenced EXRs (PXR24 and ZIP compressed) — "
@@ -64,8 +64,8 @@ def build_report() -> "cp.Report":
         )
         .add(
             cp.Compare(
-                cp.Image(url=f"{ASWF}/TestImages/SquaresSwirls.exr"),
-                cp.Image(url=f"{ASWF}/TestImages/WideColorGamut.exr"),
+                cp.Image(url=f"{ASWF}/TestImages/SquaresSwirls.exr", label="SquaresSwirls"),
+                cp.Image(url=f"{ASWF}/TestImages/WideColorGamut.exr", label="WideColorGamut"),
                 mode="abs",
                 colormap="plasma",
             )
@@ -79,7 +79,7 @@ def build_report() -> "cp.Report":
             "Z-sorted front-to-back and OVER-composited (associated alpha) "
             "into a flat HDR image — fully client-side."
         )
-        .add(cp.Image(url=f"{ASWF}/v2/Stereo/Trunks.exr", tonemap="aces"))
+        .add(cp.Image(url=f"{ASWF}/v2/Stereo/Trunks.exr", tonemap="aces", label="Trunks (deep)"))
     )
 
 

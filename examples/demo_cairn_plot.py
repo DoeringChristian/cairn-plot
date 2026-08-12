@@ -200,7 +200,7 @@ def build_gallery() -> list[tuple[str, object]]:
     ))
 
     # ── media ─────────────────────────────────────────────────────────────
-    items.append(("Image — baked inline", cp.Image(_gradient_image(96, 64))))
+    items.append(("Image — baked inline", cp.Image(_gradient_image(96, 64), label="gradient")))
     items.append((
         "Table",
         cp.Table([
@@ -238,9 +238,10 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "Image processing — exposure & gamma sweep",
         cp.Grid(
-            [[cp.Image(base, exposure=-2.0), cp.Image(base), cp.Image(base, exposure=2.0)],
-             [cp.Image(base, gamma=0.5), cp.Image(base, colormap="viridis"),
-              cp.Image(base, gamma=2.2)]],
+            [[cp.Image(base, exposure=-2.0, label="EV −2"), cp.Image(base, label="EV 0"),
+              cp.Image(base, exposure=2.0, label="EV +2")],
+             [cp.Image(base, gamma=0.5, label="γ 0.5"), cp.Image(base, colormap="viridis", label="viridis"),
+              cp.Image(base, gamma=2.2, label="γ 2.2")]],
         ),
     ))
 
@@ -252,13 +253,13 @@ def build_gallery() -> list[tuple[str, object]]:
         "HDR image — tone-map operators & exposure (true float, real tone-mapping)",
         cp.Grid([
             # the four tone-map operators side by side (highlight roll-off differs)
-            [cp.Image(hdr, tonemap="linear"), cp.Image(hdr, tonemap="srgb"),
-             cp.Image(hdr, tonemap="reinhard"), cp.Image(hdr, tonemap="aces")],
+            [cp.Image(hdr, tonemap="linear", label="linear"), cp.Image(hdr, tonemap="srgb", label="srgb"),
+             cp.Image(hdr, tonemap="reinhard", label="reinhard"), cp.Image(hdr, tonemap="aces", label="aces")],
             # an exposure sweep: lowering exposure recovers blown-out highlights
-            [cp.Image(hdr, tonemap="srgb", exposure=-2.0),
-             cp.Image(hdr, tonemap="srgb", exposure=0.0),
-             cp.Image(hdr, tonemap="srgb", exposure=2.0),
-             cp.Image(hdr, tonemap="aces", exposure=2.0)],
+            [cp.Image(hdr, tonemap="srgb", exposure=-2.0, label="srgb · EV −2"),
+             cp.Image(hdr, tonemap="srgb", exposure=0.0, label="srgb · EV 0"),
+             cp.Image(hdr, tonemap="srgb", exposure=2.0, label="srgb · EV +2"),
+             cp.Image(hdr, tonemap="aces", exposure=2.0, label="aces · EV +2")],
         ]),
     ))
 
@@ -274,7 +275,7 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "Compare — zoomable split w/ TEV-style pixel values "
         "(Alt/Ctrl + wheel to zoom; per-pixel RGB appears when pixels get big)",
-        cp.Compare(cp.Image(small_a), cp.Image(small_b), mode="slide",
+        cp.Compare(cp.Image(small_a, label="prediction"), cp.Image(small_b, label="reference"), mode="slide",
                    split_position=0.5),
     ))
 
@@ -284,13 +285,13 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "Compare — all modes (slide · blend · diff)",
         cp.Grid(
-            [[cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide",
+            [[cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="slide",
                          split_position=0.25),
-              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="slide",
+              cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="slide",
                          split_position=0.5)],
-             [cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="blend",
+             [cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="blend",
                          blend_alpha=0.5),
-              cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="signed", colormap="red-blue")]],
+              cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue")]],
         ),
     ))
     # Every diff submode the renderer supports (see DiffMode in types.ts /
@@ -305,14 +306,14 @@ def build_gallery() -> list[tuple[str, object]]:
         cp.Grid(
             [
                 [
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="abs", colormap="viridis"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="square", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="square", colormap="viridis"),
                 ],
                 [
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_abs", colormap="viridis"),
-                    cp.Compare(cp.Image(img_a), cp.Image(img_b), mode="rel_square", colormap="red-green"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_signed", colormap="red-blue"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_abs", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_square", colormap="red-green"),
                 ],
             ],
         ),
@@ -331,9 +332,9 @@ def build_gallery() -> list[tuple[str, object]]:
         "Perceptual diff — FLIP vs absolute "
         "(pane toolbar: MODE menu slide · blend · kernels; COLORMAP menu)",
         cp.Grid(
-            [[cp.Compare(cp.Image(flip_pred), cp.Image(flip_ref), mode="flip",
+            [[cp.Compare(cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
                          colormap="viridis"),
-              cp.Compare(cp.Image(flip_pred), cp.Image(flip_ref), mode="abs",
+              cp.Compare(cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="abs",
                          colormap="viridis")]],
         ),
     ))
@@ -349,7 +350,7 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "FLIP at scale — 2048×2048 (kernel runs once into the cached result; "
         "zoom in for per-pixel FLIP values)",
-        cp.Compare(cp.Image(big_pred), cp.Image(big_ref), mode="flip",
+        cp.Compare(cp.Image(big_pred, label="prediction"), cp.Image(big_ref, label="reference"), mode="flip",
                    colormap="magma"),
     ))
 
@@ -390,7 +391,7 @@ def build_gallery() -> list[tuple[str, object]]:
         "Grid — 2×2 with per-column widths",
         cp.Grid(
             [[cp.Line(np.exp(-steps / 12)), cp.Bar([2, 5, 3], labels=["x", "y", "z"])],
-             [cp.Image(_gradient_image(80, 60)),
+             [cp.Image(_gradient_image(80, 60), label="gradient"),
               cp.Histogram(rng.normal(size=500), bins=20)]],
             col_widths=[0.6, 0.4],
         ),
@@ -411,7 +412,7 @@ def build_gallery() -> list[tuple[str, object]]:
         "Synced image controls — zoom/pan linked "
         "(Alt/Ctrl + wheel/drag on either pane moves both together)",
         cp.Grid(
-            [[cp.Image(sync_a), cp.Image(sync_b)]],
+            [[cp.Image(sync_a, label="view A"), cp.Image(sync_b, label="view B")]],
             shared=cp.Shared(sync={"viewport": True}),
         ),
     ))
