@@ -53,6 +53,8 @@ import {
   nextSelectionPaneId,
   paneSyncGroups,
   GLOBAL_SELECTION_BASE,
+  REFERENCE_COLOR,
+  REFERENCE_COLOR_RGB,
   type SelectionMode,
 } from "./lib/cairn-plot/viewport/selection-store";
 import { useSyncedImageViewport } from "./lib/cairn-plot/renderers/use-synced-image-viewport";
@@ -134,7 +136,7 @@ interface PaneSyncCtx {
   settingsSyncGroupId?: string;
   syncIsAnchor?: boolean;
 }
-const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
+export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
 
 function Message({ text, error }: { text: string; error?: boolean }) {
   return (
@@ -599,10 +601,20 @@ function PaneSelectionFrame({
   // Grid cells fill their track (rowHeights → height:100%); standalone panes
   // don't. `ChartFillContext` (set by the enclosing `GridView`) tells us which.
   const fill = useContext(ChartFillContext);
+  // The pane-sync context from an ENCLOSING provider (e.g. the fullscreen stage,
+  // which gives its cells a shared settings-sync group). A `selectable={false}`
+  // frame must PASS THIS THROUGH rather than clobber it with `null`, else the
+  // stage's group id never reaches the fresh leaf/compare it wraps (Bug 3).
+  const inheritedPaneSync = useContext(PaneSyncContext);
 
   const subscribe = useCallback((cb: () => void) => store.subscribe(cb), [store]);
-  const getSnapshot = useCallback(() => store.getSelected(), [store]);
-  const selected = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  // Track the COMBINED snapshot ({selected, reference}) — the reference drives
+  // the distinct ORANGE ring on the reference pane (Bug 2), and a reference-only
+  // change keeps `selected` array-stable, so subscribing to `getSelected()` alone
+  // would miss it.
+  const getSnapshot = useCallback(() => store.getSnapshot(), [store]);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const selected = snapshot.selected;
 
   // Register this pane's render descriptor for the page-level stage, and keep it
   // current as the node/source change. Unregister on unmount so the stage never
@@ -646,6 +658,11 @@ function PaneSelectionFrame({
   );
 
   const isSelected = selectable && selected.includes(paneId);
+  // The REFERENCE among a ≥2 selection reads with a DISTINCT orange ring (Bug 2)
+  // — the pane every comparison is taken against. Only meaningful once a pair is
+  // selected; a lone selection is just a highlight, not a reference.
+  const isReference =
+    isSelected && selected.length >= 2 && snapshot.reference === paneId;
   // Sync groups (null unless this pane is one of ≥2 selected) — the shared
   // derivation `paneSyncGroups` against the ONE page-wide base is the same one
   // the integration test asserts on.
@@ -680,18 +697,27 @@ function PaneSelectionFrame({
     ...(fill ? { height: "100%" } : null),
   };
   if (isSelected) {
-    // A CLEARLY VISIBLE selection ring: a full-opacity accent outline plus a soft
-    // accent glow so it reads over busy image/3D content (a 1px 50%-opacity border
-    // — the 3D canvas's decorative chrome — is far too faint to serve as a
-    // selection indicator; that made selection look absent). Every selected pane
-    // (2D and 3D) uses THIS shared ring via `PaneSelectionFrame`, so the look is
-    // consistent everywhere. `outline` + negative offset never shifts layout;
-    // `--color-accent` is the always-defined token. Bug 2: raise the selected cell
-    // (`z-index`) so its ring paints ABOVE later grid siblings (never occluded).
-    style.outline = "2px solid var(--color-accent)";
+    // A CLEARLY VISIBLE selection ring: a full-opacity outline plus a soft glow so
+    // it reads over busy image/3D content (a 1px 50%-opacity border — the 3D
+    // canvas's decorative chrome — is far too faint to serve as a selection
+    // indicator; that made selection look absent). Every selected pane (2D and 3D)
+    // uses THIS shared ring, so the look is consistent everywhere. `outline` +
+    // negative offset never shifts layout. Raise the selected cell (`z-index`) so
+    // its ring paints ABOVE later grid siblings (never occluded).
+    //
+    // The REFERENCE pane (the compare baseline) rings in a DISTINCT ORANGE
+    // (`REFERENCE_COLOR`); every other selected pane rings in the blue
+    // `--color-accent`. Two visually separable states so the reference is obvious.
+    if (isReference) {
+      style.outline = `2px solid ${REFERENCE_COLOR}`;
+      style.boxShadow = `0 0 0 1px ${REFERENCE_COLOR}, 0 0 8px 1px rgb(${REFERENCE_COLOR_RGB} / 0.5)`;
+    } else {
+      style.outline = "2px solid var(--color-accent)";
+      style.boxShadow =
+        "0 0 0 1px var(--color-accent), 0 0 8px 1px rgb(var(--color-accent-rgb) / 0.45)";
+    }
     style.outlineOffset = "-2px";
     style.borderRadius = "4px";
-    style.boxShadow = "0 0 0 1px var(--color-accent), 0 0 8px 1px rgb(var(--color-accent-rgb) / 0.45)";
     style.zIndex = 1;
   }
 
@@ -714,10 +740,11 @@ function PaneSelectionFrame({
       data-plot-pane-id={paneId}
       data-selectable={selectable ? "true" : "false"}
       data-selected={isSelected ? "true" : undefined}
+      data-reference={isReference ? "true" : undefined}
       onPointerDownCapture={selectable ? onPointerDownCapture : undefined}
       onPointerUpCapture={selectable ? onPointerUpCapture : undefined}
     >
-      <PaneSyncContext.Provider value={paneSync}>
+      <PaneSyncContext.Provider value={selectable ? paneSync : inheritedPaneSync}>
         <EnlargeInterceptContext.Provider value={enlargeIntercept}>
           {children}
         </EnlargeInterceptContext.Provider>

@@ -13,6 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  pixelValueClipRect,
   pixelValueFontHeight,
   pixelValueNumbersVisible,
   PIXEL_VALUE_CHAR_W_FRAC,
@@ -21,6 +22,31 @@ import {
   PIXEL_VALUE_MIN_SCREEN_PX,
   PIXEL_VALUE_PAD_FRAC,
 } from "./pixel-value-size.ts";
+
+test("Bug 5 — the draw-clip rect is the image rect EXPANDED so edge/corner numbers aren't truncated", () => {
+  const imageRect = { left: 10, top: 20, right: 110, bottom: 100 };
+  const cellScale = 40;
+  const fontH = pixelValueFontHeight(cellScale, 3, 8);
+  const clip = pixelValueClipRect(imageRect, fontH);
+
+  // The clip strictly CONTAINS the image rect (expanded on every side) — the
+  // tight-clip bug clipped exactly to the image rect, truncating edge glyphs.
+  assert.ok(clip.left < imageRect.left, "expanded on the left");
+  assert.ok(clip.top < imageRect.top, "expanded on the top");
+  assert.ok(clip.right > imageRect.right, "expanded on the right");
+  assert.ok(clip.bottom > imageRect.bottom, "expanded on the bottom");
+
+  // A CORNER texel's glyph reaches the image boundary and its drop shadow pushes
+  // just past it; the clip must cover a point one font-height OUTSIDE the corner
+  // (exactly where the tight clip used to cut).
+  assert.ok(clip.left <= imageRect.left - fontH + 0.01, "covers a shadow one font past the left edge");
+  assert.ok(clip.top <= imageRect.top - fontH + 0.01, "covers a shadow one font past the top edge");
+
+  // The pad is bounded (≈ one font height), so it never balloons into a wide
+  // halo bleed: the expansion on each side is < the cell size.
+  assert.ok(imageRect.left - clip.left < cellScale, "left pad stays under one cell");
+  assert.ok(clip.right - imageRect.right < cellScale, "right pad stays under one cell");
+});
 
 test("font height ignores the string — same size regardless of decimals", () => {
   // The signature literally has no string parameter, so the size is

@@ -44,6 +44,7 @@ import {
   type ScreenToTexelParams,
 } from "../renderers/region-select";
 import {
+  pixelValueClipRect,
   pixelValueFontHeight,
   pixelValueNumbersVisible,
   PIXEL_VALUE_LINE_H_FRAC,
@@ -378,13 +379,22 @@ export default function PixelValueOverlay({
     // into the checkerboard border, so its on-screen box is BIGGER than the
     // actual image — without this clip, a halo/stroke drawn near that border
     // could bleed onto the checkerboard.
-    const imageLeft = quadLeft;
-    const imageTop = quadTop;
-    const imageRight = quadLeft + sf.quadW;
-    const imageBottom = quadTop + sf.quadH;
+    // Bug 5: clip to the image rect EXPANDED by ~one font-height, NOT the exact
+    // rect — a number centred on an EDGE/CORNER texel legitimately reaches the
+    // image boundary (its outer half + drop shadow), and the tight clip truncated
+    // it. The margin bounds any spill to under one cell (see `pixelValueClipRect`).
+    const clip = pixelValueClipRect(
+      {
+        left: quadLeft,
+        top: quadTop,
+        right: quadLeft + sf.quadW,
+        bottom: quadTop + sf.quadH,
+      },
+      fontH,
+    );
     ctx.save();
     ctx.beginPath();
-    ctx.rect(imageLeft, imageTop, imageRight - imageLeft, imageBottom - imageTop);
+    ctx.rect(clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top);
     ctx.clip();
 
     ctx.textAlign = "center";

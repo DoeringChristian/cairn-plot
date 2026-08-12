@@ -32,6 +32,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -39,11 +40,14 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { PlotNodeView, SharedPlotContext } from "./plot-node";
+import { PlotNodeView, SharedPlotContext, PaneSyncContext } from "./plot-node";
+import { ChartFillContext } from "./plot-standalone-helpers";
 import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./plot-descriptor";
 import type { DataSource } from "./lib/cairn-plot";
 import {
   getGlobalSelectionStore,
+  REFERENCE_COLOR,
+  REFERENCE_COLOR_RGB,
   type SelectionSnapshot,
   type StageMode,
 } from "./lib/cairn-plot/viewport/selection-store";
@@ -217,9 +221,16 @@ const REPICK_SLOP_PX = 5;
 function StageCell({
   spec,
   onPickReference,
+  settingsSyncGroupId,
+  isAnchor,
 }: {
   spec: StageCellSpec;
   onPickReference: () => void;
+  /** Shared settings-sync group so a colormap/tonemap/diff-mode change on ONE
+   *  cell broadcasts to every cell in the stage (Bug 3). */
+  settingsSyncGroupId: string;
+  /** The single anchor cell seeds the group's snapshot. */
+  isAnchor: boolean;
 }) {
   const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
@@ -249,11 +260,24 @@ function StageCell({
     overflow: "hidden",
   };
   if (spec.isReference) {
-    style.outline = "2px solid var(--color-accent)";
+    // The reference cell rings in the DISTINCT ORANGE (`REFERENCE_COLOR`), NOT the
+    // blue accent a regular cell would (Bug 2) — the pane every comparison is
+    // taken against reads as special at a glance.
+    style.outline = `2px solid ${REFERENCE_COLOR}`;
     style.outlineOffset = "-2px";
-    style.boxShadow = "0 0 0 1px var(--color-accent), 0 0 8px 1px rgb(var(--color-accent-rgb) / 0.45)";
+    style.boxShadow = `0 0 0 1px ${REFERENCE_COLOR}, 0 0 8px 1px rgb(${REFERENCE_COLOR_RGB} / 0.5)`;
     style.zIndex = 1;
   }
+
+  // Fill the cell (`height:100%`) so N cells stretch to fill the overlay height
+  // (Bug 8): `ChartFillContext=true` makes the fresh `PaneSelectionFrame` +
+  // `ChartBox` fill their track rather than collapse to content height. The
+  // shared settings-sync group threads through the `PaneSyncContext` — the
+  // non-selectable stage leaf passes it through to its inner leaf/compare.
+  const paneSync = useMemo(
+    () => ({ settingsSyncGroupId, syncIsAnchor: isAnchor }),
+    [settingsSyncGroupId, isAnchor],
+  );
 
   return (
     <div
@@ -265,9 +289,13 @@ function StageCell({
       onPointerUpCapture={onPointerUpCapture}
     >
       <div style={{ position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <SharedPlotContext.Provider value={{ source: spec.source, shared: spec.shared }}>
-          <PlotNodeView node={spec.node} />
-        </SharedPlotContext.Provider>
+        <ChartFillContext.Provider value={true}>
+          <PaneSyncContext.Provider value={paneSync}>
+            <SharedPlotContext.Provider value={{ source: spec.source, shared: spec.shared }}>
+              <PlotNodeView node={spec.node} />
+            </SharedPlotContext.Provider>
+          </PaneSyncContext.Provider>
+        </ChartFillContext.Provider>
       </div>
 
       {/* REF badge (enlarge: the reference cell; compare: the shared reference). */}
@@ -285,7 +313,7 @@ function StageCell({
             fontSize: 11,
             fontWeight: 700,
             letterSpacing: "0.04em",
-            background: "var(--color-accent)",
+            background: REFERENCE_COLOR,
             color: "#fff",
             pointerEvents: "none",
           }}
@@ -326,9 +354,13 @@ function StageCell({
           }}
           className="border border-border bg-bg-elevated/90 text-fg-muted hover:text-fg hover:bg-bg-hover focus:outline-none focus:ring-2 focus:ring-accent"
           style={{
+            // BOTTOM-CENTRE, clear of the pane toolbar (top-right) and the REF
+            // chip (top-left) — Bug 6: at top-right it sat exactly under the
+            // toolbar and was unreachable.
             position: "absolute",
-            top: 6,
-            right: 6,
+            bottom: 6,
+            left: "50%",
+            transform: "translateX(-50%)",
             zIndex: 2,
             padding: "2px 8px",
             borderRadius: 9999,
@@ -371,6 +403,13 @@ function SelectionStage({
   const cells = built.cells;
   const cols = gridColumns(cells.length);
 
+  // ONE settings-sync group for the whole stage — stable across ref re-picks /
+  // cell rebuilds within a single open stage — so a display-setting change on any
+  // cell (colormap / tonemap / exposure / peak / diff mode) broadcasts to every
+  // other cell (Bug 3). Distinct from the page-wide selection group; the stage
+  // renders FRESH leaves, so it needs its own bus.
+  const settingsSyncGroupId = useId();
+
   return (
     <FullscreenOverlayShell
       open
@@ -401,11 +440,13 @@ function SelectionStage({
             Nothing to {mode === "compare" ? "compare" : "enlarge"}.
           </div>
         ) : (
-          cells.map((spec) => (
+          cells.map((spec, i) => (
             <StageCell
               key={spec.key}
               spec={spec}
               onPickReference={() => store.setReference(spec.reprPaneId)}
+              settingsSyncGroupId={settingsSyncGroupId}
+              isAnchor={i === 0}
             />
           ))
         )}
@@ -507,6 +548,47 @@ function SelectionOverlayRoot() {
   // A per-pane enlarge button (≥2 selected) routes here via the store's stage
   // channel — open the ENLARGE stage. The action bar sets `stage` directly.
   useEffect(() => store.onStageRequest((m) => setStage(m)), [store]);
+
+  // Bug 1 — CLICK EMPTY SPACE deselects. A stationary press whose target is
+  // neither a selectable pane frame NOR interactive UI (the action bar, a stage
+  // overlay, or any menu/control) clears the whole selection. Tracked down→up
+  // with a small slop so a drag (text-select / pan that begins on the page
+  // background) never counts as a deselect click. Attached at the document while
+  // any selection exists; a no-op when the click lands on a pane or on UI.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    let down: { x: number; y: number; ignore: boolean } | null = null;
+    const isInteractive = (t: EventTarget | null): boolean => {
+      const el = t as Element | null;
+      return !!el?.closest?.(
+        '[data-plot-pane-id][data-selectable="true"],' +
+          "[data-cairn-selection-actionbar]," +
+          "[data-cairn-selection-overlay-host]," +
+          "[data-cairn-plot-stage-backdrop]," +
+          "[data-cairn-plot-enlarge-backdrop]," +
+          'button,input,select,textarea,a,[role="menu"],[role="menuitem"],' +
+          '[role="listbox"],[role="option"],[role="dialog"],[contenteditable="true"]',
+      );
+    };
+    const onDown = (e: PointerEvent) => {
+      down = { x: e.clientX, y: e.clientY, ignore: isInteractive(e.target) };
+    };
+    const onUp = (e: PointerEvent) => {
+      const d = down;
+      down = null;
+      if (!d || d.ignore) return;
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
+      // Never deselect from under an open stage (its own backdrop click closes it).
+      if (isInteractive(e.target)) return;
+      store.clear();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("pointerup", onUp, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("pointerup", onUp, true);
+    };
+  }, [store]);
 
   const entries = useMemo(
     () => snap.selected.map((id) => getRegisteredPane(id)).filter((e): e is RegisteredPane => !!e),
