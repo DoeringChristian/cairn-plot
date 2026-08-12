@@ -60,7 +60,7 @@ import {
   getSelectionRegistryVersion,
   subscribeSelectionRegistry,
   type RegisteredPane,
-} from "./selection-pane-registry";
+} from "./plot-selection-pane-registry";
 
 // ---------------------------------------------------------------------------
 // Store bindings.

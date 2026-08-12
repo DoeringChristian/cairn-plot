@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>selection stage (compare/enlarge) harness</title>
+    <!-- Real compiled Tailwind (committed copy of dist/plot-inline/style.css) so
+         the panes' own layout classes resolve, exactly like a host page. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- `data-cairn-harness="self-driving"` opts this page into the DEFAULT
+         `npm run test:harness` run: it dispatches its OWN pointer/keyboard
+         gestures and settles #status headlessly, so CI gates the compare/enlarge-
+         via-selection feature like the other DOM proofs. -->
+    <meta name="cairn-harness" data-cairn-harness="self-driving" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* A DARK-scoped container wrapping three INDEPENDENT PlotApp mounts (the
+         gallery shape) so the body-portaled action bar + stage must carry the
+         origin pane's theme over. The dark tokens are asserted below. */
+      #scope { background: #0d1117; padding: 8px; }
+      .mount { width: 420px; height: 240px; margin: 10px 0; background: #222; }
+    </style>
+  </head>
+  <body>
+    <h1>plot-selection-stage.tsx — compare/enlarge via selection harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div
+      id="scope"
+      class="cairn-plot-doc"
+      data-theme="dark"
+      style="
+        color-scheme: dark;
+        --color-bg: #0d1117; --color-bg-rgb: 13 17 23;
+        --color-bg-elevated: #161b22; --color-bg-elevated-rgb: 22 27 34;
+        --color-bg-hover: #21262d; --color-bg-hover-rgb: 33 38 45;
+        --color-fg: #e6edf3; --color-fg-rgb: 230 237 243;
+        --color-fg-muted: #9198a1; --color-fg-muted-rgb: 145 152 161;
+        --color-border: #30363d; --color-border-rgb: 48 54 61;
+        --color-accent: #2f81f7; --color-accent-rgb: 47 129 247;
+      "
+    >
+      <div id="mount-a" class="mount"></div>
+      <div id="mount-b" class="mount"></div>
+      <div id="mount-c" class="mount"></div>
+    </div>
+    <!-- A tall spacer so the page is genuinely scrollable — makes the stage's
+         page-scroll-lock assertion meaningful. -->
+    <div style="height: 3000px"></div>
+    <script type="module" src="./selection-stage.browser.bundle.js?v=1"></script>
+  </body>
+</html>

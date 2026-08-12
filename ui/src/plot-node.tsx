@@ -64,7 +64,7 @@ import {
   isImageCompatibleNode,
   registerSelectionPane,
   unregisterSelectionPane,
-} from "./selection-pane-registry";
+} from "./plot-selection-pane-registry";
 import {
   ChartBox,
   ChartFillContext,

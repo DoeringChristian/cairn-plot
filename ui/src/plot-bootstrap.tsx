@@ -38,7 +38,7 @@ import { useEmitAutoHeight } from "./lib/cairn-plot/hooks";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { registerRenderer, getRenderer } from "./plot-registry";
 import { PlotNodeView, SharedPlotContext } from "./plot-node";
-import { ensureSelectionOverlayHost } from "./selection-stage";
+import { ensureSelectionOverlayHost } from "./plot-selection-stage";
 import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
