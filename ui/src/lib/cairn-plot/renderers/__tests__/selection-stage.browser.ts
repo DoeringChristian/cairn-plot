@@ -165,7 +165,6 @@ async function run(): Promise<boolean> {
   ok = ok && imagesReady;
 
   const [fa, fb, fc] = frames();
-  const idA = fa.getAttribute("data-plot-pane-id")!;
   const idC = fc.getAttribute("data-plot-pane-id")!;
   const store = getGlobalSelectionStore();
 
