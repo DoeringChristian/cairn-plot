@@ -1,5 +1,5 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ReportNaturalSizeContext } from "../renderers/natural-size-report";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePublishNaturalSize } from "../renderers/natural-size-report";
 import type {
   Colormap,
   DiffMode,
@@ -179,14 +179,10 @@ export function MediaComparePane({
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
 
-  // Publish the compare pane's natural content size on the shared channel (the
-  // SAME one `ImagePaneShell`/`GpuComparePane` use), so a grid / the compare-
-  // enlarge stage sizes this cell to the content aspect — "works for all types",
-  // not just plain images. `naturalDims` is the foreground image's own size.
-  const reportNaturalSize = useContext(ReportNaturalSizeContext);
-  useEffect(() => {
-    if (reportNaturalSize && naturalDims) reportNaturalSize(naturalDims.w, naturalDims.h);
-  }, [reportNaturalSize, naturalDims?.w, naturalDims?.h]);
+  // Publish the compare pane's natural content size (the foreground image's own
+  // size) so a grid / the compare-enlarge stage sizes this cell to the content
+  // aspect — "works for all types", not just plain images.
+  usePublishNaturalSize(naturalDims);
   const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
   const [overlayActive, setOverlayActive] = useState(false);
 

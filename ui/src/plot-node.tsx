@@ -623,8 +623,11 @@ function PaneSelectionFrame({
   // cell — making THIS selectable frame the viewport, so the ring matches it
   // exactly. In fill mode the fixed row already sizes the cell. Non-image cells
   // (scalars, nested grids) keep their natural sizing. A `compare` cell is
-  // EXCLUDED: `CompareView` owns its own two-frame layout and never reports an
-  // aspect, so forcing a box on it could letterbox/overflow.
+  // EXCLUDED here: `CompareView` owns its own two-frame layout, so forcing an
+  // aspect-ratio box on it could letterbox/overflow. (Compare panes DO report
+  // their content aspect — via `usePublishNaturalSize` — and are sized uniformly
+  // in the fullscreen stage, which wraps each cell with a reporting bridge; only
+  // the plain `cp.Grid` path leaves them at their natural size.)
   const gridUniform = useContext(GridUniformAspectContext);
   const uniformImageCell =
     !!gridUniform && !fill && node.kind === "plot" && isImageCompatibleNode(node);

@@ -38,8 +38,8 @@
  *   - Q17: double-clicking the pane BACKGROUND resets the shared viewport to
  *     `{zoom:1, pan:{x:0,y:0}}` (both panes, via `onViewportChange`).
  */
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ReportNaturalSizeContext } from "../renderers/natural-size-report";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePublishNaturalSize } from "../renderers/natural-size-report";
 import type { Colormap, DiffMode, Interpolation } from "../types";
 import { getSharedDevice } from "../engine/device";
 import { forceEngineFailRequested } from "../engine/test-hooks";
@@ -1034,14 +1034,10 @@ export default function GpuComparePane({
   // which returns null there). One basis for all panes ⇒ uniform default zoom.
   const framingDims = dims;
 
-  // Publish the compare pane's natural content size on the shared channel (the
-  // SAME one `ImagePaneShell` uses), so a grid / the compare-enlarge stage can
-  // size this cell to the content aspect — "works for all types", not just plain
-  // images. `framingDims` is the primary/overlap footprint the home view fills.
-  const reportNaturalSize = useContext(ReportNaturalSizeContext);
-  useEffect(() => {
-    if (reportNaturalSize && framingDims) reportNaturalSize(framingDims.w, framingDims.h);
-  }, [reportNaturalSize, framingDims?.w, framingDims?.h]);
+  // Publish the compare pane's natural content size (the primary/overlap footprint
+  // the home view fills) so a grid / the compare-enlarge stage can size this cell
+  // to the content aspect — "works for all types", not just plain images.
+  usePublishNaturalSize(framingDims);
 
   // ---- render pass -------------------------------------------------------
   // Extracted into a stable callback so the screenshot path

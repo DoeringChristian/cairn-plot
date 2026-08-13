@@ -14,8 +14,22 @@
  * The default is `null` (no listener) so a pane rendered without a framing
  * wrapper simply never reports — behaviour-identical to before.
  */
-import { createContext } from "react";
+import { createContext, useContext, useEffect } from "react";
 
 export type ReportNaturalSize = (width: number, height: number) => void;
 
 export const ReportNaturalSizeContext = createContext<ReportNaturalSize | null>(null);
+
+/**
+ * Publish a pane's natural content size on {@link ReportNaturalSizeContext} to
+ * whatever framing wrapper encloses it, re-firing whenever the dims change. The
+ * ONE place every image/compare pane (`ImagePaneShell`, `GpuComparePane`, the CPU
+ * `MediaComparePane`) reports up from — so the publish protocol lives in a single
+ * spot. `null` dims (not yet decoded) simply don't publish.
+ */
+export function usePublishNaturalSize(dims: { w: number; h: number } | null): void {
+  const report = useContext(ReportNaturalSizeContext);
+  useEffect(() => {
+    if (report && dims) report(dims.w, dims.h);
+  }, [report, dims?.w, dims?.h]);
+}

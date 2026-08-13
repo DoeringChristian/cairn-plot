@@ -31,7 +31,6 @@
  */
 import {
   useCallback,
-  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -67,6 +66,7 @@ import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
   useUniformGridAspect,
+  useReportCellAspect,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { ReportNaturalSizeContext } from "./lib/cairn-plot/renderers/natural-size-report";
 import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
@@ -324,22 +324,17 @@ function StageCell({
 
   // GENERAL per-cell aspect bridge: forward whatever this cell's pane publishes on
   // `ReportNaturalSizeContext` (images, COMPARE panes, any renderer with a natural
-  // size) into the shared `GridUniformAspectContext`, so `packContentGrid` sizes
-  // to the real content aspect for ALL cell types — not just images. An image
-  // leaf's inner `GridCellReporter` provides a nearer `ReportNaturalSizeContext`
+  // size) into the shared grid aspect map via the ONE keyed-report+withdraw helper,
+  // so `packContentGrid` sizes to the real content aspect for ALL cell types — not
+  // just images. An image leaf's inner `GridCellReporter` provides a nearer provider
   // that shadows this one, so each cell reports exactly once.
-  // Capture the STABLE `report` fn (the api object churns as `uniformAspect`
-  // repacks; keying on the object would make the cleanup transiently withdraw
-  // this cell's aspect — the pane reports imperatively and never re-adds it).
-  const gridReport = useContext(GridUniformAspectContext)?.report;
-  const reportKey = useId();
+  const setCellAspect = useReportCellAspect();
   const reportAspect = useCallback(
     (w: number, h: number) => {
-      if (w > 0 && h > 0) gridReport?.(reportKey, w / h);
+      if (w > 0 && h > 0) setCellAspect(w / h);
     },
-    [gridReport, reportKey],
+    [setCellAspect],
   );
-  useEffect(() => () => gridReport?.(reportKey, null), [gridReport, reportKey]);
 
   return (
     <div

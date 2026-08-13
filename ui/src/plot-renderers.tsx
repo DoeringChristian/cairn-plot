@@ -55,11 +55,12 @@ import {
 } from "./lib/cairn-plot/viewport/use-chart-viewport";
 import { makeChartViewportSyncSourceId } from "./lib/cairn-plot/viewport/chart-viewport-sync";
 import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
+import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import {
-  ContentAspectFrame,
+  GridUniformAspectContext,
   GridCellReporter,
-} from "./lib/cairn-plot/renderers/ContentAspectFrame";
-import { GridUniformAspectContext } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
+  finitePositive,
+} from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { registerRenderer } from "./plot-registry";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
@@ -362,13 +363,8 @@ function ImageStandalone(p: P) {
   // content aspect is known SYNCHRONOUSLY (before the WebGPU pane is ready / the
   // payload is decoded). uint8/URL sources have no upfront shape (the pane's
   // `<img>` onload reports it) → null.
-  const knownAspect =
-    source.dtype === "float" && source.shape.length >= 2
-      ? (() => {
-          const { w, h } = shapeDims(source.shape);
-          return h > 0 && w > 0 ? w / h : null;
-        })()
-      : null;
+  const dims = source.dtype === "float" && source.shape.length >= 2 ? shapeDims(source.shape) : null;
+  const knownAspect = dims ? finitePositive(dims.w / dims.h) : null;
   // In a grid the pane FILLS its (uniformly-sized) cell — no per-cell shrink —
   // and reports its aspect so the grid can size every cell to ONE representative
   // aspect (uniform viewports; selection ring = cell = viewport).

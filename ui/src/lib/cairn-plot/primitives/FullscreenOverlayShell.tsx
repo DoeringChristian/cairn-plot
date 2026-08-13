@@ -30,10 +30,18 @@
  * (`data-cairn-plot-enlarge-*`) so `ImagePaneShell` keeps its exact test seam;
  * the stage passes its own markers.
  */
-import { useEffect, useRef } from "react";
+import { createContext, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode, RefObject } from "react";
 import { useOriginTheme } from "./themed-portal";
+
+/**
+ * `true` for any subtree rendered inside a `FullscreenOverlayShell` — the per-pane
+ * ENLARGE or the selection STAGE. A modal-scoped affordance (e.g. the split-flip
+ * arrows) reads this to act globally within the ONE active overlay, instead of
+ * reaching UP the DOM for the owner's marker attributes. Default `false` (inline).
+ */
+export const InFullscreenOverlayContext = createContext(false);
 
 export interface FullscreenOverlayShellProps {
   /** Whether the overlay is mounted. */
@@ -153,7 +161,7 @@ export default function FullscreenOverlayShell({
         {...{ [frameAttr]: "" }}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        {children}
+        <InFullscreenOverlayContext.Provider value={true}>{children}</InFullscreenOverlayContext.Provider>
       </div>
       {/* ✕ in the backdrop's top-right gutter (OUTSIDE the frame) — visible,
           focusable, theme-aware; Escape and a backdrop click also close. */}

@@ -8,7 +8,7 @@
       #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
       #result div { white-space: pre-wrap; }
       #mounts { display: flex; gap: 8px; }
-      #mount-a, #mount-b { width: 360px; height: 260px; background: #222; }
+      #mount-a, #mount-b, #mount-c { width: 360px; height: 260px; background: #222; }
     </style>
   </head>
   <body>
@@ -17,6 +17,9 @@
     <div id="mounts">
       <div id="mount-a"></div>
       <div id="mount-b"></div>
+      <!-- A third pane wrapped in InFullscreenOverlayContext — the OVERLAY (modal)
+           split-flip path, where arrows act with no hover/focus. -->
+      <div id="mount-c"></div>
     </div>
     <div id="result"></div>
     <!-- Self-driving (see the <html data-cairn-harness>): dispatches its own

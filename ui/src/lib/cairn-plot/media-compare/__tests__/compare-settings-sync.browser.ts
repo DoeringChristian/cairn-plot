@@ -41,6 +41,7 @@ import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 import GpuComparePane from "../GpuComparePane";
+import { InFullscreenOverlayContext } from "../../primitives/FullscreenOverlayShell";
 import { listDiffMenuModes } from "../../engine/kernels";
 import {
   getGlobalSelectionStore,
@@ -331,21 +332,32 @@ async function run(): Promise<boolean> {
   report(peerTrackedFlip, `the flip syncs to the peer pane (B.splitPosition=${B().splitPosition})`);
   ok = ok && ignoredWhenAway && focusFlip && peerTrackedFlip;
 
-  // --- 7b. OVERLAY path — inside a fullscreen compare/enlarge stage the arrows
-  //     act with NO hover and NO focus (modal, one active compare). Mark pane A's
-  //     subtree as inside a stage frame, move the pointer AWAY, blur, then key:
-  //     it must STILL flip (the inline "ignored when away" rule is lifted).
-  const paneAStageWrap = comparePaneRoots()[0]!;
-  paneAStageWrap.setAttribute("data-cairn-plot-stage-frame", "");
-  paneAViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+  // --- 7b. OVERLAY path — a compare pane rendered INSIDE a fullscreen overlay
+  //     (wrapped in `InFullscreenOverlayContext`, exactly as the compare/enlarge
+  //     stage does) acts on the arrows with NO hover and NO focus (modal, one
+  //     active compare). Mount a third pane in that context, move the pointer
+  //     AWAY, blur, then key: it must STILL flip (the inline "away" rule lifted).
+  const rootC = createRoot(document.getElementById("mount-c")!);
+  rootC.render(
+    createElement(
+      InFullscreenOverlayContext.Provider,
+      { value: true },
+      createElement(PlotApp, { descriptor: compareDescriptor("#e67e22", "#16a085") }),
+    ),
+  );
+  roots.push(rootC);
+  const overlayReady = await waitFor(() => comparePaneRoots().length === 3 && !!probeOf(comparePaneRoots()[2]), 15000);
+  report(overlayReady, "overlay compare pane mounts inside InFullscreenOverlayContext");
+  const C = () => probeOf(comparePaneRoots()[2])!;
+  const paneCViewport = comparePaneRoots()[2]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
+  paneCViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-  A().changeSplit(0.4);
-  await waitFor(() => Math.abs(A().splitPosition - 0.4) < 1e-6);
+  C().changeSplit(0.4);
+  await waitFor(() => Math.abs(C().splitPosition - 0.4) < 1e-6);
   arrow("ArrowLeft"); // away + not focused, but inside the overlay → acts
-  const overlayFlip = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6, 2000);
-  report(overlayFlip, `OVERLAY ArrowLeft flips with pointer AWAY + not focused (A.splitPosition=${A().splitPosition})`);
-  paneAStageWrap.removeAttribute("data-cairn-plot-stage-frame");
-  ok = ok && overlayFlip;
+  const overlayFlip = await waitFor(() => Math.abs(C().splitPosition - 0) < 1e-6, 2000);
+  report(overlayFlip, `OVERLAY ArrowLeft flips with pointer AWAY + not focused (C.splitPosition=${C().splitPosition})`);
+  ok = ok && overlayReady && overlayFlip;
 
   // --- 8. PER-SIDE CAPTIONS — cp.Image(label=...) shown in the compare pane ---
   // Return pane A to split, then assert the REFERENCE caption sits bottom-LEFT

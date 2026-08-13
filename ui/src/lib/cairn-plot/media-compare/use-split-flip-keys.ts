@@ -23,14 +23,19 @@
 // focusable (`tabindex=-1`, out of the tab order) so the focus path works for
 // keyboard users and tests.
 // ---------------------------------------------------------------------------
-import { useEffect } from "react";
+import { useContext, useEffect } from "react";
 import type { RefObject } from "react";
+import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
 
 export function useSplitFlipKeys(
   paneRef: RefObject<HTMLElement | null>,
   mode: string,
   onSplitPositionChange?: (pos: number) => void,
 ): void {
+  // Inside a fullscreen compare/enlarge overlay (a modal with ONE active compare)
+  // the arrows act unconditionally; inline they require hover/focus. Read from the
+  // overlay context `FullscreenOverlayShell` provides — no DOM-attribute coupling.
+  const inOverlay = useContext(InFullscreenOverlayContext);
   useEffect(() => {
     if (mode !== "split" || !onSplitPositionChange) return;
     if (typeof window === "undefined") return;
@@ -71,11 +76,6 @@ export function useSplitFlipKeys(
         return;
       }
       const focusedWithin = !!active && el.contains(active);
-      // Inside a fullscreen compare/enlarge overlay the arrows always act (modal,
-      // one active compare) — no hover/focus needed. Inline, require hover/focus.
-      const inOverlay = !!el.closest?.(
-        "[data-cairn-plot-stage-frame], [data-cairn-plot-enlarge-frame]",
-      );
       if (!hovered && !focusedWithin && !inOverlay) return;
       e.preventDefault();
       onSplitPositionChange(e.key === "ArrowLeft" ? 0 : 1);
@@ -87,5 +87,5 @@ export function useSplitFlipKeys(
       window.removeEventListener("keydown", onKey);
       if (!hadTabIndex) el.removeAttribute("tabindex");
     };
-  }, [paneRef, mode, onSplitPositionChange]);
+  }, [paneRef, mode, onSplitPositionChange, inOverlay]);
 }

@@ -110,7 +110,7 @@ import {
 } from "./use-image-controller";
 import FullscreenOverlayShell from "../primitives/FullscreenOverlayShell";
 import { EnlargeInterceptContext } from "./enlarge-intercept";
-import { ReportNaturalSizeContext } from "./natural-size-report";
+import { usePublishNaturalSize } from "./natural-size-report";
 
 const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 
@@ -320,10 +320,7 @@ export default function ImagePaneShell({
   // (the default `ContentAspectFrame` / the selection stage), so the pane's BOX
   // can track the CONTENT aspect. No-op when there is no listener (the default),
   // so a pane rendered bare behaves exactly as before.
-  const reportNaturalSize = useContext(ReportNaturalSizeContext);
-  useEffect(() => {
-    if (reportNaturalSize && naturalDims) reportNaturalSize(naturalDims.w, naturalDims.h);
-  }, [reportNaturalSize, naturalDims?.w, naturalDims?.h]);
+  usePublishNaturalSize(naturalDims);
 
   // Notation is owned locally (seeded from the prop) so the pane is
   // self-contained; the toggle shows only while the overlay is active.
