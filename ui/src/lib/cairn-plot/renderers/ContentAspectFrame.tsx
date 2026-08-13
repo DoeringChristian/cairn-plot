@@ -18,10 +18,9 @@
  * itself) this frame is suppressed via {@link StagePackedContext} — the pane there
  * simply fills its already-content-aspect cell.
  */
-import { createContext, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { createContext, useCallback, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { ReportNaturalSizeContext } from "./natural-size-report";
-import { fitContentBox } from "../selection/pack-grid";
 
 /**
  * `true` while rendering inside the page-level selection stage, which does its
@@ -31,65 +30,56 @@ import { fitContentBox } from "../selection/pack-grid";
 export const StagePackedContext = createContext<boolean>(false);
 
 export function ContentAspectFrame({
-  /** CSS height for the OUTER frame — the space the pane is fitted WITHIN. Use
-   *  `"100%"` to fill whatever box the host/grid gives (the embeddable case), or a
-   *  px number as the standalone default so a bare page has something to measure.
-   *  The pane's drawable box is then the largest content-aspect box inside it. */
+  /** The box the pane fills BEFORE its content aspect is known: `"100%"` fills
+   *  whatever box the host/grid gives; a px number is the bare-page default. Once
+   *  the pane reports its natural size, the frame RESHAPES to the content aspect
+   *  (see below) so an auto-height parent collapses onto it — no empty bands. */
   outerHeight,
   children,
 }: {
   outerHeight: number | string;
   children: ReactNode;
 }) {
-  const outerRef = useRef<HTMLDivElement | null>(null);
-  const [avail, setAvail] = useState<{ w: number; h: number } | null>(null);
   const [aspect, setAspect] = useState<number | null>(null);
-
-  const report = useMemo(
-    () => (w: number, h: number) => {
-      if (w > 0 && h > 0) setAspect((prev) => (prev === w / h ? prev : w / h));
-    },
-    [],
-  );
-
-  useLayoutEffect(() => {
-    const el = outerRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const measure = () => {
-      const r = el.getBoundingClientRect();
-      setAvail((prev) => (prev && prev.w === r.width && prev.h === r.height ? prev : { w: r.width, h: r.height }));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
+  const report = useCallback((w: number, h: number) => {
+    if (w > 0 && h > 0) setAspect((prev) => (prev === w / h ? prev : w / h));
   }, []);
 
-  // Until we know BOTH the available box and the content aspect, fill — so the
-  // pane always has something to render into (no collapse) and the reframe is a
-  // one-time settle once the image reports its size.
-  const inner: { width: number | string; height: number | string } =
-    avail && aspect
-      ? fitContentBox(avail.w, avail.h, aspect)
-      : { width: "100%", height: "100%" };
+  // The fix for "big empty bands around images": the previous version filled a
+  // FIXED box and CENTERED a content-aspect box inside it — which only RELOCATED
+  // the empty space to the margins, it never removed it. Instead, once the
+  // content aspect is known, make the FRAME ITSELF content-aspect via CSS
+  // `aspect-ratio` (WIDTH-driven: height follows), so:
+  //   - a bare / auto-height parent COLLAPSES to the content (no bands at all);
+  //   - a px ceiling (`outerHeight` number, e.g. a bare float image's default
+  //     height) caps the WIDTH at `ceiling * aspect` so the box stays
+  //     content-aspect within that ceiling instead of letterboxing;
+  //   - a fixed cell (`outerHeight === "100%"`) bounds the box to the cell
+  //     (`maxHeight:100%`) while keeping it content-aspect — the pane fills the
+  //     box (no internal bands); any remaining margin is the cell's, not ours.
+  // Before the aspect is known, fall back to the plain `outerHeight` box.
+  const style: CSSProperties = {
+    minWidth: 0,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    marginInline: "auto",
+    ...(aspect
+      ? {
+          width:
+            typeof outerHeight === "number"
+              ? `min(100%, ${Math.round(outerHeight * aspect)}px)`
+              : "100%",
+          maxWidth: "100%",
+          aspectRatio: String(aspect),
+          ...(outerHeight === "100%" ? { maxHeight: "100%" } : {}),
+        }
+      : { width: "100%", height: outerHeight }),
+  };
 
   return (
-    <div
-      ref={outerRef}
-      data-cairn-content-aspect-frame=""
-      style={{
-        width: "100%",
-        height: outerHeight,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minWidth: 0,
-        minHeight: 0,
-      }}
-    >
-      <div style={{ position: "relative", width: inner.width, height: inner.height, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <ReportNaturalSizeContext.Provider value={report}>{children}</ReportNaturalSizeContext.Provider>
-      </div>
+    <div data-cairn-content-aspect-frame="" style={style}>
+      <ReportNaturalSizeContext.Provider value={report}>{children}</ReportNaturalSizeContext.Provider>
     </div>
   );
 }

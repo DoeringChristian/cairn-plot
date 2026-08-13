@@ -78,11 +78,11 @@ function imageDescriptor(w: number, h: number, color: string): PlotDescriptor {
   } as PlotDescriptor;
 }
 
-/** The inner CONTENT-ASPECT box inside a host (the child of the frame). */
+/** The content-aspect FRAME element inside a host (it IS the content-aspect box
+ *  now — it reshapes itself, not an inner child). */
 function innerBox(hostId: string): HTMLElement | null {
   const host = document.getElementById(hostId);
-  const frame = host?.querySelector<HTMLElement>("[data-cairn-content-aspect-frame]");
-  return frame?.querySelector<HTMLElement>(":scope > div") ?? null;
+  return host?.querySelector<HTMLElement>("[data-cairn-content-aspect-frame]") ?? null;
 }
 
 async function run(): Promise<boolean> {
@@ -92,11 +92,14 @@ async function run(): Promise<boolean> {
   (window as unknown as { __cairnPlotEagerMount?: boolean }).__cairnPlotEagerMount = true;
 
   const roots: Root[] = [];
+  const HOST_W = 300;
   const mount = (divId: string, d: PlotDescriptor) => {
     const el = document.getElementById(divId)!;
-    // Force a definite LANDSCAPE host box (420×240) so "fill vs content-aspect"
-    // is meaningful and "100%" outer heights have something to resolve against.
-    el.style.cssText = "width:420px;height:240px;overflow:hidden;background:#222";
+    // A fixed-WIDTH, AUTO-HEIGHT host (a gallery column / report body / auto card):
+    // the exact context where "big empty bands" appear. With the fix the host
+    // COLLAPSES to the content-aspect frame → NO bands. (`height` is intentionally
+    // unset so the parent tracks the child.)
+    el.style.cssText = `width:${HOST_W}px;background:#222`;
     const root = createRoot(el);
     root.render(createElement(PlotApp, { descriptor: d }));
     roots.push(root);
@@ -110,48 +113,40 @@ async function run(): Promise<boolean> {
   report(imagesReady, "both standalone image panes mount");
   ok = ok && imagesReady;
 
-  const host = document.getElementById("mount-square")!.getBoundingClientRect();
-  const HOST_ASPECT = host.width / host.height; // 420/240 = 1.75 (landscape)
+  // The real "no empty bands" invariant: in a fixed-width / auto-height parent the
+  // frame reshapes to the CONTENT aspect (width-driven), and the PARENT COLLAPSES
+  // onto it — so the parent's height ≈ the frame's height (no vertical bands) and
+  // the frame spans the full parent width (no horizontal bands). This is exactly
+  // the empty-space fix the previous (center-in-fixed-box) version did NOT deliver.
+  const check = async (id: string, aspect: number, tol: number, name: string): Promise<boolean> => {
+    const settled = await waitFor(() => {
+      const b = innerBox(id)?.getBoundingClientRect();
+      return !!b && b.width > 0 && b.height > 0 && near(b.width / b.height, aspect, tol);
+    });
+    const frame = innerBox(id)!.getBoundingClientRect();
+    const hostBox = document.getElementById(id)!.getBoundingClientRect();
+    const a = frame.width / frame.height;
+    const aspectOk = near(a, aspect, tol);
+    const expectH = HOST_W / aspect;
+    // Slack SLACK ≈ the pane's own chrome padding (~8px/side) — the point is the
+    // absence of BIG bands (the old behaviour parked the pane in a fixed 400px
+    // box regardless of content), not sub-pixel exactness.
+    const SLACK = 20;
+    const fillsWidth = frame.width >= HOST_W - SLACK; //   ~full parent width: no side bands
+    const parentCollapsed = near(hostBox.height, expectH, SLACK); // host tracks content height: no vertical bands
+    const notFixedBox = Math.abs(hostBox.height - 400) > 60; // NOT the old fixed DEFAULT_CHART_HEIGHT
+    report(settled && aspectOk, `${name}: frame aspect ≈ content ${aspect} (got ${a.toFixed(3)})`);
+    report(fillsWidth, `${name}: frame spans ~full parent width (${frame.width.toFixed(0)}/${HOST_W}) — NO side bands`);
+    report(
+      parentCollapsed && notFixedBox,
+      `${name}: parent COLLAPSED to content height (host ${hostBox.height.toFixed(0)} ≈ ${expectH.toFixed(0)}, not a fixed 400px box) — NO empty bands`,
+    );
+    return settled && aspectOk && fillsWidth && parentCollapsed && notFixedBox;
+  };
 
-  // The meaningful, layout-robust invariant: the drawable frame reshapes to the
-  // CONTENT aspect (NOT the mismatched host box aspect of 1.75). That is exactly
-  // "the viewport tracks the content, not the box". (Absolute fill / clipping is
-  // a function of the host's flex context — proven for real grid cells by the
-  // selection-stage harness — so it is not re-asserted against this bare host.)
-
-  // --- SQUARE image → frame aspect ≈ 1 (≠ host 1.75) --------------------------
-  const squareReady = await waitFor(() => {
-    const b = innerBox("mount-square")?.getBoundingClientRect();
-    return !!b && b.width > 0 && b.height > 0 && near(b.width / b.height, 1, 0.06);
-  });
-  report(squareReady, "the SQUARE image frame settled to the content aspect (~1:1)");
-  const sq = innerBox("mount-square")!.getBoundingClientRect();
-  const sqAspect = sq.width / sq.height;
-  const sqMatchesContent = near(sqAspect, 1, 0.06);
-  const sqNotHost = Math.abs(sqAspect - HOST_ASPECT) > 0.2;
-  report(sqMatchesContent, `square frame aspect ≈ content 1.0 (${sqAspect.toFixed(3)})`);
-  report(sqNotHost, `square frame aspect ≠ host box aspect ${HOST_ASPECT.toFixed(2)} — reshaped to content, not the box`);
-  ok = ok && squareReady && sqMatchesContent && sqNotHost;
-
-  // --- WIDE 2:1 image → frame aspect ≈ 2 (≠ host 1.75) -----------------------
-  const wideReady = await waitFor(() => {
-    const b = innerBox("mount-wide")?.getBoundingClientRect();
-    return !!b && b.width > 0 && b.height > 0 && near(b.width / b.height, 2, 0.12);
-  });
-  report(wideReady, "the WIDE 2:1 image frame settled to the content aspect (~2:1)");
-  const wd = innerBox("mount-wide")!.getBoundingClientRect();
-  const wdAspect = wd.width / wd.height;
-  const wdMatchesContent = near(wdAspect, 2, 0.12);
-  const wdNotHost = Math.abs(wdAspect - HOST_ASPECT) > 0.2;
-  report(wdMatchesContent, `wide frame aspect ≈ content 2.0 (${wdAspect.toFixed(3)})`);
-  report(wdNotHost, `wide frame aspect ≠ host box aspect ${HOST_ASPECT.toFixed(2)} — reshaped to content, not the box`);
-  ok = ok && wideReady && wdMatchesContent && wdNotHost;
-
-  // The two content aspects are DISTINCT (the frame really tracks each image, not
-  // a fixed box): square ≈ 1 vs wide ≈ 2.
-  const distinct = Math.abs(sqAspect - wdAspect) > 0.5;
-  report(distinct, `the two frames took DIFFERENT content aspects (${sqAspect.toFixed(2)} vs ${wdAspect.toFixed(2)})`);
-  ok = ok && distinct;
+  const sqOk = await check("mount-square", 1, 0.06, "SQUARE (64×64)");
+  const wdOk = await check("mount-wide", 2, 0.12, "WIDE 2:1 (128×64)");
+  ok = ok && sqOk && wdOk;
 
   roots.forEach((r) => r.unmount());
   return ok;
