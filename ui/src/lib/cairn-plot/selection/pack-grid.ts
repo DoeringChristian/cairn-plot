@@ -64,8 +64,15 @@ export interface PackOptions {
   readonly width: number;
   /** Stage inner height (content box, padding already removed). */
   readonly height: number;
-  /** Representative content aspect (width / height) for every cell. Default 1. */
+  /** Representative content aspect (width / height) — used for the single-cell
+   *  fit and as the fallback for any cell missing a per-cell `aspects` entry.
+   *  Default 1. */
   readonly aspect?: number;
+  /** PER-CELL content aspects (width / height), one per cell in order. Each cell
+   *  is then sized to ITS OWN content aspect within its grid slot, so every
+   *  viewport matches its image — no letterbox for a differently-shaped image.
+   *  Missing / non-finite entries fall back to {@link PackOptions.aspect}. */
+  readonly aspects?: readonly number[];
   /** Inter-cell gap in px. Default {@link DEFAULT_STAGE_GAP}. */
   readonly gap?: number;
 }
@@ -104,49 +111,69 @@ export function packContentGrid(opts: PackOptions): PackResult {
     return { cols: 0, rows: 0, cellWidth: 0, cellHeight: 0, gap, cluster: { left: 0, top: 0, width: 0, height: 0 }, rects: [] };
   }
 
-  // A single pane COVERS the stage — the whole box, no content-aspect letterbox
-  // (the task's "single image → cover the whole stage, no wasted bands").
+  // A single pane fills the stage AT ITS CONTENT ASPECT — the largest content-
+  // aspect box that fits, centred. "Cover everything" means as large as possible
+  // WITHOUT an object-contain letterbox (the viewport aspect must equal the
+  // content aspect, not the stage aspect — else a wide image in a tall stage
+  // shows checkerboard bands top and bottom).
   if (count === 1) {
-    const rect: Rect = { left: 0, top: 0, width, height };
-    return { cols: 1, rows: 1, cellWidth: width, cellHeight: height, gap, cluster: rect, rects: [rect] };
+    const fit = fitContentBox(width, height, aspect);
+    const rect: Rect = {
+      left: (width - fit.width) / 2,
+      top: (height - fit.height) / 2,
+      width: fit.width,
+      height: fit.height,
+    };
+    return { cols: 1, rows: 1, cellWidth: fit.width, cellHeight: fit.height, gap, cluster: rect, rects: [rect] };
   }
 
   const cols = Math.min(gridColumns(count), count);
   const rows = Math.ceil(count / cols);
 
+  // The uniform SLOT is the largest representative-aspect box that fits a grid
+  // cell — this determines the TIGHT layout (slots gap-px apart, cluster centred),
+  // exactly like a uniform grid so equal-aspect images pack with no empty cross.
   const availCellW = (width - (cols - 1) * gap) / cols;
   const availCellH = (height - (rows - 1) * gap) / rows;
-  const { width: cellWidth, height: cellHeight } = fitContentBox(
-    Math.max(0, availCellW),
-    Math.max(0, availCellH),
-    aspect,
-  );
+  const { width: slotW, height: slotH } = fitContentBox(Math.max(0, availCellW), Math.max(0, availCellH), aspect);
 
-  const clusterW = cols * cellWidth + (cols - 1) * gap;
-  const clusterH = rows * cellHeight + (rows - 1) * gap;
+  // Each cell is then the largest box of ITS OWN content aspect that fits its
+  // slot, centred in it: an image with the representative aspect fills the slot
+  // (tight, no gap); a differently-shaped image shrinks to content aspect within
+  // its own slot only — so its viewport still equals its content aspect (no
+  // letterbox), without pushing the other cells apart.
+  const perCell = (i: number): number => {
+    const a = opts.aspects?.[i];
+    return Number.isFinite(a) && (a ?? 0) > 0 ? (a as number) : aspect;
+  };
+
+  const clusterW = cols * slotW + (cols - 1) * gap;
+  const clusterH = rows * slotH + (rows - 1) * gap;
   const originY = (height - clusterH) / 2;
 
   const rects: Rect[] = [];
   for (let i = 0; i < count; i++) {
     const r = Math.floor(i / cols);
     const c = i % cols;
-    // Centre a partial final row on its own (fewer items than `cols`).
     const itemsInRow = Math.min(cols, count - r * cols);
-    const rowW = itemsInRow * cellWidth + (itemsInRow - 1) * gap;
-    const rowLeft = (width - rowW) / 2;
+    // Centre a partial final row (fewer items than `cols`) on its own.
+    const rowLeft = (width - (itemsInRow * slotW + (itemsInRow - 1) * gap)) / 2;
+    const slotLeft = rowLeft + c * (slotW + gap);
+    const slotTop = originY + r * (slotH + gap);
+    const size = fitContentBox(slotW, slotH, perCell(i));
     rects.push({
-      left: rowLeft + c * (cellWidth + gap),
-      top: originY + r * (cellHeight + gap),
-      width: cellWidth,
-      height: cellHeight,
+      left: slotLeft + (slotW - size.width) / 2, // content-aspect cell, centred in its tight slot
+      top: slotTop + (slotH - size.height) / 2,
+      width: size.width,
+      height: size.height,
     });
   }
 
   return {
     cols,
     rows,
-    cellWidth,
-    cellHeight,
+    cellWidth: slotW,
+    cellHeight: slotH,
     gap,
     cluster: { left: (width - clusterW) / 2, top: originY, width: clusterW, height: clusterH },
     rects,

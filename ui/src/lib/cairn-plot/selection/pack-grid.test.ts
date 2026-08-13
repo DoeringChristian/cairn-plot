@@ -75,12 +75,25 @@ test("representativeAspect: median of the valid aspects, fallback when empty", (
 
 // --- packContentGrid ---------------------------------------------------------
 
-test("packContentGrid: a SINGLE cell covers the whole stage (no wasted bands)", () => {
+test("packContentGrid: a SINGLE cell fills the stage at its CONTENT aspect (no letterbox)", () => {
+  // A square image in a landscape stage → the largest square that fits, centred —
+  // NOT the stage box (which would object-contain letterbox to checkerboard).
   const p = packContentGrid({ count: 1, width: 1000, height: 600, aspect: 1 });
   assert.equal(p.rects.length, 1);
-  assert.deepEqual(p.rects[0], { left: 0, top: 0, width: 1000, height: 600 });
+  assert.deepEqual(p.rects[0], { left: 200, top: 0, width: 600, height: 600 });
+  assert.ok(approx(p.rects[0].width / p.rects[0].height, 1, 1e-6), "cell is content-aspect (square)");
   assert.equal(p.cols, 1);
   assert.equal(p.rows, 1);
+});
+
+test("packContentGrid: per-cell aspects — each cell is sized to ITS OWN content aspect", () => {
+  // Two cells: a 2:1 wide image and a 1:1 square, both in a wide stage.
+  const p = packContentGrid({ count: 2, width: 1000, height: 400, aspect: 2, aspects: [2, 1], gap: 8 });
+  assert.equal(p.rects.length, 2);
+  assert.ok(approx(p.rects[0].width / p.rects[0].height, 2, 1e-6), `cell0 aspect ${p.rects[0].width / p.rects[0].height}`);
+  assert.ok(approx(p.rects[1].width / p.rects[1].height, 1, 1e-6), `cell1 aspect ${p.rects[1].width / p.rects[1].height}`);
+  // The square cell shrinks within its own slot (does not push the wide cell).
+  assert.ok(p.rects[1].width <= p.rects[0].width + 1e-6, "square cell fits within its slot");
 });
 
 test("packContentGrid: 4 squares in a landscape stage → 2x2 SQUARE cells, centrally clustered with small gaps", () => {

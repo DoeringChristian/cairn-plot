@@ -686,12 +686,20 @@ async function run(): Promise<boolean> {
     const gInnerW = gRect.width - parseFloat(cs.paddingLeft || "0") - parseFloat(cs.paddingRight || "0");
     const cell = stageCells()[0]!;
     const cr = cell.getBoundingClientRect();
-    const fillsArea = near(cr.height, gInnerH, 8) && near(cr.width, gInnerW, 8);
-    report(fillsArea, `the single compare pane FILLS the overlay content area (${cr.width.toFixed(0)}x${cr.height.toFixed(0)} vs ${gInnerW.toFixed(0)}x${gInnerH.toFixed(0)})`);
+    // The images are 8×8 (square). In a landscape overlay the single pane is
+    // sized to its CONTENT aspect (square) — it FILLS the binding (shorter) axis
+    // and is centred on the other, NOT stretched to the overlay's aspect (which
+    // would object-contain letterbox to checkerboard). Viewport aspect == content.
+    const cellAspect = cr.width / cr.height;
+    const isContentAspect = near(cellAspect, 1, 0.06);
+    const fillsHeight = near(cr.height, gInnerH, 8); // binding axis (landscape stage)
+    const notStretchedWide = cr.width < gInnerW - 20; // centred, not stretched to full width
+    report(isContentAspect, `the single compare pane is CONTENT-aspect (square) not overlay-aspect (${cellAspect.toFixed(3)})`);
+    report(fillsHeight && notStretchedWide, `it fills the binding axis + centres (${cr.width.toFixed(0)}x${cr.height.toFixed(0)} in ${gInnerW.toFixed(0)}x${gInnerH.toFixed(0)}) — no letterbox`);
     const fr = cellFrame(cell)?.getBoundingClientRect();
     const paneFills = !!fr && near(fr.height, cr.height, 6);
-    report(paneFills, "the compare pane frame fills its cell");
-    ok = ok && fillsArea && paneFills;
+    report(paneFills, "the compare pane frame fills its content-aspect cell");
+    ok = ok && isContentAspect && fillsHeight && notStretchedWide && paneFills;
     (stageBackdrop()!.querySelector("[data-cairn-plot-stage-close]") as HTMLButtonElement).click();
     await waitFor(() => !stageBackdrop());
   } else {
