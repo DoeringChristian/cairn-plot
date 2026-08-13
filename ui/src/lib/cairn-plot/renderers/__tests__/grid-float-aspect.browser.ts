@@ -13,16 +13,17 @@
  * the frame via `contentAspect`, which seeds the reshape immediately (no wait,
  * no WebGPU/decode dependency).
  *
- * Two parts:
+ * Three parts:
  *   A. SEED ISOLATION — mount `ContentAspectFrame` directly with `contentAspect`
  *      and a child that NEVER reports a natural size (the GPU-timing scenario).
- *      The frame must still reshape to the content aspect. This is the part that
- *      FAILS without the fix (aspect stays null → tall 400 fallback).
- *   B. END-TO-END — a real `cp.Grid` (PlotApp descriptor) of three same-aspect
- *      WIDE float sources. Every content-aspect frame must be WIDE (≈ content
- *      aspect) and the three the same height (the row collapsed onto the content,
- *      no bands). CPU backend forced — `CpuImagePane` tone-maps float on the CPU,
- *      so this runs without WebGPU.
+ *      The frame must still reshape to the content aspect (the portrait fix).
+ *   B. SAME-ASPECT GRID — a real `cp.Grid` of three same-aspect WIDE float
+ *      sources: every viewport WIDE and the SAME size (no portrait, no bands).
+ *   C. MIXED-ASPECT GRID — wide + square + tall float sources in one row: every
+ *      VIEWPORT the SAME size (a grid is a UNIFORM layout; a mismatched image
+ *      letterboxes within its uniform cell), and the pane FILLS its cell so the
+ *      selection ring matches the viewport ("ring larger than viewport" fix).
+ * CPU backend forced — `CpuImagePane` tone-maps float on the CPU, no WebGPU.
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
@@ -87,11 +88,36 @@ function floatLeaf(w: number, h: number): unknown {
   };
 }
 
+/** Standalone content-aspect frames (Part A / standalone panes). */
 function frames(hostId: string): HTMLElement[] {
   const host = document.getElementById(hostId);
   return host
     ? Array.from(host.querySelectorAll<HTMLElement>("[data-cairn-content-aspect-frame]"))
     : [];
+}
+/** Grid VIEWPORTS — the selectable grid item (the pane fills it, so this IS the
+ *  viewport and the selection ring). */
+function gridCells(hostId: string): HTMLElement[] {
+  const host = document.getElementById(hostId);
+  return host
+    ? Array.from(host.querySelectorAll<HTMLElement>('[data-plot-pane-id][data-selectable="true"]'))
+    : [];
+}
+/** The pane body that fills each grid cell (`GridCellReporter`). */
+function cellBodies(hostId: string): HTMLElement[] {
+  const host = document.getElementById(hostId);
+  return host ? Array.from(host.querySelectorAll<HTMLElement>("[data-cairn-grid-cell]")) : [];
+}
+function gridDescriptor(sizes: Array<[number, number]>): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: sizes.length,
+      gap: 8,
+      children: sizes.map(([w, h]) => floatLeaf(w, h)),
+    },
+  } as unknown as PlotDescriptor;
 }
 
 async function run(): Promise<boolean> {
@@ -114,11 +140,11 @@ async function run(): Promise<boolean> {
     el.style.cssText = "width:300px;background:#222";
     const rootA = createRoot(el);
     rootA.render(
-      createElement(
-        ContentAspectFrame,
-        { outerHeight: 400, contentAspect: ASPECT },
-        createElement("div", { style: { width: "100%", height: "100%" } }),
-      ),
+      createElement(ContentAspectFrame, {
+        outerHeight: 400,
+        contentAspect: ASPECT,
+        children: createElement("div", { style: { width: "100%", height: "100%" } }),
+      }),
     );
     roots.push(rootA);
   }
@@ -139,50 +165,75 @@ async function run(): Promise<boolean> {
   );
   ok = ok && seedSettled && near(seedAspect, ASPECT, 0.06) && seedWide;
 
-  // ── Part B: END-TO-END GRID ───────────────────────────────────────────────
+  // ── Part B: SAME-ASPECT GRID ──────────────────────────────────────────────
   // Three same-aspect WIDE (2:1) float images in a 3-col grid, no rowHeights
-  // (auto rows — the user's `cp.Grid`). Every frame must be WIDE and the three
-  // the same height (the auto row collapsed onto the content → no bands).
-  const gridDescriptor: PlotDescriptor = {
-    mode: "local",
-    root: {
-      kind: "grid",
-      cols: 3,
-      gap: 8,
-      children: [floatLeaf(128, 64), floatLeaf(128, 64), floatLeaf(128, 64)],
-    },
-  } as unknown as PlotDescriptor;
+  // (auto rows — the user's `cp.Grid`). Uniform aspect = the content aspect, so
+  // every viewport is WIDE and the same size (no portrait, no bands).
   {
     const el = document.getElementById("grid-host")!;
     el.style.cssText = "width:960px;background:#222";
     const rootB = createRoot(el);
-    rootB.render(createElement(PlotApp, { descriptor: gridDescriptor }));
+    rootB.render(createElement(PlotApp, { descriptor: gridDescriptor([[128, 64], [128, 64], [128, 64]]) }));
     roots.push(rootB);
   }
-  const gridSettled = await waitFor(() => {
-    const fs = frames("grid-host");
-    return fs.length >= 3 && fs.every((f) => {
-      const r = f.getBoundingClientRect();
+  await waitFor(() => {
+    const cs = gridCells("grid-host");
+    return cs.length >= 3 && cs.every((c) => {
+      const r = c.getBoundingClientRect();
       return r.width > 0 && r.height > 0 && near(r.width / r.height, 2, 0.15);
     });
   });
-  const gridFrames = frames("grid-host").map((f) => f.getBoundingClientRect());
-  report(gridFrames.length >= 3, `GRID: three content-aspect frames present (${gridFrames.length})`);
-  const allWide = gridFrames.length >= 3 && gridFrames.every((r) => near(r.width / r.height, 2, 0.15));
+  const bCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
+  report(bCells.length >= 3, `SAME-ASPECT: three viewports present (${bCells.length})`);
+  const bWide = bCells.length >= 3 && bCells.every((r) => near(r.width / r.height, 2, 0.15) && r.width > r.height);
   report(
-    allWide,
-    `GRID: every viewport is WIDE ≈ 2:1 (got ${gridFrames.map((r) => (r.width / r.height).toFixed(2)).join(", ")}) — NOT portrait`,
+    bWide,
+    `SAME-ASPECT: every viewport WIDE ≈ 2:1, none portrait (${bCells.map((r) => (r.width / r.height).toFixed(2)).join(", ")})`,
   );
-  const noneTall = gridFrames.every((r) => r.width > r.height);
-  report(noneTall, "GRID: no viewport is taller than wide");
-  const heights = gridFrames.map((r) => r.height);
-  const sameHeight =
-    heights.length >= 3 && heights.every((h) => near(h, heights[0], 4));
+  const bUniform =
+    bCells.length >= 3 &&
+    bCells.every((r) => near(r.width, bCells[0].width, 2) && near(r.height, bCells[0].height, 2));
   report(
-    sameHeight,
-    `GRID: all three frames the SAME height — the auto row collapsed onto the content, no bands (${heights.map((h) => h.toFixed(0)).join(", ")})`,
+    bUniform,
+    `SAME-ASPECT: all viewports the SAME size (${bCells.map((r) => `${r.width.toFixed(0)}×${r.height.toFixed(0)}`).join(", ")})`,
   );
-  ok = ok && gridSettled && gridFrames.length >= 3 && allWide && noneTall && sameHeight;
+  ok = ok && bCells.length >= 3 && bWide && bUniform;
+
+  roots.pop()?.unmount(); // tear down grid-host root
+  await sleep(30);
+
+  // ── Part C: MIXED-ASPECT GRID (the new "smart about grids" requirement) ────
+  // A wide 2:1, a square 1:1, and a tall 1:2 float image in one row. Despite the
+  // different content aspects, every VIEWPORT must be the SAME size (a grid is a
+  // uniform layout — a mismatched image object-contain letterboxes WITHIN its
+  // uniform cell). AND the pane must FILL its cell, so the selectable frame IS
+  // the viewport (the selection ring matches it — no "ring larger than viewport").
+  {
+    const el = document.getElementById("grid-host")!;
+    el.style.cssText = "width:960px;background:#222";
+    const rootC = createRoot(el);
+    rootC.render(createElement(PlotApp, { descriptor: gridDescriptor([[128, 64], [96, 96], [64, 128]]) }));
+    roots.push(rootC);
+  }
+  await waitFor(() => gridCells("grid-host").length >= 3 && cellBodies("grid-host").length >= 3);
+  await sleep(120); // let the representative aspect settle across all three reports
+  const cCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
+  const cBodies = cellBodies("grid-host").map((c) => c.getBoundingClientRect());
+  report(cCells.length >= 3, `MIXED: three viewports present (${cCells.length})`);
+  const cUniform =
+    cCells.length >= 3 &&
+    cCells.every((r) => near(r.width, cCells[0].width, 2) && near(r.height, cCells[0].height, 2));
+  report(
+    cUniform,
+    `MIXED: viewports are UNIFORM despite different content aspects (${cCells.map((r) => `${r.width.toFixed(0)}×${r.height.toFixed(0)}`).join(", ")})`,
+  );
+  // The pane body fills the cell → viewport == selectable frame → ring matches.
+  const cFills =
+    cBodies.length >= 3 &&
+    cCells.length >= 3 &&
+    cBodies.every((b, i) => near(b.width, cCells[i].width, 2) && near(b.height, cCells[i].height, 2));
+  report(cFills, "MIXED: the pane FILLS its cell (viewport = selectable frame → selection ring matches)");
+  ok = ok && cCells.length >= 3 && cUniform && cFills;
 
   roots.forEach((r) => r.unmount());
   return ok;

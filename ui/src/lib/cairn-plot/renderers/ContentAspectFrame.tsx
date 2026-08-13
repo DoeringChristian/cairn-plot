@@ -18,9 +18,10 @@
  * itself) this frame is suppressed via {@link StagePackedContext} — the pane there
  * simply fills its already-content-aspect cell.
  */
-import { createContext, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { ReportNaturalSizeContext } from "./natural-size-report";
+import { GridUniformAspectContext } from "./grid-uniform-aspect";
 
 /**
  * `true` while rendering inside the page-level selection stage, which does its
@@ -138,6 +139,48 @@ export function ContentAspectFrame({
 
   return (
     <div ref={ref} data-cairn-content-aspect-frame="" style={style}>
+      <ReportNaturalSizeContext.Provider value={report}>{children}</ReportNaturalSizeContext.Provider>
+    </div>
+  );
+}
+
+/**
+ * GRID cell body: the frame used INSTEAD of {@link ContentAspectFrame} when the
+ * pane sits in a `cp.Grid` (i.e. a {@link GridUniformAspectContext} is present).
+ * It does NOT shrink-wrap the pane — the pane FILLS the cell (the grid item is
+ * already sized to the grid's ONE uniform aspect, so every cell in a row is
+ * identical and the selection ring matches the viewport). Its only job is to
+ * REPORT this cell's content aspect up to the grid so the grid can pick the
+ * representative aspect: from `seedAspect` (a float/EXR source's known shape) or,
+ * for a uint8/URL pane, from the pane's own `<img>`-onload natural-size report.
+ */
+export function GridCellReporter({
+  seedAspect,
+  children,
+}: {
+  seedAspect?: number | null;
+  children: ReactNode;
+}) {
+  const grid = useContext(GridUniformAspectContext);
+  const key = useId();
+  const [reported, setReported] = useState<number | null>(null);
+  const report = useCallback((w: number, h: number) => {
+    if (w > 0 && h > 0) setReported((prev) => (prev === w / h ? prev : w / h));
+  }, []);
+  const seed =
+    seedAspect != null && Number.isFinite(seedAspect) && seedAspect > 0 ? seedAspect : null;
+  const aspect = seed ?? reported;
+  useEffect(() => {
+    grid?.report(key, aspect);
+  }, [grid, key, aspect]);
+  // Withdraw this cell's aspect on unmount (lazy-scroll teardown / grid remount)
+  // so a gone pane never skews the representative aspect.
+  useEffect(() => () => grid?.report(key, null), [grid, key]);
+  return (
+    <div
+      data-cairn-grid-cell=""
+      style={{ width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}
+    >
       <ReportNaturalSizeContext.Provider value={report}>{children}</ReportNaturalSizeContext.Provider>
     </div>
   );

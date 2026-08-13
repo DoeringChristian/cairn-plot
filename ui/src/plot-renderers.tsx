@@ -57,8 +57,10 @@ import { makeChartViewportSyncSourceId } from "./lib/cairn-plot/viewport/chart-v
 import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
 import {
   ContentAspectFrame,
+  GridCellReporter,
   StagePackedContext,
 } from "./lib/cairn-plot/renderers/ContentAspectFrame";
+import { GridUniformAspectContext } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { registerRenderer } from "./plot-registry";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
@@ -301,6 +303,12 @@ function ImageStandalone(p: P) {
   // with `rowHeights`) decides fill-the-cell vs the standalone default height.
   const stagePacked = useContext(StagePackedContext);
   const fill = useContext(ChartFillContext);
+  // Inside a `cp.Grid` every image viewport is UNIFORM (the grid picks ONE
+  // representative aspect and sizes every cell to it) — the pane fills its cell,
+  // and this reporter feeds the cell's content aspect up so the grid can choose
+  // that representative. Absent (a standalone mount) ⇒ null ⇒ the per-content
+  // `ContentAspectFrame` framing below.
+  const gridUniform = useContext(GridUniformAspectContext);
   // `p.syncIsAnchor` + the selection-derived sync group ids are threaded down by
   // `plot-node.tsx`'s `SelectionCell` while ≥2 panes are selected (else absent).
   const [viewport, onViewportChange] = useSyncedImageViewport(
@@ -357,6 +365,21 @@ function ImageStandalone(p: P) {
   // Under the selection stage the cell is already sized to the content aspect —
   // the pane fills it (no double framing).
   if (stagePacked) return pane;
+  // A FLOAT/EXR source carries its pixel dims in `source.shape` ([H, W, …]) — the
+  // content aspect is known SYNCHRONOUSLY (before the WebGPU pane is ready / the
+  // payload is decoded). uint8/URL sources have no upfront shape (the pane's
+  // `<img>` onload reports it) → null.
+  const knownAspect =
+    source.dtype === "float" && source.shape.length >= 2
+      ? (() => {
+          const { w, h } = shapeDims(source.shape);
+          return h > 0 && w > 0 ? w / h : null;
+        })()
+      : null;
+  // In a grid the pane FILLS its (uniformly-sized) cell — no per-cell shrink —
+  // and reports its aspect so the grid can size every cell to ONE representative
+  // aspect (uniform viewports; selection ring = cell = viewport).
+  if (gridUniform) return <GridCellReporter seedAspect={knownAspect}>{pane}</GridCellReporter>;
   // Otherwise the pane's box tracks the CONTENT aspect within the available space.
   // The OUTER frame keeps the pre-existing sizing so the component stays a
   // well-behaved embeddable: it FILLS a grid cell (`fill`) or a host-sized box
@@ -366,22 +389,10 @@ function ImageStandalone(p: P) {
   // image, so the empty letterbox/pillarbox bands are minimised.
   const outerHeight: number | string =
     fill || source.dtype !== "float" ? "100%" : (p.height ?? DEFAULT_CHART_HEIGHT);
-  // A FLOAT/EXR source carries its pixel dims in `source.shape` ([H, W, …]) —
-  // the content aspect is known SYNCHRONOUSLY, before the WebGPU pane is ready
-  // or the payload is decoded. Hand it to the frame so it sizes the viewport to
-  // the content aspect immediately, instead of waiting for the pane to REPORT
-  // its natural size (which only happens post-`paneReady` + decode). Without
-  // this the frame sits in its tall `outerHeight` fallback until then — a float
-  // image in a grid renders a PORTRAIT viewport (free space above/below a wide
-  // image). A uint8 URL source has no upfront shape → `null`, and the pane's
-  // `<img>` onload reports it as before.
-  const knownAspect =
-    source.dtype === "float" && source.shape.length >= 2
-      ? (() => {
-          const { w, h } = shapeDims(source.shape);
-          return h > 0 && w > 0 ? w / h : null;
-        })()
-      : null;
+  // Hand the frame the known aspect (float/EXR) so it sizes the viewport to the
+  // content aspect IMMEDIATELY — not after the pane's async natural-size report
+  // (which for the WebGPU float path only fires post-`paneReady` + decode; until
+  // then the frame sits in its tall `outerHeight` fallback → a portrait viewport).
   return (
     <ContentAspectFrame outerHeight={outerHeight} contentAspect={knownAspect}>
       {pane}

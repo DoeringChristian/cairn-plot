@@ -68,6 +68,12 @@ import {
   unregisterSelectionPane,
 } from "./plot-selection-pane-registry";
 import {
+  GridUniformAspectContext,
+  DEFAULT_GRID_CELL_ASPECT,
+  type GridUniformAspectApi,
+} from "./lib/cairn-plot/renderers/grid-uniform-aspect";
+import { representativeAspect } from "./lib/cairn-plot/selection/pack-grid";
+import {
   ChartBox,
   ChartFillContext,
   DEFAULT_CHART_HEIGHT,
@@ -613,6 +619,16 @@ function PaneSelectionFrame({
   // Grid cells fill their track (rowHeights → height:100%); standalone panes
   // don't. `ChartFillContext` (set by the enclosing `GridView`) tells us which.
   const fill = useContext(ChartFillContext);
+  // In a `cp.Grid` an image-LEAF cell is sized to the grid's ONE uniform aspect
+  // (auto rows) so every viewport in a row is identical AND the pane fills the
+  // cell — making THIS selectable frame the viewport, so the ring matches it
+  // exactly. In fill mode the fixed row already sizes the cell. Non-image cells
+  // (scalars, nested grids) keep their natural sizing. A `compare` cell is
+  // EXCLUDED: `CompareView` owns its own two-frame layout and never reports an
+  // aspect, so forcing a box on it could letterbox/overflow.
+  const gridUniform = useContext(GridUniformAspectContext);
+  const uniformImageCell =
+    !!gridUniform && !fill && node.kind === "plot" && isImageCompatibleNode(node);
   // The pane-sync context from an ENCLOSING provider (e.g. the fullscreen stage,
   // which gives its cells a shared settings-sync group). A `selectable={false}`
   // frame must PASS THIS THROUGH rather than clobber it with `null`, else the
@@ -707,6 +723,18 @@ function PaneSelectionFrame({
     minWidth: 0,
     position: "relative",
     ...(fill ? { height: "100%" } : null),
+    // Uniform image cell (auto rows): a definite width-driven box at the grid's
+    // ONE aspect, so all cells in a row are identical and the pane fills it. A
+    // `DEFAULT_GRID_CELL_ASPECT` fallback gives a definite box before any cell has
+    // reported (avoids a 0-height mount). `alignSelf:start` keeps it from being
+    // stretched by a taller non-image sibling in the same row.
+    ...(uniformImageCell
+      ? {
+          width: "100%",
+          aspectRatio: String(gridUniform!.uniformAspect ?? DEFAULT_GRID_CELL_ASPECT),
+          alignSelf: "start",
+        }
+      : null),
   };
   if (isSelected) {
     // A CLEARLY VISIBLE selection ring: a full-opacity outline plus a soft glow so
@@ -779,6 +807,36 @@ function GridView({ node }: { node: GridNode }) {
   const cols = node.cols ?? node.colWidths?.length ?? children.length ?? 1;
   const fill = !!node.rowHeights && node.rowHeights.length > 0;
 
+  // UNIFORM image-cell sizing: image cells report their content aspect here; the
+  // grid picks the REPRESENTATIVE (median) aspect and every image cell sizes to
+  // it, so viewports in a row are identical (and the selection ring, drawn on the
+  // cell, matches the pane exactly). Collected at runtime because a URL/EXR
+  // image's dims are known only after decode.
+  const [cellAspects, setCellAspects] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const reportAspect = useCallback((key: string, aspect: number | null) => {
+    setCellAspects((prev) => {
+      const cur = prev.get(key);
+      if (aspect == null) {
+        if (!prev.has(key)) return prev;
+        const next = new Map(prev);
+        next.delete(key);
+        return next;
+      }
+      if (cur === aspect) return prev;
+      const next = new Map(prev);
+      next.set(key, aspect);
+      return next;
+    });
+  }, []);
+  const uniformAspect = useMemo<number | null>(() => {
+    const xs = [...cellAspects.values()];
+    return xs.length ? representativeAspect(xs) : null;
+  }, [cellAspects]);
+  const gridAspectApi = useMemo<GridUniformAspectApi>(
+    () => ({ report: reportAspect, uniformAspect }),
+    [reportAspect, uniformAspect],
+  );
+
   const gridStyle: React.CSSProperties = {
     display: "grid",
     gridTemplateColumns: trackList(node.colWidths, Math.max(cols, 1)),
@@ -805,11 +863,13 @@ function GridView({ node }: { node: GridNode }) {
   // (and their frames) to take `height:100%`.
   const grid = (
     <ChartFillContext.Provider value={fill}>
-      <div style={gridStyle}>
-        {children.map((child, i) => (
-          <PlotNodeView key={i} node={child} />
-        ))}
-      </div>
+      <GridUniformAspectContext.Provider value={gridAspectApi}>
+        <div style={gridStyle}>
+          {children.map((child, i) => (
+            <PlotNodeView key={i} node={child} />
+          ))}
+        </div>
+      </GridUniformAspectContext.Provider>
     </ChartFillContext.Provider>
   );
 

@@ -86,14 +86,17 @@ test("packContentGrid: a SINGLE cell fills the stage at its CONTENT aspect (no l
   assert.equal(p.rows, 1);
 });
 
-test("packContentGrid: per-cell aspects — each cell is sized to ITS OWN content aspect", () => {
-  // Two cells: a 2:1 wide image and a 1:1 square, both in a wide stage.
-  const p = packContentGrid({ count: 2, width: 1000, height: 400, aspect: 2, aspects: [2, 1], gap: 8 });
-  assert.equal(p.rects.length, 2);
-  assert.ok(approx(p.rects[0].width / p.rects[0].height, 2, 1e-6), `cell0 aspect ${p.rects[0].width / p.rects[0].height}`);
-  assert.ok(approx(p.rects[1].width / p.rects[1].height, 1, 1e-6), `cell1 aspect ${p.rects[1].width / p.rects[1].height}`);
-  // The square cell shrinks within its own slot (does not push the wide cell).
-  assert.ok(p.rects[1].width <= p.rects[0].width + 1e-6, "square cell fits within its slot");
+test("packContentGrid: multi-cell viewports are UNIFORM (every cell the same size)", () => {
+  // A grid is a uniform layout: every cell is the representative-aspect slot, so
+  // all viewports are identical (a mismatched image letterboxes WITHIN its cell,
+  // and a synced zoom/pan lines up pixel-for-pixel across cells).
+  const p = packContentGrid({ count: 3, width: 1000, height: 400, aspect: 2, gap: 8 });
+  assert.equal(p.rects.length, 3);
+  for (const r of p.rects) {
+    assert.ok(approx(r.width, p.rects[0].width, 1e-6), `uniform width ${r.width} vs ${p.rects[0].width}`);
+    assert.ok(approx(r.height, p.rects[0].height, 1e-6), `uniform height ${r.height} vs ${p.rects[0].height}`);
+    assert.ok(approx(r.width / r.height, 2, 1e-6), "cell carries the representative aspect");
+  }
 });
 
 test("packContentGrid: 4 squares in a landscape stage → 2x2 SQUARE cells, centrally clustered with small gaps", () => {

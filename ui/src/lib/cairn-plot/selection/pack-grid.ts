@@ -64,15 +64,9 @@ export interface PackOptions {
   readonly width: number;
   /** Stage inner height (content box, padding already removed). */
   readonly height: number;
-  /** Representative content aspect (width / height) — used for the single-cell
-   *  fit and as the fallback for any cell missing a per-cell `aspects` entry.
-   *  Default 1. */
+  /** Representative content aspect (width / height) — sizes the single-cell fit
+   *  and the uniform multi-cell slot. Default 1. */
   readonly aspect?: number;
-  /** PER-CELL content aspects (width / height), one per cell in order. Each cell
-   *  is then sized to ITS OWN content aspect within its grid slot, so every
-   *  viewport matches its image — no letterbox for a differently-shaped image.
-   *  Missing / non-finite entries fall back to {@link PackOptions.aspect}. */
-  readonly aspects?: readonly number[];
   /** Inter-cell gap in px. Default {@link DEFAULT_STAGE_GAP}. */
   readonly gap?: number;
 }
@@ -130,22 +124,15 @@ export function packContentGrid(opts: PackOptions): PackResult {
   const cols = Math.min(gridColumns(count), count);
   const rows = Math.ceil(count / cols);
 
-  // The uniform SLOT is the largest representative-aspect box that fits a grid
-  // cell — this determines the TIGHT layout (slots gap-px apart, cluster centred),
-  // exactly like a uniform grid so equal-aspect images pack with no empty cross.
+  // Every cell is the SAME uniform SLOT: the largest representative-aspect box
+  // that fits a grid cell. A grid is a UNIFORM layout — every viewport in a row
+  // is identical (a differently-shaped image object-contain letterboxes WITHIN
+  // its uniform cell rather than getting a differently-sized viewport). Uniform
+  // slots are also what makes a SYNCED zoom/pan line up pixel-for-pixel across
+  // cells (the viewport-sync contract).
   const availCellW = (width - (cols - 1) * gap) / cols;
   const availCellH = (height - (rows - 1) * gap) / rows;
   const { width: slotW, height: slotH } = fitContentBox(Math.max(0, availCellW), Math.max(0, availCellH), aspect);
-
-  // Each cell is then the largest box of ITS OWN content aspect that fits its
-  // slot, centred in it: an image with the representative aspect fills the slot
-  // (tight, no gap); a differently-shaped image shrinks to content aspect within
-  // its own slot only — so its viewport still equals its content aspect (no
-  // letterbox), without pushing the other cells apart.
-  const perCell = (i: number): number => {
-    const a = opts.aspects?.[i];
-    return Number.isFinite(a) && (a ?? 0) > 0 ? (a as number) : aspect;
-  };
 
   const clusterW = cols * slotW + (cols - 1) * gap;
   const clusterH = rows * slotH + (rows - 1) * gap;
@@ -158,14 +145,11 @@ export function packContentGrid(opts: PackOptions): PackResult {
     const itemsInRow = Math.min(cols, count - r * cols);
     // Centre a partial final row (fewer items than `cols`) on its own.
     const rowLeft = (width - (itemsInRow * slotW + (itemsInRow - 1) * gap)) / 2;
-    const slotLeft = rowLeft + c * (slotW + gap);
-    const slotTop = originY + r * (slotH + gap);
-    const size = fitContentBox(slotW, slotH, perCell(i));
     rects.push({
-      left: slotLeft + (slotW - size.width) / 2, // content-aspect cell, centred in its tight slot
-      top: slotTop + (slotH - size.height) / 2,
-      width: size.width,
-      height: size.height,
+      left: rowLeft + c * (slotW + gap),
+      top: originY + r * (slotH + gap),
+      width: slotW,
+      height: slotH,
     });
   }
 

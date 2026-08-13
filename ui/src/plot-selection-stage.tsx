@@ -455,9 +455,10 @@ function SelectionStage({
     return () => ro.disconnect();
   }, []);
 
-  // Per-cell content aspects (in cell order) so each cell is sized to ITS OWN
-  // image aspect — the viewport aspect always equals the content aspect. The
-  // representative is only the fallback for a cell whose pane hasn't reported yet.
+  // The stage is a UNIFORM grid: every cell is sized to the REPRESENTATIVE
+  // (median) content aspect across the selected panes, so all viewports are
+  // identical (a mismatched image letterboxes within its uniform cell) and a
+  // synced zoom/pan lines up pixel-for-pixel across cells.
   const cellAspects = useMemo(() => cells.map((c) => aspects[c.key] ?? 0), [cells, aspects]);
   const aspect = useMemo(
     () => representativeAspect(cellAspects.filter((a) => a > 0)),
@@ -470,10 +471,9 @@ function SelectionStage({
         width: stageSize?.w ?? 0,
         height: stageSize?.h ?? 0,
         aspect,
-        aspects: cellAspects,
         gap: DEFAULT_STAGE_GAP,
       }),
-    [cells.length, stageSize, aspect, cellAspects],
+    [cells.length, stageSize, aspect],
   );
 
   return (
