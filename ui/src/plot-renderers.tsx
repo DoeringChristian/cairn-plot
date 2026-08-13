@@ -58,7 +58,6 @@ import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standal
 import {
   ContentAspectFrame,
   GridCellReporter,
-  StagePackedContext,
 } from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import { GridUniformAspectContext } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { registerRenderer } from "./plot-registry";
@@ -297,17 +296,14 @@ function HeatmapStandalone(p: P) {
 // this viewport to every other synced pane in the same grid.
 function ImageStandalone(p: P) {
   // DEFAULT framing: size the pane's box to the image's CONTENT aspect within the
-  // available space (Part 1). Suppressed under the selection STAGE, which packs
-  // its cells to the content aspect itself (`StagePackedContext`) — there the pane
-  // just fills its already-content-aspect cell. `ChartFillContext` (set by a grid
-  // with `rowHeights`) decides fill-the-cell vs the standalone default height.
-  const stagePacked = useContext(StagePackedContext);
+  // available space. `ChartFillContext` (set by a grid with `rowHeights`, or the
+  // compare/enlarge stage) decides fill-the-cell vs the standalone default height.
   const fill = useContext(ChartFillContext);
-  // Inside a `cp.Grid` every image viewport is UNIFORM (the grid picks ONE
-  // representative aspect and sizes every cell to it) — the pane fills its cell,
-  // and this reporter feeds the cell's content aspect up so the grid can choose
-  // that representative. Absent (a standalone mount) ⇒ null ⇒ the per-content
-  // `ContentAspectFrame` framing below.
+  // Inside ANY grid layout — a `cp.Grid` OR the compare/enlarge stage — every
+  // image viewport is UNIFORM (the grid picks ONE representative aspect and sizes
+  // every cell to it): the pane FILLS its cell and this reporter feeds the cell's
+  // content aspect up so the grid can choose that representative. Absent (a
+  // standalone mount) ⇒ null ⇒ the per-content `ContentAspectFrame` framing below.
   const gridUniform = useContext(GridUniformAspectContext);
   // `p.syncIsAnchor` + the selection-derived sync group ids are threaded down by
   // `plot-node.tsx`'s `SelectionCell` while ≥2 panes are selected (else absent).
@@ -362,9 +358,6 @@ function ImageStandalone(p: P) {
       syncIsAnchor={!!p.syncIsAnchor}
     />
   );
-  // Under the selection stage the cell is already sized to the content aspect —
-  // the pane fills it (no double framing).
-  if (stagePacked) return pane;
   // A FLOAT/EXR source carries its pixel dims in `source.shape` ([H, W, …]) — the
   // content aspect is known SYNCHRONOUSLY (before the WebGPU pane is ready / the
   // payload is decoded). uint8/URL sources have no upfront shape (the pane's

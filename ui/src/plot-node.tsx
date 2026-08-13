@@ -70,9 +70,8 @@ import {
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
-  type GridUniformAspectApi,
+  useUniformGridAspect,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
-import { representativeAspect } from "./lib/cairn-plot/selection/pack-grid";
 import {
   ChartBox,
   ChartFillContext,
@@ -807,35 +806,12 @@ function GridView({ node }: { node: GridNode }) {
   const cols = node.cols ?? node.colWidths?.length ?? children.length ?? 1;
   const fill = !!node.rowHeights && node.rowHeights.length > 0;
 
-  // UNIFORM image-cell sizing: image cells report their content aspect here; the
-  // grid picks the REPRESENTATIVE (median) aspect and every image cell sizes to
-  // it, so viewports in a row are identical (and the selection ring, drawn on the
-  // cell, matches the pane exactly). Collected at runtime because a URL/EXR
-  // image's dims are known only after decode.
-  const [cellAspects, setCellAspects] = useState<ReadonlyMap<string, number>>(() => new Map());
-  const reportAspect = useCallback((key: string, aspect: number | null) => {
-    setCellAspects((prev) => {
-      const cur = prev.get(key);
-      if (aspect == null) {
-        if (!prev.has(key)) return prev;
-        const next = new Map(prev);
-        next.delete(key);
-        return next;
-      }
-      if (cur === aspect) return prev;
-      const next = new Map(prev);
-      next.set(key, aspect);
-      return next;
-    });
-  }, []);
-  const uniformAspect = useMemo<number | null>(() => {
-    const xs = [...cellAspects.values()];
-    return xs.length ? representativeAspect(xs) : null;
-  }, [cellAspects]);
-  const gridAspectApi = useMemo<GridUniformAspectApi>(
-    () => ({ report: reportAspect, uniformAspect }),
-    [reportAspect, uniformAspect],
-  );
+  // UNIFORM image-cell sizing via the ONE shared mechanism (also used by the
+  // compare/enlarge stage): image cells report their content aspect, the grid
+  // picks the REPRESENTATIVE (median) aspect, and every image cell sizes to it —
+  // so viewports in a row are identical (and the selection ring, drawn on the
+  // cell, matches the pane exactly).
+  const gridAspectApi = useUniformGridAspect();
 
   const gridStyle: React.CSSProperties = {
     display: "grid",

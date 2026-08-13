@@ -31,6 +31,7 @@
  */
 import {
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -59,12 +60,15 @@ import {
 } from "./lib/cairn-plot/selection/compare-grid";
 import {
   packContentGrid,
-  representativeAspect,
   DEFAULT_STAGE_GAP,
   type Rect,
 } from "./lib/cairn-plot/selection/pack-grid";
+import {
+  GridUniformAspectContext,
+  DEFAULT_GRID_CELL_ASPECT,
+  useUniformGridAspect,
+} from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { ReportNaturalSizeContext } from "./lib/cairn-plot/renderers/natural-size-report";
-import { StagePackedContext } from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import { useOriginTheme } from "./lib/cairn-plot/primitives/themed-portal";
 import {
@@ -235,7 +239,6 @@ const REPICK_SLOP_PX = 5;
 function StageCell({
   spec,
   rect,
-  onAspect,
   onPickReference,
   viewportSyncGroupId,
   settingsSyncGroupId,
@@ -246,9 +249,6 @@ function StageCell({
    *  the stage size is still being measured this is a zero box (invisible for the
    *  first frame). */
   rect: Rect | undefined;
-  /** Report this cell's content aspect (width / height) up to the stage so it can
-   *  size every cell to the content and cluster them densely. */
-  onAspect: (key: string, aspect: number) => void;
   onPickReference: () => void;
   /** Shared VIEWPORT-sync group so zoom/pan on ONE cell broadcasts to every cell
    *  in the stage — the same mechanism the page-wide selection uses (via
@@ -309,25 +309,37 @@ function StageCell({
     style.cursor = "pointer";
   }
 
-  // Fill the cell (`height:100%`) so N cells stretch to fill the overlay height
-  // (Bug 8): `ChartFillContext=true` makes the fresh `PaneSelectionFrame` +
-  // `ChartBox` fill their track rather than collapse to content height. The
-  // shared settings-sync group threads through the `PaneSyncContext` — the
-  // non-selectable stage leaf passes it through to its inner leaf/compare.
+  // Fill the cell (`height:100%`) so N cells stretch to fill the overlay height:
+  // `ChartFillContext=true` makes the fresh `PaneSelectionFrame` + `ChartBox`
+  // fill their track rather than collapse to content height. The shared
+  // settings-sync group threads through the `PaneSyncContext` — the
+  // non-selectable stage leaf passes it through to its inner leaf/compare. The
+  // pane's own content aspect flows up via `GridUniformAspectContext` (a
+  // `GridCellReporter` inside `ImageStandalone`, since the stage provides that
+  // context) — the SAME path `cp.Grid` uses.
   const paneSync = useMemo(
     () => ({ viewportSyncGroupId, settingsSyncGroupId, syncIsAnchor: isAnchor }),
     [viewportSyncGroupId, settingsSyncGroupId, isAnchor],
   );
 
-  // The pane reports its natural (content) pixel size up through the shared
-  // `ReportNaturalSizeContext`; we forward it as this cell's aspect so the stage
-  // can pack every cell to the content aspect.
+  // GENERAL per-cell aspect bridge: forward whatever this cell's pane publishes on
+  // `ReportNaturalSizeContext` (images, COMPARE panes, any renderer with a natural
+  // size) into the shared `GridUniformAspectContext`, so `packContentGrid` sizes
+  // to the real content aspect for ALL cell types — not just images. An image
+  // leaf's inner `GridCellReporter` provides a nearer `ReportNaturalSizeContext`
+  // that shadows this one, so each cell reports exactly once.
+  // Capture the STABLE `report` fn (the api object churns as `uniformAspect`
+  // repacks; keying on the object would make the cleanup transiently withdraw
+  // this cell's aspect — the pane reports imperatively and never re-adds it).
+  const gridReport = useContext(GridUniformAspectContext)?.report;
+  const reportKey = useId();
   const reportAspect = useCallback(
     (w: number, h: number) => {
-      if (w > 0 && h > 0) onAspect(spec.key, w / h);
+      if (w > 0 && h > 0) gridReport?.(reportKey, w / h);
     },
-    [onAspect, spec.key],
+    [gridReport, reportKey],
   );
+  useEffect(() => () => gridReport?.(reportKey, null), [gridReport, reportKey]);
 
   return (
     <div
@@ -340,17 +352,15 @@ function StageCell({
       onPointerUpCapture={onPointerUpCapture}
     >
       <div style={{ position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <StagePackedContext.Provider value={true}>
-          <ReportNaturalSizeContext.Provider value={reportAspect}>
-            <ChartFillContext.Provider value={true}>
-              <PaneSyncContext.Provider value={paneSync}>
-                <SharedPlotContext.Provider value={{ source: spec.source, shared: spec.shared }}>
-                  <PlotNodeView node={spec.node} />
-                </SharedPlotContext.Provider>
-              </PaneSyncContext.Provider>
-            </ChartFillContext.Provider>
-          </ReportNaturalSizeContext.Provider>
-        </StagePackedContext.Provider>
+        <ReportNaturalSizeContext.Provider value={reportAspect}>
+          <ChartFillContext.Provider value={true}>
+            <PaneSyncContext.Provider value={paneSync}>
+              <SharedPlotContext.Provider value={{ source: spec.source, shared: spec.shared }}>
+                <PlotNodeView node={spec.node} />
+              </SharedPlotContext.Provider>
+            </PaneSyncContext.Provider>
+          </ChartFillContext.Provider>
+        </ReportNaturalSizeContext.Provider>
       </div>
 
       {/* REF badge (enlarge: the reference cell; compare: the shared reference). */}
@@ -428,18 +438,19 @@ function SelectionStage({
   const viewportSyncGroupId = useId();
   const settingsSyncGroupId = useId();
 
-  // --- CONTENT-ASPECT DENSE PACKING (Part 2) ---------------------------------
-  // Measure the stage's inner box and learn each cell's content aspect (reported
-  // by its pane), then pack the cells to the content aspect and cluster them
-  // centrally with small gaps — a single cell COVERS the stage. Cells are sized
-  // UNIFORMLY off ONE representative aspect so synced zoom/pan lines up across
-  // them (the viewport-sync contract).
+  // --- UNIFORM CONTENT-ASPECT PACKING ----------------------------------------
+  // The stage is a UNIFORM grid, driven by the SAME size-computation mechanism as
+  // `cp.Grid` ({@link useUniformGridAspect} + `GridUniformAspectContext`): each
+  // cell's pane reports its content aspect (via `GridCellReporter`, reached
+  // through the normal `ImageStandalone` path once the context is present), the
+  // grid picks the REPRESENTATIVE (median) aspect, and `packContentGrid` packs
+  // every cell to that ONE aspect — maximally filling the fullscreen box and
+  // clustering centrally. Identical cells mean a synced zoom/pan lines up pixel-
+  // for-pixel; a mismatched image letterboxes within its uniform cell.
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [stageSize, setStageSize] = useState<{ w: number; h: number } | null>(null);
-  const [aspects, setAspects] = useState<Record<string, number>>({});
-  const onAspect = useCallback((key: string, aspect: number) => {
-    setAspects((prev) => (prev[key] === aspect ? prev : { ...prev, [key]: aspect }));
-  }, []);
+  const gridAspectApi = useUniformGridAspect();
+  const aspect = gridAspectApi.uniformAspect ?? DEFAULT_GRID_CELL_ASPECT;
 
   useLayoutEffect(() => {
     const el = gridRef.current;
@@ -455,15 +466,6 @@ function SelectionStage({
     return () => ro.disconnect();
   }, []);
 
-  // The stage is a UNIFORM grid: every cell is sized to the REPRESENTATIVE
-  // (median) content aspect across the selected panes, so all viewports are
-  // identical (a mismatched image letterboxes within its uniform cell) and a
-  // synced zoom/pan lines up pixel-for-pixel across cells.
-  const cellAspects = useMemo(() => cells.map((c) => aspects[c.key] ?? 0), [cells, aspects]);
-  const aspect = useMemo(
-    () => representativeAspect(cellAspects.filter((a) => a > 0)),
-    [cellAspects],
-  );
   const pack = useMemo(
     () =>
       packContentGrid({
@@ -507,18 +509,19 @@ function SelectionStage({
               Nothing to {mode === "compare" ? "compare" : "enlarge"}.
             </div>
           ) : (
-            cells.map((spec, i) => (
-              <StageCell
-                key={spec.key}
-                spec={spec}
-                rect={pack.rects[i]}
-                onAspect={onAspect}
-                onPickReference={() => store.setReference(spec.reprPaneId)}
-                viewportSyncGroupId={viewportSyncGroupId}
-                settingsSyncGroupId={settingsSyncGroupId}
-                isAnchor={i === 0}
-              />
-            ))
+            <GridUniformAspectContext.Provider value={gridAspectApi}>
+              {cells.map((spec, i) => (
+                <StageCell
+                  key={spec.key}
+                  spec={spec}
+                  rect={pack.rects[i]}
+                  onPickReference={() => store.setReference(spec.reprPaneId)}
+                  viewportSyncGroupId={viewportSyncGroupId}
+                  settingsSyncGroupId={settingsSyncGroupId}
+                  isAnchor={i === 0}
+                />
+              ))}
+            </GridUniformAspectContext.Provider>
           )}
         </div>
       </div>

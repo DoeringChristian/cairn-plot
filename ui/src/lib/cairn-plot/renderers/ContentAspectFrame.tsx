@@ -14,21 +14,14 @@
  * Before the natural size is known it fills the available box (no collapse / no
  * flash), then reframes once the pane reports.
  *
- * Under the page-level selection STAGE (which packs cells to the content aspect
- * itself) this frame is suppressed via {@link StagePackedContext} — the pane there
- * simply fills its already-content-aspect cell.
+ * A pane inside ANY grid layout (a `cp.Grid` or the compare/enlarge stage) uses
+ * {@link GridCellReporter} instead — the grid sizes the uniform cell and the pane
+ * just fills it.
  */
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { ReportNaturalSizeContext } from "./natural-size-report";
 import { GridUniformAspectContext } from "./grid-uniform-aspect";
-
-/**
- * `true` while rendering inside the page-level selection stage, which does its
- * OWN content-aspect cell packing — so `ContentAspectFrame` steps aside and lets
- * the pane fill the stage-sized cell. Default `false` (standalone / grid).
- */
-export const StagePackedContext = createContext<boolean>(false);
 
 export function ContentAspectFrame({
   /** The box the pane fills BEFORE its content aspect is known: `"100%"` fills
@@ -161,7 +154,10 @@ export function GridCellReporter({
   seedAspect?: number | null;
   children: ReactNode;
 }) {
-  const grid = useContext(GridUniformAspectContext);
+  // The api OBJECT churns whenever `uniformAspect` changes, but its `report` fn is
+  // stable — key effects on `report`, not the api, so a re-pack never re-fires
+  // the unmount cleanup (which would transiently withdraw this cell's aspect).
+  const gridReport = useContext(GridUniformAspectContext)?.report;
   const key = useId();
   const [reported, setReported] = useState<number | null>(null);
   const report = useCallback((w: number, h: number) => {
@@ -171,11 +167,11 @@ export function GridCellReporter({
     seedAspect != null && Number.isFinite(seedAspect) && seedAspect > 0 ? seedAspect : null;
   const aspect = seed ?? reported;
   useEffect(() => {
-    grid?.report(key, aspect);
-  }, [grid, key, aspect]);
+    gridReport?.(key, aspect);
+  }, [gridReport, key, aspect]);
   // Withdraw this cell's aspect on unmount (lazy-scroll teardown / grid remount)
   // so a gone pane never skews the representative aspect.
-  useEffect(() => () => grid?.report(key, null), [grid, key]);
+  useEffect(() => () => gridReport?.(key, null), [gridReport, key]);
   return (
     <div
       data-cairn-grid-cell=""
