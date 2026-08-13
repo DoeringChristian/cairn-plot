@@ -6,15 +6,22 @@
 // Shared by BOTH compare panes (CPU `MediaComparePane` + `GpuComparePane`) so
 // the gesture is identical and lives in ONE place.
 //
-// Scope: a `window` keydown listener that acts ONLY when the pointer is over
-// THIS pane, or focus is within it — no click-to-focus needed, which is the
-// natural expectation (hover the slider, press an arrow). Hover is tracked with
-// explicit `pointerenter`/`pointerleave` on the pane element (subtree-aware and
-// deterministic — unlike a `:hover` match, which the browser derives from the
-// real pointer and cannot be observed/tested reliably). On a page of many
-// compare panes only the pane under the cursor reacts; arrows typed into a text
-// field are never hijacked. The pane is also made focusable (`tabindex=-1`, out
-// of the tab order) so the focus path works for keyboard users and tests.
+// Scope: a `window` keydown listener.
+//   - Inside a FULLSCREEN compare/enlarge overlay (a modal with ONE active
+//     compare context) the arrows act unconditionally — no hover and no
+//     click-to-focus needed. This is the natural expectation there: open the
+//     slide view, press Left/Right. (A compare GRID in the overlay is
+//     settings-synced, so every pane's `splitPosition` flips together.)
+//   - INLINE (a compare card on a report page with possibly many panes) the
+//     arrows act ONLY when the pointer is over THIS pane or focus is within it,
+//     so a lone pane still responds on hover but sibling panes never all move at
+//     once. Hover is tracked with explicit `pointerenter`/`pointerleave` on the
+//     pane element (subtree-aware and deterministic — unlike a `:hover` match,
+//     which the browser derives from the real pointer and cannot be observed/
+//     tested reliably).
+// Arrows typed into a text field are never hijacked. The pane is also made
+// focusable (`tabindex=-1`, out of the tab order) so the focus path works for
+// keyboard users and tests.
 // ---------------------------------------------------------------------------
 import { useEffect } from "react";
 import type { RefObject } from "react";
@@ -64,7 +71,12 @@ export function useSplitFlipKeys(
         return;
       }
       const focusedWithin = !!active && el.contains(active);
-      if (!hovered && !focusedWithin) return;
+      // Inside a fullscreen compare/enlarge overlay the arrows always act (modal,
+      // one active compare) — no hover/focus needed. Inline, require hover/focus.
+      const inOverlay = !!el.closest?.(
+        "[data-cairn-plot-stage-frame], [data-cairn-plot-enlarge-frame]",
+      );
+      if (!hovered && !focusedWithin && !inOverlay) return;
       e.preventDefault();
       onSplitPositionChange(e.key === "ArrowLeft" ? 0 : 1);
     };

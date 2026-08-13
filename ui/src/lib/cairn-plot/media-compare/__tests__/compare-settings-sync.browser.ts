@@ -331,6 +331,22 @@ async function run(): Promise<boolean> {
   report(peerTrackedFlip, `the flip syncs to the peer pane (B.splitPosition=${B().splitPosition})`);
   ok = ok && ignoredWhenAway && focusFlip && peerTrackedFlip;
 
+  // --- 7b. OVERLAY path — inside a fullscreen compare/enlarge stage the arrows
+  //     act with NO hover and NO focus (modal, one active compare). Mark pane A's
+  //     subtree as inside a stage frame, move the pointer AWAY, blur, then key:
+  //     it must STILL flip (the inline "ignored when away" rule is lifted).
+  const paneAStageWrap = comparePaneRoots()[0]!;
+  paneAStageWrap.setAttribute("data-cairn-plot-stage-frame", "");
+  paneAViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  A().changeSplit(0.4);
+  await waitFor(() => Math.abs(A().splitPosition - 0.4) < 1e-6);
+  arrow("ArrowLeft"); // away + not focused, but inside the overlay → acts
+  const overlayFlip = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6, 2000);
+  report(overlayFlip, `OVERLAY ArrowLeft flips with pointer AWAY + not focused (A.splitPosition=${A().splitPosition})`);
+  paneAStageWrap.removeAttribute("data-cairn-plot-stage-frame");
+  ok = ok && overlayFlip;
+
   // --- 8. PER-SIDE CAPTIONS — cp.Image(label=...) shown in the compare pane ---
   // Return pane A to split, then assert the REFERENCE caption sits bottom-LEFT
   // and the FOREGROUND caption bottom-RIGHT (the divider passes over them). Then
