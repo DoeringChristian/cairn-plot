@@ -18,7 +18,7 @@
  * itself) this frame is suppressed via {@link StagePackedContext} — the pane there
  * simply fills its already-content-aspect cell.
  */
-import { createContext, useCallback, useState } from "react";
+import { createContext, useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { ReportNaturalSizeContext } from "./natural-size-report";
 
@@ -40,45 +40,89 @@ export function ContentAspectFrame({
   outerHeight: number | string;
   children: ReactNode;
 }) {
+  const ref = useRef<HTMLDivElement | null>(null);
   const [aspect, setAspect] = useState<number | null>(null);
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const report = useCallback((w: number, h: number) => {
     if (w > 0 && h > 0) setAspect((prev) => (prev === w / h ? prev : w / h));
   }, []);
 
-  // The fix for "big empty bands around images": the previous version filled a
-  // FIXED box and CENTERED a content-aspect box inside it — which only RELOCATED
-  // the empty space to the margins, it never removed it. Instead, once the
-  // content aspect is known, make the FRAME ITSELF content-aspect via CSS
-  // `aspect-ratio` (WIDTH-driven: height follows), so:
-  //   - a bare / auto-height parent COLLAPSES to the content (no bands at all);
-  //   - a px ceiling (`outerHeight` number, e.g. a bare float image's default
-  //     height) caps the WIDTH at `ceiling * aspect` so the box stays
-  //     content-aspect within that ceiling instead of letterboxing;
-  //   - a fixed cell (`outerHeight === "100%"`) bounds the box to the cell
-  //     (`maxHeight:100%`) while keeping it content-aspect — the pane fills the
-  //     box (no internal bands); any remaining margin is the cell's, not ours.
-  // Before the aspect is known, fall back to the plain `outerHeight` box.
-  const style: CSSProperties = {
-    minWidth: 0,
-    minHeight: 0,
-    display: "flex",
-    flexDirection: "column",
-    marginInline: "auto",
-    ...(aspect
+  // The fix for "big empty bands / checkerboard around images": the empty space
+  // is the pane's own object-contain LETTERBOX, drawn whenever the pane box's
+  // aspect ≠ the image aspect. Pure CSS can't fit a content-aspect box within a
+  // container bounded on BOTH axes (`aspect-ratio` is ignored once width AND
+  // height are definite, and `max-height` doesn't reduce a width-driven box), so
+  // MEASURE the available space and size the frame to the largest content-aspect
+  // box that FITS it. The pane then fills a content-aspect box exactly → no
+  // letterbox.
+  //
+  // The available box is NOT the immediate parent: several auto-height wrappers
+  // (the PlotApp root, pane frames) sit between the frame and the real container,
+  // and an auto wrapper's height just follows the frame (hiding the container's
+  // true bound). So to find the real constraint we momentarily INFLATE the frame
+  // to a huge size (synchronously, before paint — no flicker): every AUTO
+  // ancestor grows with it, while a BOUNDED ancestor (a fixed cell / card / a
+  // sized host) stays put. The min bounded extent across ancestors is the real
+  // available width/height. If height is unbounded (a plain auto column), go
+  // width-driven and the container COLLAPSES onto the frame.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const parent = el?.parentElement;
+    if (!el || !parent || aspect == null || typeof ResizeObserver === "undefined") return;
+    let measuring = false;
+    const BIG = 1_000_000;
+    const measure = () => {
+      if (measuring) return;
+      measuring = true;
+      const prevW = el.style.width;
+      const prevH = el.style.height;
+      el.style.width = `${BIG}px`;
+      el.style.height = `${BIG}px`;
+      void el.offsetHeight; // force reflow so ancestors settle
+      const fr = el.getBoundingClientRect();
+      let availW = Infinity;
+      let availH = Infinity;
+      for (let node: HTMLElement | null = parent; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+        const r = node.getBoundingClientRect();
+        const cs = getComputedStyle(node);
+        if (r.width < BIG / 2) availW = Math.min(availW, r.right - parseFloat(cs.paddingRight || "0") - fr.left);
+        if (r.height < BIG / 2) availH = Math.min(availH, r.bottom - parseFloat(cs.paddingBottom || "0") - fr.top);
+      }
+      el.style.width = prevW;
+      el.style.height = prevH;
+      measuring = false;
+      if (!Number.isFinite(availW) || availW <= 0) return;
+      const bound = Number.isFinite(availH) && availH > 20 ? availH * aspect : Infinity;
+      const w = Math.max(0, Math.min(availW, bound));
+      const h = w / aspect;
+      setBox((prev) => (prev && Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5 ? prev : { w, h }));
+    };
+    measure();
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(parent);
+    const onResize = () => measure();
+    window.addEventListener("resize", onResize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", onResize);
+    };
+  }, [aspect]);
+
+  const style: CSSProperties =
+    aspect && box
       ? {
-          width:
-            typeof outerHeight === "number"
-              ? `min(100%, ${Math.round(outerHeight * aspect)}px)`
-              : "100%",
-          maxWidth: "100%",
-          aspectRatio: String(aspect),
-          ...(outerHeight === "100%" ? { maxHeight: "100%" } : {}),
+          width: box.w,
+          height: box.h,
+          marginInline: "auto",
+          minWidth: 0,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
         }
-      : { width: "100%", height: outerHeight }),
-  };
+      : { width: "100%", height: outerHeight, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" };
 
   return (
-    <div data-cairn-content-aspect-frame="" style={style}>
+    <div ref={ref} data-cairn-content-aspect-frame="" style={style}>
       <ReportNaturalSizeContext.Provider value={report}>{children}</ReportNaturalSizeContext.Provider>
     </div>
   );

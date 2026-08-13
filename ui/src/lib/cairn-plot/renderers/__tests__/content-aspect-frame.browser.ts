@@ -149,6 +149,48 @@ async function run(): Promise<boolean> {
   ok = ok && sqOk && wdOk;
 
   roots.forEach((r) => r.unmount());
+  roots.length = 0;
+  await sleep(30);
+
+  // FIXED-container guard (both orientations) — the pane must be sized to the
+  // largest content-aspect box that FITS the fixed host, in BOTH dimensions, so
+  // there is NO letterbox AND NO overflow (the previous cut overflowed a tall
+  // image in a short-wide container). The host is bounded on BOTH axes here, so
+  // the frame does NOT fill it — the point is the pane's OWN box is content-
+  // aspect (no checkerboard) and stays within the host.
+  const checkFixed = async (
+    id: string,
+    hostW: number,
+    hostH: number,
+    imgW: number,
+    imgH: number,
+    name: string,
+  ): Promise<boolean> => {
+    const el = document.getElementById(id)!;
+    el.style.cssText = `width:${hostW}px;height:${hostH}px;overflow:hidden;background:#222`;
+    const root = createRoot(el);
+    root.render(createElement(PlotApp, { descriptor: imageDescriptor(imgW, imgH, "#8e44ad") }));
+    roots.push(root);
+    const aspect = imgW / imgH;
+    const settled = await waitFor(() => {
+      const b = innerBox(id)?.getBoundingClientRect();
+      return !!b && b.width > 4 && b.height > 4 && near(b.width / b.height, aspect, 0.08);
+    });
+    const f = innerBox(id)!.getBoundingClientRect();
+    const contentAspect = near(f.width / f.height, aspect, 0.08);
+    const fits = f.width <= hostW + 2 && f.height <= hostH + 2; // NO overflow
+    report(settled && contentAspect, `${name}: pane is content-aspect ${aspect.toFixed(2)} (got ${(f.width / f.height).toFixed(3)}) — no checkerboard`);
+    report(fits, `${name}: pane fits the fixed ${hostW}×${hostH} host (${f.width.toFixed(0)}×${f.height.toFixed(0)}) — no overflow`);
+    return settled && contentAspect && fits;
+  };
+
+  // wide 2:1 image in a fixed TALL host → ~fills width, short (fits).
+  const fixA = await checkFixed("mount-square", 300, 500, 128, 64, "FIXED tall host / wide img");
+  // tall 1:2 image in a fixed SHORT-WIDE host → ~fills height, narrow (fits — the overflow guard).
+  const fixB = await checkFixed("mount-wide", 500, 300, 64, 128, "FIXED short host / tall img");
+  ok = ok && fixA && fixB;
+
+  roots.forEach((r) => r.unmount());
   return ok;
 }
 
