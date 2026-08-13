@@ -18,7 +18,7 @@
  * itself) this frame is suppressed via {@link StagePackedContext} — the pane there
  * simply fills its already-content-aspect cell.
  */
-import { createContext, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { ReportNaturalSizeContext } from "./natural-size-report";
 
@@ -35,17 +35,32 @@ export function ContentAspectFrame({
    *  the pane reports its natural size, the frame RESHAPES to the content aspect
    *  (see below) so an auto-height parent collapses onto it — no empty bands. */
   outerHeight,
+  contentAspect,
   children,
 }: {
   outerHeight: number | string;
+  /** An AUTHORITATIVE content aspect (width / height) known upfront by the host
+   *  — e.g. a float/EXR source whose pixel dims live in `source.shape` before
+   *  any decode. Seeds the frame so it reshapes to the content aspect
+   *  IMMEDIATELY, without waiting for the pane to report its natural size (which
+   *  for the WebGPU float path only happens post-decode). A uint8/URL pane has
+   *  no upfront shape → omit it and rely on the pane's `<img>`-onload report. */
+  contentAspect?: number | null;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [aspect, setAspect] = useState<number | null>(null);
+  const seedAspect =
+    contentAspect != null && Number.isFinite(contentAspect) && contentAspect > 0 ? contentAspect : null;
+  const [aspect, setAspect] = useState<number | null>(seedAspect);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const report = useCallback((w: number, h: number) => {
     if (w > 0 && h > 0) setAspect((prev) => (prev === w / h ? prev : w / h));
   }, []);
+  // Adopt the host-supplied authoritative aspect the moment it is known / changes
+  // (the pane's own later report converges to the same value — harmless).
+  useEffect(() => {
+    if (seedAspect != null) setAspect((prev) => (prev === seedAspect ? prev : seedAspect));
+  }, [seedAspect]);
 
   // The fix for "big empty bands / checkerboard around images": the empty space
   // is the pane's own object-contain LETTERBOX, drawn whenever the pane box's

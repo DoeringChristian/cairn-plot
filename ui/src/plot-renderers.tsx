@@ -42,6 +42,7 @@ import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
 import CpuImagePane from "./lib/cairn-plot/renderers/CpuImagePane";
 import {
   resolveRenderMode,
+  shapeDims,
   type ImageBackend,
   type RenderMode,
 } from "./lib/cairn-plot/renderers/image-backend";
@@ -365,7 +366,27 @@ function ImageStandalone(p: P) {
   // image, so the empty letterbox/pillarbox bands are minimised.
   const outerHeight: number | string =
     fill || source.dtype !== "float" ? "100%" : (p.height ?? DEFAULT_CHART_HEIGHT);
-  return <ContentAspectFrame outerHeight={outerHeight}>{pane}</ContentAspectFrame>;
+  // A FLOAT/EXR source carries its pixel dims in `source.shape` ([H, W, …]) —
+  // the content aspect is known SYNCHRONOUSLY, before the WebGPU pane is ready
+  // or the payload is decoded. Hand it to the frame so it sizes the viewport to
+  // the content aspect immediately, instead of waiting for the pane to REPORT
+  // its natural size (which only happens post-`paneReady` + decode). Without
+  // this the frame sits in its tall `outerHeight` fallback until then — a float
+  // image in a grid renders a PORTRAIT viewport (free space above/below a wide
+  // image). A uint8 URL source has no upfront shape → `null`, and the pane's
+  // `<img>` onload reports it as before.
+  const knownAspect =
+    source.dtype === "float" && source.shape.length >= 2
+      ? (() => {
+          const { w, h } = shapeDims(source.shape);
+          return h > 0 && w > 0 ? w / h : null;
+        })()
+      : null;
+  return (
+    <ContentAspectFrame outerHeight={outerHeight} contentAspect={knownAspect}>
+      {pane}
+    </ContentAspectFrame>
+  );
 }
 
 function TableStandalone(p: P) {
