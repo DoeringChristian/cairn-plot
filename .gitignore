@@ -21,3 +21,7 @@ ui/dist/
 *.browser.bundle.js
 examples/rendered/
 .worktrees/
+
+# harness browser download + rust build artifacts (never commit)
+ui/chrome/
+wasm/exr-decode/target/

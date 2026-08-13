@@ -88,6 +88,21 @@ test("aces(0)=0, clamps to [0,1], monotonic increasing", () => {
   assert.ok(op([0.5, 0.5, 0.5] as RgbTriple)[0] > 0.5);
 });
 
+test("normal: remaps [-1,1] → [0,1] per channel, clamps, identity encode", () => {
+  const op = TONEMAP_OPERATORS.normal!;
+  approx(op([-1, 0, 1] as RgbTriple)[0], 0); // -1 → 0
+  approx(op([-1, 0, 1] as RgbTriple)[1], 0.5); //  0 → 0.5
+  approx(op([-1, 0, 1] as RgbTriple)[2], 1); //  1 → 1
+  // Out-of-[-1,1] clamps to the displayable range.
+  approx(op([-3, 3, 0.5] as RgbTriple)[0], 0);
+  approx(op([-3, 3, 0.5] as RgbTriple)[1], 1);
+  approx(op([-3, 3, 0.5] as RgbTriple)[2], 0.75);
+  // Shown RAW: the output-encode is identity (γ=1), like linear — not sRGB.
+  assert.equal(resolveEncodeGamma("normal", 2.2), 1);
+  // It is offered as an SDR-menu operator.
+  assert.ok(SDR_TONEMAP_OPERATORS.includes("normal"));
+});
+
 test("getTonemapOperator falls back to srgb for unknown key", () => {
   assert.equal(getTonemapOperator("does-not-exist"), TONEMAP_OPERATORS.srgb);
   assert.equal(getTonemapOperator(null), TONEMAP_OPERATORS.srgb);

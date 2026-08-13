@@ -24,7 +24,17 @@ from cairn_plot.components import (
 
 
 def test_canonical_operator_set() -> None:
-    assert _TONEMAP_OPERATORS == ("linear", "srgb", "gamma", "reinhard", "aces")
+    assert _TONEMAP_OPERATORS == ("linear", "srgb", "gamma", "reinhard", "aces", "normal")
+
+
+def test_normal_map_operator_accepted() -> None:
+    # `normal` is a plain tone-map operator (remaps [-1,1] → [0,1]); accepted on
+    # the SDR/float path and emitted verbatim on the image node.
+    import numpy as np
+    import cairn_plot as cp
+
+    node = cp.Image(np.zeros((4, 4, 3), dtype=np.float32), tonemap="normal").to_node()
+    assert node["props"]["tonemap"] == "normal"
 
 
 def test_deprecated_aliases_are_accepted() -> None:

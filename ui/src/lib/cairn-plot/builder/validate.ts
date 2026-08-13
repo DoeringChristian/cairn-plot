@@ -68,9 +68,6 @@ export const COMPARE_ALIGNS: readonly string[] = [
 ];
 export const COMPARE_FITS: readonly string[] = ["crop", "fill"];
 export const PIXEL_VALUE_NOTATIONS: readonly string[] = ["decimal", "int"];
-/** The float-image display colorspaces (↔ TS `ImageColorspace` / Python
- *  `_IMAGE_COLORSPACES`): "linear" (default) or "normal" (the normal-map remap). */
-export const IMAGE_COLORSPACES: readonly string[] = ["linear", "normal"];
 
 function oneOf(name: string, value: string, allowed: readonly string[]): string {
   if (!allowed.includes(value)) {
@@ -89,5 +86,3 @@ export const checkAlign = (v: string): string => oneOf("align", v, COMPARE_ALIGN
 export const checkFit = (v: string): string => oneOf("fit", v, COMPARE_FITS);
 export const checkPixelValueNotation = (v: string): string =>
   oneOf("pixelValueNotation", v, PIXEL_VALUE_NOTATIONS);
-export const checkColorspace = (v: string): string =>
-  oneOf("colorspace", v, IMAGE_COLORSPACES);

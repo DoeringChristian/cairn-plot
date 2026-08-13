@@ -113,14 +113,12 @@ import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
   colormapToolbarButton,
   tonemapToolbarButton,
-  colorspaceToolbarButton,
 } from "./use-image-controller";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
   aliasPeakHint,
   tonemapHasGamma,
-  canonicalizeColorspace,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MIN,
   EXTENDED_TONEMAP_PEAK_MAX,
@@ -130,7 +128,6 @@ import {
   TONEMAP_GAMMA_MAX,
   TONEMAP_GAMMA_STEP,
   type TonemapOperator,
-  type ImageColorspace,
 } from "../image/tonemap";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -464,22 +461,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (propGamma && propGamma > 0) setTonemapGamma(propGamma);
   }, [propGamma, setTonemapGamma]);
 
-  // DISPLAY COLORSPACE (float pane only) — "linear" (ordinary pipeline) vs
-  // "normal" (the normal-map [-1,1]→[0,1] remap). View-local; seeded from the
-  // descriptor `colorspace=` prop and re-seeded on prop change (controlled host-
-  // menu surface, mirroring the tonemap/gamma re-seed effects). While "normal" is
-  // in effect it REPLACES the tone-map transform, so the render pass sets the
-  // engine `colorspace:"normal"` flag and the tonemap menu is hidden. Scoped to
-  // the float path — a uint8 source is conventionally already (n+1)/2-encoded.
-  const propColorspace = hdrMode
-    ? canonicalizeColorspace((props as HdrImageProps).colorspace)
-    : "linear";
-  const [colorspace, setColorspace] = useState<ImageColorspace>(propColorspace);
-  useEffect(() => {
-    setColorspace(propColorspace);
-  }, [propColorspace]);
-  const normalMapActive = hdrMode && colorspace === "normal";
-
   // (SDR display-transfer state removed — §B: the plain-SDR pane now shares the
   // SAME unified operator state as the HDR pane, `effectiveTonemap` above, and
   // the same PEAK/γ sliders. The old 3-operator sRGB·Gamma·Linear subset is gone;
@@ -505,26 +486,24 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
       if (patch.colormap !== undefined) setColormapOverride(patch.colormap as Colormap);
-      if (patch.colorspace !== undefined) setColorspace(canonicalizeColorspace(patch.colorspace));
       if (patch.tonemap !== undefined) setTonemapOverride(patch.tonemap as TonemapOperator);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
     },
-    [setColormapOverride, setColorspace, setTonemapOverride, setTonemapGamma, setPeak],
+    [setColormapOverride, setTonemapOverride, setTonemapGamma, setPeak],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
       colormap: sdrColormap,
-      colorspace,
       tonemap: effectiveTonemap,
       tonemapGamma,
       peak,
       exposureEV: displayEV,
       offset: displayOffset,
     }),
-    [sdrColormap, colorspace, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
+    [sdrColormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -545,13 +524,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       publishSettings({ tonemap: id });
     },
     [publishSettings],
-  );
-  const changeColorspace = useCallback(
-    (id: string) => {
-      setColorspace(canonicalizeColorspace(id));
-      publishSettings({ colorspace: id });
-    },
-    [setColorspace, publishSettings],
   );
   const changeExposure = useCallback(
     (ev: number) => {
@@ -966,10 +938,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             hdrOut: rt.hdrOut,
             peak: rt.peak,
             srgbDecode: !hdrMode,
-            // NORMAL-MAP colorspace (float pane only): when engaged the shader
-            // short-circuits to the [-1,1]→[0,1] remap, ignoring the operator/
-            // exposure/encode fields above.
-            colorspace: normalMapActive ? "normal" : "linear",
             uv,
             filter,
           }
@@ -1002,7 +970,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, normalMapActive, sdrPlain, hdrMode, sdrColormap, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -1157,15 +1125,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // display-ready). The HDR pane has no colormap prop.
       leadingMenus={
         hdrMode
-          ? // Float pane: the COLORSPACE menu (Linear · Normal map). While "Normal
-            // map" is active it REPLACES the tone-map transform, so the tonemap
-            // menu is hidden (it would be inert).
-            [
-              colorspaceToolbarButton(colorspace, changeColorspace),
-              ...(normalMapActive
-                ? []
-                : [tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator))]),
-            ]
+          ? [tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator))]
           : sdrPlain
             ? [
                 colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap)),
@@ -1188,7 +1148,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Gamma-on-HDR pane shows BOTH PK and γ. Their reset/modified state folds
       // into HOME so a single reset clears operator + P + γ.
       extraSliders={[
-        ...((hdrMode || sdrPlain) && hdrEngaged && !normalMapActive
+        ...((hdrMode || sdrPlain) && hdrEngaged
           ? [
               {
                 id: "peak",
@@ -1204,7 +1164,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               },
             ]
           : []),
-        ...((hdrMode || sdrPlain) && tonemapHasGamma(effectiveTonemap) && !normalMapActive
+        ...((hdrMode || sdrPlain) && tonemapHasGamma(effectiveTonemap)
           ? [
               {
                 id: "gamma",

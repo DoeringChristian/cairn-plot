@@ -28,7 +28,6 @@ import {
   checkImageColormap,
   checkPixelValueNotation,
   checkTonemap,
-  checkColorspace,
   COMPARE_KERNEL_MODES,
 } from "./validate.ts";
 
@@ -123,12 +122,6 @@ function imageHdrProps(o: Opts): Opts {
   if (o.offset != null) props.offset = num(o.offset);
   if (o.gamma != null) props.gamma = num(o.gamma);
   if (o.peak != null) props.peak = num(o.peak);
-  // Display COLORSPACE — the normal-map remap. Emitted ONLY for the non-default
-  // "normal" mode (mirrors Python `_image_hdr_props`), so an ordinary float image
-  // stays byte-for-byte as before.
-  if (o.colorspace != null && checkColorspace(String(o.colorspace)) === "normal") {
-    props.colorspace = "normal";
-  }
   if (o.interpolation != null) props.interpolation = o.interpolation;
   if (o.showAxes != null) props.showAxes = Boolean(o.showAxes);
   if (o.pixelValueNotation != null) props.pixelValueNotation = checkPixelValueNotation(String(o.pixelValueNotation));

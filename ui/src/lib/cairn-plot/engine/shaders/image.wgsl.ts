@@ -30,7 +30,7 @@
  *
  *   logical binding 2 (`u_bind2: vec4<f32>`, native binding 2*3+2=8):
  *     .x = exposureEV        (f32, EV stops)
- *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended,5=extended-reinhard,6=extended-aces,7=extended-clamp,8=gamma)
+ *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended,5=extended-reinhard,6=extended-aces,7=extended-clamp,8=gamma,9=normal)
  *     .z = gamma               (f32; <=0 means "unset" -> sRGB OETF encode; the
  *                               renderer packs it per operator via resolveEncodeGamma:
  *                               gamma-op -> γ, linear-op -> 1 (identity), else 0/unset)
@@ -206,13 +206,6 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // (zero-filled when the caller omits it) — the HDR/float path leaves it off, so
 // a scene-linear source is untouched and every existing case renders as before.
 @group(0) @binding(26) var<uniform> u_bind8: f32;
-// Logical binding 9 (uniform f32: normalMap colorspace flag, 0/1) -> native
-// binding 9*3+2 = 29. When 1, engage the NORMAL-MAP display colorspace: remap the
-// sampled FLOAT source [-1,1]->[0,1] per channel ((v+1)/2, clamped) and write it
-// DIRECTLY, replacing exposure/decode/colormap/tone-map/output-encode entirely (a
-// normal is geometry, not light). Default 0 (zero-filled when the caller omits it)
-// leaves the ordinary pipeline untouched, so every existing case renders as before.
-@group(0) @binding(29) var<uniform> u_bind9: f32;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -410,6 +403,11 @@ fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
   if (operatorId == 7) {
     return vec3<f32>(extendedClampCurve(rgb.x, peak), extendedClampCurve(rgb.y, peak), extendedClampCurve(rgb.z, peak));
   }
+  if (operatorId == 9) {
+    // normal map: remap [-1,1] -> [0,1] per channel (ports tonemap.ts's normal
+    // operator). Output-encode is identity (gamma=1) so it shows raw.
+    return clamp((rgb + vec3<f32>(1.0)) * 0.5, vec3<f32>(0.0), vec3<f32>(1.0));
+  }
   // 0 (linear) and 1 (srgb), and any unrecognized id, fall back to the clamp.
   return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
 }
@@ -436,17 +434,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   } else {
     let coord = vec2<i32>(srcUV * srcDims);
     sampled = textureLoad(t_bind0, coord, 0);
-  }
-
-  // NORMAL-MAP colorspace (u_bind9): a normal (nx,ny,nz) stored in [-1,1] is
-  // remapped ((v+1)/2, clamped) into [0,1] display range and written DIRECTLY —
-  // NO exposure, NO srgb-decode, NO colormap/tone-map, NO output-encode (a normal
-  // is geometry, not light). Ported from image/tonemap.ts's normalMapEncode; the
-  // CPU pane (tonemapToImageData) computes the SAME bytes. Runs before any of the
-  // pipeline uniforms are consulted so it is a clean short-circuit.
-  if (u_bind9 > 0.5) {
-    let n = clamp((sampled.rgb + vec3<f32>(1.0)) * 0.5, vec3<f32>(0.0), vec3<f32>(1.0));
-    return vec4<f32>(n, 1.0);
   }
 
   let exposureEV = u_bind2.x;

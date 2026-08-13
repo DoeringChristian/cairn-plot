@@ -44,6 +44,7 @@ export type ImageOperator =
   | "gamma"
   | "reinhard"
   | "aces"
+  | "normal"
   | "extended"
   | "extended-reinhard"
   | "extended-aces"
@@ -99,15 +100,6 @@ export interface ImageParams {
    * would produce.
    */
   filter?: "nearest" | "linear";
-  /**
-   * DISPLAY COLORSPACE mode (`u_bind9`). `"normal"` engages the NORMAL-MAP
-   * remap: each RGB channel of the FLOAT source is mapped `v → clamp((v+1)/2,0,1)`
-   * and written directly, REPLACING exposure / srgbDecode / colormap / tone-map /
-   * output-encode entirely (a normal is geometry, not light). Unset / `"linear"`
-   * (the default) leaves the ordinary pipeline untouched, so omitting it renders
-   * bit-for-bit as before. Scoped to the float path — see `image/tonemap.ts`'s
-   * `normalMapEncode`. */
-  colorspace?: "linear" | "normal";
 }
 
 /** Matches TONEMAP_OPERATORS' key order in image/tonemap.ts — see image.wgsl.ts's doc comment.
@@ -126,6 +118,9 @@ const OPERATOR_ID: Record<ImageOperator, number> = {
   // applyOperator falls through to clamp for id 8); the γ power curve is applied
   // at the output-encode stage via the `gamma` param (resolveEncodeGamma).
   gamma: 8,
+  // 9 = normal: remap [-1,1] → [0,1] per channel (inspect normal maps); the
+  // output-encode is identity (γ=1, like linear) so the value shows raw.
+  normal: 9,
 };
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
@@ -213,10 +208,6 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const peakVec = new Float32Array([params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT]);
   // u_bind8 = srgbDecode flag (default 0 = no decode; the HDR/float path).
   const srgbDecodeVec = new Float32Array([params.srgbDecode ? 1 : 0]);
-  // u_bind9 = normal-map colorspace flag (default 0 = ordinary pipeline). When 1,
-  // the shader remaps the FLOAT source [-1,1]→[0,1] and writes it directly,
-  // bypassing exposure/decode/colormap/tone-map/encode. See image.wgsl.ts.
-  const normalFlag = new Float32Array([params.colorspace === "normal" ? 1 : 0]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -230,7 +221,6 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 6, resource: { uniform: offsetVec } },
       { binding: 7, resource: { uniform: peakVec } },
       { binding: 8, resource: { uniform: srgbDecodeVec } },
-      { binding: 9, resource: { uniform: normalFlag } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

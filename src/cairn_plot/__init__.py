@@ -104,7 +104,6 @@ def image(
     *,
     url: str | None = None,
     data_mode: str = "local",
-    colorspace: str | None = None,
     label: str | None = None,
 ) -> PlotElement:
     """A single-view ``image`` plot — mounts the pure image renderer. ``data``:
@@ -113,14 +112,10 @@ def image(
     (mutually exclusive with ``data``) — the descriptor keeps the URL verbatim
     and the client fetches + sniffs + decodes it, handling formats a browser
     can't ``<img>``-decode (``.exr``/``.npy``/…); those default to the
-    float-HDR renderer. ``colorspace``: ``"linear"`` (default) or ``"normal"`` —
-    the latter engages the normal-map ``v → (v+1)/2`` display remap for a FLOAT
-    normal map in ``[-1,1]`` (see :class:`Image`). ``label``: an optional
-    per-image caption shown as a bottom-left chip on the pane (and threaded into
-    ``cp.Compare``'s per-side labels when this image is a compare operand)."""
-    return Image(
-        data, url=url, data_mode=data_mode, colorspace=colorspace, label=label
-    )._build_element()
+    float-HDR renderer. ``label``: an optional per-image caption shown as a
+    bottom-left chip on the pane (and threaded into ``cp.Compare``'s per-side
+    labels when this image is a compare operand)."""
+    return Image(data, url=url, data_mode=data_mode, label=label)._build_element()
 
 
 def mesh(data: Any, faces: Any = None, **kwargs: Any) -> PlotElement:
