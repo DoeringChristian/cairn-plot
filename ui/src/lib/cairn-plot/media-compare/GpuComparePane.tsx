@@ -1371,7 +1371,10 @@ export default function GpuComparePane({
       const r = d.data[i]!;
       const g = d.data[i + 1]!;
       const b = d.data[i + 2]!;
-      return buildChannelSample(r === g && g === b ? [r] : [r, g, b], "uint8", notationArg);
+      // An RGB pixel ALWAYS prints three channel-tinted lines, even when the
+      // channels are equal (a bright/gray pixel is still RGB — no value-equality
+      // collapse).
+      return buildChannelSample([r, g, b], "uint8", notationArg);
     };
   const sampleFg = useMemo(() => makeSampler(fgDataRef, fgFloatRef), []);
   const sampleRef = useMemo(() => makeSampler(refDataRef, refFloatRef), []);

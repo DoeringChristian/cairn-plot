@@ -308,7 +308,11 @@ export function useImageController({
     () => ({
       zoom: true,
       pan: true,
-      autoscale: true,
+      // For an image, "autoscale" (fit content) and "reset"/home are the SAME
+      // gesture (both call `home`) — showing both is two redundant homing
+      // buttons. Keep only the home/reset button. (A chart keeps autoscale, where
+      // fit-axes-to-data differs from reset-to-default.)
+      autoscale: false,
       reset: true,
       screenshot: true,
       boxZoom: false,

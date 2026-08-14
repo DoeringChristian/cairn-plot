@@ -1014,9 +1014,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       const r = vd.data[i]!;
       const g = vd.data[i + 1]!;
       const b = vd.data[i + 2]!;
-      // A false-colored (colormap) or grayscale pixel prints one untinted line;
-      // a true multi-channel pixel prints three channel-tinted lines.
-      const single = sdrColormap !== "none" || (r === g && g === b);
+      // A false-colored (colormap) pixel prints one untinted line — its display
+      // value IS a single scalar. An RGB pixel ALWAYS prints three channel-tinted
+      // lines, even when the channels happen to be equal (a bright/gray pixel is
+      // still RGB — do NOT collapse it to one value on value equality).
+      const single = sdrColormap !== "none";
       return buildChannelSample(single ? [r] : [r, g, b], "uint8", notationArg);
     },
     [hdrMode, naturalDims, sdrColormap],
