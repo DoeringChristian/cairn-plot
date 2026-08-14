@@ -11,7 +11,9 @@ import type {
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
-import CpuImagePane from "../renderers/CpuImagePane";
+import CpuImagePane, { tonemapToImageData } from "../renderers/CpuImagePane";
+import { DEFAULT_TONEMAP } from "../image/tonemap";
+import { DIFF_MODE_LABELS } from "../image/diff";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PixelNotationToggle,
@@ -523,6 +525,172 @@ export function CompareFloatUnsupportedError() {
   );
 }
 
+/** A small, unobtrusive corner notice overlaid on a WORKING fallback view (as
+ *  opposed to `PaneUnavailable`, which REPLACES the view). Same neutral tone. */
+function CompareCpuNotice({ text }: { text: string }) {
+  return (
+    <div
+      data-cairn-compare-cpu-notice=""
+      className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded bg-bg-elevated/90 px-2 py-1 text-[11px] text-fg-muted shadow-sm"
+    >
+      {text}
+    </div>
+  );
+}
+
+/** A diff KERNEL the CPU can't compute: anything that isn't one of the pointwise
+ *  {@link DIFF_MODE_LABELS} `computeDiff` handles. The engine kernels (SSIM, FLIP,
+ *  …) are GPU-only. */
+export function isEngineOnlyDiff(kernel: string): boolean {
+  return !(kernel in DIFF_MODE_LABELS);
+}
+
+/** Tone-map a float compare side to a display PNG data-URL on the CPU (the CPU
+ *  compare panes take only URL sources). A visual approximation good enough for a
+ *  slide/blend OVERLAY — those aren't pixel math (that's what a float DIFF needs
+ *  the GPU for). Returns `null` if the browser can't rasterize. */
+function floatSourceToDataUrl(src: CompareFloatSource, tonemap: string, gamma?: number): string | null {
+  try {
+    const imageData = tonemapToImageData(
+      { data: src.data, shape: [src.height, src.width, src.channels], dtype: "<f4", precision: src.precision },
+      tonemap,
+      0, // exposure
+      gamma,
+      0, // offset
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = src.width;
+    canvas.height = src.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * CPU fallback for a FLOAT compare when the WebGPU engine is unavailable (render
+ * mode `cpu`, addon not loaded, or no WebGPU). Instead of a bare "unavailable"
+ * placeholder with NO image, tone-map the float side(s) to display URLs on the
+ * CPU and show a real slide/blend of them + a small notice. `diff` (pixel math)
+ * is GPU-only for float, so it degrades to a SLIDE with a "diff needs WebGPU"
+ * notice. If the browser can't even rasterize, fall back to the placeholder.
+ */
+function CpuFloatComparePane({
+  imageFloat,
+  baselineFloat,
+  imageUrl,
+  baselineUrl,
+  mode,
+  tonemap,
+  tonemap_gamma,
+  splitPosition,
+  blendAlpha,
+  onSplitPositionChange,
+  zoom,
+  pan,
+  onViewportChange,
+  processing,
+  interpolation,
+  label,
+  referenceLabel,
+  foregroundLabel,
+  isDraggable,
+  onDragStart,
+  overlay,
+  overlaySettings,
+  pixelValueNotation,
+}: Pick<
+  CompositeMediaPaneProps,
+  | "imageFloat"
+  | "baselineFloat"
+  | "imageUrl"
+  | "baselineUrl"
+  | "mode"
+  | "tonemap"
+  | "tonemap_gamma"
+  | "splitPosition"
+  | "blendAlpha"
+  | "onSplitPositionChange"
+  | "zoom"
+  | "pan"
+  | "onViewportChange"
+  | "processing"
+  | "interpolation"
+  | "label"
+  | "referenceLabel"
+  | "foregroundLabel"
+  | "isDraggable"
+  | "onDragStart"
+  | "overlay"
+  | "overlaySettings"
+  | "pixelValueNotation"
+>) {
+  const tm = tonemap ?? DEFAULT_TONEMAP;
+  const fgUrl = useMemo(
+    () => (imageFloat ? floatSourceToDataUrl(imageFloat, tm, tonemap_gamma) : imageUrl),
+    [imageFloat, tm, tonemap_gamma, imageUrl],
+  );
+  const refUrl = useMemo(
+    () => (baselineFloat ? floatSourceToDataUrl(baselineFloat, tm, tonemap_gamma) : baselineUrl),
+    [baselineFloat, tm, tonemap_gamma, baselineUrl],
+  );
+  // Couldn't rasterize a float side → the honest neutral placeholder.
+  if ((imageFloat && fgUrl == null) || (baselineFloat && refUrl == null)) {
+    return <CompareFloatUnsupportedError />;
+  }
+  // No reference (a lone float side) → just the tone-mapped foreground image.
+  if (refUrl == null) {
+    return (
+      <div className="relative h-full w-full">
+        <CpuImagePane
+          toolbar={false}
+          source={urlSource(fgUrl)}
+          interpolation={interpolation}
+          processing={processing}
+          zoom={zoom}
+          pan={pan}
+          onViewportChange={onViewportChange}
+          label={foregroundLabel ?? label}
+          pixelValueNotation={pixelValueNotation}
+        />
+        <CompareCpuNotice text="Compare on CPU (WebGPU unavailable)" />
+      </div>
+    );
+  }
+  const wantDiff = mode === "diff";
+  // diff is GPU-only for float → slide; blend stays blend; anything else → slide.
+  const cpuMode: Extract<MediaCompareModeKind, "split" | "blend"> = mode === "blend" ? "blend" : "split";
+  return (
+    <div className="relative h-full w-full">
+      <MediaComparePane
+        imageUrl={fgUrl}
+        baselineUrl={refUrl}
+        mode={cpuMode}
+        splitPosition={splitPosition ?? 0.5}
+        blendAlpha={blendAlpha ?? 0.5}
+        onSplitPositionChange={onSplitPositionChange}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        processing={processing}
+        interpolation={interpolation}
+        label={label}
+        referenceLabel={referenceLabel}
+        foregroundLabel={foregroundLabel}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+        overlay={overlay}
+        overlaySettings={overlaySettings}
+        pixelValueNotation={pixelValueNotation}
+      />
+      <CompareCpuNotice text={wantDiff ? "Diff needs WebGPU — showing slide" : "Compare on CPU (WebGPU unavailable)"} />
+    </div>
+  );
+}
+
 export interface CompositeMediaPaneProps {
   mode: MediaCompareModeKind;
   imageUrl: string | null;
@@ -667,16 +835,13 @@ export function CompositeMediaPane({
   const engineComposited =
     effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff";
 
-  // Float sides are GPU-only for the COMPOSITED modes (`rgba32float` upload —
-  // the legacy CPU split/blend/diff panes take only URL sources). If the engine
-  // pane isn't available, or the effective mode isn't one it composites, surface
-  // the standard clear error — never a blank pane (Task point 3).
-  // `useGpuCompareReadyTick` above still forces a re-render once the gpu-image
-  // addon finishes initializing, so on a WebGPU browser this resolves to the
-  // real GPU pane below once ready.
-  if (hasFloatSide && (!GpuCompare || !engineComposited)) {
-    return <CompareFloatUnsupportedError />;
-  }
+  // Float sides are GPU-only for the COMPOSITED modes (`rgba32float` upload — the
+  // legacy CPU split/blend/diff panes take only URL sources). The engine pane
+  // below ingests them when available; when it ISN'T, the CPU fallback further
+  // down tone-maps them for a slide/blend + a small notice — never a blank pane.
+  // `useGpuCompareReadyTick` above forces a re-render once the gpu-image addon
+  // finishes initializing, so on a WebGPU browser this resolves to the real GPU
+  // pane below once ready.
 
   // Engine-backed split/blend/diff (opt-in — see `resolveGpuComparePane`). One
   // `renderCompare` GPU pass replaces the CPU clip-path split / opacity blend /
@@ -721,6 +886,40 @@ export function CompositeMediaPane({
     );
   }
 
+  // CPU FALLBACK (no GPU engine for this composite). Float compositing is
+  // GPU-only, so tone-map the float side(s) on the CPU and show a real slide/
+  // blend + a small notice — a float `diff`, being pixel math, degrades to a
+  // slide. Never a bare "unavailable" placeholder with no image.
+  if (hasFloatSide) {
+    return (
+      <CpuFloatComparePane
+        imageFloat={imageFloat}
+        baselineFloat={baselineFloat}
+        imageUrl={imageUrl}
+        baselineUrl={baselineUrl}
+        mode={effectiveMode}
+        tonemap={tonemap}
+        tonemap_gamma={tonemap_gamma}
+        splitPosition={splitPosition}
+        blendAlpha={blendAlpha}
+        onSplitPositionChange={onSplitPositionChange}
+        zoom={zoom}
+        pan={pan}
+        onViewportChange={onViewportChange}
+        processing={processing}
+        interpolation={interpolation}
+        label={label}
+        referenceLabel={referenceLabel}
+        foregroundLabel={foregroundLabel}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+        overlay={overlay}
+        overlaySettings={overlaySettings}
+        pixelValueNotation={pixelValueNotation}
+      />
+    );
+  }
+
   if (effectiveMode === "split" || effectiveMode === "blend") {
     return (
       <MediaComparePane
@@ -744,6 +943,39 @@ export function CompositeMediaPane({
         overlaySettings={overlaySettings}
         pixelValueNotation={pixelValueNotation}
       />
+    );
+  }
+
+  // An engine-only diff KERNEL (SSIM / FLIP / …) was requested but the engine
+  // isn't available. `computeDiff` (the CPU path below) only does the pointwise
+  // DiffModes, so fall back to a SLIDE of the two images + a small notice rather
+  // than a broken/blank diff.
+  if (effectiveMode === "diff" && isEngineOnlyDiff(diffSubmode)) {
+    return (
+      <div className="relative h-full w-full">
+        <MediaComparePane
+          imageUrl={imageUrl}
+          baselineUrl={baselineUrl}
+          mode="split"
+          splitPosition={splitPosition ?? 0.5}
+          blendAlpha={blendAlpha ?? 0.5}
+          onSplitPositionChange={onSplitPositionChange}
+          zoom={zoom}
+          pan={pan}
+          onViewportChange={onViewportChange}
+          processing={processing}
+          interpolation={interpolation}
+          label={label}
+          referenceLabel={referenceLabel}
+          foregroundLabel={foregroundLabel}
+          isDraggable={isDraggable}
+          onDragStart={onDragStart}
+          overlay={overlay}
+          overlaySettings={overlaySettings}
+          pixelValueNotation={pixelValueNotation}
+        />
+        <CompareCpuNotice text="This diff needs WebGPU — showing slide" />
+      </div>
     );
   }
 

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>cpu compare fallback harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      #mounts { display: flex; flex-wrap: wrap; gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>CPU compare fallback — no bare error, always a valid view + small notice</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="mounts">
+      <div id="m1"></div>
+      <div id="m2"></div>
+      <div id="m3"></div>
+      <div id="m4"></div>
+    </div>
+    <div id="result"></div>
+    <script type="module" src="./cpu-compare-fallback.browser.bundle.js"></script>
+  </body>
+</html>

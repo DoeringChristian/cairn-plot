@@ -1,0 +1,168 @@
+/**
+ * CPU COMPARE FALLBACK — when the WebGPU compare engine is unavailable (render
+ * mode `cpu`), a compare must NOT show a bare "unavailable" placeholder with no
+ * image. It falls back to a VALID view + a small notice:
+ *
+ *   1. FLOAT diff  → tone-map the float sides on the CPU, show a SLIDE + a
+ *      "Diff needs WebGPU" notice (float diff is GPU-only pixel math).
+ *   2. FLOAT split → the requested slide of the tone-mapped floats + a
+ *      "Compare on CPU" notice.
+ *   3. UINT8 diff with an ENGINE-only kernel (e.g. SSIM) → slide + a
+ *      "This diff needs WebGPU" notice.
+ *   4. UINT8 diff with a BASIC kernel (absolute) → the CPU pixel-diff pane
+ *      (`computeDiff`), NO notice — the CPU can compute it.
+ *
+ * Mounts `CompositeMediaPane` directly (bypassing the descriptor pipeline) in
+ * forced CPU mode. No WebGPU needed — that's the whole point.
+ */
+import { createRoot, type Root } from "react-dom/client";
+import { createElement } from "react";
+import { CompositeMediaPane, type CompareFloatSource } from "../compositor";
+import type { DiffMode } from "../../types";
+
+function report(pass: boolean, message: string): void {
+  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
+  // eslint-disable-next-line no-console
+  console[pass ? "log" : "error"](line);
+  const el = document.getElementById("result");
+  if (el) {
+    const p = document.createElement("div");
+    p.textContent = line;
+    p.style.color = pass ? "green" : "red";
+    el.appendChild(p);
+  }
+}
+function setOverallStatus(pass: boolean): void {
+  const el = document.getElementById("status");
+  if (el) {
+    el.textContent = pass ? "PASS" : "FAIL";
+    el.style.color = pass ? "green" : "red";
+  }
+  document.title = pass ? "CPU-COMPARE-FALLBACK PASS" : "CPU-COMPARE-FALLBACK FAIL";
+}
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function waitFor(predicate: () => boolean, timeoutMs = 4000, stepMs = 20): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await sleep(stepMs);
+  }
+  return predicate();
+}
+
+/** A tiny wide float source (2:1), a diagonal gradient so the tone-map isn't flat. */
+function floatSource(key: string): CompareFloatSource {
+  const w = 8;
+  const h = 4;
+  const data = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const v = (x + y) / (w + h);
+      const b = (y * w + x) * 3;
+      data[b] = v;
+      data[b + 1] = v * 0.5;
+      data[b + 2] = 1 - v;
+    }
+  }
+  return { data, width: w, height: h, channels: 3, contentKey: key, precision: "f32" };
+}
+/** A uint8 data-URL side (a solid color PNG). */
+function urlSide(color: string): string {
+  const c = document.createElement("canvas");
+  c.width = 8;
+  c.height = 4;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 8, 4);
+  return c.toDataURL("image/png");
+}
+
+function host(id: string): HTMLElement {
+  const el = document.getElementById(id)!;
+  el.style.cssText = "width:360px;height:200px;position:relative;background:#222";
+  return el;
+}
+function notice(hostId: string): HTMLElement | null {
+  return document.getElementById(hostId)!.querySelector<HTMLElement>("[data-cairn-compare-cpu-notice]");
+}
+function hasUnavailablePlaceholder(hostId: string): boolean {
+  return (document.getElementById(hostId)!.textContent ?? "").includes("GPU compare unavailable");
+}
+function dataImgCount(hostId: string): number {
+  return document.getElementById(hostId)!.querySelectorAll("img[src^='data:image']").length;
+}
+
+async function run(): Promise<boolean> {
+  let ok = true;
+  (window as unknown as { __cairnPlotRenderMode?: string }).__cairnPlotRenderMode = "cpu";
+  const roots: Root[] = [];
+
+  const baseProps = {
+    imageUrl: null as string | null,
+    baselineUrl: null as string | null,
+    diffSubmode: "absolute" as DiffMode,
+    colormap: "none" as const,
+    interpolation: "auto" as const,
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    label: "",
+  };
+  const mount = (id: string, props: Record<string, unknown>) => {
+    const root = createRoot(host(id));
+    root.render(createElement(CompositeMediaPane, { ...baseProps, ...props } as never));
+    roots.push(root);
+  };
+
+  // 1. FLOAT diff → slide + "Diff needs WebGPU"; no unavailable placeholder.
+  mount("m1", { mode: "diff", imageFloat: floatSource("fg1"), baselineFloat: floatSource("ref1") });
+  // 2. FLOAT split → slide + "Compare on CPU".
+  mount("m2", { mode: "split", imageFloat: floatSource("fg2"), baselineFloat: floatSource("ref2") });
+  // 3. UINT8 diff + ENGINE kernel (ssim) → slide + "This diff needs WebGPU".
+  mount("m3", {
+    mode: "diff",
+    diffSubmode: "ssim" as DiffMode,
+    imageUrl: urlSide("#c0392b"),
+    baselineUrl: urlSide("#2980b9"),
+  });
+  // 4. UINT8 diff + BASIC kernel (absolute) → CPU pixel-diff pane, NO notice.
+  mount("m4", { mode: "diff", imageUrl: urlSide("#27ae60"), baselineUrl: urlSide("#8e44ad") });
+
+  // --- 1. FLOAT diff ---------------------------------------------------------
+  const n1 = await waitFor(() => !!notice("m1") && dataImgCount("m1") >= 1);
+  const n1txt = notice("m1")?.textContent ?? "";
+  report(n1 && /diff needs webgpu/i.test(n1txt), `FLOAT diff → slide + notice "${n1txt}"`);
+  report(!hasUnavailablePlaceholder("m1"), "FLOAT diff → NO full 'GPU compare unavailable' placeholder");
+  report(dataImgCount("m1") >= 1, `FLOAT diff → tone-mapped image(s) shown (${dataImgCount("m1")})`);
+  ok = ok && n1 && /diff needs webgpu/i.test(n1txt) && !hasUnavailablePlaceholder("m1") && dataImgCount("m1") >= 1;
+
+  // --- 2. FLOAT split --------------------------------------------------------
+  const n2 = await waitFor(() => !!notice("m2") && dataImgCount("m2") >= 1);
+  const n2txt = notice("m2")?.textContent ?? "";
+  report(n2 && /compare on cpu/i.test(n2txt), `FLOAT split → slide + notice "${n2txt}"`);
+  report(!hasUnavailablePlaceholder("m2"), "FLOAT split → NO full placeholder");
+  ok = ok && n2 && /compare on cpu/i.test(n2txt) && !hasUnavailablePlaceholder("m2");
+
+  // --- 3. UINT8 engine-kernel diff ------------------------------------------
+  const n3 = await waitFor(() => !!notice("m3") && dataImgCount("m3") >= 1);
+  const n3txt = notice("m3")?.textContent ?? "";
+  report(n3 && /diff needs webgpu/i.test(n3txt), `UINT8 SSIM diff → slide + notice "${n3txt}"`);
+  ok = ok && n3 && /diff needs webgpu/i.test(n3txt);
+
+  // --- 4. UINT8 basic diff → CPU pixel diff, NO notice -----------------------
+  const cpuPane = await waitFor(() => !!document.getElementById("m4")!.querySelector("[data-cpu-image-pane]"));
+  report(cpuPane, "UINT8 absolute diff → CPU pixel-diff pane renders");
+  report(!notice("m4"), "UINT8 absolute diff → NO fallback notice (the CPU computes it)");
+  ok = ok && cpuPane && !notice("m4");
+
+  roots.forEach((r) => r.unmount());
+  return ok;
+}
+
+run()
+  .then((ok) => setOverallStatus(ok))
+  .catch((err) => {
+    report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    setOverallStatus(false);
+  });
