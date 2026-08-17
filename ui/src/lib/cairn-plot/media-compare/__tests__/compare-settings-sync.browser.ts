@@ -316,6 +316,21 @@ async function run(): Promise<boolean> {
   report(hoverFlipRight, `HOVER ArrowRight snaps split→1 without focus (A.splitPosition=${A().splitPosition})`);
   ok = ok && notFocused && hoverFlipLeft && hoverFlipRight;
 
+  // --- 7a. DEDICATED `[`/`]` slide-flip keys -------------------------------
+  // `[`/`]` snap the divider to the left/right edge EVERYWHERE (their reason to
+  // exist: inside a stacked grid the arrows drive the tab strip, so the flip
+  // needs distinct keys). Here (inline, non-stacked) they flip alongside the
+  // arrows; the pane is still hovered from above.
+  const bracket = (key: "[" | "]") =>
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  bracket("[");
+  const braceLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6);
+  report(braceLeft, `HOVER "[" snaps split→0 (A.splitPosition=${A().splitPosition})`);
+  bracket("]");
+  const braceRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
+  report(braceRight, `HOVER "]" snaps split→1 (A.splitPosition=${A().splitPosition})`);
+  ok = ok && braceLeft && braceRight;
+
   // Leaving the pane stops it reacting; and the FOCUS path still works too.
   paneAViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
   A().changeSplit(0.4);
@@ -408,6 +423,60 @@ async function run(): Promise<boolean> {
   report(diffHasMetric, `diff caption names the metric (has '·'): "${diffCaptionEl?.textContent ?? ""}"`);
   report(diffLeft, "diff caption sits bottom-LEFT (clear of the bottom-right metrics)");
   ok = ok && diffChip && diffHasMetric && diffLeft;
+
+  // --- 9. STACKED cp.Grid auto-syncs settings (incl. DIFF MODE) — NO selection
+  // The new contract: a `cp.Grid(mode="stacked")` ALWAYS syncs its children's
+  // display + compare settings via the ONE settings bus, so flipping between
+  // tabs shows the SAME settings. Crucially this needs NO page-wide selection —
+  // the grid provides the shared group itself. Mount a stacked grid of TWO
+  // compare panes, change the diff mode/kernel/colormap on child 0, and assert
+  // child 1 (the hidden tab) follows.
+  const dRootEl = document.getElementById("mount-d")!;
+  const rootD = createRoot(dRootEl);
+  rootD.render(
+    createElement(PlotApp, {
+      descriptor: {
+        mode: "local",
+        root: {
+          kind: "grid",
+          cols: 2,
+          gap: 8,
+          mode: "stacked",
+          children: [
+            compareDescriptor("#c0392b", "#2980b9").root,
+            compareDescriptor("#27ae60", "#8e44ad").root,
+          ],
+        },
+      } as unknown as PlotDescriptor,
+    }),
+  );
+  roots.push(rootD);
+  // Both compare children stay MOUNTED in a stacked grid (only one visible).
+  const dPanes = () => Array.from(dRootEl.querySelectorAll<HTMLElement>("[data-gpu-compare-pane]"));
+  const stackReady = await waitFor(
+    () => dPanes().length === 2 && dPanes().every((p) => !!probeOf(p)),
+    15000,
+  );
+  report(stackReady, `stacked grid mounts BOTH compare children with probes (got ${dPanes().length})`);
+  if (stackReady) {
+    const noStackSelection =
+      dRootEl.querySelectorAll('[data-plot-pane-id][data-selected="true"]').length === 0;
+    report(noStackSelection, "stacked-grid sync needs NO selection (none selected)");
+    const D0 = () => probeOf(dPanes()[0])!;
+    const D1 = () => probeOf(dPanes()[1])!;
+    D0().changeCompareMode("diff");
+    const dDiff = await waitFor(() => D1().compareMode === "diff");
+    report(dDiff, `stacked: child0→diff, child1 (hidden tab) follows (D1.compareMode=${D1().compareMode})`);
+    D0().changeDiffKernel("squared");
+    const dKernel = await waitFor(() => D1().diffKernel === "squared");
+    report(dKernel, `stacked: child0 diff KERNEL→squared, child1 follows (D1.diffKernel=${D1().diffKernel})`);
+    D0().changeColormap("viridis");
+    const dCmap = await waitFor(() => D1().colormap === "viridis");
+    report(dCmap, `stacked: child0 COLORMAP→viridis, child1 follows (D1.colormap=${D1().colormap})`);
+    ok = ok && noStackSelection && dDiff && dKernel && dCmap;
+  } else {
+    ok = false;
+  }
 
   roots.forEach((r) => r.unmount());
   return ok;

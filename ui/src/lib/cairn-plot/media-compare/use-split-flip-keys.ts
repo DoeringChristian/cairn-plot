@@ -1,10 +1,13 @@
 // ---------------------------------------------------------------------------
-// useSplitFlipKeys — in SPLIT ("slide") compare mode, Left/Right arrow snaps the
-// divider fully to one edge, flipping between the two images:
-//   ArrowLeft  → split = 0  (divider hard left  → foreground fills the pane)
-//   ArrowRight → split = 1  (divider hard right → reference fills the pane)
-// Shared by BOTH compare panes (CPU `MediaComparePane` + `GpuComparePane`) so
-// the gesture is identical and lives in ONE place.
+// useSplitFlipKeys — in SPLIT ("slide") compare mode, snap the divider fully to
+// one edge, flipping between the two images:
+//   left  → split = 0  (divider hard left  → foreground fills the pane)
+//   right → split = 1  (divider hard right → reference fills the pane)
+// Keys: `[` (left) / `]` (right) are the DEDICATED slide-flip keys — they work
+// everywhere and never collide with anything. `←`/`→` (and `h`/`l` aliases) ALSO
+// flip, but ONLY when NOT inside a stacked grid — there arrows/hjkl drive the tab
+// strip, so the divider is reached with `[`/`]` (distinct keys, no collision).
+// Shared by BOTH compare panes (CPU `MediaComparePane` + `GpuComparePane`).
 //
 // Scope: a `window` keydown listener.
 //   - Inside a FULLSCREEN compare/enlarge overlay (a modal with ONE active
@@ -38,7 +41,8 @@ export function useSplitFlipKeys(
   // overlay context `FullscreenOverlayShell` provides — no DOM-attribute coupling.
   const inOverlay = useContext(InFullscreenOverlayContext);
   // Inside a STACKED grid, plain arrows/hjkl drive the tab strip, so the slide-
-  // flip moves to Shift+←/→ (Shift+h/l) to avoid a key collision.
+  // flip is reached with the DEDICATED `[`/`]` keys (distinct from the tab keys,
+  // no collision); arrows/hjkl no longer flip here.
   const inStackedGrid = useContext(InStackedGridContext);
   useEffect(() => {
     if (mode !== "split" || !onSplitPositionChange) return;
@@ -74,13 +78,13 @@ export function useSplitFlipKeys(
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser/OS shortcuts alone
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      const isLeft = k === "ArrowLeft" || k === "h"; // hjkl aliases for the arrows
-      const isRight = k === "ArrowRight" || k === "l";
+      // `[`/`]` are DEDICATED — always flip. Arrows/hjkl also flip, but not in a
+      // stacked grid (there they drive the tab strip), so there's no collision.
+      const isLeft = k === "[" || (!inStackedGrid && (k === "ArrowLeft" || k === "h"));
+      const isRight = k === "]" || (!inStackedGrid && (k === "ArrowRight" || k === "l"));
       if (!isLeft && !isRight) return;
-      // In a stacked grid, plain arrows/hjkl drive the tabs → require Shift here.
-      if (inStackedGrid && !e.shiftKey) return;
       const active = document.activeElement as HTMLElement | null;
-      // Never steal arrows from a text field / editable control.
+      // Never steal keys from a text field / editable control.
       if (active && active !== el && active.closest?.('input, textarea, select, [contenteditable="true"]')) {
         return;
       }

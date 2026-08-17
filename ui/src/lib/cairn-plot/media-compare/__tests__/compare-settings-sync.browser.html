@@ -9,6 +9,7 @@
       #result div { white-space: pre-wrap; }
       #mounts { display: flex; gap: 8px; }
       #mount-a, #mount-b, #mount-c { width: 360px; height: 260px; background: #222; }
+      #mount-d { width: 480px; height: 300px; background: #222; }
     </style>
   </head>
   <body>
@@ -21,6 +22,9 @@
            split-flip path, where arrows act with no hover/focus. -->
       <div id="mount-c"></div>
     </div>
+    <!-- A STACKED cp.Grid of two compare panes — settings (incl. diff mode)
+         auto-sync across the stack with NO selection. -->
+    <div id="mount-d"></div>
     <div id="result"></div>
     <!-- Self-driving (see the <html data-cairn-harness>): dispatches its own
          selection gestures and drives the panes' exposed control wrappers, then

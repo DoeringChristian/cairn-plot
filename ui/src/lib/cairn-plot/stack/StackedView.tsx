@@ -76,8 +76,9 @@ export function useStackKeyboard(
 }
 
 /** The panes container: all children mounted, only `active` shown; marks the
- *  subtree as inside a stacked grid so a compare cell moves its slide-flip to
- *  Shift+←/→. `fill` (the fullscreen stage) makes the visible pane FILL the area;
+ *  subtree as inside a stacked grid so a compare cell reaches its slide-flip via
+ *  the dedicated `[`/`]` keys (arrows/hjkl drive the tab strip here). `fill` (the
+ *  fullscreen stage) makes the visible pane FILL the area;
  *  otherwise (a `cp.Grid`) the visible pane is content-aspect, capped at the page
  *  height like a 1-cell grid. */
 export function StackedPanes({ panes, active, fill }: { panes: ReactNode[]; active: number; fill?: boolean }) {

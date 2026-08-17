@@ -639,10 +639,13 @@ function PaneSelectionFrame({
   const gridUniform = useContext(GridUniformAspectContext);
   const uniformImageCell =
     !!gridUniform && !fill && node.kind === "plot" && isImageCompatibleNode(node);
-  // The pane-sync context from an ENCLOSING provider (e.g. the fullscreen stage,
-  // which gives its cells a shared settings-sync group). A `selectable={false}`
-  // frame must PASS THIS THROUGH rather than clobber it with `null`, else the
-  // stage's group id never reaches the fresh leaf/compare it wraps (Bug 3).
+  // The pane-sync context from an ENCLOSING provider (e.g. the fullscreen stage
+  // or a STACKED grid, which give their cells a shared settings-sync group). A
+  // frame must PASS THIS THROUGH whenever it has no active selection group of its
+  // own — for a `selectable={false}` frame OR a selectable one that isn't part of
+  // a live ≥2 selection — else the enclosing group id never reaches the fresh
+  // leaf/compare it wraps (Bug 3 + stacked-grid settings sync). An active
+  // selection's own groups (`paneSync`) take precedence when present.
   const inheritedPaneSync = useContext(PaneSyncContext);
 
   const subscribe = useCallback((cb: () => void) => store.subscribe(cb), [store]);
@@ -798,7 +801,7 @@ function PaneSelectionFrame({
       onPointerDownCapture={selectable ? onPointerDownCapture : undefined}
       onPointerUpCapture={selectable ? onPointerUpCapture : undefined}
     >
-      <PaneSyncContext.Provider value={selectable ? paneSync : inheritedPaneSync}>
+      <PaneSyncContext.Provider value={paneSync ?? inheritedPaneSync}>
         <EnlargeInterceptContext.Provider value={enlargeIntercept}>
           {children}
         </EnlargeInterceptContext.Provider>
@@ -875,7 +878,28 @@ function GridView({ node }: { node: GridNode }) {
   // `PaneSelectionFrame` (wrapped by `PlotNodeView`), obtained from the ONE
   // document-scoped store. `ChartFillContext` still tells fill-mode children
   // (and their frames) to take `height:100%`.
-  const panes = children.map((child, i) => <PlotNodeView key={i} node={child} />);
+  //
+  // STACKED mode ALWAYS syncs display + compare settings across every child —
+  // colormap · tonemap · exposure · gamma · peak · offset AND the compare
+  // mode/kernel (diff mode) — via the ONE settings bus (`image-settings-sync`),
+  // so flipping between tabs shows the SAME settings (the point of a flip-to-
+  // compare stack). A stable per-grid group id; child 0 anchors (seeds the
+  // shared state, others adopt on join). An active ≥2 selection still wins (its
+  // own groups override in `PaneSelectionFrame`); viewport zoom/pan still follows
+  // the grid's own `shared.sync.viewport`. `PaneSyncContext` per child so each
+  // carries the same group but only child 0 is the anchor.
+  const stackSettingsGroupId =
+    effectiveMode === "stacked" ? `plot-grid-stack-settings-${localId}` : null;
+  const panes = children.map((child, i) => {
+    const el = <PlotNodeView key={i} node={child} />;
+    return stackSettingsGroupId ? (
+      <PaneSyncContext.Provider key={i} value={{ settingsSyncGroupId: stackSettingsGroupId, syncIsAnchor: i === 0 }}>
+        {el}
+      </PaneSyncContext.Provider>
+    ) : (
+      el
+    );
+  });
   // Keyboard tab-flip attaches to the WHOLE grid area (header + panes) so keys
   // work while hovering anywhere over the grid (only in stacked mode).
   useStackKeyboard(stackRootRef, effectiveMode === "stacked", clampedActive, children.length, setActive);
