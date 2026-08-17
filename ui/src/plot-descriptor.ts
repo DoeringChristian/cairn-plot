@@ -143,6 +143,10 @@ export interface GridNode {
   rowHeights?: Array<number | string>;
   gap?: number | string;
   shared?: SharedProps;
+  /** View mode. `"normal"` (default) is the uniform CSS grid; `"stacked"` shows
+   *  ONE child at a time with a keyboard-driven tab strip to flip between them.
+   *  A live toggle on the grid lets the viewer switch either way. */
+  mode?: "normal" | "stacked";
 }
 
 /** Two DataSpec frames composited into one pane (split/blend/diff).

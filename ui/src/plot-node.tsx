@@ -73,6 +73,7 @@ import {
   VIEWPORT_HEIGHT_MARGIN,
   useUniformGridAspect,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
+import { StackedView, GridModeToggle, stackLabelFor } from "./lib/cairn-plot/stack/StackedView";
 import {
   ChartBox,
   ChartFillContext,
@@ -821,6 +822,15 @@ function GridView({ node }: { node: GridNode }) {
   // cell, matches the pane exactly).
   const gridAspectApi = useUniformGridAspect();
 
+  // VIEW MODE: `normal` (uniform CSS grid) vs `stacked` (one child at a time +
+  // a keyboard-driven tab strip). Seeded from `node.mode`; a live toggle flips
+  // it. Stacking a lone child is a no-op, so the toggle only shows for ≥2.
+  const canStack = children.length > 1;
+  const [mode, setMode] = useState<"normal" | "stacked">(node.mode === "stacked" ? "stacked" : "normal");
+  const [active, setActive] = useState(0);
+  const effectiveMode = canStack ? mode : "normal";
+  const clampedActive = Math.min(active, Math.max(0, children.length - 1));
+
   const gridStyle: React.CSSProperties = {
     display: "grid",
     gridTemplateColumns: trackList(node.colWidths, Math.max(cols, 1)),
@@ -858,13 +868,24 @@ function GridView({ node }: { node: GridNode }) {
   // `PaneSelectionFrame` (wrapped by `PlotNodeView`), obtained from the ONE
   // document-scoped store. `ChartFillContext` still tells fill-mode children
   // (and their frames) to take `height:100%`.
+  const panes = children.map((child, i) => <PlotNodeView key={i} node={child} />);
   const grid = (
     <ChartFillContext.Provider value={fill}>
       <GridUniformAspectContext.Provider value={gridAspectApi}>
-        <div style={gridStyle}>
-          {children.map((child, i) => (
-            <PlotNodeView key={i} node={child} />
-          ))}
+        <div className={canStack ? "group" : undefined} style={{ position: "relative", minWidth: 0, width: "100%" }}>
+          {canStack && (
+            <GridModeToggle mode={effectiveMode} onChange={setMode} className="absolute right-1 top-1 z-10" />
+          )}
+          {effectiveMode === "stacked" ? (
+            <StackedView
+              panes={panes}
+              labels={children.map((c, i) => stackLabelFor(c, i))}
+              active={clampedActive}
+              onActiveChange={setActive}
+            />
+          ) : (
+            <div style={gridStyle}>{panes}</div>
+          )}
         </div>
       </GridUniformAspectContext.Provider>
     </ChartFillContext.Provider>
