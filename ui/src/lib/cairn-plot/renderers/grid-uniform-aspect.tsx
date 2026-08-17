@@ -46,6 +46,12 @@ export const GridUniformAspectContext = createContext<GridUniformAspectApi | nul
  *  cell has a definite box to mount/measure into (avoids a 0-height flash). */
 export const DEFAULT_GRID_CELL_ASPECT = 4 / 3;
 
+/** Breathing room (px) left below a page-height-capped image, so a tall pane
+ *  (standalone or a grid cell) never exceeds the window and stays viewable in
+ *  one screenful. Shared by `ContentAspectFrame` (JS measure) and the grid-cell
+ *  CSS cap in `PaneSelectionFrame`. */
+export const VIEWPORT_HEIGHT_MARGIN = 24;
+
 /**
  * The ONE size-computation primitive shared by every grid layout (the regular
  * `cp.Grid` AND the compare/enlarge stage): it collects each cell's content

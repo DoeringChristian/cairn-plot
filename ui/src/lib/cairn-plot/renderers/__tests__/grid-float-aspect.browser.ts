@@ -235,6 +235,37 @@ async function run(): Promise<boolean> {
   report(cFills, "MIXED: the pane FILLS its cell (viewport = selectable frame → selection ring matches)");
   ok = ok && cCells.length >= 3 && cUniform && cFills;
 
+  roots.pop()?.unmount(); // tear down the mixed grid
+  await sleep(30);
+
+  // ── Part D: PAGE-HEIGHT CAP in a grid ─────────────────────────────────────
+  // A grid of very TALL images (aspect 0.125): each cell's aspect-derived height
+  // (colWidth / aspect ≈ 2500px) must be capped at the window (page) height, so a
+  // tall grid image stays viewable in one screenful. The width shrinks to keep
+  // the aspect (`maxWidth: calc((100vh - m) * aspect)`).
+  {
+    const el = document.getElementById("grid-host")!;
+    el.style.cssText = "width:960px;background:#222";
+    const rootD = createRoot(el);
+    rootD.render(createElement(PlotApp, { descriptor: gridDescriptor([[64, 512], [64, 512], [64, 512]]) }));
+    roots.push(rootD);
+  }
+  const CAP = window.innerHeight - 24; // matches VIEWPORT_HEIGHT_MARGIN
+  await waitFor(() => {
+    const cs = gridCells("grid-host");
+    return cs.length >= 3 && cs.every((c) => c.getBoundingClientRect().height > 0);
+  });
+  await sleep(80);
+  const dCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
+  const dCapped = dCells.length >= 3 && dCells.every((r) => r.height <= CAP + 4);
+  report(
+    dCapped,
+    `TALL grid: every cell height ≤ page height ${CAP} (got ${dCells.map((r) => r.height.toFixed(0)).join(", ")})`,
+  );
+  const dAspect = dCells.length >= 3 && dCells.every((r) => near(r.width / r.height, 0.125, 0.03));
+  report(dAspect, `TALL grid: cells keep the content aspect 0.125 (${dCells.map((r) => (r.width / r.height).toFixed(3)).join(", ")})`);
+  ok = ok && dCapped && dAspect;
+
   roots.forEach((r) => r.unmount());
   return ok;
 }

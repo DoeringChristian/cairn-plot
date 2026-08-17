@@ -21,11 +21,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { ReportNaturalSizeContext } from "./natural-size-report";
-import { finitePositive } from "./grid-uniform-aspect";
-
-/** Breathing room (px) left below a page-height-capped image so a tall pane
- *  doesn't butt exactly against the window edges. */
-const VIEWPORT_HEIGHT_MARGIN = 24;
+import { finitePositive, VIEWPORT_HEIGHT_MARGIN } from "./grid-uniform-aspect";
 
 export function ContentAspectFrame({
   /** The box the pane fills BEFORE its content aspect is known: `"100%"` fills

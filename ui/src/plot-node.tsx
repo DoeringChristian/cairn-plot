@@ -70,6 +70,7 @@ import {
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
+  VIEWPORT_HEIGHT_MARGIN,
   useUniformGridAspect,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import {
@@ -729,13 +730,22 @@ function PaneSelectionFrame({
     // ONE aspect, so all cells in a row are identical and the pane fills it. A
     // `DEFAULT_GRID_CELL_ASPECT` fallback gives a definite box before any cell has
     // reported (avoids a 0-height mount). `alignSelf:start` keeps it from being
-    // stretched by a taller non-image sibling in the same row.
+    // stretched by a taller non-image sibling in the same row. `maxWidth` caps the
+    // width so the aspect-derived HEIGHT never exceeds the page (window) height —
+    // a tall grid image stays viewable in one screenful; when capped narrower than
+    // its column the cell centres (`marginInline:auto`). Pure-CSS `vh` so it
+    // tracks window resizes with no JS.
     ...(uniformImageCell
-      ? {
-          width: "100%",
-          aspectRatio: String(gridUniform!.uniformAspect ?? DEFAULT_GRID_CELL_ASPECT),
-          alignSelf: "start",
-        }
+      ? (() => {
+          const a = gridUniform!.uniformAspect ?? DEFAULT_GRID_CELL_ASPECT;
+          return {
+            width: "100%",
+            aspectRatio: String(a),
+            maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${a})`,
+            marginInline: "auto",
+            alignSelf: "start",
+          };
+        })()
       : null),
   };
   if (isSelected) {
