@@ -23,6 +23,10 @@ import type { CSSProperties, ReactNode } from "react";
 import { ReportNaturalSizeContext } from "./natural-size-report";
 import { finitePositive } from "./grid-uniform-aspect";
 
+/** Breathing room (px) left below a page-height-capped image so a tall pane
+ *  doesn't butt exactly against the window edges. */
+const VIEWPORT_HEIGHT_MARGIN = 24;
+
 export function ContentAspectFrame({
   /** The box the pane fills BEFORE its content aspect is known: `"100%"` fills
    *  whatever box the host/grid gives; a px number is the bare-page default. Once
@@ -100,7 +104,19 @@ export function ContentAspectFrame({
       el.style.height = prevH;
       measuring = false;
       if (!Number.isFinite(availW) || availW <= 0) return;
-      const bound = Number.isFinite(availH) && availH > 20 ? availH * aspect : Infinity;
+      // The drawable box height must never exceed the PAGE (window) height — so a
+      // very TALL (portrait) or a large square image stays viewable in one
+      // screenful instead of running off the page. Cap the height by the window,
+      // then let the width shrink to keep the content aspect (the box centres via
+      // `marginInline:auto`). A wide/short image is unaffected (its height is well
+      // under the cap). This is ABSOLUTE (window height), not relative to the
+      // frame's scroll position — the pane is at most one page tall wherever it is.
+      const viewportCap =
+        typeof window !== "undefined" && window.innerHeight > 0
+          ? window.innerHeight - VIEWPORT_HEIGHT_MARGIN
+          : Infinity;
+      const hCap = Math.min(Number.isFinite(availH) && availH > 20 ? availH : Infinity, viewportCap);
+      const bound = Number.isFinite(hCap) ? hCap * aspect : Infinity;
       const w = Math.max(0, Math.min(availW, bound));
       const h = w / aspect;
       setBox((prev) => (prev && Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5 ? prev : { w, h }));

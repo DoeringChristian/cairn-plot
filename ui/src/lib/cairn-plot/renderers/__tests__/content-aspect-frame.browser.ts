@@ -152,6 +152,40 @@ async function run(): Promise<boolean> {
   roots.length = 0;
   await sleep(30);
 
+  // PAGE-HEIGHT CAP — a very TALL image's drawable box must not exceed the window
+  // (page) height, so it stays viewable in ONE screenful; the width shrinks to
+  // keep the content aspect (centred). Fixed-WIDTH (300) auto-height host; the
+  // uncapped width-driven height (300 / aspect = ~4800) is far taller than any
+  // window, so the cap MUST engage.
+  const VIEWPORT_MARGIN = 24; // matches ContentAspectFrame's VIEWPORT_HEIGHT_MARGIN
+  const TALL_ASPECT = 32 / 512; // 0.0625 — a very tall portrait
+  {
+    const el = document.getElementById("mount-square")!;
+    el.style.cssText = `width:${HOST_W}px;background:#222`;
+    const root = createRoot(el);
+    root.render(createElement(PlotApp, { descriptor: imageDescriptor(32, 512, "#16a085") }));
+    roots.push(root);
+  }
+  const cap = window.innerHeight - VIEWPORT_MARGIN;
+  const tallSettled = await waitFor(() => {
+    const b = innerBox("mount-square")?.getBoundingClientRect();
+    return !!b && b.height > 4 && b.width > 1 && near(b.width / b.height, TALL_ASPECT, 0.02);
+  });
+  const tf = innerBox("mount-square")!.getBoundingClientRect();
+  const keptAspect = near(tf.width / tf.height, TALL_ASPECT, 0.02);
+  const capped = tf.height <= cap + 4;
+  const wasClamped = tf.height < HOST_W / TALL_ASPECT - 100; // NOT the uncapped ~4800px
+  report(tallSettled && keptAspect, `TALL cap: box keeps content aspect ${TALL_ASPECT.toFixed(4)} (got ${(tf.width / tf.height).toFixed(4)})`);
+  report(
+    capped && wasClamped,
+    `TALL cap: box height ${tf.height.toFixed(0)} ≤ page height ${cap} (not the uncapped ${(HOST_W / TALL_ASPECT).toFixed(0)})`,
+  );
+  ok = ok && tallSettled && keptAspect && capped && wasClamped;
+
+  roots.forEach((r) => r.unmount());
+  roots.length = 0;
+  await sleep(30);
+
   // FIXED-container guard (both orientations) — the pane must be sized to the
   // largest content-aspect box that FITS the fixed host, in BOTH dimensions, so
   // there is NO letterbox AND NO overflow (the previous cut overflowed a tall
