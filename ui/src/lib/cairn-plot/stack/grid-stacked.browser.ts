@@ -86,7 +86,8 @@ async function run(): Promise<boolean> {
   const up = await waitFor(() => qa("m1", "[data-cairn-stack-tab]").length >= 1 || qa("m1", "[role='tab']").length >= 3);
   const tabs = qa("m1", "[role='tab']");
   report(tabs.length === 3, `stacked grid renders a tab strip with 3 tabs (got ${tabs.length})`);
-  report(!!q("m1", "[data-cairn-stacked]"), "stacked container present");
+  report(!!q("m1", "[data-cairn-grid-header]"), "grid header (holds tabs + toggle, above the viewports) present");
+  report(!!q("m1", "[data-cairn-stacked-view]"), "stacked panes container present");
   const oneVisible =
     qa("m1", '[data-cairn-stacked-pane="active"]').length === 1 &&
     qa("m1", '[data-cairn-stacked-pane="hidden"]').length === 2;
@@ -95,7 +96,7 @@ async function run(): Promise<boolean> {
   ok = ok && up && tabs.length === 3 && oneVisible && activePaneIndex("m1") === 0;
 
   // hover the stack so keys are in scope, then navigate.
-  q("m1", "[data-cairn-stacked]")!.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+  q("m1", "[data-cairn-grid-root]")!.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
 
   key("ArrowRight");
   report(await waitFor(() => activePaneIndex("m1") === 1), `→ moves to tab 1 (got ${activePaneIndex("m1")})`);

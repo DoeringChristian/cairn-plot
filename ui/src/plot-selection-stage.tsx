@@ -69,6 +69,13 @@ import {
   useReportCellAspect,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { ReportNaturalSizeContext } from "./lib/cairn-plot/renderers/natural-size-report";
+import {
+  useStackKeyboard,
+  StackTabStrip,
+  StackedPanes,
+  GridModeToggle,
+  stackLabelFor,
+} from "./lib/cairn-plot/stack/StackedView";
 import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import { useOriginTheme } from "./lib/cairn-plot/primitives/themed-portal";
 import {
@@ -239,6 +246,7 @@ const REPICK_SLOP_PX = 5;
 function StageCell({
   spec,
   rect,
+  fill,
   onPickReference,
   viewportSyncGroupId,
   settingsSyncGroupId,
@@ -247,8 +255,11 @@ function StageCell({
   spec: StageCellSpec;
   /** The packed rect for this cell (content-aspect, centrally clustered). While
    *  the stage size is still being measured this is a zero box (invisible for the
-   *  first frame). */
+   *  first frame). Ignored when `fill` is set. */
   rect: Rect | undefined;
+  /** STACKED stage: fill the (single-visible) stacked pane box instead of the
+   *  absolute packed rect. */
+  fill?: boolean;
   onPickReference: () => void;
   /** Shared VIEWPORT-sync group so zoom/pan on ONE cell broadcasts to every cell
    *  in the stage — the same mechanism the page-wide selection uses (via
@@ -284,11 +295,15 @@ function StageCell({
   // cluster) — not a stretch-to-fill grid track — so N panes cluster densely in
   // the middle instead of filling the quadrants (Part 2).
   const style: React.CSSProperties = {
-    position: "absolute",
-    left: rect?.left ?? 0,
-    top: rect?.top ?? 0,
-    width: rect?.width ?? 0,
-    height: rect?.height ?? 0,
+    ...(fill
+      ? { position: "relative", width: "100%", height: "100%" }
+      : {
+          position: "absolute",
+          left: rect?.left ?? 0,
+          top: rect?.top ?? 0,
+          width: rect?.width ?? 0,
+          height: rect?.height ?? 0,
+        }),
     minWidth: 0,
     minHeight: 0,
     display: "flex",
@@ -473,6 +488,16 @@ function SelectionStage({
     [cells.length, stageSize, aspect],
   );
 
+  // STACKED stage: show ONE selected pane at a time + a tab strip (the same
+  // grid/stacked toggle as `cp.Grid`). Keyboard flips between the tabs (the stage
+  // is a fullscreen overlay, so keys act unconditionally).
+  const canStack = cells.length > 1;
+  const [stackMode, setStackMode] = useState<"normal" | "stacked">("normal");
+  const [stackActive, setStackActive] = useState(0);
+  const stackedNow = canStack && stackMode === "stacked";
+  const stackActiveClamped = Math.min(stackActive, Math.max(0, cells.length - 1));
+  useStackKeyboard(gridRef, stackedNow, stackActiveClamped, cells.length, setStackActive);
+
   return (
     <FullscreenOverlayShell
       open
@@ -484,11 +509,25 @@ function SelectionStage({
       closeAttr="data-cairn-plot-stage-close"
     >
       <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", minHeight: 0 }}>
-        <StageModeToggle mode={mode} imageCount={imageCount} onSwitchMode={onSwitchMode} />
+        <div className="group flex items-center gap-2">
+          <StageModeToggle mode={mode} imageCount={imageCount} onSwitchMode={onSwitchMode} />
+          <div style={{ flex: 1 }} />
+          {canStack && <GridModeToggle mode={stackedNow ? "stacked" : "normal"} onChange={setStackMode} />}
+        </div>
+        {stackedNow && cells.length > 0 && (
+          <div className="mt-1 flex min-w-0">
+            <StackTabStrip
+              labels={cells.map((spec, i) => stackLabelFor(spec.node, i))}
+              active={stackActiveClamped}
+              onSelect={setStackActive}
+            />
+          </div>
+        )}
         <div
           ref={gridRef}
           data-cairn-stage-grid=""
           data-cairn-stage-mode={mode}
+          data-cairn-stage-stack={stackedNow ? "stacked" : "normal"}
           data-cairn-stage-cols={pack.cols}
           data-cairn-stage-rows={pack.rows}
           style={{
@@ -505,17 +544,36 @@ function SelectionStage({
             </div>
           ) : (
             <GridUniformAspectContext.Provider value={gridAspectApi}>
-              {cells.map((spec, i) => (
-                <StageCell
-                  key={spec.key}
-                  spec={spec}
-                  rect={pack.rects[i]}
-                  onPickReference={() => store.setReference(spec.reprPaneId)}
-                  viewportSyncGroupId={viewportSyncGroupId}
-                  settingsSyncGroupId={settingsSyncGroupId}
-                  isAnchor={i === 0}
+              {stackedNow ? (
+                <StackedPanes
+                  fill
+                  active={stackActiveClamped}
+                  panes={cells.map((spec, i) => (
+                    <StageCell
+                      key={spec.key}
+                      spec={spec}
+                      rect={undefined}
+                      fill
+                      onPickReference={() => store.setReference(spec.reprPaneId)}
+                      viewportSyncGroupId={viewportSyncGroupId}
+                      settingsSyncGroupId={settingsSyncGroupId}
+                      isAnchor={i === 0}
+                    />
+                  ))}
                 />
-              ))}
+              ) : (
+                cells.map((spec, i) => (
+                  <StageCell
+                    key={spec.key}
+                    spec={spec}
+                    rect={pack.rects[i]}
+                    onPickReference={() => store.setReference(spec.reprPaneId)}
+                    viewportSyncGroupId={viewportSyncGroupId}
+                    settingsSyncGroupId={settingsSyncGroupId}
+                    isAnchor={i === 0}
+                  />
+                ))
+              )}
             </GridUniformAspectContext.Provider>
           )}
         </div>

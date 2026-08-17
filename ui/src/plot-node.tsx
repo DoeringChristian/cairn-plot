@@ -73,7 +73,13 @@ import {
   VIEWPORT_HEIGHT_MARGIN,
   useUniformGridAspect,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
-import { StackedView, GridModeToggle, stackLabelFor } from "./lib/cairn-plot/stack/StackedView";
+import {
+  useStackKeyboard,
+  StackTabStrip,
+  StackedPanes,
+  GridModeToggle,
+  stackLabelFor,
+} from "./lib/cairn-plot/stack/StackedView";
 import {
   ChartBox,
   ChartFillContext,
@@ -830,6 +836,7 @@ function GridView({ node }: { node: GridNode }) {
   const [active, setActive] = useState(0);
   const effectiveMode = canStack ? mode : "normal";
   const clampedActive = Math.min(active, Math.max(0, children.length - 1));
+  const stackRootRef = useRef<HTMLDivElement | null>(null);
 
   const gridStyle: React.CSSProperties = {
     display: "grid",
@@ -869,20 +876,36 @@ function GridView({ node }: { node: GridNode }) {
   // document-scoped store. `ChartFillContext` still tells fill-mode children
   // (and their frames) to take `height:100%`.
   const panes = children.map((child, i) => <PlotNodeView key={i} node={child} />);
+  // Keyboard tab-flip attaches to the WHOLE grid area (header + panes) so keys
+  // work while hovering anywhere over the grid (only in stacked mode).
+  useStackKeyboard(stackRootRef, effectiveMode === "stacked", clampedActive, children.length, setActive);
   const grid = (
     <ChartFillContext.Provider value={fill}>
       <GridUniformAspectContext.Provider value={gridAspectApi}>
-        <div className={canStack ? "group" : undefined} style={{ position: "relative", minWidth: 0, width: "100%" }}>
+        <div
+          ref={stackRootRef}
+          data-cairn-grid-root=""
+          className={canStack ? "group" : undefined}
+          style={{ minWidth: 0, width: "100%" }}
+        >
+          {/* A thin HEADER above the viewports (never overlaps pane controls):
+              the mode toggle, plus the tab strip in stacked mode. */}
           {canStack && (
-            <GridModeToggle mode={effectiveMode} onChange={setMode} className="absolute right-1 top-1 z-10" />
+            <div data-cairn-grid-header="" className="mb-1 flex items-center gap-2" style={{ minHeight: 26 }}>
+              {effectiveMode === "stacked" ? (
+                <StackTabStrip
+                  labels={children.map((c, i) => stackLabelFor(c, i))}
+                  active={clampedActive}
+                  onSelect={setActive}
+                />
+              ) : (
+                <div className="flex-1" />
+              )}
+              <GridModeToggle mode={effectiveMode} onChange={setMode} />
+            </div>
           )}
           {effectiveMode === "stacked" ? (
-            <StackedView
-              panes={panes}
-              labels={children.map((c, i) => stackLabelFor(c, i))}
-              active={clampedActive}
-              onActiveChange={setActive}
-            />
+            <StackedPanes panes={panes} active={clampedActive} />
           ) : (
             <div style={gridStyle}>{panes}</div>
           )}

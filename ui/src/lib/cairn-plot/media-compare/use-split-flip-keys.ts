@@ -26,6 +26,7 @@
 import { useContext, useEffect } from "react";
 import type { RefObject } from "react";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
+import { InStackedGridContext } from "../stack/stack-context";
 
 export function useSplitFlipKeys(
   paneRef: RefObject<HTMLElement | null>,
@@ -36,6 +37,9 @@ export function useSplitFlipKeys(
   // the arrows act unconditionally; inline they require hover/focus. Read from the
   // overlay context `FullscreenOverlayShell` provides — no DOM-attribute coupling.
   const inOverlay = useContext(InFullscreenOverlayContext);
+  // Inside a STACKED grid, plain arrows/hjkl drive the tab strip, so the slide-
+  // flip moves to Shift+←/→ (Shift+h/l) to avoid a key collision.
+  const inStackedGrid = useContext(InStackedGridContext);
   useEffect(() => {
     if (mode !== "split" || !onSplitPositionChange) return;
     if (typeof window === "undefined") return;
@@ -68,8 +72,13 @@ export function useSplitFlipKeys(
     if (!hadTabIndex) el.tabIndex = -1;
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser/OS shortcuts alone
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const isLeft = k === "ArrowLeft" || k === "h"; // hjkl aliases for the arrows
+      const isRight = k === "ArrowRight" || k === "l";
+      if (!isLeft && !isRight) return;
+      // In a stacked grid, plain arrows/hjkl drive the tabs → require Shift here.
+      if (inStackedGrid && !e.shiftKey) return;
       const active = document.activeElement as HTMLElement | null;
       // Never steal arrows from a text field / editable control.
       if (active && active !== el && active.closest?.('input, textarea, select, [contenteditable="true"]')) {
@@ -78,7 +87,7 @@ export function useSplitFlipKeys(
       const focusedWithin = !!active && el.contains(active);
       if (!hovered && !focusedWithin && !inOverlay) return;
       e.preventDefault();
-      onSplitPositionChange(e.key === "ArrowLeft" ? 0 : 1);
+      onSplitPositionChange(isLeft ? 0 : 1);
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -87,5 +96,5 @@ export function useSplitFlipKeys(
       window.removeEventListener("keydown", onKey);
       if (!hadTabIndex) el.removeAttribute("tabindex");
     };
-  }, [paneRef, mode, onSplitPositionChange, inOverlay]);
+  }, [paneRef, mode, onSplitPositionChange, inOverlay, inStackedGrid]);
 }

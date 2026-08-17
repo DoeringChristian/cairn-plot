@@ -1,42 +1,37 @@
 /**
- * STACKED grid view: shows ONE child at a time with a keyboard-driven tab strip
- * to flip between them. A pure *view* over the grid's own children — every child
- * stays MOUNTED (inactive ones `display:none`) so flipping is instant and the
- * grid's viewport-sync carries over (a synced stacked grid flips as a true A/B).
+ * STACKED grid view pieces: a keyboard hook + a tab strip + a panes container +
+ * the mode toggle. A grid in `stacked` mode shows ONE child at a time; the OWNER
+ * (`GridView` / the stage) composes a thin HEADER (tab strip + toggle) ABOVE the
+ * viewports (so the toggle never overlaps pane controls) and the panes below.
  *
- * Keys (when the stack is the target — hovered/focused inline, or inside a
- * fullscreen overlay): `←/↑/h/k` prev, `→/↓/l/j` next, `1`–`9`/`0` and `a`–`z`
- * jump. See `stack-keys.ts`. Never steals keys from a text field.
+ * Every child stays MOUNTED (inactive ones `display:none`) so flipping is instant
+ * and the grid's viewport-sync carries over (a synced stacked grid flips A/B).
+ *
+ * Keys (via `useStackKeyboard`, when the stack is hovered/focused or inside a
+ * fullscreen overlay): `←/↑/h/k` prev, `→/↓/l/j` next (wrap), `1`–`9`/`0` and
+ * `a`–`z` jump. Never steals keys from a text field.
  */
 import { useContext, useEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { stackKeyAction, applyStackAction, stackTabBadge } from "./stack-keys";
 import { GridUniformAspectContext, VIEWPORT_HEIGHT_MARGIN } from "../renderers/grid-uniform-aspect";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
+import { InStackedGridContext } from "./stack-context";
 
-export function StackedView({
-  panes,
-  labels,
-  active,
-  onActiveChange,
-}: {
-  /** One rendered child per tab, in order (kept mounted; only `active` shown). */
-  panes: ReactNode[];
-  /** Tab labels (one per pane). */
-  labels: string[];
-  active: number;
-  onActiveChange: (i: number) => void;
-}) {
-  const count = panes.length;
-  const rootRef = useRef<HTMLDivElement | null>(null);
+/**
+ * Window keydown → stack navigation, scoped to `rootRef` (hovered/focused inline,
+ * or inside a fullscreen overlay). Reads active/count/onChange via refs so the
+ * listener subscribes ONCE — the hover state must survive a flip. No-op when
+ * `enabled` is false.
+ */
+export function useStackKeyboard(
+  rootRef: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  active: number,
+  count: number,
+  onActiveChange: (i: number) => void,
+): void {
   const inOverlay = useContext(InFullscreenOverlayContext);
-  // The single-view page-height cap: like a 1-cell grid, cap the visible pane so
-  // a tall image stays viewable in one screenful (the pane fills this box).
-  const uniformAspect = useContext(GridUniformAspectContext)?.uniformAspect;
-
-  // Latest active/count/callback via refs so the keydown effect subscribes ONCE
-  // (not per navigation) — the listener + hover state must survive an active
-  // change, else every flip re-seeds `hovered` and further keys stop working.
   const activeRef = useRef(active);
   activeRef.current = active;
   const countRef = useRef(count);
@@ -44,10 +39,9 @@ export function StackedView({
   const onChangeRef = useRef(onActiveChange);
   onChangeRef.current = onActiveChange;
 
-  // Keyboard: hovered/focused (inline) OR inside a fullscreen overlay.
   useEffect(() => {
     const el = rootRef.current;
-    if (!el || typeof window === "undefined") return;
+    if (!enabled || !el || typeof window === "undefined") return;
     let hovered = false;
     try {
       hovered = el.matches(":hover");
@@ -62,11 +56,7 @@ export function StackedView({
 
     const onKey = (e: KeyboardEvent) => {
       const activeEl = document.activeElement as HTMLElement | null;
-      if (
-        activeEl &&
-        activeEl !== el &&
-        activeEl.closest?.('input, textarea, select, [contenteditable="true"]')
-      ) {
+      if (activeEl && activeEl !== el && activeEl.closest?.('input, textarea, select, [contenteditable="true"]')) {
         return;
       }
       const focusedWithin = !!activeEl && el.contains(activeEl);
@@ -82,34 +72,41 @@ export function StackedView({
       el.removeEventListener("pointerleave", onLeave);
       window.removeEventListener("keydown", onKey);
     };
-  }, [inOverlay]);
+  }, [enabled, inOverlay, rootRef]);
+}
 
-  const viewStyle =
-    uniformAspect != null && uniformAspect > 0
+/** The panes container: all children mounted, only `active` shown; marks the
+ *  subtree as inside a stacked grid so a compare cell moves its slide-flip to
+ *  Shift+←/→. `fill` (the fullscreen stage) makes the visible pane FILL the area;
+ *  otherwise (a `cp.Grid`) the visible pane is content-aspect, capped at the page
+ *  height like a 1-cell grid. */
+export function StackedPanes({ panes, active, fill }: { panes: ReactNode[]; active: number; fill?: boolean }) {
+  const uniformAspect = useContext(GridUniformAspectContext)?.uniformAspect;
+  const viewStyle = fill
+    ? ({ width: "100%", height: "100%" } as const)
+    : uniformAspect != null && uniformAspect > 0
       ? { maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${uniformAspect})`, marginInline: "auto" as const }
       : undefined;
-
   return (
-    <div ref={rootRef} data-cairn-stacked="" style={{ minWidth: 0 }}>
-      <StackTabStrip labels={labels} active={active} onSelect={onActiveChange} />
-      <div data-cairn-stacked-view="" style={{ minWidth: 0, ...viewStyle }}>
+    <InStackedGridContext.Provider value={true}>
+      <div data-cairn-stacked-view="" style={{ minWidth: 0, minHeight: 0, ...viewStyle }}>
         {panes.map((pane, i) => (
           <div
             key={i}
             data-cairn-stacked-pane={i === active ? "active" : "hidden"}
-            style={{ display: i === active ? "block" : "none", minWidth: 0 }}
+            style={{ display: i === active ? "block" : "none", minWidth: 0, ...(fill ? { height: "100%" } : null) }}
           >
             {pane}
           </div>
         ))}
       </div>
-    </div>
+    </InStackedGridContext.Provider>
   );
 }
 
 /** The horizontal tab strip: one tab per child (`<badge> <label>`), active
  *  highlighted, click-to-select, horizontally scrollable. */
-function StackTabStrip({
+export function StackTabStrip({
   labels,
   active,
   onSelect,
@@ -122,7 +119,7 @@ function StackTabStrip({
     <div
       data-cairn-stack-tabs=""
       role="tablist"
-      className="flex items-center gap-1 overflow-x-auto pb-1"
+      className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
       style={{ scrollbarWidth: "thin" }}
     >
       {labels.map((label, i) => {
@@ -161,8 +158,7 @@ function StackTabStrip({
 
 /**
  * The `▦ | ▭` segmented control that toggles a grid between `normal` and
- * `stacked`. Subtle by default (fades in on hover of its enclosing `group`), so
- * it's discoverable without cluttering a clean report.
+ * `stacked`. Lives in the grid's header row (never overlapping pane controls).
  */
 export function GridModeToggle({
   mode,
@@ -198,7 +194,7 @@ export function GridModeToggle({
     <div
       data-cairn-grid-mode-toggle=""
       className={
-        "inline-flex gap-0.5 rounded border border-border bg-bg-elevated/90 p-0.5 opacity-40 transition-opacity group-hover:opacity-100 focus-within:opacity-100 " +
+        "inline-flex shrink-0 gap-0.5 rounded border border-border bg-bg-elevated/90 p-0.5 opacity-60 transition-opacity group-hover:opacity-100 focus-within:opacity-100 " +
         (className ?? "")
       }
     >
