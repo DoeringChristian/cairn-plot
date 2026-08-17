@@ -31,6 +31,7 @@ import {
   resolveFinalUrl,
   type DataSource,
 } from "./lib/cairn-plot";
+import { fetchImageBytes } from "./lib/cairn-plot/fetch-image";
 
 /**
  * How the renderer's DATA props are produced.
@@ -211,7 +212,9 @@ export async function resolveDataProps(
       // serve formats the browser can't `<img>`-decode (`exr`/`npy`/…) while the
       // image stays referenced by URL, not embedded. CORS applies to the fetch.
       if (data.url) {
-        const res = await fetch(data.url);
+        // Throttled + retry-on-429 (a big URL gallery must not trip the host's
+        // rate limit; a transient 429 recovers rather than hard-erroring).
+        const res = await fetchImageBytes(data.url);
         if (!res.ok) {
           throw new Error(`cairn-plot: failed to fetch image ${data.url} (${res.status})`);
         }
