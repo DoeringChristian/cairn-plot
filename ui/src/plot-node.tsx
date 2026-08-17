@@ -730,22 +730,17 @@ function PaneSelectionFrame({
     // ONE aspect, so all cells in a row are identical and the pane fills it. A
     // `DEFAULT_GRID_CELL_ASPECT` fallback gives a definite box before any cell has
     // reported (avoids a 0-height mount). `alignSelf:start` keeps it from being
-    // stretched by a taller non-image sibling in the same row. `maxWidth` caps the
-    // width so the aspect-derived HEIGHT never exceeds the page (window) height —
-    // a tall grid image stays viewable in one screenful; when capped narrower than
-    // its column the cell centres (`marginInline:auto`). Pure-CSS `vh` so it
-    // tracks window resizes with no JS.
+    // stretched by a taller non-image sibling in the same row. The cell FILLS its
+    // column (no maxWidth here) so figures sit edge-to-edge with no gaps between
+    // them; the page-HEIGHT cap is applied to the grid CONTAINER width in
+    // `GridView` (which narrows the whole cluster and centres it), so a tall grid
+    // image stays viewable in one screenful without leaving space between figures.
     ...(uniformImageCell
-      ? (() => {
-          const a = gridUniform!.uniformAspect ?? DEFAULT_GRID_CELL_ASPECT;
-          return {
-            width: "100%",
-            aspectRatio: String(a),
-            maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${a})`,
-            marginInline: "auto",
-            alignSelf: "start",
-          };
-        })()
+      ? {
+          width: "100%",
+          aspectRatio: String(gridUniform!.uniformAspect ?? DEFAULT_GRID_CELL_ASPECT),
+          alignSelf: "start",
+        }
       : null),
   };
   if (isSelected) {
@@ -832,8 +827,21 @@ function GridView({ node }: { node: GridNode }) {
     width: "100%",
   };
   if (fill) gridStyle.gridTemplateRows = trackList(node.rowHeights, 1);
+  const gapPx = typeof node.gap === "number" ? node.gap : 0;
   if (node.gap != null) {
     gridStyle.gap = typeof node.gap === "number" ? `${node.gap}px` : node.gap;
+  }
+  // PAGE-HEIGHT CAP for a grid of TALL images: cap the grid CONTAINER width so its
+  // `1fr` columns never exceed the per-column width whose aspect-derived height
+  // would exceed the window — then the cells (which FILL their columns) stay ≤ one
+  // page tall. Capping the container (not the cells) keeps figures edge-to-edge
+  // with no gaps between them; the leftover space becomes ONE centred outer margin
+  // (`marginInline:auto`). Wide/short grids: the cap is larger than the container,
+  // so it never binds. `vh` tracks window resizes with no JS. Auto rows only.
+  if (!fill && gridAspectApi.uniformAspect != null && gridAspectApi.uniformAspect > 0) {
+    const c = Math.max(cols, 1);
+    gridStyle.maxWidth = `calc(${c} * (100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${gridAspectApi.uniformAspect} + ${(c - 1) * gapPx}px)`;
+    gridStyle.marginInline = "auto";
   }
 
   // A grid re-seeds the shared context for its subtree (its own `shared` wins,

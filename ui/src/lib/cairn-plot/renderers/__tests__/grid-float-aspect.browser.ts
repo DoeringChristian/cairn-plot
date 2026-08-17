@@ -238,11 +238,12 @@ async function run(): Promise<boolean> {
   roots.pop()?.unmount(); // tear down the mixed grid
   await sleep(30);
 
-  // ── Part D: PAGE-HEIGHT CAP in a grid ─────────────────────────────────────
+  // ── Part D: PAGE-HEIGHT CAP in a grid, WITHOUT gaps between figures ────────
   // A grid of very TALL images (aspect 0.125): each cell's aspect-derived height
-  // (colWidth / aspect ≈ 2500px) must be capped at the window (page) height, so a
-  // tall grid image stays viewable in one screenful. The width shrinks to keep
-  // the aspect (`maxWidth: calc((100vh - m) * aspect)`).
+  // (colWidth / aspect ≈ 2500px) must be capped at the window (page) height so a
+  // tall grid image stays viewable in one screenful. The cap is on the grid
+  // CONTAINER width (centred), so cells stay EDGE-TO-EDGE (only the 8px gap
+  // between them) — no unusable space between figures.
   {
     const el = document.getElementById("grid-host")!;
     el.style.cssText = "width:960px;background:#222";
@@ -253,7 +254,7 @@ async function run(): Promise<boolean> {
   const CAP = window.innerHeight - 24; // matches VIEWPORT_HEIGHT_MARGIN
   await waitFor(() => {
     const cs = gridCells("grid-host");
-    return cs.length >= 3 && cs.every((c) => c.getBoundingClientRect().height > 0);
+    return cs.length >= 3 && cs.every((c) => c.getBoundingClientRect().height > 0 && c.getBoundingClientRect().height <= CAP + 4);
   });
   await sleep(80);
   const dCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
@@ -264,7 +265,12 @@ async function run(): Promise<boolean> {
   );
   const dAspect = dCells.length >= 3 && dCells.every((r) => near(r.width / r.height, 0.125, 0.03));
   report(dAspect, `TALL grid: cells keep the content aspect 0.125 (${dCells.map((r) => (r.width / r.height).toFixed(3)).join(", ")})`);
-  ok = ok && dCapped && dAspect;
+  // Adjacent cells sit ONE grid gap apart (~8px) — NOT floating in wide columns
+  // with big centring gaps between them.
+  const hGap = dCells.length >= 2 ? dCells[1].left - (dCells[0].left + dCells[0].width) : 999;
+  const edgeToEdge = near(hGap, 8, 3);
+  report(edgeToEdge, `TALL grid: figures are edge-to-edge (h-gap ${hGap.toFixed(1)}px ≈ 8px grid gap, no unusable space between)`);
+  ok = ok && dCapped && dAspect && edgeToEdge;
 
   roots.forEach((r) => r.unmount());
   return ok;
