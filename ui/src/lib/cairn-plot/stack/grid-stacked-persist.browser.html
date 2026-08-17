@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>grid stacked diff-persist harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* A visible, sized, ON-SCREEN mount so the ACTIVE tab lazy-mounts (its
+         IntersectionObserver intersects); hidden tabs stay display:none and do
+         NOT — exactly the real (non-eager) condition this harness reproduces. */
+      #mount { width: 640px; height: 460px; background: #222; }
+    </style>
+  </head>
+  <body>
+    <h1>stack/GridView — stacked grid PERSISTS compare settings across tab flips</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="mount"></div>
+    <div id="result"></div>
+    <!-- Deliberately NOT eager-mount: this harness exists to catch the case the
+         eager compare-settings-sync harness cannot — a hidden tab that mounts
+         LAZILY on first reveal must still adopt the group's synced settings. -->
+    <script type="module" src="./grid-stacked-persist.browser.bundle.js"></script>
+  </body>
+</html>

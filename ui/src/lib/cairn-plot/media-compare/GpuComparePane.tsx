@@ -229,6 +229,13 @@ export interface GpuComparePaneProps {
    * joining pane adopts it. See `renderers/use-synced-image-settings.ts`. */
   settingsSyncGroupId?: string;
   syncIsAnchor?: boolean;
+  /** Slide-flip keyboard scope, THREADED FROM CORE (not read from context here):
+   *  this pane ships in the `gpu-image` bundle, whose copy of the stacked-grid /
+   *  overlay context objects differs in identity from the core providers', so a
+   *  `useContext` in this bundle silently returns the default. The core adapter
+   *  (`CompositeMediaPane`) reads them on the right side and passes them in. */
+  inStackedGrid?: boolean;
+  inOverlay?: boolean;
 }
 
 /** Uint8 256x3 LUT -> Float32 256x4 (RGBA, [0,1]) for `CompareParams.diffColormap`. */
@@ -353,6 +360,8 @@ export default function GpuComparePane({
   toolbar = true,
   settingsSyncGroupId,
   syncIsAnchor,
+  inStackedGrid,
+  inOverlay,
 }: GpuComparePaneProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
   // Attached by the shared shell (see `ImagePaneShell`); this pane measures
@@ -696,7 +705,9 @@ export default function GpuComparePane({
   // flipping between the two images (scoped to the pane the key lands in). Uses
   // `changeSplit` — the SAME handler the divider drives — so the flip also
   // publishes to the settings-sync bus (peers track it), not just the local prop.
-  useSplitFlipKeys(paneRef, compareMode, changeSplit);
+  // Flags threaded from CORE (see the prop docs) — NOT read from context here,
+  // which would be a different context instance in this bundle and yield `false`.
+  useSplitFlipKeys(paneRef, compareMode, changeSplit, { inStackedGrid, inOverlay });
 
   // The two leading toolbar menus (rendered by `ImagePaneShell` → `PlotToolbar`).
   //   MODE — slide · blend · every registered diff kernel (flat list). Selecting

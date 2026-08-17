@@ -35,15 +35,25 @@ export function useSplitFlipKeys(
   paneRef: RefObject<HTMLElement | null>,
   mode: string,
   onSplitPositionChange?: (pos: number) => void,
+  opts?: { inStackedGrid?: boolean; inOverlay?: boolean },
 ): void {
-  // Inside a fullscreen compare/enlarge overlay (a modal with ONE active compare)
-  // the arrows act unconditionally; inline they require hover/focus. Read from the
-  // overlay context `FullscreenOverlayShell` provides — no DOM-attribute coupling.
-  const inOverlay = useContext(InFullscreenOverlayContext);
+  // `inOverlay` / `inStackedGrid` are resolved from React context by CORE callers
+  // (e.g. the CPU `MediaComparePane`). But the GPU `GpuComparePane` ships in a
+  // SEPARATE bundle: its copy of these context objects is a DIFFERENT identity
+  // than the one the core `StackedPanes` / `FullscreenOverlayShell` providers use,
+  // so a cross-bundle `useContext` here silently returns the DEFAULT (`false`) —
+  // which made `→` both flip the slider AND change the tab inside a stacked grid.
+  // The fix: the CORE adapter (`CompositeMediaPane`) reads the contexts on the
+  // correct side of the boundary and threads the booleans in via `opts`, exactly
+  // as `settingsSyncGroupId` is threaded. `opts` wins; the context read is only a
+  // fallback for callers that don't thread (kept so behaviour is unchanged there).
+  const ctxOverlay = useContext(InFullscreenOverlayContext);
+  const ctxStacked = useContext(InStackedGridContext);
+  const inOverlay = opts?.inOverlay ?? ctxOverlay;
   // Inside a STACKED grid, plain arrows/hjkl drive the tab strip, so the slide-
   // flip is reached with the DEDICATED `[`/`]` keys (distinct from the tab keys,
   // no collision); arrows/hjkl no longer flip here.
-  const inStackedGrid = useContext(InStackedGridContext);
+  const inStackedGrid = opts?.inStackedGrid ?? ctxStacked;
   useEffect(() => {
     if (mode !== "split" || !onSplitPositionChange) return;
     if (typeof window === "undefined") return;

@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
+import { InStackedGridContext } from "../stack/stack-context";
 import { usePublishNaturalSize } from "../renderers/natural-size-report";
 import type {
   Colormap,
@@ -831,6 +833,16 @@ export function CompositeMediaPane({
   useGpuCompareReadyTick();
   const GpuCompare = resolveGpuComparePane();
 
+  // Slide-flip keyboard scope, read HERE (core, inside the real providers) and
+  // threaded into the GPU compare pane below. `GpuComparePane` ships in a separate
+  // bundle whose copies of these context objects differ in identity from the core
+  // providers', so IT cannot read them itself — a `useContext` there returns the
+  // default `false`, which let `→` BOTH flip the slider AND change the stacked-grid
+  // tab (the reported collision). The CPU panes are core, so they still read the
+  // same context via `useSplitFlipKeys`'s fallback; only the GPU pane needs these.
+  const inStackedGrid = useContext(InStackedGridContext);
+  const inOverlay = useContext(InFullscreenOverlayContext);
+
   // The engine pane composites only split/blend/diff (normal is a single image).
   const engineComposited =
     effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff";
@@ -864,6 +876,8 @@ export function CompositeMediaPane({
         onBlendAlphaChange={onBlendAlphaChange}
         settingsSyncGroupId={settingsSyncGroupId}
         syncIsAnchor={syncIsAnchor}
+        inStackedGrid={inStackedGrid}
+        inOverlay={inOverlay}
         diffSubmode={diffSubmode}
         diffKernel={diffKernel}
         align={align}
