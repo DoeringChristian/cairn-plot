@@ -51,6 +51,9 @@ jobs:
           uv run python examples/demo_cairn_plot.py -o site/gallery.html
           uv run python examples/report_cairn_plot.py -o site/report.html
           uv run python examples/demo_url_images.py -o site/url-images.html
+          # The full ASWF openexr-images sample set, referenced by URL (builds
+          # offline; the browser fetches + WASM-decodes each EXR at view time).
+          uv run python examples/demo_openexr_gallery.py -o site/openexr-gallery.html
           # The pick-&-compare demo is authored as a JS/HTML page (window.cairnPlot)
           # referencing the just-built bundles; inline them into ONE self-contained
           # file for the gallery (interactive, fully client-side, no network).
