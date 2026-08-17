@@ -66,8 +66,13 @@ function host(id: string): HTMLElement {
 }
 const q = (id: string, sel: string) => document.getElementById(id)!.querySelector<HTMLElement>(sel);
 const qa = (id: string, sel: string) => Array.from(document.getElementById(id)!.querySelectorAll<HTMLElement>(sel));
-const activePaneIndex = (id: string): number =>
-  qa(id, "[data-cairn-stacked-pane]").findIndex((p) => p.getAttribute("data-cairn-stacked-pane") === "active");
+// Stacked mode renders ONE reused pane; the active tab index lives on the
+// stacked-view container (`data-cairn-stack-active`), not per-child panes.
+const activePaneIndex = (id: string): number => {
+  const el = q(id, "[data-cairn-stack-active]");
+  const v = el?.getAttribute("data-cairn-stack-active");
+  return v == null ? -1 : parseInt(v, 10);
+};
 const key = (k: string, extra: KeyboardEventInit = {}) =>
   window.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...extra }));
 
@@ -88,10 +93,12 @@ async function run(): Promise<boolean> {
   report(tabs.length === 3, `stacked grid renders a tab strip with 3 tabs (got ${tabs.length})`);
   report(!!q("m1", "[data-cairn-grid-header]"), "grid header (holds tabs + toggle, above the viewports) present");
   report(!!q("m1", "[data-cairn-stacked-view]"), "stacked panes container present");
+  // Single-renderer model: exactly ONE pane is rendered (the active source), not
+  // three hidden ones — flipping swaps the source on this reused instance.
   const oneVisible =
-    qa("m1", '[data-cairn-stacked-pane="active"]').length === 1 &&
-    qa("m1", '[data-cairn-stacked-pane="hidden"]').length === 2;
-  report(oneVisible, "exactly ONE pane visible, the other two hidden");
+    qa("m1", "[data-cairn-stacked-pane]").length === 1 &&
+    qa("m1", '[data-cairn-stacked-pane="active"]').length === 1;
+  report(oneVisible, "exactly ONE pane rendered (single reused renderer, not N hidden panes)");
   report(activePaneIndex("m1") === 0, `tab 0 active initially (got ${activePaneIndex("m1")})`);
   ok = ok && up && tabs.length === 3 && oneVisible && activePaneIndex("m1") === 0;
 

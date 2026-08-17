@@ -75,12 +75,22 @@ export function useStackKeyboard(
   }, [enabled, inOverlay, rootRef]);
 }
 
-/** The panes container: all children mounted, only `active` shown; marks the
+/** The panes container: all children mounted, only `active` SHOWN; marks the
  *  subtree as inside a stacked grid so a compare cell reaches its slide-flip via
  *  the dedicated `[`/`]` keys (arrows/hjkl drive the tab strip here). `fill` (the
  *  fullscreen stage) makes the visible pane FILL the area;
  *  otherwise (a `cp.Grid`) the visible pane is content-aspect, capped at the page
- *  height like a 1-cell grid. */
+ *  height like a 1-cell grid.
+ *
+ *  FLICKER-FREE SWITCHING: every pane occupies the SAME CSS-grid cell
+ *  (`grid-area: 1 / 1`, so they overlap and the container sizes to them) and the
+ *  inactive ones are hidden with `visibility: hidden` — NOT `display: none`.
+ *  `display: none` gave a GPU pane a 0×0 box, so its `IntersectionObserver`
+ *  parked its GPU resources and the reveal had to re-measure + re-render from
+ *  blank (the flicker). `visibility: hidden` keeps full geometry: the pane stays
+ *  "on-screen" (never parks), retains its last painted frame, and a flip is a
+ *  pure visibility toggle. `pointer-events: none` keeps hidden panes from
+ *  intercepting the pointer through the active one. */
 export function StackedPanes({ panes, active, fill }: { panes: ReactNode[]; active: number; fill?: boolean }) {
   const uniformAspect = useContext(GridUniformAspectContext)?.uniformAspect;
   const viewStyle = fill
@@ -90,16 +100,25 @@ export function StackedPanes({ panes, active, fill }: { panes: ReactNode[]; acti
       : undefined;
   return (
     <InStackedGridContext.Provider value={true}>
-      <div data-cairn-stacked-view="" style={{ minWidth: 0, minHeight: 0, ...viewStyle }}>
-        {panes.map((pane, i) => (
-          <div
-            key={i}
-            data-cairn-stacked-pane={i === active ? "active" : "hidden"}
-            style={{ display: i === active ? "block" : "none", minWidth: 0, ...(fill ? { height: "100%" } : null) }}
-          >
-            {pane}
-          </div>
-        ))}
+      <div data-cairn-stacked-view="" style={{ display: "grid", minWidth: 0, minHeight: 0, ...viewStyle }}>
+        {panes.map((pane, i) => {
+          const isActive = i === active;
+          return (
+            <div
+              key={i}
+              data-cairn-stacked-pane={isActive ? "active" : "hidden"}
+              style={{
+                gridArea: "1 / 1", // all panes stack in ONE cell (overlap) → no display:none
+                minWidth: 0,
+                visibility: isActive ? "visible" : "hidden",
+                pointerEvents: isActive ? undefined : "none",
+                ...(fill ? { height: "100%" } : null),
+              }}
+            >
+              {pane}
+            </div>
+          );
+        })}
       </div>
     </InStackedGridContext.Provider>
   );

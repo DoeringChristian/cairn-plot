@@ -1,22 +1,16 @@
 /**
- * STACKED GRID — compare settings (incl. DIFF MODE) must PERSIST across tab
- * flips, even when a tab mounts LAZILY on its first reveal.
+ * STACKED GRID — single-renderer model. A `cp.Grid(mode="stacked")` renders ONE
+ * reused renderer and SWAPS its source when you flip tabs; it does NOT mount N
+ * panes. So display + compare settings (incl. DIFF MODE) are shared BY
+ * CONSTRUCTION — there is nothing to re-sync, and a flip cannot "reset" them.
  *
- * The bug: in real (non-eager) usage a stacked grid's hidden tabs are
- * `display:none`, so their `LazyGate` IntersectionObserver never intersects and
- * the pane mounts FRESH only when the tab is first shown. A fresh compare pane
- * seeds its mode from the descriptor (`split`) — so unless it ADOPTS the group's
- * accumulated settings on join, flipping to it "resets" the diff mode the user
- * set on another tab. The eager `compare-settings-sync` harness cannot see this
- * (eager mounts every child up front); this one deliberately runs NON-eager and
- * drives the REAL tab strip.
- *
- * Flow: mount a `cp.Grid(mode="stacked")` of THREE engine compare panes, set
- * `diff` + `squared` on tab 0, then CLICK through tabs 1 and 2 (each mounts
- * lazily) and assert each shows `diff`/`squared`; finally flip back to tab 0 and
- * assert it is STILL `diff` (nothing reset it). Engine compare panes need
- * WebGPU, so this is a Chromium page; `npm run test:harness` runs it in the
- * default set and skips-loud with no adapter.
+ * This harness proves that end to end with the ENGINE compare pane: mount a
+ * stacked grid of three compares, set `diff`+`squared`, then flip through the
+ * tabs and assert (a) exactly ONE compare pane is ever rendered, (b) diff/squared
+ * persist across every flip, and (c) the renderer INSTANCE is reused — the same
+ * canvas DOM nodes survive a flip (no remount / park-restore → no flicker).
+ * Engine compare panes need WebGPU, so this is a Chromium page; `npm run
+ * test:harness` runs it in the default set and skips-loud with no adapter.
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
@@ -86,24 +80,24 @@ function compareChild(fg: string, ref: string): unknown {
 }
 
 const mountEl = () => document.getElementById("mount")!;
-const stackedPanes = () =>
-  Array.from(mountEl().querySelectorAll<HTMLElement>("[data-cairn-stacked-pane]"));
 const tabs = () => Array.from(mountEl().querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-
-/** The compare probe for stacked child `i` (undefined until that tab has mounted).
- *  The seam lives on the pane's INNER `paneRef` box, so walk the child subtree. */
-function probeOfChild(i: number): CompareProbe | undefined {
-  const paneWrap = stackedPanes()[i];
-  if (!paneWrap) return undefined;
-  const root = paneWrap.querySelector<HTMLElement>("[data-gpu-compare-pane]");
-  if (!root) return undefined;
+const activeIdx = (): number => {
+  const v = mountEl().querySelector("[data-cairn-stack-active]")?.getAttribute("data-cairn-stack-active");
+  return v == null ? -1 : parseInt(v, 10);
+};
+const comparePaneEls = () => Array.from(mountEl().querySelectorAll<HTMLElement>("[data-gpu-compare-pane]"));
+/** The (single) compare probe — the stacked grid renders ONE reused pane. */
+function probe(): CompareProbe | undefined {
   type SeamEl = HTMLElement & { __cairnCompareProbe?: CompareProbe };
-  if ((root as SeamEl).__cairnCompareProbe) return (root as SeamEl).__cairnCompareProbe;
-  for (const n of Array.from(root.querySelectorAll("*")) as SeamEl[]) {
-    if (n.__cairnCompareProbe) return n.__cairnCompareProbe;
+  for (const root of comparePaneEls()) {
+    if ((root as SeamEl).__cairnCompareProbe) return (root as SeamEl).__cairnCompareProbe;
+    for (const n of Array.from(root.querySelectorAll("*")) as SeamEl[]) {
+      if (n.__cairnCompareProbe) return n.__cairnCompareProbe;
+    }
   }
   return undefined;
 }
+const canvasTags = () => comparePaneEls().flatMap((p) => Array.from(p.querySelectorAll("canvas")));
 
 async function run(): Promise<boolean> {
   let ok = true;
@@ -113,8 +107,6 @@ async function run(): Promise<boolean> {
   w.__cairnPlotUseGpuImage = true;
   w.__cairnPlotGpuComparePane = GpuComparePane;
   w.__cairnPlotDiffMenuModes = listDiffMenuModes();
-  // NOTE: deliberately NOT setting __cairnPlotEagerMount — hidden tabs must mount
-  // lazily on reveal, which is the whole point of this harness.
 
   const roots: Root[] = [];
   const root = createRoot(mountEl());
@@ -138,50 +130,59 @@ async function run(): Promise<boolean> {
   );
   roots.push(root);
 
-  const up = await waitFor(() => tabs().length === 3 && !!probeOfChild(0), 15000);
-  report(up, `stacked grid mounts with 3 tabs; tab 0's compare pane mounts (probe ${!!probeOfChild(0)})`);
+  const up = await waitFor(() => tabs().length === 3 && !!probe(), 15000);
+  report(up, `stacked grid mounts with 3 tabs; the ONE reused compare pane mounts (probe ${!!probe()})`);
   ok = ok && up;
   if (!up) {
     roots.forEach((r) => r.unmount());
     return false;
   }
 
-  // Only the ACTIVE tab (0) has mounted; the hidden tabs are lazy placeholders.
-  const onlyOneMounted = !probeOfChild(1) && !probeOfChild(2);
-  report(onlyOneMounted, "hidden tabs 1 & 2 are NOT yet mounted (lazy — the real condition)");
+  // Single-renderer model: exactly ONE compare pane rendered, never N.
+  const onePane = comparePaneEls().length === 1;
+  report(onePane, `exactly ONE compare pane rendered — a stack is ONE reused renderer (got ${comparePaneEls().length})`);
+  ok = ok && onePane;
 
-  // Set diff + squared on tab 0.
-  probeOfChild(0)!.changeCompareMode("diff");
-  probeOfChild(0)!.changeDiffKernel("squared");
-  const t0diff = await waitFor(
-    () => probeOfChild(0)?.compareMode === "diff" && probeOfChild(0)?.diffKernel === "squared",
-  );
-  report(t0diff, `tab 0 set to diff/squared (mode=${probeOfChild(0)?.compareMode}, kernel=${probeOfChild(0)?.diffKernel})`);
+  // Set diff + squared while on tab 0.
+  probe()!.changeCompareMode("diff");
+  probe()!.changeDiffKernel("squared");
+  const t0diff = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared");
+  report(t0diff, `set diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.diffKernel})`);
   ok = ok && t0diff;
 
-  // Flip to tab 1 (mounts lazily NOW) → must adopt diff/squared, not reset.
+  // Tag the pane's canvases NOW (after diff, so the count is settled) to prove the
+  // INSTANCE is reused across the flip — the tagged nodes must SURVIVE (a remount
+  // or park/restore would replace them). New canvases may appear; we only require
+  // the tagged ones persist.
+  const tagged = canvasTags();
+  tagged.forEach((c, i) => c.setAttribute("data-persist-tag", `cv${i}`));
+  const tagsBefore = tagged.map((_, i) => `cv${i}`);
+
+  // Flip to tab 1 → the source swaps on the SAME instance; settings are shared BY
+  // CONSTRUCTION (one instance), so diff/squared persist with nothing to re-sync.
   tabs()[1].click();
-  const t1mounted = await waitFor(() => !!probeOfChild(1), 15000);
-  report(t1mounted, "flip → tab 1 mounts on reveal");
-  const t1diff = await waitFor(
-    () => probeOfChild(1)?.compareMode === "diff" && probeOfChild(1)?.diffKernel === "squared",
-  );
-  report(t1diff, `tab 1 ADOPTS diff/squared on lazy mount (mode=${probeOfChild(1)?.compareMode}, kernel=${probeOfChild(1)?.diffKernel})`);
-  ok = ok && t1mounted && t1diff;
+  const flipped = await waitFor(() => activeIdx() === 1);
+  report(flipped, `flip → active tab is 1 (got ${activeIdx()})`);
+  const stillDiff1 = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared");
+  report(stillDiff1, `after flip, STILL diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.diffKernel})`);
 
-  // Flip to tab 2 (also lazy) → same.
+  // The renderer INSTANCE was reused — every previously-tagged canvas still in the
+  // DOM (no remount, no park/restore → no flicker).
+  const survivingTags = new Set(canvasTags().map((c) => c.getAttribute("data-persist-tag")));
+  const reused = tagsBefore.length > 0 && tagsBefore.every((t) => survivingTags.has(t));
+  report(reused, `the renderer INSTANCE is reused across the flip (all ${tagsBefore.length} tagged canvases survived)`);
+  ok = ok && flipped && stillDiff1 && reused;
+
+  // Flip to tab 2 and back to 0 → still diff throughout.
   tabs()[2].click();
-  const t2mounted = await waitFor(() => !!probeOfChild(2), 15000);
-  const t2diff = await waitFor(() => probeOfChild(2)?.compareMode === "diff");
-  report(t2diff, `tab 2 ADOPTS diff on lazy mount (mode=${probeOfChild(2)?.compareMode})`);
-  ok = ok && t2mounted && t2diff;
-
-  // Flip BACK to tab 0 → still diff (nothing reset it).
+  await waitFor(() => activeIdx() === 2);
+  const stillDiff2 = probe()?.compareMode === "diff";
+  report(stillDiff2, `tab 2 still diff (mode=${probe()?.compareMode})`);
   tabs()[0].click();
-  await sleep(120);
-  const t0still = probeOfChild(0)?.compareMode === "diff";
-  report(t0still, `flip back → tab 0 is STILL diff (mode=${probeOfChild(0)?.compareMode})`);
-  ok = ok && t0still;
+  await waitFor(() => activeIdx() === 0);
+  const stillDiff0 = probe()?.compareMode === "diff";
+  report(stillDiff0, `back to tab 0, still diff (mode=${probe()?.compareMode})`);
+  ok = ok && stillDiff2 && stillDiff0;
 
   roots.forEach((r) => r.unmount());
   return ok;

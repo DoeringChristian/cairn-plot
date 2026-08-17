@@ -76,10 +76,10 @@ import {
 import {
   useStackKeyboard,
   StackTabStrip,
-  StackedPanes,
   GridModeToggle,
   stackLabelFor,
 } from "./lib/cairn-plot/stack/StackedView";
+import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
 import {
   ChartBox,
   ChartFillContext,
@@ -90,6 +90,12 @@ import {
   LAZY_ROOT_MARGIN,
   type EagerMountSignals,
 } from "./lib/cairn-plot/lazy-mount";
+import {
+  sourceKey,
+  peekResolved,
+  resolveCached,
+  prefetchResolved,
+} from "./lib/cairn-plot/resolve-cache";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -172,28 +178,36 @@ function LeafView({ node }: { node: PlotLeafNode }) {
   // Only the async-resolved DATA props live in state; the shared-block +
   // selection-sync props are merged at RENDER time (below) so a selection change
   // (which flips the sync group ids) re-renders WITHOUT re-fetching the data.
+  // Data resolution is memoized by node identity (`resolve-cache`) so a STACKED
+  // viewport flips to an already-seen / prefetched source SYNCHRONOUSLY — no
+  // "Loading…" flash. Seed from the cache at mount; on a source SWAP keep the old
+  // frame until the new one resolves (never reset to "loading" → never a blank).
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
     | { status: "ready"; dataProps: Record<string, unknown> }
-  >({ status: "loading" });
+  >(() => {
+    const cached = peekResolved<Record<string, unknown>>(sourceKey(node));
+    return cached ? { status: "ready", dataProps: cached } : { status: "loading" };
+  });
   const [, bumpRegistry] = useState(0);
 
   useEffect(() => {
+    const key = sourceKey(node);
+    const cached = peekResolved<Record<string, unknown>>(key);
+    if (cached) {
+      setState({ status: "ready", dataProps: cached });
+      return;
+    }
     let cancelled = false;
-    (async () => {
-      try {
-        const dataProps = await resolveDataProps(node.data, source);
-        if (cancelled) return;
-        setState({ status: "ready", dataProps });
-      } catch (err) {
-        if (cancelled) return;
-        setState({
-          status: "error",
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })();
+    resolveCached(key, () => resolveDataProps(node.data, source)).then(
+      (dataProps) => {
+        if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
+      },
+      (err) => {
+        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -385,43 +399,46 @@ function CompareView({ node }: { node: CompareNode }) {
   // via the SAME viewport-sync bus. The frame provides the group id + anchor
   // flag; outside a selection these are absent and the viewport is purely local.
   const paneSync = useContext(PaneSyncContext);
+  // Resolution memoized by node identity (`resolve-cache`), like `LeafView`, so a
+  // stacked compare viewport flips to a seen/prefetched pair synchronously (no
+  // flash) and keeps the old frame while a fresh pair resolves.
+  type ReadyFrames = { a: ResolvedCompareFrame; b: ResolvedCompareFrame };
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "ready"; a: ResolvedCompareFrame; b: ResolvedCompareFrame }
-  >({ status: "loading" });
+    | ({ status: "ready" } & ReadyFrames)
+  >(() => {
+    const cached = peekResolved<ReadyFrames>(sourceKey(node));
+    return cached ? { status: "ready", ...cached } : { status: "loading" };
+  });
 
   useEffect(() => {
+    const key = sourceKey(node);
+    const cached = peekResolved<ReadyFrames>(key);
+    if (cached) {
+      setState({ status: "ready", ...cached });
+      return;
+    }
     let cancelled = false;
-    (async () => {
-      try {
-        const [a, b] = await Promise.all([
-          resolveFrame(node.a, source),
-          resolveFrame(node.b, source),
-        ]);
-        if (cancelled) return;
-        // Silent-empty guard (the bug): a side that resolves to NEITHER a url
-        // nor a float payload is unrenderable — surface the standard error
-        // state instead of a blank pane.
-        const missing: string[] = [];
-        if (!a.url && !a.float) missing.push("a");
-        if (!b.url && !b.float) missing.push("b");
-        if (missing.length) {
-          setState({
-            status: "error",
-            message: `compare side ${missing.join(" & ")} did not resolve to an image source`,
-          });
-          return;
-        }
-        setState({ status: "ready", a, b });
-      } catch (err) {
-        if (cancelled) return;
-        setState({
-          status: "error",
-          message: err instanceof Error ? err.message : String(err),
-        });
+    resolveCached(key, async (): Promise<ReadyFrames> => {
+      const [a, b] = await Promise.all([resolveFrame(node.a, source), resolveFrame(node.b, source)]);
+      // Silent-empty guard: a side that resolves to NEITHER a url nor a float
+      // payload is unrenderable — surface the standard error instead of a blank.
+      const missing: string[] = [];
+      if (!a.url && !a.float) missing.push("a");
+      if (!b.url && !b.float) missing.push("b");
+      if (missing.length) {
+        throw new Error(`compare side ${missing.join(" & ")} did not resolve to an image source`);
       }
-    })();
+      return { a, b };
+    }).then(
+      ({ a, b }) => {
+        if (!cancelled) setState({ status: "ready", a, b });
+      },
+      (err) => {
+        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -810,6 +827,19 @@ function PaneSelectionFrame({
   );
 }
 
+/** The renderer identity of a grid child — a stacked viewport shows the ACTIVE
+ *  child through ONE reused renderer, which only works when every child is the
+ *  same kind (all images, or all compares). Mixed stacks aren't supported. */
+function stackKindKey(node: PlotNode): string {
+  if (node.kind === "plot") return `plot:${node.renderer}`;
+  return node.kind; // "compare", "grid", …
+}
+function homogeneousStack(children: PlotNode[]): boolean {
+  if (children.length < 2) return false;
+  const k0 = stackKindKey(children[0]!);
+  return children.every((c) => stackKindKey(c) === k0);
+}
+
 function GridView({ node }: { node: GridNode }) {
   const { source, shared: parentShared } = useSharedPlot();
   // Image viewport sync (`shared.sync.viewport`, SharedProps in
@@ -833,8 +863,10 @@ function GridView({ node }: { node: GridNode }) {
 
   // VIEW MODE: `normal` (uniform CSS grid) vs `stacked` (one child at a time +
   // a keyboard-driven tab strip). Seeded from `node.mode`; a live toggle flips
-  // it. Stacking a lone child is a no-op, so the toggle only shows for ≥2.
-  const canStack = children.length > 1;
+  // it. Stacking shows the active child through ONE reused renderer, so it's only
+  // offered for a HOMOGENEOUS ≥2 grid (all the same kind) — a mixed stack can't
+  // share a renderer and simply isn't stackable (the ▭ toggle is hidden).
+  const canStack = homogeneousStack(children);
   const [mode, setMode] = useState<"normal" | "stacked">(node.mode === "stacked" ? "stacked" : "normal");
   const [active, setActive] = useState(0);
   const effectiveMode = canStack ? mode : "normal";
@@ -874,35 +906,63 @@ function GridView({ node }: { node: GridNode }) {
   // re-seeds the context below (`node.shared && node.shared !== parentShared`).
   const viewportSyncGroupId = node.shared?.sync?.viewport ? `plot-grid-viewport-${localId}` : null;
 
-  // GridView is LAYOUT ONLY now — selection lives page-wide in each child's own
+  // GridView is LAYOUT ONLY — selection lives page-wide in each child's own
   // `PaneSelectionFrame` (wrapped by `PlotNodeView`), obtained from the ONE
   // document-scoped store. `ChartFillContext` still tells fill-mode children
   // (and their frames) to take `height:100%`.
   //
-  // STACKED mode ALWAYS syncs display + compare settings across every child —
-  // colormap · tonemap · exposure · gamma · peak · offset AND the compare
-  // mode/kernel (diff mode) — via the ONE settings bus (`image-settings-sync`),
-  // so flipping between tabs shows the SAME settings (the point of a flip-to-
-  // compare stack). A stable per-grid group id; child 0 anchors (seeds the
-  // shared state, others adopt on join). An active ≥2 selection still wins (its
-  // own groups override in `PaneSelectionFrame`); viewport zoom/pan still follows
-  // the grid's own `shared.sync.viewport`. `PaneSyncContext` per child so each
-  // carries the same group but only child 0 is the anchor.
-  const stackSettingsGroupId =
-    effectiveMode === "stacked" ? `plot-grid-stack-settings-${localId}` : null;
-  const panes = children.map((child, i) => {
-    const el = <PlotNodeView key={i} node={child} />;
-    return stackSettingsGroupId ? (
-      <PaneSyncContext.Provider key={i} value={{ settingsSyncGroupId: stackSettingsGroupId, syncIsAnchor: i === 0 }}>
-        {el}
-      </PaneSyncContext.Provider>
-    ) : (
-      el
-    );
-  });
-  // Keyboard tab-flip attaches to the WHOLE grid area (header + panes) so keys
+  // NORMAL mode: every child rendered side by side.
+  const panes = children.map((child, i) => <PlotNodeView key={i} node={child} />);
+
+  // STACKED mode: render ONLY the active child, through ONE reused renderer
+  // instance (stable tree position → React reuses it; flipping the active child
+  // only SWAPS its source, resolved from the `resolve-cache` → instant, no
+  // remount, no `display:none` park/restore, no blank). Because it's one
+  // instance, display settings + camera are shared BY CONSTRUCTION — no
+  // settings-sync bus, no anchor. `InStackedGridContext` marks the subtree so a
+  // compare child routes its slide-flip to the dedicated `[`/`]` keys (arrows
+  // drive the tabs). Content-aspect capped at one page tall like a 1-cell grid;
+  // `fill` (the stage) takes 100%.
+  const stackedViewStyle: React.CSSProperties = fill
+    ? { width: "100%", height: "100%" }
+    : gridAspectApi.uniformAspect != null && gridAspectApi.uniformAspect > 0
+      ? {
+          maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${gridAspectApi.uniformAspect})`,
+          marginInline: "auto",
+        }
+      : {};
+  const activeChild = children[clampedActive];
+  const stackedPane = activeChild ? (
+    <InStackedGridContext.Provider value={true}>
+      <div
+        data-cairn-stacked-view=""
+        data-cairn-stack-active={clampedActive}
+        style={{ minWidth: 0, minHeight: 0, ...(fill ? { height: "100%" } : null), ...stackedViewStyle }}
+      >
+        <div
+          data-cairn-stacked-pane="active"
+          style={{ minWidth: 0, ...(fill ? { height: "100%" } : null) }}
+        >
+          <PlotNodeView node={activeChild} />
+        </div>
+      </div>
+    </InStackedGridContext.Provider>
+  ) : null;
+  // Keyboard tab-flip attaches to the WHOLE grid area (header + pane) so keys
   // work while hovering anywhere over the grid (only in stacked mode).
   useStackKeyboard(stackRootRef, effectiveMode === "stacked", clampedActive, children.length, setActive);
+
+  // PREFETCH: warm every stacked child's data in the background so the FIRST flip
+  // to a tab is already resolved (no wait). Plot leaves only — compare children
+  // resolve on first visit and cache thereafter (still flash-free via the cache).
+  useEffect(() => {
+    if (effectiveMode !== "stacked") return;
+    prefetchResolved(
+      children
+        .filter((c): c is PlotLeafNode => c.kind === "plot")
+        .map((c) => ({ key: sourceKey(c), run: () => resolveDataProps(c.data, source) })),
+    );
+  }, [effectiveMode, children, source]);
   const grid = (
     <ChartFillContext.Provider value={fill}>
       <GridUniformAspectContext.Provider value={gridAspectApi}>
@@ -928,11 +988,7 @@ function GridView({ node }: { node: GridNode }) {
               <GridModeToggle mode={effectiveMode} onChange={setMode} />
             </div>
           )}
-          {effectiveMode === "stacked" ? (
-            <StackedPanes panes={panes} active={clampedActive} />
-          ) : (
-            <div style={gridStyle}>{panes}</div>
-          )}
+          {effectiveMode === "stacked" ? stackedPane : <div style={gridStyle}>{panes}</div>}
         </div>
       </GridUniformAspectContext.Provider>
     </ChartFillContext.Provider>

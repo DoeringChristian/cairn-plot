@@ -424,59 +424,10 @@ async function run(): Promise<boolean> {
   report(diffLeft, "diff caption sits bottom-LEFT (clear of the bottom-right metrics)");
   ok = ok && diffChip && diffHasMetric && diffLeft;
 
-  // --- 9. STACKED cp.Grid auto-syncs settings (incl. DIFF MODE) — NO selection
-  // The new contract: a `cp.Grid(mode="stacked")` ALWAYS syncs its children's
-  // display + compare settings via the ONE settings bus, so flipping between
-  // tabs shows the SAME settings. Crucially this needs NO page-wide selection —
-  // the grid provides the shared group itself. Mount a stacked grid of TWO
-  // compare panes, change the diff mode/kernel/colormap on child 0, and assert
-  // child 1 (the hidden tab) follows.
-  const dRootEl = document.getElementById("mount-d")!;
-  const rootD = createRoot(dRootEl);
-  rootD.render(
-    createElement(PlotApp, {
-      descriptor: {
-        mode: "local",
-        root: {
-          kind: "grid",
-          cols: 2,
-          gap: 8,
-          mode: "stacked",
-          children: [
-            compareDescriptor("#c0392b", "#2980b9").root,
-            compareDescriptor("#27ae60", "#8e44ad").root,
-          ],
-        },
-      } as unknown as PlotDescriptor,
-    }),
-  );
-  roots.push(rootD);
-  // Both compare children stay MOUNTED in a stacked grid (only one visible).
-  const dPanes = () => Array.from(dRootEl.querySelectorAll<HTMLElement>("[data-gpu-compare-pane]"));
-  const stackReady = await waitFor(
-    () => dPanes().length === 2 && dPanes().every((p) => !!probeOf(p)),
-    15000,
-  );
-  report(stackReady, `stacked grid mounts BOTH compare children with probes (got ${dPanes().length})`);
-  if (stackReady) {
-    const noStackSelection =
-      dRootEl.querySelectorAll('[data-plot-pane-id][data-selected="true"]').length === 0;
-    report(noStackSelection, "stacked-grid sync needs NO selection (none selected)");
-    const D0 = () => probeOf(dPanes()[0])!;
-    const D1 = () => probeOf(dPanes()[1])!;
-    D0().changeCompareMode("diff");
-    const dDiff = await waitFor(() => D1().compareMode === "diff");
-    report(dDiff, `stacked: child0→diff, child1 (hidden tab) follows (D1.compareMode=${D1().compareMode})`);
-    D0().changeDiffKernel("squared");
-    const dKernel = await waitFor(() => D1().diffKernel === "squared");
-    report(dKernel, `stacked: child0 diff KERNEL→squared, child1 follows (D1.diffKernel=${D1().diffKernel})`);
-    D0().changeColormap("viridis");
-    const dCmap = await waitFor(() => D1().colormap === "viridis");
-    report(dCmap, `stacked: child0 COLORMAP→viridis, child1 follows (D1.colormap=${D1().colormap})`);
-    ok = ok && noStackSelection && dDiff && dKernel && dCmap;
-  } else {
-    ok = false;
-  }
+  // NOTE: a stacked `cp.Grid` no longer syncs N mounted panes via this bus — it
+  // renders ONE reused renderer and swaps the source, so settings are shared by
+  // construction. That path (single pane, diff persists across a flip, instance
+  // reused) is covered by `stack/grid-stacked-persist`.
 
   roots.forEach((r) => r.unmount());
   return ok;
