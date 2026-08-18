@@ -1125,16 +1125,18 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // SDR pane pairs it with the COLORMAP menu; picking a colormap swaps in the
       // false-color path, which HIDES the tonemap menu (its LUT output is already
       // display-ready). The HDR pane has no colormap prop.
-      leadingMenus={
-        hdrMode
+      leadingMenus={[
+        // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
+        ...(props.channelMenu ? [props.channelMenu] : []),
+        ...(hdrMode
           ? [tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator))]
           : sdrPlain
             ? [
                 colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap)),
                 tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)),
               ]
-            : [colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap))]
-      }
+            : [colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap))]),
+      ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths), so no source re-upload / diff recompute.
       displayAdjust={{
@@ -1202,13 +1204,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         peakMeta.reset();
         gammaMeta.reset();
         deepFlatten.reset();
+        props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
         colormapMeta.isModified ||
         tonemapModified ||
         peakMeta.isModified ||
         gammaMeta.isModified ||
-        deepFlatten.isModified
+        deepFlatten.isModified ||
+        !!props.channelModified
       }
       label={label}
       showLabelChip={!!label}

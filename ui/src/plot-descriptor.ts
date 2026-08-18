@@ -53,7 +53,11 @@ function tryExrTree(bytes: ArrayBuffer): ExrTree | null {
         name: p.name,
         index: p.index,
         deep: p.deep,
-        groups: groupChannels(p.channels),
+        // SUBSAMPLED channels (RY/BY chroma, xSampling/ySampling > 1) are NOT
+        // offered for selection: the selector decode path reads full-res planes
+        // only, so isolating them would break (and the DEFAULT luminance-chroma
+        // → RGB view already shows them combined).
+        groups: groupChannels(p.channels.filter((c) => c.xSampling === 1 && c.ySampling === 1)),
       })),
     };
   } catch {

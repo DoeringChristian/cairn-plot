@@ -96,10 +96,11 @@ import {
   resolveCached,
   prefetchResolved,
 } from "./lib/cairn-plot/resolve-cache";
-import ChannelStrip, {
+import {
+  channelToolbarButton,
   type ChannelSelection,
-  type ChannelStripTree,
-} from "./lib/cairn-plot/image/ChannelStrip";
+  type ChannelMenuTree,
+} from "./lib/cairn-plot/image/channel-menu";
 import {
   publishImageSettings,
   subscribeImageSettings,
@@ -190,6 +191,8 @@ function LeafView({ node }: { node: PlotLeafNode }) {
   // node swap: in a STACKED viewport the same LeafView instance flips between
   // slots, and the picked layer must carry across (shared-settings semantics).
   const [chSel, setChSel] = useState<ChannelSelection | null>(null);
+  const chSelRef = useRef<ChannelSelection | null>(null);
+  chSelRef.current = chSel;
   // The EFFECTIVE data spec: the strip override merged over the node's data
   // (image specs only — the strip never renders for other kinds).
   const effectiveData = useMemo(() => {
@@ -230,7 +233,18 @@ function LeafView({ node }: { node: PlotLeafNode }) {
         if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
       },
       (err) => {
-        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+        if (cancelled) return;
+        // A CHANNEL-OVERRIDE decode that fails must never strand the pane in an
+        // error state with no way back (the toolbar — and with it the CHANNELS
+        // menu — only renders on the ready pane): revert the override, keep the
+        // last good frame, and log the reason.
+        if (chSelRef.current) {
+          // eslint-disable-next-line no-console
+          console.warn("cairn-plot: channel selection failed, reverting:", err);
+          setChSel(null);
+          return;
+        }
+        setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
       },
     );
     return () => {
@@ -280,8 +294,22 @@ function LeafView({ node }: { node: PlotLeafNode }) {
       sharedProps.settingsSyncGroupId = paneSync.settingsSyncGroupId;
     }
     if (paneSync?.syncIsAnchor) sharedProps.syncIsAnchor = true;
+    // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
+    // selection state) and handed to the pane as a standard ToolbarButtonSpec —
+    // the pane renders it with its other leading menus and folds the override
+    // into HOME (reset clears back to the authored selection).
+    const exrTree = state.dataProps.exrTree as ChannelMenuTree | undefined;
+    if (exrTree && node.data.kind === "image") {
+      const effSel: ChannelSelection = chSel ?? { part: node.data.part, layer: node.data.layer };
+      const menu = channelToolbarButton(exrTree, effSel, (sel) => selectChannels(sel ?? {}));
+      if (menu) {
+        sharedProps.channelMenu = menu;
+        sharedProps.channelModified = chSel != null;
+        sharedProps.onChannelReset = () => selectChannels({});
+      }
+    }
     return { ...sharedProps, ...(node.props ?? {}), ...state.dataProps };
-  }, [state, shared, viewportSyncGroupId, paneSync, node.props]);
+  }, [state, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -312,20 +340,10 @@ function LeafView({ node }: { node: PlotLeafNode }) {
   if (state.status === "loading") return <Message text="Loading…" />;
   if (state.status === "error") return <Message text={`Plot error: ${state.message}`} error />;
   const Renderer = getRenderer(node.renderer);
-  // CHANNEL STRIP (tev-style) below the viewport: rendered for EXR sources whose
-  // resolve attached the parts × groups tree. The current selection = the strip
-  // override, else the node's own authored `part`/`layer`.
-  const exrTree = state.dataProps.exrTree as ChannelStripTree | undefined;
-  const stripSelection: ChannelSelection =
-    chSel ??
-    (node.data.kind === "image" ? { part: node.data.part, layer: node.data.layer } : {});
   return Renderer ? (
-    <>
-      <Suspense fallback={<Message text="Loading renderer…" />}>
-        <Renderer {...mergedProps} />
-      </Suspense>
-      {exrTree && <ChannelStrip tree={exrTree} selection={stripSelection} onSelect={selectChannels} />}
-    </>
+    <Suspense fallback={<Message text="Loading renderer…" />}>
+      <Renderer {...mergedProps} />
+    </Suspense>
   ) : (
     <Message text="Loading renderer…" />
   );

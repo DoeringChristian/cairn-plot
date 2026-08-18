@@ -861,14 +861,16 @@ function CpuSdrImagePane(
       // SDR single-image: a view-local COLORMAP menu + (on the plain path) the
       // tev DISPLAY-TRANSFER menu (sRGB · Gamma · Linear). The transfer menu is
       // hidden once a colormap is active (false-color output is display-ready).
-      leadingMenus={
-        colormap === "none"
+      leadingMenus={[
+        // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
+        ...(props.channelMenu ? [props.channelMenu] : []),
+        ...(colormap === "none"
           ? [
               colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap)),
               displayTransferToolbarButton(sdrTransfer, (id) => changeSdrTransfer(id as TonemapOperator)),
             ]
-          : [colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap))]
-      }
+          : [colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap))]),
+      ]}
       // γ slider — shown only while the Gamma transfer is in effect on the plain
       // path (PEAK-slider precedent).
       extraSliders={
@@ -893,8 +895,14 @@ function CpuSdrImagePane(
         colormapMeta.reset();
         sdrTransferMeta.reset();
         gammaMeta.reset();
+        props.onChannelReset?.(); // channel override folds into HOME
       }}
-      extraModified={colormapMeta.isModified || sdrTransferMeta.isModified || gammaMeta.isModified}
+      extraModified={
+        colormapMeta.isModified ||
+        sdrTransferMeta.isModified ||
+        gammaMeta.isModified ||
+        !!props.channelModified
+      }
       histogram={histogramSource}
       // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
       // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
@@ -1151,6 +1159,8 @@ function CpuHdrImagePane(
       // it is the SDR rendition by construction (P=1, no PEAK slider). HOME
       // restores the default.
       leadingMenus={[
+        // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
+        ...(props.channelMenu ? [props.channelMenu] : []),
         tonemapToolbarButton(tonemapOp, (id) => changeTonemap(id as TonemapOperator)),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
@@ -1198,8 +1208,11 @@ function CpuHdrImagePane(
         deepFlatten.reset();
         tonemapMeta.reset();
         gammaMeta.reset();
+        props.onChannelReset?.(); // channel override folds into HOME
       }}
-      extraModified={deepFlatten.isModified || tonemapMeta.isModified || gammaMeta.isModified}
+      extraModified={
+        deepFlatten.isModified || tonemapMeta.isModified || gammaMeta.isModified || !!props.channelModified
+      }
       histogram={histogramSource}
       label={label}
       showLabelChip={!!label}
@@ -1229,6 +1242,9 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
   const sync = {
     settingsSyncGroupId: backendProps.settingsSyncGroupId,
     syncIsAnchor: backendProps.syncIsAnchor,
+    channelMenu: backendProps.channelMenu,
+    channelModified: backendProps.channelModified,
+    onChannelReset: backendProps.onChannelReset,
   };
   return isHdrProps(props) ? (
     <CpuHdrImagePane {...props} {...sync} />

@@ -101,6 +101,16 @@ export interface HdrImageProps {
   settingsSyncGroupId?: string;
   /** True when this pane is the selection ANCHOR (see {@link ImageBackendProps}). */
   syncIsAnchor?: boolean;
+  /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
+   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
+   *  the selection state and re-decodes on pick). The pane just renders it at
+   *  the leading edge next to its own menus, folds `channelModified` into HOME's
+   *  modified state, and calls `onChannelReset` from its reset handler. */
+  channelMenu?: import("../controls/ToolbarConfig").ToolbarButtonSpec;
+  /** True while a view-local channel override is active (drives HOME's dot). */
+  channelModified?: boolean;
+  /** Clear the channel override back to the authored selection (HOME/dbl-click). */
+  onChannelReset?: () => void;
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
@@ -162,6 +172,16 @@ export interface SdrImageProps {
   settingsSyncGroupId?: string;
   /** True when this pane is the selection ANCHOR (see {@link ImageBackendProps}). */
   syncIsAnchor?: boolean;
+  /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
+   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
+   *  the selection state and re-decodes on pick). The pane just renders it at
+   *  the leading edge next to its own menus, folds `channelModified` into HOME's
+   *  modified state, and calls `onChannelReset` from its reset handler. */
+  channelMenu?: import("../controls/ToolbarConfig").ToolbarButtonSpec;
+  /** True while a view-local channel override is active (drives HOME's dot). */
+  channelModified?: boolean;
+  /** Clear the channel override back to the authored selection (HOME/dbl-click). */
+  onChannelReset?: () => void;
 }
 
 /**
@@ -261,6 +281,16 @@ export interface ImageBackendProps {
    *  full current settings when the group forms, so members adopt the anchor's
    *  settings (design req 5). */
   syncIsAnchor?: boolean;
+  /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
+   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
+   *  the selection state and re-decodes on pick). The pane just renders it at
+   *  the leading edge next to its own menus, folds `channelModified` into HOME's
+   *  modified state, and calls `onChannelReset` from its reset handler. */
+  channelMenu?: import("../controls/ToolbarConfig").ToolbarButtonSpec;
+  /** True while a view-local channel override is active (drives HOME's dot). */
+  channelModified?: boolean;
+  /** Clear the channel override back to the authored selection (HOME/dbl-click). */
+  onChannelReset?: () => void;
 }
 
 /**
@@ -343,6 +373,9 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       toolbar: p.toolbar,
       settingsSyncGroupId: p.settingsSyncGroupId,
       syncIsAnchor: p.syncIsAnchor,
+      channelMenu: p.channelMenu,
+      channelModified: p.channelModified,
+      onChannelReset: p.onChannelReset,
     };
   }
   return {
@@ -373,6 +406,9 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     toolbar: p.toolbar,
     settingsSyncGroupId: p.settingsSyncGroupId,
     syncIsAnchor: p.syncIsAnchor,
+    channelMenu: p.channelMenu,
+    channelModified: p.channelModified,
+    onChannelReset: p.onChannelReset,
   };
 }
 

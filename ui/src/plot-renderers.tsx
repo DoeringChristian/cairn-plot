@@ -357,6 +357,9 @@ function ImageStandalone(p: P) {
       onViewportChange={onViewportChange}
       settingsSyncGroupId={p.settingsSyncGroupId}
       syncIsAnchor={!!p.syncIsAnchor}
+      channelMenu={p.channelMenu}
+      channelModified={p.channelModified}
+      onChannelReset={p.onChannelReset}
     />
   );
   // A FLOAT/EXR source carries its pixel dims in `source.shape` ([H, W, …]) — the
