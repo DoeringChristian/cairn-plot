@@ -665,6 +665,14 @@ export interface DecodeImageOptions {
    * choice for generic/compare callers that never move the slider.
    */
   deepLiveFlatten?: boolean;
+  /**
+   * EXR part/layer decode selection (docs/plans/2026-08-18-exr-parts-channels-
+   * deep.md): `part` = index or part name; `layer` = channel-GROUP name
+   * ("diffuse", "" = base color) or a FULL channel name ("diffuse.G", "Z") for
+   * a single-channel scalar view. Only the EXR decoder honours it; other
+   * formats ignore it. Absent/empty = the legacy whole-image decode.
+   */
+  select?: { part?: number | string; layer?: string };
 }
 
 /**

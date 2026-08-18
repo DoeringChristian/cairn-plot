@@ -20,10 +20,29 @@
  */
 import type { DecodedImage, ImageSource } from "../decoders.ts";
 import { EXRLoader, type ExrLoaderChannel } from "./vendor/exr-loader.js";
+import { describeExr, resolvePartIndex } from "./exr-describe.ts";
+import { groupChannels, resolveGroup } from "../channel-groups.ts";
 
 // three.js numeric constants (mirrored in `vendor/three-shim.js`).
 const FLOAT_TYPE = 1015;
 const RGBA_FORMAT = 1023;
+
+/** Decode-time selection: which part and channel group/channel to decode.
+ *  See docs/plans/2026-08-18-exr-parts-channels-deep.md. */
+export interface ExrSelection {
+  /** Part index or part name. Default: part 0. */
+  part?: number | string;
+  /** Channel-GROUP name ("diffuse"; "" = the base color layer) or a FULL
+   *  channel name ("diffuse.G", "Z") for a single-channel scalar view.
+   *  Default: the first group (base color when present). */
+  layer?: string;
+}
+
+/** True when a selection actually selects something (default-everything ⇒ the
+ *  legacy single-image decode path, incl. the wasm fast path, stays valid). */
+export function hasExrSelection(sel: ExrSelection | undefined): boolean {
+  return !!sel && (sel.part != null || sel.layer != null);
+}
 
 /** Decide the canonical output channel count + which RGBA slots to keep. */
 function planChannels(channels: ExrLoaderChannel[]): {
@@ -53,10 +72,34 @@ function planChannels(channels: ExrLoaderChannel[]): {
  * Synchronous decode wrapped in a promise so it slots into the async decoder
  * registry (and can be awaited identically on the worker and main-thread paths).
  */
-export function decodeExrBuffer(buffer: ArrayBuffer): Extract<DecodedImage, { kind: "f32" }> {
+export function decodeExrBuffer(
+  buffer: ArrayBuffer,
+  sel?: ExrSelection,
+): Extract<DecodedImage, { kind: "f32" }> {
   const loader = new EXRLoader();
   loader.type = FLOAT_TYPE; // emit Float32Array directly (no half output LUT)
   loader.outputFormat = RGBA_FORMAT; // robust 4-channel path; we compact below
+
+  // SELECTION (part / channel group): resolve against the header-only describe,
+  // then drive the loader's part index + explicit `channelSelection` (the
+  // vendored adaptation that bypasses R/G/B/A/Y suffix classification, so
+  // layered channels ("diffuse.R") and scalars ("Z") decode). The selected
+  // channels land in output slots 0..N-1, so compaction is the identity slots.
+  let selectedCount: number | null = null;
+  if (hasExrSelection(sel)) {
+    const desc = describeExr(buffer);
+    const partIndex = resolvePartIndex(desc, sel!.part);
+    const part = desc.parts[partIndex]!;
+    if (part.deep) {
+      throw new Error(
+        "cairn-plot: part/layer selection on DEEP parts is not supported yet (deep decodes whole)",
+      );
+    }
+    const group = resolveGroup(groupChannels(part.channels), sel!.layer);
+    loader.part = partIndex;
+    loader.channelSelection = group.channels;
+    selectedCount = group.channels.length;
+  }
 
   const res = loader.parse(buffer);
   const src = res.data;
@@ -67,7 +110,14 @@ export function decodeExrBuffer(buffer: ArrayBuffer): Extract<DecodedImage, { ki
 
   const width = res.width;
   const height = res.height;
-  const { outChannels, slots } = planChannels(res.header.channels);
+  const { outChannels, slots } =
+    selectedCount != null
+      ? // Selected channels occupy slots 0..N-1 in selection order. A 2-channel
+        // group (rare) pads to 3 so downstream sees a renderable channel count.
+        selectedCount === 2
+        ? { outChannels: 3, slots: [0, 1, 1] }
+        : { outChannels: selectedCount, slots: [0, 1, 2, 3].slice(0, selectedCount) }
+      : planChannels(res.header.channels);
 
   const out = new Float32Array(width * height * outChannels);
   // Vertical flip (three is bottom-to-top) + channel compaction, one pass.
@@ -93,7 +143,7 @@ export function decodeExrBuffer(buffer: ArrayBuffer): Extract<DecodedImage, { ki
 }
 
 /** {@link ImageSource} entry point for the full decoder (needs raw bytes). */
-export function decodeExrFull(src: ImageSource): Promise<DecodedImage> {
+export function decodeExrFull(src: ImageSource, sel?: ExrSelection): Promise<DecodedImage> {
   if (!src.bytes) {
     return Promise.reject(
       new Error(
@@ -101,5 +151,5 @@ export function decodeExrFull(src: ImageSource): Promise<DecodedImage> {
       ),
     );
   }
-  return Promise.resolve(decodeExrBuffer(src.bytes));
+  return Promise.resolve(decodeExrBuffer(src.bytes, sel));
 }

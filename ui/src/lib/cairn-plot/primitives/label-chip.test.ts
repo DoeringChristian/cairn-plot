@@ -84,7 +84,7 @@ test("GpuComparePane folds the metrics offset into the shared caption-stack flag
   );
   assert.match(
     src,
-    /rightCaption \? <LabelChip[^>]*corner="bottom-right"/,
+    /rightCaption \?[\s(]*<LabelChip[^>]*corner="bottom-right"/,
     "the bottom-right caption chip is gated on the SAME rightCaption value",
   );
   assert.match(src, /\$\{metricsBottomClass\}/, "metrics span uses the derived offset");

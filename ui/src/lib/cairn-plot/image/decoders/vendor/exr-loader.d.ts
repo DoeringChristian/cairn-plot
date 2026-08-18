@@ -38,5 +38,11 @@ export class EXRLoader {
   outputFormat: number;
   /** Part index for multi-part files. */
   part: number;
+  /** cairn-plot adaptation: EXPLICIT channel selection — FULL channel names in
+   *  output-slot order (e.g. `["diffuse.R","diffuse.G","diffuse.B"]` or
+   *  `["Z"]`). Bypasses the R/G/B/A/Y suffix classification so layered and
+   *  scalar channels decode; all selected channels must share one pixel type.
+   *  `null` (default) keeps the classified legacy behavior. */
+  channelSelection: string[] | null;
   parse(buffer: ArrayBuffer): ExrLoaderResult;
 }

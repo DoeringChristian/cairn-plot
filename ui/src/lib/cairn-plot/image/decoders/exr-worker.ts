@@ -33,7 +33,14 @@ import { loadExrDecoder, type DecodedImage } from "./wasm-inline/wasm-exr-inline
 
 /** Inbound requests (discriminated by `kind`; absent `kind` = "decode"). */
 export type ExrWorkerRequest =
-  | { id: number; kind?: "decode"; buffer: ArrayBuffer }
+  | {
+      id: number;
+      kind?: "decode";
+      buffer: ArrayBuffer;
+      /** Part/layer decode selection (structured-clone-safe) — routed to the
+       *  full TS decoder inside the worker. Absent = legacy whole-image decode. */
+      select?: { part?: number | string; layer?: string };
+    }
   | { id: number; kind: "openDeep"; buffer: ArrayBuffer }
   | { id: number; kind: "flattenDeep"; handle: number; zNear: number; zFar: number }
   | { id: number; kind: "deepGpuCsr"; handle: number }
@@ -167,8 +174,8 @@ async function handle(req: ExrWorkerRequest): Promise<void> {
   }
 
   // Plain decode (also the deep FALLBACK: one-shot full composite, no handle).
-  const { buffer } = req as Extract<ExrWorkerRequest, { kind?: "decode" }>;
-  const decoded = await decodeExrPreferWasm(buffer);
+  const { buffer, select } = req as Extract<ExrWorkerRequest, { kind?: "decode" }>;
+  const decoded = await decodeExrPreferWasm(buffer, undefined, select);
   const out = decoded.data.buffer as ArrayBuffer;
   ctx.postMessage(
     { id, ok: true, data: out, width: decoded.width, height: decoded.height, channels: decoded.channels, precision: decoded.precision },

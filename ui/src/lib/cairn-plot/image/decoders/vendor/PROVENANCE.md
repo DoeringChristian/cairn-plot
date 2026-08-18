@@ -57,3 +57,17 @@ wasm-vs-JS trade-off are in
 Bump `three`, re-copy `EXRLoader.js` → `exr-loader.js` and re-apply the two-line
 import repoint (or re-run the `diff` check above), re-copy `fflate.module.js`,
 update the versions + sha256s here, and re-run `exr-full.test.ts`.
+
+## cairn-plot adaptation: `channelSelection` (part/layer decode)
+
+`exr-loader.js` carries ONE local adaptation beyond the import repoint: an
+optional `loader.channelSelection` (array of FULL channel names in output-slot
+order, e.g. `["diffuse.R","diffuse.G","diffuse.B"]` or `["Z"]`). When set, the
+suffix-based R/G/B/A/Y channel classification in `setupDecoder` is bypassed and
+`decodeChannels` is built directly from the selection — this is what lets
+LAYERED channels (`diffuse.R`) and arbitrary scalars (`Z`, `mask`) decode at
+all (the upstream classifier throws "unsupported data channels" on files with
+no bare RGB/Y). All selected channels must share one pixel type (the decode
+getter is global). Grep for `channelSelection` when re-vendoring; the block is
+marked `cairn-plot adaptation` inline. Driven by `../exr-full.ts` via
+`describeExr` + `channel-groups.ts`.

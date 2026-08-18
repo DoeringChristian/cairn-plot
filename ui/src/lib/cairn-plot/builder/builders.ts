@@ -292,6 +292,20 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       // Host seam: emit `toolbar:false` only when explicitly disabled (omitted at
       // the default `true`), mirroring Python `cp.Image(toolbar=...)`.
       if (opts.toolbar === false) props.toolbar = false;
+      // EXR PART/CHANNEL selection (mirrors Python `cp.Image(part=, channels=)`):
+      // `part` = index or part name; `channels` = group ("diffuse") or full
+      // channel name ("diffuse.G", "Z"). Rides the client-decode `image` DataSpec
+      // — a baked array / browser-native URL has no parts to select.
+      if (opts.part != null || opts.channels != null) {
+        if (shaped.data.kind !== "image") {
+          throw new Error(
+            "cairnPlot: image({part, channels}) requires a client-decoded URL source (e.g. an .exr URL)",
+          );
+        }
+        const d = shaped.data as { part?: number | string; layer?: string };
+        if (opts.part != null) d.part = opts.part as number | string;
+        if (opts.channels != null) d.layer = String(opts.channels);
+      }
       return handle(leaf("image", shaped.data, props), shaped.runtime);
     },
 

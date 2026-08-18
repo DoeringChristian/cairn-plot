@@ -74,11 +74,15 @@ test("focus is restored to the trigger on close", () => {
 });
 
 test("Bug 3: page scroll-root is locked while open and restored on close", () => {
-  // Lock the real scroll root (document.scrollingElement) — set overflow hidden
-  // while open, restore on cleanup.
+  // Lock the real scroll root (document.scrollingElement) via the REF-COUNTED
+  // module lock (overlays can OVERLAP — compare stage + a pane-enlarge opened
+  // from inside it; per-instance save/restore left the page stuck): overflow
+  // hidden on 0→1, the TRUE pre-lock style restored when the LAST lock releases.
   assert.match(overlay, /document\.scrollingElement/);
   assert.match(overlay, /scroller\.style\.overflow = "hidden"/);
-  assert.match(overlay, /scroller\.style\.overflow = prevOverflow/);
+  assert.match(overlay, /scrollLockCount/);
+  assert.match(overlay, /scroller\.style\.overflow = scrollLockSaved\.overflow/);
+  assert.match(overlay, /return lockPageScroll\(\)/);
   // Must NOT blanket-preventDefault wheel (that swallowed in-overlay scrolling,
   // e.g. the diff-mode menu) — no wheel listener that cancels the event.
   assert.doesNotMatch(overlay, /addEventListener\(\s*["']wheel["']/);

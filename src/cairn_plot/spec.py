@@ -74,6 +74,10 @@ class ImageDataSpec(_Strict):
     metadata: Optional[str] = None
     format: Optional[str] = None
     url: Optional[str] = None
+    # EXR PART/CHANNEL selection (client decode): part index-or-name; layer =
+    # channel-group name or a full channel name (scalar view).
+    part: Optional[Union[int, str]] = None
+    layer: Optional[str] = None
 
 
 class UrlDataSpec(_Strict):
@@ -175,6 +179,9 @@ class GridSpec(_Strict):
     rowHeights: Optional[list[Union[float, str]]] = None
     gap: Optional[Union[float, str]] = None
     shared: Optional[SharedPropsSpec] = None
+    # View mode: "normal" (uniform grid) | "stacked" (one child at a time,
+    # keyboard tab strip; single reused renderer).
+    mode: Optional[Literal["normal", "stacked"]] = None
 
 
 class CompareSpec(_Strict):

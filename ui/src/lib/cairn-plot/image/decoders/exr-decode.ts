@@ -34,6 +34,7 @@ import type {
 } from "../decoders.ts";
 import { decodeExr as decodeExrPure } from "./exr.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
+import { hasExrSelection, type ExrSelection } from "./exr-full.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
 import type {
   ExrGpuCsrPayload,
@@ -144,9 +145,9 @@ function payloadToImage(msg: ExrImagePayload): F32Image {
 }
 
 /** Decode via the persistent worker, transferring a copy of the bytes in. */
-async function decodeViaWorker(bytes: ArrayBuffer): Promise<F32Image> {
+async function decodeViaWorker(bytes: ArrayBuffer, select?: ExrSelection): Promise<F32Image> {
   const buffer = bytes.slice(0); // copy so we never detach the caller's buffer
-  const msg = await requestWorker((id) => ({ id, buffer }), [buffer]);
+  const msg = await requestWorker((id) => ({ id, buffer, select }), [buffer]);
   return payloadToImage(msg as ExrImagePayload);
 }
 
@@ -265,19 +266,19 @@ async function decodeDeepAware(bytes: ArrayBuffer): Promise<DecodedImage> {
 }
 
 /** Full decode: worker when possible, else the same WASM-first core on the main thread. */
-async function decodeFull(src: ImageSource): Promise<DecodedImage> {
+async function decodeFull(src: ImageSource, select?: ExrSelection): Promise<DecodedImage> {
   const bytes = src.bytes!;
   if (canUseWorker()) {
     try {
-      return await decodeViaWorker(bytes);
+      return await decodeViaWorker(bytes, select);
     } catch {
       // Worker path unavailable/broken → run the SAME WASM-first core on the
       // main thread (also yields the real, informative error for a bad file).
-      return decodeExrPreferWasm(bytes.slice(0));
+      return decodeExrPreferWasm(bytes.slice(0), undefined, select);
     }
   }
   // No Worker (e.g. node): the WASM-first core runs inline, TS fallback beneath.
-  return decodeExrPreferWasm(bytes.slice(0));
+  return decodeExrPreferWasm(bytes.slice(0), undefined, select);
 }
 
 /**
@@ -297,7 +298,11 @@ export async function decodeExr(
       "cairn-plot decodeImage: the exr decoder needs raw bytes (src.bytes), got only a url",
     );
   }
-  if (opts?.deepLiveFlatten) {
+  const select = opts?.select;
+  // A part/layer SELECTION uses the plain full-decoder path: deep parts reject
+  // selection (exr-full throws a clear error), and the deep-live-flatten open
+  // has no selection concept yet.
+  if (opts?.deepLiveFlatten && !hasExrSelection(select)) {
     try {
       return await decodeDeepAware(src.bytes);
     } catch {
@@ -306,8 +311,13 @@ export async function decodeExr(
     }
   }
   try {
-    return await decodeFull(src);
+    return await decodeFull(src, select);
   } catch (fullErr) {
+    // The pure reader has no selection support — with a selection, the full
+    // decoder's error (e.g. "no channel named X") is the real answer.
+    if (hasExrSelection(select)) {
+      throw fullErr instanceof Error ? fullErr : new Error(String(fullErr));
+    }
     try {
       return await decodeExrPure(src);
     } catch {

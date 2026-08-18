@@ -134,6 +134,7 @@ class EXRLoader extends DataTextureLoader {
 		 * @default 0
 		 */
 		this.part = 0;
+		this.channelSelection = null;
 
 	}
 
@@ -2878,7 +2879,7 @@ class EXRLoader extends DataTextureLoader {
 
 		}
 
-		function setupDecoder( EXRHeader, dataView, uInt8Array, offset, outputType, outputFormat ) {
+		function setupDecoder( EXRHeader, dataView, uInt8Array, offset, outputType, outputFormat, channelSelection ) {
 
 			const EXRDecoder = {
 				size: 0,
@@ -2954,6 +2955,44 @@ class EXRLoader extends DataTextureLoader {
 
 			}
 
+			// RGB images will be converted to RGBA format, preventing software emulation in select devices.
+			let fillAlpha = false;
+			let invalidOutput = false;
+
+			// cairn-plot adaptation (see PROVENANCE.md): EXPLICIT channel selection.
+			// `channelSelection` is an array of FULL channel names in output-slot
+			// order (e.g. ["diffuse.R","diffuse.G","diffuse.B"] or ["Z"]). It
+			// bypasses the R/G/B/A/Y suffix classification below so LAYERED
+			// channels and arbitrary scalars decode; output is always RGBA
+			// (missing slots pre-filled with 1) and the caller compacts. All
+			// selected channels must share one pixel type (the decode getter is
+			// global) — mixed selections throw.
+			if ( channelSelection && channelSelection.length ) {
+
+				const byName = {};
+				for ( const channel of EXRHeader.channels ) byName[ channel.name ] = channel;
+				let selType = null;
+				const decodeChannels = {};
+				for ( let i = 0; i < channelSelection.length; i ++ ) {
+
+					const chName = channelSelection[ i ];
+					const ch = byName[ chName ];
+					if ( ! ch ) throw new Error( 'THREE.EXRLoader: no channel named "' + chName + '" in the selected part.' );
+					if ( selType !== null && ch.pixelType !== selType )
+						throw new Error( 'THREE.EXRLoader: channelSelection mixes pixel types (unsupported).' );
+					selType = ch.pixelType;
+					decodeChannels[ chName ] = i;
+
+				}
+
+				EXRDecoder.type = selType;
+				EXRDecoder.outputChannels = 4;
+				EXRDecoder.decodeChannels = decodeChannels;
+				EXRDecoder.format = RGBAFormat;
+				fillAlpha = true;
+
+			} else {
+
 			const channels = {};
 			for ( const channel of EXRHeader.channels ) {
 
@@ -2972,10 +3011,6 @@ class EXRLoader extends DataTextureLoader {
 				}
 
 			}
-
-			// RGB images will be converted to RGBA format, preventing software emulation in select devices.
-			let fillAlpha = false;
-			let invalidOutput = false;
 
 			// Validate if input texture contain supported channels
 			if ( channels.Y && channels.RY && channels.BY ) {
@@ -3083,6 +3118,8 @@ class EXRLoader extends DataTextureLoader {
 				fillAlpha = true;
 
 			}
+
+			} // end classification (no channelSelection)
 
 			if ( EXRDecoder.type == 1 ) {
 
@@ -3272,7 +3309,7 @@ class EXRLoader extends DataTextureLoader {
 		}
 
 		// get input compression information and prepare decoding.
-		const EXRDecoder = setupDecoder( EXRHeader, bufferDataView, uInt8Array, offset, this.type, this.outputFormat );
+		const EXRDecoder = setupDecoder( EXRHeader, bufferDataView, uInt8Array, offset, this.type, this.outputFormat, this.channelSelection );
 
 		// parse input data
 		EXRDecoder.decode();

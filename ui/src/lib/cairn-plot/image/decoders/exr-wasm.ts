@@ -26,7 +26,7 @@
  * its `.buffer` is a transferable — no extra copy needed here.
  */
 import type { DecodedImage } from "../decoders.ts";
-import { decodeExrBuffer } from "./exr-full.ts";
+import { decodeExrBuffer, hasExrSelection, type ExrSelection } from "./exr-full.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
 
 type F32Image = Extract<DecodedImage, { kind: "f32" }>;
@@ -65,7 +65,12 @@ export function isWasmUnsupportedError(err: unknown): boolean {
 export async function decodeExrPreferWasm(
   buffer: ArrayBuffer,
   loadDecoder: ExrWasmLoader = loadExrDecoder,
+  select?: ExrSelection,
 ): Promise<F32Image> {
+  // PART/LAYER selection routes straight to the full TS decoder: the wasm
+  // binding decodes whole-image only (moving selection into the wasm module is
+  // the planned follow-up — see docs/plans/2026-08-18-exr-parts-channels-deep.md).
+  if (hasExrSelection(select)) return decodeExrBuffer(buffer, select);
   try {
     const { decode_exr } = await loadDecoder();
     const img = decode_exr(new Uint8Array(buffer));

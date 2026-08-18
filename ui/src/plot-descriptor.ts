@@ -81,6 +81,20 @@ export type DataSpec =
        * is CORS-gated — the serving endpoint must allow the page's origin.
        */
       url?: string;
+      /**
+       * EXR PART selection (multi-part files): index or part name. Only honoured
+       * on the client-decode paths (`url` / raw-buffer `format`) for `.exr`
+       * sources; other formats ignore it. Default: part 0.
+       */
+      part?: number | string;
+      /**
+       * EXR channel selection: a channel-GROUP name ("diffuse"; "" = the base
+       * color layer) or a FULL channel name ("diffuse.G", "Z") for a single-
+       * channel scalar view (rendered via the colormap path). Grouping follows
+       * the OpenEXR dot-prefix convention — see `lib/cairn-plot/image/
+       * channel-groups.ts`. Default: the first group (base color when present).
+       */
+      layer?: string;
     }
   | {
       kind: "npz";
@@ -227,7 +241,8 @@ export async function resolveDataProps(
         // depth slider (`decoded.deep`, threaded into the `hdr` prop below).
         const decoded = await decodeImage(
           { bytes, url: data.url, mime: res.headers.get("content-type") ?? undefined },
-          { deepLiveFlatten: true },
+          // Part/layer selection (EXR-only; other formats ignore it).
+          { deepLiveFlatten: true, select: { part: data.part, layer: data.layer } },
         );
         const overlay = parseOverlay(data.metadata) ?? undefined;
         return { source: decodedToSource(decoded), baselineUrl: null, overlay };
@@ -243,7 +258,8 @@ export async function resolveDataProps(
         // Single-image leaf → deep-live-flatten enabled (depth slider).
         const decoded = await decodeImage(
           { bytes: await source.bytes(data.hash), ext: data.format },
-          { deepLiveFlatten: true },
+          // Part/layer selection (EXR-only; other formats ignore it).
+          { deepLiveFlatten: true, select: { part: data.part, layer: data.layer } },
         );
         const baselineUrl = await resolveRawBufferBaseline(data, source);
         const overlay = parseOverlay(data.metadata) ?? undefined;

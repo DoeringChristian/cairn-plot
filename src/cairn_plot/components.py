@@ -1036,6 +1036,8 @@ class Image(Component):
         pixel_value_notation: str | None = None,
         toolbar: bool | None = None,
         label: str | None = None,
+        part: int | str | None = None,
+        channels: str | None = None,
     ) -> None:
         import json as _json
 
@@ -1063,6 +1065,18 @@ class Image(Component):
         if label is not None and not isinstance(label, str):
             raise ValueError("cp.Image(label=...) must be a string.")
         self._image_label = label
+        # EXR PART/CHANNEL selection (multi-part / multi-channel files):
+        # ``part=`` selects a part by index or name; ``channels=`` selects a
+        # channel GROUP ("diffuse") or a single FULL channel ("diffuse.G", "Z")
+        # decoded via the client's selector-aware EXR decoder. Only meaningful
+        # for client-decoded sources (``url=`` or an EXR/raw-format DataRef) —
+        # rejected on baked ndarray paths, where it could only silently no-op.
+        if part is not None and not isinstance(part, (int, str)):
+            raise ValueError("cp.Image(part=...) must be an int index or a part name.")
+        if channels is not None and not isinstance(channels, str):
+            raise ValueError("cp.Image(channels=...) must be a group or channel name.")
+        self._exr_part = part
+        self._exr_channels = channels
         self._source: Any = None
         self._store: dict[str, dict[str, str]] = {}
         self._data_mode = data_mode
@@ -1232,8 +1246,21 @@ class Image(Component):
         self._data_mode = "local"
 
     def to_node(self) -> dict[str, Any]:
+        data = self._data
+        # PART/CHANNEL selection rides on the image DataSpec (client decode).
+        if self._exr_part is not None or self._exr_channels is not None:
+            if data.get("kind") != "image":
+                raise ValueError(
+                    "cp.Image(part=/channels=) requires a client-decoded source "
+                    "(url= or an EXR DataRef) — a baked array has no parts/layers."
+                )
+            data = dict(data)
+            if self._exr_part is not None:
+                data["part"] = self._exr_part
+            if self._exr_channels is not None:
+                data["layer"] = self._exr_channels
         node: dict[str, Any] = {
-            "kind": "plot", "renderer": self._renderer, "data": self._data
+            "kind": "plot", "renderer": self._renderer, "data": data
         }
         # Merge the host-seam `toolbar:false` (only when disabled) onto whatever
         # display props the routed pipeline built.

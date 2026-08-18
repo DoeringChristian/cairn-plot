@@ -18,6 +18,8 @@
 #include <ImfTiledOutputFile.h>
 #include <ImfRgbaFile.h>
 #include <ImfDeepScanLineOutputFile.h>
+#include <ImfMultiPartOutputFile.h>
+#include <ImfOutputPart.h>
 #include <ImfChannelList.h>
 #include <ImfFrameBuffer.h>
 #include <ImfDeepFrameBuffer.h>
@@ -286,6 +288,80 @@ static void writeDeepDense(const std::string& path, int w, int h, int maxSamples
     }
 }
 
+
+// Layered AOV file (single part): default RGBA + diffuse.RGB + specular.RGB +
+// a bare Z — the channel-GROUPING coverage fixture. Every channel is a CONSTANT
+// value ((index+1)/16) so selector tests can assert exact planes:
+//   R=1/16 G=2/16 B=3/16 A=4/16 · diffuse.R=5/16 .G=6/16 .B=7/16 ·
+//   specular.R=8/16 .G=9/16 .B=10/16 · Z=11/16
+static void writeLayeredAov(const std::string& path, int w, int h) {
+  const char* names[] = {"R", "G", "B", "A",
+                         "diffuse.R", "diffuse.G", "diffuse.B",
+                         "specular.R", "specular.G", "specular.B", "Z"};
+  const int n = sizeof(names) / sizeof(names[0]);
+  Header hd(w, h);
+  hd.compression() = ZIP_COMPRESSION;
+  for (int i = 0; i < n; ++i) hd.channels().insert(names[i], Channel(HALF));
+  std::vector<std::vector<half>> bufs(n, std::vector<half>(size_t(w) * h));
+  FrameBuffer fb;
+  for (int i = 0; i < n; ++i) {
+    const half v = half(float(i + 1) / 16.0f);
+    for (auto& px : bufs[i]) px = v;
+    fb.insert(names[i], Slice(HALF, (char*)bufs[i].data(), sizeof(half), sizeof(half) * w));
+  }
+  OutputFile file(path.c_str(), hd);
+  file.setFrameBuffer(fb);
+  file.writePixels(h);
+}
+
+// Multi-part scanline file: part 0 "beauty" (RGB half, constants .1/.2/.3) and
+// part 1 "aux" (Z float const 7.5 + mask half const 1.0) — the PART-selection
+// coverage fixture (part by index AND by name; scalar channels in a part).
+static void writeMultiPart2(const std::string& path, int w, int h) {
+  std::vector<Header> headers;
+  {
+    Header hd(w, h);
+    hd.setName("beauty");
+    hd.setType(SCANLINEIMAGE);
+    hd.compression() = ZIP_COMPRESSION;
+    hd.channels().insert("R", Channel(HALF));
+    hd.channels().insert("G", Channel(HALF));
+    hd.channels().insert("B", Channel(HALF));
+    headers.push_back(hd);
+  }
+  {
+    Header hd(w, h);
+    hd.setName("aux");
+    hd.setType(SCANLINEIMAGE);
+    hd.compression() = ZIP_COMPRESSION;
+    hd.channels().insert("Z", Channel(FLOAT));
+    hd.channels().insert("mask", Channel(HALF));
+    headers.push_back(hd);
+  }
+  MultiPartOutputFile file(path.c_str(), headers.data(), (int)headers.size());
+  {
+    std::vector<half> R(size_t(w) * h, half(0.1f)), G(size_t(w) * h, half(0.2f)),
+        B(size_t(w) * h, half(0.3f));
+    FrameBuffer fb;
+    fb.insert("R", Slice(HALF, (char*)R.data(), sizeof(half), sizeof(half) * w));
+    fb.insert("G", Slice(HALF, (char*)G.data(), sizeof(half), sizeof(half) * w));
+    fb.insert("B", Slice(HALF, (char*)B.data(), sizeof(half), sizeof(half) * w));
+    OutputPart part(file, 0);
+    part.setFrameBuffer(fb);
+    part.writePixels(h);
+  }
+  {
+    std::vector<float> Z(size_t(w) * h, 7.5f);
+    std::vector<half> M(size_t(w) * h, half(1.0f));
+    FrameBuffer fb;
+    fb.insert("Z", Slice(FLOAT, (char*)Z.data(), sizeof(float), sizeof(float) * w));
+    fb.insert("mask", Slice(HALF, (char*)M.data(), sizeof(half), sizeof(half) * w));
+    OutputPart part(file, 1);
+    part.setFrameBuffer(fb);
+    part.writePixels(h);
+  }
+}
+
 int main(int argc, char** argv) {
   std::string dir = (argc > 1) ? argv[1] : ".";
   auto p = [&](const char* n) { return dir + "/" + n; };
@@ -296,6 +372,8 @@ int main(int argc, char** argv) {
   writeHtj2k(p("htj2k-half-64x48.exr"), 64, 48);
   writeDeep(p("deep-rgba-32x32.exr"), 32, 32);
   writeDeepHoles(p("deep-holes-8x8.exr"), 8, 8);
+  writeLayeredAov(p("layers-aov-64x48.exr"), 64, 48);
+  writeMultiPart2(p("multipart-2part-64x48.exr"), 64, 48);
   writeFlatHalf(p("rgb-piz-half-1024x1024.exr"), 1024, 1024, PIZ_COMPRESSION);
   // Trunks-scale dense deep for the retained-vs-redecode benchmark (uncommitted).
   writeDeepDense(p("deep-dense-512x512.exr"), 512, 512, 12);
