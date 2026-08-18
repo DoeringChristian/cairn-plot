@@ -1054,9 +1054,23 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
 
   // --- FOLDED: one "⋯" button opening a menu with every control ------------
   if (folded) {
+    // ENLARGE stays PINNED as a bare icon LEFT of the "⋯" trigger even when the
+    // rest of the toolbar folds — switching into the large view must always be
+    // one click, never buried in the overflow. Everything else folds as before.
+    const pinnedEnlarge = leading.find((b) => b.id === "enlarge");
+    const foldedLeading = pinnedEnlarge ? leading.filter((b) => b.id !== "enlarge") : leading;
     return (
-      <div ref={rootRef} style={wrapperStyle} className={`${chromeClass} inline-flex px-0.5 py-0.5`} role="toolbar" aria-label="Plot controls">
-        <OverflowMenu actions={flatActions} leading={leading} sliders={sliders} />
+      <div ref={rootRef} style={wrapperStyle} className={`${chromeClass} inline-flex items-center gap-0.5 px-0.5 py-0.5`} role="toolbar" aria-label="Plot controls">
+        {pinnedEnlarge && (
+          <ToolbarButton
+            icon={pinnedEnlarge.icon}
+            title={pinnedEnlarge.title}
+            active={pinnedEnlarge.active}
+            disabled={pinnedEnlarge.disabled}
+            onClick={pinnedEnlarge.onClick ?? (() => {})}
+          />
+        )}
+        <OverflowMenu actions={flatActions} leading={foldedLeading} sliders={sliders} />
       </div>
     );
   }

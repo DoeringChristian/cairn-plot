@@ -21,11 +21,13 @@
 import type { ToolbarButtonSpec, ToolbarMenuOption } from "../controls/ToolbarConfig";
 import type { ChannelGroup } from "./channel-groups";
 
-/** True when the tree offers anything to select — deep-only trees don't (deep
- *  parts skip decode-time selection; their FLATTENED output is sliced via the
- *  synthetic RGBA tree instead). */
+/** True when the tree yields a USABLE menu (≥2 selectable entries). Deep-only
+ *  trees don't (deep parts skip decode-time selection), and neither do
+ *  luminance-chroma files whose subsampled RY/BY were filtered (a lone Y is
+ *  nothing to switch) — both fall back to the SYNTHETIC RGBA tree over the
+ *  DECODED pixels (the format-agnostic slice path). */
 export function treeHasSelectableChannels(tree: ChannelMenuTree): boolean {
-  return tree.parts.some((p) => !p.deep && p.groups.length > 0);
+  return buildEntries(tree).length >= 2;
 }
 
 export interface ChannelMenuTree {
