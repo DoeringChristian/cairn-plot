@@ -39,7 +39,7 @@ export type ExrWorkerRequest =
       buffer: ArrayBuffer;
       /** Part/layer decode selection (structured-clone-safe) — routed to the
        *  full TS decoder inside the worker. Absent = legacy whole-image decode. */
-      select?: { part?: number | string; layer?: string };
+      select?: { part?: number | string; layer?: string | string[] };
     }
   | { id: number; kind: "openDeep"; buffer: ArrayBuffer }
   | { id: number; kind: "flattenDeep"; handle: number; zNear: number; zFar: number }

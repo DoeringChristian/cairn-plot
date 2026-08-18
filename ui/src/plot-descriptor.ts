@@ -28,6 +28,7 @@ import {
   decodeImage,
   decodedU8ToDataUrl,
   isRawBufferFormat,
+  sniffFormat,
   resolveFinalUrl,
   type DataSource,
 } from "./lib/cairn-plot";
@@ -124,9 +125,11 @@ export type DataSpec =
        * color layer) or a FULL channel name ("diffuse.G", "Z") for a single-
        * channel scalar view (rendered via the colormap path). Grouping follows
        * the OpenEXR dot-prefix convention — see `lib/cairn-plot/image/
-       * channel-groups.ts`. Default: the first group (base color when present).
+       * channel-groups.ts`. An ARBITRARY LIST of up to 3 full channel
+       * names packs them into the R,G,B slots in order (the RenderDoc-style
+       * combo). Default: the first group (base color when present).
        */
-      layer?: string;
+      layer?: string | string[];
     }
   | {
       kind: "npz";
@@ -303,7 +306,9 @@ export async function resolveDataProps(
         );
         const baselineUrl = await resolveRawBufferBaseline(data, source);
         const overlay = parseOverlay(data.metadata) ?? undefined;
-        const exrTree = data.format === "exr" ? tryExrTree(bytes) : null;
+        // Magic-sniffed (tryExrTree bails on non-EXR bytes) — an exact
+        // format-string gate missed MIME/uppercase hints ("image/x-exr").
+        const exrTree = tryExrTree(bytes);
         return {
           source: decodedToSource(decoded),
           baselineUrl,
@@ -322,6 +327,27 @@ export async function resolveDataProps(
       );
       const item = res.items[0] ?? null;
       const ref = res.referenceItems[0] ?? null;
+      // A hash-only EXR (no `format` hint) must NOT fall through to the pane's
+      // internal URL decode — it would lose the parts × channels tree AND the
+      // part/layer selection. Detect by URL (extension or data: mime) and route
+      // through the same fetch + selector-aware decode as the `url` branch.
+      if (item?.url && sniffFormat({ url: item.url }) === "exr") {
+        const res2 = await fetchImageBytes(item.url);
+        if (res2.ok) {
+          const bytes = await res2.arrayBuffer();
+          const decoded = await decodeImage(
+            { bytes, url: item.url },
+            { deepLiveFlatten: true, select: { part: data.part, layer: data.layer } },
+          );
+          const exrTree = tryExrTree(bytes);
+          return {
+            source: decodedToSource(decoded),
+            baselineUrl: ref?.url ?? null,
+            overlay: item.overlay ?? undefined,
+            ...(exrTree ? { exrTree } : {}),
+          };
+        }
+      }
       return {
         source: { dtype: "uint8", url: item?.url ?? null },
         baselineUrl: ref?.url ?? null,

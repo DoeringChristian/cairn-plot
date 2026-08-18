@@ -132,8 +132,18 @@
               "description": "EXR PART selection (multi-part files): index or part name. Only honoured on the client-decode paths (`url` / raw-buffer `format`) for `.exr` sources; other formats ignore it. Default: part 0."
             },
             "layer": {
-              "type": "string",
-              "description": "EXR channel selection: a channel-GROUP name (\"diffuse\"; \"\" = the base color layer) or a FULL channel name (\"diffuse.G\", \"Z\") for a single- channel scalar view (rendered via the colormap path). Grouping follows the OpenEXR dot-prefix convention — see `lib/cairn-plot/image/ channel-groups.ts`. Default: the first group (base color when present)."
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ],
+              "description": "EXR channel selection: a channel-GROUP name (\"diffuse\"; \"\" = the base color layer) or a FULL channel name (\"diffuse.G\", \"Z\") for a single- channel scalar view (rendered via the colormap path). Grouping follows the OpenEXR dot-prefix convention — see `lib/cairn-plot/image/ channel-groups.ts`. An ARBITRARY LIST of up to 3 full channel names packs them into the R,G,B slots in order (the RenderDoc-style combo). Default: the first group (base color when present)."
             }
           },
           "required": [

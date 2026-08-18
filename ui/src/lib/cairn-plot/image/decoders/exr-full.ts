@@ -32,10 +32,12 @@ const RGBA_FORMAT = 1023;
 export interface ExrSelection {
   /** Part index or part name. Default: part 0. */
   part?: number | string;
-  /** Channel-GROUP name ("diffuse"; "" = the base color layer) or a FULL
-   *  channel name ("diffuse.G", "Z") for a single-channel scalar view.
+  /** Channel-GROUP name ("diffuse"; "" = the base color layer), a FULL
+   *  channel name ("diffuse.G", "Z") for a single-channel scalar view, or an
+   *  ARBITRARY LIST of up to 3 full channel names packed into the R,G,B output
+   *  slots in order (["a.R","b.R","Z"] — the RenderDoc-style combo).
    *  Default: the first group (base color when present). */
-  layer?: string;
+  layer?: string | string[];
 }
 
 /** True when a selection actually selects something (default-everything ⇒ the
@@ -43,6 +45,9 @@ export interface ExrSelection {
 export function hasExrSelection(sel: ExrSelection | undefined): boolean {
   return !!sel && (sel.part != null || sel.layer != null);
 }
+
+/** Max slots an arbitrary channel-combo may fill (packed into R,G,B). */
+export const MAX_CHANNEL_COMBO = 3;
 
 /** Decide the canonical output channel count + which RGBA slots to keep. */
 function planChannels(channels: ExrLoaderChannel[]): {
@@ -95,10 +100,31 @@ export function decodeExrBuffer(
         "cairn-plot: part/layer selection on DEEP parts is not supported yet (deep decodes whole)",
       );
     }
-    const group = resolveGroup(groupChannels(part.channels), sel!.layer);
-    loader.part = partIndex;
-    loader.channelSelection = group.channels;
-    selectedCount = group.channels.length;
+    if (Array.isArray(sel!.layer)) {
+      // ARBITRARY COMBO: up to 3 full channel names → R,G,B slots in order.
+      const combo = sel!.layer;
+      if (combo.length === 0 || combo.length > MAX_CHANNEL_COMBO) {
+        throw new Error(
+          `cairn-plot: a channel combo selects 1..${MAX_CHANNEL_COMBO} channels (got ${combo.length})`,
+        );
+      }
+      const names = new Set(part.channels.map((c) => c.name));
+      for (const n of combo) {
+        if (!names.has(n)) {
+          throw new Error(
+            `cairn-plot: no channel named "${n}" in part (channels: ${[...names].join(", ")})`,
+          );
+        }
+      }
+      loader.part = partIndex;
+      loader.channelSelection = combo;
+      selectedCount = combo.length;
+    } else {
+      const group = resolveGroup(groupChannels(part.channels), sel!.layer);
+      loader.part = partIndex;
+      loader.channelSelection = group.channels;
+      selectedCount = group.channels.length;
+    }
   }
 
   const res = loader.parse(buffer);

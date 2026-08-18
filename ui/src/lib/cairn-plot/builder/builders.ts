@@ -302,9 +302,15 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
             "cairnPlot: image({part, channels}) requires a client-decoded URL source (e.g. an .exr URL)",
           );
         }
-        const d = shaped.data as { part?: number | string; layer?: string };
+        const d = shaped.data as { part?: number | string; layer?: string | string[] };
         if (opts.part != null) d.part = opts.part as number | string;
-        if (opts.channels != null) d.layer = String(opts.channels);
+        if (opts.channels != null) {
+          // Group/channel name, or an ARBITRARY list of up to 3 full channel
+          // names (packed into R,G,B slots in order).
+          d.layer = Array.isArray(opts.channels)
+            ? (opts.channels as unknown[]).map(String)
+            : String(opts.channels);
+        }
       }
       return handle(leaf("image", shaped.data, props), shaped.runtime);
     },

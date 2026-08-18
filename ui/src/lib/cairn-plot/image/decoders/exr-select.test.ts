@@ -75,3 +75,23 @@ test("selection on a deep part is rejected explicitly", () => {
     /DEEP parts is not supported/,
   );
 });
+
+test("ARBITRARY COMBO: up to 3 full channel names pack into R,G,B slots", () => {
+  // diffuse.R=5/16, specular.G=9/16, Z=11/16 (constants — see fixture doc).
+  const img = decodeExrBuffer(load("layers-aov-64x48.exr"), {
+    layer: ["diffuse.R", "specular.G", "Z"],
+  });
+  assert.equal(img.channels, 3);
+  assert.deepEqual(Array.from(img.data.subarray(0, 3)), [5 / 16, 9 / 16, 11 / 16]);
+});
+
+test("combo validation: >3 channels and unknown names throw", () => {
+  assert.throws(
+    () => decodeExrBuffer(load("layers-aov-64x48.exr"), { layer: ["R", "G", "B", "A"] }),
+    /1\.\.3 channels/,
+  );
+  assert.throws(
+    () => decodeExrBuffer(load("layers-aov-64x48.exr"), { layer: ["R", "nope"] }),
+    /no channel named "nope"/,
+  );
+});

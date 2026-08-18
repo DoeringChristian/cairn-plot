@@ -1037,7 +1037,7 @@ class Image(Component):
         toolbar: bool | None = None,
         label: str | None = None,
         part: int | str | None = None,
-        channels: str | None = None,
+        channels: str | list[str] | tuple[str, ...] | None = None,
     ) -> None:
         import json as _json
 
@@ -1074,7 +1074,17 @@ class Image(Component):
         if part is not None and not isinstance(part, (int, str)):
             raise ValueError("cp.Image(part=...) must be an int index or a part name.")
         if channels is not None and not isinstance(channels, str):
-            raise ValueError("cp.Image(channels=...) must be a group or channel name.")
+            if (
+                isinstance(channels, (list, tuple))
+                and 1 <= len(channels) <= 3
+                and all(isinstance(c, str) for c in channels)
+            ):
+                channels = list(channels)  # arbitrary combo → R,G,B slots in order
+            else:
+                raise ValueError(
+                    "cp.Image(channels=...) must be a group/channel name or a "
+                    "list of 1..3 full channel names."
+                )
         self._exr_part = part
         self._exr_channels = channels
         self._source: Any = None

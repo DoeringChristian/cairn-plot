@@ -28,7 +28,9 @@ export interface ChannelMenuTree {
 /** The decode selection the menu drives — mirrors the descriptor fields. */
 export interface ChannelSelection {
   part?: number | string;
-  layer?: string;
+  /** Group name, full channel name, or an ARBITRARY combo of up to 3 full
+   *  channel names (packed into R,G,B slots in order). */
+  layer?: string | string[];
 }
 
 interface MenuEntry {
@@ -101,7 +103,17 @@ export function channelToolbarButton(
   const curPartIdx = partIndexOf(tree, selection.part);
   const curLayer = selection.layer;
   let value = entries[0]!.option.id;
-  if (curLayer != null) {
+  // An ARBITRARY COMBO (authored `channels=[...]`) has no group entry — show it
+  // verbatim on the face via a synthetic option (picking it is a no-op keep).
+  if (Array.isArray(curLayer)) {
+    const comboOpt: MenuEntry = {
+      option: { id: "__combo", label: curLayer.join(" | ") },
+      selection: { part: selection.part, layer: curLayer },
+    };
+    entries.unshift(comboOpt);
+    byId.set("__combo", comboOpt);
+    value = "__combo";
+  } else if (curLayer != null) {
     const direct = byId.get(`p${curPartIdx}|${curLayer}`);
     if (direct) value = direct.option.id;
   } else {

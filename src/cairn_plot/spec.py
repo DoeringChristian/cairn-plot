@@ -77,7 +77,7 @@ class ImageDataSpec(_Strict):
     # EXR PART/CHANNEL selection (client decode): part index-or-name; layer =
     # channel-group name or a full channel name (scalar view).
     part: Optional[Union[int, str]] = None
-    layer: Optional[str] = None
+    layer: Optional[Union[str, list[str]]] = None
 
 
 class UrlDataSpec(_Strict):

@@ -672,7 +672,7 @@ export interface DecodeImageOptions {
    * a single-channel scalar view. Only the EXR decoder honours it; other
    * formats ignore it. Absent/empty = the legacy whole-image decode.
    */
-  select?: { part?: number | string; layer?: string };
+  select?: { part?: number | string; layer?: string | string[] };
 }
 
 /**

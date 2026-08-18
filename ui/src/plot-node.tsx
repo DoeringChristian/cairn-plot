@@ -201,7 +201,8 @@ function LeafView({ node }: { node: PlotLeafNode }) {
   }, [node.data, chSel]);
   // The resolve-cache key includes the override so each selection caches its own
   // decode (flipping BACK to a seen layer is instant).
-  const selKey = chSel ? `|${chSel.part ?? ""}|${chSel.layer ?? ""}` : "";
+  const selLayerKey = Array.isArray(chSel?.layer) ? chSel.layer.join(",") : (chSel?.layer ?? "");
+  const selKey = chSel ? `|${chSel.part ?? ""}|${selLayerKey}` : "";
 
   // Only the async-resolved DATA props live in state; the shared-block +
   // selection-sync props are merged at RENDER time (below) so a selection change
