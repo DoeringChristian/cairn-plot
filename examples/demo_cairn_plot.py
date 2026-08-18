@@ -320,6 +320,34 @@ def build_gallery() -> list[tuple[str, object]]:
         ]),
     ))
 
+    # ── EXR parts & channels — cp.Image(part=, channels=) ────────────────
+    # A layered AOV EXR (beauty RGBA + diffuse/specular layers + signed normals
+    # + a Z depth channel), embedded as a data: URL so the baked gallery stays
+    # offline. Each pane decodes a DIFFERENT selection from the SAME file:
+    # `channels=` names a channel GROUP ("diffuse") or a single FULL channel
+    # ("diffuse.G", "Z" — rendered as a scalar). Grouping follows the OpenEXR
+    # dot-prefix convention (tev-style).
+    import base64 as _b64
+
+    _exr_path = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "ui/src/lib/cairn-plot/image/decoders/fixtures/layers-demo-128x96.exr"
+    )
+    if _exr_path.exists():
+        _exr_url = "data:image/x-exr;base64," + _b64.b64encode(_exr_path.read_bytes()).decode()
+        items.append((
+            "EXR parts & channels — one file, per-pane channel selection",
+            cp.Grid([
+                [cp.Image(url=_exr_url, label="beauty (default RGBA)"),
+                 cp.Image(url=_exr_url, channels="diffuse", label='channels="diffuse"'),
+                 cp.Image(url=_exr_url, channels="specular", label='channels="specular"')],
+                [cp.Image(url=_exr_url, channels="normal", label='channels="normal" (XYZ)'),
+                 cp.Image(url=_exr_url, channels="Z", exposure=-3.0,
+                          label='channels="Z" (scalar depth, EV −3)'),
+                 cp.Image(url=_exr_url, channels="diffuse.G", label='channels="diffuse.G" (one channel)')],
+            ]),
+        ))
+
     # ── zoomable split of a SMALL image → TEV-style per-pixel values ──────
     # Two tiny 16×16 gradients: hold Alt/Ctrl and wheel-zoom the split pane.
     # BOTH sides zoom together and the divider stays aligned; once each source

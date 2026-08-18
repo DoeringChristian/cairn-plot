@@ -362,6 +362,49 @@ static void writeMultiPart2(const std::string& path, int w, int h) {
   }
 }
 
+
+// Visually rich layered AOV DEMO file (gallery + docs): a plausible "render"
+// with beauty RGBA + diffuse/specular layers + signed normals + a radial Z.
+// Content is deterministic waves — no assets. 128x96 HALF, ZIP.
+static void writeLayeredDemo(const std::string& path, int w, int h) {
+  const char* names[] = {"R", "G", "B", "A",
+                         "diffuse.R", "diffuse.G", "diffuse.B",
+                         "specular.R", "specular.G", "specular.B",
+                         "normal.X", "normal.Y", "normal.Z", "Z"};
+  const int n = sizeof(names) / sizeof(names[0]);
+  Header hd(w, h);
+  hd.compression() = ZIP_COMPRESSION;
+  for (int i = 0; i < n; ++i) hd.channels().insert(names[i], Channel(HALF));
+  std::vector<std::vector<half>> bufs(n, std::vector<half>(size_t(w) * h));
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      const size_t i = size_t(y) * w + x;
+      const float u = float(x) / w, v = float(y) / h;
+      // Diffuse: soft colored waves.
+      const float dr = 0.30f + 0.25f * wave(x, y, 0);
+      const float dg = 0.25f + 0.25f * wave(x, y, 1);
+      const float db = 0.35f + 0.25f * wave(x, y, 2);
+      // Specular: sharp moving highlights (wave^8) with a warm tint.
+      const float s = std::pow(wave(x * 2, y * 2, 1), 8.0f);
+      const float sr = 1.2f * s, sg = 1.0f * s, sb = 0.7f * s;
+      // Normals: a smooth signed field (a bumpy plane facing +Z).
+      const float nx = 0.6f * std::sin(u * 9.0f), ny = 0.6f * std::sin(v * 7.0f);
+      const float nz = std::sqrt(std::max(0.0f, 1.0f - nx * nx - ny * ny));
+      // Z: radial depth from centre, 1..6.
+      const float dx = u - 0.5f, dy = v - 0.5f;
+      const float z = 1.0f + 5.0f * std::sqrt(dx * dx + dy * dy) * 1.6f;
+      const float vals[] = {dr + sr, dg + sg, db + sb, 1.0f,
+                            dr, dg, db, sr, sg, sb, nx, ny, nz, z};
+      for (int c = 0; c < n; ++c) bufs[c][i] = half(vals[c]);
+    }
+  FrameBuffer fb;
+  for (int c = 0; c < n; ++c)
+    fb.insert(names[c], Slice(HALF, (char*)bufs[c].data(), sizeof(half), sizeof(half) * w));
+  OutputFile file(path.c_str(), hd);
+  file.setFrameBuffer(fb);
+  file.writePixels(h);
+}
+
 int main(int argc, char** argv) {
   std::string dir = (argc > 1) ? argv[1] : ".";
   auto p = [&](const char* n) { return dir + "/" + n; };
@@ -374,6 +417,7 @@ int main(int argc, char** argv) {
   writeDeepHoles(p("deep-holes-8x8.exr"), 8, 8);
   writeLayeredAov(p("layers-aov-64x48.exr"), 64, 48);
   writeMultiPart2(p("multipart-2part-64x48.exr"), 64, 48);
+  writeLayeredDemo(p("layers-demo-128x96.exr"), 128, 96);
   writeFlatHalf(p("rgb-piz-half-1024x1024.exr"), 1024, 1024, PIZ_COMPRESSION);
   // Trunks-scale dense deep for the retained-vs-redecode benchmark (uncommitted).
   writeDeepDense(p("deep-dense-512x512.exr"), 512, 512, 12);
