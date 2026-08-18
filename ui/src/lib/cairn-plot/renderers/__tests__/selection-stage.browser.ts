@@ -155,6 +155,88 @@ async function openListbox(btn: HTMLButtonElement): Promise<HTMLUListElement | n
   await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 2000);
   return document.querySelector<HTMLUListElement>('ul[role="listbox"]');
 }
+/** The folded-toolbar "⋯" overflow trigger inside a cell, if the toolbar folded
+ *  (small stage cells fold — the Colormap moves INTO the overflow popover). */
+function overflowButton(cell: HTMLElement): HTMLButtonElement | null {
+  return cell.querySelector<HTMLButtonElement>('button[aria-label="More controls"]');
+}
+async function waitForEl<T extends Element>(fn: () => T | null, timeoutMs = 2000): Promise<T | null> {
+  const deadline = Date.now() + timeoutMs;
+  let el = fn();
+  while (!el && Date.now() < deadline) {
+    await sleep(20);
+    el = fn();
+  }
+  return el;
+}
+/** An option's label, robust across both menu renders (the folded overflow rows
+ *  prefix a "✓" checkmark span for the selected entry). */
+function optLabel(o: Element): string {
+  return (o.textContent ?? "").replace(/✓/g, "").trim();
+}
+/** Whether an option button (folded overflow row) or its `<li>` (expanded
+ *  listbox) is the currently-selected one. */
+function optSelected(o: HTMLButtonElement): boolean {
+  return o.getAttribute("aria-checked") === "true" || o.closest('li[aria-selected="true"]') !== null;
+}
+/**
+ * FOLD-AWARE: open a cell's Colormap menu and resolve (a) the portaled FLOATING
+ * element that must paint above the stage backdrop, (b) the option buttons, and
+ * (c) the current colormap face label. Works whether the cell's toolbar is
+ * EXPANDED (a `<ToolbarMenu>` portaled `ul[role="listbox"]`) or FOLDED (the "⋯"
+ * `div[role="menu"]` overflow popover with an inline Colormap group — the small
+ * stage cells fold once the format-agnostic CHANNELS menu joins the leading row).
+ */
+async function openCellColormap(
+  cell: HTMLElement,
+): Promise<{ floating: HTMLElement; options: HTMLButtonElement[]; currentFace: string } | null> {
+  const direct = cmapButton(cell);
+  if (direct) {
+    const ul = await openListbox(direct);
+    if (!ul) return null;
+    const options = Array.from(ul.querySelectorAll<HTMLButtonElement>('li[role="option"] button'));
+    return { floating: ul, options, currentFace: (direct.textContent ?? "").trim() };
+  }
+  // Folded — reach the Colormap through the overflow popover's inline group.
+  const ovf = overflowButton(cell);
+  if (!ovf) return null;
+  ovf.click();
+  const popover = await waitForEl(() => document.querySelector<HTMLElement>('div[role="menu"]'));
+  const group = popover?.querySelector<HTMLButtonElement>('button[aria-label="Colormap"]') ?? null;
+  if (!popover || !group) return null;
+  group.click(); // expand the inline option rows
+  await waitForEl(() => popover.querySelector('button[role="menuitemradio"]'));
+  const options = Array.from(popover.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]'));
+  const currentFace = optLabel(options.find(optSelected) ?? options[0] ?? group);
+  return { floating: popover, options, currentFace };
+}
+/** FOLD-AWARE, single read of a cell's current colormap face. Expanded: the
+ *  direct `<ToolbarMenu>` button face. Folded: the "⋯" overflow's Colormap group
+ *  header ALWAYS shows the current face — no need to expand the option rows —
+ *  read it, then close the overflow (leaving no stray popover). A fresh open each
+ *  time is deliberate: syncing to a colormap drops the display-transfer button,
+ *  which can UNFOLD the toolbar and unmount any held popover reference. */
+async function readColormapFace(cell: HTMLElement): Promise<string | null> {
+  const direct = cmapButton(cell);
+  if (direct) return (direct.textContent ?? "").trim();
+  const ovf = overflowButton(cell);
+  if (!ovf) return null;
+  ovf.click();
+  const popover = await waitForEl(() => document.querySelector<HTMLElement>('div[role="menu"]'));
+  const group = popover?.querySelector<HTMLButtonElement>('button[aria-label="Colormap"]') ?? null;
+  const face = group?.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim() ?? null;
+  if (overflowButton(cell) === ovf) ovf.click(); // close (unless the toolbar unfolded it away)
+  return face;
+}
+/** Poll a cell's colormap face until it matches (settings-sync follow). */
+async function pollColormapFace(cell: HTMLElement, want: string, timeoutMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await readColormapFace(cell)) === want) return true;
+    await sleep(50);
+  }
+  return (await readColormapFace(cell)) === want;
+}
 function normColor(c: string): string {
   return c.replace(/\s+/g, " ").trim();
 }
@@ -497,39 +579,36 @@ async function run(): Promise<boolean> {
   // === Bug 3 + Bug 4 — settings SYNC across the stage + a toolbar menu opened
   //     INSIDE the stage floats ABOVE the backdrop (reachable/clickable). Drive a
   //     REAL colormap change on cell A and assert (a) the menu was on top and (b)
-  //     cell B's colormap FOLLOWS. ==============================================
+  //     cell B's colormap FOLLOWS. The colormap control is FOLD-AWARE: the small
+  //     stage cells fold their toolbar (the format-agnostic CHANNELS menu now
+  //     joins the leading row on every image), so the Colormap lives in the "⋯"
+  //     overflow popover — which is itself a portaled, backdrop-clearing float,
+  //     so Bug 4's "menu paints above the stage" intent still holds there. ======
   {
     const cells = stageCells();
     const cellA = cells[0]!;
     const cellB = cells[1]!;
-    const btnA = cmapButton(cellA);
-    const btnB = cmapButton(cellB);
-    if (btnA && btnB) {
-      const faceBefore = (btnB.textContent ?? "").trim();
-      const ul = await openListbox(btnA);
-      report(!!ul, "a stage cell's colormap menu opens (portaled listbox present)");
-      if (ul) {
-        // Bug 4 — the portaled menu paints ABOVE the stage backdrop: elementFromPoint
-        // at a menu OPTION returns that option, not the stage backdrop underneath.
-        const opts = Array.from(ul.querySelectorAll<HTMLButtonElement>('li[role="option"] button'));
-        const target = opts.find((o) => (o.textContent ?? "").trim() !== faceBefore) ?? opts[1] ?? opts[0]!;
-        const menuZ = Number(getComputedStyle(ul).zIndex);
-        const bdZ = Number(getComputedStyle(stageBackdrop()!).zIndex);
-        const zAbove = menuZ > bdZ;
-        report(zAbove, `the in-stage menu z (${menuZ}) is ABOVE the stage backdrop z (${bdZ})`);
-        const tr = target.getBoundingClientRect();
-        const hit = document.elementFromPoint(Math.round(tr.left + tr.width / 2), Math.round(tr.top + tr.height / 2));
-        const hitIsMenu = !!hit && !!hit.closest('ul[role="listbox"]');
-        report(hitIsMenu, `elementFromPoint at a menu item hits the MENU, not the stage backdrop (${hit?.tagName ?? "null"})`);
-        const wantLabel = (target.textContent ?? "").trim();
-        target.click();
-        // Bug 3 — cell B's colormap menu face follows cell A's pick (shared group).
-        const bFollowed = await waitFor(() => (cmapButton(cellB)?.textContent ?? "").trim() === wantLabel, 3000);
-        report(bFollowed, `changing colormap on cell A → cell B follows ("${faceBefore}" → "${wantLabel}")`);
-        ok = ok && zAbove && hitIsMenu && bFollowed;
-      } else {
-        ok = false;
-      }
+    const aMenu = await openCellColormap(cellA);
+    report(!!aMenu, "a stage cell's colormap menu opens (portaled, fold-aware)");
+    if (aMenu) {
+      const { floating, options, currentFace } = aMenu;
+      // Bug 4 — the portaled menu paints ABOVE the stage backdrop: elementFromPoint
+      // at a menu OPTION returns that option, not the stage backdrop underneath.
+      const target = options.find((o) => optLabel(o) !== currentFace) ?? options[1] ?? options[0]!;
+      const menuZ = Number(getComputedStyle(floating).zIndex);
+      const bdZ = Number(getComputedStyle(stageBackdrop()!).zIndex);
+      const zAbove = menuZ > bdZ;
+      report(zAbove, `the in-stage menu z (${menuZ}) is ABOVE the stage backdrop z (${bdZ})`);
+      const tr = target.getBoundingClientRect();
+      const hit = document.elementFromPoint(Math.round(tr.left + tr.width / 2), Math.round(tr.top + tr.height / 2));
+      const hitIsMenu = !!hit && !!hit.closest('ul[role="listbox"], div[role="menu"]');
+      report(hitIsMenu, `elementFromPoint at a menu item hits the MENU, not the stage backdrop (${hit?.tagName ?? "null"})`);
+      const wantLabel = optLabel(target);
+      target.click();
+      // Bug 3 — cell B's colormap menu face follows cell A's pick (shared group).
+      const bFollowed = await pollColormapFace(cellB, wantLabel);
+      report(bFollowed, `changing colormap on cell A → cell B follows ("${currentFace}" → "${wantLabel}")`);
+      ok = ok && zAbove && hitIsMenu && bFollowed;
     } else {
       report(false, "stage cells expose a colormap toolbar menu (needed for Bug 3/4)");
       ok = false;
