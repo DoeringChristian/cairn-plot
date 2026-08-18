@@ -21,6 +21,13 @@
 import type { ToolbarButtonSpec, ToolbarMenuOption } from "../controls/ToolbarConfig";
 import type { ChannelGroup } from "./channel-groups";
 
+/** True when the tree offers anything to select — deep-only trees don't (deep
+ *  parts skip decode-time selection; their FLATTENED output is sliced via the
+ *  synthetic RGBA tree instead). */
+export function treeHasSelectableChannels(tree: ChannelMenuTree): boolean {
+  return tree.parts.some((p) => !p.deep && p.groups.length > 0);
+}
+
 export interface ChannelMenuTree {
   parts: Array<{ name: string; index: number; deep: boolean; groups: ChannelGroup[] }>;
 }

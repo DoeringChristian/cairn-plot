@@ -98,9 +98,14 @@ import {
 } from "./lib/cairn-plot/resolve-cache";
 import {
   channelToolbarButton,
+  treeHasSelectableChannels,
   type ChannelSelection,
   type ChannelMenuTree,
 } from "./lib/cairn-plot/image/channel-menu";
+import {
+  applyChannelSlice,
+  syntheticChannelTree,
+} from "./lib/cairn-plot/image/channel-slice";
 import {
   publishImageSettings,
   subscribeImageSettings,
@@ -229,7 +234,18 @@ function LeafView({ node }: { node: PlotLeafNode }) {
       return;
     }
     let cancelled = false;
-    resolveCached(key, () => resolveDataProps(effectiveData, source)).then(
+    resolveCached(key, async () => {
+      const dp = await resolveDataProps(effectiveData, source);
+      // FORMAT-AGNOSTIC channel selection: EXR selects at decode (dp.exrTree
+      // present — the selector already rode `effectiveData`); everything else
+      // is an N-channel array and the selection is a pure post-decode SLICE.
+      const describedSelectable =
+        !!dp.exrTree && treeHasSelectableChannels(dp.exrTree as ChannelMenuTree);
+      if (chSelRef.current?.layer != null && !describedSelectable) {
+        return applyChannelSlice(dp, chSelRef.current.layer);
+      }
+      return dp;
+    }).then(
       (dataProps) => {
         if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
       },
@@ -299,9 +315,22 @@ function LeafView({ node }: { node: PlotLeafNode }) {
     // selection state) and handed to the pane as a standard ToolbarButtonSpec —
     // the pane renders it with its other leading menus and folds the override
     // into HOME (reset clears back to the authored selection).
-    const exrTree = state.dataProps.exrTree as ChannelMenuTree | undefined;
-    if (exrTree && node.data.kind === "image") {
-      const effSel: ChannelSelection = chSel ?? { part: node.data.part, layer: node.data.layer };
+    // The channel tree is FORMAT-AGNOSTIC: EXRs carry their described tree;
+    // any other multi-channel source gets a synthesized R/G/B/A tree — after
+    // decode the file type has no bearing on what a channel selection means.
+    const described = state.dataProps.exrTree as ChannelMenuTree | undefined;
+    // A deep-only described tree offers nothing to select — fall back to the
+    // synthetic RGBA tree over the FLATTENED pixels (format-agnostic slice).
+    const exrTree =
+      (described && treeHasSelectableChannels(described) ? described : undefined) ??
+      (syntheticChannelTree(state.dataProps.source as never) as ChannelMenuTree | null) ??
+      undefined;
+    if (exrTree && (node.data.kind === "image" || node.data.kind === "imghdr" || node.data.kind === "inline" || node.data.kind === "url")) {
+      const effSel: ChannelSelection =
+        chSel ??
+        (node.data.kind === "image"
+          ? { part: node.data.part, layer: node.data.layer }
+          : {});
       const menu = channelToolbarButton(exrTree, effSel, (sel) => selectChannels(sel ?? {}));
       if (menu) {
         sharedProps.channelMenu = menu;
