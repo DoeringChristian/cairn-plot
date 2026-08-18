@@ -203,15 +203,20 @@ function buildCompareCells(
   if (!ref || !refSpec) return { cells: [], referenceId: plan.referenceId };
 
   const cells: StageCellSpec[] = [];
+  let pairIndex = 0;
   for (const pair of plan.pairs) {
     const fg = getRegisteredPane(pair.foregroundId);
     const fgSpec = fg ? operandDataSpec(fg.node) : null;
     if (!fg || !fgSpec) continue;
+    pairIndex += 1;
     // cp.Compare(nonRef, ref): a = foreground, b = reference (baseline). Thread
     // each pane's REAL caption to the matching slot (`labelA`=a=foreground,
     // `labelB`=b=reference) — the pane shows reference bottom-left, foreground
-    // bottom-right (slide/blend) or folds them into the diff caption. No id
-    // fallback: a caption-less pane contributes no chip.
+    // bottom-right (slide/blend) or folds them into the diff caption.
+    // The FOREGROUND caption always gets a value (positional "View N" fallback):
+    // its bottom-right chip is the stage's click-to-set-reference affordance, so
+    // it must exist even for caption-less panes. The reference falls back to
+    // "reference" so the left side stays identifiable.
     const node: CompareNode = {
       kind: "compare",
       mode: "split",
@@ -221,8 +226,8 @@ function buildCompareCells(
       props: {
         toolbar: true,
         selectable: false,
-        ...(paneUserLabel(fg) ? { labelA: paneUserLabel(fg) } : {}),
-        ...(paneUserLabel(ref) ? { labelB: paneUserLabel(ref) } : {}),
+        labelA: paneUserLabel(fg) ?? `View ${pairIndex}`,
+        labelB: paneUserLabel(ref) ?? "reference",
       },
     };
     cells.push({
@@ -261,11 +266,12 @@ function StageCell({
   /** STACKED stage: fill the (single-visible) stacked pane box instead of the
    *  absolute packed rect. */
   fill?: boolean;
-  /** ENLARGE mode: a plain stationary click on the cell re-picks the reference
-   *  (the cells are plain images — no gesture to collide with). COMPARE mode:
-   *  false — compare panes own double-click-to-reset, so a cell click would
-   *  hijack the first click of a double-click; re-pick is ONLY the dedicated
-   *  "Set ref" button there. */
+  /** ENLARGE mode: a plain stationary click ANYWHERE on the cell re-picks the
+   *  reference (the cells are plain images — no gesture to collide with).
+   *  COMPARE mode: false — compare panes own double-click-to-reset, so a cell
+   *  click would hijack the first click of a double-click; there, ONLY a click
+   *  on the pane's bottom-right FOREGROUND caption chip re-picks ("make this
+   *  image the reference" — the chip names exactly that image). */
   clickPicksRef: boolean;
   /** Re-designate THIS cell as the reference. */
   onPickReference: () => void;
@@ -281,15 +287,21 @@ function StageCell({
   /** The single anchor cell seeds the group's snapshot. */
   isAnchor: boolean;
 }) {
-  // ENLARGE-only whole-cell click-to-pick (stationary press, never a control
-  // press, never a drag). Compare mode skips this entirely (see `clickPicksRef`).
-  const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
+  // Re-pick gesture (stationary press, never a control press, never a drag).
+  // ENLARGE: anywhere on the cell. COMPARE: only when the press started on the
+  // pane's FOREGROUND caption chip (`data-cairn-compare-caption="foreground"`,
+  // tagged by the shared `LabelChip` render sites) — event delegation, so the
+  // compare pane itself stays presentation-only.
+  const downRef = useRef<{ x: number; y: number; onControl: boolean; onFgChip: boolean } | null>(null);
   const cellClickEnabled = clickPicksRef && !spec.isReference;
+  const chipClickEnabled = !clickPicksRef && !spec.isReference;
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
-    const onControl = !!(e.target as Element | null)?.closest?.(
+    const target = e.target as Element | null;
+    const onControl = !!target?.closest?.(
       'button, input, select, textarea, a, [role="menu"], [role="menuitem"], [contenteditable="true"]',
     );
-    downRef.current = { x: e.clientX, y: e.clientY, onControl };
+    const onFgChip = !!target?.closest?.('[data-cairn-compare-caption="foreground"]');
+    downRef.current = { x: e.clientX, y: e.clientY, onControl, onFgChip };
   }, []);
   const onPointerUpCapture = useCallback(
     (e: React.PointerEvent) => {
@@ -297,9 +309,10 @@ function StageCell({
       downRef.current = null;
       if (!d || d.onControl) return;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > REPICK_SLOP_PX) return;
+      if (!cellClickEnabled && !d.onFgChip) return; // compare: only the fg chip picks
       onPickReference();
     },
-    [onPickReference],
+    [cellClickEnabled, onPickReference],
   );
 
   // The cell is ABSOLUTELY positioned at its packed rect (content-aspect, centred
@@ -360,6 +373,7 @@ function StageCell({
   );
 
   if (cellClickEnabled) style.cursor = "pointer";
+  const pickHandlersOn = cellClickEnabled || chipClickEnabled;
 
   return (
     <div
@@ -367,9 +381,10 @@ function StageCell({
       title={cellClickEnabled ? "Click to set as the reference" : undefined}
       data-cairn-stage-cell=""
       data-cairn-stage-ref={spec.isReference ? "true" : "false"}
+      data-cairn-stage-chip-pick={chipClickEnabled ? "true" : undefined}
       data-stage-repr-pane={spec.reprPaneId}
-      onPointerDownCapture={cellClickEnabled ? onPointerDownCapture : undefined}
-      onPointerUpCapture={cellClickEnabled ? onPointerUpCapture : undefined}
+      onPointerDownCapture={pickHandlersOn ? onPointerDownCapture : undefined}
+      onPointerUpCapture={pickHandlersOn ? onPointerUpCapture : undefined}
     >
       <div style={{ position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <ReportNaturalSizeContext.Provider value={reportAspect}>
@@ -407,42 +422,14 @@ function StageCell({
         </span>
       )}
 
-      {/* COMPARE-mode re-pick: a DEDICATED "set as reference" button. A plain
-          cell click can't re-pick here — compare panes own double-click-to-reset,
-          so the first click of a double-click would hijack it. Positioned top-
-          CENTER: in split mode the LEFT half is the reference image, so a left-
-          corner button would read as pointing at the reference side; centred it
-          reads as acting on the WHOLE comparison ("make this pane's image the
-          reference"). Top-right is the pane toolbar; the bottom edge holds the
-          captions + metrics. */}
-      {!clickPicksRef && !spec.isReference && (
-        <button
-          type="button"
-          data-cairn-stage-set-ref=""
-          title="Set this comparison's image as the reference"
-          onClick={onPickReference}
-          className="cairn-plot-doc"
-          style={{
-            position: "absolute",
-            top: 6,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 3,
-            padding: "2px 8px",
-            borderRadius: 9999,
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "0.03em",
-            border: `1px solid ${REFERENCE_COLOR}`,
-            background: "rgba(0,0,0,0.45)",
-            color: "#fff",
-            cursor: "pointer",
-            opacity: 0.75,
-          }}
-        >
-          Set ref
-        </button>
-      )}
+      {/* COMPARE-mode re-pick affordance: the pane's OWN bottom-right FOREGROUND
+          caption chip (which names exactly the image being compared) is the
+          click target — see the delegated pointer handlers above. No overlay
+          button: every floating placement collided with pane chrome (top-right
+          toolbar, top-left ring/badge, top-centre menus, bottom captions and
+          metrics). The chip's clickable styling is a ONE-per-stage scoped
+          <style> in `SelectionStage`; the chip itself stays presentation-only
+          in the renderer. */}
     </div>
   );
 }
@@ -552,6 +539,22 @@ function SelectionStage({
       closeAttr="data-cairn-plot-stage-close"
     >
       <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", minHeight: 0 }}>
+        {/* COMPARE mode: the panes' bottom-right FOREGROUND caption chip is the
+            click-to-set-reference target (StageCell delegates the gesture); this
+            one scoped style makes it read as clickable. */}
+        {mode === "compare" && (
+          <style>{`
+            [data-cairn-stage-chip-pick] [data-cairn-compare-caption="foreground"] {
+              cursor: pointer;
+              text-decoration: underline dotted;
+              text-underline-offset: 2px;
+            }
+            [data-cairn-stage-chip-pick] [data-cairn-compare-caption="foreground"]:hover {
+              outline: 1px solid ${REFERENCE_COLOR};
+              color: #fff;
+            }
+          `}</style>
+        )}
         <div className="group flex items-center gap-2">
           <StageModeToggle mode={mode} imageCount={imageCount} onSwitchMode={onSwitchMode} />
           <div style={{ flex: 1 }} />

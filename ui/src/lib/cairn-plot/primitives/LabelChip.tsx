@@ -27,6 +27,7 @@ export default function LabelChip({
   isDraggable = false,
   grip = isDraggable,
   onDragStart,
+  attrs,
 }: {
   label: string;
   corner?: LabelChipCorner;
@@ -39,6 +40,11 @@ export default function LabelChip({
    *  temporarily suppresses dragging. */
   grip?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  /** Extra attributes spread onto the chip span — used by the compare panes to
+   *  tag which SIDE a caption names (`data-cairn-compare-caption`), so a host
+   *  (e.g. the compare stage) can target a side's chip via event delegation
+   *  without threading callbacks through the renderer. */
+  attrs?: Record<string, string>;
 }) {
   const cornerClass = corner === "bottom-right" ? "bottom-1 right-1" : "bottom-1 left-1";
   return (
@@ -47,6 +53,7 @@ export default function LabelChip({
       draggable={isDraggable}
       onDragStart={onDragStart}
       style={{ cursor: isDraggable ? "grab" : undefined }}
+      {...attrs}
     >
       {grip && (
         <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" aria-hidden="true" />

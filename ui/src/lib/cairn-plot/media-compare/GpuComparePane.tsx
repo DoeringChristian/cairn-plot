@@ -1866,8 +1866,12 @@ export default function GpuComparePane({
               draggable): REFERENCE bottom-left, FOREGROUND bottom-right in slide/
               blend, or the single "<metric> · <fg> compared to <ref>" caption
               bottom-left in diff. Routed through the shared LabelChip. */}
-          {leftCaption ? <LabelChip label={leftCaption} corner="bottom-left" /> : null}
-          {rightCaption ? <LabelChip label={rightCaption} corner="bottom-right" /> : null}
+          {leftCaption ? (
+            <LabelChip label={leftCaption} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+          ) : null}
+          {rightCaption ? (
+            <LabelChip label={rightCaption} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
+          ) : null}
           {metrics && (
             <span
               // §requirement C: the diff metrics live in the LOWER-RIGHT corner.

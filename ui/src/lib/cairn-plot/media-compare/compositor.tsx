@@ -438,7 +438,9 @@ export function MediaComparePane({
         const rightLabel = caps.right ?? (label || undefined);
         return (
           <>
-            {caps.left && <LabelChip label={caps.left} corner="bottom-left" />}
+            {caps.left && (
+              <LabelChip label={caps.left} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+            )}
             {rightLabel && (
               <LabelChip
                 label={rightLabel}
@@ -446,6 +448,7 @@ export function MediaComparePane({
                 isDraggable={isDraggable && !modifierActive}
                 grip
                 onDragStart={onDragStart}
+                attrs={{ "data-cairn-compare-caption": "foreground" }}
               />
             )}
           </>

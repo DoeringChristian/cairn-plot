@@ -158,14 +158,26 @@ async function openListbox(btn: HTMLButtonElement): Promise<HTMLUListElement | n
 function normColor(c: string): string {
   return c.replace(/\s+/g, " ").trim();
 }
-/** Re-pick a stage cell's reference via its DEDICATED "Set ref" button. A plain
- *  cell click no longer re-picks (it would hijack double-click-to-reset); the
- *  button is the only re-pick affordance. Returns false if the cell has none
- *  (i.e. it is already the reference). */
-function repickViaSetRefButton(cell: HTMLElement): boolean {
-  const btn = cell.querySelector<HTMLButtonElement>("[data-cairn-stage-set-ref]");
-  if (!btn) return false;
-  btn.click();
+/** COMPARE-mode re-pick: a stationary click on the pane's bottom-right
+ *  FOREGROUND caption chip (the label naming the compared image). A plain cell
+ *  click no longer re-picks there (it would hijack the compare pane's
+ *  double-click-to-reset); the chip is the only affordance. Returns false if
+ *  the cell has no foreground chip. */
+function repickViaForegroundChip(cell: HTMLElement): boolean {
+  const chip = cell.querySelector<HTMLElement>('[data-cairn-compare-caption="foreground"]');
+  if (!chip) return false;
+  const r = chip.getBoundingClientRect();
+  const opts = {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    pointerType: "mouse",
+    button: 0,
+    clientX: Math.round(r.left + r.width / 2),
+    clientY: Math.round(r.top + r.height / 2),
+  };
+  chip.dispatchEvent(new PointerEvent("pointerdown", opts));
+  chip.dispatchEvent(new PointerEvent("pointerup", opts));
   return true;
 }
 /** A stationary plain click on the cell background (NOT the button) — used to
@@ -578,10 +590,10 @@ async function run(): Promise<boolean> {
     ok = ok && plainNoop && cellNotPointer;
   }
   const newRefId = stageCells()[0].getAttribute("data-stage-repr-pane")!;
-  const pickedCompare = repickViaSetRefButton(stageCells()[0]);
-  report(pickedCompare, "the first comparison cell has a 'Set ref' button");
+  const pickedCompare = repickViaForegroundChip(stageCells()[0]);
+  report(pickedCompare, "the first comparison cell has a clickable FOREGROUND caption chip");
   const refChanged = await waitFor(() => store.reference() === newRefId);
-  report(refChanged, `clicking the 'Set ref' button re-designates the reference (now ${store.reference()})`);
+  report(refChanged, `clicking the foreground chip re-designates the reference (now ${store.reference()})`);
   const rebuilt = await waitFor(() => {
     const now = stageCells().map((c) => c.getAttribute("data-stage-repr-pane"));
     // The new reference is no longer a comparison cell; the old reference now is.
