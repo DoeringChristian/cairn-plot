@@ -241,10 +241,13 @@ function buildCompareCells(
 // Stage cell — a fresh leaf + the REF badge / re-pick affordance.
 // ---------------------------------------------------------------------------
 
+const REPICK_SLOP_PX = 5;
+
 function StageCell({
   spec,
   rect,
   fill,
+  clickPicksRef,
   onPickReference,
   viewportSyncGroupId,
   settingsSyncGroupId,
@@ -258,8 +261,13 @@ function StageCell({
   /** STACKED stage: fill the (single-visible) stacked pane box instead of the
    *  absolute packed rect. */
   fill?: boolean;
-  /** Re-designate THIS cell as the reference — fired ONLY by the dedicated
-   *  "Set ref" button (never a plain cell click). */
+  /** ENLARGE mode: a plain stationary click on the cell re-picks the reference
+   *  (the cells are plain images — no gesture to collide with). COMPARE mode:
+   *  false — compare panes own double-click-to-reset, so a cell click would
+   *  hijack the first click of a double-click; re-pick is ONLY the dedicated
+   *  "Set ref" button there. */
+  clickPicksRef: boolean;
+  /** Re-designate THIS cell as the reference. */
   onPickReference: () => void;
   /** Shared VIEWPORT-sync group so zoom/pan on ONE cell broadcasts to every cell
    *  in the stage — the same mechanism the page-wide selection uses (via
@@ -273,10 +281,26 @@ function StageCell({
   /** The single anchor cell seeds the group's snapshot. */
   isAnchor: boolean;
 }) {
-  // NOTE: a plain click NO LONGER sets the reference — that collided with the
-  // double-click-to-reset gesture (the first click of a double-click would
-  // re-pick the reference, which was confusing). The reference is chosen in the
-  // page-wide selection before the stage opens; the REF badge just shows it.
+  // ENLARGE-only whole-cell click-to-pick (stationary press, never a control
+  // press, never a drag). Compare mode skips this entirely (see `clickPicksRef`).
+  const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
+  const cellClickEnabled = clickPicksRef && !spec.isReference;
+  const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
+    const onControl = !!(e.target as Element | null)?.closest?.(
+      'button, input, select, textarea, a, [role="menu"], [role="menuitem"], [contenteditable="true"]',
+    );
+    downRef.current = { x: e.clientX, y: e.clientY, onControl };
+  }, []);
+  const onPointerUpCapture = useCallback(
+    (e: React.PointerEvent) => {
+      const d = downRef.current;
+      downRef.current = null;
+      if (!d || d.onControl) return;
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > REPICK_SLOP_PX) return;
+      onPickReference();
+    },
+    [onPickReference],
+  );
 
   // The cell is ABSOLUTELY positioned at its packed rect (content-aspect, centred
   // cluster) — not a stretch-to-fill grid track — so N panes cluster densely in
@@ -335,12 +359,17 @@ function StageCell({
     [setCellAspect],
   );
 
+  if (cellClickEnabled) style.cursor = "pointer";
+
   return (
     <div
       style={style}
+      title={cellClickEnabled ? "Click to set as the reference" : undefined}
       data-cairn-stage-cell=""
       data-cairn-stage-ref={spec.isReference ? "true" : "false"}
       data-stage-repr-pane={spec.reprPaneId}
+      onPointerDownCapture={cellClickEnabled ? onPointerDownCapture : undefined}
+      onPointerUpCapture={cellClickEnabled ? onPointerUpCapture : undefined}
     >
       <div style={{ position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <ReportNaturalSizeContext.Provider value={reportAspect}>
@@ -378,21 +407,26 @@ function StageCell({
         </span>
       )}
 
-      {/* A DEDICATED "set as reference" button on non-reference cells. Plain
-          clicks on the cell no longer re-pick (they'd hijack double-click-to-
-          reset) — this tiny corner button is the only re-pick affordance, and
-          being a real <button> it's excluded from the pane's pan/zoom/reset. */}
-      {!spec.isReference && (
+      {/* COMPARE-mode re-pick: a DEDICATED "set as reference" button. A plain
+          cell click can't re-pick here — compare panes own double-click-to-reset,
+          so the first click of a double-click would hijack it. Positioned top-
+          CENTER: in split mode the LEFT half is the reference image, so a left-
+          corner button would read as pointing at the reference side; centred it
+          reads as acting on the WHOLE comparison ("make this pane's image the
+          reference"). Top-right is the pane toolbar; the bottom edge holds the
+          captions + metrics. */}
+      {!clickPicksRef && !spec.isReference && (
         <button
           type="button"
           data-cairn-stage-set-ref=""
-          title="Set as the reference"
+          title="Set this comparison's image as the reference"
           onClick={onPickReference}
           className="cairn-plot-doc"
           style={{
             position: "absolute",
             top: 6,
-            left: 6,
+            left: "50%",
+            transform: "translateX(-50%)",
             zIndex: 3,
             padding: "2px 8px",
             borderRadius: 9999,
@@ -568,6 +602,7 @@ function SelectionStage({
                       spec={cells[stackActiveClamped]!}
                       rect={undefined}
                       fill
+                      clickPicksRef={mode === "enlarge"}
                       onPickReference={() => store.setReference(cells[stackActiveClamped]!.reprPaneId)}
                       viewportSyncGroupId={viewportSyncGroupId}
                       settingsSyncGroupId={settingsSyncGroupId}
@@ -581,6 +616,7 @@ function SelectionStage({
                     key={spec.key}
                     spec={spec}
                     rect={pack.rects[i]}
+                    clickPicksRef={mode === "enlarge"}
                     onPickReference={() => store.setReference(spec.reprPaneId)}
                     viewportSyncGroupId={viewportSyncGroupId}
                     settingsSyncGroupId={settingsSyncGroupId}

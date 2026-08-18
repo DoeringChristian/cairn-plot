@@ -393,22 +393,17 @@ async function run(): Promise<boolean> {
     ok = ok && squareCells && framesFillCells && clustered && smallGap && ringOnCell;
   }
 
-  // === Re-pick is a DEDICATED button, not the whole cell (a plain cell click
-  // would hijack double-click-to-reset). Non-ref cells have a "Set ref" button;
-  // the cell itself is NOT a pointer target. ==
+  // === ENLARGE re-pick affordance — the WHOLE non-reference cell is the click
+  // target (plain image cells: no gesture to collide with), cursor:pointer, and
+  // NO "Set ref" button (that button is compare-mode-only, where a cell click
+  // would hijack the compare pane's double-click-to-reset). ==
   {
     const nonRef = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
-    const hasButton = !!nonRef.querySelector("[data-cairn-stage-set-ref]");
-    report(hasButton, "non-reference cells have a dedicated 'Set ref' button");
-    const notWholeCellTarget = getComputedStyle(nonRef).cursor !== "pointer";
-    report(notWholeCellTarget, `the cell itself is NOT a click-to-set-ref target (cursor: ${getComputedStyle(nonRef).cursor})`);
-    // A plain click on the cell background must NOT change the reference.
-    const refBeforePlain = bd2RefRepr();
-    plainCellClick(nonRef);
-    await sleep(120);
-    const refUnchanged = bd2RefRepr() === refBeforePlain;
-    report(refUnchanged, `a plain cell click does NOT change the reference (${refBeforePlain} → ${bd2RefRepr()})`);
-    ok = ok && hasButton && notWholeCellTarget && refUnchanged;
+    const noButton = !nonRef.querySelector("[data-cairn-stage-set-ref]");
+    report(noButton, "ENLARGE cells have NO 'Set ref' button (whole-cell click instead)");
+    const clickable = getComputedStyle(nonRef).cursor === "pointer";
+    report(clickable, `the non-reference enlarge cell is the click target (cursor: ${getComputedStyle(nonRef).cursor})`);
+    ok = ok && noButton && clickable;
   }
 
   // === MODE TOGGLE — the in-stage segmented control switches the LIVE stage
@@ -568,7 +563,20 @@ async function run(): Promise<boolean> {
   ok = ok && twoComparisons && !!modeIsCompare && noRefInCells && noStageChip && compHasSurface;
 
   // --- 4. Re-pick the reference IN the grid → comparisons rebuild ------------
+  // COMPARE mode: a PLAIN cell click must NOT re-pick (compare panes own
+  // double-click-to-reset — the first click of a double-click would hijack it);
+  // re-pick is ONLY the dedicated "Set ref" button.
   const reprBefore = new Set(reprPanes);
+  {
+    const refBeforePlain = store.reference();
+    plainCellClick(stageCells()[0]);
+    await sleep(120);
+    const plainNoop = store.reference() === refBeforePlain;
+    report(plainNoop, `COMPARE: a plain cell click does NOT change the reference (${refBeforePlain} → ${store.reference()})`);
+    const cellNotPointer = getComputedStyle(stageCells()[0]).cursor !== "pointer";
+    report(cellNotPointer, `COMPARE: the cell is not a click-to-set-ref target (cursor: ${getComputedStyle(stageCells()[0]).cursor})`);
+    ok = ok && plainNoop && cellNotPointer;
+  }
   const newRefId = stageCells()[0].getAttribute("data-stage-repr-pane")!;
   const pickedCompare = repickViaSetRefButton(stageCells()[0]);
   report(pickedCompare, "the first comparison cell has a 'Set ref' button");
@@ -669,7 +677,7 @@ async function run(): Promise<boolean> {
     const refBefore = bd2RefRepr();
     const nonRefCell = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
     const newRef = nonRefCell.getAttribute("data-stage-repr-pane")!;
-    repickViaSetRefButton(nonRefCell);
+    plainCellClick(nonRefCell); // ENLARGE: the whole cell is the re-pick target
     const badgeMoved = await waitFor(() => bd2RefRepr() === newRef && store.reference() === newRef, 3000);
     report(badgeMoved, `enlarge re-pick moved the reference badge live (${refBefore} → ${bd2RefRepr()})`);
     // The newly-referenced cell now rings orange.
