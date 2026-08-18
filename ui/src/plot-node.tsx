@@ -923,29 +923,57 @@ function GridView({ node }: { node: GridNode }) {
   // compare child routes its slide-flip to the dedicated `[`/`]` keys (arrows
   // drive the tabs). Content-aspect capped at one page tall like a 1-cell grid;
   // `fill` (the stage) takes 100%.
+  //
+  // The viewport BOX is LATCHED for the life of stacked mode: with only the
+  // ACTIVE slot mounted, it is the grid's ONLY aspect reporter, so the live
+  // "representative" aspect would just track whichever image is active — the
+  // canvas would RESIZE on every flip (and the shared zoom would read
+  // differently against each box). One viewport = ONE fixed surface: freeze the
+  // first established aspect and let a differently-shaped slot letterbox WITHIN
+  // it. Normal mode clears the latch (the live median over all cells is correct
+  // there); re-entering stacked re-latches the then-current representative.
+  const stackAspectRef = useRef<number | null>(null);
+  if (effectiveMode === "stacked") {
+    if (stackAspectRef.current == null && gridAspectApi.uniformAspect != null) {
+      stackAspectRef.current = gridAspectApi.uniformAspect;
+    }
+  } else {
+    stackAspectRef.current = null;
+  }
+  const stackAspect = stackAspectRef.current ?? gridAspectApi.uniformAspect;
+  // The frozen context the stacked subtree sizes against: same reporter (the
+  // active slot still reports, establishing the latch on first mount), but a
+  // LATCHED `uniformAspect` so the cell's `aspect-ratio` box never follows a
+  // flip.
+  const stackedAspectApi = useMemo<typeof gridAspectApi>(
+    () => ({ ...gridAspectApi, uniformAspect: stackAspect }),
+    [gridAspectApi, stackAspect],
+  );
   const stackedViewStyle: React.CSSProperties = fill
     ? { width: "100%", height: "100%" }
-    : gridAspectApi.uniformAspect != null && gridAspectApi.uniformAspect > 0
+    : stackAspect != null && stackAspect > 0
       ? {
-          maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${gridAspectApi.uniformAspect})`,
+          maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${stackAspect})`,
           marginInline: "auto",
         }
       : {};
   const activeChild = children[clampedActive];
   const stackedPane = activeChild ? (
     <InStackedGridContext.Provider value={true}>
-      <div
-        data-cairn-stacked-view=""
-        data-cairn-stack-active={clampedActive}
-        style={{ minWidth: 0, minHeight: 0, ...(fill ? { height: "100%" } : null), ...stackedViewStyle }}
-      >
+      <GridUniformAspectContext.Provider value={stackedAspectApi}>
         <div
-          data-cairn-stacked-pane="active"
-          style={{ minWidth: 0, ...(fill ? { height: "100%" } : null) }}
+          data-cairn-stacked-view=""
+          data-cairn-stack-active={clampedActive}
+          style={{ minWidth: 0, minHeight: 0, ...(fill ? { height: "100%" } : null), ...stackedViewStyle }}
         >
-          <PlotNodeView node={activeChild} />
+          <div
+            data-cairn-stacked-pane="active"
+            style={{ minWidth: 0, ...(fill ? { height: "100%" } : null) }}
+          >
+            <PlotNodeView node={activeChild} />
+          </div>
         </div>
-      </div>
+      </GridUniformAspectContext.Provider>
     </InStackedGridContext.Provider>
   ) : null;
   // Keyboard tab-flip attaches to the WHOLE grid area (header + pane) so keys

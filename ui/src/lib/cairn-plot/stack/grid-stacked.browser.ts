@@ -53,9 +53,24 @@ function floatLeaf(w: number, h: number, label: string): unknown {
   };
 }
 function stackedGrid(labels: string[], mode: "normal" | "stacked"): PlotDescriptor {
+  // DELIBERATELY different sizes/aspects per child: the stacked viewport BOX is
+  // latched (one fixed surface; a differently-shaped slot letterboxes within
+  // it), and the box-stability assertions below depend on the children actually
+  // differing — identical children would pass even without the latch.
+  const dims: Array<[number, number]> = [
+    [96, 96],
+    [48, 192],
+    [144, 48],
+  ];
   return {
     mode: "local",
-    root: { kind: "grid", cols: labels.length, gap: 8, mode, children: labels.map((l) => floatLeaf(96, 96, l)) },
+    root: {
+      kind: "grid",
+      cols: labels.length,
+      gap: 8,
+      mode,
+      children: labels.map((l, i) => floatLeaf(...(dims[i % dims.length] as [number, number]), l)),
+    },
   } as unknown as PlotDescriptor;
 }
 
@@ -120,6 +135,71 @@ async function run(): Promise<boolean> {
   ok =
     ok &&
     activePaneIndex("m1") === 2;
+
+  // ── VIEWPORT-BOX LATCH: one FIXED surface across flips ────────────────────
+  // The children have DIFFERENT aspects (1:1, 1:4, 3:1). Without the latch the
+  // stacked box tracked the ACTIVE slot's aspect (its only reporter) and the
+  // canvas RESIZED on every flip — the reported "canvas size changes per
+  // viewport". The box must stay identical on every tab.
+  const viewBox = (): string => {
+    const v = q("m1", "[data-cairn-stacked-view]")!.getBoundingClientRect();
+    return `${Math.round(v.width)}x${Math.round(v.height)}`;
+  };
+  key("1");
+  await waitFor(() => activePaneIndex("m1") === 0);
+  await sleep(100);
+  const box0 = viewBox();
+  key("2");
+  await waitFor(() => activePaneIndex("m1") === 1);
+  await sleep(100);
+  const box1 = viewBox();
+  key("3");
+  await waitFor(() => activePaneIndex("m1") === 2);
+  await sleep(100);
+  const box2 = viewBox();
+  const boxStable = box0 === box1 && box1 === box2;
+  report(boxStable, `stacked viewport BOX is latched across flips of differently-shaped slots (${box0} | ${box1} | ${box2})`);
+  ok = ok && boxStable;
+
+  // ── ZOOM PERSISTENCE: the shared camera survives a flip ───────────────────
+  // Wheel-zoom the (CPU) pane — its zoom renders as an inline `scale(...)`
+  // transform — then flip and assert the SAME transform still applies (one
+  // reused renderer instance ⇒ one camera, shared by construction).
+  const zoomTransforms = (): string[] =>
+    qa("m1", "*")
+      .filter((n) => n.style?.transform && /scale\(/.test(n.style.transform))
+      .map((n) => n.style.transform);
+  const surface = q("m1", "[data-cairn-stacked-pane] canvas") ?? q("m1", "[data-cairn-stacked-pane] img");
+  if (surface) {
+    const r = surface.getBoundingClientRect();
+    for (let i = 0; i < 4; i++) {
+      surface.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+          deltaY: -120,
+          ctrlKey: true, // wheel zoom is modifier-gated (ctrl = pinch signature)
+        }),
+      );
+      await sleep(30);
+    }
+    await sleep(150);
+    const zoomed = zoomTransforms();
+    const zoomApplied = zoomed.length > 0 && zoomed.some((t) => !/scale\(1\)/.test(t));
+    report(zoomApplied, `wheel-zoom applied on the stacked pane (transforms: ${JSON.stringify(zoomed)})`);
+    key("1"); // flip to tab 0
+    await waitFor(() => activePaneIndex("m1") === 0);
+    await sleep(150);
+    const afterFlip = zoomTransforms();
+    const zoomPersisted = JSON.stringify(afterFlip) === JSON.stringify(zoomed);
+    report(zoomPersisted, `the zoom PERSISTS across the flip (before ${JSON.stringify(zoomed)} → after ${JSON.stringify(afterFlip)})`);
+    ok = ok && zoomApplied && zoomPersisted;
+  } else {
+    report(false, "no pane surface found for the zoom-persistence check");
+    ok = false;
+  }
 
   // ── The live toggle: a NORMAL grid has the button; click → stacked ────────
   const rootB = createRoot(host("m2"));

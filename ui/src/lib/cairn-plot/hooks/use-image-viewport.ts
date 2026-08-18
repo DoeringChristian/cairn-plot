@@ -346,18 +346,23 @@ export function useReframeViewportOnResize(args: {
   const latest = useRef({ zoom, pan, onViewportChange, naturalWidth, naturalHeight });
   latest.current = { zoom, pan, onViewportChange, naturalWidth, naturalHeight };
   const lastBoxRef = useRef<{ width: number; height: number } | null>(null);
+  // The natural dims the current baseline box belongs to — see the SOURCE-SWAP
+  // gate below.
+  const lastDimsRef = useRef<{ nw?: number; nh?: number } | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const seed = el.getBoundingClientRect();
     lastBoxRef.current = { width: seed.width, height: seed.height };
+    lastDimsRef.current = { nw: latest.current.naturalWidth, nh: latest.current.naturalHeight };
     const ro = new ResizeObserver(() => {
       const rect = el.getBoundingClientRect();
       const newBox = { width: rect.width, height: rect.height };
       const oldBox = lastBoxRef.current;
       if (!oldBox) {
         lastBoxRef.current = newBox;
+        lastDimsRef.current = { nw: latest.current.naturalWidth, nh: latest.current.naturalHeight };
         return;
       }
       // Ignore sub-pixel jitter (RO fires on fractional layout churn).
@@ -366,6 +371,26 @@ export function useReframeViewportOnResize(args: {
       }
       lastBoxRef.current = newBox;
       const { onViewportChange: cb, zoom: z, pan: p, naturalWidth: nw, naturalHeight: nh } = latest.current;
+      // SOURCE-SWAP gate: this reframe exists for "SAME image, container
+      // resized" (keep the centered texel + its on-screen size). When the
+      // natural dims changed along with the box — a stacked viewport flipping
+      // to a differently-shaped SLOT, or a step-scrub to a new resolution —
+      // it is a DIFFERENT image: the shared camera must stay put (one viewport,
+      // one camera), so just re-seed the baseline and do NOT rewrite zoom/pan.
+      // Only a DEFINED → different-DEFINED transition counts as a swap: an
+      // `undefined → defined` change is the SAME image finishing its decode
+      // (dims were simply unknown at seed time) and must still reframe — e.g.
+      // the enlarge enter/exit resize right after first load.
+      const lastDims = lastDimsRef.current;
+      const dimsChanged =
+        !!lastDims &&
+        lastDims.nw != null &&
+        lastDims.nh != null &&
+        nw != null &&
+        nh != null &&
+        (lastDims.nw !== nw || lastDims.nh !== nh);
+      lastDimsRef.current = { nw, nh };
+      if (dimsChanged) return;
       if (!cb) return;
       const next = reframeViewportForResize({ zoom: z, pan: p }, oldBox, newBox, nw, nh);
       if (next.zoom !== z || next.pan.x !== p.x || next.pan.y !== p.y) cb(next);
