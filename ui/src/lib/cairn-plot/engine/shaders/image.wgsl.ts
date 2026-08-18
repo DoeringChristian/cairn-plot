@@ -159,6 +159,8 @@
  * the linear path (`sampleLutLinearF`) — both need only `textureLoad`'s
  * exact-texel semantics, no filterable-float sampler.
  */
+import { buildTonemapCurvesWGSL } from "../../image/encodings/index.ts";
+
 export const imageWGSL = `
 struct VSOut {
   @builtin(position) position: vec4<f32>,
@@ -265,54 +267,6 @@ fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
   return extendedSrgbOetf(x);
 }
 
-fn reinhardCurve(x: f32) -> f32 {
-  let v = max(x, 0.0);
-  return v / (1.0 + v);
-}
-
-fn acesCurve(x: f32) -> f32 {
-  let v = max(x, 0.0);
-  let num = v * (2.51 * v + 0.03);
-  let den = v * (2.43 * v + 0.59) + 0.14;
-  return clamp(num / den, 0.0, 1.0);
-}
-
-// --- HDR-out roll-off operators (peak-parameterized) — ported verbatim from
-// image/tonemap.ts's extendedReinhardCurve / extendedAcesCurve. ---
-
-// Extended Reinhard with display peak P: y = x/(1 + x/P) — identity slope at
-// 0, asymptote P. Mirrors image/tonemap.ts's extendedReinhardCurve exactly
-// (see its doc for why the SDR white-point form x*(1+x/P^2)/(1+x) is wrong
-// for extended output: it targets x=P -> 1 and darkens the midrange).
-fn extendedReinhardCurve(x: f32, peak: f32) -> f32 {
-  let v = max(x, 0.0);
-  let p = max(peak, 1e-6);
-  return v / (1.0 + v / p);
-}
-
-// ACES fit peak-parameterized as the CANONICAL curve scaled to P: y = P*aces(x/P).
-// Mirrors image/tonemap.ts's extendedAcesCurve EXACTLY. INVARIANT: at P=1 this
-// is 1*aces(x/1) = aces(x) — the SDR ACES operator exactly, so the only
-// difference between SDR and extended ACES is the peak P (parity-tested). Keeps
-// y→P as x→∞ and monotone. (Replaces the earlier P*aces(x*S/P), S=0.14/0.03,
-// which normalized the low-x slope to 1 but broke the P=1 equivalence.)
-fn extendedAcesCurve(x: f32, peak: f32) -> f32 {
-  let v = max(x, 0.0);
-  let p = max(peak, 1e-6);
-  return p * acesCurve(v / p);
-}
-
-// Extended · Linear (MANAGED) with display peak P: y = min(max(x,0), P) —
-// identity below P, hard ceiling at P. Mirrors image/tonemap.ts's
-// extendedClampCurve exactly. This is the cross-browser-deterministic sibling of
-// operator 4 (extended / raw Linear): 4 hands raw values to the compositor which
-// clips at its own headroom estimate; this clips in-shader at the shared P.
-fn extendedClampCurve(x: f32, peak: f32) -> f32 {
-  let v = max(x, 0.0);
-  let p = max(peak, 1e-6);
-  return min(v, p);
-}
-
 // Manual bilinear blend of the 4 texels surrounding 'uv' (source-space
 // [0,1]) — see module doc comment's "Source filtering" section for why this
 // is hand-rolled instead of a real Sampler+textureSample. 'uv' is assumed
@@ -373,44 +327,16 @@ fn sampleLutLinearF(valueUnit: f32) -> vec3<f32> {
   return mix(c0, c1, frac);
 }
 
-// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (Extended·Linear),
-// 5=extended-reinhard, 6=extended-aces, 7=extended-clamp (Extended·Linear
-// managed), 8=gamma (matches OPERATOR_ID in image-engine.ts / TONEMAP_OPERATORS +
-// the extended curves in image/tonemap.ts). linear/srgb/gamma are the SAME clamp
-// (the RANGE-MAP) — the display transfer (sRGB OETF, identity, or the gamma power
-// curve) lives in outputEncodeF, selected by the gamma uniform the renderer
-// packs per operator (see image/tonemap.ts's resolveEncodeGamma). 4 (extended) is a pure identity —
-// no compression, no clamp — deliberately preserving values above 1.0 for a real
-// HDR (hdrOut) target. 5/6 are the peak-parameterized HDR roll-off operators;
-// 7 is the peak-parameterized HARD clamp (managed linear) — all three read
-// the peak uniform (see image/tonemap.ts's doc comments).
-fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
-  if (operatorId == 2) {
-    return vec3<f32>(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z));
-  }
-  if (operatorId == 3) {
-    return vec3<f32>(acesCurve(rgb.x), acesCurve(rgb.y), acesCurve(rgb.z));
-  }
-  if (operatorId == 4) {
-    return rgb;
-  }
-  if (operatorId == 5) {
-    return vec3<f32>(extendedReinhardCurve(rgb.x, peak), extendedReinhardCurve(rgb.y, peak), extendedReinhardCurve(rgb.z, peak));
-  }
-  if (operatorId == 6) {
-    return vec3<f32>(extendedAcesCurve(rgb.x, peak), extendedAcesCurve(rgb.y, peak), extendedAcesCurve(rgb.z, peak));
-  }
-  if (operatorId == 7) {
-    return vec3<f32>(extendedClampCurve(rgb.x, peak), extendedClampCurve(rgb.y, peak), extendedClampCurve(rgb.z, peak));
-  }
-  if (operatorId == 9) {
-    // normal map: remap [-1,1] -> [0,1] per channel (ports tonemap.ts's normal
-    // operator). Output-encode is identity (gamma=1) so it shows raw.
-    return clamp((rgb + vec3<f32>(1.0)) * 0.5, vec3<f32>(0.0), vec3<f32>(1.0));
-  }
-  // 0 (linear) and 1 (srgb), and any unrecognized id, fall back to the clamp.
-  return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-}
+// The curve helper fns (reinhardCurve/acesCurve/extended*Curve) + the
+// operatorId-dispatched applyOperator are ASSEMBLED from the display-encoding
+// registry (image/encodings) — the single source of truth shared with the CPU
+// twins (image/tonemap.ts) and the compose path (kernels/prelude.wgsl.ts). Ids:
+// 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended, 5=extended-reinhard,
+// 6=extended-aces, 7=extended-clamp, 8=gamma, 9=normal (remaps:true → the
+// single-image path includes the normal remap; compose passes remaps:false).
+// linear/srgb/gamma are the default clamp (no explicit branch); the display
+// transfer lives in outputEncodeF, selected per operator by the gamma uniform.
+${buildTonemapCurvesWGSL({ remaps: true })}
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {

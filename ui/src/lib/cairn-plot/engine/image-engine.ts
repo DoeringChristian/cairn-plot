@@ -37,6 +37,10 @@ import { imageWGSL } from "./shaders/image.wgsl";
 import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl";
 import { computeCompareMapping, type CompareMapping } from "./compare-align";
 import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../image/tonemap";
+// The operatorId uniform values are GENERATED from the display-encoding registry
+// (image/encodings) — the SAME source the shader's assembled `applyOperator`
+// dispatch keys on, so the CPU packing here and the GPU dispatch can never drift.
+import { OPERATOR_ID } from "../image/encodings/index.ts";
 
 export type ImageOperator =
   | "linear"
@@ -101,27 +105,6 @@ export interface ImageParams {
    */
   filter?: "nearest" | "linear";
 }
-
-/** Matches TONEMAP_OPERATORS' key order in image/tonemap.ts — see image.wgsl.ts's doc comment.
- *  Ids 5/6/7 are the peak-parameterized extended operators (roll-off pair + the
- *  managed hard-clamp `extended-clamp`). */
-const OPERATOR_ID: Record<ImageOperator, number> = {
-  linear: 0,
-  srgb: 1,
-  reinhard: 2,
-  aces: 3,
-  extended: 4,
-  "extended-reinhard": 5,
-  "extended-aces": 6,
-  "extended-clamp": 7,
-  // 8 = gamma: the RANGE-MAP is the same clamp as linear/srgb (the shader's
-  // applyOperator falls through to clamp for id 8); the γ power curve is applied
-  // at the output-encode stage via the `gamma` param (resolveEncodeGamma).
-  gamma: 8,
-  // 9 = normal: remap [-1,1] → [0,1] per channel (inspect normal maps); the
-  // output-encode is identity (γ=1, like linear) so the value shows raw.
-  normal: 9,
-};
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
 const pipelineCache = new WeakMap<Device, Map<TextureFormat, RenderPipeline>>();

@@ -20,6 +20,8 @@
  *     passed as uniforms), so no filter-coefficient buffer plumbing is needed.
  */
 
+import { buildTonemapCurvesWGSL } from "../../image/encodings/index.ts";
+
 export const VERTEX_WGSL = `
 struct VSOut {
   @builtin(position) position: vec4<f32>,
@@ -161,34 +163,14 @@ fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
   return extendedSrgbOetf(x);
 }
 
-fn reinhardCurve(x: f32) -> f32 { let v = max(x, 0.0); return v / (1.0 + v); }
-fn acesCurve(x: f32) -> f32 {
-  let v = max(x, 0.0);
-  let num = v * (2.51 * v + 0.03);
-  let den = v * (2.43 * v + 0.59) + 0.14;
-  return clamp(num / den, 0.0, 1.0);
-}
-
-// Peak-parameterized extended operators (ids 5/6/7) — mirror image.wgsl.ts
-// exactly: Reinhard rescaled to asymptote P, ACES canonical-scaled to P, and the
-// managed hard clamp at P.
-fn extendedReinhardCurve(x: f32, peak: f32) -> f32 { let v = max(x, 0.0); let p = max(peak, 1e-6); return v / (1.0 + v / p); }
-fn extendedAcesCurve(x: f32, peak: f32) -> f32 { let v = max(x, 0.0); let p = max(peak, 1e-6); return p * acesCurve(v / p); }
-fn extendedClampCurve(x: f32, peak: f32) -> f32 { let v = max(x, 0.0); let p = max(peak, 1e-6); return min(v, p); }
-
-// operatorId: 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended (pure identity),
-// 5=extended-reinhard, 6=extended-aces, 7=extended-clamp, 8=gamma (clamp; γ in
-// the encode). Ids 5/6/7 read the peak uniform. Matches image.wgsl.ts's
-// applyOperator + OPERATOR_ID in image-engine.ts.
-fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
-  if (operatorId == 2) { return vec3<f32>(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z)); }
-  if (operatorId == 3) { return vec3<f32>(acesCurve(rgb.x), acesCurve(rgb.y), acesCurve(rgb.z)); }
-  if (operatorId == 4) { return rgb; }
-  if (operatorId == 5) { return vec3<f32>(extendedReinhardCurve(rgb.x, peak), extendedReinhardCurve(rgb.y, peak), extendedReinhardCurve(rgb.z, peak)); }
-  if (operatorId == 6) { return vec3<f32>(extendedAcesCurve(rgb.x, peak), extendedAcesCurve(rgb.y, peak), extendedAcesCurve(rgb.z, peak)); }
-  if (operatorId == 7) { return vec3<f32>(extendedClampCurve(rgb.x, peak), extendedClampCurve(rgb.y, peak), extendedClampCurve(rgb.z, peak)); }
-  return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-}
+// The curve helper fns + operatorId-dispatched applyOperator are ASSEMBLED from
+// the display-encoding registry (image/encodings) — the SAME source the
+// single-image shader (image.wgsl.ts) and the CPU twins (image/tonemap.ts) use,
+// so the compose path tone-maps byte-identically. remaps:false reproduces the
+// pre-registry compose behavior exactly: operatorId 9 (normal) has NO branch
+// here and falls through to the default clamp (the normal remap is a
+// single-image-only path). Ids 5/6/7 read the peak uniform.
+${buildTonemapCurvesWGSL({ remaps: false })}
 
 // Per-side [sRGB-DECODE] -> exposure+offset -> [scalar LUT] -> operator(peak) ->
 // encode. srgbDecode LINEARIZES a u8 side first (a float side passes it 0). The

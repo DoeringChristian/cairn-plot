@@ -108,3 +108,19 @@ the existing architecture rather than questioning it. The unification became
 visible only when the channel selector made "what do the selected channels
 become" a first-class question. Lesson: periodic structure-level review, not
 only diff-level.
+
+## Phase 1 — DONE (commit 77446c8)
+
+The `DisplayEncoding` registry landed under `ui/src/lib/cairn-plot/image/encodings/`
+(core-safe, mirroring `engine/kernels`): the 10 curve/remap operators carry their
+`cpu` twin + a WGSL curve expression + `operatorId` on one object; `image.wgsl.ts`,
+`prelude.wgsl.ts` (compose) and `image-engine.ts`'s `OPERATOR_ID` are all now
+ASSEMBLED/generated from it, and `image/tonemap.ts` keeps every export but
+delegates the curve math to the registry. Behaviour-identical — pinned by
+`tonemap.test.ts`, the new node `registry.test.ts` (shape) + the new WebGPU
+`encoding-registry.browser.ts` parity harness (GPU applyOperator === cpu twin),
+and unchanged results across all pre-existing engine parity harnesses.
+Scope choices: registry `wgsl` is the operator CURVE only (exposure/output-encode
+stay shared stages, per the phased plan); `params` are declared per-encoding
+(UI-gating metadata, not yet wired); compose keeps `remaps:false` so the `normal`
+remap stays single-image-only (exactly as before). No UI/schema/Python changes.
