@@ -58,6 +58,10 @@ export interface ImageSyncSettings {
   splitPosition?: number;
   /** Blend-mode alpha in [0,1]. */
   blendAlpha?: number;
+  /** EXR channel-strip selection ({part, layer} or null = the node default) —
+   *  applied by image LEAVES (LeafView), ignored by compare panes. Synced BY
+   *  NAME so a group flips every pane to the same part/layer. */
+  channelSelect?: { part?: number | string; layer?: string } | null;
 }
 
 interface SettingsStateDetail {

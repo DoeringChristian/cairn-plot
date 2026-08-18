@@ -32,6 +32,34 @@ import {
   type DataSource,
 } from "./lib/cairn-plot";
 import { fetchImageBytes } from "./lib/cairn-plot/fetch-image";
+import { describeExr } from "./lib/cairn-plot/image/decoders/exr-describe";
+import { groupChannels, type ChannelGroup } from "./lib/cairn-plot/image/channel-groups";
+
+/** The parts × channel-groups tree of an EXR source, attached to a resolved
+ *  image leaf's props (`exrTree`) so the pane can render the CHANNEL STRIP
+ *  (tev-style, below the viewport) and drive re-decodes. `null`-ish for
+ *  non-EXR sources. */
+export interface ExrTree {
+  parts: Array<{ name: string; index: number; deep: boolean; groups: ChannelGroup[] }>;
+}
+
+/** Header-only describe → strip tree; `null` when `bytes` isn't an EXR (bad
+ *  magic) — callers attach the tree opportunistically, never fail the decode. */
+function tryExrTree(bytes: ArrayBuffer): ExrTree | null {
+  try {
+    const d = describeExr(bytes);
+    return {
+      parts: d.parts.map((p) => ({
+        name: p.name,
+        index: p.index,
+        deep: p.deep,
+        groups: groupChannels(p.channels),
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * How the renderer's DATA props are produced.
@@ -245,7 +273,14 @@ export async function resolveDataProps(
           { deepLiveFlatten: true, select: { part: data.part, layer: data.layer } },
         );
         const overlay = parseOverlay(data.metadata) ?? undefined;
-        return { source: decodedToSource(decoded), baselineUrl: null, overlay };
+        // EXR: attach the parts × groups tree so the pane shows the channel strip.
+        const exrTree = tryExrTree(bytes);
+        return {
+          source: decodedToSource(decoded),
+          baselineUrl: null,
+          overlay,
+          ...(exrTree ? { exrTree } : {}),
+        };
       }
       // Multi-format DECODER seam. When `format` names a RAW-buffer image
       // (`.npy`/`.npz`), the browser can't decode it via `<img>`, so fetch the
@@ -256,14 +291,21 @@ export async function resolveDataProps(
       // fall through to the byte-identical URL fast path below.
       if (data.format && isRawBufferFormat(data.format) && data.hash) {
         // Single-image leaf → deep-live-flatten enabled (depth slider).
+        const bytes = await source.bytes(data.hash);
         const decoded = await decodeImage(
-          { bytes: await source.bytes(data.hash), ext: data.format },
+          { bytes, ext: data.format },
           // Part/layer selection (EXR-only; other formats ignore it).
           { deepLiveFlatten: true, select: { part: data.part, layer: data.layer } },
         );
         const baselineUrl = await resolveRawBufferBaseline(data, source);
         const overlay = parseOverlay(data.metadata) ?? undefined;
-        return { source: decodedToSource(decoded), baselineUrl, overlay };
+        const exrTree = data.format === "exr" ? tryExrTree(bytes) : null;
+        return {
+          source: decodedToSource(decoded),
+          baselineUrl,
+          overlay,
+          ...(exrTree ? { exrTree } : {}),
+        };
       }
       const res = resolveImageViewportItems(
         {

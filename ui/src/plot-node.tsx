@@ -96,6 +96,15 @@ import {
   resolveCached,
   prefetchResolved,
 } from "./lib/cairn-plot/resolve-cache";
+import ChannelStrip, {
+  type ChannelSelection,
+  type ChannelStripTree,
+} from "./lib/cairn-plot/image/ChannelStrip";
+import {
+  publishImageSettings,
+  subscribeImageSettings,
+} from "./lib/cairn-plot/viewport/image-settings-sync";
+import { makeImageViewportSyncSourceId } from "./lib/cairn-plot/viewport/image-viewport-sync";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -175,6 +184,22 @@ function LeafView({ node }: { node: PlotLeafNode }) {
   const { source, shared, viewportSyncGroupId } = useSharedPlot();
   // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
   const paneSync = useContext(PaneSyncContext);
+
+  // CHANNEL-STRIP selection override (EXR part/layer, view-local). `null` =
+  // follow the node's own `data.part`/`data.layer`. Deliberately NOT reset on a
+  // node swap: in a STACKED viewport the same LeafView instance flips between
+  // slots, and the picked layer must carry across (shared-settings semantics).
+  const [chSel, setChSel] = useState<ChannelSelection | null>(null);
+  // The EFFECTIVE data spec: the strip override merged over the node's data
+  // (image specs only — the strip never renders for other kinds).
+  const effectiveData = useMemo(() => {
+    if (!chSel || node.data.kind !== "image") return node.data;
+    return { ...node.data, part: chSel.part, layer: chSel.layer };
+  }, [node.data, chSel]);
+  // The resolve-cache key includes the override so each selection caches its own
+  // decode (flipping BACK to a seen layer is instant).
+  const selKey = chSel ? `|${chSel.part ?? ""}|${chSel.layer ?? ""}` : "";
+
   // Only the async-resolved DATA props live in state; the shared-block +
   // selection-sync props are merged at RENDER time (below) so a selection change
   // (which flips the sync group ids) re-renders WITHOUT re-fetching the data.
@@ -187,20 +212,20 @@ function LeafView({ node }: { node: PlotLeafNode }) {
     | { status: "error"; message: string }
     | { status: "ready"; dataProps: Record<string, unknown> }
   >(() => {
-    const cached = peekResolved<Record<string, unknown>>(sourceKey(node));
+    const cached = peekResolved<Record<string, unknown>>(sourceKey(node) + selKey);
     return cached ? { status: "ready", dataProps: cached } : { status: "loading" };
   });
   const [, bumpRegistry] = useState(0);
 
   useEffect(() => {
-    const key = sourceKey(node);
+    const key = sourceKey(node) + selKey;
     const cached = peekResolved<Record<string, unknown>>(key);
     if (cached) {
       setState({ status: "ready", dataProps: cached });
       return;
     }
     let cancelled = false;
-    resolveCached(key, () => resolveDataProps(node.data, source)).then(
+    resolveCached(key, () => resolveDataProps(effectiveData, source)).then(
       (dataProps) => {
         if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
       },
@@ -211,7 +236,33 @@ function LeafView({ node }: { node: PlotLeafNode }) {
     return () => {
       cancelled = true;
     };
-  }, [node, source]);
+  }, [node, source, selKey, effectiveData]);
+
+  // Selection change handler + SYNC: inside a settings-sync group (the compare/
+  // enlarge stage, a page-wide multi-selection) a strip pick broadcasts so every
+  // pane in the group flips to the same part/layer BY NAME (compare diffuse of
+  // run A vs diffuse of run B). Same bus + echo-guard as colormap/tonemap.
+  const chSyncIdRef = useRef<string>();
+  if (!chSyncIdRef.current) chSyncIdRef.current = makeImageViewportSyncSourceId();
+  const settingsGroupId = paneSync?.settingsSyncGroupId;
+  useEffect(() => {
+    if (!settingsGroupId) return;
+    return subscribeImageSettings(settingsGroupId, chSyncIdRef.current!, (patch) => {
+      if (patch.channelSelect !== undefined) {
+        setChSel(patch.channelSelect as ChannelSelection | null);
+      }
+    });
+  }, [settingsGroupId]);
+  const selectChannels = useCallback(
+    (sel: ChannelSelection) => {
+      const next = sel.part == null && sel.layer == null ? null : sel;
+      setChSel(next);
+      if (settingsGroupId) {
+        publishImageSettings(settingsGroupId, chSyncIdRef.current!, { channelSelect: next });
+      }
+    },
+    [settingsGroupId],
+  );
 
   // Merge the shared block + the live sync group ids over the resolved data
   // props at render (leaf `node.props` win over `shared`, data props win over
@@ -261,10 +312,20 @@ function LeafView({ node }: { node: PlotLeafNode }) {
   if (state.status === "loading") return <Message text="Loading…" />;
   if (state.status === "error") return <Message text={`Plot error: ${state.message}`} error />;
   const Renderer = getRenderer(node.renderer);
+  // CHANNEL STRIP (tev-style) below the viewport: rendered for EXR sources whose
+  // resolve attached the parts × groups tree. The current selection = the strip
+  // override, else the node's own authored `part`/`layer`.
+  const exrTree = state.dataProps.exrTree as ChannelStripTree | undefined;
+  const stripSelection: ChannelSelection =
+    chSel ??
+    (node.data.kind === "image" ? { part: node.data.part, layer: node.data.layer } : {});
   return Renderer ? (
-    <Suspense fallback={<Message text="Loading renderer…" />}>
-      <Renderer {...mergedProps} />
-    </Suspense>
+    <>
+      <Suspense fallback={<Message text="Loading renderer…" />}>
+        <Renderer {...mergedProps} />
+      </Suspense>
+      {exrTree && <ChannelStrip tree={exrTree} selection={stripSelection} onSelect={selectChannels} />}
+    </>
   ) : (
     <Message text="Loading renderer…" />
   );
