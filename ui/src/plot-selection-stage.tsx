@@ -284,7 +284,13 @@ function StageCell({
   /** Shared settings-sync group so a colormap/tonemap/diff-mode change on ONE
    *  cell broadcasts to every cell in the stage (Bug 3). */
   settingsSyncGroupId: string;
-  /** The single anchor cell seeds the group's snapshot. */
+  /** Whether this cell ANCHOR-seeds the sync groups. The stage always passes
+   *  FALSE: its cells are created identical (no divergence for an anchor to
+   *  reconcile), and a NON-anchor adopts the group's ACCUMULATED snapshot on
+   *  join — which is what keeps diff mode / settings / zoom alive when cells
+   *  REMOUNT on a normal⇄stacked toggle. An anchor would re-seed the group
+   *  with its freshly-reset defaults instead (the reported "toggling to
+   *  stacked resets my diff mode"). */
   isAnchor: boolean;
 }) {
   // Re-pick gesture (stationary press, never a control press, never a drag).
@@ -609,7 +615,7 @@ function SelectionStage({
                       onPickReference={() => store.setReference(cells[stackActiveClamped]!.reprPaneId)}
                       viewportSyncGroupId={viewportSyncGroupId}
                       settingsSyncGroupId={settingsSyncGroupId}
-                      isAnchor
+                      isAnchor={false}
                     />
                   </div>
                 </InStackedGridContext.Provider>
@@ -623,7 +629,7 @@ function SelectionStage({
                     onPickReference={() => store.setReference(spec.reprPaneId)}
                     viewportSyncGroupId={viewportSyncGroupId}
                     settingsSyncGroupId={settingsSyncGroupId}
-                    isAnchor={i === 0}
+                    isAnchor={false}
                   />
                 ))
               )}

@@ -43,6 +43,42 @@ import { useOriginTheme } from "./themed-portal";
  */
 export const InFullscreenOverlayContext = createContext(false);
 
+// ---------------------------------------------------------------------------
+// REF-COUNTED page-scroll lock (module singleton). Overlays can OVERLAP — e.g.
+// the compare stage open AND a pane-enlarge opened from inside it. Per-instance
+// save/restore of the previous inline style broke down there: whichever overlay
+// closed LAST had saved "hidden" (set by the other) and restored THAT, leaving
+// the page permanently unscrollable. The counter saves the TRUE pre-lock style
+// on 0→1 and restores it only when the last lock releases — any close order.
+// ---------------------------------------------------------------------------
+let scrollLockCount = 0;
+let scrollLockSaved: { overflow: string; overscroll: string } | null = null;
+
+/** Acquire the page-scroll lock; returns the paired release. Safe to overlap. */
+function lockPageScroll(): () => void {
+  const scroller = (document.scrollingElement as HTMLElement | null) ?? document.body;
+  if (scrollLockCount === 0) {
+    scrollLockSaved = {
+      overflow: scroller.style.overflow,
+      overscroll: scroller.style.overscrollBehavior,
+    };
+    scroller.style.overflow = "hidden";
+    scroller.style.overscrollBehavior = "none";
+  }
+  scrollLockCount += 1;
+  let released = false;
+  return () => {
+    if (released) return; // idempotent — a double cleanup must not double-decrement
+    released = true;
+    scrollLockCount -= 1;
+    if (scrollLockCount === 0 && scrollLockSaved) {
+      scroller.style.overflow = scrollLockSaved.overflow;
+      scroller.style.overscrollBehavior = scrollLockSaved.overscroll;
+      scrollLockSaved = null;
+    }
+  };
+}
+
 export interface FullscreenOverlayShellProps {
   /** Whether the overlay is mounted. */
   open: boolean;
@@ -105,17 +141,11 @@ export default function FullscreenOverlayShell({
   // Page-scroll lock on the REAL scroll root (usually <html> in standards mode).
   // Do NOT preventDefault wheel — that would swallow wheel bubbling up from
   // scrollable UI INSIDE the overlay; locking the root already stops the page.
+  // Ref-counted (see `lockPageScroll`) so OVERLAPPING overlays release cleanly
+  // in any close order.
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
-    const scroller = (document.scrollingElement as HTMLElement | null) ?? document.body;
-    const prevOverflow = scroller.style.overflow;
-    const prevOverscroll = scroller.style.overscrollBehavior;
-    scroller.style.overflow = "hidden";
-    scroller.style.overscrollBehavior = "none";
-    return () => {
-      scroller.style.overflow = prevOverflow;
-      scroller.style.overscrollBehavior = prevOverscroll;
-    };
+    return lockPageScroll();
   }, [open]);
 
   if (!open || typeof document === "undefined") return null;
