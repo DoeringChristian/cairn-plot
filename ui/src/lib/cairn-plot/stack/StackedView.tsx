@@ -14,9 +14,7 @@
 import { useContext, useEffect, useRef } from "react";
 import type { ReactNode, RefObject } from "react";
 import { stackKeyAction, applyStackAction, stackTabBadge } from "./stack-keys";
-import { GridUniformAspectContext, VIEWPORT_HEIGHT_MARGIN } from "../renderers/grid-uniform-aspect";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
-import { InStackedGridContext } from "./stack-context";
 
 /**
  * Window keydown → stack navigation, scoped to `rootRef` (hovered/focused inline,
@@ -30,8 +28,16 @@ export function useStackKeyboard(
   active: number,
   count: number,
   onActiveChange: (i: number) => void,
+  opts?: { inOverlay?: boolean },
 ): void {
-  const inOverlay = useContext(InFullscreenOverlayContext);
+  // In a fullscreen overlay the tab keys act UNCONDITIONALLY (no hover/focus
+  // needed — one active view), exactly like the slide-flip. The compare/enlarge
+  // STAGE calls this hook ABOVE its own `FullscreenOverlayShell` provider, so a
+  // `useContext` here would read `false`; it passes `inOverlay` explicitly. An
+  // INLINE `cp.Grid` passes nothing and gets the context value (false → requires
+  // hover), which is correct there.
+  const ctxOverlay = useContext(InFullscreenOverlayContext);
+  const inOverlay = opts?.inOverlay ?? ctxOverlay;
   const activeRef = useRef(active);
   activeRef.current = active;
   const countRef = useRef(count);
@@ -73,55 +79,6 @@ export function useStackKeyboard(
       window.removeEventListener("keydown", onKey);
     };
   }, [enabled, inOverlay, rootRef]);
-}
-
-/** The panes container: all children mounted, only `active` SHOWN; marks the
- *  subtree as inside a stacked grid so a compare cell reaches its slide-flip via
- *  the dedicated `[`/`]` keys (arrows/hjkl drive the tab strip here). `fill` (the
- *  fullscreen stage) makes the visible pane FILL the area;
- *  otherwise (a `cp.Grid`) the visible pane is content-aspect, capped at the page
- *  height like a 1-cell grid.
- *
- *  FLICKER-FREE SWITCHING: every pane occupies the SAME CSS-grid cell
- *  (`grid-area: 1 / 1`, so they overlap and the container sizes to them) and the
- *  inactive ones are hidden with `visibility: hidden` — NOT `display: none`.
- *  `display: none` gave a GPU pane a 0×0 box, so its `IntersectionObserver`
- *  parked its GPU resources and the reveal had to re-measure + re-render from
- *  blank (the flicker). `visibility: hidden` keeps full geometry: the pane stays
- *  "on-screen" (never parks), retains its last painted frame, and a flip is a
- *  pure visibility toggle. `pointer-events: none` keeps hidden panes from
- *  intercepting the pointer through the active one. */
-export function StackedPanes({ panes, active, fill }: { panes: ReactNode[]; active: number; fill?: boolean }) {
-  const uniformAspect = useContext(GridUniformAspectContext)?.uniformAspect;
-  const viewStyle = fill
-    ? ({ width: "100%", height: "100%" } as const)
-    : uniformAspect != null && uniformAspect > 0
-      ? { maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${uniformAspect})`, marginInline: "auto" as const }
-      : undefined;
-  return (
-    <InStackedGridContext.Provider value={true}>
-      <div data-cairn-stacked-view="" style={{ display: "grid", minWidth: 0, minHeight: 0, ...viewStyle }}>
-        {panes.map((pane, i) => {
-          const isActive = i === active;
-          return (
-            <div
-              key={i}
-              data-cairn-stacked-pane={isActive ? "active" : "hidden"}
-              style={{
-                gridArea: "1 / 1", // all panes stack in ONE cell (overlap) → no display:none
-                minWidth: 0,
-                visibility: isActive ? "visible" : "hidden",
-                pointerEvents: isActive ? undefined : "none",
-                ...(fill ? { height: "100%" } : null),
-              }}
-            >
-              {pane}
-            </div>
-          );
-        })}
-      </div>
-    </InStackedGridContext.Provider>
-  );
 }
 
 /** The horizontal tab strip: one tab per child (`<badge> <label>`), active

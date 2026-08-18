@@ -72,10 +72,10 @@ import { ReportNaturalSizeContext } from "./lib/cairn-plot/renderers/natural-siz
 import {
   useStackKeyboard,
   StackTabStrip,
-  StackedPanes,
   GridModeToggle,
   stackLabelFor,
 } from "./lib/cairn-plot/stack/StackedView";
+import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
 import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import { useOriginTheme } from "./lib/cairn-plot/primitives/themed-portal";
 import {
@@ -241,8 +241,6 @@ function buildCompareCells(
 // Stage cell — a fresh leaf + the REF badge / re-pick affordance.
 // ---------------------------------------------------------------------------
 
-const REPICK_SLOP_PX = 5;
-
 function StageCell({
   spec,
   rect,
@@ -260,6 +258,8 @@ function StageCell({
   /** STACKED stage: fill the (single-visible) stacked pane box instead of the
    *  absolute packed rect. */
   fill?: boolean;
+  /** Re-designate THIS cell as the reference — fired ONLY by the dedicated
+   *  "Set ref" button (never a plain cell click). */
   onPickReference: () => void;
   /** Shared VIEWPORT-sync group so zoom/pan on ONE cell broadcasts to every cell
    *  in the stage — the same mechanism the page-wide selection uses (via
@@ -273,23 +273,10 @@ function StageCell({
   /** The single anchor cell seeds the group's snapshot. */
   isAnchor: boolean;
 }) {
-  const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
-  const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
-    const onControl = !!(e.target as Element | null)?.closest?.(
-      'button, input, select, textarea, a, [role="menu"], [role="menuitem"], [contenteditable="true"]',
-    );
-    downRef.current = { x: e.clientX, y: e.clientY, onControl };
-  }, []);
-  const onPointerUpCapture = useCallback(
-    (e: React.PointerEvent) => {
-      const d = downRef.current;
-      downRef.current = null;
-      if (!d || d.onControl) return;
-      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > REPICK_SLOP_PX) return;
-      if (!spec.isReference) onPickReference();
-    },
-    [spec.isReference, onPickReference],
-  );
+  // NOTE: a plain click NO LONGER sets the reference — that collided with the
+  // double-click-to-reset gesture (the first click of a double-click would
+  // re-pick the reference, which was confusing). The reference is chosen in the
+  // page-wide selection before the stage opens; the REF badge just shows it.
 
   // The cell is ABSOLUTELY positioned at its packed rect (content-aspect, centred
   // cluster) — not a stretch-to-fill grid track — so N panes cluster densely in
@@ -319,9 +306,6 @@ function StageCell({
     style.outlineOffset = "-2px";
     style.boxShadow = `0 0 0 1px ${REFERENCE_COLOR}, 0 0 8px 1px rgb(${REFERENCE_COLOR_RGB} / 0.5)`;
     style.zIndex = 1;
-  } else {
-    // The whole non-reference cell is the click-to-set-reference target.
-    style.cursor = "pointer";
   }
 
   // Fill the cell (`height:100%`) so N cells stretch to fill the overlay height:
@@ -354,12 +338,9 @@ function StageCell({
   return (
     <div
       style={style}
-      title={spec.isReference ? undefined : "Click to set as the reference"}
       data-cairn-stage-cell=""
       data-cairn-stage-ref={spec.isReference ? "true" : "false"}
       data-stage-repr-pane={spec.reprPaneId}
-      onPointerDownCapture={onPointerDownCapture}
-      onPointerUpCapture={onPointerUpCapture}
     >
       <div style={{ position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <ReportNaturalSizeContext.Provider value={reportAspect}>
@@ -397,11 +378,37 @@ function StageCell({
         </span>
       )}
 
-      {/* No explicit "set reference" button: the WHOLE non-reference cell is the
-          click target (see `onPointerUpCapture`), discoverable via the pointer
-          cursor + tooltip below. An absolutely-positioned button had nowhere to
-          live that didn't collide with pane chrome — top-right = toolbar,
-          bottom = the compare metrics/label chips. */}
+      {/* A DEDICATED "set as reference" button on non-reference cells. Plain
+          clicks on the cell no longer re-pick (they'd hijack double-click-to-
+          reset) — this tiny corner button is the only re-pick affordance, and
+          being a real <button> it's excluded from the pane's pan/zoom/reset. */}
+      {!spec.isReference && (
+        <button
+          type="button"
+          data-cairn-stage-set-ref=""
+          title="Set as the reference"
+          onClick={onPickReference}
+          className="cairn-plot-doc"
+          style={{
+            position: "absolute",
+            top: 6,
+            left: 6,
+            zIndex: 3,
+            padding: "2px 8px",
+            borderRadius: 9999,
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: "0.03em",
+            border: `1px solid ${REFERENCE_COLOR}`,
+            background: "rgba(0,0,0,0.45)",
+            color: "#fff",
+            cursor: "pointer",
+            opacity: 0.75,
+          }}
+        >
+          Set ref
+        </button>
+      )}
     </div>
   );
 }
@@ -432,7 +439,6 @@ function SelectionStage({
   onSwitchMode: (mode: StageMode) => void;
 }) {
   const store = getGlobalSelectionStore();
-
   const built = useMemo(() => {
     if (mode === "compare") return buildCompareCells(entries, requestedReference);
     return { cells: buildEnlargeCells(entries, requestedReference), referenceId: requestedReference };
@@ -496,7 +502,10 @@ function SelectionStage({
   const [stackActive, setStackActive] = useState(0);
   const stackedNow = canStack && stackMode === "stacked";
   const stackActiveClamped = Math.min(stackActive, Math.max(0, cells.length - 1));
-  useStackKeyboard(gridRef, stackedNow, stackActiveClamped, cells.length, setStackActive);
+  // The stage is a fullscreen overlay → tab keys act unconditionally (no
+  // hover/focus), like the slide-flip. This hook runs ABOVE the overlay's own
+  // context provider, so pass `inOverlay` explicitly.
+  useStackKeyboard(gridRef, stackedNow, stackActiveClamped, cells.length, setStackActive, { inOverlay: true });
 
   return (
     <FullscreenOverlayShell
@@ -545,22 +554,27 @@ function SelectionStage({
           ) : (
             <GridUniformAspectContext.Provider value={gridAspectApi}>
               {stackedNow ? (
-                <StackedPanes
-                  fill
-                  active={stackActiveClamped}
-                  panes={cells.map((spec, i) => (
+                // STACKED: ONE reused cell fills the overlay area and swaps its
+                // source on a tab flip — same single-renderer model as `cp.Grid`
+                // (no N panes, no overflow). `InStackedGridContext` marks it so a
+                // compare cell routes its slide-flip to `[`/`]` (arrows drive tabs).
+                <InStackedGridContext.Provider value={true}>
+                  <div
+                    data-cairn-stacked-view=""
+                    data-cairn-stack-active={stackActiveClamped}
+                    style={{ width: "100%", height: "100%", minWidth: 0, minHeight: 0 }}
+                  >
                     <StageCell
-                      key={spec.key}
-                      spec={spec}
+                      spec={cells[stackActiveClamped]!}
                       rect={undefined}
                       fill
-                      onPickReference={() => store.setReference(spec.reprPaneId)}
+                      onPickReference={() => store.setReference(cells[stackActiveClamped]!.reprPaneId)}
                       viewportSyncGroupId={viewportSyncGroupId}
                       settingsSyncGroupId={settingsSyncGroupId}
-                      isAnchor={i === 0}
+                      isAnchor
                     />
-                  ))}
-                />
+                  </div>
+                </InStackedGridContext.Provider>
               ) : (
                 cells.map((spec, i) => (
                   <StageCell

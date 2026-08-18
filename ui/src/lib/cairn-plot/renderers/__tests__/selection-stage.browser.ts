@@ -158,22 +158,28 @@ async function openListbox(btn: HTMLButtonElement): Promise<HTMLUListElement | n
 function normColor(c: string): string {
   return c.replace(/\s+/g, " ").trim();
 }
-/** Re-pick a stage cell's reference via the whole-cell click gesture (a
- *  stationary pointerdown+pointerup on the cell background) — the affordance
- *  that replaced the removed "Set as reference" button. Clicks a spot away from
- *  the toolbar so the gesture is not swallowed as an on-control press. */
-function repickViaCellClick(cell: HTMLElement): void {
+/** Re-pick a stage cell's reference via its DEDICATED "Set ref" button. A plain
+ *  cell click no longer re-picks (it would hijack double-click-to-reset); the
+ *  button is the only re-pick affordance. Returns false if the cell has none
+ *  (i.e. it is already the reference). */
+function repickViaSetRefButton(cell: HTMLElement): boolean {
+  const btn = cell.querySelector<HTMLButtonElement>("[data-cairn-stage-set-ref]");
+  if (!btn) return false;
+  btn.click();
+  return true;
+}
+/** A stationary plain click on the cell background (NOT the button) — used to
+ *  assert it does NOT change the reference. */
+function plainCellClick(cell: HTMLElement): void {
   const r = cell.getBoundingClientRect();
-  const x = Math.round(r.left + r.width / 2);
-  const y = Math.round(r.bottom - 8); // low in the cell — clear of the top-right toolbar
   const opts = {
     bubbles: true,
     cancelable: true,
     pointerId: 1,
     pointerType: "mouse",
     button: 0,
-    clientX: x,
-    clientY: y,
+    clientX: Math.round(r.left + r.width / 2),
+    clientY: Math.round(r.bottom - 8),
   };
   cell.dispatchEvent(new PointerEvent("pointerdown", opts));
   cell.dispatchEvent(new PointerEvent("pointerup", opts));
@@ -387,16 +393,22 @@ async function run(): Promise<boolean> {
     ok = ok && squareCells && framesFillCells && clustered && smallGap && ringOnCell;
   }
 
-  // === Bug 6 — NO fixed "Set as reference" button (it had nowhere to sit that
-  // didn't collide with pane chrome: toolbar top, compare metrics bottom). The
-  // WHOLE non-reference cell is the click target (cursor:pointer). ==
+  // === Re-pick is a DEDICATED button, not the whole cell (a plain cell click
+  // would hijack double-click-to-reset). Non-ref cells have a "Set ref" button;
+  // the cell itself is NOT a pointer target. ==
   {
     const nonRef = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
-    const noButton = !nonRef.querySelector("[data-cairn-stage-set-ref]");
-    report(noButton, "no absolutely-positioned Set-as-reference button (removed — collided with toolbar/metrics)");
-    const clickable = getComputedStyle(nonRef).cursor === "pointer";
-    report(clickable, `the non-reference cell itself is the click target (cursor: ${getComputedStyle(nonRef).cursor})`);
-    ok = ok && noButton && clickable;
+    const hasButton = !!nonRef.querySelector("[data-cairn-stage-set-ref]");
+    report(hasButton, "non-reference cells have a dedicated 'Set ref' button");
+    const notWholeCellTarget = getComputedStyle(nonRef).cursor !== "pointer";
+    report(notWholeCellTarget, `the cell itself is NOT a click-to-set-ref target (cursor: ${getComputedStyle(nonRef).cursor})`);
+    // A plain click on the cell background must NOT change the reference.
+    const refBeforePlain = bd2RefRepr();
+    plainCellClick(nonRef);
+    await sleep(120);
+    const refUnchanged = bd2RefRepr() === refBeforePlain;
+    report(refUnchanged, `a plain cell click does NOT change the reference (${refBeforePlain} → ${bd2RefRepr()})`);
+    ok = ok && hasButton && notWholeCellTarget && refUnchanged;
   }
 
   // === MODE TOGGLE — the in-stage segmented control switches the LIVE stage
@@ -558,9 +570,10 @@ async function run(): Promise<boolean> {
   // --- 4. Re-pick the reference IN the grid → comparisons rebuild ------------
   const reprBefore = new Set(reprPanes);
   const newRefId = stageCells()[0].getAttribute("data-stage-repr-pane")!;
-  repickViaCellClick(stageCells()[0]);
+  const pickedCompare = repickViaSetRefButton(stageCells()[0]);
+  report(pickedCompare, "the first comparison cell has a 'Set ref' button");
   const refChanged = await waitFor(() => store.reference() === newRefId);
-  report(refChanged, `clicking a cell's REF affordance re-designates the reference (now ${store.reference()})`);
+  report(refChanged, `clicking the 'Set ref' button re-designates the reference (now ${store.reference()})`);
   const rebuilt = await waitFor(() => {
     const now = stageCells().map((c) => c.getAttribute("data-stage-repr-pane"));
     // The new reference is no longer a comparison cell; the old reference now is.
@@ -656,7 +669,7 @@ async function run(): Promise<boolean> {
     const refBefore = bd2RefRepr();
     const nonRefCell = stageCells().find((c) => c.getAttribute("data-cairn-stage-ref") !== "true")!;
     const newRef = nonRefCell.getAttribute("data-stage-repr-pane")!;
-    repickViaCellClick(nonRefCell);
+    repickViaSetRefButton(nonRefCell);
     const badgeMoved = await waitFor(() => bd2RefRepr() === newRef && store.reference() === newRef, 3000);
     report(badgeMoved, `enlarge re-pick moved the reference badge live (${refBefore} → ${bd2RefRepr()})`);
     // The newly-referenced cell now rings orange.
