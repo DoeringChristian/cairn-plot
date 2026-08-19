@@ -404,7 +404,7 @@ harnesses green on real GPU (Apple metal-3), plot-inline bundles rebuilt + synce
 gallery (27 types) clean. No schema/Python change (encoding/norm are view-local
 sync keys, not descriptor kwargs).
 
-## Follow-up: analytic red-green (tev-style, unclamped) — DONE (commit 7d3ed9c)
+## Follow-up: analytic red-green (tev-style, unclamped) — DONE (commit b3bfa0b)
 
 The RED-GREEN signed colormap became an ANALYTIC encoding — computed per value in
 scene-linear space, output UNCLAMPED — replicating tev's `POS_NEG` tonemap.
