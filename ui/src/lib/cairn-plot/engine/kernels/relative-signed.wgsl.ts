@@ -8,6 +8,7 @@ export const relativeSignedKernel: PointwiseKernel = {
   label: "Relative Signed",
   publicName: "rel_signed",
   displayRange: "signed",
+  defaultColormap: "red-green", // ℝ signed-relative error → diverging map
   output: "per-channel",
   source: `
 fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {

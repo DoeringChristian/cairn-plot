@@ -66,7 +66,7 @@ function makeController(): PlotController {
     toPNG: () => Promise.resolve(new Blob()),
   };
 }
-let cmap = "viridis";
+let cmap = "turbo";
 function buildConfig(): ToolbarConfig {
   return {
     visibility: "always",
@@ -78,7 +78,7 @@ function buildConfig(): ToolbarConfig {
           value: cmap,
           onSelect: (id) => { cmap = id; wideRender(); },
           options: [
-            { id: "viridis", label: "Viridis" },
+            { id: "turbo", label: "Turbo" },
             { id: "magma", label: "Magma" },
           ],
         },

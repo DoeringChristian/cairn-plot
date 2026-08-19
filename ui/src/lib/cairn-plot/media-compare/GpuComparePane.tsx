@@ -62,7 +62,7 @@ import {
   type DiffCacheEntry,
 } from "../engine/diff-engine";
 import { formatSsim } from "../engine/ssim-metric";
-import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId } from "../engine/kernels";
+import { getDiffKernel, listDiffMenuModes, resolveDiffKernelId, resolveDiffColormap } from "../engine/kernels";
 import { computeCompareMapping, mappingKey, type CompareAlign, type CompareFit } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
@@ -460,13 +460,28 @@ export default function GpuComparePane({
     [onCompareModeChange, setCompareModeState],
   );
 
-  // Diff COLORMAP selection (spec §toolbar). Seeded from the `colormap` prop;
-  // internal state owns it so the COLORMAP menu is view-local (display-only —
-  // it NEVER changes the diff cache key / recompute count, only the blit LUT).
-  const [colormapState, setColormapState, colormapMeta] = useResettableState<Colormap>(colormap);
+  // Diff COLORMAP selection (spec §toolbar + the per-kernel-default-colormaps
+  // follow-up). `colormapState` here is the EXPLICIT OVERRIDE: `null` = "follow the
+  // selected kernel's default colormap"; a concrete `Colormap` (a lut id, or
+  // `"none"` for raw per-channel error) = the user's explicit pick, which STICKS
+  // across kernel switches. Seeded from the `colormap` prop (an authored colormap
+  // is an explicit override; the default/unset `"none"` seeds `null` → follow
+  // defaults). View-local, display-only (a colormap switch NEVER changes the diff
+  // cache key / recompute count, only the blit LUT). HOME resets to the seed.
+  // Back-compat: `viridis` was REMOVED → alias an authored colormap to `turbo`.
+  const seededColormap = (colormap as string) === "viridis" ? ("turbo" as Colormap) : colormap;
+  const [colormapState, setColormapState, colormapMeta] = useResettableState<Colormap | null>(
+    seededColormap !== "none" ? seededColormap : null,
+  );
   useEffect(() => {
-    setColormapState(colormap);
+    const c = (colormap as string) === "viridis" ? ("turbo" as Colormap) : colormap;
+    setColormapState(c !== "none" ? c : null);
   }, [colormap, setColormapState]);
+  // The EFFECTIVE diff colormap: the explicit override, or the SELECTED kernel's
+  // REQUESTED DEFAULT (`resolveDiffColormap` — signed→red-green, ℝ⁺→viridis,
+  // FLIP/SSIM→magma). Switching kernels re-derives the default only while the user
+  // hasn't overridden; a pick sticks; HOME clears the override → defaults again.
+  const effectiveColormap = resolveDiffColormap(diffKernel, colormapState) as Colormap;
 
   // UNIFIED TONE-MAP (§A) — the SAME operator × PEAK model as the single-image
   // pane, applied to the split/blend COMPOSE pass (both operands through one
@@ -625,9 +640,14 @@ export default function GpuComparePane({
       encoding: deriveCompareEncodingId(
         compareMode === "diff" ? "scalar" : "light",
         effectiveTonemap,
-        colormapState,
+        effectiveColormap,
       ),
-      colormap: colormapState,
+      // Publish the EFFECTIVE diff colormap (the per-kernel default when the user
+      // hasn't overridden) so an image-pane peer / the derived encoding is a valid
+      // concrete colormap. (Compare↔compare divergence after a post-join kernel
+      // switch — a peer that adopted the anchor's default AS an override then won't
+      // re-follow — is the documented task-#87 sync-polish edge, unchanged here.)
+      colormap: effectiveColormap,
       tonemap: effectiveTonemap,
       tonemapGamma,
       peak,
@@ -640,7 +660,7 @@ export default function GpuComparePane({
     }),
     [
       compareMode,
-      colormapState,
+      effectiveColormap,
       effectiveTonemap,
       tonemapGamma,
       peak,
@@ -771,12 +791,12 @@ export default function GpuComparePane({
       mode: compareMode === "diff" ? "scalar" : "light",
       curveIds: COMPARE_LIGHT_CURVES,
       curveValue: effectiveTonemap,
-      lutValue: colormapState,
+      lutValue: effectiveColormap,
       onSelectCurve: (id) => changeTonemap(id as TonemapOperator),
       onSelectLut: (id) => changeColormap(id as Colormap),
     });
     return [modeMenu, displayMenu];
-  }, [compareMode, diffKernel, colormapState, effectiveTonemap, changeDiffKernel, changeCompareMode, changeColormap, changeTonemap]);
+  }, [compareMode, diffKernel, effectiveColormap, effectiveTonemap, changeDiffKernel, changeCompareMode, changeColormap, changeTonemap]);
 
   // TEV per-side source pixels. u8 sides keep their raw `ImageData`; FLOAT sides
   // (`.exr`/`imghdr`) have NO 8-bit `ImageData` (decoded to `rgba32float`), so
@@ -1029,21 +1049,21 @@ export default function GpuComparePane({
     () =>
       resolveDiffCmapMode(
         getDiffKernel(resolvedKernelId)?.displayRange ?? "unit",
-        colormapState === "none" ? null : colormapState,
+        effectiveColormap === "none" ? null : effectiveColormap,
       ),
-    [resolvedKernelId, colormapState],
+    [resolvedKernelId, effectiveColormap],
   );
   const diffColormap = useMemo<Float32Array | undefined>(
-    () => (colormapState !== "none" ? colormapFloatLUT(colormapState as Exclude<Colormap, "none">) : undefined),
-    [colormapState],
+    () => (effectiveColormap !== "none" ? colormapFloatLUT(effectiveColormap as Exclude<Colormap, "none">) : undefined),
+    [effectiveColormap],
   );
   // ANALYTIC diff colormap (tev-style signed red-green): computed color, no LUT.
   // When active, `renderDiffDisplay` bypasses the cmap-mode fold + LUT and computes
   // the signed color from the raw metric, output-encoded (|v|>1 survives on an HDR
   // surface). Norm is hidden for it (linear-in-|v| by construction).
   const diffAnalytic = useMemo(
-    () => (colormapState !== "none" ? !!getEncoding(colormapState)?.analytic : false),
-    [colormapState],
+    () => (effectiveColormap !== "none" ? !!getEncoding(effectiveColormap)?.analytic : false),
+    [effectiveColormap],
   );
 
   // Align/fit overlap mapping for the two operands (primary = foreground = texB).
@@ -1582,10 +1602,12 @@ export default function GpuComparePane({
       // sliders / divider call, so the compare↔compare sync harness can drive a
       // real control change on pane A and read pane B's adopted state. Driving
       // these exercises the actual publish→bus→apply path (not a shortcut).
+      // The EFFECTIVE diff colormap (explicit override, else the per-kernel default)
+      // — so the settings-sync + per-kernel-default harness can read the displayed
+      // colormap.
       get colormap() {
-        return colormapState;
+        return effectiveColormap;
       },
-      // The ONE unified encoding id (derived from the active mode face) + the
       // The ONE `encoding` id (derived from the active mode face) — so the
       // settings-sync harness can read it. (The norm getter/changeNorm were removed
       // with the norm picker — norm-UI-removal follow-up.)
@@ -1593,7 +1615,7 @@ export default function GpuComparePane({
         return deriveCompareEncodingId(
           compareMode === "diff" ? "scalar" : "light",
           effectiveTonemap,
-          colormapState,
+          effectiveColormap,
         );
       },
       get diffKernel() {
@@ -1623,6 +1645,10 @@ export default function GpuComparePane({
       changeTonemap,
       changeExposure,
       changeSplit,
+      // HOME (the view-local reset the toolbar HOME button fires) — so the
+      // per-kernel-default-colormaps harness can assert HOME clears the explicit
+      // colormap override back to the kernel defaults.
+      home: resetViewSelections,
     };
     return () => {
       if (el) delete el.__cairnCompareProbe;
@@ -1643,7 +1669,7 @@ export default function GpuComparePane({
     ssimScalar,
     effectiveTonemap,
     hdrEngaged,
-    colormapState,
+    effectiveColormap,
     diffKernel,
     splitPosition,
     blendAlpha,
@@ -1657,6 +1683,7 @@ export default function GpuComparePane({
     changeTonemap,
     changeExposure,
     changeSplit,
+    resetViewSelections,
   ]);
 
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
@@ -1692,7 +1719,7 @@ export default function GpuComparePane({
           // DiffMode (the pointwise ids are 1:1; `flip` degrades to `absolute`).
           diffMode={(getDiffKernel(resolvedKernelId)?.kind === "pointwise" ? resolvedKernelId : "absolute") as DiffMode}
           interpolation={interpolation}
-          colormap={colormapState}
+          colormap={effectiveColormap}
           showAxes={false}
           zoom={zoom}
           pan={pan}

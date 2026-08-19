@@ -119,13 +119,13 @@ export function MeshStandalone(p: P) {
 }
 
 /** The standalone default view config for a volume — mirrors the app card's
- *  `defaultVolumeSettings()` (MIP raymarch, viridis, 128 steps, no clip, dark
+ *  `defaultVolumeSettings()` (MIP raymarch, turbo, 128 steps, no clip, dark
  *  background). Any field is overridable via the descriptor's `props`. Note
  *  the config field is `mode` (the render mode), NOT the compare mode. */
 const DEFAULT_VOLUME_VIEW = {
   mode: "mip" as const,
   isovalue: 0.5,
-  colormap: "viridis" as const,
+  colormap: "turbo" as const,
   steps: 128 as const,
   clipMin: [0, 0, 0] as [number, number, number],
   clipMax: [1, 1, 1] as [number, number, number],

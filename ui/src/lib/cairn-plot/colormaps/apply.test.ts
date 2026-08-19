@@ -57,7 +57,7 @@ test("positive exposure pushes a mid pixel UP the ramp (brighter magma index)", 
 
 test("exposure is applied BEFORE the LUT: EV maps value 32 to the same index as value 64 at EV-1", () => {
   // 32 * 2^1 == 64 * 2^0 in the [0,1] domain -> identical LUT index/color.
-  const a = applyColormap(px(32), "viridis", "linear", 1, 0);
-  const b = applyColormap(px(64), "viridis", "linear", 0, 0);
+  const a = applyColormap(px(32), "magma", "linear", 1, 0);
+  const b = applyColormap(px(64), "magma", "linear", 0, 0);
   assert.deepEqual(rgbOf(a), rgbOf(b));
 });

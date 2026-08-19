@@ -64,7 +64,7 @@ let setSeedProp: ((s: string) => void) | null = null;
 /** A component whose SEED comes from a state prop we can change post-mount, to
  *  prove the seed is captured once. */
 function Harness() {
-  const [seed, setSeed] = useState("viridis");
+  const [seed, setSeed] = useState("turbo");
   setSeedProp = setSeed;
   const [value, set, meta] = useResettableState<string>(seed);
   probe = { value, set, meta };
@@ -80,9 +80,9 @@ async function main(): Promise<void> {
     createRoot(document.getElementById("root") as HTMLElement).render(h(Harness));
     await wait(40);
 
-    gate(probe!.value === "viridis" && probe!.meta.isModified === false,
-      "[1] seed 'viridis', isModified=false at mount");
-    gate(probe!.meta.default === "viridis", "[1] meta.default is the seed");
+    gate(probe!.value === "turbo" && probe!.meta.isModified === false,
+      "[1] seed 'turbo', isModified=false at mount");
+    gate(probe!.meta.default === "turbo", "[1] meta.default is the seed");
 
     // (2) set a different value → modified
     probe!.set("magma");
@@ -91,9 +91,9 @@ async function main(): Promise<void> {
       "[2] set('magma') → value magma, isModified=true");
 
     // set back to seed value → not modified (Object.is)
-    probe!.set("viridis");
+    probe!.set("turbo");
     await wait(40);
-    gate(probe!.value === "viridis" && probe!.meta.isModified === false,
+    gate(probe!.value === "turbo" && probe!.meta.isModified === false,
       "[2] set back to seed clears isModified");
 
     // (3) reset restores seed + clears modified
@@ -102,21 +102,21 @@ async function main(): Promise<void> {
     gate(probe!.meta.isModified === true, "[3] set('turbo') → modified");
     probe!.meta.reset();
     await wait(40);
-    gate(probe!.value === "viridis" && probe!.meta.isModified === false,
+    gate(probe!.value === "turbo" && probe!.meta.isModified === false,
       "[3] reset() restores seed + clears isModified");
 
     // (4) seed captured ONCE — a later seed-prop change moves NEITHER the live
     // value NOR the reset target (the hook ignores it; the pane re-seeds via its
-    // own effect, deliberately outside the hook). value is still "viridis".
+    // own effect, deliberately outside the hook). value is still "turbo".
     setSeedProp!("plasma");
     await wait(40);
-    gate(probe!.value === "viridis" && probe!.meta.default === "viridis",
+    gate(probe!.value === "turbo" && probe!.meta.default === "turbo",
       "[4] later seed-prop change moves neither value nor reset target");
     probe!.set("cividis");
     await wait(40);
     probe!.meta.reset();
     await wait(40);
-    gate(probe!.value === "viridis" && probe!.meta.default === "viridis",
+    gate(probe!.value === "turbo" && probe!.meta.default === "turbo",
       "[4] reset still returns the ORIGINAL mount seed (target captured once)");
 
     setOverallStatus(ok);

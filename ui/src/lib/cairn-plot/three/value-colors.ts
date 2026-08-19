@@ -26,7 +26,7 @@ export function valuesToColors(
   values: ArrayLike<number>,
   nPoints: number,
   domain: [number, number],
-  colormap: ColormapName = "viridis",
+  colormap: ColormapName = "turbo",
   opts?: StridedColorOptions,
 ): Float32Array {
   const { stride = 1, offset = 0, out } = opts ?? {};

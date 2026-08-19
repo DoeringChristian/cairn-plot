@@ -19,6 +19,7 @@
  * kernel id also carried by the descriptor's `diffSubmode`.
  */
 import type { BindGroupEntry } from "../types";
+import type { ColormapName } from "../../colormaps/lut";
 
 /** How the display blit maps a raw result value → [0,1] before the colormap. */
 export type DisplayRange = "unit" | "signed" | "relative";
@@ -41,8 +42,24 @@ interface KernelMetaBase {
    *  channel-tinted lines. Printing three identical numbers for a scalar kernel
    *  was the reported bug. */
   output: KernelOutput;
-  /** Display value→[0,1] mapping the blit applies before the colormap. */
+  /** Display value→[0,1] mapping the blit applies before the colormap. This IS the
+   *  kernel's OUTPUT RANGE statement: `"unit"` = an ℝ⁺ magnitude (0 = no error);
+   *  `"signed"`/`"relative"` = an ℝ signed error (0 = no error, sign = direction).
+   *  The {@link DiffKernel.defaultColormap} is chosen to match it (a sequential map
+   *  for ℝ⁺, a diverging map for ℝ). */
   displayRange: DisplayRange;
+  /**
+   * The kernel's REQUESTED DEFAULT colormap (the per-kernel-default-colormaps
+   * follow-up) — applied to the diff face on selecting this kernel UNLESS the user
+   * has explicitly picked a colormap (see {@link resolveDiffColormap}). Chosen to
+   * match the OUTPUT RANGE ({@link displayRange}):
+   *   - signed / signed-relative (ℝ) → `"red-green"` (diverging: red = negative,
+   *     green = positive, neutral at zero — tev's signed convention);
+   *   - absolute / squared / relative (ℝ⁺) → `"turbo"` (tev's false-color
+   *     sequential map: dark = no error, bright = max);
+   *   - FLIP / SSIM (perceptual ℝ⁺ metrics) → `"magma"` (the reference FLIP
+   *     tooling's convention; brighter = more error). */
+  defaultColormap: ColormapName;
   /** Typed default parameters (e.g. FLIP `ppd`). */
   params?: Readonly<Record<string, number>>;
 }
@@ -124,4 +141,25 @@ export function listDiffKernels(): DiffKernel[] {
 /** Resolve a param set for a kernel: its typed defaults overlaid with `params`. */
 export function resolveKernelParams(kernel: DiffKernel, params?: Record<string, number>): Record<string, number> {
   return { ...(kernel.params ?? {}), ...(params ?? {}) };
+}
+
+/** The REQUESTED DEFAULT colormap of a kernel (the per-kernel-default-colormaps
+ *  follow-up) — the kernel's `defaultColormap`, or `"turbo"` for an unknown id
+ *  (a safe sequential fallback; every registered kernel declares one). */
+export function kernelDefaultColormap(kernelId: string): ColormapName {
+  return getDiffKernel(kernelId)?.defaultColormap ?? "turbo";
+}
+
+/**
+ * The diff face's EFFECTIVE colormap (the per-kernel-default-colormaps follow-up),
+ * the SINGLE pure resolution the compare pane + its node tests share:
+ *   - `explicitOverride` is the user's explicit colormap pick (`"none"` = raw
+ *     per-channel error, a lut id, …). It STICKS across kernel switches.
+ *   - `null` = no explicit pick → follow the SELECTED kernel's `defaultColormap`.
+ * So switching kernels re-derives the default only while the user hasn't diverged;
+ * HOME clears the override (back to `null`) → defaults again. Pure + registry-only
+ * so it unit-tests without any GPU/React.
+ */
+export function resolveDiffColormap(kernelId: string, explicitOverride: string | null): string {
+  return explicitOverride ?? kernelDefaultColormap(kernelId);
 }

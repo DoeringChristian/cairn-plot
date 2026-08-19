@@ -53,7 +53,7 @@ export interface ScatterPlotProps {
   onBackgroundClick?: () => void;
   tooltipContent?: (point: ScatterPoint) => ReactNode;
   colors?: string[];
-  /** Colormap for the color-by-value marker fill + colorbar. Default "viridis". */
+  /** Colormap for the color-by-value marker fill + colorbar. Default "turbo". */
   colormap?: ColormapName;
   className?: string;
 }
@@ -72,7 +72,7 @@ export default function ScatterPlot({
   onBackgroundClick,
   tooltipContent,
   colors = DEFAULT_COLORS,
-  colormap = "viridis",
+  colormap = "turbo",
   className,
 }: ScatterPlotProps) {
   const rawId = useId();

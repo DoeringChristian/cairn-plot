@@ -557,10 +557,15 @@ function CompareView({ node }: { node: CompareNode }) {
   // submode/split/blend/…) — CompareView previously dropped them entirely. A
   // node prop wins over the inherited `shared` block, which wins over defaults.
   const props = (node.props ?? {}) as Record<string, unknown>;
+  // Default `"none"` (NOT a fixed colormap): the compare pane's diff face then
+  // follows each diff kernel's REQUESTED DEFAULT colormap (the per-kernel-default-
+  // colormaps follow-up — turbo/red-green/magma). An authored node/shared colormap
+  // still wins (an explicit override that sticks across kernel switches). `viridis`
+  // was removed → an authored `viridis` aliases to `turbo` (GpuComparePane seed).
   const colormap =
     (props.colormap as ColormapName | undefined) ??
     (shared?.colormap as ColormapName | undefined) ??
-    "viridis";
+    "none";
   // Host seam (`cp.Compare(toolbar=False)`): drop this compare's chrome so a host
   // can drive it from its own menu. Gates BOTH the side-view owner toolbar below
   // AND the composited `GpuComparePane` shell toolbar (via `CompositeMediaPane`).
@@ -1145,7 +1150,7 @@ function GridView({ node }: { node: GridNode }) {
   // for leaf colormap/colorRange) must NOT draw a second colorbar — only the
   // grid that actually declares `colorbar` renders one.
   if (!node.shared?.colorbar) return body;
-  const cbColormap = (node.shared.colormap as ColormapName | undefined) ?? "viridis";
+  const cbColormap = (node.shared.colormap as ColormapName | undefined) ?? "turbo";
   const [min, max] = node.shared.colorRange ?? [undefined, undefined];
   return (
     <div style={{ display: "flex", alignItems: "stretch", gap: 4, width: "100%" }}>

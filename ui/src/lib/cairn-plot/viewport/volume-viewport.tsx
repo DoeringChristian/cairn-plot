@@ -292,7 +292,7 @@ export function VolumeNativeDiffPane({
     );
   }
 
-  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
   const n = data.meta.shape[0] * data.meta.shape[1] * data.meta.shape[2];
   const delta = computeDelta(data.arrays.data, reference.arrays.data, n);
   // WS-VCP fix 4: normalize against the card-level UNIFIED diff domain when
@@ -300,7 +300,7 @@ export function VolumeNativeDiffPane({
   // mesh/pointcloud/boxes (precomputed per-element RGB), the raymarch shader
   // itself normalizes by `vmin`/`vmax` — no separate recolor step needed.
   const domain = colorRange ?? diffDomain(delta, diffColormap);
-  const diffData = diffColormap === "viridis" ? absArray(delta) : delta;
+  const diffData = diffColormap === "turbo" ? absArray(delta) : delta;
 
   return (
     <div className="relative flex h-full w-full overflow-hidden rounded bg-bg">
@@ -359,7 +359,7 @@ export function volumeActiveColorbar(args: {
   const { items, referenceItems, settings, nativeMode } = args;
 
   if (nativeMode === "diff-value") {
-    const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+    const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
     const domains: [number, number][] = [];
     for (let i = 0; i < items.length; i++) {
       const a = items[i];

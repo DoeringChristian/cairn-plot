@@ -182,7 +182,7 @@ async function main(): Promise<void> {
         baselineUrl: refUrl, // texA — reference/baseline
         mode: "diff",
         diffKernel: "flip", // start on FLIP
-        colormap: "viridis",
+        colormap: "turbo",
         splitPosition: 0.5,
         blendAlpha: 0.5,
         zoom: viewport.zoom,

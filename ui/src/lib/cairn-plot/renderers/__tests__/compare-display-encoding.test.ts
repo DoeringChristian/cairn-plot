@@ -23,12 +23,12 @@ import { getEncoding, listEncodingsByKind } from "../../image/encodings/index.ts
 const LIGHT_CURVES = ["linear", "srgb", "gamma", "reinhard", "aces"];
 
 test("deriveCompareEncodingId: light face → the curve id", () => {
-  assert.equal(deriveCompareEncodingId("light", "aces", "viridis"), "aces");
+  assert.equal(deriveCompareEncodingId("light", "aces", "turbo"), "aces");
   assert.equal(deriveCompareEncodingId("light", "srgb", "none"), "srgb");
 });
 
 test("deriveCompareEncodingId: scalar face → the lut id when a colormap is active", () => {
-  assert.equal(deriveCompareEncodingId("scalar", "srgb", "viridis"), "viridis");
+  assert.equal(deriveCompareEncodingId("scalar", "srgb", "turbo"), "turbo");
   assert.equal(deriveCompareEncodingId("scalar", "aces", "magma"), "magma");
 });
 
@@ -68,7 +68,7 @@ test("compareDisplayToolbarButton (scalar): None first, then every colormap LUT"
     mode: "scalar",
     curveIds: LIGHT_CURVES,
     curveValue: "srgb",
-    lutValue: "viridis",
+    lutValue: "turbo",
     onSelectCurve: () => {},
     onSelectLut: () => {},
   });
@@ -80,7 +80,7 @@ test("compareDisplayToolbarButton (scalar): None first, then every colormap LUT"
     opts.slice(1).map((o) => o.id),
     lutIds,
   );
-  assert.equal(spec.menu!.value, "viridis");
+  assert.equal(spec.menu!.value, "turbo");
   // No curve ids leak into the scalar (diff) face.
   assert.ok(!opts.some((o) => LIGHT_CURVES.includes(o.id)));
 });

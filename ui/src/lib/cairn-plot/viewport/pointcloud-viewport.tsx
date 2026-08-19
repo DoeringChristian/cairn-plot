@@ -326,7 +326,7 @@ export function PointCloudNativeDiffPane({
     );
   }
 
-  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
   let deltaValues: Float32Array | null = null;
   if (nativeMode === "diff-position") {
     const posA = extractPositions(data.arrays.data, data.meta.channels, data.meta.n_points);
@@ -409,7 +409,7 @@ export function pointCloudActiveColorbar(args: {
   const { items, referenceItems, settings, nativeMode } = args;
   if (nativeMode !== "diff-property" && nativeMode !== "diff-position") return null;
   const property = settings.property ?? null;
-  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
   const domains: [number, number][] = [];
   for (let i = 0; i < items.length; i++) {
     const a = items[i];

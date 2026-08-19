@@ -21,7 +21,7 @@
  *   1-4. Each operator (linear/srgb/reinhard/aces) at EV=0, on a 4-pixel
  *        scene-linear gradient that includes a value > 1.0 (HDR range).
  *   5. Nonzero EV (+1.5) on the same gradient, operator "srgb".
- *   6. Scalar image + a 256x4 colormap LUT (viridis stops, converted to
+ *   6. Scalar image + a 256x4 colormap LUT (magma stops, converted to
  *      normalized RGBA float) — `isScalar: true`. The LUT sample IS the final
  *      display color: the colormap SHORT-CIRCUITS the operator + output-encode
  *      stages (the shared LUT family / diff-blit convention), so the LUT's own
@@ -33,7 +33,7 @@
  *      round-half-to-EVEN, GLSL: implementation-defined) disagreeing with
  *      the CPU reference's `Math.round` (round-half-up) — and disagreeing
  *      with EACH OTHER — exactly at these boundaries; a smooth LUT (like
- *      case 6's viridis) can't catch this because neighboring stops are too
+ *      case 6's magma) can't catch this because neighboring stops are too
  *      close in color to distinguish an off-by-one index within 1/255.
  *   8. Gamma override (2.2) instead of the default sRGB OETF.
  *   9. `uv` viewport window (zoom/pan): samples only a sub-rect of a wider
@@ -101,9 +101,9 @@ function setOverallStatus(pass: boolean): void {
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 const byteOf = (x: number): number => Math.round(clamp01(x) * 255);
 
-/** 256x4 (RGBA, [0,1]) viridis LUT — reuses the real colormap stops from colormaps/lut.ts. */
+/** 256x4 (RGBA, [0,1]) magma LUT — reuses the real colormap stops from colormaps/lut.ts. */
 function buildFloatColormap(): Float32Array {
-  const bytes = buildLUT(COLORMAP_STOPS.viridis); // Uint8Array(256*3), 0..255
+  const bytes = buildLUT(COLORMAP_STOPS.magma); // Uint8Array(256*3), 0..255
   const out = new Float32Array(256 * 4);
   for (let i = 0; i < 256; i++) {
     out[i * 4 + 0] = bytes[i * 3 + 0]! / 255;
@@ -119,7 +119,7 @@ const VIRIDIS_FLOAT_LUT = buildFloatColormap();
  * Alternating black/white 256x4 LUT — every ADJACENT index pair differs
  * maximally (0 vs 1 per channel), so a LUT index that rounds to the WRONG
  * neighbor is unmistakable in the readback (diff ~255, not ~1), unlike a
- * smooth LUT (e.g. viridis) where neighboring stops are too close in color
+ * smooth LUT (e.g. magma) where neighboring stops are too close in color
  * to distinguish an off-by-one index within the 1/255 comparison epsilon.
  */
 function buildBoundaryColormap(): Float32Array {

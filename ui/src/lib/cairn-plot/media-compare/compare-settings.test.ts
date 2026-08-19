@@ -30,10 +30,10 @@ test("diff option lists are non-empty and well-formed", () => {
     assert.ok(list.length > 0);
     for (const o of list) assert.ok(o.value && o.label);
   }
-  // The two native-diff colormaps are exactly red-green + viridis.
+  // The two native-diff colormaps are exactly red-green + turbo.
   assert.deepEqual(
     DIFF_COLORMAP_OPTIONS.map((o) => o.value).sort(),
-    ["red-green", "viridis"],
+    ["red-green", "turbo"],
   );
 });
 

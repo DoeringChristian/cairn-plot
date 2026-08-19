@@ -212,7 +212,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
 
     scatter(xs, ys, opts = {}) {
       const points = scatterPoints(xs, ys, { color: opts.color, labels: opts.labels });
-      const cfg: Opts = { colormap: checkChartColormap(String(opts.colormap ?? "viridis")) };
+      const cfg: Opts = { colormap: checkChartColormap(String(opts.colormap ?? "turbo")) };
       if (opts.xLabel != null) cfg.xLabel = opts.xLabel;
       if (opts.yLabel != null) cfg.yLabel = opts.yLabel;
       if (opts.colorLabel != null) cfg.colorLabel = opts.colorLabel;
@@ -248,7 +248,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
 
     heatmap(z, opts = {}) {
       const matrix = heatmapMatrix(z);
-      const cfg: Opts = { colormap: checkChartColormap(String(opts.colormap ?? "viridis")) };
+      const cfg: Opts = { colormap: checkChartColormap(String(opts.colormap ?? "turbo")) };
       if (opts.zmin != null) cfg.min = num(opts.zmin);
       if (opts.zmax != null) cfg.max = num(opts.zmax);
       if (opts.logColor) cfg.logColor = true;
@@ -261,7 +261,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
 
     parallelCoordinates(dimensions, opts = {}) {
       const { columns, rows, columnDomains } = parallelFromDimensions(dimensions);
-      const cfg: Opts = { colormap: checkChartColormap(String(opts.colormap ?? "viridis")) };
+      const cfg: Opts = { colormap: checkChartColormap(String(opts.colormap ?? "turbo")) };
       return handle(leaf("parallel", { kind: "inline", props: { columns, rows, columnDomains } }, cfg));
     },
 

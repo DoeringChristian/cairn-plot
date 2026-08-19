@@ -1,6 +1,6 @@
 """Chart `colormap=` kwarg — Scatter / ParallelCoordinates / Heatmap.
 
-The named-colormap set (`viridis` · `plasma` · `red-green` · `red-blue`) is now
+The named-colormap set (`plasma` · `red-green` · `red-blue`) is now
 a first-class kwarg on the color-by-value charts, validated against one
 canonical allowed set. These assert the prop lowers into the descriptor node's
 `props.colormap` and that an unknown name raises a clear ValueError.
@@ -20,9 +20,9 @@ def test_scatter_accepts_plasma():
     assert node["props"]["colormap"] == "plasma"
 
 
-def test_scatter_defaults_to_viridis():
+def test_scatter_defaults_to_turbo():
     node = cp.Scatter([0, 1], [0, 1]).to_node()
-    assert node["props"]["colormap"] == "viridis"
+    assert node["props"]["colormap"] == "turbo"
 
 
 def test_scatter_rejects_unknown_colormap():
@@ -37,9 +37,9 @@ def test_parallel_coordinates_accepts_plasma():
     assert node["props"]["colormap"] == "plasma"
 
 
-def test_parallel_coordinates_defaults_to_viridis():
+def test_parallel_coordinates_defaults_to_turbo():
     node = cp.ParallelCoordinates({"a": [1, 2], "b": [3, 4]}).to_node()
-    assert node["props"]["colormap"] == "viridis"
+    assert node["props"]["colormap"] == "turbo"
 
 
 def test_parallel_coordinates_rejects_unknown_colormap():

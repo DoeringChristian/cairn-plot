@@ -123,8 +123,8 @@ function computeColors(
     return categoriesToColors(data, nPoints, { stride, offset: 3 });
   }
 
-  // height → viridis over z
-  return valuesToColors(data, nPoints, [bounds.min[2], bounds.max[2]], "viridis", {
+  // height → turbo over z
+  return valuesToColors(data, nPoints, [bounds.min[2], bounds.max[2]], "turbo", {
     stride,
     offset: 2,
   });

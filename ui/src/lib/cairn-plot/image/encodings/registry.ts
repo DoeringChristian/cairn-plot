@@ -393,7 +393,12 @@ export function registerEncoding(encoding: DisplayEncoding): void {
 }
 
 export function getEncoding(id: string | undefined | null): DisplayEncoding | undefined {
-  return id ? REGISTRY.get(id) : undefined;
+  if (!id) return undefined;
+  // Back-compat: `viridis` was REMOVED (the tev-mapped `turbo` replaced it as the
+  // default sequential map). Any incoming `viridis` encoding id resolves to `turbo`
+  // rather than missing — mirrors `colormaps/lut.ts`'s `aliasColormap` (kept a bare
+  // literal here so the core-safe registry pulls no extra import).
+  return REGISTRY.get(id === "viridis" ? "turbo" : id);
 }
 
 /** All registered encodings, in registration order. */

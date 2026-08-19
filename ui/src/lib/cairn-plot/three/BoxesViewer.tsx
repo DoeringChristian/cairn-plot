@@ -92,10 +92,10 @@ function computeBoxColors(
   mode: BoxesColorMode,
 ): Float32Array {
   if (mode === "value" && values) {
-    return valuesToColors(values, nBoxes, valueRange ?? [0, 1], "viridis");
+    return valuesToColors(values, nBoxes, valueRange ?? [0, 1], "turbo");
   }
   if (mode === "depth") {
-    return valuesToColors(depth, nBoxes, [0, Math.max(maxDepth, 1e-6)], "viridis");
+    return valuesToColors(depth, nBoxes, [0, Math.max(maxDepth, 1e-6)], "turbo");
   }
   const out = new Float32Array(nBoxes * 3);
   for (let i = 0; i < nBoxes; i++) {

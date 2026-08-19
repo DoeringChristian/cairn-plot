@@ -57,12 +57,12 @@ def test_side_mode_rejected():
     ],
 )
 def test_diff_kernel_modes(mode, kernel_id):
-    node = cp.Compare(_img(), _img(), mode=mode, colormap="viridis").to_node()
+    node = cp.Compare(_img(), _img(), mode=mode, colormap="viridis").to_node()  # viridis aliases to turbo
     assert node["kind"] == "compare"
     assert node["mode"] == "diff"
     # The kernel id rides on `diffSubmode` — the pane's initial diff kernel.
     assert node["props"]["diffSubmode"] == kernel_id
-    assert node["props"]["colormap"] == "viridis"
+    assert node["props"]["colormap"] == "turbo"  # viridis -> turbo alias
 
 
 def test_flip_is_accepted_and_orientation():

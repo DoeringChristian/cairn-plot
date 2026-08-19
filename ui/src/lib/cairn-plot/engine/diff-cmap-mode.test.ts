@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { resolveDiffCmapMode, resolveColormapMode } from "./diff-cmap-mode.ts";
 
 test("signed/relative ranges are always 'signed' (zero on the LUT midpoint)", () => {
-  for (const cmap of ["viridis", "plasma", "magma", "red-blue", "red-green", null]) {
+  for (const cmap of ["turbo", "plasma", "magma", "red-blue", "red-green", null]) {
     assert.equal(resolveDiffCmapMode("signed", cmap), "signed");
     assert.equal(resolveDiffCmapMode("relative", cmap), "signed");
   }
@@ -20,7 +20,7 @@ test("signed/relative ranges are always 'signed' (zero on the LUT midpoint)", ()
 test("unit range + SEQUENTIAL colormap uses the FULL LUT ('linear') — the fix", () => {
   // The reported bug: a sequential map (plasma/magma) was pushed into its upper
   // half ('positive'), using only half the ramp and mismatching the reference.
-  assert.equal(resolveDiffCmapMode("unit", "viridis"), "linear");
+  assert.equal(resolveDiffCmapMode("unit", "turbo"), "linear");
   assert.equal(resolveDiffCmapMode("unit", "plasma"), "linear");
   assert.equal(resolveDiffCmapMode("unit", "magma"), "linear");
 });
@@ -40,7 +40,7 @@ test("resolveColormapMode: the shared sequential-vs-diverging rule", () => {
   // DIVERGING → 'positive'; SEQUENTIAL / unknown / empty → 'linear'.
   assert.equal(resolveColormapMode("red-blue"), "positive");
   assert.equal(resolveColormapMode("red-green"), "positive");
-  assert.equal(resolveColormapMode("viridis"), "linear");
+  assert.equal(resolveColormapMode("turbo"), "linear");
   assert.equal(resolveColormapMode("plasma"), "linear");
   assert.equal(resolveColormapMode(null), "linear");
   assert.equal(resolveColormapMode(undefined), "linear");
@@ -48,7 +48,7 @@ test("resolveColormapMode: the shared sequential-vs-diverging rule", () => {
 });
 
 test("resolveDiffCmapMode's unit branch matches resolveColormapMode", () => {
-  for (const cmap of ["viridis", "plasma", "magma", "red-blue", "red-green", "none", null]) {
+  for (const cmap of ["turbo", "plasma", "magma", "red-blue", "red-green", "none", null]) {
     assert.equal(resolveDiffCmapMode("unit", cmap), resolveColormapMode(cmap));
   }
 });

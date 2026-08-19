@@ -365,7 +365,7 @@ export function MeshNativeDiffPane({
     );
   }
 
-  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
   let deltaValues: Float32Array | null = null;
   if (nativeMode === "diff-geometry") {
     deltaValues = computeDisplacementMagnitude(
@@ -452,7 +452,7 @@ export function meshActiveColorbar(args: {
 }): { colormap: ColormapName; min: number; max: number } | null {
   const { items, referenceItems, settings, nativeMode } = args;
   const property = settings.property ?? null;
-  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
 
   if (nativeMode === "diff-property" || nativeMode === "diff-geometry") {
     const domains: [number, number][] = [];
@@ -487,7 +487,7 @@ export function meshActiveColorbar(args: {
     }
   }
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
-  return { colormap: "viridis", min: lo, max: hi };
+  return { colormap: "turbo", min: lo, max: hi };
 }
 
 /**

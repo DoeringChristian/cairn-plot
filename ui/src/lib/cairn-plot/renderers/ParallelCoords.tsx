@@ -52,7 +52,7 @@ export interface ParallelCoordsProps {
     row: ParallelRow,
     columns: ParallelColumn[],
   ) => ReactNode;
-  /** Colormap for the line color-by-value + colorbar. Default "viridis". */
+  /** Colormap for the line color-by-value + colorbar. Default "turbo". */
   colormap?: ColormapName;
   className?: string;
 }
@@ -65,7 +65,7 @@ export default function ParallelCoords({
   onHover,
   onClick,
   tooltipContent,
-  colormap = "viridis",
+  colormap = "turbo",
   className,
 }: ParallelCoordsProps) {
   const rawId = useId();

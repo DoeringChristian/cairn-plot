@@ -145,7 +145,7 @@ test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+red
   assert.ok(luts.length >= 3, "expected the migrated colormap LUT entries");
   // Includes the canonical colormaps.
   const ids = luts.map((e) => e.id);
-  for (const id of ["viridis", "magma"]) assert.ok(ids.includes(id), `missing lut "${id}"`);
+  for (const id of ["magma", "plasma"]) assert.ok(ids.includes(id), `missing lut "${id}"`);
   for (const e of luts) {
     // Multi-channel follow-up: colormaps are legal at every k∈[1,4] (a k>1 sample
     // is reduced to a scalar before the LUT).
@@ -444,25 +444,25 @@ test("reduceToScalar mean: average over the color channels (alpha ignored)", () 
 });
 
 test("lut cpu twin reduces multi-channel input before the LUT (k=1 unchanged)", () => {
-  const viridis = getEncoding("viridis")!;
+  const magmaEnc = getEncoding("magma")!;
   // At k=1 the multi-channel path is inert: cpu([s],1) === cpu([s, junk],1).
-  const a = viridis.cpu([0.5], 1, DEFAULT_ENCODE_PARAMS);
-  const b = viridis.cpu([0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS);
+  const a = magmaEnc.cpu([0.5], 1, DEFAULT_ENCODE_PARAMS);
+  const b = magmaEnc.cpu([0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS);
   assert.deepEqual(a, b, "k=1 lut cpu must read only channel 0");
   // At k=3 with an explicit reduce, the twin equals the LUT of the reduced scalar
   // (which equals the k=1 lut cpu of that scalar) — i.e. reduce THEN index.
   const rgb = [0.2, 0.5, 0.8];
   const meanScalar = reduceToScalar(rgb, 3, "mean");
   assert.deepEqual(
-    viridis.cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" }),
-    viridis.cpu([meanScalar], 1, DEFAULT_ENCODE_PARAMS),
+    magmaEnc.cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" }),
+    magmaEnc.cpu([meanScalar], 1, DEFAULT_ENCODE_PARAMS),
     "lut cpu(k=3, mean) === lut cpu(reduced scalar)",
   );
   // Unset reduce falls back to the k-based default (luminance for k=3).
   const lumScalar = reduceToScalar(rgb, 3, "luminance");
   assert.deepEqual(
-    viridis.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS),
-    viridis.cpu([lumScalar], 1, DEFAULT_ENCODE_PARAMS),
+    magmaEnc.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS),
+    magmaEnc.cpu([lumScalar], 1, DEFAULT_ENCODE_PARAMS),
     "unset reduce → luminance default at k=3",
   );
 });

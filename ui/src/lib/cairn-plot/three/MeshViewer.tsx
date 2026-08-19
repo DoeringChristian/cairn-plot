@@ -139,7 +139,7 @@ function computeVertexColors(
   }
   if (mode === "values" && values) {
     const domain = valueRange ?? dataRange(values);
-    return valuesToColors(values, nVertices, domain, "viridis");
+    return valuesToColors(values, nVertices, domain, "turbo");
   }
   return null;
 }

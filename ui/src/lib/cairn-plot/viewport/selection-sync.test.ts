@@ -90,7 +90,7 @@ test("a newly-ADDED member adopts the anchor's current view + settings", () => {
   const g = paneSyncGroups(store, "A", base)!;
   // The anchor seeds the group (what `useSyncedImage*`'s anchor effect does).
   publishImageViewportState(g.viewportGroupId, "A", { zoom: 2, pan: { x: 1, y: 2 } });
-  publishImageSettings(g.settingsGroupId, "A", { colormap: "viridis", exposureEV: 1 });
+  publishImageSettings(g.settingsGroupId, "A", { colormap: "turbo", exposureEV: 1 });
 
   // C is now shift-clicked in → it joins the SAME groups and adopts last state.
   store.select("C", "toggle");
@@ -99,7 +99,7 @@ test("a newly-ADDED member adopts the anchor's current view + settings", () => {
   assert.equal(gC.isAnchor, false, "a newly-added member is never the anchor");
   assert.deepEqual(
     getLastImageSettings(gC.settingsGroupId),
-    { colormap: "viridis", exposureEV: 1 },
+    { colormap: "turbo", exposureEV: 1 },
     "the joiner reads the group's accumulated settings",
   );
 });

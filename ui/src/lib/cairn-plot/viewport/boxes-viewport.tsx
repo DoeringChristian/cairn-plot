@@ -330,7 +330,7 @@ export function BoxesNativeDiffPane({
     );
   }
 
-  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
   const activeA = resolveActiveProperty(data.arrays.properties, view.property, data.meta.properties ?? null);
   const activeB = resolveActiveProperty(
     reference.arrays.properties,
@@ -404,7 +404,7 @@ export function boxesActiveColorbar(args: {
   nativeMode?: string;
 }): { colormap: ColormapName; min: number; max: number } | null {
   const { items, referenceItems, settings, nativeMode } = args;
-  const diffColormap: DiffColormap = settings.diffColormap ?? "viridis";
+  const diffColormap: DiffColormap = settings.diffColormap ?? "turbo";
 
   if (nativeMode === "diff-property") {
     const property = settings.property ?? null;
@@ -440,7 +440,7 @@ export function boxesActiveColorbar(args: {
     }
   }
   if (settings.colorMode === "value" && anyHasValues) {
-    return { colormap: "viridis", min: lo, max: hi };
+    return { colormap: "turbo", min: lo, max: hi };
   }
   // "depth" (or "value" with nothing to color by, matching the per-pane
   // fallback) — domain is [0, max_depth] unioned across every item.
@@ -449,7 +449,7 @@ export function boxesActiveColorbar(args: {
     if (it) maxDepth = Math.max(maxDepth, it.meta.max_depth);
   }
   if (all.every((it) => !it)) return null;
-  return { colormap: "viridis", min: 0, max: Math.max(maxDepth, 1) };
+  return { colormap: "turbo", min: 0, max: Math.max(maxDepth, 1) };
 }
 
 /**

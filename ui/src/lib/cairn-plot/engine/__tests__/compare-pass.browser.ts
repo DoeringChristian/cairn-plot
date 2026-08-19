@@ -210,15 +210,15 @@ async function runDiffCase(device: Device, kernelId: string): Promise<boolean> {
 // `renderDiffDisplay` now threads the DATA-encoding NORM (linear/log/power)
 // through the SAME `cairnDataIndex` the image LUT path uses, before the colormap
 // LUT. Prove the GPU diff-display colormap index === the CPU `computeDataIndex`
-// twin: build an ABSOLUTE-error diff (unit range), blit it through a viridis LUT
+// twin: build an ABSOLUTE-error diff (unit range), blit it through a magma LUT
 // (cmapMode `linear`, nearest) with each norm, and compare each pixel to a
 // hand-rolled reference (clamp → avg → computeDataIndex → nearest float-LUT tap).
-const VIRIDIS_LUT = colormapFloatLUT("viridis");
+const MAGMA_LUT = colormapFloatLUT("magma");
 /** Nearest float-LUT tap — mirrors the WGSL `cairnLutSampleNearest`
  *  (round-half-up index), reading the SAME `colormapFloatLUT` the GPU binds. */
 function lutNearest(t: number): [number, number, number] {
   const row = Math.min(255, Math.max(0, Math.floor(clamp01(t) * 255 + 0.5)));
-  return [VIRIDIS_LUT[row * 4]!, VIRIDIS_LUT[row * 4 + 1]!, VIRIDIS_LUT[row * 4 + 2]!];
+  return [MAGMA_LUT[row * 4]!, MAGMA_LUT[row * 4 + 1]!, MAGMA_LUT[row * 4 + 2]!];
 }
 async function runDiffDisplayNormCase(device: Device, norm: NormMode, gamma: number): Promise<boolean> {
   const kernelId = "absolute"; // unit displayRange → disp = clamp01(raw)
@@ -229,7 +229,7 @@ async function runDiffDisplayNormCase(device: Device, norm: NormMode, gamma: num
   renderDiffDisplay(device, target, result, "unit", {
     uv: uvFull,
     cmapMode: "linear",
-    colormap: VIRIDIS_LUT,
+    colormap: MAGMA_LUT,
     filter: "nearest",
     norm,
     ...(norm === "power" ? { gamma } : {}),

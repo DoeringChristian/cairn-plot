@@ -296,6 +296,7 @@ export const flipKernel: MultipassKernel = {
   label: "FLIP (perceptual)",
   publicName: "flip",
   displayRange: "unit",
+  defaultColormap: "magma", // perceptual FLIP metric → the reference FLIP tooling's magma
   // FLIP is a single perceptual error per pixel (replicated across R/G/B in the
   // result); the overlay prints ONE untinted number, never three channels.
   output: "scalar",
@@ -321,6 +322,7 @@ export const flipLdrForcedKernel: MultipassKernel = {
   label: "FLIP (LDR forced)",
   publicName: "flip_ldr",
   displayRange: "unit",
+  defaultColormap: "magma", // perceptual FLIP metric → the reference FLIP tooling's magma
   output: "scalar",
   params: { ppd: 67 },
   buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {

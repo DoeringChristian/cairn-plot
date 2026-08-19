@@ -99,13 +99,19 @@ def _resolver(name: str) -> Any:
 # minus the image-only `"none"` passthrough (a color-by-value chart always
 # needs a real ramp). Kept as one canonical tuple so Scatter / ParallelCoordinates
 # / Heatmap validate against the same allowed set with one error style.
-_COLORMAPS = ("viridis", "plasma", "magma", "turbo", "red-green", "red-blue")
+_COLORMAPS = ("plasma", "magma", "turbo", "red-green", "red-blue")
+
+# Back-compat: ``viridis`` was REMOVED (the tev-mapped ``turbo`` replaced it as the
+# default sequential map). An incoming ``viridis`` reference is ALIASED to ``turbo``
+# rather than raising — mirrors the TS ``aliasColormap`` (``colormaps/lut.ts``).
+_COLORMAP_ALIASES = {"viridis": "turbo"}
 
 
 def _check_colormap(value: str) -> str:
     """Validate a chart's ``colormap`` kwarg against the named colormap set,
     raising a clear ``ValueError`` (same style as ``_check_pixel_value_notation``)
-    on an unknown name."""
+    on an unknown name. A legacy ``viridis`` aliases to ``turbo``."""
+    value = _COLORMAP_ALIASES.get(value, value)
     if value not in _COLORMAPS:
         raise ValueError(
             f"colormap must be one of {_COLORMAPS!r}, got {value!r}"
@@ -124,7 +130,9 @@ _IMAGE_COLORMAPS = ("none", *_COLORMAPS)
 def _check_image_colormap(value: str) -> str:
     """Validate an image / compare ``colormap`` kwarg against the named ramps +
     the ``"none"`` passthrough, raising a clear ``ValueError`` on an unknown
-    name. Used for ``cp.Image``/``cp.Compare`` (charts use ``_check_colormap``)."""
+    name. Used for ``cp.Image``/``cp.Compare`` (charts use ``_check_colormap``).
+    A legacy ``viridis`` aliases to ``turbo``."""
+    value = _COLORMAP_ALIASES.get(value, value)
     if value not in _IMAGE_COLORMAPS:
         raise ValueError(
             f"colormap must be one of {_IMAGE_COLORMAPS!r}, got {value!r}"
@@ -406,9 +414,9 @@ class Scatter(Component):
     """A scatter plot (renderer key ``scatter``).
 
     ``cp.Scatter(x, y, *, color=None, labels=None, x_label=None, y_label=None,
-    color_label=None, x_log=False, y_log=False, colormap="viridis")``. ``color``
+    color_label=None, x_log=False, y_log=False, colormap="turbo")``. ``color``
     is a per-point numeric value mapped through the ``colormap`` colorbar (one of
-    ``viridis``/``plasma``/``magma``/``turbo``/``red-green``/``red-blue``). Raw-only (``local``)."""
+    ``plasma``/``magma``/``turbo``/``red-green``/``red-blue``). Raw-only (``local``)."""
 
     _label = "scatter"
 
@@ -424,7 +432,7 @@ class Scatter(Component):
         color_label: str | None = None,
         x_log: bool = False,
         y_log: bool = False,
-        colormap: str = "viridis",
+        colormap: str = "turbo",
     ) -> None:
         from .shapers import _scatter_points_from_raw
 
@@ -551,11 +559,11 @@ class Histogram(Component):
 class Heatmap(Component):
     """A heatmap (renderer key ``heatmap``).
 
-    ``cp.Heatmap(z, *, colormap="viridis", zmin=None, zmax=None,
+    ``cp.Heatmap(z, *, colormap="turbo", zmin=None, zmax=None,
     log_color=False, origin_top=True, x_label=None, y_label=None,
     value_label=None)`` where ``z`` is a 2-D array (``matrix[y][x]``).
     Convenience: ``cp.Heatmap(run["confusion"])`` deserializes a 2-D artifact.
-    ``colormap`` is one of ``viridis``/``plasma``/``magma``/``turbo``/``red-green``/``red-blue``."""
+    ``colormap`` is one of ``plasma``/``magma``/``turbo``/``red-green``/``red-blue``."""
 
     _label = "heatmap"
 
@@ -563,7 +571,7 @@ class Heatmap(Component):
         self,
         z: Any,
         *,
-        colormap: str = "viridis",
+        colormap: str = "turbo",
         zmin: float | None = None,
         zmax: float | None = None,
         log_color: bool = False,
@@ -617,17 +625,17 @@ class Heatmap(Component):
 class ParallelCoordinates(Component):
     """A parallel-coordinates plot (renderer key ``parallel``).
 
-    ``cp.ParallelCoordinates(dimensions, *, colormap="viridis")`` where
+    ``cp.ParallelCoordinates(dimensions, *, colormap="turbo")`` where
     ``dimensions`` is a list of ``{label, values}`` dicts (Plotly-style), a
     ``{label: values}`` dict, or a pandas ``DataFrame`` (duck-typed). Numeric
     columns keep their scale; non-numeric columns are treated categorically
     (first-seen index). The last column drives the line color, mapped through the
-    ``colormap`` ramp (one of ``viridis``/``plasma``/``magma``/``turbo``/``red-green``/``red-blue``).
+    ``colormap`` ramp (one of ``plasma``/``magma``/``turbo``/``red-green``/``red-blue``).
     Raw-only (``local``)."""
 
     _label = "parallel"
 
-    def __init__(self, dimensions: Any, *, colormap: str = "viridis") -> None:
+    def __init__(self, dimensions: Any, *, colormap: str = "turbo") -> None:
         from .shapers import _parallel_from_dimensions
 
         _check_colormap(colormap)

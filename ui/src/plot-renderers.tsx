@@ -276,7 +276,7 @@ function HeatmapStandalone(p: P) {
   return (
     <ChartBox height={height}>
       <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
-        <Heatmap matrix={p.matrix ?? []} colormap={p.colormap ?? "viridis"} {...rest} />
+        <Heatmap matrix={p.matrix ?? []} colormap={p.colormap ?? "turbo"} {...rest} />
       </ChartSyncBoundary>
     </ChartBox>
   );

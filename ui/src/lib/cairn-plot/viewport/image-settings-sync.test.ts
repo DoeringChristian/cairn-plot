@@ -22,9 +22,9 @@ test("a subscriber receives a peer's settings patch", () => {
   const g = freshGroup();
   const received: ImageSyncSettings[] = [];
   const off = subscribeImageSettings(g, "sub", (p) => received.push(p));
-  publishImageSettings(g, "peer", { colormap: "viridis" });
+  publishImageSettings(g, "peer", { colormap: "turbo" });
   off();
-  assert.deepEqual(received, [{ colormap: "viridis" }]);
+  assert.deepEqual(received, [{ colormap: "turbo" }]);
 });
 
 test("echo guard: a publisher never receives its own patch", () => {
@@ -53,11 +53,11 @@ test("a colormap change broadcasts to every selected member", () => {
 
 test("getLastImageSettings ACCUMULATES a merged snapshot for a late joiner", () => {
   const g = freshGroup();
-  publishImageSettings(g, "anchor", { colormap: "viridis", tonemap: "aces" });
+  publishImageSettings(g, "anchor", { colormap: "turbo", tonemap: "aces" });
   publishImageSettings(g, "anchor", { exposureEV: 1.5 });
   // A pane joining now should see the full merged group state.
   assert.deepEqual(getLastImageSettings(g), {
-    colormap: "viridis",
+    colormap: "turbo",
     tonemap: "aces",
     exposureEV: 1.5,
   });
@@ -101,7 +101,7 @@ test("getLastImageSettings merges compare-only AND shared keys for a late joiner
   const g = freshGroup();
   // A compare anchor seeds BOTH the shared look and its compare-only settings.
   publishImageSettings(g, "anchor", {
-    colormap: "viridis",
+    colormap: "turbo",
     tonemap: "aces",
     compareMode: "split",
     splitPosition: 0.25,
@@ -109,7 +109,7 @@ test("getLastImageSettings merges compare-only AND shared keys for a late joiner
   });
   publishImageSettings(g, "anchor", { diffKernel: "ssim" });
   assert.deepEqual(getLastImageSettings(g), {
-    colormap: "viridis",
+    colormap: "turbo",
     tonemap: "aces",
     compareMode: "split",
     splitPosition: 0.25,

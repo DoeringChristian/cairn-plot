@@ -17,7 +17,7 @@
  * call) and asserts pane B's state follows:
  *   - compare MODE  (split → blend → diff → split)
  *   - diff KERNEL   (absolute → squared)
- *   - COLORMAP      (none → viridis)
+ *   - COLORMAP      (none → magma)
  *   - TONEMAP       (srgb → aces)
  *   - SPLIT position (0.5 → 0.3)
  *
@@ -42,7 +42,7 @@ import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 import GpuComparePane from "../GpuComparePane";
 import { InFullscreenOverlayContext } from "../../primitives/FullscreenOverlayShell";
-import { listDiffMenuModes } from "../../engine/kernels";
+import { listDiffMenuModes, kernelDefaultColormap } from "../../engine/kernels";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,
@@ -66,6 +66,8 @@ interface CompareSyncProbe {
   changeColormap: (id: string) => void;
   changeTonemap: (id: string) => void;
   changeSplit: (p: number) => void;
+  /** HOME (view-local reset) — the per-kernel-default-colormaps follow-up. */
+  home: () => void;
 }
 
 function report(pass: boolean, message: string): void {
@@ -272,15 +274,15 @@ async function run(): Promise<boolean> {
   report(kernelOk, `KERNEL sync: A→squared, B follows (B.diffKernel=${B().diffKernel})`);
   ok = ok && kernelOk;
 
-  // --- 4. COLORMAP: none → viridis (colormap menu is live in diff mode) -----
-  A().changeColormap("viridis");
-  const cmapOk = await waitFor(() => B().colormap === "viridis");
-  report(cmapOk, `COLORMAP sync: A→viridis, B follows (B.colormap=${B().colormap})`);
+  // --- 4. COLORMAP: none → magma (colormap menu is live in diff mode) -----
+  A().changeColormap("magma");
+  const cmapOk = await waitFor(() => B().colormap === "magma");
+  report(cmapOk, `COLORMAP sync: A→magma, B follows (B.colormap=${B().colormap})`);
   ok = ok && cmapOk;
   // The unified `encoding` key follows too (in diff+colormap the active encoding
   // IS the lut) — the compare-pane-on-DISPLAY follow-up carries ONE encoding id.
-  const encOk = await waitFor(() => B().encodingId === "viridis");
-  report(encOk, `ENCODING sync: B's derived encoding follows to viridis (B.encodingId=${B().encodingId})`);
+  const encOk = await waitFor(() => B().encodingId === "magma");
+  report(encOk, `ENCODING sync: B's derived encoding follows to magma (B.encodingId=${B().encodingId})`);
   ok = ok && encOk;
 
   // (The NORM sync step was removed — the norm Lin·Log·Pow picker is gone,
@@ -441,6 +443,48 @@ async function run(): Promise<boolean> {
   // renders ONE reused renderer and swaps the source, so settings are shared by
   // construction. That path (single pane, diff persists across a flip, instance
   // reused) is covered by `stack/grid-stacked-persist`.
+
+  // --- 9. PER-KERNEL DEFAULT COLORMAPS (the per-kernel-default-colormaps follow-up) --
+  // On switching diff kernel the diff colormap follows that kernel's REQUESTED
+  // DEFAULT (signed→red-green, ℝ⁺→turbo, FLIP/SSIM→magma) UNLESS the user has
+  // explicitly picked one (a pick sticks across kernel switches; HOME clears it).
+  // Single-pane (pane A) — the exact directive steps. Each control change is
+  // AWAITED to settle (home resets kernel+mode through echo setters that round-trip
+  // through the owner, so a bare synchronous follow-up can race the echo).
+  A().home(); // clear the override left by the earlier COLORMAP sync step
+  await waitFor(() => A().colormap === kernelDefaultColormap(A().diffKernel));
+  A().changeCompareMode("diff");
+  await waitFor(() => A().compareMode === "diff");
+  // (a) DEFAULT FOLLOWS the kernel: signed (ℝ signed error) → red-green (diverging).
+  A().changeDiffKernel("signed");
+  const defSigned = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green");
+  report(defSigned, `DEFAULT: signed kernel → red-green colormap (A.colormap=${A().colormap})`);
+  ok = ok && defSigned;
+  // (b) switch to absolute (ℝ⁺) → the default FOLLOWS to turbo (sequential).
+  A().changeDiffKernel("absolute");
+  const defAbs = await waitFor(() => A().diffKernel === "absolute" && A().colormap === "turbo");
+  report(defAbs, `DEFAULT: absolute kernel → turbo colormap (A.colormap=${A().colormap})`);
+  ok = ok && defAbs;
+  // (c) the user PICKS magma explicitly → an override.
+  A().changeColormap("magma");
+  const picked = await waitFor(() => A().colormap === "magma");
+  report(picked, `OVERRIDE: user picks magma (A.colormap=${A().colormap})`);
+  ok = ok && picked;
+  // (d) switch kernel again → the pick STICKS (does NOT revert to the new default).
+  A().changeDiffKernel("signed");
+  const stuck = await waitFor(() => A().diffKernel === "signed" && A().colormap === "magma");
+  report(stuck, `STICK: kernel→signed but the magma pick sticks (A.colormap=${A().colormap})`);
+  ok = ok && stuck;
+  // (e) HOME clears the override → back to the (reset) kernel's DEFAULT colormap.
+  A().home();
+  const homeReset = await waitFor(
+    () => A().colormap === kernelDefaultColormap(A().diffKernel) && A().colormap !== "magma",
+  );
+  report(
+    homeReset,
+    `HOME: override cleared → follows the kernel default (A.colormap=${A().colormap}, kernel=${A().diffKernel})`,
+  );
+  ok = ok && homeReset;
 
   roots.forEach((r) => r.unmount());
   return ok;

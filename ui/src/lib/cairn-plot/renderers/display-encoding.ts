@@ -280,7 +280,10 @@ export interface PaneEncoding {
  * publish to the settings-sync bus.
  */
 export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
-  const { mode, arity, curveSet, propColormap, propTonemap, resolveDefaultCurve } = config;
+  const { mode, arity, curveSet, propTonemap, resolveDefaultCurve } = config;
+  // Back-compat: `viridis` was REMOVED → alias an incoming descriptor colormap to
+  // `turbo` so the seed resolves to a real lut id (mirrors `aliasColormap`).
+  const propColormap = config.propColormap === "viridis" ? "turbo" : config.propColormap;
 
   const idsFor = useCallback(
     (a: number): DisplayEncodingIds => resolveDisplayEncodingIds({ mode, arity: a, curveSet }),
@@ -338,7 +341,9 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   }, [propColormap, propTonemap, arity]);
 
   const setEncoding = useCallback(
-    (id: string) => {
+    (rawId: string) => {
+      // Back-compat: a sync peer may still publish `viridis` → alias to `turbo`.
+      const id = rawId === "viridis" ? "turbo" : rawId;
       memoryRef.current.set(arity, id);
       setEncodingId(id);
     },

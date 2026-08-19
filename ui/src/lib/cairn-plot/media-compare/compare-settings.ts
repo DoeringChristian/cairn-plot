@@ -141,15 +141,15 @@ export const DIFF_SUBMODE_OPTIONS: ReadonlyArray<LabelledOption<DiffMode>> = [
 
 /** False-color maps offered for the image-space pixel "diff" mode. */
 export const PIXEL_DIFF_COLORMAP_OPTIONS: ReadonlyArray<LabelledOption<Colormap>> = [
-  { value: "viridis", label: "Viridis" },
+  { value: "turbo", label: "Turbo" },
   { value: "red-green", label: "Red-green" },
   { value: "red-blue", label: "Red-blue" },
 ];
 
-/** The two native-diff-mode colormaps (signed red-green / magnitude viridis). */
+/** The two native-diff-mode colormaps (signed red-green / magnitude turbo). */
 export const DIFF_COLORMAP_OPTIONS: ReadonlyArray<LabelledOption<DiffColormap>> = [
   { value: "red-green", label: "Red–green (signed)" },
-  { value: "viridis", label: "Viridis (magnitude)" },
+  { value: "turbo", label: "Turbo (magnitude)" },
 ];
 
 // ---------------------------------------------------------------------------

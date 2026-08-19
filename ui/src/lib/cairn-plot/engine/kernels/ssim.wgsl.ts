@@ -197,6 +197,7 @@ export const ssimKernel: MultipassKernel = {
   label: "SSIM (1−SSIM)",
   publicName: "ssim",
   displayRange: "unit",
+  defaultColormap: "magma", // perceptual ℝ⁺ metric → magma (FLIP-family convention)
   // SSIM is a single structural-error value per pixel (1-SSIM, replicated across
   // R/G/B); the overlay prints ONE untinted number, never three channels.
   output: "scalar",

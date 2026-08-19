@@ -119,7 +119,7 @@ function makeController(): PlotController {
 }
 
 let mode = "flip";
-let cmap = "viridis";
+let cmap = "turbo";
 let exposure = 0;
 let offset = 0;
 
@@ -150,7 +150,7 @@ function buildConfig(): ToolbarConfig {
           value: cmap,
           onSelect: (id) => { cmap = id; render(); },
           options: [
-            { id: "viridis", label: "Viridis" },
+            { id: "turbo", label: "Turbo" },
             { id: "magma", label: "Magma" },
             { id: "rdbu", label: "Red–Blue" },
             { id: "turbo", label: "Turbo" },

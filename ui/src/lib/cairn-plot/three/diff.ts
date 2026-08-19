@@ -14,7 +14,7 @@
  * - "red-green": a DIVERGING colormap (red -> white -> green) — used with a
  *   domain symmetric around zero (`[-maxAbs, maxAbs]`) so zero maps to the
  *   neutral white midpoint, i.e. signed diff coloring.
- * - "viridis": a sequential colormap — used with a `[0, maxAbs]` domain over
+ * - "turbo": a sequential colormap — used with a `[0, maxAbs]` domain over
  *   the delta's MAGNITUDE, i.e. "how different", not which direction.
  */
 
@@ -22,7 +22,7 @@ import { valuesToColors } from "./value-colors";
 import type { ColormapName } from "../types";
 
 /** The two native-diff-mode colormaps every 3D type's diff modes offer. */
-export type DiffColormap = Extract<ColormapName, "red-green" | "viridis">;
+export type DiffColormap = Extract<ColormapName, "red-green" | "turbo">;
 
 /** Per-element signed delta `a[i] - b[i]`, length `n` (stride 1). */
 export function computeDelta(a: ArrayLike<number>, b: ArrayLike<number>, n: number): Float32Array {
@@ -63,14 +63,14 @@ function maxAbs(values: ArrayLike<number>): number {
 /**
  * Domain for a diff array under the given colormap: symmetric around zero
  * (`[-maxAbs, maxAbs]`) for "red-green" (signed, zero=neutral), or
- * `[0, maxAbs]` for "viridis" (magnitude).
+ * `[0, maxAbs]` for "turbo" (magnitude).
  */
 export function diffDomain(values: ArrayLike<number>, colormap: DiffColormap): [number, number] {
   const m = maxAbs(values);
   return colormap === "red-green" ? [-m, m] : [0, m];
 }
 
-/** Elementwise `|values[i]|` — used to feed the "viridis" (magnitude)
+/** Elementwise `|values[i]|` — used to feed the "turbo" (magnitude)
  *  colormap a non-negative array before domain-mapping (a SIGNED delta's
  *  negative half must not clamp to the LUT's zero end). Exported so a card
  *  can apply the same magnitude transform directly to a raymarched scalar
@@ -92,7 +92,7 @@ export interface DiffColorsResult {
  * delta array into render-ready colors + a Colorbar domain — no per-viewer
  * delta/colormap loop. `values` is always the SIGNED delta (e.g. from
  * `computeDelta`) or a magnitude (e.g. from `computeDisplacementMagnitude`,
- * already non-negative). For "viridis" (magnitude), a signed input is
+ * already non-negative). For "turbo" (magnitude), a signed input is
  * absolute-valued first so its negative half doesn't clamp to the LUT's
  * zero end; for "red-green" (signed, zero=neutral) the raw signed values
  * are used as-is against the symmetric domain.
@@ -119,7 +119,7 @@ export function diffColorsForDomain(
   domain: [number, number],
   colormap: DiffColormap,
 ): Float32Array {
-  const magnitudeSafe = colormap === "viridis" ? absArray(values) : values;
+  const magnitudeSafe = colormap === "turbo" ? absArray(values) : values;
   return valuesToColors(magnitudeSafe, nElements, domain, colormap);
 }
 
@@ -127,7 +127,7 @@ export function diffColorsForDomain(
  * Unions per-pane diff domains (each from `diffDomain`) into ONE card-level
  * domain — the "value-only" analogue of `diffDomain` for the multi-pane
  * case: "red-green" (signed, symmetric) takes the largest `maxAbs` across
- * every pane; "viridis" (magnitude, `[0, maxAbs]`) takes the largest `hi`.
+ * every pane; "turbo" (magnitude, `[0, maxAbs]`) takes the largest `hi`.
  * `null` when `domains` is empty (no pane currently has a valid diff to
  * contribute — e.g. every pair is topology-mismatched).
  */
@@ -167,9 +167,9 @@ function assertDiffMathInvariants(): void {
   if (rgLo !== -3 || rgHi !== 3) {
     throw new Error("diff.ts: red-green domain must be symmetric around zero");
   }
-  const [vLo, vHi] = diffDomain(delta, "viridis");
+  const [vLo, vHi] = diffDomain(delta, "turbo");
   if (vLo !== 0 || vHi !== 3) {
-    throw new Error("diff.ts: viridis domain must be [0, maxAbs]");
+    throw new Error("diff.ts: turbo domain must be [0, maxAbs]");
   }
   const { colors, domain } = diffColors(delta, 3, "red-green");
   if (colors.length !== 9 || domain[0] !== -3 || domain[1] !== 3) {
@@ -180,12 +180,12 @@ function assertDiffMathInvariants(): void {
   if (Math.abs(zeroColors[0]! - 1) > 0.02 || Math.abs(zeroColors[1]! - 1) > 0.02 || Math.abs(zeroColors[2]! - 1) > 0.02) {
     throw new Error("diff.ts: red-green zero must map to white (neutral)");
   }
-  // Sign-clamp regression guard: under "viridis" (a [0, maxAbs] MAGNITUDE
+  // Sign-clamp regression guard: under "turbo" (a [0, maxAbs] MAGNITUDE
   // domain) a SIGNED delta must be absolute-valued first, so +v and -v color
   // IDENTICALLY (equal magnitude) and both differ from 0. Without the
   // absArray() step in diffColors, -3 would clamp to the LUT's zero end and
   // read the SAME as 0 — the exact bug this workstream fixed.
-  const signed = diffColors(new Float32Array([-3, 0, 3]), 3, "viridis").colors;
+  const signed = diffColors(new Float32Array([-3, 0, 3]), 3, "turbo").colors;
   const negEqPos =
     Math.abs(signed[0]! - signed[6]!) < 1e-6 &&
     Math.abs(signed[1]! - signed[7]!) < 1e-6 &&
@@ -196,7 +196,7 @@ function assertDiffMathInvariants(): void {
     Math.abs(signed[2]! - signed[5]!) > 1e-3;
   if (!negEqPos || !negDiffersFromZero) {
     throw new Error(
-      "diff.ts: viridis magnitude must color ±v identically and distinctly from 0 (sign-clamp regression)",
+      "diff.ts: turbo magnitude must color ±v identically and distinctly from 0 (sign-clamp regression)",
     );
   }
 }

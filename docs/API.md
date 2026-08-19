@@ -23,11 +23,11 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | Component | What it renders |
 | --- | --- |
 | `cp.Line` | Line / scalar-sequence chart. `Line(y)`, `Line(y, x)`, `Line({"a": ya, "b": yb})`. |
-| `cp.Scatter` | Scatter plot. `color=` maps a per-point value through `colormap=` (`viridis` · `plasma` · `magma` · `turbo` · `red-green` · `red-blue`; default `viridis`). |
+| `cp.Scatter` | Scatter plot. `color=` maps a per-point value through `colormap=` (`plasma` · `magma` · `turbo` · `red-green` · `red-blue`; default `turbo`). |
 | `cp.Bar` | Bar chart. |
 | `cp.Histogram` | Histogram. |
-| `cp.Heatmap` | Heatmap. `colormap=` (`viridis` · `plasma` · `magma` · `turbo` · `red-green` · `red-blue`; default `viridis`). |
-| `cp.ParallelCoordinates` | Parallel-coordinates plot. `colormap=` colors the lines by the last column (`viridis` · `plasma` · `magma` · `turbo` · `red-green` · `red-blue`; default `viridis`). |
+| `cp.Heatmap` | Heatmap. `colormap=` (`plasma` · `magma` · `turbo` · `red-green` · `red-blue`; default `turbo`). |
+| `cp.ParallelCoordinates` | Parallel-coordinates plot. `colormap=` colors the lines by the last column (`plasma` · `magma` · `turbo` · `red-green` · `red-blue`; default `turbo`). |
 | `cp.Image` | Single image (`PIL`/ndarray/PNG-JPEG bytes, or `url=`). Float `.npy`/`.exr` → HDR renderer. `label=` adds a bottom-left caption (and, as a `cp.Compare` operand, captions its side). |
 | `cp.PointCloud` | 3D point cloud `(N,3\|4\|6)`. |
 | `cp.Mesh` | 3D mesh (`vertices`/`faces`). |
