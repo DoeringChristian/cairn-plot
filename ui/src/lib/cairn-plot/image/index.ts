@@ -9,9 +9,7 @@ export {
   REC709_LUMINANCE_WEIGHTS,
 } from "./luminance";
 export {
-  TONEMAP_OPERATORS,
   DEFAULT_TONEMAP,
-  getTonemapOperator,
   applyExposure,
   srgbOetf,
   outputEncode,

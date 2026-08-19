@@ -71,8 +71,8 @@ import { clamp01 } from "../util/clamp";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { f16BitsToFloat32, halfToFloat } from "../image/half";
 import {
-  getTonemapOperator,
   toSdrTonemap,
+  DEFAULT_TONEMAP,
   applyExposureOffset,
   outputEncode,
   srgbEotf,
@@ -96,7 +96,13 @@ import { u8HistogramSource, floatHistogramSource } from "./image-histogram-sourc
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import { displayToolbarButton, normToolbarButton, usePaneEncoding } from "./display-encoding";
-import { computeDataIndex, type EncodeParams, type NormMode } from "../image/encodings";
+import {
+  computeDataIndex,
+  getEncoding,
+  DEFAULT_ENCODE_PARAMS,
+  type EncodeParams,
+  type NormMode,
+} from "../image/encodings";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -173,7 +179,17 @@ export function tonemapToImageData(
   // kept half — the GPU path keeps the bits; only this fallback pays the copy.
   const src =
     hdr.precision === "f16-bits" ? f16BitsToFloat32(hdr.data as Uint16Array) : hdr.data;
-  const op = getTonemapOperator(tonemap);
+  // Resolve the operator CURVE straight from the registry (the single source of
+  // truth). The CPU triple path applies only the PLAIN (non-peak) SDR curves —
+  // exposure is folded in below and peak is an HDR-surface concern — so a peak or
+  // LUT id (never reached here in practice) falls back to the srgb clamp, exactly
+  // as the former `getTonemapOperator` lookup did.
+  const curveEnc = getEncoding(tonemap);
+  const opEnc =
+    curveEnc && curveEnc.kind !== "lut" && !curveEnc.params.includes("peak")
+      ? curveEnc
+      : getEncoding(DEFAULT_TONEMAP)!;
+  const op = (rgb: RgbTriple): RgbTriple => opEnc.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
   const out = new Uint8ClampedArray(w * h * 4);
 
   for (let i = 0; i < w * h; i++) {

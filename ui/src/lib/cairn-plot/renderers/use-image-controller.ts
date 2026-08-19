@@ -40,12 +40,13 @@ import type { ToolbarConfig, ToolbarButtonSpec } from "../controls/ToolbarConfig
 import { adaptiveMaxZoom, type Viewport } from "../hooks/use-image-viewport";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../primitives/plot-to-png";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
-import { listEncodingsByKind } from "../image/encodings";
-import {
-  SDR_TONEMAP_OPERATORS,
-  SDR_DISPLAY_TRANSFER_OPERATORS,
-  type TonemapOperator,
-} from "../image/tonemap";
+import { getEncoding, listEncodingsByKind } from "../image/encodings";
+import { SDR_TONEMAP_OPERATORS, SDR_DISPLAY_TRANSFER_OPERATORS } from "../image/tonemap";
+
+/** The registry label for an encoding id, falling back to the id itself. Both the
+ *  tone-map and display-transfer menus source their labels from here so they can
+ *  never drift from the registry entries (the label lives on the entry). */
+const encodingLabel = (id: string): string => getEncoding(id)?.label ?? id;
 
 const HOME: Viewport = { zoom: 1, pan: { x: 0, y: 0 } };
 /** Per-button click factor for the toolbar's +/- zoom (coarser than the
@@ -123,34 +124,17 @@ export function colormapToolbarButton(
   };
 }
 
-/** Human labels for the tone-map menu, keyed by operator. `Record<TonemapOperator,
- *  …>` is exhaustive, so adding an operator to the `TonemapOperator` union
- *  without a label here is a COMPILE error — labels can't drift from the set. */
-const TONEMAP_LABELS: Record<TonemapOperator, string> = {
-  linear: "Linear",
-  srgb: "sRGB",
-  gamma: "Gamma",
-  reinhard: "Reinhard",
-  aces: "ACES",
-  normal: "Normal map",
-  extended: "Extended · Linear",
-  "extended-clamp": "Extended · Linear (managed)",
-  "extended-reinhard": "Extended · Reinhard",
-  "extended-aces": "Extended · ACES",
-};
-
 /**
  * The user-selectable tone-map operators as a toolbar-menu option list — the
- * pane's ONE operator group (Linear · sRGB · Gamma · Reinhard · ACES). DERIVED
- * from `image/tonemap.ts`'s `SDR_TONEMAP_OPERATORS` group array (single source,
- * pinned by tonemap.test.ts) + the label map, so the menu can't drift from the
- * operator set. Under the UNIFIED model there is no separate "Extended · *"
- * group — the PEAK slider is the HDR mode (see {@link tonemapToolbarButton}).
- * The `TONEMAP_LABELS` map still carries labels for the deprecated `extended*`
- * aliases (the `TonemapOperator` union retains them) but they are never shown.
+ * pane's ONE operator group (Linear · sRGB · Gamma · Reinhard · ACES · Normal
+ * map). Both the SET (`SDR_TONEMAP_OPERATORS`) and the LABELS
+ * (`encodingLabel` → the registry entry's `label`) DERIVE from the display-
+ * encoding registry, so the menu can never drift from the entries. Under the
+ * UNIFIED model there is no separate "Extended · *" group — the PEAK slider is
+ * the HDR mode (see {@link tonemapToolbarButton}).
  */
 export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] =
-  SDR_TONEMAP_OPERATORS.map((id) => ({ id, label: TONEMAP_LABELS[id] }));
+  SDR_TONEMAP_OPERATORS.map((id) => ({ id, label: encodingLabel(id) }));
 
 /**
  * A tone-map operator dropdown as a toolbar LEADING button (menu variant),
@@ -180,14 +164,15 @@ export function tonemapToolbarButton(
 /**
  * The DISPLAY-TRANSFER options for an SDR / 8-bit image pane (menu order
  * sRGB · Gamma · Linear). DERIVED from `image/tonemap.ts`'s
- * `SDR_DISPLAY_TRANSFER_OPERATORS` + the shared label map, so it can't drift.
+ * `SDR_DISPLAY_TRANSFER_OPERATORS` + the registry entry labels (`encodingLabel`),
+ * so it can't drift.
  * tev applies the same transfer selector to LDR images: the pane sRGB-DECODEs
  * the 8-bit source to linear, then re-encodes via the chosen transfer (sRGB is
  * the default, a round-trip identity; Gamma reveals the γ slider; Linear shows
  * raw linear).
  */
 export const SDR_DISPLAY_TRANSFER_MENU_OPTIONS: { id: string; label: string }[] =
-  SDR_DISPLAY_TRANSFER_OPERATORS.map((id) => ({ id, label: TONEMAP_LABELS[id] }));
+  SDR_DISPLAY_TRANSFER_OPERATORS.map((id) => ({ id, label: encodingLabel(id) }));
 
 /**
  * A DISPLAY-TRANSFER dropdown as a toolbar LEADING button (menu variant) for an

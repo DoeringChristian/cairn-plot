@@ -74,11 +74,10 @@ export {
 } from "./image";
 export type { DecodedImage, ImageSource, ImageFormat, ImageDecoder } from "./image";
 
-// HDR tone-mapping operators (extensible; see image/tonemap.ts)
+// HDR tone-mapping display pipeline (curves live in image/encodings; the shared
+// exposure/output-encode stages + defaults live in image/tonemap.ts)
 export {
-  TONEMAP_OPERATORS,
   DEFAULT_TONEMAP,
-  getTonemapOperator,
   applyExposure,
   srgbOetf,
   outputEncode,

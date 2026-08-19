@@ -1,53 +1,41 @@
 /**
- * HDR tone-mapping operators for the float-image path (cairn-plot HDR-A).
+ * The NON-registry display pipeline layer for the image panes (cairn-plot HDR-A).
+ * After the display-encoding registry landed (Phases 1–5), the OPERATOR CURVES
+ * live in `image/encodings` — the single source of truth shared with the GPU
+ * shaders. What stays HERE is everything that is NOT an operator curve:
  *
- * PIPELINE (the HDR image renderer runs these in order, per pixel):
+ *   - The SHARED PIPELINE STAGES that bracket the curve: EXPOSURE/offset
+ *     (`applyExposure` / `applyExposureOffset`, a scene-linear affine BEFORE the
+ *     curve) and OUTPUT-ENCODE (`outputEncode` / the `extended*` HDR-out encoders,
+ *     display-linear → display code AFTER the curve) plus the sRGB transfer
+ *     functions (`srgbOetf` / `srgbEotf`) they are built on.
+ *   - The UI CONFIG the sliders read: gamma (`TONEMAP_GAMMA_*`) and peak
+ *     (`EXTENDED_TONEMAP_PEAK_*`) bounds + `resolveEncodeGamma` / `tonemapHasGamma`.
+ *   - The UNIFIED RENDER-TRANSLATION: the deprecated `extended*` alias table and
+ *     the `resolveEffectiveTonemap` / `resolveRenderTonemap` "pick a curve, pick a
+ *     ceiling" mapping onto the engine's operator + `hdrOut` + `peak`.
+ *   - The menu operator SET (`SDR_TONEMAP_OPERATORS`), DERIVED from the registry.
  *
- *   1. EXPOSURE   — `applyExposure(v, ev) = v * 2**ev`, in scene-linear space,
- *                   where `ev` is a stop count (EV). Applied to each channel
- *                   BEFORE tone-mapping.
- *   2. TONE-MAP   — one `TonemapOperator` (`TONEMAP_OPERATORS[name]`): maps the
- *                   exposure-applied scene-linear RGB in [0, ∞) down to
- *                   DISPLAY-LINEAR RGB in [0, 1]. Still LINEAR light — NOT yet
- *                   gamma/sRGB encoded.
- *   3. OUTPUT-ENCODE — `outputEncode(x, tonemap, gamma)`: the last step maps the
- *                   display-linear [0,1] value to a display-referred code value.
- *                   For `tonemap === "srgb"` this is the sRGB OETF; otherwise a
- *                   plain `pow(x, 1/gamma)` power curve (gamma defaults to 1 =
- *                   identity). This is deliberately SPLIT from the tone-map: the
- *                   operator only compresses HDR→[0,1]; the encode is a separate,
- *                   swappable stage.
+ * The pipeline per pixel is still EXPOSURE → CURVE (registry) → OUTPUT-ENCODE; a
+ * caller applies the curve via `getEncoding(id).cpu(rgb, 3, params)`.
  *
- * WHY THE SPLIT: "sRGB" and "gamma" are output *transfer functions*, not
- * tone-maps. Keeping them out of `TONEMAP_OPERATORS` means every operator
- * (linear/reinhard/aces/…) can be paired with any output encode, and adding a
- * new HDR operator is a ONE-LINE addition to `TONEMAP_OPERATORS` — it never has
- * to re-implement gamma/sRGB.
- *
- * ADDING AN OPERATOR: add a single entry to `TONEMAP_OPERATORS` below, e.g.
- *   uncharted2: (rgb) => rgb.map(uncharted2Curve) as RgbTriple,
- * and (optionally) widen the `TonemapOperator` union / Python `Literal`. No
- * other renderer/registry change is needed — `HdrImagePane` looks the operator
- * up by name at render time and falls back to `srgb` for an unknown key.
- *
- * PERF: these are plain scalar functions used in the CPU decode loop (v1).
- * The WebGPU engine (`engine/shaders/image.wgsl.ts`) ports the same operators
- * to a GPU fragment shader (see `HdrImagePane`'s module doc).
+ * WHY EXPOSURE + OUTPUT-ENCODE ARE SEPARATE STAGES (not folded into the curve):
+ * "sRGB" and "gamma" are output *transfer functions*, so every operator curve
+ * (linear/reinhard/aces/…) can pair with any output encode; and exposure is a
+ * scene-linear affine shared by all curves. The WebGPU engine
+ * (`engine/shaders/image.wgsl.ts`) ports these same stages to the fragment shader.
  */
 
 import { clamp01 } from "../util/clamp.ts";
-// The operator CURVE math is migrated to the display-encoding registry
+// The operator CURVE math lives in the display-encoding registry
 // (image/encodings) — the single source of truth shared with the GPU shaders
-// (assembled WGSL) and the parity harness. `tonemap.ts` KEEPS its historical
-// exports (many callers) but now DELEGATES the curve math to the registry.
-import {
-  listEncodings,
-  getEncoding,
-  DEFAULT_ENCODE_PARAMS,
-  extendedClampScalar,
-  extendedReinhardScalar,
-  extendedAcesScalar,
-} from "./encodings/index.ts";
+// (assembled WGSL) and the parity harness. After Phase 5, `tonemap.ts` no longer
+// re-exports the curve math: what remains here is the NON-registry render layer
+// (exposure/offset + output-encode pipeline stages, the sRGB transfer functions,
+// the gamma/peak UI config, and the UNIFIED render-translation `resolve*` +
+// alias tables). It reads the registry only to DERIVE the menu operator SET so
+// that set can't drift from the entries.
+import { listEncodingsByKind } from "./encodings/index.ts";
 
 export type RgbTriple = [number, number, number];
 
@@ -89,106 +77,27 @@ export const EXTENDED_TONEMAP_PEAK_MIN = 1;
 export const EXTENDED_TONEMAP_PEAK_MAX = 16;
 export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
 
-/**
- * Extended · Linear (MANAGED) with a display peak P: `y = min(max(x, 0), P)` —
- * a pure identity below `P` (slope exactly 1, values pass through unchanged) and
- * a HARD CEILING at `P`. Per channel, `x` pre-clamped to `[0,∞)`. Invariants
- * (tested): `y = x` exactly for `0 ≤ x ≤ P`; `y = P` exactly for `x ≥ P`;
- * monotone non-decreasing.
- *
- * This is the CROSS-BROWSER-DETERMINISTIC counterpart to `extended` (Extended ·
- * Linear): `extended` hands raw unclamped values to the browser/OS compositor,
- * which clips each unclamped value at ITS OWN estimate of display headroom — so
- * Chrome and Safari render the same HDR image differently. `extended-clamp`
- * instead does the clip in OUR shader at a shared `P` (the PEAK slider), so
- * every browser that honors extended tone mapping converges below `P`. It is
- * HDR-out like the other extended operators (emits display-linear light in
- * `[0, P]`); mirrored verbatim in `engine/shaders/image.wgsl.ts`'s
- * `extendedClampCurve` and checked by the GPU↔TS parity harness.
- */
-export function extendedClampCurve(x: number, peak: number): number {
-  return extendedClampScalar(x, peak);
-}
-
-/**
- * Extended Reinhard with a display peak P: `y = x/(1 + x/P)` — the plain
- * Reinhard curve `x/(1+x)` rescaled so the ASYMPTOTE is `P` while the low-`x`
- * slope stays exactly 1. Per channel, `x` pre-clamped to `[0,∞)`. Invariants
- * (tested): monotonic increasing; `y ≈ x` for `x ≪ 1`; `y → P` as `x → ∞`.
- *
- * NOT the SDR white-point form `x·(1+x/P²)/(1+x)` (Reinhard et al. 2002,
- * eq. 4): that curve targets `x = P → 1` — an SDR-OUTPUT mapping — and dips
- * well below identity in the midrange (at P=4, `x=1 → 0.53`), visibly
- * darkening SDR-range content on an HDR display. For extended output the
- * ceiling must be `P`, not 1.
- */
-export function extendedReinhardCurve(x: number, peak: number): number {
-  return extendedReinhardScalar(x, peak);
-}
-
-/**
- * ACES fit peak-parameterized as the CANONICAL curve scaled to a peak P:
- * `y = P · acesCurve(x / P)`, where `acesCurve` is the Narkowicz 2015 fit
- * (clamped to `[0,1]`). Per channel, `x` pre-clamped to `[0,∞)`.
- *
- * INVARIANT (the operator-family consistency rule): at `P = 1` this is
- * `1 · acesCurve(x/1) = acesCurve(x)` — the SDR ACES operator EXACTLY, so the
- * ONLY difference between the SDR and extended ACES is the peak `P` (the clip
- * point), tested by `tonemap.test.ts`'s P=1-equivalence goldens. It also
- * satisfies `y → P` as `x → ∞` (acesCurve saturates at 1, so `y → P·1 = P`)
- * and is monotone increasing.
- *
- * NOTE: this REPLACES the earlier `P · acesCurve(x · S / P)` form (with
- * `S = 0.14/0.03`), which normalized the low-`x` slope to exactly 1 but BROKE
- * the P=1 equivalence (`acesCurve(x·S) ≠ acesCurve(x)`). The `x/P` form keeps
- * the invariant exact at ALL `x` (SDR = extended at P=1 identically), sharing
- * the Narkowicz low-`x` slope (`acesCurve'(0) = 0.03/0.14`) between the SDR and
- * extended curves rather than a separate slope-1 normalization — which is what
- * "the only difference is the clip point P" means.
- */
-export function extendedAcesCurve(x: number, peak: number): number {
-  return extendedAcesScalar(x, peak);
-}
-
-/**
- * The extensible tone-map operator set — GENERATED from the display-encoding
- * registry (image/encodings). Keys are the NON-PEAK curve/remap encodings
- * (linear, srgb, gamma, reinhard, aces, normal, extended); the peak-parameterized
- * `extended-*` roll-off/clamp curves take a `peak` and are dispatched by
- * {@link applyTonemapOperatorTriple} instead (they are not `(rgb)=>rgb` shaped).
- * Each function delegates to the registry entry's `cpu` twin — the single source
- * of truth shared with the GPU shaders. Behaviour is identical to the former
- * hand-written object (pinned by `tonemap.test.ts`):
- *   - linear/srgb/gamma → clamp to [0,1] (the RANGE-MAP; the display transfer —
- *     sRGB OETF / identity / γ power — lives in the OUTPUT-ENCODE stage).
- *   - reinhard/aces     → the per-channel filmic curves.
- *   - normal            → remap [-1,1] → [0,1] per channel (shown raw, γ=1).
- *   - extended          → pure identity (values above 1 survive for a real HDR
- *     surface).
- */
-export const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
-  listEncodings()
-    .filter((e) => e.kind !== "lut" && !e.params.includes("peak"))
-    .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => e.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS)]),
-);
+// The peak-parameterized curve MATH (extendedClamp/Reinhard/Aces scalars) and
+// the per-operator CPU dispatch now live entirely in the registry
+// (`image/encodings`); callers apply a curve via `getEncoding(id).cpu(...)`.
+// tonemap.ts no longer wraps them — see the module doc.
 
 /** The default operator when none / an unknown key is supplied. */
 export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
 
 /**
- * The user-selectable SDR tone-map operators — the TONEMAP toolbar menu's base
- * option group (always shown). The `extended*` operators are HDR-out-only and
- * excluded here; they form the separate {@link HDR_TONEMAP_OPERATORS} group,
- * appended to the menu only on a pane whose real HDR surface engaged.
+ * The user-selectable SDR tone-map operators — the ONE unified operator menu
+ * (Linear · sRGB · Gamma · Reinhard · ACES · Normal map). DERIVED from the
+ * display-encoding registry so it can never drift from the entries: the non-HDR
+ * `kind:"curve"` operators (the `extended*` HDR-out curves declare
+ * `needsHdrSurface` and are excluded — the PEAK slider is the HDR mode now, not a
+ * second menu group) followed by the `kind:"remap"` entries (the `normal` map).
+ * Registration order yields the historical menu order.
  */
 export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
-  "linear",
-  "srgb",
-  "gamma",
-  "reinhard",
-  "aces",
-  "normal",
-];
+  ...listEncodingsByKind("curve").filter((e) => !e.needsHdrSurface),
+  ...listEncodingsByKind("remap"),
+].map((e) => e.id as TonemapOperator);
 
 /**
  * The DISPLAY-TRANSFER operators offered on an SDR / 8-bit image pane (menu
@@ -208,47 +117,14 @@ export const SDR_DISPLAY_TRANSFER_OPERATORS: readonly TonemapOperator[] = [
   "linear",
 ];
 
-/**
- * The HDR-out tone-map operators (the "extended" family) — the menu's second
- * group, offered ONLY when the pane's real HDR surface engaged. Order is the
- * menu order: Linear · Linear (managed) · Reinhard · ACES — `extended-clamp`
- * (managed linear) sits next to `extended` because it is its cross-browser-
- * deterministic sibling (identity below P, hard ceiling at P in OUR shader).
- */
-export const HDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
-  "extended",
-  "extended-clamp",
-  "extended-reinhard",
-  "extended-aces",
-];
-
-/** The extended operators whose curve ROLLS OFF toward the peak (a soft
- *  shoulder): Reinhard/ACES. `extended-clamp` is peak-parameterized too but is a
- *  HARD clip, not a roll-off, so it is NOT here — see {@link EXTENDED_PEAK_OPERATORS}. */
-export const EXTENDED_ROLLOFF_OPERATORS: readonly TonemapOperator[] = [
-  "extended-reinhard",
-  "extended-aces",
-];
-
-/** Every extended operator that READS the PEAK parameter — the roll-off pair
- *  PLUS `extended-clamp` (managed linear, whose ceiling IS the peak). Selecting
- *  any of these reveals the PEAK slider. `extended` (raw Linear) has no peak. */
-export const EXTENDED_PEAK_OPERATORS: readonly TonemapOperator[] = [
-  "extended-clamp",
-  "extended-reinhard",
-  "extended-aces",
-];
-
-/** True when `op` is an HDR-out operator (drives `hdrOut` + the menu group). */
-export function isHdrTonemap(name: string | undefined | null): name is TonemapOperator {
-  return !!name && (HDR_TONEMAP_OPERATORS as readonly string[]).includes(name);
-}
-
-/** True when the operator reads the PEAK parameter (extended-clamp/-reinhard/
- *  -aces), i.e. the PEAK slider should be visible. */
-export function tonemapHasPeak(name: string | undefined | null): boolean {
-  return !!name && (EXTENDED_PEAK_OPERATORS as readonly string[]).includes(name);
-}
+// The `extended*` HDR-out operators are no longer a second menu GROUP (the PEAK
+// slider is the HDR mode). They survive only as the DEPRECATED aliases resolved
+// by the render-translation layer below (`EXTENDED_TO_SDR` /
+// `DEPRECATED_TONEMAP_ALIASES` / `resolveRenderTonemap`), plus the registry curve
+// entries the engine dispatches. The former `HDR_TONEMAP_OPERATORS` /
+// `EXTENDED_ROLLOFF_OPERATORS` / `EXTENDED_PEAK_OPERATORS` menu-group arrays and
+// the `isHdrTonemap` / `tonemapHasPeak` classifiers were unused post-unification
+// and were removed in Phase 5.
 
 /**
  * UNIFIED-MODEL alias table (the ONE place the pre-unification operator names
@@ -291,34 +167,10 @@ export const DEPRECATED_TONEMAP_ALIASES: readonly string[] = [
   "extended-gamma",
 ];
 
-/** Resolve an operator name to its function, falling back to the default. */
-export function getTonemapOperator(
-  name: string | undefined | null,
-): (rgb: RgbTriple) => RgbTriple {
-  return (name && TONEMAP_OPERATORS[name]) || TONEMAP_OPERATORS[DEFAULT_TONEMAP]!;
-}
-
-/**
- * Apply a named tone-map operator (INCLUDING the peak-parameterized extended
- * roll-off ones) to an RGB triple — the single dispatch the GPU shader's
- * `applyOperator` mirrors and the parity harness checks. For `linear`/`srgb`/
- * `reinhard`/`aces`/`extended` it delegates to {@link TONEMAP_OPERATORS} (peak
- * ignored); for `extended-clamp`/`extended-reinhard`/`extended-aces` it applies
- * the peak curve per channel.
- */
-export function applyTonemapOperatorTriple(
-  rgb: RgbTriple,
-  operator: string,
-  peak: number,
-): RgbTriple {
-  // Delegate to the registry entry's cpu twin (the peak-parameterized extended
-  // curves read `peak`; the rest ignore it) — the SAME curve the GPU shader's
-  // assembled `applyOperator` runs. Unknown operators fall back to the default
-  // (srgb clamp), exactly as before.
-  const enc = getEncoding(operator);
-  if (enc) return enc.cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
-  return getTonemapOperator(operator)(rgb);
-}
+// The name→CPU-curve resolver and the peak-aware triple dispatch were removed in
+// Phase 5: callers apply a curve straight from the registry via
+// `getEncoding(id).cpu(rgb, 3, params)` (the single source of truth the GPU
+// `applyOperator` mirrors), with `getEncoding(DEFAULT_TONEMAP)` as the fallback.
 
 /**
  * Coerce an arbitrary operator name to a valid SDR operator. An SDR operator
@@ -517,10 +369,10 @@ export function extendedOutputEncode(x: number, gamma?: number): number {
 
 // ---------------------------------------------------------------------------
 // Gamma(γ) display-transfer operator — the tev "Gamma" mode as a first-class
-// tone-map operator. See the `gamma` entry in `TONEMAP_OPERATORS` for the
-// mechanism: the operator's RANGE-MAP is the plain clamp; the γ power curve is
-// applied at the OUTPUT-ENCODE stage via the existing `gamma` parameter, which
-// the renderer supplies ONLY while this operator is in effect.
+// tone-map operator. See the `gamma` registry entry (`image/encodings/curves.ts`)
+// for the mechanism: the operator's RANGE-MAP is the plain clamp; the γ power
+// curve is applied at the OUTPUT-ENCODE stage via the existing `gamma` parameter,
+// which the renderer supplies ONLY while this operator is in effect.
 // ---------------------------------------------------------------------------
 
 /** Default γ for the Gamma operator (≈ the sRGB OETF's effective exponent, so
@@ -532,8 +384,8 @@ export const TONEMAP_GAMMA_MIN = 0.5;
 export const TONEMAP_GAMMA_MAX = 4.0;
 export const TONEMAP_GAMMA_STEP = 0.1;
 
-/** True when `op` is the Gamma operator (drives the γ slider's visibility, the
- *  same conditional-slider precedent `tonemapHasPeak` sets for PEAK). */
+/** True when `op` is the Gamma operator (drives the γ slider's visibility — the
+ *  conditional-slider precedent the PEAK slider also follows). */
 export function tonemapHasGamma(name: string | undefined | null): boolean {
   return name === "gamma";
 }

@@ -10,8 +10,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  TONEMAP_OPERATORS,
-  getTonemapOperator,
   toSdrTonemap,
   canonicalizeTonemap,
   aliasPeakHint,
@@ -20,18 +18,9 @@ import {
   resolveRenderTonemap,
   SDR_TONEMAP_OPERATORS,
   SDR_DISPLAY_TRANSFER_OPERATORS,
-  HDR_TONEMAP_OPERATORS,
-  EXTENDED_ROLLOFF_OPERATORS,
-  EXTENDED_PEAK_OPERATORS,
-  isHdrTonemap,
-  tonemapHasPeak,
   tonemapHasGamma,
   resolveEncodeGamma,
   TONEMAP_GAMMA_DEFAULT,
-  extendedClampCurve,
-  extendedReinhardCurve,
-  extendedAcesCurve,
-  applyTonemapOperatorTriple,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MAX,
   EXTENDED_TONEMAP_PEAK_UNBOUNDED,
@@ -45,6 +34,34 @@ import {
   extendedOutputEncode,
   type RgbTriple,
 } from "./tonemap.ts";
+// The operator CURVE math now lives in the display-encoding registry (Phase 5).
+// The peak-parameterized scalar curves are imported under their historical names;
+// the former `TONEMAP_OPERATORS` table + `getTonemapOperator` / peak-aware triple
+// dispatch are reconstructed here as thin REGISTRY ADAPTERS so these goldens keep
+// pinning the exact same math the panes/shaders run via `getEncoding(id).cpu`.
+import {
+  getEncoding,
+  listEncodings,
+  DEFAULT_ENCODE_PARAMS,
+  extendedClampScalar as extendedClampCurve,
+  extendedReinhardScalar as extendedReinhardCurve,
+  extendedAcesScalar as extendedAcesCurve,
+} from "./encodings/index.ts";
+
+/** The non-peak, non-lut curve operators as `(rgb)=>rgb` — the CPU triple path's
+ *  operator table, resolved from the registry (was `image/tonemap.ts`'s
+ *  `TONEMAP_OPERATORS`). */
+const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
+  listEncodings()
+    .filter((e) => e.kind !== "lut" && !e.params.includes("peak"))
+    .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => e.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS)]),
+);
+/** Resolve an operator name to its non-peak CPU curve fn, srgb fallback. */
+const getTonemapOperator = (name: string | undefined | null): ((rgb: RgbTriple) => RgbTriple) =>
+  (name && TONEMAP_OPERATORS[name]) || TONEMAP_OPERATORS.srgb!;
+/** Peak-aware operator dispatch (extended-* read `peak`; the rest ignore it). */
+const applyTonemapOperatorTriple = (rgb: RgbTriple, operator: string, peak: number): RgbTriple =>
+  (getEncoding(operator) ?? getEncoding("srgb")!).cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
 
 const approx = (a: number, b: number, eps = 1e-9) =>
   assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);
@@ -128,36 +145,16 @@ test("toSdrTonemap: SDR pass-through, extended*→SDR counterpart, else srgb", (
   assert.equal(toSdrTonemap("extended-aces"), "aces");
   // extended-gamma (the never-shipped alias) resolves to the Gamma curve.
   assert.equal(toSdrTonemap("extended-gamma"), "gamma");
-  // SDR menu domain excludes every extended operator.
-  for (const op of HDR_TONEMAP_OPERATORS) {
+  // SDR menu domain excludes every extended (HDR-out) operator.
+  for (const op of ["extended", "extended-clamp", "extended-reinhard", "extended-aces"]) {
     assert.ok(!(SDR_TONEMAP_OPERATORS as readonly string[]).includes(op));
   }
 });
 
-test("isHdrTonemap / tonemapHasPeak classify the operator groups", () => {
-  // Menu order: Linear · Linear (managed) · Reinhard · ACES.
-  assert.deepEqual(
-    [...HDR_TONEMAP_OPERATORS],
-    ["extended", "extended-clamp", "extended-reinhard", "extended-aces"],
-  );
-  for (const op of HDR_TONEMAP_OPERATORS) assert.ok(isHdrTonemap(op));
-  for (const op of SDR_TONEMAP_OPERATORS) assert.ok(!isHdrTonemap(op));
-  assert.ok(!isHdrTonemap(undefined));
-  // The roll-off pair are the SOFT-shoulder operators (managed clamp is a hard
-  // clip, so it is NOT a roll-off).
-  assert.deepEqual([...EXTENDED_ROLLOFF_OPERATORS], ["extended-reinhard", "extended-aces"]);
-  // The PEAK parameter is read by the roll-off pair PLUS managed linear
-  // (extended-clamp) — raw extended·Linear has no peak.
-  assert.deepEqual(
-    [...EXTENDED_PEAK_OPERATORS],
-    ["extended-clamp", "extended-reinhard", "extended-aces"],
-  );
-  assert.ok(tonemapHasPeak("extended-clamp"));
-  assert.ok(tonemapHasPeak("extended-reinhard"));
-  assert.ok(tonemapHasPeak("extended-aces"));
-  assert.ok(!tonemapHasPeak("extended"));
-  assert.ok(!tonemapHasPeak("aces"));
-});
+// (The former `isHdrTonemap` / `tonemapHasPeak` classifiers + the
+// `HDR_TONEMAP_OPERATORS` / `EXTENDED_ROLLOFF_OPERATORS` / `EXTENDED_PEAK_OPERATORS`
+// menu-group arrays were removed in Phase 5 — unused post-unification. Which
+// extended curves declare `peak` is still pinned by `encodings/registry.test.ts`.)
 
 test("resolveEffectiveTonemap: UNIFIED — canonical operator passes through; surface only sets the UNSET default", () => {
   // The operator (curve) is surface-independent; only the PEAK ceiling differs

@@ -65,13 +65,13 @@ import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
 import {
   applyExposure,
-  applyTonemapOperatorTriple,
   outputEncode,
   extendedOutputEncode,
   srgbEotf,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
 } from "../../image/tonemap";
+import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings";
 import { buildLUT, COLORMAP_STOPS } from "../../colormaps/lut";
 import type { Device, Texture } from "../types";
 
@@ -166,13 +166,15 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
   }
   const rgb = exposed;
 
-  // Peak-aware operator dispatch (mirrors image.wgsl.ts's applyOperator): the
-  // extended roll-off operators (extended-reinhard/-aces) read params.peak.
-  const toned = applyTonemapOperatorTriple(
-    rgb,
-    params.operator,
-    params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,
-  );
+  // Peak-aware operator dispatch (mirrors image.wgsl.ts's applyOperator): apply
+  // the operator CURVE straight from the registry (the CPU source of truth) — the
+  // extended roll-off operators (extended-reinhard/-aces) read `peak`; the rest
+  // ignore it. An unknown operator falls back to the srgb clamp.
+  const opEnc = getEncoding(params.operator) ?? getEncoding("srgb")!;
+  const toned = opEnc.cpu(rgb, 3, {
+    ...DEFAULT_ENCODE_PARAMS,
+    peak: params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,
+  });
 
   if (params.hdrOut) {
     // The extended-surface path ENCODES (not skips): a float16 srgb/display-p3

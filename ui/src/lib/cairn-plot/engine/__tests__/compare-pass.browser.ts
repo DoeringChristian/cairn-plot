@@ -24,7 +24,8 @@ import { getSharedDevice } from "../device";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
 import { getDiffKernel } from "../kernels";
-import { applyExposure, TONEMAP_OPERATORS, outputEncode, type RgbTriple } from "../../image/tonemap";
+import { applyExposure, outputEncode, type RgbTriple } from "../../image/tonemap";
+import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings";
 import type { Device, Texture } from "../types";
 
 function report(pass: boolean, message: string): void {
@@ -59,8 +60,11 @@ function processSide(px: number[], params: CompareParams): RgbTriple {
     applyExposure(px[1]!, params.exposureEV),
     applyExposure(px[2]!, params.exposureEV),
   ];
-  const opFn = TONEMAP_OPERATORS[params.operator] ?? TONEMAP_OPERATORS.srgb!;
-  const toned = opFn(exposed);
+  // Apply the operator CURVE straight from the registry (the CPU source of truth
+  // the GPU `applyOperator` mirrors); compose only uses the plain SDR curves, so
+  // an unknown operator falls back to the srgb clamp.
+  const opEnc = getEncoding(params.operator) ?? getEncoding("srgb")!;
+  const toned = opEnc.cpu(exposed, 3, DEFAULT_ENCODE_PARAMS);
   return [outputEncode(toned[0], params.gamma), outputEncode(toned[1], params.gamma), outputEncode(toned[2], params.gamma)];
 }
 
