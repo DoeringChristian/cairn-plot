@@ -41,6 +41,12 @@
  *  effective only where they mean something. */
 export interface ImageSyncSettings {
   // Shared display fields — applied by image AND compare panes.
+  /** The unified DISPLAY-ENCODING id (a curve/remap operator id or a colormap
+   *  LUT id) — the ONE key the display-encoding registry (Phase 3) syncs. Image
+   *  panes publish + apply this; they ALSO publish the derived `colormap`/
+   *  `tonemap` below so a pre-registry peer (a compare pane) still follows the
+   *  shared look, and apply `colormap`/`tonemap` for the reverse direction. */
+  encoding?: string;
   colormap?: string;
   tonemap?: string;
   tonemapGamma?: number;

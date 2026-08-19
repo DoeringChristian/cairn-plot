@@ -421,10 +421,12 @@ function ToolbarMenu({
 
   const choose = useCallback(
     (id: string) => {
+      // Never "select" a section-header row (defensive — nav already skips them).
+      if (options.find((o) => o.id === id)?.header) return;
       onSelect(id);
       setOpen(false);
     },
-    [onSelect],
+    [onSelect, options],
   );
 
   // Close on outside-click / Escape while open (self-contained — no parent
@@ -432,6 +434,19 @@ function ToolbarMenu({
   // include the portaled list too (both refs) — otherwise a click on an option
   // would read as an outside click and dismiss before `choose` runs.
   useDismissOnOutsideOrEscape(open, [rootRef, listRef], () => setOpen(false));
+
+  // Section HEADER rows are non-interactive: skip them in arrow-key nav so the
+  // highlight only ever lands on a selectable encoding.
+  const stepHighlight = (from: number, dir: 1 | -1): number => {
+    const n = options.length;
+    if (n === 0) return 0;
+    let i = from;
+    for (let step = 0; step < n; step++) {
+      i = (i + dir + n) % n;
+      if (!options[i]?.header) return i;
+    }
+    return from;
+  };
 
   const onButtonKeyDown = (e: React.KeyboardEvent) => {
     if (!open) {
@@ -444,10 +459,10 @@ function ToolbarMenu({
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => (h + 1) % options.length);
+      setHighlight((h) => stepHighlight(h, 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlight((h) => (h - 1 + options.length) % options.length);
+      setHighlight((h) => stepHighlight(h, -1));
     } else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       const opt = options[highlight];
@@ -505,6 +520,23 @@ function ToolbarMenu({
             onPointerDown={(e) => e.stopPropagation()}
           >
             {options.map((opt, i) => {
+              if (opt.header) {
+                // A non-first section header carries a hairline top border — the
+                // thin DIVIDER that separates the CURVES / COLORMAPS / REMAPS
+                // sections (a labelled divider, so the sections also read by name).
+                return (
+                  <li
+                    key={opt.id}
+                    role="presentation"
+                    className={[
+                      "px-2 pb-0.5 text-[9px] font-semibold uppercase tracking-wide text-fg-muted select-none",
+                      i > 0 ? "mt-1 pt-1.5 border-t border-border-subtle" : "pt-1.5",
+                    ].join(" ")}
+                  >
+                    {opt.label}
+                  </li>
+                );
+              }
               const isSelected = opt.id === value;
               const isHi = i === highlight;
               return (
@@ -730,7 +762,23 @@ function OverflowMenuGroup({
         </span>
       </button>
       {expanded &&
-        options.map((opt) => {
+        options.map((opt, i) => {
+          if (opt.header) {
+            // Non-first header → hairline top border (the section DIVIDER),
+            // matching the expanded listbox.
+            return (
+              <div
+                key={opt.id}
+                role="presentation"
+                className={[
+                  "px-3 pb-0.5 text-[9px] font-semibold uppercase tracking-wide text-fg-muted select-none",
+                  i > 0 ? "mt-1 pt-1.5 border-t border-border-subtle" : "pt-1.5",
+                ].join(" ")}
+              >
+                {opt.label}
+              </div>
+            );
+          }
           const isSelected = opt.id === value;
           return (
             <button

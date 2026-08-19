@@ -145,9 +145,10 @@ function stageGrid(): HTMLElement | null {
 function cellFrame(cell: HTMLElement): HTMLElement | null {
   return cell.querySelector<HTMLElement>("[data-plot-pane-id]");
 }
-/** A stage cell's colormap toolbar menu button (CPU image pane). */
+/** A stage cell's unified DISPLAY-encoding toolbar menu button (CPU image pane) —
+ *  Phase 3 collapsed the separate Colormap + tone-map menus into this one. */
 function cmapButton(cell: HTMLElement): HTMLButtonElement | null {
-  return cell.querySelector<HTMLButtonElement>('button[aria-label="Colormap"]');
+  return cell.querySelector<HTMLButtonElement>('button[aria-label="Display encoding"]');
 }
 /** Open a toolbar menu button and resolve its portaled listbox. */
 async function openListbox(btn: HTMLButtonElement): Promise<HTMLUListElement | null> {
@@ -197,12 +198,12 @@ async function openCellColormap(
     const options = Array.from(ul.querySelectorAll<HTMLButtonElement>('li[role="option"] button'));
     return { floating: ul, options, currentFace: (direct.textContent ?? "").trim() };
   }
-  // Folded — reach the Colormap through the overflow popover's inline group.
+  // Folded — reach the Display menu through the overflow popover's inline group.
   const ovf = overflowButton(cell);
   if (!ovf) return null;
   ovf.click();
   const popover = await waitForEl(() => document.querySelector<HTMLElement>('div[role="menu"]'));
-  const group = popover?.querySelector<HTMLButtonElement>('button[aria-label="Colormap"]') ?? null;
+  const group = popover?.querySelector<HTMLButtonElement>('button[aria-label="Display encoding"]') ?? null;
   if (!popover || !group) return null;
   group.click(); // expand the inline option rows
   await waitForEl(() => popover.querySelector('button[role="menuitemradio"]'));
@@ -210,12 +211,11 @@ async function openCellColormap(
   const currentFace = optLabel(options.find(optSelected) ?? options[0] ?? group);
   return { floating: popover, options, currentFace };
 }
-/** FOLD-AWARE, single read of a cell's current colormap face. Expanded: the
- *  direct `<ToolbarMenu>` button face. Folded: the "⋯" overflow's Colormap group
- *  header ALWAYS shows the current face — no need to expand the option rows —
- *  read it, then close the overflow (leaving no stray popover). A fresh open each
- *  time is deliberate: syncing to a colormap drops the display-transfer button,
- *  which can UNFOLD the toolbar and unmount any held popover reference. */
+/** FOLD-AWARE, single read of a cell's current DISPLAY-encoding face. Expanded:
+ *  the direct `<ToolbarMenu>` button face. Folded: the "⋯" overflow's Display
+ *  group header ALWAYS shows the current face — no need to expand the option rows
+ *  — read it, then close the overflow (leaving no stray popover). Post Phase 3
+ *  there is ONE Display menu (never dropped), so the leading row is stable. */
 async function readColormapFace(cell: HTMLElement): Promise<string | null> {
   const direct = cmapButton(cell);
   if (direct) return (direct.textContent ?? "").trim();
@@ -223,7 +223,7 @@ async function readColormapFace(cell: HTMLElement): Promise<string | null> {
   if (!ovf) return null;
   ovf.click();
   const popover = await waitForEl(() => document.querySelector<HTMLElement>('div[role="menu"]'));
-  const group = popover?.querySelector<HTMLButtonElement>('button[aria-label="Colormap"]') ?? null;
+  const group = popover?.querySelector<HTMLButtonElement>('button[aria-label="Display encoding"]') ?? null;
   const face = group?.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim() ?? null;
   if (overflowButton(cell) === ovf) ovf.click(); // close (unless the toolbar unfolded it away)
   return face;

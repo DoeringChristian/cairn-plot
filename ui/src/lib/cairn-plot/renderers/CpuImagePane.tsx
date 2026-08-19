@@ -77,11 +77,12 @@ import {
   outputEncode,
   srgbEotf,
   resolveEncodeGamma,
-  tonemapHasGamma,
   TONEMAP_GAMMA_DEFAULT,
   TONEMAP_GAMMA_MIN,
   TONEMAP_GAMMA_MAX,
   TONEMAP_GAMMA_STEP,
+  SDR_DISPLAY_TRANSFER_OPERATORS,
+  SDR_TONEMAP_OPERATORS,
   type RgbTriple,
   type TonemapOperator,
 } from "../image/tonemap";
@@ -94,11 +95,7 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import {
-  colormapToolbarButton,
-  tonemapToolbarButton,
-  displayTransferToolbarButton,
-} from "./use-image-controller";
+import { displayToolbarButton, usePaneEncoding } from "./display-encoding";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -320,27 +317,25 @@ function CpuSdrImagePane(
   // Descriptor default captured at mount; HOME restores the view-local colormap
   // override (and `isModified` enables it while off-default) — same contract as
   // GpuImagePane / the compare pane, now via the shared `useResettableState`.
-  const [colormap, setColormap, colormapMeta] = useResettableState<Colormap>(colormapProp);
-  useEffect(() => {
-    setColormap(colormapProp);
-  }, [colormapProp, setColormap]);
-
-  // SDR DISPLAY TRANSFER (tev sRGB · Gamma · Linear) — the plain-image display
-  // menu. Seeded from the descriptor `tonemap=` prop coerced to a display
-  // transfer (default "srgb"); HOME restores it. The γ for the Gamma transfer
-  // rides `tonemapGamma` (slider shown only while Gamma is active — PEAK
-  // precedent). sRGB is the identity round-trip (plain `<img>`); gamma/linear
-  // recompute into a canvas (see the transfer effect / surface below).
-  const seedSdrTransfer = ((): TonemapOperator => {
-    const t = toSdrTonemap(tonemapProp);
-    return t === "gamma" || t === "linear" ? t : "srgb";
-  })();
-  const [sdrTransfer, setSdrTransfer, sdrTransferMeta] =
-    useResettableState<TonemapOperator>(seedSdrTransfer);
-  useEffect(() => {
-    setSdrTransfer(seedSdrTransfer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tonemapProp]);
+  // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id — the colormap LUTs
+  // and the tev DISPLAY-TRANSFER curves (sRGB · Gamma · Linear) in one menu,
+  // mutually exclusive by construction. `mode:"sdr"` (an 8-bit source has no
+  // channel-count signal) offers the full set; the default curve coerces
+  // `tonemap=` to a transfer (reinhard/aces/unknown → srgb). The γ for the Gamma
+  // transfer rides `tonemapGamma` (slider gated by the active encoding's manifest).
+  const enc = usePaneEncoding({
+    mode: "sdr",
+    arity: 1,
+    curveSet: SDR_DISPLAY_TRANSFER_OPERATORS,
+    propColormap: colormapProp,
+    propTonemap: tonemapProp,
+    resolveDefaultCurve: (t) => {
+      const s = toSdrTonemap(t);
+      return s === "gamma" || s === "linear" ? s : "srgb";
+    },
+  });
+  const colormap = enc.colormap as Colormap;
+  const sdrTransfer = enc.curveId as TonemapOperator;
   const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
     gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT,
   );
@@ -349,20 +344,27 @@ function CpuSdrImagePane(
   }, [gammaProp, setTonemapGamma]);
 
   // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
-  // CPU SDR path syncs colormap, the display-transfer operator and its γ (the
-  // controls it actually owns; it has no in-pane exposure/offset — see the
-  // graceful-degradation note at the sliders).
+  // CPU SDR path syncs the ONE encoding (+ derived colormap/tonemap for
+  // pre-registry peers) and the Gamma-transfer γ (the controls it owns; it has
+  // no in-pane exposure/offset — see the graceful-degradation note at the sliders).
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
-      if (patch.colormap !== undefined) setColormap(patch.colormap as Colormap);
-      if (patch.tonemap !== undefined) setSdrTransfer(patch.tonemap as TonemapOperator);
+      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
+      else if (patch.colormap !== undefined && patch.colormap !== "none")
+        enc.setEncoding(patch.colormap);
+      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
     },
-    [setColormap, setSdrTransfer, setTonemapGamma],
+    [enc, setTonemapGamma],
   );
   const settingsSnapshot = useCallback(
-    (): ImageSyncSettings => ({ colormap, tonemap: sdrTransfer, tonemapGamma }),
-    [colormap, sdrTransfer, tonemapGamma],
+    (): ImageSyncSettings => ({
+      encoding: enc.encodingId,
+      colormap: enc.colormap,
+      tonemap: sdrTransfer,
+      tonemapGamma,
+    }),
+    [enc.encodingId, enc.colormap, sdrTransfer, tonemapGamma],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -370,19 +372,17 @@ function CpuSdrImagePane(
     settingsSnapshot,
     applyRemoteSettings,
   );
-  const changeColormap = useCallback(
-    (id: Colormap) => {
-      setColormap(id);
-      publishSettings({ colormap: id });
+  const changeEncoding = useCallback(
+    (id: string) => {
+      enc.setEncoding(id);
+      const isLut = enc.ids.lutIds.includes(id);
+      publishSettings({
+        encoding: id,
+        colormap: isLut ? id : "none",
+        tonemap: isLut ? sdrTransfer : id,
+      });
     },
-    [setColormap, publishSettings],
-  );
-  const changeSdrTransfer = useCallback(
-    (id: TonemapOperator) => {
-      setSdrTransfer(id);
-      publishSettings({ tonemap: id });
-    },
-    [setSdrTransfer, publishSettings],
+    [enc, publishSettings, sdrTransfer],
   );
   const changeGamma = useCallback(
     (v: number) => {
@@ -876,23 +876,18 @@ function CpuSdrImagePane(
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={exportCanvasRef}
-      // SDR single-image: a view-local COLORMAP menu + (on the plain path) the
-      // tev DISPLAY-TRANSFER menu (sRGB · Gamma · Linear). The transfer menu is
-      // hidden once a colormap is active (false-color output is display-ready).
+      // SDR single-image: ONE unified DISPLAY menu (the tev DISPLAY-TRANSFER
+      // curves sRGB · Gamma · Linear + the colormap LUTs) — mutually exclusive by
+      // construction (`enc`), replacing the old colormap + transfer menu pair.
       leadingMenus={[
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
-        ...(colormap === "none"
-          ? [
-              colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap)),
-              displayTransferToolbarButton(sdrTransfer, (id) => changeSdrTransfer(id as TonemapOperator)),
-            ]
-          : [colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap))]),
+        displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
-      // γ slider — shown only while the Gamma transfer is in effect on the plain
-      // path (PEAK-slider precedent).
+      // γ slider — gated by the active encoding's manifest (only the Gamma curve
+      // declares γ; a colormap LUT / other transfers do not).
       extraSliders={
-        colormap === "none" && tonemapHasGamma(sdrTransfer)
+        enc.hasParam("gamma")
           ? [
               {
                 id: "gamma",
@@ -910,14 +905,12 @@ function CpuSdrImagePane(
           : undefined
       }
       onReset={() => {
-        colormapMeta.reset();
-        sdrTransferMeta.reset();
+        enc.resetEncoding();
         gammaMeta.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
-        colormapMeta.isModified ||
-        sdrTransferMeta.isModified ||
+        enc.encodingModified ||
         gammaMeta.isModified ||
         !!props.channelModified
       }
@@ -974,41 +967,41 @@ function CpuHdrImagePane(
   const deepFlatten = useDeepFlatten(props.hdr);
   const hdr = deepFlatten.hdr;
 
-  // TONE-MAP operator (view-local override for the toolbar menu). Seeded from
-  // the descriptor `tonemap=` prop (validated to an SDR operator; default
-  // "srgb") and re-seeded on prop change — same controlled-surface contract as
-  // the colormap override on the SDR pane. The CPU pane tone-maps to an 8-bit
-  // ImageData (no real HDR surface), so "extended" is NOT offered — the menu
-  // shows Linear/sRGB/Reinhard/ACES only. HOME restores the descriptor default.
-  const [tonemapOp, setTonemapOp, tonemapMeta] = useResettableState<TonemapOperator>(
-    toSdrTonemap(tonemap),
+  // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
+  // tone-map + colormap overrides — selecting a colormap LUT deactivates the
+  // curve and vice-versa STRUCTURALLY (`display-encoding.ts`). Like the GPU float
+  // pane, this pane KNOWS its channel arity (`hdr.shape`), so it gates by arity:
+  // luts@k=1, `normal`@k=3, curves always. The default curve resolves from the
+  // descriptor `tonemap=` coerced to an SDR operator (the CPU pane tone-maps to
+  // an 8-bit ImageData — "extended" is never offered); a colormap `colormap=`
+  // wins the seed for a scalar source. HOME restores the authored seed.
+  const propColormap: Colormap =
+    (props as unknown as { colormap?: Colormap }).colormap ?? "none";
+  const sourceArity = shapeDims(hdr.shape).c;
+  const resolveDefaultCurve = useCallback(
+    (t: string | null | undefined) => toSdrTonemap(t ?? undefined),
+    [],
   );
-  useEffect(() => {
-    setTonemapOp(toSdrTonemap(tonemap));
-  }, [tonemap, setTonemapOp]);
+  const enc = usePaneEncoding({
+    mode: "arity",
+    arity: sourceArity,
+    curveSet: SDR_TONEMAP_OPERATORS,
+    propColormap,
+    propTonemap: tonemap,
+    resolveDefaultCurve,
+  });
+  const colormap = enc.colormap as Colormap;
+  const tonemapOp = enc.curveId as TonemapOperator;
 
-  // Gamma(γ) for the Gamma operator (the γ slider is shown only while Gamma is in
-  // effect — the PEAK-slider precedent). Seeded from the descriptor `gamma=`,
-  // else the default 2.2; HOME restores it.
+  // Gamma(γ) for the Gamma operator (the γ slider is gated by the active
+  // encoding's param manifest — only the Gamma curve declares γ). Seeded from the
+  // descriptor `gamma=`, else the default 2.2; HOME restores it.
   const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
     gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT,
   );
   useEffect(() => {
     if (gamma && gamma > 0) setTonemapGamma(gamma);
   }, [gamma, setTonemapGamma]);
-
-  // COLORMAP override (Phase 2 / task #86): a colormap on the FLOAT surface runs
-  // the LUT family on the scalar channel — the CPU parity of the GPU float
-  // colormap path. Seeded from an optional `colormap=` prop (absent on most HDR
-  // sources → "none"), re-seeded on prop change, driven view-local by the toolbar
-  // COLORMAP menu / sync bus. A colormap HIDES the tonemap menu (its LUT output
-  // is display-ready) — the two exclusive DISPLAY encodings gate each other.
-  const propColormap: Colormap =
-    (props as unknown as { colormap?: Colormap }).colormap ?? "none";
-  const [colormap, setColormap, colormapMeta] = useResettableState<Colormap>(propColormap);
-  useEffect(() => {
-    setColormap(propColormap);
-  }, [propColormap, setColormap]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -1023,26 +1016,32 @@ function CpuHdrImagePane(
   const [displayOffset, setDisplayOffset] = useState(0);
 
   // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
-  // CPU HDR path syncs the tone-map operator, its γ, and exposure/offset.
+  // CPU HDR path syncs the ONE encoding (+ derived colormap/tonemap for
+  // pre-registry peers), the Gamma γ, and exposure/offset.
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
-      if (patch.colormap !== undefined) setColormap(patch.colormap as Colormap);
-      if (patch.tonemap !== undefined) setTonemapOp(patch.tonemap as TonemapOperator);
+      // The unified `encoding` key is primary; `colormap`/`tonemap` are honored
+      // for back-compat (a compare-pane peer publishes those, not `encoding`).
+      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
+      else if (patch.colormap !== undefined && patch.colormap !== "none")
+        enc.setEncoding(patch.colormap);
+      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
     },
-    [setColormap, setTonemapOp, setTonemapGamma],
+    [enc, setTonemapGamma],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
-      colormap,
+      encoding: enc.encodingId,
+      colormap: enc.colormap,
       tonemap: tonemapOp,
       tonemapGamma,
       exposureEV: displayEV,
       offset: displayOffset,
     }),
-    [colormap, tonemapOp, tonemapGamma, displayEV, displayOffset],
+    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -1050,19 +1049,17 @@ function CpuHdrImagePane(
     settingsSnapshot,
     applyRemoteSettings,
   );
-  const changeTonemap = useCallback(
-    (id: TonemapOperator) => {
-      setTonemapOp(id);
-      publishSettings({ tonemap: id });
+  const changeEncoding = useCallback(
+    (id: string) => {
+      enc.setEncoding(id);
+      const isLut = enc.ids.lutIds.includes(id);
+      publishSettings({
+        encoding: id,
+        colormap: isLut ? id : "none",
+        tonemap: isLut ? tonemapOp : id,
+      });
     },
-    [setTonemapOp, publishSettings],
-  );
-  const changeColormap = useCallback(
-    (id: Colormap) => {
-      setColormap(id);
-      publishSettings({ colormap: id });
-    },
-    [setColormap, publishSettings],
+    [enc, publishSettings, tonemapOp],
   );
   const changeGamma = useCallback(
     (v: number) => {
@@ -1201,33 +1198,35 @@ function CpuHdrImagePane(
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
-      // TONEMAP menu (HDR/float pane) — the ONE unified 5-operator group. The
-      // CPU fallback tone-maps to an 8-bit surface (never engages true HDR), so
-      // it is the SDR rendition by construction (P=1, no PEAK slider). HOME
-      // restores the default.
+      // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
+      // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
+      // menus. Selecting a LUT deactivates the curve and vice-versa structurally
+      // (`enc` owns the single `encoding` id); luts are gated to k=1 and `normal`
+      // to k=3. The CPU fallback tone-maps to an 8-bit surface (never engages
+      // true HDR), so it is the SDR rendition by construction (no PEAK slider).
       leadingMenus={[
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
-        // COLORMAP menu + (when no colormap) the TONEMAP menu — the two exclusive
-        // DISPLAY encodings. A colormap false-colors the scalar channel and hides
-        // the tonemap menu (its LUT output is display-ready).
-        colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap)),
-        ...(colormap === "none"
-          ? [tonemapToolbarButton(tonemapOp, (id) => changeTonemap(id as TonemapOperator))]
-          : []),
+        displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
-      // applies them (recomputed like any exposure/tonemap change).
-      displayAdjust={{
-        exposureEV: displayEV,
-        offset: displayOffset,
-        onExposureChange: changeExposure,
-        onOffsetChange: changeOffset,
-      }}
-      // γ slider — shown ONLY while the Gamma operator is in effect (the same
-      // conditional-slider precedent PEAK uses on the GPU pane).
+      // applies them (recomputed like any exposure/tonemap change). Gated by the
+      // ACTIVE encoding's param manifest: shown for curves + luts (which declare
+      // exposure/offset), hidden for the paramless `normal` remap.
+      displayAdjust={
+        enc.hasParam("exposure")
+          ? {
+              exposureEV: displayEV,
+              offset: displayOffset,
+              onExposureChange: changeExposure,
+              onOffsetChange: changeOffset,
+            }
+          : undefined
+      }
+      // γ slider — gated by the active encoding's manifest (only the Gamma curve
+      // declares γ; a colormap LUT / other curves do not).
       extraSliders={
-        tonemapHasGamma(tonemapOp)
+        enc.hasParam("gamma")
           ? [
               {
                 id: "gamma",
@@ -1259,15 +1258,13 @@ function CpuHdrImagePane(
       }
       onReset={() => {
         deepFlatten.reset();
-        tonemapMeta.reset();
-        colormapMeta.reset();
+        enc.resetEncoding();
         gammaMeta.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
         deepFlatten.isModified ||
-        tonemapMeta.isModified ||
-        colormapMeta.isModified ||
+        enc.encodingModified ||
         gammaMeta.isModified ||
         !!props.channelModified
       }

@@ -110,15 +110,12 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import {
-  colormapToolbarButton,
-  tonemapToolbarButton,
-} from "./use-image-controller";
+import { displayToolbarButton, usePaneEncoding } from "./display-encoding";
+import { getEncoding } from "../image/encodings";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
   aliasPeakHint,
-  tonemapHasGamma,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MIN,
   EXTENDED_TONEMAP_PEAK_MAX,
@@ -127,6 +124,7 @@ import {
   TONEMAP_GAMMA_MIN,
   TONEMAP_GAMMA_MAX,
   TONEMAP_GAMMA_STEP,
+  SDR_TONEMAP_OPERATORS,
   type TonemapOperator,
 } from "../image/tonemap";
 import { useDeepFlatten } from "./use-deep-flatten";
@@ -390,47 +388,41 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // "diffuse.G" — become colormappable). An absent prop (the common HDR case)
   // reads `"none"`; the toolbar COLORMAP menu / sync bus then drive it view-local.
   const propColormap: Colormap = (props as SdrImageProps).colormap ?? "none";
-  // Descriptor default captured at mount (via `useResettableState`'s seed
-  // capture); HOME restores the view-local colormap override to it (and
-  // `isModified` enables it while off-default) — same contract as
-  // CpuImagePane / the compare pane. Re-seeds to the live prop when the app
-  // card's colormap control changes (controlled surface until user overrides).
-  const [colormapOverride, setColormapOverride, colormapMeta] =
-    useResettableState<Colormap>(propColormap);
-  useEffect(() => {
-    setColormapOverride(propColormap);
-  }, [propColormap, setColormapOverride]);
-  // The SDR (8-bit) pane false-colors CPU-side; the FLOAT pane runs the GPU LUT
-  // family. Split the one override into the two path-specific values so each
-  // path's "no colormap" condition (`sdrPlain`, the HDR curve params) is exact.
-  const sdrColormap = hdrMode ? "none" : colormapOverride;
-  const hdrColormap: Colormap = hdrMode ? colormapOverride : "none";
-
-  // TONE-MAP operator — the UNIFIED 5-operator menu, now shown on BOTH the HDR
-  // (float) pane AND the plain-SDR (8-bit, no colormap) pane (§B: "all 5
-  // operators legal no matter what the input data was"). The view-local override
-  // is a NULLABLE "user explicitly picked X"; `null` means "follow the effective
-  // default". The default is resolved by `resolveEffectiveTonemap`
-  // (`image/tonemap.ts`) from the descriptor `tonemap=` prop (both prop shapes
-  // carry one) — under the unified model this is `srgb` on every surface (an
-  // identity round-trip on an already-sRGB 8-bit source; the managed-PEAK
-  // extended sRGB when the HDR surface engages). Re-seeds to "follow default"
-  // when the descriptor prop changes (controlled surface). A COLORMAPPED SDR pane
-  // hides this menu (its false-color LUT output is already display-ready).
   const propTonemap = hdrMode
     ? (props as HdrImageProps).tonemap
     : (props as SdrImageProps).tonemap;
-  const [tonemapOverride, setTonemapOverride] = useState<TonemapOperator | null>(null);
-  useEffect(() => {
-    setTonemapOverride(null);
-  }, [propTonemap]);
-  // The operator ACTUALLY in effect (menu value + render operator): the override
-  // when the user picked one, else the effective default.
-  const effectiveDefaultTonemap = resolveEffectiveTonemap(propTonemap, hdrEngaged);
-  const effectiveTonemap: TonemapOperator = tonemapOverride ?? effectiveDefaultTonemap;
-  const tonemapModified =
-    tonemapOverride !== null && tonemapOverride !== effectiveDefaultTonemap;
-  const resetTonemapOverride = useCallback(() => setTonemapOverride(null), []);
+
+  // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
+  // colormap + tonemap overrides — selecting a LUT deactivates the curve and
+  // vice-versa STRUCTURALLY (`display-encoding.ts`). The float pane gates the
+  // menu by its real channel arity (luts@k=1, `normal`@k=3); the 8-bit pane has
+  // no channel-count signal (`mode:"sdr"`) so offers the full applicable set.
+  // Both drive the unified 5-curve set (Linear · sRGB · Gamma · Reinhard · ACES
+  // + `normal`); the default curve resolves from `tonemap=` (colormap wins the
+  // seed for scalars, per the descriptor back-compat contract).
+  const sourceArity = hdrMode ? shapeDims(deepFlatten.hdr.shape).c : 1;
+  const resolveDefaultCurve = useCallback(
+    (t: string | null | undefined) => resolveEffectiveTonemap(t, false),
+    [],
+  );
+  const enc = usePaneEncoding({
+    mode: hdrMode ? "arity" : "sdr",
+    arity: sourceArity,
+    curveSet: SDR_TONEMAP_OPERATORS,
+    propColormap,
+    propTonemap,
+    resolveDefaultCurve,
+  });
+  // Derived back-compat values the render pipeline / sync already consume: the
+  // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
+  // each path's "no colormap" condition (`sdrPlain`) is exact.
+  const sdrColormap: Colormap = hdrMode ? "none" : (enc.colormap as Colormap);
+  const hdrColormap: Colormap = hdrMode ? (enc.colormap as Colormap) : "none";
+  const effectiveTonemap: TonemapOperator = enc.curveId as TonemapOperator;
+  // PEAK (HDR ceiling) applies to the CURVE family only — hidden for the `normal`
+  // remap and for a colormap LUT (neither has a peak). γ / EV / OFF gate off the
+  // ACTIVE encoding's param manifest (see the slider block below).
+  const activeIsCurve = getEncoding(enc.encodingId)?.kind === "curve";
 
   // PEAK white (×SDR white) — the UNIFIED HDR MODE control. On an engaged HDR
   // surface it is ALWAYS shown and every operator respects it as its ceiling `P`
@@ -494,27 +486,32 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
-      if (patch.colormap !== undefined) setColormapOverride(patch.colormap as Colormap);
-      if (patch.tonemap !== undefined) setTonemapOverride(patch.tonemap as TonemapOperator);
+      // The unified `encoding` key is primary; `colormap`/`tonemap` are honored
+      // for back-compat (a compare-pane peer publishes those, not `encoding`).
+      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
+      else if (patch.colormap !== undefined && patch.colormap !== "none")
+        enc.setEncoding(patch.colormap);
+      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
     },
-    [setColormapOverride, setTonemapOverride, setTonemapGamma, setPeak],
+    [enc, setTonemapGamma, setPeak],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
-      // The active colormap (SDR CPU false-color OR the float LUT family) — the
-      // one override, so a synced peer follows on either surface.
-      colormap: colormapOverride,
+      // The ONE `encoding` id, plus the derived colormap/tonemap so a pre-registry
+      // (compare) peer still follows the shared look.
+      encoding: enc.encodingId,
+      colormap: enc.colormap,
       tonemap: effectiveTonemap,
       tonemapGamma,
       peak,
       exposureEV: displayEV,
       offset: displayOffset,
     }),
-    [colormapOverride, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
+    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -522,19 +519,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     settingsSnapshot,
     applyRemoteSettings,
   );
-  const changeColormap = useCallback(
-    (id: Colormap) => {
-      setColormapOverride(id);
-      publishSettings({ colormap: id });
+  const changeEncoding = useCallback(
+    (id: string) => {
+      enc.setEncoding(id);
+      const isLut = getEncoding(id)?.kind === "lut";
+      publishSettings({
+        encoding: id,
+        colormap: isLut ? id : "none",
+        tonemap: isLut ? effectiveTonemap : id,
+      });
     },
-    [setColormapOverride, publishSettings],
-  );
-  const changeTonemap = useCallback(
-    (id: TonemapOperator) => {
-      setTonemapOverride(id);
-      publishSettings({ tonemap: id });
-    },
-    [publishSettings],
+    [enc, publishSettings, effectiveTonemap],
   );
   const changeExposure = useCallback(
     (ev: number) => {
@@ -771,7 +766,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (hdrMode || !paneReady) return;
     const p = props as SdrImageProps;
     const imageUrl = p.imageUrl;
-    const colormap = colormapOverride;
+    const colormap = sdrColormap;
     if (!imageUrl) {
       sdrImageDataRef.current = null;
       setNaturalDims(null);
@@ -833,7 +828,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     hdrMode,
     paneReady,
     hdrMode ? null : (props as SdrImageProps).imageUrl,
-    hdrMode ? null : colormapOverride,
+    hdrMode ? null : sdrColormap,
     // Exposure/offset re-bake the colormap (pre-LUT) — only meaningful when a
     // colormap is active; harmless (re-uploads the raw) otherwise.
     hdrMode ? 0 : displayEV,
@@ -1150,47 +1145,36 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
       histogram={histogramSource}
-      // UNIFIED TONEMAP menu (§B): the ONE 5-operator group (Linear · sRGB ·
-      // Gamma · Reinhard · ACES) is shown on the HDR (float) pane AND the plain
-      // 8-bit pane — the PEAK slider is the HDR mode (see extraSliders). Every
-      // pane also carries the COLORMAP menu; picking a colormap swaps in the
-      // false-color path (SDR: CPU applyColormap; FLOAT: the GPU LUT family on the
-      // scalar channel — Phase 2), which HIDES the tonemap menu (its LUT output is
-      // already display-ready). So the two exclusive DISPLAY encodings (curve vs
-      // LUT) present as one colormap + one tonemap control, gated by each other.
+      // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
+      // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
+      // menus. Selecting a LUT deactivates the curve and vice-versa structurally
+      // (`enc` owns the single `encoding` id); the float pane gates luts to k=1
+      // and `normal` to k=3, the 8-bit pane offers the full applicable set.
       leadingMenus={[
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
-        ...(hdrMode
-          ? hdrColormap === "none"
-            ? [
-                colormapToolbarButton(colormapOverride, (id) => changeColormap(id as Colormap)),
-                tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)),
-              ]
-            : [colormapToolbarButton(colormapOverride, (id) => changeColormap(id as Colormap))]
-          : sdrPlain
-            ? [
-                colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap)),
-                tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)),
-              ]
-            : [colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap))]),
+        displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
-      // in-pass (both HDR and SDR paths), so no source re-upload / diff recompute.
-      displayAdjust={{
-        exposureEV: displayEV,
-        offset: displayOffset,
-        onExposureChange: changeExposure,
-        onOffsetChange: changeOffset,
-      }}
-      // UNIFIED sliders: PEAK is the HDR MODE — shown WHENEVER the real HDR
-      // surface engaged (every operator respects `P` as its ceiling; SDR forces
-      // P=1 and hides it). γ rides alongside it, shown while the Gamma operator
-      // (HDR) or the Gamma display-transfer (plain SDR) is in effect — so a
-      // Gamma-on-HDR pane shows BOTH PK and γ. Their reset/modified state folds
-      // into HOME so a single reset clears operator + P + γ.
+      // in-pass (both HDR and SDR paths). Gated by the ACTIVE encoding's param
+      // manifest: shown for curves + luts (which declare exposure/offset), hidden
+      // for the paramless `normal` remap.
+      displayAdjust={
+        enc.hasParam("exposure")
+          ? {
+              exposureEV: displayEV,
+              offset: displayOffset,
+              onExposureChange: changeExposure,
+              onOffsetChange: changeOffset,
+            }
+          : undefined
+      }
+      // PEAK is the HDR MODE — shown while the real HDR surface engaged AND the
+      // active encoding is a CURVE (every curve respects `P` as its ceiling; the
+      // paramless `normal` remap and colormap LUTs have no peak). γ rides the
+      // active encoding's manifest (only the Gamma curve declares it).
       extraSliders={[
-        ...((hdrMode || sdrPlain) && hdrEngaged
+        ...((hdrMode || sdrPlain) && hdrEngaged && activeIsCurve
           ? [
               {
                 id: "peak",
@@ -1206,7 +1190,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               },
             ]
           : []),
-        ...((hdrMode || sdrPlain) && tonemapHasGamma(effectiveTonemap)
+        ...((hdrMode || sdrPlain) && enc.hasParam("gamma")
           ? [
               {
                 id: "gamma",
@@ -1237,16 +1221,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           : undefined
       }
       onReset={() => {
-        colormapMeta.reset();
-        resetTonemapOverride();
+        enc.resetEncoding();
         peakMeta.reset();
         gammaMeta.reset();
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
-        colormapMeta.isModified ||
-        tonemapModified ||
+        enc.encodingModified ||
         peakMeta.isModified ||
         gammaMeta.isModified ||
         deepFlatten.isModified ||

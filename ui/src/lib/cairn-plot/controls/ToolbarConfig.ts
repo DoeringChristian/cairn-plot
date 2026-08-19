@@ -11,6 +11,11 @@
 export interface ToolbarMenuOption {
   id: string;
   label: string;
+  /** A non-interactive SECTION HEADER row (not selectable, skipped in keyboard
+   *  nav / the `onSelect` path). Lets a flat menu emulate grouped sections — the
+   *  unified DISPLAY encoding menu uses it for CURVES / COLORMAPS / REMAPS
+   *  dividers. A header's `id` must never collide with a real option id. */
+  header?: boolean;
 }
 
 /**

@@ -88,12 +88,24 @@ for (const [name, src] of [
 
 // --- the controlled-props companion guarantee -----------------------------
 
-test("GpuImagePane: peak re-seeds from its prop (controlled while toolbar hidden)", () => {
-  // colormap + tonemap already re-seeded; peak was the gap — a re-seed effect on
-  // [propPeak, propTonemap] makes it a controlled surface too.
-  assert.match(gpu, /setColormapOverride\(propColormap\)/, "colormap must re-seed");
-  assert.match(gpu, /setTonemapOverride\(null\)/, "tonemap must re-seed (follow default)");
+test("GpuImagePane: encoding + peak re-seed from their props (controlled while toolbar hidden)", () => {
+  // Phase 3: the unified DISPLAY encoding replaces the separate colormap +
+  // tonemap overrides. Its controlled-surface re-seed lives INSIDE
+  // `usePaneEncoding` (`display-encoding.ts`), which the pane feeds the live
+  // descriptor `propColormap` + `propTonemap`; peak keeps its own re-seed effect.
+  assert.match(gpu, /usePaneEncoding\(\{/, "the pane must own its encoding via usePaneEncoding");
+  assert.match(gpu, /\n\s*propColormap,/, "usePaneEncoding must be fed propColormap (controlled)");
+  assert.match(gpu, /\n\s*propTonemap,/, "usePaneEncoding must be fed propTonemap (controlled)");
   assert.match(gpu, /setPeak\(seedPeak\(\)\)/, "peak must re-seed from its prop");
+});
+
+test("display-encoding: usePaneEncoding re-seeds when the descriptor props change", () => {
+  // The controlled-surface guarantee now lives in the shared hook: an effect
+  // keyed on the descriptor seed reseeds the single encoding id + clears the
+  // per-arity override memory when the host changes colormap/tonemap.
+  const de = read("renderers/display-encoding.ts");
+  assert.match(de, /setEncodingId\(seedFor\(arity\)\)/, "the hook must reseed from the props");
+  assert.match(de, /memoryRef\.current\.clear\(\)/, "a prop reseed must forget per-arity overrides");
 });
 
 test("GpuImagePane: base exposure/offset feed the render (additive with sliders)", () => {
