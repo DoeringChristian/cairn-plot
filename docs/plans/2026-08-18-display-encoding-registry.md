@@ -195,3 +195,89 @@ Phase 5 needs to know: norms/bounds are wired on the FLOAT-LUT path only — the
 8-bit SDR false-color colormap (baked CPU-side via `applyColormap`) and the compare
 pane's diff-display do NOT yet honor norm/bounds; `renderCompose`'s dead `isScalar`
 branch still lacks the `u_bind9` uniform (fine — every caller passes `isScalar:false`).
+
+## Phase 5 — DONE (commit b614b4f)
+
+CLEANUP + single-source generation, behaviour-identical (no rendered-output/UX
+change — pinned by the unchanged parity harnesses + gallery).
+
+**ABSORBED `image/tonemap.ts`.** Its registry-delegate exports are gone: the peak
+curve wrappers (`extendedClamp/Reinhard/AcesCurve`), the CPU operator table
+(`TONEMAP_OPERATORS`), its resolver (`getTonemapOperator`) and the peak-aware
+triple dispatch (`applyTonemapOperatorTriple`) were thin pass-throughs to
+`image/encodings`; every caller now applies a curve straight from the registry via
+`getEncoding(id).cpu(rgb, 3, params)` (CpuImagePane's CPU fallback, the
+`image-pass`/`compare-pass` parity harnesses, and the two library barrels — which
+dropped the `TONEMAP_OPERATORS`/`getTonemapOperator` re-exports). The dead
+post-unification classifiers + menu-group arrays (`isHdrTonemap`, `tonemapHasPeak`,
+`HDR_TONEMAP_OPERATORS`, `EXTENDED_ROLLOFF_OPERATORS`, `EXTENDED_PEAK_OPERATORS`)
+were removed. What GENUINELY STAYS (documented in the module header) is the
+NON-registry layer: the exposure + output-encode pipeline STAGES, the sRGB transfer
+fns, the gamma/peak UI config, and the unified render-translation (`resolve*` +
+the deprecated-alias tables). `SDR_TONEMAP_OPERATORS` is now DERIVED from the
+registry (non-HDR curves + remaps), so the menu set can't drift; `tonemap.test.ts`
+re-points its curve goldens at the registry via thin local adapters. Net ~150 LOC
+of delegates/dead-code deleted from `tonemap.ts` (645 → ~470 lines).
+
+**MENUS from the registry.** The tone-map + display-transfer toolbar option lists
+(`use-image-controller.ts`) now source BOTH their id set (`SDR_TONEMAP_OPERATORS`,
+already registry-derived) AND their labels (`encodingLabel` → the entry `label`)
+from the registry; the hand-maintained `TONEMAP_LABELS` map was deleted. The
+colormap menu (`COLORMAP_MENU_OPTIONS`) was already `listEncodingsByKind("lut")`-
+derived. The compare pane's `colormapToolbarButton`/`tonemapToolbarButton` stay
+MODE-scoped (diff vs slide/blend, never co-shown) — NOT force-unified per the
+brief — but both now draw their lists from the registry-derived constants, so no
+hardcoded option arrays survive on either menu.
+
+**GENERATION / drift.** Chosen approach: a NODE DRIFT TEST
+(`image/encodings/registry-drift.test.ts`), not a Python-consumed generated file.
+Rationale (documented in the test): the committed JSON *schema*
+(`cairn-plot-spec.schema.json`) types `colormap`/`tonemap` as plain `string` — it
+carries NO enum, so there is nothing there to generate from the registry; the enum
+authority is the cross-face CONTRACT JSON + Python's `components.py` tuples. Wiring
+the pure-Python package to import a TS-generated artifact at import time is
+invasive, so per the design's explicit escape hatch the drift TEST is the
+"can't drift" mechanism: it asserts the REGISTRY ids === the contract
+(`colormaps`/`tonemapOperators`) === Python (`_COLORMAPS`/`_TONEMAP_OPERATORS`).
+The registry is the source; the test names exactly which mirrors to update.
+
+**Phase-4 loose ends — explicit NON-GOALS (deferred, unchanged behaviour).** All
+three are either output-CHANGING feature work (off-limits in a behaviour-identical
+cleanup phase) or dead code, so they are documented rather than fixed:
+  1. The 8-bit SDR false-color path (CPU `applyColormap`) does NOT honor
+     `norm`/`bounds` — threading `computeDataIndex` there would change rendered
+     output for 8-bit colormap+norm images. Follow-up.
+  2. The compare pane's diff-display does NOT honor `norm`/`bounds` — same reason
+     (and the compare pane isn't on the settings-sync bus yet, task #87).
+  3. `renderCompose`'s `processSide` `isScalar` branch still lacks the `u_bind9`
+     norm uniform + a `cairnDataIndex` call. It is DEAD (every `renderCompose`
+     caller passes `isScalar:false`; diff routes through `diff-engine`, not
+     compose), so it is latent-only; left as-is rather than plumbed or deleted
+     (deleting would rip the shared `lut` binding out of the compose shader).
+
+Gates: typecheck, 566 node tests (+5 drift), all 23 parity harnesses, 252 pytest,
+schema-in-sync, gallery green; plot-inline bundles rebuilt + synced.
+
+## Epic complete
+
+The tonemap/colormap split is fully unified. END STATE:
+  - `image/encodings/` is the SINGLE SOURCE OF TRUTH for "how do the selected
+    channels become RGB": each `DisplayEncoding` carries `kind` (curve/lut/remap),
+    arity, param manifest, `operatorId`, a WGSL curve/family expression, and a
+    `cpu` twin. The GPU shaders (`image.wgsl.ts`, `prelude.wgsl.ts`), the engine's
+    `OPERATOR_ID`, the CPU panes, the menus, and the `SDR_TONEMAP_OPERATORS` set
+    are all ASSEMBLED/DERIVED from it; GPU↔CPU byte parity is proven mechanically
+    by the `encoding-registry` harness.
+  - ONE arity-gated DISPLAY menu (`usePaneEncoding` + `displayToolbarButton`)
+    drives both image panes with per-arity memory + structural curve↔lut
+    exclusivity; a per-pane name-keyed param store gives slider continuity across
+    encoding switches. Colormaps are legal on the float/unified surface; DATA
+    encodings carry norms (linear/log/power) + optional min/max bounds.
+  - Cross-face enums (schema contract + Python) can't drift from the registry
+    (drift test); `tonemap.ts` is now purely the non-registry pipeline-stage +
+    render-translation layer.
+
+DOCUMENTED NON-GOALS carried out of the epic: norm/bounds on the 8-bit false-color
+and diff-display paths, and the dead `renderCompose` `isScalar` branch (all above);
+plus the compare pane joining the settings-sync bus (task #87). The compare pane's
+two mode-scoped menus were deliberately NOT force-unified.
