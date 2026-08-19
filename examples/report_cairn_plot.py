@@ -400,26 +400,26 @@ def build_report() -> cp.Report:
         )
         rep.md(
             "### Validation — official `flip-evaluator` vs our client-side kernel\n\n"
-            "One STACKED grid, two slots: the error map computed OFFLINE by "
-            "NVIDIA's compiled reference implementation "
-            "([NVlabs/flip](https://github.com/NVlabs/flip), `flip-evaluator`), "
-            f"**mean FLIP = {_official_mean:.4f}** — baked into this page as a "
-            "plain image (magma-colored by the official tool) — beside the SAME "
-            "pair diffed live by cairn-plot's GPU FLIP kernel (`mode=\"flip\"`). "
-            "Flip between the slots (arrow keys / tab strip) to eyeball the "
-            "agreement per pixel; the kernel is verified against this reference "
-            "to ≤3.6e-3 per pixel in the test suite."
+            "Left: the error map computed OFFLINE by NVIDIA's compiled reference "
+            "implementation ([NVlabs/flip](https://github.com/NVlabs/flip), "
+            f"`flip-evaluator`), **mean FLIP = {_official_mean:.4f}** — baked into "
+            "this page as a plain image (magma-colored by the official tool). "
+            "Right: the SAME pair diffed live by cairn-plot's GPU FLIP kernel "
+            "(`mode=\"flip\"`). The kernel is verified against this reference to "
+            "≤3.6e-3 per pixel in the test suite; here you can eyeball the "
+            "agreement directly."
         )
         rep.grid(
             [
-                cp.Image(_official_u8, label="official FLIP"),
-                cp.Compare(
-                    cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
-                    # magma to match the official flip-evaluator's magma-colored map.
-                    colormap="magma",
-                ),
-            ],
-            mode="stacked",
+                [
+                    cp.Image(_official_u8, label="official FLIP"),
+                    cp.Compare(
+                        cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
+                        # magma to match the official flip-evaluator's magma-colored map.
+                        colormap="magma",
+                    ),
+                ]
+            ]
         )
     except ImportError:
         rep.md(
