@@ -125,7 +125,7 @@ stay shared stages, per the phased plan); `params` are declared per-encoding
 (UI-gating metadata, not yet wired); compose keeps `remaps:false` so the `normal`
 remap stays single-image-only (exactly as before). No UI/schema/Python changes.
 
-## Phase 2 — DONE (commit 8a33597)
+## Phase 2 — DONE (commit e012536)
 
 Colormaps are now `kind:"lut"` registry entries (`encodings/luts.ts`, generated
 from `COLORMAP_STOPS` → arity `[1]`, `needsLut`, `lutName` table ref, sensitivity
