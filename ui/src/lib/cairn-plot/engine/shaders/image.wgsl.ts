@@ -161,7 +161,7 @@
  * the linear path (`sampleLutLinearF`) — both need only `textureLoad`'s
  * exact-texel semantics, no filterable-float sampler.
  */
-import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL } from "../../image/encodings/index.ts";
+import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL } from "../../image/encodings/index.ts";
 
 export const imageWGSL = `
 struct VSOut {
@@ -219,71 +219,25 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // uniform (u_bind2.z), free on the lut path.
 @group(0) @binding(29) var<uniform> u_bind9: vec4<f32>;
 // Logical binding 10 (uniform vec4: DATA-encoding multi-channel REDUCE params —
-// reduceMode, channelCount k, reserved, reserved) -> native binding 10*3+2 = 32.
-// Only the scalar/LUT (isScalar) path reads it; it feeds cairnReduceScalar (the
-// ℝᵏ→scalar collapse) BEFORE cairnDataIndex. Defaults to vec4(0) when the caller
-// omits it (zero-filled) — reduceMode 0 + k 0, and cairnReduceScalar's k<=1 guard
-// returns channel 0, so a scalar colormap (k=1) renders bit-for-bit as before
-// (the engine always packs k, so k=1 hits the guard explicitly too).
+// reduceMode, channelCount k, ANALYTIC flag (.z), reserved) -> native binding
+// 10*3+2 = 32. Only the scalar/LUT (isScalar) path reads it; it feeds
+// cairnReduceScalar (the ℝᵏ→scalar collapse) BEFORE cairnDataIndex. .z=1 selects
+// the ANALYTIC signed-color branch (tev-style red-green: cairnSignedAnalyticColor
+// + shared output-encode) INSTEAD of the LUT sample — computed color, no texture
+// bind. Defaults to vec4(0) when the caller omits it (zero-filled) — reduceMode 0
+// + k 0 + analytic 0, and cairnReduceScalar's k<=1 guard returns channel 0, so a
+// scalar colormap (k=1) renders bit-for-bit as before (the engine always packs k,
+// so k=1 hits the guard explicitly too).
 @group(0) @binding(32) var<uniform> u_bind10: vec4<f32>;
 
-// --- ported verbatim from image/tonemap.ts ---
-
-fn srgbOetf(x: f32) -> f32 {
-  let v = clamp(x, 0.0, 1.0);
-  if (v <= 0.0031308) {
-    return 12.92 * v;
-  }
-  return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
-}
-
-// sRGB EOTF (sRGB code -> linear) — the exact inverse of srgbOetf. Mirrors
-// image/tonemap.ts's srgbEotf. Used to LINEARIZE an 8-bit sRGB source at the
-// front of the pipeline when srgbDecode (u_bind8) is set (SDR display-transfer
-// panes), so exposure/offset + the chosen transfer operate on linear light,
-// tev-style.
-fn srgbEotf(x: f32) -> f32 {
-  let v = clamp(x, 0.0, 1.0);
-  if (v <= 0.04045) {
-    return v / 12.92;
-  }
-  return pow((v + 0.055) / 1.055, 2.4);
-}
-
-fn outputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
-  if (hasGamma) {
-    return clamp(pow(clamp(x, 0.0, 1.0), 1.0 / gamma), 0.0, 1.0);
-  }
-  return srgbOetf(x);
-}
-
-// --- EXTENDED output-encode (HDR-out / extended-surface transfer) — ported
-// BYTE-IDENTICALLY from image/tonemap.ts's extendedSrgbOetf / extendedGammaEncode
-// / extendedOutputEncode. See that file's doc block for WHY: a float16 canvas in
-// "srgb"/"display-p3" (the hdrOut surface) stores TRANSFER-ENCODED (non-linear)
-// signals per W3C ColorWeb-CG, so the hdrOut path must ENCODE the display-linear
-// light the operator produced, not hand over raw scene-linear values. Same
-// piecewise sRGB / power curves as the SDR encoders but UNCLAMPED (values past 1
-// survive as extended brightness) and MIRRORED through the origin for negatives
-// (sign(x)*f(|x|)). ---
-
-fn extendedSrgbOetf(x: f32) -> f32 {
-  let a = abs(x);
-  let s = sign(x);
-  if (a <= 0.0031308) { return s * 12.92 * a; }
-  return s * (1.055 * pow(a, 1.0 / 2.4) - 0.055);
-}
-
-fn extendedGammaEncode(x: f32, gamma: f32) -> f32 {
-  let a = abs(x);
-  let s = sign(x);
-  return s * pow(a, 1.0 / gamma);
-}
-
-fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
-  if (hasGamma) { return extendedGammaEncode(x, gamma); }
-  return extendedSrgbOetf(x);
-}
+// Display-transfer stage — the SDR sRGB/gamma OETF (+ the sRGB EOTF that
+// LINEARIZES an 8-bit source when srgbDecode/u_bind8 is set) and the EXTENDED
+// (unclamped, origin-mirrored) HDR-out encoders — ASSEMBLED from the shared
+// OUTPUT_ENCODE_WGSL (image/encodings), the SAME block the diff-display blit
+// (engine/diff-engine.ts) interpolates. Ported byte-identically from
+// image/tonemap.ts's srgbOetf/srgbEotf/outputEncode + extended*; see that file's
+// doc block for WHY the hdrOut path must transfer-encode (W3C ColorWeb-CG).
+${OUTPUT_ENCODE_WGSL}
 
 // Manual bilinear blend of the 4 texels surrounding 'uv' (source-space
 // [0,1]) — see module doc comment's "Source filtering" section for why this
@@ -400,7 +354,32 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     // sensitivity (already folded into the reduced scalar) is the sole affine.
     let reduceMode = i32(round(u_bind10.x));
     let channelCount = i32(round(u_bind10.y));
+    let analytic = u_bind10.z > 0.5;
     let scalar = cairnReduceScalar(rgb, reduceMode, channelCount);
+    if (analytic) {
+      // ANALYTIC signed error (tev-style red-green) — computed color, no LUT
+      // bind. The reduced signed scalar (exposure already SCALED its amplitude)
+      // maps to a SCENE-LINEAR color that flows through the SHARED output-encode
+      // (like a curve), so |v|>1 survives on the extended/HDR surface while |v|<=1
+      // renders identically on SDR. gamma here is the sRGB OETF path (hasGamma
+      // false when the pane leaves gamma unset — the analytic entry has no γ).
+      let lin = cairnSignedAnalyticColor(scalar);
+      let hasG = gamma > 0.0;
+      if (hdrOut) {
+        return vec4<f32>(
+          extendedOutputEncodeF(lin.r, gamma, hasG),
+          extendedOutputEncodeF(lin.g, gamma, hasG),
+          extendedOutputEncodeF(lin.b, gamma, hasG),
+          1.0,
+        );
+      }
+      return vec4<f32>(
+        outputEncodeF(lin.r, gamma, hasG),
+        outputEncodeF(lin.g, gamma, hasG),
+        outputEncodeF(lin.b, gamma, hasG),
+        1.0,
+      );
+    }
     let normMode = i32(round(u_bind9.x));
     let boundsActive = u_bind9.w > 0.5;
     let idx = cairnDataIndex(scalar, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);

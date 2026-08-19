@@ -24,8 +24,8 @@ import { getSharedDevice } from "../device";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
 import { getDiffKernel } from "../kernels";
-import { applyExposure, outputEncode, type RgbTriple } from "../../image/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, type NormMode } from "../../image/encodings";
+import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../image/tonemap";
+import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../image/encodings";
 import { colormapFloatLUT } from "../../colormaps";
 import type { Device, Texture } from "../types";
 
@@ -263,6 +263,48 @@ async function runDiffDisplayNormCase(device: Device, norm: NormMode, gamma: num
   return allOk;
 }
 
+// ---- diff DISPLAY ANALYTIC parity (tev-style signed red-green follow-up) -----
+// `renderDiffDisplay` with `analytic:true` COMPUTES the signed color from the RAW
+// metric (mean over channels — tev's average(col)), BYPASSING the (v+1)/2 fold +
+// clamp + LUT, then output-encodes. Prove the GPU === the CPU twin
+// (signedAnalyticColor + outputEncode/extendedOutputEncode) on BOTH surfaces: SDR
+// (clamps) and HDR (|v|>1 survives — row 3's mean error 0.53 → green 1.07).
+async function runDiffDisplayAnalyticCase(device: Device, hdrOut: boolean): Promise<boolean> {
+  const kernelId = "signed"; // result stores raw a-b per channel (signed range)
+  const texRef = buildRowTexture(device, PIXELS_REF);
+  const texFg = buildRowTexture(device, PIXELS_FG);
+  const result = computeDiff(device, texRef, texFg, kernelId);
+  const target = device.createTexture(WIDTH, 1, hdrOut ? "rgba16float" : "rgba8unorm");
+  renderDiffDisplay(device, target, result, "signed", {
+    uv: uvFull,
+    analytic: true,
+    filter: "nearest",
+  });
+  const out = await device.readback(target);
+  texRef.destroy();
+  texFg.destroy();
+  result.destroy();
+  target.destroy();
+  let allOk = true;
+  for (let i = 0; i < WIDTH; i++) {
+    let sAvg = 0;
+    for (let c = 0; c < 3; c++) sAvg += PIXELS_REF[i]![c]! - PIXELS_FG[i]![c]!;
+    sAvg /= 3;
+    const lin = signedAnalyticColor(sAvg);
+    for (let c = 0; c < 3; c++) {
+      const exp = hdrOut ? extendedOutputEncode(lin[c]!, undefined) : outputEncode(lin[c]!, undefined);
+      const actual = out[i * 4 + c]!;
+      const d = hdrOut ? Math.abs(actual - exp) : Math.abs(actual - byteOf(exp));
+      if (d > (hdrOut ? 0.01 : 2)) {
+        allOk = false;
+        report(false, `[diff-display/analytic${hdrOut ? "-hdr" : ""}] px[${i}].ch[${c}] expected=${hdrOut ? exp.toFixed(4) : byteOf(exp)} actual=${actual}`);
+      }
+    }
+  }
+  report(allOk, `[diff-display/analytic${hdrOut ? "-hdr" : ""}] GPU cairnSignedAnalyticColor === cpu twin${hdrOut ? " (>1 survives)" : ""}`);
+  return allOk;
+}
+
 function cpuMetrics(a: number[][], b: number[][]): { mse: number; psnr: number; mae: number } {
   let sumSq = 0;
   let sumAbs = 0;
@@ -371,6 +413,11 @@ async function runAll(device: Device): Promise<boolean> {
   ok = (await runDiffDisplayNormCase(device, "log", 1)) && ok;
   ok = (await runDiffDisplayNormCase(device, "power", 2)) && ok;
   ok = (await runDiffDisplayNormCase(device, "power", 0.5)) && ok;
+  // Diff-display ANALYTIC (tev-style signed red-green): SDR (clamps) + HDR (>1).
+  ok = (await runDiffDisplayAnalyticCase(device, false)) && ok;
+  if (device.capabilities.hdr) {
+    ok = (await runDiffDisplayAnalyticCase(device, true)) && ok;
+  }
   ok = (await runMetricsCase(device)) && ok;
   ok = (await runSwapGuardCase(device, "split@0.25", { ...BASE, mode: "split", split: 0.25, alpha: 0.5 })) && ok;
   ok = (await runSwapGuardCase(device, "blend@0.25", { ...BASE, mode: "blend", split: 0.5, alpha: 0.25 })) && ok;

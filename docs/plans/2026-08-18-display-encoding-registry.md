@@ -403,3 +403,63 @@ Gates: typecheck, 580 node tests (+6 compare-display-encoding), all 23 parity
 harnesses green on real GPU (Apple metal-3), plot-inline bundles rebuilt + synced,
 gallery (27 types) clean. No schema/Python change (encoding/norm are view-local
 sync keys, not descriptor kwargs).
+
+## Follow-up: analytic red-green (tev-style, unclamped) — DONE (commit 7d3ed9c)
+
+The RED-GREEN signed colormap became an ANALYTIC encoding — computed per value in
+scene-linear space, output UNCLAMPED — replicating tev's `POS_NEG` tonemap.
+
+**tev convention (source).** `github.com/Tom94/tev`, `src/UberShader.cpp`
+`applyTonemap`, `POS_NEG` case:
+`vec3(-average(min(col,0))*2, average(max(col,0))*2, 0) + background`. So NEGATIVE
+(image < reference) → RED, POSITIVE → GREEN, blue 0, amplitude `2*|v|`, and the
+result is left UNCLAMPED (only a later `smoothClamp` brightness-limits it). Ported
+faithfully: negative → red, positive → green, gain `SIGNED_ANALYTIC_AMPLITUDE=2`.
+This matches the pre-existing cairn signed convention (diff `signed` range folded
+`(v+1)/2` so `v<0`→the red end), so no sign flip was needed.
+
+**The analytic encoding.** `DisplayEncoding.analytic` (registry) marks a
+`kind:"lut"` entry whose color is COMPUTED — no `needsLut`/`lutName`, no texture
+bind. `red-green` keeps its id (descriptors/back-compat/sync keys unchanged) but is
+now `analytic:true` with `params:["exposure","offset","reduce"]`. The CPU twin
+`signedAnalyticColor` + the WGSL twin `cairnSignedAnalyticColor` (in
+`LUT_FAMILY_WGSL`) are byte-parallel; the k>1 sample is `reduceToScalar`-collapsed
+to the signed scalar first (tev's `average`).
+
+**SDR/HDR output treatment (the convention chosen).** Unlike a table LUT (which
+bakes display-sRGB written to the surface UNCHANGED), the analytic color is
+SCENE-LINEAR and flows through the SHARED output-encode — exactly like a curve
+(`OUTPUT_ENCODE_WGSL`, newly EXTRACTED so `image.wgsl` + the diff blit share ONE
+copy). So the SURFACE's own encoder decides the range: SDR (`outputEncode`) clamps
+to `[0,1]`; the extended/HDR surface (`extendedOutputEncode`) lets `|v|>1` SURVIVE
+(per W3C ColorWeb-CG). Since the two encoders agree on `[0,1]`, an amplitude
+`|v|≤1` renders IDENTICALLY on both surfaces; only `|v|>1` diverges (HDR keeps the
+over-range error, SDR clamps). On the float image pane the analytic entry takes the
+pane's real `hdrOut` (`rt.hdrOut`), not the LUT path's forced `hdrOut:false`.
+
+**Norms/bounds/exposure.** EXPOSURE scales the amplitude (multiply the signed value
+before the map — tev applies exposure before POS_NEG); offset shifts it. The
+analytic entry declares NO `norm` and NO `min`/`max`: an unbounded signed
+diverging map has no log/power reshape or normalize-to-`[0,1]` affine, so those
+pickers are hidden (gated on `hasParam`, not just `isLut`). Documented on
+`DisplayEncoding.analytic` + `ANALYTIC_LUT_IDS`.
+
+**Paths wired.** image.wgsl `isScalar` branch (`u_bind10.z` analytic flag →
+`ImageParams.analytic`); the diff-display blit (`renderDiffDisplay`,
+`DiffDisplayParams.analytic`, new `u_src.z`=analytic/`.w`=hdrOut — BYPASSES the
+`(v+1)/2` fold + clamp + LUT, output-encodes the raw signed mean); GpuImagePane +
+CpuImagePane (CPU-fallback twin) + GpuComparePane (diff face).
+
+**Tests.** Parity: `encoding-registry` routes analytic entries to a dedicated
+signed SDR+HDR case (GPU `cairnSignedAnalyticColor` === cpu twin, incl. ±1.0 →
+amplitude 2.0 SURVIVING on the HDR path); `compare-pass` adds a diff-display
+analytic SDR+HDR case (row-3 mean error 0.53 → green 1.07 > 1 survives). Node:
+`registry.test.ts` — analytic entry shape, `SIGNED_ANALYTIC_AMPLITUDE`/
+`signedAnalyticColor` exact ±v colors (unclamped past 1), reduce-then-color twin;
+the table-lut shape/`[0,1]` tests now EXCLUDE analytic entries (justified: the
+analytic cpu is unclamped-linear + LUT-free, a different contract). Gates:
+typecheck, 583 node tests, all 23 parity harnesses green on real GPU (Apple
+metal-3), plot-inline bundles rebuilt + synced, gallery (27 types) clean. No
+schema/Python change — the `red-green` id + contract/Python enums are unchanged
+(the 8-bit CPU `applyColormap` false-color path keeps the old red→white→green LUT,
+a documented non-goal, so `COLORMAP_STOPS["red-green"]` stays).

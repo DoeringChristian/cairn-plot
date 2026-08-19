@@ -506,6 +506,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // it (min<max). Curves/remaps never use bounds.
   const boundsEngaged =
     enc.isLut &&
+    enc.hasParam("min") &&
     !!colorBounds &&
     Number.isFinite(colorBounds[0]) &&
     Number.isFinite(colorBounds[1]);
@@ -1014,6 +1015,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // holds display sRGB), so operator/gamma/hdrOut are moot; the LUT table comes
     // from the shared `colormapFloatLUT`, the SAME the diff blit binds.
     const hdrColormapActive = hdrMode && hdrColormap !== "none";
+    // ANALYTIC colormap (tev-style signed red-green): computed color, no LUT bind.
+    // Unlike the LUT branch (which bakes display sRGB → hdrOut:false), the analytic
+    // color is SCENE-LINEAR and rides the SHARED output-encode, so it takes the
+    // pane's real hdrOut (`rt.hdrOut`) — |v|>1 error survives on the engaged HDR
+    // surface, |v|<=1 renders identically on SDR. Exposure/offset SCALE the
+    // amplitude (no bounds/norm skin on the analytic entry). See DisplayEncoding.
+    const analyticColormapActive = hdrColormapActive && !!getEncoding(hdrColormap)?.analytic;
     // Phase 4 DATA-encoding skins (float LUT path only): when the min/max BOUNDS
     // skin is engaged (`boundsEngaged`, seeded from `colorRange`), it is the SOLE
     // affine — EV/OFF are held NEUTRAL so the two skins never double-apply
@@ -1021,7 +1029,23 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // reuses the γ uniform (gamma), free on the lut path; other norms leave it 1.
     const cmapExposure = boundsEngaged ? 0 : baseExposure + displayEV;
     const cmapOffset = boundsEngaged ? 0 : baseOffset + displayOffset;
-    const params: ImageParams = hdrColormapActive
+    const params: ImageParams = analyticColormapActive
+      ? {
+          exposureEV: baseExposure + displayEV,
+          offset: baseOffset + displayOffset,
+          operator: "linear",
+          isScalar: true,
+          analytic: true,
+          // No colormap bound, no norm/bounds; gamma unset → sRGB OETF encode.
+          hdrOut: rt.hdrOut,
+          peak: rt.peak,
+          srgbDecode: false,
+          reduce: effectiveReduce,
+          channelCount: sourceArity,
+          uv,
+          filter,
+        }
+      : hdrColormapActive
       ? {
           exposureEV: cmapExposure,
           offset: cmapOffset,
@@ -1250,8 +1274,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // DISPLAY menu. Norm shows while a lut is active; reduce shows while a lut is
       // active AND the source has >1 channel (the reduction is moot for a scalar).
       rowSegments={[
-        ...(enc.isLut ? [normSegment(norm, changeNorm)] : []),
-        ...(enc.isLut && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
+        // Norm gates on the manifest (`hasParam`), not just `isLut`: the ANALYTIC
+        // red-green declares no norm (linear-in-|v| by construction), so its picker
+        // is hidden; the table-backed luts show Lin·Log·Pow.
+        ...(enc.hasParam("norm") ? [normSegment(norm, changeNorm)] : []),
+        ...(enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths). Gated by the ACTIVE encoding's param
@@ -1311,7 +1338,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         // POWER-norm exponent (Phase 4) — shown while a lut's norm is `power`.
         // REUSES the γ state/slot (`tonemapGamma`, free on the lut path), so the
         // exponent carries across curve↔lut flips like every other named param.
-        ...(enc.isLut && norm === "power"
+        ...(enc.hasParam("norm") && norm === "power"
           ? [
               {
                 id: "gamma",

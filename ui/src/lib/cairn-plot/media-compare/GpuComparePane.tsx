@@ -1053,6 +1053,14 @@ export default function GpuComparePane({
     () => (colormapState !== "none" ? colormapFloatLUT(colormapState as Exclude<Colormap, "none">) : undefined),
     [colormapState],
   );
+  // ANALYTIC diff colormap (tev-style signed red-green): computed color, no LUT.
+  // When active, `renderDiffDisplay` bypasses the cmap-mode fold + LUT and computes
+  // the signed color from the raw metric, output-encoded (|v|>1 survives on an HDR
+  // surface). Norm is hidden for it (linear-in-|v| by construction).
+  const diffAnalytic = useMemo(
+    () => (colormapState !== "none" ? !!getEncoding(colormapState)?.analytic : false),
+    [colormapState],
+  );
 
   // Align/fit overlap mapping for the two operands (primary = foreground = texB).
   // Pure function of the source dims + align/fit (engine/compare-align.ts); it
@@ -1195,6 +1203,7 @@ export default function GpuComparePane({
           uv,
           cmapMode: diffCmapMode,
           colormap: diffColormap,
+          analytic: diffAnalytic,
           filter,
           // The pane frames on the PRIMARY footprint (`framingDims` = `dims`), so
           // the uv-window lives in PRIMARY space. The diff RESULT is min-cropped to
@@ -1277,6 +1286,7 @@ export default function GpuComparePane({
     hdrExposures,
     diffCmapMode,
     diffColormap,
+    diffAnalytic,
     norm,
     imageUrl,
     baselineUrl,
@@ -1803,7 +1813,7 @@ export default function GpuComparePane({
       // ONLY in DIFF mode while a colormap is active (the scalar error map is a
       // DATA encoding then); a raw "none" diff / slide / blend has no norm.
       rowSegments={
-        (compareMode === "diff" && colormapState !== "none"
+        (compareMode === "diff" && colormapState !== "none" && !diffAnalytic
           ? [normSegment(norm, changeNorm)]
           : []) as ToolbarSegmentSpec[]
       }
@@ -1861,7 +1871,7 @@ export default function GpuComparePane({
         // POWER-norm exponent (the compare-pane-on-DISPLAY follow-up) — shown while
         // the DIFF colormap's norm is `power`. REUSES the γ state (`tonemapGamma`,
         // free on the lut path) exactly as the image LUT path does.
-        ...(compareMode === "diff" && colormapState !== "none" && norm === "power"
+        ...(compareMode === "diff" && colormapState !== "none" && !diffAnalytic && norm === "power"
           ? [
               {
                 id: "gamma",

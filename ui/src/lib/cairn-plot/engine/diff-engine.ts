@@ -33,7 +33,7 @@ import {
   type KernelBuildCtx,
 } from "./kernels";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl";
-import { LUT_FAMILY_WGSL, NORM_ID, type NormMode } from "../image/encodings/index.ts";
+import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../image/encodings/index.ts";
 import { computeMetrics, makeCpuMapSampler, type DiffMetrics } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
@@ -445,12 +445,13 @@ const DISPLAY_SHADER = `
 ${VERTEX_WGSL}
 ${SAMPLING_WGSL}
 ${LUT_FAMILY_WGSL}
+${OUTPUT_ENCODE_WGSL}
 @group(0) @binding(0) var resultTex: texture_2d<f32>;
 @group(0) @binding(3) var lut: texture_2d<f32>;
 @group(0) @binding(8) var<uniform> u_uv: vec4<f32>;   // uvRect.xy, uvRect.wh
 @group(0) @binding(11) var<uniform> u_disp: vec4<f32>; // displayRangeId, cmapModeId, useColormap, filterMode
 @group(0) @binding(14) var<uniform> u_expo: vec4<f32>; // exposureEV, offset, powerExp(gamma), 0
-@group(0) @binding(17) var<uniform> u_src: vec4<f32>;  // primaryW, primaryH, 0, 0 (source footprint)
+@group(0) @binding(17) var<uniform> u_src: vec4<f32>;  // primaryW, primaryH, ANALYTIC(.z), hdrOut(.w)
 @group(0) @binding(20) var<uniform> u_norm: vec4<f32>; // normModeId, boundsMin, boundsMax, boundsActive (DATA-encoding norm/bounds — the compare-pane-on-DISPLAY follow-up)
 
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
@@ -483,11 +484,37 @@ ${LUT_FAMILY_WGSL}
     raw = textureLoad(resultTex, vec2<i32>(primaryPixel), 0);
   }
   let displayRangeId = i32(round(u_disp.x));
+  let analytic = u_src.z > 0.5;
+  let hdrOut = u_src.w > 0.5;
   // Exposure/offset adjust the RAW metric value BEFORE the cmap-mode index
   // mapping and LUT — i.e. they change the colormap SENSITIVITY (value * 2^EV +
   // offset), not the final RGB. Display-only: the cached diff RESULT is never
   // touched, so this never triggers a recompute.
   var v = raw.rgb * exp2(u_expo.x) + vec3<f32>(u_expo.y);
+  if (analytic) {
+    // ANALYTIC signed error (tev-style red-green): the RAW signed metric (mean
+    // over channels — tev's average(col)) → cairnSignedAnalyticColor (negative →
+    // red, positive → green, amplitude 2*|v|), UNCLAMPED, then the SHARED
+    // output-encode. BYPASSES the (v+1)/2 displayRange fold + the clamp + the LUT:
+    // the signed value must survive raw. On the HDR surface |v|>1 error survives
+    // (extended encode); on SDR it clamps — |v|<=1 renders the same on both.
+    let sAvg = (v.r + v.g + v.b) / 3.0;
+    let lin = cairnSignedAnalyticColor(sAvg);
+    if (hdrOut) {
+      return vec4<f32>(
+        extendedOutputEncodeF(lin.r, 0.0, false),
+        extendedOutputEncodeF(lin.g, 0.0, false),
+        extendedOutputEncodeF(lin.b, 0.0, false),
+        1.0,
+      );
+    }
+    return vec4<f32>(
+      outputEncodeF(lin.r, 0.0, false),
+      outputEncodeF(lin.g, 0.0, false),
+      outputEncodeF(lin.b, 0.0, false),
+      1.0,
+    );
+  }
   if (displayRangeId == 1 || displayRangeId == 2) {
     v = (v + vec3<f32>(1.0)) * 0.5; // signed / relative -> [0,1] about 0.5
   }
@@ -527,6 +554,15 @@ export interface DiffDisplayParams {
   uv: { x: number; y: number; w: number; h: number };
   /** Colormap index mode; default `"positive"` (matches the legacy diff blit). */
   cmapMode?: DiffCmapMode;
+  /**
+   * ANALYTIC signed error colormap (the tev-style red-green follow-up). When true
+   * the blit COMPUTES the color (`cairnSignedAnalyticColor`: negative → red,
+   * positive → green, amplitude `2*|v|`, UNCLAMPED) from the RAW signed metric —
+   * BYPASSING the `(v+1)/2` displayRange fold, the clamp, and the LUT/cmapMode —
+   * then runs it through the shared output-encode. On an HDR `target` the
+   * over-range (`|v|>1`) error survives; on SDR it clamps (`|v|<=1` matches).
+   * `colormap`/`cmapMode`/`norm` are ignored under it. Unset = false. */
+  analytic?: boolean;
   /** 256x4 RGBA-float LUT; when absent the raw per-channel display value is shown. */
   colormap?: Float32Array;
   /** Source filter, like ImageParams.filter. Default `"linear"`. */
@@ -615,8 +651,12 @@ export function renderDiffDisplay(
   const expoVec = new Float32Array([params.exposureEV ?? 0, params.offset ?? 0, params.gamma ?? 1, 0]);
   // Primary/foreground footprint for the min-crop top-left mapping (see
   // `sourceDims` doc). `0` → the shader falls back to the result texture's own
-  // dims (identity), so an equal-size pair is unchanged.
-  const srcVec = new Float32Array([params.sourceDims?.w ?? 0, params.sourceDims?.h ?? 0, 0, 0]);
+  // dims (identity), so an equal-size pair is unchanged. .z = ANALYTIC flag
+  // (tev-style signed color); .w = hdrOut (the target is an extended HDR surface,
+  // so the analytic output-encode lets |v|>1 survive).
+  const analyticFlag = params.analytic ? 1 : 0;
+  const hdrOutFlag = targetFormat === "rgba16float" ? 1 : 0;
+  const srcVec = new Float32Array([params.sourceDims?.w ?? 0, params.sourceDims?.h ?? 0, analyticFlag, hdrOutFlag]);
   // u_norm — DATA-encoding norm/bounds, packed exactly like image-engine's
   // u_bind9: [normModeId, boundsMin, boundsMax, boundsActive]. boundsActive iff
   // BOTH bounds are finite (the min/max skin; else the exposure/offset skin).

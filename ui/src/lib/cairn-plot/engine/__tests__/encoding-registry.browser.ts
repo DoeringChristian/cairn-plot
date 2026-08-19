@@ -341,6 +341,83 @@ async function runLutReduceCase(
   return ok;
 }
 
+/** SIGNED scalar values for the ANALYTIC (tev-style red-green) entry — channel 0
+ *  carries the signed error; the ±1.0 endpoints give amplitude `2*|v| = 2.0`, a
+ *  `>1` over-range value that MUST survive on the HDR path (extended encode) and
+ *  clamp on SDR. */
+const ANALYTIC_PIXELS: number[][] = [
+  [-1.0, 0, 0, 1.0], // strong negative → red 2.0 (>1)
+  [-0.3, 0, 0, 1.0], // red 0.6
+  [0.0, 0, 0, 1.0], // zero → black
+  [0.4, 0, 0, 1.0], // green 0.8
+  [1.0, 0, 0, 1.0], // strong positive → green 2.0 (>1)
+];
+
+/**
+ * ANALYTIC-encoding parity (the tev-style signed red-green follow-up): render the
+ * signed SCALAR pixels through the REAL GPU `isScalar` + `analytic` path (no LUT
+ * bound → the shader dispatches `cairnSignedAnalyticColor` + the shared
+ * output-encode) and assert the readback equals the encoding's `cpu` twin
+ * (SCENE-LINEAR) threaded through the SAME `outputEncode`/`extendedOutputEncode`
+ * the curves use. Runs BOTH surfaces: SDR (`rgba8unorm`, byte-exact) where the
+ * `2.0` amplitude CLAMPS, and HDR (`rgba32float`, float eps) where it SURVIVES
+ * past 1 — the directive's ">1 amplitude on the HDR path" case.
+ */
+async function runAnalyticCase(device: Device, enc: DisplayEncoding): Promise<boolean> {
+  let ok = true;
+  for (const hdrOut of [false, true]) {
+    const params: ImageParams = {
+      exposureEV: EV,
+      operator: "linear" as ImageOperator, // moot: isScalar+analytic short-circuits it
+      isScalar: true,
+      analytic: true,
+      hdrOut,
+      uv: uvFull,
+      filter: "nearest",
+    };
+    const src = buildSrcTexture(device, ANALYTIC_PIXELS);
+    const target = device.createTexture(ANALYTIC_PIXELS.length, 1, hdrOut ? "rgba32float" : "rgba8unorm");
+    renderImage(device, target, src, params);
+    const out = await device.readback(target);
+    src.destroy();
+    target.destroy();
+    for (let i = 0; i < ANALYTIC_PIXELS.length; i++) {
+      // cpu twin: signed scalar → LINEAR analytic color (unclamped), then the SAME
+      // output-encode the GPU applies (sRGB OETF; extended on the HDR surface).
+      const lin = enc.cpu([applyExposure(ANALYTIC_PIXELS[i]![0]!, EV)], 1, { ...DEFAULT_ENCODE_PARAMS });
+      if (hdrOut) {
+        if (!(out instanceof Float32Array)) {
+          report(false, `[${enc.id}/analytic-hdr] expected Float32Array readback`);
+          return false;
+        }
+        for (let c = 0; c < 3; c++) {
+          const exp = extendedOutputEncode(lin[c]!, undefined);
+          const diff = Math.abs(out[i * 4 + c]! - exp);
+          if (diff > 0.01) {
+            ok = false;
+            report(false, `[${enc.id}/analytic-hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${out[i * 4 + c]!.toFixed(4)}`);
+          }
+        }
+      } else {
+        if (!(out instanceof Uint8Array)) {
+          report(false, `[${enc.id}/analytic-sdr] expected Uint8Array readback`);
+          return false;
+        }
+        for (let c = 0; c < 3; c++) {
+          const eb = byteOf(outputEncode(lin[c]!, undefined));
+          const ab = out[i * 4 + c]!;
+          if (Math.abs(ab - eb) > 1) {
+            ok = false;
+            report(false, `[${enc.id}/analytic-sdr] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
+          }
+        }
+      }
+    }
+  }
+  report(ok, `[${enc.id}] (analytic) GPU cairnSignedAnalyticColor === cpu twin (SDR clamps, HDR survives >1)`);
+  return ok;
+}
+
 /** The norm/bounds variants exercised per lut (Phase 4). */
 const LUT_NORM_VARIANTS: Array<{ variant: string; params: EncodeParams }> = [
   { variant: "log", params: { ...DEFAULT_ENCODE_PARAMS, norm: "log" as NormMode } },
@@ -358,6 +435,13 @@ async function main(): Promise<void> {
     report(true, `iterating ${encodings.length} registry encoding(s)`);
     let allOk = true;
     for (const enc of encodings) {
+      // ANALYTIC entries (tev-style red-green) COMPUTE their color (no LUT bind),
+      // route through output-encode, and declare no norm/bounds — so they get the
+      // dedicated signed SDR+HDR case, NOT the LUT-family path/variants.
+      if (enc.analytic) {
+        if (!(await runAnalyticCase(device, enc))) allOk = false;
+        continue;
+      }
       const ok = enc.kind === "lut" ? await runLutCase(device, enc) : await runEncodingCase(device, enc);
       if (!ok) allOk = false;
       // Phase 4: every lut also runs the norm/bounds variants (cairnDataIndex).

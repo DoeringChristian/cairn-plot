@@ -65,6 +65,57 @@ ${buildApplyOperatorWGSL(opts)}`;
 }
 
 /**
+ * The shared OUTPUT-ENCODE WGSL — the display-transfer stage (sRGB OETF / gamma,
+ * plus the sRGB EOTF used to LINEARIZE an 8-bit source), ported BYTE-IDENTICALLY
+ * from `image/tonemap.ts`'s `srgbOetf`/`srgbEotf`/`outputEncode` and the EXTENDED
+ * (unclamped, origin-mirrored) `extendedSrgbOetf`/`extendedGammaEncode`/
+ * `extendedOutputEncode`. The image shader (`engine/shaders/image.wgsl.ts`) AND
+ * the diff-display blit (`engine/diff-engine.ts`) both interpolate this so the
+ * transfer math lives in ONE place — the diff path needs it for the ANALYTIC
+ * signed encoding (whose scene-linear color must be display-encoded, and must let
+ * `|v|>1` survive on the extended surface). `outputEncodeF`/`extendedOutputEncodeF`
+ * take `(x, gamma, hasGamma)`: `hasGamma` false → the sRGB curve, true → the
+ * `1/gamma` power curve (WGSL has no `undefined`, so "unset" is `gamma <= 0`).
+ */
+export const OUTPUT_ENCODE_WGSL = `
+fn srgbOetf(x: f32) -> f32 {
+  let v = clamp(x, 0.0, 1.0);
+  if (v <= 0.0031308) {
+    return 12.92 * v;
+  }
+  return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+fn srgbEotf(x: f32) -> f32 {
+  let v = clamp(x, 0.0, 1.0);
+  if (v <= 0.04045) {
+    return v / 12.92;
+  }
+  return pow((v + 0.055) / 1.055, 2.4);
+}
+fn outputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
+  if (hasGamma) {
+    return clamp(pow(clamp(x, 0.0, 1.0), 1.0 / gamma), 0.0, 1.0);
+  }
+  return srgbOetf(x);
+}
+fn extendedSrgbOetf(x: f32) -> f32 {
+  let a = abs(x);
+  let s = sign(x);
+  if (a <= 0.0031308) { return s * 12.92 * a; }
+  return s * (1.055 * pow(a, 1.0 / 2.4) - 0.055);
+}
+fn extendedGammaEncode(x: f32, gamma: f32) -> f32 {
+  let a = abs(x);
+  let s = sign(x);
+  return s * pow(a, 1.0 / gamma);
+}
+fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
+  if (hasGamma) { return extendedGammaEncode(x, gamma); }
+  return extendedSrgbOetf(x);
+}
+`;
+
+/**
  * The shared LUT-FAMILY WGSL — the `kind:"lut"` twin of the curve dispatch. ONE
  * family for every colormap: the entry only parameterizes the bound 256×1
  * `rgba32float` texture (the colormap TABLE), never the code — so no
@@ -142,6 +193,19 @@ fn cairnReduceScalar(rgb: vec3<f32>, reduceMode: i32, k: i32) -> f32 {
   }
   if (k == 2) { return (rgb.x + rgb.y) * 0.5; }
   return (rgb.x + rgb.y + rgb.z) / 3.0;
+}
+
+// ANALYTIC signed error color (the tev-style red-green follow-up) — the WGSL twin
+// of image/encodings' signedAnalyticColor (the CPU source of truth), kept
+// byte-parallel. Ports tev's POS_NEG tonemap: a NEGATIVE scalar → RED, a POSITIVE
+// scalar → GREEN, blue 0, amplitude 2*|v|. Returns SCENE-LINEAR color, UNCLAMPED —
+// the caller runs it through the shared output-encode stage (outputEncodeF /
+// extendedOutputEncodeF), so |v|>1 survives on the extended/HDR surface while
+// |v|<=1 renders identically on SDR (the two encoders agree on [0,1]). The input
+// is the post-exposure/offset, already-reduced signed scalar (cairnReduceScalar
+// ran before this — exposure SCALES the amplitude, matching tev).
+fn cairnSignedAnalyticColor(s: f32) -> vec3<f32> {
+  return vec3<f32>(2.0 * max(-s, 0.0), 2.0 * max(s, 0.0), 0.0);
 }
 
 fn cairnDataIndex(scalar: f32, normMode: i32, minV: f32, maxV: f32, boundsActive: bool, expo: f32) -> f32 {

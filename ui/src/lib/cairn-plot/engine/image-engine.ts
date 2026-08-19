@@ -100,6 +100,16 @@ export interface ImageParams {
    * pre-follow-up behavior). Ignored when `isScalar` is false.
    */
   channelCount?: number;
+  /**
+   * ANALYTIC data encoding (the tev-style signed red-green follow-up) — on the
+   * `isScalar` path, COMPUTE the color (`cairnSignedAnalyticColor`: negative →
+   * red, positive → green, amplitude `2*|v|`) instead of sampling `colormap`, and
+   * run it through the SHARED output-encode (so `|v|>1` survives on an `hdrOut`
+   * surface, `|v|<=1` renders identically on SDR). No LUT is bound/read. Ignored
+   * when `isScalar` is false; `norm`/`normMin`/`normMax` are ignored under it (the
+   * analytic map is intrinsically linear in `|v|`). Unset = false.
+   */
+  analytic?: boolean;
   /** When true, run the EXTENDED output-encode (unclamped, origin-mirrored sRGB
    *  OETF / power curve) and write the transfer-encoded float to `target` — the
    *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
@@ -241,7 +251,8 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // colormap renders bit-for-bit as before.
   const reduceId = REDUCE_ID[params.reduce ?? "mean"] ?? 0;
   const channelCount = typeof params.channelCount === "number" ? params.channelCount : 1;
-  const reduceVec = new Float32Array([reduceId, channelCount, 0, 0]);
+  // u_bind10.z = ANALYTIC flag (tev-style signed color; scalar/LUT path only).
+  const reduceVec = new Float32Array([reduceId, channelCount, params.analytic ? 1 : 0, 0]);
 
   let bindGroup: BindGroup | undefined;
   try {

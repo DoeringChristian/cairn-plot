@@ -101,6 +101,7 @@ import {
   reduceToScalar,
   defaultReduceMode,
   getEncoding,
+  signedAnalyticColor,
   DEFAULT_ENCODE_PARAMS,
   type EncodeParams,
   type NormMode,
@@ -170,7 +171,13 @@ export function tonemapToImageData(
   // family + the diff blit. The index runs through `computeDataIndex` (the norm
   // reshape + optional bounds affine — the CPU source of truth the WGSL
   // `cairnDataIndex` mirrors). cmap-mode `linear`.
-  const cmapLut = colormap !== "none" ? getColormapLUT(colormap as never) : null;
+  // ANALYTIC colormap (tev-style signed red-green) — computed color, no LUT. The
+  // reduced signed scalar → signedAnalyticColor (neg→red, pos→green, 2*|v|,
+  // UNCLAMPED) → SHARED output-encode (like a curve), NOT a baked-sRGB LUT sample.
+  // This CPU fallback writes an 8-bit ImageData, so |v|>1 clamps here (the extended
+  // >1 survival is the GPU/HDR-surface path); |v|<=1 matches the GPU exactly.
+  const analyticCmap = colormap !== "none" && !!getEncoding(colormap)?.analytic;
+  const cmapLut = colormap !== "none" && !analyticCmap ? getColormapLUT(colormap as never) : null;
   const cmapBoundsOn =
     typeof colorMin === "number" && Number.isFinite(colorMin) &&
     typeof colorMax === "number" && Number.isFinite(colorMax);
@@ -229,6 +236,18 @@ export function tonemapToImageData(
       applyExposureOffset(b, exposure, offset),
     ];
     const o = i * 4;
+    if (analyticCmap) {
+      // The (exposure/offset-adjusted) color channels REDUCE to a signed scalar,
+      // then the analytic color runs through the SAME output-encode as a curve.
+      const scalar = reduceToScalar(lit, c, reduceMode);
+      const [lr, lg, lb] = signedAnalyticColor(scalar);
+      // sRGB OETF (no gamma) — matches the GPU analytic branch's hasGamma=false.
+      out[o] = 255 * outputEncode(lr);
+      out[o + 1] = 255 * outputEncode(lg);
+      out[o + 2] = 255 * outputEncode(lb);
+      out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
+      continue;
+    }
     if (cmapLut) {
       // Multi-channel follow-up: the color channels are first REDUCED to a scalar
       // (luminance/mean — `reduceToScalar`, the shared CPU source of truth the WGSL
@@ -1089,7 +1108,7 @@ function CpuHdrImagePane(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
   const boundsEngaged =
-    enc.isLut && !!colorBounds && Number.isFinite(colorBounds[0]) && Number.isFinite(colorBounds[1]);
+    enc.isLut && enc.hasParam("min") && !!colorBounds && Number.isFinite(colorBounds[0]) && Number.isFinite(colorBounds[1]);
   const boundsRange = useMemo(() => {
     const seed = propColorRange ?? [0, 1];
     const lo = seed[0];
@@ -1337,8 +1356,10 @@ function CpuHdrImagePane(
       // sit in the second toolbar row alongside EV/OFF/γ, not next to the DISPLAY
       // menu. Mirrors GpuImagePane.
       rowSegments={[
-        ...(enc.isLut ? [normSegment(norm, changeNorm)] : []),
-        ...(enc.isLut && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
+        // Gate on the manifest (`hasParam`), not just `isLut`: the ANALYTIC
+        // red-green declares no norm (linear-in-|v|), so its picker is hidden.
+        ...(enc.hasParam("norm") ? [normSegment(norm, changeNorm)] : []),
+        ...(enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change). Gated by the
@@ -1375,7 +1396,7 @@ function CpuHdrImagePane(
               },
             ]
           : []),
-        ...(enc.isLut && norm === "power"
+        ...(enc.hasParam("norm") && norm === "power"
           ? [
               {
                 id: "gamma",

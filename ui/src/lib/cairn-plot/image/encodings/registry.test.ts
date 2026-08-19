@@ -25,6 +25,8 @@ import {
   reduceToScalar,
   defaultReduceMode,
   colorChannelCount,
+  signedAnalyticColor,
+  SIGNED_ANALYTIC_AMPLITUDE,
   type ParamName,
   type EncodeParams,
 } from "./index.ts";
@@ -133,7 +135,9 @@ test("wgsl curve expression is a non-empty string for every entry", () => {
 });
 
 test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+reduce params", () => {
-  const luts = listEncodings().filter((e) => e.kind === "lut");
+  // Table-backed luts only (the ANALYTIC entries are kind:"lut" but computed — no
+  // needsLut/lutName; tested separately below).
+  const luts = listEncodings().filter((e) => e.kind === "lut" && !e.analytic);
   assert.ok(luts.length >= 3, "expected the migrated colormap LUT entries");
   // Includes the canonical colormaps.
   const ids = luts.map((e) => e.id);
@@ -155,7 +159,7 @@ test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+red
 });
 
 test("lut cpu twins return finite display triples in [0,1] across the scalar range", () => {
-  const luts = listEncodings().filter((e) => e.kind === "lut");
+  const luts = listEncodings().filter((e) => e.kind === "lut" && !e.analytic);
   const scalars = [-0.5, 0, 0.25, 0.5, 0.75, 1, 1.5];
   for (const e of luts) {
     for (const s of scalars) {
@@ -166,6 +170,45 @@ test("lut cpu twins return finite display triples in [0,1] across the scalar ran
       }
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Analytic signed encoding (tev-style red-green) — the CPU twin the WGSL
+// cairnSignedAnalyticColor mirrors (GPU↔CPU parity proven by the browser harness).
+// ---------------------------------------------------------------------------
+
+test("red-green is an ANALYTIC lut: kind lut, no needsLut/lutName, exposure/offset/reduce params", () => {
+  const rg = getEncoding("red-green");
+  assert.ok(rg, "red-green missing from the registry");
+  assert.equal(rg!.kind, "lut", "red-green stays in the COLORMAPS section");
+  assert.equal(rg!.analytic, true, "red-green must be analytic (computed, no LUT bind)");
+  assert.ok(!rg!.needsLut, "analytic red-green must NOT bind a LUT");
+  assert.equal(rg!.lutName, undefined, "analytic red-green references no table");
+  assert.deepEqual(rg!.arities, [1, 2, 3, 4]);
+  // No norm/min/max — the signed map is linear in |v|.
+  assert.deepEqual(rg!.params, ["exposure", "offset", "reduce"]);
+});
+
+test("SIGNED_ANALYTIC_AMPLITUDE is 2 (tev POS_NEG) and signedAnalyticColor matches tev's convention", () => {
+  assert.equal(SIGNED_ANALYTIC_AMPLITUDE, 2);
+  // Negative → RED (channel 0), positive → GREEN (channel 1), blue always 0.
+  assert.deepEqual(signedAnalyticColor(-1), [2, 0, 0]); // amplitude 2*1 = 2 (>1, unclamped)
+  assert.deepEqual(signedAnalyticColor(-0.25), [0.5, 0, 0]);
+  assert.deepEqual(signedAnalyticColor(0), [0, 0, 0]); // zero → black
+  assert.deepEqual(signedAnalyticColor(0.25), [0, 0.5, 0]);
+  assert.deepEqual(signedAnalyticColor(1), [0, 2, 0]); // 2*1 = 2 (>1, unclamped)
+  // UNCLAMPED past 1 (the HDR-survivable over-range error).
+  assert.deepEqual(signedAnalyticColor(3), [0, 6, 0]);
+});
+
+test("red-green cpu twin: reduces multi-channel then applies the analytic color (UNCLAMPED, linear)", () => {
+  const rg = getEncoding("red-green")!;
+  // k=1: channel 0 straight through.
+  assert.deepEqual(rg.cpu([-0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS), [1, 0, 0]);
+  assert.deepEqual(rg.cpu([0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS), [0, 1, 0]);
+  // k=3 mean of (0.3, -0.9, 0.3) = -0.1 → red 0.2 (negative wins the mean).
+  const outMean = rg.cpu([0.3, -0.9, 0.3], 3, { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" });
+  assert.ok(Math.abs(outMean[0] - 0.2) < 1e-12 && outMean[1] === 0 && outMean[2] === 0, `got ${outMean}`);
 });
 
 // ---------------------------------------------------------------------------

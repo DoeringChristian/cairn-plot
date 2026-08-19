@@ -189,6 +189,36 @@ export interface DisplayEncoding {
   /** LUT family binds a 256×1 texture (Phase 2). */
   needsLut?: boolean;
   /**
+   * ANALYTIC data encoding (the tev-style signed red-green follow-up) — a
+   * `kind:"lut"` DATA encoding whose color is COMPUTED per value (no texture
+   * bind: `needsLut` is false, `lutName` absent), so it lives in the COLORMAPS
+   * menu section and gates as a data encoding (arity/reduce), but the GPU
+   * dispatches {@link signedAnalyticColor}'s WGSL twin instead of sampling a LUT.
+   *
+   * ## Output treatment (the convention chosen — documented)
+   * Unlike a LUT entry (whose `cpu`/family return BAKED display-sRGB written to
+   * the surface UNCHANGED), an analytic entry's `cpu`/WGSL return SCENE-LINEAR
+   * color that flows through the SHARED output-encode stage — exactly like a
+   * curve. So the surface's own encoder decides the range: the SDR path
+   * (`outputEncode`) clamps to `[0,1]`, the extended/HDR path
+   * (`extendedOutputEncode`) lets values past 1 SURVIVE (unclamped, per W3C
+   * ColorWeb-CG). Because the two encoders AGREE on `[0,1]`, an amplitude `|v|≤1`
+   * renders identically on both surfaces; only `|v|>1` diverges (HDR keeps the
+   * over-range error, SDR clamps). The `cpu` twin therefore returns the LINEAR
+   * color (pre-encode), and the parity harness threads it through the SAME
+   * `outputEncode`/`extendedOutputEncode` the curves use.
+   *
+   * ## Norm/bounds/exposure (documented)
+   * The analytic map is intrinsically linear in `|v|`, so it declares NEITHER
+   * `norm` NOR `min`/`max` (a log/power reshape or a normalize-to-[0,1] bounds
+   * affine has no meaning on an unbounded signed diverging map). It DOES declare
+   * `exposure`/`offset` (the sensitivity skin — exposure SCALES the amplitude,
+   * matching tev applying exposure BEFORE the POS_NEG operator) and `reduce`
+   * (collapse a k>1 sample to the signed scalar; tev averages the per-channel
+   * difference — `mean` is the tev-faithful reduce, `luminance` the k≥3 default).
+   */
+  analytic?: boolean;
+  /**
    * For `kind:"lut"` encodings: the colormap TABLE id (== a `ColormapName` in
    * `colormaps/lut.ts`) whose 256×4 float LUT the shared LUT shader family binds.
    * The entry references the table by id — it does NOT carry texel data — so
@@ -280,6 +310,32 @@ export function computeDataIndex(scalar: number, p: EncodeParams): number {
     return Math.pow(clamp01(t), g);
   }
   return t;
+}
+
+/**
+ * Amplitude gain of the ANALYTIC signed error color (tev's POS_NEG uses `2.0`):
+ * the displayed magnitude is `AMPLITUDE * |v|` per lit channel. Shared by the CPU
+ * twin ({@link signedAnalyticColor}) and the WGSL twin (`cairnSignedAnalyticColor`
+ * in `./wgsl.ts`), so GPU/CPU stay byte-parallel. */
+export const SIGNED_ANALYTIC_AMPLITUDE = 2;
+
+/**
+ * The tev-style ANALYTIC signed error color — the CPU SOURCE OF TRUTH (WGSL twin:
+ * `cairnSignedAnalyticColor` in `./wgsl.ts`, kept byte-parallel). Ports tev's
+ * `POS_NEG` tonemap
+ * (`vec3(-average(min(col,0))*2, average(max(col,0))*2, 0)`; see
+ * github.com/Tom94/tev `src/UberShader.cpp`): a NEGATIVE value (image < reference)
+ * → RED, a POSITIVE value (image > reference) → GREEN, blue always 0, amplitude
+ * `SIGNED_ANALYTIC_AMPLITUDE * |v|`. Returns SCENE-LINEAR color, UNCLAMPED (values
+ * past 1 are legitimate over-range error) — the caller runs it through the shared
+ * output-encode stage (see {@link DisplayEncoding.analytic}). The input is the
+ * already-reduced, exposure/offset-adjusted signed scalar (the k>1 collapse ran in
+ * the `cpu` twin / `cairnReduceScalar` before this).
+ */
+export function signedAnalyticColor(scalar: number): [number, number, number] {
+  const neg = scalar < 0 ? -scalar : 0;
+  const pos = scalar > 0 ? scalar : 0;
+  return [SIGNED_ANALYTIC_AMPLITUDE * neg, SIGNED_ANALYTIC_AMPLITUDE * pos, 0];
 }
 
 const REGISTRY = new Map<string, DisplayEncoding>();
