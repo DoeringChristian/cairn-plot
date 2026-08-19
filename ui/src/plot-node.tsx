@@ -69,6 +69,7 @@ import {
 } from "./plot-selection-pane-registry";
 import {
   GridUniformAspectContext,
+  GridCellReporter,
   DEFAULT_GRID_CELL_ASPECT,
   VIEWPORT_HEIGHT_MARGIN,
   useUniformGridAspect,
@@ -503,6 +504,15 @@ const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
 
 function CompareView({ node }: { node: CompareNode }) {
   const { source, shared } = useSharedPlot();
+  // Inside ANY grid layout (a `cp.Grid` OR the compare/enlarge stage) a compare
+  // pane is a UNIFORM cell exactly like an image leaf: the grid sizes every cell
+  // to ONE representative content aspect, the pane FILLS its cell, and this
+  // reporter feeds the compare's own content aspect (the primary/foreground
+  // footprint `GpuComparePane` publishes via `usePublishNaturalSize`) up so the
+  // grid's median includes it. The metrics strip is an ABSOLUTE overlay chip, so
+  // it rides as chrome over the viewport and never inflates the cell. Absent (a
+  // standalone mount) ⇒ null ⇒ the fixed-height `ChartBox` fallback below.
+  const gridUniform = useContext(GridUniformAspectContext);
   // Compare panes are in the "image" sync-kind: while this pane is one of ≥2
   // selected panes, its zoom/pan locks to the group (shared with image leaves)
   // via the SAME viewport-sync bus. The frame provides the group id + anchor
@@ -657,9 +667,8 @@ function CompareView({ node }: { node: CompareNode }) {
   // (when the engine is present), whose shell hosts the MODE menu. Its
   // selections flow back up through the callbacks below so this component's
   // lifted view-mode state stays coherent.
-  return (
-    <ChartBox>
-      <CompositeMediaPane
+  const pane = (
+    <CompositeMediaPane
         toolbar={toolbar}
         mode={viewMode}
         imageUrl={foreground.url}
@@ -691,8 +700,14 @@ function CompareView({ node }: { node: CompareNode }) {
         overlay={foreground.overlay}
         pixelValueNotation={pixelValueNotation}
       />
-    </ChartBox>
   );
+  // In a grid the pane FILLS its uniformly-sized cell (the `PaneSelectionFrame`
+  // gives the cell the grid's ONE `aspectRatio` box) and reports its content
+  // aspect so the grid's median covers image + compare cells alike — identical
+  // to `ImageStandalone`'s grid path. Standalone keeps the fixed-height
+  // `ChartBox` (fills a `fill` cell, else the default height on a bare page).
+  if (gridUniform) return <GridCellReporter>{pane}</GridCellReporter>;
+  return <ChartBox>{pane}</ChartBox>;
 }
 
 // ---------------------------------------------------------------------------
@@ -757,19 +772,20 @@ function PaneSelectionFrame({
   // Grid cells fill their track (rowHeights → height:100%); standalone panes
   // don't. `ChartFillContext` (set by the enclosing `GridView`) tells us which.
   const fill = useContext(ChartFillContext);
-  // In a `cp.Grid` an image-LEAF cell is sized to the grid's ONE uniform aspect
-  // (auto rows) so every viewport in a row is identical AND the pane fills the
-  // cell — making THIS selectable frame the viewport, so the ring matches it
-  // exactly. In fill mode the fixed row already sizes the cell. Non-image cells
-  // (scalars, nested grids) keep their natural sizing. A `compare` cell is
-  // EXCLUDED here: `CompareView` owns its own two-frame layout, so forcing an
-  // aspect-ratio box on it could letterbox/overflow. (Compare panes DO report
-  // their content aspect — via `usePublishNaturalSize` — and are sized uniformly
-  // in the fullscreen stage, which wraps each cell with a reporting bridge; only
-  // the plain `cp.Grid` path leaves them at their natural size.)
+  // In a `cp.Grid` an image-compatible cell (an image LEAF *or* a `compare`
+  // pane) is sized to the grid's ONE uniform aspect (auto rows) so every viewport
+  // in a row is identical AND the pane fills the cell — making THIS selectable
+  // frame the viewport, so the ring matches it exactly. In fill mode the fixed
+  // row already sizes the cell. Non-image cells (scalars, nested grids) keep
+  // their natural sizing. A `compare` cell fills the SAME aspect box: its
+  // `GpuComparePane` is a single object-contain viewport (`ImagePaneShell`),
+  // whose toolbar + metrics are ABSOLUTE overlays — so the box carries only the
+  // content, exactly like an image pane. `CompareView` fills the box via a
+  // `GridCellReporter` (mirroring `ImageStandalone`), which also reports the
+  // compare's content aspect up so the grid's median covers both cell types.
   const gridUniform = useContext(GridUniformAspectContext);
   const uniformImageCell =
-    !!gridUniform && !fill && node.kind === "plot" && isImageCompatibleNode(node);
+    !!gridUniform && !fill && isImageCompatibleNode(node);
   // The pane-sync context from an ENCLOSING provider (e.g. the fullscreen stage
   // or a STACKED grid, which give their cells a shared settings-sync group). A
   // frame must PASS THIS THROUGH whenever it has no active selection group of its
