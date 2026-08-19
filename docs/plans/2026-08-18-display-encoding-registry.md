@@ -525,3 +525,78 @@ goldens are byte-identical; the change is HDR-surface-only + the additive gray b
 Gates: typecheck, 585 node tests, all 23 parity harnesses green on real GPU (Apple
 metal-3), plot-inline bundles rebuilt + synced, gallery (27 types) clean. No
 schema/Python change (gray-none is a view-local render path, not a descriptor kwarg).
+
+## Follow-up: turbo (tev-exact) + norm UI removal + per-kernel default colormaps — DONE (commits 500175d, f63928d, d100041)
+
+Three user directives + a three-point amendment, landed as three commits.
+
+**1. TURBO, TEV-EXACT (commit 500175d).** Added tev's false-color colormap — the
+256-entry Google/Anton Mikhailov turbo table pulled VERBATIM from tev
+(github.com/Tom94/tev, `src/FalseColor.cpp`'s `turbo()`, byte-for-byte the same
+table as `include/tev/FalseColor.h`'s `colormap::turbo()`), stored ROW-FOR-ROW as
+256 `COLORMAP_STOPS` (round(f*255) — the 8-bit LUT; buildLUT over 256 stops is the
+identity, so the LUT bytes ARE tev's table). NOT Google's turbo polynomial. The
+turbo ENCODING bakes tev's FIXED log2 index (`turboDataIndex`/`cairnTurboDataIndex`):
+`index = clamp(log2(mean(rgb)+2⁻⁵)/10 + 0.5, 0, 1)` — value 1.0 → ~0.504 (mid-ramp,
+green), ~32 saturates dark red, 2⁻⁵ floors at dark indigo. This is its OWN data-index
+(NOT a user norm — declares no norm/min/max), defaults `reduce` to MEAN (tev averages
+RGB), and exposure/offset apply BEFORE the log2 (sliding along the ramp). GPU routes
+it via scalar-mode 3 (`u_bind10.z`) → `cairnTurboDataIndex` before sampling the bound
+turbo table. CPU+WGSL twins on one registry object; `encoding-registry` harness gains
+a dedicated turbo case (GPU === cpu twin, incl. a >1 sample in the hot half). Drift
+stays green (contract + Python + docs). SDR 8-bit false-color + diff-display render
+turbo as a plain sequential LUT (the baked log2 is the float/registry path — the
+documented 8-bit norm/bounds non-goal).
+
+**2. NORM SELECTOR UI REMOVED (commit f63928d).** The Lin·Log·Pow segmented control
+and the power-exponent slider were removed from the toolbar EVERYWHERE — both image
+panes (GpuImagePane, CpuImagePane SDR+HDR), the compare diff pane (GpuComparePane),
+and the gray-none scalar path. The effective norm is now LINEAR everywhere UI-wise.
+KEPT the ENGINE machinery: `EncodeParams.norm`, `computeDataIndex`/`cairnDataIndex`,
+`u_bind9` (image) + `u_norm` (diff-display), and their GPU↔CPU parity cases all stay
+— the panes just always pass `norm:"linear"` (cairnDataIndex identity → the pre-picker
+render, byte-for-byte). min/max BOUNDS seeding is untouched. Sync bus: nothing emits
+the `norm` key (dropped from every snapshot); `ImageSyncSettings.norm` stays in the
+type + is still ACCEPTED (ignored) on apply, for back-compat. The `norm` param was
+removed from the lut manifest + the `ParamName` union. Harness: the
+compare-settings-sync `changeNorm`/norm step is gone (the probe drops its norm
+getter/changeNorm); the ENGINE norm parity cases in encoding-registry/compare-pass
+stay.
+
+**3. PER-KERNEL DEFAULT COLORMAPS + amendment (commit d100041).** Each diff kernel
+(`engine/kernels`) declares its OUTPUT RANGE (`displayRange`) + a REQUESTED DEFAULT
+colormap: signed/signed-relative (ℝ) → red-green; absolute/squared/relative (ℝ⁺) →
+**turbo** (amendment 1 — was viridis); FLIP/SSIM (perceptual ℝ⁺) → magma. A pure
+`resolveDiffColormap(kernelId, override)` (kernel-registry) is the single source:
+`null` override → the kernel default; a concrete pick (a lut id or "none") STICKS
+across kernel switches. GpuComparePane's diff face tracks an explicit-override bit
+(`colormapState: Colormap|null`, null = follow defaults) wired through the render
+(`effectiveColormap`), the DISPLAY menu, and the sync bus (publishes the effective
+colormap; `changeDiffKernel` never publishes a colormap so syncing panes agree). HOME
+clears the override → defaults. `plot-node`'s compare colormap default changed
+viridis → `"none"` so the diff face follows per-kernel defaults (an authored
+node/shared colormap still wins). Node tests (`kernel-default-colormap.test.ts`) +
+a compare-settings-sync harness step (switch → default follows; pick → sticks; HOME →
+resets) land.
+
+**Amendment 2 — viridis REMOVED, aliased to turbo.** `viridis` dropped from the
+registry/menus (`COLORMAP_STOPS`, `ColormapName`, contract JSON, Python `_COLORMAPS`,
+schema). Any INCOMING `viridis` reference (descriptors, sync payloads, Python
+`colormap=`) ALIASES to `turbo` rather than erroring: `aliasColormap`
+(`colormaps/lut.ts`) at the LUT lookups, a bare `viridis→turbo` in `getEncoding` /
+`usePaneEncoding` / `setEncoding` / the compare seed, and `_COLORMAP_ALIASES` in
+Python's `_check_colormap`/`_check_image_colormap`. All former viridis DEFAULTS
+(charts, the 3D diff magnitude map, colorbar) now use turbo; the 3D `DiffColormap`
+is `red-green | turbo`.
+
+**Amendment 3 — bit-exact 256-entry magma + LUT chording audit.** magma's 5-anchor
+chord (max **16/255** dev at t≈0.624, 503/768 channel samples off by ≥1) replaced
+with the BIT-EXACT 256-entry table from NVIDIA FLIP's `MapMagma` (`src/cpp/FLIP.h`),
+verified byte-identical to matplotlib magma@256. **Chording audit:** magma 16/255
+(fixed) · plasma 10/255 (trivially replaceable, left as anchors + noted) · turbo 0
+(already the exact 256-entry tev table) · red-green/red-blue N/A (custom diverging
+anchor maps, no canonical curve).
+
+Gates (final commit): typecheck, 596 node tests, all 23 parity harnesses green on
+real GPU (Apple metal-3), 242 pytest, schema-in-sync, plot-inline bundles rebuilt +
+synced, gallery (27 types) clean.
