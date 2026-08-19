@@ -163,7 +163,7 @@ absorbs `tonemap.ts`, deletes the per-pane switches, and generates schema/Python
 from the registry (`use-image-controller`'s `colormapToolbarButton`/
 `tonemapToolbarButton` survive ONLY for the compare pane).
 
-## Phase 4 — DONE (commit f53f381)
+## Phase 4 — DONE (commit c16db89)
 
 NORMS + BOUNDS landed on the DATA (lut) encodings. The lut manifest now declares
 `exposure`/`offset`/`min`/`max`/`norm`; a NEW pure `computeDataIndex` (registry) is
