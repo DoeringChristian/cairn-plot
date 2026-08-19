@@ -463,3 +463,65 @@ metal-3), plot-inline bundles rebuilt + synced, gallery (27 types) clean. No
 schema/Python change — the `red-green` id + contract/Python enums are unchanged
 (the 8-bit CPU `applyColormap` false-color path keeps the old red→white→green LUT,
 a documented non-goal, so `COLORMAP_STOPS["red-green"]` stays).
+
+## Follow-up: scalar `none` HDR-native — DONE (commit 6eaf353)
+
+The plain-grayscale **`none`** display of a SINGLE-CHANNEL image now supports HDR
+natively — the raw scalar (after exposure/offset + any norm/bounds) is treated as
+LINEAR LIGHT that rides the SHARED (extended) output-encode, exactly like the light
+curves and the analytic red-green, instead of being peak-clamped by the curve path.
+
+**Where the clamp lived.** A single-channel float source is expanded to gray RGBA at
+upload and rendered through the CURVE path (`isScalar:false`): on an engaged HDR
+surface the default `srgb` transfer resolves (`resolveRenderTonemap`) to the
+`extended-clamp` operator, which hard-clips at the PEAK ceiling (default P=4). So the
+grayscale value never survived past the peak, and the curve path carries NO norm/bounds
+stage. (The compare pane's diff `None` clamped even harder — `renderDiffDisplay`'s
+DISPLAY_SHADER wrote `clamp(v,0,1)` DIRECTLY to the surface, no output-encode, so
+over-range diff error was lost on HDR too.)
+
+**The gray-none DATA path (mirrors the analytic precedent).** A scalar (arity 1) with
+no colormap is DATA, not light, so it now renders through the `isScalar` path as a
+COMPUTED grayscale: `cairnReduceScalar` (k=1 identity) → `cairnDataIndex` → the SCENE-
+LINEAR gray `vec3(idx)` → the SHARED output-encode. Wired via a SCALAR-MODE enum on
+`u_bind10.z` (0 = LUT sample, 1 = analytic, 2 = gray-none — replacing the bare analytic
+flag so a slot stays free) and the gray encode-gamma on `u_bind10.w`. `ImageParams`
+gains `grayNone` + `grayEncodeGamma`; `GpuImagePane`'s `scalarNoneData` routes it and
+hides PEAK / shows the NORM (+ bounds) pickers. The CpuImagePane fallback needs NO
+change: its 8-bit `op(lit)`→`outputEncode` already produces byte-identical gray for the
+in-range case (its >1 clamp is the same 8-bit degradation as the analytic fallback).
+
+**Convention chosen for the norm/bounds interplay (documented).** With **linear norm +
+no bounds** `cairnDataIndex` is the IDENTITY, so the raw scalar passes through
+UNCLAMPED — the shared output-encode alone decides the range (SDR clamps to `[0,1]`,
+byte-identical to the old srgb/linear/gamma curve for in-range values; the extended/HDR
+surface keeps `idx>1`). When the user sets **min/max bounds** or a **log/power norm**,
+`cairnDataIndex` maps the index to `[0,1]` exactly as on the LUT path — that is an
+EXPLICIT normalize request, so clamping to the ramp is intended. Two independent gamma
+roles never collide: the power-NORM exponent rides `u_bind2.z` (as on the LUT path)
+while the gray output-encode TRANSFER rides the separate `u_bind10.w`.
+
+**Scope.** Only the IDENTITY-TRANSFER curves (linear/srgb/gamma — pure-clamp operators
+whose transfer lives entirely in output-encode) route to gray-none; real tone-mappers
+(reinhard/aces) stay on the curve path, so a scalar keeps them selectable and their
+highlight-compression (a LIGHT concept) is unchanged and byte-identical. The SDR path
+is pixel-identical to before for in-range values across all three transfers (verified:
+`applyOperator` clamp + `outputEncode` === `computeDataIndex` identity + `outputEncode`).
+
+**Diff `none` (compare pane) — INCLUDED.** Separate plumbing (the diff DISPLAY_SHADER,
+not the image path) but small: the `useColormap==false` branch now extended-output-
+encodes the folded value on an HDR target (`hdrOut` derived from the target format), so
+over-range diff error SURVIVES on HDR; SDR stays the legacy raw-clamped code value
+(byte-identical — the SDR diff-none has never sRGB-encoded, and unifying that transfer
+is out of scope). GpuComparePane needed no change.
+
+**Tests.** `encoding-registry` harness: a dedicated gray-none SDR+HDR case per norm
+(linear/log) — GPU `grayNone` === CPU `computeDataIndex`→gray→output-encode twin, incl.
+a `1.5` sample SURVIVING on the HDR path. `compare-pass` harness: an HDR diff-none case
+(GPU raw diff === CPU `extendedOutputEncode` twin). Node `registry.test.ts`: the gray-
+none CPU convention (linear+no-bounds passes the raw scalar UNCLAMPED as gray; bounds/
+log/power map to `[0,1]`). No old-byte asserts changed — SDR diff-none + all curve/lut
+goldens are byte-identical; the change is HDR-surface-only + the additive gray branch.
+Gates: typecheck, 585 node tests, all 23 parity harnesses green on real GPU (Apple
+metal-3), plot-inline bundles rebuilt + synced, gallery (27 types) clean. No
+schema/Python change (gray-none is a view-local render path, not a descriptor kwarg).
