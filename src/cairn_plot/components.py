@@ -99,7 +99,7 @@ def _resolver(name: str) -> Any:
 # minus the image-only `"none"` passthrough (a color-by-value chart always
 # needs a real ramp). Kept as one canonical tuple so Scatter / ParallelCoordinates
 # / Heatmap validate against the same allowed set with one error style.
-_COLORMAPS = ("plasma", "magma", "turbo", "red-green", "red-blue")
+_COLORMAPS = ("turbo", "plasma", "magma", "red-green", "red-blue")
 
 # Back-compat: ``viridis`` was REMOVED (the tev-mapped ``turbo`` replaced it as the
 # default sequential map). An incoming ``viridis`` reference is ALIASED to ``turbo``
