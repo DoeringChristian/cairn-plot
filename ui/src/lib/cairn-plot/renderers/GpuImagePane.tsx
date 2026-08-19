@@ -110,8 +110,8 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import { displayToolbarButton, normSegment, reduceSegment, usePaneEncoding } from "./display-encoding";
-import { getEncoding, defaultReduceMode, type NormMode, type ReduceMode } from "../image/encodings";
+import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
+import { getEncoding, defaultReduceMode, type ReduceMode } from "../image/encodings";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
@@ -499,10 +499,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
 
-  // DATA-ENCODING NORM + BOUNDS (Phase 4). `norm` is the nonlinear reshape of a
-  // colormap LUT's index (linear/log/power) — shown only while a lut is the
-  // active encoding; the `power` exponent REUSES the γ slider/state above
-  // (`tonemapGamma`), free on the lut path. `colorRange` (the grid-shared
+  // DATA-ENCODING BOUNDS (Phase 4). (The norm Lin·Log·Pow PICKER was removed —
+  // the engine norm machinery `cairnDataIndex`/`computeDataIndex`/`u_bind9` stays,
+  // but the UI is gone and the effective norm is always linear; see the
+  // norm-UI-removal follow-up.) `colorRange` (the grid-shared
   // descriptor prop — `shared.colorRange` → LeafView mergedProps) SEEDS the
   // min/max BOUNDS skin: the ALTERNATIVE to EV/OFF (bounds-first, data-speak).
   // The two are skins over ONE affine and are NEVER composed — when bounds are
@@ -510,7 +510,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // cairnDataIndex + the colorRange audit note in the design doc). Absent
   // `colorRange` → EV/OFF as before, bounds inactive.
   const propColorRange = (props as { colorRange?: [number, number] }).colorRange;
-  const [norm, setNorm] = useState<NormMode>("linear");
   // MULTI-CHANNEL REDUCE (the multi-channel-colormap follow-up) — how a k>1
   // colormap source collapses to the scalar the LUT indexes. `reduceOverride`
   // null = follow the k-based default (`defaultReduceMode`: luminance for k≥3,
@@ -569,7 +568,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
-      if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
+      // `patch.norm` is still ACCEPTED for back-compat (a stale peer may emit it)
+      // but IGNORED — the norm picker is gone and the effective norm is linear.
       if (patch.reduce !== undefined) setReduceOverride(patch.reduce as ReduceMode);
       if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
         setColorBounds([patch.colorMin, patch.colorMax]);
@@ -588,11 +588,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       peak,
       exposureEV: displayEV,
       offset: displayOffset,
-      norm,
       reduce: effectiveReduce,
       ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
     }),
-    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, norm, effectiveReduce, colorBounds],
+    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -639,13 +638,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       publishSettings({ tonemapGamma: v });
     },
     [setTonemapGamma, publishSettings],
-  );
-  const changeNorm = useCallback(
-    (mode: NormMode) => {
-      setNorm(mode);
-      publishSettings({ norm: mode });
-    },
-    [publishSettings],
   );
   const changeReduce = useCallback(
     (mode: ReduceMode) => {
@@ -1077,16 +1069,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           exposureEV: cmapExposure,
           offset: cmapOffset,
           operator: "linear",
-          gamma: norm === "power" ? tonemapGamma : 1,
+          gamma: 1,
           isScalar: true,
           colormap: colormapFloatLUT(hdrColormap as Exclude<Colormap, "none">),
           hdrOut: false,
           peak: rt.peak,
           srgbDecode: false,
-          // TURBO bakes its own FIXED log2 index (scalar-mode 3) — the `norm`
-          // (which stays `linear`, its picker hidden) is then ignored by the GPU.
+          // TURBO bakes its own FIXED log2 index (scalar-mode 3). The user-facing
+          // norm picker was removed (effective norm is linear = cairnDataIndex
+          // identity), so the LUT index is the plain sensitivity-adjusted scalar.
           ...(activeIsTurbo ? { turbo: true } : {}),
-          norm,
           // Multi-channel follow-up: a k>1 source is REDUCED to a scalar
           // (luminance/mean) before the LUT; k=1 leaves channel 0 untouched.
           reduce: effectiveReduce,
@@ -1103,21 +1095,20 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           // as the float-LUT branch (scalar → cairnDataIndex) but the color is the
           // SCENE-LINEAR gray vec3(idx) through the SHARED output-encode (NOT a
           // baked-sRGB LUT), so `hdrOut` is the pane's REAL surface (rt.hdrOut) and
-          // idx>1 survives on HDR. `gamma` carries the power-NORM exponent (like the
-          // lut path); `grayEncodeGamma` is the curve's OWN encode transfer (sRGB /
-          // identity / 1/γ) — a separate uniform, so the two never collide. EV/OFF
-          // are the sensitivity skin (neutralized when bounds engage, single-apply).
+          // idx>1 survives on HDR. `gamma` (the power-NORM exponent slot) is 1 now
+          // that the norm picker is removed (effective norm linear); `grayEncodeGamma`
+          // is the curve's OWN encode transfer (sRGB / identity / 1/γ). EV/OFF are the
+          // sensitivity skin (neutralized when bounds engage, single-apply).
           exposureEV: cmapExposure,
           offset: cmapOffset,
           operator: "linear",
-          gamma: norm === "power" ? tonemapGamma : 1,
+          gamma: 1,
           isScalar: true,
           grayNone: true,
           grayEncodeGamma: resolveEncodeGamma(effectiveTonemap, tonemapGamma) ?? 0,
           hdrOut: rt.hdrOut,
           peak: rt.peak,
           srgbDecode: false,
-          norm,
           reduce: effectiveReduce,
           channelCount: sourceArity,
           ...(boundsEngaged && colorBounds
@@ -1168,7 +1159,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, norm, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -1328,17 +1319,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
       // SECOND-ROW segmented controls (controls-row-separation directive): the
-      // DATA-encoding NORM (Lin·Log·Pow) + multi-channel REDUCE (Lum·Mean) pickers
-      // live in the second toolbar row alongside EV/OFF/PK/γ, NOT next to the
-      // DISPLAY menu. Norm shows while a lut is active; reduce shows while a lut is
-      // active AND the source has >1 channel (the reduction is moot for a scalar).
+      // multi-channel REDUCE (Lum·Mean) picker lives in the second toolbar row
+      // alongside EV/OFF/PK/γ. Shown while a lut is active AND the source has >1
+      // channel (the reduction is moot for a scalar). (The norm Lin·Log·Pow picker
+      // was REMOVED — norm-UI-removal follow-up.)
       rowSegments={[
-        // Norm gates on the manifest (`hasParam`), not just `isLut`: the ANALYTIC
-        // red-green declares no norm (linear-in-|v| by construction), so its picker
-        // is hidden; the table-backed luts show Lin·Log·Pow. The gray-none DATA path
-        // (a scalar with no colormap) also honors norm — its raw value reshapes
-        // through the SAME cairnDataIndex, so it shows the picker too.
-        ...(enc.hasParam("norm") || scalarNoneData ? [normSegment(norm, changeNorm)] : []),
         ...(enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
@@ -1399,29 +1384,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               },
             ]
           : []),
-        // POWER-norm exponent (Phase 4) — shown while a lut's norm is `power`.
-        // REUSES the γ state/slot (`tonemapGamma`, free on the lut path), so the
-        // exponent carries across curve↔lut flips like every other named param.
-        // The power-NORM exponent reuses the γ state/slot. On the gray-none path a
-        // `gamma` curve ALSO surfaces a γ slider (its encode transfer) from the same
-        // state — so suppress this duplicate `exp` slider when that γ slider already
-        // renders (`enc.hasParam("gamma")`); the single γ slider then drives both.
-        ...((enc.hasParam("norm") || scalarNoneData) && norm === "power" && !enc.hasParam("gamma")
-          ? [
-              {
-                id: "gamma",
-                label: "exp",
-                title:
-                  "Power-norm exponent — the colormap index becomes clamp01(t)^exp. Double-click to type a value.",
-                min: TONEMAP_GAMMA_MIN,
-                max: TONEMAP_GAMMA_MAX,
-                step: TONEMAP_GAMMA_STEP,
-                value: tonemapGamma,
-                onChange: changeGamma,
-                format: (v: number) => v.toFixed(1),
-              },
-            ]
-          : []),
+        // (The power-NORM exponent `exp` slider was REMOVED with the norm picker —
+        // norm-UI-removal follow-up. The Gamma-curve γ slider above is unaffected.)
         // MIN/MAX BOUNDS sliders (Phase 4) — the bounds-first, data-speak skin,
         // shown INSTEAD of EV/OFF when the descriptor `colorRange` seeds a lut.
         ...(boundsEngaged && colorBounds
@@ -1468,7 +1432,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         enc.resetEncoding();
         peakMeta.reset();
         gammaMeta.reset();
-        setNorm("linear"); // DATA-encoding norm back to linear
         setReduceOverride(null); // reduce back to the k-based default
         boundsMeta.reset(); // min/max back to the descriptor colorRange seed
         deepFlatten.reset();
@@ -1478,7 +1441,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         enc.encodingModified ||
         peakMeta.isModified ||
         gammaMeta.isModified ||
-        norm !== "linear" ||
         reduceOverride !== null ||
         boundsMeta.isModified ||
         deepFlatten.isModified ||

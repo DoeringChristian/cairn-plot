@@ -175,10 +175,12 @@ export const LUT_ENCODINGS: DisplayEncoding[] = COLORMAP_NAMES.map((name, i) =>
         needsLut: true,
         // The DATA encoding declares the sensitivity skin (exposure/offset), the
         // bounds skin (min/max — the ALTERNATIVE affine, shown only when the
-        // descriptor seeds a colorRange), the norm (linear/log/power), and the
-        // multi-channel `reduce` (luminance/mean — shown only at k>1). All are
-        // UI-gating metadata; the pipeline reads uniforms directly.
-        params: ["exposure", "offset", "min", "max", "norm", "reduce"],
+        // descriptor seeds a colorRange), and the multi-channel `reduce`
+        // (luminance/mean — shown only at k>1). All are UI-gating metadata; the
+        // pipeline reads uniforms directly. (The `norm` picker was removed — the
+        // engine `cairnDataIndex`/`u_bind9` norm machinery stays but is unused
+        // UI-side; the manifest no longer declares it — norm-UI-removal follow-up.)
+        params: ["exposure", "offset", "min", "max", "reduce"],
         operatorId: LUT_OPERATOR_ID_BASE + i,
         lutName: name,
         wgsl: LUT_FAMILY_WGSL_REF,

@@ -95,7 +95,7 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import { displayToolbarButton, normSegment, reduceSegment, usePaneEncoding } from "./display-encoding";
+import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
   computeDataIndex,
   reduceToScalar,
@@ -1096,12 +1096,12 @@ function CpuHdrImagePane(
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
 
-  // DATA-ENCODING NORM + BOUNDS (Phase 4) — mirrors GpuImagePane. `norm` (the
-  // colormap LUT index reshape) shows only while a lut is active; `power` reuses
-  // the γ slot. `colorRange` (grid-shared descriptor) SEEDS the min/max BOUNDS
-  // skin — the ALTERNATIVE to EV/OFF (never composed).
+  // DATA-ENCODING BOUNDS (Phase 4) — mirrors GpuImagePane. `colorRange` (grid-
+  // shared descriptor) SEEDS the min/max BOUNDS skin — the ALTERNATIVE to EV/OFF
+  // (never composed). (The norm Lin·Log·Pow PICKER was removed — the engine norm
+  // machinery `cairnDataIndex`/`computeDataIndex` stays, but the UI is gone and the
+  // effective norm is always linear; see the norm-UI-removal follow-up.)
   const propColorRange = (props as unknown as { colorRange?: [number, number] }).colorRange;
-  const [norm, setNorm] = useState<NormMode>("linear");
   // MULTI-CHANNEL REDUCE (the multi-channel-colormap follow-up) — mirrors
   // GpuImagePane. `reduceOverride` null = the k-based default (luminance for k≥3,
   // mean for k=2); the segmented control shows only while a lut is active AND
@@ -1140,7 +1140,8 @@ function CpuHdrImagePane(
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
-      if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
+      // `patch.norm` is still ACCEPTED for back-compat (a stale peer may emit it)
+      // but IGNORED — the norm picker is gone and the effective norm is linear.
       if (patch.reduce !== undefined) setReduceOverride(patch.reduce as ReduceMode);
       if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
         setColorBounds([patch.colorMin, patch.colorMax]);
@@ -1156,11 +1157,10 @@ function CpuHdrImagePane(
       tonemapGamma,
       exposureEV: displayEV,
       offset: displayOffset,
-      norm,
       reduce: effectiveReduce,
       ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
     }),
-    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, norm, effectiveReduce, colorBounds],
+    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -1201,13 +1201,6 @@ function CpuHdrImagePane(
     },
     [publishSettings],
   );
-  const changeNorm = useCallback(
-    (mode: NormMode) => {
-      setNorm(mode);
-      publishSettings({ norm: mode });
-    },
-    [publishSettings],
-  );
   const changeReduce = useCallback(
     (mode: ReduceMode) => {
       setReduceOverride(mode);
@@ -1243,13 +1236,14 @@ function CpuHdrImagePane(
         // Colormap (LUT family): active → the scalar channel is false-colored and
         // the tone-map operator is bypassed (see tonemapToImageData).
         colormap,
-        // Phase 4 DATA-encoding norm + bounds (colormap only). When bounds are
-        // engaged, tonemapToImageData reads the RAW value (EV/OFF neutralized
-        // here to avoid double-apply — single-application).
-        norm,
+        // Phase 4 DATA-encoding bounds (colormap only). When bounds are engaged,
+        // tonemapToImageData reads the RAW value (EV/OFF neutralized here to avoid
+        // double-apply — single-application). Norm is always LINEAR (the picker was
+        // removed; the engine norm machinery stays but is unused UI-side).
+        "linear",
         boundsEngaged && colorBounds ? colorBounds[0] : undefined,
         boundsEngaged && colorBounds ? colorBounds[1] : undefined,
-        norm === "power" ? tonemapGamma : 1,
+        1,
         // Multi-channel follow-up: the reduce (luminance/mean) that collapses a
         // k>1 colormap source to the LUT scalar. Moot for k=1.
         effectiveReduce,
@@ -1271,7 +1265,7 @@ function CpuHdrImagePane(
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset, norm, effectiveReduce, colorBounds, boundsEngaged]);
+  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds, boundsEngaged]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -1360,13 +1354,10 @@ function CpuHdrImagePane(
         displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
       // SECOND-ROW segmented controls (controls-row-separation directive): the
-      // DATA-encoding NORM (lut-only) + multi-channel REDUCE (lut + k>1) pickers
-      // sit in the second toolbar row alongside EV/OFF/γ, not next to the DISPLAY
-      // menu. Mirrors GpuImagePane.
+      // multi-channel REDUCE (lut + k>1) picker sits in the second toolbar row
+      // alongside EV/OFF/γ, not next to the DISPLAY menu. Mirrors GpuImagePane.
+      // (The norm Lin·Log·Pow picker was REMOVED — norm-UI-removal follow-up.)
       rowSegments={[
-        // Gate on the manifest (`hasParam`), not just `isLut`: the ANALYTIC
-        // red-green declares no norm (linear-in-|v|), so its picker is hidden.
-        ...(enc.hasParam("norm") ? [normSegment(norm, changeNorm)] : []),
         ...(enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
@@ -1385,8 +1376,9 @@ function CpuHdrImagePane(
           : undefined
       }
       // γ slider — gated by the active encoding's manifest (only the Gamma curve
-      // declares γ; a colormap LUT / other curves do not). Phase 4 adds the
-      // power-norm exponent (reuses γ) + the min/max bounds sliders.
+      // declares γ; a colormap LUT / other curves do not). Phase 4's min/max bounds
+      // sliders follow. (The power-NORM exponent slider was REMOVED with the norm
+      // picker — norm-UI-removal follow-up.)
       extraSliders={[
         ...(enc.hasParam("gamma")
           ? [
@@ -1395,22 +1387,6 @@ function CpuHdrImagePane(
                 label: "γ",
                 title:
                   "Display gamma γ for the Gamma transfer — display = clamp(value)^(1/γ), tev-style. Default 2.2 (close to sRGB, not identical). Double-click to type a value.",
-                min: TONEMAP_GAMMA_MIN,
-                max: TONEMAP_GAMMA_MAX,
-                step: TONEMAP_GAMMA_STEP,
-                value: tonemapGamma,
-                onChange: changeGamma,
-                format: (v: number) => v.toFixed(1),
-              },
-            ]
-          : []),
-        ...(enc.hasParam("norm") && norm === "power"
-          ? [
-              {
-                id: "gamma",
-                label: "exp",
-                title:
-                  "Power-norm exponent — the colormap index becomes clamp01(t)^exp. Double-click to type a value.",
                 min: TONEMAP_GAMMA_MIN,
                 max: TONEMAP_GAMMA_MAX,
                 step: TONEMAP_GAMMA_STEP,
@@ -1464,7 +1440,6 @@ function CpuHdrImagePane(
         deepFlatten.reset();
         enc.resetEncoding();
         gammaMeta.reset();
-        setNorm("linear");
         setReduceOverride(null); // reduce back to the k-based default
         boundsMeta.reset();
         props.onChannelReset?.(); // channel override folds into HOME
@@ -1473,7 +1448,6 @@ function CpuHdrImagePane(
         deepFlatten.isModified ||
         enc.encodingModified ||
         gammaMeta.isModified ||
-        norm !== "linear" ||
         reduceOverride !== null ||
         boundsMeta.isModified ||
         !!props.channelModified

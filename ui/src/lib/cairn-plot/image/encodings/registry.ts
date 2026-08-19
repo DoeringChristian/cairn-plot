@@ -31,8 +31,11 @@
 import { clamp01 } from "../../util/clamp.ts";
 
 /** A named display parameter an encoding may DECLARE it reads (its slider
- *  manifest — UI gating only in Phase 1; the pipeline reads uniforms directly). */
-export type ParamName = "exposure" | "offset" | "peak" | "gamma" | "min" | "max" | "norm" | "reduce";
+ *  manifest — UI gating only; the pipeline reads uniforms directly). `norm` is NOT
+ *  a manifest param: the norm Lin·Log·Pow picker was removed (norm-UI-removal
+ *  follow-up); the engine norm machinery (`EncodeParams.norm`/`computeDataIndex`/
+ *  `cairnDataIndex`) stays but no encoding declares a UI norm param. */
+export type ParamName = "exposure" | "offset" | "peak" | "gamma" | "min" | "max" | "reduce";
 
 /**
  * Multi-channel REDUCTION for a DATA (lut) encoding — how ℝᵏ (k>1) collapses to

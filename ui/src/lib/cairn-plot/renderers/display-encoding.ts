@@ -31,16 +31,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../controls/ToolbarConfig";
-import { getEncoding, listEncodingsByKind, type NormMode, type ReduceMode } from "../image/encodings/index.ts";
-
-/** The DATA-encoding norm options, in menu order (Phase 4). Shown ONLY when a
- *  lut (data) encoding is active — a norm is the nonlinear domain mapping INSIDE
- *  a data encoding and is never applicable to a curve (see the design doc). */
-export const NORM_MENU_OPTIONS: { id: NormMode; label: string }[] = [
-  { id: "linear", label: "Lin" },
-  { id: "log", label: "Log" },
-  { id: "power", label: "Pow" },
-];
+import { getEncoding, listEncodingsByKind, type ReduceMode } from "../image/encodings/index.ts";
 
 /** The DATA-encoding multi-channel REDUCE options, in order (the multi-channel-
  *  colormap follow-up). Shown ONLY while a colormap LUT is active AND the source
@@ -49,27 +40,6 @@ export const REDUCE_MENU_OPTIONS: { id: ReduceMode; label: string }[] = [
   { id: "luminance", label: "Lum" },
   { id: "mean", label: "Mean" },
 ];
-
-/**
- * The DATA-encoding NORM picker as a SECOND-ROW segmented control (Lin · Log ·
- * Pow) — the minimal selector a pane shows ONLY while a colormap LUT is the
- * active encoding. It lives in the second toolbar row alongside EV/OFF/PK/γ (the
- * controls-row-separation directive), NOT next to the DISPLAY menu. `value` is
- * the norm in effect; `onSelect` receives the picked mode.
- */
-export function normSegment(
-  value: NormMode,
-  onSelect: (mode: NormMode) => void,
-): ToolbarSegmentSpec {
-  return {
-    id: "norm",
-    label: "norm",
-    title: "Colormap norm (Linear · Log · Power) — the nonlinear domain mapping inside the data encoding",
-    options: NORM_MENU_OPTIONS,
-    value,
-    onSelect: (id: string) => onSelect(id as NormMode),
-  };
-}
 
 /**
  * The DATA-encoding multi-channel REDUCE picker as a SECOND-ROW segmented control

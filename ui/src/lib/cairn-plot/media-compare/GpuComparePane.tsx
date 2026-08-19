@@ -72,9 +72,8 @@ import type { ToolbarButtonSpec, ToolbarSegmentSpec } from "../controls/ToolbarC
 import {
   compareDisplayToolbarButton,
   deriveCompareEncodingId,
-  normSegment,
 } from "../renderers/display-encoding";
-import { getEncoding, type NormMode } from "../image/encodings";
+import { getEncoding } from "../image/encodings";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
@@ -506,16 +505,11 @@ export default function GpuComparePane({
     if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
   }, [gammaProp, setTonemapGamma]);
 
-  // DATA-encoding NORM (the compare-pane-on-DISPLAY follow-up) — the nonlinear
-  // reshape of the diff colormap's error index (linear/log/power), the SAME norm
-  // the image LUT path uses (`computeDataIndex`/`cairnDataIndex`). Meaningful only
-  // in DIFF mode while a colormap is active (the scalar error map IS a DATA
-  // encoding); ignored in slide/blend (light) and for the raw "none" display. The
-  // `power` exponent reuses the γ slider/state (`tonemapGamma`), free on the lut
-  // path. View-local, display-only (re-blits the cached diff — never a recompute);
-  // HOME resets it to linear. BOUNDS (min/max) are a documented-remaining item —
-  // the compare descriptor seeds no `colorRange`, so no bounds skin here yet.
-  const [norm, setNorm] = useState<NormMode>("linear");
+  // (The DATA-encoding NORM Lin·Log·Pow PICKER was REMOVED — norm-UI-removal
+  // follow-up. The diff-display engine norm machinery — `renderDiffDisplay`'s
+  // `u_norm` + `cairnDataIndex` — STAYS, but nothing drives it: the effective norm
+  // is always linear (`renderDiffDisplay` is called with `norm:"linear"`, so
+  // `dataIdx == avg`, the pre-picker diff colormap). BOUNDS were never wired here.)
 
   // HOME / double-click reset restores every VIEW-LOCAL selection to its
   // descriptor default — mode, colormap AND kernel — alongside the shell's own
@@ -536,7 +530,6 @@ export default function GpuComparePane({
     // §A: HOME also clears the unified tone-map selection (operator + P + γ) so a
     // single reset fully neutralizes the pane, matching the single-image pane.
     setTonemapOverride(null);
-    setNorm("linear"); // DATA-encoding norm back to linear (diff colormap)
     peakMeta.reset();
     gammaMeta.reset();
   }, [
@@ -555,7 +548,6 @@ export default function GpuComparePane({
     colormapMeta.isModified ||
     diffKernelMeta.isModified ||
     tonemapModified ||
-    norm !== "linear" ||
     peakMeta.isModified ||
     gammaMeta.isModified;
 
@@ -600,7 +592,8 @@ export default function GpuComparePane({
       // Shared display keys — image panes apply these too (raw setters, no echo).
       if (patch.colormap !== undefined) setColormapState(patch.colormap as Colormap);
       if (patch.tonemap !== undefined) setTonemapOverride(patch.tonemap as TonemapOperator);
-      if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
+      // `patch.norm` is still ACCEPTED for back-compat (a stale peer may emit it)
+      // but IGNORED — the norm picker is gone and the effective norm is linear.
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
@@ -636,7 +629,6 @@ export default function GpuComparePane({
       ),
       colormap: colormapState,
       tonemap: effectiveTonemap,
-      norm,
       tonemapGamma,
       peak,
       exposureEV: displayEV,
@@ -650,7 +642,6 @@ export default function GpuComparePane({
       compareMode,
       colormapState,
       effectiveTonemap,
-      norm,
       tonemapGamma,
       peak,
       displayEV,
@@ -704,13 +695,6 @@ export default function GpuComparePane({
       publishSettings({ encoding: id, colormap: "none", tonemap: id });
     },
     [setTonemapOverride, publishSettings],
-  );
-  const changeNorm = useCallback(
-    (mode: NormMode) => {
-      setNorm(mode);
-      publishSettings({ norm: mode });
-    },
-    [publishSettings],
   );
   const changePeak = useCallback(
     (v: number) => {
@@ -1218,11 +1202,11 @@ export default function GpuComparePane({
           // metric BEFORE the LUT), display-only — never a diff recompute.
           exposureEV: displayEV,
           offset: displayOffset,
-          // DATA-encoding NORM (the compare-pane-on-DISPLAY follow-up): reshape the
-          // error index through the SAME cairnDataIndex the image LUT path uses.
-          // `power` reuses the γ state as its exponent. Bounds (min/max) are a
-          // documented-remaining item (the compare descriptor seeds no colorRange).
-          norm,
+          // The diff-display norm ENGINE (renderDiffDisplay's u_norm + cairnDataIndex)
+          // stays wired, but the Lin·Log·Pow PICKER was removed (norm-UI-removal
+          // follow-up), so the effective norm is always LINEAR — `dataIdx == avg`,
+          // the pre-picker diff colormap, byte-for-byte.
+          norm: "linear",
           gamma: tonemapGamma,
         });
       } else {
@@ -1287,7 +1271,6 @@ export default function GpuComparePane({
     diffCmapMode,
     diffColormap,
     diffAnalytic,
-    norm,
     imageUrl,
     baselineUrl,
     imageFloat,
@@ -1603,8 +1586,9 @@ export default function GpuComparePane({
         return colormapState;
       },
       // The ONE unified encoding id (derived from the active mode face) + the
-      // DATA-encoding norm — the new DISPLAY-convention state (compare-pane-on-
-      // DISPLAY follow-up), so the settings-sync harness can drive/read them.
+      // The ONE `encoding` id (derived from the active mode face) — so the
+      // settings-sync harness can read it. (The norm getter/changeNorm were removed
+      // with the norm picker — norm-UI-removal follow-up.)
       get encodingId() {
         return deriveCompareEncodingId(
           compareMode === "diff" ? "scalar" : "light",
@@ -1612,10 +1596,6 @@ export default function GpuComparePane({
           colormapState,
         );
       },
-      get norm() {
-        return norm;
-      },
-      changeNorm,
       get diffKernel() {
         return diffKernel;
       },
@@ -1664,7 +1644,6 @@ export default function GpuComparePane({
     effectiveTonemap,
     hdrEngaged,
     colormapState,
-    norm,
     diffKernel,
     splitPosition,
     blendAlpha,
@@ -1676,7 +1655,6 @@ export default function GpuComparePane({
     changeDiffKernel,
     changeColormap,
     changeTonemap,
-    changeNorm,
     changeExposure,
     changeSplit,
   ]);
@@ -1808,15 +1786,10 @@ export default function GpuComparePane({
       requestRender={renderPass}
       leadingMenus={leadingMenus}
       // SECOND-ROW segmented controls (controls-row-separation directive, matching
-      // the image panes): the DATA-encoding NORM picker (Lin·Log·Pow) lives in the
-      // second toolbar row alongside EV/OFF, NOT next to the DISPLAY menu. Shown
-      // ONLY in DIFF mode while a colormap is active (the scalar error map is a
-      // DATA encoding then); a raw "none" diff / slide / blend has no norm.
-      rowSegments={
-        (compareMode === "diff" && colormapState !== "none" && !diffAnalytic
-          ? [normSegment(norm, changeNorm)]
-          : []) as ToolbarSegmentSpec[]
-      }
+      // (The DATA-encoding NORM picker Lin·Log·Pow was REMOVED — norm-UI-removal
+      // follow-up. The compare pane has no reduce picker either — the diff error is a
+      // k=1 scalar — so the second row carries no segments.)
+      rowSegments={[] as ToolbarSegmentSpec[]}
       // EXPOSURE / OFFSET sliders: in split/blend they adjust the compose pass;
       // in DIFF they adjust the colormap SENSITIVITY (value * 2^EV + offset fed
       // to the LUT, `renderDiffDisplay`'s `exposureEV`/`offset`). Either way it's
@@ -1868,25 +1841,8 @@ export default function GpuComparePane({
               },
             ]
           : []),
-        // POWER-norm exponent (the compare-pane-on-DISPLAY follow-up) — shown while
-        // the DIFF colormap's norm is `power`. REUSES the γ state (`tonemapGamma`,
-        // free on the lut path) exactly as the image LUT path does.
-        ...(compareMode === "diff" && colormapState !== "none" && !diffAnalytic && norm === "power"
-          ? [
-              {
-                id: "gamma",
-                label: "exp",
-                title:
-                  "Power-norm exponent — the colormap index becomes clamp01(t)^exp. Double-click to type a value.",
-                min: TONEMAP_GAMMA_MIN,
-                max: TONEMAP_GAMMA_MAX,
-                step: TONEMAP_GAMMA_STEP,
-                value: tonemapGamma,
-                onChange: changeGamma,
-                format: (v: number) => v.toFixed(1),
-              },
-            ]
-          : []),
+        // (The power-NORM exponent `exp` slider was REMOVED with the norm picker —
+        // norm-UI-removal follow-up.)
       ]}
       label=""
       showLabelChip={false}

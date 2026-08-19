@@ -58,14 +58,13 @@ interface CompareSyncProbe {
   splitPosition: number;
   effectiveTonemap: string;
   // Unified DISPLAY-encoding state (the compare-pane-on-DISPLAY follow-up): the
-  // ONE derived encoding id + the DATA-encoding norm.
+  // ONE derived encoding id. (The DATA-encoding norm getter/changeNorm were removed
+  // with the norm picker — norm-UI-removal follow-up.)
   encodingId: string;
-  norm: string;
   changeCompareMode: (m: "split" | "blend" | "diff") => void;
   changeDiffKernel: (id: string) => void;
   changeColormap: (id: string) => void;
   changeTonemap: (id: string) => void;
-  changeNorm: (mode: "linear" | "log" | "power") => void;
   changeSplit: (p: number) => void;
 }
 
@@ -284,11 +283,9 @@ async function run(): Promise<boolean> {
   report(encOk, `ENCODING sync: B's derived encoding follows to viridis (B.encodingId=${B().encodingId})`);
   ok = ok && encOk;
 
-  // --- 4b. NORM: linear → log (DATA-encoding norm, diff colormap active) ----
-  A().changeNorm("log");
-  const normOk = await waitFor(() => B().norm === "log");
-  report(normOk, `NORM sync: A→log, B follows (B.norm=${B().norm})`);
-  ok = ok && normOk;
+  // (The NORM sync step was removed — the norm Lin·Log·Pow picker is gone,
+  // norm-UI-removal follow-up. The ENGINE norm parity cases live in the
+  // encoding-registry / compare-pass harnesses and stay.)
 
   // --- 5. back to split, then TONEMAP: srgb → aces (tonemap is split/blend) --
   A().changeCompareMode("split");

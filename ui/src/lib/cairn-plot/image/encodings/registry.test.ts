@@ -34,7 +34,7 @@ import {
   type EncodeParams,
 } from "./index.ts";
 
-const ALLOWED_PARAMS: ParamName[] = ["exposure", "offset", "peak", "gamma", "min", "max", "norm", "reduce"];
+const ALLOWED_PARAMS: ParamName[] = ["exposure", "offset", "peak", "gamma", "min", "max", "reduce"];
 const ALLOWED_KINDS = new Set(["curve", "lut", "remap"]);
 
 test("registry is non-empty and includes the 10 migrated operators", () => {
@@ -153,11 +153,12 @@ test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+red
     assert.equal(e.needsLut, true, `${e.id} lut must set needsLut`);
     assert.equal(typeof e.lutName, "string", `${e.id} lut must reference a table`);
     assert.ok(e.lutName!.length > 0, `${e.id} lut has empty lutName`);
-    // Sensitivity (exposure/offset) + bounds (min/max) + norm + multi-channel reduce.
+    // Sensitivity (exposure/offset) + bounds (min/max) + multi-channel reduce. NO
+    // `norm` — the norm picker was removed (norm-UI-removal follow-up).
     assert.deepEqual(
       e.params,
-      ["exposure", "offset", "min", "max", "norm", "reduce"],
-      `${e.id} lut declares sensitivity + bounds + norm + reduce params`,
+      ["exposure", "offset", "min", "max", "reduce"],
+      `${e.id} lut declares sensitivity + bounds + reduce params`,
     );
   }
 });
