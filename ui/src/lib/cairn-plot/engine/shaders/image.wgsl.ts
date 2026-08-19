@@ -219,15 +219,18 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // uniform (u_bind2.z), free on the lut path.
 @group(0) @binding(29) var<uniform> u_bind9: vec4<f32>;
 // Logical binding 10 (uniform vec4: DATA-encoding multi-channel REDUCE params —
-// reduceMode, channelCount k, ANALYTIC flag (.z), reserved) -> native binding
-// 10*3+2 = 32. Only the scalar/LUT (isScalar) path reads it; it feeds
-// cairnReduceScalar (the ℝᵏ→scalar collapse) BEFORE cairnDataIndex. .z=1 selects
-// the ANALYTIC signed-color branch (tev-style red-green: cairnSignedAnalyticColor
-// + shared output-encode) INSTEAD of the LUT sample — computed color, no texture
-// bind. Defaults to vec4(0) when the caller omits it (zero-filled) — reduceMode 0
-// + k 0 + analytic 0, and cairnReduceScalar's k<=1 guard returns channel 0, so a
-// scalar colormap (k=1) renders bit-for-bit as before (the engine always packs k,
-// so k=1 hits the guard explicitly too).
+// reduceMode, channelCount k, SCALAR-MODE enum (.z), gray encode-gamma (.w)) ->
+// native binding 10*3+2 = 32. Only the scalar/LUT (isScalar) path reads it; it
+// feeds cairnReduceScalar (the ℝᵏ→scalar collapse) BEFORE cairnDataIndex. .z is a
+// scalar-MODE enum: 0 = LUT sample (table colormap), 1 = ANALYTIC signed-color
+// (tev red-green: cairnSignedAnalyticColor + shared output-encode, no LUT bind),
+// 2 = GRAY NONE (the plain-grayscale "none" DATA encoding: cairnDataIndex → scene-
+// linear gray vec3 → shared output-encode; HDR-native, no LUT bind). .w carries the
+// GRAY-NONE encode-gamma (0 = sRGB OETF, >0 = the 1/γ power curve) — the transfer
+// the gray output-encode uses (the power-NORM exponent still rides u_bind2.z). Both
+// .z and .w default to 0 when the caller omits the slot (zero-filled) → LUT mode +
+// sRGB encode; with cairnReduceScalar's k<=1 guard a scalar colormap (k=1) renders
+// bit-for-bit as before.
 @group(0) @binding(32) var<uniform> u_bind10: vec4<f32>;
 
 // Display-transfer stage — the SDR sRGB/gamma OETF (+ the sRGB EOTF that
@@ -354,7 +357,13 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     // sensitivity (already folded into the reduced scalar) is the sole affine.
     let reduceMode = i32(round(u_bind10.x));
     let channelCount = i32(round(u_bind10.y));
-    let analytic = u_bind10.z > 0.5;
+    // u_bind10.z is a SCALAR-MODE enum, not a bare flag: 0 = LUT sample (table
+    // colormap), 1 = ANALYTIC (computed signed color, tev red-green), 2 = GRAY
+    // NONE (the plain-grayscale "none" data encoding — scalar → data index →
+    // scene-linear gray → shared output-encode, HDR-native). Kept an enum (not two
+    // flags) so a fresh uniform slot stays free for the gray encode-gamma (.w).
+    let scalarMode = i32(round(u_bind10.z));
+    let analytic = scalarMode == 1;
     let scalar = cairnReduceScalar(rgb, reduceMode, channelCount);
     if (analytic) {
       // ANALYTIC signed error (tev-style red-green) — computed color, no LUT
@@ -383,6 +392,28 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let normMode = i32(round(u_bind9.x));
     let boundsActive = u_bind9.w > 0.5;
     let idx = cairnDataIndex(scalar, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);
+    if (scalarMode == 2) {
+      // GRAY NONE (the plain-grayscale "none" DATA encoding). A single-channel
+      // scalar is DATA, not light: it carries the SAME data index the LUT path
+      // computes (cairnDataIndex — linear norm + no bounds = the RAW value passed
+      // through UNCLAMPED; log/power/bounds map it to [0,1]), but its color is the
+      // SCENE-LINEAR gray vec3(idx) run through the SHARED output-encode — exactly
+      // like a curve / the analytic entry, NOT a baked-sRGB LUT sample. So the SDR
+      // surface clamps to [0,1] (byte-identical to the old srgb/linear/gamma curve
+      // for in-range values) while the extended/HDR surface lets idx>1 SURVIVE.
+      // The output-encode transfer is the curve's own encode-gamma (u_bind10.w:
+      // 0 = sRGB OETF, >0 = the 1/γ power curve — linear→1, gamma→γ). The power-
+      // NORM exponent still rides the gamma uniform (u_bind2.z) inside
+      // cairnDataIndex above, so the two never collide.
+      let ge = u_bind10.w;
+      let hasGe = ge > 0.0;
+      if (hdrOut) {
+        let e = extendedOutputEncodeF(idx, ge, hasGe);
+        return vec4<f32>(e, e, e, 1.0);
+      }
+      let e = outputEncodeF(idx, ge, hasGe);
+      return vec4<f32>(e, e, e, 1.0);
+    }
     return vec4<f32>(cairnLutColor(t_bind1, idx, 0, filterLinear), 1.0);
   }
 

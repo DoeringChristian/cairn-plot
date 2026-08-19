@@ -305,6 +305,40 @@ async function runDiffDisplayAnalyticCase(device: Device, hdrOut: boolean): Prom
   return allOk;
 }
 
+// ---- diff DISPLAY GRAY NONE (HDR-native) parity (scalar-none follow-up) -------
+// The diff `None` (no false-color, raw per-channel) is the compare-pane twin of the
+// single-image gray-none path. On an HDR target the FOLDED value now rides the
+// SHARED extended output-encode (so |v|>1 survives) instead of writing raw-clamped;
+// on SDR it stays byte-identical (covered by runDiffCase). Prove the GPU HDR path
+// === the CPU twin (extendedOutputEncode of the folded value).
+async function runDiffDisplayGrayNoneHdrCase(device: Device): Promise<boolean> {
+  const texRef = buildRowTexture(device, PIXELS_REF);
+  const texFg = buildRowTexture(device, PIXELS_FG);
+  const result = computeDiff(device, texRef, texFg, "signed");
+  const target = device.createTexture(WIDTH, 1, "rgba16float");
+  renderDiffDisplay(device, target, result, "signed", { uv: uvFull, filter: "nearest" });
+  const out = await device.readback(target);
+  texRef.destroy();
+  texFg.destroy();
+  result.destroy();
+  target.destroy();
+  let allOk = true;
+  for (let i = 0; i < WIDTH; i++) {
+    for (let c = 0; c < 3; c++) {
+      const raw = PIXELS_REF[i]![c]! - PIXELS_FG[i]![c]!;
+      const folded = (raw + 1) / 2; // signed displayRange fold, UNCLAMPED on HDR
+      const exp = extendedOutputEncode(folded, undefined);
+      const actual = out[i * 4 + c]!;
+      if (Math.abs(actual - exp) > 0.01) {
+        allOk = false;
+        report(false, `[diff-display/none-hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${actual.toFixed(4)}`);
+      }
+    }
+  }
+  report(allOk, `[diff-display/none-hdr] GPU raw diff === cpu extendedOutputEncode twin`);
+  return allOk;
+}
+
 function cpuMetrics(a: number[][], b: number[][]): { mse: number; psnr: number; mae: number } {
   let sumSq = 0;
   let sumAbs = 0;
@@ -417,6 +451,9 @@ async function runAll(device: Device): Promise<boolean> {
   ok = (await runDiffDisplayAnalyticCase(device, false)) && ok;
   if (device.capabilities.hdr) {
     ok = (await runDiffDisplayAnalyticCase(device, true)) && ok;
+    // Diff-display GRAY NONE HDR-native (the scalar-none follow-up): raw diff rides
+    // the extended output-encode so over-range survives (SDR covered by runDiffCase).
+    ok = (await runDiffDisplayGrayNoneHdrCase(device)) && ok;
   }
   ok = (await runMetricsCase(device)) && ok;
   ok = (await runSwapGuardCase(device, "split@0.25", { ...BASE, mode: "split", split: 0.25, alpha: 0.5 })) && ok;

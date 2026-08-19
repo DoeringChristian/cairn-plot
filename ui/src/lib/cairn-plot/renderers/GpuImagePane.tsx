@@ -115,6 +115,7 @@ import { getEncoding, defaultReduceMode, type NormMode, type ReduceMode } from "
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
+  resolveEncodeGamma,
   aliasPeakHint,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MIN,
@@ -143,6 +144,14 @@ import {
 // A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
 const NULL_HDR: HdrData = { data: new Float32Array(0), shape: [0, 0], dtype: "<f4" };
+
+/** The IDENTITY-TRANSFER curves — the ones whose tone-map "operator" is a pure
+ *  clamp, the display transfer living entirely in the output-encode stage. A
+ *  single-channel "none" source on one of these renders through the gray DATA path
+ *  (`scalarNoneData`) so the raw scalar rides the shared (extended) output-encode
+ *  unclamped on an HDR surface, byte-identically to the curve on SDR. Real tone-
+ *  mappers (reinhard/aces) compress highlights and stay on the curve path. */
+const NONE_GRAY_CURVES: ReadonlySet<string> = new Set(["linear", "srgb", "gamma"]);
 import { reportCapabilityLimit } from "../primitives/capability-notice";
 
 /** Expand the raw HDR buffer into an RGBA source upload — NO exposure/tonemap/
@@ -424,6 +433,20 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // ACTIVE encoding's param manifest (see the slider block below).
   const activeIsCurve = getEncoding(enc.encodingId)?.kind === "curve";
 
+  // GRAY NONE (the plain-grayscale "none" DATA encoding — HDR-native follow-up).
+  // A SINGLE-CHANNEL source with no colormap LUT is DATA, not light: its raw scalar
+  // (after exposure/offset + any norm/bounds) is linear light that should ride the
+  // SHARED output-encode exactly like a curve / the analytic red-green — SDR clamps
+  // (byte-identical to the old srgb/linear/gamma curve for in-range values), an
+  // engaged HDR surface keeps >1. So a scalar with one of the IDENTITY-TRANSFER
+  // curves (linear/srgb/gamma — the ones whose "operator" is a pure clamp, the
+  // transfer living entirely in output-encode) renders through the gray DATA path
+  // (isScalar + `grayNone`) instead of the peak-clamping curve path, and honors the
+  // NORM/BOUNDS pickers. Real tone-mappers (reinhard/aces) stay on the curve path —
+  // they compress highlights (a LIGHT concept), so a scalar keeps them selectable.
+  const scalarNoneData =
+    hdrMode && sourceArity === 1 && hdrColormap === "none" && NONE_GRAY_CURVES.has(effectiveTonemap);
+
   // PEAK white (×SDR white) — the UNIFIED HDR MODE control. On an engaged HDR
   // surface it is ALWAYS shown and every operator respects it as its ceiling `P`
   // (SDR is just `P = 1`); view-local, display-only, fed into the render pass via
@@ -502,11 +525,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     setColorBounds(propColorRange ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
-  // The bounds skin is engaged iff a lut is active AND a finite colorRange seeds
-  // it (min<max). Curves/remaps never use bounds.
+  // The bounds skin is engaged iff a DATA encoding is active (a lut that declares
+  // min/max, OR the gray-none data path) AND a finite colorRange seeds it (min<max).
+  // Light curves (reinhard/aces on a scalar, RGB curves) never use bounds.
   const boundsEngaged =
-    enc.isLut &&
-    enc.hasParam("min") &&
+    ((enc.isLut && enc.hasParam("min")) || scalarNoneData) &&
     !!colorBounds &&
     Number.isFinite(colorBounds[0]) &&
     Number.isFinite(colorBounds[1]);
@@ -1067,6 +1090,35 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           uv,
           filter,
         }
+      : scalarNoneData
+      ? {
+          // GRAY NONE — the plain-grayscale scalar as a DATA encoding. Same shape
+          // as the float-LUT branch (scalar → cairnDataIndex) but the color is the
+          // SCENE-LINEAR gray vec3(idx) through the SHARED output-encode (NOT a
+          // baked-sRGB LUT), so `hdrOut` is the pane's REAL surface (rt.hdrOut) and
+          // idx>1 survives on HDR. `gamma` carries the power-NORM exponent (like the
+          // lut path); `grayEncodeGamma` is the curve's OWN encode transfer (sRGB /
+          // identity / 1/γ) — a separate uniform, so the two never collide. EV/OFF
+          // are the sensitivity skin (neutralized when bounds engage, single-apply).
+          exposureEV: cmapExposure,
+          offset: cmapOffset,
+          operator: "linear",
+          gamma: norm === "power" ? tonemapGamma : 1,
+          isScalar: true,
+          grayNone: true,
+          grayEncodeGamma: resolveEncodeGamma(effectiveTonemap, tonemapGamma) ?? 0,
+          hdrOut: rt.hdrOut,
+          peak: rt.peak,
+          srgbDecode: false,
+          norm,
+          reduce: effectiveReduce,
+          channelCount: sourceArity,
+          ...(boundsEngaged && colorBounds
+            ? { normMin: colorBounds[0], normMax: colorBounds[1] }
+            : {}),
+          uv,
+          filter,
+        }
       : hdrMode || sdrPlain
         ? {
             exposureEV: baseExposure + displayEV,
@@ -1276,8 +1328,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       rowSegments={[
         // Norm gates on the manifest (`hasParam`), not just `isLut`: the ANALYTIC
         // red-green declares no norm (linear-in-|v| by construction), so its picker
-        // is hidden; the table-backed luts show Lin·Log·Pow.
-        ...(enc.hasParam("norm") ? [normSegment(norm, changeNorm)] : []),
+        // is hidden; the table-backed luts show Lin·Log·Pow. The gray-none DATA path
+        // (a scalar with no colormap) also honors norm — its raw value reshapes
+        // through the SAME cairnDataIndex, so it shows the picker too.
+        ...(enc.hasParam("norm") || scalarNoneData ? [normSegment(norm, changeNorm)] : []),
         ...(enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
@@ -1303,7 +1357,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // paramless `normal` remap and colormap LUTs have no peak). γ rides the
       // active encoding's manifest (only the Gamma curve declares it).
       extraSliders={[
-        ...((hdrMode || sdrPlain) && hdrEngaged && activeIsCurve
+        // PEAK is the CURVE family's HDR ceiling — hidden for the gray-none DATA
+        // path (a scalar as data has no tone-map ceiling; its raw value rides the
+        // output-encode unclamped), the `normal` remap, and colormap LUTs.
+        ...((hdrMode || sdrPlain) && hdrEngaged && activeIsCurve && !scalarNoneData
           ? [
               {
                 id: "peak",
@@ -1338,7 +1395,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         // POWER-norm exponent (Phase 4) — shown while a lut's norm is `power`.
         // REUSES the γ state/slot (`tonemapGamma`, free on the lut path), so the
         // exponent carries across curve↔lut flips like every other named param.
-        ...(enc.hasParam("norm") && norm === "power"
+        // The power-NORM exponent reuses the γ state/slot. On the gray-none path a
+        // `gamma` curve ALSO surfaces a γ slider (its encode transfer) from the same
+        // state — so suppress this duplicate `exp` slider when that γ slider already
+        // renders (`enc.hasParam("gamma")`); the single γ slider then drives both.
+        ...((enc.hasParam("norm") || scalarNoneData) && norm === "power" && !enc.hasParam("gamma")
           ? [
               {
                 id: "gamma",

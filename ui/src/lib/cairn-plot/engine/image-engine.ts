@@ -110,6 +110,25 @@ export interface ImageParams {
    * analytic map is intrinsically linear in `|v|`). Unset = false.
    */
   analytic?: boolean;
+  /**
+   * GRAY NONE data encoding (the plain-grayscale "none" HDR-native follow-up) — on
+   * the `isScalar` path, produce the SCENE-LINEAR gray `vec3(idx)` (where `idx` is
+   * the SAME `cairnDataIndex` the LUT path computes: linear norm + no bounds = the
+   * RAW value passed through UNCLAMPED; log/power/bounds map it to `[0,1]`) and run
+   * it through the SHARED output-encode instead of sampling `colormap`. So the SDR
+   * surface clamps to `[0,1]` (byte-identical to the old srgb/linear/gamma curve for
+   * in-range values) while an `hdrOut` surface lets `idx>1` SURVIVE — the directive's
+   * "none colormap on a single channel supports HDR natively". No LUT is bound/read.
+   * Mutually exclusive with `analytic`. Ignored when `isScalar` is false; the encode
+   * transfer is {@link grayEncodeGamma}. Unset = false. */
+  grayNone?: boolean;
+  /** GRAY-NONE output-encode transfer (only read when {@link grayNone}): `0`/unset →
+   *  the sRGB OETF (matching the default `srgb` transfer), `1` → linear identity
+   *  encode, `γ` → the `1/γ` power curve (the `gamma` transfer). This is the CURVE's
+   *  own encode-gamma (`resolveEncodeGamma`); it is a SEPARATE slot from the power-
+   *  NORM exponent (which still rides `gamma`/`u_bind2.z`), so a gray-none image can
+   *  carry both a display transfer and a power norm without collision. */
+  grayEncodeGamma?: number;
   /** When true, run the EXTENDED output-encode (unclamped, origin-mirrored sRGB
    *  OETF / power curve) and write the transfer-encoded float to `target` — the
    *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
@@ -251,8 +270,15 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // colormap renders bit-for-bit as before.
   const reduceId = REDUCE_ID[params.reduce ?? "mean"] ?? 0;
   const channelCount = typeof params.channelCount === "number" ? params.channelCount : 1;
-  // u_bind10.z = ANALYTIC flag (tev-style signed color; scalar/LUT path only).
-  const reduceVec = new Float32Array([reduceId, channelCount, params.analytic ? 1 : 0, 0]);
+  // u_bind10.z = SCALAR-MODE enum (scalar/LUT path only): 0 = LUT sample, 1 =
+  // ANALYTIC signed color (tev red-green), 2 = GRAY NONE (plain-grayscale data
+  // encoding). u_bind10.w = the GRAY-NONE encode-gamma (0 = sRGB OETF, >0 = 1/γ
+  // power curve) — a separate slot from the power-norm exponent (which rides
+  // gamma/u_bind2.z), so a gray-none image can carry both. Both default to 0.
+  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : 0;
+  const grayEncodeGamma =
+    typeof params.grayEncodeGamma === "number" && params.grayEncodeGamma > 0 ? params.grayEncodeGamma : 0;
+  const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, grayEncodeGamma]);
 
   let bindGroup: BindGroup | undefined;
   try {

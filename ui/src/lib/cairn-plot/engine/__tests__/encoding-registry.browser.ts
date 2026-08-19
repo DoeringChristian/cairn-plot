@@ -28,6 +28,7 @@ import {
 } from "../../image/tonemap";
 import {
   listEncodings,
+  computeDataIndex,
   DEFAULT_ENCODE_PARAMS,
   type DisplayEncoding,
   type EncodeParams,
@@ -418,6 +419,71 @@ async function runAnalyticCase(device: Device, enc: DisplayEncoding): Promise<bo
   return ok;
 }
 
+/** GRAY NONE (the plain-grayscale "none" DATA encoding — HDR-native follow-up).
+ *  The scalar (channel 0) maps through the SAME `computeDataIndex` the LUT path
+ *  uses, but the color is the SCENE-LINEAR gray `vec3(idx)` run through the SHARED
+ *  output-encode (NOT a baked-sRGB LUT). Renders BOTH surfaces per norm variant:
+ *  SDR (`rgba8unorm`, byte-exact) where an over-range `idx>1` CLAMPS, and HDR
+ *  (`rgba32float`, float eps) where it SURVIVES past 1 — the directive's ">1 on the
+ *  HDR path" case. The default `srgb` transfer (grayEncodeGamma 0 → sRGB OETF) is
+ *  exercised; `linear` norm passes the raw value UNCLAMPED, `log` maps to [0,1]. */
+async function runGrayNoneCase(device: Device, norm: NormMode): Promise<boolean> {
+  let ok = true;
+  for (const hdrOut of [false, true]) {
+    const params: ImageParams = {
+      exposureEV: EV,
+      operator: "linear" as ImageOperator, // moot: isScalar+grayNone short-circuits it
+      isScalar: true,
+      grayNone: true,
+      grayEncodeGamma: 0, // sRGB OETF transfer (the default `srgb` curve)
+      norm,
+      reduce: "mean",
+      channelCount: 1,
+      hdrOut,
+      uv: uvFull,
+      filter: "nearest",
+    };
+    const src = buildSrcTexture(device, SCALAR_PIXELS);
+    const target = device.createTexture(SCALAR_PIXELS.length, 1, hdrOut ? "rgba32float" : "rgba8unorm");
+    renderImage(device, target, src, params);
+    const out = await device.readback(target);
+    src.destroy();
+    target.destroy();
+    for (let i = 0; i < SCALAR_PIXELS.length; i++) {
+      // cpu twin: scalar → computeDataIndex (linear = raw, unclamped) → gray, then
+      // the SAME sRGB output-encode the GPU applies (extended on the HDR surface).
+      const idx = computeDataIndex(applyExposure(SCALAR_PIXELS[i]![0]!, EV), { ...DEFAULT_ENCODE_PARAMS, norm });
+      if (hdrOut) {
+        if (!(out instanceof Float32Array)) {
+          report(false, `[gray-none/${norm}-hdr] expected Float32Array readback`);
+          return false;
+        }
+        const exp = extendedOutputEncode(idx, undefined);
+        for (let c = 0; c < 3; c++) {
+          if (Math.abs(out[i * 4 + c]! - exp) > 0.01) {
+            ok = false;
+            report(false, `[gray-none/${norm}-hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${out[i * 4 + c]!.toFixed(4)}`);
+          }
+        }
+      } else {
+        if (!(out instanceof Uint8Array)) {
+          report(false, `[gray-none/${norm}-sdr] expected Uint8Array readback`);
+          return false;
+        }
+        const eb = byteOf(outputEncode(idx, undefined));
+        for (let c = 0; c < 3; c++) {
+          if (Math.abs(out[i * 4 + c]! - eb) > 1) {
+            ok = false;
+            report(false, `[gray-none/${norm}-sdr] px[${i}].ch[${c}] expected=${eb} actual=${out[i * 4 + c]}`);
+          }
+        }
+      }
+    }
+  }
+  report(ok, `[gray-none/${norm}] GPU grayNone === cpu twin (SDR clamps, HDR survives >1)`);
+  return ok;
+}
+
 /** The norm/bounds variants exercised per lut (Phase 4). */
 const LUT_NORM_VARIANTS: Array<{ variant: string; params: EncodeParams }> = [
   { variant: "log", params: { ...DEFAULT_ENCODE_PARAMS, norm: "log" as NormMode } },
@@ -456,6 +522,11 @@ async function main(): Promise<void> {
           if (!rok) allOk = false;
         }
       }
+    }
+    // GRAY NONE (the plain-grayscale "none" DATA encoding) — not a registry entry
+    // (a scalar with no colormap), so it runs as a dedicated SDR+HDR case per norm.
+    for (const norm of ["linear", "log"] as NormMode[]) {
+      if (!(await runGrayNoneCase(device, norm))) allOk = false;
     }
     report(allOk, `all ${encodings.length} encodings: GPU === registry cpu twin`);
     setOverallStatus(allOk);

@@ -540,6 +540,20 @@ ${OUTPUT_ENCODE_WGSL}
     let dataIdx = cairnDataIndex(avg, i32(round(u_norm.x)), u_norm.y, u_norm.z, u_norm.w > 0.5, u_expo.z);
     outColor = cairnLutColor(lut, dataIdx, cmapModeId, filterLinear);
   } else {
+    // GRAY NONE (raw per-channel diff, no false-color) — the compare-pane twin of
+    // the single-image gray-none path. On an HDR target the FOLDED value v (pre-
+    // clamp) rides the SHARED extended output-encode so over-range (|v|>1) error
+    // SURVIVES; on SDR it stays the legacy raw-clamped code value (disp), byte-
+    // identical to before (the SDR diff-none has never sRGB-encoded — it shows the
+    // raw magnitude as a code value; unifying that transfer is out of scope).
+    if (hdrOut) {
+      return vec4<f32>(
+        extendedOutputEncodeF(v.r, 0.0, false),
+        extendedOutputEncodeF(v.g, 0.0, false),
+        extendedOutputEncodeF(v.b, 0.0, false),
+        1.0,
+      );
+    }
     outColor = disp;
   }
   return vec4<f32>(outColor, 1.0);
