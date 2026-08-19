@@ -33,7 +33,7 @@ import {
   type KernelBuildCtx,
 } from "./kernels";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl";
-import { LUT_FAMILY_WGSL } from "../image/encodings/index.ts";
+import { LUT_FAMILY_WGSL, NORM_ID, type NormMode } from "../image/encodings/index.ts";
 import { computeMetrics, makeCpuMapSampler, type DiffMetrics } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
@@ -449,8 +449,9 @@ ${LUT_FAMILY_WGSL}
 @group(0) @binding(3) var lut: texture_2d<f32>;
 @group(0) @binding(8) var<uniform> u_uv: vec4<f32>;   // uvRect.xy, uvRect.wh
 @group(0) @binding(11) var<uniform> u_disp: vec4<f32>; // displayRangeId, cmapModeId, useColormap, filterMode
-@group(0) @binding(14) var<uniform> u_expo: vec4<f32>; // exposureEV, offset, 0, 0
+@group(0) @binding(14) var<uniform> u_expo: vec4<f32>; // exposureEV, offset, powerExp(gamma), 0
 @group(0) @binding(17) var<uniform> u_src: vec4<f32>;  // primaryW, primaryH, 0, 0 (source footprint)
+@group(0) @binding(20) var<uniform> u_norm: vec4<f32>; // normModeId, boundsMin, boundsMax, boundsActive (DATA-encoding norm/bounds — the compare-pane-on-DISPLAY follow-up)
 
 @fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(0.999999));
@@ -503,7 +504,14 @@ ${LUT_FAMILY_WGSL}
     // at the pixelated zoom for crisp per-texel color). The diff path's private
     // LUT sampling/index plumbing folded INTO this family.
     let avg = (disp.r + disp.g + disp.b) / 3.0;
-    outColor = cairnLutColor(lut, avg, cmapModeId, filterLinear);
+    // DATA-encoding NORM/BOUNDS (the compare-pane-on-DISPLAY follow-up): reshape
+    // the normalized error index through the SAME cairnDataIndex the image LUT
+    // path uses (linear/log/power + optional min/max bounds), byte-parallel with
+    // the CPU computeDataIndex. norm=linear + boundsActive=false → dataIdx==avg,
+    // so the pre-follow-up diff colormap is reproduced bit-for-bit. The power
+    // exponent reuses u_expo.z (the gamma slot), free on the lut path.
+    let dataIdx = cairnDataIndex(avg, i32(round(u_norm.x)), u_norm.y, u_norm.z, u_norm.w > 0.5, u_expo.z);
+    outColor = cairnLutColor(lut, dataIdx, cmapModeId, filterLinear);
   } else {
     outColor = disp;
   }
@@ -530,6 +538,24 @@ export interface DiffDisplayParams {
   /** Additive offset applied after exposure, before the cmap index mapping.
    *  Display-only. Default 0. */
   offset?: number;
+  /**
+   * DATA-encoding NORM (the compare-pane-on-DISPLAY follow-up) — the nonlinear
+   * reshape of the normalized error index INSIDE the colormap (`linear`/`log`/
+   * `power`), threaded through the SAME `cairnDataIndex` the image LUT path uses
+   * (byte-parallel with the CPU `computeDataIndex`). Only meaningful when a
+   * `colormap` is bound; `"linear"` (default) is the identity, so the pre-
+   * follow-up diff colormap is unchanged. `power` reuses {@link gamma} as its
+   * exponent (free on the lut path). */
+  norm?: NormMode;
+  /** DATA-encoding BOUNDS min — the ALTERNATIVE domain affine to exposure/offset
+   *  (bounds-first). Active iff BOTH {@link normMin}/{@link normMax} are finite:
+   *  the index becomes `(value - normMin)/(normMax - normMin)`. Unset → the
+   *  exposure/offset sensitivity skin (the common compare case). */
+  normMin?: number;
+  normMax?: number;
+  /** Power-norm exponent (reuses the image LUT path's `gamma` slot). Only read
+   *  when `norm:"power"`; `<= 0` falls back to 1. Default 1. */
+  gamma?: number;
   /**
    * The PRIMARY (foreground) source footprint the uv-window is expressed in —
    * the same dims that drive the pane's overlay grid + viewport. The diff RESULT
@@ -584,11 +610,25 @@ export function renderDiffDisplay(
     params.colormap ? 1 : 0,
     params.filter === "nearest" ? 0 : 1,
   ]);
-  const expoVec = new Float32Array([params.exposureEV ?? 0, params.offset ?? 0, 0, 0]);
+  // u_expo.z carries the power-norm exponent (the gamma slot), read only on the
+  // `power` norm branch of cairnDataIndex — free on the lut path.
+  const expoVec = new Float32Array([params.exposureEV ?? 0, params.offset ?? 0, params.gamma ?? 1, 0]);
   // Primary/foreground footprint for the min-crop top-left mapping (see
   // `sourceDims` doc). `0` → the shader falls back to the result texture's own
   // dims (identity), so an equal-size pair is unchanged.
   const srcVec = new Float32Array([params.sourceDims?.w ?? 0, params.sourceDims?.h ?? 0, 0, 0]);
+  // u_norm — DATA-encoding norm/bounds, packed exactly like image-engine's
+  // u_bind9: [normModeId, boundsMin, boundsMax, boundsActive]. boundsActive iff
+  // BOTH bounds are finite (the min/max skin; else the exposure/offset skin).
+  const hasBounds =
+    typeof params.normMin === "number" && Number.isFinite(params.normMin) &&
+    typeof params.normMax === "number" && Number.isFinite(params.normMax);
+  const normVec = new Float32Array([
+    NORM_ID[params.norm ?? "linear"] ?? 0,
+    hasBounds ? (params.normMin as number) : 0,
+    hasBounds ? (params.normMax as number) : 0,
+    hasBounds ? 1 : 0,
+  ]);
   let bg: BindGroup | undefined;
   try {
     bg = device.createBindGroup(pipeline, [
@@ -598,6 +638,7 @@ export function renderDiffDisplay(
       { binding: 3, resource: { uniform: dispVec } },
       { binding: 4, resource: { uniform: expoVec } },
       { binding: 5, resource: { uniform: srcVec } },
+      { binding: 6, resource: { uniform: normVec } },
     ]);
     device.renderFullscreen(target, pipeline, bg);
   } finally {

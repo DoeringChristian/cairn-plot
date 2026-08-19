@@ -266,12 +266,15 @@ async function main(): Promise<void> {
       ok = ok && clicked && kernelNow === "absolute" && delta === 1 && md > 1.0;
     }
 
-    // --- (2) colormap switch via COLORMAP menu → NO recompute + display changes ---
+    // --- (2) colormap switch via the unified DISPLAY menu → NO recompute + display changes ---
+    // The compare pane's separate Colormap/Tone-map buttons collapsed into ONE
+    // arity-gated DISPLAY menu (the compare-pane-on-DISPLAY follow-up); in diff
+    // mode it offers None + the colormap LUTs, so the colormap switch drives it.
     {
       const before = readbackOf(canvas);
       const countBefore = getDiffComputeCount();
-      const clicked = clickMenu("Colormap", "Red–Blue");
-      report(clicked, "[2] COLORMAP menu opens and 'Red–Blue' option clicks");
+      const clicked = clickMenu("Display encoding", "Red–Blue");
+      report(clicked, "[2] DISPLAY menu opens and 'Red–Blue' colormap option clicks");
       const countAfter = await waitForStableCount();
       const after = readbackOf(canvas);
       const delta = countAfter - countBefore;

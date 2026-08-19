@@ -31,7 +31,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../controls/ToolbarConfig";
-import { getEncoding, listEncodingsByKind, type NormMode, type ReduceMode } from "../image/encodings";
+import { getEncoding, listEncodingsByKind, type NormMode, type ReduceMode } from "../image/encodings/index.ts";
 
 /** The DATA-encoding norm options, in menu order (Phase 4). Shown ONLY when a
  *  lut (data) encoding is active — a norm is the nonlinear domain mapping INSIDE
@@ -185,6 +185,80 @@ export function displayToolbarButton(args: {
     title: "Display encoding",
     menu: { options, value, onSelect },
   };
+}
+
+/**
+ * The ONE DISPLAY menu for the COMPARE pane — the mode-dependent twin of
+ * {@link displayToolbarButton}, replacing the compare pane's separate
+ * tone-map (slide/blend) + colormap (diff) buttons. The compare pane's two
+ * encoding FACES are structurally exclusive by MODE (a slide/blend composite is
+ * LIGHT → curves; a diff is a SCALAR error map → data LUTs), so only ONE section
+ * ever applies — that IS the arity gating, so each face renders as a single
+ * section (no hairline header, exactly like the image panes' Display menu when
+ * only one section is applicable).
+ *
+ *  - `mode:"light"` (slide/blend): the LIGHT curves (Linear · sRGB · Gamma ·
+ *    Reinhard · ACES). `value` is the active curve id. Luts are gated out — a
+ *    colormap on a light composite is meaningless (the compose path has no LUT
+ *    stage). The `normal` remap is gated out too (the compose shader assembles
+ *    with `remaps:false`, so it was a latent no-op on this path).
+ *  - `mode:"scalar"` (diff): a `None` entry (the raw per-channel error, no
+ *    false-color) + the colormap LUTs. `value` is `"none"` or a lut id. Curves
+ *    are gated out — the diff display has no tone-map stage (error values aren't
+ *    light; the design doc's DATA-encoding model: scalar error → sensitivity →
+ *    LUT).
+ */
+export function compareDisplayToolbarButton(args: {
+  mode: "light" | "scalar";
+  /** LIGHT-mode curve ids to offer (ignored in scalar mode). */
+  curveIds: readonly string[];
+  /** Active curve id (light) — the value when `mode:"light"`. */
+  curveValue: string;
+  /** Active colormap (`"none"` or a lut id) — the value when `mode:"scalar"`. */
+  lutValue: string;
+  onSelectCurve: (id: string) => void;
+  onSelectLut: (id: string) => void;
+}): ToolbarButtonSpec {
+  const { mode, curveIds, curveValue, lutValue, onSelectCurve, onSelectLut } = args;
+  let options: ToolbarMenuOption[];
+  let value: string;
+  let onSelect: (id: string) => void;
+  if (mode === "light") {
+    options = curveIds.map((id) => ({ id, label: getEncoding(id)?.label ?? id }));
+    value = curveValue;
+    onSelect = onSelectCurve;
+  } else {
+    options = [
+      { id: "none", label: "None" },
+      ...listEncodingsByKind("lut").map((e) => ({ id: e.id, label: e.label })),
+    ];
+    value = lutValue;
+    onSelect = onSelectLut;
+  }
+  return {
+    id: "display",
+    title: "Display encoding",
+    menu: { options, value, onSelect },
+  };
+}
+
+/**
+ * The compare pane's ONE `encoding` id for the settings-sync bus (item 4 of the
+ * compare-pane-on-DISPLAY-conventions follow-up), derived from the pane's two
+ * mode-scoped faces so it carries the SAME `encoding` key the image panes
+ * publish. In diff mode the active encoding IS the chosen colormap LUT (a data
+ * encoding); with no colormap (`"none"`) OR in slide/blend the active encoding is
+ * the LIGHT curve — always a valid registry id, so an image-pane peer applying
+ * `encoding` never lands on a non-registry token. The pane also publishes the
+ * derived `colormap`/`tonemap` for pre-registry back-compat.
+ */
+export function deriveCompareEncodingId(
+  mode: "light" | "scalar",
+  curveId: string,
+  colormap: string,
+): string {
+  if (mode === "scalar" && colormap && colormap !== "none") return colormap;
+  return curveId;
 }
 
 /** Config for {@link usePaneEncoding}. */

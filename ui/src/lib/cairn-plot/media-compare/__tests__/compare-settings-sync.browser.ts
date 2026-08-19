@@ -57,10 +57,15 @@ interface CompareSyncProbe {
   diffKernel: string;
   splitPosition: number;
   effectiveTonemap: string;
+  // Unified DISPLAY-encoding state (the compare-pane-on-DISPLAY follow-up): the
+  // ONE derived encoding id + the DATA-encoding norm.
+  encodingId: string;
+  norm: string;
   changeCompareMode: (m: "split" | "blend" | "diff") => void;
   changeDiffKernel: (id: string) => void;
   changeColormap: (id: string) => void;
   changeTonemap: (id: string) => void;
+  changeNorm: (mode: "linear" | "log" | "power") => void;
   changeSplit: (p: number) => void;
 }
 
@@ -273,6 +278,17 @@ async function run(): Promise<boolean> {
   const cmapOk = await waitFor(() => B().colormap === "viridis");
   report(cmapOk, `COLORMAP sync: A→viridis, B follows (B.colormap=${B().colormap})`);
   ok = ok && cmapOk;
+  // The unified `encoding` key follows too (in diff+colormap the active encoding
+  // IS the lut) — the compare-pane-on-DISPLAY follow-up carries ONE encoding id.
+  const encOk = await waitFor(() => B().encodingId === "viridis");
+  report(encOk, `ENCODING sync: B's derived encoding follows to viridis (B.encodingId=${B().encodingId})`);
+  ok = ok && encOk;
+
+  // --- 4b. NORM: linear → log (DATA-encoding norm, diff colormap active) ----
+  A().changeNorm("log");
+  const normOk = await waitFor(() => B().norm === "log");
+  report(normOk, `NORM sync: A→log, B follows (B.norm=${B().norm})`);
+  ok = ok && normOk;
 
   // --- 5. back to split, then TONEMAP: srgb → aces (tonemap is split/blend) --
   A().changeCompareMode("split");

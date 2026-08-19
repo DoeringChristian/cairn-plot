@@ -333,3 +333,73 @@ per-lut k=3 luminance + mean cases (GPU `cairnReduceScalar` === cpu twin). Gates
 typecheck, 574 node tests (+8), all 23 parity harnesses green on real GPU,
 plot-inline bundles rebuilt + synced, gallery (27 types) clean. No schema/Python
 change (reduce is a view-local sync key like norm, not a descriptor kwarg).
+
+## Follow-up: compare pane on DISPLAY conventions — DONE (commit <sha>)
+
+The user reported the SLIDE view "still behaves differently, it seems to use the
+old conventions." The compare pane (`media-compare/GpuComparePane.tsx`) still had
+its own separate tone-map (slide/blend) + colormap (diff) toolbar buttons — the
+pre-registry pair — instead of the ONE DISPLAY menu the image panes adopted in
+Phase 3. Unified onto the display-encoding conventions.
+
+**1. ONE DISPLAY menu.** The pane's two mode-scoped buttons collapsed into ONE
+arity-gated DISPLAY menu (id `display`, aria-label "Display encoding" — the SAME
+as the image panes). New pure builder `compareDisplayToolbarButton`
+(`renderers/display-encoding.ts`, node-tested): the compare pane's two encoding
+FACES are structurally exclusive BY MODE (that IS the arity gating), so only one
+section ever applies — slide/blend show the LIGHT curves (Linear·sRGB·Gamma·
+Reinhard·ACES); diff shows `None` + the colormap LUTs (the scalar error map is a
+DATA encoding). The `normal` remap is dropped from the light face (the compose
+shader assembles with `remaps:false`, so it was a latent no-op — a menu-only
+change, no rendered-output change).
+
+**2. Second-row controls from the manifest.** EV/OFF/PK/γ already gated the way
+the image panes do (curves declare exposure/offset; PK on an engaged HDR surface;
+γ for the Gamma curve). ADDED the DATA-encoding NORM picker (Lin·Log·Pow) as a
+second-row SEGMENTED control (`normSegment`, `rowSegments`) — shown ONLY in diff
+mode while a colormap is active — plus the power-norm `exp` slider (reuses the γ
+slot). Reduce is hidden (the diff error map is k=1 scalar). min/max BOUNDS are
+NOT shown — see documented-remaining below.
+
+**3. Diff display honors NORM (was non-goal #2).** `renderDiffDisplay`
+(`engine/diff-engine.ts`) now threads `norm`/`normMin`/`normMax`/`gamma` through a
+NEW `u_norm` uniform (`@binding(20)`, packed exactly like image-engine's
+`u_bind9`) and calls the SAME `cairnDataIndex` (already in `LUT_FAMILY_WGSL`,
+already parity-proven) between the error `avg` and `cairnLutColor`. `norm:"linear"`
++ no bounds ⇒ `dataIdx == avg`, so the pre-follow-up diff colormap is byte-for-byte
+unchanged. Parity: `compare-pass.browser.ts` gained a diff-display norm case
+(GPU colormap index === CPU `computeDataIndex` twin, per norm: linear/log/power@2/
+power@0.5).
+
+**4. Settings bus.** The pane now carries the ONE `encoding` key
+(`deriveCompareEncodingId` — a lut id in diff+colormap, else the light curve;
+always a valid registry id so an image-pane peer never lands on a non-registry
+token) + the `norm` key, alongside the legacy `colormap`/`tonemap` keys (kept for
+back-compat). Apply honors incoming `encoding` (lut → diff colormap face; curve →
+slide/blend face) plus the legacy keys. HOME resets norm to linear.
+
+**5. Harnesses.** `gpu-compare-menus` clicks the unified "Display encoding" menu
+(was "Colormap"); `compare-settings-sync` gained an `encoding`-follows + a NORM
+sync assertion (existing change*/getters kept). `gpu-compare-split-numbers` /
+`selection-stage` needed no change (no compare-menu-label dependency;
+selection-stage already probes the unified "Display encoding" button). Behavior
+beyond the unification is untouched (split divider, [/]/arrow flip, metrics,
+captions, TEV readback).
+
+**DOCUMENTED-REMAINING (clean subset, not half-wired):**
+  - Diff **min/max BOUNDS**: the shader path is fully plumbed (`u_norm` carries
+    `boundsMin`/`boundsMax`/`boundsActive`, `renderDiffDisplay` accepts
+    `normMin`/`normMax`), but the compare descriptor seeds no `colorRange`, so no
+    bounds UI is shown yet. Threading a `colorRange` prop into `cp.Compare` (like
+    the image panes' `shared.colorRange`) would light it up with zero engine work.
+  - `use-image-controller.ts`'s `colormapToolbarButton`/`tonemapToolbarButton` (+
+    `TONEMAP_MENU_OPTIONS`) are now UNUSED (the compare pane was their last
+    consumer) — dead exports left in place for a cleanup pass, not removed here.
+  - Cross-MODE/-type sync nuance (a curve-face patch clearing a diff-face colormap
+    via the derived `colormap:"none"`) matches the image panes' convention; the
+    full compare↔compare sync polish is task #87.
+
+Gates: typecheck, 580 node tests (+6 compare-display-encoding), all 23 parity
+harnesses green on real GPU (Apple metal-3), plot-inline bundles rebuilt + synced,
+gallery (27 types) clean. No schema/Python change (encoding/norm are view-local
+sync keys, not descriptor kwargs).

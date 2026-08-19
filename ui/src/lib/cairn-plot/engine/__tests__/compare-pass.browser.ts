@@ -25,7 +25,8 @@ import { renderCompose, renderImage, computeMetrics, type CompareParams, type Im
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
 import { getDiffKernel } from "../kernels";
 import { applyExposure, outputEncode, type RgbTriple } from "../../image/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings";
+import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, type NormMode } from "../../image/encodings";
+import { colormapFloatLUT } from "../../colormaps";
 import type { Device, Texture } from "../types";
 
 function report(pass: boolean, message: string): void {
@@ -205,6 +206,63 @@ async function runDiffCase(device: Device, kernelId: string): Promise<boolean> {
   return allOk;
 }
 
+// ---- diff DISPLAY colormap NORM parity (compare-pane-on-DISPLAY follow-up) --
+// `renderDiffDisplay` now threads the DATA-encoding NORM (linear/log/power)
+// through the SAME `cairnDataIndex` the image LUT path uses, before the colormap
+// LUT. Prove the GPU diff-display colormap index === the CPU `computeDataIndex`
+// twin: build an ABSOLUTE-error diff (unit range), blit it through a viridis LUT
+// (cmapMode `linear`, nearest) with each norm, and compare each pixel to a
+// hand-rolled reference (clamp → avg → computeDataIndex → nearest float-LUT tap).
+const VIRIDIS_LUT = colormapFloatLUT("viridis");
+/** Nearest float-LUT tap — mirrors the WGSL `cairnLutSampleNearest`
+ *  (round-half-up index), reading the SAME `colormapFloatLUT` the GPU binds. */
+function lutNearest(t: number): [number, number, number] {
+  const row = Math.min(255, Math.max(0, Math.floor(clamp01(t) * 255 + 0.5)));
+  return [VIRIDIS_LUT[row * 4]!, VIRIDIS_LUT[row * 4 + 1]!, VIRIDIS_LUT[row * 4 + 2]!];
+}
+async function runDiffDisplayNormCase(device: Device, norm: NormMode, gamma: number): Promise<boolean> {
+  const kernelId = "absolute"; // unit displayRange → disp = clamp01(raw)
+  const texRef = buildRowTexture(device, PIXELS_REF);
+  const texFg = buildRowTexture(device, PIXELS_FG);
+  const result = computeDiff(device, texRef, texFg, kernelId);
+  const target = device.createTexture(WIDTH, 1, "rgba8unorm");
+  renderDiffDisplay(device, target, result, "unit", {
+    uv: uvFull,
+    cmapMode: "linear",
+    colormap: VIRIDIS_LUT,
+    filter: "nearest",
+    norm,
+    ...(norm === "power" ? { gamma } : {}),
+  });
+  const out = await device.readback(target);
+  texRef.destroy();
+  texFg.destroy();
+  result.destroy();
+  target.destroy();
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[diff-display/norm=${norm}] readback should be Uint8Array`);
+    return false;
+  }
+  const p = { ...DEFAULT_ENCODE_PARAMS, norm, gamma };
+  let allOk = true;
+  for (let i = 0; i < WIDTH; i++) {
+    let avg = 0;
+    for (let c = 0; c < 3; c++) avg += clamp01(Math.abs(PIXELS_REF[i]![c]! - PIXELS_FG[i]![c]!));
+    avg /= 3;
+    const idx = computeDataIndex(avg, p);
+    const rgb = lutNearest(idx);
+    for (let c = 0; c < 3; c++) {
+      const d = Math.abs(out[i * 4 + c]! - byteOf(rgb[c]!));
+      if (d > 2) {
+        allOk = false;
+        report(false, `[diff-display/norm=${norm}] px[${i}].ch[${c}] expected=${byteOf(rgb[c]!)} actual=${out[i * 4 + c]}`);
+      }
+    }
+  }
+  report(allOk, `[diff-display/norm=${norm}${norm === "power" ? `@${gamma}` : ""}] GPU colormap index === cpu computeDataIndex twin`);
+  return allOk;
+}
+
 function cpuMetrics(a: number[][], b: number[][]): { mse: number; psnr: number; mae: number } {
   let sumSq = 0;
   let sumAbs = 0;
@@ -307,6 +365,12 @@ async function runAll(device: Device): Promise<boolean> {
   for (const k of ["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]) {
     ok = (await runDiffCase(device, k)) && ok;
   }
+  // Diff-display colormap NORM parity (linear must reproduce the pre-follow-up
+  // behavior; log/power exercise the newly-threaded cairnDataIndex).
+  ok = (await runDiffDisplayNormCase(device, "linear", 1)) && ok;
+  ok = (await runDiffDisplayNormCase(device, "log", 1)) && ok;
+  ok = (await runDiffDisplayNormCase(device, "power", 2)) && ok;
+  ok = (await runDiffDisplayNormCase(device, "power", 0.5)) && ok;
   ok = (await runMetricsCase(device)) && ok;
   ok = (await runSwapGuardCase(device, "split@0.25", { ...BASE, mode: "split", split: 0.25, alpha: 0.5 })) && ok;
   ok = (await runSwapGuardCase(device, "blend@0.25", { ...BASE, mode: "blend", split: 0.5, alpha: 0.25 })) && ok;

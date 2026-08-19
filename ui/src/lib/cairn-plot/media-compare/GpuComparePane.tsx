@@ -68,13 +68,19 @@ import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
 import type { Device, Surface, Texture } from "../engine/types";
 import { colormapFloatLUT } from "../colormaps";
-import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
-import { colormapToolbarButton, tonemapToolbarButton } from "../renderers/use-image-controller";
+import type { ToolbarButtonSpec, ToolbarSegmentSpec } from "../controls/ToolbarConfig";
+import {
+  compareDisplayToolbarButton,
+  deriveCompareEncodingId,
+  normSegment,
+} from "../renderers/display-encoding";
+import { getEncoding, type NormMode } from "../image/encodings";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
   aliasPeakHint,
   tonemapHasGamma,
+  SDR_TONEMAP_OPERATORS,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MIN,
   EXTENDED_TONEMAP_PEAK_MAX,
@@ -85,6 +91,13 @@ import {
   TONEMAP_GAMMA_STEP,
   type TonemapOperator,
 } from "../image/tonemap";
+
+/** The LIGHT curves the compare pane's DISPLAY menu offers in slide/blend (the
+ *  composite is light → tone-map curves; the `normal` remap is excluded, the
+ *  compose path assembles with `remaps:false`, so it was a latent no-op there). */
+const COMPARE_LIGHT_CURVES: readonly string[] = SDR_TONEMAP_OPERATORS.filter(
+  (id) => getEncoding(id)?.kind === "curve",
+);
 import { loadImageData } from "../image";
 import { useSyncedImageSettings } from "../renderers/use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
@@ -493,6 +506,17 @@ export default function GpuComparePane({
     if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
   }, [gammaProp, setTonemapGamma]);
 
+  // DATA-encoding NORM (the compare-pane-on-DISPLAY follow-up) — the nonlinear
+  // reshape of the diff colormap's error index (linear/log/power), the SAME norm
+  // the image LUT path uses (`computeDataIndex`/`cairnDataIndex`). Meaningful only
+  // in DIFF mode while a colormap is active (the scalar error map IS a DATA
+  // encoding); ignored in slide/blend (light) and for the raw "none" display. The
+  // `power` exponent reuses the γ slider/state (`tonemapGamma`), free on the lut
+  // path. View-local, display-only (re-blits the cached diff — never a recompute);
+  // HOME resets it to linear. BOUNDS (min/max) are a documented-remaining item —
+  // the compare descriptor seeds no `colorRange`, so no bounds skin here yet.
+  const [norm, setNorm] = useState<NormMode>("linear");
+
   // HOME / double-click reset restores every VIEW-LOCAL selection to its
   // descriptor default — mode, colormap AND kernel — alongside the shell's own
   // viewport + EV/OFFSET reset (user requirement: home = fully neutral pane).
@@ -512,6 +536,7 @@ export default function GpuComparePane({
     // §A: HOME also clears the unified tone-map selection (operator + P + γ) so a
     // single reset fully neutralizes the pane, matching the single-image pane.
     setTonemapOverride(null);
+    setNorm("linear"); // DATA-encoding norm back to linear (diff colormap)
     peakMeta.reset();
     gammaMeta.reset();
   }, [
@@ -530,6 +555,7 @@ export default function GpuComparePane({
     colormapMeta.isModified ||
     diffKernelMeta.isModified ||
     tonemapModified ||
+    norm !== "linear" ||
     peakMeta.isModified ||
     gammaMeta.isModified;
 
@@ -561,9 +587,20 @@ export default function GpuComparePane({
   // -----------------------------------------------------------------------
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
+      // The unified `encoding` key is primary (a peer — image OR compare — that
+      // publishes it): a lut id sets the diff colormap face, a curve id sets the
+      // slide/blend tone-map face. The legacy `colormap`/`tonemap` keys are then
+      // applied for back-compat (a pre-registry peer publishes only those; image
+      // panes publish all three, which stay consistent).
+      if (patch.encoding !== undefined) {
+        const kind = getEncoding(patch.encoding)?.kind;
+        if (kind === "lut") setColormapState(patch.encoding as Colormap);
+        else if (kind === "curve") setTonemapOverride(patch.encoding as TonemapOperator);
+      }
       // Shared display keys — image panes apply these too (raw setters, no echo).
       if (patch.colormap !== undefined) setColormapState(patch.colormap as Colormap);
       if (patch.tonemap !== undefined) setTonemapOverride(patch.tonemap as TonemapOperator);
+      if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
@@ -590,8 +627,16 @@ export default function GpuComparePane({
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
+      // The ONE `encoding` id (derived from the pane's active mode face) + the
+      // derived colormap/tonemap so a pre-registry peer still follows the look.
+      encoding: deriveCompareEncodingId(
+        compareMode === "diff" ? "scalar" : "light",
+        effectiveTonemap,
+        colormapState,
+      ),
       colormap: colormapState,
       tonemap: effectiveTonemap,
+      norm,
       tonemapGamma,
       peak,
       exposureEV: displayEV,
@@ -602,13 +647,14 @@ export default function GpuComparePane({
       blendAlpha,
     }),
     [
+      compareMode,
       colormapState,
       effectiveTonemap,
+      norm,
       tonemapGamma,
       peak,
       displayEV,
       displayOffset,
-      compareMode,
       diffKernel,
       splitPosition,
       blendAlpha,
@@ -641,16 +687,30 @@ export default function GpuComparePane({
   const changeColormap = useCallback(
     (id: Colormap) => {
       setColormapState(id);
-      publishSettings({ colormap: id });
+      // Diff (scalar) face: publish the unified `encoding` (the lut id, or the
+      // curve when "none") + the derived colormap/tonemap for back-compat.
+      publishSettings({
+        encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
+        colormap: id,
+        tonemap: effectiveTonemap,
+      });
     },
-    [setColormapState, publishSettings],
+    [setColormapState, publishSettings, effectiveTonemap],
   );
   const changeTonemap = useCallback(
     (id: TonemapOperator) => {
       setTonemapOverride(id);
-      publishSettings({ tonemap: id });
+      // Slide/blend (light) face: the active encoding IS the curve.
+      publishSettings({ encoding: id, colormap: "none", tonemap: id });
     },
     [setTonemapOverride, publishSettings],
+  );
+  const changeNorm = useCallback(
+    (mode: NormMode) => {
+      setNorm(mode);
+      publishSettings({ norm: mode });
+    },
+    [publishSettings],
   );
   const changePeak = useCallback(
     (v: number) => {
@@ -717,17 +777,21 @@ export default function GpuComparePane({
         changeDiffKernel(id);
       },
     });
-    const menus: ToolbarButtonSpec[] = [modeMenu];
-    if (compareMode === "diff") {
-      menus.push(colormapToolbarButton(colormapState, (id) => changeColormap(id as Colormap)));
-    } else {
-      // §A: split/blend get the SAME unified 5-operator TONEMAP menu the
-      // single-image pane has (the PEAK slider is the HDR mode — see
-      // extraSliders). Diff shows the colormap menu instead (error values aren't
-      // light, so they route through colormaps, not a tone-map operator).
-      menus.push(tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)));
-    }
-    return menus;
+    // The ONE unified DISPLAY-encoding menu (the compare-pane-on-DISPLAY
+    // follow-up) — replaces the separate tone-map (slide/blend) + colormap (diff)
+    // buttons with the SAME menu id/title the image panes use. Mode-dependent
+    // content (structural exclusivity by mode = arity gating): slide/blend show
+    // the LIGHT curves; diff shows None + the colormap LUTs (the scalar error
+    // map's data encoding). Never co-shown, so each face is a single section.
+    const displayMenu = compareDisplayToolbarButton({
+      mode: compareMode === "diff" ? "scalar" : "light",
+      curveIds: COMPARE_LIGHT_CURVES,
+      curveValue: effectiveTonemap,
+      lutValue: colormapState,
+      onSelectCurve: (id) => changeTonemap(id as TonemapOperator),
+      onSelectLut: (id) => changeColormap(id as Colormap),
+    });
+    return [modeMenu, displayMenu];
   }, [compareMode, diffKernel, colormapState, effectiveTonemap, changeDiffKernel, changeCompareMode, changeColormap, changeTonemap]);
 
   // TEV per-side source pixels. u8 sides keep their raw `ImageData`; FLOAT sides
@@ -1145,6 +1209,12 @@ export default function GpuComparePane({
           // metric BEFORE the LUT), display-only — never a diff recompute.
           exposureEV: displayEV,
           offset: displayOffset,
+          // DATA-encoding NORM (the compare-pane-on-DISPLAY follow-up): reshape the
+          // error index through the SAME cairnDataIndex the image LUT path uses.
+          // `power` reuses the γ state as its exponent. Bounds (min/max) are a
+          // documented-remaining item (the compare descriptor seeds no colorRange).
+          norm,
+          gamma: tonemapGamma,
         });
       } else {
         // UNIFIED tone-map (§A): split/blend run the SAME operator × PEAK × surface
@@ -1207,6 +1277,7 @@ export default function GpuComparePane({
     hdrExposures,
     diffCmapMode,
     diffColormap,
+    norm,
     imageUrl,
     baselineUrl,
     imageFloat,
@@ -1521,6 +1592,20 @@ export default function GpuComparePane({
       get colormap() {
         return colormapState;
       },
+      // The ONE unified encoding id (derived from the active mode face) + the
+      // DATA-encoding norm — the new DISPLAY-convention state (compare-pane-on-
+      // DISPLAY follow-up), so the settings-sync harness can drive/read them.
+      get encodingId() {
+        return deriveCompareEncodingId(
+          compareMode === "diff" ? "scalar" : "light",
+          effectiveTonemap,
+          colormapState,
+        );
+      },
+      get norm() {
+        return norm;
+      },
+      changeNorm,
       get diffKernel() {
         return diffKernel;
       },
@@ -1569,6 +1654,7 @@ export default function GpuComparePane({
     effectiveTonemap,
     hdrEngaged,
     colormapState,
+    norm,
     diffKernel,
     splitPosition,
     blendAlpha,
@@ -1580,6 +1666,7 @@ export default function GpuComparePane({
     changeDiffKernel,
     changeColormap,
     changeTonemap,
+    changeNorm,
     changeExposure,
     changeSplit,
   ]);
@@ -1710,6 +1797,16 @@ export default function GpuComparePane({
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
       leadingMenus={leadingMenus}
+      // SECOND-ROW segmented controls (controls-row-separation directive, matching
+      // the image panes): the DATA-encoding NORM picker (Lin·Log·Pow) lives in the
+      // second toolbar row alongside EV/OFF, NOT next to the DISPLAY menu. Shown
+      // ONLY in DIFF mode while a colormap is active (the scalar error map is a
+      // DATA encoding then); a raw "none" diff / slide / blend has no norm.
+      rowSegments={
+        (compareMode === "diff" && colormapState !== "none"
+          ? [normSegment(norm, changeNorm)]
+          : []) as ToolbarSegmentSpec[]
+      }
       // EXPOSURE / OFFSET sliders: in split/blend they adjust the compose pass;
       // in DIFF they adjust the colormap SENSITIVITY (value * 2^EV + offset fed
       // to the LUT, `renderDiffDisplay`'s `exposureEV`/`offset`). Either way it's
@@ -1752,6 +1849,25 @@ export default function GpuComparePane({
                 label: "γ",
                 title:
                   "Display gamma γ for the Gamma transfer — display = clamp(value)^(1/γ), tev-style. Default 2.2 (close to sRGB, not identical). Double-click to type a value.",
+                min: TONEMAP_GAMMA_MIN,
+                max: TONEMAP_GAMMA_MAX,
+                step: TONEMAP_GAMMA_STEP,
+                value: tonemapGamma,
+                onChange: changeGamma,
+                format: (v: number) => v.toFixed(1),
+              },
+            ]
+          : []),
+        // POWER-norm exponent (the compare-pane-on-DISPLAY follow-up) — shown while
+        // the DIFF colormap's norm is `power`. REUSES the γ state (`tonemapGamma`,
+        // free on the lut path) exactly as the image LUT path does.
+        ...(compareMode === "diff" && colormapState !== "none" && norm === "power"
+          ? [
+              {
+                id: "gamma",
+                label: "exp",
+                title:
+                  "Power-norm exponent — the colormap index becomes clamp01(t)^exp. Double-click to type a value.",
                 min: TONEMAP_GAMMA_MIN,
                 max: TONEMAP_GAMMA_MAX,
                 step: TONEMAP_GAMMA_STEP,
