@@ -162,3 +162,36 @@ log/power + min/max + the `shared.colorRange` double-apply audit remain); Phase 
 absorbs `tonemap.ts`, deletes the per-pane switches, and generates schema/Python
 from the registry (`use-image-controller`'s `colormapToolbarButton`/
 `tonemapToolbarButton` survive ONLY for the compare pane).
+
+## Phase 4 — DONE (commit f53f381)
+
+NORMS + BOUNDS landed on the DATA (lut) encodings. The lut manifest now declares
+`exposure`/`offset`/`min`/`max`/`norm`; a NEW pure `computeDataIndex` (registry) is
+the CPU source of truth — the WGSL twin `cairnDataIndex` (in `LUT_FAMILY_WGSL`,
+new uniform `u_bind9`) is kept byte-parallel and the `encoding-registry` parity
+harness proves it (log / power2 / power0.5 / bounds / bounds+log, per lut, GPU ===
+`enc.cpu`). Norm = the nonlinear reshape of the normalized index: `linear`
+(identity), `log` (a log squeeze of the index clamped to `LOG_NORM_EPS=1e-4`, so
+non-positive floors to the ramp bottom — the documented convention), `power`
+(`clamp01(t)^exp`; the exponent REUSES the `gamma` param slot — free on the lut
+path, no new uniform). A tiny lut-only `normToolbarButton` (Linear · Log · Power)
+shows the picker; the power exponent rides the reused γ slider.
+**min/max UI decision (v1):** lut encodings declare BOTH skins but the UI shows
+EV/OFF by DEFAULT and min/max sliders only when the descriptor seeds a
+`colorRange` (avoids slider overload) — when the bounds skin is engaged EV/OFF are
+hidden AND neutralized so the two affines are never composed (single-application).
+**colorRange audit outcome:** `shared.colorRange` reaches image panes as a prop
+(LeafView `mergedProps`) but was — until Phase 4 — a DEAD prop for images (only 3D
+viewports + the grid Colorbar read it), so NO pre-existing double-apply existed.
+Phase 4 makes it the seed for the min/max bounds skin; the single-application
+invariant (bounds XOR exposure/offset, never both) is enforced by the
+`boundsEngaged` gate in both panes + the `computeDataIndex` bounds branch (which
+ignores exposure/offset), and pinned by a node test
+(`registry.test.ts` "SINGLE-APPLICATION invariant"). No Python/schema change (the
+existing `SharedProps.colorRange` / `cp.Shared(colorRange=…)` surface flows
+through unchanged — no new kwargs invented). Gates: typecheck, 562 node tests, all
+23 parity harnesses, schema-in-sync, gallery (27 types) green.
+Phase 5 needs to know: norms/bounds are wired on the FLOAT-LUT path only — the
+8-bit SDR false-color colormap (baked CPU-side via `applyColormap`) and the compare
+pane's diff-display do NOT yet honor norm/bounds; `renderCompose`'s dead `isScalar`
+branch still lacks the `u_bind9` uniform (fine — every caller passes `isScalar:false`).

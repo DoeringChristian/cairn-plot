@@ -110,8 +110,8 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import { displayToolbarButton, usePaneEncoding } from "./display-encoding";
-import { getEncoding } from "../image/encodings";
+import { displayToolbarButton, normToolbarButton, usePaneEncoding } from "./display-encoding";
+import { getEncoding, type NormMode } from "../image/encodings";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
@@ -476,6 +476,44 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
 
+  // DATA-ENCODING NORM + BOUNDS (Phase 4). `norm` is the nonlinear reshape of a
+  // colormap LUT's index (linear/log/power) — shown only while a lut is the
+  // active encoding; the `power` exponent REUSES the γ slider/state above
+  // (`tonemapGamma`), free on the lut path. `colorRange` (the grid-shared
+  // descriptor prop — `shared.colorRange` → LeafView mergedProps) SEEDS the
+  // min/max BOUNDS skin: the ALTERNATIVE to EV/OFF (bounds-first, data-speak).
+  // The two are skins over ONE affine and are NEVER composed — when bounds are
+  // active EV/OFF are hidden and inert (single-application; see the shader's
+  // cairnDataIndex + the colorRange audit note in the design doc). Absent
+  // `colorRange` → EV/OFF as before, bounds inactive.
+  const propColorRange = (props as { colorRange?: [number, number] }).colorRange;
+  const [norm, setNorm] = useState<NormMode>("linear");
+  const boundsSeed = useResettableState<[number, number] | null>(propColorRange ?? null);
+  const [colorBounds, setColorBounds, boundsMeta] = boundsSeed;
+  // Re-seed on descriptor change (controlled surface, mirrors the peak/γ effects).
+  useEffect(() => {
+    setColorBounds(propColorRange ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propColorRange?.[0], propColorRange?.[1]]);
+  // The bounds skin is engaged iff a lut is active AND a finite colorRange seeds
+  // it (min<max). Curves/remaps never use bounds.
+  const boundsEngaged =
+    enc.isLut &&
+    !!colorBounds &&
+    Number.isFinite(colorBounds[0]) &&
+    Number.isFinite(colorBounds[1]);
+  // Slider travel for the MIN/MAX bounds — derived from the DESCRIPTOR seed (not
+  // the live value) so the track doesn't shift under a drag. Each endpoint gets
+  // ±one span of headroom around the seeded [lo,hi].
+  const boundsRange = useMemo(() => {
+    const seed = propColorRange ?? [0, 1];
+    const lo = seed[0];
+    const hi = seed[1];
+    const span = hi > lo ? hi - lo : 1;
+    return { lo, hi, span };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propColorRange?.[0], propColorRange?.[1]]);
+
   // -----------------------------------------------------------------------
   // Multi-viewport SELECTION: display-settings sync. When this pane joins a ≥2
   // selection (`props.settingsSyncGroupId` set), a local control change
@@ -496,8 +534,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
+      if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
+      if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
+        setColorBounds([patch.colorMin, patch.colorMax]);
+      }
     },
-    [enc, setTonemapGamma, setPeak],
+    [enc, setTonemapGamma, setPeak, setColorBounds],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
@@ -510,8 +552,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       peak,
       exposureEV: displayEV,
       offset: displayOffset,
+      norm,
+      ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
     }),
-    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
+    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, norm, colorBounds],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -558,6 +602,20 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       publishSettings({ tonemapGamma: v });
     },
     [setTonemapGamma, publishSettings],
+  );
+  const changeNorm = useCallback(
+    (mode: NormMode) => {
+      setNorm(mode);
+      publishSettings({ norm: mode });
+    },
+    [publishSettings],
+  );
+  const changeBounds = useCallback(
+    (next: [number, number]) => {
+      setColorBounds(next);
+      publishSettings({ colorMin: next[0], colorMax: next[1] });
+    },
+    [setColorBounds, publishSettings],
   );
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
@@ -940,17 +998,28 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // holds display sRGB), so operator/gamma/hdrOut are moot; the LUT table comes
     // from the shared `colormapFloatLUT`, the SAME the diff blit binds.
     const hdrColormapActive = hdrMode && hdrColormap !== "none";
+    // Phase 4 DATA-encoding skins (float LUT path only): when the min/max BOUNDS
+    // skin is engaged (`boundsEngaged`, seeded from `colorRange`), it is the SOLE
+    // affine — EV/OFF are held NEUTRAL so the two skins never double-apply
+    // (single-application; see the colorRange audit). The `power` norm's exponent
+    // reuses the γ uniform (gamma), free on the lut path; other norms leave it 1.
+    const cmapExposure = boundsEngaged ? 0 : baseExposure + displayEV;
+    const cmapOffset = boundsEngaged ? 0 : baseOffset + displayOffset;
     const params: ImageParams = hdrColormapActive
       ? {
-          exposureEV: baseExposure + displayEV,
-          offset: baseOffset + displayOffset,
+          exposureEV: cmapExposure,
+          offset: cmapOffset,
           operator: "linear",
-          gamma: 1,
+          gamma: norm === "power" ? tonemapGamma : 1,
           isScalar: true,
           colormap: colormapFloatLUT(hdrColormap as Exclude<Colormap, "none">),
           hdrOut: false,
           peak: rt.peak,
           srgbDecode: false,
+          norm,
+          ...(boundsEngaged && colorBounds
+            ? { normMin: colorBounds[0], normMax: colorBounds[1] }
+            : {}),
           uv,
           filter,
         }
@@ -996,7 +1065,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, norm, colorBounds, boundsEngaged, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -1154,13 +1223,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
         displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
+        // NORM picker (Phase 4) — shown ONLY while a colormap LUT is the active
+        // encoding (a norm is the data-encoding's nonlinear domain mapping; never
+        // applicable to a curve). Minimal 3-way Linear · Log · Power dropdown.
+        ...(enc.isLut ? [normToolbarButton(norm, changeNorm)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths). Gated by the ACTIVE encoding's param
       // manifest: shown for curves + luts (which declare exposure/offset), hidden
       // for the paramless `normal` remap.
       displayAdjust={
-        enc.hasParam("exposure")
+        // EV/OFF are the DEFAULT sensitivity skin — hidden when the min/max
+        // BOUNDS skin is engaged (they are alternatives over ONE affine, never
+        // both; the bounds sliders below replace them). Also hidden for the
+        // paramless `normal` remap (no exposure param).
+        enc.hasParam("exposure") && !boundsEngaged
           ? {
               exposureEV: displayEV,
               offset: displayOffset,
@@ -1206,6 +1283,53 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               },
             ]
           : []),
+        // POWER-norm exponent (Phase 4) — shown while a lut's norm is `power`.
+        // REUSES the γ state/slot (`tonemapGamma`, free on the lut path), so the
+        // exponent carries across curve↔lut flips like every other named param.
+        ...(enc.isLut && norm === "power"
+          ? [
+              {
+                id: "gamma",
+                label: "exp",
+                title:
+                  "Power-norm exponent — the colormap index becomes clamp01(t)^exp. Double-click to type a value.",
+                min: TONEMAP_GAMMA_MIN,
+                max: TONEMAP_GAMMA_MAX,
+                step: TONEMAP_GAMMA_STEP,
+                value: tonemapGamma,
+                onChange: changeGamma,
+                format: (v: number) => v.toFixed(1),
+              },
+            ]
+          : []),
+        // MIN/MAX BOUNDS sliders (Phase 4) — the bounds-first, data-speak skin,
+        // shown INSTEAD of EV/OFF when the descriptor `colorRange` seeds a lut.
+        ...(boundsEngaged && colorBounds
+          ? [
+              {
+                id: "colorMin",
+                label: "min",
+                title: "Colormap domain minimum — the data value that maps to the bottom of the ramp.",
+                min: boundsRange.lo - boundsRange.span,
+                max: boundsRange.hi,
+                step: boundsRange.span / 100,
+                value: colorBounds[0],
+                onChange: (v: number) => changeBounds([v, colorBounds[1]]),
+                format: (v: number) => v.toPrecision(3),
+              },
+              {
+                id: "colorMax",
+                label: "max",
+                title: "Colormap domain maximum — the data value that maps to the top of the ramp.",
+                min: boundsRange.lo,
+                max: boundsRange.hi + boundsRange.span,
+                step: boundsRange.span / 100,
+                value: colorBounds[1],
+                onChange: (v: number) => changeBounds([colorBounds[0], v]),
+                format: (v: number) => v.toPrecision(3),
+              },
+            ]
+          : []),
       ]}
       // DEEP depth-window sliders + region-select (HDR deep sources only). Their
       // reset/modified fold into the colormap/tonemap/peak ones so HOME clears all.
@@ -1224,6 +1348,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         enc.resetEncoding();
         peakMeta.reset();
         gammaMeta.reset();
+        setNorm("linear"); // DATA-encoding norm back to linear
+        boundsMeta.reset(); // min/max back to the descriptor colorRange seed
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
@@ -1231,6 +1357,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         enc.encodingModified ||
         peakMeta.isModified ||
         gammaMeta.isModified ||
+        norm !== "linear" ||
+        boundsMeta.isModified ||
         deepFlatten.isModified ||
         !!props.channelModified
       }

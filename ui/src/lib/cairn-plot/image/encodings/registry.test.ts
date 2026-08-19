@@ -16,6 +16,10 @@ import {
   getEncoding,
   OPERATOR_ID,
   DEFAULT_ENCODE_PARAMS,
+  computeDataIndex,
+  boundsActive,
+  LOG_NORM_EPS,
+  NORM_ID,
   type ParamName,
   type EncodeParams,
 } from "./index.ts";
@@ -134,7 +138,12 @@ test("lut entries: kind lut, arity [1], needsLut, lutName, sensitivity params", 
     assert.equal(e.needsLut, true, `${e.id} lut must set needsLut`);
     assert.equal(typeof e.lutName, "string", `${e.id} lut must reference a table`);
     assert.ok(e.lutName!.length > 0, `${e.id} lut has empty lutName`);
-    assert.deepEqual(e.params, ["exposure", "offset"], `${e.id} lut declares only sensitivity params (Phase 2)`);
+    // Phase 4: sensitivity (exposure/offset) + bounds (min/max) + norm.
+    assert.deepEqual(
+      e.params,
+      ["exposure", "offset", "min", "max", "norm"],
+      `${e.id} lut declares sensitivity + bounds + norm params (Phase 4)`,
+    );
   }
 });
 
@@ -150,4 +159,77 @@ test("lut cpu twins return finite display triples in [0,1] across the scalar ran
       }
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4 — norms + bounds (computeDataIndex, the shared CPU source of truth the
+// WGSL cairnDataIndex mirrors). GPU↔CPU byte parity is proven by the browser
+// harness; these pin the math + the single-application invariant in plain Node.
+// ---------------------------------------------------------------------------
+
+test("NORM_ID ids are the stable {linear:0, log:1, power:2}", () => {
+  assert.deepEqual(NORM_ID, { linear: 0, log: 1, power: 2 });
+});
+
+test("linear norm is the identity (index === scalar; unclamped — LUT clamps)", () => {
+  const p: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, norm: "linear" };
+  for (const s of [-0.5, 0, 0.3, 0.5, 1, 1.7]) {
+    assert.equal(computeDataIndex(s, p), s, `linear norm changed ${s}`);
+  }
+  // Unset norm behaves as linear (back-compat with the Phase-2 default).
+  assert.equal(computeDataIndex(0.42, { ...DEFAULT_ENCODE_PARAMS, norm: undefined }), 0.42);
+});
+
+test("log norm: monotone, maps [eps,1]→[0,1], non-positive floors to 0", () => {
+  const p: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, norm: "log" };
+  assert.equal(computeDataIndex(LOG_NORM_EPS, p), 0, "eps → 0");
+  assert.ok(Math.abs(computeDataIndex(1, p) - 1) < 1e-9, "1 → 1");
+  // Non-positive inputs clamp to the eps floor → the bottom of the ramp.
+  assert.equal(computeDataIndex(0, p), 0, "0 floors to 0");
+  assert.equal(computeDataIndex(-3, p), 0, "negative floors to 0");
+  // Strictly increasing across the ramp, and above-1 clamps to 1.
+  let prev = -1;
+  for (const s of [0.01, 0.1, 0.3, 0.6, 0.9, 1]) {
+    const v = computeDataIndex(s, p);
+    assert.ok(v > prev, `log not increasing at ${s}`);
+    assert.ok(v >= 0 && v <= 1, `log out of [0,1] at ${s}`);
+    prev = v;
+  }
+  assert.equal(computeDataIndex(1.5, p), 1, "above 1 clamps to 1");
+});
+
+test("power norm: clamp01(t)^gamma (exponent reuses the gamma slot)", () => {
+  const p2: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, norm: "power", gamma: 2 };
+  assert.ok(Math.abs(computeDataIndex(0.5, p2) - 0.25) < 1e-9, "0.5^2 = 0.25");
+  assert.equal(computeDataIndex(0, p2), 0);
+  assert.equal(computeDataIndex(1, p2), 1);
+  assert.equal(computeDataIndex(1.5, p2), 1, "clamps above 1 before the power");
+  // gamma <= 0 falls back to exponent 1 (identity on [0,1]).
+  const pBad: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, norm: "power", gamma: 0 };
+  assert.equal(computeDataIndex(0.3, pBad), 0.3);
+});
+
+test("bounds affine: (scalar-min)/(max-min); active iff BOTH set", () => {
+  // boundsActive predicate.
+  assert.equal(boundsActive({ ...DEFAULT_ENCODE_PARAMS }), false, "no bounds");
+  assert.equal(boundsActive({ ...DEFAULT_ENCODE_PARAMS, min: 0 }), false, "only min");
+  assert.equal(boundsActive({ ...DEFAULT_ENCODE_PARAMS, min: 0, max: 4 }), true, "both");
+  const p: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 };
+  assert.equal(computeDataIndex(2, p), 0, "min → 0");
+  assert.equal(computeDataIndex(6, p), 1, "max → 1");
+  assert.equal(computeDataIndex(4, p), 0.5, "midpoint → 0.5");
+  // Degenerate min===max → 0 (no divide-by-zero).
+  assert.equal(computeDataIndex(3, { ...DEFAULT_ENCODE_PARAMS, min: 5, max: 5 }), 0);
+});
+
+test("SINGLE-APPLICATION invariant: bounds skin ignores exposure/offset (never composed)", () => {
+  // The exposure/offset sensitivity is folded into `scalar` by the CALLER. When
+  // the bounds skin is active, computeDataIndex re-normalizes from the RAW value
+  // via (scalar-min)/(max-min) — it must NOT additionally apply exposure/offset
+  // (they are skins over the SAME affine; the shared.colorRange audit fix hinges
+  // on this). So the exposure/offset fields on the params are inert here.
+  const withEvOff: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, min: 0, max: 4, exposure: 3, offset: 0.9 };
+  const noEvOff: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, min: 0, max: 4 };
+  assert.equal(computeDataIndex(2, withEvOff), computeDataIndex(2, noEvOff), "bounds index must not read exposure/offset");
+  assert.equal(computeDataIndex(2, noEvOff), 0.5);
 });

@@ -54,6 +54,15 @@ export interface ImageSyncSettings {
   exposureEV?: number;
   offset?: number;
   interpolation?: string;
+  /** DATA-encoding norm (Phase 4) — the nonlinear reshape of a colormap LUT's
+   *  index (`linear`/`log`/`power`). Only meaningful while a lut encoding is
+   *  active; ignored otherwise. */
+  norm?: string;
+  /** DATA-encoding BOUNDS (Phase 4) — the min/max colorRange skin, synced so a
+   *  selection group shares one data window. Both set = the bounds affine is
+   *  engaged (else the exposure/offset skin). */
+  colorMin?: number;
+  colorMax?: number;
   // Compare-only fields — applied ONLY by compare panes (image panes ignore
   // them; their apply function reads none of these keys).
   /** Composited compare mode: "split" | "blend" | "diff". */

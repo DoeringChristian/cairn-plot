@@ -34,6 +34,30 @@ import { clamp01 } from "../../util/clamp.ts";
  *  manifest — UI gating only in Phase 1; the pipeline reads uniforms directly). */
 export type ParamName = "exposure" | "offset" | "peak" | "gamma" | "min" | "max" | "norm";
 
+/**
+ * Nonlinear domain mapping INSIDE a DATA (lut) encoding — the norm (Phase 4).
+ * NEVER applicable to curves (a tone-map operator is defined over scene-linear
+ * input; log/power before it is illegitimate — see the design doc): the norm
+ * lives INSIDE the data encoding, reshaping the normalized LUT index.
+ *   - `linear` — identity (the pre-Phase-4 behavior).
+ *   - `log`    — a logarithmic squeeze of the [0,1] index; non-positive inputs
+ *                clamp to {@link LOG_NORM_EPS} (documented floor convention).
+ *   - `power`  — `t^exponent`; the exponent REUSES the `gamma` param slot (free
+ *                on the lut path — the scalar short-circuits output-encode), so
+ *                Phase 4 adds no new uniform for it (documented reuse).
+ */
+export type NormMode = "linear" | "log" | "power";
+
+/** Small floor the `log` norm clamps its (normalized) index to, so a
+ *  non-positive value maps to the bottom of the ramp rather than -∞. Shared by
+ *  the CPU twin ({@link computeDataIndex}) and the WGSL twin (`cairnDataIndex`
+ *  in `./wgsl.ts`), so GPU/CPU stay byte-parallel. ln(1e-4) ≈ -9.21. */
+export const LOG_NORM_EPS = 1e-4;
+
+/** Numeric ids the norm modes pack into the GPU uniform (`u_bind9.x`) and the
+ *  WGSL `cairnDataIndex` dispatch keys on. Stable — do not renumber. */
+export const NORM_ID: Record<NormMode, number> = { linear: 0, log: 1, power: 2 };
+
 /** Menu section / structural family of an encoding.
  *  - `curve`: a light tone-map operator over scene-linear input (per-channel).
  *  - `lut`:   a data colormap (Phase 2) — binds a 256×1 texture.
@@ -53,6 +77,20 @@ export interface EncodeParams {
   offset: number;
   peak: number;
   gamma: number;
+  /**
+   * DATA (lut) bounds — the ALTERNATIVE domain parameterization to exposure/
+   * offset (bounds-first, data-speak). Active iff BOTH are set: the lut index
+   * then becomes the affine `(scalar - min)/(max - min)` INSTEAD of the
+   * exposure/offset sensitivity (the two are skins over the same affine — never
+   * composed; see the design doc + `computeDataIndex`). Unset (the common case)
+   * → the exposure/offset skin, i.e. the pre-Phase-4 behavior. Ignored by
+   * curves/remaps.
+   */
+  min?: number;
+  max?: number;
+  /** DATA (lut) norm — the nonlinear reshape of the normalized index. Unset =
+   *  `"linear"` (identity). `power` reuses `gamma` as its exponent. */
+  norm?: NormMode;
 }
 
 /** A single display encoding — the CPU twin (`cpu`) and its WGSL twin (`wgsl`)
@@ -108,8 +146,64 @@ export interface DisplayEncoding {
 
 /** Default params for a curve when a caller only cares about the operator (e.g.
  *  the non-peak `TONEMAP_OPERATORS` delegates) — peak defaults are guarded by the
- *  peak curves anyway. Callers that read `peak` always pass a real value. */
-export const DEFAULT_ENCODE_PARAMS: EncodeParams = { exposure: 0, offset: 0, peak: 4, gamma: 2.2 };
+ *  peak curves anyway. Callers that read `peak` always pass a real value. `norm`
+ *  defaults to `"linear"` and `min`/`max` are unset, so the pre-Phase-4 lut path
+ *  (exposure/offset sensitivity, linear ramp) is reproduced bit-for-bit. */
+export const DEFAULT_ENCODE_PARAMS: EncodeParams = {
+  exposure: 0,
+  offset: 0,
+  peak: 4,
+  gamma: 2.2,
+  norm: "linear",
+};
+
+/**
+ * Whether an {@link EncodeParams} carries an active DATA-bounds affine — the
+ * `min`/`max` skin is engaged iff BOTH are finite numbers. The exposure/offset
+ * skin (the default) is used otherwise. Single predicate so the CPU twin, the
+ * uniform packer (`image-engine.ts`), and the panes agree on ONE rule (pins the
+ * single-application invariant: bounds XOR exposure/offset, never both).
+ */
+export function boundsActive(p: EncodeParams): boolean {
+  return typeof p.min === "number" && Number.isFinite(p.min) && typeof p.max === "number" && Number.isFinite(p.max);
+}
+
+/**
+ * The DATA (lut) encoding's LUT INDEX from a scalar — the CPU SOURCE OF TRUTH
+ * (WGSL twin: `cairnDataIndex` in `./wgsl.ts`, kept byte-parallel). Two stages:
+ *
+ *  1. AFFINE → normalized index `t`. When {@link boundsActive} (min/max set):
+ *     `t = (scalar - min)/(max - min)` (bounds-first skin). Otherwise `t =
+ *     scalar` — the caller has ALREADY folded the exposure/offset sensitivity
+ *     into `scalar` (the two are skins over the SAME affine; using BOTH would
+ *     double-apply, which the UI + `boundsActive` guard prevent).
+ *  2. NORM → reshape `t` on the ramp:
+ *     - `linear`: `t` unchanged.
+ *     - `log`: a log squeeze of `t` clamped to `[LOG_NORM_EPS, 1]` (so any
+ *       non-positive value lands at the ramp floor — the documented convention).
+ *     - `power`: `clamp01(t)^gamma` — the exponent reuses the `gamma` slot
+ *       (free on the lut path); `gamma <= 0` falls back to 1.
+ *
+ * The result is fed to the LUT sampler, which clamps to `[0,1]` — so `linear`
+ * needs no pre-clamp here (matching the pre-Phase-4 `clamp01` at sample time).
+ */
+export function computeDataIndex(scalar: number, p: EncodeParams): number {
+  let t = scalar;
+  if (boundsActive(p)) {
+    const denom = (p.max as number) - (p.min as number);
+    t = denom !== 0 ? (scalar - (p.min as number)) / denom : 0;
+  }
+  const norm = p.norm ?? "linear";
+  if (norm === "log") {
+    const tc = t < LOG_NORM_EPS ? LOG_NORM_EPS : t > 1 ? 1 : t;
+    return (Math.log(tc) - Math.log(LOG_NORM_EPS)) / (0 - Math.log(LOG_NORM_EPS));
+  }
+  if (norm === "power") {
+    const g = p.gamma > 0 ? p.gamma : 1;
+    return Math.pow(clamp01(t), g);
+  }
+  return t;
+}
 
 const REGISTRY = new Map<string, DisplayEncoding>();
 

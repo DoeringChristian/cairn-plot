@@ -30,6 +30,8 @@ import {
   listEncodings,
   DEFAULT_ENCODE_PARAMS,
   type DisplayEncoding,
+  type EncodeParams,
+  type NormMode,
 } from "../../image/encodings/index";
 import { colormapFloatLUT } from "../../colormaps/lut";
 import type { ColormapName } from "../../colormaps/lut";
@@ -221,6 +223,70 @@ async function runLutCase(device: Device, enc: DisplayEncoding): Promise<boolean
   return ok;
 }
 
+/**
+ * Phase-4 DATA-encoding parity: the same SCALAR-image LUT render, but with a
+ * NORM (log/power) and/or a min/max BOUNDS affine engaged — proving the GPU
+ * `cairnDataIndex` (norm reshape + bounds) matches the CPU `computeDataIndex`
+ * twin the encoding's `cpu` threads through. `power` seeds the exponent via the
+ * `gamma` param (which the engine packs into the shared gamma uniform the lut
+ * path reuses); `bounds` passes `normMin`/`normMax` (the descriptor colorRange
+ * skin). Nearest filter + EV 0 → byte-exact (within 1/255).
+ */
+async function runLutNormCase(
+  device: Device,
+  enc: DisplayEncoding,
+  variant: string,
+  encParams: EncodeParams,
+): Promise<boolean> {
+  const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
+  const params: ImageParams = {
+    exposureEV: EV,
+    operator: "linear" as ImageOperator,
+    isScalar: true,
+    colormap: lut,
+    hdrOut: false,
+    uv: uvFull,
+    filter: "nearest",
+    norm: encParams.norm,
+    ...(encParams.norm === "power" ? { gamma: encParams.gamma } : {}),
+    ...(typeof encParams.min === "number" ? { normMin: encParams.min } : {}),
+    ...(typeof encParams.max === "number" ? { normMax: encParams.max } : {}),
+  };
+  const src = buildSrcTexture(device, SCALAR_PIXELS);
+  const target = device.createTexture(SCALAR_PIXELS.length, 1, "rgba8unorm");
+  renderImage(device, target, src, params);
+  const out = await device.readback(target);
+  src.destroy();
+  target.destroy();
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[${enc.id}/${variant}] expected Uint8Array readback, got ${out.constructor.name}`);
+    return false;
+  }
+  let ok = true;
+  for (let i = 0; i < SCALAR_PIXELS.length; i++) {
+    const exp = enc.cpu([applyExposure(SCALAR_PIXELS[i]![0]!, EV)], 1, encParams);
+    for (let c = 0; c < 3; c++) {
+      const eb = byteOf(exp[c]!);
+      const ab = out[i * 4 + c]!;
+      if (Math.abs(ab - eb) > 1) {
+        ok = false;
+        report(false, `[${enc.id}/${variant}] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
+      }
+    }
+  }
+  report(ok, `[${enc.id}/${variant}] (lut norm) GPU cairnDataIndex === cpu twin`);
+  return ok;
+}
+
+/** The norm/bounds variants exercised per lut (Phase 4). */
+const LUT_NORM_VARIANTS: Array<{ variant: string; params: EncodeParams }> = [
+  { variant: "log", params: { ...DEFAULT_ENCODE_PARAMS, norm: "log" as NormMode } },
+  { variant: "power2", params: { ...DEFAULT_ENCODE_PARAMS, norm: "power" as NormMode, gamma: 2 } },
+  { variant: "power0.5", params: { ...DEFAULT_ENCODE_PARAMS, norm: "power" as NormMode, gamma: 0.5 } },
+  { variant: "bounds", params: { ...DEFAULT_ENCODE_PARAMS, min: 0.2, max: 1.2 } },
+  { variant: "bounds+log", params: { ...DEFAULT_ENCODE_PARAMS, min: 0.2, max: 1.2, norm: "log" as NormMode } },
+];
+
 async function main(): Promise<void> {
   try {
     const device = await getSharedDevice();
@@ -231,6 +297,13 @@ async function main(): Promise<void> {
     for (const enc of encodings) {
       const ok = enc.kind === "lut" ? await runLutCase(device, enc) : await runEncodingCase(device, enc);
       if (!ok) allOk = false;
+      // Phase 4: every lut also runs the norm/bounds variants (cairnDataIndex).
+      if (enc.kind === "lut") {
+        for (const { variant, params } of LUT_NORM_VARIANTS) {
+          const vok = await runLutNormCase(device, enc, variant, params);
+          if (!vok) allOk = false;
+        }
+      }
     }
     report(allOk, `all ${encodings.length} encodings: GPU === registry cpu twin`);
     setOverallStatus(allOk);

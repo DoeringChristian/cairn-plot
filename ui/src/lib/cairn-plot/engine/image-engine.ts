@@ -40,7 +40,7 @@ import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../image/tonemap";
 // The operatorId uniform values are GENERATED from the display-encoding registry
 // (image/encodings) — the SAME source the shader's assembled `applyOperator`
 // dispatch keys on, so the CPU packing here and the GPU dispatch can never drift.
-import { OPERATOR_ID } from "../image/encodings/index.ts";
+import { OPERATOR_ID, NORM_ID, type NormMode } from "../image/encodings/index.ts";
 
 export type ImageOperator =
   | "linear"
@@ -69,6 +69,22 @@ export interface ImageParams {
   colormap?: Float32Array;
   /** When true, `rgb.r` (post-exposure) indexes `colormap` instead of being tone-mapped directly. */
   isScalar: boolean;
+  /**
+   * DATA-encoding norm (Phase 4) — the nonlinear reshape of the LUT index on the
+   * scalar/LUT path. Unset = `"linear"` (identity), so a colormap with no norm
+   * renders exactly as before. `"power"` reuses `gamma` as its exponent (the lut
+   * path leaves gamma otherwise unused). Ignored when `isScalar` is false.
+   */
+  norm?: NormMode;
+  /**
+   * DATA-encoding BOUNDS (Phase 4) — the ALTERNATIVE domain skin to exposure/
+   * offset: the LUT index becomes `(scalar - normMin)/(normMax - normMin)`.
+   * Engaged iff BOTH are finite numbers (seeded from the descriptor colorRange);
+   * otherwise the exposure/offset sensitivity is the sole affine (the two are
+   * skins over one affine — never composed). Ignored when `isScalar` is false.
+   */
+  normMin?: number;
+  normMax?: number;
   /** When true, run the EXTENDED output-encode (unclamped, origin-mirrored sRGB
    *  OETF / power curve) and write the transfer-encoded float to `target` — the
    *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
@@ -191,6 +207,19 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const peakVec = new Float32Array([params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT]);
   // u_bind8 = srgbDecode flag (default 0 = no decode; the HDR/float path).
   const srgbDecodeVec = new Float32Array([params.srgbDecode ? 1 : 0]);
+  // u_bind9 = DATA-encoding norm params (scalar/LUT path only): normMode id,
+  // boundsMin, boundsMax, boundsActive. boundsActive iff BOTH bounds are finite
+  // (the min/max skin; else the exposure/offset skin — never composed).
+  const normId = NORM_ID[params.norm ?? "linear"] ?? 0;
+  const hasBounds =
+    typeof params.normMin === "number" && Number.isFinite(params.normMin) &&
+    typeof params.normMax === "number" && Number.isFinite(params.normMax);
+  const normVec = new Float32Array([
+    normId,
+    hasBounds ? (params.normMin as number) : 0,
+    hasBounds ? (params.normMax as number) : 0,
+    hasBounds ? 1 : 0,
+  ]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -204,6 +233,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 6, resource: { uniform: offsetVec } },
       { binding: 7, resource: { uniform: peakVec } },
       { binding: 8, resource: { uniform: srgbDecodeVec } },
+      { binding: 9, resource: { uniform: normVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

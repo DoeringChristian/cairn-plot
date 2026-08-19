@@ -113,4 +113,33 @@ fn cairnLutColor(lut: texture_2d<f32>, scalar: f32, cmapMode: i32, filterLinear:
   if (filterLinear) { return cairnLutSampleLinear(lut, idx); }
   return cairnLutSampleNearest(lut, idx);
 }
+
+// DATA-encoding LUT INDEX (Phase 4) — the WGSL twin of image/encodings'
+// computeDataIndex (the CPU source of truth), kept byte-parallel. Two stages:
+//   1. AFFINE -> normalized index. boundsActive (min/max seeded from the
+//      descriptor colorRange) -> (scalar-min)/(max-min); else pass scalar
+//      through (the caller already folded the exposure/offset sensitivity in --
+//      the two are skins over ONE affine, never composed).
+//   2. NORM reshape: 0 linear (identity) / 1 log (squeeze, non-positive clamped
+//      to LOG_NORM_EPS=1e-4) / 2 power (clamp01(t)^expo; expo reuses the gamma
+//      uniform -- free on the lut path). The LUT sampler clamps to [0,1], so
+//      linear needs no pre-clamp here (matches the CPU twin).
+fn cairnDataIndex(scalar: f32, normMode: i32, minV: f32, maxV: f32, boundsActive: bool, expo: f32) -> f32 {
+  var t = scalar;
+  if (boundsActive) {
+    let denom = maxV - minV;
+    if (denom != 0.0) { t = (scalar - minV) / denom; } else { t = 0.0; }
+  }
+  if (normMode == 1) {
+    let eps = 1e-4;
+    let tc = clamp(t, eps, 1.0);
+    return (log(tc) - log(eps)) / (0.0 - log(eps));
+  }
+  if (normMode == 2) {
+    var g = expo;
+    if (g <= 0.0) { g = 1.0; }
+    return pow(clamp(t, 0.0, 1.0), g);
+  }
+  return t;
+}
 `;

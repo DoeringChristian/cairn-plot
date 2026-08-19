@@ -22,10 +22,18 @@
  *
  * The diff-display blit reuses the SAME family for its `signed`/`positive` index
  * modes (see `engine/diff-engine.ts`); those live on the diff path (a kernel
- * `displayRange` + diverging fold), not on these float-image entries, whose
- * params are `exposure`/`offset` only until Phase 4 adds min/max + norms.
+ * `displayRange` + diverging fold), not on these float-image entries. Phase 4
+ * added the DATA norms + bounds: an entry now declares `exposure`/`offset`
+ * (sensitivity) + `min`/`max` (the bounds skin) + `norm` (linear/log/power), and
+ * the `cpu` twin threads the scalar through `computeDataIndex` before the LUT.
  */
-import { registerEncoding, clamp01, type DisplayEncoding } from "./registry.ts";
+import {
+  registerEncoding,
+  clamp01,
+  computeDataIndex,
+  DEFAULT_ENCODE_PARAMS,
+  type DisplayEncoding,
+} from "./registry.ts";
 import { COLORMAP_NAMES, COLORMAP_LABELS, getColormapLUT } from "../../colormaps/lut.ts";
 import { sampleLutByte } from "../../colormaps/lut-sample.ts";
 
@@ -41,11 +49,16 @@ const LUT_OPERATOR_ID_BASE = 10;
  *  the string documents which family the entry belongs to. */
 const LUT_FAMILY_WGSL_REF = "cairnLutColor(lut, scalar, /*cmapMode*/ 0, filterLinear)";
 
-/** CPU twin of the LUT family (cmap-mode `linear`): the (already exposure/offset-
- *  adjusted) scalar → the DISPLAY (sRGB) colormap color in `[0,1]`. */
+/** CPU twin of the LUT family: the scalar → the DISPLAY (sRGB) colormap color in
+ *  `[0,1]`. Phase 4: the LUT INDEX runs through {@link computeDataIndex} (the
+ *  norm reshape + optional min/max bounds affine), the shared CPU source of
+ *  truth the WGSL `cairnDataIndex` mirrors. With DEFAULT params (norm `linear`,
+ *  no bounds) `v[0]` — already the exposure/offset-adjusted scalar — passes
+ *  through unchanged, so this stays byte-identical to the Phase-2 behavior. */
 function lutCpu(name: string): DisplayEncoding["cpu"] {
-  return (v) => {
-    const [r, g, b] = sampleLutByte(getColormapLUT(name as never), clamp01(v[0] ?? 0));
+  return (v, _k, p = DEFAULT_ENCODE_PARAMS) => {
+    const idx = computeDataIndex(v[0] ?? 0, p);
+    const [r, g, b] = sampleLutByte(getColormapLUT(name as never), clamp01(idx));
     return [r / 255, g / 255, b / 255];
   };
 }
@@ -59,8 +72,11 @@ export const LUT_ENCODINGS: DisplayEncoding[] = COLORMAP_NAMES.map((name, i) => 
   // Colormaps map ONE scalar channel → RGB; arity 1 only (Phase 3 gates this).
   arities: [1],
   needsLut: true,
-  // Sensitivity params for now; min/max + norms are Phase 4.
-  params: ["exposure", "offset"],
+  // Phase 4: the DATA encoding declares the sensitivity skin (exposure/offset),
+  // the bounds skin (min/max — the ALTERNATIVE affine, shown only when the
+  // descriptor seeds a colorRange), and the norm (linear/log/power). `min`/`max`/
+  // `norm` are UI-gating metadata; the pipeline reads uniforms directly.
+  params: ["exposure", "offset", "min", "max", "norm"],
   operatorId: LUT_OPERATOR_ID_BASE + i,
   lutName: name,
   wgsl: LUT_FAMILY_WGSL_REF,

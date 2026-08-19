@@ -28,7 +28,38 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption } from "../controls/ToolbarConfig";
-import { getEncoding, listEncodingsByKind } from "../image/encodings";
+import { getEncoding, listEncodingsByKind, type NormMode } from "../image/encodings";
+
+/** The DATA-encoding norm options, in menu order (Phase 4). Shown ONLY when a
+ *  lut (data) encoding is active — a norm is the nonlinear domain mapping INSIDE
+ *  a data encoding and is never applicable to a curve (see the design doc). */
+export const NORM_MENU_OPTIONS: { id: NormMode; label: string }[] = [
+  { id: "linear", label: "Linear" },
+  { id: "log", label: "Log" },
+  { id: "power", label: "Power" },
+];
+
+/**
+ * The DATA-encoding NORM picker as a toolbar LEADING button (menu variant) — the
+ * minimal 3-way selector (Linear · Log · Power) a pane shows ONLY while a
+ * colormap LUT is the active encoding. `value` is the norm in effect; `onSelect`
+ * receives the picked mode. Matches the display/colormap menu idiom (a
+ * ToolbarButtonSpec dropdown), so it folds into the same leading-button row.
+ */
+export function normToolbarButton(
+  value: NormMode,
+  onSelect: (mode: NormMode) => void,
+): ToolbarButtonSpec {
+  return {
+    id: "norm",
+    title: "Colormap norm (Linear · Log · Power) — the nonlinear domain mapping inside the data encoding",
+    menu: {
+      options: NORM_MENU_OPTIONS,
+      value,
+      onSelect: (id: string) => onSelect(id as NormMode),
+    },
+  };
+}
 
 /** The encoding ids offered in each menu SECTION, resolved for the current
  *  arity/surface. `all` is the flat union (membership = "supported here"). */

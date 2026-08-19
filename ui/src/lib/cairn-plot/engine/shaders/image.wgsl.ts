@@ -210,6 +210,14 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // (zero-filled when the caller omits it) — the HDR/float path leaves it off, so
 // a scene-linear source is untouched and every existing case renders as before.
 @group(0) @binding(26) var<uniform> u_bind8: f32;
+// Logical binding 9 (uniform vec4: DATA-encoding norm params — normMode,
+// boundsMin, boundsMax, boundsActive) -> native binding 9*3+2 = 29. Only the
+// scalar/LUT (isScalar) path reads it; it feeds cairnDataIndex (the norm
+// reshape + min/max bounds affine). Defaults to vec4(0) when the caller omits it
+// (zero-filled) — normMode 0 (linear) + boundsActive 0, so a colormap with no
+// norm/bounds renders bit-for-bit as before. The power exponent reuses the gamma
+// uniform (u_bind2.z), free on the lut path.
+@group(0) @binding(29) var<uniform> u_bind9: vec4<f32>;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -373,7 +381,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   //    lookup still mirrors the source filter (linear at moderate zoom, nearest
   //    pixelated) so false-color interpolation never diverges from the plain path.
   if (isScalar) {
-    return vec4<f32>(cairnLutColor(t_bind1, rgb.x, 0, filterLinear), 1.0);
+    // Phase 4: the scalar (rgb.x) runs through cairnDataIndex — the norm reshape
+    // (linear/log/power via u_bind9.x, power exponent = gamma) + the optional
+    // min/max bounds affine (u_bind9.yz, engaged by boundsActive u_bind9.w). With
+    // the zero-filled default (normMode 0, boundsActive 0) this is the identity,
+    // so the exposure/offset sensitivity (already in rgb.x) is the sole affine.
+    let normMode = i32(round(u_bind9.x));
+    let boundsActive = u_bind9.w > 0.5;
+    let idx = cairnDataIndex(rgb.x, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);
+    return vec4<f32>(cairnLutColor(t_bind1, idx, 0, filterLinear), 1.0);
   }
 
   // 3) tone-map operator: HDR [0,inf) -> display-linear [0,1] (or [0,peak] for

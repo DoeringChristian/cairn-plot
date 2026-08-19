@@ -95,7 +95,8 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import { displayToolbarButton, usePaneEncoding } from "./display-encoding";
+import { displayToolbarButton, normToolbarButton, usePaneEncoding } from "./display-encoding";
+import { computeDataIndex, type EncodeParams, type NormMode } from "../image/encodings";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -136,14 +137,36 @@ export function tonemapToImageData(
   gamma?: number,
   offset: number = 0,
   colormap: string = "none",
+  // DATA-encoding norm + bounds (Phase 4) — the colormap-only extras. `norm`
+  // reshapes the LUT index (linear/log/power; `normExponent` is the power
+  // exponent); `colorMin`/`colorMax` (both set) engage the min/max BOUNDS skin
+  // INSTEAD of the exposure/offset sensitivity (never composed). Defaults
+  // reproduce the Phase-2 behavior (linear, no bounds) bit-for-bit.
+  norm: NormMode = "linear",
+  colorMin?: number,
+  colorMax?: number,
+  normExponent: number = 1,
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
-  // COLORMAP (LUT family, CPU twin — Phase 2): when a colormap is active the
-  // SCALAR channel (channel 0), after exposure/offset SENSITIVITY, indexes the
-  // colormap LUT and the DISPLAY color is written straight out — the tone-map
-  // operator + output-encode are SHORT-CIRCUITED (the LUT holds display sRGB),
-  // matching the GPU `cairnLutColor` family + the diff blit. cmap-mode `linear`.
+  // COLORMAP (LUT family, CPU twin — Phase 2/4): when a colormap is active the
+  // SCALAR channel (channel 0) indexes the colormap LUT and the DISPLAY color is
+  // written straight out — the tone-map operator + output-encode are SHORT-
+  // CIRCUITED (the LUT holds display sRGB), matching the GPU `cairnLutColor`
+  // family + the diff blit. The index runs through `computeDataIndex` (the norm
+  // reshape + optional bounds affine — the CPU source of truth the WGSL
+  // `cairnDataIndex` mirrors). cmap-mode `linear`.
   const cmapLut = colormap !== "none" ? getColormapLUT(colormap as never) : null;
+  const cmapBoundsOn =
+    typeof colorMin === "number" && Number.isFinite(colorMin) &&
+    typeof colorMax === "number" && Number.isFinite(colorMax);
+  const cmapDataParams: EncodeParams = {
+    exposure,
+    offset,
+    peak: 4,
+    gamma: normExponent,
+    norm,
+    ...(cmapBoundsOn ? { min: colorMin, max: colorMax } : {}),
+  };
   // F16 pipeline: this is the CPU tone-map FALLBACK path (used when the GPU
   // backend is unavailable), so a `precision:"f16-bits"` source is widened to
   // f32 ONCE for the whole frame here (see `../image/half.ts`) rather than
@@ -182,8 +205,11 @@ export function tonemapToImageData(
     ];
     const o = i * 4;
     if (cmapLut) {
-      // Scalar (channel 0) → LUT → display color directly (no operator/encode).
-      const [cr, cg, cb] = sampleLutByte(cmapLut, clamp01(lit[0]));
+      // Scalar (channel 0) → data index → LUT → display color directly (no
+      // operator/encode). The BOUNDS skin reads the RAW value (`r`); otherwise
+      // the exposure/offset sensitivity (`lit[0]`) — the two are never composed.
+      const scalar = cmapBoundsOn ? r : lit[0];
+      const [cr, cg, cb] = sampleLutByte(cmapLut, clamp01(computeDataIndex(scalar, cmapDataParams)));
       out[o] = cr;
       out[o + 1] = cg;
       out[o + 2] = cb;
@@ -1015,9 +1041,33 @@ function CpuHdrImagePane(
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
 
+  // DATA-ENCODING NORM + BOUNDS (Phase 4) — mirrors GpuImagePane. `norm` (the
+  // colormap LUT index reshape) shows only while a lut is active; `power` reuses
+  // the γ slot. `colorRange` (grid-shared descriptor) SEEDS the min/max BOUNDS
+  // skin — the ALTERNATIVE to EV/OFF (never composed).
+  const propColorRange = (props as unknown as { colorRange?: [number, number] }).colorRange;
+  const [norm, setNorm] = useState<NormMode>("linear");
+  const [colorBounds, setColorBounds, boundsMeta] = useResettableState<[number, number] | null>(
+    propColorRange ?? null,
+  );
+  useEffect(() => {
+    setColorBounds(propColorRange ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propColorRange?.[0], propColorRange?.[1]]);
+  const boundsEngaged =
+    enc.isLut && !!colorBounds && Number.isFinite(colorBounds[0]) && Number.isFinite(colorBounds[1]);
+  const boundsRange = useMemo(() => {
+    const seed = propColorRange ?? [0, 1];
+    const lo = seed[0];
+    const hi = seed[1];
+    const span = hi > lo ? hi - lo : 1;
+    return { lo, hi, span };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propColorRange?.[0], propColorRange?.[1]]);
+
   // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
   // CPU HDR path syncs the ONE encoding (+ derived colormap/tonemap for
-  // pre-registry peers), the Gamma γ, and exposure/offset.
+  // pre-registry peers), the Gamma γ, exposure/offset, and the norm/bounds.
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
       // The unified `encoding` key is primary; `colormap`/`tonemap` are honored
@@ -1029,8 +1079,12 @@ function CpuHdrImagePane(
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
+      if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
+      if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
+        setColorBounds([patch.colorMin, patch.colorMax]);
+      }
     },
-    [enc, setTonemapGamma],
+    [enc, setTonemapGamma, setColorBounds],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
@@ -1040,8 +1094,10 @@ function CpuHdrImagePane(
       tonemapGamma,
       exposureEV: displayEV,
       offset: displayOffset,
+      norm,
+      ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
     }),
-    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset],
+    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, norm, colorBounds],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -1082,9 +1138,23 @@ function CpuHdrImagePane(
     },
     [publishSettings],
   );
+  const changeNorm = useCallback(
+    (mode: NormMode) => {
+      setNorm(mode);
+      publishSettings({ norm: mode });
+    },
+    [publishSettings],
+  );
+  const changeBounds = useCallback(
+    (next: [number, number]) => {
+      setColorBounds(next);
+      publishSettings({ colorMin: next[0], colorMax: next[1] });
+    },
+    [setColorBounds, publishSettings],
+  );
 
   // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma /
-  // display-adjust.
+  // display-adjust / norm / bounds.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1103,6 +1173,13 @@ function CpuHdrImagePane(
         // Colormap (LUT family): active → the scalar channel is false-colored and
         // the tone-map operator is bypassed (see tonemapToImageData).
         colormap,
+        // Phase 4 DATA-encoding norm + bounds (colormap only). When bounds are
+        // engaged, tonemapToImageData reads the RAW value (EV/OFF neutralized
+        // here to avoid double-apply — single-application).
+        norm,
+        boundsEngaged && colorBounds ? colorBounds[0] : undefined,
+        boundsEngaged && colorBounds ? colorBounds[1] : undefined,
+        norm === "power" ? tonemapGamma : 1,
       );
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
@@ -1121,7 +1198,7 @@ function CpuHdrImagePane(
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset]);
+  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset, norm, colorBounds, boundsEngaged]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -1208,13 +1285,16 @@ function CpuHdrImagePane(
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
         displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
+        // NORM picker (Phase 4) — lut-only, mirrors GpuImagePane.
+        ...(enc.isLut ? [normToolbarButton(norm, changeNorm)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change). Gated by the
       // ACTIVE encoding's param manifest: shown for curves + luts (which declare
-      // exposure/offset), hidden for the paramless `normal` remap.
+      // exposure/offset), hidden for the paramless `normal` remap AND when the
+      // min/max BOUNDS skin is engaged (the two are never composed).
       displayAdjust={
-        enc.hasParam("exposure")
+        enc.hasParam("exposure") && !boundsEngaged
           ? {
               exposureEV: displayEV,
               offset: displayOffset,
@@ -1224,9 +1304,10 @@ function CpuHdrImagePane(
           : undefined
       }
       // γ slider — gated by the active encoding's manifest (only the Gamma curve
-      // declares γ; a colormap LUT / other curves do not).
-      extraSliders={
-        enc.hasParam("gamma")
+      // declares γ; a colormap LUT / other curves do not). Phase 4 adds the
+      // power-norm exponent (reuses γ) + the min/max bounds sliders.
+      extraSliders={[
+        ...(enc.hasParam("gamma")
           ? [
               {
                 id: "gamma",
@@ -1241,8 +1322,50 @@ function CpuHdrImagePane(
                 format: (v: number) => v.toFixed(1),
               },
             ]
-          : undefined
-      }
+          : []),
+        ...(enc.isLut && norm === "power"
+          ? [
+              {
+                id: "gamma",
+                label: "exp",
+                title:
+                  "Power-norm exponent — the colormap index becomes clamp01(t)^exp. Double-click to type a value.",
+                min: TONEMAP_GAMMA_MIN,
+                max: TONEMAP_GAMMA_MAX,
+                step: TONEMAP_GAMMA_STEP,
+                value: tonemapGamma,
+                onChange: changeGamma,
+                format: (v: number) => v.toFixed(1),
+              },
+            ]
+          : []),
+        ...(boundsEngaged && colorBounds
+          ? [
+              {
+                id: "colorMin",
+                label: "min",
+                title: "Colormap domain minimum — the data value that maps to the bottom of the ramp.",
+                min: boundsRange.lo - boundsRange.span,
+                max: boundsRange.hi,
+                step: boundsRange.span / 100,
+                value: colorBounds[0],
+                onChange: (v: number) => changeBounds([v, colorBounds[1]]),
+                format: (v: number) => v.toPrecision(3),
+              },
+              {
+                id: "colorMax",
+                label: "max",
+                title: "Colormap domain maximum — the data value that maps to the top of the ramp.",
+                min: boundsRange.lo,
+                max: boundsRange.hi + boundsRange.span,
+                step: boundsRange.span / 100,
+                value: colorBounds[1],
+                onChange: (v: number) => changeBounds([colorBounds[0], v]),
+                format: (v: number) => v.toPrecision(3),
+              },
+            ]
+          : []),
+      ]}
       // DEEP depth-window sliders (Z-NEAR/Z-FAR) + region-select (absent for
       // non-deep); HOME resets the window to [zMin,zMax] and the tonemap override.
       depthSliders={deepFlatten.sliders}
@@ -1260,12 +1383,16 @@ function CpuHdrImagePane(
         deepFlatten.reset();
         enc.resetEncoding();
         gammaMeta.reset();
+        setNorm("linear");
+        boundsMeta.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
         deepFlatten.isModified ||
         enc.encodingModified ||
         gammaMeta.isModified ||
+        norm !== "linear" ||
+        boundsMeta.isModified ||
         !!props.channelModified
       }
       histogram={histogramSource}
