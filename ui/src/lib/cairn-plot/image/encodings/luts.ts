@@ -34,6 +34,7 @@ import {
   reduceToScalar,
   defaultReduceMode,
   signedAnalyticColor,
+  turboDataIndex,
   DEFAULT_ENCODE_PARAMS,
   type DisplayEncoding,
 } from "./registry.ts";
@@ -57,6 +58,12 @@ const LUT_FAMILY_WGSL_REF = "cairnLutColor(lut, scalar, /*cmapMode*/ 0, filterLi
  *  isScalar path runs through output-encode (NOT written unchanged). Held as the
  *  entry's `wgsl` so the registry's "non-empty wgsl" invariant holds. */
 const ANALYTIC_WGSL_REF = "cairnSignedAnalyticColor(scalar)";
+
+/** The TURBO entry binds its table like an ordinary LUT — the WGSL twin is the
+ *  shared family call, but the isScalar path indexes it at `cairnTurboDataIndex`
+ *  (scalar-mode 3) instead of `cairnDataIndex`. Held as the entry's `wgsl` for the
+ *  registry's "non-empty wgsl" invariant + to document the family. */
+const TURBO_WGSL_REF = "cairnLutColor(lut, cairnTurboDataIndex(scalar), /*cmapMode*/ 0, filterLinear)";
 
 /** CPU twin of the LUT family: the (reduced) scalar → the DISPLAY (sRGB) colormap
  *  color in `[0,1]`. The k>1 sample is first collapsed to a scalar by
@@ -87,6 +94,27 @@ function lutCpu(name: string): DisplayEncoding["cpu"] {
  *  signed map has no log/power or normalize-to-[0,1] skin). */
 const ANALYTIC_LUT_IDS = new Set<string>(["red-green"]);
 
+/** The TURBO false-color colormap (the tev-exact follow-up) — a table-backed LUT
+ *  whose INDEX is tev's FIXED log2 mapping ({@link turboDataIndex}) BAKED into the
+ *  encoding (not the user-facing norm path). `turbo:true` routes the GPU to
+ *  scalar-mode 3 (`cairnTurboDataIndex` before the LUT sample); it declares NO
+ *  norm/min/max (the log2 is intrinsic) and defaults `reduce` to `mean` (tev
+ *  averages RGB). Exposure/offset apply BEFORE the log2 (sliding along the ramp). */
+const TURBO_LUT_IDS = new Set<string>(["turbo"]);
+
+/** CPU twin of the TURBO entry: the (reduced, exposure/offset-adjusted) scalar →
+ *  tev's FIXED log2 index → the DISPLAY (sRGB) turbo color in `[0,1]`. The k>1
+ *  sample is collapsed to a scalar first; the turbo entry defaults `reduce` to
+ *  `mean` (tev's RGB average), NOT the k-based {@link defaultReduceMode}. */
+function turboCpu(): DisplayEncoding["cpu"] {
+  return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
+    const scalar = reduceToScalar(v, k, p.reduce ?? "mean");
+    const idx = turboDataIndex(scalar);
+    const [r, g, b] = sampleLutByte(getColormapLUT("turbo" as never), clamp01(idx));
+    return [r / 255, g / 255, b / 255];
+  };
+}
+
 /** CPU twin of an analytic entry: the (reduced, exposure/offset-adjusted) signed
  *  scalar → the SCENE-LINEAR analytic color (UNCLAMPED, pre-output-encode — the
  *  caller runs it through outputEncode/extendedOutputEncode, exactly like a
@@ -102,7 +130,24 @@ function analyticCpu(): DisplayEncoding["cpu"] {
  *  `listEncodingsByKind("lut")` matches the colormap menu order. `red-green` is
  *  the ANALYTIC entry (computed, no LUT bind); the rest are table-backed LUTs. */
 export const LUT_ENCODINGS: DisplayEncoding[] = COLORMAP_NAMES.map((name, i) =>
-  ANALYTIC_LUT_IDS.has(name)
+  TURBO_LUT_IDS.has(name)
+    ? {
+        id: name,
+        label: COLORMAP_LABELS[name],
+        kind: "lut", // COLORMAPS menu section; gates as a DATA encoding.
+        arities: [1, 2, 3, 4],
+        needsLut: true,
+        turbo: true,
+        // Sensitivity (exposure slides along the ramp BEFORE the log2) + offset +
+        // the k>1 reduce (default `mean`, tev's RGB average). NO norm/min/max — the
+        // log2 index is BAKED into the encoding (see TURBO_LUT_IDS / turboDataIndex).
+        params: ["exposure", "offset", "reduce"],
+        operatorId: LUT_OPERATOR_ID_BASE + i,
+        lutName: name,
+        wgsl: TURBO_WGSL_REF,
+        cpu: turboCpu(),
+      }
+    : ANALYTIC_LUT_IDS.has(name)
     ? {
         id: name,
         label: COLORMAP_LABELS[name],

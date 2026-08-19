@@ -27,6 +27,9 @@ import {
   colorChannelCount,
   signedAnalyticColor,
   SIGNED_ANALYTIC_AMPLITUDE,
+  turboDataIndex,
+  TURBO_LOG2_OFFSET,
+  TURBO_LOG2_STOPS,
   type ParamName,
   type EncodeParams,
 } from "./index.ts";
@@ -135,9 +138,10 @@ test("wgsl curve expression is a non-empty string for every entry", () => {
 });
 
 test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+reduce params", () => {
-  // Table-backed luts only (the ANALYTIC entries are kind:"lut" but computed — no
-  // needsLut/lutName; tested separately below).
-  const luts = listEncodings().filter((e) => e.kind === "lut" && !e.analytic);
+  // Table-backed NORM luts only (the ANALYTIC entries are computed — no
+  // needsLut/lutName; TURBO is table-backed but bakes its own log2 index, so it
+  // declares no norm/min/max — both tested separately below).
+  const luts = listEncodings().filter((e) => e.kind === "lut" && !e.analytic && !e.turbo);
   assert.ok(luts.length >= 3, "expected the migrated colormap LUT entries");
   // Includes the canonical colormaps.
   const ids = luts.map((e) => e.id);
@@ -209,6 +213,61 @@ test("red-green cpu twin: reduces multi-channel then applies the analytic color 
   // k=3 mean of (0.3, -0.9, 0.3) = -0.1 → red 0.2 (negative wins the mean).
   const outMean = rg.cpu([0.3, -0.9, 0.3], 3, { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" });
   assert.ok(Math.abs(outMean[0] - 0.2) < 1e-12 && outMean[1] === 0 && outMean[2] === 0, `got ${outMean}`);
+});
+
+// ---------------------------------------------------------------------------
+// TURBO false-color (the tev-exact follow-up) — a table-backed lut whose INDEX is
+// tev's FIXED log2 mapping (turboDataIndex), BAKED into the encoding. GPU↔CPU
+// parity is proven by the browser harness; these pin the shape + the index math.
+// ---------------------------------------------------------------------------
+
+test("turbo is a table-backed lut with the BAKED log2 index: needsLut, lutName, no norm/min/max, turbo flag", () => {
+  const t = getEncoding("turbo");
+  assert.ok(t, "turbo missing from the registry");
+  assert.equal(t!.kind, "lut", "turbo stays in the COLORMAPS section");
+  assert.equal(t!.turbo, true, "turbo must set the turbo flag (scalar-mode 3)");
+  assert.equal(t!.needsLut, true, "turbo binds the turbo table");
+  assert.equal(t!.lutName, "turbo", "turbo references the turbo table");
+  assert.ok(!t!.analytic, "turbo is table-backed, not analytic");
+  assert.deepEqual(t!.arities, [1, 2, 3, 4]);
+  // NO norm/min/max — the log2 index is intrinsic (see turboDataIndex).
+  assert.deepEqual(t!.params, ["exposure", "offset", "reduce"]);
+});
+
+test("turboDataIndex is tev's FIXED log2 mapping (2⁻⁵ offset, ten stops)", () => {
+  assert.equal(TURBO_LOG2_OFFSET, 0.03125); // 2⁻⁵
+  assert.equal(TURBO_LOG2_STOPS, 10);
+  // Value 1.0 lands mid-ramp (~0.504, green); ~32 saturates at 1 (dark red); a
+  // tiny value floors near 0 (dark indigo).
+  assert.ok(Math.abs(turboDataIndex(1.0) - (Math.log2(1.03125) / 10 + 0.5)) < 1e-12);
+  assert.ok(Math.abs(turboDataIndex(1.0) - 0.5044) < 1e-3, `1.0 → ~0.504, got ${turboDataIndex(1.0)}`);
+  assert.equal(turboDataIndex(32), 1, "~32 saturates the ramp top (clamps to 1)");
+  assert.equal(turboDataIndex(0), 0, "2⁻⁵ input → 0 (log2(2⁻⁵)/10+0.5 = 0)");
+  // Monotone increasing over the exercised range, always in [0,1].
+  let prev = -1;
+  for (const s of [0, 0.05, 0.2, 0.5, 1, 2, 8, 32]) {
+    const v = turboDataIndex(s);
+    assert.ok(v >= 0 && v <= 1, `turbo index out of [0,1] at ${s}: ${v}`);
+    assert.ok(v >= prev, `turbo index not monotone at ${s}`);
+    prev = v;
+  }
+});
+
+test("turbo cpu twin: reduce (mean default) then the BAKED log2 index into the turbo table", () => {
+  const t = getEncoding("turbo")!;
+  // k=1: channel 0 straight through the log2 index.
+  const out1 = t.cpu([1.0], 1, DEFAULT_ENCODE_PARAMS);
+  assert.equal(out1.length, 3);
+  for (const c of out1) assert.ok(Number.isFinite(c) && c >= 0 && c <= 1);
+  // k=3 default reduce is MEAN (tev averages RGB), NOT the k≥3 luminance default:
+  // cpu([a,b,c],3) === cpu([mean],1).
+  const rgb = [0.2, 0.5, 0.8];
+  const mean = (0.2 + 0.5 + 0.8) / 3;
+  assert.deepEqual(
+    t.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS),
+    t.cpu([mean], 1, DEFAULT_ENCODE_PARAMS),
+    "turbo default reduce must be mean (tev averages RGB)",
+  );
 });
 
 // ---------------------------------------------------------------------------

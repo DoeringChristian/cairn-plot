@@ -517,7 +517,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // mean for k=2); a user pick overrides it. The control (below) shows only while
   // a lut is active AND sourceArity>1; HOME clears the override.
   const [reduceOverride, setReduceOverride] = useState<ReduceMode | null>(null);
-  const effectiveReduce = reduceOverride ?? defaultReduceMode(sourceArity);
+  // TURBO false-color (the tev-exact follow-up) defaults `reduce` to MEAN (tev
+  // averages RGB) regardless of k, unlike the k-based `defaultReduceMode`
+  // (luminance for k≥3). A user pick still overrides it.
+  const activeIsTurbo = !!getEncoding(enc.encodingId)?.turbo;
+  const effectiveReduce = reduceOverride ?? (activeIsTurbo ? "mean" : defaultReduceMode(sourceArity));
   const boundsSeed = useResettableState<[number, number] | null>(propColorRange ?? null);
   const [colorBounds, setColorBounds, boundsMeta] = boundsSeed;
   // Re-seed on descriptor change (controlled surface, mirrors the peak/γ effects).
@@ -1079,6 +1083,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           hdrOut: false,
           peak: rt.peak,
           srgbDecode: false,
+          // TURBO bakes its own FIXED log2 index (scalar-mode 3) — the `norm`
+          // (which stays `linear`, its picker hidden) is then ignored by the GPU.
+          ...(activeIsTurbo ? { turbo: true } : {}),
           norm,
           // Multi-channel follow-up: a k>1 source is REDUCED to a scalar
           // (luminance/mean) before the LUT; k=1 leaves channel 0 untouched.

@@ -342,6 +342,67 @@ async function runLutReduceCase(
   return ok;
 }
 
+/** TURBO scalar values — spans the ramp PLUS an over-range `8.0` that maps into
+ *  the HOT (dark-red upper) half via tev's log2 index (turboDataIndex(8) ≈ 0.80),
+ *  and a `>1` value (1.5) — the directive's ">1 sample mapping into the hot half".
+ *  Non-negative only (the log2 is NaN for s < -2⁻⁵; turbo indexes magnitudes). */
+const TURBO_PIXELS: number[][] = [
+  [0.0, 0, 0, 1.0],
+  [0.03125, 0, 0, 1.0], // 2⁻⁵ → index 0 (dark indigo)
+  [1.0, 0, 0, 1.0], // → ~0.504 (mid-ramp, green)
+  [1.5, 0, 0, 1.0], // >1
+  [8.0, 0, 0, 1.0], // over-range → the HOT half (~0.80)
+  [32.0, 0, 0, 1.0], // saturates the top (dark red)
+];
+
+/**
+ * TURBO false-color parity (the tev-exact follow-up): render the scalar pixels
+ * through the REAL GPU `isScalar` + `turbo` path (scalar-mode 3 → the shader
+ * indexes the bound turbo table at `cairnTurboDataIndex` — the FIXED log2 mapping —
+ * instead of `cairnDataIndex`) and assert the readback equals the encoding's `cpu`
+ * twin (reduce → turboDataIndex → turbo table). Nearest filter + EV 0 → byte-exact
+ * (within 1/255). Covers a `>1` sample landing in the hot half of the ramp.
+ */
+async function runTurboCase(device: Device, enc: DisplayEncoding): Promise<boolean> {
+  const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
+  const params: ImageParams = {
+    exposureEV: EV,
+    operator: "linear" as ImageOperator, // moot: isScalar+turbo short-circuits it
+    isScalar: true,
+    turbo: true,
+    colormap: lut,
+    hdrOut: false,
+    uv: uvFull,
+    filter: "nearest",
+    reduce: "mean",
+    channelCount: 1,
+  };
+  const src = buildSrcTexture(device, TURBO_PIXELS);
+  const target = device.createTexture(TURBO_PIXELS.length, 1, "rgba8unorm");
+  renderImage(device, target, src, params);
+  const out = await device.readback(target);
+  src.destroy();
+  target.destroy();
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[${enc.id}] expected Uint8Array readback, got ${out.constructor.name}`);
+    return false;
+  }
+  let ok = true;
+  for (let i = 0; i < TURBO_PIXELS.length; i++) {
+    const exp = enc.cpu([applyExposure(TURBO_PIXELS[i]![0]!, EV)], 1, { ...DEFAULT_ENCODE_PARAMS });
+    for (let c = 0; c < 3; c++) {
+      const eb = byteOf(exp[c]!);
+      const ab = out[i * 4 + c]!;
+      if (Math.abs(ab - eb) > 1) {
+        ok = false;
+        report(false, `[${enc.id}/turbo] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
+      }
+    }
+  }
+  report(ok, `[${enc.id}] (turbo) GPU cairnTurboDataIndex + LUT === cpu twin (>1 sample into the hot half)`);
+  return ok;
+}
+
 /** SIGNED scalar values for the ANALYTIC (tev-style red-green) entry — channel 0
  *  carries the signed error; the ±1.0 endpoints give amplitude `2*|v| = 2.0`, a
  *  `>1` over-range value that MUST survive on the HDR path (extended encode) and
@@ -506,6 +567,13 @@ async function main(): Promise<void> {
       // dedicated signed SDR+HDR case, NOT the LUT-family path/variants.
       if (enc.analytic) {
         if (!(await runAnalyticCase(device, enc))) allOk = false;
+        continue;
+      }
+      // TURBO bakes its own FIXED log2 index (scalar-mode 3) — it needs the turbo
+      // flag set, and the user-facing norm/bounds variants don't apply to it. So it
+      // gets a dedicated case, NOT the generic lut-family path/variants.
+      if (enc.turbo) {
+        if (!(await runTurboCase(device, enc))) allOk = false;
         continue;
       }
       const ok = enc.kind === "lut" ? await runLutCase(device, enc) : await runEncodingCase(device, enc);

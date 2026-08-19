@@ -102,6 +102,7 @@ import {
   defaultReduceMode,
   getEncoding,
   signedAnalyticColor,
+  turboDataIndex,
   DEFAULT_ENCODE_PARAMS,
   type EncodeParams,
   type NormMode,
@@ -163,7 +164,11 @@ export function tonemapToImageData(
   reduce?: ReduceMode,
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
-  const reduceMode: ReduceMode = reduce ?? defaultReduceMode(c);
+  // TURBO false-color (the tev-exact follow-up) indexes the bound turbo table at
+  // tev's FIXED log2 mapping (`turboDataIndex`) instead of `computeDataIndex`, and
+  // defaults `reduce` to MEAN (tev averages RGB) regardless of k.
+  const turboCmap = colormap !== "none" && !!getEncoding(colormap)?.turbo;
+  const reduceMode: ReduceMode = reduce ?? (turboCmap ? "mean" : defaultReduceMode(c));
   // COLORMAP (LUT family, CPU twin — Phase 2/4): when a colormap is active the
   // SCALAR channel (channel 0) indexes the colormap LUT and the DISPLAY color is
   // written straight out — the tone-map operator + output-encode are SHORT-
@@ -178,6 +183,8 @@ export function tonemapToImageData(
   // >1 survival is the GPU/HDR-surface path); |v|<=1 matches the GPU exactly.
   const analyticCmap = colormap !== "none" && !!getEncoding(colormap)?.analytic;
   const cmapLut = colormap !== "none" && !analyticCmap ? getColormapLUT(colormap as never) : null;
+  // TURBO bakes its own FIXED index (`turboDataIndex`), bypassing the norm/bounds
+  // path — so its params (norm/bounds) are inert on this branch.
   const cmapBoundsOn =
     typeof colorMin === "number" && Number.isFinite(colorMin) &&
     typeof colorMax === "number" && Number.isFinite(colorMax);
@@ -256,7 +263,8 @@ export function tonemapToImageData(
       // (`r,g,b`); otherwise the exposure/offset sensitivity (`lit`) — the two are
       // never composed. At k=1 the reduce returns channel 0 unchanged.
       const scalar = reduceToScalar(cmapBoundsOn ? [r, g, b] : lit, c, reduceMode);
-      const [cr, cg, cb] = sampleLutByte(cmapLut, clamp01(computeDataIndex(scalar, cmapDataParams)));
+      const idx = turboCmap ? turboDataIndex(scalar) : computeDataIndex(scalar, cmapDataParams);
+      const [cr, cg, cb] = sampleLutByte(cmapLut, clamp01(idx));
       out[o] = cr;
       out[o + 1] = cg;
       out[o + 2] = cb;

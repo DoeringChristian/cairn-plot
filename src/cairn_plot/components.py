@@ -99,7 +99,7 @@ def _resolver(name: str) -> Any:
 # minus the image-only `"none"` passthrough (a color-by-value chart always
 # needs a real ramp). Kept as one canonical tuple so Scatter / ParallelCoordinates
 # / Heatmap validate against the same allowed set with one error style.
-_COLORMAPS = ("viridis", "plasma", "magma", "red-green", "red-blue")
+_COLORMAPS = ("viridis", "plasma", "magma", "turbo", "red-green", "red-blue")
 
 
 def _check_colormap(value: str) -> str:
@@ -408,7 +408,7 @@ class Scatter(Component):
     ``cp.Scatter(x, y, *, color=None, labels=None, x_label=None, y_label=None,
     color_label=None, x_log=False, y_log=False, colormap="viridis")``. ``color``
     is a per-point numeric value mapped through the ``colormap`` colorbar (one of
-    ``viridis``/``plasma``/``magma``/``red-green``/``red-blue``). Raw-only (``local``)."""
+    ``viridis``/``plasma``/``magma``/``turbo``/``red-green``/``red-blue``). Raw-only (``local``)."""
 
     _label = "scatter"
 
@@ -555,7 +555,7 @@ class Heatmap(Component):
     log_color=False, origin_top=True, x_label=None, y_label=None,
     value_label=None)`` where ``z`` is a 2-D array (``matrix[y][x]``).
     Convenience: ``cp.Heatmap(run["confusion"])`` deserializes a 2-D artifact.
-    ``colormap`` is one of ``viridis``/``plasma``/``magma``/``red-green``/``red-blue``."""
+    ``colormap`` is one of ``viridis``/``plasma``/``magma``/``turbo``/``red-green``/``red-blue``."""
 
     _label = "heatmap"
 
@@ -622,7 +622,7 @@ class ParallelCoordinates(Component):
     ``{label: values}`` dict, or a pandas ``DataFrame`` (duck-typed). Numeric
     columns keep their scale; non-numeric columns are treated categorically
     (first-seen index). The last column drives the line color, mapped through the
-    ``colormap`` ramp (one of ``viridis``/``plasma``/``magma``/``red-green``/``red-blue``).
+    ``colormap`` ramp (one of ``viridis``/``plasma``/``magma``/``turbo``/``red-green``/``red-blue``).
     Raw-only (``local``)."""
 
     _label = "parallel"

@@ -208,6 +208,18 @@ fn cairnSignedAnalyticColor(s: f32) -> vec3<f32> {
   return vec3<f32>(2.0 * max(-s, 0.0), 2.0 * max(s, 0.0), 0.0);
 }
 
+// TURBO false-color BAKED index (the tev-exact follow-up) — the WGSL twin of
+// image/encodings' turboDataIndex (the CPU source of truth), kept byte-parallel.
+// tev's FIXED false-color log mapping: index = clamp(log2(s + 2⁻⁵)/10 + 0.5, 0, 1)
+// where s is the (reduced, exposure/offset-adjusted) scalar. This is BAKED into
+// the turbo encoding (NOT the user-facing cairnDataIndex norm path): the isScalar
+// path calls THIS (scalar-mode 3, u_bind10.z==3) instead of cairnDataIndex before
+// sampling the bound turbo table. Value 1.0 → ~0.504 (mid-ramp, green); ~32 → 1
+// (dark red); tiny inputs floor to 0 (dark indigo).
+fn cairnTurboDataIndex(s: f32) -> f32 {
+  return clamp(log2(s + 0.03125) / 10.0 + 0.5, 0.0, 1.0);
+}
+
 fn cairnDataIndex(scalar: f32, normMode: i32, minV: f32, maxV: f32, boundsActive: bool, expo: f32) -> f32 {
   var t = scalar;
   if (boundsActive) {

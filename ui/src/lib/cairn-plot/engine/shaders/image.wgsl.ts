@@ -225,7 +225,10 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // scalar-MODE enum: 0 = LUT sample (table colormap), 1 = ANALYTIC signed-color
 // (tev red-green: cairnSignedAnalyticColor + shared output-encode, no LUT bind),
 // 2 = GRAY NONE (the plain-grayscale "none" DATA encoding: cairnDataIndex → scene-
-// linear gray vec3 → shared output-encode; HDR-native, no LUT bind). .w carries the
+// linear gray vec3 → shared output-encode; HDR-native, no LUT bind), 3 = TURBO
+// false-color (tev-exact: the bound turbo table sampled at cairnTurboDataIndex —
+// the FIXED log2 index BAKED into the encoding, bypassing cairnDataIndex's norm).
+// .w carries the
 // GRAY-NONE encode-gamma (0 = sRGB OETF, >0 = the 1/γ power curve) — the transfer
 // the gray output-encode uses (the power-NORM exponent still rides u_bind2.z). Both
 // .z and .w default to 0 when the caller omits the slot (zero-filled) → LUT mode +
@@ -360,8 +363,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     // u_bind10.z is a SCALAR-MODE enum, not a bare flag: 0 = LUT sample (table
     // colormap), 1 = ANALYTIC (computed signed color, tev red-green), 2 = GRAY
     // NONE (the plain-grayscale "none" data encoding — scalar → data index →
-    // scene-linear gray → shared output-encode, HDR-native). Kept an enum (not two
-    // flags) so a fresh uniform slot stays free for the gray encode-gamma (.w).
+    // scene-linear gray → shared output-encode, HDR-native), 3 = TURBO false-color
+    // (tev-exact: the bound turbo table sampled at cairnTurboDataIndex, the FIXED
+    // log2 index baked into the encoding). Kept an enum (not flags) so a fresh
+    // uniform slot stays free for the gray encode-gamma (.w).
     let scalarMode = i32(round(u_bind10.z));
     let analytic = scalarMode == 1;
     let scalar = cairnReduceScalar(rgb, reduceMode, channelCount);
@@ -391,7 +396,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
     let normMode = i32(round(u_bind9.x));
     let boundsActive = u_bind9.w > 0.5;
-    let idx = cairnDataIndex(scalar, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);
+    // TURBO false-color (scalar-mode 3): the LUT index is tev's FIXED log2 mapping
+    // (cairnTurboDataIndex), BAKED into the encoding — NOT the user-facing
+    // cairnDataIndex norm/bounds path. Everything else (reduce, the bound turbo
+    // table, the LUT sampler) is the ordinary table-LUT path.
+    var idx = cairnDataIndex(scalar, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);
+    if (scalarMode == 3) { idx = cairnTurboDataIndex(scalar); }
     if (scalarMode == 2) {
       // GRAY NONE (the plain-grayscale "none" DATA encoding). A single-channel
       // scalar is DATA, not light: it carries the SAME data index the LUT path

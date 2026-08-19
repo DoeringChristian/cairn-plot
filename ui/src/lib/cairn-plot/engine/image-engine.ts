@@ -122,6 +122,16 @@ export interface ImageParams {
    * Mutually exclusive with `analytic`. Ignored when `isScalar` is false; the encode
    * transfer is {@link grayEncodeGamma}. Unset = false. */
   grayNone?: boolean;
+  /**
+   * TURBO false-color (the tev-exact follow-up) — on the `isScalar` path, index
+   * the bound `colormap` (the turbo table) at tev's FIXED log2 mapping
+   * (`cairnTurboDataIndex`: `clamp(log2(scalar + 2⁻⁵)/10 + 0.5, 0, 1)`) instead of
+   * the user-facing `cairnDataIndex` norm/bounds path. `norm`/`normMin`/`normMax`
+   * are ignored under it (turbo bakes its own index); `reduce` still applies
+   * (default `mean`, tev's RGB average) and exposure/offset apply BEFORE the log2.
+   * Requires `colormap` to be the turbo table. Mutually exclusive with
+   * `analytic`/`grayNone`. Ignored when `isScalar` is false. Unset = false. */
+  turbo?: boolean;
   /** GRAY-NONE output-encode transfer (only read when {@link grayNone}): `0`/unset →
    *  the sRGB OETF (matching the default `srgb` transfer), `1` → linear identity
    *  encode, `γ` → the `1/γ` power curve (the `gamma` transfer). This is the CURVE's
@@ -272,10 +282,11 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const channelCount = typeof params.channelCount === "number" ? params.channelCount : 1;
   // u_bind10.z = SCALAR-MODE enum (scalar/LUT path only): 0 = LUT sample, 1 =
   // ANALYTIC signed color (tev red-green), 2 = GRAY NONE (plain-grayscale data
-  // encoding). u_bind10.w = the GRAY-NONE encode-gamma (0 = sRGB OETF, >0 = 1/γ
-  // power curve) — a separate slot from the power-norm exponent (which rides
-  // gamma/u_bind2.z), so a gray-none image can carry both. Both default to 0.
-  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : 0;
+  // encoding), 3 = TURBO false-color (tev-exact: the bound turbo table sampled at
+  // the FIXED log2 index, bypassing the norm path). u_bind10.w = the GRAY-NONE
+  // encode-gamma (0 = sRGB OETF, >0 = 1/γ power curve) — a separate slot from the
+  // power-norm exponent (which rides gamma/u_bind2.z). Both default to 0.
+  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : params.turbo ? 3 : 0;
   const grayEncodeGamma =
     typeof params.grayEncodeGamma === "number" && params.grayEncodeGamma > 0 ? params.grayEncodeGamma : 0;
   const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, grayEncodeGamma]);

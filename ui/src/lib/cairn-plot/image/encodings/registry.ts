@@ -219,6 +219,18 @@ export interface DisplayEncoding {
    */
   analytic?: boolean;
   /**
+   * TURBO false-color (the tev-exact follow-up) — a table-backed `kind:"lut"`
+   * DATA encoding (`needsLut`/`lutName:"turbo"`, so it DOES bind the LUT texture)
+   * whose LUT INDEX is tev's FIXED log2 mapping ({@link turboDataIndex}) BAKED into
+   * the encoding, NOT the user-facing {@link computeDataIndex} norm path. So it
+   * declares NO `norm`/`min`/`max` (those pickers are hidden), defaults `reduce` to
+   * `mean` (tev averages RGB), and exposure/offset apply BEFORE the log2 (sliding
+   * the image along the ramp). The GPU routes it via scalar-mode `3` (`u_bind10.z`),
+   * which calls `cairnTurboDataIndex` instead of `cairnDataIndex` before sampling
+   * the bound turbo table. Unset on every other entry.
+   */
+  turbo?: boolean;
+  /**
    * For `kind:"lut"` encodings: the colormap TABLE id (== a `ColormapName` in
    * `colormaps/lut.ts`) whose 256×4 float LUT the shared LUT shader family binds.
    * The entry references the table by id — it does NOT carry texel data — so
@@ -310,6 +322,36 @@ export function computeDataIndex(scalar: number, p: EncodeParams): number {
     return Math.pow(clamp01(t), g);
   }
   return t;
+}
+
+/**
+ * tev's FALSE-COLOR (turbo) FIXED log mapping — the BAKED data-index of the
+ * `turbo` encoding (NOT a user-facing norm). Ported from tev
+ * (`github.com/Tom94/tev`, `src/UberShader.cpp` ~L523, which uploads
+ * `colormap::turbo()` from `include/tev/FalseColor.h` / `src/FalseColor.cpp`):
+ *   `index = clamp(log2(mean(rgb) + 2⁻⁵) / 10 + 0.5, 0, 1)`
+ * A 2⁻⁵ ({@link TURBO_LOG2_OFFSET}) offset, ten stops ({@link TURBO_LOG2_STOPS}):
+ * a pixel value 1.0 lands mid-ramp (~0.504, green), ~32 saturates at the dark-red
+ * end, ~2⁻⁵ floors at dark indigo. `mean(rgb)` is the tev-faithful reduce (so the
+ * turbo encoding defaults `reduce` to `mean`, and exposure/offset are applied
+ * BEFORE — exposure slides the image along the ramp). Shared by the CPU twin
+ * ({@link turboDataIndex}) and the WGSL twin (`cairnTurboDataIndex` in `./wgsl.ts`),
+ * kept byte-parallel.
+ */
+export const TURBO_LOG2_OFFSET = 0.03125; // 2⁻⁵
+export const TURBO_LOG2_STOPS = 10;
+
+/**
+ * The `turbo` encoding's BAKED LUT index from a (reduced, exposure/offset-adjusted)
+ * scalar — tev's fixed false-color log mapping (see {@link TURBO_LOG2_OFFSET}).
+ * Unlike {@link computeDataIndex} (the user-facing norm/bounds path), this is a
+ * FIXED mapping intrinsic to the encoding — turbo declares NO norm/min/max. The
+ * result is clamped to `[0,1]` (the LUT sampler clamps too, but the log2 can go
+ * negative for tiny inputs, so clamp here for the CPU twin's `[0,1]` contract).
+ * WGSL twin: `cairnTurboDataIndex` in `./wgsl.ts`, kept byte-parallel.
+ */
+export function turboDataIndex(scalar: number): number {
+  return clamp01(Math.log2(scalar + TURBO_LOG2_OFFSET) / TURBO_LOG2_STOPS + 0.5);
 }
 
 /**
