@@ -124,3 +124,23 @@ Scope choices: registry `wgsl` is the operator CURVE only (exposure/output-encod
 stay shared stages, per the phased plan); `params` are declared per-encoding
 (UI-gating metadata, not yet wired); compose keeps `remaps:false` so the `normal`
 remap stays single-image-only (exactly as before). No UI/schema/Python changes.
+
+## Phase 2 — DONE (commit 8a33597)
+
+Colormaps are now `kind:"lut"` registry entries (`encodings/luts.ts`, generated
+from `COLORMAP_STOPS` → arity `[1]`, `needsLut`, `lutName` table ref, sensitivity
+params) driving the colormap menus via `listEncodingsByKind("lut")`; ONE shared
+`LUT_FAMILY_WGSL` (`cairnLutColor`) + `colormapFloatLUT` table now back BOTH the
+single-image `isScalar` path (which short-circuits operator/output-encode — the
+LUT holds display sRGB) AND `renderDiffDisplay` (its private LUT/index plumbing
+deleted), so the diff blit and the image LUT are literally one family. Colormap is
+legal on the FLOAT surface (task #86): GpuImagePane renders a scalar float source
+through the LUT family (scalar→exposure/offset→LUT), CpuImagePane's HDR path has
+the CPU twin, both exposing the colormap menu (exclusive with the tonemap menu).
+The `encoding-registry` parity harness now covers the LUT family (GPU LUT ===
+cpu twin per colormap). Deviations: the float-image LUT uses cmap-mode `linear`
+only (diverging fold + min/max/norms are Phase 4); the compose `processSide`
+`isScalar` branch (dead — every caller passes `isScalar:false`) was left as-is.
+Phase 3 (menu unification) needs to know: the LUT entries + `listEncodingsByKind`
+are ready to feed ONE Display menu with kind sections; per-arity memory + moving
+`normal` to a `remap` section is all that remains.

@@ -40,7 +40,7 @@ import type { ToolbarConfig, ToolbarButtonSpec } from "../controls/ToolbarConfig
 import { adaptiveMaxZoom, type Viewport } from "../hooks/use-image-viewport";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../primitives/plot-to-png";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
-import { COLORMAP_OPTIONS } from "../colormaps/lut";
+import { listEncodingsByKind } from "../image/encodings";
 import {
   SDR_TONEMAP_OPERATORS,
   SDR_DISPLAY_TRANSFER_OPERATORS,
@@ -90,17 +90,18 @@ export function notationToolbarButton(
 
 /**
  * The registered colormaps as a toolbar-menu option list (diff-kernels
- * toolbar-selection track). DERIVED from `colormaps/lut.ts`'s canonical
- * `COLORMAP_OPTIONS` (itself derived from the `COLORMAP_STOPS` registry + its
- * label map) with the image-only `"none"` raw/grayscale passthrough prepended —
- * so this list can never drift from the actual LUT registry. `"none"` shows the
- * raw image / grayscale diff. Kept here (not in the toolbar primitive) so the
- * panes' shared image-controller module owns the one canonical list both
- * single-image backends and the compare pane's diff colormap draw from.
+ * toolbar-selection track). DERIVED from the display-encoding registry's
+ * `kind:"lut"` entries (`listEncodingsByKind("lut")`) — the SAME registry the
+ * GPU LUT family binds — with the image-only `"none"` raw/grayscale passthrough
+ * prepended, so this menu can never drift from the actual colormap set (the
+ * tonemap menu's `SDR_TONEMAP_OPERATORS` precedent). `"none"` shows the raw image
+ * / grayscale diff. Kept here (not in the toolbar primitive) so the panes' shared
+ * image-controller module owns the one canonical list both single-image backends
+ * and the compare pane's diff colormap draw from.
  */
 export const COLORMAP_MENU_OPTIONS: { id: string; label: string }[] = [
   { id: "none", label: "None" },
-  ...COLORMAP_OPTIONS,
+  ...listEncodingsByKind("lut").map((e) => ({ id: e.id, label: e.label })),
 ];
 
 /**

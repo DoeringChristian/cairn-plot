@@ -33,6 +33,7 @@ import {
   type KernelBuildCtx,
 } from "./kernels";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl";
+import { LUT_FAMILY_WGSL } from "../image/encodings/index.ts";
 import { computeMetrics, makeCpuMapSampler, type DiffMetrics } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
@@ -443,6 +444,7 @@ export function clearDiffCache(device: Device): void {
 const DISPLAY_SHADER = `
 ${VERTEX_WGSL}
 ${SAMPLING_WGSL}
+${LUT_FAMILY_WGSL}
 @group(0) @binding(0) var resultTex: texture_2d<f32>;
 @group(0) @binding(3) var lut: texture_2d<f32>;
 @group(0) @binding(8) var<uniform> u_uv: vec4<f32>;   // uvRect.xy, uvRect.wh
@@ -493,16 +495,15 @@ ${SAMPLING_WGSL}
   let useColormap = u_disp.z > 0.5;
   var outColor: vec3<f32>;
   if (useColormap) {
+    // The SHARED LUT family (image/encodings' cairnLutColor) — the SAME family
+    // the single-image isScalar path uses. It folds the index per cmap-mode
+    // (2 = positive: zero on a diverging map's neutral midpoint; 0/1 use the
+    // full ramp) and mirrors the source filter (linear at moderate zoom so the
+    // smooth diff magnitude doesn't snap to one of 256 discrete bins, nearest
+    // at the pixelated zoom for crisp per-texel color). The diff path's private
+    // LUT sampling/index plumbing folded INTO this family.
     let avg = (disp.r + disp.g + disp.b) / 3.0;
-    var idx = avg;
-    if (cmapModeId == 2) { idx = 0.5 + avg * 0.5; } // "positive"
-    // Mirror the source filter: when the diff RESULT is sampled bilinearly
-    // (moderate zoom), interpolate the LUT too — otherwise the smooth diff
-    // magnitude snaps to one of 256 discrete colormap bins, banding the
-    // false-color image into blocky per-texel cells (the colormap-interp bug).
-    // At the pixelated zoom the nearest fetch keeps crisp per-texel color.
-    if (filterLinear) { outColor = sampleLUTLinear(lut, idx); }
-    else { outColor = sampleLUT(lut, idx); }
+    outColor = cairnLutColor(lut, avg, cmapModeId, filterLinear);
   } else {
     outColor = disp;
   }

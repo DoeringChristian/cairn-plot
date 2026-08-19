@@ -122,3 +122,32 @@ test("wgsl curve expression is a non-empty string for every entry", () => {
     assert.ok(e.wgsl.trim().length > 0, `${e.id} has empty wgsl`);
   }
 });
+
+test("lut entries: kind lut, arity [1], needsLut, lutName, sensitivity params", () => {
+  const luts = listEncodings().filter((e) => e.kind === "lut");
+  assert.ok(luts.length >= 3, "expected the migrated colormap LUT entries");
+  // Includes the canonical colormaps.
+  const ids = luts.map((e) => e.id);
+  for (const id of ["viridis", "magma"]) assert.ok(ids.includes(id), `missing lut "${id}"`);
+  for (const e of luts) {
+    assert.deepEqual(e.arities, [1], `${e.id} lut arity must be [1]`);
+    assert.equal(e.needsLut, true, `${e.id} lut must set needsLut`);
+    assert.equal(typeof e.lutName, "string", `${e.id} lut must reference a table`);
+    assert.ok(e.lutName!.length > 0, `${e.id} lut has empty lutName`);
+    assert.deepEqual(e.params, ["exposure", "offset"], `${e.id} lut declares only sensitivity params (Phase 2)`);
+  }
+});
+
+test("lut cpu twins return finite display triples in [0,1] across the scalar range", () => {
+  const luts = listEncodings().filter((e) => e.kind === "lut");
+  const scalars = [-0.5, 0, 0.25, 0.5, 0.75, 1, 1.5];
+  for (const e of luts) {
+    for (const s of scalars) {
+      const out = e.cpu([s, 0, 0], 1, DEFAULT_ENCODE_PARAMS);
+      assert.equal(out.length, 3, `${e.id} cpu returned non-triple`);
+      for (const c of out) {
+        assert.ok(Number.isFinite(c) && c >= 0 && c <= 1, `${e.id} cpu(${s}) out of [0,1]: ${c}`);
+      }
+    }
+  }
+});

@@ -61,8 +61,10 @@ export const COLORMAP_NAMES = Object.keys(COLORMAP_STOPS) as ColormapName[];
 
 /** Human labels for the colormap menu, keyed by name. `Record<ColormapName,…>`
  *  is exhaustive, so adding a colormap to `COLORMAP_STOPS` without a label here
- *  is a COMPILE error — labels can't silently fall out of sync with the set. */
-const COLORMAP_LABELS: Record<ColormapName, string> = {
+ *  is a COMPILE error — labels can't silently fall out of sync with the set.
+ *  Exported so the display-encoding LUT entries (`image/encodings/luts.ts`) label
+ *  themselves from the SAME map — the registry can't drift from the menu. */
+export const COLORMAP_LABELS: Record<ColormapName, string> = {
   viridis: "Viridis",
   plasma: "Plasma",
   magma: "Magma",
@@ -91,4 +93,31 @@ export function getColormapLUT(name: ColormapName): Uint8Array {
     colormapLUTs.set(name, lut);
   }
   return lut;
+}
+
+const colormapFloatLUTs = new Map<string, Float32Array>();
+
+/**
+ * The colormap LUT as a 256×4 RGBA-FLOAT table (`[0,1]`, alpha 1) — the ONE
+ * representation the GPU LUT family binds as its 256×1 `rgba32float` texture
+ * (`engine/image-engine.ts`'s `buildColormapTexture`, `diff-engine.ts`'s diff
+ * blit, and the compare pane's diff colormap all consume THIS, not their own
+ * hand-rolled `Uint8→Float` expansion). The stored bytes are the display
+ * (sRGB-encoded) colormap colors; the LUT family samples them and writes them
+ * straight to the display surface (no re-encode) — see `image/encodings`. Cached
+ * per name (the tables are immutable). */
+export function colormapFloatLUT(name: ColormapName): Float32Array {
+  let out = colormapFloatLUTs.get(name);
+  if (!out) {
+    const bytes = getColormapLUT(name);
+    out = new Float32Array(256 * 4);
+    for (let i = 0; i < 256; i++) {
+      out[i * 4 + 0] = bytes[i * 3 + 0]! / 255;
+      out[i * 4 + 1] = bytes[i * 3 + 1]! / 255;
+      out[i * 4 + 2] = bytes[i * 3 + 2]! / 255;
+      out[i * 4 + 3] = 1;
+    }
+    colormapFloatLUTs.set(name, out);
+  }
+  return out;
 }

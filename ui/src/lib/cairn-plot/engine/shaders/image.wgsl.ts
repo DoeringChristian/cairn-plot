@@ -125,11 +125,13 @@
  * ## Colormap LUT (scalar-image path)
  * `t_bind1` is a `256x1 rgba32float` texture (or a 1x1 placeholder when
  * `ImageParams.colormap` is absent — see `image-engine.ts`'s
- * `buildColormapTexture`) holding a `256x4` RGBA-float lookup table. When
- * `isScalar` is set, the scalar value is taken from `rgb.x` AFTER exposure
- * is applied (matching the brief's pipeline order: `v*=2^exposureEV; if
- * (isScalar) v.rgb = colormapLUT(v.r)`) and mapped through the LUT by
- * `sampleLutNearestF` / `sampleLutLinearF`, SELECTED by the same `filterMode`
+ * `buildColormapTexture`) holding a `256x4` RGBA-float lookup table of DISPLAY
+ * (sRGB-encoded) colormap colors. When `isScalar` is set, the scalar value is
+ * taken from `rgb.x` AFTER exposure/offset (the colormap SENSITIVITY) and mapped
+ * through the SHARED LUT family (`image/encodings`' `cairnLutColor`, the SAME
+ * family the diff blit uses) — whose sampled value IS the final display color, so
+ * the colormap SHORT-CIRCUITS the tone-map operator + output-encode stages and
+ * returns straight to the surface (no re-encode). The family is SELECTED by the same `filterMode`
  * (`u_bind5`) that picks nearest vs. bilinear SOURCE sampling. Nearest source
  * sampling (pixelated zoom) uses the NEAREST index: `clamp(rgb.x,0,1)*255`
  * rounded via `floor(idxF + 0.5)` (deterministic round-half-UP, matching the
@@ -159,7 +161,7 @@
  * the linear path (`sampleLutLinearF`) — both need only `textureLoad`'s
  * exact-texel semantics, no filterable-float sampler.
  */
-import { buildTonemapCurvesWGSL } from "../../image/encodings/index.ts";
+import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL } from "../../image/encodings/index.ts";
 
 export const imageWGSL = `
 struct VSOut {
@@ -292,40 +294,17 @@ fn sampleBilinearF(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
   return mix(top, bot, frac.y);
 }
 
-// Colormap LUT lookup, two variants selected by the SAME filter flag (u_bind5)
-// that picks nearest/bilinear source sampling — so a colormapped image shares
-// ONE interpolation decision with the plain path, never diverging.
-//
-//  sampleLutNearestF: the crisp per-texel mapping. Round-half-UP index (matches
-//    the CPU Math.round reference — WGSL round() is round-half-to-EVEN), exact
-//    texel fetch. Used at the pixelated zoom (source sampled nearest), where
-//    each source texel is a solid on-screen block anyway.
-//  sampleLutLinearF: blends the TWO adjacent LUT entries by the fractional
-//    index. Used at moderate zoom (source sampled bilinearly). Without this a
-//    bilinearly-interpolated scalar still SNAPS to one of 256 discrete LUT bins,
-//    reintroducing stair-step banding whose iso-value contours follow the texel
-//    grid — the "sharp corners that should not be there" the plain (non-LUT)
-//    path never shows. Interpolating the scalar across texels AND interpolating
-//    the LUT across its entries is the intended smooth false-color pipeline.
-// At a texel-aligned 8-bit scalar (idxF integer, frac==0) the linear variant
-// degenerates to the exact entry, so the two agree wherever the source is
-// texel-aligned.
-fn sampleLutNearestF(valueUnit: f32) -> vec3<f32> {
-  let idxF = clamp(valueUnit, 0.0, 1.0) * 255.0;
-  let idx = clamp(i32(floor(idxF + 0.5)), 0, 255);
-  return textureLoad(t_bind1, vec2<i32>(idx, 0), 0).rgb;
-}
-
-fn sampleLutLinearF(valueUnit: f32) -> vec3<f32> {
-  let idxF = clamp(valueUnit, 0.0, 1.0) * 255.0;
-  let base = floor(idxF);
-  let i0 = clamp(i32(base), 0, 255);
-  let i1 = min(i0 + 1, 255);
-  let frac = idxF - base;
-  let c0 = textureLoad(t_bind1, vec2<i32>(i0, 0), 0).rgb;
-  let c1 = textureLoad(t_bind1, vec2<i32>(i1, 0), 0).rgb;
-  return mix(c0, c1, frac);
-}
+// Colormap LUT family — the SHARED cairnLutColor(lut, scalar, cmapMode,
+// filterLinear) from image/encodings (LUT_FAMILY_WGSL), the SAME family the diff
+// blit consumes. Its nearest/linear samplers are selected by the SAME filter
+// flag (u_bind5) that picks nearest/bilinear source sampling, so a colormapped
+// image shares ONE interpolation decision with the plain path: crisp round-half-
+// UP nearest at the pixelated zoom, adjacent-entry blend at moderate zoom (so an
+// interpolated scalar yields a smooth color instead of snapping to one of 256
+// bins). The float single-image path uses cmap-mode 0 (linear / full ramp); the
+// LUT holds DISPLAY (sRGB) colors written to the surface UNCHANGED (no output
+// re-encode) — see the isScalar short-circuit in fs_main.
+${LUT_FAMILY_WGSL}
 
 // The curve helper fns (reinhardCurve/acesCurve/extended*Curve) + the
 // operatorId-dispatched applyOperator are ASSEMBLED from the display-encoding
@@ -384,19 +363,17 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   //    colormap / tone-map / output-encode stages below.
   var rgb = src * exp2(exposureEV) + vec3<f32>(offset);
 
-  // 2) scalar image + colormap LUT (GPU-only pipeline stage; see module doc).
-  //    The LUT lookup mirrors the SOURCE filter: bilinear source sampling pairs
-  //    with a LINEAR LUT lookup (interpolate the scalar across texels, THEN
-  //    interpolate the LUT across its entries — the smooth false-color path),
-  //    nearest source sampling pairs with the crisp round-half-up NEAREST index.
-  //    Keying both off the one filterLinear flag keeps colormapped rendering
-  //    from diverging from the plain path's interpolation at any zoom.
+  // 2) scalar image + colormap LUT family (the DATA encoding). The scalar (rgb.x,
+  //    AFTER exposure/offset = the colormap SENSITIVITY) indexes the shared LUT
+  //    family; the sampled value is the FINAL DISPLAY color (the LUT holds sRGB-
+  //    encoded colormap colors), so a colormap SHORT-CIRCUITS the tone-map
+  //    operator + output-encode stages entirely and returns straight to the
+  //    surface — exactly the diff blit's convention, and why the two now share
+  //    one family. cmap-mode 0 (linear/full ramp) for the float image. The LUT
+  //    lookup still mirrors the source filter (linear at moderate zoom, nearest
+  //    pixelated) so false-color interpolation never diverges from the plain path.
   if (isScalar) {
-    if (filterLinear) {
-      rgb = sampleLutLinearF(rgb.x);
-    } else {
-      rgb = sampleLutNearestF(rgb.x);
-    }
+    return vec4<f32>(cairnLutColor(t_bind1, rgb.x, 0, filterLinear), 1.0);
   }
 
   // 3) tone-map operator: HDR [0,inf) -> display-linear [0,1] (or [0,peak] for

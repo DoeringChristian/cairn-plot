@@ -82,7 +82,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../types";
-import { applyColormap } from "../colormaps";
+import { applyColormap, colormapFloatLUT } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
 import { HALF_ONE, halfToFloat } from "../image/half";
@@ -384,7 +384,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // COLORMAP menu can switch it in-pane (diff-kernels toolbar track). Re-seeds
   // when the prop changes (e.g. the app card's colormap control) so the pane
   // stays a controlled surface until the user overrides it locally.
-  const propColormap: Colormap = hdrMode ? "none" : ((props as SdrImageProps).colormap ?? "none");
+  // The colormap seeds from the prop on BOTH shapes: the SDR pane false-colors it
+  // CPU-side, and (Phase 2) the FLOAT pane runs it through the GPU LUT family on
+  // its scalar channel (the channel selector's scalar isolations — layer "Z",
+  // "diffuse.G" — become colormappable). An absent prop (the common HDR case)
+  // reads `"none"`; the toolbar COLORMAP menu / sync bus then drive it view-local.
+  const propColormap: Colormap = (props as SdrImageProps).colormap ?? "none";
   // Descriptor default captured at mount (via `useResettableState`'s seed
   // capture); HOME restores the view-local colormap override to it (and
   // `isModified` enables it while off-default) — same contract as
@@ -395,7 +400,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   useEffect(() => {
     setColormapOverride(propColormap);
   }, [propColormap, setColormapOverride]);
+  // The SDR (8-bit) pane false-colors CPU-side; the FLOAT pane runs the GPU LUT
+  // family. Split the one override into the two path-specific values so each
+  // path's "no colormap" condition (`sdrPlain`, the HDR curve params) is exact.
   const sdrColormap = hdrMode ? "none" : colormapOverride;
+  const hdrColormap: Colormap = hdrMode ? colormapOverride : "none";
 
   // TONE-MAP operator — the UNIFIED 5-operator menu, now shown on BOTH the HDR
   // (float) pane AND the plain-SDR (8-bit, no colormap) pane (§B: "all 5
@@ -496,14 +505,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
-      colormap: sdrColormap,
+      // The active colormap (SDR CPU false-color OR the float LUT family) — the
+      // one override, so a synced peer follows on either surface.
+      colormap: colormapOverride,
       tonemap: effectiveTonemap,
       tonemapGamma,
       peak,
       exposureEV: displayEV,
       offset: displayOffset,
     }),
-    [sdrColormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
+    [colormapOverride, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -927,8 +938,28 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // SDR image is the one exception — its false-color LUT output is already
     // display-ready, so it stays a raw passthrough (operator "linear", gamma 1 =
     // identity, no decode, hdrOut:false) to avoid double-encoding the LUT output.
-    const params: ImageParams =
-      hdrMode || sdrPlain
+    // FLOAT colormap (Phase 2 / task #86): a colormap on the float/unified
+    // surface runs the GPU LUT FAMILY on the scalar channel — scalar (channel 0)
+    // → exposure/offset SENSITIVITY → LUT (cmap-mode linear). `isScalar`
+    // short-circuits the tone-map operator + output-encode in the shader (the LUT
+    // holds display sRGB), so operator/gamma/hdrOut are moot; the LUT table comes
+    // from the shared `colormapFloatLUT`, the SAME the diff blit binds.
+    const hdrColormapActive = hdrMode && hdrColormap !== "none";
+    const params: ImageParams = hdrColormapActive
+      ? {
+          exposureEV: baseExposure + displayEV,
+          offset: baseOffset + displayOffset,
+          operator: "linear",
+          gamma: 1,
+          isScalar: true,
+          colormap: colormapFloatLUT(hdrColormap as Exclude<Colormap, "none">),
+          hdrOut: false,
+          peak: rt.peak,
+          srgbDecode: false,
+          uv,
+          filter,
+        }
+      : hdrMode || sdrPlain
         ? {
             exposureEV: baseExposure + displayEV,
             offset: baseOffset + displayOffset,
@@ -970,7 +1001,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -1121,15 +1152,22 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       histogram={histogramSource}
       // UNIFIED TONEMAP menu (§B): the ONE 5-operator group (Linear · sRGB ·
       // Gamma · Reinhard · ACES) is shown on the HDR (float) pane AND the plain
-      // 8-bit pane — the PEAK slider is the HDR mode (see extraSliders). A plain
-      // SDR pane pairs it with the COLORMAP menu; picking a colormap swaps in the
-      // false-color path, which HIDES the tonemap menu (its LUT output is already
-      // display-ready). The HDR pane has no colormap prop.
+      // 8-bit pane — the PEAK slider is the HDR mode (see extraSliders). Every
+      // pane also carries the COLORMAP menu; picking a colormap swaps in the
+      // false-color path (SDR: CPU applyColormap; FLOAT: the GPU LUT family on the
+      // scalar channel — Phase 2), which HIDES the tonemap menu (its LUT output is
+      // already display-ready). So the two exclusive DISPLAY encodings (curve vs
+      // LUT) present as one colormap + one tonemap control, gated by each other.
       leadingMenus={[
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
         ...(hdrMode
-          ? [tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator))]
+          ? hdrColormap === "none"
+            ? [
+                colormapToolbarButton(colormapOverride, (id) => changeColormap(id as Colormap)),
+                tonemapToolbarButton(effectiveTonemap, (id) => changeTonemap(id as TonemapOperator)),
+              ]
+            : [colormapToolbarButton(colormapOverride, (id) => changeColormap(id as Colormap))]
           : sdrPlain
             ? [
                 colormapToolbarButton(sdrColormap, (id) => changeColormap(id as Colormap)),

@@ -22,9 +22,10 @@
  *        scene-linear gradient that includes a value > 1.0 (HDR range).
  *   5. Nonzero EV (+1.5) on the same gradient, operator "srgb".
  *   6. Scalar image + a 256x4 colormap LUT (viridis stops, converted to
- *      normalized RGBA float) — `isScalar: true`, operator "linear" (a
- *      clamp no-op, so the LUT's own [0,1] values pass through unchanged
- *      before output-encode).
+ *      normalized RGBA float) — `isScalar: true`. The LUT sample IS the final
+ *      display color: the colormap SHORT-CIRCUITS the operator + output-encode
+ *      stages (the shared LUT family / diff-blit convention), so the LUT's own
+ *      sRGB [0,1] values reach the surface UNCHANGED (no re-encode).
  *   7. LUT-index rounding parity: scalar values whose `*255` lands EXACTLY
  *      on a `k+0.5` boundary (0.5/1.5/127.5/254.5), against an alternating
  *      black/white LUT (`BOUNDARY_LUT`) so a wrong adjacent index is
@@ -153,12 +154,17 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
     applyExposure(decoded[2], params.exposureEV),
   ];
 
-  let rgb = exposed;
   if (params.isScalar) {
+    // Colormap LUT family (data encoding): the sampled LUT value IS the final
+    // DISPLAY color — the isScalar path SHORT-CIRCUITS the operator + output-
+    // encode stages and returns straight to the surface (cmap-mode 0 / linear,
+    // round-half-up NEAREST index; matches image.wgsl.ts's cairnLutColor + the
+    // diff blit convention). The LUT holds sRGB-encoded colors, so no re-encode.
     const lut = colormap!;
     const idx = Math.max(0, Math.min(255, Math.round(clamp01(exposed[0]) * 255)));
-    rgb = [lut[idx * 4 + 0]!, lut[idx * 4 + 1]!, lut[idx * 4 + 2]!];
+    return [lut[idx * 4 + 0]!, lut[idx * 4 + 1]!, lut[idx * 4 + 2]!];
   }
+  const rgb = exposed;
 
   // Peak-aware operator dispatch (mirrors image.wgsl.ts's applyOperator): the
   // extended roll-off operators (extended-reinhard/-aces) read params.peak.
@@ -363,9 +369,11 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // Source = 2 texels [127/255, 128/255]; BOUNDARY_LUT is alternating
     // black/white so lut[127]=white(1), lut[128]=black(0) differ maximally. A
     // 3-wide output samples its MIDDLE pixel at source-uv 0.5 → bilinear scalar
-    // 127.5/255 → idxF 127.5. LINEAR LUT blends white+black by 0.5 = 0.5, sRGB-
-    // encoded ≈ byte 188 — strictly BETWEEN the two texels' colors (0 and 255).
-    // The OLD nearest code returned lut[128]=0 (a solid block).
+    // 127.5/255 → idxF 127.5. LINEAR LUT blends white+black by 0.5 = 0.5. The LUT
+    // family writes the sampled DISPLAY value straight to the surface (no
+    // re-encode — the shared family / diff-blit convention), so the blend is
+    // byte 128 — strictly BETWEEN the two texels' colors (0 and 255). The OLD
+    // nearest code returned lut[128]=0 (a solid block).
     const caseLabel = `${label}/scalar+colormap/linear-blends-lut`;
     const src = buildSrcTexture(device, [
       [127 / 255, 0, 0, 1.0],
@@ -388,10 +396,10 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     if (out instanceof Uint8Array) {
       const mid = out[1 * 4 + 0]!; // middle output pixel, R channel
       const isBlend = mid > 20 && mid < 235; // strictly between black(0) and white(255)
-      const nearExpected = Math.abs(mid - 188) <= 3; // sRGB(0.5) ≈ 188
+      const nearExpected = Math.abs(mid - 128) <= 3; // 0.5 display blend, written unchanged
       ok = isBlend && nearExpected;
       report(isBlend, `[${caseLabel}] middle pixel is a LUT blend (0<${mid}<255, not a nearest snap)`);
-      report(nearExpected, `[${caseLabel}] middle pixel ≈188 (sRGB-encoded 0.5 blend), got ${mid}`);
+      report(nearExpected, `[${caseLabel}] middle pixel ≈128 (0.5 LUT blend, no re-encode), got ${mid}`);
     } else {
       report(false, `[${caseLabel}] readback should be Uint8Array`);
     }

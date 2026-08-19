@@ -7,9 +7,14 @@
  * `tonemap.ts` re-exports under its historical names).
  */
 import { registerCurveEncodings } from "./curves.ts";
+import { registerLutEncodings } from "./luts.ts";
 import { listEncodings } from "./registry.ts";
 
+// Curves first (operatorIds 0–9), then the colormap LUT family (10+) — the
+// registration order `listEncodingsByKind` returns, so the colormap menu order
+// matches `COLORMAP_NAMES`.
 registerCurveEncodings();
+registerLutEncodings();
 
 /**
  * The `operatorId` uniform value for each encoding id — the map
@@ -23,4 +28,5 @@ export const OPERATOR_ID: Record<string, number> = Object.fromEntries(
 
 export * from "./registry.ts";
 export * from "./curves.ts";
+export * from "./luts.ts";
 export * from "./wgsl.ts";

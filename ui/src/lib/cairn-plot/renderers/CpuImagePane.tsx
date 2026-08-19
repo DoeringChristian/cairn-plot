@@ -64,6 +64,8 @@ import {
   setCachedImageData,
 } from "../image";
 import { applyColormap, getColormapLUT } from "../colormaps";
+import { sampleLutByte } from "../colormaps/lut-sample";
+import { clamp01 } from "../util/clamp";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
@@ -136,8 +138,15 @@ export function tonemapToImageData(
   exposure: number,
   gamma?: number,
   offset: number = 0,
+  colormap: string = "none",
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
+  // COLORMAP (LUT family, CPU twin — Phase 2): when a colormap is active the
+  // SCALAR channel (channel 0), after exposure/offset SENSITIVITY, indexes the
+  // colormap LUT and the DISPLAY color is written straight out — the tone-map
+  // operator + output-encode are SHORT-CIRCUITED (the LUT holds display sRGB),
+  // matching the GPU `cairnLutColor` family + the diff blit. cmap-mode `linear`.
+  const cmapLut = colormap !== "none" ? getColormapLUT(colormap as never) : null;
   // F16 pipeline: this is the CPU tone-map FALLBACK path (used when the GPU
   // backend is unavailable), so a `precision:"f16-bits"` source is widened to
   // f32 ONCE for the whole frame here (see `../image/half.ts`) rather than
@@ -174,8 +183,17 @@ export function tonemapToImageData(
       applyExposureOffset(g, exposure, offset),
       applyExposureOffset(b, exposure, offset),
     ];
-    const [tr, tg, tb] = op(lit);
     const o = i * 4;
+    if (cmapLut) {
+      // Scalar (channel 0) → LUT → display color directly (no operator/encode).
+      const [cr, cg, cb] = sampleLutByte(cmapLut, clamp01(lit[0]));
+      out[o] = cr;
+      out[o + 1] = cg;
+      out[o + 2] = cb;
+      out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
+      continue;
+    }
+    const [tr, tg, tb] = op(lit);
     out[o] = 255 * outputEncode(tr, gamma);
     out[o + 1] = 255 * outputEncode(tg, gamma);
     out[o + 2] = 255 * outputEncode(tb, gamma);
@@ -979,6 +997,19 @@ function CpuHdrImagePane(
     if (gamma && gamma > 0) setTonemapGamma(gamma);
   }, [gamma, setTonemapGamma]);
 
+  // COLORMAP override (Phase 2 / task #86): a colormap on the FLOAT surface runs
+  // the LUT family on the scalar channel — the CPU parity of the GPU float
+  // colormap path. Seeded from an optional `colormap=` prop (absent on most HDR
+  // sources → "none"), re-seeded on prop change, driven view-local by the toolbar
+  // COLORMAP menu / sync bus. A colormap HIDES the tonemap menu (its LUT output
+  // is display-ready) — the two exclusive DISPLAY encodings gate each other.
+  const propColormap: Colormap =
+    (props as unknown as { colormap?: Colormap }).colormap ?? "none";
+  const [colormap, setColormap, colormapMeta] = useResettableState<Colormap>(propColormap);
+  useEffect(() => {
+    setColormap(propColormap);
+  }, [propColormap, setColormap]);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -995,21 +1026,23 @@ function CpuHdrImagePane(
   // CPU HDR path syncs the tone-map operator, its γ, and exposure/offset.
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
+      if (patch.colormap !== undefined) setColormap(patch.colormap as Colormap);
       if (patch.tonemap !== undefined) setTonemapOp(patch.tonemap as TonemapOperator);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
     },
-    [setTonemapOp, setTonemapGamma],
+    [setColormap, setTonemapOp, setTonemapGamma],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
+      colormap,
       tonemap: tonemapOp,
       tonemapGamma,
       exposureEV: displayEV,
       offset: displayOffset,
     }),
-    [tonemapOp, tonemapGamma, displayEV, displayOffset],
+    [colormap, tonemapOp, tonemapGamma, displayEV, displayOffset],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -1023,6 +1056,13 @@ function CpuHdrImagePane(
       publishSettings({ tonemap: id });
     },
     [setTonemapOp, publishSettings],
+  );
+  const changeColormap = useCallback(
+    (id: Colormap) => {
+      setColormap(id);
+      publishSettings({ colormap: id });
+    },
+    [setColormap, publishSettings],
   );
   const changeGamma = useCallback(
     (v: number) => {
@@ -1063,6 +1103,9 @@ function CpuHdrImagePane(
         // Base offset (controlled) + the additive runtime OFF slider. HOME zeroes
         // only `displayOffset`, so the descriptor `offset` persists.
         baseOffset + displayOffset,
+        // Colormap (LUT family): active → the scalar channel is false-colored and
+        // the tone-map operator is bypassed (see tonemapToImageData).
+        colormap,
       );
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
@@ -1081,7 +1124,7 @@ function CpuHdrImagePane(
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemapOp, exposure, baseOffset, tonemapGamma, displayEV, displayOffset]);
+  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -1097,11 +1140,15 @@ function CpuHdrImagePane(
         hdr.precision === "f16-bits"
           ? (k: number) => halfToFloat(src[k] ?? 0)
           : (k: number) => src[k] ?? 0;
+      // A colormapped scalar prints ONE value (its false-color display is a
+      // single scalar), like the SDR colormap pane.
       const values =
-        c === 1 ? [readV(base)] : [readV(base), readV(base + 1), readV(base + 2)];
+        c === 1 || colormap !== "none"
+          ? [readV(base)]
+          : [readV(base), readV(base + 1), readV(base + 2)];
       return buildChannelSample(values, "unit", notation);
     },
-    [hdr, dims],
+    [hdr, dims, colormap],
   );
 
   // In-pane HISTOGRAM source — bins the RAW float scene values. For a DEEP EXR,
@@ -1161,7 +1208,13 @@ function CpuHdrImagePane(
       leadingMenus={[
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
-        tonemapToolbarButton(tonemapOp, (id) => changeTonemap(id as TonemapOperator)),
+        // COLORMAP menu + (when no colormap) the TONEMAP menu — the two exclusive
+        // DISPLAY encodings. A colormap false-colors the scalar channel and hides
+        // the tonemap menu (its LUT output is display-ready).
+        colormapToolbarButton(colormap, (id) => changeColormap(id as Colormap)),
+        ...(colormap === "none"
+          ? [tonemapToolbarButton(tonemapOp, (id) => changeTonemap(id as TonemapOperator))]
+          : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change).
@@ -1207,11 +1260,16 @@ function CpuHdrImagePane(
       onReset={() => {
         deepFlatten.reset();
         tonemapMeta.reset();
+        colormapMeta.reset();
         gammaMeta.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
-        deepFlatten.isModified || tonemapMeta.isModified || gammaMeta.isModified || !!props.channelModified
+        deepFlatten.isModified ||
+        tonemapMeta.isModified ||
+        colormapMeta.isModified ||
+        gammaMeta.isModified ||
+        !!props.channelModified
       }
       histogram={histogramSource}
       label={label}

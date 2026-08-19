@@ -63,3 +63,54 @@ export function buildTonemapCurvesWGSL(opts: ApplyOperatorOptions): string {
   return `${CURVE_HELPERS_WGSL}
 ${buildApplyOperatorWGSL(opts)}`;
 }
+
+/**
+ * The shared LUT-FAMILY WGSL — the `kind:"lut"` twin of the curve dispatch. ONE
+ * family for every colormap: the entry only parameterizes the bound 256×1
+ * `rgba32float` texture (the colormap TABLE), never the code — so no
+ * per-colormap pipeline. Both the single-image shader (`engine/shaders/
+ * image.wgsl.ts`, `isScalar` path) and the diff-display blit (`engine/
+ * diff-engine.ts`) interpolate this and call `cairnLutColor(lut, scalar, mode,
+ * filterLinear)`, so the colormap math lives in exactly one place (the
+ * duplicated diff LUT plumbing folds into this).
+ *
+ * The samplers are byte-identical to the pre-registry `sampleLutNearestF`/
+ * `sampleLutLinearF` (`image.wgsl.ts`) and `sampleLUT`/`sampleLUTLinear`
+ * (`prelude.wgsl.ts`'s `SAMPLING_WGSL`): the SAME round-half-UP nearest index
+ * (matches the CPU `Math.round` reference — WGSL `round()` is round-half-to-EVEN)
+ * and the SAME two-tap adjacent-entry blend on the linear (moderate-zoom) path.
+ * The LUT stores DISPLAY (sRGB-encoded) colors and the sampled value is written
+ * to the surface unchanged (no output re-encode) — the family produces final
+ * display RGB, matching the diff blit's long-standing convention.
+ *
+ * `cmapMode` (matches `engine/diff-cmap-mode.ts`'s `DiffCmapMode` ids):
+ *   0 `linear`   — the full ramp (sequential maps; the float-image colormap).
+ *   1 `signed`   — linear index of an ALREADY value-remapped input (the diff
+ *                  blit does the `(v+1)/2` remap before calling), so it behaves
+ *                  like `linear` here.
+ *   2 `positive` — fold `[0,1]` into the LUT's UPPER half so zero lands on a
+ *                  diverging map's neutral midpoint.
+ */
+export const LUT_FAMILY_WGSL = `
+fn cairnLutSampleNearest(lut: texture_2d<f32>, t: f32) -> vec3<f32> {
+  let idxF = clamp(t, 0.0, 1.0) * 255.0;
+  let idx = clamp(i32(floor(idxF + 0.5)), 0, 255);
+  return textureLoad(lut, vec2<i32>(idx, 0), 0).rgb;
+}
+fn cairnLutSampleLinear(lut: texture_2d<f32>, t: f32) -> vec3<f32> {
+  let idxF = clamp(t, 0.0, 1.0) * 255.0;
+  let base = floor(idxF);
+  let i0 = clamp(i32(base), 0, 255);
+  let i1 = min(i0 + 1, 255);
+  let frac = idxF - base;
+  let c0 = textureLoad(lut, vec2<i32>(i0, 0), 0).rgb;
+  let c1 = textureLoad(lut, vec2<i32>(i1, 0), 0).rgb;
+  return mix(c0, c1, frac);
+}
+fn cairnLutColor(lut: texture_2d<f32>, scalar: f32, cmapMode: i32, filterLinear: bool) -> vec3<f32> {
+  var idx = clamp(scalar, 0.0, 1.0);
+  if (cmapMode == 2) { idx = 0.5 + idx * 0.5; }
+  if (filterLinear) { return cairnLutSampleLinear(lut, idx); }
+  return cairnLutSampleNearest(lut, idx);
+}
+`;

@@ -31,6 +31,8 @@ import {
   DEFAULT_ENCODE_PARAMS,
   type DisplayEncoding,
 } from "../../image/encodings/index";
+import { colormapFloatLUT } from "../../colormaps/lut";
+import type { ColormapName } from "../../colormaps/lut";
 import type { Device, Texture } from "../types";
 
 function report(pass: boolean, message: string): void {
@@ -84,6 +86,17 @@ const SIGNED_PIXELS: number[][] = [
   [-0.25, 0.0, 0.25, 1.0],
   [0.5, 0.75, 1.0, 1.0],
   [1.0, -1.0, 0.5, 1.0],
+];
+
+/** SCALAR values — the LUT family reads channel 0. Spans [0,1] plus an
+ *  over-range value (clamps to the last LUT row) so the whole ramp is exercised. */
+const SCALAR_PIXELS: number[][] = [
+  [0.0, 0, 0, 1.0],
+  [0.2, 0, 0, 1.0],
+  [0.5, 0, 0, 1.0],
+  [0.8, 0, 0, 1.0],
+  [1.0, 0, 0, 1.0],
+  [1.5, 0, 0, 1.0],
 ];
 
 const uvFull = { x: 0, y: 0, w: 1, h: 1 };
@@ -159,6 +172,55 @@ async function runEncodingCase(device: Device, enc: DisplayEncoding): Promise<bo
   return ok;
 }
 
+/**
+ * LUT-family parity: render a SCALAR float image through the REAL GPU LUT family
+ * (`renderImage` with `isScalar:true` + the encoding's bound `colormapFloatLUT`
+ * table → the shader's shared `cairnLutColor`) and assert the readback equals the
+ * encoding's `cpu` twin. Nearest filter + EV 0: byte-exact (within 1/255). This
+ * covers task #86's float-image colormap AND proves each colormap's GPU sample
+ * agrees with its CPU twin across the whole registered set.
+ */
+async function runLutCase(device: Device, enc: DisplayEncoding): Promise<boolean> {
+  const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
+  const params: ImageParams = {
+    exposureEV: EV,
+    operator: "linear" as ImageOperator, // moot: isScalar short-circuits the operator
+    isScalar: true,
+    colormap: lut,
+    hdrOut: false,
+    uv: uvFull,
+    filter: "nearest",
+  };
+  const src = buildSrcTexture(device, SCALAR_PIXELS);
+  const target = device.createTexture(SCALAR_PIXELS.length, 1, "rgba8unorm");
+  renderImage(device, target, src, params);
+  const out = await device.readback(target);
+  src.destroy();
+  target.destroy();
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[${enc.id}] expected Uint8Array readback, got ${out.constructor.name}`);
+    return false;
+  }
+  let ok = true;
+  for (let i = 0; i < SCALAR_PIXELS.length; i++) {
+    // cpu twin: the (exposure-adjusted) scalar → display sRGB triple (cmap-mode
+    // linear). EV 0 so the exposed scalar is the raw channel-0 value.
+    const exp = enc.cpu([applyExposure(SCALAR_PIXELS[i]![0]!, EV)], 1, {
+      ...DEFAULT_ENCODE_PARAMS,
+    });
+    for (let c = 0; c < 3; c++) {
+      const eb = byteOf(exp[c]!);
+      const ab = out[i * 4 + c]!;
+      if (Math.abs(ab - eb) > 1) {
+        ok = false;
+        report(false, `[${enc.id}] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
+      }
+    }
+  }
+  report(ok, `[${enc.id}] (lut) GPU LUT family === cpu twin`);
+  return ok;
+}
+
 async function main(): Promise<void> {
   try {
     const device = await getSharedDevice();
@@ -167,10 +229,10 @@ async function main(): Promise<void> {
     report(true, `iterating ${encodings.length} registry encoding(s)`);
     let allOk = true;
     for (const enc of encodings) {
-      const ok = await runEncodingCase(device, enc);
+      const ok = enc.kind === "lut" ? await runLutCase(device, enc) : await runEncodingCase(device, enc);
       if (!ok) allOk = false;
     }
-    report(allOk, `all ${encodings.length} encodings: GPU curve === registry cpu twin`);
+    report(allOk, `all ${encodings.length} encodings: GPU === registry cpu twin`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

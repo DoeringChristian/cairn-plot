@@ -74,6 +74,14 @@ export interface DisplayEncoding {
   /** LUT family binds a 256×1 texture (Phase 2). */
   needsLut?: boolean;
   /**
+   * For `kind:"lut"` encodings: the colormap TABLE id (== a `ColormapName` in
+   * `colormaps/lut.ts`) whose 256×4 float LUT the shared LUT shader family binds.
+   * The entry references the table by id — it does NOT carry texel data — so
+   * every colormap is ONE family parameterized by texture, never a per-colormap
+   * pipeline (per the design). Absent on curve/remap entries.
+   */
+  lutName?: string;
+  /**
    * GPU operator id — the uniform value (`u_bind2.y`) the assembled
    * `applyOperator` dispatch and `engine/image-engine.ts`'s `OPERATOR_ID` map
    * both key on. Stable across the codebase (documented in `image.wgsl.ts`).

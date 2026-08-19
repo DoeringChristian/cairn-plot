@@ -67,7 +67,7 @@ import { computeCompareMapping, mappingKey, type CompareAlign, type CompareFit }
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
 import type { Device, Surface, Texture } from "../engine/types";
-import { getColormapLUT } from "../colormaps";
+import { colormapFloatLUT } from "../colormaps";
 import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
 import { colormapToolbarButton, tonemapToolbarButton } from "../renderers/use-image-controller";
 import {
@@ -236,19 +236,6 @@ export interface GpuComparePaneProps {
    *  (`CompositeMediaPane`) reads them on the right side and passes them in. */
   inStackedGrid?: boolean;
   inOverlay?: boolean;
-}
-
-/** Uint8 256x3 LUT -> Float32 256x4 (RGBA, [0,1]) for `CompareParams.diffColormap`. */
-function floatLutFor(colormap: Exclude<Colormap, "none">): Float32Array {
-  const bytes = getColormapLUT(colormap);
-  const out = new Float32Array(256 * 4);
-  for (let i = 0; i < 256; i++) {
-    out[i * 4 + 0] = bytes[i * 3 + 0]! / 255;
-    out[i * 4 + 1] = bytes[i * 3 + 1]! / 255;
-    out[i * 4 + 2] = bytes[i * 3 + 2]! / 255;
-    out[i * 4 + 3] = 1;
-  }
-  return out;
 }
 
 interface GpuResources {
@@ -999,7 +986,7 @@ export default function GpuComparePane({
     [resolvedKernelId, colormapState],
   );
   const diffColormap = useMemo<Float32Array | undefined>(
-    () => (colormapState !== "none" ? floatLutFor(colormapState as Exclude<Colormap, "none">) : undefined),
+    () => (colormapState !== "none" ? colormapFloatLUT(colormapState as Exclude<Colormap, "none">) : undefined),
     [colormapState],
   );
 
