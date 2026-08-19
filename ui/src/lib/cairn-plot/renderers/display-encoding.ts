@@ -14,8 +14,11 @@
  *
  * ## Arity gating (`resolveDisplayEncodingIds`)
  *   - `mode:"arity"` (the FLOAT/HDR path, which KNOWS its channel count from the
- *     source shape / channel selector): luts only at k=1; the `normal` remap only
- *     at k=3; curves always. This is the design's arity rule verbatim.
+ *     source shape / channel selector): luts at every k∈[1,4] (a k>1 sample is
+ *     REDUCED to a scalar before the LUT — the multi-channel-colormap follow-up,
+ *     with a Lum/Mean reduce picker in the second toolbar row); the `normal` remap
+ *     only at k=3; curves always. Per-arity memory still applies (flipping the
+ *     channel selector remembers the last encoding chosen at each k).
  *   - `mode:"sdr"` (the 8-bit `imageUrl` path): a decoded PNG has no meaningful
  *     scalar-vs-RGB channel-count signal (its false-color colormap treats it as
  *     scalar, its normal-map view treats it as RGB), so it offers the FULL
@@ -27,37 +30,66 @@
  * Core-safe (registry + React only) — CpuImagePane ships in `core.iife.js`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ToolbarButtonSpec, ToolbarMenuOption } from "../controls/ToolbarConfig";
-import { getEncoding, listEncodingsByKind, type NormMode } from "../image/encodings";
+import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../controls/ToolbarConfig";
+import { getEncoding, listEncodingsByKind, type NormMode, type ReduceMode } from "../image/encodings";
 
 /** The DATA-encoding norm options, in menu order (Phase 4). Shown ONLY when a
  *  lut (data) encoding is active — a norm is the nonlinear domain mapping INSIDE
  *  a data encoding and is never applicable to a curve (see the design doc). */
 export const NORM_MENU_OPTIONS: { id: NormMode; label: string }[] = [
-  { id: "linear", label: "Linear" },
+  { id: "linear", label: "Lin" },
   { id: "log", label: "Log" },
-  { id: "power", label: "Power" },
+  { id: "power", label: "Pow" },
+];
+
+/** The DATA-encoding multi-channel REDUCE options, in order (the multi-channel-
+ *  colormap follow-up). Shown ONLY while a colormap LUT is active AND the source
+ *  has >1 channel — how ℝᵏ collapses to the scalar the LUT indexes. */
+export const REDUCE_MENU_OPTIONS: { id: ReduceMode; label: string }[] = [
+  { id: "luminance", label: "Lum" },
+  { id: "mean", label: "Mean" },
 ];
 
 /**
- * The DATA-encoding NORM picker as a toolbar LEADING button (menu variant) — the
- * minimal 3-way selector (Linear · Log · Power) a pane shows ONLY while a
- * colormap LUT is the active encoding. `value` is the norm in effect; `onSelect`
- * receives the picked mode. Matches the display/colormap menu idiom (a
- * ToolbarButtonSpec dropdown), so it folds into the same leading-button row.
+ * The DATA-encoding NORM picker as a SECOND-ROW segmented control (Lin · Log ·
+ * Pow) — the minimal selector a pane shows ONLY while a colormap LUT is the
+ * active encoding. It lives in the second toolbar row alongside EV/OFF/PK/γ (the
+ * controls-row-separation directive), NOT next to the DISPLAY menu. `value` is
+ * the norm in effect; `onSelect` receives the picked mode.
  */
-export function normToolbarButton(
+export function normSegment(
   value: NormMode,
   onSelect: (mode: NormMode) => void,
-): ToolbarButtonSpec {
+): ToolbarSegmentSpec {
   return {
     id: "norm",
+    label: "norm",
     title: "Colormap norm (Linear · Log · Power) — the nonlinear domain mapping inside the data encoding",
-    menu: {
-      options: NORM_MENU_OPTIONS,
-      value,
-      onSelect: (id: string) => onSelect(id as NormMode),
-    },
+    options: NORM_MENU_OPTIONS,
+    value,
+    onSelect: (id: string) => onSelect(id as NormMode),
+  };
+}
+
+/**
+ * The DATA-encoding multi-channel REDUCE picker as a SECOND-ROW segmented control
+ * (Lum · Mean) — shown ONLY while a colormap LUT is active AND the source arity
+ * is >1. Selects how the color channels collapse to the scalar the LUT indexes
+ * (luminance = Rec.709, mean = average). Lives in the second toolbar row with the
+ * norm picker + sliders (controls-row-separation directive). `value` is the reduce
+ * mode in effect; `onSelect` receives the picked mode.
+ */
+export function reduceSegment(
+  value: ReduceMode,
+  onSelect: (mode: ReduceMode) => void,
+): ToolbarSegmentSpec {
+  return {
+    id: "reduce",
+    label: "reduce",
+    title: "Multi-channel reduce (Luminance · Mean) — how the selected channels collapse to the scalar the colormap indexes",
+    options: REDUCE_MENU_OPTIONS,
+    value,
+    onSelect: (id: string) => onSelect(id as ReduceMode),
   };
 }
 
@@ -77,6 +109,16 @@ export interface DisplayEncodingIds {
 /** Every registered colormap LUT id, in registry (== menu) order. */
 function allLutIds(): string[] {
   return listEncodingsByKind("lut").map((e) => e.id);
+}
+
+/** The colormap LUT ids whose declared `arities` include `arity`. Colormaps now
+ *  support every k∈[1,4] (a k>1 sample is REDUCED to a scalar before the LUT —
+ *  the multi-channel follow-up), so this is the full set at any 1..4 arity and
+ *  empty beyond it. */
+function lutIdsForArity(arity: number): string[] {
+  return listEncodingsByKind("lut")
+    .filter((e) => e.arities.includes(arity))
+    .map((e) => e.id);
 }
 
 /**
@@ -100,7 +142,9 @@ export function resolveDisplayEncodingIds(opts: {
     lutIds = allLutIds();
     remapIds = hasNormal ? ["normal"] : [];
   } else {
-    lutIds = arity === 1 ? allLutIds() : [];
+    // Colormaps are legal at every k∈[1,4] (the multi-channel follow-up reduces a
+    // k>1 sample to a scalar before the LUT); the `normal` remap stays k=3 only.
+    lutIds = lutIdsForArity(arity);
     remapIds = arity === 3 && hasNormal ? ["normal"] : [];
   }
   return { curveIds, lutIds, remapIds, all: [...curveIds, ...lutIds, ...remapIds] };

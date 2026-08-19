@@ -110,8 +110,8 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import { displayToolbarButton, normToolbarButton, usePaneEncoding } from "./display-encoding";
-import { getEncoding, type NormMode } from "../image/encodings";
+import { displayToolbarButton, normSegment, reduceSegment, usePaneEncoding } from "./display-encoding";
+import { getEncoding, defaultReduceMode, type NormMode, type ReduceMode } from "../image/encodings";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
@@ -488,6 +488,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `colorRange` → EV/OFF as before, bounds inactive.
   const propColorRange = (props as { colorRange?: [number, number] }).colorRange;
   const [norm, setNorm] = useState<NormMode>("linear");
+  // MULTI-CHANNEL REDUCE (the multi-channel-colormap follow-up) — how a k>1
+  // colormap source collapses to the scalar the LUT indexes. `reduceOverride`
+  // null = follow the k-based default (`defaultReduceMode`: luminance for k≥3,
+  // mean for k=2); a user pick overrides it. The control (below) shows only while
+  // a lut is active AND sourceArity>1; HOME clears the override.
+  const [reduceOverride, setReduceOverride] = useState<ReduceMode | null>(null);
+  const effectiveReduce = reduceOverride ?? defaultReduceMode(sourceArity);
   const boundsSeed = useResettableState<[number, number] | null>(propColorRange ?? null);
   const [colorBounds, setColorBounds, boundsMeta] = boundsSeed;
   // Re-seed on descriptor change (controlled surface, mirrors the peak/γ effects).
@@ -535,6 +542,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
       if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
+      if (patch.reduce !== undefined) setReduceOverride(patch.reduce as ReduceMode);
       if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
         setColorBounds([patch.colorMin, patch.colorMax]);
       }
@@ -553,9 +561,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       exposureEV: displayEV,
       offset: displayOffset,
       norm,
+      reduce: effectiveReduce,
       ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
     }),
-    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, norm, colorBounds],
+    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, norm, effectiveReduce, colorBounds],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -607,6 +616,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (mode: NormMode) => {
       setNorm(mode);
       publishSettings({ norm: mode });
+    },
+    [publishSettings],
+  );
+  const changeReduce = useCallback(
+    (mode: ReduceMode) => {
+      setReduceOverride(mode);
+      publishSettings({ reduce: mode });
     },
     [publishSettings],
   );
@@ -1017,6 +1033,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           peak: rt.peak,
           srgbDecode: false,
           norm,
+          // Multi-channel follow-up: a k>1 source is REDUCED to a scalar
+          // (luminance/mean) before the LUT; k=1 leaves channel 0 untouched.
+          reduce: effectiveReduce,
+          channelCount: sourceArity,
           ...(boundsEngaged && colorBounds
             ? { normMin: colorBounds[0], normMax: colorBounds[1] }
             : {}),
@@ -1065,7 +1085,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, norm, colorBounds, boundsEngaged, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, norm, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -1223,10 +1243,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
         displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
-        // NORM picker (Phase 4) — shown ONLY while a colormap LUT is the active
-        // encoding (a norm is the data-encoding's nonlinear domain mapping; never
-        // applicable to a curve). Minimal 3-way Linear · Log · Power dropdown.
-        ...(enc.isLut ? [normToolbarButton(norm, changeNorm)] : []),
+      ]}
+      // SECOND-ROW segmented controls (controls-row-separation directive): the
+      // DATA-encoding NORM (Lin·Log·Pow) + multi-channel REDUCE (Lum·Mean) pickers
+      // live in the second toolbar row alongside EV/OFF/PK/γ, NOT next to the
+      // DISPLAY menu. Norm shows while a lut is active; reduce shows while a lut is
+      // active AND the source has >1 channel (the reduction is moot for a scalar).
+      rowSegments={[
+        ...(enc.isLut ? [normSegment(norm, changeNorm)] : []),
+        ...(enc.isLut && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths). Gated by the ACTIVE encoding's param
@@ -1349,6 +1374,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         peakMeta.reset();
         gammaMeta.reset();
         setNorm("linear"); // DATA-encoding norm back to linear
+        setReduceOverride(null); // reduce back to the k-based default
         boundsMeta.reset(); // min/max back to the descriptor colorRange seed
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
@@ -1358,6 +1384,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         peakMeta.isModified ||
         gammaMeta.isModified ||
         norm !== "linear" ||
+        reduceOverride !== null ||
         boundsMeta.isModified ||
         deepFlatten.isModified ||
         !!props.channelModified

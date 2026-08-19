@@ -92,6 +92,33 @@ export interface ToolbarSliderSpec {
   format?(value: number): string;
 }
 
+/**
+ * A compact SEGMENTED control rendered in the toolbar's SECOND row alongside the
+ * {@link ToolbarSliderSpec}s (image panes' DATA-encoding norm + multi-channel
+ * reduce pickers). A tiny leading `label` + a row of small option buttons, the
+ * active one highlighted — the second-row idiom for a SMALL discrete choice (2–3
+ * options) that reads inline next to the sliders, rather than a dropdown next to
+ * the DISPLAY menu. Like the slider spec it holds no state: `value` is the current
+ * option id and `onSelect` is called with the next. `<PlotToolbar>` renders these
+ * before the sliders in the second row (same hover-reveal) and folds them into the
+ * overflow menu as rows when the pane is too narrow.
+ */
+export interface ToolbarSegmentSpec {
+  /** Stable identity (React key). */
+  id: string;
+  /** Minimal on-toolbar label (e.g. "norm", "reduce") — kept tiny. */
+  label: string;
+  /** Tooltip / aria-label (the full human description). */
+  title: string;
+  /** Options in display order — `id` is passed back through `onSelect`, `label`
+   *  is the tiny button face. */
+  options: { id: string; label: string }[];
+  /** Current option id (controlled — drives the highlighted segment). */
+  value: string;
+  /** Called with the chosen option id when the user picks a segment. */
+  onSelect(id: string): void;
+}
+
 export interface ToolbarConfig {
   /** Master switch. Default: on. */
   enabled?: boolean;
@@ -99,6 +126,10 @@ export interface ToolbarConfig {
    *  under the button row with the same hover-reveal; folded into the overflow
    *  menu when the pane is too narrow. */
   sliders?: ToolbarSliderSpec[];
+  /** Second-row SEGMENTED controls (image panes' DATA-encoding norm + reduce),
+   *  rendered at the LEADING edge of the second row BEFORE the sliders, with the
+   *  same hover-reveal + overflow fold. See {@link ToolbarSegmentSpec}. */
+  segments?: ToolbarSegmentSpec[];
   /** Per-button overrides keyed by button id (e.g. "zoom", "pan", "reset").
    *  Omitted buttons follow capability-gating. */
   buttons?: Partial<Record<string, boolean>>;

@@ -124,6 +124,26 @@ fn cairnLutColor(lut: texture_2d<f32>, scalar: f32, cmapMode: i32, filterLinear:
 //      to LOG_NORM_EPS=1e-4) / 2 power (clamp01(t)^expo; expo reuses the gamma
 //      uniform -- free on the lut path). The LUT sampler clamps to [0,1], so
 //      linear needs no pre-clamp here (matches the CPU twin).
+// Multi-channel REDUCTION (the multi-channel-colormap follow-up) — the WGSL twin
+// of image/encodings' reduceToScalar (the CPU source of truth), kept
+// byte-parallel. Collapses the post-exposure/offset rgb to the scalar the LUT
+// indexes, BEFORE cairnDataIndex. k<=1 -> channel 0 (identity, matching the
+// pre-follow-up scalar path). k>1: reduce the min(k,3) COLOR channels (alpha, the
+// 4th, is never a color channel and is excluded — rgb carries only channels 0..2).
+//   reduceMode 1 luminance: Rec.709 weighted sum (0.2126 R + 0.7152 G + 0.0722 B),
+//     a missing color channel (k=2 -> B) counts as 0.
+//   reduceMode 2 (or other) mean: arithmetic mean of the min(k,3) color channels.
+fn cairnReduceScalar(rgb: vec3<f32>, reduceMode: i32, k: i32) -> f32 {
+  if (k <= 1) { return rgb.x; }
+  if (reduceMode == 1) {
+    var b = rgb.z;
+    if (k < 3) { b = 0.0; }
+    return 0.2126 * rgb.x + 0.7152 * rgb.y + 0.0722 * b;
+  }
+  if (k == 2) { return (rgb.x + rgb.y) * 0.5; }
+  return (rgb.x + rgb.y + rgb.z) / 3.0;
+}
+
 fn cairnDataIndex(scalar: f32, normMode: i32, minV: f32, maxV: f32, boundsActive: bool, expo: f32) -> f32 {
   var t = scalar;
   if (boundsActive) {

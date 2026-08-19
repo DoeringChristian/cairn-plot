@@ -32,7 +32,77 @@ import { clamp01 } from "../../util/clamp.ts";
 
 /** A named display parameter an encoding may DECLARE it reads (its slider
  *  manifest — UI gating only in Phase 1; the pipeline reads uniforms directly). */
-export type ParamName = "exposure" | "offset" | "peak" | "gamma" | "min" | "max" | "norm";
+export type ParamName = "exposure" | "offset" | "peak" | "gamma" | "min" | "max" | "norm" | "reduce";
+
+/**
+ * Multi-channel REDUCTION for a DATA (lut) encoding — how ℝᵏ (k>1) collapses to
+ * the single scalar the LUT indexes (the follow-up: multi-channel colormaps).
+ * NEVER applicable to curves (a light operator maps each channel independently);
+ * the reduce lives INSIDE the data encoding, BEFORE {@link computeDataIndex}.
+ *   - `luminance` — Rec.709 weighted sum of the first 3 color channels
+ *                   (`0.2126 R + 0.7152 G + 0.0722 B`), ignoring alpha; a missing
+ *                   color channel (k=2 → B) counts as 0.
+ *   - `mean`      — arithmetic mean of the color channels (alpha, the 4th, is
+ *                   ignored — so k=4 averages the first 3).
+ * k=1 needs no reduction (the scalar IS the channel). Default per k:
+ * {@link defaultReduceMode} — luminance for k≥3, mean for k=2.
+ */
+export type ReduceMode = "luminance" | "mean";
+
+/** Numeric ids the reduce modes pack into the GPU uniform (`u_bind10.x`) and the
+ *  WGSL `cairnReduceScalar` dispatch keys on. 0 = identity (k≤1, no reduce).
+ *  Stable — do not renumber. */
+export const REDUCE_ID: Record<ReduceMode, number> = { luminance: 1, mean: 2 };
+
+/** Rec.709 luminance weights (the `luminance` reduce), applied to color channels
+ *  0/1/2. Shared by the CPU twin ({@link reduceToScalar}) and the WGSL twin
+ *  (`cairnReduceScalar` in `./wgsl.ts`) so GPU/CPU stay byte-parallel. */
+export const REC709_LUMA: readonly [number, number, number] = [0.2126, 0.7152, 0.0722];
+
+/**
+ * The COLOR-channel count for a k-channel source (alpha, the 4th channel, is not
+ * a color channel and is ignored by every reduction). k∈[1,4] ⇒ `min(k,3)`: a
+ * 3-channel RGB has 3 color channels, an RGBA (k=4) has 3 (alpha dropped), a
+ * 2-channel has 2, a scalar has 1.
+ */
+export function colorChannelCount(k: number): number {
+  return k < 3 ? k : 3;
+}
+
+/**
+ * The default reduce mode for a k-channel colormap source: `luminance` for k≥3
+ * (RGB/RGBA — perceptual weighting is the sensible default), `mean` for k=2 (no
+ * meaningful luma without a blue channel). k≤1 is moot (no reduction). This is
+ * the UI seed; the user may override to the other mode.
+ */
+export function defaultReduceMode(k: number): ReduceMode {
+  return k >= 3 ? "luminance" : "mean";
+}
+
+/**
+ * Collapse a multi-channel sample to the single scalar the LUT indexes — the CPU
+ * SOURCE OF TRUTH (WGSL twin: `cairnReduceScalar` in `./wgsl.ts`, kept
+ * byte-parallel), applied BEFORE {@link computeDataIndex}. For k≤1 the first
+ * channel passes through unchanged (so the pre-follow-up scalar path is
+ * bit-identical). For k>1 it reduces the {@link colorChannelCount} color channels
+ * per `mode` (alpha ignored): `luminance` = Rec.709 weighted sum (a missing color
+ * channel, k=2 → B, counts as 0); `mean` = their arithmetic average.
+ */
+export function reduceToScalar(v: readonly number[], k: number, mode: ReduceMode): number {
+  if (k <= 1) return v[0] ?? 0;
+  const cc = colorChannelCount(k);
+  if (mode === "luminance") {
+    // Rec.709 over channels 0..2; a channel not present (k=2 → index 2) is 0.
+    const r = v[0] ?? 0;
+    const g = v[1] ?? 0;
+    const b = cc >= 3 ? (v[2] ?? 0) : 0;
+    return REC709_LUMA[0] * r + REC709_LUMA[1] * g + REC709_LUMA[2] * b;
+  }
+  // mean over the cc color channels.
+  let sum = 0;
+  for (let i = 0; i < cc; i++) sum += v[i] ?? 0;
+  return sum / cc;
+}
 
 /**
  * Nonlinear domain mapping INSIDE a DATA (lut) encoding — the norm (Phase 4).
@@ -91,6 +161,13 @@ export interface EncodeParams {
   /** DATA (lut) norm — the nonlinear reshape of the normalized index. Unset =
    *  `"linear"` (identity). `power` reuses `gamma` as its exponent. */
   norm?: NormMode;
+  /**
+   * DATA (lut) multi-channel REDUCTION — how a k>1 sample collapses to the scalar
+   * the LUT indexes (applied BEFORE the norm/bounds). Unset → the k-based default
+   * ({@link defaultReduceMode}: luminance for k≥3, mean for k=2). Ignored for
+   * k≤1 (the scalar IS the channel) and by curves/remaps.
+   */
+  reduce?: ReduceMode;
 }
 
 /** A single display encoding — the CPU twin (`cpu`) and its WGSL twin (`wgsl`)

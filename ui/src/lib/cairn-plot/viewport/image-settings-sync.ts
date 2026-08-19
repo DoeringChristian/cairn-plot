@@ -58,6 +58,10 @@ export interface ImageSyncSettings {
    *  index (`linear`/`log`/`power`). Only meaningful while a lut encoding is
    *  active; ignored otherwise. */
   norm?: string;
+  /** DATA-encoding multi-channel REDUCE (the multi-channel-colormap follow-up) —
+   *  how a k>1 colormap source collapses to a scalar (`luminance`/`mean`). Only
+   *  meaningful while a lut encoding is active on a k>1 source; ignored otherwise. */
+  reduce?: string;
   /** DATA-encoding BOUNDS (Phase 4) — the min/max colorRange skin, synced so a
    *  selection group shares one data window. Both set = the bounds affine is
    *  engaged (else the exposure/offset skin). */

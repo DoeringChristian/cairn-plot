@@ -40,7 +40,7 @@ import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../image/tonemap";
 // The operatorId uniform values are GENERATED from the display-encoding registry
 // (image/encodings) — the SAME source the shader's assembled `applyOperator`
 // dispatch keys on, so the CPU packing here and the GPU dispatch can never drift.
-import { OPERATOR_ID, NORM_ID, type NormMode } from "../image/encodings/index.ts";
+import { OPERATOR_ID, NORM_ID, REDUCE_ID, type NormMode, type ReduceMode } from "../image/encodings/index.ts";
 
 export type ImageOperator =
   | "linear"
@@ -85,6 +85,21 @@ export interface ImageParams {
    */
   normMin?: number;
   normMax?: number;
+  /**
+   * DATA-encoding multi-channel REDUCE (the multi-channel-colormap follow-up) —
+   * how a k>1 sample collapses to the scalar the LUT indexes, applied BEFORE the
+   * norm/bounds. `"luminance"` (Rec.709) or `"mean"`. Ignored when `isScalar` is
+   * false OR when `channelCount` ≤ 1 (the scalar IS the channel). Unset → treated
+   * as `"mean"` on the GPU only if `channelCount` > 1, but callers always pass the
+   * resolved mode; at k≤1 the shader's guard makes it moot.
+   */
+  reduce?: ReduceMode;
+  /**
+   * Source channel arity `k` for the scalar/LUT reduce (the multi-channel-colormap
+   * follow-up). Unset/≤1 → the LUT reads channel 0 unchanged (scalar colormap, the
+   * pre-follow-up behavior). Ignored when `isScalar` is false.
+   */
+  channelCount?: number;
   /** When true, run the EXTENDED output-encode (unclamped, origin-mirrored sRGB
    *  OETF / power curve) and write the transfer-encoded float to `target` — the
    *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
@@ -220,6 +235,13 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
     hasBounds ? (params.normMax as number) : 0,
     hasBounds ? 1 : 0,
   ]);
+  // u_bind10 = DATA-encoding multi-channel REDUCE (scalar/LUT path only): reduce
+  // mode id, channelCount k, reserved, reserved. At k<=1 the shader returns
+  // channel 0 regardless of the mode (the pre-follow-up scalar path), so a scalar
+  // colormap renders bit-for-bit as before.
+  const reduceId = REDUCE_ID[params.reduce ?? "mean"] ?? 0;
+  const channelCount = typeof params.channelCount === "number" ? params.channelCount : 1;
+  const reduceVec = new Float32Array([reduceId, channelCount, 0, 0]);
 
   let bindGroup: BindGroup | undefined;
   try {
@@ -234,6 +256,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 7, resource: { uniform: peakVec } },
       { binding: 8, resource: { uniform: srgbDecodeVec } },
       { binding: 9, resource: { uniform: normVec } },
+      { binding: 10, resource: { uniform: reduceVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

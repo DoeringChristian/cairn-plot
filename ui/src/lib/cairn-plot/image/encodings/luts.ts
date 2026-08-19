@@ -31,6 +31,8 @@ import {
   registerEncoding,
   clamp01,
   computeDataIndex,
+  reduceToScalar,
+  defaultReduceMode,
   DEFAULT_ENCODE_PARAMS,
   type DisplayEncoding,
 } from "./registry.ts";
@@ -49,15 +51,19 @@ const LUT_OPERATOR_ID_BASE = 10;
  *  the string documents which family the entry belongs to. */
 const LUT_FAMILY_WGSL_REF = "cairnLutColor(lut, scalar, /*cmapMode*/ 0, filterLinear)";
 
-/** CPU twin of the LUT family: the scalar → the DISPLAY (sRGB) colormap color in
- *  `[0,1]`. Phase 4: the LUT INDEX runs through {@link computeDataIndex} (the
- *  norm reshape + optional min/max bounds affine), the shared CPU source of
- *  truth the WGSL `cairnDataIndex` mirrors. With DEFAULT params (norm `linear`,
- *  no bounds) `v[0]` — already the exposure/offset-adjusted scalar — passes
- *  through unchanged, so this stays byte-identical to the Phase-2 behavior. */
+/** CPU twin of the LUT family: the (reduced) scalar → the DISPLAY (sRGB) colormap
+ *  color in `[0,1]`. The k>1 sample is first collapsed to a scalar by
+ *  {@link reduceToScalar} (the multi-channel follow-up: luminance / mean over the
+ *  color channels), then the LUT INDEX runs through {@link computeDataIndex} (the
+ *  norm reshape + optional min/max bounds affine — the shared CPU source of truth
+ *  the WGSL `cairnDataIndex` mirrors). At k=1 `reduceToScalar` returns `v[0]`
+ *  unchanged, so with DEFAULT params (norm `linear`, no bounds) the scalar passes
+ *  straight through — byte-identical to the pre-follow-up behavior. `reduce`
+ *  defaults to the k-based mode ({@link defaultReduceMode}) when unset. */
 function lutCpu(name: string): DisplayEncoding["cpu"] {
-  return (v, _k, p = DEFAULT_ENCODE_PARAMS) => {
-    const idx = computeDataIndex(v[0] ?? 0, p);
+  return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
+    const scalar = reduceToScalar(v, k, p.reduce ?? defaultReduceMode(k));
+    const idx = computeDataIndex(scalar, p);
     const [r, g, b] = sampleLutByte(getColormapLUT(name as never), clamp01(idx));
     return [r / 255, g / 255, b / 255];
   };
@@ -69,14 +75,19 @@ export const LUT_ENCODINGS: DisplayEncoding[] = COLORMAP_NAMES.map((name, i) => 
   id: name,
   label: COLORMAP_LABELS[name],
   kind: "lut",
-  // Colormaps map ONE scalar channel → RGB; arity 1 only (Phase 3 gates this).
-  arities: [1],
+  // Colormaps map the selected channels → RGB. The follow-up makes them legal at
+  // EVERY k∈[1,4]: a k>1 sample is REDUCED to a scalar (luminance/mean) before the
+  // LUT (see `reduce` below + `reduceToScalar`), so a colormap is offered on RGB /
+  // RGBA sources too, not only isolated scalars. usePaneEncoding gates the menu by
+  // this arity set.
+  arities: [1, 2, 3, 4],
   needsLut: true,
-  // Phase 4: the DATA encoding declares the sensitivity skin (exposure/offset),
-  // the bounds skin (min/max — the ALTERNATIVE affine, shown only when the
-  // descriptor seeds a colorRange), and the norm (linear/log/power). `min`/`max`/
-  // `norm` are UI-gating metadata; the pipeline reads uniforms directly.
-  params: ["exposure", "offset", "min", "max", "norm"],
+  // The DATA encoding declares the sensitivity skin (exposure/offset), the bounds
+  // skin (min/max — the ALTERNATIVE affine, shown only when the descriptor seeds a
+  // colorRange), the norm (linear/log/power), and the multi-channel `reduce`
+  // (luminance/mean — shown only at k>1). All are UI-gating metadata; the pipeline
+  // reads uniforms directly.
+  params: ["exposure", "offset", "min", "max", "norm", "reduce"],
   operatorId: LUT_OPERATOR_ID_BASE + i,
   lutName: name,
   wgsl: LUT_FAMILY_WGSL_REF,

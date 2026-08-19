@@ -91,7 +91,7 @@ import ImageHistogramOverlay, {
 import { applyRectEdit, RESIZE_HANDLES, type RegionHandle } from "./region-edit";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
-import type { ToolbarButtonSpec, ToolbarSliderSpec } from "../controls/ToolbarConfig";
+import type { ToolbarButtonSpec, ToolbarSliderSpec, ToolbarSegmentSpec } from "../controls/ToolbarConfig";
 import PixelValueOverlay, {
   PixelNotationToggle,
   type PixelSampler,
@@ -254,6 +254,13 @@ export interface ImagePaneShellProps {
    *  is selected). The pane owns their value/reset — their `reset`/`isModified`
    *  ride the `onReset`/`extraModified` contract below, like the others. */
   extraSliders?: ToolbarSliderSpec[];
+  /** Second-row SEGMENTED controls (the DATA-encoding norm + multi-channel reduce
+   *  pickers) rendered at the LEADING edge of the second row BEFORE the sliders —
+   *  a compact discrete-choice control that lives alongside EV/OFF/PK/γ rather
+   *  than next to the DISPLAY menu (per the controls-row-separation directive).
+   *  Folds into the overflow menu as rows like the sliders. Only shown when the
+   *  toolbar itself renders (`toolbar={true}`). */
+  rowSegments?: ToolbarSegmentSpec[];
   /** Extra host-pane reset run by HOME / double-click alongside the viewport +
    *  slider reset — a compare pane restores its colormap / view-mode / kernel
    *  to the descriptor defaults here. */
@@ -306,6 +313,7 @@ export default function ImagePaneShell({
   displayAdjust,
   depthSliders,
   extraSliders,
+  rowSegments,
   regionSelect,
   onReset,
   extraModified,
@@ -590,8 +598,9 @@ export default function ImagePaneShell({
         ...(overlayActive ? [notationToolbarButton(notation, setNotation)] : []),
       ],
       sliders,
+      segments: rowSegments,
     }),
-    [overlayActive, notation, leadingMenus, regionButton, histogramButton, sliders, enlargeButton],
+    [overlayActive, notation, leadingMenus, regionButton, histogramButton, sliders, rowSegments, enlargeButton],
   );
 
   const checkerClass = " cairn-checkerboard";

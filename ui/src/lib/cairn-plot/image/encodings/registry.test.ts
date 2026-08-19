@@ -20,11 +20,16 @@ import {
   boundsActive,
   LOG_NORM_EPS,
   NORM_ID,
+  REDUCE_ID,
+  REC709_LUMA,
+  reduceToScalar,
+  defaultReduceMode,
+  colorChannelCount,
   type ParamName,
   type EncodeParams,
 } from "./index.ts";
 
-const ALLOWED_PARAMS: ParamName[] = ["exposure", "offset", "peak", "gamma", "min", "max", "norm"];
+const ALLOWED_PARAMS: ParamName[] = ["exposure", "offset", "peak", "gamma", "min", "max", "norm", "reduce"];
 const ALLOWED_KINDS = new Set(["curve", "lut", "remap"]);
 
 test("registry is non-empty and includes the 10 migrated operators", () => {
@@ -127,22 +132,24 @@ test("wgsl curve expression is a non-empty string for every entry", () => {
   }
 });
 
-test("lut entries: kind lut, arity [1], needsLut, lutName, sensitivity params", () => {
+test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+reduce params", () => {
   const luts = listEncodings().filter((e) => e.kind === "lut");
   assert.ok(luts.length >= 3, "expected the migrated colormap LUT entries");
   // Includes the canonical colormaps.
   const ids = luts.map((e) => e.id);
   for (const id of ["viridis", "magma"]) assert.ok(ids.includes(id), `missing lut "${id}"`);
   for (const e of luts) {
-    assert.deepEqual(e.arities, [1], `${e.id} lut arity must be [1]`);
+    // Multi-channel follow-up: colormaps are legal at every k∈[1,4] (a k>1 sample
+    // is reduced to a scalar before the LUT).
+    assert.deepEqual(e.arities, [1, 2, 3, 4], `${e.id} lut arity must be [1,2,3,4]`);
     assert.equal(e.needsLut, true, `${e.id} lut must set needsLut`);
     assert.equal(typeof e.lutName, "string", `${e.id} lut must reference a table`);
     assert.ok(e.lutName!.length > 0, `${e.id} lut has empty lutName`);
-    // Phase 4: sensitivity (exposure/offset) + bounds (min/max) + norm.
+    // Sensitivity (exposure/offset) + bounds (min/max) + norm + multi-channel reduce.
     assert.deepEqual(
       e.params,
-      ["exposure", "offset", "min", "max", "norm"],
-      `${e.id} lut declares sensitivity + bounds + norm params (Phase 4)`,
+      ["exposure", "offset", "min", "max", "norm", "reduce"],
+      `${e.id} lut declares sensitivity + bounds + norm + reduce params`,
     );
   }
 });
@@ -232,4 +239,88 @@ test("SINGLE-APPLICATION invariant: bounds skin ignores exposure/offset (never c
   const noEvOff: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, min: 0, max: 4 };
   assert.equal(computeDataIndex(2, withEvOff), computeDataIndex(2, noEvOff), "bounds index must not read exposure/offset");
   assert.equal(computeDataIndex(2, noEvOff), 0.5);
+});
+
+// ---------------------------------------------------------------------------
+// Multi-channel colormaps — reduceToScalar (the ℝᵏ→scalar collapse the WGSL
+// cairnReduceScalar mirrors; GPU↔CPU byte parity is proven by the browser
+// harness). These pin the reduction math (Rec.709 weights exact) in plain Node.
+// ---------------------------------------------------------------------------
+
+test("REDUCE_ID ids are the stable {luminance:1, mean:2}", () => {
+  assert.deepEqual(REDUCE_ID, { luminance: 1, mean: 2 });
+});
+
+test("REC709_LUMA weights are the exact Rec.709 coefficients (sum to 1)", () => {
+  assert.deepEqual(REC709_LUMA, [0.2126, 0.7152, 0.0722]);
+  assert.ok(Math.abs(REC709_LUMA[0] + REC709_LUMA[1] + REC709_LUMA[2] - 1) < 1e-12);
+});
+
+test("defaultReduceMode: luminance for k>=3, mean for k=2", () => {
+  assert.equal(defaultReduceMode(2), "mean");
+  assert.equal(defaultReduceMode(3), "luminance");
+  assert.equal(defaultReduceMode(4), "luminance");
+});
+
+test("colorChannelCount ignores alpha (min(k,3))", () => {
+  assert.equal(colorChannelCount(1), 1);
+  assert.equal(colorChannelCount(2), 2);
+  assert.equal(colorChannelCount(3), 3);
+  assert.equal(colorChannelCount(4), 3, "k=4 drops the alpha channel");
+});
+
+test("reduceToScalar k<=1: channel 0 passes through (both modes)", () => {
+  assert.equal(reduceToScalar([0.42, 9, 9], 1, "luminance"), 0.42);
+  assert.equal(reduceToScalar([0.42, 9, 9], 1, "mean"), 0.42);
+});
+
+test("reduceToScalar luminance: EXACT Rec.709 over the color channels", () => {
+  // k=3: full Rec.709.
+  const r = 0.2, g = 0.5, b = 0.8;
+  assert.ok(
+    Math.abs(reduceToScalar([r, g, b], 3, "luminance") - (0.2126 * r + 0.7152 * g + 0.0722 * b)) < 1e-12,
+  );
+  // k=4: alpha (index 3) is ignored — same as the k=3 luminance of RGB.
+  assert.equal(
+    reduceToScalar([r, g, b, 0.99], 4, "luminance"),
+    reduceToScalar([r, g, b], 3, "luminance"),
+    "alpha must not affect luminance",
+  );
+  // k=2: the missing blue channel counts as 0.
+  assert.ok(
+    Math.abs(reduceToScalar([r, g], 2, "luminance") - (0.2126 * r + 0.7152 * g)) < 1e-12,
+  );
+  // Equal channels → the reduced scalar is that value (weights sum to 1).
+  assert.ok(Math.abs(reduceToScalar([0.3, 0.3, 0.3], 3, "luminance") - 0.3) < 1e-12);
+});
+
+test("reduceToScalar mean: average over the color channels (alpha ignored)", () => {
+  assert.ok(Math.abs(reduceToScalar([0.2, 0.5, 0.8], 3, "mean") - 0.5) < 1e-12);
+  assert.ok(Math.abs(reduceToScalar([0.2, 0.6], 2, "mean") - 0.4) < 1e-12);
+  // k=4: mean of the first 3 (RGB), alpha (index 3) excluded.
+  assert.ok(Math.abs(reduceToScalar([0.3, 0.6, 0.9, 0.0], 4, "mean") - 0.6) < 1e-12);
+});
+
+test("lut cpu twin reduces multi-channel input before the LUT (k=1 unchanged)", () => {
+  const viridis = getEncoding("viridis")!;
+  // At k=1 the multi-channel path is inert: cpu([s],1) === cpu([s, junk],1).
+  const a = viridis.cpu([0.5], 1, DEFAULT_ENCODE_PARAMS);
+  const b = viridis.cpu([0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS);
+  assert.deepEqual(a, b, "k=1 lut cpu must read only channel 0");
+  // At k=3 with an explicit reduce, the twin equals the LUT of the reduced scalar
+  // (which equals the k=1 lut cpu of that scalar) — i.e. reduce THEN index.
+  const rgb = [0.2, 0.5, 0.8];
+  const meanScalar = reduceToScalar(rgb, 3, "mean");
+  assert.deepEqual(
+    viridis.cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" }),
+    viridis.cpu([meanScalar], 1, DEFAULT_ENCODE_PARAMS),
+    "lut cpu(k=3, mean) === lut cpu(reduced scalar)",
+  );
+  // Unset reduce falls back to the k-based default (luminance for k=3).
+  const lumScalar = reduceToScalar(rgb, 3, "luminance");
+  assert.deepEqual(
+    viridis.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS),
+    viridis.cpu([lumScalar], 1, DEFAULT_ENCODE_PARAMS),
+    "unset reduce → luminance default at k=3",
+  );
 });

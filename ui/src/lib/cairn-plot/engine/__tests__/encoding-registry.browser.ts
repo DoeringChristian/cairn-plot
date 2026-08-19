@@ -278,6 +278,69 @@ async function runLutNormCase(
   return ok;
 }
 
+/** MULTI-CHANNEL (k=3) pixels — distinct per-channel values so luminance and mean
+ *  reduce to DIFFERENT scalars (proving the GPU reduction matches the cpu twin per
+ *  mode, not by coincidence). Alpha is 1 (ignored by the reduction). */
+const MULTI_PIXELS: number[][] = [
+  [0.0, 0.0, 0.0, 1.0],
+  [0.2, 0.5, 0.8, 1.0],
+  [0.9, 0.1, 0.3, 1.0],
+  [1.0, 0.0, 0.0, 1.0],
+  [0.0, 1.0, 0.0, 1.0],
+];
+
+/**
+ * Multi-channel-colormap parity (the follow-up): render a k=3 float image through
+ * the REAL GPU LUT family with `channelCount:3` + a `reduce` mode, so the shader's
+ * `cairnReduceScalar` (ℝ³→scalar) runs before `cairnDataIndex`. Assert the readback
+ * equals the encoding's `cpu` twin threaded through the SAME `reduceToScalar`
+ * (`enc.cpu(rgb, 3, {reduce})`). Nearest filter + EV 0 → byte-exact (within 1/255).
+ */
+async function runLutReduceCase(
+  device: Device,
+  enc: DisplayEncoding,
+  mode: "luminance" | "mean",
+): Promise<boolean> {
+  const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
+  const params: ImageParams = {
+    exposureEV: EV,
+    operator: "linear" as ImageOperator,
+    isScalar: true,
+    colormap: lut,
+    hdrOut: false,
+    uv: uvFull,
+    filter: "nearest",
+    channelCount: 3,
+    reduce: mode,
+  };
+  const src = buildSrcTexture(device, MULTI_PIXELS);
+  const target = device.createTexture(MULTI_PIXELS.length, 1, "rgba8unorm");
+  renderImage(device, target, src, params);
+  const out = await device.readback(target);
+  src.destroy();
+  target.destroy();
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[${enc.id}/reduce-${mode}] expected Uint8Array readback, got ${out.constructor.name}`);
+    return false;
+  }
+  let ok = true;
+  for (let i = 0; i < MULTI_PIXELS.length; i++) {
+    const px = MULTI_PIXELS[i]!;
+    // cpu twin: the raw RGB triple (EV 0) → reduce (mode) → LUT display color.
+    const exp = enc.cpu([px[0]!, px[1]!, px[2]!], 3, { ...DEFAULT_ENCODE_PARAMS, reduce: mode });
+    for (let c = 0; c < 3; c++) {
+      const eb = byteOf(exp[c]!);
+      const ab = out[i * 4 + c]!;
+      if (Math.abs(ab - eb) > 1) {
+        ok = false;
+        report(false, `[${enc.id}/reduce-${mode}] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
+      }
+    }
+  }
+  report(ok, `[${enc.id}/reduce-${mode}] (lut k=3 reduce) GPU cairnReduceScalar === cpu twin`);
+  return ok;
+}
+
 /** The norm/bounds variants exercised per lut (Phase 4). */
 const LUT_NORM_VARIANTS: Array<{ variant: string; params: EncodeParams }> = [
   { variant: "log", params: { ...DEFAULT_ENCODE_PARAMS, norm: "log" as NormMode } },
@@ -302,6 +365,11 @@ async function main(): Promise<void> {
         for (const { variant, params } of LUT_NORM_VARIANTS) {
           const vok = await runLutNormCase(device, enc, variant, params);
           if (!vok) allOk = false;
+        }
+        // Multi-channel follow-up: k=3 luminance + mean reduce (cairnReduceScalar).
+        for (const mode of ["luminance", "mean"] as const) {
+          const rok = await runLutReduceCase(device, enc, mode);
+          if (!rok) allOk = false;
         }
       }
     }

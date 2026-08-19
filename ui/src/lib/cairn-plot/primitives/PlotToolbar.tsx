@@ -30,6 +30,7 @@ import type {
   ToolbarMenuSpec,
   ToolbarButtonSpec,
   ToolbarSliderSpec,
+  ToolbarSegmentSpec,
 } from "../controls/ToolbarConfig";
 import { downloadBlob } from "./plot-to-png";
 import { computeToolbarFold, selectedMenuIndex } from "./toolbar-fold";
@@ -707,6 +708,59 @@ function ToolbarSlider({ spec }: { spec: ToolbarSliderSpec }) {
 }
 
 /**
+ * A compact SEGMENTED control for the toolbar's SECOND row (image panes'
+ * DATA-encoding norm + multi-channel reduce). A tiny leading label + a row of
+ * small option buttons (the active one highlighted). Controlled — holds no state
+ * of its own; `stopPropagation` on the pointer events keeps a click from reaching
+ * the plot surface underneath (same as `ToolbarButton`/`ToolbarSlider`). Rendered
+ * in both the expanded second row AND the folded overflow menu (one component so
+ * the two never diverge).
+ */
+function ToolbarSegment({ spec }: { spec: ToolbarSegmentSpec }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-fg-muted"
+      title={spec.title}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <span aria-hidden="true" className="text-[9px] font-mono">
+        {spec.label}
+      </span>
+      <span
+        role="group"
+        aria-label={spec.title}
+        className="inline-flex overflow-hidden rounded border border-border"
+      >
+        {spec.options.map((o) => {
+          const active = o.id === spec.value;
+          return (
+            <button
+              key={o.id}
+              type="button"
+              aria-pressed={active}
+              onClick={(e) => {
+                e.stopPropagation();
+                spec.onSelect(o.id);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              className={[
+                "h-[18px] px-1.5 text-[9px] font-mono leading-none",
+                active
+                  ? "bg-bg-hover text-accent"
+                  : "text-fg-muted hover:text-fg hover:bg-bg-hover",
+              ].join(" ")}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </span>
+    </span>
+  );
+}
+
+/**
  * A leading MENU rendered INSIDE the folded overflow popover, as an inline
  * expandable group (a header row that toggles its options open BELOW it, in
  * normal document flow).
@@ -818,10 +872,12 @@ function OverflowMenu({
   actions,
   leading,
   sliders,
+  segments,
 }: {
   actions: ActionItem[];
   leading: ToolbarButtonSpec[];
   sliders: ToolbarSliderSpec[];
+  segments: ToolbarSegmentSpec[];
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -934,9 +990,16 @@ function OverflowMenu({
             </button>
           ))}
 
-          {sliders.length > 0 && (actions.length > 0 || leading.length > 0) && (
-            <div aria-hidden="true" className="my-1 h-px bg-border" />
-          )}
+          {(segments.length > 0 || sliders.length > 0) &&
+            (actions.length > 0 || leading.length > 0) && (
+              <div aria-hidden="true" className="my-1 h-px bg-border" />
+            )}
+
+          {segments.map((s) => (
+            <div key={s.id} className="px-2 py-1">
+              <ToolbarSegment spec={s} />
+            </div>
+          ))}
 
           {sliders.map((s) => (
             <div key={s.id} className="px-2 py-1">
@@ -970,8 +1033,8 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
   // Re-observe (and re-measure) whenever the toolbar's CONTENT could change its
   // expanded width — leading menus / notation button / sliders appearing.
   const foldKey = `${config?.leadingButtons?.length ?? 0}:${config?.sliders?.length ?? 0}:${
-    config?.visibility ?? "hover"
-  }`;
+    config?.segments?.length ?? 0
+  }:${config?.visibility ?? "hover"}`;
   useEffect(() => {
     const root = rootRef.current;
     const parent = root?.parentElement;
@@ -1070,8 +1133,10 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
   const flatActions = groups.flat();
   const leading = config?.leadingButtons ?? [];
   const sliders = config?.sliders ?? [];
+  const segments = config?.segments ?? [];
 
-  if (!leading.length && flatActions.length === 0 && sliders.length === 0) return null;
+  if (!leading.length && flatActions.length === 0 && sliders.length === 0 && segments.length === 0)
+    return null;
 
   const position = config?.position ?? "top-right";
   const alwaysOn = config?.visibility === "always";
@@ -1118,7 +1183,7 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
             onClick={pinnedEnlarge.onClick ?? (() => {})}
           />
         )}
-        <OverflowMenu actions={flatActions} leading={foldedLeading} sliders={sliders} />
+        <OverflowMenu actions={flatActions} leading={foldedLeading} sliders={sliders} segments={segments} />
       </div>
     );
   }
@@ -1171,8 +1236,11 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
         ))}
       </div>
 
-      {sliders.length > 0 && (
+      {(segments.length > 0 || sliders.length > 0) && (
         <div className={`flex items-center gap-2 ${rightAligned ? "justify-end" : "justify-start"}`}>
+          {segments.map((s) => (
+            <ToolbarSegment key={s.id} spec={s} />
+          ))}
           {sliders.map((s) => (
             <ToolbarSlider key={s.id} spec={s} />
           ))}

@@ -95,13 +95,16 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import { displayToolbarButton, normToolbarButton, usePaneEncoding } from "./display-encoding";
+import { displayToolbarButton, normSegment, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
   computeDataIndex,
+  reduceToScalar,
+  defaultReduceMode,
   getEncoding,
   DEFAULT_ENCODE_PARAMS,
   type EncodeParams,
   type NormMode,
+  type ReduceMode,
 } from "../image/encodings";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
@@ -152,8 +155,14 @@ export function tonemapToImageData(
   colorMin?: number,
   colorMax?: number,
   normExponent: number = 1,
+  // Multi-channel REDUCE (the multi-channel-colormap follow-up) — how a k>1
+  // colormap source collapses to the scalar the LUT indexes. Unset → the k-based
+  // default (`defaultReduceMode`). Ignored for k=1 (the scalar IS the channel)
+  // and when no colormap is active.
+  reduce?: ReduceMode,
 ): ImageData {
   const { h, w, c } = shapeDims(hdr.shape);
+  const reduceMode: ReduceMode = reduce ?? defaultReduceMode(c);
   // COLORMAP (LUT family, CPU twin — Phase 2/4): when a colormap is active the
   // SCALAR channel (channel 0) indexes the colormap LUT and the DISPLAY color is
   // written straight out — the tone-map operator + output-encode are SHORT-
@@ -221,10 +230,13 @@ export function tonemapToImageData(
     ];
     const o = i * 4;
     if (cmapLut) {
-      // Scalar (channel 0) → data index → LUT → display color directly (no
-      // operator/encode). The BOUNDS skin reads the RAW value (`r`); otherwise
-      // the exposure/offset sensitivity (`lit[0]`) — the two are never composed.
-      const scalar = cmapBoundsOn ? r : lit[0];
+      // Multi-channel follow-up: the color channels are first REDUCED to a scalar
+      // (luminance/mean — `reduceToScalar`, the shared CPU source of truth the WGSL
+      // `cairnReduceScalar` mirrors), then data index → LUT → display color
+      // directly (no operator/encode). The BOUNDS skin reduces the RAW channels
+      // (`r,g,b`); otherwise the exposure/offset sensitivity (`lit`) — the two are
+      // never composed. At k=1 the reduce returns channel 0 unchanged.
+      const scalar = reduceToScalar(cmapBoundsOn ? [r, g, b] : lit, c, reduceMode);
       const [cr, cg, cb] = sampleLutByte(cmapLut, clamp01(computeDataIndex(scalar, cmapDataParams)));
       out[o] = cr;
       out[o + 1] = cg;
@@ -1063,6 +1075,12 @@ function CpuHdrImagePane(
   // skin — the ALTERNATIVE to EV/OFF (never composed).
   const propColorRange = (props as unknown as { colorRange?: [number, number] }).colorRange;
   const [norm, setNorm] = useState<NormMode>("linear");
+  // MULTI-CHANNEL REDUCE (the multi-channel-colormap follow-up) — mirrors
+  // GpuImagePane. `reduceOverride` null = the k-based default (luminance for k≥3,
+  // mean for k=2); the segmented control shows only while a lut is active AND
+  // sourceArity>1.
+  const [reduceOverride, setReduceOverride] = useState<ReduceMode | null>(null);
+  const effectiveReduce = reduceOverride ?? defaultReduceMode(sourceArity);
   const [colorBounds, setColorBounds, boundsMeta] = useResettableState<[number, number] | null>(
     propColorRange ?? null,
   );
@@ -1096,6 +1114,7 @@ function CpuHdrImagePane(
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
       if (patch.norm !== undefined) setNorm(patch.norm as NormMode);
+      if (patch.reduce !== undefined) setReduceOverride(patch.reduce as ReduceMode);
       if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
         setColorBounds([patch.colorMin, patch.colorMax]);
       }
@@ -1111,9 +1130,10 @@ function CpuHdrImagePane(
       exposureEV: displayEV,
       offset: displayOffset,
       norm,
+      reduce: effectiveReduce,
       ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
     }),
-    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, norm, colorBounds],
+    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, norm, effectiveReduce, colorBounds],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -1161,6 +1181,13 @@ function CpuHdrImagePane(
     },
     [publishSettings],
   );
+  const changeReduce = useCallback(
+    (mode: ReduceMode) => {
+      setReduceOverride(mode);
+      publishSettings({ reduce: mode });
+    },
+    [publishSettings],
+  );
   const changeBounds = useCallback(
     (next: [number, number]) => {
       setColorBounds(next);
@@ -1196,6 +1223,9 @@ function CpuHdrImagePane(
         boundsEngaged && colorBounds ? colorBounds[0] : undefined,
         boundsEngaged && colorBounds ? colorBounds[1] : undefined,
         norm === "power" ? tonemapGamma : 1,
+        // Multi-channel follow-up: the reduce (luminance/mean) that collapses a
+        // k>1 colormap source to the LUT scalar. Moot for k=1.
+        effectiveReduce,
       );
     } catch (err) {
       console.error("[cairn] HDR tone-map error:", err);
@@ -1214,7 +1244,7 @@ function CpuHdrImagePane(
         ? prev
         : { w: imageData.width, h: imageData.height },
     );
-  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset, norm, colorBounds, boundsEngaged]);
+  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset, norm, effectiveReduce, colorBounds, boundsEngaged]);
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -1301,8 +1331,14 @@ function CpuHdrImagePane(
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
         displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
-        // NORM picker (Phase 4) — lut-only, mirrors GpuImagePane.
-        ...(enc.isLut ? [normToolbarButton(norm, changeNorm)] : []),
+      ]}
+      // SECOND-ROW segmented controls (controls-row-separation directive): the
+      // DATA-encoding NORM (lut-only) + multi-channel REDUCE (lut + k>1) pickers
+      // sit in the second toolbar row alongside EV/OFF/γ, not next to the DISPLAY
+      // menu. Mirrors GpuImagePane.
+      rowSegments={[
+        ...(enc.isLut ? [normSegment(norm, changeNorm)] : []),
+        ...(enc.isLut && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
       // applies them (recomputed like any exposure/tonemap change). Gated by the
@@ -1400,6 +1436,7 @@ function CpuHdrImagePane(
         enc.resetEncoding();
         gammaMeta.reset();
         setNorm("linear");
+        setReduceOverride(null); // reduce back to the k-based default
         boundsMeta.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
@@ -1408,6 +1445,7 @@ function CpuHdrImagePane(
         enc.encodingModified ||
         gammaMeta.isModified ||
         norm !== "linear" ||
+        reduceOverride !== null ||
         boundsMeta.isModified ||
         !!props.channelModified
       }

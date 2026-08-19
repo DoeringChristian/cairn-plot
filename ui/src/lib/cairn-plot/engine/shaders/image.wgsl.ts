@@ -218,6 +218,14 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // norm/bounds renders bit-for-bit as before. The power exponent reuses the gamma
 // uniform (u_bind2.z), free on the lut path.
 @group(0) @binding(29) var<uniform> u_bind9: vec4<f32>;
+// Logical binding 10 (uniform vec4: DATA-encoding multi-channel REDUCE params —
+// reduceMode, channelCount k, reserved, reserved) -> native binding 10*3+2 = 32.
+// Only the scalar/LUT (isScalar) path reads it; it feeds cairnReduceScalar (the
+// ℝᵏ→scalar collapse) BEFORE cairnDataIndex. Defaults to vec4(0) when the caller
+// omits it (zero-filled) — reduceMode 0 + k 0, and cairnReduceScalar's k<=1 guard
+// returns channel 0, so a scalar colormap (k=1) renders bit-for-bit as before
+// (the engine always packs k, so k=1 hits the guard explicitly too).
+@group(0) @binding(32) var<uniform> u_bind10: vec4<f32>;
 
 // --- ported verbatim from image/tonemap.ts ---
 
@@ -381,14 +389,21 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   //    lookup still mirrors the source filter (linear at moderate zoom, nearest
   //    pixelated) so false-color interpolation never diverges from the plain path.
   if (isScalar) {
-    // Phase 4: the scalar (rgb.x) runs through cairnDataIndex — the norm reshape
-    // (linear/log/power via u_bind9.x, power exponent = gamma) + the optional
-    // min/max bounds affine (u_bind9.yz, engaged by boundsActive u_bind9.w). With
-    // the zero-filled default (normMode 0, boundsActive 0) this is the identity,
-    // so the exposure/offset sensitivity (already in rgb.x) is the sole affine.
+    // Multi-channel follow-up: a k>1 sample is first REDUCED to a scalar
+    // (cairnReduceScalar — luminance/mean over the color channels, via u_bind10.x
+    // + k=u_bind10.y), so a colormap is legal on RGB/RGBA sources, not only
+    // isolated scalars. At k<=1 it returns rgb.x (the pre-follow-up scalar).
+    // Then the norm reshape (linear/log/power via u_bind9.x, power exponent =
+    // gamma) + the optional min/max bounds affine (u_bind9.yz, engaged by
+    // boundsActive u_bind9.w). With the zero-filled default (normMode 0,
+    // boundsActive 0) cairnDataIndex is the identity, so the exposure/offset
+    // sensitivity (already folded into the reduced scalar) is the sole affine.
+    let reduceMode = i32(round(u_bind10.x));
+    let channelCount = i32(round(u_bind10.y));
+    let scalar = cairnReduceScalar(rgb, reduceMode, channelCount);
     let normMode = i32(round(u_bind9.x));
     let boundsActive = u_bind9.w > 0.5;
-    let idx = cairnDataIndex(rgb.x, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);
+    let idx = cairnDataIndex(scalar, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);
     return vec4<f32>(cairnLutColor(t_bind1, idx, 0, filterLinear), 1.0);
   }
 
