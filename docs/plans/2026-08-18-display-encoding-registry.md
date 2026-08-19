@@ -334,7 +334,7 @@ typecheck, 574 node tests (+8), all 23 parity harnesses green on real GPU,
 plot-inline bundles rebuilt + synced, gallery (27 types) clean. No schema/Python
 change (reduce is a view-local sync key like norm, not a descriptor kwarg).
 
-## Follow-up: compare pane on DISPLAY conventions — DONE (commit <sha>)
+## Follow-up: compare pane on DISPLAY conventions — DONE (commit 63c58fa)
 
 The user reported the SLIDE view "still behaves differently, it seems to use the
 old conventions." The compare pane (`media-compare/GpuComparePane.tsx`) still had
