@@ -281,3 +281,55 @@ DOCUMENTED NON-GOALS carried out of the epic: norm/bounds on the 8-bit false-col
 and diff-display paths, and the dead `renderCompose` `isScalar` branch (all above);
 plus the compare pane joining the settings-sync bus (task #87). The compare pane's
 two mode-scoped menus were deliberately NOT force-unified.
+
+## Follow-up: lut controls row + multi-channel luts — DONE (commit 1defc58)
+
+Two user directives, both landed.
+
+**1. CONTROLS-ROW SEPARATION.** Every control an active encoding declares now
+renders in the SECOND toolbar row alongside EV/OFF/PK/γ, never next to the DISPLAY
+menu. The NORM picker (Phase 4 had it as a `normToolbarButton` dropdown in
+`leadingMenus`, next to the DISPLAY button) moved into the second row as a compact
+SEGMENTED control (Lin·Log·Pow). New row idiom: `ToolbarSegmentSpec` +
+`ToolbarConfig.segments`, rendered by a new `ToolbarSegment` in `PlotToolbar` at the
+LEADING edge of the second row before the sliders (and in the folded overflow as
+rows) — the fold key, the null-guard and the second-row render condition all now
+count segments. `ImagePaneShell` gained a `rowSegments` prop feeding
+`toolbarConfig.segments`. min/max BOUNDS were ALREADY second-row (`extraSliders`),
+so they needed no move. Panes drop `normToolbarButton` from `leadingMenus` and pass
+`normSegment(...)` (lut-active) via `rowSegments`. `normToolbarButton` is deleted;
+`normSegment`/`reduceSegment` (+ `REDUCE_MENU_OPTIONS`) live in `display-encoding.ts`.
+
+**2. MULTI-CHANNEL COLORMAPS.** lut encodings now declare `arities:[1,2,3,4]`
+(was `[1]`): a k>1 sample is REDUCED to a scalar before the LUT. `ReduceMode` =
+`luminance` (Rec.709 `0.2126R+0.7152G+0.0722B` over the first 3 color channels,
+alpha ignored, a missing color channel counts as 0) | `mean` (average of the
+`min(k,3)` color channels). DEFAULTS (`defaultReduceMode`): luminance for k≥3, mean
+for k=2, identity for k=1. The CPU source of truth is `reduceToScalar` (registry),
+applied inside the lut `cpu` twin BEFORE `computeDataIndex`; the GPU twin
+`cairnReduceScalar` (in `LUT_FAMILY_WGSL`) is byte-parallel and runs in
+`image.wgsl`'s `isScalar` path on the post-exposure/offset `rgb` before
+`cairnDataIndex`, keyed on a NEW uniform `u_bind10` (reduceMode.x, channelCount.y —
+u_bind9 was full, so a new slot per the "only if none free" rule). `ImageParams`
+gained `reduce`+`channelCount`; both panes pass them + expose a `reduceSegment`
+(Lum·Mean) in the second row, shown only when the active encoding is a lut AND
+sourceArity>1. `usePaneEncoding` arity gating now offers luts at every k∈[1,4]
+(`lutIdsForArity`, filtering by each entry's `arities`); per-arity memory + the
+channel-selector interplay are unchanged. `reduce` is a per-pane override (null =
+follow the k-based default), synced (`ImageSyncSettings.reduce`) and HOME-reset.
+
+**Reduce defaults chosen:** luminance for k≥3 (perceptual weighting is the sensible
+RGB/RGBA default), mean for k=2 (no meaningful luma without blue). Deviations: for
+k=2 luminance the missing blue channel counts as 0 (defined, non-default edge case);
+only the 4th channel is treated as alpha (`colorChannelCount = min(k,3)`, so a
+2-channel source is two color channels). The 8-bit SDR false-color pane keeps NO
+norm/reduce controls (arity 1, and the documented non-goal above stands).
+
+**Tests.** Node: `registry.test.ts` updated (lut arities `[1,2,3,4]`, params add
+`reduce`, `ALLOWED_PARAMS`) + new reduction-math tests (REDUCE_ID, exact Rec.709
+weights, `defaultReduceMode`, `colorChannelCount`, `reduceToScalar` per mode incl.
+alpha-ignored, and the lut `cpu` reduce-then-index equivalence). Parity harness:
+per-lut k=3 luminance + mean cases (GPU `cairnReduceScalar` === cpu twin). Gates:
+typecheck, 574 node tests (+8), all 23 parity harnesses green on real GPU,
+plot-inline bundles rebuilt + synced, gallery (27 types) clean. No schema/Python
+change (reduce is a view-local sync key like norm, not a descriptor kwarg).
