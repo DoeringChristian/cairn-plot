@@ -144,3 +144,21 @@ only (diverging fold + min/max/norms are Phase 4); the compose `processSide`
 Phase 3 (menu unification) needs to know: the LUT entries + `listEncodingsByKind`
 are ready to feed ONE Display menu with kind sections; per-arity memory + moving
 `normal` to a `remap` section is all that remains.
+
+## Phase 3 — DONE (commit d4e5045)
+
+The separate colormap + tone-map menus collapsed into ONE arity-gated DISPLAY
+menu (`renderers/display-encoding.ts`: `usePaneEncoding` owns the single
+`encoding` id — structural curve↔lut exclusivity, per-arity memory, arity
+fall-back — + `displayToolbarButton` with CURVES/COLORMAPS/REMAPS sections split
+by a labelled `header` hairline divider that keyboard-nav skips). Both image
+panes (GpuImagePane, CpuImagePane SDR+HDR) drive it; EV/OFF/PK/γ sliders now gate
+off the ACTIVE encoding's `params` manifest. The bus carries one `encoding` key
+(+ derived `colormap`/`tonemap` back-compat, so the compare pane — whose two
+menus are MODE-scoped, never co-shown, hence left as-is — still follows). Gates:
+typecheck, 556 node tests, all 23 parity harnesses, gallery (27 types) green.
+Phase 4 needs to know: the float-LUT path is still cmap-mode `linear` only (norms
+log/power + min/max + the `shared.colorRange` double-apply audit remain); Phase 5
+absorbs `tonemap.ts`, deletes the per-pane switches, and generates schema/Python
+from the registry (`use-image-controller`'s `colormapToolbarButton`/
+`tonemapToolbarButton` survive ONLY for the compare pane).
