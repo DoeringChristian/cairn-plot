@@ -107,6 +107,105 @@ report + gallery regen clean.
 - HDR-FLIP's multi-exposure loop is the most complex cached op.
 - Harnesses encode the current compare DOM heavily — migrate, don't fork.
 
+## Phase 3 — DONE (commits 9f70506, 04a5e64, a96ab54, + the harness/doc commit)
+
+split/blend became `direct` compositor ContentOps on the unified pane; the last
+cross-kind remount is gone. Landed in four green stages.
+
+**Registry + engine (9f70506).** `split`/`blend` are arity-2 `direct` ops —
+`outputArity 3`, `outputRange "light"`, `defaultEncoding "srgb"`, param
+`split`/`blend`. Their WGSL joins `cairnContent`'s dispatch as `select(b, a, uv.x
+< param.x)` / `mix(a, b, param.x)` (slot a = REFERENCE, b = FOREGROUND — the
+diff/routing binding, so split shows the reference left of the divider exactly
+like `GpuComparePane`'s `select(colorB, colorA, uv.x < split)`; a hard split is
+select-then-display == display-then-select → byte-identical; blend mixes the RAW
+light — the unified model, like the turbo-log2 ruling). `cairnContent`'s signature
+grew `uv` (the fragment SCREEN uv — the divider is a DEST-space cut) + `param`
+(the compositor scalar); the image shader binds a new compositor-param uniform
+`u_bind13` and `renderImage` packs `ImageParams.contentParam` into it — divider
+drag / blend slider only change the uniform, NO recompile. A per-texel `cpu` twin
+(reading a new `ContentOpCpuCtx` = uv+param) drives readout/parity; the diff +
+identity twins keep their `(sources,k)` shape (optional arg). `content-ops.browser`
+proves split/blend GPU render === the composed cpu twin on BOTH an SDR (clamp +
+sRGB OETF) and an HDR (`rgba16float`, extended unclamped encode) surface.
+
+**Pane + chrome (04a5e64).** `GpuImagePane` renders the compositor behind
+`compareSource.opId ∈ {split,blend}` (later `compareSource.mode`), through the
+pool: `render({contentOpId, contentParam})`, the pool injects `srcB`, one LIGHT
+display pass (isScalar false). Chrome ported from `GpuComparePane`: the shared
+`SplitDivider` (a wrapper child, `left:split%`, agreeing with the shader's
+screen-space `uv.x < split` by construction), `useSplitFlipKeys` ([ / ] / arrows),
+`RefBadge` (split), per-side caption chips (reference bottom-left, foreground
+bottom-right), the MSE/PSNR/MAE/SSIM chip (all compare modes), and the MODE menu +
+the mode's DISPLAY menu (light curves for a composite, scalar colormap for diff).
+
+**Routing + retire (a96ab54).** `NodeDispatch` lowers a compare node in ANY mode
+(diff AND split/blend) to `LeafView` + `compareSource` — the SAME component an
+image leaf renders. `CompareSource.mode` is explicit (`opId` stays the diff
+kernel). `stackKindKey` returns `plot:image` for EVERY compare node, so
+`[image,split]`, `[diff,blend]`, … are all homogeneous → source-swap on ONE reused
+pane. **The 341c577 `mixedImageStack` + `stackPaneSync` machinery is retired**
+(the two sync-group ids, the memo, the conditional `PaneSyncContext.Provider`);
+`canStack` is just `homogeneousStack`. `CompareView` + the `CompositeMediaPane`
+route are DELETED from `plot-node` (no descriptor-tree caller left).
+
+**Harness coverage + verify (this commit).** `gpu-compare-split-numbers` (the #88
+proof) migrated onto the unified pane (`GpuImagePane` + `compareSource:{mode:
+"split"}`, `__cairnImageDiffProbe`'s `overlayTexelCenter`/`srcDims`/`readbackSurface`).
+
+### Task #88 — root cause + fix (documented per the brief)
+
+The naive PORT reintroduces #88: the unified pane's `single` `PixelValueOverlay`
+maps EVERY texel through the PRIMARY framing dims (`naturalDims`). Both split
+operands are drawn stretched into the SAME framing quad (each sampled through one
+normalized uv window, scaled by its OWN `textureDimensions`), so the non-primary
+side's texel `px` is placed at `quadLeft + (px+0.5)*quadW/primaryW` instead of
+`/sideW` — an error PROPORTIONAL to `px` (zero at the left edge, growing with
+texel index, WORST at large / mismatched resolution). **Fix:** the compositor
+readout uses the shell's `overlay.render` variant to emit TWO split-clipped
+`PixelValueOverlay`s, each carrying its OWN `sourceDims` — the reference side
+through the framing grid (identity), the FOREGROUND side through `refDims` (its own
+grid). This mirrors `GpuComparePane`'s per-side overlays; `computeSourceFit(sourceDims)`
+then places each side's numbers on their pixels. Proven by the migrated
+split-numbers harness (mismatched 64×48 vs 100×70 + large 1200×800 vs 1100×760:
+per-side numbers land <1px on their own grid, the old primary-grid placement drifts
+>15px and grows with index).
+
+### What was retired / GpuComparePane's remaining consumers
+
+Retired: `mixedImageStack`, `stackPaneSync` (+ its two `useId` groups + the memo +
+the conditional Provider), `compareDescriptorIsDiff`, `CompareView`, and
+`plot-node`'s `CompositeMediaPane` import. `GpuComparePane` itself is KEPT (Phase 4
+deletes it): its remaining consumers are the CROSS-TYPE / card paths NOT in the
+descriptor tree — `ImageViewportPane` → `CrossTypeCompositeMediaPane` (the image
+CARD path) and `OffscreenComparePanes` → `CrossTypeCompositeMediaPane` (live 3D /
+point-cloud snapshot compare); a 3D operand has no `DecodedSource`, so it can't
+lower to the unified image pane.
+
+### Deviations
+
+- **CPU fallback.** The compositor is GPU-only; on `render=cpu` / no-WebGPU,
+  `CpuImagePane` renders a compare's REFERENCE image DEGRADED (no live composite)
+  but keeps the compare CHROME (per-side caption chips + split REF badge, same
+  DOM/selectors) so the selection-stage reference re-pick + labeling still work. A
+  real CPU composite is Phase 4 ("CpuImagePane gets the cpu twins"). Captions are
+  inlined (compare-captions pulls `engine/kernels` — the core bundle stays engine-free).
+- **Per-side srgbDecode.** The unified pane has ONE `srgbDecode` flag (follows the
+  primary); a MIXED-dtype split (u8 vs float operands) can't per-side decode like
+  `GpuComparePane`. Same-dtype operands (the near-universal case — a compare's two
+  sides are the same series/metric) are exact; documented.
+- **Compositor sampling.** split/blend sample BOTH slots at the normalized `srcUV`
+  (fill-stretch, each by its own dims) — identical to `compare.wgsl` and the direct-
+  diff path, so mismatched sizes render like today. `computeCompareMapping` governs
+  the metrics + the per-side readout grid (the #88 fix), NOT the composite sampling
+  (the brief's "same as diff" — the direct path never mapped the composite either).
+- **Visual verify.** All the brief's scenarios (divider drag, [ / ] keys, captions,
+  #88 alignment at mismatched res, blend, split→diff→split no-remount, flicker-free
+  stack) are covered by the migrated/extended HEADLESS harnesses (split-numbers,
+  compare-settings-sync, grid-stacked, grid-stacked-persist). The live in-browser
+  eyeball is the HUMAN-RUN step (like the 3 human-run `gpu-compare-*` interaction
+  harnesses, which still target the KEPT `GpuComparePane` and are unaffected).
+
 ## Phase 2 — DONE (commits a83553d, 5244fc4, 09c4731, 0bb5b94)
 
 Phase 2 is COMPLETE and gate-green. Landing 2 (the routing switch — the flicker

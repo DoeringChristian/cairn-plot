@@ -47,13 +47,17 @@
  */
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GpuComparePane from "../GpuComparePane";
+// Phase 3: split renders on the UNIFIED pane (`GpuImagePane` + a `compareSource`
+// whose `mode:"split"`), so the #88 per-side number-alignment proof migrates onto
+// it — reading the SAME per-side geometry seams (now on `__cairnImageDiffProbe`).
+import GpuImagePane from "../../renderers/GpuImagePane";
+import { urlSource, type CompareSource } from "../../renderers/image-backend";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 import { isDeviceLostError } from "../../engine/webgpu/device";
 
 const h = React.createElement;
 
-/** The subset of `__cairnCompareProbe` this harness reads. */
+/** The subset of the unified pane's `__cairnImageDiffProbe` this harness reads. */
 interface SplitNumbersProbe {
   overlayTexelCenter: (side: "a" | "b", px: number, py: number) => { x: number; y: number } | null;
   overlayWindow: { x: number; y: number; w: number; h: number };
@@ -219,13 +223,20 @@ function mount(id: string, wCss: number, hCss: number, imageUrl: string, baselin
     const [split, setSplit] = React.useState(0.5);
     setViewportFn = setViewport;
     setSplitFn = setSplit;
-    return h(GpuComparePane, {
-      imageUrl, // texB — foreground / primary / RIGHT side
-      baselineUrl, // texA — reference / LEFT side
+    // Slot convention: source = REFERENCE (baselineUrl, side "a" / LEFT of the
+    // divider), compareSource.b = FOREGROUND (imageUrl, side "b" / RIGHT).
+    const compareSource: CompareSource = {
+      b: urlSource(imageUrl),
+      opId: "absolute", // the diff kernel seed (unused in split mode)
       mode: "split",
       splitPosition: split,
-      blendAlpha: 0.5,
       onSplitPositionChange: setSplit,
+      referenceLabel: "ref",
+      foregroundLabel: "fg",
+    };
+    return h(GpuImagePane, {
+      source: urlSource(baselineUrl),
+      compareSource,
       zoom: viewport.zoom,
       pan: viewport.pan,
       onViewportChange: setViewport,
@@ -236,17 +247,20 @@ function mount(id: string, wCss: number, hCss: number, imageUrl: string, baselin
   root.render(h(Harness));
 
   // The seam is attached to the pane's INNER viewport element (`paneRef`), not
-  // the outer `data-gpu-compare-pane` root — walk the subtree for it.
+  // the outer `data-gpu-image-pane` root — walk the subtree for it.
   const findProbe = (): SplitNumbersProbe | null => {
-    type SeamEl = HTMLElement & { __cairnCompareProbe?: SplitNumbersProbe };
+    type SeamEl = HTMLElement & { __cairnImageDiffProbe?: SplitNumbersProbe };
     for (const n of Array.from(container.querySelectorAll("*")) as SeamEl[]) {
-      if (n.__cairnCompareProbe) return n.__cairnCompareProbe;
+      if (n.__cairnImageDiffProbe) return n.__cairnImageDiffProbe;
     }
     return null;
   };
   return {
     container,
-    canvas: () => container.querySelector("canvas[data-gpu-compare-canvas]") as HTMLCanvasElement | null,
+    canvas: () =>
+      container.querySelector(
+        "canvas[data-gpu-image-canvas], canvas[data-gpu-compare-canvas]",
+      ) as HTMLCanvasElement | null,
     probe: findProbe,
     setViewport: (v) => setViewportFn(v),
     setSplit: (p) => setSplitFn(p),
