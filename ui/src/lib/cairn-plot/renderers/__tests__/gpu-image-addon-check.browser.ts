@@ -91,16 +91,16 @@ async function main(): Promise<void> {
     const gotPane = typeof window.__cairnPlotGpuImagePane === "function";
     report(gotPane, "gpu-image addon sets window.__cairnPlotGpuImagePane to the pane component");
 
-    const gotComparePane = typeof window.__cairnPlotGpuComparePane === "function";
-    report(gotComparePane, "gpu-image addon sets window.__cairnPlotGpuComparePane to the compare pane component");
-
+    // NOTE: `__cairnPlotGpuComparePane` is gone (content-op unification, Phase 4):
+    // every image-compare now renders on the UNIFIED `GpuImagePane`, so the addon
+    // no longer injects a separate compare pane.
     const gotUseFlag = window.__cairnPlotUseGpuImage === true;
     report(gotUseFlag, "gpu-image addon defaults window.__cairnPlotUseGpuImage to true on success");
 
     const gotReadyEvent = await waitFor(() => window.__gpuReadyEventSeen === true);
     report(gotReadyEvent, "gpu-image addon dispatches the gpu-image-ready event on success");
 
-    const addonOk = gotFlag && gotPane && gotComparePane && gotUseFlag && gotReadyEvent;
+    const addonOk = gotFlag && gotPane && gotUseFlag && gotReadyEvent;
 
     // Wait for the sibling bundle (cases 1-5) to finish, then combine into
     // the page's FINAL authoritative status (this script runs last).

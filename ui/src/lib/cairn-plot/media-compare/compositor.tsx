@@ -33,47 +33,46 @@ import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
-import type { GpuComparePaneProps } from "./GpuComparePane";
 import { resolveRenderMode, urlSource } from "../renderers/image-backend";
+import type {
+  CompareSource,
+  DecodedSource,
+  FloatSource,
+  ImageBackend,
+} from "../renderers/image-backend";
 
 declare global {
   interface Window {
     /** Opt-in flag (same one `plot-gpu-image-addon.tsx` gates `GpuImagePane`
      *  on): `true` routes split/blend/diff through the engine. */
     __cairnPlotUseGpuImage?: boolean;
-    /**
-     * The engine-backed compare pane, injected at RUNTIME by the lazy
-     * gpu-image addon (`plot-gpu-image-addon.tsx`) — NOT a static import, so
-     * `core` stays free of the WebGPU engine (the bundle guard: core
-     * carries no `engine/*`; it ships in the addon IIFE). `compositor.tsx` is
-     * reachable from `core`, so this indirection is REQUIRED: a static
-     * `import GpuComparePane` here would pull `renderCompare`/`computeMetrics`
-     * and the WebGPU device into `core.iife.js`.
-     */
-    __cairnPlotGpuComparePane?: (props: GpuComparePaneProps) => JSX.Element | null;
   }
 }
 
 /**
  * Dispatched by `plot-gpu-image-addon.tsx` once its capability check
- * resolves and it has set `__cairnPlotGpuComparePane`/`__cairnPlotUseGpuImage`
+ * resolves and it has set `__cairnPlotGpuImagePane`/`__cairnPlotUseGpuImage`
  * (Task 8). Name duplicated (not imported) — `compositor.tsx` is a CORE file
  * an addon may depend on, never the reverse.
  */
 const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
 
 /**
- * Resolve the runtime-injected engine compare pane, but only when the opt-in
- * flag is set AND the gpu-image addon has registered it. Unset/false (or addon
- * absent) keeps the legacy CPU `MediaComparePane` / `ImagePane` diff path —
- * the Task 8 brief's required fallback (either the addon never loaded, the
- * host opted out, or `getSharedDevice()` found WebGPU unavailable). The
- * compare-pane counterpart to `plot-renderers.tsx`'s `resolveImageRenderer`
- * — same capability-gated seam, same WebGPU-or-legacy-CPU-pane fallback
- * boundary (see `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`).
+ * Resolve the runtime-injected UNIFIED engine image pane (`GpuImagePane`),
+ * but only when the opt-in flag is set AND the gpu-image addon has registered
+ * it. Unset/false (or addon absent) keeps the legacy CPU `MediaComparePane` /
+ * `ImagePane` diff path — the required fallback (either the addon never
+ * loaded, the host opted out, or `getSharedDevice()` found WebGPU
+ * unavailable). Same seam + capability gate `plot-renderers.tsx`'s
+ * `resolveImageRenderer` uses; here it is read from the CORE compositor so the
+ * cross-type compare consumers (`ImageViewportPane` / `OffscreenComparePanes`)
+ * render the SAME unified pane a descriptor image-compare leaf does — the
+ * `GpuComparePane` it replaced is deleted (content-op unification, Phase 4).
  */
-function resolveGpuComparePane(): ((props: GpuComparePaneProps) => JSX.Element | null) | null {
+function resolveGpuImagePane(): ImageBackend | null {
   if (typeof window === "undefined") return null;
+  const seam = (window as unknown as { __cairnPlotGpuImagePane?: ImageBackend })
+    .__cairnPlotGpuImagePane;
   // Honor the user-settable render mode (cpu | gpu | auto — same seam as
   // `resolveImageRenderer`): "cpu" forces the legacy CPU compare path; "gpu"
   // forces the engine pane when registered (outranking the opt-in flag, like
@@ -81,9 +80,9 @@ function resolveGpuComparePane(): ((props: GpuComparePaneProps) => JSX.Element |
   // flag-gated default.
   const mode = resolveRenderMode();
   if (mode === "cpu") return null;
-  if (mode === "gpu") return window.__cairnPlotGpuComparePane ?? null;
+  if (mode === "gpu") return seam ?? null;
   if (window.__cairnPlotUseGpuImage !== true) return null;
-  return window.__cairnPlotGpuComparePane ?? null;
+  return seam ?? null;
 }
 
 /**
@@ -96,11 +95,26 @@ function resolveGpuComparePane(): ((props: GpuComparePaneProps) => JSX.Element |
 function useGpuCompareReadyTick(): void {
   const [, bump] = useState(0);
   useEffect(() => {
-    if (typeof window === "undefined" || window.__cairnPlotGpuComparePane) return;
+    if (
+      typeof window === "undefined" ||
+      (window as unknown as { __cairnPlotGpuImagePane?: ImageBackend }).__cairnPlotGpuImagePane
+    )
+      return;
     const onReady = () => bump((n) => n + 1);
     window.addEventListener(GPU_IMAGE_READY_EVENT, onReady);
     return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
   }, []);
+}
+
+/** Map a decoded-float compare side ({@link CompareFloatSource}) to the unified
+ *  {@link FloatSource} the image backend consumes (`[H,W,C]` shape). */
+function compareFloatToDecoded(src: CompareFloatSource): FloatSource {
+  return {
+    dtype: "float",
+    data: src.data,
+    shape: [src.height, src.width, src.channels],
+    precision: src.precision,
+  };
 }
 
 const DEFAULT_PROCESSING: ImageProcessing = {
@@ -834,7 +848,7 @@ export function CompositeMediaPane({
   const hasFloatSide = imageFloat != null || baselineFloat != null;
   const effectiveMode: MediaCompareModeKind = !hasBaseline ? "normal" : mode;
   useGpuCompareReadyTick();
-  const GpuCompare = resolveGpuComparePane();
+  const GpuImagePane = resolveGpuImagePane();
 
   // Slide-flip keyboard scope, read HERE (core, inside the real providers) and
   // threaded into the GPU compare pane below. `GpuComparePane` ships in a separate
@@ -858,46 +872,71 @@ export function CompositeMediaPane({
   // finishes initializing, so on a WebGPU browser this resolves to the real GPU
   // pane below once ready.
 
-  // Engine-backed split/blend/diff (opt-in — see `resolveGpuComparePane`). One
-  // `renderCompare` GPU pass replaces the CPU clip-path split / opacity blend /
-  // webgl-diff path, plus a `computeMetrics` MSE/PSNR/MAE readout. Q17
-  // double-click-resets the shared viewport inside GpuComparePane. Float sides
-  // (`imageFloat`/`baselineFloat`) are threaded through here — this is the ONLY
-  // pane that can ingest them (`rgba32float` textures).
-  if (GpuCompare && hasBaseline && engineComposited) {
+  // Engine-backed split/blend/diff (opt-in — see `resolveGpuImagePane`) on the
+  // UNIFIED image pane (`GpuImagePane` + `compareSource`) — the SAME pane a
+  // descriptor image-compare leaf lowers to (`plot-node.tsx`'s `LeafView`).
+  // Slot convention (matches the unified pane + the deleted `GpuComparePane`'s
+  // `texA − texB`): `source` = slot `a` = REFERENCE (`baselineUrl`/
+  // `baselineFloat`), `compareSource.b` = slot `b` = FOREGROUND (`imageUrl`/
+  // `imageFloat`), so `diff = a − b` and split shows the reference left of the
+  // divider. One WGSL content-op pass composites/diffs the two operands; the
+  // metrics chip / per-side captions / divider gesture ride the pane's chrome.
+  // Float sides (`imageFloat`/`baselineFloat`) are threaded through here — the
+  // engine pane ingests them as `rgba16float` textures.
+  if (GpuImagePane && hasBaseline && engineComposited) {
+    const referenceSource: DecodedSource = baselineFloat
+      ? compareFloatToDecoded(baselineFloat)
+      : urlSource(baselineUrl);
+    const foregroundSource: DecodedSource = imageFloat
+      ? compareFloatToDecoded(imageFloat)
+      : urlSource(imageUrl);
+    // Stable diff-cache identity keys (a source URL / float contentKey, NOT the
+    // decoded bytes) — `a` = reference, `b` = foreground, matching the pool's
+    // `ensureDiff(texA, texB)` ordering (see `renderers/image-backend.ts`).
+    const contentKeyA = baselineFloat?.contentKey ?? baselineUrl ?? "diff:a";
+    const contentKeyB = imageFloat?.contentKey ?? imageUrl ?? "diff:b";
+    const compareSource: CompareSource = {
+      b: foregroundSource,
+      opId: diffKernel ?? diffSubmode,
+      mode: effectiveMode as "split" | "blend" | "diff",
+      colormap,
+      splitPosition: splitPosition ?? 0.5,
+      blendAlpha: blendAlpha ?? 0.5,
+      align,
+      fit,
+      contentKeyA,
+      contentKeyB,
+      referenceLabel,
+      foregroundLabel,
+      inStackedGrid,
+      inOverlay,
+      onDiffKernelChange,
+      onCompareModeChange,
+      onSplitPositionChange,
+      onBlendAlphaChange,
+    };
     return (
-      <GpuCompare
+      <GpuImagePane
+        source={referenceSource}
+        compareSource={compareSource}
         toolbar={toolbar}
-        imageUrl={imageUrl}
-        baselineUrl={baselineUrl}
-        imageFloat={imageFloat}
-        baselineFloat={baselineFloat}
-        mode={effectiveMode}
-        splitPosition={splitPosition ?? 0.5}
-        blendAlpha={blendAlpha ?? 0.5}
-        onSplitPositionChange={onSplitPositionChange}
-        onBlendAlphaChange={onBlendAlphaChange}
         settingsSyncGroupId={settingsSyncGroupId}
         syncIsAnchor={syncIsAnchor}
-        inStackedGrid={inStackedGrid}
-        inOverlay={inOverlay}
-        diffSubmode={diffSubmode}
-        diffKernel={diffKernel}
-        align={align}
-        fit={fit}
-        onDiffKernelChange={onDiffKernelChange}
-        onCompareModeChange={onCompareModeChange}
-        colormap={colormap}
         tonemap={tonemap}
         peak={peak}
         gamma={tonemap_gamma}
+        processing={processing}
+        showAxes={showAxes ?? false}
         zoom={zoom}
         pan={pan}
         onViewportChange={onViewportChange}
+        onNaturalSize={onNaturalSize}
         interpolation={interpolation}
         label={label}
-        referenceLabel={referenceLabel}
-        foregroundLabel={foregroundLabel}
+        isDraggable={isDraggable}
+        onDragStart={onDragStart}
+        overlay={overlay}
+        overlaySettings={overlaySettings}
         pixelValueNotation={pixelValueNotation}
       />
     );
