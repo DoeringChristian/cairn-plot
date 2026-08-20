@@ -27,9 +27,9 @@ import { getSharedDevice } from "../device";
 import { renderImage, computeMetrics, type ImageParams, type ImageOperator } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
-import { getContentOp, isDirectContentOp, contentOpId } from "../../image/content-ops/index";
+import { getContentOp, isDirectContentOp, contentOpId, type ContentOpCpuCtx } from "../../image/content-ops/index";
 import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings/index";
-import { outputEncode, type RgbTriple } from "../../image/tonemap";
+import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../image/tonemap";
 import { colormapFloatLUT } from "../../colormaps/lut";
 import type { ColormapName } from "../../colormaps/lut";
 import type { Device, Texture } from "../types";
@@ -204,6 +204,98 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
     }
   }
   report(ok, `[identity] opId 0 ignores the (placeholder) second slot — single-source render unchanged`);
+  return ok;
+}
+
+/**
+ * COMPOSITOR ops (Phase 3): drive `split`/`blend` through the unified image path
+ * as a LIGHT composite (isScalar false) and assert the readback === the composed
+ * cpu twin, on BOTH an SDR (rgba8unorm) surface — clamp + sRGB OETF — and an HDR
+ * (rgba16float) surface — the extended (unclamped) encode, so an over-range
+ * composite survives. The two operands are an N-wide strip so the fragment SCREEN
+ * uv.x = (i+0.5)/N straddles the split divider (`param` 0.5) — proving the
+ * per-texel `uv.x < param` cut — and blend mixes at alpha `param` (0.25). The cpu
+ * twin is `op.cpu([a,b], 3, {uv,param})` → the display twin (operator srgb =
+ * clamp, then output-encode), the SAME two-registry composition the diff case uses.
+ */
+async function runCompositorOpCase(device: Device, opId: "split" | "blend", param: number): Promise<boolean> {
+  const op = getContentOp(opId);
+  if (!op || !isDirectContentOp(op)) {
+    report(false, `[${opId}] not a registered direct content op`);
+    return false;
+  }
+  // Reference (a) / foreground (b) rows, incl. an OVER-RANGE operand (2.0) that
+  // clamps on SDR but survives on the HDR surface.
+  const rowsA: number[][] = [
+    [0.8, 0.6, 0.4, 1],
+    [0.2, 0.9, 0.3, 1],
+    [2.0, 0.1, 0.5, 1],
+    [0.3, 0.3, 0.3, 1],
+    [0.5, 0.5, 0.5, 1],
+    [0.1, 0.7, 0.2, 1],
+  ];
+  const rowsB: number[][] = [
+    [0.1, 0.2, 0.9, 1],
+    [0.7, 0.3, 0.6, 1],
+    [0.0, 0.0, 0.0, 1],
+    [1.5, 0.4, 0.2, 1],
+    [0.2, 0.8, 0.6, 1],
+    [0.9, 0.1, 0.4, 1],
+  ];
+  const N = rowsA.length;
+  const twin = (i: number, c: number): number => {
+    const ctx: ContentOpCpuCtx = { uv: [(i + 0.5) / N, 0.5], param };
+    return op.cpu([rowsA[i]!, rowsB[i]!], 3, ctx)[c]!;
+  };
+
+  let ok = true;
+  for (const hdrOut of [false, true]) {
+    const texA = buildTex(device, rowsA);
+    const texB = buildTex(device, rowsB);
+    const target = device.createTexture(N, 1, hdrOut ? "rgba16float" : "rgba8unorm");
+    const params: ImageParams = {
+      exposureEV: 0,
+      // SDR: `srgb` = clamp01 then the sRGB OETF (output-encode) — an over-range
+      // operand clamps. HDR: `extended` = identity operator (no clamp) then the
+      // EXTENDED (unclamped) encode, so an over-range composite survives.
+      operator: (hdrOut ? "extended" : "srgb") as ImageOperator,
+      isScalar: false,
+      srcB: texB,
+      contentOpId: contentOpId(opId),
+      contentParam: param,
+      hdrOut,
+      srgbDecode: false, // scene-linear float operands
+      uv: uvFull,
+      filter: "nearest",
+    };
+    renderImage(device, target, texA, params);
+    const out = await device.readback(target);
+    texA.destroy();
+    texB.destroy();
+    target.destroy();
+    for (let i = 0; i < N; i++) {
+      for (let c = 0; c < 3; c++) {
+        const composite = twin(i, c);
+        if (hdrOut) {
+          const exp = extendedOutputEncode(composite, undefined);
+          const act = (out as Float32Array)[i * 4 + c] ?? 0;
+          // f16 storage step near the encoded over-range values (~1.35) is ~1e-3.
+          if (Math.abs(act - exp) > 3e-3) {
+            ok = false;
+            report(false, `[${opId}:hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${act.toFixed(4)}`);
+          }
+        } else {
+          const exp = byteOf(outputEncode(composite, undefined));
+          const act = (out as Uint8Array)[i * 4 + c] ?? 0;
+          if (Math.abs(act - exp) > 1) {
+            ok = false;
+            report(false, `[${opId}:sdr] px[${i}].ch[${c}] expected=${exp} actual=${act}`);
+          }
+        }
+      }
+    }
+  }
+  report(ok, `[${opId}] (param=${param}) GPU cairnContent composite === composed cpu twin (SDR + HDR surfaces)`);
   return ok;
 }
 
@@ -509,6 +601,10 @@ async function main(): Promise<void> {
       if (!(await runDiffOpCase(device, opId))) allOk = false;
     }
     report(allOk, `all ${DIRECT_DIFF_OPS.length} direct diff ops: GPU cairnContent + display === composed cpu twin`);
+    // Phase 3 — COMPOSITOR ops (split/blend): light composite === composed cpu twin.
+    if (!(await runCompositorOpCase(device, "split", 0.5))) allOk = false;
+    if (!(await runCompositorOpCase(device, "blend", 0.25))) allOk = false;
+    report(allOk, `compositor ops (split/blend): GPU composite === composed cpu twin (SDR + HDR)`);
     // Phase 2b — POOL wiring: the second source slot + the cached-op render path.
     for (const opId of DIRECT_DIFF_OPS) {
       if (!(await runPoolDirectOpCase(device, opId))) allOk = false;

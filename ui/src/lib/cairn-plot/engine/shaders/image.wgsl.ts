@@ -250,6 +250,14 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // (signed/absolute/…) assembled from the content-op registry. See
 // content-ops/wgsl.ts (CONTENT_OP_ID).
 @group(0) @binding(38) var<uniform> u_bind12: f32;
+// Logical binding 13 (uniform vec4: COMPOSITOR param — the per-frame scalar the
+// Phase-3 compositor content ops (split/blend) read) -> native binding 13*3+2 = 41.
+// .x = the divider position (split) or the mix alpha (blend); .yzw reserved (0).
+// Driven live (divider drag / blend slider) with NO shader recompile — only this
+// uniform changes. Defaults to vec4(0) when the caller omits it (zero-filled): the
+// diff/identity ops ignore it, so the single-image + diff paths are unaffected. See
+// engine/image-engine.ts's contentParam handling + content-ops/wgsl.ts.
+@group(0) @binding(41) var<uniform> u_bind13: vec4<f32>;
 
 // Display-transfer stage — the SDR sRGB/gamma OETF (+ the sRGB EOTF that
 // LINEARIZES an 8-bit source when srgbDecode/u_bind8 is set) and the EXTENDED
@@ -334,14 +342,18 @@ ${buildTonemapCurvesWGSL({ remaps: true })}
 
 // CONTENT stage — ASSEMBLED from the content-op registry (image/content-ops),
 // the single source of truth for "what k-channel value does this texel carry".
-// cairnContent(a, b, opId) dispatches on the contentOpId uniform (u_bind12): opId 0
-// = IDENTITY (passthrough of the single sampled slot a — the sampled source
-// enters the display pipeline here, byte-for-byte the pre-diff path); opId 1.. =
-// the direct pointwise diff ops (signed/absolute/squared + relative variants),
-// each the raw per-channel error over the two sampled slots a,b. The display
-// stage downstream (exposure, isScalar/reduce/dataIndex, applyOperator,
-// output-encode) is unchanged and consumes cairnContent's output — a diff is
-// displayed as a scalar error (reduce → colormap) via its defaultEncoding.
+// cairnContent(a, b, uv, param, opId) dispatches on the contentOpId uniform
+// (u_bind12): opId 0 = IDENTITY (passthrough of the single sampled slot a — the
+// sampled source enters the display pipeline here, byte-for-byte the pre-diff
+// path); opId 1.. = the direct pointwise diff ops (signed/absolute/squared +
+// relative variants), each the raw per-channel error over the two sampled slots
+// a,b; and the COMPOSITOR ops split/blend, which composite a,b by the fragment
+// SCREEN uv against the compositor param (u_bind13.x — the divider position /
+// alpha). The display stage downstream (exposure, isScalar/reduce/dataIndex,
+// applyOperator, output-encode) is unchanged and consumes cairnContent's output —
+// a diff is displayed as a scalar error (reduce → colormap) via its
+// defaultEncoding; a split/blend composite is LIGHT (k=3) displayed as a plain
+// image (curves).
 ${buildContentOpWGSL()}
 
 @fragment
@@ -397,7 +409,11 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // (raw per-channel error over a,b), which the display stage then encodes
   // (reduce -> colormap) via the op's defaultEncoding.
   let contentOpId = i32(round(u_bind12));
-  let content = cairnContent(sampled, sampledB, contentOpId);
+  // uv (fragment SCREEN uv) + u_bind13 (the compositor param) feed the split/
+  // blend COMPOSITOR ops — the divider is a DEST-space cut (uv.x < param.x), so
+  // it stays put under source zoom/pan exactly like GpuComparePane. The diff /
+  // identity ops ignore both, so this is inert for every non-compositor op.
+  let content = cairnContent(sampled, sampledB, uv, u_bind13, contentOpId);
 
   // 0) [SDR display-transfer path] sRGB-DECODE the sampled 8-bit source to
   //    linear light so exposure/offset + the chosen transfer operate on linear

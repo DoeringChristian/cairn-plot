@@ -61,17 +61,21 @@ export function contentOpId(id: string | undefined | null): number {
 }
 
 /**
- * Assemble `fn cairnContent(a: vec4<f32>, b: vec4<f32>, opId: i32) -> vec4<f32>`
- * from the registry: an opId dispatch over the `direct` ops (mirroring
- * `buildApplyOperatorWGSL`), with IDENTITY as the fallthrough (`return a;`). Each
- * non-identity direct op emits `if (opId == N) { return <expr>; }` where `<expr>`
- * is the op's `wgsl` over the two sampled slots `a`,`b`. Cached ops assemble no
- * WGSL here — their result texture is bound as slot `a` + displayed via identity.
+ * Assemble `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param:
+ * vec4<f32>, opId: i32) -> vec4<f32>` from the registry: an opId dispatch over the
+ * `direct` ops (mirroring `buildApplyOperatorWGSL`), with IDENTITY as the
+ * fallthrough (`return a;`). Each non-identity direct op emits `if (opId == N) {
+ * return <expr>; }` where `<expr>` is the op's `wgsl`. Diff/identity exprs read
+ * only `a`,`b`; the COMPOSITOR ops (split/blend) also read `uv` (the fragment
+ * SCREEN uv — the divider is a dest-space cut) and `param` (the compositor scalar
+ * in `.x`). Cached ops assemble no WGSL here — their result texture is bound as
+ * slot `a` + displayed via identity.
  *
- * The `a`/`b` slot convention: `a` is the primary/foreground source (single-image
- * = the only source); `b` is the second/reference source (arity-2 diffs). An
- * arity-1 op (identity) ignores `b`, so the single-image path is unaffected by the
- * (placeholder) second slot.
+ * The `a`/`b` slot convention: `a` is the primary source (single-image = the only
+ * source; the REFERENCE operand of an arity-2 diff/compositor); `b` is the second
+ * source (the FOREGROUND operand). An arity-1 op (identity) ignores `b`/`uv`/
+ * `param`, so the single-image path is unaffected by the (placeholder) second slot
+ * and the (zero) param.
  */
 export function buildContentOpWGSL(): string {
   const direct = listDirectContentOps();
@@ -83,7 +87,7 @@ export function buildContentOpWGSL(): string {
     .filter((op) => op.id !== "identity")
     .map((op) => `  if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.wgsl}; }`)
     .join("\n");
-  return `fn cairnContent(a: vec4<f32>, b: vec4<f32>, opId: i32) -> vec4<f32> {
+  return `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>, opId: i32) -> vec4<f32> {
 ${branches}
   return ${identity.wgsl};
 }`;

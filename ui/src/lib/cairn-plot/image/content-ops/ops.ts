@@ -13,6 +13,11 @@
  *    raw error (the diff pixel-value readout's single source of truth). Ids MATCH
  *    the `engine/kernels` pointwise kernel ids. `defaultEncoding` generalizes the
  *    kernels' per-kernel `defaultColormap` (signed → red-green, magnitude → turbo).
+ *  - SPLIT / BLEND — arity-2 `direct` COMPOSITOR ops (Phase 3). Their `wgsl`
+ *    composites the two sampled slots by the fragment SCREEN uv against the
+ *    compositor param (`u_bind13.x`): split cuts at the divider, blend mixes by
+ *    alpha. Output is LIGHT (`outputArity 3`, `defaultEncoding srgb`) — displayed
+ *    as a plain image. Their `cpu` twin reads the per-frame uv/param context.
  *  - FLIP / HDR-FLIP / SSIM — arity-2 `cached` ops delegating to the matching
  *    multi-pass kernel; `defaultEncoding` magma (the reference FLIP convention).
  */
@@ -131,6 +136,75 @@ const relativeSquared = pointwise(
   },
 );
 
+// ---------------------------------------------------------------------------
+// COMPOSITOR ops (Phase 3) — split / blend. Arity-2 `direct` ops that composite
+// the two sampled slots into ONE LIGHT value by the fragment SCREEN uv against a
+// per-frame compositor param (`u_bind13.x` — the divider position for split, the
+// alpha for blend). Unlike a diff (a scalar error → colormap), the output is
+// ordinary scene light: `outputArity 3`, `outputRange "light"`, `defaultEncoding
+// "srgb"` — the DISPLAY stage then applies curves EXACTLY as a plain image (luts
+// gate OFF at k=3 via the arity-gating). SLOT CONVENTION matches the diff/routing
+// binding: slot `a` = `source` = REFERENCE (texA), slot `b` = `compareSource.b` =
+// FOREGROUND (texB) — so split shows the reference LEFT of the divider (`uv.x <
+// param`) and the foreground right (`select(b, a, uv.x < param.x)`), and blend
+// mixes reference→foreground as alpha 0→1 (`mix(a, b, param.x)`), byte-identical
+// to `GpuComparePane`'s `select(colorB, colorA, uv.x < split)` / `mix(colorA,
+// colorB, alpha)` for a hard split (select-then-display == display-then-select).
+// The `cpu` twin mirrors the composite (over the SAME uv/param) so the GPU render
+// === the composed twin (content-ops harness), for both SDR + HDR surfaces.
+
+/** Build a compositor `direct` op: id, label, the `split`/`blend` param name, the
+ *  WGSL composite EXPRESSION (over `a`,`b`,`uv`,`param`), and the per-texel CPU
+ *  twin `(a, b) → composited channel-vector` given the fragment uv + param. */
+function compositor(
+  id: "split" | "blend",
+  label: string,
+  wgsl: string,
+  compose: (a: number, b: number, uvx: number, param: number) => number,
+): DirectContentOp {
+  return {
+    id,
+    label,
+    sourceArity: 2,
+    renderClass: "direct",
+    // Light RGB composite: gates as k=3 (curves offered, luts OFF), displayed as
+    // a plain image via defaultEncoding srgb.
+    outputArity: 3,
+    outputRange: "light",
+    defaultEncoding: "srgb",
+    params: [id],
+    wgsl,
+    cpu: (sources, _k, ctx) => {
+      const uvx = ctx?.uv[0] ?? 0;
+      const param = ctx?.param ?? 0;
+      const [a0, a1, a2] = rgb3(sources[0]);
+      const [b0, b1, b2] = rgb3(sources[1]);
+      return [
+        compose(a0, b0, uvx, param),
+        compose(a1, b1, uvx, param),
+        compose(a2, b2, uvx, param),
+      ];
+    },
+  };
+}
+
+const split = compositor(
+  "split",
+  "Slide",
+  // Reference (a) LEFT of the divider (uv.x < param), foreground (b) right —
+  // matching GpuComparePane's `select(colorB, colorA, uv.x < split)`.
+  "select(b, a, uv.x < param.x)",
+  (a, b, uvx, param) => (uvx < param ? a : b),
+);
+
+const blend = compositor(
+  "blend",
+  "Blend",
+  // alpha 0 → reference (a), alpha 1 → foreground (b): mix(colorA, colorB, alpha).
+  "mix(a, b, param.x)",
+  (a, b, _uvx, param) => a * (1 - param) + b * param,
+);
+
 /** Build a `cached` metric op delegating to a multi-pass `engine/kernels` kernel. */
 function cached(id: string, label: string, kernelId: string): CachedContentOp {
   return {
@@ -150,8 +224,10 @@ const flip = cached("flip", "FLIP (perceptual)", "flip");
 const hdrFlip = cached("hdr-flip", "HDR-FLIP", "hdr-flip");
 const ssim = cached("ssim", "SSIM", "ssim");
 
-/** Registration order == menu order: identity, the six pointwise diffs, the three
- *  cached metrics (mirrors `engine/kernels`' bootstrap order). */
+/** Registration order == menu order: identity, the six pointwise diffs, the two
+ *  compositor ops (split/blend), then the three cached metrics (mirrors
+ *  `engine/kernels`' bootstrap order). The DIRECT ops (identity + pointwise +
+ *  split/blend) get contiguous dispatch ids (identity → 0) in THIS order. */
 export const CONTENT_OPS: ContentOp[] = [
   identity,
   absolute,
@@ -160,6 +236,8 @@ export const CONTENT_OPS: ContentOp[] = [
   relativeAbsolute,
   relativeSigned,
   relativeSquared,
+  split,
+  blend,
   flip,
   hdrFlip,
   ssim,

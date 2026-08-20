@@ -25,24 +25,30 @@ test("the image shader interpolates the registry-assembled content function", ()
   );
 });
 
-test("the image shader consumes cairnContent(a, b, opId) at the content seam", () => {
-  // The two sampled slots enter the display pipeline THROUGH the assembled function.
+test("the image shader consumes cairnContent(a, b, uv, param, opId) at the content seam", () => {
+  // The two sampled slots + the fragment uv + the compositor param enter the
+  // display pipeline THROUGH the assembled function.
   assert.ok(
-    imageWGSL.includes("cairnContent(sampled, sampledB, contentOpId)"),
-    "image.wgsl must route both sampled slots + the op id through cairnContent(...)",
+    imageWGSL.includes("cairnContent(sampled, sampledB, uv, u_bind13, contentOpId)"),
+    "image.wgsl must route both sampled slots + the fragment uv + the compositor param + the op id through cairnContent(...)",
   );
 });
 
-test("the image shader binds the second source slot + the content-op id uniform", () => {
+test("the image shader binds the second source slot + the content-op id + compositor param uniforms", () => {
   assert.ok(imageWGSL.includes("t_bind11"), "image.wgsl must declare the second source texture (t_bind11)");
   assert.ok(imageWGSL.includes("u_bind12"), "image.wgsl must declare the contentOpId uniform (u_bind12)");
+  assert.ok(imageWGSL.includes("u_bind13"), "image.wgsl must declare the compositor param uniform (u_bind13)");
 });
 
 test("the assembled dispatch has identity as the fallthrough + a branch per non-identity direct op", () => {
   const identity = getContentOp("identity")!;
   assert.equal(identity.renderClass, "direct");
   const assembled = buildContentOpWGSL();
-  assert.ok(assembled.startsWith("fn cairnContent(a: vec4<f32>, b: vec4<f32>, opId: i32) -> vec4<f32>"));
+  assert.ok(
+    assembled.startsWith(
+      "fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>, opId: i32) -> vec4<f32>",
+    ),
+  );
   // Identity is the fallthrough (opId 0 / any unmatched id → return a).
   assert.ok(assembled.trimEnd().endsWith(`return ${(identity as { wgsl: string }).wgsl};\n}`));
   // Every non-identity direct op emits its own `if (opId == N)` branch.

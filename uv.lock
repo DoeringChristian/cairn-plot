@@ -31,9 +31,13 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "flip-evaluator" },
+    { name = "latex2mathml" },
     { name = "pillow" },
     { name = "plotly" },
     { name = "pytest" },
+]
+math = [
+    { name = "latex2mathml" },
 ]
 media = [
     { name = "pillow" },
@@ -44,6 +48,8 @@ media = [
 requires-dist = [
     { name = "flip-evaluator", marker = "extra == 'dev'", specifier = ">=1.7" },
     { name = "jinja2", specifier = ">=3.1" },
+    { name = "latex2mathml", marker = "extra == 'dev'", specifier = ">=3.77" },
+    { name = "latex2mathml", marker = "extra == 'math'", specifier = ">=3.77" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pillow", marker = "extra == 'dev'", specifier = ">=10.0.0" },
     { name = "pillow", marker = "extra == 'media'", specifier = ">=10.0.0" },
@@ -52,7 +58,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
 ]
-provides-extras = ["media", "dev"]
+provides-extras = ["media", "math", "dev"]
 
 [[package]]
 name = "colorama"
@@ -130,6 +136,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d", size = 245115, upload-time = "2025-03-05T20:05:02.478Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899, upload-time = "2025-03-05T20:05:00.369Z" },
+]
+
+[[package]]
+name = "latex2mathml"
+version = "3.81.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/62/35bb816c5c19d4d0cde5bdfb82ebb996306243d5f94e03f201658c629960/latex2mathml-3.81.0.tar.gz", hash = "sha256:4b959cdc3cac8686bc0e3e5aece8127dfb1b81ca1241bed8e00ef31b82bb4022", size = 77584, upload-time = "2026-04-15T00:55:27.977Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/b1/c488b530994c4f68e46efa99a4d6ca6741aaf158e35779fe6c4d8a9a427d/latex2mathml-3.81.0-py3-none-any.whl", hash = "sha256:d317710393fe20579aea39cfe8928fa2ad9b8780896e585326c75e89c1d1d1a4", size = 79185, upload-time = "2026-04-15T00:55:29.301Z" },
 ]
 
 [[package]]

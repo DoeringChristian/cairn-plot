@@ -191,6 +191,16 @@ export interface ImageParams {
    * they render into a result texture bound as `src` + identity. Unset = 0.
    */
   contentOpId?: number;
+  /**
+   * COMPOSITOR param (Phase 3) — the per-frame scalar the split/blend content ops
+   * read from `u_bind13.x`: the split DIVIDER position (`[0,1]` dest-space, the
+   * reference is shown where `uv.x < contentParam`) or the blend ALPHA
+   * (`mix(reference, foreground, contentParam)`). Only the compositor ops read it;
+   * the diff/identity ops ignore it, so omitting it (default 0) leaves every other
+   * path bit-for-bit unchanged. Driven live (divider drag / blend slider) — only
+   * this uniform changes, NO pipeline recompile.
+   */
+  contentParam?: number;
 }
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
@@ -310,6 +320,9 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
 
   // u_bind12 = CONTENT-op dispatch id (0 = identity passthrough, the default).
   const contentOpIdVec = new Float32Array([params.contentOpId ?? 0]);
+  // u_bind13 = COMPOSITOR param (split divider position / blend alpha) in .x;
+  // .yzw reserved. Default 0 — the diff/identity ops ignore it.
+  const contentParamVec = new Float32Array([params.contentParam ?? 0, 0, 0, 0]);
   // Logical binding 11 = the SECOND source slot `b` (arity-2 diff ops). Bind the
   // caller's srcB, or a 1x1 placeholder for the single-image path — WebGPU
   // requires every declared texture binding to have a resource, and the IDENTITY
@@ -333,6 +346,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 10, resource: { uniform: reduceVec } },
       { binding: 11, resource: srcB },
       { binding: 12, resource: { uniform: contentOpIdVec } },
+      { binding: 13, resource: { uniform: contentParamVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {

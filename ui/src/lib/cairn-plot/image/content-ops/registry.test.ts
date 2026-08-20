@@ -27,11 +27,12 @@ import {
 } from "./index.ts";
 
 const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
+const COMPOSITOR = ["split", "blend"];
 const CACHED = ["flip", "hdr-flip", "ssim"];
 
-test("the expected op set is registered (identity + pointwise diffs + cached metrics)", () => {
+test("the expected op set is registered (identity + pointwise diffs + compositor + cached metrics)", () => {
   const ids = listContentOps().map((o) => o.id);
-  assert.deepEqual(ids, ["identity", ...POINTWISE, ...CACHED]);
+  assert.deepEqual(ids, ["identity", ...POINTWISE, ...COMPOSITOR, ...CACHED]);
 });
 
 test("ids are unique", () => {
@@ -79,6 +80,41 @@ test("cached metrics are arity-2 cached ops (magma default) delegating to a kern
   }
 });
 
+test("compositor ops are arity-2 direct LIGHT ops (k=3, srgb default) with a split/blend param", () => {
+  for (const opId of COMPOSITOR) {
+    const op = getContentOp(opId);
+    assert.ok(op && isDirectContentOp(op), `${opId} must be a registered direct op`);
+    assert.equal(op!.sourceArity, 2, `${opId} sourceArity`);
+    assert.equal(op!.renderClass, "direct", `${opId} renderClass`);
+    assert.equal(op!.outputArity, 3, `${opId} light RGB → k=3 DISPLAY gating (luts off, curves offered)`);
+    assert.equal(op!.outputRange, "light", `${opId} range`);
+    assert.equal(op!.defaultEncoding, "srgb", `${opId} default encoding`);
+    assert.deepEqual(op!.params ?? [], [opId], `${opId} declares its own param name`);
+  }
+});
+
+test("compositor cpu twins composite over the fragment uv + param (readout parity)", () => {
+  const a = [0.8, 0.6, 0.4];
+  const b = [0.2, 0.3, 0.1];
+  const splitOp = getContentOp("split")!;
+  const blendOp = getContentOp("blend")!;
+  assert.ok(isDirectContentOp(splitOp) && isDirectContentOp(blendOp));
+  // split: uv.x < param → reference (a); else foreground (b).
+  assert.deepEqual(splitOp.cpu([a, b], 3, { uv: [0.2, 0.5], param: 0.5 }), a);
+  assert.deepEqual(splitOp.cpu([a, b], 3, { uv: [0.8, 0.5], param: 0.5 }), b);
+  // blend: mix(a, b, alpha) per channel.
+  const near = (got: number[], exp: number[]) => {
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(got[i]! - exp[i]!) < 1e-9, `${got} !~ ${exp}`);
+  };
+  near(blendOp.cpu([a, b], 3, { uv: [0.5, 0.5], param: 0.25 }), [
+    a[0]! * 0.75 + b[0]! * 0.25,
+    a[1]! * 0.75 + b[1]! * 0.25,
+    a[2]! * 0.75 + b[2]! * 0.25,
+  ]);
+  // No ctx → param/uv default 0: split picks foreground everywhere (uv.x 0 < 0 is false).
+  assert.deepEqual(splitOp.cpu([a, b], 3), b);
+});
+
 test("getContentOp is falsy-safe", () => {
   assert.equal(getContentOp(undefined), undefined);
   assert.equal(getContentOp(null), undefined);
@@ -97,7 +133,7 @@ test("resolveOutputArity: identity is a passthrough, diffs are fixed scalar", ()
 
 test("dispatch ids: identity is 0, direct ops are contiguous, cached ops are unmapped", () => {
   const direct = listDirectContentOps().map((o) => o.id);
-  assert.deepEqual(direct, ["identity", ...POINTWISE], "direct set == identity + pointwise");
+  assert.deepEqual(direct, ["identity", ...POINTWISE, ...COMPOSITOR], "direct set == identity + pointwise + compositor");
   assert.equal(CONTENT_OP_ID["identity"], 0, "identity must dispatch to 0 (zero-filled default)");
   assert.equal(contentOpId("identity"), 0);
   assert.equal(contentOpId(undefined), 0, "unknown/undefined → identity fallthrough");
