@@ -109,7 +109,97 @@ export function getPaneRenderLog(): PaneRenderRecord[] {
 export function isPaneRenderLogActive(): boolean {
   return paneRenderLog !== null;
 }
-/** Pool-internal: record one present. No-op unless a harness started the log. */
+/** Pool-internal: record one present. No-op unless the log is active. When the
+ *  USER-FACING capture (see {@link armPaneRenderLogFromFlag}) is armed the buffer
+ *  is bounded (ring) and each ORANGE-suspect present is surfaced live. */
 export function recordPaneRender(record: PaneRenderRecord): void {
-  if (paneRenderLog) paneRenderLog.push(record);
+  if (!paneRenderLog) return;
+  paneRenderLog.push(record);
+  if (!userCaptureArmed) return;
+  // Bound the buffer in a long-lived user session (a harness never arms this
+  // path, so its full-log assertions are unaffected).
+  if (paneRenderLog.length > USER_CAPTURE_MAX_RECORDS) paneRenderLog.shift();
+  if (isOrangeSuspect(record) && orangeSuspects.length < USER_CAPTURE_MAX_SUSPECTS) {
+    orangeSuspects.push(record);
+    // eslint-disable-next-line no-console
+    console.warn(
+      "cairn-plot paneRenderLog: ORANGE-suspect present — a plain image (identity op, no `b`) " +
+        "rendered through a SCALAR COLORMAP (a light image false-colored). Record captured on " +
+        "`window.__cairnPaneRenderLogSuspects`.",
+      record,
+    );
+  }
 }
+
+// ---------------------------------------------------------------------------
+// USER-FACING CAPTURE — arm the render-log oracle in a real browser so the
+// reported one-frame ORANGE flash can be captured in the USER'S OWN environment
+// if it ever recurs. Armed by a URL flag `?paneRenderLog=1` OR a window global
+// `window.__cairnPaneRenderLog = 1` set BEFORE the plot bundle loads. Zero cost
+// when unarmed: this module runs ONE `URLSearchParams` read at load and, if the
+// flag is absent, never sets `userCaptureArmed`, so the pool's
+// `isPaneRenderLogActive()` gate stays false and the present path is untouched.
+//
+// When armed:
+//   - the pool logs every present (bounded ring, so no unbounded growth);
+//   - each ORANGE-suspect present (an image-mode blit carrying a scalar colormap
+//     — a plain image false-colored, the artefact BY CONSTRUCTION) is
+//     `console.warn`ed AND pushed to `window.__cairnPaneRenderLogSuspects`;
+//   - `window.__cairnPaneRenderLogRecords()` returns the full bounded buffer.
+// A repro then dumps `__cairnPaneRenderLogSuspects` (or copies the console).
+// ---------------------------------------------------------------------------
+const USER_CAPTURE_MAX_RECORDS = 5000;
+const USER_CAPTURE_MAX_SUSPECTS = 500;
+let userCaptureArmed = false;
+let orangeSuspects: PaneRenderRecord[] = [];
+
+/** The orange-frame signature: an IMAGE-mode present (identity op, no `b`) that is
+ *  `isScalar` with a bound colormap LUT — a plain image collapsed through a scalar
+ *  colormap (the diff's magma reaching a light image), which lands a near-white
+ *  image on the colormap's upper ramp = orange. */
+function isOrangeSuspect(r: PaneRenderRecord): boolean {
+  return (
+    r.mode === "image" &&
+    !r.contentOpId &&
+    !r.hasSrcB &&
+    r.isScalar === true &&
+    r.hasColormap === true
+  );
+}
+
+function paneRenderLogFlagSet(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (new URLSearchParams(location.search).get("paneRenderLog") === "1") return true;
+  } catch {
+    /* ignore */
+  }
+  const w = window as unknown as { __cairnPaneRenderLog?: unknown };
+  return w.__cairnPaneRenderLog === 1 || w.__cairnPaneRenderLog === true;
+}
+
+/** Arm the user-facing capture if the flag is set. Idempotent; safe to call more
+ *  than once. Installs the `window.__cairnPaneRenderLog*` accessors and starts a
+ *  bounded log. Returns whether capture is now armed. */
+export function armPaneRenderLogFromFlag(): boolean {
+  if (userCaptureArmed) return true;
+  if (!paneRenderLogFlagSet()) return false;
+  userCaptureArmed = true;
+  orangeSuspects = [];
+  startPaneRenderLog();
+  const w = window as unknown as {
+    __cairnPaneRenderLogRecords?: () => PaneRenderRecord[];
+    __cairnPaneRenderLogSuspects?: PaneRenderRecord[];
+  };
+  w.__cairnPaneRenderLogRecords = () => getPaneRenderLog();
+  w.__cairnPaneRenderLogSuspects = orangeSuspects;
+  // eslint-disable-next-line no-console
+  console.info(
+    "cairn-plot: paneRenderLog capture ARMED — orange-suspect presents will be logged to the console " +
+      "and collected on window.__cairnPaneRenderLogSuspects (full buffer: window.__cairnPaneRenderLogRecords()).",
+  );
+  return true;
+}
+
+// Auto-arm at module load (one URL read; a no-op when the flag is absent).
+armPaneRenderLogFromFlag();

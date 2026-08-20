@@ -457,13 +457,19 @@ function CpuSdrImagePane(
   // no in-pane exposure/offset — see the graceful-degradation note at the sliders).
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
-      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-      else if (patch.colormap !== undefined && patch.colormap !== "none")
-        enc.setEncoding(patch.colormap);
-      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
+      // Content-kind scoping (orange-frame fix, mirrors GpuImagePane): a DIFF
+      // peer's scalar-error display encoding (`compareMode:"diff"`) must not
+      // false-color a LIGHT image — a non-diff pane ignores it. See GpuImagePane.
+      const adoptDisplayEncoding = !(patch.compareMode === "diff" && diffMode === "none");
+      if (adoptDisplayEncoding) {
+        if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
+        else if (patch.colormap !== undefined && patch.colormap !== "none")
+          enc.setEncoding(patch.colormap);
+        else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
+      }
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
     },
-    [enc, setTonemapGamma],
+    [enc, setTonemapGamma, diffMode],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
@@ -1165,12 +1171,20 @@ function CpuHdrImagePane(
   // pre-registry peers), the Gamma γ, exposure/offset, and the norm/bounds.
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
+      // Content-kind scoping (orange-frame fix, mirrors GpuImagePane): this CPU
+      // HDR/float pane always renders LIGHT image content (the CPU compare path
+      // is a separate degraded reference render), so a DIFF peer's scalar-error
+      // display encoding (`compareMode:"diff"`) must never be adopted here — it
+      // would false-color the light image through the diff's magma. See GpuImagePane.
+      const adoptDisplayEncoding = patch.compareMode !== "diff";
       // The unified `encoding` key is primary; `colormap`/`tonemap` are honored
       // for back-compat (a compare-pane peer publishes those, not `encoding`).
-      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-      else if (patch.colormap !== undefined && patch.colormap !== "none")
-        enc.setEncoding(patch.colormap);
-      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
+      if (adoptDisplayEncoding) {
+        if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
+        else if (patch.colormap !== undefined && patch.colormap !== "none")
+          enc.setEncoding(patch.colormap);
+        else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
+      }
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);

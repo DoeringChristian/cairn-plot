@@ -765,12 +765,31 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
+      // CONTENT-KIND SCOPING (orange-frame fix). A DIFF peer publishes its
+      // SCALAR-ERROR display face — `encoding`/`colormap` = a scalar colormap
+      // (magma/…) chosen to false-color an ERROR MAP, tagged `compareMode:"diff"`.
+      // Adopting that scalar colormap onto a pane rendering LIGHT content (a plain
+      // image, or a split/blend composite) runs the LIGHT image through the diff's
+      // magma — mean-reduced, a near-white image lands on the magma UPPER RAMP =
+      // the reported ORANGE frame (measured: `stacked-diff-flip-realstack-gpu`,
+      // diff-anchored selection = 97/97 image presents orange). A diff's
+      // scalar-error DISPLAY encoding is therefore DIFF-ONLY, exactly as the bus
+      // already treats the compare-only keys (`diffKernel`/`splitPosition`/…): a
+      // pane NOT itself in diff mode ignores it. Same-kind sync is intact — an
+      // image's own colormap PICK carries no `compareMode`, so it still syncs to
+      // image peers; a diff's colormap still reaches diff peers via the diffMode
+      // branch below (`setDiffColormapOverride`). split/blend peers publish a LIGHT
+      // curve (compareMode "split"/"blend"), which a light image adopts fine — only
+      // `"diff"` (the scalar-error face) is scoped out.
+      const adoptDisplayEncoding = !(patch.compareMode === "diff" && !diffMode);
       // The unified `encoding` key is primary; `colormap`/`tonemap` are honored
       // for back-compat (a compare-pane peer publishes those, not `encoding`).
-      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-      else if (patch.colormap !== undefined && patch.colormap !== "none")
-        enc.setEncoding(patch.colormap);
-      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
+      if (adoptDisplayEncoding) {
+        if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
+        else if (patch.colormap !== undefined && patch.colormap !== "none")
+          enc.setEncoding(patch.colormap);
+        else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
+      }
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);

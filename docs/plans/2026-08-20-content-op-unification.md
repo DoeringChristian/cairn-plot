@@ -445,6 +445,82 @@ the 2 new, + stress/slow/grid unaffected); 243 pytest; core + gpu-image bundles
 rebuilt + synced + committed; report (63 blocks) + gallery (27 types) regen clean;
 live report probe (0 churn, stable rect, no errors). `uv.lock` left untouched.
 
+## Follow-up — DONE: ORANGE flash CAUGHT + FIXED (cross-content-kind sync adoption)
+
+The prior investigation (368795e, below) proved the PANE present path source⊗encode-
+coherent but left ONE honest gap: the DESCRIPTOR GPU real-stack path
+(`PlotApp → GridView → NodeDispatch → LeafView → GpuImagePane`) with real page-wide
+SELECTION fell back to CPU headlessly, so it was never measured. Closing that gap
+REPRODUCED the orange and pinned its mechanism.
+
+**1. The CPU-fallback, root-caused + fixed.** `ImageStandalone` resolves its backend
+through `resolveImageRenderer("gpu")`, which returns the CPU pane unless
+`window.__cairnPlotGpuImagePane` is set — and that seam is set ONLY by the lazy
+`plot-gpu-image-addon` bundle, which a SOURCE harness never loads (it imports the pane
+module directly). Nothing in the mode-resolution was broken; the addon's registration
+side-effect simply never ran. FIX (harness-side): register the seam exactly as the
+addon does — `await getSharedDevice()` → assign `__cairnPlotGpuImagePane = GpuImagePane`
++ `__cairnPlotUseGpuImage = true` — then force `render=gpu`. The real stack then runs on
+the GPU headlessly (metal-3), so the pool render-log oracle sees real presents. New
+harness: `stack/stacked-diff-flip-realstack-gpu.browser.{ts,html}` (default set; float
+sources throughout — an SDR colormap is CPU-baked into the texture → present
+`isScalar:false`, INVISIBLE to the encode oracle, so a FLOAT image is required to make
+the false-color ride the GPU `isScalar` path the oracle reads).
+
+**2. The sync-adoption hypothesis — CONFIRMED, with a measurement.** A side-by-side
+`[float image, FLIP-diff]` grid, BOTH panes SETTLED, then a page-wide selection formed
+with the DIFF as ANCHOR (select diff first, add the image) — the exact thing a user does
+(the prior pane-level FSYNC probe formed the group at MOUNT, before the diff resolved its
+magma default, so its anchor seed carried a curve, not magma → it measured 0 and the
+vector looked refuted). **Measured: diff-anchor selection = 97 / 97 image presents ORANGE**
+— every image present `mode:image, op:0, isScalar:true, hasColormap:true, cmapSig:magma,
+reduce:luminance, ch:3`: a light k=3 float image luminance-reduced through the diff's
+magma = the magma UPPER RAMP orange, BY CONSTRUCTION. **CONTROL (image-anchor) = 0**; the
+lone stacked-flip storm (no peer) = **0** (re-confirming the pane path itself is coherent —
+368795e stands). Mechanism: the settled diff's snapshot publishes
+`encoding: deriveCompareEncodingId("scalar", …, "magma") = "magma"` with `compareMode:"diff"`;
+the non-anchor plain image's `applyRemoteSettings` called `enc.setEncoding("magma")`
+UNCONDITIONALLY (`GpuImagePane.tsx`), false-coloring the light image. (This is a PERSISTENT
+orange while the diff is the anchor, not only a 1-frame flash — same root, and the flip-timing
+transient is a special case of it.)
+
+**3. The fix — CONTENT-KIND SCOPING at the receiver (`applyRemoteSettings`).** A diff peer's
+`encoding`/`colormap` describe its SCALAR-ERROR face (a colormap chosen to false-color an ERROR
+MAP), already tagged `compareMode:"diff"` in the payload. Adopting that scalar colormap onto a
+pane rendering LIGHT content is the bug. So a diff's scalar-error DISPLAY encoding is now treated
+as DIFF-ONLY — exactly as the bus already treats the compare-only keys (`diffKernel`/
+`splitPosition`/…): a pane NOT itself in diff mode ignores it
+(`adoptDisplayEncoding = !(patch.compareMode === "diff" && !diffMode)`). Landed in all three
+sync receivers (`GpuImagePane`, the SDR + HDR `CpuImagePane`). **Scoping rationale (justified
+against default-vs-override semantics):** same-content-kind USER PICKS still sync — an image's
+own colormap pick carries NO `compareMode`, so it still reaches image peers; a diff's colormap
+still reaches diff peers via the `diffMode` branch (`setDiffColormapOverride`); split/blend peers
+publish a LIGHT curve (`compareMode:"split"/"blend"`), which a light image adopts fine — ONLY the
+scalar-error `"diff"` face is scoped out. Content-kind based (not dtype), so it fixes the visible
+FLOAT orange AND the oracle-invisible SDR one in one path.
+
+**Proof (real GPU, metal-3, ≥3 repeats).** The new harness: diff-anchor **0 orange** (was 97/97),
+image-anchor control **0**, stacked flip storm **0** across 3 reps. A DIFFERENTIAL phase drives the
+bus directly against a live selected image pane and asserts the fix is PRECISELY scoped: a same-kind
+image colormap patch (no `compareMode`) IS still adopted (image goes orange — same-kind sync intact),
+while a `compareMode:"diff"` patch is IGNORED. ALL 30 parity harnesses green (incl.
+`compare-settings-sync` + `page-wide-selection` — the same-kind-sync regression guards), 615 node
+tests, 243 pytest, typecheck.
+
+**4. User-facing capture path (`?paneRenderLog=1`).** `engine/test-hooks` now auto-arms the
+render-log oracle when the URL carries `?paneRenderLog=1` OR `window.__cairnPaneRenderLog = 1` is set
+before the bundle loads. Zero cost when unarmed (one `URLSearchParams` read at module load; the pool's
+`isPaneRenderLogActive()` gate stays false, present path untouched). When armed: every present is logged
+(bounded ring — no unbounded growth), and each ORANGE-suspect present (an image-mode blit carrying a
+scalar colormap) is `console.warn`ed AND pushed to `window.__cairnPaneRenderLogSuspects`;
+`window.__cairnPaneRenderLogRecords()` returns the full buffer. **Usage:** open the report/gallery with
+`?paneRenderLog=1`, reproduce the flip, then dump `window.__cairnPaneRenderLogSuspects` (or copy the
+console). Present on the GPU path (where the artefact is visible).
+
+**Gates.** typecheck; 615 node tests; ALL 30 parity harnesses (metal-3, incl. the new real-stack GPU
+harness, stable ×3); 243 pytest; core + gpu-image bundles rebuilt + synced + committed; report (63
+blocks) + gallery (27 types) regen clean. `uv.lock` left untouched.
+
 ## Follow-up — INVESTIGATION: reported one-frame ORANGE viewport flash (sharpened oracle; NOT reproduced at the pane)
 
 **User report (after 9368ee2 + c459c34).** Fast image↔diff STACKED flips still
