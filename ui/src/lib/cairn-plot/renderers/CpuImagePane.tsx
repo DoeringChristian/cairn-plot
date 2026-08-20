@@ -108,6 +108,7 @@ import {
   type NormMode,
   type ReduceMode,
 } from "../image/encodings";
+import { getContentOp } from "../image/content-ops";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -135,6 +136,13 @@ const DEFAULT_PROCESSING: ImageProcessing = {
 // ---------------------------------------------------------------------------
 // HDR tone-map (moved verbatim from HdrImagePane.tsx; re-exported there).
 // ---------------------------------------------------------------------------
+
+/** The CONTENT stage's CPU twin (Phase 1: identity — a passthrough). The CPU
+ *  pane produces its per-texel content through the content-op registry, the SAME
+ *  declaration the GPU shader's `cairnContent` assembles from. Identity returns
+ *  the sampled source channels unchanged, so the pixel pipeline is byte-for-byte
+ *  as before. */
+const IDENTITY_CONTENT = getContentOp("identity")!;
 
 /**
  * Tone-map the float HDR buffer into an 8-bit RGBA `ImageData`. Pure — no DOM
@@ -234,6 +242,15 @@ export function tonemapToImageData(
       b = finite(src[base + 2]!);
       a = finite(src[base + 3]!);
     }
+
+    // CONTENT stage (Phase 1: identity) — the sampled source color enters the
+    // display pipeline through the content-op registry's `cpu` twin, mirroring
+    // the GPU shader's `cairnContent`. Identity is a passthrough, so [r,g,b] is
+    // unchanged (alpha is a coverage value, handled separately below).
+    const content = IDENTITY_CONTENT.cpu([[r, g, b]], c);
+    r = content[0]!;
+    g = content[1]!;
+    b = content[2]!;
 
     // 1) exposure + offset (TEV) in scene-linear, 2) tone-map HDR→[0,1],
     //    3) output-encode. Offset is added after exposure, before the operator.

@@ -106,3 +106,58 @@ report + gallery regen clean.
 - Split-divider gesture + pixel-number alignment (fiddly UI; task #88).
 - HDR-FLIP's multi-exposure loop is the most complex cached op.
 - Harnesses encode the current compare DOM heavily — migrate, don't fork.
+
+## Phase 1 — DONE (commit d2cb45a)
+
+The `ContentOp` registry landed under `ui/src/lib/cairn-plot/image/content-ops/`
+(core-safe, mirroring `image/encodings/`): `registry.ts` (the `ContentOp`
+interface + `registerContentOp`/`getContentOp`/`listContentOps` +
+`resolveOutputArity`), `ops.ts` (the entries), `wgsl.ts` (the GPU assembler),
+`index.ts` (registration side-effect + barrel), plus `registry.test.ts` (shape +
+identity-twin) and `registry-drift.test.ts` (the shader-consumes-the-registry
+guard). **Only IDENTITY is registered** (sourceArity 1, renderClass `direct`,
+outputRange `light`, defaultEncoding `srgb`, no params).
+
+**Dynamic output arity (the identity decision).** `outputArity: number | "source"`.
+The `"source"` marker means PASSTHROUGH — the k the DISPLAY stage sees equals the
+source channel count (an RGB source stays k=3, a scalar stays k=1). Identity is
+`"source"`; resolve against a concrete arity with `resolveOutputArity(op, k)`.
+Chosen over a `(k)=>number` function: a marker is declarative and honest, and
+identity is the only passthrough op — a full function would over-abstract. Fixed
+numbers stay available for the future ops (scalar error = 1, split/blend = 3).
+
+**What moved in the shader assembly.** `engine/shaders/image.wgsl.ts` now
+interpolates `buildContentOpWGSL()` — assembling `fn cairnContent(a: vec4<f32>)
+-> vec4<f32>` from the registry (Phase 1 body = identity's `wgsl`, i.e.
+`return a;`) — and `fs_main` routes the sampled source through
+`cairnContent(sampled)` before the display pipeline. Identity is a passthrough
+(`content == sampled`), so the ENTIRE display stage downstream (exposure/offset,
+`isScalar`/`cairnReduceScalar`/`cairnDataIndex`, analytic/gray-none scalar-modes,
+`applyOperator`, output-encode) is UNTOUCHED and byte-identical. No new uniform,
+no uniform-layout change (there is exactly one content op, so no `contentOpId`
+dispatch is emitted yet — that + a second source slot `b` are Phase 2).
+`CpuImagePane.tsx`'s `tonemapToImageData` consumes the SAME declaration: the
+per-texel `[r,g,b]` read is routed through `IDENTITY_CONTENT.cpu([[r,g,b]], c)`
+(passthrough) before exposure. `image-engine.ts`, `GpuImagePane.tsx`,
+`GpuComparePane`, compose, plot-node, and descriptors were NOT touched.
+
+**Gates (byte-pinned).** typecheck clean; **609 node tests** (599 baseline + 10
+new content-op tests) pass; **all 23 parity harnesses pass UNMODIFIED** on real
+GPU (Apple metal-3) — `image-pass`/`encoding-registry` render through the exact
+modified shader and byte-compare to the CPU reference, so passing unmodified IS
+the zero-behavior-change proof; 243 pytest; gallery (27 sections) clean; report
+regenerates clean (63 blocks) and renders in-browser with no console errors.
+plot-inline bundles rebuilt + synced (`core.iife.js` + `gpu-image.iife.js`
+carry the assembled `cairnContent`) and committed. No schema/Python change
+(content ops are an internal render-stage, not a descriptor kwarg).
+
+**Deviations / notes.** (1) `ContentOp.wgsl` is typed `string` (a direct op's
+inline expression); the design's "cached op = pass builder" becomes a
+discriminated union in Phase 2 (like `engine/kernels`' Pointwise/Multipass) —
+documented, not pre-abstracted. (2) The content-op drift guard has no
+TS↔Python mirror (content ops are internal); instead it pins the SHADER to the
+registry (asserts `image.wgsl` interpolates `buildContentOpWGSL()` and calls
+`cairnContent`), which is the surface that could actually drift. (3) Branch note:
+implemented on `diff_unification` (where this design doc + the whole
+display-encoding registry it mirrors live at HEAD); the older `tonemapping`
+branch predates the design doc and the registry infrastructure.

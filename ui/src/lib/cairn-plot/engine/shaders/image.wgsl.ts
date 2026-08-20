@@ -162,6 +162,7 @@
  * exact-texel semantics, no filterable-float sampler.
  */
 import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL } from "../../image/encodings/index.ts";
+import { buildContentOpWGSL } from "../../image/content-ops/index.ts";
 
 export const imageWGSL = `
 struct VSOut {
@@ -293,6 +294,14 @@ ${LUT_FAMILY_WGSL}
 // transfer lives in outputEncodeF, selected per operator by the gamma uniform.
 ${buildTonemapCurvesWGSL({ remaps: true })}
 
+// CONTENT stage — ASSEMBLED from the content-op registry (image/content-ops),
+// the single source of truth for "what k-channel value does this texel carry".
+// Phase 1: the IDENTITY op only, so cairnContent(a) is the passthrough of a —
+// the sampled source enters the display pipeline here (see buildContentOpWGSL). The
+// display stage downstream (exposure, isScalar/reduce/dataIndex, applyOperator,
+// output-encode) is unchanged and consumes cairnContent's output.
+${buildContentOpWGSL()}
+
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let srcDims = vec2<f32>(textureDimensions(t_bind0));
@@ -326,10 +335,16 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let peak = u_bind7;
   let srgbDecode = u_bind8 > 0.5;
 
+  // CONTENT stage (Phase 1: identity) — the sampled source enters the display
+  // pipeline through the content-op registry (cairnContent, assembled above).
+  // Identity is a passthrough, so content == sampled; the display pipeline
+  // below is byte-for-byte unchanged.
+  let content = cairnContent(sampled);
+
   // 0) [SDR display-transfer path] sRGB-DECODE the sampled 8-bit source to
   //    linear light so exposure/offset + the chosen transfer operate on linear
   //    values (tev-style). Off for the HDR/float path (scene-linear already).
-  var src = sampled.rgb;
+  var src = content.rgb;
   if (srgbDecode) {
     src = vec3<f32>(srgbEotf(src.r), srgbEotf(src.g), srgbEotf(src.b));
   }
