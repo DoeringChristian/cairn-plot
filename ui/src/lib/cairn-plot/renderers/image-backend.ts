@@ -82,6 +82,14 @@ export interface HdrImageProps {
    *  = raw browser-clipped). Seeds the pane's PEAK slider; unset → the pane default
    *  (4 on an engaged HDR surface). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
   peak?: number;
+  /** Authored false-color colormap for the FLOAT surface (`"none"` or a LUT id).
+   *  The unified float pipeline runs a named colormap through the GPU/CPU LUT
+   *  family on the scalar channel (a k>1 sample is reduced first), so a float
+   *  scalar authored with `colormap=` seeds the DISPLAY encoding to that LUT —
+   *  exactly as the 8-bit path does via {@link SdrImageProps.colormap}. Threaded
+   *  through {@link useLegacyImageProps} so `GpuImagePane`/`CpuImagePane` read it
+   *  as `propColormap`. Unset ⇒ `"none"` (plain-grayscale scalar / light RGB). */
+  colormap?: Colormap;
   showAxes?: boolean;
   label?: string;
   interpolation?: Interpolation;
@@ -363,6 +371,11 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       offset: p.offset,
       gamma: p.gamma,
       peak: p.peak,
+      // The unified float surface honours a named colormap (LUT display encoding)
+      // on its scalar channel — forward it so the pane seeds DISPLAY to the
+      // authored LUT. Omitting it (the stale pre-unification float contract) is
+      // exactly what dropped `cp.Image(float, colormap="magma")` to sRGB grayscale.
+      colormap: p.colormap,
       showAxes: p.showAxes,
       label: p.label,
       interpolation: p.interpolation,

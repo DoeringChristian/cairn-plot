@@ -196,3 +196,29 @@ def test_url_image_exposure_offset_are_top_level_not_processing() -> None:
     plain = cp.Image(url="render.exr", tonemap="aces")
     assert "exposure" not in plain._props
     assert "offset" not in plain._props
+
+
+def test_float_image_colormap_is_emitted_not_ignored() -> None:
+    # cp.Image(float, colormap=...) — the unified float surface honours named
+    # colormaps (LUT + analytic display encodings), so the float/imghdr path
+    # must EMIT props.colormap, not warn-and-drop it as an "8-bit-only" arg
+    # (the stale pre-unification contract this test pins the removal of).
+    import numpy as np
+
+    import cairn_plot as cp
+
+    err = np.linspace(0.0, 1.0, 12, dtype=np.float32).reshape(3, 4)
+    img = cp.Image(err, colormap="magma")
+    assert img._data["kind"] == "imghdr"
+    assert img._props.get("colormap") == "magma"
+    node = img.to_node()
+    assert node["props"]["colormap"] == "magma"
+
+    # validation still applies on the float path (same canonical set + "none").
+    import pytest
+
+    with pytest.raises(ValueError, match="colormap"):
+        cp.Image(err, colormap="not-a-colormap")
+
+    # unset stays absent (renderer default = plain sRGB grayscale for scalars).
+    assert "colormap" not in cp.Image(err)._props

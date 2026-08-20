@@ -852,6 +852,7 @@ def _image_hdr_props(
     offset: float | None = None,
     gamma: float | None = None,
     peak: float | None = None,
+    colormap: str | None = None,
     interpolation: str | None = None,
     show_axes: bool | None = None,
     pixel_value_notation: str | None = None,
@@ -898,6 +899,10 @@ def _image_hdr_props(
         props["gamma"] = float(gamma)
     if peak is not None:
         props["peak"] = float(peak)
+    if colormap is not None:
+        # The unified float surface honours named colormaps (LUT + analytic
+        # display encodings) — same validation as the 8-bit path.
+        props["colormap"] = _check_image_colormap(colormap)
     if interpolation is not None:
         props["interpolation"] = interpolation
     if show_axes is not None:
@@ -1158,12 +1163,13 @@ class Image(Component):
                     "a baked float array has no server reference. Use "
                     "data_mode='local' (bakes the .npy self-contained)."
                 )
-            # `offset` is NO LONGER 8-bit-only — the HDR pane applies it as the
-            # base display-offset (controlled counterpart of `exposure`), so it is
-            # honoured, not ignored.
+            # `offset` and `colormap` are NO LONGER 8-bit-only — the HDR pane
+            # applies `offset` as the base display-offset (controlled counterpart
+            # of `exposure`), and the unified float surface applies named LUT /
+            # analytic colormaps through the display-encoding registry.
             ignored = [
                 n for n, v in (
-                    ("colormap", colormap), ("brightness", brightness),
+                    ("brightness", brightness),
                     ("contrast", contrast),
                     ("flip_sign", flip_sign),
                 ) if v is not None
@@ -1172,12 +1178,13 @@ class Image(Component):
                 log.warning(
                     "cp.Image float path ignores 8-bit-only args %s "
                     "(the float surface honours tonemap/exposure/offset/gamma/"
-                    "showAxes/interpolation).",
+                    "colormap/showAxes/interpolation).",
                     ignored,
                 )
             self._props = _image_hdr_props(
                 tonemap=tonemap, exposure=exposure, offset=offset, gamma=gamma,
-                peak=peak, interpolation=interpolation, show_axes=show_axes,
+                peak=peak, colormap=colormap, interpolation=interpolation,
+                show_axes=show_axes,
                 pixel_value_notation=pixel_value_notation,
             )
             # M2: guarantee C-contiguous float32 (halves size vs float64; the
