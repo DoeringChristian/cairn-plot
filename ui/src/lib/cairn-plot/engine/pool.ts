@@ -42,13 +42,18 @@
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
 import { getSharedDevice } from "./device";
-import { renderImage, type ImageParams } from "./image-engine";
+import { renderImage, computeMetrics, type ImageParams, type DiffMetrics } from "./image-engine";
 // Phase 2b: the CACHED-op render path (FLIP / HDR-FLIP / SSIM) runs the diff
 // engine's content-keyed compute + cache from INSIDE the pool (the pool owns the
 // two source textures a cached op reduces). Safe to import here: `pool.ts` is
 // browser-bundle only (never loaded by the `*.test.ts` strip-only node runner),
 // so pulling the `engine/kernels` graph in transitively is fine.
-import { ensureDiff, type DiffCacheEntry } from "./diff-engine";
+import {
+  ensureDiff,
+  ensureSsimScalar,
+  ensureDiffResultReadback,
+  type DiffCacheEntry,
+} from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
 import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
 import { forceEngineFailRequested } from "./test-hooks";
@@ -177,6 +182,30 @@ export interface PaneHandle {
     displayParams: ImageParams,
     mapping?: CompareMapping,
   ): DiffCacheEntry | null;
+  /**
+   * MSE / PSNR / MAE over the two live source slots (`a` = {@link setSource},
+   * `b` = {@link setSourceB}), honoring the align/fit `mapping` — the diff pane's
+   * metrics chip. A source-data metric: the pool owns the textures, so the compute
+   * runs against them here (the same `computeMetrics` `GpuComparePane` calls on its
+   * self-managed textures). Returns `null` (not a rejected promise) when either
+   * slot is unset / the handle is disposed / a hard GPU failure occurs.
+   */
+  computeMetrics(mapping?: CompareMapping): Promise<DiffMetrics> | null;
+  /**
+   * Mean-SSIM scalar over the two live source slots — the diff metrics chip's SSIM
+   * face. Runs `ensureSsimScalar` (the content+mapping-keyed cache) over the
+   * pool-owned textures. Returns `null` when a slot is unset / disposed / a hard
+   * GPU failure occurs.
+   */
+  computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null;
+  /**
+   * Read back a cached diff RESULT (a {@link DiffCacheEntry} returned by
+   * {@link renderDiffCached}) as the per-pixel metric values (RGBA f32, row-major,
+   * result resolution) the TEV overlay prints in a CACHED diff mode. Memoized in
+   * the entry (never re-reads, never recomputes). Returns `null` on a disposed
+   * handle.
+   */
+  readDiffResult(entry: DiffCacheEntry): Promise<Float32Array> | null;
   /** Free this pane's live GPU resources (source texture), keeping the
    *  retained CPU source buffer. Safe to call on an already-parked or
    *  disposed handle (no-op). */
@@ -436,6 +465,48 @@ function attemptRenderDiffCached(
   }
 }
 
+/**
+ * Compute MSE/PSNR/MAE over `entry`'s two live source slots (see
+ * `PaneHandle.computeMetrics`). `activateEntry` (uploads both slots) is inside the
+ * try so a hard GPU failure returns `null` (parking the entry) rather than
+ * throwing / rejecting into the caller's effect — the same never-throws contract
+ * as `attemptRender`.
+ */
+function attemptComputeMetrics(entry: PaneEntry, mapping?: CompareMapping): Promise<DiffMetrics> | null {
+  if (entry.disposed || !entry.source || !entry.sourceB) return null;
+  try {
+    activateEntry(entry);
+    if (!entry.srcTexture || !entry.srcTextureB) return null;
+    return computeMetrics(entry.device, entry.srcTexture, entry.srcTextureB, mapping);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("cairn-plot engine: pane metrics compute failed", err);
+    entry.parked = false;
+    parkEntry(entry);
+    return null;
+  }
+}
+
+/** Mean-SSIM scalar over `entry`'s two live source slots (see `PaneHandle.computeSsim`). */
+function attemptComputeSsim(
+  entry: PaneEntry,
+  contentKeys: { a: string; b: string },
+  mapping?: CompareMapping,
+): Promise<number> | null {
+  if (entry.disposed || !entry.source || !entry.sourceB) return null;
+  try {
+    activateEntry(entry);
+    if (!entry.srcTexture || !entry.srcTextureB) return null;
+    return ensureSsimScalar(entry.device, entry.srcTexture, entry.srcTextureB, contentKeys.a, contentKeys.b, mapping);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("cairn-plot engine: pane SSIM compute failed", err);
+    entry.parked = false;
+    parkEntry(entry);
+    return null;
+  }
+}
+
 function makeHandle(entry: PaneEntry): PaneHandle {
   return {
     canvas: entry.canvas,
@@ -528,6 +599,16 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       mapping?: CompareMapping,
     ): DiffCacheEntry | null {
       return attemptRenderDiffCached(entry, kernelId, contentKeys, computeParams, displayParams, mapping);
+    },
+    computeMetrics(mapping?: CompareMapping): Promise<DiffMetrics> | null {
+      return attemptComputeMetrics(entry, mapping);
+    },
+    computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null {
+      return attemptComputeSsim(entry, contentKeys, mapping);
+    },
+    readDiffResult(cacheEntry: DiffCacheEntry): Promise<Float32Array> | null {
+      if (entry.disposed) return null;
+      return ensureDiffResultReadback(entry.device, cacheEntry);
     },
     park(): void {
       if (entry.disposed) return;

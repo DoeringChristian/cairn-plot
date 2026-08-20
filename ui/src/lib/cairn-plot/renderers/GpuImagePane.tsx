@@ -85,7 +85,29 @@ import type { Colormap } from "../types";
 import { applyColormap, colormapFloatLUT } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
-import { HALF_ONE, halfToFloat } from "../image/half";
+import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
+// Content-op unification (Phase 2c): the DIFF capability. The pane samples a
+// second source slot (`compareSource.b` via the pool's `setSourceB`) and renders
+// a diff CONTENT op — a DIRECT pointwise op inline, or a CACHED metric
+// (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. All ported from `GpuComparePane`'s
+// diff plumbing but routed THROUGH the pool. Engine imports are safe here — this
+// file only ships in the gpu-image addon bundle (never `core.iife.js`).
+import { getContentOp, isDirectContentOp, contentOpId } from "../image/content-ops/index";
+import {
+  getDiffKernel,
+  resolveDiffKernelId,
+  resolveDiffColormap,
+  listDiffMenuModes,
+} from "../engine/kernels";
+import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
+import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
+import { formatSsim } from "../engine/ssim-metric";
+import type { DiffMetrics } from "../engine/image-engine";
+import type { DiffCacheEntry } from "../engine/diff-engine";
+import { compareCaptions } from "../media-compare/compare-captions";
+import { buildCompareModeMenu } from "../media-compare/compare-mode-menu";
+import LabelChip from "../primitives/LabelChip";
+import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
 import ImageOverlay from "./ImageOverlay";
 import {
   PIXEL_VALUE_MIN_SCREEN_PX,
@@ -110,7 +132,13 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
-import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
+import {
+  displayToolbarButton,
+  reduceSegment,
+  usePaneEncoding,
+  compareDisplayToolbarButton,
+  deriveCompareEncodingId,
+} from "./display-encoding";
 import { getEncoding, defaultReduceMode, type ReduceMode } from "../image/encodings";
 import {
   resolveEffectiveTonemap,
@@ -139,6 +167,8 @@ import {
   type SdrImageProps,
   type ImageBackend,
   type ImageBackendProps,
+  type CompareSource,
+  type DecodedSource,
 } from "./image-backend";
 
 // A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
@@ -216,6 +246,27 @@ function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
     out[o + 3] = a;
   }
   return { data: out, width: w, height: h, format: "rgba32float" };
+}
+
+/** Expand any decoded source (the reference operand `b` of a diff) into a
+ *  `SourceUpload` in its natural texture format: a float source expands RGB→RGBA
+ *  (via {@link hdrToRGBAFloat32}), a uint8 source is `<img>`-decoded to
+ *  `rgba8unorm`. Async because the uint8 path decodes a URL. Mirrors
+ *  `GpuComparePane`'s `loadSide`, but yields the pool's `SourceUpload` shape. */
+async function decodedSourceToUpload(src: DecodedSource): Promise<SourceUpload | null> {
+  if (src.dtype === "float") {
+    return hdrToRGBAFloat32({
+      data: src.data,
+      shape: src.shape,
+      dtype: src.numpyDtype ?? "<f4",
+      precision: src.precision,
+      deep: src.deep,
+    });
+  }
+  if (!src.url) return null;
+  const d = await loadImageData(src.url);
+  if (!d) return null;
+  return { data: d.data, width: d.width, height: d.height, format: "rgba8unorm" };
 }
 
 /**
@@ -316,6 +367,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // forwarded verbatim to the CPU fallback (which reconstructs it the same way).
   const props = useLegacyImageProps(backendProps);
   const hdrMode = isHdrProps(props);
+  // DIFF capability (content-op unification, Phase 2c): when `compareSource` is
+  // present the pane renders a diff of `source` (foreground/`a`) against
+  // `compareSource.b` (reference). The single-image path is byte-identical when
+  // absent — every diff branch below gates on `diffMode`.
+  const compareSource: CompareSource | undefined = backendProps.compareSource;
+  const diffMode = !!compareSource;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -379,6 +436,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const hdrDataRef = useRef<HdrData | null>(null);
   const sdrImageDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
+  // DIFF reference (`b`) retained pixels — the diff TEV readout's `b` operand for a
+  // DIRECT op's cpu twin. Float → the raw DecodedSource; uint8 → the decoded RGBA.
+  const refFloatRef = useRef<DecodedSource | null>(null);
+  const refU8Ref = useRef<{ data: ArrayLike<number>; width: number; height: number } | null>(null);
 
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
@@ -549,6 +610,64 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
   // -----------------------------------------------------------------------
+  // DIFF state (content-op unification). Mirrors `GpuComparePane`'s diff kernel +
+  // colormap-override view-local state, but the RENDER runs through the pool
+  // (`setSourceB` + `render(contentOpId)` for a direct op / `renderDiffCached` for
+  // a cached metric) instead of self-managed textures. All declared
+  // unconditionally (rules-of-hooks); inert when `!diffMode`.
+  // -----------------------------------------------------------------------
+  const diffSeedColormap = ((): Colormap | null => {
+    const c = compareSource?.colormap;
+    if (c == null || c === "none") return null;
+    return (c as string) === "viridis" ? ("turbo" as Colormap) : c;
+  })();
+  const [diffKernel, setDiffKernelState, diffKernelMeta] = useResettableState<string>(
+    compareSource?.opId ?? "absolute",
+  );
+  useEffect(() => {
+    setDiffKernelState(compareSource?.opId ?? "absolute");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareSource?.opId]);
+  const setDiffKernel = useCallback(
+    (id: string) => {
+      setDiffKernelState(id);
+      compareSource?.onDiffKernelChange?.(id);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setDiffKernelState, compareSource?.onDiffKernelChange],
+  );
+  // Explicit colormap OVERRIDE (null = follow the kernel default). Sticks across
+  // kernel switches; HOME clears it. Seeded from the descriptor colormap.
+  const [diffColormapOverride, setDiffColormapOverride, diffColormapMeta] =
+    useResettableState<Colormap | null>(diffSeedColormap);
+  useEffect(() => {
+    const c = compareSource?.colormap;
+    setDiffColormapOverride(
+      c == null || c === "none" ? null : (c as string) === "viridis" ? ("turbo" as Colormap) : c,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareSource?.colormap]);
+
+  // Cheap pure derivations (recomputed each render): the concrete kernel id (float
+  // sources auto-dispatch flip→hdr-flip) and the EFFECTIVE diff colormap (override
+  // else the per-kernel default). Declared before the sync snapshot below.
+  const sourcesAreFloat =
+    backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
+  const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
+  const effectiveDiffColormap = resolveDiffColormap(resolvedKernelId, diffColormapOverride ?? null) as Colormap;
+
+  // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
+  // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
+  const [diffMetrics, setDiffMetrics] = useState<DiffMetrics | null>(null);
+  const [diffSsim, setDiffSsim] = useState<number | null>(null);
+  const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
+  const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
+  const [refUploadVersion, setRefUploadVersion] = useState(0);
+  const diffEntryRef = useRef<DiffCacheEntry | null>(null);
+  const diffSamplesRef = useRef<Float32Array | null>(null);
+  const diffResultDimsRef = useRef<{ w: number; h: number } | null>(null);
+
+  // -----------------------------------------------------------------------
   // Multi-viewport SELECTION: display-settings sync. When this pane joins a ≥2
   // selection (`props.settingsSyncGroupId` set), a local control change
   // broadcasts to the group and peers' changes apply to our override state; the
@@ -574,24 +693,50 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
         setColorBounds([patch.colorMin, patch.colorMax]);
       }
+      // DIFF face (Phase 2c): a colormap patch sets the diff OVERRIDE, a diffKernel
+      // patch switches the kernel. In diff mode the image `enc` above is inert; in
+      // single-image mode these are no-ops (no peer publishes them).
+      if (diffMode && patch.colormap !== undefined) {
+        setDiffColormapOverride(patch.colormap === "none" ? null : (patch.colormap as Colormap));
+      }
+      if (patch.diffKernel !== undefined) setDiffKernelState(patch.diffKernel);
     },
-    [enc, setTonemapGamma, setPeak, setColorBounds],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enc, setTonemapGamma, setPeak, setColorBounds, diffMode, setDiffColormapOverride, setDiffKernelState],
   );
   const settingsSnapshot = useCallback(
-    (): ImageSyncSettings => ({
-      // The ONE `encoding` id, plus the derived colormap/tonemap so a pre-registry
-      // (compare) peer still follows the shared look.
-      encoding: enc.encodingId,
-      colormap: enc.colormap,
-      tonemap: effectiveTonemap,
-      tonemapGamma,
-      peak,
-      exposureEV: displayEV,
-      offset: displayOffset,
-      reduce: effectiveReduce,
-      ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
-    }),
-    [enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds],
+    (): ImageSyncSettings =>
+      diffMode
+        ? {
+            // DIFF face: the scalar-error encoding + the effective diff colormap
+            // (per-kernel default when unoverridden), plus the compare-only keys so
+            // a compare-pane peer follows mode/kernel. `deriveCompareEncodingId`
+            // matches `GpuComparePane`'s snapshot exactly (one shared bus).
+            encoding: deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap),
+            colormap: effectiveDiffColormap,
+            tonemap: effectiveTonemap,
+            tonemapGamma,
+            peak,
+            exposureEV: displayEV,
+            offset: displayOffset,
+            reduce: effectiveReduce,
+            diffKernel,
+            compareMode: "diff",
+          }
+        : {
+            // The ONE `encoding` id, plus the derived colormap/tonemap so a pre-registry
+            // (compare) peer still follows the shared look.
+            encoding: enc.encodingId,
+            colormap: enc.colormap,
+            tonemap: effectiveTonemap,
+            tonemapGamma,
+            peak,
+            exposureEV: displayEV,
+            offset: displayOffset,
+            reduce: effectiveReduce,
+            ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
+          },
+    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -652,6 +797,37 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       publishSettings({ colorMin: next[0], colorMax: next[1] });
     },
     [setColorBounds, publishSettings],
+  );
+  // DIFF publish sites (Phase 2c): the ONE place a diff MODE / colormap pick both
+  // sets local state AND broadcasts to the shared settings bus (peers follow).
+  const changeDiffKernel = useCallback(
+    (id: string) => {
+      setDiffKernel(id);
+      publishSettings({ diffKernel: id });
+    },
+    [setDiffKernel, publishSettings],
+  );
+  const changeDiffColormap = useCallback(
+    (id: Colormap) => {
+      // The picked id IS the override (incl. an explicit "none" = raw per-channel
+      // error); it sticks across kernel switches. HOME clears it back to null.
+      setDiffColormapOverride(id);
+      publishSettings({
+        encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
+        colormap: id,
+        tonemap: effectiveTonemap,
+      });
+    },
+    [setDiffColormapOverride, publishSettings, effectiveTonemap],
+  );
+  // MODE menu picking SLIDE/BLEND delegates to the owner (which remounts to
+  // `GpuComparePane` — the documented slide/blend remount).
+  const changeCompareMode = useCallback(
+    (mode: "split" | "blend" | "diff") => {
+      compareSource?.onCompareModeChange?.(mode);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareSource?.onCompareModeChange],
   );
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
@@ -860,7 +1036,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (hdrMode || !paneReady) return;
     const p = props as SdrImageProps;
     const imageUrl = p.imageUrl;
-    const colormap = sdrColormap;
+    // DIFF mode uploads the RAW source (the diff samples raw `a`/`b`) — never a
+    // CPU false-color, which is the single-image display convenience only.
+    const colormap = diffMode ? "none" : sdrColormap;
     if (!imageUrl) {
       sdrImageDataRef.current = null;
       setNaturalDims(null);
@@ -928,6 +1106,84 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     hdrMode ? 0 : displayEV,
     hdrMode ? 0 : displayOffset,
   ]);
+
+  // -----------------------------------------------------------------------
+  // DIFF: upload the reference operand `b` into the pool's SECOND source slot
+  // (`setSourceB`). The diff is `source − b` (slot a = `source`, slot b = `b`),
+  // matching the diff-engine's `texA − texB` — the caller assigns operands to pick
+  // the sign (reference→`source`, foreground→`b` for GpuComparePane parity).
+  // Cleared to the single-image path when `!diffMode`. Async (a uint8 ref decodes
+  // a URL). Byte-parity is proven at the engine level by content-ops.browser.ts.
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    if (!paneReady) return;
+    const b = diffMode ? compareSource?.b : undefined;
+    if (!b) {
+      paneHandleRef.current?.setSourceB(null);
+      setRefDims(null);
+      refFloatRef.current = null;
+      refU8Ref.current = null;
+      return;
+    }
+    let cancelled = false;
+    decodedSourceToUpload(b).then((upload) => {
+      if (cancelled || !upload) return;
+      paneHandleRef.current?.setSourceB(upload);
+      // Retain the reference pixels for the DIRECT-op cpu-twin readout.
+      if (b.dtype === "float") {
+        refFloatRef.current = b;
+        refU8Ref.current = null;
+      } else {
+        refU8Ref.current = { data: upload.data as unknown as ArrayLike<number>, width: upload.width, height: upload.height };
+        refFloatRef.current = null;
+      }
+      setRefDims((prev) =>
+        prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
+      );
+      setRefUploadVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneReady, diffMode, compareSource?.b]);
+
+  // Align/fit overlap mapping for the two operands (a = `source`/primary, b =
+  // reference) — folds into the diff cache key + the metrics reduction region. Null
+  // until both footprints are known.
+  const diffMapping = useMemo<CompareMapping | null>(() => {
+    if (!diffMode || !naturalDims || !refDims) return null;
+    // Primary = the foreground = the SECOND operand (`b`), matching
+    // `GpuComparePane`'s `computeCompareMapping(ref, fg, …, "b")` — `fit:"fill"`
+    // rescales to the foreground. Irrelevant under the default `crop`.
+    return computeCompareMapping(
+      naturalDims,
+      refDims,
+      compareSource?.align ?? "top-left",
+      compareSource?.fit ?? "crop",
+      "b",
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffMode, naturalDims, refDims, compareSource?.align, compareSource?.fit]);
+
+  // HDR-FLIP exposure range — computed once per REFERENCE content from its
+  // luminance (deterministic → folds into the diff-cache key, never a recompute on
+  // zoom/pan). The reference is the diff-engine's `texA` operand = the pane's
+  // `source` here. Only needed for the `hdr-flip` kernel.
+  const hdrExposures = useMemo(() => {
+    if (!diffMode || !sourcesAreFloat) return null;
+    const ref = backendProps.source.dtype === "float" ? backendProps.source : null;
+    if (!ref) return null;
+    const { h, w, c } = shapeDims(ref.shape);
+    const refData = ref.precision === "f16-bits" ? f16BitsToFloat32(ref.data as Uint16Array) : ref.data;
+    return computeHdrFlipExposures(refData, w, h, c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffMode, sourcesAreFloat, backendProps.source]);
+
+  // Content-identity diff-cache keys (`a` = primary/`source`, `b` = reference):
+  // a float side keys on its ORIGINAL content key (URL), not the decoded bytes.
+  const contentKeyA = compareSource?.contentKeyA ?? "diff:a";
+  const contentKeyB = compareSource?.contentKeyB ?? "diff:b";
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +
@@ -1001,6 +1257,89 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ? "nearest"
         : "linear";
     const uv = rawUv;
+
+    // ---- DIFF path (content-op unification, Phase 2c) --------------------
+    // Renders `source − compareSource.b` through the pool: a DIRECT pointwise op
+    // inline (`render({contentOpId})`, the pool injects `srcB`); a CACHED metric
+    // (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. The DISPLAY reuses the pane's
+    // display-encoding machinery: analytic red-green (signed), turbo-log2
+    // (magnitude), a plain LUT (magma/…) or raw per-channel error ("none"). Proven
+    // byte-identical to the composed cpu twin by content-ops.browser.ts.
+    if (diffMode) {
+      // Wait for the reference slot to upload (else a direct op would sample the
+      // 1×1 placeholder). The render effect re-fires on `refUploadVersion`.
+      if (!refDims) return;
+      const kernelId = getDiffKernel(resolvedKernelId) ? resolvedKernelId : "absolute";
+      const kernel = getDiffKernel(kernelId);
+      const cmap = effectiveDiffColormap; // an encoding/colormap id, or "none"
+      const encEntry = cmap !== "none" ? getEncoding(cmap) : undefined;
+      const isAnalytic = !!encEntry?.analytic;
+      const isTurbo = !!encEntry?.turbo;
+      const lut =
+        cmap !== "none" && !isAnalytic ? colormapFloatLUT(cmap as Exclude<Colormap, "none">) : undefined;
+      // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
+      // colormap sensitivity, the resolved encoding face. `gamma` is LEFT UNSET so
+      // the analytic branch encodes via sRGB OETF (a gamma of 1 would flip it to an
+      // identity encode — the content-ops.browser twin uses `outputEncode(_, undefined)`).
+      const diffDisplay: ImageParams = {
+        exposureEV: displayEV,
+        offset: displayOffset,
+        operator: "linear",
+        isScalar: cmap !== "none",
+        reduce: "mean",
+        channelCount: 3,
+        // The LUT/turbo tables hold display-sRGB → SDR (hdrOut false); the analytic
+        // color is scene-linear and rides the shared output-encode, so |v|>1 error
+        // survives on an engaged HDR surface.
+        hdrOut: isAnalytic ? useHdrRef.current : false,
+        srgbDecode: false,
+        uv,
+        filter,
+        ...(isAnalytic ? { analytic: true } : {}),
+        ...(isTurbo ? { turbo: true } : {}),
+        ...(lut ? { colormap: lut } : {}),
+      };
+      try {
+        if (kernel?.kind === "multipass") {
+          // CACHED metric: the pool owns the content-keyed compute+cache; the RESULT
+          // (a scalar error) is displayed via IDENTITY content + isScalar colormap.
+          const computeParams =
+            kernelId === "hdr-flip" && hdrExposures
+              ? {
+                  ppd: 67,
+                  startExposure: hdrExposures.startExposure,
+                  stopExposure: hdrExposures.stopExposure,
+                  numExposures: hdrExposures.numExposures,
+                }
+              : undefined;
+          const cachedDisplay: ImageParams = {
+            ...diffDisplay,
+            channelCount: 1,
+            isScalar: true,
+            norm: "linear",
+          };
+          const entry = handle.renderDiffCached(
+            kernelId,
+            { a: contentKeyA, b: contentKeyB },
+            computeParams,
+            cachedDisplay,
+            diffMapping ?? undefined,
+          );
+          if (entry) diffEntryRef.current = entry;
+          else setEngineFailed(true);
+        } else {
+          // DIRECT pointwise op: the pool injects `srcB`; `cairnContent(a,b,opId)`.
+          diffEntryRef.current = null;
+          const ok = handle.render({ ...diffDisplay, contentOpId: contentOpId(kernelId) });
+          if (!ok) setEngineFailed(true);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("cairn-plot: GpuImagePane diff render failed, falling back to legacy pane", err);
+        setEngineFailed(true);
+      }
+      return;
+    }
     // TONE-MAP operator = the operator ACTUALLY in effect (`effectiveTonemap`,
     // the toolbar menu's value): the view-local override if the user picked one,
     // else the effective default (Linear on an engaged HDR surface, sRGB on SDR).
@@ -1159,7 +1498,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setEngineFailed(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr]);
+  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr,
+    // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
+    // change, or the hdr-flip exposures resolve.
+    diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffColormap, diffMapping, hdrExposures, contentKeyA, contentKeyB]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -1168,6 +1510,127 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   useEffect(() => {
     renderPass();
   }, [renderPass, uploadVersion, containerTick]);
+
+  // -----------------------------------------------------------------------
+  // DIFF metrics (MSE/PSNR/MAE) + mean-SSIM — source-data metrics computed over
+  // the two pool-owned slots (never on viewport/exposure/colormap). Ported from
+  // `GpuComparePane`, but run THROUGH the pool (`handle.computeMetrics` /
+  // `computeSsim`) since the pool owns the textures.
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    if (!diffMode || !paneReady || !refDims) {
+      setDiffMetrics(null);
+      return;
+    }
+    let cancelled = false;
+    const p = paneHandleRef.current?.computeMetrics(diffMapping ?? undefined);
+    p?.then((m) => {
+      if (!cancelled) setDiffMetrics(m);
+    }).catch(() => {
+      if (!cancelled) setDiffMetrics(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [diffMode, paneReady, refDims, uploadVersion, refUploadVersion, diffKernel, diffMapping]);
+
+  useEffect(() => {
+    if (!diffMode || !paneReady || !refDims) {
+      setDiffSsim(null);
+      return;
+    }
+    let cancelled = false;
+    setDiffSsim(null);
+    const p = paneHandleRef.current?.computeSsim({ a: contentKeyA, b: contentKeyB }, diffMapping ?? undefined);
+    p?.then((m) => {
+      if (!cancelled) setDiffSsim(m);
+    }).catch(() => {
+      if (!cancelled) setDiffSsim(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [diffMode, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping]);
+
+  // -----------------------------------------------------------------------
+  // DIFF RESULT readback (TEV per-pixel metric values) — CACHED kernels only. A
+  // direct op's per-pixel readout comes from its `cpu` twin (below); a cached
+  // metric has no per-texel twin, so read back the RESULT texture once per entry.
+  // Cleared on a kernel switch; bumps `diffOverlayVersion` so the overlay tracks
+  // the selected metric.
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    if (!diffMode) {
+      diffSamplesRef.current = null;
+      diffResultDimsRef.current = null;
+      return;
+    }
+    const kernel = getDiffKernel(resolvedKernelId);
+    if (kernel?.kind !== "multipass") {
+      // Direct op: no result readback — the cpu twin drives the readout.
+      diffSamplesRef.current = null;
+      diffResultDimsRef.current = null;
+      setDiffOverlayVersion((v) => v + 1);
+      return;
+    }
+    const entry = diffEntryRef.current;
+    if (!paneReady || !entry) return;
+    let cancelled = false;
+    diffSamplesRef.current = null;
+    diffResultDimsRef.current = null;
+    setDiffOverlayVersion((v) => v + 1);
+    paneHandleRef.current
+      ?.readDiffResult(entry)
+      ?.then((arr) => {
+        if (cancelled) return;
+        diffSamplesRef.current = arr;
+        diffResultDimsRef.current = { w: entry.width, h: entry.height };
+        setDiffOverlayVersion((v) => v + 1);
+      })
+      .catch(() => {
+        /* readback failure — leave numbers blank (display-only) */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [diffMode, paneReady, resolvedKernelId, uploadVersion, refUploadVersion, diffMapping]);
+
+  // Test seam (browser harness only): expose the live diff seams on the pane
+  // element so a headless harness can drive kernel/colormap switching + HOME and
+  // read the wired metric strings — mirrors `GpuComparePane`'s `__cairnCompareProbe`.
+  // No production code reads this; set only in diff mode.
+  useEffect(() => {
+    const el = paneRef.current as (HTMLDivElement & { __cairnImageDiffProbe?: unknown }) | null;
+    if (!el || !diffMode) return;
+    el.__cairnImageDiffProbe = {
+      canvas: canvasRef.current,
+      requestRender: renderPass,
+      get diffKernel() {
+        return diffKernel;
+      },
+      get resolvedKernelId() {
+        return resolvedKernelId;
+      },
+      get colormap() {
+        return effectiveDiffColormap;
+      },
+      get metrics() {
+        return diffMetrics;
+      },
+      get ssimText() {
+        return formatSsim(diffSsim);
+      },
+      changeDiffKernel,
+      changeDiffColormap,
+      home: () => {
+        setDiffKernel(diffKernelMeta.default);
+        diffColormapMeta.reset();
+      },
+    };
+    return () => {
+      if (el) delete el.__cairnImageDiffProbe;
+    };
+  }, [diffMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, diffMetrics, diffSsim, changeDiffKernel, changeDiffColormap, setDiffKernel, diffKernelMeta, diffColormapMeta]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
@@ -1213,6 +1676,69 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     [hdrMode, naturalDims, sdrColormap],
   );
 
+  // DIFF per-pixel readout — the diff-TEV numbers. A DIRECT op reads its `cpu` twin
+  // over the two RAW source pixels (NORMALIZED to match the GPU's `textureLoad`:
+  // uint8 → /255, float → raw); a CACHED metric reads the RESULT readback at the
+  // result stride (like `GpuComparePane`'s `sampleDiff`). Values are floats.
+  const sampleDiffPixel = useCallback(
+    (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
+      const kernel = getDiffKernel(resolvedKernelId);
+      // CACHED metric — the RESULT readback (min-cropped resolution).
+      if (kernel?.kind === "multipass") {
+        const arr = diffSamplesRef.current;
+        const rdims = diffResultDimsRef.current;
+        if (!arr || !rdims || px < 0 || py < 0 || px >= rdims.w || py >= rdims.h) return null;
+        const base = (py * rdims.w + px) * 4;
+        const values =
+          kernel.output === "scalar"
+            ? [arr[base] ?? 0]
+            : [arr[base] ?? 0, arr[base + 1] ?? 0, arr[base + 2] ?? 0];
+        return buildChannelSample(values, "unit", notationArg);
+      }
+      // DIRECT op — the cpu twin over the two source pixels.
+      const op = getContentOp(resolvedKernelId);
+      if (!op || !isDirectContentOp(op)) return null;
+      // Slot A = the primary `source`.
+      const readA = (): number[] | null => {
+        if (hdrMode) {
+          const hdr = hdrDataRef.current;
+          const dims = naturalDims;
+          if (!hdr || !dims || px < 0 || py < 0 || px >= dims.w || py >= dims.h) return null;
+          const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
+          const b0 = (py * dims.w + px) * c;
+          const rd =
+            hdr.precision === "f16-bits" ? (k: number) => halfToFloat(hdr.data[k] ?? 0) : (k: number) => hdr.data[k] ?? 0;
+          return c === 1 ? [rd(b0), rd(b0), rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
+        }
+        const vd = sdrImageDataRef.current;
+        if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
+        const i = (py * vd.width + px) * 4;
+        return [vd.data[i]! / 255, vd.data[i + 1]! / 255, vd.data[i + 2]! / 255];
+      };
+      // Slot B = the reference `compareSource.b`.
+      const readB = (): number[] | null => {
+        const fl = refFloatRef.current;
+        if (fl && fl.dtype === "float") {
+          const { h, w, c } = shapeDims(fl.shape);
+          if (px < 0 || py < 0 || px >= w || py >= h) return null;
+          const b0 = (py * w + px) * c;
+          const rd =
+            fl.precision === "f16-bits" ? (k: number) => halfToFloat(fl.data[k] ?? 0) : (k: number) => fl.data[k] ?? 0;
+          return c === 1 ? [rd(b0), rd(b0), rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
+        }
+        const u8 = refU8Ref.current;
+        if (!u8 || px < 0 || py < 0 || px >= u8.width || py >= u8.height) return null;
+        const i = (py * u8.width + px) * 4;
+        return [u8.data[i]! / 255, u8.data[i + 1]! / 255, u8.data[i + 2]! / 255];
+      };
+      const a = readA();
+      const b = readB();
+      if (!a || !b) return null;
+      return buildChannelSample(op.cpu([a, b], 3), "unit", notationArg);
+    },
+    [resolvedKernelId, hdrMode, naturalDims],
+  );
+
   // In-pane HISTOGRAM source — bins the RAW retained buffer (float scene values
   // in HDR mode, RGBA source bytes in SDR mode), NOT the display pixels. For a
   // DEEP EXR, `getDeepCsr` exports the samples for the per-pixel depth read-out.
@@ -1226,6 +1752,62 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return u8HistogramSource(sdrImageDataRef.current, pixelDataVersion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hdrMode, pixelDataVersion]);
+
+  // -----------------------------------------------------------------------
+  // DIFF chrome (Phase 2c): the MODE + colormap menus, the diff caption, and the
+  // MSE/PSNR/MAE/SSIM metrics chip — all ride the SAME shell seams the compare pane
+  // uses (`leadingMenus`, `extraChips`). Inert (empty/undefined) when `!diffMode`.
+  // -----------------------------------------------------------------------
+  const diffLeadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
+    if (!diffMode) return [];
+    const modeMenu = buildCompareModeMenu({
+      mode: "diff",
+      kernel: diffKernel,
+      kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
+      onSlide: () => changeCompareMode("split"),
+      onBlend: () => changeCompareMode("blend"),
+      onKernel: (id) => changeDiffKernel(id),
+    });
+    // The scalar-error DISPLAY menu (None + colormap LUTs) — one shared menu id/
+    // title with the image + compare panes; diff offers no light curves.
+    const displayMenu = compareDisplayToolbarButton({
+      mode: "scalar",
+      curveIds: [],
+      curveValue: effectiveTonemap,
+      lutValue: effectiveDiffColormap,
+      onSelectCurve: () => {},
+      onSelectLut: (id) => changeDiffColormap(id as Colormap),
+    });
+    return [modeMenu, displayMenu];
+  }, [diffMode, diffKernel, effectiveDiffColormap, effectiveTonemap, changeCompareMode, changeDiffKernel, changeDiffColormap]);
+
+  // The single bottom-left diff caption + the bottom-right metrics chip (same DOM /
+  // selectors as `GpuComparePane` — `data-gpu-compare-metrics`, `data-cairn-compare-caption`).
+  const diffCaption = diffMode
+    ? compareCaptions({
+        mode: "diff",
+        diffKernel,
+        referenceLabel: compareSource?.referenceLabel,
+        foregroundLabel: compareSource?.foregroundLabel,
+      }).left
+    : undefined;
+  const diffChips = diffMode ? (
+    <>
+      {diffCaption ? (
+        <LabelChip label={diffCaption} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+      ) : null}
+      {diffMetrics && (
+        <span
+          className="absolute right-1 bottom-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono"
+          data-gpu-compare-metrics
+        >
+          MSE {diffMetrics.mse.toExponential(2)} · PSNR{" "}
+          {Number.isFinite(diffMetrics.psnr) ? diffMetrics.psnr.toFixed(1) : "∞"} dB · MAE {diffMetrics.mae.toExponential(2)} ·
+          SSIM {formatSsim(diffSsim)}
+        </span>
+      )}
+    </>
+  ) : undefined;
 
   // -----------------------------------------------------------------------
   // Render.
@@ -1299,56 +1881,73 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       overlayNode={overlayNode}
       overlay={{
         displayElRef: canvasRef,
-        sample: samplePixel,
-        version: pixelDataVersion,
+        // DIFF mode prints the metric values (cpu twin / result readback); the
+        // version bumps on kernel switches so the numbers track the selected metric.
+        sample: diffMode ? sampleDiffPixel : samplePixel,
+        version: diffMode ? diffOverlayVersion : pixelDataVersion,
         hasSource: true,
         sourceWindow: overlayWindow,
       }}
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
-      histogram={histogramSource}
+      histogram={diffMode ? undefined : histogramSource}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
       // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
       // menus. Selecting a LUT deactivates the curve and vice-versa structurally
       // (`enc` owns the single `encoding` id); the float pane gates luts to k=1
       // and `normal` to k=3, the 8-bit pane offers the full applicable set.
-      leadingMenus={[
-        // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
-        ...(props.channelMenu ? [props.channelMenu] : []),
-        displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
-      ]}
+      leadingMenus={
+        diffMode
+          ? // DIFF: the MODE (slide·blend·kernels) + scalar-error colormap menus.
+            [...(props.channelMenu ? [props.channelMenu] : []), ...diffLeadingMenus]
+          : [
+              // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
+              ...(props.channelMenu ? [props.channelMenu] : []),
+              displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
+            ]
+      }
       // SECOND-ROW segmented controls (controls-row-separation directive): the
       // multi-channel REDUCE (Lum·Mean) picker lives in the second toolbar row
       // alongside EV/OFF/PK/γ. Shown while a lut is active AND the source has >1
       // channel (the reduction is moot for a scalar). (The norm Lin·Log·Pow picker
       // was REMOVED — norm-UI-removal follow-up.)
       rowSegments={[
-        ...(enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
+        // The diff error is a k=1 scalar (reduce mean) — no reduce picker in diff mode.
+        ...(!diffMode && enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths). Gated by the ACTIVE encoding's param
       // manifest: shown for curves + luts (which declare exposure/offset), hidden
       // for the paramless `normal` remap.
       displayAdjust={
-        // EV/OFF are the DEFAULT sensitivity skin — hidden when the min/max
-        // BOUNDS skin is engaged (they are alternatives over ONE affine, never
-        // both; the bounds sliders below replace them). Also hidden for the
-        // paramless `normal` remap (no exposure param).
-        enc.hasParam("exposure") && !boundsEngaged
+        // DIFF: EV/OFF are always shown (they scale the colormap SENSITIVITY of the
+        // raw metric before the LUT — display-only, never a diff recompute).
+        diffMode
           ? {
               exposureEV: displayEV,
               offset: displayOffset,
               onExposureChange: changeExposure,
               onOffsetChange: changeOffset,
             }
-          : undefined
+          : // EV/OFF are the DEFAULT sensitivity skin — hidden when the min/max
+            // BOUNDS skin is engaged (they are alternatives over ONE affine, never
+            // both; the bounds sliders below replace them). Also hidden for the
+            // paramless `normal` remap (no exposure param).
+            enc.hasParam("exposure") && !boundsEngaged
+            ? {
+                exposureEV: displayEV,
+                offset: displayOffset,
+                onExposureChange: changeExposure,
+                onOffsetChange: changeOffset,
+              }
+            : undefined
       }
       // PEAK is the HDR MODE — shown while the real HDR surface engaged AND the
       // active encoding is a CURVE (every curve respects `P` as its ceiling; the
       // paramless `normal` remap and colormap LUTs have no peak). γ rides the
       // active encoding's manifest (only the Gamma curve declares it).
-      extraSliders={[
+      extraSliders={diffMode ? [] : [
         // PEAK is the CURVE family's HDR ceiling — hidden for the gray-none DATA
         // path (a scalar as data has no tone-map ceiling; its raw value rides the
         // output-encode unclamped), the `normal` remap, and colormap LUTs.
@@ -1436,6 +2035,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         boundsMeta.reset(); // min/max back to the descriptor colorRange seed
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
+        // DIFF: restore the kernel (echoing to the owner) + clear the colormap
+        // override back to the per-kernel defaults.
+        if (diffMode) {
+          setDiffKernel(diffKernelMeta.default);
+          diffColormapMeta.reset();
+        }
       }}
       extraModified={
         enc.encodingModified ||
@@ -1444,10 +2049,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         reduceOverride !== null ||
         boundsMeta.isModified ||
         deepFlatten.isModified ||
-        !!props.channelModified
+        !!props.channelModified ||
+        (diffMode && (diffKernelMeta.isModified || diffColormapMeta.isModified))
       }
-      label={label}
-      showLabelChip={!!label}
+      // DIFF: the caption carries the labeling (no separate label chip).
+      label={diffMode ? "" : label}
+      showLabelChip={!diffMode && !!label}
+      extraChips={diffChips}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
     />

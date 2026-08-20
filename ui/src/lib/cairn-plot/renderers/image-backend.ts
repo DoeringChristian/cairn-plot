@@ -240,6 +240,66 @@ export interface Uint8Source {
 /** The ONE decoded-source shape, tagged by dtype (design §3). */
 export type DecodedSource = FloatSource | Uint8Source;
 
+// ---------------------------------------------------------------------------
+// COMPARE source (content-op unification, Phase 2c). Presence of `compareSource`
+// on {@link ImageBackendProps} turns the GPU image pane into a DIFF pane: the
+// primary `source` is the foreground/comparison operand `a`, and `compareSource.b`
+// is the reference operand — the pane uploads `b` via the pool's second source
+// slot (`setSourceB`) and renders a diff CONTENT op (`image/content-ops`) instead
+// of the single-image identity. A DIRECT op (signed/absolute/…) samples both slots
+// inline; a CACHED metric (FLIP/HDR-FLIP/SSIM) runs through `renderDiffCached`.
+// The single-image path is byte-identical when `compareSource` is ABSENT.
+// ---------------------------------------------------------------------------
+
+/** Where the smaller operand sits within the larger before the overlap crop (a
+ *  mismatched-size diff). Mirrors `engine/compare-align`'s `CompareAlign`. */
+export type CompareAlign =
+  | "top-left"
+  | "center"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
+/** Mismatched-size handling — `"crop"` (min-crop overlap) or `"fill"` (rescale to
+ *  the primary). Mirrors `engine/compare-align`'s `CompareFit`. */
+export type CompareFit = "crop" | "fill";
+
+/**
+ * The COMPARE operand + diff settings that turn the GPU image pane into a diff
+ * pane. Ported from `GpuComparePane`'s diff plumbing, but routed THROUGH the pool
+ * (`setSourceB` + `renderDiffCached`) rather than self-managed textures.
+ */
+export interface CompareSource {
+  /** The reference/baseline operand `b` — same dtype-tagged shape as the primary
+   *  {@link ImageBackendProps.source} (which is the foreground/`a`). */
+  b: DecodedSource;
+  /** The diff MODE — a menu selection token (a pointwise id, `"flip"`, `"flip_ldr"`
+   *  or `"ssim"`). SEEDS the pane's diff-kernel state; the MODE menu switches it
+   *  view-locally. Resolved to a concrete kernel id by `resolveDiffKernelId`. */
+  opId: string;
+  /** Colormap OVERRIDE for the diff display (a display-encoding/colormap id, or
+   *  `"none"` for the raw per-channel error). `null`/absent = follow the selected
+   *  kernel's default (`resolveDiffColormap`). An explicit pick STICKS across
+   *  kernel switches; HOME clears it. */
+  colormap?: Colormap | null;
+  /** Alignment anchor for mismatched-size operands (ignored under `fit:"fill"`). */
+  align?: CompareAlign;
+  /** Mismatched-size handling (`"crop"` default | `"fill"`). */
+  fit?: CompareFit;
+  /** Content-identity cache keys for the diff cache (stable across remount — a
+   *  source URL, not the decoded bytes). `a` = foreground/primary, `b` = reference. */
+  contentKeyA?: string;
+  contentKeyB?: string;
+  /** Per-side captions for the diff caption ("<metric> · <fg> compared to <ref>"). */
+  referenceLabel?: string;
+  foregroundLabel?: string;
+  /** Fired when the pane's diff MODE changes via its own MODE menu — lets an owner
+   *  (`CompareView`) keep its lifted mode/kernel state coherent (Phase 2c routing). */
+  onDiffKernelChange?: (kernelId: string) => void;
+  /** Fired when the MODE menu selects SLIDE/BLEND (a non-diff mode) — the owner
+   *  then remounts to `GpuComparePane` (the documented slide/blend remount). */
+  onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
+}
+
 /**
  * The ONE unified prop shape BOTH image backends accept. Carries the decoded
  * `source` (dtype-tagged) plus the FULL display-control set — each pane applies
@@ -250,6 +310,11 @@ export type DecodedSource = FloatSource | Uint8Source;
 export interface ImageBackendProps {
   /** The decoded image, tagged by dtype (`float` | `uint8`). */
   source: DecodedSource;
+  /** When set, the pane renders a DIFF of `source` (foreground/`a`) against
+   *  `compareSource.b` (reference) — see {@link CompareSource}. Absent = the
+   *  byte-identical single-image path. Only the GPU backend honors it; the CPU
+   *  backend ignores it (single-image fallback). */
+  compareSource?: CompareSource;
   // — display controls (full set) —
   colormap?: Colormap;
   tonemap?: string;

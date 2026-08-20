@@ -24,9 +24,9 @@
  * single source + identity display (pane-level wiring, a later phase).
  */
 import { getSharedDevice } from "../device";
-import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
+import { renderImage, computeMetrics, type ImageParams, type ImageOperator } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
-import { ensureDiff, getDiffComputeCount } from "../diff-engine";
+import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
 import { getContentOp, isDirectContentOp, contentOpId } from "../../image/content-ops/index";
 import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings/index";
 import { outputEncode, type RgbTriple } from "../../image/tonemap";
@@ -407,6 +407,96 @@ function rowsToF32(rows: number[][]): Float32Array {
   return d;
 }
 
+/**
+ * STAGE C (pool diff-chrome methods): the metrics/SSIM/readback the UNIFIED DIFF
+ * PANE (`GpuImagePane` + `compareSource`) drives for its chip + TEV numbers, run
+ * THROUGH the pool over the two live slots. Asserts:
+ *   - `handle.computeMetrics()` === the direct `computeMetrics(device, texA, texB)`
+ *     over the same operands (the pool owns the textures — same numbers);
+ *   - `handle.computeSsim()` === the direct `ensureSsimScalar(...)`;
+ *   - `handle.readDiffResult(entry)` yields the cached FLIP RESULT samples
+ *     (non-degenerate), the per-pixel TEV source for a cached metric.
+ */
+async function runPoolChromeCase(device: Device): Promise<boolean> {
+  const rowsA: number[][] = [];
+  const rowsB: number[][] = [];
+  for (let i = 0; i < 16; i++) {
+    const v = (i % 4) / 3;
+    rowsA.push([v, v, v, 1]);
+    rowsB.push([Math.min(1, v + 0.2), v * 0.7, v, 1]);
+  }
+  const texA = (() => {
+    const t = device.createTexture(4, 4, "rgba32float");
+    t.write(rowsToF32(rowsA));
+    return t;
+  })();
+  const texB = (() => {
+    const t = device.createTexture(4, 4, "rgba32float");
+    t.write(rowsToF32(rowsB));
+    return t;
+  })();
+  const refMetrics = await computeMetrics(device, texA, texB);
+  const refSsim = await ensureSsimScalar(device, texA, texB, "chrome:a", "chrome:b");
+  texA.destroy();
+  texB.destroy();
+
+  const canvas = document.createElement("canvas");
+  document.body.appendChild(canvas);
+  const handle = await acquirePane(canvas, { hdr: false });
+  handle.setSource({ data: rowsToF32(rowsA), width: 4, height: 4, format: "rgba32float" });
+  handle.setSourceB({ data: rowsToF32(rowsB), width: 4, height: 4, format: "rgba32float" });
+  handle.resize(4, 4);
+
+  const poolMetricsP = handle.computeMetrics();
+  const poolSsimP = handle.computeSsim({ a: "pchrome:a", b: "pchrome:b" });
+  const magma = colormapFloatLUT("magma");
+  const entry = handle.renderDiffCached(
+    "flip",
+    { a: "pchrome:a", b: "pchrome:b" },
+    undefined,
+    {
+      exposureEV: 0,
+      operator: "linear" as ImageOperator,
+      isScalar: true,
+      colormap: magma,
+      reduce: "mean",
+      channelCount: 1,
+      norm: "linear",
+      hdrOut: false,
+      uv: uvFull,
+      filter: "nearest",
+    },
+  );
+  const readbackP = entry ? handle.readDiffResult(entry) : null;
+  const poolMetrics = poolMetricsP ? await poolMetricsP : null;
+  const poolSsim = poolSsimP ? await poolSsimP : null;
+  const readback = readbackP ? await readbackP : null;
+  releasePane(handle);
+  canvas.remove();
+
+  let ok = true;
+  if (!poolMetrics) {
+    report(false, `[pool:chrome] computeMetrics returned null`);
+    return false;
+  }
+  const mseClose = Math.abs(poolMetrics.mse - refMetrics.mse) <= 1e-6 + Math.abs(refMetrics.mse) * 1e-4;
+  const maeClose = Math.abs(poolMetrics.mae - refMetrics.mae) <= 1e-6 + Math.abs(refMetrics.mae) * 1e-4;
+  if (!mseClose || !maeClose) {
+    ok = false;
+    report(false, `[pool:chrome] metrics diverge: pool mse=${poolMetrics.mse} mae=${poolMetrics.mae} vs ref mse=${refMetrics.mse} mae=${refMetrics.mae}`);
+  }
+  if (poolSsim == null || Math.abs(poolSsim - refSsim) > 1e-4) {
+    ok = false;
+    report(false, `[pool:chrome] SSIM diverges: pool=${poolSsim} vs ref=${refSsim}`);
+  }
+  if (!readback || !(readback instanceof Float32Array) || !readback.some((v) => v !== 0)) {
+    ok = false;
+    report(false, `[pool:chrome] readDiffResult produced no non-zero FLIP samples`);
+  }
+  report(ok, `[pool:chrome] computeMetrics/computeSsim/readDiffResult === direct engine references`);
+  return ok;
+}
+
 const DIRECT_DIFF_OPS = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
 
 async function main(): Promise<void> {
@@ -424,7 +514,8 @@ async function main(): Promise<void> {
       if (!(await runPoolDirectOpCase(device, opId))) allOk = false;
     }
     if (!(await runPoolCachedOpCase(device))) allOk = false;
-    report(allOk, `pool: setSourceB direct ops + renderDiffCached (flip) parity`);
+    if (!(await runPoolChromeCase(device))) allOk = false;
+    report(allOk, `pool: setSourceB direct ops + renderDiffCached (flip) + chrome (metrics/ssim/readback) parity`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
