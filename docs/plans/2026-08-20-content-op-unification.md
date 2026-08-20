@@ -107,6 +107,95 @@ report + gallery regen clean.
 - HDR-FLIP's multi-exposure loop is the most complex cached op.
 - Harnesses encode the current compare DOM heavily — migrate, don't fork.
 
+## Phase 2c — LANDING 1 DONE (diff-capable pane, no routing) (commit 09c4731)
+
+The **DIFF-CAPABLE PANE** (design task C) is landed and gate-green — `GpuImagePane`
+now renders a diff when given `compareSource`, driven THROUGH the pool. Routing
+(Landing 2 / task D) is deliberately NOT yet wired, so nothing points at the new
+capability and every existing gate stays green trivially.
+
+**Landed (09c4731), single-image path byte-identical when `compareSource` absent:**
+- `renderers/image-backend.ts` — the `CompareSource` shape (`b` reference operand,
+  `opId` diff MODE, colormap override, align/fit, content keys, per-side labels,
+  mode/kernel echo callbacks) + the optional `compareSource` prop on
+  `ImageBackendProps`. **Slot convention:** `diff = source − compareSource.b`
+  (slot a = `source`, slot b = `b`), matching the diff-engine's `texA − texB`; the
+  CALLER assigns reference→`source`, foreground→`b` to match `GpuComparePane`'s
+  sign (byte-parity is caller-controlled, no swap in the pane).
+- `renderers/GpuImagePane.tsx` — a `diffMode` render branch: DIRECT pointwise ops
+  render inline (`handle.render({contentOpId})`, the pool injects `srcB`), CACHED
+  metrics (FLIP/HDR-FLIP/SSIM) via `handle.renderDiffCached`. DISPLAY reuses the
+  pane's own encoding machinery keyed off `resolveDiffColormap(kernel, override)`:
+  analytic red-green (signed), turbo-log2 (magnitude), a plain LUT (magma/…), or
+  raw per-channel error ("none"). Plus the MODE menu (`buildCompareModeMenu`) +
+  scalar-error colormap menu (`compareDisplayToolbarButton`), the MSE/PSNR/MAE/SSIM
+  chip + diff caption (via the shell's EXISTING `extraChips` seam — no new
+  `ImagePaneShell` props needed, so E collapsed to reuse), the diff TEV readout
+  (direct op `cpu` twin / cached RESULT readback), and diff settings-sync
+  (`deriveCompareEncodingId` + the override that sticks across kernel switches,
+  HOME clears — task F). A `__cairnImageDiffProbe` test seam mirrors
+  `__cairnCompareProbe`.
+- `engine/pool.ts` — `PaneHandle.computeMetrics` / `computeSsim` / `readDiffResult`:
+  the pool owns the two source textures, so the diff CHROME computes over them
+  (ported from `GpuComparePane`, routed through the pool — the honest "port, don't
+  rewrite").
+- **Harnesses:** `content-ops.browser.ts` (default gate) gained a pool-chrome case
+  (`computeMetrics`/`computeSsim`/`readDiffResult` === direct engine references).
+  New `renderers/__tests__/gpu-image-diff.browser.{ts,html}` — a SELF-DRIVING pane
+  harness (in the default set): signed→red-green diverging map (7873 red + 7873
+  green px on symmetric data), FLIP→magma, MODE-menu kernel switch, metrics chip,
+  HOME reset. Exact per-byte diff-engine equivalence stays pinned by
+  content-ops.browser.ts; the pane harness reads the COMPOSITED canvas via
+  `createImageBitmap` (an in-DOM canvas rotates its swapchain texture, so a
+  `device.readback` of the surface reads blank — a harness-readback gotcha, NOT a
+  pane bug; the pane renders correctly).
+- **Gates:** typecheck; 615 node tests; ALL 25 parity harnesses (metal-3, incl. the
+  new self-driving diff pane harness); 243 pytest; boundary/schema in sync;
+  gpu-image bundle rebuilt + synced + committed.
+
+**REMAINING — LANDING 2 (routing / task D) — the flicker fix, NOT started.** This
+is the core-dispatch surgery the design flagged as red-gating stack/compare/
+selection if done partially. Precise remaining seams:
+1. **`CompareView` diff lowering.** A compare node in mode `"diff"` must render a
+   `GpuImagePane` with a `compareSource` built from the resolved frames (reference
+   → `source`, foreground → `compareSource.b`, each `ResolvedCompareFrame`'s
+   `url`→`urlSource` / `float`→`FloatSource`), NOT `CompositeMediaPane`→
+   `GpuComparePane`. slide/blend STILL route to `GpuComparePane`; the MODE menu
+   switching INTO diff routes to the unified pane (and back on slide/blend — the
+   ONE documented remount). Wire `compareSource.onCompareModeChange`/
+   `onDiffKernelChange` back to `CompareView`'s lifted `viewMode`/`diffKernel`.
+2. **`stackKindKey` homogeneity — THE crux + an ARCHITECTURAL FORK (beyond the
+   standing decisions).** `stackKindKey(compare mode:diff)` must equal an image
+   leaf's key so `[image, diff]` is `homogeneousStack` → the source-swap reused-
+   renderer path (no `stackPaneSync`, no mount-swap). BUT the standing decision
+   "stackKindKey(diff) === image-leaf key" is necessary yet NOT sufficient for a
+   no-remount flip: the stacked slot renders `<PlotNodeView node={activeChild}/>`,
+   which dispatches on `node.kind` → `LeafView` (plot) vs `CompareView` (compare).
+   Those are DIFFERENT React component types at the same tree position, so React
+   REMOUNTS the subtree (incl. the `GpuImagePane` canvas) on an image↔diff flip
+   even though both ultimately render `GpuImagePane` — the flicker survives. AND
+   `LeafView` lowers through the renderer-registry `*Standalone` adapter while
+   `CompareView` goes through `CompositeMediaPane` — two different pipelines.
+   **The fork:** to make the flip a true source-swap, image-plot and diff-compare
+   must lower to the SAME component instance at the stacked slot. Options: (a) a
+   shared `UnifiedImageView` that both `PlotNodeView` branches (plot-image AND
+   compare-diff) render, itself rendering `GpuImagePane` with/without
+   `compareSource`; (b) teach `LeafView` to accept a diff-compare node and build
+   `compareSource`. Either is a real routing refactor the task's one-liner
+   ("lower a diff-mode compare to a GpuImagePane ... so the reused instance ...
+   is one component type") under-specifies. This needs the author's call on the
+   shared-lowering shape before implementation, since it reshapes the core
+   `PlotNodeView`/`LeafView`/`CompareView` dispatch.
+3. **Retire `mixedImageStack` for the image+diff case** (keep it for image+slide/
+   blend until Phase 3).
+4. **Harness migration:** `stack/grid-stacked` mixed section → NO-remount asserts
+   (a DOM-marker element persists across image↔diff flips, zoom persists, no hidden
+   sibling); `compare-settings-sync` diff expectations onto the unified path;
+   `selection-stage`/`compare-pass` as needed; KEEP split/blend coverage green.
+5. **Visual verify:** regen report + serve `/private/tmp` + open the stacked-grid
+   validation flip (image↔FLIP no-flicker, element persistence LIVE, magma +
+   metrics chip).
+
 ## Phase 2b — POOL ENGINE half landed (A+B); pane+routing (C–H) REMAINING (commit 5244fc4)
 
 **Turbo log2 — RULING (resolves the ⚠ DECISION NEEDED below).** The turbo-log2
