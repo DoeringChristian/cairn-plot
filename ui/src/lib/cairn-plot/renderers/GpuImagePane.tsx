@@ -106,10 +106,14 @@ import type { DiffMetrics } from "../engine/image-engine";
 import type { DiffCacheEntry } from "../engine/diff-engine";
 import { compareCaptions } from "../media-compare/compare-captions";
 import { buildCompareModeMenu } from "../media-compare/compare-mode-menu";
+import SplitDivider from "../media-compare/SplitDivider";
+import { useSplitFlipKeys } from "../media-compare/use-split-flip-keys";
+import RefBadge from "../primitives/RefBadge";
+import { sourceTexelCenter } from "./region-select";
 import LabelChip from "../primitives/LabelChip";
 import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
 import ImageOverlay from "./ImageOverlay";
-import {
+import PixelValueOverlay, {
   PIXEL_VALUE_MIN_SCREEN_PX,
   buildChannelSample,
   type PixelSample,
@@ -118,7 +122,7 @@ import {
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { useResettableState } from "../hooks/use-resettable-state";
-import { acquirePane, releasePane, type PaneHandle, type SourceUpload } from "../engine/pool";
+import { acquirePane, releasePane, getCanvasSurfaceForTest, type PaneHandle, type SourceUpload } from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
 import type { ImageParams } from "../engine/image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
@@ -367,12 +371,25 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // forwarded verbatim to the CPU fallback (which reconstructs it the same way).
   const props = useLegacyImageProps(backendProps);
   const hdrMode = isHdrProps(props);
-  // DIFF capability (content-op unification, Phase 2c): when `compareSource` is
-  // present the pane renders a diff of `source` (foreground/`a`) against
-  // `compareSource.b` (reference). The single-image path is byte-identical when
-  // absent — every diff branch below gates on `diffMode`.
+  // COMPARE capability (content-op unification): when `compareSource` is present
+  // the pane renders a COMPARE of `source` (reference/`a`) against
+  // `compareSource.b` (foreground). The single-image path is byte-identical when
+  // absent. The `opId` selects the mode:
+  //   - `compositorMode` (Phase 3): `split`/`blend` — a LIGHT composite (divider /
+  //     alpha), displayed as a plain image with the divider + per-side chrome.
+  //   - `diffMode` (Phase 2c): a diff kernel — the scalar-error display.
+  // `hasCompare` gates the SHARED operand plumbing (upload `b`, mapping, metrics).
   const compareSource: CompareSource | undefined = backendProps.compareSource;
-  const diffMode = !!compareSource;
+  const hasCompare = !!compareSource;
+  const compositorMode = compareSource?.opId === "split" || compareSource?.opId === "blend";
+  const diffMode = hasCompare && !compositorMode;
+  // The concrete compositor mode ("split" | "blend"), or null. Drives the divider,
+  // the flip keys, the per-side captions/readout, and the compositor render.
+  const compareOpMode: "split" | "blend" | null = compositorMode
+    ? (compareSource!.opId as "split" | "blend")
+    : null;
+  const splitPosition = compareSource?.splitPosition ?? 0.5;
+  const blendAlpha = compareSource?.blendAlpha ?? 0.5;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -735,8 +752,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             offset: displayOffset,
             reduce: effectiveReduce,
             ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
+            // COMPOSITOR (split/blend): the LIGHT display look above (a compare
+            // peer follows it) PLUS the compare-only keys so a selected peer's
+            // control follows the mode + divider/alpha (`useCompareControl` reads
+            // them). Omitted in the plain single-image case.
+            ...(compositorMode
+              ? { compareMode: compareOpMode as string, splitPosition, blendAlpha }
+              : {}),
           },
-    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds],
+    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, blendAlpha],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -833,6 +857,35 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onCompareModeChange, publishSettings],
   );
+  // COMPOSITOR param publish sites (Phase 3): the divider / flip keys / blend
+  // slider both LIFT the value to the owner (so the reused-instance control state
+  // survives) AND broadcast on the shared bus (a selected peer's control follows —
+  // `useCompareControl` subscribes to `splitPosition`/`blendAlpha`). Mirrors
+  // `GpuComparePane.changeSplit`. NO recompile — only the compositor param uniform.
+  const changeSplit = useCallback(
+    (p: number) => {
+      compareSource?.onSplitPositionChange?.(p);
+      publishSettings({ splitPosition: p });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareSource?.onSplitPositionChange, publishSettings],
+  );
+  const changeBlend = useCallback(
+    (a: number) => {
+      compareSource?.onBlendAlphaChange?.(a);
+      publishSettings({ blendAlpha: a });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareSource?.onBlendAlphaChange, publishSettings],
+  );
+  // SPLIT flip keys ([ / ] always; ←/→/h/l when not in a stacked grid) — ported
+  // from `GpuComparePane`. Active only in split mode; `inStackedGrid`/`inOverlay`
+  // are threaded via `compareSource` from the CORE side (the addon bundle's
+  // context identity differs, so the hook's own context read would miss).
+  useSplitFlipKeys(paneRef, compareOpMode === "split" ? "split" : "normal", changeSplit, {
+    inStackedGrid: compareSource?.inStackedGrid,
+    inOverlay: compareSource?.inOverlay,
+  });
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
   // re-fire that sizing whenever `devicePixelRatio` itself changes (moving
@@ -1040,9 +1093,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (hdrMode || !paneReady) return;
     const p = props as SdrImageProps;
     const imageUrl = p.imageUrl;
-    // DIFF mode uploads the RAW source (the diff samples raw `a`/`b`) — never a
-    // CPU false-color, which is the single-image display convenience only.
-    const colormap = diffMode ? "none" : sdrColormap;
+    // COMPARE mode uploads the RAW source (diff samples raw `a`/`b`; a compositor
+    // composites raw light) — never a CPU false-color, which is the single-image
+    // display convenience only.
+    const colormap = hasCompare ? "none" : sdrColormap;
     if (!imageUrl) {
       sdrImageDataRef.current = null;
       setNaturalDims(null);
@@ -1121,7 +1175,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!paneReady) return;
-    const b = diffMode ? compareSource?.b : undefined;
+    const b = hasCompare ? compareSource?.b : undefined;
     if (!b) {
       paneHandleRef.current?.setSourceB(null);
       setRefDims(null);
@@ -1150,13 +1204,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, diffMode, compareSource?.b]);
+  }, [paneReady, hasCompare, compareSource?.b]);
 
-  // Align/fit overlap mapping for the two operands (a = `source`/primary, b =
-  // reference) — folds into the diff cache key + the metrics reduction region. Null
-  // until both footprints are known.
+  // Align/fit overlap mapping for the two operands (a = `source`/reference, b =
+  // foreground) — folds into the diff cache key + the metrics reduction region
+  // (both diff AND compositor metrics). Null until both footprints are known.
   const diffMapping = useMemo<CompareMapping | null>(() => {
-    if (!diffMode || !naturalDims || !refDims) return null;
+    if (!hasCompare || !naturalDims || !refDims) return null;
     // Primary = the foreground = the SECOND operand (`b`), matching
     // `GpuComparePane`'s `computeCompareMapping(ref, fg, …, "b")` — `fit:"fill"`
     // rescales to the foreground. Irrelevant under the default `crop`.
@@ -1168,7 +1222,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       "b",
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diffMode, naturalDims, refDims, compareSource?.align, compareSource?.fit]);
+  }, [hasCompare, naturalDims, refDims, compareSource?.align, compareSource?.fit]);
 
   // HDR-FLIP exposure range — computed once per REFERENCE content from its
   // luminance (deterministic → folds into the diff-cache key, never a recompute on
@@ -1261,6 +1315,56 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ? "nearest"
         : "linear";
     const uv = rawUv;
+
+    // ---- COMPOSITOR path (split / blend, Phase 3) -----------------------
+    // Renders a LIGHT composite of the two operands (slot a = reference =
+    // `source`, slot b = foreground = `compareSource.b`) through the SAME unified
+    // image pipeline: `render({contentOpId: split|blend, contentParam})`, the pool
+    // injects `srcB`, and `cairnContent` composites by the fragment uv against the
+    // compositor param. The composite is ordinary scene light → the DISPLAY stage
+    // (operator × peak × surface, output-encode) runs EXACTLY as a plain image
+    // (isScalar false). Byte-identical to `GpuComparePane`'s compose for a hard
+    // split; blend mixes the RAW light (the unified model — the cpu twin mirrors
+    // it, proven by content-ops.browser). Driven live (divider drag / blend
+    // slider) — only the compositor param uniform changes, no recompile.
+    if (compositorMode) {
+      // Wait for the foreground slot to upload (else the composite would sample
+      // the 1×1 placeholder for slot b). Re-fires on `refUploadVersion`.
+      if (!refDims) return;
+      const rt = resolveRenderTonemap(
+        effectiveTonemap,
+        useHdrRef.current ? peak : 1,
+        useHdrRef.current,
+        tonemapGamma,
+      );
+      const compositeParams: ImageParams = {
+        exposureEV: baseExposure + displayEV,
+        offset: baseOffset + displayOffset,
+        operator: rt.operator as ImageParams["operator"],
+        gamma: rt.gamma,
+        isScalar: false,
+        hdrOut: rt.hdrOut,
+        peak: rt.peak,
+        // sRGB-DECODE an 8-bit operand to scene-linear (like the single-image
+        // light path); a float operand is already scene-linear. Same-dtype
+        // operands (the common case) share this flag; a mixed-dtype pair follows
+        // the PRIMARY (documented limitation vs GpuComparePane's per-side decode).
+        srgbDecode: !hdrMode,
+        uv,
+        filter,
+        contentOpId: contentOpId(compareOpMode!),
+        contentParam: compareOpMode === "split" ? splitPosition : blendAlpha,
+      };
+      try {
+        const ok = handle.render(compositeParams);
+        if (!ok) setEngineFailed(true);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("cairn-plot: GpuImagePane compositor render failed, falling back to legacy pane", err);
+        setEngineFailed(true);
+      }
+      return;
+    }
 
     // ---- DIFF path (content-op unification, Phase 2c) --------------------
     // Renders `source − compareSource.b` through the pool: a DIRECT pointwise op
@@ -1505,7 +1609,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr,
     // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
     // change, or the hdr-flip exposures resolve.
-    diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffColormap, diffMapping, hdrExposures, contentKeyA, contentKeyB]);
+    diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffColormap, diffMapping, hdrExposures, contentKeyA, contentKeyB,
+    // COMPOSITOR deps: re-render on a divider drag / blend-slider / mode change
+    // (only the compositor param uniform changes — no recompile).
+    compositorMode, compareOpMode, splitPosition, blendAlpha]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -1522,7 +1629,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `computeSsim`) since the pool owns the textures.
   // -----------------------------------------------------------------------
   useEffect(() => {
-    if (!diffMode || !paneReady || !refDims) {
+    if (!hasCompare || !paneReady || !refDims) {
       setDiffMetrics(null);
       return;
     }
@@ -1536,10 +1643,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       cancelled = true;
     };
-  }, [diffMode, paneReady, refDims, uploadVersion, refUploadVersion, diffKernel, diffMapping]);
+  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, diffKernel, diffMapping]);
 
   useEffect(() => {
-    if (!diffMode || !paneReady || !refDims) {
+    if (!hasCompare || !paneReady || !refDims) {
       setDiffSsim(null);
       return;
     }
@@ -1554,7 +1661,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       cancelled = true;
     };
-  }, [diffMode, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping]);
+  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping]);
 
   // -----------------------------------------------------------------------
   // DIFF RESULT readback (TEV per-pixel metric values) — CACHED kernels only. A
@@ -1602,16 +1709,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // Test seam (browser harness only): expose the live diff seams on the pane
   // element so a headless harness can drive kernel/colormap switching + HOME and
   // read the wired metric strings — mirrors `GpuComparePane`'s `__cairnCompareProbe`.
-  // No production code reads this; set only in diff mode.
+  // No production code reads this; set whenever the pane is a COMPARE pane (diff
+  // OR compositor). It unifies the seams the migrated harnesses read — the diff
+  // fields (kernel/colormap/metrics) AND the compositor fields (split/blend +
+  // per-side overlay geometry + surface readback the split-numbers harness needs).
   useEffect(() => {
     const el = paneRef.current as (HTMLDivElement & { __cairnImageDiffProbe?: unknown }) | null;
-    if (!el || !diffMode) return;
+    if (!el || !hasCompare) return;
     el.__cairnImageDiffProbe = {
       canvas: canvasRef.current,
       requestRender: renderPass,
-      // Always "diff" here (the seam is set only in diff mode) — lets a unified
-      // harness read `compareMode` off whichever probe (compare | diff) is live.
-      compareMode: "diff" as const,
+      // The LIVE compare mode — a unified harness reads `compareMode` off whichever
+      // probe (compare | diff) is live to follow mode across a split↔diff switch.
+      get compareMode() {
+        return (diffMode ? "diff" : compareOpMode) as "split" | "blend" | "diff";
+      },
       get diffKernel() {
         return diffKernel;
       },
@@ -1635,6 +1747,55 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       get ssimText() {
         return formatSsim(diffSsim);
       },
+      // COMPOSITOR (split/blend) seams — mirror `GpuComparePane`'s `__cairnCompareProbe`.
+      get splitPosition() {
+        return splitPosition;
+      },
+      get blendAlpha() {
+        return blendAlpha;
+      },
+      changeSplit,
+      changeBlend,
+      // The FRAMING grid (primary/reference footprint) + the per-side source grids
+      // ("a" = reference = the framing dims, "b" = foreground = its own dims).
+      get dims() {
+        return naturalDims;
+      },
+      get srcDims() {
+        return naturalDims ? { a: naturalDims, b: refDims ?? naturalDims } : null;
+      },
+      get overlayWindow() {
+        return overlayWindow;
+      },
+      // Per-side TEV texel→screen mapping (canvas-LOCAL CSS px) through the SAME
+      // `sourceTexelCenter`/`computeSourceFit` the per-side overlays draw with —
+      // the split-numbers alignment proof (the #88 fix).
+      overlayTexelCenter: (side: "a" | "b", px: number, py: number) => {
+        const canvas = canvasRef.current;
+        if (!canvas || !naturalDims) return null;
+        const box = canvas.getBoundingClientRect();
+        const srcd = side === "a" ? naturalDims : (refDims ?? naturalDims);
+        const c = sourceTexelCenter(
+          px,
+          py,
+          { box, naturalWidth: naturalDims.w, naturalHeight: naturalDims.h, sourceWindow: overlayWindow },
+          srcd,
+        );
+        return { x: c.x - box.left, y: c.y - box.top };
+      },
+      // Headless-reliable surface readback (a live in-DOM swapchain reads blank via
+      // createImageBitmap): a fresh synchronous frame then `device.readback` of the
+      // pool-owned surface. Mirrors `GpuComparePane.readbackSurface`.
+      readbackSurface: async () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        renderPass();
+        const surface = getCanvasSurfaceForTest(canvas);
+        if (!surface) return null;
+        const device = await getSharedDevice();
+        const data = await device.readback(surface);
+        return { data, width: canvas.width, height: canvas.height };
+      },
       changeCompareMode,
       changeDiffKernel,
       changeDiffColormap,
@@ -1649,7 +1810,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [diffMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, changeCompareMode, changeDiffKernel, changeDiffColormap, setDiffKernel, diffKernelMeta, diffColormapMeta]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, setDiffKernel, diffKernelMeta, diffColormapMeta]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
@@ -1758,6 +1919,32 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     [resolvedKernelId, hdrMode, naturalDims],
   );
 
+  // COMPOSITOR (split/blend) FOREGROUND-side readout — the TEV numbers for slot
+  // `b` = `compareSource.b` (the reference side reuses `samplePixel` over the
+  // primary source). Reads the retained foreground buffer at ITS OWN grid
+  // (`refFloatRef`/`refU8Ref`), so the per-side `sourceDims` (#88 fix) maps its
+  // texels onto their pixels even when the two resolutions differ. Mirrors
+  // `GpuComparePane`'s `sampleFg`.
+  const sampleForeground = useCallback(
+    (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
+      const fl = refFloatRef.current;
+      if (fl && fl.dtype === "float") {
+        const { h, w, c } = shapeDims(fl.shape);
+        if (px < 0 || py < 0 || px >= w || py >= h) return null;
+        const b0 = (py * w + px) * c;
+        const rd =
+          fl.precision === "f16-bits" ? (k: number) => halfToFloat(fl.data[k] ?? 0) : (k: number) => fl.data[k] ?? 0;
+        const values = c === 1 ? [rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
+        return buildChannelSample(values, "unit", notationArg);
+      }
+      const u8 = refU8Ref.current;
+      if (!u8 || px < 0 || py < 0 || px >= u8.width || py >= u8.height) return null;
+      const i = (py * u8.width + px) * 4;
+      return buildChannelSample([u8.data[i]!, u8.data[i + 1]!, u8.data[i + 2]!], "uint8", notationArg);
+    },
+    [],
+  );
+
   // In-pane HISTOGRAM source — bins the RAW retained buffer (float scene values
   // in HDR mode, RGBA source bytes in SDR mode), NOT the display pixels. For a
   // DEEP EXR, `getDeepCsr` exports the samples for the per-pixel depth read-out.
@@ -1773,22 +1960,34 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }, [hdrMode, pixelDataVersion]);
 
   // -----------------------------------------------------------------------
-  // DIFF chrome (Phase 2c): the MODE + colormap menus, the diff caption, and the
-  // MSE/PSNR/MAE/SSIM metrics chip — all ride the SAME shell seams the compare pane
-  // uses (`leadingMenus`, `extraChips`). Inert (empty/undefined) when `!diffMode`.
+  // COMPARE chrome (diff + Phase-3 compositor): the MODE menu + the mode's DISPLAY
+  // menu, the caption(s), and the MSE/PSNR/MAE/SSIM metrics chip — all ride the
+  // SAME shell seams the compare pane uses (`leadingMenus`, `extraChips`). Inert
+  // (empty/undefined) when `!hasCompare`.
   // -----------------------------------------------------------------------
-  const diffLeadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
-    if (!diffMode) return [];
+  const compareLeadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
+    if (!hasCompare) return [];
+    // The ONE compare MODE menu (Slide · Blend · <kernels>), current value = the
+    // live mode. onKernel switches INTO diff (an op-switch on the reused instance
+    // — no remount, since [image, split, diff] all key `plot:image`).
     const modeMenu = buildCompareModeMenu({
-      mode: "diff",
+      mode: compositorMode ? compareOpMode! : "diff",
       kernel: diffKernel,
       kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
       onSlide: () => changeCompareMode("split"),
       onBlend: () => changeCompareMode("blend"),
-      onKernel: (id) => changeDiffKernel(id),
+      onKernel: (id) => {
+        if (compositorMode) changeCompareMode("diff");
+        changeDiffKernel(id);
+      },
     });
-    // The scalar-error DISPLAY menu (None + colormap LUTs) — one shared menu id/
-    // title with the image + compare panes; diff offers no light curves.
+    if (compositorMode) {
+      // SPLIT/BLEND composite LIGHT — the SAME unified image DISPLAY menu (curves;
+      // luts gated off at k=3) as a plain image, so the composite is displayed
+      // exactly as an image would be.
+      return [modeMenu, displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding })];
+    }
+    // DIFF: the scalar-error DISPLAY menu (None + colormap LUTs); no light curves.
     const displayMenu = compareDisplayToolbarButton({
       mode: "scalar",
       curveIds: [],
@@ -1798,26 +1997,35 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       onSelectLut: (id) => changeDiffColormap(id as Colormap),
     });
     return [modeMenu, displayMenu];
-  }, [diffMode, diffKernel, effectiveDiffColormap, effectiveTonemap, changeCompareMode, changeDiffKernel, changeDiffColormap]);
+  }, [hasCompare, compositorMode, compareOpMode, diffKernel, effectiveDiffColormap, effectiveTonemap, enc.encodingId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffColormap]);
 
-  // The single bottom-left diff caption + the bottom-right metrics chip (same DOM /
-  // selectors as `GpuComparePane` — `data-gpu-compare-metrics`, `data-cairn-compare-caption`).
-  const diffCaption = diffMode
+  // Captions (same DOM / selectors as `GpuComparePane`): diff → ONE bottom-left
+  // "<metric> · <fg> compared to <ref>"; split/blend → REFERENCE bottom-left +
+  // FOREGROUND bottom-right (the divider slides over them). The metrics chip
+  // (all compare modes) sits bottom-right, stacked ABOVE the foreground caption
+  // when present (`data-gpu-compare-metrics`, `data-cairn-compare-caption`).
+  const compareCaps = hasCompare
     ? compareCaptions({
-        mode: "diff",
+        mode: diffMode ? "diff" : compareOpMode!,
         diffKernel,
         referenceLabel: compareSource?.referenceLabel,
         foregroundLabel: compareSource?.foregroundLabel,
-      }).left
-    : undefined;
-  const diffChips = diffMode ? (
+      })
+    : { left: undefined, right: undefined };
+  const metricsBottomClass = compareCaps.right ? "bottom-7" : "bottom-1";
+  const compareChips = hasCompare ? (
     <>
-      {diffCaption ? (
-        <LabelChip label={diffCaption} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+      {/* REF badge: split only (the left-of-divider side IS the reference). */}
+      {compareOpMode === "split" && <RefBadge />}
+      {compareCaps.left ? (
+        <LabelChip label={compareCaps.left} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+      ) : null}
+      {compareCaps.right ? (
+        <LabelChip label={compareCaps.right} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
       ) : null}
       {diffMetrics && (
         <span
-          className="absolute right-1 bottom-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono"
+          className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}`}
           data-gpu-compare-metrics
         >
           MSE {diffMetrics.mse.toExponential(2)} · PSNR{" "}
@@ -1887,39 +2095,127 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       naturalDims={naturalDims}
       checkerboard="wrapper"
       wrapperClassName="relative w-full h-full flex items-center justify-center"
-      viewportPadding={showAxes && naturalDims ? "16px 4px 4px 28px" : 0}
+      // COMPOSITOR: zero padding + no axis gutter, so the divider (a child of the
+      // wrapper, `left:split%`) and the shader's screen-space `uv.x < split` agree
+      // by construction (matching `GpuComparePane`).
+      viewportPadding={!compositorMode && showAxes && naturalDims ? "16px 4px 4px 28px" : 0}
       surface={
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full block"
-          style={{ imageRendering: imgRendering }}
-          data-gpu-image-canvas
-        />
+        <>
+          <canvas
+            ref={canvasRef}
+            className="w-full h-full block"
+            style={{ imageRendering: imgRendering }}
+            data-gpu-image-canvas
+            data-gpu-compare-canvas={compositorMode ? "" : undefined}
+          />
+          {/* Full-height gapless split divider — drives the `contentParam` uniform
+              via `changeSplit`. Double-click resets to 0.5. Ported from
+              `GpuComparePane` (SplitDivider is the single source of truth). */}
+          {compareOpMode === "split" && (
+            <SplitDivider splitPosition={splitPosition} onChange={changeSplit} onReset={() => changeSplit(0.5)} />
+          )}
+        </>
       }
-      showAxes={showAxes}
+      showAxes={showAxes && !compositorMode}
       overlayNode={overlayNode}
-      overlay={{
-        displayElRef: canvasRef,
-        // DIFF mode prints the metric values (cpu twin / result readback); the
-        // version bumps on kernel switches so the numbers track the selected metric.
-        sample: diffMode ? sampleDiffPixel : samplePixel,
-        version: diffMode ? diffOverlayVersion : pixelDataVersion,
-        hasSource: true,
-        sourceWindow: overlayWindow,
-      }}
+      overlay={
+        compositorMode
+          ? {
+              // COMPOSITOR per-side TEV overlays (the #88 fix). split → each side
+              // clipped at the divider: LEFT (uv.x < split) = REFERENCE (slot a =
+              // `source`, framing grid = identity), RIGHT = FOREGROUND (slot b =
+              // `compareSource.b`, its OWN grid via `sourceDims={refDims}` — so its
+              // numbers land on ITS pixels even when the two resolutions differ,
+              // instead of drifting through the framing grid). blend → the single
+              // foreground overlay. The shell owns notation / active state.
+              render: ({ notation, setOverlayActive }) =>
+                compareOpMode === "split" ? (
+                  <>
+                    {naturalDims && (
+                      <div
+                        className="absolute inset-0 overflow-hidden pointer-events-none"
+                        style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
+                      >
+                        <PixelValueOverlay
+                          imageElRef={canvasRef}
+                          naturalWidth={naturalDims.w}
+                          naturalHeight={naturalDims.h}
+                          zoom={zoom}
+                          pan={pan}
+                          sourceWindow={overlayWindow}
+                          // REFERENCE side = the primary/framing footprint → identity.
+                          sourceDims={naturalDims}
+                          sample={samplePixel}
+                          notation={notation}
+                          version={pixelDataVersion}
+                        />
+                      </div>
+                    )}
+                    {naturalDims && refDims && (
+                      <div
+                        className="absolute inset-0 overflow-hidden pointer-events-none"
+                        style={{ clipPath: `inset(0 0 0 ${splitPosition * 100}%)` }}
+                      >
+                        <PixelValueOverlay
+                          imageElRef={canvasRef}
+                          naturalWidth={naturalDims.w}
+                          naturalHeight={naturalDims.h}
+                          zoom={zoom}
+                          pan={pan}
+                          sourceWindow={overlayWindow}
+                          // FOREGROUND side = its OWN grid (mismatched-res #88 fix).
+                          sourceDims={refDims}
+                          sample={sampleForeground}
+                          notation={notation}
+                          version={refUploadVersion + pixelDataVersion}
+                          onActiveChange={setOverlayActive}
+                        />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  naturalDims &&
+                  refDims && (
+                    <PixelValueOverlay
+                      imageElRef={canvasRef}
+                      naturalWidth={naturalDims.w}
+                      naturalHeight={naturalDims.h}
+                      zoom={zoom}
+                      pan={pan}
+                      sourceWindow={overlayWindow}
+                      sourceDims={refDims}
+                      sample={sampleForeground}
+                      notation={notation}
+                      version={refUploadVersion + pixelDataVersion}
+                      onActiveChange={setOverlayActive}
+                    />
+                  )
+                ),
+            }
+          : {
+              displayElRef: canvasRef,
+              // DIFF mode prints the metric values (cpu twin / result readback); the
+              // version bumps on kernel switches so the numbers track the selected metric.
+              sample: diffMode ? sampleDiffPixel : samplePixel,
+              version: diffMode ? diffOverlayVersion : pixelDataVersion,
+              hasSource: true,
+              sourceWindow: overlayWindow,
+            }
+      }
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
-      histogram={diffMode ? undefined : histogramSource}
+      histogram={hasCompare ? undefined : histogramSource}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
       // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
       // menus. Selecting a LUT deactivates the curve and vice-versa structurally
       // (`enc` owns the single `encoding` id); the float pane gates luts to k=1
       // and `normal` to k=3, the 8-bit pane offers the full applicable set.
       leadingMenus={
-        diffMode
-          ? // DIFF: the MODE (slide·blend·kernels) + scalar-error colormap menus.
-            [...(props.channelMenu ? [props.channelMenu] : []), ...diffLeadingMenus]
+        hasCompare
+          ? // COMPARE (diff OR split/blend): the MODE menu + the mode's DISPLAY menu
+            // (scalar colormap for diff, light curves for a compositor composite).
+            [...(props.channelMenu ? [props.channelMenu] : []), ...compareLeadingMenus]
           : [
               // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
               ...(props.channelMenu ? [props.channelMenu] : []),
@@ -2072,9 +2368,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         (diffMode && (diffKernelMeta.isModified || diffColormapMeta.isModified))
       }
       // DIFF: the caption carries the labeling (no separate label chip).
-      label={diffMode ? "" : label}
-      showLabelChip={!diffMode && !!label}
-      extraChips={diffChips}
+      label={hasCompare ? "" : label}
+      showLabelChip={!hasCompare && !!label}
+      extraChips={compareChips}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
     />

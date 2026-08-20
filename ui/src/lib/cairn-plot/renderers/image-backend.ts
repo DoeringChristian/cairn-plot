@@ -241,13 +241,19 @@ export interface Uint8Source {
 export type DecodedSource = FloatSource | Uint8Source;
 
 // ---------------------------------------------------------------------------
-// COMPARE source (content-op unification, Phase 2c). Presence of `compareSource`
-// on {@link ImageBackendProps} turns the GPU image pane into a DIFF pane: the
-// primary `source` is the foreground/comparison operand `a`, and `compareSource.b`
-// is the reference operand — the pane uploads `b` via the pool's second source
-// slot (`setSourceB`) and renders a diff CONTENT op (`image/content-ops`) instead
-// of the single-image identity. A DIRECT op (signed/absolute/…) samples both slots
-// inline; a CACHED metric (FLIP/HDR-FLIP/SSIM) runs through `renderDiffCached`.
+// COMPARE source (content-op unification). Presence of `compareSource` on
+// {@link ImageBackendProps} turns the GPU image pane into a COMPARE pane over two
+// operands: the primary `source` is the REFERENCE (slot `a`) and `compareSource.b`
+// is the FOREGROUND (slot `b`) — the pane uploads `b` via the pool's second source
+// slot (`setSourceB`) and renders a compare CONTENT op (`image/content-ops`)
+// instead of the single-image identity. The `opId` selects the mode:
+//   - DIFF (Phase 2c): a pointwise DIRECT op (signed/absolute/…) samples both
+//     slots inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) runs through
+//     `renderDiffCached`; displayed as a scalar error (colormap).
+//   - SPLIT / BLEND (Phase 3): a compositor DIRECT op composites the two slots by
+//     the fragment uv against the compositor param (`splitPosition`/`blendAlpha`);
+//     displayed as ordinary LIGHT (curves) — a divider gesture + per-side captions
+//     + per-side TEV readout ride the pane's chrome.
 // The single-image path is byte-identical when `compareSource` is ABSENT.
 // ---------------------------------------------------------------------------
 
@@ -269,13 +275,36 @@ export type CompareFit = "crop" | "fill";
  * (`setSourceB` + `renderDiffCached`) rather than self-managed textures.
  */
 export interface CompareSource {
-  /** The reference/baseline operand `b` — same dtype-tagged shape as the primary
-   *  {@link ImageBackendProps.source} (which is the foreground/`a`). */
+  /** The FOREGROUND operand `b` — same dtype-tagged shape as the primary
+   *  {@link ImageBackendProps.source} (which is the REFERENCE / slot `a`). Slot
+   *  convention (diff + compositor): `a` = reference (texA), `b` = foreground
+   *  (texB), so `diff = a − b` and split shows the reference left of the divider. */
   b: DecodedSource;
-  /** The diff MODE — a menu selection token (a pointwise id, `"flip"`, `"flip_ldr"`
-   *  or `"ssim"`). SEEDS the pane's diff-kernel state; the MODE menu switches it
-   *  view-locally. Resolved to a concrete kernel id by `resolveDiffKernelId`. */
+  /** The compare OP — a menu selection token. A DIFF kernel (a pointwise id,
+   *  `"flip"`, `"flip_ldr"`, `"ssim"`) renders the scalar-error diff; the Phase-3
+   *  COMPOSITOR ids `"split"` / `"blend"` render a LIGHT composite of the two
+   *  operands (divider / alpha) instead. SEEDS the pane's kernel state; the MODE
+   *  menu switches it view-locally. Diff kernels resolve via `resolveDiffKernelId`. */
   opId: string;
+  /** Split-divider position `[0,1]` (`opId:"split"`) — the reference is shown
+   *  where the fragment `uv.x < splitPosition`. Controlled: the pane's divider /
+   *  `[`·`]` keys report up via {@link onSplitPositionChange}; the owner lifts it
+   *  and the new value flows back. Default 0.5. */
+  splitPosition?: number;
+  /** Blend mix alpha `[0,1]` (`opId:"blend"`) — `mix(reference, foreground,
+   *  blendAlpha)`. Controlled like {@link splitPosition}. Default 0.5. */
+  blendAlpha?: number;
+  /** Fired when the split divider / flip keys move the divider — lifts the split
+   *  position to the owner (`CompareView`'s lifted `splitPos`). */
+  onSplitPositionChange?: (pos: number) => void;
+  /** Fired when the blend alpha changes (owner lifts it). */
+  onBlendAlphaChange?: (alpha: number) => void;
+  /** True when this compare pane is inside a STACKED grid — threaded from the CORE
+   *  side (the addon bundle's context identity differs) so `useSplitFlipKeys`
+   *  scopes the `←`/`→`/`h`/`l` flip aliases correctly (`[`·`]` always flip). */
+  inStackedGrid?: boolean;
+  /** True when this compare pane is inside a FULLSCREEN overlay (see above). */
+  inOverlay?: boolean;
   /** Colormap OVERRIDE for the diff display (a display-encoding/colormap id, or
    *  `"none"` for the raw per-channel error). `null`/absent = follow the selected
    *  kernel's default (`resolveDiffColormap`). An explicit pick STICKS across
@@ -295,8 +324,10 @@ export interface CompareSource {
   /** Fired when the pane's diff MODE changes via its own MODE menu — lets an owner
    *  (`CompareView`) keep its lifted mode/kernel state coherent (Phase 2c routing). */
   onDiffKernelChange?: (kernelId: string) => void;
-  /** Fired when the MODE menu selects SLIDE/BLEND (a non-diff mode) — the owner
-   *  then remounts to `GpuComparePane` (the documented slide/blend remount). */
+  /** Fired when the pane's MODE menu switches mode (slide ↔ blend ↔ diff) — the
+   *  owner lifts it (`CompareView`'s `viewMode`). Phase 3: split/blend now ALSO
+   *  render on THIS unified pane, so a mode switch is an OP switch on the reused
+   *  instance (NO remount) — not the old route-to-`GpuComparePane` remount. */
   onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
 }
 
