@@ -399,6 +399,19 @@ export interface ImageBackendProps {
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
+  /** RESERVE the compare chrome slots on a PLAIN-IMAGE pane (no `compareSource`).
+   *  Set by `plot-node.tsx` when this image leaf lives in a STACKED viewport whose
+   *  grid ALSO holds a compare child (the report's Validation `[image, FLIP]`
+   *  stack): the image slot and the diff slot are the ONE reused pane, so their
+   *  chrome must be structurally IDENTICAL or the image↔diff flip
+   *  mounts/unmounts the MODE menu + metrics/caption chips (visible popping +
+   *  toolbar reflow — the residual "flicker"). When set, the plain-image pane
+   *  reserves the MODE menu (rendered greyed/inert — the image is not a compare),
+   *  the second-row EV/OFF sliders, and the caption/metrics chip CONTAINERS, and
+   *  swaps only their CONTENT across the flip — never their structure. Ignored
+   *  when `compareSource` is present (a diff/compositor slot already renders the
+   *  chrome) and by the CPU backend. Absent = today's plain-image chrome exactly. */
+  reserveCompareChrome?: boolean;
 }
 
 /**

@@ -358,6 +358,93 @@ console warnings, no legacy fallback.
 stable ×3); 243 pytest; gpu-image bundle rebuilt (370347→370854 B) + synced +
 committed; report (63 blocks) + gallery (27 types) regen clean; live report probe.
 
+## Follow-up — DONE: residual FAST-flip flicker was CHROME CHURN (not pixels)
+
+**User report (after 9368ee2).** Intermittent flicker STILL on FAST image↔diff
+stacked flips (never same-kind), AFTER the present-coherency guard proved GPU
+PRESENTS are coherent. The guard fixed the PIXELS; the residual is the CHROME.
+
+**Finding 1 — CHROME CHURN (measured, deterministic, the primary cause).** A new
+DOM harness (`renderers/__tests__/stacked-diff-flip-chrome.browser.{ts,html}`,
+default set) drives ONE reused `GpuImagePane` image↔diff under a `MutationObserver`
+and counts ELEMENT add/removes in the pane subtree. **Pre-fix, every flip
+mounts/unmounts chrome** — measured on the pane AND confirmed live on the served
+Validation `[image, FLIP]` stack: the bottom-left LabelChip↔diff caption
+(`SPAN.absolute`), the metrics chip (`SPAN[data-gpu-compare-metrics]`), the MODE
+menu `<button>` (diff-only), the CHANNELS menu (`DIV.relative.inline-flex`,
+image-only), and the histogram button (image-only). 40 flips → 160 add/remove
+events: visible popping + toolbar reflow. This is the "flicker."
+
+**Fix 1 — a stacked viewport may change PIXELS, never LAYOUT.** A plain-image pane
+that shares a stacked grid with a compare child now RESERVES the compare chrome so
+its structure is IDENTICAL to the diff slot's; only content/text swaps across the
+flip. Wiring: `StackHasCompareContext` (`stack/stack-context.ts`) is provided by
+`GridView`'s stacked branch when `children.some(kind==="compare")`; `LeafView`
+reads it and threads `reserveCompareChrome` on the single-image path; the image
+renderer adapter (`plot-renderers.tsx ImageStandalone`) forwards it (the missing
+forward was caught by the LIVE probe — the pane-level harness passes it directly).
+`GpuImagePane` then renders the compare chrome skeleton when `hasCompare ||
+reserveCompareChrome`:
+- **Chips — PERSISTENCE.** The bottom-left caption slot is ALWAYS mounted (diff
+  caption on the compare slot, the image's own label on the reserved slot — the
+  SAME `<span>`, text swaps; empty ⇒ `visibility:hidden` via a new `LabelChip
+  hidden` prop). The metrics chip is ALWAYS mounted, present-but-invisible + empty
+  when there is no live metric. `showLabelChip` is off whenever the compare chrome
+  renders (one persistent bottom-left chip, never two swapped ones).
+- **Toolbar MODE menu — RESERVED SLOT (chosen over "functional in both modes").**
+  The reserved image slot emits the SAME `[compare-mode, display]` leading menus as
+  the diff slot; the MODE menu is rendered **disabled/greyed** (new `ToolbarMenu
+  disabled`). JUSTIFICATION: in the descriptor model the image child of a mixed
+  `[image, diff]` stack is a genuinely SEPARATE plain-image node with no foreground
+  operand — it cannot "become" a diff — so a functional MODE menu there would be
+  dishonest; reserving the slot keeps layout stable without faking capability.
+- **Second row + extra buttons matched.** The reserved image slot forces EV/OFF
+  (like the diff slot), suppresses reduce/peak/gamma/bounds, and suppresses the
+  histogram button; the CHANNELS menu is suppressed in `LeafView` when
+  `stackHasCompare` (the diff sibling has none). Net: both slots' toolbars are
+  byte-structurally identical.
+- Non-stacked / homogeneous stacks are UNCHANGED (default `false` context) — plain
+  images keep today's chrome exactly. Trade-off (documented): a plain image inside
+  a MIXED compare stack loses its CHANNELS/histogram/peak/gamma/bounds affordances
+  (chrome-stability over those niche controls); EV/OFF + display + MODE remain.
+
+**Finding 2 — resolve flash: VERDICT = the placeholder flash does NOT fire; the
+stale-resolve transition DOES (now held cleanly).** A reused `LeafView` flipped
+INTO diff still holds the PREVIOUS slot's single-image dataProps for the render
+right after the node swaps (the resolve effect updates it synchronously on a cache
+HIT). Instrumented via `window.__cairnLeafResolveStats` (`placeholderMounts` /
+`staleDiffHolds`) and a real-stack harness
+(`stack/stacked-diff-flip-resolve.browser.{ts,html}`, default set, CPU renderers).
+**Measured (live report Validation grid, 20 flips): `placeholderMounts = 0`,
+`staleDiffHolds = 10`** (== one per image→diff transition). So `LeafView` NEVER
+resets to a `"Loading…"` placeholder on a reused flip (the guard-held canvas is
+never uncovered), but the stale window IS real — without a fix `mergedProps` would
+emit a `compareSource` whose `b` is undefined for one commit. **Fix:** a
+SYNCHRONOUS HOLD — when `diffSpec` is set but `state.dataProps.__diffB` is missing,
+render the PREVIOUS single-image content (`dp.source`, `reserveCompareChrome` kept
+so the held frame's chrome stays the compare skeleton) instead of a half-built
+`compareSource`; the resolve effect swaps in the real diff dataProps on the next
+commit. Never a placeholder, never an undefined-`b` frame.
+
+**Harness additions.** `stacked-diff-flip-chrome` (DOM stability: 0 element
+add/removes across a 40-flip storm + a CSS-independent toolbar-signature equality
+via a new always-on `__cairnChromeProbe.chromeSig`, since the width-based overflow
+fold can't be measured in a headless page). `stacked-diff-flip-resolve` (real
+stacked `[image, diff]` grid through `PlotApp`: `placeholderMounts === 0`,
+`staleDiffHolds > 0` as evidence). Default set now **29 harnesses**.
+
+**Live visual verify** (served report `?eager=1`, Validation `[image, FLIP]`
+stack, rapid tab flips): image & diff slots' toolbars are pixel-identical (MODE
+menu greyed on image / "FLIP (perceptual)" on diff; EV/OFF; Magma display); the
+caption + metrics chips are present in both (invisible on the image slot); a
+`MutationObserver` over 12 flips records **0 element add/removes and a STABLE
+canvas rect (864×648, single sample)**; no console errors.
+
+**Gates.** typecheck; 615 node tests; ALL **29** parity harnesses (metal-3, incl.
+the 2 new, + stress/slow/grid unaffected); 243 pytest; core + gpu-image bundles
+rebuilt + synced + committed; report (63 blocks) + gallery (27 types) regen clean;
+live report probe (0 churn, stable rect, no errors). `uv.lock` left untouched.
+
 ## Phase 3 — DONE (commits 9f70506, 04a5e64, a96ab54, + the harness/doc commit)
 
 split/blend became `direct` compositor ContentOps on the unified pane; the last

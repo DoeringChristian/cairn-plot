@@ -392,10 +392,17 @@ function ToolbarMenu({
   icon,
   title,
   menu,
+  disabled = false,
 }: {
   icon?: string;
   title: string;
   menu: ToolbarMenuSpec;
+  /** Greyed + non-interactive (the dropdown never opens). Used to RESERVE a menu's
+   *  layout slot on a pane where the control does not apply — e.g. the compare
+   *  MODE menu on a plain-image slot of a stacked image↔diff viewport, so the
+   *  toolbar never reflows across the flip. Same element TYPE as an active menu
+   *  (a `<ToolbarMenu>`), so React never remounts it when the slot goes live. */
+  disabled?: boolean;
 }) {
   const { options, value, onSelect } = menu;
   const [open, setOpen] = useState(false);
@@ -475,12 +482,15 @@ function ToolbarMenu({
     <div ref={rootRef} className="relative inline-flex" onPointerDown={(e) => e.stopPropagation()}>
       <button
         type="button"
+        disabled={disabled}
+        aria-disabled={disabled}
         onClick={(e) => {
           e.stopPropagation();
+          if (disabled) return;
           toggle();
         }}
         onDoubleClick={(e) => e.stopPropagation()}
-        onKeyDown={onButtonKeyDown}
+        onKeyDown={disabled ? undefined : onButtonKeyDown}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={title}
@@ -488,7 +498,11 @@ function ToolbarMenu({
         className={[
           "h-[22px] min-w-[22px] inline-flex items-center gap-0.5 rounded",
           face ? "px-1.5 text-[10px] font-mono" : "px-1 text-xs",
-          open ? "bg-bg-hover text-accent" : "text-fg-muted hover:text-fg hover:bg-bg-hover",
+          disabled
+            ? "opacity-40 cursor-default text-fg-muted"
+            : open
+              ? "bg-bg-hover text-accent"
+              : "text-fg-muted hover:text-fg hover:bg-bg-hover",
         ].join(" ")}
       >
         {face ? <span aria-hidden="true">{face}</span> : <Icon name={icon ?? ""} />}
@@ -1202,7 +1216,7 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
           <>
             {leading.map((b) =>
               b.menu ? (
-                <ToolbarMenu key={b.id} icon={b.icon} title={b.title} menu={b.menu} />
+                <ToolbarMenu key={b.id} icon={b.icon} title={b.title} menu={b.menu} disabled={b.disabled} />
               ) : (
                 <ToolbarButton
                   key={b.id}
