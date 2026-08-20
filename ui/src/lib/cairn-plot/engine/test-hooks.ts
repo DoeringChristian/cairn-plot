@@ -24,3 +24,59 @@ export function forceEngineFailRequested(): boolean {
     return false;
   }
 }
+
+/**
+ * PER-PRESENT RENDER LOG (browser harness only) — records the GROUND-TRUTH
+ * (bound source keys, content-op id, display mode) of EVERY actual GPU present
+ * the pool performs (`engine/pool.ts`'s `attemptRender`/`attemptRenderDiffCached`).
+ *
+ * Its purpose is the present-coherency proof (the stacked-diff-flip STRESS
+ * harness): under rapid image↔diff flipping a present can slip through with a
+ * MISMATCHED combination — e.g. an image-mode blit while the pool's primary
+ * texture is still the diff's keyed reference (`sourceKey === "flip:ref"`), or
+ * a diff blit before the foreground slot's `sourceBKey` caught up. Because this
+ * log captures what the pool ACTUALLY had bound at the moment of each present
+ * (not the pane's React intent), the harness can flag any present whose bound
+ * keys don't match the slot it belongs to — the objective artefact signal, with
+ * no reliance on flaky mid-present canvas readback.
+ *
+ * Off by default (a single null check on the pool hot path); a harness calls
+ * {@link startPaneRenderLog} to begin capturing. Never used by production code.
+ */
+export interface PaneRenderRecord {
+  /** "image" (plain / direct-op blit via `attemptRender`) or "cached-diff"
+   *  (FLIP/HDR-FLIP/SSIM via `attemptRenderDiffCached`). */
+  mode: "image" | "cached-diff";
+  /** The pool entry's CURRENTLY-BOUND primary source key (`entry.sourceKey`) —
+   *  the retention key of the texture actually sampled (undefined = unkeyed
+   *  single-image). Ground truth, independent of the pane's React state. */
+  sourceKey: string | undefined;
+  /** The pool entry's currently-bound `b` source key (`entry.sourceBKey`). */
+  sourceBKey: string | undefined;
+  /** `params.contentOpId` (0/undefined = identity/plain image; nonzero = a
+   *  direct diff/compositor op sampling slot `b`). */
+  contentOpId: number | undefined;
+  /** Whether slot `b` had a real texture bound (`entry.srcTextureB != null`). */
+  hasSrcB: boolean;
+  /** `params.isScalar` — the display arity (a scalar-error colormap vs light). */
+  isScalar: boolean | undefined;
+}
+
+let paneRenderLog: PaneRenderRecord[] | null = null;
+
+/** Begin (or reset) capturing per-present records. */
+export function startPaneRenderLog(): void {
+  paneRenderLog = [];
+}
+/** Stop capturing and drop the buffer. */
+export function stopPaneRenderLog(): void {
+  paneRenderLog = null;
+}
+/** The records captured since the last {@link startPaneRenderLog}. */
+export function getPaneRenderLog(): PaneRenderRecord[] {
+  return paneRenderLog ?? [];
+}
+/** Pool-internal: record one present. No-op unless a harness started the log. */
+export function recordPaneRender(record: PaneRenderRecord): void {
+  if (paneRenderLog) paneRenderLog.push(record);
+}

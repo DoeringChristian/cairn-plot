@@ -288,6 +288,76 @@ new one, stable across repeat runs); 243 pytest; gpu-image bundle rebuilt
 clean; live report spot-check — no blank frame, no distinct intermediate, settled
 content stable across flips, no console errors.
 
+## Follow-up — DONE: residual FAST-flip flicker (present-coherency epoch guard)
+
+**User report (after 0bb636e).** Flicker STILL occurs in stacked viewports, but
+ONLY when flipping EXTREMELY FAST and only intermittently — and (narrowed by the
+user) ONLY between a diff and a NON-diff slot, never on same-kind flips. Source
+retention (0bb636e) closed the flip-BACK re-upload gap but did NOT make the OP
+TRANSITION atomic.
+
+**Fix-is-live receipt.** The committed dist bundle carries 0bb636e: its retention
+property names (`retained`/`sourceKey`/`sourceBKey`) are present in
+`src/cairn_plot/_assets/plot-inline/gpu-image.iife.js` and ABSENT from the parent
+(28e4275) bundle (369263→370347 B). The slow-flip harness (`stacked-diff-flip`,
+run against current source == the committed bundle) re-confirms 0bb636e's claims
+live: per-revisit diff-recompute delta 0 and source-upload delta 0. The served
+report (`/private/tmp` @ 8765, `?eager=1`) inlines the NEW bundle (guard
+fingerprints `cached-diff` + `img:` present).
+
+**Root cause (MEASURED, not guessed).** A new self-driving STRESS harness
+(`renderers/__tests__/stacked-diff-flip-stress.browser.{ts,html}`, default set,
+now 27 harnesses) flips ONE reused `GpuImagePane` image↔diff FASTER than the frame
+rate (every rAF + double-flips, 400 iters / ~330 op-transitions, seeded-random)
+and inspects EVERY actual GPU present via a new pool per-present render log
+(`engine/test-hooks`'s `startPaneRenderLog`, fed by `pool.ts`'s `attemptRender`/
+`attemptRenderDiffCached`) — the GROUND TRUTH of the bound source keys + op at
+each present, not flaky mid-present readback. **Pre-fix rate: 206 / 748 presents
+INCOHERENT (27.5%)**, every one the SAME mismatch triple — an IMAGE-mode present
+(`contentOpId` identity) whose bound primary was still the diff's KEYED reference
+(`sourceKey === "flip:ref"`). Mechanism: on a diff→image flip `renderPass` runs
+SYNCHRONOUSLY from the new props (`diffMode`/op/encoding flip instantly), but the
+plain image's primary goes through async `loadImageData` (async even on a cache
+hit) — so the pane presents the identity blit sampling the PREVIOUS slot's retained
+reference texture before the image upload lands. The plain-image path had NO gate
+(only the diff path gated, on `refDims`), which is exactly why the artefact is
+diff↔non-diff-only (image→diff is held by `refDims === null`; diff→image was not).
+A same-kind CONTROL (image↔image) measured ~0 (matching the field report).
+
+**Fix — PRESENT-COHERENCY GUARD (epoch at params-assembly level).** `GpuImagePane`
+now derives, each render, the content IDENTITY this frame intends —
+`expectedPrimaryId` (`A:<contentKeyA>` for a compare, `img:<url>` / `"hdr"` /
+`"deep"` for a single image) and `expectedBId` (`B:<contentKeyB>` when a compare
+operand is present, else `null`). Two refs (`appliedPrimaryIdRef`/`appliedBIdRef`)
+record the identity the pool has ACTUALLY applied, stamped at every upload site
+(SDR `applySdr`, HDR, DEEP, `setSourceB` apply + its null branch) — the SAME
+expressions, so they converge. `renderPass` PRESENTS only when applied == expected
+for BOTH slots; otherwise it RETURNS, HOLDING the previous frame (WebGPU keeps the
+last present) until the pending async application lands and bumps
+`uploadVersion`/`refUploadVersion` → re-fire. Because op + encoding + compositor
+params are pure synchronous derivations of the current props (no async lag), gating
+the two async-lagging SOURCE identities is necessary and sufficient — a present can
+no longer mix a new op with a previous slot's textures. Deadlock-free (applied is
+set from the same values, from an always-scheduled effect) and GENERAL: it equally
+gates a plain single-pane image→image URL swap, not only stacks. `imageUrl`/
+`hasCompare`/`deepActive`/`compareSource.b` were added to `renderPass`'s deps so the
+guard re-evaluates against fresh identities (else an image→image swap would compare
+a stale expected id and hold forever).
+
+**Proof.** The stress harness goes 206/748 → **0/748-class incoherent** (0 of 542
+presents, CONTROL 0 of 143), STABLE across 3 repeat runs; a render-log no-deadlock
+oracle confirms the pane still presents a coherent diff AND a coherent image after
+the storm. The slow-flip invariants (0 recompute / 0 re-upload) still hold, and ALL
+27 parity harnesses stay green (the "broke nothing" receipt — incl.
+`compare-settings-sync`, `grid-stacked`/`-persist`, `gpu-image-diff`, `content-ops`,
+every engine parity). Live: rapid arrow-key mashing (~105 flips) on the served
+Validation `[image, FLIP]` stack — coherent settle, no blank/intermediate frame, no
+console warnings, no legacy fallback.
+
+**Gates.** typecheck; 615 node tests; ALL 27 parity harnesses (metal-3, stress incl.,
+stable ×3); 243 pytest; gpu-image bundle rebuilt (370347→370854 B) + synced +
+committed; report (63 blocks) + gallery (27 types) regen clean; live report probe.
+
 ## Phase 3 — DONE (commits 9f70506, 04a5e64, a96ab54, + the harness/doc commit)
 
 split/blend became `direct` compositor ContentOps on the unified pane; the last

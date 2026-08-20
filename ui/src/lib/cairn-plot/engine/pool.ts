@@ -56,7 +56,7 @@ import {
 } from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
 import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
-import { forceEngineFailRequested } from "./test-hooks";
+import { forceEngineFailRequested, recordPaneRender } from "./test-hooks";
 
 /**
  * Cap on simultaneously-LIVE GPU swapchains (configured `Surface` + source
@@ -500,6 +500,16 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
     // placeholder, and opId 0 / identity ignores it), byte-identical to before.
     const p = entry.srcTextureB ? { ...params, srcB: entry.srcTextureB } : params;
     renderImage(entry.device, entry.surface, entry.srcTexture, p);
+    // Present-coherency instrumentation (test-only; no-op unless a harness started
+    // the log): the GROUND-TRUTH bound keys at this present, for the stress harness.
+    recordPaneRender({
+      mode: "image",
+      sourceKey: entry.sourceKey,
+      sourceBKey: entry.sourceBKey,
+      contentOpId: params.contentOpId,
+      hasSrcB: entry.srcTextureB != null,
+      isScalar: params.isScalar,
+    });
     return true;
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -552,6 +562,17 @@ function attemptRenderDiffCached(
     // Bind it as the PRIMARY source; `srcTextureB` is intentionally NOT injected
     // (the display is single-source over the result).
     renderImage(entry.device, entry.surface, cacheEntry.texture, displayParams);
+    // Present-coherency instrumentation (test-only; see attemptRender). A cached
+    // diff blits the RESULT as the primary — the bound SOURCE keys still record
+    // which operands the result was computed from (stale = an artefact).
+    recordPaneRender({
+      mode: "cached-diff",
+      sourceKey: entry.sourceKey,
+      sourceBKey: entry.sourceBKey,
+      contentOpId: displayParams.contentOpId,
+      hasSrcB: entry.srcTextureB != null,
+      isScalar: displayParams.isScalar,
+    });
     return cacheEntry;
   } catch (err) {
     // eslint-disable-next-line no-console

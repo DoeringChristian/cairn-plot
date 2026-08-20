@@ -481,6 +481,26 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // memory can't grow unbounded across many flips. See the setSource/setSourceB
   // effects below for the synchronous fast-path.
   const uploadCacheRef = useRef<Map<string, { upload: SourceUpload; ref: DecodedSource }>>(new Map());
+  // -----------------------------------------------------------------------
+  // PRESENT-COHERENCY GUARD (residual fast-flip flicker). The pane's content
+  // config — which primary/`b` source, and whether it's a diff/composite/plain
+  // image — flips SYNCHRONOUSLY from props, but the pool's actual source TEXTURES
+  // are applied through SEPARATE effects, some ASYNC (an SDR primary always goes
+  // through async `loadImageData`; a first-visit `b` decodes). Under rapid
+  // image↔diff flipping a `renderPass` can therefore fire while the pool still has
+  // the PREVIOUS slot's textures bound — presenting a stale/mismatched frame (the
+  // measured artefact: an identity blit sampling the retained diff reference on a
+  // diff→image flip). These refs record the content IDENTITY the pool has actually
+  // applied for each slot; `renderPass` presents only when the applied identities
+  // match the identities the CURRENT render expects (`expectedPrimaryId`/
+  // `expectedBId` below), else it HOLDS the previous frame (WebGPU keeps the last
+  // present) until the pending async application lands + bumps a version → re-fire.
+  // General by construction: it protects every single-pane source swap, not just
+  // stacks (an image→image URL swap is gated the same way). Deadlock-free: the
+  // applied values are set from the SAME expressions `renderPass` uses, so they
+  // converge once the (always-scheduled) upload effect completes.
+  const appliedPrimaryIdRef = useRef<string | undefined>(undefined);
+  const appliedBIdRef = useRef<string | null | undefined>(undefined);
   const rememberUpload = useCallback((key: string, upload: SourceUpload, ref: DecodedSource) => {
     const m = uploadCacheRef.current;
     if (m.has(key)) m.delete(key);
@@ -1090,6 +1110,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // already SYNCHRONOUS (no async decode), so there is no flip-back gap to close
     // beyond the upload itself. Unkeyed for the single-image path.
     paneHandleRef.current?.setSource(upload, hasCompare ? contentKeyA : undefined);
+    // Coherency guard: mirrors `expectedPrimaryId` (compare → `A:<keyA>`, else "hdr").
+    appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : "hdr";
     setNaturalDims((prev) =>
       prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
     );
@@ -1114,6 +1136,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       .then((csr) => {
         if (cancelled) return;
         paneHandleRef.current?.setDeepSource(csr, deep.zMin, deep.zMax);
+        appliedPrimaryIdRef.current = "deep"; // coherency guard: mirrors expectedPrimaryId
         setNaturalDims((prev) =>
           prev && prev.w === csr.width && prev.h === csr.height ? prev : { w: csr.width, h: csr.height },
         );
@@ -1143,6 +1166,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const colormap = hasCompare ? "none" : sdrColormap;
     if (!imageUrl) {
       sdrImageDataRef.current = null;
+      appliedPrimaryIdRef.current = `img:`;
       setNaturalDims(null);
       setPixelDataVersion((v) => v + 1);
       // Q24 fix: no explicit inline CSS size to drop anymore — the canvas is
@@ -1166,6 +1190,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         format: "rgba8unorm",
       };
       paneHandleRef.current?.setSource(upload, primaryKey);
+      // Coherency guard: record which primary content the pool now holds — mirrors
+      // `expectedPrimaryId` in renderPass (compare → `A:<keyA>`, else `img:<url>`).
+      appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : `img:${imageUrl}`;
       setNaturalDims((prev) =>
         prev && prev.w === display.width && prev.h === display.height ? prev : { w: display.width, h: display.height },
       );
@@ -1241,6 +1268,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const b = hasCompare ? compareSource?.b : undefined;
     if (!b) {
       paneHandleRef.current?.setSourceB(null);
+      appliedBIdRef.current = null; // coherency guard: no `b` operand bound
       setRefDims(null);
       refFloatRef.current = null;
       refU8Ref.current = null;
@@ -1253,6 +1281,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // commit — no async gap, no intermediate frame.
     const apply = (upload: SourceUpload) => {
       paneHandleRef.current?.setSourceB(upload, key);
+      // Coherency guard: record the `b` operand the pool now holds — mirrors
+      // `expectedBId` in renderPass (`B:<keyB>`).
+      appliedBIdRef.current = `B:${key}`;
       // Retain the reference pixels for the DIRECT-op cpu-twin readout.
       if (b.dtype === "float") {
         refFloatRef.current = b;
@@ -1391,6 +1422,32 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ? "nearest"
         : "linear";
     const uv = rawUv;
+
+    // ---- PRESENT-COHERENCY GUARD ---------------------------------------
+    // The content this frame is ABOUT to present (op + display encoding + the
+    // compositor/diff params below) is derived SYNCHRONOUSLY from the current
+    // props, but the pool's actual source TEXTURES are applied through separate,
+    // partly-async effects. Present ONLY when the pool has the sources THIS frame
+    // expects bound; otherwise HOLD the previous frame (WebGPU keeps the last
+    // present) — the pending async application will bump `uploadVersion`/
+    // `refUploadVersion` and re-fire this pass once the sources are coherent.
+    // Without this, a rapid image↔diff flip presents the PREVIOUS slot's textures
+    // under the new op (the measured artefact: an identity blit sampling the
+    // retained diff reference on a diff→image flip). `expected*` mirror the
+    // identities the upload effects stamp into `applied*` (same expressions), so
+    // this converges and never deadlocks. General: it equally gates a plain
+    // image→image URL swap (single-pane), not only stacks.
+    const expectedPrimaryId = hasCompare
+      ? `A:${contentKeyA}`
+      : hdrMode
+        ? deepActive
+          ? "deep"
+          : "hdr"
+        : `img:${(props as SdrImageProps).imageUrl ?? ""}`;
+    const expectedBId: string | null = hasCompare && !!compareSource?.b ? `B:${contentKeyB}` : null;
+    if (appliedPrimaryIdRef.current !== expectedPrimaryId || appliedBIdRef.current !== expectedBId) {
+      return;
+    }
 
     // ---- COMPOSITOR path (split / blend, Phase 3) -----------------------
     // Renders a LIGHT composite of the two operands (slot a = reference =
@@ -1688,7 +1745,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffColormap, diffMapping, hdrExposures, contentKeyA, contentKeyB,
     // COMPOSITOR deps: re-render on a divider drag / blend-slider / mode change
     // (only the compositor param uniform changes — no recompile).
-    compositorMode, compareOpMode, splitPosition, blendAlpha]);
+    compositorMode, compareOpMode, splitPosition, blendAlpha,
+    // PRESENT-COHERENCY GUARD deps: `expectedPrimaryId`/`expectedBId` read these,
+    // so renderPass must be recreated (and re-evaluate the guard) when the pane's
+    // intended source IDENTITY changes — notably a plain image→image URL swap
+    // (`imageUrl`), a compare toggle (`hasCompare`), a deep toggle (`deepActive`),
+    // or the presence of the `b` operand — else the guard would compare against a
+    // stale expected id and hold the previous frame forever.
+    hasCompare, deepActive, hdrMode ? null : (props as SdrImageProps).imageUrl, compareSource?.b]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
