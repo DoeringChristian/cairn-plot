@@ -14,13 +14,15 @@
  *
  * FAULT INJECTION: the page is loaded with a `?forceEngineFail` query param
  * (`engine/test-hooks.ts`'s `forceEngineFailRequested()`, read by
- * `engine/pool.ts`'s `activateEntry()` and `media-compare/GpuComparePane.tsx`'s
- * device/surface acquisition — see both files' C1-fix doc comments) —
+ * `engine/pool.ts`'s `activateEntry()` — see its C1-fix doc comment) —
  * deterministically forces every pane-activation attempt to throw, exactly
  * the hard-failure branch the C1 fix targets, without needing to actually
  * exhaust a real GPU resource cap.
  *
- * CASES (all run under `?forceEngineFail`):
+ * CASES (all run under `?forceEngineFail`). Since Phase 4 (content-op
+ * unification) EVERY compare renders on the unified `GpuImagePane` via
+ * `compareSource` (`GpuComparePane` is deleted), so cases 3/4 drive the SAME
+ * pane as cases 1/2, just with a `compareSource`:
  *   1. `GpuImagePane` (SDR `imageUrl` prop shape) — asserts NO
  *      `[data-gpu-image-canvas]` mounts (the engine bailed before painting)
  *      and the LEGACY `ImagePane`'s `<img>` renders instead, with the
@@ -28,13 +30,12 @@
  *   2. `GpuImagePane` (HDR `hdr` prop shape) — asserts NO
  *      `[data-gpu-image-canvas]` and the legacy `HdrImagePane`'s `<canvas>`
  *      renders NON-BLANK content (readback).
- *   3. `GpuComparePane` (`mode:"split"`) — asserts NO
- *      `[data-gpu-compare-canvas]` and the legacy `MediaComparePane`
- *      (`compositor.tsx`) renders — its foreground `<img>` with the correct
- *      `src`.
- *   4. `GpuComparePane` (`mode:"diff"`) — asserts NO
- *      `[data-gpu-compare-canvas]` and the legacy `ImagePane` diff path
- *      renders a NON-BLANK `<canvas>` (readback).
+ *   3. `GpuImagePane` + `compareSource` (`mode:"split"`) — asserts NO
+ *      `[data-gpu-image-canvas]` and the legacy `CpuImagePane` compare fallback
+ *      renders its `<img>` (NOT a blank card).
+ *   4. `GpuImagePane` + `compareSource` (`mode:"diff"`) — asserts NO
+ *      `[data-gpu-image-canvas]` and the legacy `CpuImagePane` diff fallback
+ *      renders content (`<canvas>`/`<img>`, NOT a blank card).
  *
  * Every case also asserts NO uncaught `window.onerror`/`unhandledrejection`
  * fired and NO `console.error` call — a genuinely uncaught throw would
@@ -64,7 +65,6 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
 import { hdrSource, urlSource, type HdrData } from "../image-backend";
-import GpuComparePane from "../../media-compare/GpuComparePane";
 
 const h = React.createElement;
 
@@ -237,7 +237,7 @@ async function runHdrImageCase(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Case 3: GpuComparePane, split mode.
+// Case 3: GpuImagePane + compareSource, split mode.
 // ---------------------------------------------------------------------------
 async function runCompareSplitCase(): Promise<boolean> {
   let ok = true;
@@ -249,12 +249,14 @@ async function runCompareSplitCase(): Promise<boolean> {
 
   const root = createRoot(container);
   root.render(
-    h(GpuComparePane, {
-      imageUrl: RED_PNG_DATA_URL,
-      baselineUrl: RED_PNG_DATA_URL,
-      mode: "split",
-      splitPosition: 0.5,
-      blendAlpha: 0.5,
+    h(GpuImagePane, {
+      source: urlSource(RED_PNG_DATA_URL),
+      compareSource: {
+        b: urlSource(RED_PNG_DATA_URL),
+        opId: "absolute",
+        mode: "split",
+        splitPosition: 0.5,
+      },
       zoom: 1,
       pan: { x: 0, y: 0 },
       label: "compare-split-fallback-test",
@@ -263,12 +265,12 @@ async function runCompareSplitCase(): Promise<boolean> {
 
   await sleep(1000);
 
-  const gpuCanvasFound = !!container.querySelector("canvas[data-gpu-compare-canvas]");
-  report(!gpuCanvasFound, "[compare/split] engine bailed BEFORE mounting its own canvas (no [data-gpu-compare-canvas])");
+  const gpuCanvasFound = !!container.querySelector("canvas[data-gpu-image-canvas]");
+  report(!gpuCanvasFound, "[compare/split] engine bailed BEFORE mounting its own canvas (no [data-gpu-image-canvas])");
   ok = ok && !gpuCanvasFound;
 
   const legacyImgFound = await waitFor(() => container.querySelectorAll("img").length > 0);
-  report(legacyImgFound, "[compare/split] legacy MediaComparePane's <img> mounted (NOT a blank card)");
+  report(legacyImgFound, "[compare/split] legacy CpuImagePane compare fallback <img> mounted (NOT a blank card)");
   ok = ok && legacyImgFound;
 
   root.unmount();
@@ -277,7 +279,7 @@ async function runCompareSplitCase(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Case 4: GpuComparePane, diff mode.
+// Case 4: GpuImagePane + compareSource, diff mode.
 // ---------------------------------------------------------------------------
 async function runCompareDiffCase(): Promise<boolean> {
   let ok = true;
@@ -289,14 +291,14 @@ async function runCompareDiffCase(): Promise<boolean> {
 
   const root = createRoot(container);
   root.render(
-    h(GpuComparePane, {
-      imageUrl: RED_PNG_DATA_URL,
-      baselineUrl: RED_PNG_DATA_URL,
-      mode: "diff",
-      splitPosition: 0.5,
-      blendAlpha: 0.5,
-      diffSubmode: "signed",
-      colormap: "red-blue",
+    h(GpuImagePane, {
+      source: urlSource(RED_PNG_DATA_URL),
+      compareSource: {
+        b: urlSource(RED_PNG_DATA_URL),
+        opId: "signed",
+        mode: "diff",
+        colormap: "red-blue",
+      },
       zoom: 1,
       pan: { x: 0, y: 0 },
       label: "compare-diff-fallback-test",
@@ -305,8 +307,8 @@ async function runCompareDiffCase(): Promise<boolean> {
 
   await sleep(1500);
 
-  const gpuCanvasFound = !!container.querySelector("canvas[data-gpu-compare-canvas]");
-  report(!gpuCanvasFound, "[compare/diff] engine bailed BEFORE mounting its own canvas (no [data-gpu-compare-canvas])");
+  const gpuCanvasFound = !!container.querySelector("canvas[data-gpu-image-canvas]");
+  report(!gpuCanvasFound, "[compare/diff] engine bailed BEFORE mounting its own canvas (no [data-gpu-image-canvas])");
   ok = ok && !gpuCanvasFound;
 
   // ImagePane's diff path renders EITHER a <canvas> (diff computed) or an
@@ -316,7 +318,7 @@ async function runCompareDiffCase(): Promise<boolean> {
   const legacyContentFound = await waitFor(
     () => container.querySelectorAll("canvas, img").length > 0,
   );
-  report(legacyContentFound, "[compare/diff] legacy ImagePane content (<canvas>/<img>) mounted (NOT a blank card)");
+  report(legacyContentFound, "[compare/diff] legacy CpuImagePane content (<canvas>/<img>) mounted (NOT a blank card)");
   ok = ok && legacyContentFound;
 
   root.unmount();

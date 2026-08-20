@@ -50,7 +50,7 @@ test("LabelChip: both corners + draggable + accessible grip contract", () => {
 // Every compare pane must render the SHARED chip and NOT hard-code its own
 // inline label chip. The grip icon + drag-grip class are the tells of the old
 // inline copies, so their absence outside LabelChip is the re-divergence guard.
-const CONSUMERS = ["media-compare/compositor.tsx", "media-compare/GpuComparePane.tsx"];
+const CONSUMERS = ["media-compare/compositor.tsx", "renderers/GpuImagePane.tsx"];
 
 test("every compare pane routes its label through the shared LabelChip", () => {
   for (const rel of CONSUMERS) {
@@ -71,21 +71,22 @@ test("every compare pane routes its label through the shared LabelChip", () => {
 
 // Finding 2: the metrics chip's vertical offset must derive from the SAME value
 // that renders the bottom-RIGHT (foreground) caption chip, so it can't silently
-// drift. Both key off `rightCaption`; the metrics className references the
+// drift. Both key off `compareCaps.right`; the metrics className references the
 // derived `metricsBottomClass`, never an independent `bottom-7 : bottom-1` re-test.
-test("GpuComparePane folds the metrics offset into the shared caption-stack flag", () => {
-  const src = read("media-compare/GpuComparePane.tsx");
+// (Post content-op unification, Phase 4, this rides the unified `GpuImagePane`.)
+test("the unified pane folds the metrics offset into the shared caption-stack flag", () => {
+  const src = read("renderers/GpuImagePane.tsx");
   // The bottom-right caption chip presence and the metrics offset both key off
-  // `rightCaption` (the one foreground-caption value).
+  // `compareCaps.right` (the one foreground-caption value).
   assert.match(
     src,
-    /const metricsBottomClass = rightCaption \?/,
-    "metrics offset must derive from the same rightCaption value that renders the chip",
+    /const metricsBottomClass = compareCaps\.right \?/,
+    "metrics offset must derive from the same compareCaps.right value that renders the chip",
   );
   assert.match(
     src,
-    /rightCaption \?[\s(]*<LabelChip[^>]*corner="bottom-right"/,
-    "the bottom-right caption chip is gated on the SAME rightCaption value",
+    /compareCaps\.right \?[\s(]*<LabelChip[^>]*corner="bottom-right"/,
+    "the bottom-right caption chip is gated on the SAME compareCaps.right value",
   );
   assert.match(src, /\$\{metricsBottomClass\}/, "metrics span uses the derived offset");
   // No independent re-test of `label` for the offset (the silent-break shape).

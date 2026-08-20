@@ -5,12 +5,13 @@
  *   node --experimental-strip-types --test \
  *     src/lib/cairn-plot/media-compare/split-divider.test.ts
  *
- * Background: BOTH compare panes (CPU `compositor.tsx`, GPU `GpuComparePane.tsx`)
- * carried a byte-for-byte copy of the divider element AND its ~20-line
- * pointer-capture drag handler, and the copies had begun to diverge (GPU's
- * dbl-click reset called `stopPropagation`, the CPU's did not). They now BOTH
- * consume this one component; the correct dbl-click behavior (`stopPropagation`,
- * so it never also triggers the pane's own view reset) lives here once.
+ * Background: the compare panes carried a byte-for-byte copy of the divider
+ * element AND its ~20-line pointer-capture drag handler, and the copies had
+ * begun to diverge. They now consume this one component; the correct dbl-click
+ * behavior (`stopPropagation`, so it never also triggers the pane's own view
+ * reset) lives here once. Post content-op unification (Phase 4) the split-mode
+ * panes are the unified GPU pane (`renderers/GpuImagePane.tsx`) and the CPU
+ * split/blend fallback (`media-compare/compositor.tsx`'s `MediaComparePane`).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -46,7 +47,7 @@ test("SplitDivider owns the element, the drag handler and the correct dbl-click"
 // One SplitDivider consumer contract: every split-mode pane renders <SplitDivider>
 // and NO pane keeps its own inline divider. The `cairn-plot-split-divider` class
 // now appears ONLY in SplitDivider.tsx across the whole media-compare surface.
-const CONSUMERS = ["media-compare/compositor.tsx", "media-compare/GpuComparePane.tsx"];
+const CONSUMERS = ["media-compare/compositor.tsx", "renderers/GpuImagePane.tsx"];
 
 test("both compare panes consume the shared SplitDivider (no inline copy)", () => {
   for (const rel of CONSUMERS) {

@@ -34,7 +34,7 @@ import {
 } from "./kernels";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl";
 import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../image/encodings/index.ts";
-import { computeMetrics, makeCpuMapSampler, type DiffMetrics } from "./image-engine";
+import { makeCpuMapSampler } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
 import { computeCompareMapping, mappingKey, type CompareMapping } from "./compare-align";
@@ -382,23 +382,10 @@ async function ssimScalarReference(
   return ssimMeanFromLuminanceChunked(lumX, lumY, width, height);
 }
 
-/** Lazily compute + cache the entry's MSE/PSNR/MAE (over the two sources). */
-export async function ensureDiffScalars(
-  device: Device,
-  entry: DiffCacheEntry,
-  texA: Texture,
-  texB: Texture,
-  mapping?: CompareMapping,
-): Promise<DiffMetrics> {
-  if (entry.scalars) return entry.scalars;
-  if (!entry.scalarsPending) {
-    entry.scalarsPending = computeMetrics(device, texA, texB, mapping).then((m) => {
-      entry.scalars = m;
-      return m;
-    });
-  }
-  return entry.scalarsPending;
-}
+// NOTE: `ensureDiffScalars` (the entry-cached MSE/PSNR/MAE helper) was removed
+// in Phase 4 — its only consumer was the deleted `GpuComparePane`. The unified
+// pane computes metrics through the pool (`PaneHandle.computeMetrics`, which
+// calls `image-engine.ts`'s `computeMetrics` directly).
 
 /**
  * Lazily read back the entry's diff RESULT texture into a CPU `Float32Array`

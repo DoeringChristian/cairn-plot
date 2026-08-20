@@ -57,7 +57,6 @@
  */
 import { getSharedDevice } from "./lib/cairn-plot/engine/device";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
-import GpuComparePane from "./lib/cairn-plot/media-compare/GpuComparePane";
 import { listDiffMenuModes } from "./lib/cairn-plot/engine/kernels";
 import { reportCapabilityLimit } from "./lib/cairn-plot/primitives/capability-notice";
 
@@ -99,12 +98,10 @@ async function tryRegister(): Promise<void> {
     await getSharedDevice();
     (window as unknown as { __cairnPlotGpuImagePane?: typeof GpuImagePane }).__cairnPlotGpuImagePane =
       GpuImagePane;
-    // Inject the engine-backed split/blend/diff compare pane for
-    // `media-compare/compositor.tsx` to pick up at runtime (Task 7). Kept off
-    // the static `core` graph — see that file's `__cairnPlotGpuComparePane`
-    // doc — so the engine ships here in the addon, not in core.iife.js.
-    (window as unknown as { __cairnPlotGpuComparePane?: typeof GpuComparePane }).__cairnPlotGpuComparePane =
-      GpuComparePane;
+    // NOTE: no separate compare-pane seam any more (content-op unification,
+    // Phase 4). EVERY image-compare — diff AND split/blend, descriptor-tree AND
+    // the cross-type card/3D-snapshot consumers — renders on the ONE unified
+    // `GpuImagePane` above via `compareSource`; `GpuComparePane` is deleted.
     // Publish the diff-kernel MENU list (id/label pairs) so the CORE
     // view-mode menu (`plot-node.tsx`'s `CompareView`, which owns the side ⇄
     // slide ⇄ blend ⇄ kernel selection) can offer the kernel entries WITHOUT

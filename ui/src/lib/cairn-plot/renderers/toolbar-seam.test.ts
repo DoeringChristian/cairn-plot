@@ -31,7 +31,6 @@ const shell = read("renderers/ImagePaneShell.tsx");
 const backend = read("renderers/image-backend.ts");
 const cpu = read("renderers/CpuImagePane.tsx");
 const gpu = read("renderers/GpuImagePane.tsx");
-const compare = read("media-compare/GpuComparePane.tsx");
 
 // --- the shared contract: the shape carries `toolbar` ---------------------
 
@@ -73,7 +72,6 @@ test("ImagePaneShell: hidden toolbar keeps ONLY the floating notation toggle", (
 for (const [name, src] of [
   ["CpuImagePane", cpu],
   ["GpuImagePane", gpu],
-  ["GpuComparePane", compare],
 ] as const) {
   test(`${name}: forwards a resolved toolbar flag to ImagePaneShell`, () => {
     assert.match(src, /toolbar=\{toolbar\}/, `${name} must pass toolbar={toolbar} to the shell`);
@@ -113,17 +111,10 @@ test("GpuImagePane: base exposure/offset feed the render (additive with sliders)
   assert.match(gpu, /baseOffset \+ displayOffset/, "render offset = base + slider adjustment");
 });
 
-test("GpuComparePane: peak + gamma re-seed (controlled kernel/mode already were)", () => {
-  assert.match(compare, /setPeak\(seedPeak\(\)\)/, "compare peak must re-seed from its prop");
-  assert.match(
-    compare,
-    /if \(gammaProp && gammaProp > 0\) setTonemapGamma\(gammaProp\)/,
-    "compare gamma must re-seed from its prop",
-  );
-  // The already-controlled pair (kept as a re-divergence guard).
-  assert.match(compare, /setCompareModeState\(mode\)/, "compare mode must re-seed");
-  assert.match(compare, /setDiffKernelState\(/, "diff kernel must re-seed");
-});
+// NOTE: the separate "GpuComparePane: peak + gamma re-seed" guard is gone —
+// `GpuComparePane` is deleted (content-op unification, Phase 4). The unified
+// pane's controlled re-seed (peak/encoding, and — in compare mode — mode/kernel
+// via `compareSource`) is covered by the `GpuImagePane` re-seed test above.
 
 test("CpuImagePane HDR: base offset is additive with the runtime OFF slider", () => {
   assert.match(cpu, /baseOffset \+ displayOffset/, "CPU HDR offset = base + slider adjustment");

@@ -17,7 +17,6 @@ import { createElement } from "react";
 import { PlotApp } from "../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../plot-renderers";
 import type { PlotDescriptor } from "../../../plot-descriptor";
-import GpuComparePane from "../media-compare/GpuComparePane";
 import GpuImagePane from "../renderers/GpuImagePane";
 import { listDiffMenuModes } from "../engine/kernels";
 
@@ -119,9 +118,9 @@ async function run(): Promise<boolean> {
   const w = window as unknown as Record<string, unknown>;
   w.__cairnPlotRenderMode = "gpu";
   w.__cairnPlotUseGpuImage = true;
-  w.__cairnPlotGpuComparePane = GpuComparePane;
-  // Diff-mode compares lower to the unified image pane (Phase 2c) — wire it so
-  // `resolveImageRenderer("gpu")` finds it when the active slot flips to diff.
+  // EVERY compare mode lowers to the unified image pane (`GpuImagePane` +
+  // `compareSource`) — `GpuComparePane` is deleted (Phase 4). Wire it so
+  // `resolveImageRenderer("gpu")` finds it when the active slot flips.
   w.__cairnPlotGpuImagePane = GpuImagePane;
   w.__cairnPlotDiffMenuModes = listDiffMenuModes();
 

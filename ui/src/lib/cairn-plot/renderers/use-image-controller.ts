@@ -41,7 +41,7 @@ import { adaptiveMaxZoom, type Viewport } from "../hooks/use-image-viewport";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../primitives/plot-to-png";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
 import { getEncoding, listEncodingsByKind } from "../image/encodings";
-import { SDR_TONEMAP_OPERATORS, SDR_DISPLAY_TRANSFER_OPERATORS } from "../image/tonemap";
+import { SDR_DISPLAY_TRANSFER_OPERATORS } from "../image/tonemap";
 
 /** The registry label for an encoding id, falling back to the id itself. Both the
  *  tone-map and display-transfer menus source their labels from here so they can
@@ -105,61 +105,13 @@ export const COLORMAP_MENU_OPTIONS: { id: string; label: string }[] = [
   ...listEncodingsByKind("lut").map((e) => ({ id: e.id, label: e.label })),
 ];
 
-/**
- * A colormap dropdown as a toolbar LEADING button (menu variant). `value` is the
- * current colormap id; `onSelect` receives the picked id. Shown by a
- * colormap-capable pane (SDR single-image, or the compare pane's diff view) so
- * the colormap can be switched view-locally without leaving the pane. Like the
- * notation button, it's a leading (leftmost) control so its presence never
- * shifts the corner-anchored zoom/pan/reset buttons.
- */
-export function colormapToolbarButton(
-  value: string,
-  onSelect: (id: string) => void,
-): ToolbarButtonSpec {
-  return {
-    id: "colormap",
-    title: "Colormap",
-    menu: { options: COLORMAP_MENU_OPTIONS, value, onSelect },
-  };
-}
-
-/**
- * The user-selectable tone-map operators as a toolbar-menu option list — the
- * pane's ONE operator group (Linear · sRGB · Gamma · Reinhard · ACES · Normal
- * map). Both the SET (`SDR_TONEMAP_OPERATORS`) and the LABELS
- * (`encodingLabel` → the registry entry's `label`) DERIVE from the display-
- * encoding registry, so the menu can never drift from the entries. Under the
- * UNIFIED model there is no separate "Extended · *" group — the PEAK slider is
- * the HDR mode (see {@link tonemapToolbarButton}).
- */
-export const TONEMAP_MENU_OPTIONS: { id: string; label: string }[] =
-  SDR_TONEMAP_OPERATORS.map((id) => ({ id, label: encodingLabel(id) }));
-
-/**
- * A tone-map operator dropdown as a toolbar LEADING button (menu variant),
- * shown on HDR/float image panes only (SDR panes show already-encoded 8-bit
- * pixels, so they have no tone-map stage to switch). `value` is the operator
- * ACTUALLY in effect (see `image/tonemap.ts`'s `resolveEffectiveTonemap`);
- * `onSelect` receives the picked id.
- *
- * UNIFIED model: there is ONE operator group ({@link TONEMAP_MENU_OPTIONS} —
- * Linear · sRGB · Gamma · Reinhard · ACES). There are NO separate "Extended · *"
- * entries: the PEAK slider `P` is the MODE (every operator respects it as its
- * ceiling; SDR is just `P = 1`), so the old two-group menu — which duplicated
- * each curve — is gone. Like the colormap button, it's a leading (leftmost)
- * control so its presence never shifts the corner-anchored zoom/pan/reset buttons.
- */
-export function tonemapToolbarButton(
-  value: string,
-  onSelect: (id: string) => void,
-): ToolbarButtonSpec {
-  return {
-    id: "tonemap",
-    title: "Tone-mapping operator",
-    menu: { options: TONEMAP_MENU_OPTIONS, value, onSelect },
-  };
-}
+// NOTE: `colormapToolbarButton` / `tonemapToolbarButton` (+ the derived
+// `TONEMAP_MENU_OPTIONS`) were removed in Phase 4 (content-op unification) —
+// their last consumer was the deleted `GpuComparePane`. The single-image panes
+// use `displayTransferToolbarButton` (below) + `compareDisplayToolbarButton`
+// (`renderers/display-encoding.ts`); the compare diff colormap rides the SAME
+// `compareDisplayToolbarButton` on the unified pane. `COLORMAP_MENU_OPTIONS`
+// stays — `colormaps/lut.ts` consumes it.
 
 /**
  * The DISPLAY-TRANSFER options for an SDR / 8-bit image pane (menu order

@@ -90,13 +90,10 @@ export {
   type CompareFloatSource,
 } from "./compositor";
 
-// NB: `GpuComparePane` is intentionally NOT re-exported from this barrel — it
-// imports the WebGPU engine, and this barrel is reachable from `core`
-// (the bundle guard keeps `engine/*` out of `core.iife.js`). The lazy
-// gpu-image addon imports it directly by path and injects it at runtime via
-// `window.__cairnPlotGpuComparePane` (see `plot-gpu-image-addon.tsx` /
-// `media-compare/compositor.tsx`).
-export type { GpuComparePaneProps } from "./GpuComparePane";
+// NB: `GpuComparePane` is DELETED (content-op unification, Phase 4). Every
+// image-compare now renders on the unified `GpuImagePane` via `compareSource`
+// (`renderers/image-backend.ts`); `compositor.tsx` resolves it through the
+// `__cairnPlotGpuImagePane` seam the gpu-image addon injects.
 
 export {
   migrateLegacyMode,

@@ -40,7 +40,6 @@ import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
-import GpuComparePane from "../GpuComparePane";
 import GpuImagePane from "../../renderers/GpuImagePane";
 import { InFullscreenOverlayContext } from "../../primitives/FullscreenOverlayShell";
 import { listDiffMenuModes, kernelDefaultColormap } from "../../engine/kernels";
@@ -202,10 +201,10 @@ async function run(): Promise<boolean> {
   const w = window as unknown as Record<string, unknown>;
   w.__cairnPlotRenderMode = "gpu";
   w.__cairnPlotUseGpuImage = true;
-  w.__cairnPlotGpuComparePane = GpuComparePane;
-  // Diff-mode compares now route through the unified image pane (Phase 2c
-  // routing), so a diff pane is a `GpuImagePane` with `compareSource`, not a
-  // `GpuComparePane`. Wire it so `resolveImageRenderer("gpu")` finds it.
+  // EVERY compare mode (diff AND split/blend) now routes through the unified
+  // image pane (`GpuImagePane` + `compareSource`) — `GpuComparePane` is deleted
+  // (content-op unification, Phase 4). Wire it so `resolveImageRenderer("gpu")`
+  // finds it.
   w.__cairnPlotGpuImagePane = GpuImagePane;
   w.__cairnPlotDiffMenuModes = listDiffMenuModes();
   w.__cairnPlotEagerMount = true;
