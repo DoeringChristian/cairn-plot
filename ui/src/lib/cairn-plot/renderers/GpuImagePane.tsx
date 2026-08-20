@@ -84,7 +84,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap, colormapFloatLUT } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
-import { loadImageData, getCachedImageData, setCachedImageData } from "../image";
+import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../image";
 import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
 // Content-op unification (Phase 2c): the DIFF capability. The pane samples a
 // second source slot (`compareSource.b` via the pool's `setSourceB`) and renders
@@ -122,7 +122,14 @@ import PixelValueOverlay, {
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { useResettableState } from "../hooks/use-resettable-state";
-import { acquirePane, releasePane, getCanvasSurfaceForTest, type PaneHandle, type SourceUpload } from "../engine/pool";
+import {
+  acquirePane,
+  releasePane,
+  getCanvasSurfaceForTest,
+  MAX_RETAINED_SOURCE_TEXTURES as POOL_MAX_RETAINED_SOURCE_TEXTURES,
+  type PaneHandle,
+  type SourceUpload,
+} from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
 import type { ImageParams } from "../engine/image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
@@ -462,6 +469,34 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // DIRECT op's cpu twin. Float → the raw DecodedSource; uint8 → the decoded RGBA.
   const refFloatRef = useRef<DecodedSource | null>(null);
   const refU8Ref = useRef<{ data: ArrayLike<number>; width: number; height: number } | null>(null);
+  // FLIP-BACK RETENTION (content-op unification follow-up — residual stacked-flip
+  // flicker). A stacked viewport reuses ONE pane across its slots; flipping BACK
+  // to an already-shown COMPARE slot must present the (content-keyed, still-cached)
+  // diff RESULT SYNCHRONOUSLY — never through an async decode+upload gap that
+  // paints a transient/intermediate frame. This caches the DECODED `SourceUpload`
+  // (the primary reference `a` + foreground `b`) keyed by the slot's content keys,
+  // so a flip back binds without re-decoding; the POOL separately retains the GPU
+  // texture (`PaneHandle.setSource(..., contentKey)`), so neither re-decode nor
+  // re-upload happens. Bounded (LRU) to the pool's retention cap so CPU-buffer
+  // memory can't grow unbounded across many flips. See the setSource/setSourceB
+  // effects below for the synchronous fast-path.
+  const uploadCacheRef = useRef<Map<string, { upload: SourceUpload; ref: DecodedSource }>>(new Map());
+  const rememberUpload = useCallback((key: string, upload: SourceUpload, ref: DecodedSource) => {
+    const m = uploadCacheRef.current;
+    if (m.has(key)) m.delete(key);
+    m.set(key, { upload, ref });
+    while (m.size > POOL_MAX_RETAINED_SOURCE_TEXTURES) {
+      const oldest = m.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      m.delete(oldest);
+    }
+  }, []);
+  // Content-identity diff-cache keys (`a` = primary/`source`, `b` = reference):
+  // a float side keys on its ORIGINAL content key (URL), not the decoded bytes.
+  // Declared here (before the source-upload effects) so those effects can key the
+  // pool retention + the local flip-back upload cache on them.
+  const contentKeyA = compareSource?.contentKeyA ?? "diff:a";
+  const contentKeyB = compareSource?.contentKeyB ?? "diff:b";
 
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
@@ -1050,14 +1085,18 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const hdr = deepFlatten.hdr;
     hdrDataRef.current = hdr;
     const upload = hdrToRGBAFloat32(hdr);
-    paneHandleRef.current?.setSource(upload);
+    // COMPARE primary: key the pool retention on `contentKeyA` so a stacked flip
+    // back rebinds the resident float texture (no GPU re-upload). This effect is
+    // already SYNCHRONOUS (no async decode), so there is no flip-back gap to close
+    // beyond the upload itself. Unkeyed for the single-image path.
+    paneHandleRef.current?.setSource(upload, hasCompare ? contentKeyA : undefined);
     setNaturalDims((prev) =>
       prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
     );
     setPixelDataVersion((v) => v + 1);
     setUploadVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, deepActive, hdrMode ? deepFlatten.hdr : null]);
+  }, [hdrMode, paneReady, deepActive, hdrMode ? deepFlatten.hdr : null, hasCompare, hasCompare ? contentKeyA : null]);
 
   // DEEP GPU-composite upload: fetch the Z-sorted samples ONCE, upload them to
   // GPU storage buffers, and composite the full window [zMin, zMax] into the
@@ -1114,6 +1153,37 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // source to render into it).
       return;
     }
+    // COMPARE mode keys the pool retention on the reference's content identity
+    // (`contentKeyA`) so a stacked flip BACK to this slot rebinds the resident
+    // primary texture instead of re-uploading. Unkeyed for the single-image path.
+    const primaryKey = hasCompare ? contentKeyA : undefined;
+    const applySdr = (raw: ImageData, display: ImageData, p2: SdrImageProps) => {
+      sdrImageDataRef.current = raw; // TEV overlay reads the RAW source, like ImagePane.
+      const upload: SourceUpload = {
+        data: display.data,
+        width: display.width,
+        height: display.height,
+        format: "rgba8unorm",
+      };
+      paneHandleRef.current?.setSource(upload, primaryKey);
+      setNaturalDims((prev) =>
+        prev && prev.w === display.width && prev.h === display.height ? prev : { w: display.width, h: display.height },
+      );
+      p2.onNaturalSize?.(display.width, display.height);
+      setPixelDataVersion((v) => v + 1);
+      setUploadVersion((v) => v + 1);
+    };
+    // FLIP-BACK FAST PATH (compare primary only — the raw source, colormap "none"):
+    // if the decode is already resident, bind SYNCHRONOUSLY so the diff presents on
+    // this commit (no async gap, no intermediate frame). The single-image colormap
+    // path keeps its async bake below (unchanged).
+    if (hasCompare && colormap === "none") {
+      const raw = getCachedLoadedImageData(imageUrl);
+      if (raw) {
+        applySdr(raw, raw, p);
+        return;
+      }
+    }
     let cancelled = false;
     loadImageData(imageUrl).then((raw) => {
       if (cancelled || !raw) return;
@@ -1138,22 +1208,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           setCachedImageData(cacheKey, display);
         }
       }
-      sdrImageDataRef.current = raw; // TEV overlay reads the RAW source, like ImagePane.
-      const upload: SourceUpload = {
-        data: display.data,
-        width: display.width,
-        height: display.height,
-        format: "rgba8unorm",
-      };
-      paneHandleRef.current?.setSource(upload);
-      setNaturalDims((prev) =>
-        prev && prev.w === display.width && prev.h === display.height
-          ? prev
-          : { w: display.width, h: display.height },
-      );
-      p.onNaturalSize?.(display.width, display.height);
-      setPixelDataVersion((v) => v + 1);
-      setUploadVersion((v) => v + 1);
+      applySdr(raw, display, p);
     });
     return () => {
       cancelled = true;
@@ -1168,6 +1223,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // colormap is active; harmless (re-uploads the raw) otherwise.
     hdrMode ? 0 : displayEV,
     hdrMode ? 0 : displayOffset,
+    // Compare primary keys the pool retention on `contentKeyA` (flip-back).
+    hasCompare,
+    hasCompare ? contentKeyA : null,
   ]);
 
   // -----------------------------------------------------------------------
@@ -1188,10 +1246,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       refU8Ref.current = null;
       return;
     }
-    let cancelled = false;
-    decodedSourceToUpload(b).then((upload) => {
-      if (cancelled || !upload) return;
-      paneHandleRef.current?.setSourceB(upload);
+    const key = contentKeyB;
+    // Apply a decoded upload to the pool + local readout refs + versions. Shared
+    // by the SYNCHRONOUS flip-back path (cache hit) and the async decode path so a
+    // flip back to a resident diff slot presents the cached RESULT on the same
+    // commit — no async gap, no intermediate frame.
+    const apply = (upload: SourceUpload) => {
+      paneHandleRef.current?.setSourceB(upload, key);
       // Retain the reference pixels for the DIRECT-op cpu-twin readout.
       if (b.dtype === "float") {
         refFloatRef.current = b;
@@ -1204,12 +1265,27 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
       );
       setRefUploadVersion((v) => v + 1);
+    };
+    const cached = uploadCacheRef.current.get(key);
+    if (cached) {
+      // FLIP-BACK FAST PATH: decoded upload already resident (and the pool retains
+      // the GPU texture under `key`) — bind synchronously, no `.then`.
+      uploadCacheRef.current.delete(key); // touch → most-recently-used
+      uploadCacheRef.current.set(key, cached);
+      apply(cached.upload);
+      return;
+    }
+    let cancelled = false;
+    decodedSourceToUpload(b).then((upload) => {
+      if (cancelled || !upload) return;
+      rememberUpload(key, upload, b);
+      apply(upload);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, hasCompare, compareSource?.b]);
+  }, [paneReady, hasCompare, compareSource?.b, contentKeyB]);
 
   // Align/fit overlap mapping for the two operands (a = `source`/reference, b =
   // foreground) — folds into the diff cache key + the metrics reduction region
@@ -1242,11 +1318,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return computeHdrFlipExposures(refData, w, h, c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diffMode, sourcesAreFloat, backendProps.source]);
-
-  // Content-identity diff-cache keys (`a` = primary/`source`, `b` = reference):
-  // a float side keys on its ORIGINAL content key (URL), not the decoded bytes.
-  const contentKeyA = compareSource?.contentKeyA ?? "diff:a";
-  const contentKeyB = compareSource?.contentKeyB ?? "diff:b";
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +

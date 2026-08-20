@@ -68,6 +68,26 @@ import { forceEngineFailRequested } from "./test-hooks";
  */
 export const MAX_LIVE_SWAPCHAINS = 12;
 
+/**
+ * Cap on the number of CONTENT-KEYED source textures a single pane retains for
+ * instant flip-back (see `PaneEntry.retained`). A stacked viewport reuses ONE
+ * pane across its slots and re-drives it via `setSource`/`setSourceB` on every
+ * flip; without retention each flip re-uploads the slot's source texture (the
+ * `createTexture`+`write` cost, async behind the caller's decode), so flipping
+ * BACK to an already-shown slot re-pays it and the cached diff RESULT can't be
+ * presented until the re-upload lands — the reported residual flicker. When the
+ * caller supplies a content key, the pool KEEPS the uploaded texture in a small
+ * per-pane LRU so a flip back to that key rebinds it SYNCHRONOUSLY (no
+ * re-upload). 6 covers the common stacks (a `[image, diff]` pair needs 3 keyed
+ * textures — image, reference, foreground — and a 3-slot diff stack ~4–6)
+ * while bounding resident source-texture memory; older keys evict (LRU) and
+ * re-upload on their next visit. The retained set is per LIVE pane and is freed
+ * wholesale on `park()`/`dispose()` — the pool's existing park/LRU discipline
+ * (`MAX_LIVE_SWAPCHAINS`) stays the ultimate cap authority, so this never leaks
+ * unbounded GPU memory (an off-screen pane holds ZERO retained textures).
+ */
+export const MAX_RETAINED_SOURCE_TEXTURES = 6;
+
 /** A CPU-side source buffer + the GPU texture layout to upload it as. */
 export interface SourceUpload {
   width: number;
@@ -95,8 +115,16 @@ export interface PaneHandle {
    * `src.width/height` directly — the source's native resolution — which
    * the browser then CSS-upscaled to the pane's actual on-screen size,
    * producing blurry edges and sub-pixel jitter on zoom/pan.
+   *
+   * `contentKey` (optional) opts this slot into CONTENT-KEYED RETENTION (see
+   * {@link MAX_RETAINED_SOURCE_TEXTURES}): the uploaded texture is kept in a
+   * small per-pane LRU under the key, so a later `setSource` with the SAME key
+   * (a stacked-viewport flip BACK to an already-shown slot) rebinds the resident
+   * texture instead of re-uploading (`createTexture`+`write`). Omit it for the
+   * plain single-image path (unkeyed, exclusive, freed on replace) — byte- and
+   * lifecycle-identical to before.
    */
-  setSource(src: SourceUpload): void;
+  setSource(src: SourceUpload, contentKey?: string): void;
   /**
    * Set (or clear) the SECOND source buffer `b` — the reference/baseline operand
    * of an arity-2 diff CONTENT op (`image/content-ops`). Retained by the pool
@@ -108,8 +136,12 @@ export interface PaneHandle {
    * texture as `srcB`, so a `params.contentOpId` selecting a `direct` diff op
    * (signed/absolute/…) samples both slots; the single-image (identity) path is
    * unaffected when `b` is null (a 1x1 placeholder is bound and opId 0 ignores it).
+   *
+   * `contentKey` (optional) opts the `b` slot into the SAME content-keyed
+   * retention {@link setSource} documents — a stacked flip back to a diff slot
+   * rebinds the reference texture synchronously instead of re-uploading it.
    */
-  setSourceB(src: SourceUpload | null): void;
+  setSourceB(src: SourceUpload | null, contentKey?: string): void;
   /**
    * DEEP-EXR GPU composite source (the depth slider on GPU panes). Uploads the
    * Z-sorted samples to GPU storage buffers ONCE and composites the window
@@ -245,6 +277,18 @@ interface PaneEntry {
    *  `PaneHandle.setSourceB`. */
   sourceB: SourceUpload | null;
   srcTextureB: Texture | null;
+  /** Content key of the CURRENT primary/`b` source (see `PaneHandle.setSource`'s
+   *  `contentKey`). `undefined` = the slot's texture is UNKEYED (exclusive, freed
+   *  on replace/park); a string = the texture is owned by `retained` under this
+   *  key (kept for instant flip-back). */
+  sourceKey: string | undefined;
+  sourceBKey: string | undefined;
+  /** CONTENT-KEYED source-texture LRU (insertion-order = LRU order), capped at
+   *  {@link MAX_RETAINED_SOURCE_TEXTURES}. Holds the keyed textures BOTH slots
+   *  bind (a stacked pane's recently-shown slots), so a flip back to a resident
+   *  key rebinds without a re-upload. Owns its textures: freed wholesale on
+   *  `parkEntry`/`dispose` (an off-screen pane retains nothing). */
+  retained: Map<string, Texture>;
   /** DEEP-EXR GPU composite source (retained CSR) — mutually exclusive with
    *  `source`; when set, `srcTexture` is filled by `compositeDeep`, not a CPU
    *  upload. See `PaneHandle.setDeepSource`. */
@@ -285,18 +329,74 @@ function untrack(entry: PaneEntry): void {
   if (i !== -1) live.splice(i, 1);
 }
 
+/**
+ * Upload `src` into a source texture, or REBIND an already-resident one when
+ * `key` names a retained upload. When `key` is given, the returned texture is
+ * owned by `entry.retained` (kept for flip-back); when absent, the caller owns
+ * it exclusively (unkeyed, freed on replace). A keyed hit re-inserts the key as
+ * most-recently-used; a keyed miss uploads, retains, and evicts the LRU.
+ */
+function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | undefined): Texture {
+  if (key !== undefined) {
+    const existing = entry.retained.get(key);
+    if (existing) {
+      // Touch: move to most-recently-used (Map insertion order = LRU order).
+      entry.retained.delete(key);
+      entry.retained.set(key, existing);
+      return existing;
+    }
+    const tex = entry.device.createTexture(src.width, src.height, src.format);
+    tex.write(src.data);
+    entry.retained.set(key, tex);
+    evictRetained(entry);
+    return tex;
+  }
+  const tex = entry.device.createTexture(src.width, src.height, src.format);
+  tex.write(src.data);
+  return tex;
+}
+
+/** Evict the LRU retained textures down to the cap, never destroying one that is
+ *  the CURRENTLY-bound `srcTexture`/`srcTextureB` (skips to the next oldest). */
+function evictRetained(entry: PaneEntry): void {
+  while (entry.retained.size > MAX_RETAINED_SOURCE_TEXTURES) {
+    let victimKey: string | undefined;
+    for (const [k, tex] of entry.retained) {
+      if (tex !== entry.srcTexture && tex !== entry.srcTextureB) {
+        victimKey = k;
+        break;
+      }
+    }
+    if (victimKey === undefined) break; // every retained texture is currently bound
+    const tex = entry.retained.get(victimKey)!;
+    entry.retained.delete(victimKey);
+    tex.destroy();
+  }
+}
+
+/** Free the texture a slot last bound, IF it was unkeyed (exclusive). Keyed
+ *  textures stay in `retained` for flip-back; the caller drops the slot's ref. */
+function releaseUnkeyedSlotTexture(tex: Texture | null, key: string | undefined): void {
+  if (tex && key === undefined) tex.destroy();
+}
+
+/** Destroy every retained texture and clear the map (park/dispose). */
+function clearRetained(entry: PaneEntry): void {
+  for (const tex of entry.retained.values()) tex.destroy();
+  entry.retained.clear();
+}
+
 /** Free `entry`'s live GPU resources; leaves `entry.source` (CPU buffer) intact. */
 function parkEntry(entry: PaneEntry): void {
   if (entry.parked) return;
   untrack(entry);
-  if (entry.srcTexture) {
-    entry.srcTexture.destroy();
-    entry.srcTexture = null;
-  }
-  if (entry.srcTextureB) {
-    entry.srcTextureB.destroy();
-    entry.srcTextureB = null;
-  }
+  // Free the currently-bound slot textures IF unkeyed; keyed ones are owned by
+  // `retained` and freed by `clearRetained` below (no double-destroy).
+  releaseUnkeyedSlotTexture(entry.srcTexture, entry.sourceKey);
+  entry.srcTexture = null;
+  releaseUnkeyedSlotTexture(entry.srcTextureB, entry.sourceBKey);
+  entry.srcTextureB = null;
+  clearRetained(entry);
   if (entry.deepBuffers) {
     entry.deepBuffers.destroy();
     entry.deepBuffers = null;
@@ -365,18 +465,15 @@ function activateEntry(entry: PaneEntry): void {
     entry.deepBuffers = device.createDeepSampleBuffers!(entry.deep);
     device.compositeDeep!(entry.deepBuffers, tex, entry.deepZNear, entry.deepZFar);
   } else if (entry.source) {
-    const tex = device.createTexture(entry.source.width, entry.source.height, entry.source.format);
-    tex.write(entry.source.data);
-    entry.srcTexture = tex;
+    // Re-upload the current primary (park cleared `retained`), re-seeding the
+    // content-keyed retention if the source carries a key.
+    entry.srcTexture = uploadOrBindSource(entry, entry.source, entry.sourceKey);
   }
   // SECOND source slot `b` (arity-2 diff ops) — retained + re-uploaded on every
   // (re)activate exactly like the primary `a` buffer. Null for the single-image
   // path (no texture allocated).
   if (entry.sourceB) {
-    if (entry.srcTextureB) entry.srcTextureB.destroy();
-    const texB = device.createTexture(entry.sourceB.width, entry.sourceB.height, entry.sourceB.format);
-    texB.write(entry.sourceB.data);
-    entry.srcTextureB = texB;
+    entry.srcTextureB = uploadOrBindSource(entry, entry.sourceB, entry.sourceBKey);
   }
   entry.parked = false;
   touchMostRecentlyUsed(entry);
@@ -513,7 +610,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     get isParked() {
       return entry.parked;
     },
-    setSource(src: SourceUpload): void {
+    setSource(src: SourceUpload, contentKey?: string): void {
       if (entry.disposed) return;
       entry.source = src;
       // A plain CPU source supersedes any prior DEEP composite source.
@@ -526,28 +623,43 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       // driven by the pane's ON-SCREEN display size, not this source
       // texture's own resolution.
       if (!entry.parked && entry.surface) {
-        if (entry.srcTexture) entry.srcTexture.destroy();
-        const tex = entry.device.createTexture(src.width, src.height, src.format);
-        tex.write(src.data);
+        const prev = entry.srcTexture;
+        const prevKey = entry.sourceKey;
+        // Content-keyed retention: a keyed hit rebinds the resident texture (no
+        // re-upload — the flip-back fast path); otherwise upload. The PREVIOUS
+        // texture is freed only if it was unkeyed — a keyed one stays in
+        // `retained` for its own flip-back (and may be `prev` itself on a
+        // same-key re-set, in which case `uploadOrBindSource` returns it).
+        const tex = uploadOrBindSource(entry, src, contentKey);
+        if (prev && prev !== tex) releaseUnkeyedSlotTexture(prev, prevKey);
         entry.srcTexture = tex;
+        entry.sourceKey = contentKey;
+      } else {
+        // Parked: the new source is picked up by the next activateEntry();
+        // record its key so that upload re-seeds retention correctly.
+        entry.sourceKey = contentKey;
       }
-      // Parked: the new source is picked up by the next activateEntry().
     },
-    setSourceB(src: SourceUpload | null): void {
+    setSourceB(src: SourceUpload | null, contentKey?: string): void {
       if (entry.disposed) return;
       entry.sourceB = src;
       if (!entry.parked && entry.surface) {
-        if (entry.srcTextureB) {
-          entry.srcTextureB.destroy();
-          entry.srcTextureB = null;
-        }
+        const prev = entry.srcTextureB;
+        const prevKey = entry.sourceBKey;
         if (src) {
-          const tex = entry.device.createTexture(src.width, src.height, src.format);
-          tex.write(src.data);
+          const tex = uploadOrBindSource(entry, src, contentKey);
+          if (prev && prev !== tex) releaseUnkeyedSlotTexture(prev, prevKey);
           entry.srcTextureB = tex;
+          entry.sourceBKey = contentKey;
+        } else {
+          if (prev) releaseUnkeyedSlotTexture(prev, prevKey);
+          entry.srcTextureB = null;
+          entry.sourceBKey = undefined;
         }
+      } else {
+        // Parked: picked up by the next activateEntry().
+        entry.sourceBKey = src ? contentKey : undefined;
       }
-      // Parked: the new second source is picked up by the next activateEntry().
     },
     setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number): void {
       if (entry.disposed) return;
@@ -557,7 +669,10 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       entry.source = null; // mutually exclusive with a CPU source
       if (!entry.parked && entry.surface) {
         // Rebuild the composite target + storage buffers, then composite once.
-        if (entry.srcTexture) entry.srcTexture.destroy();
+        // A deep source is never a keyed (compare) source, but free the prior
+        // texture retention-safely regardless (keyed → owned by `retained`).
+        releaseUnkeyedSlotTexture(entry.srcTexture, entry.sourceKey);
+        entry.sourceKey = undefined;
         if (entry.deepBuffers) entry.deepBuffers.destroy();
         const tex = entry.device.createTexture(spec.width, spec.height, "rgba16float");
         entry.srcTexture = tex;
@@ -624,9 +739,11 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     dispose(): void {
       if (entry.disposed) return;
-      parkEntry(entry); // frees srcTexture + srcTextureB + deepBuffers
+      parkEntry(entry); // frees srcTexture + srcTextureB + retained + deepBuffers
       entry.source = null;
       entry.sourceB = null;
+      entry.sourceKey = undefined;
+      entry.sourceBKey = undefined;
       entry.deep = null;
       entry.disposed = true;
     },
@@ -657,6 +774,9 @@ export async function acquirePane(
     source: null,
     sourceB: null,
     srcTextureB: null,
+    sourceKey: undefined,
+    sourceBKey: undefined,
+    retained: new Map(),
     deep: null,
     deepZNear: -Infinity,
     deepZFar: Infinity,

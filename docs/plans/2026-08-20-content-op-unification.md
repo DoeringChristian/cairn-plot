@@ -217,6 +217,77 @@ deleted pane were updated to the unified-pane wording.
 synced + committed; report (63 blocks) + gallery (27 types) regen clean; live
 report spot-check.
 
+## Follow-up — DONE: residual stacked-flip flicker (source retention)
+
+**User report.** Flipping slots in a stacked viewport containing a diff (the
+report's Validation `[image, FLIP]` stack, rapid arrow-key flipping) still
+flickered. Hypothesis in the report: "the error is RE-COMPUTED on each switch."
+
+**Root cause (MEASURED, not guessed).** A self-driving GPU harness
+(`renderers/__tests__/stacked-diff-flip.browser.ts`) drives ONE reused
+`GpuImagePane` through `image → diff → image → diff …` (the homogeneous
+source-swap Phase 2c produces) and counts `getDiffComputeCount()` + source-texture
+uploads across the round-trip. It refuted the recompute hypothesis and isolated
+the real gap:
+
+- **Diff RESULT — already retained.** Per-revisit `getDiffComputeCount()` delta is
+  `0` — the content-keyed diff cache (`diff-cache.ts`, keyed by
+  `(contentKeyA, contentKeyB, kernel, params, mapping)`) HITS on every flip-back;
+  the FLIP result is NOT recomputed. (First visit is `+2` = the FLIP result + the
+  SSIM metric entry, both then cache-stable.) So the reported "re-computed on each
+  switch" was wrong for the cached FLIP.
+- **SOURCE textures — re-uploaded EVERY flip (the real cost).** Per-revisit
+  source-upload delta was `[1,1,1]`: `GpuImagePane`'s `setSource`/`setSourceB`
+  effects always ran the async decode→`createTexture`+`write` path, and the pool
+  held only ONE source per slot (overwritten on flip, discarded on flip-away), so a
+  flip BACK re-decoded + re-uploaded. The cached-result present was DEFERRED behind
+  that async re-upload (the diff render gates on `refDims`, set only when the async
+  `setSourceB` resolves), so the pane painted a transient/intermediate frame before
+  settling. Live confirmation on the served Validation stack: the pane went
+  outgoing-image → a DISTINCT intermediate → settled-diff (three distinct
+  frame fingerprints); never blank (the frame was held), but visibly perturbed on
+  rapid flipping.
+
+**Fix — CONTENT-KEYED SOURCE RETENTION (two cooperating caches).**
+- **Pool (GPU textures).** `PaneHandle.setSource`/`setSourceB` take an optional
+  `contentKey`; the pool keeps keyed uploads in a small per-pane LRU
+  (`PaneEntry.retained`, `uploadOrBindSource`/`evictRetained`). A flip back to a
+  resident key REBINDS the texture (no `createTexture`+`write`); the unkeyed
+  single-image / deep paths are byte- and lifecycle-identical (an unkeyed texture
+  is still freed on replace).
+- **Pane (decoded uploads).** `GpuImagePane` caches the decoded `SourceUpload`
+  keyed by `contentKeyA`/`contentKeyB` (`uploadCacheRef`) and, on a flip-back hit,
+  binds SYNCHRONOUSLY (no `.then`) — `refDims` is set on the same effect pass, so
+  the cache-hit diff blits without an async gap or an intermediate frame. The SDR
+  compare-primary reuses the existing URL decode cache (`getCachedLoadedImageData`)
+  for its synchronous path; the HDR primary was already synchronous (just keyed).
+- **Present discipline.** Unchanged and preserved — the pane holds the previous
+  frame until the new slot is ready; it never clears. With retention that "ready"
+  is now synchronous on flip-back.
+
+**Retention policy + memory bounds.** Both caches are bounded by
+`MAX_RETAINED_SOURCE_TEXTURES = 6` (pool export, reused by the pane's upload
+cache) — enough for the common stacks (a `[image, diff]` pair needs 3 keyed
+textures: image, reference, foreground; a 3-slot diff stack ~4–6). Older keys
+evict LRU and re-upload on their next visit. The retained set is **per LIVE pane**
+and freed WHOLESALE on `park()`/`dispose()`, so an off-screen pane retains ZERO
+textures — the pool's existing park/LRU discipline (`MAX_LIVE_SWAPCHAINS`) stays
+the ultimate cap authority; no unbounded GPU (or CPU-buffer) growth.
+
+**Harness added.** `renderers/__tests__/stacked-diff-flip.browser.{ts,html}`
+(default set, now 26 harnesses) asserts across a 4-visit stacked flip: per-revisit
+diff-recompute delta all `0`, per-revisit source-upload delta all `0` (was
+`[1,1,1]`), each visit paints non-blank, and the retained result presents
+identical settled content each flip-back. (Immediate-readback blank-sampling was
+dropped as unreliable — an in-DOM canvas rotates its swapchain back-buffer
+mid-present, the documented `gpu-image-diff` readback gotcha.)
+
+**Gates.** typecheck; 615 node tests; ALL 26 parity harnesses (metal-3, incl. the
+new one, stable across repeat runs); 243 pytest; gpu-image bundle rebuilt
+(369→370 KB) + synced + committed; report (63 blocks) + gallery (27 types) regen
+clean; live report spot-check — no blank frame, no distinct intermediate, settled
+content stable across flips, no console errors.
+
 ## Phase 3 — DONE (commits 9f70506, 04a5e64, a96ab54, + the harness/doc commit)
 
 split/blend became `direct` compositor ContentOps on the unified pane; the last
