@@ -45,8 +45,10 @@
  * `GpuImagePane`'s C1 fallback) use the default `toolbar={true}`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import PaneUnavailable from "../primitives/PaneUnavailable";
+import LabelChip from "../primitives/LabelChip";
+import RefBadge from "../primitives/RefBadge";
 import type { Colormap, DiffMode, Interpolation } from "../types";
 import { autoImageRendering, containScreenPxPerTexel } from "./interp-auto";
 // The ONE shared magnification threshold — the SAME constant `GpuImagePane`
@@ -384,6 +386,10 @@ function CpuSdrImagePane(
     toolbar?: boolean;
     settingsSyncGroupId?: string;
     syncIsAnchor?: boolean;
+    /** COMPARE chrome (caption chips + REF badge) when this pane renders a
+     *  compare's reference (degraded CPU fallback); suppresses the label chip. */
+    compareChrome?: ReactNode;
+    isCompareMode?: boolean;
   },
 ) {
   const {
@@ -1024,12 +1030,15 @@ function CpuSdrImagePane(
       // per-pixel re-encode pipeline this path doesn't have. The GPU SDR backend
       // (`GpuImagePane`) applies both in-shader, and the CPU HDR path recomputes
       // its tone-map pass — so `displayAdjust` is wired there, just not here.
-      label={label}
+      // COMPARE mode: the caption chips carry the labeling (suppress the pane's
+      // own label chip); else the ordinary bottom-left label.
+      label={props.isCompareMode ? "" : label}
       // Gate on a non-empty label (matching the CPU HDR path + `GpuImagePane`),
       // so an empty label renders NO chip. The `side`-compare reference pane
       // relies on this: it passes `label=""` and shows the shared top-left
       // `RefBadge` instead of a bottom-left "REF" label chip.
-      showLabelChip={!!label}
+      showLabelChip={!props.isCompareMode && !!label}
+      extraChips={props.compareChrome}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
     />
@@ -1047,6 +1056,10 @@ function CpuHdrImagePane(
     toolbar?: boolean;
     settingsSyncGroupId?: string;
     syncIsAnchor?: boolean;
+    /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
+     *  fallback; suppresses the label chip. See {@link cpuCompareChrome}. */
+    compareChrome?: ReactNode;
+    isCompareMode?: boolean;
   },
 ) {
   const {
@@ -1474,8 +1487,9 @@ function CpuHdrImagePane(
         !!props.channelModified
       }
       histogram={histogramSource}
-      label={label}
-      showLabelChip={!!label}
+      label={props.isCompareMode ? "" : label}
+      showLabelChip={!props.isCompareMode && !!label}
+      extraChips={props.compareChrome}
     />
   );
 }
@@ -1495,16 +1509,63 @@ export type CpuImagePaneProps = ImageBackendProps;
  * representations via {@link useLegacyImageProps}; the sub-panes below are
  * unchanged.
  */
+/**
+ * COMPARE chrome for the CPU backend (content-op unification, Phase 3). The
+ * unified COMPOSITOR lives on the GPU pane (`GpuImagePane`); the CPU backend is
+ * the no-WebGPU / render=cpu FALLBACK, so on `compareSource` it renders the
+ * REFERENCE image (the primary `source`) DEGRADED — no live composite of the
+ * foreground — but keeps the compare CHROME (per-side caption chips + the split
+ * REF badge, same DOM/selectors as the GPU pane) so the reference re-pick
+ * gesture + labeling still work. A real CPU composite is Phase 4 ("CpuImagePane
+ * gets the cpu twins"). Captions are inlined (NOT `compareCaptions`, which pulls
+ * `engine/kernels` into the CORE bundle — the CPU pane must stay engine-free). */
+function cpuCompareChrome(cs: ImageBackendProps["compareSource"]): ReactNode {
+  if (!cs) return undefined;
+  const mode = cs.mode ?? "diff";
+  if (mode === "diff") {
+    // ONE bottom-left caption "<fg> compared to <ref>" (no metric display name —
+    // that needs the kernel registry the CPU bundle must not import).
+    const fg = cs.foregroundLabel || "image";
+    const ref = cs.referenceLabel || "reference";
+    return (
+      <LabelChip
+        label={`${fg} compared to ${ref}`}
+        corner="bottom-left"
+        attrs={{ "data-cairn-compare-caption": "reference" }}
+      />
+    );
+  }
+  // split / blend: REFERENCE bottom-left, FOREGROUND bottom-right (the foreground
+  // chip is the selection stage's click-to-set-reference affordance).
+  return (
+    <>
+      {mode === "split" && <RefBadge />}
+      {cs.referenceLabel ? (
+        <LabelChip label={cs.referenceLabel} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+      ) : null}
+      {cs.foregroundLabel ? (
+        <LabelChip label={cs.foregroundLabel} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
+      ) : null}
+    </>
+  );
+}
+
 export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Element {
   const props = useLegacyImageProps(backendProps);
-  // The selection settings-sync fields ride ALONGSIDE the reconstructed legacy
-  // props (they aren't part of the dtype-keyed `LegacyImageProps` shape).
+  // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
+  // reconstructed legacy props (they aren't part of the dtype-keyed
+  // `LegacyImageProps` shape).
+  const isCompare = !!backendProps.compareSource;
   const sync = {
     settingsSyncGroupId: backendProps.settingsSyncGroupId,
     syncIsAnchor: backendProps.syncIsAnchor,
     channelMenu: backendProps.channelMenu,
     channelModified: backendProps.channelModified,
     onChannelReset: backendProps.onChannelReset,
+    // In compare mode the caption chips carry the labeling — suppress the pane's
+    // own bottom-left label chip and hand the shell the compare chrome.
+    compareChrome: cpuCompareChrome(backendProps.compareSource),
+    isCompareMode: isCompare,
   };
   return isHdrProps(props) ? (
     <CpuHdrImagePane {...props} {...sync} />

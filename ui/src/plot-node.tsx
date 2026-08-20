@@ -23,7 +23,6 @@ import React, {
 } from "react";
 import {
   Colorbar,
-  CompositeMediaPane,
   decodeImageSource,
   parseNpy,
   parseOverlay,
@@ -32,10 +31,7 @@ import {
   type ColormapName,
   type CompareFloatSource,
   type DataSource,
-  type DiffMode,
   type ImageOverlayData,
-  type ImageProcessing,
-  type Interpolation,
 } from "./lib/cairn-plot";
 import { f16BitsToFloat32 } from "./lib/cairn-plot/image/half";
 import type {
@@ -63,7 +59,6 @@ import {
   REFERENCE_COLOR_RGB,
   type SelectionMode,
 } from "./lib/cairn-plot/viewport/selection-store";
-import { useSyncedImageViewport } from "./lib/cairn-plot/renderers/use-synced-image-viewport";
 import {
   EnlargeInterceptContext,
   type EnlargeIntercept,
@@ -75,7 +70,6 @@ import {
 } from "./plot-selection-pane-registry";
 import {
   GridUniformAspectContext,
-  GridCellReporter,
   DEFAULT_GRID_CELL_ASPECT,
   VIEWPORT_HEIGHT_MARGIN,
   useUniformGridAspect,
@@ -87,8 +81,8 @@ import {
   stackLabelFor,
 } from "./lib/cairn-plot/stack/StackedView";
 import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
+import { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import {
-  ChartBox,
   ChartFillContext,
   DEFAULT_CHART_HEIGHT,
 } from "./plot-standalone-helpers";
@@ -356,10 +350,11 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // the settings-sync group + anchor flag come only from an active selection.
   const mergedProps = useMemo<Record<string, unknown>>(() => {
     if (state.status !== "ready") return {};
-    // DIFF path: the resolved reference `source` + the LIVE `compareSource` (the
-    // decoded foreground + content keys from the cache, plus the per-render diff
-    // settings/callbacks). No shared-colormap merge, no channel strip — those are
-    // single-image concerns. `node.props` carries the synth leaf's view controls
+    // COMPARE path (diff + split/blend): the resolved reference `source` + the
+    // LIVE `compareSource` (the decoded foreground + content keys from the cache,
+    // plus the per-render mode/kernel/split/blend settings + callbacks). No
+    // shared-colormap merge, no channel strip — those are single-image concerns.
+    // `node.props` carries the synth leaf's view controls
     // (interpolation/showAxes/toolbar/pixelValueNotation).
     if (diffSpec) {
       const dp = state.dataProps;
@@ -371,6 +366,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       const compareSource: CompareSource = {
         b: dp.__diffB as DecodedSource,
         opId: diffSpec.diffKernel,
+        mode: diffSpec.mode,
         colormap: diffSpec.colormap,
         align: diffSpec.align,
         fit: diffSpec.fit,
@@ -378,8 +374,14 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         contentKeyB: dp.__diffContentKeyB as string,
         referenceLabel: diffSpec.referenceLabel,
         foregroundLabel: diffSpec.foregroundLabel,
+        splitPosition: diffSpec.splitPosition,
+        blendAlpha: diffSpec.blendAlpha,
+        inStackedGrid: diffSpec.inStackedGrid,
+        inOverlay: diffSpec.inOverlay,
         onDiffKernelChange: diffSpec.onDiffKernelChange,
         onCompareModeChange: diffSpec.onCompareModeChange,
+        onSplitPositionChange: diffSpec.onSplitPositionChange,
+        onBlendAlphaChange: diffSpec.onBlendAlphaChange,
       };
       return {
         ...(node.props ?? {}),
@@ -616,23 +618,41 @@ function frameContentKey(f: ResolvedCompareFrame, fallback: string): string {
   return f.float?.contentKey ?? f.url ?? fallback;
 }
 
-/** The LIVE diff settings + resolved foreground operand a diff-mode compare
- *  hands `LeafView`. The reference operand IS the synthesized leaf's `node.data`
- *  (resolved through the leaf's own cache); this carries everything else. */
+/** The LIVE compare settings + resolved foreground operand a compare node hands
+ *  `LeafView` (Phase 3: EVERY mode — diff AND split/blend — lowers here, so the
+ *  whole compare family renders through the ONE unified pane). The reference
+ *  operand IS the synthesized leaf's `node.data` (resolved through the leaf's own
+ *  cache); this carries everything else. */
 interface DiffLeafSpec {
   /** The foreground/comparison operand (`compareSource.b`). */
   fgData: DataSpec;
-  /** The diff MODE (a kernel/menu token) — lifted state, seeds the pane. */
+  /** The compare MODE (`diff` | `split` | `blend`) — lifted state. Diff renders
+   *  the scalar-error kernel; split/blend render the LIGHT compositor. */
+  mode: CompareViewMode;
+  /** The diff KERNEL (a menu token) — always a real kernel, seeds the pane's diff
+   *  face even while `mode` is a compositor mode. */
   diffKernel: string;
   /** Authored colormap override (`"none"` follows the kernel default). */
   colormap: CompareSource["colormap"];
+  /** Split-divider position (`mode:"split"`) — lifted control state. */
+  splitPosition: number;
+  /** Blend alpha (`mode:"blend"`) — lifted control state. */
+  blendAlpha: number;
   align?: CompareAlign;
   fit?: CompareFit;
   referenceLabel?: string;
   foregroundLabel?: string;
-  /** Pane MODE-menu callbacks → the lifted control (keeps routing coherent). */
+  /** True when this compare is inside a STACKED grid / FULLSCREEN overlay —
+   *  threaded to the addon-bundled pane's `useSplitFlipKeys` (its own context read
+   *  would miss across the bundle boundary). */
+  inStackedGrid: boolean;
+  inOverlay: boolean;
+  /** Pane MODE / divider / blend callbacks → the lifted control (keeps routing +
+   *  the reused-instance control state coherent). */
   onDiffKernelChange: (id: string) => void;
   onCompareModeChange: (mode: CompareViewMode) => void;
+  onSplitPositionChange: (p: number) => void;
+  onBlendAlphaChange: (a: number) => void;
 }
 
 /** The synthesized image leaf + static per-side derivations for a compare node,
@@ -676,13 +696,9 @@ function synthDiffLeafOf(node: CompareNode): SynthDiffLeaf {
   return e;
 }
 
-/** Event the gpu-image addon dispatches once it's initialized (name mirrored,
- *  not imported — core must not depend back on an addon file). */
-const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
-
-/** The lifted view-mode state a compare node's `NodeDispatch` owns and threads
- *  to `CompareView` (slide/blend) — hoisted OUT of `CompareView` so it survives
- *  the diff↔slide/blend remount and the image↔diff stacked flip (Phase 2c). */
+/** The lifted compare view-mode state a compare node's `NodeDispatch` owns and
+ *  threads to the unified pane via `compareSource` — hoisted so it survives the
+ *  mode-switch op-swap and the stacked flip (the reused-instance control state). */
 interface CompareControl {
   viewMode: CompareViewMode;
   setViewMode: (m: CompareViewMode) => void;
@@ -692,190 +708,6 @@ interface CompareControl {
   setSplitPos: (p: number) => void;
   blendAlpha: number;
   setBlendAlpha: (a: number) => void;
-}
-
-function CompareView({ node, control }: { node: CompareNode; control: CompareControl }) {
-  const { source, shared } = useSharedPlot();
-  // Inside ANY grid layout (a `cp.Grid` OR the compare/enlarge stage) a compare
-  // pane is a UNIFORM cell exactly like an image leaf: the grid sizes every cell
-  // to ONE representative content aspect, the pane FILLS its cell, and this
-  // reporter feeds the compare's own content aspect (the primary/foreground
-  // footprint `GpuComparePane` publishes via `usePublishNaturalSize`) up so the
-  // grid's median includes it. The metrics strip is an ABSOLUTE overlay chip, so
-  // it rides as chrome over the viewport and never inflates the cell. Absent (a
-  // standalone mount) ⇒ null ⇒ the fixed-height `ChartBox` fallback below.
-  const gridUniform = useContext(GridUniformAspectContext);
-  // Compare panes are in the "image" sync-kind: while this pane is one of ≥2
-  // selected panes, its zoom/pan locks to the group (shared with image leaves)
-  // via the SAME viewport-sync bus. The frame provides the group id + anchor
-  // flag; outside a selection these are absent and the viewport is purely local.
-  const paneSync = useContext(PaneSyncContext);
-  // Resolution memoized by node identity (`resolve-cache`), like `LeafView`, so a
-  // stacked compare viewport flips to a seen/prefetched pair synchronously (no
-  // flash) and keeps the old frame while a fresh pair resolves.
-  type ReadyFrames = { a: ResolvedCompareFrame; b: ResolvedCompareFrame };
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "error"; message: string }
-    | ({ status: "ready" } & ReadyFrames)
-  >(() => {
-    const cached = peekResolved<ReadyFrames>(sourceKey(node));
-    return cached ? { status: "ready", ...cached } : { status: "loading" };
-  });
-
-  useEffect(() => {
-    const key = sourceKey(node);
-    const cached = peekResolved<ReadyFrames>(key);
-    if (cached) {
-      setState({ status: "ready", ...cached });
-      return;
-    }
-    let cancelled = false;
-    resolveCached(key, async (): Promise<ReadyFrames> => {
-      const [a, b] = await Promise.all([resolveFrame(node.a, source), resolveFrame(node.b, source)]);
-      // Silent-empty guard: a side that resolves to NEITHER a url nor a float
-      // payload is unrenderable — surface the standard error instead of a blank.
-      const missing: string[] = [];
-      if (!a.url && !a.float) missing.push("a");
-      if (!b.url && !b.float) missing.push("b");
-      if (missing.length) {
-        throw new Error(`compare side ${missing.join(" & ")} did not resolve to an image source`);
-      }
-      return { a, b };
-    }).then(
-      ({ a, b }) => {
-        if (!cancelled) setState({ status: "ready", a, b });
-      },
-      (err) => {
-        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [node, source]);
-
-  // F2: honour the compare node's own `props` (interpolation/colormap/diff
-  // submode/split/blend/…) — CompareView previously dropped them entirely. A
-  // node prop wins over the inherited `shared` block, which wins over defaults.
-  const props = (node.props ?? {}) as Record<string, unknown>;
-  // Default `"none"` (NOT a fixed colormap): the compare pane's diff face then
-  // follows each diff kernel's REQUESTED DEFAULT colormap (the per-kernel-default-
-  // colormaps follow-up — turbo/red-green/magma). An authored node/shared colormap
-  // still wins (an explicit override that sticks across kernel switches). `viridis`
-  // was removed → an authored `viridis` aliases to `turbo` (GpuComparePane seed).
-  const colormap =
-    (props.colormap as ColormapName | undefined) ??
-    (shared?.colormap as ColormapName | undefined) ??
-    "none";
-  // Host seam (`cp.Compare(toolbar=False)`): drop this compare's chrome so a host
-  // can drive it from its own menu. Gates BOTH the side-view owner toolbar below
-  // AND the composited `GpuComparePane` shell toolbar (via `CompositeMediaPane`).
-  const toolbar = (props.toolbar as boolean | undefined) ?? true;
-
-  // View-mode state is HOISTED to `NodeDispatch` (Phase 2c) and threaded in via
-  // `control` — so it survives the diff↔slide/blend remount and the image↔diff
-  // stacked flip. `CompareView` only ever renders a slide/blend mode (a diff
-  // mode routes to `LeafView` instead), but it still drives `control.setViewMode`
-  // (the MODE menu switching INTO diff) and re-seeds the kernel on a round-trip.
-  const { viewMode, setViewMode, diffKernel, setDiffKernel, splitPos, setSplitPos, blendAlpha, setBlendAlpha } =
-    control;
-
-  // Re-render when the gpu-image addon finishes initializing, so the side
-  // view's MODE menu picks up the kernel entries the moment they're published.
-  const [, bumpReady] = useState(0);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onReady = () => bumpReady((n) => n + 1);
-    window.addEventListener(GPU_IMAGE_READY_EVENT, onReady);
-    return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
-  }, []);
-
-  // Own the live viewport (zoom/pan) so wheel-zoom + drag-pan work in the
-  // compare view exactly like the single ImageStandalone pane. The compositor
-  // forwards this SAME zoom/pan to BOTH panes, so split/blend/diff (and the two
-  // side panes) zoom in lock-step. `useSyncedImageViewport` links it to the
-  // selection group when this pane is selected (with ≥1 peer) — the identical
-  // hook `ImageStandalone` uses — so a compare + image selection pans together;
-  // absent a group it is a plain local `{zoom,pan}` state.
-  const [viewport, setViewport] = useSyncedImageViewport(
-    paneSync?.viewportSyncGroupId,
-    { zoom: 1, pan: { x: 0, y: 0 } },
-    !!paneSync?.syncIsAnchor,
-  );
-
-  // The MODE menu (slide · blend · <kernels>) is hosted by `GpuComparePane`'s
-  // shell toolbar (built there via `buildCompareModeMenu`); its selections flow
-  // back through this component's `viewMode`/`diffKernel` state via the
-  // `onCompareModeChange`/`onDiffKernelChange` callbacks on the composited pane.
-
-  if (state.status === "loading") return <Message text="Loading…" />;
-  if (state.status === "error") return <Message text={`Plot error: ${state.message}`} error />;
-
-  const baseIdx = node.baselineIndex ?? 0;
-  const reference = baseIdx === 0 ? state.a : state.b;
-  const foreground = baseIdx === 0 ? state.b : state.a;
-
-  // Per-side captions, matched to the a/b slots (`props.labelA`/`labelB`); the
-  // reference/foreground split follows `baselineIndex`, exactly like the frames
-  // above. The legacy single `props.label` (older descriptors) still names the
-  // FOREGROUND caption for back-compat, but a per-side label takes precedence.
-  const labelA = typeof props.labelA === "string" ? (props.labelA as string) : undefined;
-  const labelB = typeof props.labelB === "string" ? (props.labelB as string) : undefined;
-  const legacyLabel = typeof props.label === "string" ? (props.label as string) : undefined;
-  const referenceLabel = baseIdx === 0 ? labelA : labelB;
-  const foregroundLabel = (baseIdx === 0 ? labelB : labelA) ?? legacyLabel;
-
-  const interpolation = (props.interpolation as Interpolation | undefined) ?? "auto";
-  const showAxes = (props.showAxes as boolean | undefined) ?? false;
-  const processing = props.processing as ImageProcessing | undefined;
-  const pixelValueNotation = props.pixelValueNotation as "decimal" | "int" | undefined;
-
-  // Composited views (slide/blend/diff): `CompositeMediaPane` → `GpuComparePane`
-  // (when the engine is present), whose shell hosts the MODE menu. Its
-  // selections flow back up through the callbacks below so this component's
-  // lifted view-mode state stays coherent.
-  const pane = (
-    <CompositeMediaPane
-        toolbar={toolbar}
-        mode={viewMode}
-        imageUrl={foreground.url}
-        baselineUrl={reference.url}
-        imageFloat={foreground.float}
-        baselineFloat={reference.float}
-        diffSubmode={diffKernel as DiffMode}
-        diffKernel={diffKernel}
-        align={node.align}
-        fit={node.fit}
-        onDiffKernelChange={setDiffKernel}
-        onCompareModeChange={setViewMode}
-        colormap={colormap}
-        interpolation={interpolation}
-        showAxes={showAxes}
-        processing={processing}
-        splitPosition={splitPos}
-        onSplitPositionChange={setSplitPos}
-        blendAlpha={blendAlpha}
-        onBlendAlphaChange={setBlendAlpha}
-        settingsSyncGroupId={paneSync?.settingsSyncGroupId}
-        syncIsAnchor={!!paneSync?.syncIsAnchor}
-        zoom={viewport.zoom}
-        pan={viewport.pan}
-        onViewportChange={setViewport}
-        label=""
-        referenceLabel={referenceLabel}
-        foregroundLabel={foregroundLabel}
-        overlay={foreground.overlay}
-        pixelValueNotation={pixelValueNotation}
-      />
-  );
-  // In a grid the pane FILLS its uniformly-sized cell (the `PaneSelectionFrame`
-  // gives the cell the grid's ONE `aspectRatio` box) and reports its content
-  // aspect so the grid's median covers image + compare cells alike — identical
-  // to `ImageStandalone`'s grid path. Standalone keeps the fixed-height
-  // `ChartBox` (fills a `fill` cell, else the default height on a bare page).
-  if (gridUniform) return <GridCellReporter>{pane}</GridCellReporter>;
-  return <ChartBox>{pane}</ChartBox>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1125,39 +957,23 @@ function PaneSelectionFrame({
   );
 }
 
-/** True when a compare node's DESCRIPTOR mode is a DIFF mode — it lowers to the
- *  `image` renderer family (`LeafView` + `GpuImagePane` with `compareSource`),
- *  NOT `CompositeMediaPane`/`GpuComparePane`. slide/blend keep the compare pane.
- *  Descriptor-based (static): the stack structure is decided from the tree, and a
- *  runtime diff↔slide/blend switch is the one documented remount. */
-function compareDescriptorIsDiff(node: CompareNode): boolean {
-  return node.mode === "diff";
-}
-
 /** The renderer identity of a grid child — a HOMOGENEOUS stacked viewport shows
  *  the ACTIVE child through ONE reused renderer (source-swap), which only works
- *  when every child lowers to the same component. A DIFF-mode compare lowers to
- *  the SAME `image` leaf family (Phase 2c), so it shares the image leaf's key —
- *  an `[image, diff]` stack is homogeneous and flips with no remount/flicker. */
+ *  when every child lowers to the same component. Phase 3: a compare node in ANY
+ *  mode (diff AND split/blend) lowers to the SAME `image` leaf family (`LeafView`
+ *  + `GpuImagePane` with `compareSource`), so EVERY image-compatible child shares
+ *  the image leaf's key — `[image, diff]`, `[image, split]`, `[diff, blend]` …
+ *  are all homogeneous and flip with no remount/flicker (the last cross-kind
+ *  remount — the 341c577 `mixedImageStack` mount-swap — is retired). */
 function stackKindKey(node: PlotNode): string {
   if (node.kind === "plot") return `plot:${node.renderer}`;
-  if (node.kind === "compare" && compareDescriptorIsDiff(node)) return "plot:image";
-  return node.kind; // "compare" (slide/blend), "grid", …
+  if (node.kind === "compare") return "plot:image";
+  return node.kind; // "grid", …
 }
 function homogeneousStack(children: PlotNode[]): boolean {
   if (children.length < 2) return false;
   const k0 = stackKindKey(children[0]!);
   return children.every((c) => stackKindKey(c) === k0);
-}
-/** A stackable MIXED grid — image leaves interleaved with `compare` panes (any
- *  ≥2 combination of image-compatible cells that ISN'T homogeneous). These can't
- *  share ONE renderer instance across a kind flip (the pane REMOUNTS), so instead
- *  of the source-swap fast path they mount-swap and carry zoom/pan + display
- *  settings across the flip via stage-style sync groups (see {@link GridView}). */
-function mixedImageStack(children: PlotNode[]): boolean {
-  if (children.length < 2) return false;
-  if (homogeneousStack(children)) return false;
-  return children.every((c) => isImageCompatibleNode(c));
 }
 
 function GridView({ node }: { node: GridNode }) {
@@ -1183,14 +999,13 @@ function GridView({ node }: { node: GridNode }) {
 
   // VIEW MODE: `normal` (uniform CSS grid) vs `stacked` (one child at a time +
   // a keyboard-driven tab strip). Seeded from `node.mode`; a live toggle flips
-  // it. Stacking is offered for a HOMOGENEOUS ≥2 grid (all the same kind → the
-  // active child shows through ONE reused renderer, source-swap fast path) OR a
-  // MIXED image+compare grid (image leaves interleaved with compare panes → the
-  // pane mount-swaps on a kind flip but carries zoom/pan + settings via the
-  // stage-style sync groups threaded below). Non-image mixes (a chart next to an
-  // image, a nested grid) still aren't stackable (the ▭ toggle is hidden).
-  const isMixedStack = mixedImageStack(children);
-  const canStack = homogeneousStack(children) || isMixedStack;
+  // it. Stacking is offered for a HOMOGENEOUS ≥2 grid — Phase 3 makes EVERY
+  // image-compatible grid (image leaves + compare panes, any mode) homogeneous
+  // (all key `plot:image`), so the active child ALWAYS shows through ONE reused
+  // renderer (source-swap fast path — no mount-swap, no sync groups). Non-image
+  // mixes (a chart next to an image, a nested grid) still aren't stackable (the
+  // ▭ toggle is hidden).
+  const canStack = homogeneousStack(children);
   const [mode, setMode] = useState<"normal" | "stacked">(node.mode === "stacked" ? "stacked" : "normal");
   const [active, setActive] = useState(0);
   const effectiveMode = canStack ? mode : "normal";
@@ -1281,30 +1096,12 @@ function GridView({ node }: { node: GridNode }) {
           marginInline: "auto",
         }
       : {};
-  // MIXED image+compare stacks mount-swap on a kind flip (no shared renderer
-  // instance), so a plain flip would drop the camera + display settings. Give the
-  // stacked subtree the SAME two sync groups the fullscreen stage uses: a
-  // non-anchor pane adopts the group's accumulated viewport + settings on join
-  // (`useSyncedImageViewport` / `useSyncedImageSettings`), so zoom/pan, colormap,
-  // tonemap, exposure and diff mode stay put across the remount. A HOMOGENEOUS
-  // stack needs no group — its ONE reused instance shares those by construction —
-  // so it keeps the leaner source-swap path (no PaneSyncContext here). Ids are
-  // stable per grid instance so the group survives a normal⇄stacked toggle.
-  const stackViewportSyncId = useId();
-  const stackSettingsSyncId = useId();
-  const stackPaneSync = useMemo<PaneSyncCtx | null>(
-    () =>
-      isMixedStack
-        ? {
-            viewportSyncGroupId: stackViewportSyncId,
-            settingsSyncGroupId: stackSettingsSyncId,
-            syncIsAnchor: false,
-          }
-        : null,
-    [isMixedStack, stackViewportSyncId, stackSettingsSyncId],
-  );
+  // Phase 3: EVERY stackable grid is now HOMOGENEOUS (image leaves + compare
+  // panes all key `plot:image`), so the active child ALWAYS shows through ONE
+  // reused renderer instance — zoom/pan + display settings + compare mode are
+  // shared BY CONSTRUCTION, no sync-group + PaneSyncContext plumbing needed (the
+  // 341c577 mixed-stack mount-swap machinery is retired).
   const activeChild = children[clampedActive];
-  const activePaneNode = activeChild ? <PlotNodeView node={activeChild} /> : null;
   const stackedPane = activeChild ? (
     <InStackedGridContext.Provider value={true}>
       <GridUniformAspectContext.Provider value={stackedAspectApi}>
@@ -1317,11 +1114,7 @@ function GridView({ node }: { node: GridNode }) {
             data-cairn-stacked-pane="active"
             style={{ minWidth: 0, ...(fill ? { height: "100%" } : null) }}
           >
-            {stackPaneSync ? (
-              <PaneSyncContext.Provider value={stackPaneSync}>{activePaneNode}</PaneSyncContext.Provider>
-            ) : (
-              activePaneNode
-            )}
+            <PlotNodeView node={activeChild} />
           </div>
         </div>
       </GridUniformAspectContext.Provider>
@@ -1568,17 +1361,23 @@ function useCompareControl(node: PlotNode, settingsSyncGroupId: string | undefin
 }
 
 /**
- * Dispatch on `(kind + effective compare mode)`, INSIDE the pane's
- * `PaneSelectionFrame` (so it can read the pane's sync identity). A compare node
- * in a DIFF mode lowers to `LeafView` with a synthesized image leaf + resolved
- * `compareSource` — the SAME component an image plot leaf renders — so an
- * `[image, diff]` stacked flip is a source-swap (no remount). slide/blend lower
- * to `CompareView` (the one documented remaining remount when crossing the
- * diff↔slide/blend boundary).
+ * Dispatch on `node.kind`, INSIDE the pane's `PaneSelectionFrame` (so it can read
+ * the pane's sync identity). Phase 3: a compare node in ANY mode (diff AND
+ * split/blend) lowers to `LeafView` with a synthesized image leaf + a resolved
+ * `compareSource` — the SAME component an image plot leaf renders — so every
+ * image-compatible stack is homogeneous and a mode switch / stacked flip is a
+ * source-swap on the reused pane (NO remount, no `CompositeMediaPane`/
+ * `GpuComparePane`, no flicker). The `mode`/`splitPosition`/`blendAlpha` ride the
+ * `compareSource`; the pane's MODE menu lifts changes back through the callbacks.
  */
 function NodeDispatch({ node }: { node: PlotNode }) {
   const { shared } = useSharedPlot();
   const paneSync = useContext(PaneSyncContext);
+  // In a stacked grid / fullscreen overlay — read on the CORE side (the addon
+  // bundle's context identity differs) and threaded to the pane so
+  // `useSplitFlipKeys` scopes its arrow aliases correctly.
+  const inStackedGrid = useContext(InStackedGridContext);
+  const inOverlay = useContext(InFullscreenOverlayContext);
   // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
   const control = useCompareControl(node, paneSync?.settingsSyncGroupId);
   // Static synth-leaf derivation (memoized on the node object) — only meaningful
@@ -1596,30 +1395,31 @@ function NodeDispatch({ node }: { node: PlotNode }) {
         </LazyGate>
       );
     case "compare": {
-      if (control.viewMode === "diff" && synth) {
-        const diffSpec: DiffLeafSpec = {
-          fgData: synth.fgData,
-          diffKernel: control.diffKernel,
-          colormap:
-            ((node.props?.colormap as CompareSource["colormap"]) ??
-              (shared?.colormap as CompareSource["colormap"]) ??
-              "none") as CompareSource["colormap"],
-          align: synth.align,
-          fit: synth.fit,
-          referenceLabel: synth.referenceLabel,
-          foregroundLabel: synth.foregroundLabel,
-          onDiffKernelChange: control.setDiffKernel,
-          onCompareModeChange: control.setViewMode,
-        };
-        return (
-          <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-            <LeafView node={synth.leaf} diffSpec={diffSpec} />
-          </LazyGate>
-        );
-      }
+      if (!synth) return <Message text="invalid compare node" error />;
+      const diffSpec: DiffLeafSpec = {
+        fgData: synth.fgData,
+        mode: control.viewMode,
+        diffKernel: control.diffKernel,
+        colormap:
+          ((node.props?.colormap as CompareSource["colormap"]) ??
+            (shared?.colormap as CompareSource["colormap"]) ??
+            "none") as CompareSource["colormap"],
+        splitPosition: control.splitPos,
+        blendAlpha: control.blendAlpha,
+        align: synth.align,
+        fit: synth.fit,
+        referenceLabel: synth.referenceLabel,
+        foregroundLabel: synth.foregroundLabel,
+        inStackedGrid,
+        inOverlay,
+        onDiffKernelChange: control.setDiffKernel,
+        onCompareModeChange: control.setViewMode,
+        onSplitPositionChange: control.setSplitPos,
+        onBlendAlphaChange: control.setBlendAlpha,
+      };
       return (
         <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-          <CompareView node={node} control={control} />
+          <LeafView node={synth.leaf} diffSpec={diffSpec} />
         </LazyGate>
       );
     }

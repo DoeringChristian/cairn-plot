@@ -320,10 +320,13 @@ async function run(): Promise<boolean> {
   // --- 7. SPLIT flip via Left/Right arrow keys (slide mode) -----------------
   // In split mode the arrows snap the divider hard to an edge, flipping between
   // the two images. The listener lives on the PANE element (not window), so the
-  // keydown is dispatched on pane A's viewport box (`data-gpu-compare-viewport`,
-  // which IS the pane's own paneRef). Because split position syncs across the
-  // selected panes, B tracks the flip too.
-  const paneAViewport = frames()[0]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
+  // keydown is dispatched on pane A's viewport box. Phase 3: split/blend now
+  // render on the UNIFIED pane (`data-gpu-image-viewport`), so target either
+  // seam (compare | image). Because split position syncs across the selected
+  // panes, B tracks the flip too.
+  const paneAViewport = frames()[0]!.querySelector<HTMLElement>(
+    "[data-gpu-compare-viewport], [data-gpu-image-viewport]",
+  )!;
   const arrow = (key: "ArrowLeft" | "ArrowRight") =>
     window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 
@@ -390,7 +393,9 @@ async function run(): Promise<boolean> {
   const overlayReady = await waitFor(() => frames().length === 3 && !!probeOf(frames()[2]), 15000);
   report(overlayReady, "overlay compare pane mounts inside InFullscreenOverlayContext");
   const C = () => probeOf(frames()[2])!;
-  const paneCViewport = frames()[2]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
+  const paneCViewport = frames()[2]!.querySelector<HTMLElement>(
+    "[data-gpu-compare-viewport], [data-gpu-image-viewport]",
+  )!;
   paneCViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   C().changeSplit(0.4);

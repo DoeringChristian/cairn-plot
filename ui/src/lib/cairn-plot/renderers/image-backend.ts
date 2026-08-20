@@ -280,12 +280,16 @@ export interface CompareSource {
    *  convention (diff + compositor): `a` = reference (texA), `b` = foreground
    *  (texB), so `diff = a − b` and split shows the reference left of the divider. */
   b: DecodedSource;
-  /** The compare OP — a menu selection token. A DIFF kernel (a pointwise id,
-   *  `"flip"`, `"flip_ldr"`, `"ssim"`) renders the scalar-error diff; the Phase-3
-   *  COMPOSITOR ids `"split"` / `"blend"` render a LIGHT composite of the two
-   *  operands (divider / alpha) instead. SEEDS the pane's kernel state; the MODE
-   *  menu switches it view-locally. Diff kernels resolve via `resolveDiffKernelId`. */
+  /** The DIFF kernel — a menu selection token (a pointwise id, `"flip"`,
+   *  `"flip_ldr"`, `"ssim"`). SEEDS the pane's diff-kernel state (always a real
+   *  kernel, even while {@link mode} is a compositor mode — so switching INTO diff
+   *  restores it). Resolved to a concrete kernel id by `resolveDiffKernelId`. */
   opId: string;
+  /** The COMPARE mode: `"diff"` (the scalar-error diff of {@link opId}, the
+   *  default when absent) OR the Phase-3 compositor modes `"split"` / `"blend"` (a
+   *  LIGHT composite of the two operands by divider / alpha). Selecting a mode is
+   *  an OP switch on the reused pane — the display + chrome change, no remount. */
+  mode?: "diff" | "split" | "blend";
   /** Split-divider position `[0,1]` (`opId:"split"`) — the reference is shown
    *  where the fragment `uv.x < splitPosition`. Controlled: the pane's divider /
    *  `[`·`]` keys report up via {@link onSplitPositionChange}; the owner lifts it

@@ -381,12 +381,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `hasCompare` gates the SHARED operand plumbing (upload `b`, mapping, metrics).
   const compareSource: CompareSource | undefined = backendProps.compareSource;
   const hasCompare = !!compareSource;
-  const compositorMode = compareSource?.opId === "split" || compareSource?.opId === "blend";
-  const diffMode = hasCompare && !compositorMode;
+  // The compare mode is EXPLICIT (`compareSource.mode`, default "diff"), so `opId`
+  // stays the diff kernel even in a compositor mode (switching INTO diff restores it).
+  const compareMode: "diff" | "split" | "blend" | null = hasCompare
+    ? (compareSource!.mode ?? "diff")
+    : null;
+  const compositorMode = compareMode === "split" || compareMode === "blend";
+  const diffMode = compareMode === "diff";
   // The concrete compositor mode ("split" | "blend"), or null. Drives the divider,
   // the flip keys, the per-side captions/readout, and the compositor render.
   const compareOpMode: "split" | "blend" | null = compositorMode
-    ? (compareSource!.opId as "split" | "blend")
+    ? (compareMode as "split" | "blend")
     : null;
   const splitPosition = compareSource?.splitPosition ?? 0.5;
   const blendAlpha = compareSource?.blendAlpha ?? 0.5;
@@ -1799,6 +1804,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       changeCompareMode,
       changeDiffKernel,
       changeDiffColormap,
+      // The compare display curve (light compositor tonemap) — the unified encoding
+      // set; mirrors `GpuComparePane.changeTonemap` for the settings-sync harness.
+      changeTonemap: (id: string) => changeEncoding(id),
       // Alias mirroring `GpuComparePane`'s probe field name (the diff colormap
       // menu) so a unified harness drives either pane with one call.
       changeColormap: changeDiffColormap,
@@ -1810,7 +1818,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, setDiffKernel, diffKernelMeta, diffColormapMeta]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, diffColormapMeta]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
