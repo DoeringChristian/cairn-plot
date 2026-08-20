@@ -52,6 +52,46 @@ function floatLeaf(w: number, h: number, label: string): unknown {
     props: { toolbar: true, label },
   };
 }
+// A flat colour PNG data-url — the CPU compare pane takes URL sources and
+// rasterizes/blends them with a CSS `translate(pan) scale(zoom)` transform (the
+// same transform an image leaf uses), so a MIXED stack's camera is observable
+// on both cell types without WebGPU.
+function imgUrl(color: string): string {
+  const c = document.createElement("canvas");
+  c.width = 16;
+  c.height = 16;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 16, 16);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(4, 4, 8, 8);
+  return c.toDataURL("image/png");
+}
+function compareUrlChild(fg: string, ref: string, label: string): unknown {
+  return {
+    kind: "compare",
+    mode: "split", // CPU-composited split (no WebGPU) — still exercises the sync group
+    a: { kind: "url", src: imgUrl(fg) },
+    b: { kind: "url", src: imgUrl(ref) },
+    props: { toolbar: true, label },
+  };
+}
+// A HETEROGENEOUS grid: an image LEAF next to a COMPARE pane. Stacking these
+// can't reuse ONE renderer instance (the pane mount-swaps on the kind flip), so
+// the grid threads stage-style viewport+settings sync groups to carry zoom/pan
+// across the remount. Pre-fix the ▭ toggle was hidden on any mixed grid.
+function mixedGrid(mode: "normal" | "stacked"): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: 2,
+      gap: 8,
+      mode,
+      children: [floatLeaf(96, 96, "Image"), compareUrlChild("#c0392b", "#2980b9", "Compare")],
+    },
+  } as unknown as PlotDescriptor;
+}
 function stackedGrid(labels: string[], mode: "normal" | "stacked"): PlotDescriptor {
   // DELIBERATELY different sizes/aspects per child: the stacked viewport BOX is
   // latched (one fixed surface; a differently-shaped slot letterboxes within
@@ -165,10 +205,11 @@ async function run(): Promise<boolean> {
   // Wheel-zoom the (CPU) pane — its zoom renders as an inline `scale(...)`
   // transform — then flip and assert the SAME transform still applies (one
   // reused renderer instance ⇒ one camera, shared by construction).
-  const zoomTransforms = (): string[] =>
-    qa("m1", "*")
+  const zoomTransformsIn = (id: string): string[] =>
+    qa(id, "*")
       .filter((n) => n.style?.transform && /scale\(/.test(n.style.transform))
       .map((n) => n.style.transform);
+  const zoomTransforms = (): string[] => zoomTransformsIn("m1");
   const surface = q("m1", "[data-cairn-stacked-pane] canvas") ?? q("m1", "[data-cairn-stacked-pane] img");
   if (surface) {
     const r = surface.getBoundingClientRect();
@@ -224,6 +265,80 @@ async function run(): Promise<boolean> {
   const noToggle = !q("m3", "[data-cairn-grid-mode-toggle]");
   report(noToggle, "single-child grid has NO mode toggle");
   ok = ok && noToggle;
+
+  // ── MIXED image + compare stack: toggle present, mount-swap keeps the camera ─
+  // The reported bug: a grid mixing an image leaf and a compare pane offered NO
+  // ▭ toggle (stacking required a HOMOGENEOUS grid). Now a mixed image-compatible
+  // grid stacks too — the pane mount-swaps on a kind flip but the stacked grid's
+  // sync groups carry zoom/pan across the remount, so pixel-level eyeballing
+  // survives a flip.
+  const rootD = createRoot(host("m4"));
+  rootD.render(createElement(PlotApp, { descriptor: mixedGrid("normal") }));
+  roots.push(rootD);
+  const mixToggle = await waitFor(() => !!q("m4", "[data-cairn-grid-mode-toggle]"));
+  report(mixToggle, "MIXED image+compare grid shows the normal|stacked toggle (was hidden pre-fix)");
+  q("m4", '[data-cairn-grid-mode="stacked"]')?.click();
+  const mixStacked = await waitFor(() => qa("m4", "[role='tab']").length === 2);
+  report(mixStacked, `mixed grid switches to stacked: 2 tabs (got ${qa("m4", "[role='tab']").length})`);
+  const oneMixPane = qa("m4", '[data-cairn-stacked-pane="active"]').length === 1;
+  report(oneMixPane, "exactly ONE pane rendered in the mixed stack (single mounted slot)");
+  const imgOnTab0 = await waitFor(
+    () => !!(q("m4", "[data-cairn-stacked-pane] canvas") ?? q("m4", "[data-cairn-stacked-pane] img")),
+  );
+  report(imgOnTab0, "tab 0 mounts the IMAGE leaf");
+  ok = ok && mixToggle && mixStacked && oneMixPane && imgOnTab0;
+
+  // Zoom the image (tab 0), then flip through the COMPARE (tab 1) and back. The
+  // image REMOUNTS on the round-trip (image→compare→image is a mount-swap, not a
+  // source-swap), so a surviving zoom proves the sync group — not instance reuse
+  // — carried the camera. The compare must ALSO show the same zoom on its tab
+  // (cross-type adoption).
+  q("m4", "[data-cairn-grid-root]")!.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+  const mixSurface = q("m4", "[data-cairn-stacked-pane] canvas") ?? q("m4", "[data-cairn-stacked-pane] img");
+  if (mixSurface) {
+    const r = mixSurface.getBoundingClientRect();
+    for (let i = 0; i < 4; i++) {
+      mixSurface.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+          deltaY: -120,
+          ctrlKey: true,
+        }),
+      );
+      await sleep(30);
+    }
+    await sleep(150);
+    const mixImgZoom = zoomTransformsIn("m4");
+    const mixZoomApplied = mixImgZoom.some((t) => !/scale\(1\)/.test(t));
+    report(mixZoomApplied, `wheel-zoom applied on the mixed stack's image (${JSON.stringify(mixImgZoom)})`);
+
+    key("2"); // → compare tab (mount-swap)
+    await waitFor(() => activePaneIndex("m4") === 1);
+    // The CPU compare pane stacks two <img>s (foreground "pred" over reference
+    // "ref"); the image leaf is a <canvas>. `img[alt="ref"]` is unique to the
+    // compare, so its presence proves the mount-swap put the compare on tab 1.
+    const compareShown = await waitFor(() => !!q("m4", "[data-cairn-stacked-pane] img[alt='ref']"));
+    report(compareShown, "flip to tab 1 MOUNT-SWAPS in the compare pane");
+    await sleep(150);
+    const mixCmpZoom = zoomTransformsIn("m4");
+    const compareAdopted = mixCmpZoom.some((t) => !/scale\(1\)/.test(t));
+    report(compareAdopted, `the compare ADOPTS the image's zoom across the mount-swap (${JSON.stringify(mixCmpZoom)})`);
+
+    key("1"); // → back to the image tab (remount)
+    await waitFor(() => activePaneIndex("m4") === 0);
+    await waitFor(() => !!(q("m4", "[data-cairn-stacked-pane] canvas") ?? q("m4", "[data-cairn-stacked-pane] img")));
+    await sleep(150);
+    const mixImgAfter = zoomTransformsIn("m4");
+    const cameraPersisted = mixImgAfter.some((t) => !/scale\(1\)/.test(t));
+    report(cameraPersisted, `the zoom PERSISTS on the image after the round-trip remount (${JSON.stringify(mixImgAfter)})`);
+    ok = ok && mixZoomApplied && compareShown && compareAdopted && cameraPersisted;
+  } else {
+    report(false, "no image surface found in the mixed stack for the camera-persistence check");
+    ok = false;
+  }
 
   roots.forEach((r) => r.unmount());
   return ok;

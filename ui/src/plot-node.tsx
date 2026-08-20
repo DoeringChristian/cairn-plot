@@ -957,9 +957,9 @@ function PaneSelectionFrame({
   );
 }
 
-/** The renderer identity of a grid child — a stacked viewport shows the ACTIVE
- *  child through ONE reused renderer, which only works when every child is the
- *  same kind (all images, or all compares). Mixed stacks aren't supported. */
+/** The renderer identity of a grid child — a HOMOGENEOUS stacked viewport shows
+ *  the ACTIVE child through ONE reused renderer (source-swap), which only works
+ *  when every child is the same kind (all images, or all compares). */
 function stackKindKey(node: PlotNode): string {
   if (node.kind === "plot") return `plot:${node.renderer}`;
   return node.kind; // "compare", "grid", …
@@ -968,6 +968,16 @@ function homogeneousStack(children: PlotNode[]): boolean {
   if (children.length < 2) return false;
   const k0 = stackKindKey(children[0]!);
   return children.every((c) => stackKindKey(c) === k0);
+}
+/** A stackable MIXED grid — image leaves interleaved with `compare` panes (any
+ *  ≥2 combination of image-compatible cells that ISN'T homogeneous). These can't
+ *  share ONE renderer instance across a kind flip (the pane REMOUNTS), so instead
+ *  of the source-swap fast path they mount-swap and carry zoom/pan + display
+ *  settings across the flip via stage-style sync groups (see {@link GridView}). */
+function mixedImageStack(children: PlotNode[]): boolean {
+  if (children.length < 2) return false;
+  if (homogeneousStack(children)) return false;
+  return children.every((c) => isImageCompatibleNode(c));
 }
 
 function GridView({ node }: { node: GridNode }) {
@@ -993,10 +1003,14 @@ function GridView({ node }: { node: GridNode }) {
 
   // VIEW MODE: `normal` (uniform CSS grid) vs `stacked` (one child at a time +
   // a keyboard-driven tab strip). Seeded from `node.mode`; a live toggle flips
-  // it. Stacking shows the active child through ONE reused renderer, so it's only
-  // offered for a HOMOGENEOUS ≥2 grid (all the same kind) — a mixed stack can't
-  // share a renderer and simply isn't stackable (the ▭ toggle is hidden).
-  const canStack = homogeneousStack(children);
+  // it. Stacking is offered for a HOMOGENEOUS ≥2 grid (all the same kind → the
+  // active child shows through ONE reused renderer, source-swap fast path) OR a
+  // MIXED image+compare grid (image leaves interleaved with compare panes → the
+  // pane mount-swaps on a kind flip but carries zoom/pan + settings via the
+  // stage-style sync groups threaded below). Non-image mixes (a chart next to an
+  // image, a nested grid) still aren't stackable (the ▭ toggle is hidden).
+  const isMixedStack = mixedImageStack(children);
+  const canStack = homogeneousStack(children) || isMixedStack;
   const [mode, setMode] = useState<"normal" | "stacked">(node.mode === "stacked" ? "stacked" : "normal");
   const [active, setActive] = useState(0);
   const effectiveMode = canStack ? mode : "normal";
@@ -1087,7 +1101,30 @@ function GridView({ node }: { node: GridNode }) {
           marginInline: "auto",
         }
       : {};
+  // MIXED image+compare stacks mount-swap on a kind flip (no shared renderer
+  // instance), so a plain flip would drop the camera + display settings. Give the
+  // stacked subtree the SAME two sync groups the fullscreen stage uses: a
+  // non-anchor pane adopts the group's accumulated viewport + settings on join
+  // (`useSyncedImageViewport` / `useSyncedImageSettings`), so zoom/pan, colormap,
+  // tonemap, exposure and diff mode stay put across the remount. A HOMOGENEOUS
+  // stack needs no group — its ONE reused instance shares those by construction —
+  // so it keeps the leaner source-swap path (no PaneSyncContext here). Ids are
+  // stable per grid instance so the group survives a normal⇄stacked toggle.
+  const stackViewportSyncId = useId();
+  const stackSettingsSyncId = useId();
+  const stackPaneSync = useMemo<PaneSyncCtx | null>(
+    () =>
+      isMixedStack
+        ? {
+            viewportSyncGroupId: stackViewportSyncId,
+            settingsSyncGroupId: stackSettingsSyncId,
+            syncIsAnchor: false,
+          }
+        : null,
+    [isMixedStack, stackViewportSyncId, stackSettingsSyncId],
+  );
   const activeChild = children[clampedActive];
+  const activePaneNode = activeChild ? <PlotNodeView node={activeChild} /> : null;
   const stackedPane = activeChild ? (
     <InStackedGridContext.Provider value={true}>
       <GridUniformAspectContext.Provider value={stackedAspectApi}>
@@ -1100,7 +1137,11 @@ function GridView({ node }: { node: GridNode }) {
             data-cairn-stacked-pane="active"
             style={{ minWidth: 0, ...(fill ? { height: "100%" } : null) }}
           >
-            <PlotNodeView node={activeChild} />
+            {stackPaneSync ? (
+              <PaneSyncContext.Provider value={stackPaneSync}>{activePaneNode}</PaneSyncContext.Provider>
+            ) : (
+              activePaneNode
+            )}
           </div>
         </div>
       </GridUniformAspectContext.Provider>
