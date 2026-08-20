@@ -390,32 +390,41 @@ def build_report() -> cp.Report:
     try:
         import flip_evaluator as _flip
 
-        _official_map, _official_mean, _ = _flip.evaluate(
+        # `applyMagma=False` → the RAW scalar error field (H,W,1) in [0,1], NOT
+        # the tool's magma-colored RGB. Baking the raw values (not a pre-colored
+        # PNG) lets THIS page's DISPLAY menu apply cairn-plot's own bit-exact
+        # magma/turbo onto the official data — so the colorscheme can be compared
+        # independently of the error magnitudes.
+        _official_raw, _official_mean, _ = _flip.evaluate(
             flip_ref.astype(np.float32) / 255.0,
             flip_pred.astype(np.float32) / 255.0,
             "LDR",
+            applyMagma=False,
         )
-        _official_u8 = (np.clip(np.asarray(_official_map), 0.0, 1.0) * 255.0).astype(
-            np.uint8
-        )
+        _official_err = np.asarray(_official_raw, dtype=np.float32)
+        if _official_err.ndim == 3:  # (H,W,1) → (H,W) scalar field
+            _official_err = _official_err[..., 0]
+        _official_err = np.ascontiguousarray(_official_err)
         rep.md(
             "### Validation — official `flip-evaluator` vs our client-side kernel\n\n"
-            "Left: the error map computed OFFLINE by NVIDIA's compiled reference "
-            "implementation ([NVlabs/flip](https://github.com/NVlabs/flip), "
-            f"`flip-evaluator`), **mean FLIP = {_official_mean:.4f}** — baked into "
-            "this page as a plain image (magma-colored by the official tool). "
-            "Right: the SAME pair diffed live by cairn-plot's GPU FLIP kernel "
-            "(`mode=\"flip\"`). The kernel is verified against this reference to "
-            "≤3.6e-3 per pixel in the test suite; here you can eyeball the "
-            "agreement directly."
+            "Left: the **raw** FLIP error field computed OFFLINE by NVIDIA's "
+            "compiled reference implementation ([NVlabs/flip](https://github.com/NVlabs/flip), "
+            f"`flip-evaluator`, `applyMagma=False`), **mean FLIP = {_official_mean:.4f}** — "
+            "baked as a plain float **grayscale** image (sRGB, dark = agreement, "
+            "bright = error). Open this pane's DISPLAY menu to apply magma/turbo "
+            "onto the official data, so its colorscheme lines up with the kernel's "
+            "and can be compared on its own. Right: the SAME pair diffed live by "
+            "cairn-plot's GPU FLIP kernel (`mode=\"flip\"`, magma by default). The "
+            "kernel is verified against this reference to ≤3.6e-3 per pixel in the "
+            "test suite; here you can eyeball the agreement directly."
         )
         rep.grid(
             [
                 [
-                    cp.Image(_official_u8, label="official FLIP"),
+                    cp.Image(_official_err, label="official FLIP (raw error, sRGB)"),
                     cp.Compare(
                         cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
-                        # magma to match the official flip-evaluator's magma-colored map.
+                        # magma default — the live kernel's own colorscheme.
                         colormap="magma",
                     ),
                 ]
