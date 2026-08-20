@@ -60,6 +60,33 @@ export interface PaneRenderRecord {
   hasSrcB: boolean;
   /** `params.isScalar` — the display arity (a scalar-error colormap vs light). */
   isScalar: boolean | undefined;
+  // ---- FULL display-encode fingerprint (sharpened orange-frame oracle) -------
+  // The source-identity fields above (sourceKey/sourceBKey/contentOpId) catch a
+  // MISBOUND texture; these catch a MISMATCHED display-encode combination — the
+  // orange-frame artefact, where the source is RIGHT but the encode params
+  // (isScalar/lut/reduce/scalarMode) are a STALE diff's applied to a light image
+  // (or vice-versa). All read straight off the `params` the pool actually
+  // presented with, so it is the ground truth of the encode combination — no
+  // pixel readback. Each is a separate uniform field written per `renderImage`.
+  /** `params.operator` (tone-map operator). */
+  operator?: string;
+  /** `params.hdrOut`. */
+  hdrOut?: boolean;
+  /** `params.reduce` (multi-channel scalar reduce). */
+  reduce?: string;
+  /** `params.channelCount`. */
+  channelCount?: number;
+  /** Scalar-mode enum the shader uses: 1=analytic, 2=grayNone, 3=turbo, 0=LUT.
+   *  Combined from analytic/grayNone/turbo so one field pins the scalar path. */
+  scalarMode?: number;
+  /** Whether a colormap LUT was bound (`params.colormap != null` on the scalar
+   *  path). A light image binds none; a diff (magma/turbo/…) binds one. */
+  hasColormap?: boolean;
+  /** A cheap signature of the bound colormap LUT (a few sampled entries) so two
+   *  DIFFERENT LUTs (e.g. magma vs turbo) are distinguishable, not just present. */
+  colormapSig?: number;
+  /** `params.contentParam` (split divider / blend alpha). */
+  contentParam?: number;
 }
 
 let paneRenderLog: PaneRenderRecord[] | null = null;
@@ -75,6 +102,12 @@ export function stopPaneRenderLog(): void {
 /** The records captured since the last {@link startPaneRenderLog}. */
 export function getPaneRenderLog(): PaneRenderRecord[] {
   return paneRenderLog ?? [];
+}
+/** True while a harness is capturing. The pool checks this BEFORE building the
+ *  (now full-fingerprint) record, so no per-present cost is paid in production —
+ *  the record + its display fingerprint are assembled only when logging is on. */
+export function isPaneRenderLogActive(): boolean {
+  return paneRenderLog !== null;
 }
 /** Pool-internal: record one present. No-op unless a harness started the log. */
 export function recordPaneRender(record: PaneRenderRecord): void {

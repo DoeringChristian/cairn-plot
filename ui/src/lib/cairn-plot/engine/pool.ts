@@ -56,7 +56,47 @@ import {
 } from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
 import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
-import { forceEngineFailRequested, recordPaneRender } from "./test-hooks";
+import { forceEngineFailRequested, recordPaneRender, isPaneRenderLogActive } from "./test-hooks";
+
+/**
+ * Test-only: the FULL display-encode fingerprint of an `ImageParams`, for the
+ * sharpened present-coherency oracle (the orange-frame proof). Reads only the
+ * fields that decide the pixel's color path, so two DIFFERENT display combos
+ * (a light image vs a scalar magma diff) are distinguishable from the ground
+ * truth the pool actually presented with — no pixel readback. Cheap; only ever
+ * called on the present hot path when a harness started the render log.
+ */
+function displayFingerprint(params: ImageParams): {
+  operator?: string;
+  hdrOut?: boolean;
+  reduce?: string;
+  channelCount?: number;
+  scalarMode?: number;
+  hasColormap?: boolean;
+  colormapSig?: number;
+  contentParam?: number;
+} {
+  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : params.turbo ? 3 : 0;
+  const lut = params.isScalar ? params.colormap : undefined;
+  let colormapSig: number | undefined;
+  if (lut && lut.length >= 1024) {
+    // Sample a few LUT entries (mid + high ramp) so magma≠turbo≠viridis are
+    // distinct; a stable, allocation-free scalar.
+    colormapSig =
+      lut[512] * 1 + lut[513] * 3 + lut[514] * 7 + // mid RGB
+      lut[1020] * 11 + lut[1021] * 13 + lut[1022] * 17; // top RGB
+  }
+  return {
+    operator: params.operator,
+    hdrOut: params.hdrOut,
+    reduce: params.reduce,
+    channelCount: params.channelCount,
+    scalarMode,
+    hasColormap: !!lut,
+    colormapSig,
+    contentParam: params.contentParam,
+  };
+}
 
 /**
  * Cap on simultaneously-LIVE GPU swapchains (configured `Surface` + source
@@ -500,16 +540,20 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
     // placeholder, and opId 0 / identity ignores it), byte-identical to before.
     const p = entry.srcTextureB ? { ...params, srcB: entry.srcTextureB } : params;
     renderImage(entry.device, entry.surface, entry.srcTexture, p);
-    // Present-coherency instrumentation (test-only; no-op unless a harness started
-    // the log): the GROUND-TRUTH bound keys at this present, for the stress harness.
-    recordPaneRender({
-      mode: "image",
-      sourceKey: entry.sourceKey,
-      sourceBKey: entry.sourceBKey,
-      contentOpId: params.contentOpId,
-      hasSrcB: entry.srcTextureB != null,
-      isScalar: params.isScalar,
-    });
+    // Present-coherency instrumentation (test-only; guarded so NO per-present cost
+    // — record + display fingerprint — is paid unless a harness started the log):
+    // the GROUND-TRUTH bound keys + full display-encode combo at this present.
+    if (isPaneRenderLogActive()) {
+      recordPaneRender({
+        mode: "image",
+        sourceKey: entry.sourceKey,
+        sourceBKey: entry.sourceBKey,
+        contentOpId: params.contentOpId,
+        hasSrcB: entry.srcTextureB != null,
+        isScalar: params.isScalar,
+        ...displayFingerprint(params),
+      });
+    }
     return true;
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -565,14 +609,17 @@ function attemptRenderDiffCached(
     // Present-coherency instrumentation (test-only; see attemptRender). A cached
     // diff blits the RESULT as the primary — the bound SOURCE keys still record
     // which operands the result was computed from (stale = an artefact).
-    recordPaneRender({
-      mode: "cached-diff",
-      sourceKey: entry.sourceKey,
-      sourceBKey: entry.sourceBKey,
-      contentOpId: displayParams.contentOpId,
-      hasSrcB: entry.srcTextureB != null,
-      isScalar: displayParams.isScalar,
-    });
+    if (isPaneRenderLogActive()) {
+      recordPaneRender({
+        mode: "cached-diff",
+        sourceKey: entry.sourceKey,
+        sourceBKey: entry.sourceBKey,
+        contentOpId: displayParams.contentOpId,
+        hasSrcB: entry.srcTextureB != null,
+        isScalar: displayParams.isScalar,
+        ...displayFingerprint(displayParams),
+      });
+    }
     return cacheEntry;
   } catch (err) {
     // eslint-disable-next-line no-console

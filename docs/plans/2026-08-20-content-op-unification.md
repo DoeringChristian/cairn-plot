@@ -445,6 +445,91 @@ the 2 new, + stress/slow/grid unaffected); 243 pytest; core + gpu-image bundles
 rebuilt + synced + committed; report (63 blocks) + gallery (27 types) regen clean;
 live report probe (0 churn, stable rect, no errors). `uv.lock` left untouched.
 
+## Follow-up — INVESTIGATION: reported one-frame ORANGE viewport flash (sharpened oracle; NOT reproduced at the pane)
+
+**User report (after 9368ee2 + c459c34).** Fast image↔diff STACKED flips still
+intermittently flash the VIEWPORT (the diff map itself, not chrome) ORANGE for one
+frame — "maybe the max of the plasma/magma colormap." Working hypothesis: one
+present mixes a MISMATCHED (source, params) combination — an IMAGE source rendered
+through the DIFF's scalar display params (`isScalar`+reduce collapses a light image
+to a ~0.5–1.0 scalar → magma/plasma UPPER ramp = orange). The 9368ee2 guard gates
+ONLY the two async source identities; the concern was that the encode/op fields
+(`contentOpId`/`isScalar`/lut/reduce) could lag across an effect boundary and slip a
+present through with the right source but a stale diff's encode — invisible to the
+prior stress oracle (which only checked `contentOpId`-vs-`sourceKey`).
+
+**Sharpened oracle (built, LANDED).** `engine/test-hooks`'s `PaneRenderRecord` now
+carries the FULL display-encode fingerprint per present — `operator`, `hdrOut`,
+`reduce`, `channelCount`, a combined `scalarMode` (analytic/grayNone/turbo/LUT),
+`hasColormap` + a `colormapSig` (a few sampled LUT entries, so magma≠turbo≠viridis),
+`contentParam` — read straight off the `ImageParams` the pool ACTUALLY presented
+with (`engine/pool.ts`'s `displayFingerprint`, computed ONLY when a harness started
+the log — an `isPaneRenderLogActive()` gate keeps the production present path
+cost-free). This is the GROUND TRUTH of the full (source ⊗ encode) combination at
+each present — no flaky mid-present pixel readback (an in-DOM canvas rotates its
+swapchain back-buffer, the documented readback gotcha; a settled-canvas readback in
+this investigation returned rgb(6,6,6) blanks, confirming the unreliability). The
+`stacked-diff-flip-stress` harness now classifies EVERY present against the captured
+SETTLED fingerprints of each slot: a present matching neither settled slot is a
+FULL-STATE (source⊗encode) mismatch; among those, a scalar-LUT-over-light one is an
+ORANGE frame BY CONSTRUCTION (a light source collapsed through a scalar colormap =
+the magma-upper-ramp orange). The oracle spans two single-pane storms (image↔FLIP
+cached-magma AND image↔absolute DIRECT-magma — the latter drives `attemptRender`
+with `isScalar`+magma, the exact scalar path the artefact rides), a synced-pair SDR
+storm, and a FLOAT-synced (diff-anchor ⊕ image-peer) probe, each ≥3 repeats.
+
+**Measured — the pane present path is ALREADY full-state coherent.** Pre-existing
+rates (no pane change): **source-incoherent 0, FULL-STATE mismatch 0, ORANGE 0**
+across ALL storms — single-pane image↔FLIP (≈540 presents/rep ×3), single-pane
+image↔DIRECT-magma (≈535/rep ×3), CONTROL image↔image (0/145), synced-pair SDR
+(≈1700 presents ×3), and the FLOAT diff-anchor⊕image-peer probe (0/247). So the
+reported orange is NOT a source⊗encode tear in the `GpuImagePane` present path.
+
+**Why (mechanism, verified not assumed).** `renderImage` rebuilds the ENTIRE uniform
+set + a fresh bind group per call (no persistent uniform between presents — checked),
+so there is no stale-uniform-bleed vector. And `renderPass` derives `expectedPrimaryId`/
+`expectedBId` AND the full `params` from ONE consistent render closure — `hasCompare`/
+`diffMode`/`compareOpMode`/`contentKeyA/B` are pure synchronous prop derivations, so a
+single closure can NOT pair an image source-identity with diff encode params; the
+9368ee2 source guard then withholds the present until the (async) applied source
+identities equal that closure's expected identities. The only state-derived encode
+fields (`diffColormapOverride`/`diffKernel`/`reduceOverride`, and the image `enc`) never
+cross between the image and diff branches within a pane on a stacked flip (diff uses
+`effectiveDiffColormap`, image uses `enc`; neither is written by the other's path
+absent the settings-sync bus). The one path by which a diff's display encoding could
+reach a plain image is the settings-sync bus — `applyRemoteSettings` adopting a diff
+peer's `deriveCompareEncodingId("scalar", …, "magma") = "magma"` into a plain image's
+`enc` — but the FLOAT synced-peer probe measured 0 (the light-image `enc` did not
+false-color), so that vector did not bleed either.
+
+**Remaining UNTESTED path (honest gap + recommended next repro).** The DESCRIPTOR
+GPU real-stack path (`PlotApp → GridView stacked → NodeDispatch → LeafView →
+GpuImagePane` with the LeafView async-resolve + `diffSpec` cross-commit timing) could
+NOT be exercised headlessly — a scratch real-stack harness forced to `render=gpu` fell
+back to CPU (0 pool presents logged), so the live GPU pane under cross-commit prop
+delivery was not measured. Architecturally React hands the pane ONE consistent
+`mergedProps` snapshot per commit and `LeafView` holds cleanly (never emits an
+undefined-`b` `compareSource`; c459c34), so a torn props set should not reach the pane
+— but this was reasoned, not measured on GPU. NEXT: a GPU real-stack harness that
+actually mounts `GpuImagePane` (resolve the CPU-fallback in headless), reusing the
+per-present render-log oracle landed here; and/or reliable per-present GPU
+texture-copy readback to see an SDR CPU-baked-colormap flash the ground-truth encode
+oracle cannot (SDR colormaps are baked into the texture → `isScalar:false`).
+
+**No pane fix was landed** — none is warranted by the evidence (the pane is coherent;
+the 9368ee2 source guard + pure-synchronous encode derivation already keep every
+tested present source⊗encode-coherent). The atomic-params-snapshot refactor was NOT
+applied: it would reframe (not change) an already-correct guard and risk regressing a
+2600-line critical pane for no measured benefit. What LANDED is the strengthened
+oracle — a strict superset of the prior source-only check, now a permanent regression
+guard that WOULD catch the described artefact if it ever occurs.
+
+**Gates.** typecheck; 615 node tests; ALL 29 parity harnesses (metal-3, incl. the
+sharpened stress harness, stable ×3); gpu-image bundle rebuilt + synced (test-only
+fingerprint additions; production present path unchanged — fingerprint gated behind
+`isPaneRenderLogActive`). pytest + report/gallery regen UNAFFECTED (no
+schema/render-behavior change). `uv.lock` left untouched.
+
 ## Phase 3 — DONE (commits 9f70506, 04a5e64, a96ab54, + the harness/doc commit)
 
 split/blend became `direct` compositor ContentOps on the unified pane; the last

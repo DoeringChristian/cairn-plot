@@ -34,7 +34,7 @@
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
-import { urlSource } from "../image-backend";
+import { urlSource, hdrSource, type HdrData } from "../image-backend";
 import { getSharedDevice } from "../../engine/device";
 import {
   startPaneRenderLog,
@@ -111,16 +111,21 @@ function makeImageUrl(fill: (x: number, y: number) => [number, number, number]):
   return c.toDataURL("image/png");
 }
 
+// LIGHT (near-white) fills so a scalar reduce of the RAW image lands high on the
+// magma ramp (~orange) — the exact "image source through the diff's scalar magma
+// display" artefact the user reported. A torn present that runs the LIGHT image
+// through isScalar+magma is thus an orange-dominant frame by construction.
 const FG_URL = makeImageUrl((x) => [Math.round((x / 63) * 255), 128, 64]);
 const REF_URL = makeImageUrl((_x, y) => [Math.round((y / 63) * 255), 128, 64]);
-const PLAIN_URL = makeImageUrl((x, y) => [x * 3, y * 3, 128]);
-const PLAIN2_URL = makeImageUrl((x, y) => [128, x * 3, y * 3]);
+const PLAIN_URL = makeImageUrl((x, y) => [200 + (x % 55), 200 + (y % 55), 210]);
+const PLAIN2_URL = makeImageUrl((x, y) => [210, 200 + (x % 55), 200 + (y % 55)]);
 
 const STACK_KEYS = { a: "flip:ref", b: "flip:fg" };
 
 function imageProps(url = PLAIN_URL): Record<string, unknown> {
   return { source: urlSource(url), zoom: 1, pan: { x: 0, y: 0 }, label: "" };
 }
+// A CACHED FLIP diff (default): the RESULT (scalar error) is blit through magma.
 function diffProps(): Record<string, unknown> {
   return {
     source: urlSource(REF_URL),
@@ -138,41 +143,125 @@ function diffProps(): Record<string, unknown> {
     label: "",
   };
 }
+// A DIRECT magnitude diff with an explicit MAGMA colormap. This is the path that
+// exercises `attemptRender` (NOT the cached blit) with `isScalar + magma LUT +
+// reduce mean` — the exact scalar-magma display the orange artefact rides. A
+// torn present here that binds the LIGHT image primary while carrying these
+// encode params is a logged orange frame.
+function diffMagmaProps(): Record<string, unknown> {
+  return {
+    source: urlSource(REF_URL),
+    compareSource: {
+      b: urlSource(FG_URL),
+      opId: "absolute",
+      mode: "diff",
+      colormap: "magma",
+      contentKeyA: STACK_KEYS.a,
+      contentKeyB: STACK_KEYS.b,
+      referenceLabel: "ref",
+      foregroundLabel: "fg",
+    },
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    label: "",
+  };
+}
 
-function probeEl(container: HTMLElement): (HTMLElement & { __cairnImageDiffProbe?: { canvas: HTMLCanvasElement | null; requestRender: () => void } }) | null {
-  return container.querySelector("[data-gpu-image-viewport]") as never;
+// FLOAT (HDR) sources: a near-white float image so a scalar-magma false-color of
+// it lands high on the ramp (orange). Unlike SDR (colormap CPU-baked → present
+// isScalar false, invisible to the encode oracle), a float image false-colored
+// through `enc` runs the GPU `isScalar` path — VISIBLE to the render-log oracle.
+function floatHdr(fill: (x: number, y: number) => number): HdrData {
+  const W = 32, H = 32;
+  const data = new Float32Array(W * H * 3);
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const v = fill(x, y);
+      const i = (y * W + x) * 3;
+      data[i] = v; data[i + 1] = v; data[i + 2] = v;
+    }
+  return { data, shape: [H, W, 3], dtype: "<f4" };
 }
-async function readCanvasBytes(canvas: HTMLCanvasElement | null): Promise<Uint8Array | null> {
-  if (!canvas) return null;
-  const bmp = await createImageBitmap(canvas);
-  const tmp = document.createElement("canvas");
-  tmp.width = bmp.width;
-  tmp.height = bmp.height;
-  const ctx = tmp.getContext("2d")!;
-  ctx.drawImage(bmp, 0, 0);
-  return new Uint8Array(ctx.getImageData(0, 0, tmp.width, tmp.height).data.buffer);
+const FLOAT_IMG = floatHdr((x) => 0.85 + 0.1 * (x / 31)); // light
+const FLOAT_REF = floatHdr((_x, y) => 0.8 + 0.15 * (y / 31));
+const FLOAT_FG = floatHdr((x) => 0.82 + 0.13 * (x / 31));
+function floatImageProps(): Record<string, unknown> {
+  return { hdr: FLOAT_IMG, zoom: 1, pan: { x: 0, y: 0 }, label: "" };
 }
-function nonZero(bytes: Uint8Array | null): boolean {
-  if (!bytes) return false;
-  for (let i = 0; i < bytes.length; i += 4) {
-    if (bytes[i] !== 0 || bytes[i + 1] !== 0 || bytes[i + 2] !== 0) return true;
-  }
-  return false;
+function floatDiffProps(): Record<string, unknown> {
+  return {
+    source: hdrSource(FLOAT_REF),
+    compareSource: {
+      b: hdrSource(FLOAT_FG),
+      opId: "flip",
+      mode: "diff",
+      contentKeyA: STACK_KEYS.a,
+      contentKeyB: STACK_KEYS.b,
+      referenceLabel: "ref",
+      foregroundLabel: "fg",
+    },
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    label: "",
+  };
 }
 
-/** Classify one present. Returns null if coherent, else a reason string. */
+/** A canonical string of a present's FULL (source + display-encode) state — the
+ *  sharpened oracle. Two DIFFERENT settled combos (a light image vs a scalar
+ *  magma diff) map to different strings; a TORN present (right source, stale
+ *  encode — or vice-versa) maps to a string that matches NEITHER settled slot. */
+function fullSig(r: PaneRenderRecord): string {
+  return JSON.stringify({
+    mode: r.mode,
+    a: r.sourceKey ?? null,
+    b: r.sourceBKey ?? null,
+    hasSrcB: r.hasSrcB,
+    op: r.contentOpId ?? 0,
+    isScalar: !!r.isScalar,
+    scalarMode: r.scalarMode ?? 0,
+    hasColormap: !!r.hasColormap,
+    cmapSig: r.colormapSig != null ? Math.round(r.colormapSig * 1000) : null,
+    reduce: r.reduce ?? null,
+    ch: r.channelCount ?? null,
+    op2: r.operator ?? null,
+    hdr: !!r.hdrOut,
+  });
+}
+
+/** Would this present render ORANGE-dominant? The artefact is a LIGHT-content
+ *  source (the plain image primary, or a direct-op primary whose `b` operand is
+ *  missing so |a-b| ≈ a ≈ light) driven through a SCALAR colormap (isScalar +
+ *  a bound LUT) — a near-white scalar lands on the magma UPPER ramp = orange.
+ *  Derived from the ground-truth encode fingerprint (deterministic), not flaky
+ *  mid-present pixel readback (an in-DOM canvas rotates its back-buffer). */
+function isOrangeFrame(r: PaneRenderRecord, settled: Set<string>): boolean {
+  if (settled.has(fullSig(r))) return false; // a settled slot is never orange
+  if (!r.isScalar || !r.hasColormap) return false; // orange needs the scalar-LUT path
+  // A scalar-LUT present that is NOT a settled diff means a light source is
+  // being collapsed through the diff's magma — the orange flash.
+  return true;
+}
+
+function probeEl(container: HTMLElement): HTMLElement | null {
+  return container.querySelector("[data-gpu-image-viewport]");
+}
+
+/** Classify one present's SOURCE binding (the 9368ee2 oracle). Returns null if
+ *  the bound textures match the present's mode/op, else a reason string. Accepts
+ *  both a CACHED diff (contentOpId 0, RESULT blit) and a DIRECT diff op
+ *  (contentOpId nonzero, samples both keyed operands). */
 function incoherentReason(r: PaneRenderRecord): string | null {
-  const isDiffOp = !!r.contentOpId; // nonzero contentOpId = a direct op (unused for FLIP, which is cached)
-  if (r.mode === "cached-diff") {
-    // A FLIP present: the RESULT of the two keyed operands.
+  const isDiffOp = !!r.contentOpId; // nonzero contentOpId = a direct diff/compositor op
+  if (r.mode === "cached-diff" || isDiffOp) {
+    // A diff present (cached RESULT, or a direct op over both operands): the two
+    // bound source keys must be the diff's keyed operands.
     if (r.sourceKey !== STACK_KEYS.a || r.sourceBKey !== STACK_KEYS.b || !r.hasSrcB) {
-      return `cached-diff bound to (a=${r.sourceKey}, b=${r.sourceBKey}, hasSrcB=${r.hasSrcB}); want (${STACK_KEYS.a}, ${STACK_KEYS.b}, true)`;
+      return `diff present bound to (a=${r.sourceKey}, b=${r.sourceBKey}, hasSrcB=${r.hasSrcB}); want (${STACK_KEYS.a}, ${STACK_KEYS.b}, true)`;
     }
     return null;
   }
-  // mode "image": the plain image path (identity). VALID only when the primary is
-  // the UNKEYED plain image and no diff op / operand lingers.
-  if (isDiffOp) return `image-mode present with a nonzero contentOpId=${r.contentOpId}`;
+  // mode "image", identity op: the plain image path. VALID only when the primary
+  // is the UNKEYED plain image and no diff operand lingers.
   if (r.sourceKey !== undefined) return `image present but primary is keyed "${r.sourceKey}" (stale diff reference)`;
   if (r.hasSrcB || r.sourceBKey !== undefined) return `image present with a lingering b slot (sourceBKey=${r.sourceBKey}, hasSrcB=${r.hasSrcB})`;
   return null;
@@ -205,23 +294,48 @@ async function main(): Promise<void> {
 
     const renderProps = (p: Record<string, unknown>) => root.render(h(GpuImagePane, p as never));
 
-    // ---- warm up: settle image, then diff (populates retention + diff cache) --
+    // ---- warm up + settled-fingerprint capture. LOG-BASED (the plain-image path
+    // has no `__cairnImageDiffProbe`, only compare panes do), so we settle by
+    // watching the pool's per-present render log for a COHERENT present of the
+    // requested mode, then take the LAST (quiescent) present's full fingerprint —
+    // renderPass fires only on a dep change, so after a short sleep the tail IS
+    // the settled state. Any storm present whose fingerprint is not a captured
+    // settled sig is a TORN frame; a scalar-LUT-over-light one is an ORANGE frame.
     renderProps(imageProps());
-    await waitFor(() => !!probeEl(container)?.__cairnImageDiffProbe?.canvas, 8000);
-    const settle = async () => {
-      await waitFor(async () => {
-        const p = probeEl(container)?.__cairnImageDiffProbe;
-        if (!p?.canvas) return false;
-        p.requestRender();
-        return nonZero(await readCanvasBytes(p.canvas));
-      }, 8000, 60);
+    await waitFor(() => !!probeEl(container), 8000);
+    const captureSettledSig = async (
+      p: Record<string, unknown>,
+      wantDiff: boolean,
+    ): Promise<string[]> => {
+      startPaneRenderLog();
+      renderProps(p);
+      await waitFor(() => {
+        const log = getPaneRenderLog();
+        return log.some(
+          (r) =>
+            incoherentReason(r) === null &&
+            (wantDiff ? r.mode === "cached-diff" || !!r.contentOpId : r.mode === "image" && r.sourceKey === undefined && !r.contentOpId),
+        );
+      }, 8000, 40);
+      await sleep(200); // quiesce
+      const log = getPaneRenderLog();
+      const sigs = new Set<string>();
+      // The tail (post-quiesce) presents are the settled state; take the last few
+      // COHERENT ones so both a possible cached-result AND its blit variants land.
+      for (const r of log.slice(-4)) if (incoherentReason(r) === null) sigs.add(fullSig(r));
+      stopPaneRenderLog();
+      return [...sigs];
     };
-    await settle();
-    renderProps(diffProps());
-    await settle();
-    renderProps(imageProps());
-    await settle();
-    note("warm-up done (image + FLIP-diff both settled; retention + diff cache primed)");
+    const imgSigs = await captureSettledSig(imageProps(), false);
+    const flipSigs = await captureSettledSig(diffProps(), true);
+    const magmaSigs = await captureSettledSig(diffMagmaProps(), true);
+    await captureSettledSig(imageProps(), false); // leave settled on image + primes retention/cache
+    note(
+      `warm-up done — settled fingerprints image:${imgSigs.length} flip:${flipSigs.length} magma:${magmaSigs.length}`,
+    );
+    note(`  image settled sig: ${imgSigs[0] ?? "(none)"}`);
+    note(`  flip  settled sig: ${flipSigs[0] ?? "(none)"}`);
+    note(`  magma settled sig: ${magmaSigs[0] ?? "(none)"}`);
 
     // A seeded PRNG so the randomized flip pattern is reproducible across runs.
     let seed = 0x9e3779b9 >>> 0;
@@ -246,51 +360,199 @@ async function main(): Promise<void> {
     note(`CONTROL image↔image: ${control.total} presents, ${control.incoherent.length} incoherent`);
     report(control.incoherent.length === 0, `same-kind (image↔image) flips are coherent (${control.incoherent.length}/${control.total} incoherent)`);
 
-    // ---- MAIN: rapid image↔diff (op-transition) flips ------------------------
-    // Flip every rAF, randomly choosing the kind and occasionally double-flipping
-    // within one rAF, so the async source/refDims application for one slot lands
-    // while the pane's props already describe another. Hundreds of transitions.
+    // ---- Generic op-transition storm runner. Flips image↔diff every rAF,
+    // randomly, occasionally twice per rAF (faster than a frame), so the async
+    // source/refDims application for one slot lands while the pane's props already
+    // describe another. Measures BOTH the source-coherency oracle (the 9368ee2
+    // proof) AND the sharpened FULL-STATE oracle + orange-frame count. ----------
     const ITER = 400;
-    startPaneRenderLog();
-    let prevDiff = false;
-    let transitions = 0;
-    for (let i = 0; i < ITER; i++) {
-      const wantDiff: boolean = rnd() < 0.5;
-      renderProps(wantDiff ? diffProps() : imageProps());
-      if (wantDiff !== prevDiff) transitions++;
-      prevDiff = wantDiff;
-      // Occasionally a second, opposite flip in the SAME rAF (faster than a frame).
-      if (rnd() < 0.35) {
-        const wantDiff2: boolean = !wantDiff;
-        renderProps(wantDiff2 ? diffProps() : imageProps());
-        if (wantDiff2 !== prevDiff) transitions++;
-        prevDiff = wantDiff2;
+    const settledSet = new Set<string>([...imgSigs, ...flipSigs, ...magmaSigs]);
+    const runStorm = async (
+      diffFactory: () => Record<string, unknown>,
+    ): Promise<{
+      total: number;
+      srcIncoherent: number;
+      fullMismatch: number;
+      orange: number;
+      transitions: number;
+      mismatchReasons: Map<string, number>;
+    }> => {
+      startPaneRenderLog();
+      let prevDiff = false;
+      let transitions = 0;
+      for (let i = 0; i < ITER; i++) {
+        const wantDiff: boolean = rnd() < 0.5;
+        renderProps(wantDiff ? diffFactory() : imageProps());
+        if (wantDiff !== prevDiff) transitions++;
+        prevDiff = wantDiff;
+        if (rnd() < 0.35) {
+          const wantDiff2: boolean = !wantDiff;
+          renderProps(wantDiff2 ? diffFactory() : imageProps());
+          if (wantDiff2 !== prevDiff) transitions++;
+          prevDiff = wantDiff2;
+        }
+        await raf();
       }
+      await sleep(300);
+      const records = getPaneRenderLog();
+      stopPaneRenderLog();
+      let srcIncoherent = 0;
+      let fullMismatch = 0;
+      let orange = 0;
+      const mismatchReasons = new Map<string, number>();
+      for (const r of records) {
+        if (incoherentReason(r)) srcIncoherent++;
+        if (!settledSet.has(fullSig(r))) {
+          fullMismatch++;
+          const key = fullSig(r);
+          mismatchReasons.set(key, (mismatchReasons.get(key) ?? 0) + 1);
+        }
+        if (isOrangeFrame(r, settledSet)) orange++;
+      }
+      return { total: records.length, srcIncoherent, fullMismatch, orange, transitions, mismatchReasons };
+    };
+
+    // Run each storm variant 3× (the ≥3-repeat requirement). FLIP is the user's
+    // reported path (cached magma); MAGMA is the DIRECT scalar-magma path that
+    // exercises attemptRender with the scalar-LUT display (where the orange rides).
+    const REPEATS = 3;
+    let anyFullMismatch = 0;
+    let anyOrange = 0;
+    let anySrcIncoherent = 0;
+    for (const [name, factory] of [
+      ["image↔FLIP(cached-magma)", diffProps],
+      ["image↔absolute(direct-magma)", diffMagmaProps],
+    ] as const) {
+      for (let rep = 0; rep < REPEATS; rep++) {
+        const res = await runStorm(factory);
+        anySrcIncoherent += res.srcIncoherent;
+        anyFullMismatch += res.fullMismatch;
+        anyOrange += res.orange;
+        note(
+          `STORM ${name} rep${rep + 1}: ${res.total} presents, ${res.transitions} op-transitions — ` +
+            `src-incoherent ${res.srcIncoherent}, FULL-STATE mismatch ${res.fullMismatch}, ORANGE ${res.orange}`,
+        );
+        if (res.fullMismatch) {
+          const sample = [...res.mismatchReasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+          for (const [sig, count] of sample) note(`    ×${count}  ${sig}`);
+        }
+      }
+    }
+
+    // ---- SYNCED-PAIR storm (the report's real shape): TWO panes in ONE
+    // settings-sync selection group, flipped in OPPOSITE phase. A diff peer
+    // publishes its scalar-magma `encoding` on the bus; if a plain-IMAGE peer
+    // applies that encoding to its own light `enc`, it false-colors the light
+    // image through magma → an ORANGE present (mode "image", isScalar + a bound
+    // LUT over a NON-error source). This is the one path a diff's display params
+    // reach a plain image. Measured via the SAME render-log full-state oracle. ---
+    const SYNC = "stress-sync-grp";
+    const syncImage = (url = PLAIN_URL, anchor = false): Record<string, unknown> => ({
+      ...imageProps(url),
+      settingsSyncGroupId: SYNC,
+      syncIsAnchor: anchor,
+    });
+    const syncDiff = (anchor = false): Record<string, unknown> => ({
+      ...diffProps(),
+      settingsSyncGroupId: SYNC,
+      syncIsAnchor: anchor,
+    });
+    const cB = document.createElement("div");
+    cB.style.cssText = "width:128px;height:128px;position:absolute;left:140px;top:0";
+    document.body.appendChild(cB);
+    const mountB = document.createElement("div");
+    mountB.style.cssText = "width:128px;height:128px";
+    cB.appendChild(mountB);
+    const rootB: Root = createRoot(mountB);
+    const renderA = (p: Record<string, unknown>) => root.render(h(GpuImagePane, p as never));
+    const renderB = (p: Record<string, unknown>) => rootB.render(h(GpuImagePane, p as never));
+    // settle both on image first
+    renderA(syncImage(PLAIN_URL, true));
+    renderB(syncImage(PLAIN2_URL, false));
+    await sleep(400);
+    let syncedOrange = 0;
+    let syncedTotal = 0;
+    const syncedReasons = new Map<string, number>();
+    for (let rep = 0; rep < REPEATS; rep++) {
+      startPaneRenderLog();
+      for (let i = 0; i < 200; i++) {
+        // Opposite phase: when A is diff, B is image, and vice-versa.
+        const aDiff = rnd() < 0.5;
+        renderA(aDiff ? syncDiff(true) : syncImage(PLAIN_URL, true));
+        renderB(aDiff ? syncImage(PLAIN2_URL, false) : syncDiff(false));
+        await raf();
+      }
+      await sleep(300);
+      const records = getPaneRenderLog();
+      stopPaneRenderLog();
+      for (const r of records) {
+        syncedTotal++;
+        if (isOrangeFrame(r, settledSet)) {
+          syncedOrange++;
+          const k = fullSig(r);
+          syncedReasons.set(k, (syncedReasons.get(k) ?? 0) + 1);
+        }
+      }
+    }
+    note(`SYNCED-PAIR storm ×${REPEATS}: ${syncedTotal} presents, ORANGE(encode-oracle) ${syncedOrange}`);
+    if (syncedOrange) {
+      const sample = [...syncedReasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      for (const [sig, count] of sample) note(`    ×${count}  ${sig}`);
+    }
+
+    // ---- FLOAT image peer synced with a DIFF ANCHOR. The diff anchor's
+    // seed publishes its scalar-magma `encoding:"magma"` when the group forms; a
+    // plain FLOAT image peer that adopts it into its light `enc` false-colors via
+    // the GPU `isScalar` path — a present the render-log oracle SEES (isScalar +
+    // magma LUT over a light float image). This is the exact "IMAGE source through
+    // the DIFF's scalar magma display" the user reported. --------------------------
+    const FSYNC = "stress-fsync-grp";
+    const withSync = (p: Record<string, unknown>, anchor: boolean): Record<string, unknown> => ({
+      ...p,
+      settingsSyncGroupId: FSYNC,
+      syncIsAnchor: anchor,
+    });
+    startPaneRenderLog();
+    // A = DIFF ANCHOR (publishes scalar-magma on group form); B = FLOAT IMAGE peer.
+    renderA(withSync(floatDiffProps(), true));
+    renderB(withSync(floatImageProps(), false));
+    await sleep(700);
+    // Then flip B image↔diff a few times while A stays diff — the storm shape.
+    for (let i = 0; i < 60; i++) {
+      renderB(withSync(i % 2 === 0 ? floatImageProps() : floatDiffProps(), false));
       await raf();
     }
-    // Let any in-flight async source applications drain, then capture.
     await sleep(300);
-    const mainRes = analyze(getPaneRenderLog());
+    const frecords = getPaneRenderLog();
     stopPaneRenderLog();
-
-    note(`MAIN image↔diff: ${transitions} op-transitions over ${ITER} iterations, ${mainRes.total} presents captured`);
-    const rate = mainRes.total ? (100 * mainRes.incoherent.length) / mainRes.total : 0;
-    note(`INCOHERENT presents = ${mainRes.incoherent.length}/${mainRes.total} (${rate.toFixed(2)}% of presents)`);
-    if (mainRes.incoherent.length) {
-      const sample = [...mainRes.reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
-      for (const [why, count] of sample) note(`  ×${count}  ${why}`);
+    let floatOrange = 0;
+    const floatReasons = new Map<string, number>();
+    for (const r of frecords) {
+      // A float IMAGE present carrying a scalar LUT (isScalar + hasColormap, op 0,
+      // NOT a diff's keyed operands) = the light float image false-colored → orange.
+      const isImagePresent = r.mode === "image" && !r.contentOpId;
+      if (isImagePresent && r.isScalar && r.hasColormap) {
+        floatOrange++;
+        const k = fullSig(r);
+        floatReasons.set(k, (floatReasons.get(k) ?? 0) + 1);
+      }
     }
+    note(`FLOAT synced (diff-anchor ⊕ image-peer): ${frecords.length} presents, ORANGE(float-image-scalar-LUT) ${floatOrange}`);
+    if (floatOrange) {
+      const sample = [...floatReasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      for (const [sig, count] of sample) note(`    ×${count}  ${sig}`);
+    }
+    anyOrange += syncedOrange + floatOrange;
+    rootB.unmount();
+    cB.remove();
 
-    // The proof: ZERO incoherent presents. Pre-fix this is > 0 (the mismatch-triple
-    // evidence above); the present-coherency guard must drive it to 0.
-    const coherent = mainRes.incoherent.length === 0;
-    report(coherent, `rapid image↔diff flips present NO stale/intermediate frame (${mainRes.incoherent.length} incoherent of ${mainRes.total})`);
+    report(anySrcIncoherent === 0, `source-coherency (9368ee2): ${anySrcIncoherent} incoherent presents across all storms`);
+    report(anyFullMismatch === 0, `FULL-STATE coherency: ${anyFullMismatch} torn (source⊗encode) presents across all storms`);
+    report(anyOrange === 0, `ORANGE frames: ${anyOrange} scalar-magma-over-light presents across all storms (incl. synced pair)`);
 
     // Sanity — NO DEADLOCK: the guard HOLDS the previous frame while sources are
-    // incoherent, so we must prove it still eventually PRESENTS each slot coherently
-    // after the storm. Uses the render log as the oracle (a COHERENT present of the
-    // requested kind must appear), not canvas readback — the `__cairnImageDiffProbe`
-    // seam only exists in compare mode, and mid-present canvas readback is flaky.
+    // incoherent, so prove it still eventually PRESENTS each slot coherently after
+    // the storm (render-log oracle, not flaky canvas readback).
     const settledPresent = async (want: "image" | "diff"): Promise<boolean> => {
       startPaneRenderLog();
       renderProps(want === "diff" ? diffProps() : imageProps());
@@ -311,8 +573,14 @@ async function main(): Promise<void> {
     const settledImg = await settledPresent("image");
     report(settledImg, `pane still presents a coherent image after the storm (no deadlock)`);
 
-    const allOk = control.incoherent.length === 0 && coherent && settledDiff && settledImg;
-    report(allOk, `stress: rapid image↔diff flipping is present-coherent + no deadlock`);
+    const allOk =
+      control.incoherent.length === 0 &&
+      anySrcIncoherent === 0 &&
+      anyFullMismatch === 0 &&
+      anyOrange === 0 &&
+      settledDiff &&
+      settledImg;
+    report(allOk, `stress: rapid image↔diff flipping is FULL-STATE coherent, orange-free + no deadlock`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
