@@ -236,6 +236,20 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // sRGB encode; with cairnReduceScalar's k<=1 guard a scalar colormap (k=1) renders
 // bit-for-bit as before.
 @group(0) @binding(32) var<uniform> u_bind10: vec4<f32>;
+// Logical binding 11 (texture, SECOND source slot b — the reference/baseline of
+// an arity-2 diff CONTENT op) -> native binding 11*3+0 = 33. For a single-image
+// (arity-1) render this is a 1x1 placeholder the caller binds (WebGPU requires
+// every declared binding to have a resource); the IDENTITY content op (opId 0)
+// ignores b, so the single-image path is byte-for-byte unaffected. See
+// engine/image-engine.ts's srcB handling + content-ops/wgsl.ts.
+@group(0) @binding(33) var t_bind11: texture_2d<f32>;
+// Logical binding 12 (uniform f32: contentOpId — the CONTENT-op dispatch id) ->
+// native binding 12*3+2 = 38. Selects the content op cairnContent applies to the
+// two sampled slots: 0 = IDENTITY (passthrough of a; the zero-filled default, so
+// a caller that sets no op renders as before), 1.. = the direct diff ops
+// (signed/absolute/…) assembled from the content-op registry. See
+// content-ops/wgsl.ts (CONTENT_OP_ID).
+@group(0) @binding(38) var<uniform> u_bind12: f32;
 
 // Display-transfer stage — the SDR sRGB/gamma OETF (+ the sRGB EOTF that
 // LINEARIZES an 8-bit source when srgbDecode/u_bind8 is set) and the EXTENDED
@@ -271,6 +285,30 @@ fn sampleBilinearF(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
   return mix(top, bot, frac.y);
 }
 
+// Manual bilinear blend for the SECOND source slot (t_bind11) — the arity-2 diff
+// CONTENT ops sample both slots at the fragment source UV. A verbatim twin of
+// sampleBilinearF on t_bind11 (WGSL textures are not first-class parameters, so
+// the sampler is duplicated rather than parameterized). Unused by the single-image
+// (identity) path.
+fn sampleBilinearB(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
+  let texel = uv * dims - vec2<f32>(0.5);
+  let base = floor(texel);
+  let frac = texel - base;
+  let maxX = i32(dims.x) - 1;
+  let maxY = i32(dims.y) - 1;
+  let x0 = clamp(i32(base.x), 0, maxX);
+  let x1 = clamp(i32(base.x) + 1, 0, maxX);
+  let y0 = clamp(i32(base.y), 0, maxY);
+  let y1 = clamp(i32(base.y) + 1, 0, maxY);
+  let c00 = textureLoad(t_bind11, vec2<i32>(x0, y0), 0);
+  let c10 = textureLoad(t_bind11, vec2<i32>(x1, y0), 0);
+  let c01 = textureLoad(t_bind11, vec2<i32>(x0, y1), 0);
+  let c11 = textureLoad(t_bind11, vec2<i32>(x1, y1), 0);
+  let top = mix(c00, c10, frac.x);
+  let bot = mix(c01, c11, frac.x);
+  return mix(top, bot, frac.y);
+}
+
 // Colormap LUT family — the SHARED cairnLutColor(lut, scalar, cmapMode,
 // filterLinear) from image/encodings (LUT_FAMILY_WGSL), the SAME family the diff
 // blit consumes. Its nearest/linear samplers are selected by the SAME filter
@@ -296,10 +334,14 @@ ${buildTonemapCurvesWGSL({ remaps: true })}
 
 // CONTENT stage — ASSEMBLED from the content-op registry (image/content-ops),
 // the single source of truth for "what k-channel value does this texel carry".
-// Phase 1: the IDENTITY op only, so cairnContent(a) is the passthrough of a —
-// the sampled source enters the display pipeline here (see buildContentOpWGSL). The
-// display stage downstream (exposure, isScalar/reduce/dataIndex, applyOperator,
-// output-encode) is unchanged and consumes cairnContent's output.
+// cairnContent(a, b, opId) dispatches on the contentOpId uniform (u_bind12): opId 0
+// = IDENTITY (passthrough of the single sampled slot a — the sampled source
+// enters the display pipeline here, byte-for-byte the pre-diff path); opId 1.. =
+// the direct pointwise diff ops (signed/absolute/squared + relative variants),
+// each the raw per-channel error over the two sampled slots a,b. The display
+// stage downstream (exposure, isScalar/reduce/dataIndex, applyOperator,
+// output-encode) is unchanged and consumes cairnContent's output — a diff is
+// displayed as a scalar error (reduce → colormap) via its defaultEncoding.
 ${buildContentOpWGSL()}
 
 @fragment
@@ -326,6 +368,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     sampled = textureLoad(t_bind0, coord, 0);
   }
 
+  // SECOND source slot b — sampled at the same source UV from t_bind11 (its own
+  // dims). Only the arity-2 diff CONTENT ops read it; for the single-image path
+  // it is a 1x1 placeholder the IDENTITY op ignores, so this sample is inert.
+  let srcDimsB = vec2<f32>(textureDimensions(t_bind11));
+  var sampledB: vec4<f32>;
+  if (filterLinear) {
+    sampledB = sampleBilinearB(srcUV, srcDimsB);
+  } else {
+    let coordB = vec2<i32>(srcUV * srcDimsB);
+    sampledB = textureLoad(t_bind11, coordB, 0);
+  }
+
   let exposureEV = u_bind2.x;
   let operatorId = i32(round(u_bind2.y));
   let gamma = u_bind2.z;
@@ -335,11 +389,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let peak = u_bind7;
   let srgbDecode = u_bind8 > 0.5;
 
-  // CONTENT stage (Phase 1: identity) — the sampled source enters the display
-  // pipeline through the content-op registry (cairnContent, assembled above).
-  // Identity is a passthrough, so content == sampled; the display pipeline
-  // below is byte-for-byte unchanged.
-  let content = cairnContent(sampled);
+  // CONTENT stage — the sampled source slot(s) enter the display pipeline through
+  // the content-op registry (cairnContent, assembled above), dispatched by the
+  // contentOpId uniform (u_bind12). opId 0 = IDENTITY (passthrough of a, the
+  // zero-filled default), so content == sampled and the single-image display
+  // pipeline below is byte-for-byte unchanged; opId 1.. = the direct diff ops
+  // (raw per-channel error over a,b), which the display stage then encodes
+  // (reduce -> colormap) via the op's defaultEncoding.
+  let contentOpId = i32(round(u_bind12));
+  let content = cairnContent(sampled, sampledB, contentOpId);
 
   // 0) [SDR display-transfer path] sRGB-DECODE the sampled 8-bit source to
   //    linear light so exposure/offset + the chosen transfer operate on linear

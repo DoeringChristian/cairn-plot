@@ -174,6 +174,23 @@ export interface ImageParams {
    * would produce.
    */
   filter?: "nearest" | "linear";
+  /**
+   * SECOND source slot `b` (the reference/baseline of an arity-2 diff CONTENT op)
+   * — sampled at the same source UV as `src` and fed to `cairnContent(a, b, opId)`.
+   * Only read when {@link contentOpId} selects a `direct` diff op; for the
+   * single-image (identity) path it is omitted and a 1x1 placeholder is bound
+   * (WebGPU requires every declared binding to have a resource). See
+   * `image/content-ops` + `image.wgsl.ts`'s t_bind11.
+   */
+  srcB?: Texture;
+  /**
+   * CONTENT-op dispatch id (`image/content-ops`' `CONTENT_OP_ID`): 0 = IDENTITY
+   * (passthrough of `src`; the default, so omitting it renders bit-for-bit as
+   * before), 1.. = the direct pointwise diff ops (signed/absolute/…). Packed into
+   * the u_bind12 uniform. Cached metrics (FLIP/SSIM) are NOT dispatched here —
+   * they render into a result texture bound as `src` + identity. Unset = 0.
+   */
+  contentOpId?: number;
 }
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
@@ -291,6 +308,15 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
     typeof params.grayEncodeGamma === "number" && params.grayEncodeGamma > 0 ? params.grayEncodeGamma : 0;
   const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, grayEncodeGamma]);
 
+  // u_bind12 = CONTENT-op dispatch id (0 = identity passthrough, the default).
+  const contentOpIdVec = new Float32Array([params.contentOpId ?? 0]);
+  // Logical binding 11 = the SECOND source slot `b` (arity-2 diff ops). Bind the
+  // caller's srcB, or a 1x1 placeholder for the single-image path — WebGPU
+  // requires every declared texture binding to have a resource, and the IDENTITY
+  // op ignores it. A placeholder is allocated (+ freed) only when srcB is absent.
+  const placeholderB = params.srcB ? undefined : buildColormapTexture(device, undefined);
+  const srcB = params.srcB ?? (placeholderB as Texture);
+
   let bindGroup: BindGroup | undefined;
   try {
     bindGroup = device.createBindGroup(pipeline, [
@@ -305,11 +331,14 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 8, resource: { uniform: srgbDecodeVec } },
       { binding: 9, resource: { uniform: normVec } },
       { binding: 10, resource: { uniform: reduceVec } },
+      { binding: 11, resource: srcB },
+      { binding: 12, resource: { uniform: contentOpIdVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {
     bindGroup?.destroy?.();
     lut.destroy();
+    placeholderB?.destroy();
   }
 }
 

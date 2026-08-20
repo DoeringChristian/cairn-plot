@@ -108,7 +108,7 @@ import {
   type NormMode,
   type ReduceMode,
 } from "../image/encodings";
-import { getContentOp } from "../image/content-ops";
+import { getContentOp, isDirectContentOp, type DirectContentOp } from "../image/content-ops";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
@@ -142,7 +142,11 @@ const DEFAULT_PROCESSING: ImageProcessing = {
  *  declaration the GPU shader's `cairnContent` assembles from. Identity returns
  *  the sampled source channels unchanged, so the pixel pipeline is byte-for-byte
  *  as before. */
-const IDENTITY_CONTENT = getContentOp("identity")!;
+const _identityOp = getContentOp("identity");
+if (!_identityOp || !isDirectContentOp(_identityOp)) {
+  throw new Error("CpuImagePane: the 'identity' content op must be registered as a direct op");
+}
+const IDENTITY_CONTENT: DirectContentOp = _identityOp;
 
 /**
  * Tone-map the float HDR buffer into an 8-bit RGBA `ImageData`. Pure — no DOM

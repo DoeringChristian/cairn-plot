@@ -1,5 +1,5 @@
 /**
- * Content-op REGISTRY ⟷ SHADER drift guard (Phase 1) — pure Node, no GPU/DOM:
+ * Content-op REGISTRY ⟷ SHADER drift guard — pure Node, no GPU/DOM:
  *   node --experimental-strip-types --test \
  *     src/lib/cairn-plot/image/content-ops/registry-drift.test.ts
  *
@@ -7,15 +7,14 @@
  * the CONTENT stage. Unlike the display-encoding drift guard (which pins TS↔Python
  * enum echoes), content ops have no cross-language mirror — the surface that could
  * DRIFT is the GPU shader, which must ASSEMBLE its content function from the
- * registry rather than hand-inline a source-sample-to-content path. This test
+ * registry rather than hand-inline the source-sample-to-content path. This test
  * proves that seam: the image shader interpolates `buildContentOpWGSL()` verbatim
- * and routes the sampled source through the assembled `cairnContent`, so the op
- * is declared in exactly one place. To change the content stage you touch the
- * registry; this test then fails if the shader stops consuming it.
+ * and routes the two sampled slots through the assembled `cairnContent(a, b, opId)`,
+ * so the op set is declared in exactly one place.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildContentOpWGSL, getContentOp, listContentOps } from "./index.ts";
+import { buildContentOpWGSL, getContentOp, listDirectContentOps, CONTENT_OP_ID } from "./index.ts";
 import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
@@ -26,22 +25,41 @@ test("the image shader interpolates the registry-assembled content function", ()
   );
 });
 
-test("the image shader consumes cairnContent at the content seam", () => {
-  // The sampled source enters the display pipeline THROUGH the assembled function.
+test("the image shader consumes cairnContent(a, b, opId) at the content seam", () => {
+  // The two sampled slots enter the display pipeline THROUGH the assembled function.
   assert.ok(
-    imageWGSL.includes("cairnContent(sampled)"),
-    "image.wgsl must route the sampled source through cairnContent(...)",
+    imageWGSL.includes("cairnContent(sampled, sampledB, contentOpId)"),
+    "image.wgsl must route both sampled slots + the op id through cairnContent(...)",
   );
 });
 
-test("the assembled content function is identity's declared WGSL, not a literal", () => {
-  const identity = getContentOp("identity")!;
-  const assembled = buildContentOpWGSL();
-  // The function body is the registry entry's own `wgsl` expression (passthrough).
-  assert.ok(assembled.includes(`return ${identity.wgsl};`));
-  assert.ok(assembled.startsWith("fn cairnContent(a: vec4<f32>) -> vec4<f32>"));
+test("the image shader binds the second source slot + the content-op id uniform", () => {
+  assert.ok(imageWGSL.includes("t_bind11"), "image.wgsl must declare the second source texture (t_bind11)");
+  assert.ok(imageWGSL.includes("u_bind12"), "image.wgsl must declare the contentOpId uniform (u_bind12)");
 });
 
-test("Phase 1 declares exactly one content op (no scattered op declarations)", () => {
-  assert.deepEqual(listContentOps().map((o) => o.id), ["identity"]);
+test("the assembled dispatch has identity as the fallthrough + a branch per non-identity direct op", () => {
+  const identity = getContentOp("identity")!;
+  assert.equal(identity.renderClass, "direct");
+  const assembled = buildContentOpWGSL();
+  assert.ok(assembled.startsWith("fn cairnContent(a: vec4<f32>, b: vec4<f32>, opId: i32) -> vec4<f32>"));
+  // Identity is the fallthrough (opId 0 / any unmatched id → return a).
+  assert.ok(assembled.trimEnd().endsWith(`return ${(identity as { wgsl: string }).wgsl};\n}`));
+  // Every non-identity direct op emits its own `if (opId == N)` branch.
+  for (const op of listDirectContentOps()) {
+    if (op.id === "identity") continue;
+    assert.ok(
+      assembled.includes(`if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.wgsl}; }`),
+      `dispatch branch missing for ${op.id}`,
+    );
+  }
+});
+
+test("cached ops are NOT inlined into the content dispatch (they render a result texture)", () => {
+  const assembled = buildContentOpWGSL();
+  for (const id of ["flip", "hdr-flip", "ssim"]) {
+    // No dispatch id → no branch. (kernelId strings never appear in the shader.)
+    assert.equal(CONTENT_OP_ID[id], undefined);
+    assert.ok(!assembled.includes(`"${id}"`));
+  }
 });
