@@ -107,6 +107,77 @@ report + gallery regen clean.
 - HDR-FLIP's multi-exposure loop is the most complex cached op.
 - Harnesses encode the current compare DOM heavily — migrate, don't fork.
 
+## Phase 2 — FOUNDATION LANDED / pane wiring REMAINING (commit a83553d)
+
+The **engine + registry half** of Phase 2 is done and gate-green; the **pane +
+routing half** (the part that actually kills the flicker) is NOT yet wired.
+
+**Landed (a83553d), zero behavior change — all 24 parity harnesses byte-identical:**
+- `image/content-ops` is now a `DirectContentOp | CachedContentOp` discriminated
+  union (the union the Phase-1 note deferred). Registered: the six POINTWISE
+  diffs as arity-2 `direct` ops (ids == the `engine/kernels` pointwise ids; WGSL
+  diff EXPRESSION over slots `a`,`b`; a pure per-channel `cpu` twin = the diff
+  pixel-value readout's source of truth; `defaultEncoding` generalizes the
+  per-kernel defaults — signed/rel-signed→`red-green`, abs/squared/rel-*→`turbo`),
+  and FLIP/HDR-FLIP/SSIM as arity-2 `cached` ops carrying the `kernelId` they
+  delegate to (`defaultEncoding` magma). `outputArity:1` is the diff's
+  DISPLAY-gating arity (colormaps offered); the content vec4 still physically
+  carries the per-channel error the readout reads.
+- Shader assembly: `buildContentOpWGSL()` now emits `cairnContent(a, b, opId)` —
+  an opId dispatch over the direct ops with IDENTITY as the fallthrough (opId 0,
+  the zero-filled default), mirroring `buildApplyOperatorWGSL`. `CONTENT_OP_ID`
+  is computed LAZILY (the barrel `export *` evaluates `wgsl.ts` before
+  registration runs, so an eager read saw an empty registry — a real ESM
+  evaluation-order trap, documented in `wgsl.ts`).
+- Engine: `image.wgsl` grew a SECOND source slot (`t_bind11`, logical 11) + the
+  `contentOpId` uniform (`u_bind12`, logical 12) + `sampleBilinearB`; `renderImage`
+  takes `srcB` + `contentOpId` and binds a 1×1 placeholder for the single-image
+  path (opId 0 ignores it → byte-identical). `CpuImagePane` narrows identity to
+  its `direct` shape.
+- Parity: new `engine/__tests__/content-ops.browser.ts` drives EVERY direct diff
+  op through the unified image path (`renderImage(srcB, contentOpId,
+  defaultEncoding)`) and asserts the readback === the COMPOSED cpu twin
+  (`contentOp.cpu` → `displayEncoding.cpu`) — signed→red-green (analytic) and
+  magnitude→turbo, incl. negative mean error + SDR clamp. This proves the unified
+  pane's diff CONTENT+DISPLAY render is correct BY CONSTRUCTION before any pane
+  rewiring.
+- Gates: typecheck; 615 node tests (+6); 24 parity harnesses (metal-3); 243
+  pytest; schema/assets/boundary in sync; bundles rebuilt+synced+committed.
+
+**REMAINING (the pane/routing half — not started):**
+1. Cached-op rendering on the unified pane: bind the `ensureDiff` result texture
+   as slot `a` + identity display (the result IS the scalar error). Generalize the
+   diff-cache key to the unified pane's ownership.
+2. `GpuImagePane` grows the 2nd source SLOT lifecycle + a content-op MODE menu
+   (diff kernels from the registry); reconcile the compare pane's SELF-managed
+   two-texture+surface lifecycle vs the pool-managed single-source pane (the key
+   structural mismatch — `GpuComparePane` is NOT on the pool).
+3. Routing (`ui/src/plot-node.tsx`): a `compare` node in mode `diff` lowers to the
+   unified pane (leaves AND stacked-grid slots); a mixed `[image, diff]` stack
+   becomes a HOMOGENEOUS stack of unified panes → the existing source-swap path
+   (no mount-swap) — THE flicker fix. slide/blend still route to `GpuComparePane`
+   (the one documented remount).
+4. Chrome migration: the diff metrics chip (MSE/PSNR/MAE/SSIM) + caption ride
+   `ImagePaneShell`'s `extraChips`/`overlay.render` seams onto the unified pane.
+5. Settings-sync: one path (the bus is ALREADY unified via `deriveCompareEncodingId`).
+6. Harnesses: the mixed grid-stacked block must assert NO remount on image↔diff
+   flips; `compare-pass` diff parity migrates to the unified pane path. (These are
+   INTERACTION harnesses — human/`--all`-run, not the default headless set.)
+
+**⚠ DECISION NEEDED — turbo byte-identity (blocks the "byte-identical to old diff
+display" gate for magnitude kernels).** The old diff blit (`renderDiffDisplay`)
+renders `turbo` as a PLAIN sequential LUT: raw → `(clamp)` → `cairnDataIndex`
+(linear) → `cairnLutColor` (documented in the turbo follow-up: "diff-display
+render turbo as a plain sequential LUT"). The unified image `turbo` encoding bakes
+tev's FIXED log2 index (`cairnTurboDataIndex`). So routing an abs/squared/relative
+diff to the unified pane with `defaultEncoding:turbo` CHANGES the rendered magnitude
+mapping (log2 vs linear) — it is NOT byte-identical to today's compare diff. Either
+(a) the new turbo-log2 magnitude map is the intended (improved) unified behavior and
+"byte-identical" is scoped to signed→red-green + the shared LUT family, or (b) the
+magnitude diff ops need a linear-index default encoding to preserve the old blit.
+This needs the author's call. (signed→red-green is ALREADY analytic-identical to the
+old blit's analytic branch — that half is clean.)
+
 ## Phase 1 — DONE (commit d2cb45a)
 
 The `ContentOp` registry landed under `ui/src/lib/cairn-plot/image/content-ops/`
