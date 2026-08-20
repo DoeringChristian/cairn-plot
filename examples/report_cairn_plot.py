@@ -410,18 +410,19 @@ def build_report() -> cp.Report:
             "Left: the **raw** FLIP error field computed OFFLINE by NVIDIA's "
             "compiled reference implementation ([NVlabs/flip](https://github.com/NVlabs/flip), "
             f"`flip-evaluator`, `applyMagma=False`), **mean FLIP = {_official_mean:.4f}** — "
-            "baked as a plain float **grayscale** image (sRGB, dark = agreement, "
-            "bright = error). Open this pane's DISPLAY menu to apply magma/turbo "
-            "onto the official data, so its colorscheme lines up with the kernel's "
-            "and can be compared on its own. Right: the SAME pair diffed live by "
-            "cairn-plot's GPU FLIP kernel (`mode=\"flip\"`, magma by default). The "
-            "kernel is verified against this reference to ≤3.6e-3 per pixel in the "
-            "test suite; here you can eyeball the agreement directly."
+            "baked as a raw float scalar field and colored by OUR bit-exact magma "
+            "LUT (the same 256-entry table FLIP itself ships). Right: the SAME "
+            "pair diffed live by cairn-plot's GPU FLIP kernel (`mode=\"flip\"`, "
+            "magma by default). Both panes apply the same colorscheme to "
+            "independently computed error data — flip between them (stacked "
+            "layout) to eyeball kernel agreement; switch either DISPLAY menu to "
+            "sRGB/none for the raw fields. The kernel is verified against this "
+            "reference to ≤3.6e-3 per pixel in the test suite."
         )
         rep.grid(
             [
                 [
-                    cp.Image(_official_err, label="official FLIP (raw error, sRGB)"),
+                    cp.Image(_official_err, label="official FLIP (raw error)", colormap="magma"),
                     cp.Compare(
                         cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
                         # magma default — the live kernel's own colorscheme.
