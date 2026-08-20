@@ -107,6 +107,92 @@ report + gallery regen clean.
 - HDR-FLIP's multi-exposure loop is the most complex cached op.
 - Harnesses encode the current compare DOM heavily — migrate, don't fork.
 
+## Phase 2b — POOL ENGINE half landed (A+B); pane+routing (C–H) REMAINING (commit 5244fc4)
+
+**Turbo log2 — RULING (resolves the ⚠ DECISION NEEDED below).** The turbo-log2
+magnitude map IS the intended unified behavior (tev-exact). "Byte-identical to the
+old diff blit" is SCOPED to: signed / rel-signed → red-green (analytic, already
+identical) + ANY explicitly-picked non-turbo LUT (e.g. magma on a cached FLIP,
+proven byte-identical below). Magnitude diffs routed to the unified pane with
+`defaultEncoding:turbo` change from the old blit's LINEAR turbo index to tev's
+FIXED log2 index ON PURPOSE — option (a), not a regression.
+
+**A+B — pool engine half (DONE, gate-green, commit 5244fc4).** The two pieces the
+unified pane needs from the pool-managed single-source pane, with the single-image
+path byte-pinned (unmodified image harnesses):
+- **A. Second source slot.** `PaneEntry.sourceB`/`srcTextureB` +
+  `PaneHandle.setSourceB(upload|null)` — retained + uploaded in `activateEntry`,
+  freed in `parkEntry`, re-uploaded on restore, dropped in `dispose` (mirrors the
+  primary `a` buffer). `attemptRender` injects the pool-owned `srcTextureB` as
+  `params.srcB`, so a `params.contentOpId` selecting a `direct` diff op samples
+  both slots; absent → the 1x1-placeholder single-image path (opId 0 ignores it).
+- **B. `PaneHandle.renderDiffCached(kernelId, contentKeys, computeParams,
+  displayParams, mapping?)`** — the FLIP/HDR-FLIP/SSIM path: `ensureDiff(a,b)` over
+  the two live slots (the diff-engine's content-keyed cache OWNS the result texture)
+  → `renderImage` blits the scalar-error RESULT through the unified image path
+  (identity content + isScalar colormap). Never-throws (parks + returns `null`) like
+  `render`. The diff cache was already general — only pool OWNERSHIP of the compute
+  is new.
+- **Parity (real GPU, metal-3):** `content-ops.browser.ts` gained two POOL cases —
+  every direct diff op driven through `setSource`+`setSourceB`+`render(contentOpId)`
+  reads back byte-identical to the composed cpu twin, and `renderDiffCached(flip)`
+  reads back byte-identical to the manual `ensureDiff`+`renderImage(result, magma)`
+  reference with a repeat render proven a cache HIT (compute count flat). Added
+  `getCanvasSurfaceForTest` (introspection-only) for the surface readback.
+- **Gates:** typecheck; 615 node tests; all 24 parity harnesses; 243 pytest;
+  boundary/schema in sync; gpu-image bundle rebuilt + synced + committed.
+
+**C–H — pane + routing + chrome + sync + harnesses + visual (NOT STARTED).** These
+are tightly coupled and were deliberately NOT attempted piecemeal, because the only
+green landing is the whole set (a partial `plot-node` routing change alters the core
+dispatch and red-gates the stack/compare/selection harnesses). Precise seam map for
+the continuation:
+- **C. `GpuImagePane` diff capability.** Add an optional `compareSource` to
+  `ImageBackendProps` (`renderers/image-backend.ts`) carrying the reference operand
+  (uint8/float, like `GpuComparePane`'s `imageFloat`/`baselineFloat`), the diff
+  MODE (a content-op id) + kernel + colormap-override + align/fit. When present the
+  pane: uploads the reference via `handle.setSourceB` (direct ops) and either
+  `render({contentOpId, isScalar, defaultEncoding})` (direct) or
+  `handle.renderDiffCached(...)` (cached FLIP/SSIM); adds a diff MODE menu (from the
+  ContentOp registry, `listContentOps`) to `leadingMenus`; resolves the diff colormap
+  via `resolveDiffColormap` + per-kernel-default vs override (`colormapState`, exactly
+  as `GpuComparePane` does). The single-image path is UNTOUCHED when `compareSource`
+  is absent (byte-pinned). Most of `GpuComparePane`'s diff render (lines ~1121–1421:
+  `resolvedKernelId`/`hdrExposures`/`diffCmapMode`/`diffColormap`/`diffAnalytic`,
+  the `mapping`/`framingDims`/`contentKey*` derivations, the metrics/SSIM/TEV-readback
+  effects) ports across — but through the POOL (`renderDiffCached` for cached, the
+  pool-injected `srcB` for direct) instead of self-managed textures.
+- **D. Routing (`plot-node.tsx`) — the flicker fix + THE crux.** A `compare` node in
+  mode `"diff"` must render through the SAME `GpuImagePane`-family instance an image
+  leaf renders, so `stackKindKey(compare mode:diff) === stackKindKey(image leaf)`
+  (`plot-node.tsx:963`) makes a `[image, diff]` stack HOMOGENEOUS →
+  `homogeneousStack` → the source-swap reused-renderer path (no remount, no
+  `stackPaneSync` group). This requires: (1) `stackKindKey` to inspect a compare
+  node's resolved mode (diff vs slide/blend) and return the image leaf's key for
+  diff; (2) `PlotNodeView`/`CompareView` to lower a diff-mode compare to a
+  `GpuImagePane` with `compareSource` (NOT `CompositeMediaPane`→`GpuComparePane`),
+  so the reused instance across an image↔diff flip is one component type; (3) retire
+  `mixedImageStack` for the image+diff case (keep it for image+slide/blend until
+  Phase 3). slide/blend STILL route to `GpuComparePane` (the one documented remaining
+  remount — Phase 3 absorbs them).
+- **E. `ImagePaneShell` chrome.** Promote `metrics?`/`caption?` props next to
+  `extraChips` (`ImagePaneShell.tsx:~287`) + `overlay.render` (~614); move the
+  MSE/PSNR/MAE/SSIM chip + diff caption from `GpuComparePane` (lines ~1786–1985) onto
+  the unified diff pane.
+- **F. Sync.** Reuse the existing bus + `deriveCompareEncodingId` +
+  `resolveDiffColormap` semantics (the compare pane already does; the image pane's
+  `useSyncedImageSettings` is the same bus) — pick sticks across kernel switches,
+  HOME resets.
+- **G. Harnesses.** Extend `stack/grid-stacked` mixed section with NO-remount
+  assertions (a DOM-marker element persists across image↔diff flips, zoom persists,
+  no hidden sibling); add a signed→red-green byte-identity-vs-old-compare-path case;
+  migrate `compare-settings-sync` diff expectations; KEEP split/blend coverage;
+  pixel-value readout parity (op cpu twins / cached readback) vs the existing diff-TEV
+  numbers.
+- **H. Visual verify.** Regen report + serve `/private/tmp` + open the stacked-grid
+  validation flip (image↔FLIP no-flicker, element persistence live, magma + metrics
+  chip).
+
 ## Phase 2 — FOUNDATION LANDED / pane wiring REMAINING (commit a83553d)
 
 The **engine + registry half** of Phase 2 is done and gate-green; the **pane +
