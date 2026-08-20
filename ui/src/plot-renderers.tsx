@@ -336,6 +336,7 @@ function ImageStandalone(p: P) {
   const pane = (
     <Pane
       source={source}
+      compareSource={p.compareSource}
       toolbar={p.toolbar}
       baselineUrl={p.baselineUrl ?? null}
       diffMode={p.diffMode ?? "none"}

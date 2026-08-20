@@ -821,13 +821,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     [setDiffColormapOverride, publishSettings, effectiveTonemap],
   );
   // MODE menu picking SLIDE/BLEND delegates to the owner (which remounts to
-  // `GpuComparePane` — the documented slide/blend remount).
+  // `GpuComparePane` — the documented slide/blend remount) AND broadcasts on the
+  // shared settings bus so a selected PEER pane follows the switch out of diff
+  // (its router — `NodeDispatch` — reads `compareMode` and reroutes; a diff
+  // `GpuImagePane` can't apply it itself). Mirrors `GpuComparePane.changeCompareMode`.
   const changeCompareMode = useCallback(
     (mode: "split" | "blend" | "diff") => {
       compareSource?.onCompareModeChange?.(mode);
+      publishSettings({ compareMode: mode });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compareSource?.onCompareModeChange],
+    [compareSource?.onCompareModeChange, publishSettings],
   );
   // Q22 fix: the canvas backing store / WebGPU surface are sized to
   // `displayCssSize * dpr` (see the render-pass effect below) — this must
@@ -1605,6 +1609,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     el.__cairnImageDiffProbe = {
       canvas: canvasRef.current,
       requestRender: renderPass,
+      // Always "diff" here (the seam is set only in diff mode) — lets a unified
+      // harness read `compareMode` off whichever probe (compare | diff) is live.
+      compareMode: "diff" as const,
       get diffKernel() {
         return diffKernel;
       },
@@ -1614,14 +1621,26 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       get colormap() {
         return effectiveDiffColormap;
       },
+      // The ONE derived encoding id this pane publishes on the shared bus — a
+      // migrated compare-settings-sync harness asserts a peer follows it.
+      get encodingId() {
+        return deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap);
+      },
+      get effectiveTonemap() {
+        return effectiveTonemap;
+      },
       get metrics() {
         return diffMetrics;
       },
       get ssimText() {
         return formatSsim(diffSsim);
       },
+      changeCompareMode,
       changeDiffKernel,
       changeDiffColormap,
+      // Alias mirroring `GpuComparePane`'s probe field name (the diff colormap
+      // menu) so a unified harness drives either pane with one call.
+      changeColormap: changeDiffColormap,
       home: () => {
         setDiffKernel(diffKernelMeta.default);
         diffColormapMeta.reset();
@@ -1630,7 +1649,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [diffMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, diffMetrics, diffSsim, changeDiffKernel, changeDiffColormap, setDiffKernel, diffKernelMeta, diffColormapMeta]);
+  }, [diffMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, changeCompareMode, changeDiffKernel, changeDiffColormap, setDiffKernel, diffKernelMeta, diffColormapMeta]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the

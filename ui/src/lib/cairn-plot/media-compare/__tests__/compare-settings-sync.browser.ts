@@ -41,6 +41,7 @@ import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 import GpuComparePane from "../GpuComparePane";
+import GpuImagePane from "../../renderers/GpuImagePane";
 import { InFullscreenOverlayContext } from "../../primitives/FullscreenOverlayShell";
 import { listDiffMenuModes, kernelDefaultColormap } from "../../engine/kernels";
 import {
@@ -163,25 +164,31 @@ function clickPane(el: Element, shift = false): void {
   el.dispatchEvent(new PointerEvent("pointerup", opts({ shiftKey: shift })));
 }
 
+/** The selectable pane FRAMES (one per mount, document order = [A, B, …]). This
+ *  is the pane-type-AGNOSTIC anchor: it is present for a slide/blend compare
+ *  (`GpuComparePane`) AND a diff compare (which — post Phase 2c routing — lowers
+ *  to a `GpuImagePane` with `compareSource`, NOT a `GpuComparePane`). */
 function frames(): HTMLElement[] {
   return Array.from(
     document.querySelectorAll<HTMLElement>('[data-plot-pane-id][data-selectable="true"]'),
   );
 }
-/** The outer `data-gpu-compare-pane` root of each mounted compare pane (one per
- *  mount, in document order = [A, B]). */
-function comparePaneRoots(): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>("[data-gpu-compare-pane]"));
-}
-/** The probe/kernel seams live on the pane's INNER `paneRef` element (the padded
- *  viewport box), NOT the outer `data-gpu-compare-pane` root — so walk each
- *  pane's own subtree for whichever descendant carries `__cairnCompareProbe`. */
-function probeOf(root: HTMLElement | undefined): CompareSyncProbe | undefined {
-  if (!root) return undefined;
-  type SeamEl = HTMLElement & { __cairnCompareProbe?: CompareSyncProbe };
-  if ((root as SeamEl).__cairnCompareProbe) return (root as SeamEl).__cairnCompareProbe;
-  for (const n of Array.from(root.querySelectorAll("*")) as SeamEl[]) {
-    if (n.__cairnCompareProbe) return n.__cairnCompareProbe;
+/** The compare/diff probe within a pane frame — `__cairnCompareProbe` (slide/
+ *  blend `GpuComparePane`) OR `__cairnImageDiffProbe` (diff `GpuImagePane`). Both
+ *  expose the same driven surface (compareMode/diffKernel/colormap/encodingId/
+ *  changeCompareMode/changeDiffKernel/changeColormap/home), so a single unified
+ *  accessor drives whichever pane is live across a mode switch. */
+function probeOf(frame: HTMLElement | undefined): CompareSyncProbe | undefined {
+  if (!frame) return undefined;
+  type SeamEl = HTMLElement & {
+    __cairnCompareProbe?: CompareSyncProbe;
+    __cairnImageDiffProbe?: CompareSyncProbe;
+  };
+  const seam = (el: SeamEl) => el.__cairnCompareProbe ?? el.__cairnImageDiffProbe;
+  if (seam(frame as SeamEl)) return seam(frame as SeamEl);
+  for (const n of Array.from(frame.querySelectorAll("*")) as SeamEl[]) {
+    const p = seam(n);
+    if (p) return p;
   }
   return undefined;
 }
@@ -196,6 +203,10 @@ async function run(): Promise<boolean> {
   w.__cairnPlotRenderMode = "gpu";
   w.__cairnPlotUseGpuImage = true;
   w.__cairnPlotGpuComparePane = GpuComparePane;
+  // Diff-mode compares now route through the unified image pane (Phase 2c
+  // routing), so a diff pane is a `GpuImagePane` with `compareSource`, not a
+  // `GpuComparePane`. Wire it so `resolveImageRenderer("gpu")` finds it.
+  w.__cairnPlotGpuImagePane = GpuImagePane;
   w.__cairnPlotDiffMenuModes = listDiffMenuModes();
   w.__cairnPlotEagerMount = true;
 
@@ -212,10 +223,10 @@ async function run(): Promise<boolean> {
   // Both engine compare panes mount AND expose their probe (needs a real GPU
   // surface — if this never settles the runner reports TIMEOUT, not a false pass).
   const panesReady = await waitFor(
-    () => comparePaneRoots().length === 2 && comparePaneRoots().every((p) => !!probeOf(p)),
+    () => frames().length === 2 && frames().every((f) => !!probeOf(f)),
     15000,
   );
-  report(panesReady, `two engine compare panes mount and expose a probe (got ${comparePaneRoots().length})`);
+  report(panesReady, `two engine compare panes mount and expose a probe (got ${frames().length})`);
   ok = ok && panesReady;
   if (!panesReady) {
     roots.forEach((r) => r.unmount());
@@ -253,8 +264,8 @@ async function run(): Promise<boolean> {
 
   // Pane A is the anchor — drive A, assert B follows. Re-read the probe each
   // poll (the pane recreates the probe object on every render).
-  const A = () => probeOf(comparePaneRoots()[0])!;
-  const B = () => probeOf(comparePaneRoots()[1])!;
+  const A = () => probeOf(frames()[0])!;
+  const B = () => probeOf(frames()[1])!;
 
   // --- 1. compare MODE: split → blend --------------------------------------
   A().changeCompareMode("blend");
@@ -312,7 +323,7 @@ async function run(): Promise<boolean> {
   // keydown is dispatched on pane A's viewport box (`data-gpu-compare-viewport`,
   // which IS the pane's own paneRef). Because split position syncs across the
   // selected panes, B tracks the flip too.
-  const paneAViewport = comparePaneRoots()[0]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
+  const paneAViewport = frames()[0]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
   const arrow = (key: "ArrowLeft" | "ArrowRight") =>
     window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 
@@ -376,10 +387,10 @@ async function run(): Promise<boolean> {
     ),
   );
   roots.push(rootC);
-  const overlayReady = await waitFor(() => comparePaneRoots().length === 3 && !!probeOf(comparePaneRoots()[2]), 15000);
+  const overlayReady = await waitFor(() => frames().length === 3 && !!probeOf(frames()[2]), 15000);
   report(overlayReady, "overlay compare pane mounts inside InFullscreenOverlayContext");
-  const C = () => probeOf(comparePaneRoots()[2])!;
-  const paneCViewport = comparePaneRoots()[2]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
+  const C = () => probeOf(frames()[2])!;
+  const paneCViewport = frames()[2]!.querySelector<HTMLElement>("[data-gpu-compare-viewport]")!;
   paneCViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   C().changeSplit(0.4);
@@ -393,7 +404,7 @@ async function run(): Promise<boolean> {
   // Return pane A to split, then assert the REFERENCE caption sits bottom-LEFT
   // and the FOREGROUND caption bottom-RIGHT (the divider passes over them). Then
   // switch to diff and assert the ONE "<metric> · <fg> compared to <ref>" caption.
-  const paneARoot = comparePaneRoots()[0]!;
+  const paneARoot = frames()[0]!;
   const chipByText = (root: HTMLElement, text: string): HTMLElement | null =>
     Array.from(root.querySelectorAll<HTMLElement>("span")).find(
       (s) => (s.textContent ?? "").trim() === text && !s.querySelector("span"),

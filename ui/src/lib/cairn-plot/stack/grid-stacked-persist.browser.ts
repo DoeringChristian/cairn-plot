@@ -18,6 +18,7 @@ import { PlotApp } from "../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../plot-renderers";
 import type { PlotDescriptor } from "../../../plot-descriptor";
 import GpuComparePane from "../media-compare/GpuComparePane";
+import GpuImagePane from "../renderers/GpuImagePane";
 import { listDiffMenuModes } from "../engine/kernels";
 
 interface CompareProbe {
@@ -85,19 +86,32 @@ const activeIdx = (): number => {
   const v = mountEl().querySelector("[data-cairn-stack-active]")?.getAttribute("data-cairn-stack-active");
   return v == null ? -1 : parseInt(v, 10);
 };
-const comparePaneEls = () => Array.from(mountEl().querySelectorAll<HTMLElement>("[data-gpu-compare-pane]"));
-/** The (single) compare probe — the stacked grid renders ONE reused pane. */
+// The single reused stacked-pane slot — pane-type-AGNOSTIC: it holds the slide/
+// blend `GpuComparePane` OR (post Phase 2c routing) the diff `GpuImagePane`.
+const stackPane = () => mountEl().querySelector<HTMLElement>('[data-cairn-stacked-pane="active"]');
+const stackPaneCount = () => mountEl().querySelectorAll('[data-cairn-stacked-pane]').length;
+/** The (single) compare/diff probe — `__cairnCompareProbe` (slide/blend) OR
+ *  `__cairnImageDiffProbe` (diff `GpuImagePane`); the stacked grid renders ONE
+ *  reused pane, so a diff-mode compare swaps its lowering to the image pane. */
 function probe(): CompareProbe | undefined {
-  type SeamEl = HTMLElement & { __cairnCompareProbe?: CompareProbe };
-  for (const root of comparePaneEls()) {
-    if ((root as SeamEl).__cairnCompareProbe) return (root as SeamEl).__cairnCompareProbe;
-    for (const n of Array.from(root.querySelectorAll("*")) as SeamEl[]) {
-      if (n.__cairnCompareProbe) return n.__cairnCompareProbe;
-    }
+  const sp = stackPane();
+  if (!sp) return undefined;
+  type SeamEl = HTMLElement & {
+    __cairnCompareProbe?: CompareProbe;
+    __cairnImageDiffProbe?: CompareProbe;
+  };
+  const seam = (el: SeamEl) => el.__cairnCompareProbe ?? el.__cairnImageDiffProbe;
+  if (seam(sp as SeamEl)) return seam(sp as SeamEl);
+  for (const n of Array.from(sp.querySelectorAll("*")) as SeamEl[]) {
+    const p = seam(n);
+    if (p) return p;
   }
   return undefined;
 }
-const canvasTags = () => comparePaneEls().flatMap((p) => Array.from(p.querySelectorAll("canvas")));
+const canvasTags = () => {
+  const sp = stackPane();
+  return sp ? Array.from(sp.querySelectorAll("canvas")) : [];
+};
 
 async function run(): Promise<boolean> {
   let ok = true;
@@ -106,6 +120,9 @@ async function run(): Promise<boolean> {
   w.__cairnPlotRenderMode = "gpu";
   w.__cairnPlotUseGpuImage = true;
   w.__cairnPlotGpuComparePane = GpuComparePane;
+  // Diff-mode compares lower to the unified image pane (Phase 2c) — wire it so
+  // `resolveImageRenderer("gpu")` finds it when the active slot flips to diff.
+  w.__cairnPlotGpuImagePane = GpuImagePane;
   w.__cairnPlotDiffMenuModes = listDiffMenuModes();
 
   const roots: Root[] = [];
@@ -138,9 +155,9 @@ async function run(): Promise<boolean> {
     return false;
   }
 
-  // Single-renderer model: exactly ONE compare pane rendered, never N.
-  const onePane = comparePaneEls().length === 1;
-  report(onePane, `exactly ONE compare pane rendered — a stack is ONE reused renderer (got ${comparePaneEls().length})`);
+  // Single-renderer model: exactly ONE stacked-pane slot rendered, never N.
+  const onePane = stackPaneCount() === 1;
+  report(onePane, `exactly ONE pane rendered — a stack is ONE reused renderer (got ${stackPaneCount()})`);
   ok = ok && onePane;
 
   // Set diff + squared while on tab 0.

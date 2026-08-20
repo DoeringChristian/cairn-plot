@@ -76,6 +76,39 @@ function compareUrlChild(fg: string, ref: string, label: string): unknown {
     props: { toolbar: true, label },
   };
 }
+// A DIFF-mode compare (mode="diff") lowers — post Phase 2c routing — to the SAME
+// `image` renderer family an image leaf uses (`LeafView` + a `compareSource`),
+// so an `[image, diff]` stack is HOMOGENEOUS and a flip is a SOURCE-SWAP on ONE
+// reused instance (no remount / no flicker). URL sources ⇒ CpuImagePane renders
+// each as an `<img>` (no WebGPU needed to prove the React reconciliation).
+function diffUrlChild(fg: string, ref: string, label: string): unknown {
+  return {
+    kind: "compare",
+    mode: "diff",
+    a: { kind: "url", src: imgUrl(fg) },
+    b: { kind: "url", src: imgUrl(ref) },
+    diffSubmode: "absolute",
+    props: { toolbar: true, label },
+  };
+}
+// A stacked grid mixing an image LEAF and a DIFF compare — homogeneous by the
+// Phase 2c `stackKindKey` (both lower to `plot:image`), so the flip is a reused-
+// instance source-swap, NOT a mount-swap.
+function imageDiffGrid(mode: "normal" | "stacked"): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: 2,
+      gap: 8,
+      mode,
+      children: [
+        { kind: "plot", renderer: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
+        diffUrlChild("#c0392b", "#2980b9", "Diff"),
+      ],
+    },
+  } as unknown as PlotDescriptor;
+}
 // A HETEROGENEOUS grid: an image LEAF next to a COMPARE pane. Stacking these
 // can't reuse ONE renderer instance (the pane mount-swaps on the kind flip), so
 // the grid threads stage-style viewport+settings sync groups to carry zoom/pan
@@ -339,6 +372,57 @@ async function run(): Promise<boolean> {
     report(false, "no image surface found in the mixed stack for the camera-persistence check");
     ok = false;
   }
+
+  // ── HOMOGENEOUS image + DIFF stack: NO remount on the image↔diff flip ─────
+  // The Phase 2c flicker fix: a diff-mode compare lowers to the SAME `image` leaf
+  // family, so `[image, diff]` is HOMOGENEOUS → source-swap on ONE reused pane
+  // instance (no mount-swap, no sync group). Prove it by DOM-element PERSISTENCE:
+  // tag the pane surface on tab 0, flip to the diff tab, and assert the SAME node
+  // is still the active surface (a remount would replace it), zoom persists, and
+  // there is exactly ONE stacked-pane (no hidden sibling).
+  const rootE = createRoot(host("m5"));
+  rootE.render(createElement(PlotApp, { descriptor: imageDiffGrid("stacked") }));
+  roots.push(rootE);
+  const diffUp = await waitFor(() => qa("m5", "[role='tab']").length === 2);
+  report(diffUp, `[image, diff] stack renders 2 tabs (got ${qa("m5", "[role='tab']").length})`);
+  const oneDiffPane = qa("m5", '[data-cairn-stacked-pane="active"]').length === 1;
+  report(oneDiffPane, "exactly ONE stacked-pane (single reused instance, no hidden sibling)");
+  const diffSurface0 = await waitFor(
+    () => !!(q("m5", "[data-cairn-stacked-pane] canvas") ?? q("m5", "[data-cairn-stacked-pane] img")),
+  );
+  report(diffSurface0, "tab 0 (image leaf) mounts a pane surface");
+  const surfaceBefore = q("m5", "[data-cairn-stacked-pane] canvas") ?? q("m5", "[data-cairn-stacked-pane] img");
+  // Tag the live surface node so we can assert THIS exact DOM node survives.
+  surfaceBefore?.setAttribute("data-cairn-noremount-marker", "1");
+
+  // Zoom the image (source-swap stacks share ONE camera by construction).
+  q("m5", "[data-cairn-grid-root]")!.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+  if (surfaceBefore) {
+    const r = surfaceBefore.getBoundingClientRect();
+    for (let i = 0; i < 4; i++) {
+      surfaceBefore.dispatchEvent(
+        new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, deltaY: -120, ctrlKey: true }),
+      );
+      await sleep(30);
+    }
+    await sleep(120);
+  }
+  const diffZoomBefore = zoomTransformsIn("m5");
+
+  // Flip to the DIFF tab. A source-swap keeps the marked node; a remount drops it.
+  key("2");
+  await waitFor(() => activePaneIndex("m5") === 1);
+  await sleep(150);
+  const markerSurvived = !!q("m5", '[data-cairn-stacked-pane] [data-cairn-noremount-marker="1"], [data-cairn-stacked-pane][data-cairn-noremount-marker="1"]')
+    || (q("m5", "[data-cairn-stacked-pane] canvas")?.getAttribute("data-cairn-noremount-marker") === "1")
+    || (q("m5", "[data-cairn-stacked-pane] img")?.getAttribute("data-cairn-noremount-marker") === "1");
+  report(markerSurvived, "the SAME surface DOM node persists across the image↔diff flip (NO remount)");
+  const stillOnePane = qa("m5", '[data-cairn-stacked-pane="active"]').length === 1;
+  report(stillOnePane, "still exactly ONE stacked-pane after the flip (no hidden sibling)");
+  const diffZoomAfter = zoomTransformsIn("m5");
+  const diffZoomPersisted = JSON.stringify(diffZoomAfter) === JSON.stringify(diffZoomBefore) && diffZoomAfter.some((t) => !/scale\(1\)/.test(t));
+  report(diffZoomPersisted, `zoom PERSISTS across the image↔diff flip (before ${JSON.stringify(diffZoomBefore)} → after ${JSON.stringify(diffZoomAfter)})`);
+  ok = ok && diffUp && oneDiffPane && diffSurface0 && markerSurvived && stillOnePane && diffZoomPersisted;
 
   roots.forEach((r) => r.unmount());
   return ok;

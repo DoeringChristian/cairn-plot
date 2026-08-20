@@ -107,6 +107,72 @@ report + gallery regen clean.
 - HDR-FLIP's multi-exposure loop is the most complex cached op.
 - Harnesses encode the current compare DOM heavily — migrate, don't fork.
 
+## Phase 2 — DONE (commits a83553d, 5244fc4, 09c4731, 0bb5b94)
+
+Phase 2 is COMPLETE and gate-green. Landing 2 (the routing switch — the flicker
+fix) landed per the epic author's ARCHITECTURAL RULING (folded in here, not
+relitigated): the image↔diff flip remounted because `LeafView` and `CompareView`
+are DIFFERENT React component types at the stacked slot, so the dispatch was
+COLLAPSED inside `PlotNodeView` — a diff-mode compare now lowers to the SAME
+`LeafView` → `image` renderer → `GpuImagePane` family an image leaf uses.
+
+**How the ruling was implemented (`ui/src/plot-node.tsx`):**
+- **Dispatch collapsed into `NodeDispatch`** (a new component one level INSIDE the
+  pane's `PaneSelectionFrame`, rendered by `PlotNodeView`). It dispatches on
+  `(node.kind + effective compare mode)`: a `compare` node whose lifted `viewMode`
+  is `"diff"` → `<LeafView node={synthLeaf} diffSpec={…}/>` (a SYNTHESIZED image
+  leaf whose `data` = the reference side + a resolved `compareSource` where `b` =
+  the foreground side); `"split"/"blend"` → `<CompareView node control/>` exactly
+  as before. Because BOTH the image-plot slot and the diff-compare slot now render
+  `LeafView`, an `[image, diff]` stack is homogeneous and the flip is a source-swap
+  on ONE reused instance — no remount, no flicker (verified LIVE: the SAME `<canvas>`
+  DOM node persists across the flip, and by `stack/grid-stacked`'s new marker-
+  persistence assertions + `grid-stacked-persist`'s canvas-survival check).
+- **Mode hoisting** (`useCompareControl`, keyed by the pane's sync identity): the
+  compare view-mode state (viewMode/diffKernel/splitPos/blendAlpha) is HOISTED out
+  of `CompareView` up to `NodeDispatch` — seeded from the descriptor (override-null
+  pattern so a fresh compare re-seeds), updated from the panes' menu callbacks AND
+  a READ-ONLY subscription to the settings-sync bus (`subscribeImageSettings` on
+  `paneSync.settingsSyncGroupId`). The bus read is what lets mode sync across a
+  page-wide selection even when the mounted pane is a diff `GpuImagePane` (which
+  can't apply a `compareMode` patch itself — that's a routing decision above the
+  pane). It NEVER publishes (the panes already publish those keys); it only reads,
+  so no loops. Held in a component that is reused across the stacked flip → the mode
+  survives stacking; seeded per-descriptor → survives selection.
+- **Lowering** (`LeafView` diff path): both operands resolve through the compare
+  resolver (`resolveFrame`) — `node.data` (reference) → `source`, `diffSpec.fgData`
+  (foreground) → `compareSource.b` — cached once under a stable `|diffpair` key so a
+  flip-back is synchronous (no flash). `frameToSource` maps a `ResolvedCompareFrame`
+  to the dtype-tagged `DecodedSource`. The LIVE diff settings (kernel/colormap/
+  callbacks) merge at render (no re-fetch). `ImageStandalone` threads `compareSource`
+  → `GpuImagePane`. **Slot convention: `source` = reference, `b` = foreground**
+  (`diff = source − b`, byte-parity with the compare pane's `texA − texB`).
+- **`stackKindKey` homogeneity** (descriptor-based): `stackKindKey(compare mode:diff)`
+  returns the image-leaf key `plot:image`, so `homogeneousStack([image, diff])` is
+  true. This AUTOMATICALLY retires the 341c577 `mixedImageStack` mount-swap path for
+  `[image, diff]` (now homogeneous → source-swap, no `stackPaneSync` group), while
+  KEEPING it for `[image, slide/blend]` (still `compare`-keyed → mixed). Diff↔slide/
+  blend mode switches are the ONE documented remaining remount.
+- **Pane edits (`GpuImagePane.tsx`):** `changeCompareMode` now also
+  `publishSettings({compareMode})` (so a selected peer's router follows the switch
+  out of diff); the `__cairnImageDiffProbe` seam grew `compareMode`/`changeCompareMode`/
+  `encodingId`/`effectiveTonemap` + a `changeColormap` alias so a unified harness
+  drives either pane across a mode switch.
+
+**Harness deltas:** `compare-settings-sync` + `grid-stacked-persist` migrated to
+find the pane by its selectable FRAME (pane-type-agnostic) and read EITHER
+`__cairnCompareProbe` (slide/blend) OR `__cairnImageDiffProbe` (diff), and wire
+`__cairnPlotGpuImagePane`; `grid-stacked` gained an `[image, diff]` homogeneous
+section asserting DOM-marker element persistence + zoom persistence + no hidden
+sibling across the flip. All split/blend coverage stays green (the compare-pane
+path is untouched).
+
+**Gates:** typecheck; 615 node tests; ALL 25 parity harnesses (metal-3); 243
+pytest; assets in sync; bundles rebuilt + synced + committed; report (63 blocks) +
+gallery (27 sections) regen clean; LIVE visual verify — stacked validation grid
+image↔FLIP flip has NO flicker / NO remount (same canvas node), magma render +
+metrics chip present, plain (non-stacked) diff compares work, no console errors.
+
 ## Phase 2c — LANDING 1 DONE (diff-capable pane, no routing) (commit 09c4731)
 
 The **DIFF-CAPABLE PANE** (design task C) is landed and gate-green — `GpuImagePane`
