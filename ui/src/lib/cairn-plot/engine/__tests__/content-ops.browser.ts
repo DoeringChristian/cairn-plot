@@ -25,6 +25,8 @@
  */
 import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
+import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
+import { ensureDiff, getDiffComputeCount } from "../diff-engine";
 import { getContentOp, isDirectContentOp, contentOpId } from "../../image/content-ops/index";
 import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings/index";
 import { outputEncode, type RgbTriple } from "../../image/tonemap";
@@ -205,6 +207,206 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
   return ok;
 }
 
+/** Build a `SourceUpload` (rgba32float) from RGBA rows — the CPU buffer the pool
+ *  retains + uploads (mirrors what a pane hands `setSource`/`setSourceB`). */
+function buildUpload(rows: number[][]): SourceUpload {
+  const data = new Float32Array(rows.length * 4);
+  for (let i = 0; i < rows.length; i++) data.set(rows[i]!, i * 4);
+  return { data, width: rows.length, height: 1, format: "rgba32float" };
+}
+
+/**
+ * STAGE A (pool second slot): drive the SAME direct diff op through the POOL —
+ * `setSource(a)` + `setSourceB(b)` + `render({contentOpId})` — and assert the
+ * SURFACE readback equals the composed CPU twin, byte-for-byte with the direct
+ * `renderImage(srcB,…)` path. Proves the pool retains + uploads the second slot
+ * and injects it as `params.srcB` (the pane never touches the GPU texture).
+ */
+async function runPoolDirectOpCase(device: Device, opId: string): Promise<boolean> {
+  const op = getContentOp(opId);
+  if (!op || !isDirectContentOp(op)) {
+    report(false, `[pool:${opId}] not a registered direct content op`);
+    return false;
+  }
+  const signed = op.outputRange === "R";
+  const enc = getEncoding(op.defaultEncoding)!;
+  const encParams = { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" as const };
+
+  const canvas = document.createElement("canvas");
+  document.body.appendChild(canvas);
+  const handle = await acquirePane(canvas, { hdr: false });
+  handle.setSource(buildUpload(PAIRS.map((p) => p.a)));
+  handle.setSourceB(buildUpload(PAIRS.map((p) => p.b)));
+  handle.resize(PAIRS.length, 1);
+  const params: ImageParams = {
+    exposureEV: 0,
+    operator: "linear" as ImageOperator,
+    isScalar: true,
+    // NB: NO `srcB` here — the pool supplies it from `setSourceB`.
+    contentOpId: contentOpId(opId),
+    reduce: "mean",
+    channelCount: 3,
+    hdrOut: false,
+    uv: uvFull,
+    filter: "nearest",
+    ...(signed ? { analytic: true } : { turbo: true, colormap: colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName) }),
+  };
+  const ok0 = handle.render(params);
+  const surface = getCanvasSurfaceForTest(canvas);
+  if (!surface) {
+    report(false, `[pool:${opId}] no live surface after render`);
+    releasePane(handle);
+    canvas.remove();
+    return false;
+  }
+  const out = await device.readback(surface);
+  releasePane(handle);
+  canvas.remove();
+
+  if (!ok0) {
+    report(false, `[pool:${opId}] handle.render returned false (engine failed)`);
+    return false;
+  }
+  if (!(out instanceof Uint8Array)) {
+    report(false, `[pool:${opId}] expected Uint8Array surface readback, got ${out.constructor.name}`);
+    return false;
+  }
+  let ok = true;
+  for (let i = 0; i < PAIRS.length; i++) {
+    const content = op.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    let exp: RgbTriple;
+    if (signed) {
+      const lin = enc.cpu(content, 3, encParams);
+      exp = [outputEncode(lin[0], undefined), outputEncode(lin[1], undefined), outputEncode(lin[2], undefined)];
+    } else {
+      exp = enc.cpu(content, 3, encParams);
+    }
+    for (let c = 0; c < 3; c++) {
+      const eb = byteOf(exp[c]!);
+      const ab = out[i * 4 + c]!;
+      if (Math.abs(ab - eb) > 1) {
+        ok = false;
+        report(false, `[pool:${opId}] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
+      }
+    }
+  }
+  report(ok, `[pool:${opId}] setSource + setSourceB + render(contentOpId) surface === composed cpu twin`);
+  return ok;
+}
+
+/**
+ * STAGE B (renderDiffCached): the pool's cached-op path === the manual
+ * `ensureDiff` + `renderImage(result, isScalar+magma)` reference, byte-for-byte,
+ * for a multi-pass kernel (`flip`), AND a repeat render is a CACHE HIT (the
+ * expensive compute does not re-run on a re-blit). Proves the pool owns the
+ * content-keyed compute+cache and displays the scalar-error RESULT through the
+ * unified image path with an explicitly-picked non-turbo LUT (magma).
+ */
+async function runPoolCachedOpCase(device: Device): Promise<boolean> {
+  // 4x4 sources with structured variation so FLIP produces a non-degenerate map.
+  const rowsA: number[][] = [];
+  const rowsB: number[][] = [];
+  for (let i = 0; i < 16; i++) {
+    const v = (i % 4) / 3;
+    rowsA.push([v, v, v, 1]);
+    rowsB.push([Math.min(1, v + 0.15), v * 0.8, v, 1]);
+  }
+  const toTex = (rows: number[][]): Texture => {
+    const t = device.createTexture(4, 4, "rgba32float");
+    const d = new Float32Array(16 * 4);
+    for (let i = 0; i < 16; i++) d.set(rows[i]!, i * 4);
+    t.write(d);
+    return t;
+  };
+  const texA = toTex(rowsA);
+  const texB = toTex(rowsB);
+  const magma = colormapFloatLUT("magma");
+  const displayParams: ImageParams = {
+    exposureEV: 0,
+    operator: "linear" as ImageOperator,
+    isScalar: true,
+    colormap: magma,
+    reduce: "mean",
+    channelCount: 1,
+    norm: "linear",
+    hdrOut: false,
+    uv: uvFull,
+    filter: "nearest",
+  };
+  // Reference: ensure the diff RESULT, then display it via the unified image path.
+  const refEntry = ensureDiff(device, texA, texB, "flip", undefined, "ref:a", "ref:b");
+  const refTarget = device.createTexture(4, 4, "rgba8unorm");
+  renderImage(device, refTarget, refEntry.texture, displayParams);
+  const refOut = await device.readback(refTarget);
+  refTarget.destroy();
+
+  // Pool: renderDiffCached over the SAME sources.
+  const canvas = document.createElement("canvas");
+  document.body.appendChild(canvas);
+  const handle = await acquirePane(canvas, { hdr: false });
+  handle.setSource({ data: rowsToF32(rowsA), width: 4, height: 4, format: "rgba32float" });
+  handle.setSourceB({ data: rowsToF32(rowsB), width: 4, height: 4, format: "rgba32float" });
+  handle.resize(4, 4);
+  const before = getDiffComputeCount();
+  const poolEntry = handle.renderDiffCached("flip", { a: "pool:a", b: "pool:b" }, undefined, displayParams);
+  const poolSurface = getCanvasSurfaceForTest(canvas);
+  if (!poolSurface) {
+    report(false, `[pool:flip] no live surface after renderDiffCached`);
+    releasePane(handle);
+    canvas.remove();
+    texA.destroy();
+    texB.destroy();
+    return false;
+  }
+  const poolOut = await device.readback(poolSurface);
+  // Second render with the SAME keys must be a cache hit (no recompute).
+  handle.renderDiffCached("flip", { a: "pool:a", b: "pool:b" }, undefined, displayParams);
+  const after = getDiffComputeCount();
+  releasePane(handle);
+  canvas.remove();
+  texA.destroy();
+  texB.destroy();
+
+  let ok = true;
+  if (!poolEntry) {
+    report(false, `[pool:flip] renderDiffCached returned null`);
+    return false;
+  }
+  if (!(refOut instanceof Uint8Array) || !(poolOut instanceof Uint8Array)) {
+    report(false, `[pool:flip] expected Uint8Array readbacks`);
+    return false;
+  }
+  // The first renderDiffCached computes flip ONCE (miss); the second is a HIT.
+  const computedOnRepeat = after - (before + 1);
+  if (computedOnRepeat !== 0) {
+    ok = false;
+    report(false, `[pool:flip] repeat renderDiffCached recomputed (compute delta on re-blit = ${computedOnRepeat}, want 0)`);
+  }
+  let nonZero = false;
+  for (let i = 0; i < 16 * 4; i++) {
+    if ((poolOut[i] ?? 0) !== 0) nonZero = true;
+    const rb = refOut[i] ?? 0;
+    const pb = poolOut[i] ?? 0;
+    if (Math.abs(rb - pb) > 1) {
+      ok = false;
+      report(false, `[pool:flip] byte[${i}] ref=${rb} pool=${pb}`);
+      break;
+    }
+  }
+  if (!nonZero) {
+    ok = false;
+    report(false, `[pool:flip] pool surface readback is all-zero (degenerate diff display)`);
+  }
+  report(ok, `[pool:flip] renderDiffCached === ensureDiff + renderImage(result, magma); repeat = cache hit`);
+  return ok;
+}
+
+function rowsToF32(rows: number[][]): Float32Array {
+  const d = new Float32Array(rows.length * 4);
+  for (let i = 0; i < rows.length; i++) d.set(rows[i]!, i * 4);
+  return d;
+}
+
 const DIRECT_DIFF_OPS = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
 
 async function main(): Promise<void> {
@@ -217,6 +419,12 @@ async function main(): Promise<void> {
       if (!(await runDiffOpCase(device, opId))) allOk = false;
     }
     report(allOk, `all ${DIRECT_DIFF_OPS.length} direct diff ops: GPU cairnContent + display === composed cpu twin`);
+    // Phase 2b — POOL wiring: the second source slot + the cached-op render path.
+    for (const opId of DIRECT_DIFF_OPS) {
+      if (!(await runPoolDirectOpCase(device, opId))) allOk = false;
+    }
+    if (!(await runPoolCachedOpCase(device))) allOk = false;
+    report(allOk, `pool: setSourceB direct ops + renderDiffCached (flip) parity`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

@@ -43,6 +43,13 @@
  */
 import { getSharedDevice } from "./device";
 import { renderImage, type ImageParams } from "./image-engine";
+// Phase 2b: the CACHED-op render path (FLIP / HDR-FLIP / SSIM) runs the diff
+// engine's content-keyed compute + cache from INSIDE the pool (the pool owns the
+// two source textures a cached op reduces). Safe to import here: `pool.ts` is
+// browser-bundle only (never loaded by the `*.test.ts` strip-only node runner),
+// so pulling the `engine/kernels` graph in transitively is fine.
+import { ensureDiff, type DiffCacheEntry } from "./diff-engine";
+import type { CompareMapping } from "./compare-align";
 import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
 import { forceEngineFailRequested } from "./test-hooks";
 
@@ -85,6 +92,19 @@ export interface PaneHandle {
    * producing blurry edges and sub-pixel jitter on zoom/pan.
    */
   setSource(src: SourceUpload): void;
+  /**
+   * Set (or clear) the SECOND source buffer `b` — the reference/baseline operand
+   * of an arity-2 diff CONTENT op (`image/content-ops`). Retained by the pool
+   * exactly like {@link setSource}'s primary buffer, so park/restore cycles don't
+   * need the caller to re-supply it: uploaded immediately when live, deferred to
+   * the next `render()`/`restore()` when parked. Pass `null` to drop it (back to
+   * the single-image path). INDEPENDENT of {@link setSource} — the primary `a`
+   * slot is untouched. Once set, {@link render}'s `params` are bound with this
+   * texture as `srcB`, so a `params.contentOpId` selecting a `direct` diff op
+   * (signed/absolute/…) samples both slots; the single-image (identity) path is
+   * unaffected when `b` is null (a 1x1 placeholder is bound and opId 0 ignores it).
+   */
+  setSourceB(src: SourceUpload | null): void;
   /**
    * DEEP-EXR GPU composite source (the depth slider on GPU panes). Uploads the
    * Z-sorted samples to GPU storage buffers ONCE and composites the window
@@ -134,6 +154,29 @@ export interface PaneHandle {
    * a `false` return as "fall back to the legacy CPU pane".
    */
   render(params: ImageParams): boolean;
+  /**
+   * CACHED-op render path (FLIP / HDR-FLIP / SSIM). Ensures the content-keyed diff
+   * RESULT texture for (`contentKeys.a`, `contentKeys.b`, `kernelId`,
+   * `computeParams`, `mapping`) over this pane's TWO live source slots (`a` =
+   * {@link setSource}, `b` = {@link setSourceB}), then blits it through
+   * `displayParams` — the result texture is bound as the PRIMARY source and shown
+   * via IDENTITY content (the result already IS the scalar error) + the
+   * `isScalar` colormap the display-encoding registry supplies. The diff-engine's
+   * per-device content-keyed cache OWNS the returned entry's texture — the caller
+   * must NOT destroy it — and a zoom / exposure / colormap change only re-blits
+   * (cache hit), never recomputes. Returns the cache entry (so the caller can read
+   * MSE/PSNR/MAE + the per-pixel readback) or `null` on a hard GPU failure (the
+   * pane is parked and the caller must fall back to the legacy pane), mirroring
+   * {@link render}'s NEVER-THROWS contract. Both source slots must be set (returns
+   * `null` otherwise).
+   */
+  renderDiffCached(
+    kernelId: string,
+    contentKeys: { a: string; b: string },
+    computeParams: Record<string, number> | undefined,
+    displayParams: ImageParams,
+    mapping?: CompareMapping,
+  ): DiffCacheEntry | null;
   /** Free this pane's live GPU resources (source texture), keeping the
    *  retained CPU source buffer. Safe to call on an already-parked or
    *  disposed handle (no-op). */
@@ -166,6 +209,13 @@ interface PaneEntry {
   surface: Surface | null;
   srcTexture: Texture | null;
   source: SourceUpload | null;
+  /** SECOND source slot `b` (the reference/baseline of an arity-2 diff CONTENT
+   *  op) — the retained CPU buffer + its uploaded texture, mirroring `source`/
+   *  `srcTexture`. Uploaded in `activateEntry`, freed in `parkEntry`, re-uploaded
+   *  on restore. Null for the single-image path (the common case). See
+   *  `PaneHandle.setSourceB`. */
+  sourceB: SourceUpload | null;
+  srcTextureB: Texture | null;
   /** DEEP-EXR GPU composite source (retained CSR) — mutually exclusive with
    *  `source`; when set, `srcTexture` is filled by `compositeDeep`, not a CPU
    *  upload. See `PaneHandle.setDeepSource`. */
@@ -213,6 +263,10 @@ function parkEntry(entry: PaneEntry): void {
   if (entry.srcTexture) {
     entry.srcTexture.destroy();
     entry.srcTexture = null;
+  }
+  if (entry.srcTextureB) {
+    entry.srcTextureB.destroy();
+    entry.srcTextureB = null;
   }
   if (entry.deepBuffers) {
     entry.deepBuffers.destroy();
@@ -286,6 +340,15 @@ function activateEntry(entry: PaneEntry): void {
     tex.write(entry.source.data);
     entry.srcTexture = tex;
   }
+  // SECOND source slot `b` (arity-2 diff ops) — retained + re-uploaded on every
+  // (re)activate exactly like the primary `a` buffer. Null for the single-image
+  // path (no texture allocated).
+  if (entry.sourceB) {
+    if (entry.srcTextureB) entry.srcTextureB.destroy();
+    const texB = device.createTexture(entry.sourceB.width, entry.sourceB.height, entry.sourceB.format);
+    texB.write(entry.sourceB.data);
+    entry.srcTextureB = texB;
+  }
   entry.parked = false;
   touchMostRecentlyUsed(entry);
   evictOverCap(entry);
@@ -305,7 +368,12 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   try {
     activateEntry(entry);
     if (!entry.surface || !entry.srcTexture) return false;
-    renderImage(entry.device, entry.surface, entry.srcTexture, params);
+    // Bind the pool-owned SECOND source slot `b` (arity-2 direct diff ops) when
+    // present — the caller sets `params.contentOpId`; the pool supplies the
+    // physical texture. Absent → the single-image path (renderImage binds a 1x1
+    // placeholder, and opId 0 / identity ignores it), byte-identical to before.
+    const p = entry.srcTextureB ? { ...params, srcB: entry.srcTextureB } : params;
+    renderImage(entry.device, entry.surface, entry.srcTexture, p);
     return true;
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -316,6 +384,55 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
     entry.parked = false;
     parkEntry(entry);
     return false;
+  }
+}
+
+/**
+ * Runs the CACHED-op render path for `entry` (see `PaneHandle.renderDiffCached`).
+ * `activateEntry()` (which uploads BOTH source slots) + `ensureDiff()` (the
+ * multi-pass compute, on a cache MISS) + `renderImage()` (the display blit) are
+ * all inside ONE try/catch: a hard GPU failure from any of them parks the entry
+ * and returns `null` instead of throwing into the caller's render effect (which
+ * would unmount its subtree — the same C1-fix reasoning as `attemptRender`).
+ */
+function attemptRenderDiffCached(
+  entry: PaneEntry,
+  kernelId: string,
+  contentKeys: { a: string; b: string },
+  computeParams: Record<string, number> | undefined,
+  displayParams: ImageParams,
+  mapping?: CompareMapping,
+): DiffCacheEntry | null {
+  if (entry.disposed || (!entry.source && !entry.deep) || !entry.sourceB) return null;
+  try {
+    activateEntry(entry);
+    if (!entry.surface || !entry.srcTexture || !entry.srcTextureB) return null;
+    // Content-keyed cache: a pure function of the SOURCE content (not the
+    // viewport / exposure / colormap), so the expensive multi-pass compute runs
+    // once and zoom/pan/encoding changes re-blit only. The cache OWNS the result
+    // texture — never destroyed here.
+    const cacheEntry = ensureDiff(
+      entry.device,
+      entry.srcTexture,
+      entry.srcTextureB,
+      kernelId,
+      computeParams,
+      contentKeys.a,
+      contentKeys.b,
+      mapping,
+    );
+    // The cached RESULT is the scalar error — displayed via IDENTITY content
+    // (`displayParams.contentOpId` unset/0, no `srcB`) + the isScalar colormap.
+    // Bind it as the PRIMARY source; `srcTextureB` is intentionally NOT injected
+    // (the display is single-source over the result).
+    renderImage(entry.device, entry.surface, cacheEntry.texture, displayParams);
+    return cacheEntry;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("cairn-plot engine: cached-diff pane render failed, falling back to legacy pane", err);
+    entry.parked = false;
+    parkEntry(entry);
+    return null;
   }
 }
 
@@ -344,6 +461,22 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         entry.srcTexture = tex;
       }
       // Parked: the new source is picked up by the next activateEntry().
+    },
+    setSourceB(src: SourceUpload | null): void {
+      if (entry.disposed) return;
+      entry.sourceB = src;
+      if (!entry.parked && entry.surface) {
+        if (entry.srcTextureB) {
+          entry.srcTextureB.destroy();
+          entry.srcTextureB = null;
+        }
+        if (src) {
+          const tex = entry.device.createTexture(src.width, src.height, src.format);
+          tex.write(src.data);
+          entry.srcTextureB = tex;
+        }
+      }
+      // Parked: the new second source is picked up by the next activateEntry().
     },
     setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number): void {
       if (entry.disposed) return;
@@ -387,6 +520,15 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     render(params: ImageParams): boolean {
       return attemptRender(entry, params);
     },
+    renderDiffCached(
+      kernelId: string,
+      contentKeys: { a: string; b: string },
+      computeParams: Record<string, number> | undefined,
+      displayParams: ImageParams,
+      mapping?: CompareMapping,
+    ): DiffCacheEntry | null {
+      return attemptRenderDiffCached(entry, kernelId, contentKeys, computeParams, displayParams, mapping);
+    },
     park(): void {
       if (entry.disposed) return;
       parkEntry(entry);
@@ -401,8 +543,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     dispose(): void {
       if (entry.disposed) return;
-      parkEntry(entry); // frees srcTexture + deepBuffers
+      parkEntry(entry); // frees srcTexture + srcTextureB + deepBuffers
       entry.source = null;
+      entry.sourceB = null;
       entry.deep = null;
       entry.disposed = true;
     },
@@ -431,6 +574,8 @@ export async function acquirePane(
     surface: null,
     srcTexture: null,
     source: null,
+    sourceB: null,
+    srcTextureB: null,
     deep: null,
     deepZNear: -Infinity,
     deepZFar: Infinity,
@@ -460,4 +605,13 @@ export function getLiveSwapchainCount(): number {
  *  parked without needing access to its `PaneHandle`. */
 export function isCanvasLive(canvas: HTMLCanvasElement): boolean {
   return live.some((e) => e.canvas === canvas);
+}
+
+/** The live `Surface` a pane rendered into, or `null` if parked/unknown —
+ *  test/introspection ONLY (the pool never exposes its `Surface` to callers; a
+ *  parity harness needs it to `device.readback()` the rendered frame, the same
+ *  path `GpuComparePane`'s `readbackSurface` uses on its self-managed surface).
+ *  Not used by any production code. */
+export function getCanvasSurfaceForTest(canvas: HTMLCanvasElement): Surface | null {
+  return live.find((e) => e.canvas === canvas)?.surface ?? null;
 }
