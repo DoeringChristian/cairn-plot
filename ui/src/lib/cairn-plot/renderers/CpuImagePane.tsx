@@ -1510,15 +1510,16 @@ export type CpuImagePaneProps = ImageBackendProps;
  * unchanged.
  */
 /**
- * COMPARE chrome for the CPU backend (content-op unification, Phase 3). The
- * unified COMPOSITOR lives on the GPU pane (`GpuImagePane`); the CPU backend is
- * the no-WebGPU / render=cpu FALLBACK, so on `compareSource` it renders the
+ * COMPARE chrome for the CPU backend (content-op unification). The unified
+ * COMPOSITOR lives on the GPU pane (`GpuImagePane`); the CPU backend is the
+ * no-WebGPU / render=cpu FALLBACK, so on `compareSource` it renders the
  * REFERENCE image (the primary `source`) DEGRADED — no live composite of the
  * foreground — but keeps the compare CHROME (per-side caption chips + the split
  * REF badge, same DOM/selectors as the GPU pane) so the reference re-pick
- * gesture + labeling still work. A real CPU composite is Phase 4 ("CpuImagePane
- * gets the cpu twins"). Captions are inlined (NOT `compareCaptions`, which pulls
- * `engine/kernels` into the CORE bundle — the CPU pane must stay engine-free). */
+ * gesture + labeling still work. A real CPU composite is a documented remaining
+ * gap (see the default export + the design doc's Phase-4 note). Captions are
+ * inlined (NOT `compareCaptions`, which pulls `engine/kernels` into the CORE
+ * bundle — the CPU pane must stay engine-free). */
 function cpuCompareChrome(cs: ImageBackendProps["compareSource"]): ReactNode {
   if (!cs) return undefined;
   const mode = cs.mode ?? "diff";
@@ -1555,6 +1556,19 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
   // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
   // reconstructed legacy props (they aren't part of the dtype-keyed
   // `LegacyImageProps` shape).
+  //
+  // CPU COMPARE FALLBACK (content-op unification). The unified COMPOSITOR is
+  // GPU-only; on the no-WebGPU / render=cpu path a descriptor image-compare
+  // lowers to THIS pane, which renders the REFERENCE (`source`) DEGRADED (no
+  // live composite) but keeps the compare CHROME (per-side caption chips + split
+  // REF badge, same DOM/selectors as the GPU pane) so the reference re-pick +
+  // labeling still work. A REAL CPU composite is a documented remaining gap
+  // (design doc, Phase-4 note): a CPU diff must render into the SAME `<img>`
+  // surface the image tab uses (diff → data-URL) to preserve the
+  // homogeneous-stack no-remount flip in CPU mode, which `stack/grid-stacked`
+  // codifies (a canvas-based diff reintroduces a surface swap). The cross-type
+  // consumers already get a real CPU split/blend/diff via the compositor's
+  // `MediaComparePane` / `CpuImagePane`-diff / `CpuFloatComparePane` fallbacks.
   const isCompare = !!backendProps.compareSource;
   const sync = {
     settingsSyncGroupId: backendProps.settingsSyncGroupId,

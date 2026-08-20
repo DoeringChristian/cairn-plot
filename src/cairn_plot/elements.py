@@ -119,8 +119,8 @@ def _node_has_image(node: Any) -> bool:
     """Recursively: does this ``PlotNode`` dict need the WebGPU/WebGL2 image
     engine addon? True for a ``plot`` leaf whose renderer is
     ``image``/``imagehdr``, for ANY ``compare`` node (split/blend/diff compare
-    always renders two images — via ``CompositeMediaPane``, which routes to
-    the engine-backed ``GpuComparePane`` the same addon carries, once it's
+    always renders two images — every mode now lowers to the unified
+    ``GpuImagePane`` via ``compareSource``, the same addon carries it, once it's
     loaded), and recursively through ``grid`` children. Mirrors
     ``_node_has_figure``/``_node_has_three``'s shape."""
     if not isinstance(node, dict):
@@ -293,8 +293,8 @@ class PlotElement(Element):
 
     def _gpu_image_addon_html(self) -> str:
         """The engine-backed image/compare addon IIFE (WebGPU/WebGL2 RHI +
-        ``GpuImagePane``/``GpuComparePane``, Task 8 of the WebGPU engine
-        Sub-project), guarded include-once by
+        the unified ``GpuImagePane`` — image AND every compare mode, Task 8 of
+        the WebGPU engine Sub-project), guarded include-once by
         ``window.__cairnPlotGpuImageLoaded``. Emitted ONLY when the
         descriptor contains an ``image``/``imagehdr`` leaf or a ``compare``
         node ANYWHERE — so a scalar/table/figure/3D-only tree never carries

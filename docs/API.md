@@ -386,8 +386,8 @@ its **own** menu. `cp.Image(toolbar=False)` / `cp.Compare(toolbar=False)` (and t
 JS `image(data, { toolbar:false })` / `compare(a, b, { toolbar:false })`) emit
 `props.toolbar = false`; the default `True` is omitted (minimal descriptor). The
 flag is a validated bool and rides the shared `ImageBackendProps.toolbar` seam, so
-**all three panes** (`CpuImagePane`, `GpuImagePane`, `GpuComparePane`) hide it
-identically.
+**both panes** (`CpuImagePane`, `GpuImagePane` — the ONE unified pane for images
+AND every compare mode) hide it identically.
 
 **Hidden-toolbar convention.** With `toolbar=false` the shell (`ImagePaneShell`)
 renders **no `PlotToolbar` and no hover `group`**; the ONLY floating affordance
@@ -433,8 +433,8 @@ instead of widening to f32 on decode. The float payload carries a
 - `"f16-bits"` ⇒ `data` is a `Uint16Array` of half bits (2 bytes/sample); the
   pure-TS `exr.ts` reader emits it when **every** channel is `HALF` (a mix with
   any `FLOAT`/`UINT` channel stays `"f32"`).
-- Upload: `GpuImagePane`/`GpuComparePane` expand RGB→RGBA **in half space**
-  (alpha = `HALF_ONE` = `0x3C00`) and upload an `rgba16float` source texture
+- Upload: the unified `GpuImagePane` (image AND compare) expands RGB→RGBA **in
+  half space** (alpha = `HALF_ONE` = `0x3C00`) and uploads an `rgba16float` source texture
   (8 B/px vs 16 B/px for `rgba32float`). `textureLoad` yields f32 in-shader, so
   all diff/tonemap/FLIP kernel math is unchanged.
 - CPU consumers widen **lazily** via `image/half.ts` — `halfToFloat` per pixel

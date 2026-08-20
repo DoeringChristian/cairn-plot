@@ -107,6 +107,116 @@ report + gallery regen clean.
 - HDR-FLIP's multi-exposure loop is the most complex cached op.
 - Harnesses encode the current compare DOM heavily — migrate, don't fork.
 
+## Phase 4 — DONE / EPIC COMPLETE (commits d821875, 28e4275, + the sweep commit)
+
+`GpuComparePane` is DELETED. There is now ONE viewport pane — `GpuImagePane`
+(+ its `CpuImagePane` CPU twin) — for images AND every image-compare mode (diff,
+split, blend), reached identically from the descriptor tree AND the cross-type
+card/3D-snapshot consumers. The two-parallel-panes-over-one-engine root cause the
+Motivation named is gone by construction.
+
+**Consumer migration (d821875).** The last two `GpuComparePane` consumers —
+`ImageViewportPane` (image card) and `OffscreenComparePanes` (live-3D snapshot
+compare), both via `CompositeMediaPane` → `CrossTypeCompositeMediaPane` — now
+render the unified `GpuImagePane` + `compareSource`. The design question the
+brief posed (an image operand vs a rendered-3D-snapshot operand) resolves
+cleanly: AFTER the offscreen snapshot BOTH sides of a cross-type compare are
+plain decoded sources (a URL or a decoded float side), so the unified image pane
+serves them directly — no consumer needed live dual-texture compositing the
+unified pane can't expose, so NONE had to stop. `compositor.tsx`'s
+engine-composited branch builds `source` = slot a = REFERENCE
+(`baselineUrl`/`baselineFloat`) and `compareSource.b` = slot b = FOREGROUND
+(`imageUrl`/`imageFloat`) — byte-parity with the old `texA − texB` (texA =
+reference, verified against `GpuComparePane`'s texture assignment). It resolves
+the pane through the SAME `__cairnPlotGpuImagePane` window seam
+`plot-renderers.tsx` uses; the compare-only seam `__cairnPlotGpuComparePane` is
+gone. `CompositeMediaPane` stays as the CORE dispatcher (its CPU fallbacks —
+`MediaComparePane` / `CpuFloatComparePane` / the diff `CpuImagePane` — are the
+cross-type consumers' real CPU composite and are unchanged).
+
+**Deletion + sweep (28e4275).** Deleted `media-compare/GpuComparePane.tsx`
+(~1990 LOC) + the 3 human-run interaction harnesses that mounted it
+(`gpu-compare-menus`/`-geometry`/`-diff-readback`, .ts + .html, ~1470 LOC), whose
+coverage is FOLDED into the self-driving parity set (kernel/colormap menu
+compute-decoupling → `content-ops` cache-hit compute-count + `gpu-image-diff`
+MODE-menu switch; split-boundary geometry → the migrated `gpu-compare-split-numbers`;
+FLIP TEV readback → `content-ops` cached-readback parity + `gpu-image-diff`).
+Deleted dead exports whose last consumer was `GpuComparePane`:
+`use-image-controller.ts`'s `colormapToolbarButton`/`tonemapToolbarButton`
+(+ `TONEMAP_MENU_OPTIONS`), and `diff-engine.ts`'s `ensureDiffScalars`. ~3.5k LOC
+net removed. Migrated importers: the addon (stops injecting the compare seam),
+`media-compare/index.ts` (stops exporting it), `engine-fallback` cases 3/4 →
+`GpuImagePane` + `compareSource`, the two default-set harnesses
+(`compare-settings-sync`/`grid-stacked-persist`) drop the dead compare-pane
+injection, and the source-guard unit tests (split-divider / ref-badge /
+label-chip / toolbar-seam) retargeted onto `GpuImagePane` (+ `CpuImagePane`
+compare chrome).
+
+**Kept (reused by the unified pane, NOT orphaned):** `buildCompareModeMenu`
+(`compare-mode-menu`), `compareCaptions`, `computeCompareMapping`,
+`SplitDivider`, `use-split-flip-keys`, `RefBadge`/`LabelChip`, the diff kernels,
+`compareDisplayToolbarButton`/`deriveCompareEncodingId`. `renderCompose` /
+`renderDiffDisplay` REMAIN as engine primitives still exercised by the parity
+harnesses (`compare-pass`/`flip`/`ssim`/`hdr-flip`) — no longer on any production
+pane path, but their parity proofs are retained (the brief's "delete … if nothing
+consumes it" condition isn't met while a harness proves them).
+
+**Task #87 (compare settings-sync duplication) — CLOSED.** There is now ONE
+settings-sync path: the unified pane's `useSyncedImageSettings` bus. The compare
+display-encoding bridge `deriveCompareEncodingId` is now INTERNAL to that one
+pane (consumers: `renderers/display-encoding.ts` where it lives, +
+`renderers/GpuImagePane.tsx` — no second pane, no duplication to reconcile), so
+#87's concern is closed by construction rather than by a new abstraction. No code
+change was needed beyond the deletion.
+
+**Harness migrations.** The 3 human-run `gpu-compare-*` harnesses are folded into
+the self-driving set (above) — none silently target deleted code. `engine-fallback`
+(human-run) cases 3/4 drive the unified pane. All 25 default parity harnesses stay
+green on metal-3.
+
+### DEVIATION / remaining gap — CPU compare composite (Phase-4 item 3, partial)
+
+The brief's "CpuImagePane gets the compositor cpu twins — a real CPU split/blend
+composite … diff via the pointwise twins" is **documented as a deferred gap**, not
+landed, for a concrete structural reason discovered during implementation:
+
+- A real CPU **diff** renders a `<canvas>` (the `image/diff.ts` `computeDiff`
+  pixel path). But in CPU mode the homogeneous `[image, diff]` STACK relies on the
+  image tab AND the diff tab rendering the SAME `<img>` surface, so the stacked
+  image↔diff flip stays a seamless same-DOM-node swap (NO remount) — this is
+  exactly what `stack/grid-stacked` asserts (it forces `render=cpu`). A
+  canvas-based CPU diff reintroduces an `<img>`→`<canvas>` surface swap on the
+  flip, breaking that no-remount invariant (empirically confirmed: the harness's
+  image↔diff persistence + zoom-persist checks fail). Completing this correctly
+  requires the CPU diff to render into the SAME `<img>` surface (compute →
+  data-URL), which is a real feature with its own validation burden — deferred
+  rather than shipped unvalidated.
+- A real CPU **split/blend** is a VIEWPORT-space (dest-space) composite, not a
+  per-source-texel one, so the "per-texel via the op cpu twins" shortcut the brief
+  suggested does not directly apply; it needs the `MediaComparePane`-style
+  CSS/clip composite.
+
+Impact is narrow: this is ONLY the DESCRIPTOR path's compare fallback in a
+no-WebGPU / `render=cpu` environment. It keeps the Phase-3 behavior — the
+REFERENCE rendered degraded + the full compare CHROME (per-side captions + split
+REF badge, same DOM/selectors) so reference re-pick + labeling work. The
+cross-type consumers are UNAFFECTED — they still get a real CPU split/blend/diff
+via the compositor's preserved `MediaComparePane` / `CpuImagePane`-diff /
+`CpuFloatComparePane` fallbacks (the `cpu-compare-fallback` harness pins this).
+The cached kernels (FLIP/HDR-FLIP/SSIM) stay GPU-only with degraded+chrome, as
+the brief specified. `CpuImagePane`'s doc comments record the gap + the correct
+completion shape.
+
+**Schema / contracts:** unchanged — the descriptor surface (`cp.Compare` /
+`cp.Image`) is untouched; content ops + panes are an internal render-stage. The
+Python docstrings (`bundle.py`/`elements.py`) + `docs/API.md` that named the
+deleted pane were updated to the unified-pane wording.
+
+**Gates (every commit):** typecheck; 615 node tests; all 25 parity harnesses
+(metal-3); 243 pytest; core + gpu-image bundles rebuilt (gpu-image 404→369 KB) +
+synced + committed; report (63 blocks) + gallery (27 types) regen clean; live
+report spot-check.
+
 ## Phase 3 — DONE (commits 9f70506, 04a5e64, a96ab54, + the harness/doc commit)
 
 split/blend became `direct` compositor ContentOps on the unified pane; the last

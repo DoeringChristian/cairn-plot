@@ -177,8 +177,8 @@ def inline_three_addon_js() -> str:
 @lru_cache(maxsize=1)
 def inline_gpu_image_addon_js() -> str:
     """The self-contained **gpu-image addon** IIFE JS (the WebGPU/WebGL2 RHI +
-    ``GpuImagePane``/``GpuComparePane``; reuses core's React via
-    ``window.__cairnPlotReact``), ``</script``-guarded. Emitted ONLY for a
+    the unified ``GpuImagePane`` — image AND every compare mode; reuses core's
+    React via ``window.__cairnPlotReact``), ``</script``-guarded. Emitted ONLY for a
     page containing an ``image``/``imagehdr`` leaf or a ``compare`` node
     (Task 8 of the WebGPU engine Sub-project). The addon is itself
     capability-gated at runtime: if neither WebGPU nor WebGL2 is available it
