@@ -346,8 +346,7 @@ async function computeSsimScalar(
     const entry = ensureDiff(device, texA, texB, "ssim", undefined, contentKeyA, contentKeyB, mapping);
     if (entry.ssimMean !== undefined) return entry.ssimMean;
     if (!entry.ssimMeanPending) {
-      entry.ssimMeanPending = ensureDiffResultReadback(device, entry).then((samples) => {
-        const m = meanSsimFromErrorMap(samples, entry.width, entry.height);
+      entry.ssimMeanPending = reduceSsimMean(device, entry).then((m) => {
         entry.ssimMean = m;
         return m;
       });
@@ -359,6 +358,30 @@ async function computeSsimScalar(
     // between scanline batches while the chip shows `SSIM —`.
     return ssimScalarReference(device, texA, texB, mapping);
   }
+}
+
+/**
+ * Mean SSIM (`1 − mean(1−SSIM)`) from the cached `ssim` RESULT texture. Prefers
+ * the GPU reduction (`Device.reduceTextureChannelMean` — the reduction family's
+ * `channel`/`mean` variant over the R channel, a KB partial readback), and
+ * FALLS BACK to reading the full RESULT texture back once and averaging on the
+ * CPU (`meanSsimFromErrorMap`, the pre-existing loop, now the parity reference)
+ * for a device without the GPU reduction. Both average the R channel over the
+ * FULL result grid (`entry.width*entry.height`, the mapped region) so the
+ * displayed value is identical. A throw here (e.g. device lost mid-map)
+ * propagates to `computeSsimScalar`'s outer catch → the source-based CPU
+ * fallback.
+ */
+async function reduceSsimMean(device: Device, entry: DiffCacheEntry): Promise<number> {
+  const n = entry.width * entry.height;
+  if (n <= 0) return NaN;
+  if (device.reduceTextureChannelMean) {
+    const mean = await device.reduceTextureChannelMean(entry.texture, 0, entry.width, entry.height);
+    return 1 - mean;
+  }
+  // Fallback: the RESULT readback (cached for the TEV overlay) + the CPU loop.
+  const samples = await ensureDiffResultReadback(device, entry);
+  return meanSsimFromErrorMap(samples, entry.width, entry.height);
 }
 
 /**

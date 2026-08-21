@@ -21,6 +21,16 @@
  * exactly the mapped/compared region (overlap under crop, common grid under
  * fill) — and returns `1 − mean`, i.e. the mean SSIM. Returns `NaN` for an
  * empty region (nothing to compare).
+ *
+ * The SHIPPED scalar path now reduces this mean ON THE GPU
+ * (`Device.reduceTextureChannelMean` — the reduction family's `channel`/`mean`
+ * variant over the R channel, a KB partial-buffer readback instead of the full
+ * ~64MB texture transfer this loop needed). This function survives as (a) the
+ * CPU-average FALLBACK for a device without the GPU reduction
+ * (`diff-engine.ts`'s `reduceSsimMean`), and (b) the PARITY REFERENCE the
+ * reduction harness asserts the GPU result against. NaN PROPAGATES (`sumErr +=
+ * s`; `?? 0` guards only out-of-range `undefined`, never a NaN sample) —
+ * matching the GPU reduction's additive NaN propagation.
  */
 export function meanSsimFromErrorMap(samples: Float32Array, width: number, height: number): number {
   const n = width * height;

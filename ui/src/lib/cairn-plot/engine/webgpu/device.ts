@@ -119,7 +119,15 @@ import type {
 import type { DeepSampleBuffers, DeepGpuCsrSpec } from "../types";
 import { configureHDRSurface, configureSDRSurface, type SurfaceConfigResult } from "./surface";
 import { recordContextLossEvent } from "../test-hooks";
-import { reduceWGSL } from "../shaders/reduce.wgsl";
+import {
+  REDUCE_WORKGROUP_SIZE,
+  assembleReduceWGSL,
+  foldReducePartials,
+  getReduceOp,
+  getReduceProgram,
+  type ReduceOp,
+  type ReduceProgram,
+} from "../reduce/registry";
 import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl";
 
 /**
@@ -709,30 +717,113 @@ export async function createWebGPUDevice(): Promise<Device> {
     return supported;
   }
 
-  // Lazily-built, memoized (one per GPUDevice, not per call) compute pipeline
-  // for `reduceDiffSumSquaredAbs` — see `engine/shaders/reduce.wgsl.ts`'s
-  // module doc comment for the reduction design.
-  const REDUCE_WORKGROUP_SIZE = 256;
-  let reducePipeline: GPUComputePipeline | null = null;
-  let reduceBindGroupLayout: GPUBindGroupLayout | null = null;
-  function getReducePipeline(): { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout } {
-    if (!reducePipeline || !reduceBindGroupLayout) {
-      const module = gpuDevice.createShaderModule({ code: reduceWGSL });
-      reduceBindGroupLayout = gpuDevice.createBindGroupLayout({
-        entries: [
-          { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } },
-          { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } },
-          { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-          { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
-        ],
-      });
-      const layout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [reduceBindGroupLayout] });
-      reducePipeline = gpuDevice.createComputePipeline({
-        layout,
+  // GPU REDUCTION FAMILY harness (`engine/reduce/registry.ts`). Compute pipelines
+  // + bind-group layouts are memoized per `(program, op)` VARIANT (a tiny map,
+  // NOT one-per-call) — the "shared harness, declared entries, no per-use
+  // pipelines" house pattern. `reduceDiffSumSquaredAbs` (MSE/MAE/PSNR) and
+  // `reduceTextureChannelMean` (SSIM error-map mean) are both thin callers of the
+  // ONE `runReduce` below.
+  const reducePipelines = new Map<string, { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout }>();
+  function getReducePipeline(program: ReduceProgram, op: ReduceOp): { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout } {
+    const key = `${program.id}:${op.id}`;
+    let cached = reducePipelines.get(key);
+    if (!cached) {
+      const module = gpuDevice.createShaderModule({ code: assembleReduceWGSL(program, op) });
+      const arity = program.textureArity;
+      const entries: GPUBindGroupLayoutEntry[] = [];
+      for (let t = 0; t < arity; t++) {
+        entries.push({ binding: t, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } });
+      }
+      entries.push({ binding: arity, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } });
+      entries.push({ binding: arity + 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } });
+      const layout = gpuDevice.createBindGroupLayout({ entries });
+      const pipelineLayout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [layout] });
+      const pipeline = gpuDevice.createComputePipeline({
+        layout: pipelineLayout,
         compute: { module, entryPoint: "cs_main" },
       });
+      cached = { pipeline, layout };
+      reducePipelines.set(key, cached);
     }
-    return { pipeline: reducePipeline, layout: reduceBindGroupLayout };
+    return cached;
+  }
+
+  /**
+   * Run one reduction VARIANT over the top-left `width*height` region of the
+   * given source texture(s), returning the finalized per-lane scalars. The O(N)
+   * per-pixel work + workgroup tree-reduce run on the GPU; only a tiny
+   * `numWorkgroups * lanes` partial buffer is read back and folded on the host
+   * (`foldReducePartials`) — KB, not the MB of a full-texture readback.
+   */
+  async function runReduce(
+    program: ReduceProgram,
+    op: ReduceOp,
+    textures: WGPUTexture[],
+    width: number,
+    height: number,
+    channel: number,
+  ): Promise<number[]> {
+    const lanes = program.lanes;
+    const count = Math.max(0, width * height);
+    const numWorkgroups = Math.max(1, Math.ceil(count / REDUCE_WORKGROUP_SIZE));
+    const { pipeline, layout } = getReducePipeline(program, op);
+
+    const partialSize = numWorkgroups * lanes * 4; // lanes f32 per workgroup
+    const partialBuffer = gpuDevice.createBuffer({
+      size: partialSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    const dimsBuffer = gpuDevice.createBuffer({
+      size: 16, // Dims struct: 4x u32
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    gpuDevice.queue.writeBuffer(
+      dimsBuffer,
+      0,
+      new Uint32Array([Math.max(1, width), Math.max(1, height), count, channel >>> 0]),
+    );
+
+    const bindEntries: GPUBindGroupEntry[] = textures.map((t, i) => ({ binding: i, resource: t.gpuTexture.createView() }));
+    bindEntries.push({ binding: program.textureArity, resource: { buffer: partialBuffer } });
+    bindEntries.push({ binding: program.textureArity + 1, resource: { buffer: dimsBuffer } });
+    const bindGroup = gpuDevice.createBindGroup({ layout, entries: bindEntries });
+
+    const readBuffer = gpuDevice.createBuffer({
+      size: partialSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const encoder = gpuDevice.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(numWorkgroups);
+    pass.end();
+    encoder.copyBufferToBuffer(partialBuffer, 0, readBuffer, 0, partialSize);
+    gpuDevice.queue.submit([encoder.finish()]);
+
+    // Same device-loss guard as `readback()` — a lost/destroyed device mid-map
+    // yields a typed `DeviceLostError`, not a raw `AbortError`.
+    try {
+      await mapReadBufferGuarded(readBuffer, lostRef);
+    } catch (err) {
+      for (const b of [readBuffer, partialBuffer, dimsBuffer]) {
+        try {
+          b.destroy();
+        } catch {
+          /* already invalid after device loss — best effort */
+        }
+      }
+      throw err;
+    }
+    const mapped = new Float32Array(readBuffer.getMappedRange());
+    const partial = mapped.slice(); // copy out before unmap invalidates `mapped`
+    readBuffer.unmap();
+    readBuffer.destroy();
+    partialBuffer.destroy();
+    dimsBuffer.destroy();
+
+    return foldReducePartials(partial, numWorkgroups, lanes, op, count);
   }
 
   // Lazily-built, memoized deep-composite RENDER pipeline (one per GPUDevice).
@@ -1092,75 +1183,22 @@ export async function createWebGPUDevice(): Promise<Device> {
     },
 
     async reduceDiffSumSquaredAbs(texA, texB, width, height) {
-      const a = texA as WGPUTexture;
-      const b = texB as WGPUTexture;
-      const count = Math.max(0, width * height);
-      const numWorkgroups = Math.max(1, Math.ceil(count / REDUCE_WORKGROUP_SIZE));
-      const { pipeline, layout } = getReducePipeline();
+      // MSE/MAE/PSNR: the fused per-channel squared+absolute diff sums, now the
+      // `diffSqAbs` program (2 lanes) under the `sum` op on the shared harness.
+      const program = getReduceProgram("diffSqAbs")!;
+      const op = getReduceOp("sum")!;
+      const [sumSq, sumAbs] = await runReduce(program, op, [texA as WGPUTexture, texB as WGPUTexture], width, height, 0);
+      return { sumSq: sumSq!, sumAbs: sumAbs! };
+    },
 
-      const partialSize = numWorkgroups * 2 * 4; // 2 f32 (sumSq, sumAbs) per workgroup
-      const partialBuffer = gpuDevice.createBuffer({
-        size: partialSize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-      });
-      const dimsBuffer = gpuDevice.createBuffer({
-        size: 16, // Dims struct: 4x u32, std140/std430-aligned
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-      gpuDevice.queue.writeBuffer(dimsBuffer, 0, new Uint32Array([Math.max(1, width), Math.max(1, height), count, 0]));
-
-      const bindGroup = gpuDevice.createBindGroup({
-        layout,
-        entries: [
-          { binding: 0, resource: a.gpuTexture.createView() },
-          { binding: 1, resource: b.gpuTexture.createView() },
-          { binding: 2, resource: { buffer: partialBuffer } },
-          { binding: 3, resource: { buffer: dimsBuffer } },
-        ],
-      });
-
-      const readBuffer = gpuDevice.createBuffer({
-        size: partialSize,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      });
-
-      const encoder = gpuDevice.createCommandEncoder();
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, bindGroup);
-      pass.dispatchWorkgroups(numWorkgroups);
-      pass.end();
-      encoder.copyBufferToBuffer(partialBuffer, 0, readBuffer, 0, partialSize);
-      gpuDevice.queue.submit([encoder.finish()]);
-
-      // Same device-loss guard as `readback()` — a lost/destroyed device
-      // mid-map yields a typed `DeviceLostError`, not a raw `AbortError`.
-      try {
-        await mapReadBufferGuarded(readBuffer, lostRef);
-      } catch (err) {
-        for (const b of [readBuffer, partialBuffer, dimsBuffer]) {
-          try {
-            b.destroy();
-          } catch {
-            /* already invalid after device loss — best effort */
-          }
-        }
-        throw err;
-      }
-      const mapped = new Float32Array(readBuffer.getMappedRange());
-      const partial = mapped.slice(); // copy out before unmap invalidates `mapped`
-      readBuffer.unmap();
-      readBuffer.destroy();
-      partialBuffer.destroy();
-      dimsBuffer.destroy();
-
-      let sumSq = 0;
-      let sumAbs = 0;
-      for (let i = 0; i < numWorkgroups; i++) {
-        sumSq += partial[i * 2]!;
-        sumAbs += partial[i * 2 + 1]!;
-      }
-      return { sumSq, sumAbs };
+    async reduceTextureChannelMean(tex, channel, width, height) {
+      // SSIM error-map mean: reduce ONE channel of the RESULT texture with the
+      // `mean` op — a KB partial-buffer readback instead of the full ~64MB
+      // texture-to-CPU transfer the JS loop used to average.
+      const program = getReduceProgram("channel")!;
+      const op = getReduceOp("mean")!;
+      const [mean] = await runReduce(program, op, [tex as WGPUTexture], width, height, channel);
+      return mean!;
     },
 
     destroy() {
