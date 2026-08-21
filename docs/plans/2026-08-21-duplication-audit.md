@@ -165,3 +165,54 @@ The findings collapse into five recurring root causes, all traceable to the unif
 5. **Deleted-behavior surfaces and phantom specs.** Removed components/modes (`GpuComparePane`, the norm picker, `side` mode) survive as unreachable config, dead probe fallbacks, and parity comments pointing at code that no longer exists (L7, L9, L10, L11) — corrosive to maintainer confidence and the primary way a future edit re-derives wrong behavior.
 
 The single highest-leverage remediation is a shared `useImageDisplaySettings` hook that owns one mode-scoped store plus one copy each of apply-remote/snapshot/publish/reset — it directly closes M1, M2, M4, and structurally prevents the class behind M3 and M7.
+
+---
+
+## Addendum — duplicated-logic dimension (rerun)
+
+The original run's fifth planned dimension — **the same ALGORITHM re-expressed in 2+ places that can drift** (as opposed to the twin-*state* stores of M1–M4 or the enum/table copies of M5–M6) — failed to execute. This addendum reruns it: a fresh sweep of `ui/src/lib/cairn-plot/`, `ui/src/`, and `src/cairn_plot/` for copy-pasted computation. Each candidate was adversarially checked so that pure delegation/layering (the EXR worker→`decodeExrPreferWasm` core, the single-source `colormaps/` LUT stack, `resolveColormapMode`, the `formatChannelValue`/`formatNum` pixel formatter, `reduceToScalar`) is NOT reported. Three confirmed findings; the rest of the surface is genuinely consolidated (recorded below).
+
+### D1. The object-contain letterbox (fit scale + centering) is hand-reimplemented in 4 sites that bypass the `computeFit` primitive built to be its single source
+**Claim:** `renderers/region-select.ts` exports `computeFit`/`screenPerTexel`/`screenToTexel` as THE shared object-contain screen↔texel primitive (and `PixelValueOverlay` + `ImagePaneShell` correctly consume it), yet four other sites recompute the identical `scale = min(box.w/natural, box.h/natural)` + `(box − disp)/2` centering inline instead of calling it.
+
+**Anchors / evidence:**
+- Shared primitive: `region-select.ts:64-82` `computeFit` (`scale = Math.min(box.width/visibleW, box.height/visibleH)`, `imgLeft/imgTop = (box − disp)/2`), `screenPerTexel` `:85-87`. Good consumers: `PixelValueOverlay.tsx:45,288,303` ("the SAME `computeFit` the region marquee uses"), `ImagePaneShell.tsx:81-87,362,989`.
+- Hand-copy 1: `GpuImagePane.tsx:307-311` (`viewportToUvRect`) — `scale = Math.min(paneBox.width/naturalW, paneBox.height/naturalH)`, then `imgLeft/imgTop = (paneBox − disp)/2` verbatim, before composing zoom/pan (the zoom/pan compose IS unique; the fit scale+centering is the copy).
+- Hand-copy 2: `GpuImagePane.tsx:331-343` (`screenPxPerTexel`) — `Math.min(box.width/visibleW, box.height/visibleH)`; its own doc (`:323-327`) admits it is "the exact same object-contain-fit formula `PixelValueOverlay.tsx`'s `draw()` uses" that must "stay in EXACT lockstep."
+- Hand-copy 3: `viewport/reframe.ts:66-67` — `S = Math.min(oldBox.width/naturalWidth, oldBox.height/naturalHeight)` (+ `S2` for the new box), the home-fit letterbox scale re-derived for the resize reframe.
+- Hand-copy 4: `renderers/ImageOverlay.tsx:65-71` — `scale = Math.min(cw/naturalWidth, ch/naturalHeight)`, `left/top = (cw − dispW)/2` / `(ch − dispH)/2`, verbatim.
+
+**Risk:** Hover pixel-readout, the region marquee, the GPU nearest/linear filter-switch threshold (`Q20`), the resize reframe, and the overlay-box placement must all agree on one letterbox geometry. `computeFit` is the deliberate seam that guarantees it — but an edit to it (a DPR term, a min-scale clamp, a non-centered or fill fit) silently misses the four inline copies, so hover lands on the wrong texel / the filter flips at a different zoom than the numbers appear / overlay boxes drift off the image. `GpuImagePane`'s own comment naming the lockstep requirement is the tell that the coupling is currently hand-maintained, not enforced.
+
+**Adversarial self-check:** Not layering — the shared primitive exists AND has real consumers, proving the seam; these four re-express the formula rather than import it. `viewportToUvRect`'s zoom/pan composition is legitimately unique and is NOT counted; only its embedded fit scale + centering is the duplicate.
+
+**Suggested consolidation:** Have `viewportToUvRect`, `screenPxPerTexel`, `reframeViewportForResize`, and `ImageOverlay`'s rect memo call `computeFit`/`screenPerTexel` (feeding the full-window `sourceWindow` where they use the whole image) so the object-contain scale+centering exists once.
+
+### D2. The diff-id → default-color decision is hardcoded in TWO parallel registries (kernel `defaultColormap` + content-op `defaultEncoding`) with matching values kept in sync by hand
+**Claim:** For the overlapping pointwise-diff ids (`signed`/`absolute`/`squared`/`relative_*`) the default color is asserted independently in the `engine/kernels` registry (`defaultColormap`) AND the `content-ops` registry (`defaultEncoding`) — two literal tables encoding the same id→color rule, neither derived from the other.
+
+**Anchors / evidence:**
+- Kernel table (LIVE in the runtime UI): per-kernel `defaultColormap` — `signed.wgsl.ts:12` `"red-green"`, `absolute.wgsl.ts:11` / `squared.wgsl.ts:11` / `relative-*.wgsl.ts` `"turbo"`, `flip.wgsl.ts:299` / `ssim.wgsl.ts:200` / `hdr-flip.ts:165` `"magma"`; surfaced by `kernelDefaultColormap()` (`kernel-registry.ts:149-150`) and consumed by the actual pane seed/reset at `GpuImagePane.tsx:588,969,2201,2783`.
+- Content-op table: per-op `defaultEncoding` — `content-ops/ops.ts:76` `range === "R" ? "red-green" : "turbo"` (the SAME signed→red-green / magnitude→turbo split), `:217` `"magma"`, declared required at `content-ops/registry.ts:134`. Its own comment (`ops.ts:14-15`) states `defaultEncoding` "generalizes the kernels' per-kernel `defaultColormap`" — i.e. a re-statement, not a derivation.
+- `defaultEncoding` is consumed only by the parity/registry TESTS (`engine/__tests__/content-ops.browser.ts:97,324`, `content-ops/registry.test.ts:50,65,78,91`) via `getEncoding(op.defaultEncoding)`; the runtime diff color comes from the KERNEL table through `GpuImagePane`. So the two tables answer the same question on different paths.
+
+**Risk:** Change a kernel's `defaultColormap` (e.g. `absolute` turbo→magma) without editing the content-op's `defaultEncoding` and the runtime seed (kernel table) diverges from the parity harness's display twin (content-op table): the harness still passes against its own stale value while the UI shows a different default, or the registry-drift test fails on a value the user never sees. Two hand-synced copies of one decision, guarded only by tests that each read their own copy.
+
+**Adversarial self-check:** `defaultEncoding` is a genuine superset concept (it also covers `identity`/`split`/`blend` as `srgb`, which have no kernel default) — that non-overlapping part is legitimate, NOT reported. The duplication is strictly the pointwise-diff subset where both tables hardcode the identical red-green/turbo value for the same id.
+
+**Suggested consolidation:** Derive the pointwise op's `defaultEncoding` from `kernelDefaultColormap(op.id)` (or vice-versa) so the shared subset resolves from one table; keep only the compositor/identity encodings as literals.
+
+### D3. The `viridis → turbo` back-compat alias is written as three independent literals (1 Python, 2 TS)
+**Claim:** The removed-colormap alias is re-expressed three times rather than shared, and unlike the colormap SET (contract-pinned) the alias MAPPING is asserted by no cross-language test.
+
+**Anchors / evidence:**
+- Python: `components.py:107` `_COLORMAP_ALIASES = {"viridis": "turbo"}` (applied `:114`, `:135`).
+- TS copy 1: `colormaps/lut.ts:175-177` `aliasColormap` (`name === "viridis" ? "turbo" : name`).
+- TS copy 2: `image/encodings/registry.ts:401` `getEncoding` inline `id === "viridis" ? "turbo" : id` — its comment (`:399-400`) explicitly justifies the copy: "kept a bare literal here so the core-safe registry pulls no extra import."
+
+**Risk:** Adding/renaming a second alias (any future colormap removal) must touch all three sites; miss one and Python accepts a name the TS registry rejects (or vice-versa), with no CI signal — the same wrong-axis gap as M5/M6 (the colormap *set* is contract-tested, the *alias* is not).
+
+**Adversarial self-check:** Not layering — three literals of one mapping; the `registry.ts` comment is a self-admitted deliberate copy. Low severity (single fixed entry today), but a real drift seam.
+
+### Swept and cleared (consolidated — no finding)
+Recorded so the negative space is explicit: **colormap/LUT sampling** is a single stack (`COLORMAP_STOPS` → `getColormapLUT`/`colormapFloatLUT`/`applyColormap`, one canonical table, `aliasColormap` the only fork → D3); **f16/float conversion** is centralized in `image/half.ts` (`halfToFloat`/`f16BitsToFloat32`), and the per-sample `isF16 ? halfToFloat(raw) : raw` accessor idiom (`gpu-image-samplers.ts:72`, `image-histogram-source.ts:78`, `CpuImagePane.tsx:1356`) all delegate to that one primitive — a 1-liner branch, not a drift-prone algorithm; **diff colormap index mode** is one place (`engine/diff-cmap-mode.ts`'s `resolveColormapMode`, shared GPU/CPU); **pixel-value formatting** funnels through `formatChannelValue`→`formatNum`; **reduce-to-scalar / data-index** math is single-sourced with byte-parallel WGSL twins (`encodings/registry.ts`); **npy/exr parsing** is not duplicated worker↔main — the worker (`exr-worker.ts`) and the main-thread path both call the one `decodeExrPreferWasm` core; **menu builders** derive from single option lists (`COLORMAP_OPTIONS`, `REDUCE_MENU_OPTIONS`). Channel-name derivation (`floatChannelNames` Y/RGB/RGBA/Cn vs `channel-slice.ts`'s `RGBA.slice`) uses different rules for different purposes and is not the same algorithm.
