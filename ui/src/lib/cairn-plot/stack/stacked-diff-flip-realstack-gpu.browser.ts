@@ -224,6 +224,28 @@ function singleCompareGrid(mode: "diff" | "split"): PlotDescriptor {
     root: { kind: "grid", cols: 1, gap: 8, children: [compareNode(mode, "Cmp")] },
   } as unknown as PlotDescriptor;
 }
+// A plain SCALAR float image (k=1) with NO authored colormap (its default curve).
+const scalarPlainLeaf = (label: string) => ({
+  kind: "plot" as const,
+  renderer: "image",
+  data: imghdr("runtime:scalar"),
+  props: { toolbar: true, label },
+});
+// Two scalar slots with DISTINCT authored defaults (slot0 magma, slot1 none) — the
+// stack-shared-settings test (reg 2): a pick applies to BOTH, HOME on a slot adopts
+// THAT slot's authored default stack-wide, exit to grid restores per-image defaults.
+function stackedTwoScalarGrid(): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: 2,
+      gap: 8,
+      mode: "stacked",
+      children: [magmaScalarLeaf("Magma scalar"), scalarPlainLeaf("Plain scalar")],
+    },
+  } as unknown as PlotDescriptor;
+}
 
 // ---- oracle ------------------------------------------------------------------
 /** An IMAGE-mode present (identity op, no `b`) that is `isScalar` with a bound
@@ -279,7 +301,7 @@ interface DiffProbe {
 interface ImgProbe {
   encodingId: string;
   colormap: string;
-  slotKey: string;
+  inStack: boolean;
   changeEncoding: (id: string) => void;
   home: () => void;
 }
@@ -290,6 +312,16 @@ function findProbe<T>(hostId: string, key: string): T | null {
     if (el[key]) return el[key] as T;
   }
   return null;
+}
+// ALL image-pane seams under a host (normal grid → one per cell), in DOM order.
+function allImgProbes(hostId: string): ImgProbe[] {
+  const host = document.getElementById(hostId);
+  if (!host) return [];
+  const out: ImgProbe[] = [];
+  for (const el of Array.from(host.querySelectorAll("*")) as unknown as Array<Record<string, unknown>>) {
+    if (el.__cairnImagePaneProbe) out.push(el.__cairnImagePaneProbe as ImgProbe);
+  }
+  return out;
 }
 const diffProbe = (hostId: string) => findProbe<DiffProbe>(hostId, "__cairnImageDiffProbe");
 const imgProbe = (hostId: string) => findProbe<ImgProbe>(hostId, "__cairnImagePaneProbe");
@@ -727,97 +759,141 @@ async function main(): Promise<void> {
     report(fPost2.afterHome === "split", `PHASE F POST-FIX (reverse): authored SPLIT restored after a switch to diff + HOME (${fPost2.afterHome})`);
     if (fPost.afterHome !== "diff" || fPost2.afterHome !== "split") allOk = false;
 
-    // ============ PHASE G — A COLORMAP PICK SURVIVES SLOT FLIPS (reg 2) ==========
-    // (G1) IMAGE colormap: a stacked [magma-scalar, plain image] grid. The user
-    // picks `magma` on the PLAIN image slot, flips away and back. The pick must
-    // SURVIVE (per-slot override). Pre-fix, the flip's props change reseeded the
-    // descriptor and WIPED it. (G2) DIFF colormap: a stacked [image, diff] grid — a
-    // picked diff colormap must survive an image↔diff flip too.
-    const runPickSurvives = async (
-      hostId: string,
-      disable: boolean,
-    ): Promise<{ img: { picked: string; afterFlip: string }; diff: { picked: string; afterFlip: string } }> => {
-      (window as unknown as { __cairnDisablePerSlotEncoding?: boolean }).__cairnDisablePerSlotEncoding = disable;
-
-      // -- G1: image colormap on the plain-image slot of [magma-scalar, plain] --
-      const hostA = document.createElement("div");
-      hostA.id = hostId + "A";
-      hostA.style.cssText = "width:420px;height:260px;background:#222;position:relative";
-      document.body.appendChild(hostA);
-      const rootA: Root = createRoot(hostA);
-      rootA.render(createElement(PlotApp, { descriptor: stackedScalarMagmaGrid() }));
-      await waitFor(() => document.querySelectorAll(`#${hostId}A [role='tab']`).length >= 2, 12000);
-      hostA.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
-      key("2"); // → slot 1 = plain image
-      await waitFor(() => activeIdx(hostId + "A") === 1, 4000);
-      await waitFor(() => !!imgProbe(hostId + "A"), 4000);
+    // ============ PHASE G — STACK-WIDE SHARED DISPLAY SETTINGS (reg 2) ===========
+    // The stack owns ONE shared settings object: a pick anywhere applies to EVERY
+    // slot + survives flips; each image's authored props are SEEDS only; HOME on a
+    // slot makes the stack adopt THAT slot's authored defaults; leaving stacked mode
+    // discards the shared settings (each pane reverts to its own authored defaults).
+    // Grid: [magma-scalar (slot0, authored magma), plain-scalar (slot1, no colormap)].
+    const clickGridMode = (hostId: string, m: "normal" | "stacked"): void => {
+      document
+        .querySelector<HTMLElement>(`#${hostId} [data-cairn-grid-mode="${m}"]`)
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    };
+    interface GResult {
+      seed0: string; // slot0 initial (its authored magma seeds the stack)
+      slot1Shared: string; // flip to slot1 → the SHARED setting (magma), not slot1's own
+      slot0AfterPick: string; // pick turbo on slot1, flip to slot0 → turbo (applies to all)
+      slot1Back: string; // flip back to slot1 → turbo (survives)
+      slot0Home: string; // HOME on slot0 → magma (slot0 authored)
+      slot1AfterHome: string; // flip to slot1 → magma (shared = slot0 default post-HOME)
+      exit0: string; // exit stacked → slot0 pane shows its authored magma
+      exit1: string; // exit stacked → slot1 pane shows its own authored default (NOT magma)
+    }
+    const runG1 = async (hostId: string, disable: boolean): Promise<GResult> => {
+      (window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared = disable;
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: stackedTwoScalarGrid() }));
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000);
       await sleep(150);
-      imgProbe(hostId + "A")!.changeEncoding("magma"); // an explicit colormap pick
-      await waitFor(() => imgProbe(hostId + "A")?.encodingId === "magma", 4000);
-      const imgPicked = imgProbe(hostId + "A")?.encodingId ?? "?";
-      key("1"); // → slot 0 (magma scalar) — a DIFFERENT propsKey
-      await waitFor(() => activeIdx(hostId + "A") === 0, 4000);
-      await sleep(150);
-      key("2"); // → back to the plain image slot
-      await waitFor(() => activeIdx(hostId + "A") === 1, 4000);
+      const seed0 = imgProbe(hostId)?.encodingId ?? "?";
+      key("2");
+      await waitFor(() => activeIdx(hostId) === 1, 4000);
       await sleep(200);
-      const imgAfter = imgProbe(hostId + "A")?.encodingId ?? "?";
-      rootA.unmount();
-      hostA.remove();
-
-      // -- G2: diff colormap on the diff slot of [image, diff] --
-      const hostB = document.createElement("div");
-      hostB.id = hostId + "B";
-      hostB.style.cssText = "width:420px;height:260px;background:#222;position:relative";
-      document.body.appendChild(hostB);
-      const rootB: Root = createRoot(hostB);
-      rootB.render(createElement(PlotApp, { descriptor: stackedGrid() }));
-      await waitFor(() => document.querySelectorAll(`#${hostId}B [role='tab']`).length >= 2, 12000);
-      hostB.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
-      key("2"); // → slot 1 = diff
-      await waitFor(() => activeIdx(hostId + "B") === 1, 4000);
-      await waitFor(() => !!diffProbe(hostId + "B"), 4000);
-      await sleep(150);
-      diffProbe(hostId + "B")!.changeColormap("turbo"); // distinct from the flip default (magma)
-      await waitFor(() => diffProbe(hostId + "B")?.colormap === "turbo", 4000);
-      const diffPicked = diffProbe(hostId + "B")?.colormap ?? "?";
-      key("1"); // → image
-      await waitFor(() => activeIdx(hostId + "B") === 0, 4000);
-      await sleep(150);
-      key("2"); // → back to diff
-      await waitFor(() => activeIdx(hostId + "B") === 1, 4000);
+      const slot1Shared = imgProbe(hostId)?.encodingId ?? "?";
+      imgProbe(hostId)!.changeEncoding("turbo"); // a pick on slot1
+      await waitFor(() => imgProbe(hostId)?.encodingId === "turbo", 4000);
+      key("1");
+      await waitFor(() => activeIdx(hostId) === 0, 4000);
       await sleep(200);
-      const diffAfter = diffProbe(hostId + "B")?.colormap ?? "?";
-      rootB.unmount();
-      hostB.remove();
-
-      (window as unknown as { __cairnDisablePerSlotEncoding?: boolean }).__cairnDisablePerSlotEncoding = false;
-      note(`PHASE G (${disable ? "pre-fix" : "post-fix"}): image picked=${imgPicked}→afterFlip=${imgAfter}; diff picked=${diffPicked}→afterFlip=${diffAfter}`);
-      return { img: { picked: imgPicked, afterFlip: imgAfter }, diff: { picked: diffPicked, afterFlip: diffAfter } };
+      const slot0AfterPick = imgProbe(hostId)?.encodingId ?? "?";
+      key("2");
+      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await sleep(150);
+      const slot1Back = imgProbe(hostId)?.encodingId ?? "?";
+      // HOME on slot0 → the stack adopts slot0's authored defaults (magma).
+      key("1");
+      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await sleep(150);
+      imgProbe(hostId)!.home();
+      await sleep(250);
+      const slot0Home = imgProbe(hostId)?.encodingId ?? "?";
+      key("2");
+      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await sleep(150);
+      const slot1AfterHome = imgProbe(hostId)?.encodingId ?? "?";
+      // EXIT stacked → grid layout: each pane reverts to its OWN authored defaults.
+      clickGridMode(hostId, "normal");
+      await waitFor(() => allImgProbes(hostId).length >= 2, 8000);
+      await sleep(250);
+      const probes = allImgProbes(hostId);
+      const exit0 = probes[0]?.encodingId ?? "?";
+      const exit1 = probes[1]?.encodingId ?? "?";
+      root.unmount();
+      host.remove();
+      (window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared = false;
+      note(
+        `PHASE G1 (${disable ? "pre-fix" : "post-fix"}): seed0=${seed0} slot1Shared=${slot1Shared} ` +
+          `slot0AfterPick=${slot0AfterPick} slot1Back=${slot1Back} slot0Home=${slot0Home} ` +
+          `slot1AfterHome=${slot1AfterHome} exit0=${exit0} exit1=${exit1}`,
+      );
+      return { seed0, slot1Shared, slot0AfterPick, slot1Back, slot0Home, slot1AfterHome, exit0, exit1 };
     };
 
-    const gPre = await runPickSurvives("gPre", true);
-    report(gPre.img.picked === "magma", `PHASE G setup: image colormap pick applied (${gPre.img.picked})`);
-    report(
-      gPre.img.afterFlip !== "magma",
-      `PHASE G1 PRE-FIX: the image colormap pick is WIPED by a slot flip (bug reproduced: afterFlip=${gPre.img.afterFlip})`,
-    );
-    report(
-      gPre.diff.afterFlip !== "turbo",
-      `PHASE G2 PRE-FIX: the diff colormap pick is WIPED by an image↔diff flip (bug reproduced: afterFlip=${gPre.diff.afterFlip})`,
-    );
-    const gPost = await runPickSurvives("gPost", false);
-    report(
-      gPost.img.afterFlip === "magma",
-      `PHASE G1 POST-FIX: the image colormap pick SURVIVES a slot flip (afterFlip=${gPost.img.afterFlip})`,
-    );
-    report(
-      gPost.diff.afterFlip === "turbo",
-      `PHASE G2 POST-FIX: the diff colormap pick SURVIVES an image↔diff flip (afterFlip=${gPost.diff.afterFlip})`,
-    );
-    if (gPost.img.afterFlip !== "magma" || gPost.diff.afterFlip !== "turbo") allOk = false;
+    // -- G2: the diff colormap is a shared stack field too — it survives an
+    // image↔diff flip (pick turbo on the diff, flip to the image and back). --
+    const runG2 = async (hostId: string, disable: boolean): Promise<{ picked: string; afterFlip: string }> => {
+      (window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared = disable;
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      key("2");
+      await waitFor(() => activeIdx(hostId) === 1 && !!diffProbe(hostId), 4000);
+      await sleep(150);
+      diffProbe(hostId)!.changeColormap("turbo");
+      await waitFor(() => diffProbe(hostId)?.colormap === "turbo", 4000);
+      const picked = diffProbe(hostId)?.colormap ?? "?";
+      key("1");
+      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await sleep(150);
+      key("2");
+      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await sleep(200);
+      const afterFlip = diffProbe(hostId)?.colormap ?? "?";
+      root.unmount();
+      host.remove();
+      (window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared = false;
+      note(`PHASE G2 (${disable ? "pre-fix" : "post-fix"}): diff picked=${picked} afterFlip=${afterFlip}`);
+      return { picked, afterFlip };
+    };
 
-    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + colormap picks survive flips`);
+    const g1Pre = await runG1("g1Pre", true);
+    report(g1Pre.seed0 === "magma", `PHASE G1 setup: slot0's authored magma seeds the stack (${g1Pre.seed0})`);
+    report(
+      g1Pre.slot0AfterPick !== "turbo",
+      `PHASE G1 PRE-FIX: a pick does NOT apply stack-wide — slot0 reseeds to its own authored (bug reproduced: ${g1Pre.slot0AfterPick})`,
+    );
+    const g1 = await runG1("g1Post", false);
+    report(g1.slot1Shared === "magma", `PHASE G1: every slot renders under the SHARED setting (slot1 shows slot0's magma seed: ${g1.slot1Shared})`);
+    report(g1.slot0AfterPick === "turbo", `PHASE G1: a pick on slot1 applies to ALL slots (slot0 now turbo: ${g1.slot0AfterPick})`);
+    report(g1.slot1Back === "turbo", `PHASE G1: the pick SURVIVES flips (slot1 still turbo: ${g1.slot1Back})`);
+    report(g1.slot0Home === "magma", `PHASE G1: HOME on slot0 → stack adopts slot0's authored default (${g1.slot0Home})`);
+    report(g1.slot1AfterHome === "magma", `PHASE G1: post-HOME the shared setting is slot0's default everywhere (slot1: ${g1.slot1AfterHome})`);
+    report(g1.exit0 === "magma", `PHASE G1: exit stacked → slot0 pane shows its authored magma (${g1.exit0})`);
+    report(g1.exit1 !== "magma", `PHASE G1: exit stacked → slot1 pane reverts to its OWN authored default, not the shared magma (${g1.exit1})`);
+    if (
+      g1.slot1Shared !== "magma" || g1.slot0AfterPick !== "turbo" || g1.slot1Back !== "turbo" ||
+      g1.slot0Home !== "magma" || g1.slot1AfterHome !== "magma" || g1.exit0 !== "magma" || g1.exit1 === "magma"
+    ) allOk = false;
+
+    const g2Pre = await runG2("g2Pre", true);
+    report(g2Pre.afterFlip !== "turbo", `PHASE G2 PRE-FIX: the diff colormap pick is WIPED by an image↔diff flip (bug reproduced: ${g2Pre.afterFlip})`);
+    const g2 = await runG2("g2Post", false);
+    report(g2.afterFlip === "turbo", `PHASE G2 POST-FIX: the diff colormap pick SURVIVES an image↔diff flip (${g2.afterFlip})`);
+    if (g2.afterFlip !== "turbo") allOk = false;
+
+    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

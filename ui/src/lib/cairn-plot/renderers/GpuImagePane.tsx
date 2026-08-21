@@ -555,13 +555,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (t: string | null | undefined) => resolveEffectiveTonemap(t, false),
     [],
   );
-  // STABLE per-slot identity for the encoding OVERRIDE store (regression: a user's
-  // colormap pick was WIPED on a stacked/enlarge slot flip). `LeafView` threads the
-  // descriptor node's `sourceKey`; fall back to this pane's own source identity for
-  // standalone / card callers (a non-reused pane, so any stable value works).
-  const slotKey =
-    backendProps.slotKey ??
-    (hasCompare ? `A:${contentKeyA}` : hdrMode ? "hdr" : `img:${(props as SdrImageProps).imageUrl ?? ""}`);
+  // STACK membership: the ONE reused renderer of a STACKED viewport owns the stack's
+  // SHARED display settings (a pick applies to every slot + survives flips; each
+  // image's authored props are seeds only; HOME adopts the focused slot's; exit to
+  // grid discards). Threaded as `inStackedGrid` for a plain image (from the CORE-side
+  // `InStackedGridContext`) and via `compareSource.inStackedGrid` for a compare.
+  const inStack = !!backendProps.inStackedGrid || !!compareSource?.inStackedGrid;
   const enc = usePaneEncoding({
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,
@@ -569,7 +568,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     propColormap,
     propTonemap,
     resolveDefaultCurve,
-    slotKey,
+    inStack,
   });
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
@@ -737,54 +736,38 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [setDiffKernelState, compareSource?.onDiffKernelChange],
   );
-  // Explicit colormap OVERRIDE (null = follow the kernel default). Sticks across
-  // kernel switches; HOME clears it. Seeded from the descriptor colormap.
+  // Explicit diff-colormap OVERRIDE (null = follow the kernel default). Sticks across
+  // kernel switches; HOME clears it. Seeded from the descriptor colormap. Like the
+  // image `enc`, the diff colormap is a field of the stack's SHARED settings — in a
+  // stack it PERSISTS across flips (a pick applies to every diff slot; each diff's
+  // authored colormap is a SEED only), so the descriptor RESEED is SUPPRESSED while
+  // in a stack. HOME re-seeds it to the focused slot's authored colormap.
   const [diffColormapOverride, setDiffColormapOverride, diffColormapMeta] =
     useResettableState<Colormap | null>(diffSeedColormap);
-  // PER-SLOT diff-colormap OVERRIDE store (mirrors `usePaneEncoding`'s per-slot
-  // encoding override): a user's explicit diff-colormap pick must SURVIVE a stacked
-  // image↔diff flip (flip to the image slot and back). Keyed by the compare slot
-  // identity (`contentKeyA|contentKeyB`); a genuine NEW compare slot / an authored
-  // descriptor-colormap change reseeds (controlled surface). Test toggle mirrors the
-  // encoding one so one harness run measures pre-fix (wipe) vs post-fix (survives).
-  const diffCmapOverrideBySlotRef = useRef<Map<string, Colormap | null>>(new Map());
-  const prevCompareSlotRef = useRef<string | null>(null);
-  const prevDiffDescCmapRef = useRef<Colormap | null>(null);
-  const diffCompareSlot = `${contentKeyA}|${contentKeyB}`;
+  const diffReseededRef = useRef(false);
   useEffect(() => {
-    // Anti-churn: only (re)seed from a PRESENT compare descriptor, so an image slot
-    // in a stacked image↔diff flip does not reset the override + re-apply post-paint
-    // (a lag the pre-paint render would catch as a transient wrong-colormap present).
+    // Anti-churn: only (re)seed from a PRESENT compare descriptor, so an image slot in
+    // a stacked image↔diff flip does not reset the override + re-apply post-paint.
     if (!compareSource) return;
     const c = compareSource.colormap;
     const desc: Colormap | null =
       c == null || c === "none" ? null : (c as string) === "viridis" ? ("turbo" as Colormap) : (c as Colormap);
-    const perSlotDisabled =
+    const disableStackShared =
       typeof window !== "undefined" &&
-      !!(window as unknown as { __cairnDisablePerSlotEncoding?: boolean }).__cairnDisablePerSlotEncoding;
-    const slotChanged = !perSlotDisabled && diffCompareSlot !== prevCompareSlotRef.current;
-    if (perSlotDisabled) {
-      // PRE-FIX behavior: reseed the override to the descriptor on every (re)appearance.
-      setDiffColormapOverride(desc);
+      !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared;
+    if (inStack && !disableStackShared) {
+      // SHARED stack setting: seed ONCE from the first compare descriptor, then leave
+      // it — a flip to another diff slot keeps the shared pick (HOME re-seeds).
+      if (!diffReseededRef.current) {
+        diffReseededRef.current = true;
+        setDiffColormapOverride(desc);
+      }
       return;
     }
-    if (slotChanged) {
-      // A NEW compare slot (or first visit): restore that slot's stored override if
-      // the user picked one there, else seed from its descriptor colormap.
-      prevCompareSlotRef.current = diffCompareSlot;
-      prevDiffDescCmapRef.current = desc;
-      const stored = diffCmapOverrideBySlotRef.current.get(diffCompareSlot);
-      setDiffColormapOverride(stored !== undefined ? stored : desc);
-    } else if (desc !== prevDiffDescCmapRef.current) {
-      // SAME slot, the AUTHORED descriptor colormap changed → controlled surface:
-      // forget the stored override + adopt the descriptor. (A flip-BACK to the same
-      // slot has an unchanged `desc`, so it takes NEITHER branch — the pick survives.)
-      prevDiffDescCmapRef.current = desc;
-      diffCmapOverrideBySlotRef.current.delete(diffCompareSlot);
-      setDiffColormapOverride(desc);
-    }
+    // Non-stack (or pre-fix toggle): controlled surface — reseed from the descriptor.
+    setDiffColormapOverride(desc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareSource?.colormap, !!compareSource, diffCompareSlot]);
+  }, [compareSource?.colormap, !!compareSource, inStack]);
 
   // Cheap pure derivations (recomputed each render): the concrete kernel id (float
   // sources auto-dispatch flip→hdr-flip) and the EFFECTIVE diff colormap (override
@@ -974,9 +957,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeDiffColormap = useCallback(
     (id: Colormap) => {
       // The picked id IS the override (incl. an explicit "none" = raw per-channel
-      // error); it sticks across kernel switches AND stacked flips (recorded PER
-      // SLOT so a flip away-and-back restores it). HOME clears it.
-      diffCmapOverrideBySlotRef.current.set(diffCompareSlot, id);
+      // error); it sticks across kernel switches AND — in a stack — across flips (the
+      // shared diff-colormap setting, applied to every diff slot). HOME clears it.
       setDiffColormapOverride(id);
       publishSettings({
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
@@ -984,8 +966,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         tonemap: effectiveTonemap,
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [setDiffColormapOverride, publishSettings, effectiveTonemap, diffCompareSlot],
+    [setDiffColormapOverride, publishSettings, effectiveTonemap],
   );
   // MODE menu picking SLIDE/BLEND delegates to the owner (which remounts to
   // `GpuComparePane` — the documented slide/blend remount) AND broadcasts on the
@@ -2177,8 +2158,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // menu) so a unified harness drives either pane with one call.
       changeColormap: changeDiffColormap,
       // HOME reset (the pane's own `onReset` chain): restore the HOISTED compare
-      // control (mode/kernel/split/blend, via the owner) AND clear the pane-local
-      // per-slot diff colormap override — the same as the shell's HOME/dbl-click.
+      // control (mode/kernel/split/blend, via the owner) AND re-seed the diff colormap
+      // to the focused slot's authored default — the same as the shell's HOME/dbl-click.
       home: () => {
         const disableCompareHomeReset =
           typeof window !== "undefined" &&
@@ -2188,14 +2169,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         } else {
           setDiffKernel(diffKernelMeta.default); // direct-pane fallback (no hoisted owner)
         }
-        diffCmapOverrideBySlotRef.current.delete(diffCompareSlot);
-        diffColormapMeta.reset();
+        setDiffColormapOverride(diffSeedColormap); // focused slot's authored diff colormap
       },
     };
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, diffColormapMeta, compareSource, diffCompareSlot]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, setDiffColormapOverride, diffSeedColormap, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2213,16 +2193,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       get colormap() {
         return enc.colormap;
       },
-      get slotKey() {
-        return slotKey;
+      get inStack() {
+        return inStack;
       },
-      changeEncoding, // a user pick (records the per-slot override)
-      home: () => enc.resetEncoding(), // HOME clears this slot's override
+      changeEncoding, // a user pick → the stack's shared encoding (applies to all slots)
+      home: () => enc.resetEncoding(), // HOME re-seeds to the focused slot's authored default
     };
     return () => {
       if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
     };
-  }, [enc.encodingId, enc.colormap, slotKey, changeEncoding, enc]);
+  }, [enc.encodingId, enc.colormap, inStack, changeEncoding, enc]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
@@ -2753,11 +2733,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             setDiffKernel(diffKernelMeta.default);
           }
         }
-        // DIFF colormap is DISPLAY-only + pane-local (per-slot) — reset it here:
-        // clear this slot's override so it returns to the descriptor / per-kernel default.
+        // DIFF colormap is display-only + pane-local — HOME re-seeds it to THIS
+        // (focused) slot's authored diff colormap (in a stack, that becomes the shared
+        // diff-colormap setting; standalone, the descriptor default).
         if (diffMode) {
-          diffCmapOverrideBySlotRef.current.delete(diffCompareSlot);
-          diffColormapMeta.reset();
+          setDiffColormapOverride(diffSeedColormap);
         }
       }}
       extraModified={

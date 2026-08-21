@@ -1424,26 +1424,43 @@ reseed effect re-applied the descriptor on flip-BACK to the diff), while the IMA
 epic's reused-pane routing is what turned a pre-existing controlled-surface reseed into a live
 flip-wipe (pre-epic the mixed-stack flip REMOUNTED, losing the pick a different way).
 
-**Fix (per-slot override storage — the stated rule).** A USER/sync encoding override is stored
-PER SLOT, keyed by a stable content identity (`LeafView` threads the descriptor node's
-`sourceKey` as `slotKey` → `ImageBackendProps` → both panes). `usePaneEncoding` distinguishes a
-SLOT FLIP (`slotKey` changed → RESTORE that slot's stored override, else seed from its descriptor)
-from an AUTHORED change (same slot, `propsKey` changed → controlled-surface reseed, forget the
-override). `setEncoding` records the override; `resetEncoding` (HOME) clears it. The diff colormap
-gets the SAME treatment in `GpuImagePane` (a per-compare-slot override map + a slot-identity guard
-on the reseed effect), so a diff-colormap pick also survives an image↔diff flip; HOME clears it.
-Threaded through `CpuImagePane` too. (Incidental: `display-encoding.ts` carried 2 literal NUL bytes
-in the `propsKey` template separators — normalized to spaces.)
+**Fix — THE STACK OWNS ONE SHARED SETTINGS OBJECT (user-specified model, superseding an
+initial per-slot design + a per-content-kind design).** The founding rationale of the reused-
+renderer stacked design is that every slot is viewed under the SAME display conditions — the ONE
+reused pane's state (exposure/peak/…) is already shared across flips by construction and discarded
+when the stack unmounts on exit to grid layout. The encoding was the outlier: `usePaneEncoding`'s
+per-flip controlled-surface reseed reset it to each slot's descriptor. The fix makes the encoding
+behave like the rest of the shared state:
 
-**Harness coverage (both, in `stacked-diff-flip-realstack-gpu` — the real
-`PlotApp→GridView→NodeDispatch→LeafView→GpuImagePane` GPU tree).** New PHASE F drives a compare
-authored `diff`, switches to `split` via the probe, HOME: pre-fix stays `split` (bug), post-fix
-restores `diff` (+ reverse split→diff). New PHASE G picks a colormap on the plain-image slot of a
-stacked `[magma-scalar, image]` grid and on the diff slot of `[image, diff]`, flips away and back:
-pre-fix the pick is WIPED (both), post-fix it SURVIVES (both). Pre/post measured in one run via
-`__cairnDisableCompareHomeReset` / `__cairnDisablePerSlotEncoding` toggles (the `__cairnDisableSyncResolve`
-idiom). Added a test-only `__cairnImagePaneProbe` seam (image encoding get/change/home; no production
-reader, mirrors the diff probe).
+- `usePaneEncoding` gains `inStack` (threaded as `ImageBackendProps.inStackedGrid` from
+  `LeafView`'s CORE-side `InStackedGridContext`; via `compareSource.inStackedGrid` for a compare).
+  When `inStack` the per-flip reseed is **SUPPRESSED** — `encodingId` IS the stack's shared setting:
+  it persists across flips (a pick anywhere applies to every slot), each image's authored props are
+  SEEDS only, and the arity effect keeps it APPLICABLE per slot via the EXISTING arity-gating (a LUT
+  kept where legal, else the default curve — no new cross-kind behavior). `resetEncoding` (HOME)
+  re-seeds to the FOCUSED slot's authored defaults ⇒ the stack adopts that slot's settings. Exit to
+  grid layout unmounts the reused pane ⇒ the shared setting is discarded, each pane reverts to its
+  own authored defaults. Non-stack panes keep the controlled-surface reseed unchanged.
+- The diff colormap in `GpuImagePane` is a second field of the same shared object: `inStack` seeds
+  it ONCE then persists it across flips (a diff-colormap pick survives an image↔diff flip); HOME
+  re-seeds it to the focused slot's authored diff colormap. The image-encoding and diff-colormap are
+  kept as SEPARATE applicable fields (image slots ↔ encoding, diff slots ↔ diff colormap): unifying
+  an image CURVE with a diff's LUT-only face is the one cross-kind case the existing arity-gating
+  conventions do not answer, so per the "don't invent — report" directive it was NOT unified.
+- Threaded through `CpuImagePane` too. The earlier per-slot store + the `slotKey` plumbing are
+  DELETED (they did not degenerate into this model). (Incidental: `display-encoding.ts` had carried 2
+  literal NUL bytes in the `propsKey` template separators — normalized to spaces.)
+
+**Harness coverage (in `stacked-diff-flip-realstack-gpu` — the real
+`PlotApp→GridView→NodeDispatch→LeafView→GpuImagePane` GPU tree).** PHASE F (reg 1) drives a compare
+authored `diff`, switches to `split`, HOME: pre-fix stays `split` (bug), post-fix restores `diff`
+(+ reverse). PHASE G (reg 2) on a stacked `[magma-scalar (authored magma), plain-scalar (no colormap)]`:
+asserts every slot renders under the SHARED setting (slot1 shows slot0's magma seed), a `turbo` pick
+on slot1 applies to slot0 AND survives flips, HOME on slot0 makes the shared setting slot0's magma
+(seen on slot1 after HOME), and exiting to grid (`data-cairn-grid-mode="normal"`) reverts each pane to
+its own authored default (slot0 magma, slot1 not magma); a diff-colormap pick survives an image↔diff
+flip. Pre-fix (`__cairnDisableStackShared`) reproduces the non-shared bug in the same run. Added a
+test-only `__cairnImagePaneProbe` seam (image encoding get/change/home; no production reader).
 
 **Gates.** typecheck; 628 node tests; ALL 31 parity harnesses (metal-3, incl. the extended
 real-stack GPU harness PHASES F+G — pre-fix reproduces, post-fix fixed); 243 pytest; core +

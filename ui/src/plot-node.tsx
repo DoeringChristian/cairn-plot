@@ -213,6 +213,10 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // the compare chrome so the image↔diff flip is DOM-stable (threaded to the pane
   // as `reserveCompareChrome`; the diff path already renders the real chrome).
   const stackHasCompare = useContext(StackHasCompareContext);
+  // True inside a STACKED viewport — threaded to the pane so it treats its display
+  // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
+  // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
+  const inStackedGrid = useContext(InStackedGridContext);
   // DIFF path (Phase 2c): a diff-mode compare lowers to THIS component (so an
   // `[image, diff]` stack is homogeneous — no remount on a flip). When present,
   // BOTH operands resolve through the compare resolver (`node.data` = reference =
@@ -420,7 +424,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         // Keep the reserved compare chrome on the held frame (we ARE rendering a
         // compare node in a stack, so its chrome must stay the compare skeleton —
         // otherwise the hold itself would pop plain-image chrome for one frame).
-        return { ...(node.props ?? {}), source: dp.source, reserveCompareChrome: true, slotKey: sourceKey(node) };
+        return { ...(node.props ?? {}), source: dp.source, reserveCompareChrome: true, inStackedGrid };
       }
       const dsync: Record<string, unknown> = {};
       const vpg = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
@@ -455,7 +459,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         compareSource,
         ...(dp.__diffOverlay ? { overlay: dp.__diffOverlay } : {}),
         ...dsync,
-        slotKey: sourceKey(node),
       };
     }
     const sharedProps: Record<string, unknown> = {};
@@ -501,8 +504,8 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         sharedProps.onChannelReset = () => selectChannels({});
       }
     }
-    return { ...sharedProps, ...(node.props ?? {}), ...dataProps, slotKey: sourceKey(node) };
-  }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare]);
+    return { ...sharedProps, ...(node.props ?? {}), ...dataProps, inStackedGrid };
+  }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare, inStackedGrid]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.

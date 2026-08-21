@@ -362,7 +362,7 @@ function ImageStandalone(p: P) {
       channelModified={p.channelModified}
       onChannelReset={p.onChannelReset}
       reserveCompareChrome={p.reserveCompareChrome}
-      slotKey={p.slotKey}
+      inStackedGrid={p.inStackedGrid}
     />
   );
   // A FLOAT/EXR source carries its pixel dims in `source.shape` ([H, W, …]) — the

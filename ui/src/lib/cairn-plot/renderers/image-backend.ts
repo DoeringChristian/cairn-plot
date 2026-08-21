@@ -119,8 +119,9 @@ export interface HdrImageProps {
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
-  /** Stable per-slot content identity (see {@link ImageBackendProps.slotKey}). */
-  slotKey?: string;
+  /** True when this pane is the reused renderer of a STACKED viewport (see
+   *  {@link ImageBackendProps.inStackedGrid}). */
+  inStackedGrid?: boolean;
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
@@ -192,8 +193,9 @@ export interface SdrImageProps {
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
-  /** Stable per-slot content identity (see {@link ImageBackendProps.slotKey}). */
-  slotKey?: string;
+  /** True when this pane is the reused renderer of a STACKED viewport (see
+   *  {@link ImageBackendProps.inStackedGrid}). */
+  inStackedGrid?: boolean;
 }
 
 /**
@@ -428,13 +430,14 @@ export interface ImageBackendProps {
    *  when `compareSource` is present (a diff/compositor slot already renders the
    *  chrome) and by the CPU backend. Absent = today's plain-image chrome exactly. */
   reserveCompareChrome?: boolean;
-  /** A STABLE per-slot content identity (the descriptor node's `sourceKey`) set by
-   *  `LeafView`. In a STACKED / ENLARGE viewport ONE pane is reused across slots;
-   *  the pane keys a USER's explicit encoding/colormap OVERRIDE on this so a flip to
-   *  another slot and BACK does NOT wipe the pick (it survives until HOME or a new
-   *  pick). Absent (standalone / card callers) ⇒ the pane falls back to its own
-   *  source identity, and a single non-reused pane behaves as before. */
-  slotKey?: string;
+  /** True when this pane is the ONE reused renderer of a STACKED viewport (set by
+   *  `LeafView` from the CORE-side `InStackedGridContext`). A stack owns ONE SHARED
+   *  display-settings object: every slot renders under the stack's current
+   *  encoding/colormap, a pick applies to all slots + survives flips, each image's
+   *  authored props are SEEDS only, HOME adopts the focused slot's defaults, and
+   *  leaving stacked mode (this pane unmounts) discards the shared settings. Absent ⇒
+   *  a standalone pane / normal grid cell (each keeps its own authored defaults). */
+  inStackedGrid?: boolean;
 }
 
 /**
@@ -525,7 +528,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       channelMenu: p.channelMenu,
       channelModified: p.channelModified,
       onChannelReset: p.onChannelReset,
-      slotKey: p.slotKey,
+      inStackedGrid: p.inStackedGrid,
     };
   }
   return {
@@ -559,7 +562,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     channelMenu: p.channelMenu,
     channelModified: p.channelModified,
     onChannelReset: p.onChannelReset,
-    slotKey: p.slotKey,
+    inStackedGrid: p.inStackedGrid,
   };
 }
 
