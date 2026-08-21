@@ -84,6 +84,18 @@ export class DiffCache {
     return e;
   }
 
+  /**
+   * NON-mutating residency peek — does the cache currently hold a result for
+   * `key`? Unlike {@link get} it does NOT bump LRU order (a residency probe on
+   * every render must not perturb eviction). Used by the pane's paint-atomic
+   * flip path to decide, BEFORE painting, whether a cached diff's result is
+   * already resident (so its flip can render pre-paint without a multi-pass
+   * recompute on the critical path).
+   */
+  has(key: string): boolean {
+    return this.map.has(key);
+  }
+
   set(key: string, entry: DiffCacheEntry): void {
     const existing = this.map.get(key);
     if (existing) {

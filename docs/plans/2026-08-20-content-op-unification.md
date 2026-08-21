@@ -614,6 +614,97 @@ agnostic evidence no param oracle can produce.
 rebuilt + synced + committed; report (63 blocks) + gallery regen clean; live report deep-mode
 storm proof. `uv.lock` left untouched.
 
+## Follow-up — DONE: the one-frame flash was a PAINT-WINDOW HOLD (paint-atomic flips)
+
+**Confirmed mechanism (finally — from the user's screen recording).** Every prior
+oracle missed it because every PRESENT is coherent: the artefact is a PAINT WINDOW
+CONTAINING NO PRESENT. On a fast image→diff stacked flip the flip commits (the tab
+strip updates instantly) but the pane's engine render for the NEW slot ran in a
+POST-PAINT (passive) `useEffect` — so the FIRST PAINTED FRAME after the flip still
+showed the HELD previous slot (WebGPU keeps the last present; the demo's magma/orange
+gradient is why the held image region read as an orange flash, and why only the image
+region flashed — the transparent bg is unchanged). This is the hold-last-frame design
+(correct for genuinely-async loads) meeting React's effect timing. Same-KIND flips
+were mechanically identical (also post-paint) but imperceptible — two similar frames.
+The render log + present-coherency + deep color oracles all pass BY CONSTRUCTION here:
+they inspect presents, and there is no torn present — just a real previous present
+displayed for one paint.
+
+**Fix — PAINT-ATOMIC render when the target is RESIDENT.** When a flip's target is
+fully resident — retained source textures (0bb636e LRU) + synchronously-bindable
+decode + (for a cached op) a diff-result cache HIT — the engine render now runs
+PRE-PAINT, in a `useLayoutEffect`, so the first painted frame already shows the new
+slot. NON-resident targets keep the hold-previous-frame behavior (correct for async
+loads). Concretely (`renderers/GpuImagePane.tsx`):
+- The 3 source-upload effects (SDR / HDR / `setSourceB`) became `useLayoutEffect`
+  (their deps exclude the viewport, so pan/zoom scheduling is untouched — they only
+  fire on a source/identity change), so a resident flip binds its textures + stamps
+  `appliedPrimaryIdRef`/`appliedBIdRef`/`refDims`/`naturalDims` synchronously in the
+  commit, BEFORE paint. The SDR synchronous flip-back fast-path was broadened from
+  compare-primary-only to EVERY non-colormapped image (`colormap === "none"`), so the
+  diff→image direction (a plain unkeyed image target) is paint-atomic too, not just
+  image→diff.
+- A new pre-paint `useLayoutEffect` render runs the flip when `contentIdentity`
+  changed (a genuine flip, not pan/zoom/exposure) AND `targetResident` (both applied
+  source identities match this frame's expected, dims known, and — for FLIP/HDR-FLIP/
+  SSIM — `PaneHandle.isDiffResultCached(...)` HITs, a new NON-mutating pool peek:
+  `diff-cache.ts` `has()` + `diff-engine.ts` `hasDiff()` + the pool method, so a cold
+  cache stays on the post-paint path rather than recomputing multi-pass on the paint
+  critical path). `expectedPrimaryId`/`expectedBId` were hoisted to body scope (one
+  source of truth for the render closure AND the residency check).
+- **Double-render deduped** (layout render vs. the retained post-paint effect):
+  `renderPass` now RETURNS whether it actually submitted (a held/guarded frame ⇒
+  false), and both effects share a `lastRenderedRef` keyed on
+  `(renderId, uploadVersion, containerTick)` — `renderId` is a `useMemo(()=>({}),
+  [renderPass])` that changes iff any pixel-affecting dep changes. So a resident flip
+  submits exactly once (pre-paint); the post-paint effect skips the duplicate. The
+  present-coherency guard PASSES on the pre-paint render (sources are resident by
+  gate). The screenshot/`requestRender` force paths call `renderPass` directly and are
+  unaffected (no self-dedupe inside `renderPass`).
+- **Anti-churn (regression the paint-atomicity EXPOSED).** The diff kernel/colormap
+  re-seed effects reset to defaults when `compareSource` is absent (the image slot),
+  then re-applied the descriptor value POST-paint on flip-back — a lag the new
+  pre-paint render caught as a transient wrong-kernel/wrong-colormap present (turbo
+  instead of magma, direct-absolute instead of cached-flip), which `stacked-diff-flip-
+  stress` flagged. Fixed: both re-seed effects now no-op when `!compareSource` (keep
+  the diff state dormant across image↔diff flips), so flip-back's diff params are
+  correct on the SAME frame.
+
+**Harness proof — assert on PAINTED FRAMES, not presents.** New default harness
+`renderers/__tests__/stacked-diff-flip-paint.browser.{ts,html}` (32nd). It drives ONE
+reused `GpuImagePane` image↔diff FASTER than the frame rate (a ~3ms task gap vs a
+~16ms paint — the artefact condition) and classifies each RESIDENT flip against real
+browser PAINT boundaries: the pane records (guarded, test-only, in `engine/test-hooks`
+— zero production cost) a pre-paint COMMIT marker + the new slot's first render SUBMIT,
+each `performance.now()`-stamped, grouped by a content EPOCH; a free-running rAF loop
+records every paint boundary; a flip is STALE iff a paint falls strictly between its
+commit and its new-slot submit (a browser painted the OLD slot after commit). This is
+robust to two traps discovered here: (a) an in-DOM WebGPU canvas rotates its swapchain,
+so `createImageBitmap(canvas)` right after a flip returns a STALE buffer while the pool
+render log shows the new slot rendered — canvas readback is NOT a reliable paint sampler
+(the ground-truth render log confirmed the fix while the canvas read lied); (b)
+`flushSync` MASKS the artefact (it flushes passive effects pre-paint), and React's early
+passive-flush before a layout-effect-triggered re-render means a "post"-labelled submit
+can still be pre-paint — only the submit-vs-paint-boundary timing is decisive.
+**Measured (real GPU, metal-3): pre-fix 15/240 image↔diff + 8/239 same-kind stale
+first-frames (deterministic under the fast-flip stress; 94/94 + 119/119 when the whole
+paint-atomic path is disabled); post-fix 0/360 image↔diff AND 0 same-kind, stable ×3.**
+Correctness (the pane presents the right settled slot) stays pinned by the render-log
+oracle. 2 new `test-hooks` node tests for the paint-phase log.
+
+**Live visual verify** (served report `?eager=1&paneRenderLog=2`, Apple Metal, the
+Validation `[a: official FLIP, b: prediction]` stacked magma pane, rapid tab-flip
+storm): the deep output-color detector recorded **0 hue anomalies and 0 orange
+suspects**; the pane rendered coherent content throughout (no tearing/garbage). The
+image-frame-inside-the-diff-tab flash is what the synthetic paint-boundary harness
+measures directly (0/360 post-fix).
+
+**Gates.** typecheck; 624 node tests (622 + 2 new `test-hooks`); ALL 31 parity harnesses
+(metal, incl. the new `stacked-diff-flip-paint`; `stacked-diff-flip-stress` re-green
+after the anti-churn fix); 243 pytest; gpu-image bundle rebuilt (370854→~377.9 KB) +
+synced + committed; report (63 blocks) + gallery (27 types) regen clean; live deep-mode
+storm probe (0 anomalies). `uv.lock` left untouched.
+
 ## Follow-up — INVESTIGATION: reported one-frame ORANGE viewport flash (sharpened oracle; NOT reproduced at the pane)
 
 **User report (after 9368ee2 + c459c34).** Fast image↔diff STACKED flips still

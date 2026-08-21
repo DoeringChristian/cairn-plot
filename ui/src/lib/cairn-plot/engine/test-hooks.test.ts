@@ -5,6 +5,11 @@ import {
   recordDeepColorSample,
   setDeepColorDetectorForTest,
   getHueAnomalies,
+  startPaintPhaseLog,
+  stopPaintPhaseLog,
+  getPaintPhaseLog,
+  isPaintPhaseLogActive,
+  recordPaintPhase,
   type PaneRenderRecord,
 } from "./test-hooks.ts";
 
@@ -111,4 +116,28 @@ test("deep detector: off by default (no sampling → no anomalies)", () => {
   setDeepColorDetectorForTest(false);
   recordDeepColorSample(rec("A"), { r: 0.98, g: 0.55, b: 0.05 });
   assert.equal(getHueAnomalies().length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// PAINT-PHASE LOG (paint-atomic flip oracle) — the guarded per-submit phase log
+// the pane feeds and the paint-atomic harness reads.
+// ---------------------------------------------------------------------------
+test("paint-phase log: off by default (no capture → inactive, no records)", () => {
+  assert.equal(isPaintPhaseLogActive(), false);
+  recordPaintPhase({ phase: "layout", kind: "diff", submitted: true, resident: true, epoch: 1, t: 0 });
+  assert.equal(getPaintPhaseLog().length, 0);
+});
+
+test("paint-phase log: start captures records, stop drops the buffer", () => {
+  startPaintPhaseLog();
+  assert.equal(isPaintPhaseLogActive(), true);
+  recordPaintPhase({ phase: "commit", kind: "image", submitted: false, resident: true, epoch: 2, t: 1 });
+  recordPaintPhase({ phase: "layout", kind: "image", submitted: true, resident: true, epoch: 2, t: 2 });
+  const recs = getPaintPhaseLog();
+  assert.equal(recs.length, 2);
+  assert.equal(recs[0]!.phase, "commit");
+  assert.equal(recs[1]!.submitted, true);
+  stopPaintPhaseLog();
+  assert.equal(isPaintPhaseLogActive(), false);
+  assert.equal(getPaintPhaseLog().length, 0);
 });

@@ -50,6 +50,7 @@ import { renderImage, computeMetrics, type ImageParams, type DiffMetrics } from 
 // so pulling the `engine/kernels` graph in transitively is fine.
 import {
   ensureDiff,
+  hasDiff,
   ensureSsimScalar,
   ensureDiffResultReadback,
   type DiffCacheEntry,
@@ -261,6 +262,22 @@ export interface PaneHandle {
     displayParams: ImageParams,
     mapping?: CompareMapping,
   ): DiffCacheEntry | null;
+  /**
+   * NON-mutating residency peek for a CACHED diff (FLIP / HDR-FLIP / SSIM): is
+   * the result for (kernel, contentKeys, computeParams, mapping) already resident
+   * in the per-device diff cache? Uses the two live source textures' dims to
+   * derive the default `mapping` (as {@link renderDiffCached} would). Returns
+   * `false` when a slot is unset / disposed. The pane's paint-atomic flip path
+   * calls this to gate a PRE-PAINT cached-diff render on residency — a resident
+   * result blits synchronously (no recompute), a missing one stays on the
+   * post-paint hold path. Never uploads, computes, or perturbs LRU.
+   */
+  isDiffResultCached(
+    kernelId: string,
+    contentKeys: { a: string; b: string },
+    computeParams: Record<string, number> | undefined,
+    mapping?: CompareMapping,
+  ): boolean;
   /**
    * MSE / PSNR / MAE over the two live source slots (`a` = {@link setSource},
    * `b` = {@link setSourceB}), honoring the align/fit `mapping` — the diff pane's
@@ -876,6 +893,27 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       mapping?: CompareMapping,
     ): DiffCacheEntry | null {
       return attemptRenderDiffCached(entry, kernelId, contentKeys, computeParams, displayParams, mapping);
+    },
+    isDiffResultCached(
+      kernelId: string,
+      contentKeys: { a: string; b: string },
+      computeParams: Record<string, number> | undefined,
+      mapping?: CompareMapping,
+    ): boolean {
+      // Peek only — reads the retained operand DIMS (kept across park, unlike the
+      // GPU textures) so no activation/upload happens, then probes the per-device
+      // diff cache non-mutatingly. False when either operand is unset/disposed.
+      if (entry.disposed || !entry.source || !entry.sourceB) return false;
+      return hasDiff(
+        entry.device,
+        { w: entry.source.width, h: entry.source.height },
+        { w: entry.sourceB.width, h: entry.sourceB.height },
+        kernelId,
+        computeParams,
+        contentKeys.a,
+        contentKeys.b,
+        mapping,
+      );
     },
     computeMetrics(mapping?: CompareMapping): Promise<DiffMetrics> | null {
       return attemptComputeMetrics(entry, mapping);

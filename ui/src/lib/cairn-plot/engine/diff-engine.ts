@@ -222,6 +222,32 @@ export function diffCacheKey(
 }
 
 /**
+ * NON-mutating residency peek: is the diff RESULT for (contentKeyA, contentKeyB,
+ * kernelId, params, mapping) already cached on `device`? Derives the SAME key
+ * `ensureDiff` would (including the default `mapping` from the operand dims when
+ * omitted), then probes the cache without computing, uploading, or bumping LRU.
+ * The pane's paint-atomic flip path calls this to decide whether a CACHED diff
+ * (FLIP / HDR-FLIP / SSIM) can render pre-paint (result resident → a synchronous
+ * blit) vs. must stay on the post-paint hold path (result absent → the flip would
+ * trigger a multi-pass recompute on the critical path).
+ */
+export function hasDiff(
+  device: Device,
+  dimsA: { w: number; h: number },
+  dimsB: { w: number; h: number },
+  kernelId: string,
+  params: Record<string, number> | undefined,
+  contentKeyA: string,
+  contentKeyB: string,
+  mapping?: CompareMapping,
+): boolean {
+  const map =
+    mapping ?? computeCompareMapping({ w: dimsA.w, h: dimsA.h }, { w: dimsB.w, h: dimsB.h }, "top-left", "crop", "b");
+  const key = diffCacheKey(contentKeyA, contentKeyB, kernelId, params, map);
+  return cacheFor(device).has(key);
+}
+
+/**
  * Returns the cached diff RESULT for (contentKeyA, contentKeyB, kernelId,
  * params), computing + caching it on a miss. The cache OWNS the returned
  * texture — callers must NOT destroy it. Recomputation happens only when the

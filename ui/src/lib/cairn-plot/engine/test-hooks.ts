@@ -182,6 +182,68 @@ export function recordPaneRender(record: PaneRenderRecord): void {
 }
 
 // ---------------------------------------------------------------------------
+// PAINT-PHASE LOG (paint-atomic flip oracle). Records, per pane RENDER SUBMIT,
+// which React effect PHASE it executed in — "layout" (a `useLayoutEffect`, i.e.
+// PRE-PAINT: the WebGPU work is submitted before the browser paints, so the first
+// painted frame after a flip already shows the NEW slot) vs "post" (a passive
+// `useEffect`, i.e. POST-PAINT: the first painted frame still shows the HELD
+// previous slot — the reported one-frame stale flash). This is the RELIABLE,
+// deterministic signal for the flip artefact: an in-DOM WebGPU canvas readback
+// races swapchain rotation (the documented gotcha — a synchronous post-commit
+// `createImageBitmap` returns a stale/rotated buffer), and the pool render log
+// sees only PRESENTS (a held frame is a coherent PREVIOUS present it cannot
+// distinguish from a fresh one). But the PHASE a RESIDENT flip's render runs in
+// directly determines whether that first painted frame is stale: a layout-phase
+// submit composites in the SAME frame, before paint; a passive-phase submit lands
+// one paint later. Guarded exactly like the render log — the pane checks
+// `isPaintPhaseLogActive()` before recording, so zero production cost.
+// ---------------------------------------------------------------------------
+export interface PaintPhaseRecord {
+  /** "commit" = a pre-paint marker emitted once per flip in the layout phase (the
+   *  commit boundary, before paint — the reference the submit time is classified
+   *  against); "layout"/"post" = an actual render SUBMIT's effect phase. */
+  phase: "commit" | "layout" | "post";
+  /** Coarse slot kind of the frame submitted (the flip axis). */
+  kind: "image" | "diff" | "compositor";
+  /** Whether `renderPass` actually SUBMITTED (a held/guarded frame is `false`). */
+  submitted: boolean;
+  /** Whether the pane judged the target FULLY RESIDENT (paint-atomic eligible). */
+  resident: boolean;
+  /** Monotonic content epoch — bumps on each flip. A harness groups submits by
+   *  epoch to find the FIRST render per flip (distinguishes even two same-kind
+   *  images, which `kind` alone cannot). */
+  epoch: number;
+  /** `performance.now()` at submit — classified against browser PAINT boundaries
+   *  (rAF timestamps). This is the RELIABLE paint-atomic signal: the `phase` label
+   *  alone is ambiguous because React flushes a pending passive effect BEFORE the
+   *  re-render a layout effect triggers (so an early-flushed "post" submit is still
+   *  pre-paint). Comparing the submit time to the first paint after the flip's
+   *  commit resolves it. */
+  t: number;
+}
+let paintPhaseLog: PaintPhaseRecord[] | null = null;
+/** Begin (or reset) capturing per-submit phase records. */
+export function startPaintPhaseLog(): void {
+  paintPhaseLog = [];
+}
+/** Stop capturing and drop the buffer. */
+export function stopPaintPhaseLog(): void {
+  paintPhaseLog = null;
+}
+/** The phase records captured since the last {@link startPaintPhaseLog}. */
+export function getPaintPhaseLog(): PaintPhaseRecord[] {
+  return paintPhaseLog ?? [];
+}
+/** True while a harness is capturing — the pane's gate (zero production cost). */
+export function isPaintPhaseLogActive(): boolean {
+  return paintPhaseLog !== null;
+}
+/** Pane-internal: record one render submit's phase. No-op unless active. */
+export function recordPaintPhase(record: PaintPhaseRecord): void {
+  if (paintPhaseLog) paintPhaseLog.push(record);
+}
+
+// ---------------------------------------------------------------------------
 // USER-FACING CAPTURE — arm the render-log oracle in a real browser so the
 // reported one-frame ORANGE flash can be captured in the USER'S OWN environment
 // if it ever recurs. Armed by a URL flag `?paneRenderLog=1` OR a window global
