@@ -93,6 +93,18 @@ export interface HdrImageProps {
   showAxes?: boolean;
   label?: string;
   interpolation?: Interpolation;
+  /** DETECTION overlay (bounding boxes + segmentation masks) drawn ON TOP of the
+   *  FLOAT surface — the exact same annotation layer the 8-bit path honours (see
+   *  {@link SdrImageProps.overlay}). The overlay is a display-space CSS layer
+   *  ({@link ../ImageOverlay}); it composites over ANY decoded dtype, so a float
+   *  EXR authored with `overlay=` draws its boxes/masks identically to a uint8
+   *  PNG. Threaded through {@link useLegacyImageProps} on BOTH dtype branches;
+   *  unset ⇒ no annotations. */
+  overlay?: ImageOverlayData;
+  /** Display settings for {@link overlay} (visible classes, score threshold,
+   *  mask opacity, box/mask toggles). Defaults on (`DEFAULT_OVERLAY_SETTINGS`).
+   *  See {@link SdrImageProps.overlaySettings}. */
+  overlaySettings?: ImageOverlaySettings;
   zoom?: number;
   pan?: { x: number; y: number };
   onViewportChange?: (v: ImageViewport) => void;
@@ -518,6 +530,12 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       showAxes: p.showAxes,
       label: p.label,
       interpolation: p.interpolation,
+      // Detection overlays composite over ANY dtype (display-space CSS layer),
+      // so the float surface honours `overlay`/`overlaySettings` exactly as the
+      // uint8 branch below does — omitting them here is what silently dropped
+      // boxes/masks on an EXR/float image (M7).
+      overlay: p.overlay,
+      overlaySettings: p.overlaySettings,
       zoom: p.zoom,
       pan: p.pan,
       onViewportChange: p.onViewportChange,

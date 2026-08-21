@@ -149,7 +149,13 @@ export default function ImageOverlay({
   }, [showMasks, masks, naturalWidth, naturalHeight, hiddenKey]);
 
   if (!rect) {
-    return <div ref={ref} className="absolute inset-0 pointer-events-none" />;
+    return (
+      <div
+        ref={ref}
+        data-image-overlay=""
+        className="absolute inset-0 pointer-events-none"
+      />
+    );
   }
 
   const boxes = data.boxes ?? [];
@@ -157,7 +163,11 @@ export default function ImageOverlay({
   const classLabels = data.class_labels ?? {};
 
   return (
-    <div ref={ref} className="absolute inset-0 pointer-events-none overflow-hidden">
+    <div
+      ref={ref}
+      data-image-overlay=""
+      className="absolute inset-0 pointer-events-none overflow-hidden"
+    >
       {/* Masks (canvas, natural-res, CSS-scaled to the contained rect) */}
       {showMasks && (
         <canvas
