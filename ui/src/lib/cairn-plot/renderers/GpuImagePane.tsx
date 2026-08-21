@@ -2478,8 +2478,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const label = hdrMode ? ((props as HdrImageProps).label ?? "") : (props as SdrImageProps).label;
   const interpolation = props.interpolation ?? "auto";
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
-  const overlay = hdrMode ? undefined : (props as SdrImageProps).overlay;
-  const overlaySettings = hdrMode ? undefined : (props as SdrImageProps).overlaySettings;
+  // Detection overlays composite over the display surface regardless of dtype —
+  // read from the unified props on BOTH the float (HDR) and uint8 (SDR) paths
+  // (M7 fix: the old `hdrMode ? undefined` null-out silently dropped boxes/masks
+  // on the float surface, exactly where per-region overlays matter most). Both
+  // union members declare `overlay`/`overlaySettings`, so no dtype cast is needed.
+  const overlay = props.overlay;
+  const overlaySettings = props.overlaySettings;
   const isDraggable = hdrMode ? false : ((props as SdrImageProps).isDraggable ?? false);
   const onDragStart = hdrMode ? undefined : (props as SdrImageProps).onDragStart;
 

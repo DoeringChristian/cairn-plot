@@ -1097,6 +1097,8 @@ function CpuHdrImagePane(
     pan = { x: 0, y: 0 },
     onViewportChange,
     pixelValueNotation = "decimal",
+    overlay,
+    overlaySettings,
     toolbar = true,
   } = props;
 
@@ -1379,6 +1381,25 @@ function CpuHdrImagePane(
   // Auto-interpolation: shared threshold (GPU-pane parity); see the SDR branch.
   const imgRendering = useAutoImageRendering(wrapperRef, zoom, dims, interpolation);
 
+  // DETECTION overlay (boxes + masks) on the FLOAT surface — the CPU-fallback
+  // twin of GpuImagePane's `overlayNode` (M7). Composites over the tone-mapped
+  // canvas via the shared display-space `ImageOverlay` layer, identically to the
+  // SDR branch above (`dims` here plays the SDR pane's `naturalDims`/`imageUrl`
+  // role — a mounted float canvas has non-null `dims`).
+  const overlayNode =
+    overlay &&
+    overlaySettings?.enabled &&
+    dims &&
+    ((overlay.boxes?.length ?? 0) > 0 ||
+      (overlay.masks?.length ?? 0) > 0) ? (
+      <ImageOverlay
+        data={overlay}
+        settings={overlaySettings}
+        naturalWidth={dims.w}
+        naturalHeight={dims.h}
+      />
+    ) : undefined;
+
   return (
     <ImagePaneShell
       paneAttrs={{ "data-cpu-image-pane": "" }}
@@ -1405,6 +1426,7 @@ function CpuHdrImagePane(
         />
       }
       showAxes={showAxes}
+      overlayNode={overlayNode}
       overlay={{
         displayElRef: canvasRef,
         sample: samplePixel,

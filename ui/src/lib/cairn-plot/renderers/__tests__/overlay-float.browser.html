@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>GpuImagePane float-overlay harness</title>
+    <!-- Real compiled Tailwind (committed copy of dist/plot-inline/style.css) so
+         the pane's own layout classes (`h-full`/`flex-1`/`min-h-0`/`overflow-hidden`)
+         resolve — the detection-overlay assertion is layout-dependent (it measures
+         the letterboxed image rect), so without this the pane's height chain breaks
+         and the canvas's intrinsic backing size runs the viewport away. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>renderers/GpuImagePane.tsx — detection overlay on the FLOAT surface (M7)</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <script type="module" src="./overlay-float.browser.bundle.js?v=1"></script>
+  </body>
+</html>
