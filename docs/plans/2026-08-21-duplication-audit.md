@@ -454,3 +454,85 @@ PlotApp GPU tree) does NOT reproduce it, so the harness gate is green while the 
 path is not. FLAGGED as an open follow-up: the anchor snapshot should not carry `diffKernel`
 at all (its source `settingsSnapshot` is 9-key and omits it — the extra key's runtime
 origin is itself unexplained and is the next thread to pull).
+
+---
+
+## WAVE COMPLETE — five-workstream serial integration into `diff_unification` (2026-08-21)
+
+The five finished remediation workstreams were merged into `diff_unification` ONE
+AT A TIME, full gate suite green after each, order
+`ws4-cleanup → ws2-contracts → ws3-overlay → ws1-h1 → ws5-reduce`. The tip had
+already landed M1 (`b6525bc`) + the M2/M3/M4/D1/D2 cluster before the wave; every
+conflict was resolved favoring the CURRENT tip's semantics (viewport-owned
+settings, single colormap store, kernel-owner-authoritative, shared adoption
+module, `computeFit` consolidation, reduce family). Only the built
+`plot-inline/*.iife.js` bundles conflicted on each merge; all TS/Python source
+auto-merged clean, and the bundles were resolved by REBUILD
+(`build:plot-inline` + `sync:plot-assets`), never by taking a side.
+
+**Merge-by-merge conflicts + resolutions.**
+- **ws4-cleanup** — zero conflicts (clean auto-merge); bundle rebuild produced no
+  asset delta (dead-export pruning was already tree-shaken out of the bundle).
+- **ws2-contracts** — `core.iife.js` + `gpu-image.iife.js` conflicted → rebuilt.
+  Source auto-merged; the new `COLORMAP_ALIASES` table (viridis→turbo, D3) is
+  orthogonal to D2's default-COLORMAP derivation, so no kernel/registry-table
+  clash (watch item c).
+- **ws3-overlay** — same two bundles conflicted → rebuilt. Overlay source
+  (`Cpu`/`GpuImagePane`, `ImageOverlay`, `image-backend`) auto-merged onto the
+  tip's shared-adoption / viewport-owned model.
+- **ws1-h1** — `gpu-image.iife.js` conflicted → rebuilt. Shader/engine auto-merged
+  clean: ws1's `u_bind14` display-adjust (brightness/contrast/flipSign affine)
+  coexists with the tip's `u_bind13` compositor param. **The image fragment shader
+  now binds exactly 12 uniform buffers — the WebGPU `maxUniformBuffersPerShaderStage`
+  guaranteed minimum, no headroom for a 13th** (watch item a; documented in
+  `docs/plans/2026-08-20-content-op-unification.md`, Phase 3).
+- **ws5-reduce** — `gpu-image.iife.js` conflicted → rebuilt. `diff-engine` /
+  `image-engine` / `ssim-metric` / `device` / `types` auto-merged clean against the
+  tip's diff-engine cluster (M2 bus-sync scoping, D2 default-color) — ws5's reduce
+  rewiring lives in separate functions (watch item b). MSE/MAE (`diffSqAbs`+`sum`)
+  and SSIM-mean (`reduceTextureChannelMean`) now both route through the ONE
+  `runReduce` primitive backed by `engine/reduce/registry.ts`; the bespoke
+  `shaders/reduce.wgsl.ts` is retired.
+
+**Final gate counts (after ws5, all green):** typecheck 0 errors · **661** node
+unit tests (`src/lib/cairn-plot/**/*.test.ts`) · **33** parity harnesses
+(31 + `overlay-float` + `reduce`) · **250** pytest passed / 10 skipped · report +
+gallery regen clean. `uv.lock` left untouched. Worktrees removed
+(`.worktrees/ws1-h1`, `ws2-contracts`, `ws3-overlay`, `ws4-cleanup`, `ws5-reduce`)
+and their branches deleted.
+
+**Outcomes — all 23 findings (20 original + D1–D3 addendum).**
+
+| # | Finding | Outcome | Where |
+|---|---------|---------|-------|
+| H1 | `processing` block dropped by GpuImagePane (default renderer) | **FIXED** | ws1-h1 — brightness/contrast/flipSign in-shader (`u_bind14`) + exposure/offset on the `data=` 8-bit path |
+| M1 | Diff colormap vs image display-encoding = two stores | **FIXED (pre-wave)** | tip `b6525bc` — ONE colormap store (diff colormap IS the viewport encoding) |
+| M2 | Diff KERNEL held in two stores | **GUARDED (pre-wave)** | tip cluster — owner-authoritative + ephemeral kernel bus key; receiver-side scoping. *(live 3-diff residual below stays OPEN)* |
+| M3 | Flat `lastStates` snapshot can't scope per-patch `compareMode` | **FIXED (pre-wave)** | tip cluster — mode-aware snapshot merge (compareMode face tag) |
+| M4 | Display-settings sync rule triplicated across 3 panes | **FIXED (pre-wave)** | tip cluster — shared `image-display-encoding-sync.ts` |
+| M5 | Four validation enums hardcoded twice, no cross-language test | **GUARDED** | ws2-contracts — cross-language contract test pins the enum VALUES |
+| M6 | public-mode→kernel-id / `diffSubmode` mapping duplicated; guard only checked KEYS | **GUARDED** | ws2-contracts — contract now pins the mapping VALUES |
+| M7 | `overlay`/`overlaySettings` dropped on the float/HDR path | **FIXED** | ws3-overlay — honored on Cpu/Gpu float path; `overlay-float` harness |
+| L1 | Engine-failure fallback discards live GPU-pane state | **OPEN-residual** | rare error path; behavioral fix (seed CpuImagePane from live snapshot) deferred, not in the LOW-cleanup slice |
+| L2 | Flip-back served by two independent LRU caches | **SKIPPED (reason)** | one-directional divergence, synchronous re-upload → sub-frame GPU churn, no flicker; deferred |
+| L3 | Four orphaned `ViewportCapabilities` consts | **OPEN-residual** | still present; "delete-or-build-the-registry" decision deferred (not pruned by ws4) |
+| L4 | `diffCacheSize`/`clearDiffCache` dead | **FIXED** | ws4-cleanup — removed |
+| L5 | Context-loss test-hook accessors dead | **FIXED** | ws4-cleanup — two dead accessors removed |
+| L6 | Misc dead utility exports (svgToPng, poolLiveCount, PLOT_MARGIN, hasFloat16Array, __resetCapabilityNoticeForTests) | **FIXED** | ws4-cleanup — removed |
+| L7 | Dead `NormMode` / log-power shader substrate | **SKIPPED (reason)** | deliberately retained inert substrate, parity-covered; audit ruled "none required" |
+| L8 | Phantom `interpolation` sync field | **FIXED** | ws4-cleanup — dead field + stale docstring removed |
+| L9 | `GpuComparePane` cited as authoritative in ~27 files after deletion | **FIXED-partial** | ws4-cleanup rewrote the doc-rot in the files it touched (ssim-metric, ImagePaneShell, LabelChip, RefBadge); remaining parity comments are comment-only, zero runtime — residual doc rot |
+| L10 | Probe-seam naming unconsolidated + dead `__cairnCompareProbe` fallback | **FIXED-partial** | ws4-cleanup removed the dead `?? __cairnCompareProbe` fallback in both harnesses; probe-misnomer rename + `.home`→real-`onReset` deferred |
+| L11 | Stale "side" compare-mode comment | **FIXED** | ws4-cleanup — comment corrected to the real enum |
+| D1 | object-contain letterbox reimplemented in 4 sites | **FIXED (pre-wave)** | tip — collapsed onto the ONE `computeFit` primitive |
+| D2 | diff-id→default-color hardcoded in two registries | **FIXED (pre-wave)** | tip — kernel table is the source; content-op derives (drift test) |
+| D3 | `viridis→turbo` alias written as three literals, no cross-language test | **GUARDED** | ws2-contracts — ONE `COLORMAP_ALIASES` table (TS) + Python `_COLORMAP_ALIASES`, contract-pinned by KEY and VALUE |
+| M2* | **Live 3-diff multi-select kernel collapse (M2 addendum residual)** | **OPEN** | served-report 3-diff (FLIP/SSIM/absolute) page-wide selection still collapses the two non-anchor kernels onto the anchor; mechanism contradicts every traced path (guarded subscription blocked, no dedicated pick, no owner-callback caller); the anchor snapshot's extra 10th `diffKernel` key origin is unexplained. **Stays OPEN** — next thread. |
+
+**Beyond the 23:** ws5-reduce is a duplication-reduction consolidation not tied to a
+single numbered finding — it hardens the "reduce-to-scalar is single-sourced"
+swept-and-cleared item by making the general GPU reduction family (`runReduce` +
+`engine/reduce/registry.ts`) the ONE backing for all four metric scalars, and
+retiring the bespoke `reduce.wgsl.ts`.
+
+**Scoreboard:** 11 FIXED (7 landed pre-wave on the tip, 4 this wave: H1, M7 + the L4/L5/L6/L8/L11 dead-code removals) · 2 FIXED-partial (L9, L10) · 4 GUARDED (M2, M5, M6, D3) · 2 SKIPPED-with-reason (L2, L7) · 3 OPEN-residual (L1, L3, and the M2 live 3-diff collapse).
