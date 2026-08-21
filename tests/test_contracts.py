@@ -20,7 +20,12 @@ from pathlib import Path
 
 from cairn_plot.components import (
     _COLORMAPS,
+    _COLORMAP_ALIASES,
     _COMPARE_KERNEL_MODES,
+    _COMPARE_VIEW_MODES,
+    _COMPARE_ALIGNS,
+    _COMPARE_FITS,
+    _PIXEL_VALUE_NOTATIONS,
     _TONEMAP_OPERATORS,
     _TONEMAP_ALIASES,
     _SDR_DISPLAY_TRANSFERS,
@@ -32,6 +37,14 @@ CONTRACT = json.loads((ROOT / "schema" / "cairn-plot-contracts.json").read_text(
 
 def test_colormaps_match_contract() -> None:
     assert set(_COLORMAPS) == set(CONTRACT["colormaps"])
+
+
+def test_colormap_aliases_mapping_matches_contract() -> None:
+    # Audit addendum D3: guard the back-compat alias MAPPING (removed name →
+    # replacement) by key AND value, not just the alias set. Both faces keep one
+    # runtime table; the TS contract test additionally asserts every target is a
+    # real colormap, so pinning Python to the same JSON keeps them in lockstep.
+    assert _COLORMAP_ALIASES == CONTRACT["colormapAliases"]
 
 
 def test_tonemap_operators_match_contract() -> None:
@@ -52,6 +65,30 @@ def test_compare_kernel_public_names_match_contract() -> None:
     # intentionally NOT a public mode, matching the TS `listDiffKernelPublicNames()`
     # which filters it out.
     assert set(_COMPARE_KERNEL_MODES.keys()) == set(CONTRACT["compareKernelPublicNames"])
+
+
+def test_compare_kernel_modes_mapping_matches_contract() -> None:
+    # Audit M6: guard the public-mode → `diffSubmode` mapping VALUES, not just the
+    # keys. Both faces hand-mirror this table; the TS contract test additionally
+    # resolves every value through the kernel registry, so pinning Python to the
+    # same JSON transitively pins the emitted `diffSubmode` to a real kernel id.
+    assert _COMPARE_KERNEL_MODES == CONTRACT["compareKernelModes"]
+
+
+def test_compare_view_modes_match_contract() -> None:
+    assert set(_COMPARE_VIEW_MODES) == set(CONTRACT["compareViewModes"])
+
+
+def test_compare_aligns_match_contract() -> None:
+    assert set(_COMPARE_ALIGNS) == set(CONTRACT["compareAligns"])
+
+
+def test_compare_fits_match_contract() -> None:
+    assert set(_COMPARE_FITS) == set(CONTRACT["compareFits"])
+
+
+def test_pixel_value_notations_match_contract() -> None:
+    assert set(_PIXEL_VALUE_NOTATIONS) == set(CONTRACT["pixelValueNotations"])
 
 
 # The shared builder-name set (camelCase in the contract) → the PascalCase

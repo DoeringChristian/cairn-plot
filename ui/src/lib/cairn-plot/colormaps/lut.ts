@@ -165,15 +165,27 @@ export const COLORMAP_OPTIONS: { id: ColormapName; label: string }[] =
 export const DIVERGING_COLORMAPS = new Set<string>(["red-green", "red-blue"]);
 
 /**
- * Back-compat colormap ALIAS: `viridis` was REMOVED from the registry (the
- * tev-mapped `turbo` replaced it as the default sequential map). Any INCOMING
- * `viridis` reference — a descriptor kwarg, a settings-sync payload, a Python
- * `colormap=` user — resolves to `turbo` rather than erroring; every other name
- * (a real colormap id, or a typo handled downstream) passes through unchanged.
- * The ONE place the alias lives so TS + the LUT lookups + the panes agree.
+ * Back-compat colormap ALIAS mapping (removed name → canonical replacement).
+ * `viridis` was REMOVED from the registry (the tev-mapped `turbo` replaced it as
+ * the default sequential map). This is the ONE runtime data structure the TS
+ * face keeps: `aliasColormap` resolves through it, `image/encodings/registry.ts`
+ * delegates to `aliasColormap`, and the cross-language contract
+ * (`schema/cairn-plot-contracts.json` → `contracts.test.ts`) pins it to Python
+ * `_COLORMAP_ALIASES` by KEY and VALUE.
+ */
+export const COLORMAP_ALIASES: Readonly<Record<string, string>> = {
+  viridis: "turbo",
+};
+
+/**
+ * Back-compat colormap ALIAS resolver. Any INCOMING `viridis` reference — a
+ * descriptor kwarg, a settings-sync payload, a Python `colormap=` user —
+ * resolves to `turbo` rather than erroring; every other name (a real colormap
+ * id, or a typo handled downstream) passes through unchanged. Reads the single
+ * {@link COLORMAP_ALIASES} table so TS + the LUT lookups + the panes agree.
  */
 export function aliasColormap(name: string): string {
-  return name === "viridis" ? "turbo" : name;
+  return COLORMAP_ALIASES[name] ?? name;
 }
 
 const colormapLUTs = new Map<string, Uint8Array>();
