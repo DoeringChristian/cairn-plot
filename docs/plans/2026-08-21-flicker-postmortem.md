@@ -447,3 +447,84 @@ incomplete frame cannot be presented" — it makes the class *impossible* rather
 Confidence: high on the diagnosis and the final-fix identification (read from the
 diffs); medium on the refactor scope (the flip path is subtle, but the harness
 coverage de-risks it).
+
+---
+
+## RenderSnapshot consolidation — DONE (commits `0b02229`, `3d86e65`)
+
+Landed the §4 consolidation, in two commits, behavior byte-identical: all 31
+parity harnesses green (metal, native WebGPU), 628 node tests, 243 pytest, gpu-image
+bundle rebuilt + synced + committed. Split into a Stage 1 (behavior-structure)
+and a Stage 2 (readability) so each is independently revertable.
+
+### Stage 1 (`0b02229`) — the snapshot
+
+The scattered per-field derivations in `GpuImagePane`'s flip/render region are
+now assembled into ONE `RenderSnapshot` per commit (`render-snapshot.ts` after
+Stage 2), read by the present gate, the pre-paint effect, the flip detector, and
+the paint-phase log. The consolidation:
+
+| was (scattered local) | now (snapshot field) |
+|---|---|
+| `expectedPrimaryId` / `expectedBId` | `primaryId` / `bId` |
+| `contentIdentity` (flip detector) | `contentKey` |
+| `cachedDiffKernel` / `isCachedDiff` | `isCachedDiff` |
+| `targetResident` | `resident` |
+| the in-`renderPass` applied==expected floor | `sourcesApplied` (+ the call-time ref compare kept in `renderPass`) |
+
+The invariant is stated ONCE, at the type: *a frame is presentable only when its
+whole input set — both sources, the content op, the display encoding — comes from
+a single commit; otherwise hold the previous frame.*
+
+### Stage 2 (`3d86e65`) — decomposition + de-archaeologization
+
+Module map (LOC before → after):
+
+| file | responsibility | LOC |
+|---|---|---|
+| `renderers/GpuImagePane.tsx` | the pane shell + render/upload/diff/chrome orchestration | 2865 → **2691** |
+| `renderers/render-snapshot.ts` (new) | `RenderSnapshot` type + `buildRenderSnapshot` pure builder + the invariant doc | **142** |
+| `renderers/gpu-image-samplers.ts` (new) | `usePixelSamplers` — the 3 read-only TEV pixel-value samplers over the retained CPU buffers | **194** |
+
+Comment cleanup: rewrote the stale module header (it still described compare as
+handled by the DELETED `GpuComparePane` and claimed the pane was "not wired into
+any live page yet"); replaced history-narrating markers in the render path
+(Q20/Q22/Q24, "C1 fix", the reference-flash prose) with statements of the current
+invariant. The tripwires (`isPipelineMismatch`, `isEncodingGenerationMismatch`,
+the render/paint-phase logs) STAY — they now read as assertions that the snapshot
+builder can't emit an incomplete frame (recommendation #3).
+
+### Deletions the §4 estimate imagined — DELIBERATELY NOT made (they change behavior)
+
+Assembling the snapshot centralizes and NAMES the decision; it does **not** make
+the lagging upstream state coherent, so the per-field guards §4 hoped would "fall
+out" each still defend a real transient. Removing them would fail a harness or
+regress a proven invariant, against the "behavior identical" mandate:
+
+- **`opId===0` identity-op floor** and **`hasCompare` compare-intended floor**
+  (in `renderPass`): KEPT, re-expressed as snapshot invariants + tripwires. Cheap
+  belt-and-suspenders floors; deleting them trades a proven guard for a structural
+  argument. (This IS recommendation #3 — demote to assertion, don't delete.)
+- **`LeafView.staleDiffFallback`** (reference-leak guard, `plot-node.tsx`): KEPT.
+  §4's claim that it becomes "structurally impossible" because a single-image
+  snapshot "has no bId" does **not hold** — the leak is that the stale `state`'s
+  `source` IS the diff's reference operand, emitted as a plain-image prop with no
+  `compareSource`. By the time `GpuImagePane` sees it, `hasCompare` is already
+  false and `source` is wrong; the pane's snapshot cannot repair an upstream prop.
+  The guard is genuinely load-bearing and stays in `LeafView`.
+- **The diff-param anti-churn effects** (`if (!compareSource) return` in the
+  kernel/colormap reseed effects): KEPT. They keep diff state DORMANT across
+  image↔diff flips. The reseed is a `setState` in an effect, independent of the
+  snapshot; removing the guard reintroduces the reset-then-reapply churn the
+  paint-atomic render catches as a wrong-kernel/wrong-colormap present
+  (`stacked-diff-flip-stress` fails). The snapshot reads the churned state — it
+  doesn't prevent the churn.
+- **The two-effect pre/post-paint structure**: KEPT (the two effects run in
+  different phases by design — that IS paint-atomicity). The dedupe machinery
+  (`renderId`/`lastRenderedRef`) is retained; both effects now key on
+  `snapshot.contentKey`/`resident`.
+
+Net: the class is now enforced through ONE named, assembled-in-one-place struct
+with the invariant stated at its type, and the remaining floors are honest
+belt-and-suspenders assertions rather than deletions that would trade correctness
+for a structural story.
