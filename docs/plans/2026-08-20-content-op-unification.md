@@ -1551,3 +1551,69 @@ guards it end-to-end through a real page-wide selection.)
 **Gates.** typecheck; 628 node tests; ALL 31 parity harnesses (metal-3, incl. realstack
 PHASES H+I — pre-fix reproduces the peak wipe, post-fix shares); 243 pytest; core + gpu-image
 bundles rebuilt + synced + committed; report + gallery regen clean. `uv.lock` left untouched.
+
+## Follow-up — DONE: ONE colormap store — the diff colormap IS the viewport encoding
+
+**User report (two failures persisting after 934e7a4).** (1) A `FLIP vs SSIM vs absolute`
+grid of three DIFF panes: multi-select two+, change a colormap (mirrors), double-click ONE
+→ its colormap did NOT reset ("no reset"). (2) The Validation stacked viewport: pick a
+colormap while the DIFF slot is visible, flip to the scalar image slot → the two faces kept
+SEPARATE colormaps. **ROOT (as the user diagnosed):** the display colormap still lived in
+TWO stores per pane — the image face's `usePaneEncoding` state vs the diff face's separate
+per-kernel override (`diffColormapOverride`, resolved via `resolveDiffColormap`). The menus +
+registry were unified long ago; the STATE never was. The user ruled: ONE setting per viewport.
+
+**Merged-store design (the override moves INTO `enc`; the default is DERIVED).** The diff
+colormap is no longer a store — it is the viewport's ONE display encoding:
+- `usePaneEncoding` gains an `overridden` boolean — `true` iff the user has EXPLICITLY picked
+  an encoding since mount/HOME (`setEncoding` sets it; `resetEncoding` + the controlled-surface
+  reseed clear it). This is the default-vs-override signal, distinct from `encodingModified`
+  (which a PERSISTED cross-slot value can trip without a pick).
+- `GpuImagePane`'s `effectiveDiffColormap = enc.overridden ? enc.colormap : diffDefaultColormap`,
+  where `diffDefaultColormap = compareSource.colormap (authored) ?? kernelDefaultColormap(kernel)`.
+  This is EXACTLY the old `resolveDiffColormap(kernel, override)` — but the override now lives in
+  the SAME store the image face reads/writes. A diff-colormap pick calls `enc.setEncoding` (so the
+  scalar image shows it too — scenario 2); HOME calls `enc.resetEncoding` (→ the diff falls back to
+  its kernel default — scenario 1); switching kernels re-derives the default while un-picked (the
+  derivation re-resolves every render — ordering-independent, so the HOME-after-kernel-switch race
+  the interim commits fought disappears). `enc` is seeded from the IMAGE props and PERSISTS across
+  image↔diff flips (no reseed), so nothing fights the paint-atomic / present-coherency machinery.
+- The diff KERNEL reseed effect became a `useLayoutEffect` (pre-paint), so the FIRST flip to a diff
+  no longer presents one frame of the mount-default `absolute`/turbo before the descriptor `flip`/
+  magma settles (caught by `stacked-diff-flip-stress`).
+- The diff KERNEL was removed from the settings-sync SNAPSHOT (kept in the live `changeDiffKernel`
+  patch), so multi-selecting diffs of DIFFERENT kernels (a FLIP/SSIM/absolute grid) no longer
+  force a joining peer to adopt the anchor's kernel — that collapse would erase "magma/turbo per
+  kernel". An explicit kernel change still syncs.
+
+**DELETED.** The `diffColormapOverride` `useState` + its seed + its controlled/anti-churn reseed
+`useEffect` + the `diffReseededRef`; `diffColormapModified` (subsumed by `enc.encodingModified`);
+the diff-mode branch of `applyRemoteSettings` that adopted a diff colormap into the separate store
+(now the unified `enc.setEncoding` adoption handles it); `changeDiffKernel`'s follow-default
+bookkeeping (the derivation handles it); the explicit HOME kernel-default targeting (resetEncoding
++ the derivation suffice). `resolveDiffColormap` stays as the pure kernel-default statement (its
+unit test is unchanged). Net: one store, ~4 branch-pairs collapsed.
+
+**BROWSER verification (served `/private/tmp` @ 8765, real report `?eager=1`, freshly-built
+bundle, Apple Metal), driven via the live `__cairnImageDiffProbe` / `__cairnImagePaneProbe` seams:**
+- SCENARIO 1 (`FLIP vs SSIM vs absolute` grid, now authored with NO colormap → per-kernel
+  defaults): before = {flip: magma, ssim: magma, abs: turbo}; after colormap picks =
+  {red-blue, plasma, red-blue}; after HOME = {magma, magma, turbo} — each RESET to its kernel
+  default (magma/turbo per kernel). Pre-fix this reset did not happen (two stores).
+- SCENARIO 2 (Validation stacked viewport, activated): the scalar-image slot showed magma
+  (authored); flip to the FLIP diff, pick turbo, flip BACK to the scalar image slot → it now
+  shows turbo (`imgEnc:"turbo"`). One viewport, one setting — the two faces no longer diverge.
+
+**Harness coverage (`stacked-diff-flip-realstack-gpu`, the real PlotApp→GridView→NodeDispatch→
+LeafView→GpuImagePane GPU tree).** PHASE G2 extended: the SCALAR IMAGE slot must SHOW the colormap
+picked on the diff (`imageShowsPick === "turbo"`), with the pre-fix separate-stores bug reproduced
+(`__cairnDisableStackShared`). NEW PHASE J (scenario 1): (A) per-kernel HOME on UNSELECTED diffs —
+pick red-blue then HOME → turbo (absolute) / magma (FLIP); (B) multi-select MIRROR + LOCAL HOME —
+a pick mirrors to the peer, HOME on one resets off the pick while the neighbour KEEPS it. `+~140`
+harness lines (`sideBySideTwoDiffGrid` + `allDiffProbes` helpers).
+
+**Gates.** typecheck; 628 node tests; ALL 31 parity harnesses (metal-3, incl. realstack PHASES
+G2+J, stress ×3 clean, paint, chrome); 243 pytest; core + gpu-image bundles rebuilt + synced +
+committed; report (63 blocks) regen clean; browser scenarios 1+2 verified live. `uv.lock` left
+untouched. Report edit: the `FLIP vs SSIM vs absolute` grid drops its authored `colormap="viridis"`
+so it demonstrates the per-kernel defaults (magma/magma/turbo) the scenario is about.

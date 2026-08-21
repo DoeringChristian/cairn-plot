@@ -283,6 +283,10 @@ export interface PaneEncoding {
   resetEncoding: () => void;
   /** `true` when the encoding differs from the authored seed at this arity. */
   encodingModified: boolean;
+  /** `true` when the user has EXPLICITLY picked an encoding since mount/HOME (the
+   *  default-vs-override signal a diff face reads: overridden ⇒ the pick applies to the
+   *  diff too; else the diff follows its kernel default). */
+  overridden: boolean;
   /** Whether the ACTIVE encoding declares a given param (drives slider gating). */
   hasParam: (name: string) => boolean;
 }
@@ -332,6 +336,13 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
   const prevArityRef = useRef<number>(arity);
   const controlledSurface = !!config.controlledSurface;
+  // OVERRIDDEN — has the user EXPLICITLY picked an encoding (a `setEncoding` since the
+  // last mount / HOME / controlled reseed)? This is the default-vs-override signal a
+  // DIFF face reads (state-unification): a diff shows its kernel default UNLESS the
+  // viewport is overridden, in which case the pick applies across faces (one setting).
+  // Distinct from `encodingModified` (value ≠ seed), which a PERSISTED cross-slot value
+  // can trip without a user pick.
+  const [overridden, setOverridden] = useState(false);
 
   // CONTROLLED-SURFACE RESEED, done DURING RENDER (React's supported "adjust state
   // during render" pattern — guarded to fire once, so the COMMITTED frame already
@@ -354,6 +365,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     if (controlledSurface) {
       memoryRef.current.clear();
       setEncodingId(seedFor(arity));
+      setOverridden(false); // host drives → not a user override
     }
   }
 
@@ -382,15 +394,17 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
       const id = rawId === "viridis" ? "turbo" : rawId;
       memoryRef.current.set(arity, id);
       setEncodingId(id); // in a stack this IS the shared setting (applies to all slots)
+      setOverridden(true); // an explicit user pick — the diff face now follows it too
     },
     [arity],
   );
 
   const resetEncoding = useCallback(() => {
-    // HOME: re-seed to the FOCUSED slot's authored defaults. In a stack this makes the
-    // shared setting equal to this slot's authored encoding (points 2+3 of the model).
+    // HOME: re-seed to the FOCUSED slot's authored defaults + clear the override, so a
+    // diff face falls back to its kernel default (points 2+3 of the model).
     memoryRef.current.clear();
     setEncodingId(seedFor(arity));
+    setOverridden(false);
   }, [seedFor, arity]);
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
@@ -413,6 +427,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     setEncoding,
     resetEncoding,
     encodingModified,
+    overridden,
     hasParam,
   };
 }

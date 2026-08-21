@@ -65,7 +65,7 @@ import { contentOpId } from "../image/content-ops/index";
 import {
   getDiffKernel,
   resolveDiffKernelId,
-  resolveDiffColormap,
+  kernelDefaultColormap,
   listDiffMenuModes,
 } from "../engine/kernels";
 import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
@@ -542,6 +542,55 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     ? (props as HdrImageProps).tonemap
     : (props as SdrImageProps).tonemap;
 
+  // -----------------------------------------------------------------------
+  // DIFF kernel + DEFAULT colormap (state-unification). The diff/compare face no
+  // longer owns a SEPARATE colormap store — its colormap IS the viewport's ONE
+  // display encoding (`enc`, below). The kernel's registry default
+  // (magma/turbo/red-green) — or the authored `compareSource.colormap` when the
+  // descriptor specifies one — is the SEED/HOME target the encoding hook uses
+  // while a diff is visible. Computed HERE, above `enc`, so the hook can seed from
+  // it. (`resolveDiffColormap` stays the pure default-vs-override statement; the
+  // OVERRIDE now lives in `enc.encodingId`, so a diff-colormap pick, a slot flip
+  // to the scalar image, and HOME all read/write ONE store — one viewport, one
+  // setting.) Declared unconditionally (rules-of-hooks); inert when `!diffMode`.
+  // -----------------------------------------------------------------------
+  const diffSeedColormap = ((): Colormap | null => {
+    const c = compareSource?.colormap;
+    if (c == null || c === "none") return null;
+    return (c as string) === "viridis" ? ("turbo" as Colormap) : c;
+  })();
+  const [diffKernel, setDiffKernelState, diffKernelMeta] = useResettableState<string>(
+    compareSource?.opId ?? "absolute",
+  );
+  useLayoutEffect(() => {
+    // Only (re)seed from a PRESENT compare descriptor (anti-churn — the epic's
+    // paint-atomic note): an image slot in a stacked image↔diff flip keeps the last
+    // compare kernel DORMANT rather than resetting to "absolute" then re-applying it
+    // post-paint on flip-back (a transient wrong-kernel present). PRE-PAINT
+    // (`useLayoutEffect`) so the FIRST flip to a diff — where the mount default
+    // "absolute" would otherwise present for one frame (a direct-absolute/turbo blit)
+    // before the descriptor's "flip" (cached/magma) settled — lands the correct kernel
+    // BEFORE the diff paints. Deps exclude the viewport, so pan/zoom is untouched.
+    if (!compareSource) return;
+    setDiffKernelState(compareSource.opId ?? "absolute");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareSource?.opId, !!compareSource]);
+  const setDiffKernel = useCallback(
+    (id: string) => {
+      setDiffKernelState(id);
+      compareSource?.onDiffKernelChange?.(id);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setDiffKernelState, compareSource?.onDiffKernelChange],
+  );
+  // Cheap pure derivations: the concrete kernel id (float sources auto-dispatch
+  // flip→hdr-flip) and the diff's DEFAULT colormap (authored override else the
+  // per-kernel default) — the seed `enc` adopts while a diff is visible.
+  const sourcesAreFloat =
+    backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
+  const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
+  const diffDefaultColormap = (diffSeedColormap ?? kernelDefaultColormap(resolvedKernelId)) as Colormap;
+
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
   // colormap + tonemap overrides — selecting a LUT deactivates the curve and
   // vice-versa STRUCTURALLY (`display-encoding.ts`). The float pane gates the
@@ -577,6 +626,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,
     curveSet: SDR_TONEMAP_OPERATORS,
+    // ONE store for image AND diff. `enc` is the viewport's single display-encoding
+    // state, seeded from the image props and PERSISTED across content changes (an
+    // interactive viewport owns its setting). The diff colormap is NOT a second store:
+    // it is DERIVED below as `enc.overridden ? enc.colormap : diffDefaultColormap` — the
+    // user's viewport-wide pick when overridden, else the diff's kernel default. So a
+    // colormap picked on the diff shows on the scalar image and vice-versa (one setting),
+    // an un-picked diff shows its kernel default (no flip reseed → no flicker), and HOME
+    // clears the override so the diff falls back to its default.
     propColormap,
     propTonemap,
     resolveDefaultCurve,
@@ -727,78 +784,18 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
   // -----------------------------------------------------------------------
-  // DIFF state (content-op unification). Mirrors `GpuComparePane`'s diff kernel +
-  // colormap-override view-local state, but the RENDER runs through the pool
-  // (`setSourceB` + `render(contentOpId)` for a direct op / `renderDiffCached` for
-  // a cached metric) instead of self-managed textures. All declared
-  // unconditionally (rules-of-hooks); inert when `!diffMode`.
+  // DIFF display colormap — DERIVED from the viewport's ONE encoding store
+  // (state-unification). There is NO separate `diffColormapOverride`: the OVERRIDE is
+  // `enc` itself (`enc.overridden` = the user picked; `enc.colormap` = the pick), and
+  // the DEFAULT is `diffDefaultColormap` (authored diff colormap else the kernel
+  // default, computed above). So `enc.overridden ? enc.colormap : diffDefaultColormap`
+  // is exactly the old `resolveDiffColormap(kernel, override)` — but the override now
+  // lives in the SAME store the image face reads/writes: a diff-colormap pick writes
+  // `enc` (→ the scalar image shows it too), HOME clears `enc.overridden` (→ the diff
+  // falls back to its kernel default), and switching kernels re-derives the default
+  // while un-picked (the derivation re-resolves every render — ordering-independent).
   // -----------------------------------------------------------------------
-  const diffSeedColormap = ((): Colormap | null => {
-    const c = compareSource?.colormap;
-    if (c == null || c === "none") return null;
-    return (c as string) === "viridis" ? ("turbo" as Colormap) : c;
-  })();
-  const [diffKernel, setDiffKernelState, diffKernelMeta] = useResettableState<string>(
-    compareSource?.opId ?? "absolute",
-  );
-  useEffect(() => {
-    // Only (re)seed from a PRESENT compare descriptor. Do NOT reset to the default
-    // when `compareSource` is absent (a plain-image slot in a stacked image↔diff
-    // flip): that churn reset the kernel to "absolute" on every flip to image and
-    // re-applied "flip" post-paint on flip-back — a lag the paint-atomic pre-paint
-    // render would catch as a transient wrong-kernel present. Keeping the last
-    // compare state dormant makes flip-back's diff params correct on the SAME frame.
-    if (!compareSource) return;
-    setDiffKernelState(compareSource.opId ?? "absolute");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareSource?.opId, !!compareSource]);
-  const setDiffKernel = useCallback(
-    (id: string) => {
-      setDiffKernelState(id);
-      compareSource?.onDiffKernelChange?.(id);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [setDiffKernelState, compareSource?.onDiffKernelChange],
-  );
-  // Explicit diff-colormap OVERRIDE (null = follow the kernel default). Sticks across
-  // kernel switches; HOME clears it. Like the image `enc`, the diff colormap is a
-  // VIEWPORT setting: on an interactive viewport it is SEEDED ONCE from the first
-  // compare descriptor then PERSISTS across flips (a pick applies to every diff slot;
-  // each diff's authored colormap is a SEED only); on a CONTROLLED SURFACE it reseeds
-  // from the descriptor (host-menu contract). HOME re-seeds it to the visible slot.
-  const [diffColormapOverride, setDiffColormapOverride] =
-    useState<Colormap | null>(diffSeedColormap);
-  const diffReseededRef = useRef(false);
-  useEffect(() => {
-    // Anti-churn: only (re)seed from a PRESENT compare descriptor, so an image slot in
-    // a stacked image↔diff flip does not reset the override + re-apply post-paint.
-    if (!compareSource) return;
-    const c = compareSource.colormap;
-    const desc: Colormap | null =
-      c == null || c === "none" ? null : (c as string) === "viridis" ? ("turbo" as Colormap) : (c as Colormap);
-    if (!controlledSurface) {
-      // VIEWPORT: seed ONCE from the first present compare descriptor, then leave it —
-      // a flip to another diff slot keeps the shared pick (HOME re-seeds).
-      if (!diffReseededRef.current) {
-        diffReseededRef.current = true;
-        setDiffColormapOverride(desc);
-      }
-      return;
-    }
-    // CONTROLLED SURFACE: reseed from the descriptor.
-    setDiffColormapOverride(desc);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareSource?.colormap, !!compareSource, controlledSurface]);
-  // HOME target + modified dot for the diff colormap track the visible slot's seed.
-  const diffColormapModified = (diffColormapOverride ?? null) !== (diffSeedColormap ?? null);
-
-  // Cheap pure derivations (recomputed each render): the concrete kernel id (float
-  // sources auto-dispatch flip→hdr-flip) and the EFFECTIVE diff colormap (override
-  // else the per-kernel default). Declared before the sync snapshot below.
-  const sourcesAreFloat =
-    backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
-  const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
-  const effectiveDiffColormap = resolveDiffColormap(resolvedKernelId, diffColormapOverride ?? null) as Colormap;
+  const effectiveDiffColormap = (enc.overridden ? enc.colormap : diffDefaultColormap) as Colormap;
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
@@ -856,25 +853,29 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
         setColorBounds([patch.colorMin, patch.colorMax]);
       }
-      // DIFF face (Phase 2c): a colormap patch sets the diff OVERRIDE, a diffKernel
-      // patch switches the kernel. In diff mode the image `enc` above is inert; in
-      // single-image mode these are no-ops (no peer publishes them).
-      if (diffMode && patch.colormap !== undefined) {
-        setDiffColormapOverride(patch.colormap === "none" ? null : (patch.colormap as Colormap));
-      }
+      // DIFF face (state-unification): the diff colormap is now the SAME `enc` store
+      // adopted by the `adoptDisplayEncoding` block above (a diff peer publishes its
+      // scalar-error `encoding`, which this pane — when itself in diff mode — sets on
+      // `enc`), so there is no separate diff-colormap adoption. Only the diff KERNEL
+      // remains compare-specific.
       if (patch.diffKernel !== undefined) setDiffKernelState(patch.diffKernel);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enc, setTonemapGamma, setPeak, setColorBounds, diffMode, setDiffColormapOverride, setDiffKernelState],
+    [enc, setTonemapGamma, setPeak, setColorBounds, diffMode, setDiffKernelState],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings =>
       diffMode
         ? {
             // DIFF face: the scalar-error encoding + the effective diff colormap
-            // (per-kernel default when unoverridden), plus the compare-only keys so
-            // a compare-pane peer follows mode/kernel. `deriveCompareEncodingId`
-            // matches `GpuComparePane`'s snapshot exactly (one shared bus).
+            // (per-kernel default when unoverridden), tagged `compareMode:"diff"` so a
+            // plain-image peer scopes the scalar colormap OUT (orange-frame fix).
+            // The diff KERNEL is deliberately NOT in the snapshot: it is a per-pane
+            // CONTENT-op choice (like the compare mode), so multi-selecting diffs of
+            // DIFFERENT kernels (e.g. a FLIP/SSIM/absolute grid) must NOT force a
+            // joining peer to adopt the anchor's kernel — that would collapse them to
+            // one kernel and one default colormap (scenario 1). An EXPLICIT kernel
+            // change still syncs via `changeDiffKernel`'s live `{diffKernel}` patch.
             encoding: deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap),
             colormap: effectiveDiffColormap,
             tonemap: effectiveTonemap,
@@ -883,7 +884,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             exposureEV: displayEV,
             offset: displayOffset,
             reduce: effectiveReduce,
-            diffKernel,
             compareMode: "diff",
           }
         : {
@@ -906,7 +906,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               ? { compareMode: compareOpMode as string, splitPosition, blendAlpha }
               : {}),
           },
-    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, blendAlpha],
+    [diffMode, effectiveDiffColormap, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, blendAlpha],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -972,6 +972,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // sets local state AND broadcasts to the shared settings bus (peers follow).
   const changeDiffKernel = useCallback(
     (id: string) => {
+      // No colormap bookkeeping needed: `effectiveDiffColormap` is DERIVED, so while
+      // un-picked it re-resolves to the NEW kernel's default automatically, and a user
+      // pick (`enc.overridden`) sticks across the switch — the old `resolveDiffColormap`
+      // default-vs-override behaviour, for free.
       setDiffKernel(id);
       publishSettings({ diffKernel: id });
     },
@@ -979,17 +983,19 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   );
   const changeDiffColormap = useCallback(
     (id: Colormap) => {
-      // The picked id IS the override (incl. an explicit "none" = raw per-channel
-      // error); it sticks across kernel switches AND — in a stack — across flips (the
-      // shared diff-colormap setting, applied to every diff slot). HOME clears it.
-      setDiffColormapOverride(id);
+      // The picked id writes the viewport's ONE encoding store (`enc`). An explicit
+      // "None" = the raw per-channel error → clear the LUT by selecting the current
+      // curve id (so `enc.colormap` becomes "none"); otherwise select the LUT. The pick
+      // sticks across kernel switches AND — in a stack — across image↔diff flips (one
+      // viewport, one setting). HOME re-seeds `enc` to the kernel default.
+      enc.setEncoding(id === "none" ? enc.curveId : id);
       publishSettings({
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
         colormap: id,
         tonemap: effectiveTonemap,
       });
     },
-    [setDiffColormapOverride, publishSettings, effectiveTonemap],
+    [enc, publishSettings, effectiveTonemap],
   );
   // MODE menu picking SLIDE/BLEND delegates to the owner (which remounts to
   // `GpuComparePane` — the documented slide/blend remount) AND broadcasts on the
@@ -2181,8 +2187,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // menu) so a unified harness drives either pane with one call.
       changeColormap: changeDiffColormap,
       // HOME reset (the pane's own `onReset` chain): restore the HOISTED compare
-      // control (mode/kernel/split/blend, via the owner) AND re-seed the diff colormap
-      // to the focused slot's authored default — the same as the shell's HOME/dbl-click.
+      // control (mode/kernel/split/blend, via the owner) AND re-seed the viewport's ONE
+      // encoding — which, for a diff, IS the diff colormap → back to the kernel default.
       home: () => {
         const disableCompareHomeReset =
           typeof window !== "undefined" &&
@@ -2192,13 +2198,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         } else {
           setDiffKernel(diffKernelMeta.default); // direct-pane fallback (no hoisted owner)
         }
-        setDiffColormapOverride(diffSeedColormap); // focused slot's authored diff colormap
+        // Clear the override → the DERIVED diff colormap falls back to the (reset)
+        // kernel's default, re-resolved every render (ordering-independent, no matter
+        // which kernel HOME lands on).
+        enc.resetEncoding();
       },
     };
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, setDiffColormapOverride, diffSeedColormap, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2762,14 +2771,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             setDiffKernel(diffKernelMeta.default);
           }
         }
-        // DIFF colormap is display-only + pane-local — HOME re-seeds it to THIS
-        // (focused) slot's authored diff colormap (in a stack, that becomes the shared
-        // diff-colormap setting; standalone, the descriptor default).
-        if (diffMode) {
-          setDiffColormapOverride(diffSeedColormap);
-        }
+        // The diff colormap is DERIVED from `enc`. `enc.resetEncoding()` at the top of
+        // this reset cleared `enc.overridden`, so the diff colormap falls back to its
+        // kernel default automatically (re-resolved each render) — no explicit diff reset.
       }}
       extraModified={
+        // `enc.encodingModified` covers BOTH the image encoding AND (in diff mode) the
+        // diff colormap — they are one store now.
         enc.encodingModified ||
         peakModified ||
         gammaModified ||
@@ -2777,8 +2785,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         boundsModified ||
         deepFlatten.isModified ||
         !!props.channelModified ||
-        (hasCompare && !!compareSource?.compareModified) ||
-        (diffMode && diffColormapModified)
+        (hasCompare && !!compareSource?.compareModified)
       }
       // DIFF / RESERVING image slot: the caption chip (in `extraChips`) carries the
       // labeling, so the shell's own bottom-left LabelChip is suppressed — otherwise

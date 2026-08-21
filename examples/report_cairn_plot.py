@@ -368,17 +368,19 @@ def build_report() -> cp.Report:
     rep.grid(
         [
             [
+                # No authored colormap → each diff shows its KERNEL DEFAULT (flip/ssim
+                # → magma, abs → turbo). The colormap is the viewport's ONE display
+                # encoding, so double-click (HOME) on a pane resets it to that pane's
+                # visible-diff default (magma/turbo per kernel); a multi-select colormap
+                # pick mirrors across selected panes and is kept until HOME.
                 cp.Compare(
                     cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
-                    colormap="viridis",
                 ),
                 cp.Compare(
                     cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="ssim",
-                    colormap="viridis",
                 ),
                 cp.Compare(
                     cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="abs",
-                    colormap="viridis",
                 ),
             ]
         ]
