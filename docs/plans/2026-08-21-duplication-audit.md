@@ -350,3 +350,36 @@ diff-tag never reaches a light store; the tag). 639 node tests green (was 633). 
 parity harnesses green (compare-settings-sync / cpu-compare-fallback / page-wide-
 selection / realstack). typecheck 0; 243 pytest; core + gpu-image bundles rebuilt +
 synced. `uv.lock` untouched.
+
+---
+
+## D1 — DONE: the object-contain letterbox collapsed onto the ONE `computeFit` primitive (4 sites)
+
+**Design.** `renderers/region-select.ts` exports `computeFit`/`screenPerTexel` as THE
+shared object-contain screen↔texel primitive (`PixelValueOverlay` + `ImagePaneShell`
+already consume it). Four other sites re-expressed the identical
+`scale = min(box.w/natural, box.h/natural)` + `(box − disp)/2` centering inline; all
+four now call the primitive:
+- `GpuImagePane.viewportToUvRect` — the fit scale + centering come from `computeFit`
+  (full window); only the zoom/pan COMPOSITION (which is genuinely unique) stays inline.
+- `GpuImagePane.screenPxPerTexel` — `screenPerTexel` over the displayed `rawUv` crop
+  (the Q20 nearest/linear filter-switch threshold now shares the hover readout's scale).
+- `viewport/reframe.ts` — the home-fit letterbox scale `S`/`S2` from `screenPerTexel`.
+- `renderers/ImageOverlay.tsx` — the overlay-box letterbox rect from `computeFit`.
+
+Byte-identical by construction: each hand-copy fed `box.left/top = 0` (a size-only box)
+and either the full window or the raw uv `w/h`, which `computeFit` reproduces exactly
+(`imgLeft = box.left + (box.width − dispW)/2`, `visibleW = w·naturalW`).
+
+**Deleted code.** Four inline `Math.min(…/natural, …/natural)` + `(… − disp)/2`
+re-derivations (incl. `GpuImagePane`'s own comment naming the "must stay in EXACT
+lockstep" hazard — the coupling is now enforced by the shared call, not a comment).
+
+**Evidence.** Pinned by the existing harnesses that assert the four must agree on one
+geometry (hover pixel readout, resize reframe, overlay boxes) + the pure
+`region-select`/`reframe` unit tests: 639 node tests green, ALL 31 parity harnesses
+green. typecheck 0 (`check:plot-boundary` OK — the new `viewport → renderers/region-
+select` import is surface-internal); 243 pytest; core + gpu-image bundles rebuilt +
+synced. (Note: `reframe.ts`'s runtime-value import carries the `.ts` extension the
+node type-stripping runner requires, matching `region-select.ts`'s own `clamp.ts`
+import.) `uv.lock` untouched.

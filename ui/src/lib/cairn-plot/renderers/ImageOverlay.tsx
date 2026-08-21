@@ -6,6 +6,7 @@ import type {
 } from "../types";
 import { overlayClassColor } from "../types";
 import { useContainerSize } from "../hooks";
+import { computeFit } from "./region-select";
 
 export interface ImageOverlayProps {
   data: ImageOverlayData;
@@ -62,14 +63,19 @@ export default function ImageOverlay({
     if (cw <= 0 || ch <= 0 || naturalWidth <= 0 || naturalHeight <= 0) {
       return null;
     }
-    const scale = Math.min(cw / naturalWidth, ch / naturalHeight);
-    const dispW = naturalWidth * scale;
-    const dispH = naturalHeight * scale;
+    // Object-contain letterbox from the ONE shared primitive (`computeFit`, full
+    // window) — the SAME math the hover readout / marquee / pane uvRect use, so the
+    // overlay boxes can't drift off the image (D1).
+    const f = computeFit({
+      box: { left: 0, top: 0, width: cw, height: ch },
+      naturalWidth,
+      naturalHeight,
+    });
     return {
-      left: (cw - dispW) / 2,
-      top: (ch - dispH) / 2,
-      width: dispW,
-      height: dispH,
+      left: f.imgLeft,
+      top: f.imgTop,
+      width: f.visibleW * f.scale,
+      height: f.visibleH * f.scale,
     };
   }, [size.w, size.h, naturalWidth, naturalHeight]);
 

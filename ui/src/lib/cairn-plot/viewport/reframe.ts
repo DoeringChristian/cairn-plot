@@ -5,6 +5,7 @@
  * every genuine size change (enlarge enter/exit, window/container resize).
  */
 import type { Viewport } from "../hooks/use-image-viewport";
+import { screenPerTexel } from "../renderers/region-select.ts";
 
 /**
  * Center-preserving reframe when a pane's container box changes size.
@@ -63,8 +64,19 @@ export function reframeViewportForResize(
     };
   }
 
-  const S = Math.min(oldBox.width / naturalWidth!, oldBox.height / naturalHeight!);
-  const S2 = Math.min(newBox.width / naturalWidth!, newBox.height / naturalHeight!);
+  // The home-fit letterbox scale from the ONE shared primitive (full window) — the
+  // SAME `min(box.w/naturalW, box.h/naturalH)` the pane's uvRect / hover readout /
+  // overlay boxes use, so a resize reframe can't drift from them (D1).
+  const S = screenPerTexel({
+    box: { left: 0, top: 0, width: oldBox.width, height: oldBox.height },
+    naturalWidth: naturalWidth!,
+    naturalHeight: naturalHeight!,
+  });
+  const S2 = screenPerTexel({
+    box: { left: 0, top: 0, width: newBox.width, height: newBox.height },
+    naturalWidth: naturalWidth!,
+    naturalHeight: naturalHeight!,
+  });
   const zoom2 = S2 > 0 && S > 0 ? (zoom * S) / S2 : zoom;
   return {
     zoom: zoom2,

@@ -78,7 +78,7 @@ import { buildCompareModeMenu } from "../media-compare/compare-mode-menu";
 import SplitDivider from "../media-compare/SplitDivider";
 import { useSplitFlipKeys } from "../media-compare/use-split-flip-keys";
 import RefBadge from "../primitives/RefBadge";
-import { sourceTexelCenter } from "./region-select";
+import { sourceTexelCenter, computeFit, screenPerTexel } from "./region-select";
 import LabelChip from "../primitives/LabelChip";
 import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
 import ImageOverlay from "./ImageOverlay";
@@ -308,11 +308,20 @@ export function viewportToUvRect(
   if (naturalW <= 0 || naturalH <= 0 || paneBox.width <= 0 || paneBox.height <= 0) {
     return { x: 0, y: 0, w: 1, h: 1 };
   }
-  const scale = Math.min(paneBox.width / naturalW, paneBox.height / naturalH);
-  const dispW = naturalW * scale;
-  const dispH = naturalH * scale;
-  const imgLeft = (paneBox.width - dispW) / 2;
-  const imgTop = (paneBox.height - dispH) / 2;
+  // Object-contain fit (scale + centering) from the ONE shared primitive
+  // (`region-select.computeFit`, full window) — the SAME letterbox math the hover
+  // readout / marquee / overlay boxes use, so they can't drift (D1). Only the
+  // zoom/pan COMPOSITION below is this function's own.
+  const f = computeFit({
+    box: { left: 0, top: 0, width: paneBox.width, height: paneBox.height },
+    naturalWidth: naturalW,
+    naturalHeight: naturalH,
+  });
+  const scale = f.scale;
+  const dispW = f.visibleW * scale; // = naturalW * scale (full window)
+  const dispH = f.visibleH * scale;
+  const imgLeft = f.imgLeft;
+  const imgTop = f.imgTop;
   const z = Math.max(viewport.zoom, 1e-6);
   const w = paneBox.width / (z * dispW);
   const h = paneBox.height / (z * dispH);
@@ -341,7 +350,14 @@ export function screenPxPerTexel(
   const visibleW = rawUv.w * naturalW;
   const visibleH = rawUv.h * naturalH;
   if (visibleW <= 0 || visibleH <= 0 || box.width <= 0 || box.height <= 0) return 0;
-  return Math.min(box.width / visibleW, box.height / visibleH);
+  // The SAME object-contain scale the hover readout uses — the shared primitive over
+  // the CURRENTLY-DISPLAYED `rawUv` crop (D1); x/y don't affect scale.
+  return screenPerTexel({
+    box: { left: 0, top: 0, width: box.width, height: box.height },
+    naturalWidth: naturalW,
+    naturalHeight: naturalH,
+    sourceWindow: { x: 0, y: 0, w: rawUv.w, h: rawUv.h },
+  });
 }
 
 export default function GpuImagePane(backendProps: ImageBackendProps) {
