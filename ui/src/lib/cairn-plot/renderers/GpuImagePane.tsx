@@ -555,6 +555,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (t: string | null | undefined) => resolveEffectiveTonemap(t, false),
     [],
   );
+  // STABLE per-slot identity for the encoding OVERRIDE store (regression: a user's
+  // colormap pick was WIPED on a stacked/enlarge slot flip). `LeafView` threads the
+  // descriptor node's `sourceKey`; fall back to this pane's own source identity for
+  // standalone / card callers (a non-reused pane, so any stable value works).
+  const slotKey =
+    backendProps.slotKey ??
+    (hasCompare ? `A:${contentKeyA}` : hdrMode ? "hdr" : `img:${(props as SdrImageProps).imageUrl ?? ""}`);
   const enc = usePaneEncoding({
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,
@@ -562,6 +569,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     propColormap,
     propTonemap,
     resolveDefaultCurve,
+    slotKey,
   });
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
@@ -733,19 +741,50 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // kernel switches; HOME clears it. Seeded from the descriptor colormap.
   const [diffColormapOverride, setDiffColormapOverride, diffColormapMeta] =
     useResettableState<Colormap | null>(diffSeedColormap);
+  // PER-SLOT diff-colormap OVERRIDE store (mirrors `usePaneEncoding`'s per-slot
+  // encoding override): a user's explicit diff-colormap pick must SURVIVE a stacked
+  // image↔diff flip (flip to the image slot and back). Keyed by the compare slot
+  // identity (`contentKeyA|contentKeyB`); a genuine NEW compare slot / an authored
+  // descriptor-colormap change reseeds (controlled surface). Test toggle mirrors the
+  // encoding one so one harness run measures pre-fix (wipe) vs post-fix (survives).
+  const diffCmapOverrideBySlotRef = useRef<Map<string, Colormap | null>>(new Map());
+  const prevCompareSlotRef = useRef<string | null>(null);
+  const prevDiffDescCmapRef = useRef<Colormap | null>(null);
+  const diffCompareSlot = `${contentKeyA}|${contentKeyB}`;
   useEffect(() => {
-    // Same anti-churn gate as the kernel re-seed above: only (re)seed from a
-    // PRESENT compare descriptor, so an image slot in a stacked image↔diff flip
-    // does not reset the override to the kernel default and re-apply the descriptor
-    // colormap post-paint (a lag the pre-paint render would catch as a transient
-    // wrong-colormap present — e.g. turbo instead of magma).
+    // Anti-churn: only (re)seed from a PRESENT compare descriptor, so an image slot
+    // in a stacked image↔diff flip does not reset the override + re-apply post-paint
+    // (a lag the pre-paint render would catch as a transient wrong-colormap present).
     if (!compareSource) return;
     const c = compareSource.colormap;
-    setDiffColormapOverride(
-      c == null || c === "none" ? null : (c as string) === "viridis" ? ("turbo" as Colormap) : c,
-    );
+    const desc: Colormap | null =
+      c == null || c === "none" ? null : (c as string) === "viridis" ? ("turbo" as Colormap) : (c as Colormap);
+    const perSlotDisabled =
+      typeof window !== "undefined" &&
+      !!(window as unknown as { __cairnDisablePerSlotEncoding?: boolean }).__cairnDisablePerSlotEncoding;
+    const slotChanged = !perSlotDisabled && diffCompareSlot !== prevCompareSlotRef.current;
+    if (perSlotDisabled) {
+      // PRE-FIX behavior: reseed the override to the descriptor on every (re)appearance.
+      setDiffColormapOverride(desc);
+      return;
+    }
+    if (slotChanged) {
+      // A NEW compare slot (or first visit): restore that slot's stored override if
+      // the user picked one there, else seed from its descriptor colormap.
+      prevCompareSlotRef.current = diffCompareSlot;
+      prevDiffDescCmapRef.current = desc;
+      const stored = diffCmapOverrideBySlotRef.current.get(diffCompareSlot);
+      setDiffColormapOverride(stored !== undefined ? stored : desc);
+    } else if (desc !== prevDiffDescCmapRef.current) {
+      // SAME slot, the AUTHORED descriptor colormap changed → controlled surface:
+      // forget the stored override + adopt the descriptor. (A flip-BACK to the same
+      // slot has an unchanged `desc`, so it takes NEITHER branch — the pick survives.)
+      prevDiffDescCmapRef.current = desc;
+      diffCmapOverrideBySlotRef.current.delete(diffCompareSlot);
+      setDiffColormapOverride(desc);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareSource?.colormap, !!compareSource]);
+  }, [compareSource?.colormap, !!compareSource, diffCompareSlot]);
 
   // Cheap pure derivations (recomputed each render): the concrete kernel id (float
   // sources auto-dispatch flip→hdr-flip) and the EFFECTIVE diff colormap (override
@@ -935,7 +974,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeDiffColormap = useCallback(
     (id: Colormap) => {
       // The picked id IS the override (incl. an explicit "none" = raw per-channel
-      // error); it sticks across kernel switches. HOME clears it back to null.
+      // error); it sticks across kernel switches AND stacked flips (recorded PER
+      // SLOT so a flip away-and-back restores it). HOME clears it.
+      diffCmapOverrideBySlotRef.current.set(diffCompareSlot, id);
       setDiffColormapOverride(id);
       publishSettings({
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
@@ -943,7 +984,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         tonemap: effectiveTonemap,
       });
     },
-    [setDiffColormapOverride, publishSettings, effectiveTonemap],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setDiffColormapOverride, publishSettings, effectiveTonemap, diffCompareSlot],
   );
   // MODE menu picking SLIDE/BLEND delegates to the owner (which remounts to
   // `GpuComparePane` — the documented slide/blend remount) AND broadcasts on the
@@ -2134,15 +2176,53 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Alias mirroring `GpuComparePane`'s probe field name (the diff colormap
       // menu) so a unified harness drives either pane with one call.
       changeColormap: changeDiffColormap,
+      // HOME reset (the pane's own `onReset` chain): restore the HOISTED compare
+      // control (mode/kernel/split/blend, via the owner) AND clear the pane-local
+      // per-slot diff colormap override — the same as the shell's HOME/dbl-click.
       home: () => {
-        setDiffKernel(diffKernelMeta.default);
+        const disableCompareHomeReset =
+          typeof window !== "undefined" &&
+          !!(window as unknown as { __cairnDisableCompareHomeReset?: boolean }).__cairnDisableCompareHomeReset;
+        if (compareSource?.onCompareReset) {
+          if (!disableCompareHomeReset) compareSource.onCompareReset();
+        } else {
+          setDiffKernel(diffKernelMeta.default); // direct-pane fallback (no hoisted owner)
+        }
+        diffCmapOverrideBySlotRef.current.delete(diffCompareSlot);
         diffColormapMeta.reset();
       },
     };
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, diffColormapMeta]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, diffColormapMeta, compareSource, diffCompareSlot]);
+
+  // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
+  // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
+  // fragile DOM menu click — the reg: a user's colormap pick must SURVIVE a
+  // stacked/enlarge slot flip. No production code reads it (mirrors the diff probe).
+  useEffect(() => {
+    const el = paneRef.current as
+      | (HTMLDivElement & { __cairnImagePaneProbe?: unknown })
+      | null;
+    if (!el) return;
+    el.__cairnImagePaneProbe = {
+      get encodingId() {
+        return enc.encodingId;
+      },
+      get colormap() {
+        return enc.colormap;
+      },
+      get slotKey() {
+        return slotKey;
+      },
+      changeEncoding, // a user pick (records the per-slot override)
+      home: () => enc.resetEncoding(), // HOME clears this slot's override
+    };
+    return () => {
+      if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
+    };
+  }, [enc.encodingId, enc.colormap, slotKey, changeEncoding, enc]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
@@ -2655,10 +2735,28 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         boundsMeta.reset(); // min/max back to the descriptor colorRange seed
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
-        // DIFF: restore the kernel (echoing to the owner) + clear the colormap
-        // override back to the per-kernel defaults.
+        // COMPARE HOME: the VIEW MODE / kernel / split / blend live in the owner's
+        // hoisted `useCompareControl` (out of this pane's reach), so route their
+        // reset back through the owner — the old `GpuComparePane` reset the MODE too
+        // (`setCompareMode(compareModeMeta.default)`); hoisting the mode dropped it
+        // from the pane HOME. A diff↔slide transition re-lowers via `NodeDispatch`.
+        if (hasCompare) {
+          const disableCompareHomeReset =
+            typeof window !== "undefined" &&
+            !!(window as unknown as { __cairnDisableCompareHomeReset?: boolean }).__cairnDisableCompareHomeReset;
+          if (compareSource?.onCompareReset) {
+            // Descriptor path: the owner resets mode + kernel + split + blend.
+            if (!disableCompareHomeReset) compareSource.onCompareReset();
+          } else {
+            // Direct-pane fallback (cross-type card / diff harness — no hoisted
+            // owner): the mode is fixed by the caller, so reset only the local kernel.
+            setDiffKernel(diffKernelMeta.default);
+          }
+        }
+        // DIFF colormap is DISPLAY-only + pane-local (per-slot) — reset it here:
+        // clear this slot's override so it returns to the descriptor / per-kernel default.
         if (diffMode) {
-          setDiffKernel(diffKernelMeta.default);
+          diffCmapOverrideBySlotRef.current.delete(diffCompareSlot);
           diffColormapMeta.reset();
         }
       }}
@@ -2670,7 +2768,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         boundsMeta.isModified ||
         deepFlatten.isModified ||
         !!props.channelModified ||
-        (diffMode && (diffKernelMeta.isModified || diffColormapMeta.isModified))
+        (hasCompare && !!compareSource?.compareModified) ||
+        (diffMode && diffColormapMeta.isModified)
       }
       // DIFF / RESERVING image slot: the caption chip (in `extraChips`) carries the
       // labeling, so the shell's own bottom-left LabelChip is suppressed — otherwise

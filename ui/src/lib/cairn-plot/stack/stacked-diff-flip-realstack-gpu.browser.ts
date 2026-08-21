@@ -208,6 +208,22 @@ function stackedScalarMagmaGrid(): PlotDescriptor {
     },
   } as unknown as PlotDescriptor;
 }
+// A SINGLE compare in a given authored mode (reg 1: HOME must restore this mode
+// after the user switches away).
+const compareNode = (mode: "diff" | "split", label: string) => ({
+  kind: "compare" as const,
+  mode,
+  a: imghdr("runtime:ref"),
+  b: imghdr("runtime:fg"),
+  diffSubmode: "flip",
+  props: { toolbar: true, label },
+});
+function singleCompareGrid(mode: "diff" | "split"): PlotDescriptor {
+  return {
+    mode: "local",
+    root: { kind: "grid", cols: 1, gap: 8, children: [compareNode(mode, "Cmp")] },
+  } as unknown as PlotDescriptor;
+}
 
 // ---- oracle ------------------------------------------------------------------
 /** An IMAGE-mode present (identity op, no `b`) that is `isScalar` with a bound
@@ -249,6 +265,34 @@ const activeIdx = (hostId: string): number => {
   const v = el?.getAttribute("data-cairn-stack-active");
   return v == null ? -1 : parseInt(v, 10);
 };
+
+// The compare (`__cairnImageDiffProbe`) / image (`__cairnImagePaneProbe`) test
+// seams the ACTIVE reused pane publishes — re-queried each call so a getter reads
+// the LIVE state (each render replaces the seam object with fresh closures).
+interface DiffProbe {
+  compareMode: "diff" | "split" | "blend";
+  colormap: string;
+  changeCompareMode: (m: "diff" | "split" | "blend") => void;
+  changeColormap: (id: string) => void;
+  home: () => void;
+}
+interface ImgProbe {
+  encodingId: string;
+  colormap: string;
+  slotKey: string;
+  changeEncoding: (id: string) => void;
+  home: () => void;
+}
+function findProbe<T>(hostId: string, key: string): T | null {
+  const host = document.getElementById(hostId);
+  if (!host) return null;
+  for (const el of Array.from(host.querySelectorAll("*")) as unknown as Array<Record<string, unknown>>) {
+    if (el[key]) return el[key] as T;
+  }
+  return null;
+}
+const diffProbe = (hostId: string) => findProbe<DiffProbe>(hostId, "__cairnImageDiffProbe");
+const imgProbe = (hostId: string) => findProbe<ImgProbe>(hostId, "__cairnImagePaneProbe");
 
 async function main(): Promise<void> {
   try {
@@ -639,7 +683,141 @@ async function main(): Promise<void> {
       if (encMiss !== 0 || magmaPresents < 5) allOk = false;
     }
 
-    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable`);
+    // ============ PHASE F — HOME RESTORES THE AUTHORED COMPARE MODE (reg 1) ======
+    // A compare authored `mode:"diff"`: the user switches to SPLIT, then HOME/dbl-
+    // click. HOME must restore the DESCRIPTOR mode (diff). The view-mode is HOISTED
+    // into `useCompareControl` (out of the pane's HOME reach), so pre-fix HOME left
+    // it stuck in split. `__cairnDisableCompareHomeReset` toggles pre/post-fix in one
+    // run: pre-fix HOME leaves split (bug), post-fix restores diff.
+    const runHomeMode = async (
+      hostId: string,
+      authored: "diff" | "split",
+      switchTo: "diff" | "split",
+      disable: boolean,
+    ): Promise<{ afterSwitch: string; afterHome: string }> => {
+      (window as unknown as { __cairnDisableCompareHomeReset?: boolean }).__cairnDisableCompareHomeReset = disable;
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:420px;height:260px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: singleCompareGrid(authored) }));
+      await waitFor(() => !!diffProbe(hostId), 12000);
+      await sleep(200);
+      diffProbe(hostId)!.changeCompareMode(switchTo);
+      await waitFor(() => diffProbe(hostId)?.compareMode === switchTo, 4000);
+      const afterSwitch = diffProbe(hostId)?.compareMode ?? "?";
+      diffProbe(hostId)!.home();
+      await sleep(400);
+      await raf();
+      const afterHome = diffProbe(hostId)?.compareMode ?? "?";
+      root.unmount();
+      host.remove();
+      (window as unknown as { __cairnDisableCompareHomeReset?: boolean }).__cairnDisableCompareHomeReset = false;
+      note(`PHASE F (authored=${authored}, switch→${switchTo}, ${disable ? "pre-fix" : "post-fix"}): afterSwitch=${afterSwitch}, afterHome=${afterHome}`);
+      return { afterSwitch, afterHome };
+    };
+
+    const fPre = await runHomeMode("hfPre", "diff", "split", true);
+    report(fPre.afterSwitch === "split", `PHASE F setup: mode switched diff→split (${fPre.afterSwitch})`);
+    report(fPre.afterHome === "split", `PHASE F PRE-FIX: HOME does NOT restore the authored mode — stuck in split (bug reproduced: ${fPre.afterHome})`);
+    const fPost = await runHomeMode("hfPost", "diff", "split", false);
+    report(fPost.afterHome === "diff", `PHASE F POST-FIX: HOME restores the authored DIFF mode after a switch to split (${fPost.afterHome})`);
+    const fPost2 = await runHomeMode("hfPost2", "split", "diff", false);
+    report(fPost2.afterHome === "split", `PHASE F POST-FIX (reverse): authored SPLIT restored after a switch to diff + HOME (${fPost2.afterHome})`);
+    if (fPost.afterHome !== "diff" || fPost2.afterHome !== "split") allOk = false;
+
+    // ============ PHASE G — A COLORMAP PICK SURVIVES SLOT FLIPS (reg 2) ==========
+    // (G1) IMAGE colormap: a stacked [magma-scalar, plain image] grid. The user
+    // picks `magma` on the PLAIN image slot, flips away and back. The pick must
+    // SURVIVE (per-slot override). Pre-fix, the flip's props change reseeded the
+    // descriptor and WIPED it. (G2) DIFF colormap: a stacked [image, diff] grid — a
+    // picked diff colormap must survive an image↔diff flip too.
+    const runPickSurvives = async (
+      hostId: string,
+      disable: boolean,
+    ): Promise<{ img: { picked: string; afterFlip: string }; diff: { picked: string; afterFlip: string } }> => {
+      (window as unknown as { __cairnDisablePerSlotEncoding?: boolean }).__cairnDisablePerSlotEncoding = disable;
+
+      // -- G1: image colormap on the plain-image slot of [magma-scalar, plain] --
+      const hostA = document.createElement("div");
+      hostA.id = hostId + "A";
+      hostA.style.cssText = "width:420px;height:260px;background:#222;position:relative";
+      document.body.appendChild(hostA);
+      const rootA: Root = createRoot(hostA);
+      rootA.render(createElement(PlotApp, { descriptor: stackedScalarMagmaGrid() }));
+      await waitFor(() => document.querySelectorAll(`#${hostId}A [role='tab']`).length >= 2, 12000);
+      hostA.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      key("2"); // → slot 1 = plain image
+      await waitFor(() => activeIdx(hostId + "A") === 1, 4000);
+      await waitFor(() => !!imgProbe(hostId + "A"), 4000);
+      await sleep(150);
+      imgProbe(hostId + "A")!.changeEncoding("magma"); // an explicit colormap pick
+      await waitFor(() => imgProbe(hostId + "A")?.encodingId === "magma", 4000);
+      const imgPicked = imgProbe(hostId + "A")?.encodingId ?? "?";
+      key("1"); // → slot 0 (magma scalar) — a DIFFERENT propsKey
+      await waitFor(() => activeIdx(hostId + "A") === 0, 4000);
+      await sleep(150);
+      key("2"); // → back to the plain image slot
+      await waitFor(() => activeIdx(hostId + "A") === 1, 4000);
+      await sleep(200);
+      const imgAfter = imgProbe(hostId + "A")?.encodingId ?? "?";
+      rootA.unmount();
+      hostA.remove();
+
+      // -- G2: diff colormap on the diff slot of [image, diff] --
+      const hostB = document.createElement("div");
+      hostB.id = hostId + "B";
+      hostB.style.cssText = "width:420px;height:260px;background:#222;position:relative";
+      document.body.appendChild(hostB);
+      const rootB: Root = createRoot(hostB);
+      rootB.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+      await waitFor(() => document.querySelectorAll(`#${hostId}B [role='tab']`).length >= 2, 12000);
+      hostB.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      key("2"); // → slot 1 = diff
+      await waitFor(() => activeIdx(hostId + "B") === 1, 4000);
+      await waitFor(() => !!diffProbe(hostId + "B"), 4000);
+      await sleep(150);
+      diffProbe(hostId + "B")!.changeColormap("turbo"); // distinct from the flip default (magma)
+      await waitFor(() => diffProbe(hostId + "B")?.colormap === "turbo", 4000);
+      const diffPicked = diffProbe(hostId + "B")?.colormap ?? "?";
+      key("1"); // → image
+      await waitFor(() => activeIdx(hostId + "B") === 0, 4000);
+      await sleep(150);
+      key("2"); // → back to diff
+      await waitFor(() => activeIdx(hostId + "B") === 1, 4000);
+      await sleep(200);
+      const diffAfter = diffProbe(hostId + "B")?.colormap ?? "?";
+      rootB.unmount();
+      hostB.remove();
+
+      (window as unknown as { __cairnDisablePerSlotEncoding?: boolean }).__cairnDisablePerSlotEncoding = false;
+      note(`PHASE G (${disable ? "pre-fix" : "post-fix"}): image picked=${imgPicked}→afterFlip=${imgAfter}; diff picked=${diffPicked}→afterFlip=${diffAfter}`);
+      return { img: { picked: imgPicked, afterFlip: imgAfter }, diff: { picked: diffPicked, afterFlip: diffAfter } };
+    };
+
+    const gPre = await runPickSurvives("gPre", true);
+    report(gPre.img.picked === "magma", `PHASE G setup: image colormap pick applied (${gPre.img.picked})`);
+    report(
+      gPre.img.afterFlip !== "magma",
+      `PHASE G1 PRE-FIX: the image colormap pick is WIPED by a slot flip (bug reproduced: afterFlip=${gPre.img.afterFlip})`,
+    );
+    report(
+      gPre.diff.afterFlip !== "turbo",
+      `PHASE G2 PRE-FIX: the diff colormap pick is WIPED by an image↔diff flip (bug reproduced: afterFlip=${gPre.diff.afterFlip})`,
+    );
+    const gPost = await runPickSurvives("gPost", false);
+    report(
+      gPost.img.afterFlip === "magma",
+      `PHASE G1 POST-FIX: the image colormap pick SURVIVES a slot flip (afterFlip=${gPost.img.afterFlip})`,
+    );
+    report(
+      gPost.diff.afterFlip === "turbo",
+      `PHASE G2 POST-FIX: the diff colormap pick SURVIVES an image↔diff flip (afterFlip=${gPost.diff.afterFlip})`,
+    );
+    if (gPost.img.afterFlip !== "magma" || gPost.diff.afterFlip !== "turbo") allOk = false;
+
+    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + colormap picks survive flips`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

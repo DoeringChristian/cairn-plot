@@ -119,6 +119,8 @@ export interface HdrImageProps {
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
+  /** Stable per-slot content identity (see {@link ImageBackendProps.slotKey}). */
+  slotKey?: string;
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
@@ -190,6 +192,8 @@ export interface SdrImageProps {
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
+  /** Stable per-slot content identity (see {@link ImageBackendProps.slotKey}). */
+  slotKey?: string;
 }
 
 /**
@@ -333,6 +337,18 @@ export interface CompareSource {
    *  render on THIS unified pane, so a mode switch is an OP switch on the reused
    *  instance (NO remount) — not the old route-to-`GpuComparePane` remount. */
   onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
+  /** HOME / double-click reset for the HOISTED compare control (mode + kernel +
+   *  split + blend). The compare VIEW-MODE / kernel / split / blend state lives in
+   *  the owner's `useCompareControl` (hoisted out of the pane so it survives stacked
+   *  flips), so the pane's own HOME handler cannot reach it — it calls this to
+   *  restore those to the DESCRIPTOR (the old `GpuComparePane` reset every view-local
+   *  selection incl. the mode; the unified pane must too). Diff↔slide transitions
+   *  re-lower via `NodeDispatch`. Colormap/encoding are display-only + pane-local, so
+   *  the pane resets those itself. */
+  onCompareReset?: () => void;
+  /** True when the hoisted compare control (mode / kernel / split / blend) differs
+   *  from the descriptor — folds into the pane's HOME-enabled ("modified") state. */
+  compareModified?: boolean;
 }
 
 /**
@@ -412,6 +428,13 @@ export interface ImageBackendProps {
    *  when `compareSource` is present (a diff/compositor slot already renders the
    *  chrome) and by the CPU backend. Absent = today's plain-image chrome exactly. */
   reserveCompareChrome?: boolean;
+  /** A STABLE per-slot content identity (the descriptor node's `sourceKey`) set by
+   *  `LeafView`. In a STACKED / ENLARGE viewport ONE pane is reused across slots;
+   *  the pane keys a USER's explicit encoding/colormap OVERRIDE on this so a flip to
+   *  another slot and BACK does NOT wipe the pick (it survives until HOME or a new
+   *  pick). Absent (standalone / card callers) ⇒ the pane falls back to its own
+   *  source identity, and a single non-reused pane behaves as before. */
+  slotKey?: string;
 }
 
 /**
@@ -502,6 +525,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       channelMenu: p.channelMenu,
       channelModified: p.channelModified,
       onChannelReset: p.onChannelReset,
+      slotKey: p.slotKey,
     };
   }
   return {
@@ -535,6 +559,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     channelMenu: p.channelMenu,
     channelModified: p.channelModified,
     onChannelReset: p.onChannelReset,
+    slotKey: p.slotKey,
   };
 }
 

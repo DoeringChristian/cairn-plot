@@ -1378,3 +1378,74 @@ encoding-generation lag mechanism and reports what was measured.
 ALL 31 parity harnesses (metal-3, incl. the extended real-stack GPU harness Phase E);
 243 pytest; core + gpu-image bundles rebuilt + synced + committed; report (63 blocks)
 + gallery (27 types) regen clean. `uv.lock` left untouched.
+
+## Follow-up — DONE: two reused-pane control regressions (HOME-across-modes; colormap pick wiped by slot flips)
+
+Two user-reported regressions, both COLLATERAL of the reused-pane substrate the
+epic built — NOT the flicker fix chain the user suspected. Investigated to the
+introducing commit + mechanism BEFORE fixing; each REPRODUCED in the harness with
+a pre/post toggle (the artefact fires with the fix disabled, is gone with it on).
+
+### REGRESSION 1 — HOME does not restore the authored compare view-mode
+
+**Introducing commit + mechanism (ACCIDENTAL break).** `785385e`/`a96ab54` HOISTED
+the compare view-mode (viewMode/kernel/split/blend) out of the pane into
+`NodeDispatch`'s `useCompareControl` (override-null seeded from the descriptor), so
+it survives stacked flips. The DELETED `GpuComparePane.resetViewSelections` had reset
+the MODE on HOME (`setCompareMode(compareModeMeta.default)`, echoing to the owner —
+verified by reading `28e4275~1`); the migration ported the pane's HOME kernel+colormap
+resets into `GpuImagePane.onReset` but DROPPED the mode reset, because the mode moved
+to a hook the pane's HOME has no handle to. So after a user switches diff↔split, HOME
+reset zoom/encoding/kernel/colormap but left the hoisted mode stuck. Unnoticed break
+(no DONE note ever recorded dropping it); NOT a designed trade-off.
+
+**Fix.** `CompareSource` gains `onCompareReset` + `compareModified`; `useCompareControl`
+gains `reset` (null all four overrides → follow the descriptor) + `modified`; `NodeDispatch`
+threads them via `DiffLeafSpec` → `LeafView` `mergedProps` → the pane. `GpuImagePane.onReset`
+(and the probe `home`) now routes the compare reset back through the owner
+(`compareSource.onCompareReset()`), restoring the DESCRIPTOR mode+kernel+split+blend; a
+diff↔slide transition re-lowers via `NodeDispatch` (the accepted remount-on-mode-change).
+`extraModified` folds in `compareModified` so HOME lights up when the mode is off-descriptor.
+A DIRECT-pane fallback (cross-type card / the `gpu-image-diff` harness — no hoisted owner)
+keeps the local kernel reset. The display-only diff colormap stays reset in-pane.
+
+### REGRESSION 2 — an explicit colormap pick is wiped by a slot flip ("sometimes … non-diff image")
+
+**Introducing commit + mechanism (LONG-STANDING contract, made flip-reachable by the epic
+— NOT `cf92620`).** `usePaneEncoding`'s controlled-surface reseed forgets the override +
+reseeds whenever `propColormap`/`propTonemap` change. `cf92620` only MOVED that reseed from
+a `useEffect` into the render body (timing) — the wipe semantics predate it (verified against
+`cf92620~1`). On the REUSED stacked/enlarge pane (`785385e`/`a96ab54`) a slot flip changes
+those props, so the reseed WIPES the user's pick. "SOMETIMES" = only when the two slots'
+authored encodings differ (else `propsKey` is constant and nothing reseeds); "non-diff image"
+= a diff colormap lives in the separate `diffColormapOverride` (which had its OWN wipe: the
+reseed effect re-applied the descriptor on flip-BACK to the diff), while the IMAGE colormap is
+`usePaneEncoding`'s. So the user is right that the recent flicker fixes are not the cause; the
+epic's reused-pane routing is what turned a pre-existing controlled-surface reseed into a live
+flip-wipe (pre-epic the mixed-stack flip REMOUNTED, losing the pick a different way).
+
+**Fix (per-slot override storage — the stated rule).** A USER/sync encoding override is stored
+PER SLOT, keyed by a stable content identity (`LeafView` threads the descriptor node's
+`sourceKey` as `slotKey` → `ImageBackendProps` → both panes). `usePaneEncoding` distinguishes a
+SLOT FLIP (`slotKey` changed → RESTORE that slot's stored override, else seed from its descriptor)
+from an AUTHORED change (same slot, `propsKey` changed → controlled-surface reseed, forget the
+override). `setEncoding` records the override; `resetEncoding` (HOME) clears it. The diff colormap
+gets the SAME treatment in `GpuImagePane` (a per-compare-slot override map + a slot-identity guard
+on the reseed effect), so a diff-colormap pick also survives an image↔diff flip; HOME clears it.
+Threaded through `CpuImagePane` too. (Incidental: `display-encoding.ts` carried 2 literal NUL bytes
+in the `propsKey` template separators — normalized to spaces.)
+
+**Harness coverage (both, in `stacked-diff-flip-realstack-gpu` — the real
+`PlotApp→GridView→NodeDispatch→LeafView→GpuImagePane` GPU tree).** New PHASE F drives a compare
+authored `diff`, switches to `split` via the probe, HOME: pre-fix stays `split` (bug), post-fix
+restores `diff` (+ reverse split→diff). New PHASE G picks a colormap on the plain-image slot of a
+stacked `[magma-scalar, image]` grid and on the diff slot of `[image, diff]`, flips away and back:
+pre-fix the pick is WIPED (both), post-fix it SURVIVES (both). Pre/post measured in one run via
+`__cairnDisableCompareHomeReset` / `__cairnDisablePerSlotEncoding` toggles (the `__cairnDisableSyncResolve`
+idiom). Added a test-only `__cairnImagePaneProbe` seam (image encoding get/change/home; no production
+reader, mirrors the diff probe).
+
+**Gates.** typecheck; 628 node tests; ALL 31 parity harnesses (metal-3, incl. the extended
+real-stack GPU harness PHASES F+G — pre-fix reproduces, post-fix fixed); 243 pytest; core +
+gpu-image bundles rebuilt + synced + committed; report (63 blocks) + gallery (27 types) regen clean.
+`uv.lock` left untouched.

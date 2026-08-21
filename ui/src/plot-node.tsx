@@ -420,7 +420,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         // Keep the reserved compare chrome on the held frame (we ARE rendering a
         // compare node in a stack, so its chrome must stay the compare skeleton —
         // otherwise the hold itself would pop plain-image chrome for one frame).
-        return { ...(node.props ?? {}), source: dp.source, reserveCompareChrome: true };
+        return { ...(node.props ?? {}), source: dp.source, reserveCompareChrome: true, slotKey: sourceKey(node) };
       }
       const dsync: Record<string, unknown> = {};
       const vpg = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
@@ -446,6 +446,8 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         onCompareModeChange: diffSpec.onCompareModeChange,
         onSplitPositionChange: diffSpec.onSplitPositionChange,
         onBlendAlphaChange: diffSpec.onBlendAlphaChange,
+        onCompareReset: diffSpec.onCompareReset,
+        compareModified: diffSpec.compareModified,
       };
       return {
         ...(node.props ?? {}),
@@ -453,6 +455,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         compareSource,
         ...(dp.__diffOverlay ? { overlay: dp.__diffOverlay } : {}),
         ...dsync,
+        slotKey: sourceKey(node),
       };
     }
     const sharedProps: Record<string, unknown> = {};
@@ -498,7 +501,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         sharedProps.onChannelReset = () => selectChannels({});
       }
     }
-    return { ...sharedProps, ...(node.props ?? {}), ...dataProps };
+    return { ...sharedProps, ...(node.props ?? {}), ...dataProps, slotKey: sourceKey(node) };
   }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
@@ -760,6 +763,11 @@ interface DiffLeafSpec {
   onCompareModeChange: (mode: CompareViewMode) => void;
   onSplitPositionChange: (p: number) => void;
   onBlendAlphaChange: (a: number) => void;
+  /** HOME / double-click on the pane: restore the hoisted compare control (mode +
+   *  kernel + split + blend) to the descriptor. */
+  onCompareReset: () => void;
+  /** True when the hoisted compare control differs from the descriptor (HOME dot). */
+  compareModified: boolean;
 }
 
 /** The synthesized image leaf + static per-side derivations for a compare node,
@@ -815,6 +823,12 @@ interface CompareControl {
   setSplitPos: (p: number) => void;
   blendAlpha: number;
   setBlendAlpha: (a: number) => void;
+  /** HOME / double-click: drop every override → the control follows the DESCRIPTOR
+   *  again (mode + kernel + split + blend). The pane's own HOME can't reach this
+   *  hoisted state, so it calls this via `compareSource.onCompareReset`. */
+  reset: () => void;
+  /** True when any of mode/kernel/split/blend differs from the descriptor. */
+  modified: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1476,6 +1490,23 @@ function useCompareControl(node: PlotNode, settingsSyncGroupId: string | undefin
     });
   }, [settingsSyncGroupId]);
 
+  // HOME / double-click: drop every override so the control follows the DESCRIPTOR
+  // again. This is the compare half of the pane's HOME the old `GpuComparePane` did
+  // in-pane (`setCompareMode(compareModeMeta.default)` …); hoisting the mode out of
+  // the pane moved it out of the pane HOME's reach, so the pane routes HOME back
+  // here via `compareSource.onCompareReset`.
+  const reset = useCallback(() => {
+    setViewMode(null);
+    setDiffKernel(null);
+    setSplitPos(null);
+    setBlendAlpha(null);
+  }, []);
+  const modified =
+    (viewModeOverride !== null && viewModeOverride !== descriptorMode) ||
+    (kernelOverride !== null && kernelOverride !== descriptorKernel) ||
+    (splitOverride !== null && splitOverride !== descriptorSplit) ||
+    (blendOverride !== null && blendOverride !== descriptorBlend);
+
   return {
     viewMode: viewModeOverride ?? descriptorMode,
     setViewMode,
@@ -1485,6 +1516,8 @@ function useCompareControl(node: PlotNode, settingsSyncGroupId: string | undefin
     setSplitPos,
     blendAlpha: blendOverride ?? descriptorBlend,
     setBlendAlpha,
+    reset,
+    modified,
   };
 }
 
@@ -1544,6 +1577,8 @@ function NodeDispatch({ node }: { node: PlotNode }) {
         onCompareModeChange: control.setViewMode,
         onSplitPositionChange: control.setSplitPos,
         onBlendAlphaChange: control.setBlendAlpha,
+        onCompareReset: control.reset,
+        compareModified: control.modified,
       };
       return (
         <LazyGate reservedHeight={reservedHeightOf(node.props)}>

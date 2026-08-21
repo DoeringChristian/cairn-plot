@@ -441,6 +441,8 @@ function CpuSdrImagePane(
       const s = toSdrTonemap(t);
       return s === "gamma" || s === "linear" ? s : "srgb";
     },
+    // Per-slot override key: a stacked/enlarge flip must not wipe an explicit pick.
+    slotKey: props.slotKey ?? `img:${imageUrl ?? ""}`,
   });
   const colormap = enc.colormap as Colormap;
   const sdrTransfer = enc.curveId as TonemapOperator;
@@ -1110,6 +1112,8 @@ function CpuHdrImagePane(
     propColormap,
     propTonemap: tonemap,
     resolveDefaultCurve,
+    // Per-slot override key: a stacked/enlarge flip must not wipe an explicit pick.
+    slotKey: (props as { slotKey?: string }).slotKey ?? "hdr",
   });
   const colormap = enc.colormap as Colormap;
   const tonemapOp = enc.curveId as TonemapOperator;

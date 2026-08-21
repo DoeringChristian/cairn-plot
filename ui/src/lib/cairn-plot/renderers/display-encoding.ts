@@ -247,6 +247,15 @@ export interface PaneEncodingConfig {
    *  `resolveEffectiveTonemap`; the CPU-SDR transfer path coerces to
    *  srgb/gamma/linear). Must return a curve id. */
   resolveDefaultCurve: (propTonemap: string | null | undefined) => string;
+  /** A STABLE per-slot content identity (the descriptor node's `sourceKey`). In a
+   *  STACKED / ENLARGE viewport ONE pane is reused across slots; a flip changes the
+   *  descriptor props (`propColormap`/`propTonemap`), which — under the controlled-
+   *  surface reseed — WIPED a user's explicit encoding pick. When `slotKey` is set,
+   *  a USER/sync override is stored PER SLOT and RESTORED on a flip BACK to that
+   *  slot, so a slot flip never clears the pick (it survives until HOME or a new
+   *  pick). A genuine descriptor change for the SAME slot still reseeds. Absent ⇒
+   *  legacy behavior (any props change reseeds). */
+  slotKey?: string;
 }
 
 /** What a pane needs from the unified encoding state. */
@@ -313,9 +322,22 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
 
   const [encodingId, setEncodingId] = useState<string>(() => seedFor(arity));
   const memoryRef = useRef<Map<number, string>>(new Map());
+  // A USER/sync encoding OVERRIDE stored PER SLOT (`slotKey` → picked id). Survives
+  // a flip AWAY-and-BACK in a reused stacked/enlarge pane (see the `slotKey` doc).
+  // The slot's own authored change (controlled surface) deletes its entry.
+  const overridesRef = useRef<Map<string, string>>(new Map());
+  const slotKey = config.slotKey ?? "";
+  const prevSlotKeyRef = useRef<string>(slotKey);
   // Track the last props/arity so ONE effect can tell prop-reseed from arity-flip.
-  const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
+  const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
   const prevArityRef = useRef<number>(arity);
+  // Test-only toggle (matches the `__cairnDisableSyncResolve` idiom): when set, the
+  // per-slot override is ignored, restoring the PRE-FIX behavior (a slot flip — a
+  // props change — reseeds to the descriptor, WIPING the pick). Lets one harness run
+  // measure pre-fix (wipe) vs post-fix (survives) with the same driver.
+  const perSlotDisabled =
+    typeof window !== "undefined" &&
+    !!(window as unknown as { __cairnDisablePerSlotEncoding?: boolean }).__cairnDisablePerSlotEncoding;
 
   // COMMIT-SYNCHRONOUS RESEED (React's supported "adjust state during render" /
   // storing-information-from-previous-renders pattern). On a stacked flip the
@@ -324,17 +346,33 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   // paint-atomic flip render (which reads `encodingId` synchronously) paints the
   // PREVIOUS slot's encoding for one frame: an authored-`magma` scalar pane paints
   // raw gray-none/srgb before magma lands the next commit. Reseeding DURING RENDER
-  // (guarded on a propsKey change so it fires once, not a loop) updates `encodingId`
-  // BEFORE the pane's render closure reads it: React discards this pass and
-  // re-renders with the reseeded id, so the COMMITTED flip frame already carries the
-  // authored encoding. User/sync overrides + per-arity memory are preserved: they
-  // never change the descriptor propsKey, so this branch leaves them intact; a
-  // genuine descriptor change forgets them (the controlled-surface contract).
-  const propsKey = `${propColormap} ${String(propTonemap)}`;
-  if (propsKey !== prevPropsRef.current) {
+  // (guarded so it fires once, not a loop) updates `encodingId` BEFORE the pane's
+  // render closure reads it: React discards this pass and re-renders with the
+  // reseeded id, so the COMMITTED flip frame already carries the authored encoding.
+  //
+  // TWO distinct events change `propColormap`/`propTonemap`, distinguished by
+  // `slotKey`:
+  //   - SLOT FLIP (`slotKey` changed): a reused pane flipped to a DIFFERENT slot.
+  //     RESTORE that slot's stored override if the user picked one there, else seed
+  //     from its descriptor. This is what makes an explicit pick SURVIVE flips.
+  //   - AUTHORED CHANGE (same `slotKey`, `propsKey` changed): the descriptor's own
+  //     authored encoding changed — controlled-surface contract: forget THIS slot's
+  //     override + reseed. (Also the single-pane, no-flip authored-change case.)
+  const propsKey = `${propColormap} ${String(propTonemap)}`;
+  const slotChanged = !perSlotDisabled && slotKey !== prevSlotKeyRef.current;
+  if (slotChanged) {
+    prevSlotKeyRef.current = slotKey;
+    prevPropsRef.current = propsKey;
+    prevArityRef.current = arity;
+    memoryRef.current.clear(); // per-arity memory is slot-local
+    const ov = overridesRef.current.get(slotKey);
+    setEncodingId(ov ?? seedFor(arity));
+  } else if (propsKey !== prevPropsRef.current) {
+    prevSlotKeyRef.current = slotKey;
     prevPropsRef.current = propsKey;
     prevArityRef.current = arity;
     memoryRef.current.clear();
+    overridesRef.current.delete(slotKey);
     setEncodingId(seedFor(arity));
   }
 
@@ -361,15 +399,19 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
       // Back-compat: a sync peer may still publish `viridis` → alias to `turbo`.
       const id = rawId === "viridis" ? "turbo" : rawId;
       memoryRef.current.set(arity, id);
+      // Record the EXPLICIT pick for THIS slot so a flip away-and-back restores it.
+      overridesRef.current.set(slotKey, id);
       setEncodingId(id);
     },
-    [arity],
+    [arity, slotKey],
   );
 
   const resetEncoding = useCallback(() => {
     memoryRef.current.clear();
+    // HOME clears THIS slot's override → the reseed returns to the descriptor.
+    overridesRef.current.delete(slotKey);
     setEncodingId(seedFor(arity));
-  }, [seedFor, arity]);
+  }, [seedFor, arity, slotKey]);
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
   const activeEncoding = getEncoding(encodingId);
