@@ -1,5 +1,5 @@
 {
-  "$comment": "Cross-language contract for cairn-plot's cross-face string enums (colormaps, HDR tone-map operators, public compare-kernel modes) AND the shared builder-name set (the composable builders both faces expose). This ONE file is the canonical set; the TS sources are pinned to it by ui/src/lib/cairn-plot/contracts.test.ts + ui/src/lib/cairn-plot/builder/builders.test.ts and the Python side by tests/test_contracts.py. To change a set, edit this file AND both language sources — a single edit on either side fails its guard. Order is documentation only; every guard compares as a set.",
+  "$comment": "Cross-language contract for cairn-plot's cross-face string enums (colormaps, HDR tone-map operators, public compare-kernel modes, compare view-modes/aligns/fits, and pixel-value notations) PLUS two mappings (the back-compat colormap alias table and the public-mode->kernel-id `diffSubmode` table) AND the shared builder-name set (the composable builders both faces expose). This ONE file is the canonical set; the TS sources are pinned to it by ui/src/lib/cairn-plot/contracts.test.ts + ui/src/lib/cairn-plot/builder/builders.test.ts and the Python side by tests/test_contracts.py. To change a set, edit this file AND both language sources — a single edit on either side fails its guard. Order is documentation only; every guard compares as a set (mappings compare key+value).",
   "colormaps": [
     "turbo",
     "plasma",
@@ -7,6 +7,10 @@
     "red-green",
     "red-blue"
   ],
+  "$comment_colormapAliases": "Back-compat colormap ALIAS mapping (audit addendum D3): removed name -> canonical replacement. `viridis` was dropped when tev-mapped `turbo` became the default sequential map, so an incoming `viridis` resolves to `turbo` rather than erroring. ONE runtime source per face — Python `_COLORMAP_ALIASES` (components.py) <-> TS `COLORMAP_ALIASES` (colormaps/lut.ts, which `aliasColormap` and `image/encodings/registry.ts`'s `getEncoding` both delegate to). The guard checks KEY+VALUE; contracts.test.ts additionally asserts every alias target is a real colormap.",
+  "colormapAliases": {
+    "viridis": "turbo"
+  },
   "tonemapOperators": [
     "linear",
     "srgb",
@@ -38,6 +42,39 @@
     "flip",
     "flip_ldr",
     "ssim"
+  ],
+  "$comment_compareKernelModes": "The public `cp.Compare(mode=)` diff-name -> descriptor `diffSubmode` mapping, hand-mirrored by Python `_COMPARE_KERNEL_MODES` (components.py) and TS `COMPARE_KERNEL_MODES` (builder/validate.ts). Its KEYS == `compareKernelPublicNames` (both guards assert this). Its VALUES are the `diffSubmode` tokens the descriptor carries; contracts.test.ts additionally asserts every value resolves through `resolveDiffKernelId` + the kernel registry (`getDiffKernel`) for both u8 and float sources, so a registry kernel-id rename can no longer drift the tables silently (audit M6). Note `flip`/`flip_ldr` are MENU TOKENS, not kernel ids: they auto-dispatch client-side to `flip`/`hdr-flip`/`flip-ldr-forced`.",
+  "compareKernelModes": {
+    "signed": "signed",
+    "abs": "absolute",
+    "square": "squared",
+    "rel_signed": "relative_signed",
+    "rel_abs": "relative_absolute",
+    "rel_square": "relative_squared",
+    "flip": "flip",
+    "flip_ldr": "flip_ldr",
+    "ssim": "ssim"
+  },
+  "$comment_compareEnums": "Compare view-compositions + mismatched-size operand handling (audit M5): `compareViewModes` = `cp.Compare(mode=)` non-diff views; `compareAligns`/`compareFits` = `cp.Compare(align=, fit=)`. Python `_COMPARE_VIEW_MODES`/`_COMPARE_ALIGNS`/`_COMPARE_FITS` (components.py) <-> TS `COMPARE_VIEW_MODES`/`COMPARE_ALIGNS`/`COMPARE_FITS` (builder/validate.ts).",
+  "compareViewModes": [
+    "slide",
+    "blend"
+  ],
+  "compareAligns": [
+    "top-left",
+    "center",
+    "top-right",
+    "bottom-left",
+    "bottom-right"
+  ],
+  "compareFits": [
+    "crop",
+    "fill"
+  ],
+  "$comment_pixelValueNotations": "TEV pixel-value overlay notation kwarg (audit M5): Python `_PIXEL_VALUE_NOTATIONS` (components.py) <-> TS `PIXEL_VALUE_NOTATIONS` (builder/validate.ts). The rendering type union `PixelValueNotation` (primitives/PixelValueOverlay.tsx) is derived FROM that TS list (no third copy).",
+  "pixelValueNotations": [
+    "decimal",
+    "int"
   ],
   "builders": [
     "line",

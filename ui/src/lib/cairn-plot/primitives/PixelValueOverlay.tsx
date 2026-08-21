@@ -88,8 +88,15 @@ const LABEL_SHADOW_OFFSET_FRAC = 0.06;
  * The convention maps consistently across the 8-bit (`uint8`) and float
  * (`unit`) pipelines: a stored `uint8` value is `v/255` in decimal; a `unit`
  * float value is `v*255` in int. HDR values > 1.0 are shown, never clamped.
+ *
+ * DERIVED (audit M5): the notation set has ONE runtime source of truth —
+ * `PIXEL_VALUE_NOTATIONS` in `builder/validate.ts` (the same list the cross-
+ * language contract pins to Python). This union is a type-only projection of
+ * that tuple via `typeof import(...)` — no runtime import, so the primitive
+ * pulls nothing from the builder layer and the two can never drift.
  */
-export type PixelValueNotation = "decimal" | "int";
+export type PixelValueNotation =
+  (typeof import("../builder/validate"))["PIXEL_VALUE_NOTATIONS"][number];
 
 /** Value scale of a raw sample: `uint8` = 0..255 stored bytes; `unit` = float
  *  scene value where 1.0 is SDR white (the HDR pipeline). */
