@@ -258,6 +258,20 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // diff/identity ops ignore it, so the single-image + diff paths are unaffected. See
 // engine/image-engine.ts's contentParam handling + content-ops/wgsl.ts.
 @group(0) @binding(41) var<uniform> u_bind13: vec4<f32>;
+// Logical binding 14 (uniform vec4: DISPLAY-space post-processing — the 8-bit
+// ImageProcessing block's brightness/contrast/flipSign) -> native binding
+// 14*3+2 = 44. .x = brightness, .y = contrast, .z = flipSign (0/1); .w reserved.
+// Applied as a FINAL affine in the ENCODED (display) color space AFTER the
+// output-encode — the numeric mirror of the CPU SDR pane's CSS filter
+// (media-compare/post-processing's brightness(1+b) contrast(1+c) invert), so one
+// knob renders identically on the CPU (CSS) and GPU (shader) backends (audit H1).
+// Defaults to vec4(0) when the caller omits it (zero-filled): brightness 0 +
+// contrast 0 + flipSign 0 = cairnDisplayAdjust identity, so every existing case
+// (and every path where the pane sets no processing) renders bit-for-bit as
+// before. exposure/offset are NOT here — they are lifted top-level and applied in
+// scene-linear space (u_bind2.x / u_bind6). Ported byte-identically from
+// image/tonemap.ts's applyDisplayAdjust1.
+@group(0) @binding(44) var<uniform> u_bind14: vec4<f32>;
 
 // Display-transfer stage — the SDR sRGB/gamma OETF (+ the sRGB EOTF that
 // LINEARIZES an 8-bit source when srgbDecode/u_bind8 is set) and the EXTENDED
@@ -355,6 +369,23 @@ ${buildTonemapCurvesWGSL({ remaps: true })}
 // defaultEncoding; a split/blend composite is LIGHT (k=3) displayed as a plain
 // image (curves).
 ${buildContentOpWGSL()}
+
+// DISPLAY-space post-processing (brightness/contrast/flipSign) — the numeric
+// mirror of image/tonemap.ts's applyDisplayAdjust1 (which itself is the numeric
+// definition of the CPU SDR pane's CSS filter). Applied to the ENCODED display
+// color AFTER the output-encode: brightness(1+b) then contrast(1+c) then, when
+// flipSign, invert(1). UNCLAMPED — the surface write / readback clamps to [0,1],
+// matching CSS rasterization. With the zero-filled default (b=0,c=0,flip=0) this
+// is the identity, so every non-processing path is byte-for-byte unchanged.
+fn cairnDisplayAdjust(c: vec3<f32>) -> vec3<f32> {
+  let brightness = u_bind14.x;
+  let contrast = u_bind14.y;
+  let flip = u_bind14.z > 0.5;
+  var v = c * (1.0 + brightness);
+  v = (v - vec3<f32>(0.5)) * (1.0 + contrast) + vec3<f32>(0.5);
+  if (flip) { v = vec3<f32>(1.0) - v; }
+  return v;
+}
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
@@ -469,19 +500,19 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       let lin = cairnSignedAnalyticColor(scalar);
       let hasG = gamma > 0.0;
       if (hdrOut) {
-        return vec4<f32>(
+        let enc = vec3<f32>(
           extendedOutputEncodeF(lin.r, gamma, hasG),
           extendedOutputEncodeF(lin.g, gamma, hasG),
           extendedOutputEncodeF(lin.b, gamma, hasG),
-          1.0,
         );
+        return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
       }
-      return vec4<f32>(
+      let enc = vec3<f32>(
         outputEncodeF(lin.r, gamma, hasG),
         outputEncodeF(lin.g, gamma, hasG),
         outputEncodeF(lin.b, gamma, hasG),
-        1.0,
       );
+      return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
     }
     let normMode = i32(round(u_bind9.x));
     let boundsActive = u_bind9.w > 0.5;
@@ -508,12 +539,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       let hasGe = ge > 0.0;
       if (hdrOut) {
         let e = extendedOutputEncodeF(idx, ge, hasGe);
-        return vec4<f32>(e, e, e, 1.0);
+        return vec4<f32>(cairnDisplayAdjust(vec3<f32>(e, e, e)), 1.0);
       }
       let e = outputEncodeF(idx, ge, hasGe);
-      return vec4<f32>(e, e, e, 1.0);
+      return vec4<f32>(cairnDisplayAdjust(vec3<f32>(e, e, e)), 1.0);
     }
-    return vec4<f32>(cairnLutColor(t_bind1, idx, 0, filterLinear), 1.0);
+    return vec4<f32>(cairnDisplayAdjust(cairnLutColor(t_bind1, idx, 0, filterLinear)), 1.0);
   }
 
   // 3) tone-map operator: HDR [0,inf) -> display-linear [0,1] (or [0,peak] for
@@ -529,18 +560,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     // origin-mirrored) sRGB OETF, or the extended power curve for the Gamma
     // operator (hasGamma). Values above 1 / below 0 survive as extended
     // brightness. See extendedOutputEncodeF + image/tonemap.ts's doc block.
-    return vec4<f32>(
+    let enc = vec3<f32>(
       extendedOutputEncodeF(rgb.r, gamma, hasGamma),
       extendedOutputEncodeF(rgb.g, gamma, hasGamma),
       extendedOutputEncodeF(rgb.b, gamma, hasGamma),
-      1.0,
     );
+    return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
   }
-  return vec4<f32>(
+  let enc = vec3<f32>(
     outputEncodeF(rgb.r, gamma, hasGamma),
     outputEncodeF(rgb.g, gamma, hasGamma),
     outputEncodeF(rgb.b, gamma, hasGamma),
-    1.0,
   );
+  return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
 }
 `;
