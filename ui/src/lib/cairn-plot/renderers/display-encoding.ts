@@ -317,16 +317,32 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
   const prevArityRef = useRef<number>(arity);
 
+  // COMMIT-SYNCHRONOUS RESEED (React's supported "adjust state during render" /
+  // storing-information-from-previous-renders pattern). On a stacked flip the
+  // descriptor props (propColormap/propTonemap) change in the FLIP COMMIT, but a
+  // useEffect reseed lands the authored encoding ONE COMMIT LATER, so the pane's
+  // paint-atomic flip render (which reads `encodingId` synchronously) paints the
+  // PREVIOUS slot's encoding for one frame: an authored-`magma` scalar pane paints
+  // raw gray-none/srgb before magma lands the next commit. Reseeding DURING RENDER
+  // (guarded on a propsKey change so it fires once, not a loop) updates `encodingId`
+  // BEFORE the pane's render closure reads it: React discards this pass and
+  // re-renders with the reseeded id, so the COMMITTED flip frame already carries the
+  // authored encoding. User/sync overrides + per-arity memory are preserved: they
+  // never change the descriptor propsKey, so this branch leaves them intact; a
+  // genuine descriptor change forgets them (the controlled-surface contract).
+  const propsKey = `${propColormap} ${String(propTonemap)}`;
+  if (propsKey !== prevPropsRef.current) {
+    prevPropsRef.current = propsKey;
+    prevArityRef.current = arity;
+    memoryRef.current.clear();
+    setEncodingId(seedFor(arity));
+  }
+
   useEffect(() => {
-    const propsKey = `${propColormap} ${String(propTonemap)}`;
-    if (propsKey !== prevPropsRef.current) {
-      // Controlled surface: the descriptor changed → reseed + forget overrides.
-      prevPropsRef.current = propsKey;
-      prevArityRef.current = arity;
-      memoryRef.current.clear();
-      setEncodingId(seedFor(arity));
-      return;
-    }
+    // ARITY-flip (channel selector) reseed only, props unchanged here (the
+    // render-time reseed above absorbed any concurrent prop change + stamped
+    // prevArityRef), so this fires on a pure arity change. Kept in an effect: an
+    // arity flip is a user gesture, not the flip-commit critical path.
     if (arity !== prevArityRef.current) {
       prevArityRef.current = arity;
       const avail = idsFor(arity);
@@ -338,7 +354,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
       if (next !== encodingId) setEncodingId(next);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propColormap, propTonemap, arity]);
+  }, [arity]);
 
   const setEncoding = useCallback(
     (rawId: string) => {

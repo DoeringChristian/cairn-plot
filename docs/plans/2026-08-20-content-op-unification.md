@@ -1328,3 +1328,53 @@ the user sees is fixed.
 harnesses (metal-3, incl. the extended real-stack GPU harness); 243 pytest; core +
 gpu-image bundles rebuilt + synced + committed; report (63 blocks) + gallery (27
 types) regen clean. `uv.lock` left untouched.
+
+## Follow-up — DONE: authored-colormap flash on flips (encoding generation lag → commit-synchronous reseed)
+
+**User report (after the reference-flash fix a790e34).** The reference flash is gone,
+replaced by a NEW one-frame artefact: the OFFICIAL-FLIP slot (a scalar image with
+AUTHORED `colormap="magma"`) occasionally paints ONE frame WITHOUT magma — raw
+grayscale scalar — on flips. **Same bug class, one layer up:** the a790e34
+present-gate covered which PIPELINE drew a frame; this covers which ENCODING
+GENERATION it drew with.
+
+**Mechanism (code reading, no repro).** `usePaneEncoding`
+(`renderers/display-encoding.ts`) held the active `encodingId` in `useState` and
+RESEEDED it from `propColormap`/`propTonemap` in a `useEffect` — ONE COMMIT LATER.
+The paint-atomic flip render (which reads `encodingId` synchronously) therefore
+painted the PREVIOUS slot's encoding on the flip commit; magma landed the next
+commit. Before a790e34 this was masked because that commit painted the *held*
+previous frame; making the flip commit render immediately unmasked it. Presentability
+had covered pipeline, not encoding generation.
+
+**Fix — commit-synchronous encoding derivation (`display-encoding.ts`).** The
+descriptor reseed moved from the `useEffect` into the RENDER body as React's
+supported *adjust-state-during-render* / storing-information-from-previous-renders
+pattern: when the descriptor `propsKey` differs from `prevPropsRef` DURING RENDER,
+reseed `encodingId` + clear per-arity memory (`setEncodingId` during render →
+React discards the pass and re-renders with the reseeded id, so the COMMITTED flip
+frame already carries the authored encoding). Guarded on the propsKey change so it
+fires once, not a loop. Preserved exactly: user/sync-override stickiness + per-arity
+memory (neither changes the descriptor propsKey, so the branch leaves them intact),
+alias handling, sync-bus adoption, HOME reset. The pure ARITY-flip reseed (channel
+selector — a user gesture, not the flip-commit critical path) stays in an effect.
+
+**Tripwire extended.** `ImageParams.authoredColormap` (test-only, set = the
+descriptor authored a colormap LUT for this single-image pane) is recorded per
+present; `test-hooks`' `isEncodingGenerationMismatch(r)` flags `mode:"image" &&
+!contentOpId && !hasSrcB && authoredColormap && !hasColormap` — an authored-colormap
+pane drawn with no colormap bound (the stale-generation frame). Param-coherent, so
+the source⊗encode oracles were silent; this catches the WRONG GENERATION. The
+real-stack GPU harness grew Phase E — a stacked `[magma-scalar image, plain image]`
+grid flipped fast — asserting the magma slot is exercised (non-vacuous) and ZERO
+encoding-generation mismatches. (A deliberate user curve-override on a
+colormap-authored pane is a benign case of this predicate's shape; the flip
+harnesses drive descriptor flips only, so the tripwire stays precise.)
+
+**ACCEPTANCE.** The user's own re-test remains the acceptance gate; this closes the
+encoding-generation lag mechanism and reports what was measured.
+
+**Gates.** typecheck; 628 node tests (626 + 2 new `isEncodingGenerationMismatch`);
+ALL 31 parity harnesses (metal-3, incl. the extended real-stack GPU harness Phase E);
+243 pytest; core + gpu-image bundles rebuilt + synced + committed; report (63 blocks)
++ gallery (27 types) regen clean. `uv.lock` left untouched.

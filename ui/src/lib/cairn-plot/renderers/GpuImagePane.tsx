@@ -605,6 +605,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // remap and for a colormap LUT (neither has a peak). γ / EV / OFF gate off the
   // ACTIVE encoding's param manifest (see the slider block below).
   const activeIsCurve = getEncoding(enc.encodingId)?.kind === "curve";
+  // TEST-ONLY tripwire tag: did the DESCRIPTOR author a colormap LUT for this pane?
+  // A plain identity present with NO colormap bound while this is true is the
+  // encoding-generation lag (`isEncodingGenerationMismatch`). Static, from the
+  // descriptor prop — independent of the (possibly lagging) live `enc` state, so it
+  // catches a stale-generation present rather than agreeing with it.
+  const authoredColormapIsLut = propColormap !== "none" && getEncoding(propColormap)?.kind === "lut";
 
   // GRAY NONE (the plain-grayscale "none" DATA encoding — HDR-native follow-up).
   // A SINGLE-CHANNEL source with no colormap LUT is DATA, not light: its raw scalar
@@ -1889,7 +1895,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // last-line pane invariant.)
     if (hasCompare) return false;
     try {
-      const ok = handle.render({ ...params, compareIntended: hasCompare });
+      const ok = handle.render({ ...params, compareIntended: hasCompare, authoredColormap: authoredColormapIsLut });
       if (!ok) setEngineFailed(true);
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -1911,7 +1917,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // (`imageUrl`), a compare toggle (`hasCompare`), a deep toggle (`deepActive`),
     // or the presence of the `b` operand — else the guard would compare against a
     // stale expected id and hold the previous frame forever.
-    hasCompare, deepActive, hdrMode ? null : (props as SdrImageProps).imageUrl, compareSource?.b]);
+    hasCompare, deepActive, hdrMode ? null : (props as SdrImageProps).imageUrl, compareSource?.b,
+    // TEST-ONLY tripwire tag (fresh across a descriptor colormap change).
+    authoredColormapIsLut]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.

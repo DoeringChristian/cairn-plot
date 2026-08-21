@@ -61,6 +61,7 @@ import {
   stopPaintPhaseLog,
   getPaintPhaseLog,
   isPipelineMismatch,
+  isEncodingGenerationMismatch,
   type PaneRenderRecord,
   type PaintPhaseRecord,
 } from "../engine/test-hooks";
@@ -135,11 +136,15 @@ function registerFloatData(): void {
     dtype: "<f4",
     precision: "f32" as const,
   });
+  // A k=1 SCALAR float source (a ramp) for the authored-colormap encoding-lag test.
+  const scalar = new Float32Array(32 * 32);
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) scalar[y * 32 + x] = x / 31;
   registerRuntimeEntries({
     "runtime:img": mk(lightRGB(0.85, (x) => 0.1 * (x / 31))),
     "runtime:img2": mk(lightRGB(0.88, (_x, y) => 0.09 * (y / 31))),
     "runtime:ref": mk(lightRGB(0.8, (_x, y) => 0.15 * (y / 31))),
     "runtime:fg": mk(lightRGB(0.82, (x) => 0.13 * (x / 31))),
+    "runtime:scalar": { kind: "float" as const, data: scalar, shape: [32, 32], dtype: "<f4", precision: "f32" as const },
   });
 }
 
@@ -179,6 +184,27 @@ function stackedGrid(): PlotDescriptor {
       gap: 8,
       mode: "stacked",
       children: [imageLeaf("runtime:img", "Image"), diffCompare("Diff")],
+    },
+  } as unknown as PlotDescriptor;
+}
+// A stacked grid whose slot 0 is a k=1 SCALAR float image AUTHORED with colormap
+// "magma" (the reported OFFICIAL-FLIP slot) and slot 1 a plain RGB image — flipping
+// to slot 0 must NEVER paint a frame without magma (the encoding-generation lag).
+const magmaScalarLeaf = (label: string) => ({
+  kind: "plot" as const,
+  renderer: "image",
+  data: imghdr("runtime:scalar"),
+  props: { toolbar: true, label, colormap: "magma" },
+});
+function stackedScalarMagmaGrid(): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: 2,
+      gap: 8,
+      mode: "stacked",
+      children: [magmaScalarLeaf("Magma scalar"), imageLeaf("runtime:img", "Image")],
     },
   } as unknown as PlotDescriptor;
 }
@@ -573,7 +599,47 @@ async function main(): Promise<void> {
     report(postFix.mismatch === 0, `POST-FIX: ZERO pipeline-mismatch presents (identity blit while a compare is intended) (${postFix.mismatch})`);
     if (postFix.stale !== 0 || postFix.holds !== 0 || postFix.mismatch !== 0 || postFix.measured < 20) allOk = false;
 
-    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic`);
+    // ============ PHASE E — AUTHORED-COLORMAP ENCODING GENERATION ============
+    // A stacked [magma-scalar image, plain image] grid: flipping to the authored-
+    // magma slot must never paint a frame with NO colormap bound (the encoding
+    // reseed landing a commit late = raw gray-none for one frame). The render-log
+    // `isEncodingGenerationMismatch` tripwire asserts ZERO such presents now that the
+    // encoding derivation is commit-synchronous.
+    {
+      const host = document.createElement("div");
+      host.id = "rpE";
+      host.style.cssText = "width:520px;height:280px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: stackedScalarMagmaGrid() }));
+      await waitFor(() => document.querySelectorAll("#rpE [role='tab']").length >= 2, 12000);
+      host
+        .querySelector<HTMLElement>("[data-cairn-grid-root]")
+        ?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      key("2");
+      await waitFor(() => activeIdx("rpE") === 1, 4000);
+      await sleep(250);
+      key("1");
+      await waitFor(() => activeIdx("rpE") === 0, 4000);
+      await sleep(250);
+      startPaneRenderLog();
+      for (let i = 0; i < 100; i++) {
+        key(activeIdx("rpE") === 0 ? "2" : "1");
+        await sleep(4);
+      }
+      await sleep(400);
+      const log = getPaneRenderLog();
+      stopPaneRenderLog();
+      root.unmount();
+      const encMiss = log.filter(isEncodingGenerationMismatch).length;
+      const magmaPresents = log.filter((r) => r.mode === "image" && r.authoredColormap === true).length;
+      note(`PHASE E magma-scalar flip storm: ${log.length} presents, magma-slot image presents=${magmaPresents}, encoding-gen mismatches=${encMiss}`);
+      report(magmaPresents >= 5, `PHASE E exercised the authored-magma scalar slot (${magmaPresents} presents)`);
+      report(encMiss === 0, `PHASE E: ZERO encoding-generation mismatches — authored magma never drops to gray-none on a flip (${encMiss})`);
+      if (encMiss !== 0 || magmaPresents < 5) allOk = false;
+    }
+
+    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
