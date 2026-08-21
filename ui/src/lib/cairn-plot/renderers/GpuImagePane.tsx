@@ -1,98 +1,67 @@
 /**
- * GpuImagePane — the WebGPU image BACKEND: one of two interchangeable image
- * backends (see `CpuImagePane.tsx` for the CPU/2D-canvas other); both accept
- * the shared `ImageBackendProps` union (`renderers/image-backend.ts`) and are
- * chosen upstream by the render mode (`resolveRenderMode` — cpu | gpu | auto).
+ * GpuImagePane — the WebGPU image BACKEND. One of two interchangeable image
+ * backends (see `CpuImagePane.tsx` for the CPU/2D-canvas twin); both accept the
+ * shared `ImageBackendProps` union (`renderers/image-backend.ts`) and are chosen
+ * upstream by the render mode (`resolveRenderMode` — cpu | gpu | auto). It wraps
+ * `engine/image-engine.ts`'s `renderImage()` + `engine/pool.ts`'s many-panes
+ * resource pool. On any hard GPU-init/render failure it self-heals to
+ * `CpuImagePane` (see `engineFailed`), so a pane never blanks.
  *
- * Historically: the first LIVE on-screen WebGPU (RHI) image renderer (Task 6
- * of the WebGPU engine, Sub-project 1). Wraps `engine/image-engine.ts`'s
- * `renderImage()` (Task 5) + `engine/pool.ts`'s many-panes resource pool
- * behind the SAME prop shapes `ImagePane`/`HdrImagePane` already use, so the
- * registry (`plot-registry.tsx`) can swap it in for the `"image"`/`"imagehdr"`
- * renderer keys as a drop-in replacement (Task 8's job — NOT done here; see
- * `plot-gpu-image-addon.tsx`).
+ * ## One component, three content modes
+ * The pane renders `display_encode(content(uv))` — one persistent WebGPU
+ * surface, two stages. The CONTENT stage produces the k-channel value per texel
+ * from 1–2 source slots:
+ *   - a plain IMAGE (single source; SDR `imageUrl` or float `hdr`),
+ *   - a DIFF (`source` vs `compareSource.b` through a diff content op — a direct
+ *     pointwise op inline, or a cached FLIP/HDR-FLIP/SSIM metric), or
+ *   - a split/blend COMPOSITOR (a light composite of the two operands).
+ * `compareSource` selects diff/compositor; its absence is the plain-image path.
+ * The DISPLAY stage (curves / colormap LUTs / analytic, gated by the content
+ * op's output arity) is shared across all three. Both prop shapes retain the CPU
+ * source buffer the pixel-value overlay reads, like the CPU twin.
  *
- * ## Two prop shapes, one component
- * `ImageBackendProps = HdrImageProps | SdrImageProps` — presence
- * of `hdr` selects the HDR-float path; its absence selects the SDR `imageUrl`
- * path. Both retain the CPU source buffer the TEV overlay
- * (`PixelValueOverlay`) reads, exactly like the two CPU panes do.
- *
- * ## SCOPE (documented gaps — see Task 6 report for the full rationale)
- * Compare/metrics are handled by the separate engine-backed `GpuComparePane`
- * (`media-compare/GpuComparePane.tsx`), so the SDR path here handles the
- * PLAIN single-image case only:
- *   - `colormap` false-colors CPU-side via the exact same `applyColormap`
- *     ImagePane uses (byte-identical source pixels), then the GPU pass is a
- *     PURE PASSTHROUGH blit (`operator:"linear", gamma:1, exposureEV:0`) —
- *     the already sRGB-encoded 8-bit bytes go in and come out unchanged
- *     (linear-clamp is a no-op on [0,1]; gamma:1 makes output-encode an
- *     identity `pow(x,1)`), so this is pixel-for-pixel what `<img>`/a plain
- *     `<canvas>` already show — only the FINAL blit + zoom/pan moved to the
- *     GPU (`uvRect`), matching the brief's ask.
- *   - `diffMode !== "none"` / `baselineUrl` (baseline-compare) and
- *     `processing`'s CSS-filter fields (brightness/contrast/offset/flipSign)
- *     are ACCEPTED (prop-compatible) but NOT rendered specially — the plain
- *     `imageUrl` alone is shown. Real compare lives in `GpuComparePane`; this
- *     pane is not wired into any live page yet (registered behind a capability flag,
- *     `plot-gpu-image-addon.tsx`, not emitted by Python), so the gap has no
- *     production surface today.
- *
- * The HDR path is FULL parity with `HdrImagePane`: exposure/tonemap/gamma are
- * genuinely applied by the GPU shader (not a CPU pass), which is the whole
- * point of Task 6 — see the browser harness's readback-vs-`tonemap.ts`
- * assertion.
+ * ## Frame coherency — the RenderSnapshot
+ * Sources upload asynchronously while props flip synchronously, so every visible
+ * render is gated by a per-commit `RenderSnapshot` (`render-snapshot.ts`): a
+ * frame paints only when its whole input set is from one commit; otherwise the
+ * pane holds the previous frame. A fully-RESIDENT slot flip renders PRE-PAINT (a
+ * `useLayoutEffect`) so the first painted frame already shows the new slot.
  *
  * ## Render triggers (on demand, NOT per animation frame)
- * One `useEffect` re-uploads the source texture only when the DECODED pixels
- * change (`hdr` identity / `imageUrl`+`colormap`); a second re-renders
- * whenever viewport (zoom/pan → `uvRect`), `exposure`, `tonemap`/`operator`,
- * or `gamma` change, or the container resizes (object-contain fit depends on
- * the live box). `engine/pool.ts`'s `acquirePane`/`releasePane` own the
- * GPU-resource lifecycle (the shared WebGPU device, LRU park/restore, the
- * live-swapchain cap).
+ * The source-upload layout effects re-upload only when the decoded pixels change
+ * (source identity / `imageUrl`+`colormap` / the `b` operand). Two render effects
+ * (pre-paint for resident flips, post-paint for everything else) fire on a
+ * viewport (zoom/pan → `uvRect`), exposure/operator/gamma, container-resize, or
+ * source change. `engine/pool.ts`'s `acquirePane`/`releasePane` own the GPU
+ * lifecycle (shared device, LRU park/restore, live-swapchain cap).
  *
  * ## Zoom/pan -> uvRect
- * `useImageViewport` (unchanged — same Alt-gated wheel-zoom-to-cursor +
- * pointer-drag pan, same `Viewport` shape) still owns the CSS-px zoom/pan
- * STATE; `viewportToUvRect` converts it into the source-space `[x,y,w,h]`
- * window `renderImage` samples, using the same object-contain fit math
- * `PixelValueOverlay` already computes from the pane's live rect — GPU-side
- * pan/zoom instead of a CSS transform, per the brief.
- *
- * ## Double-click reset (Q17 — user request)
- * Double-clicking the pane resets the viewport to `{zoom:1, pan:{x:0,y:0}}`
- * via `onViewportChange`, consistent with the 2D charts' double-click-reset.
- * Compare-view double-click-reset is `CompositeMediaPane`'s job.
+ * `ImagePaneShell` owns the CSS-px zoom/pan state (Alt-gated wheel-zoom-to-cursor
+ * + pointer-drag pan) and the double-click reset; `viewportToUvRect` converts it
+ * into the source-space `[x,y,w,h]` window `renderImage` samples (GPU-side pan/
+ * zoom, not a CSS transform), using the same object-contain fit math the pixel
+ * overlay computes from the live rect.
  *
  * ## Off-screen park/restore
- * An `IntersectionObserver` on the pane container calls the pool handle's
- * `park()`/`restore()` as the pane leaves/enters the viewport, proactively
- * freeing GPU memory instead of waiting for LRU cap pressure from other
- * panes. It also reports
- * every transition to `handle.setVisible()` so `engine/pool.ts`'s LRU can
- * prefer evicting an OFF-SCREEN pane over an on-screen one when the cap is
- * hit by pane count alone (more visible panes than `MAX_LIVE_SWAPCHAINS` — a
- * gallery bigger than the cap). A pane the LRU parks that way stays fully
- * on-screen-looking (its canvas keeps showing its last frame) until it's
- * next asked to render, at which point `PaneHandle.render()` transparently
- * restores it first (see `engine/pool.ts`'s module doc) — so a viewport zoom/
- * pan, an exposure/operator change, or the double-click reset on a
- * cap-parked-but-visible pane always paints a live, correct frame.
+ * An `IntersectionObserver` on the pane calls the pool handle's `park()`/
+ * `restore()` as the pane leaves/enters the viewport (proactively freeing GPU
+ * memory) and reports every transition to `handle.setVisible()` so the pool's LRU
+ * prefers evicting an off-screen pane. A cap-parked-but-visible pane keeps showing
+ * its last frame and `PaneHandle.render()` transparently restores it on the next
+ * render, so a zoom/pan/exposure change always paints a live frame.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap, colormapFloatLUT } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../image";
-import { HALF_ONE, halfToFloat, f16BitsToFloat32 } from "../image/half";
-// Content-op unification (Phase 2c): the DIFF capability. The pane samples a
-// second source slot (`compareSource.b` via the pool's `setSourceB`) and renders
-// a diff CONTENT op — a DIRECT pointwise op inline, or a CACHED metric
-// (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. All ported from `GpuComparePane`'s
-// diff plumbing but routed THROUGH the pool. Engine imports are safe here — this
-// file only ships in the gpu-image addon bundle (never `core.iife.js`).
-import { getContentOp, isDirectContentOp, contentOpId } from "../image/content-ops/index";
+import { HALF_ONE, f16BitsToFloat32 } from "../image/half";
+// DIFF capability: the pane samples a second source slot (`compareSource.b` via
+// the pool's `setSourceB`) and renders a diff CONTENT op — a DIRECT pointwise op
+// inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
+// imports are safe here: this file only ships in the gpu-image addon bundle,
+// never `core.iife.js`.
+import { contentOpId } from "../image/content-ops/index";
 import {
   getDiffKernel,
   resolveDiffKernelId,
@@ -115,9 +84,6 @@ import type { ToolbarButtonSpec } from "../controls/ToolbarConfig";
 import ImageOverlay from "./ImageOverlay";
 import PixelValueOverlay, {
   PIXEL_VALUE_MIN_SCREEN_PX,
-  buildChannelSample,
-  type PixelSample,
-  type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
@@ -169,6 +135,8 @@ import {
   type TonemapOperator,
 } from "../image/tonemap";
 import { useDeepFlatten } from "./use-deep-flatten";
+import { usePixelSamplers } from "./gpu-image-samplers";
+import { buildRenderSnapshot } from "./render-snapshot";
 import {
   isHdrProps,
   useLegacyImageProps,
@@ -186,54 +154,6 @@ import {
 // A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
 const NULL_HDR: HdrData = { data: new Float32Array(0), shape: [0, 0], dtype: "<f4" };
-
-/**
- * RenderSnapshot — the ONE per-commit description of what this frame presents,
- * assembled in a single place (see `buildRenderSnapshot` in the component body).
- *
- * The pane's whole coherency story is this one struct plus one rule:
- *
- *   A frame is presentable only when its entire input set — the two source
- *   slots, the content op, and the display encoding — is derived from a SINGLE
- *   React commit. Otherwise hold the previous frame (WebGPU keeps the last
- *   present) until the lagging input catches up.
- *
- * Content op + encoding are pure synchronous derivations of the props, so they
- * are coherent by construction the instant a commit runs. The two SOURCE
- * textures are not: an SDR primary and a first-visit `b` decode async, so the
- * pool applies them one or more commits after the props flip. `primaryId`/`bId`
- * are the identities THIS frame expects; the upload effects stamp the same ids
- * into `appliedPrimaryIdRef`/`appliedBIdRef` once the pool has actually bound
- * them. Comparing expected-vs-applied is therefore the entire present gate:
- *   - `sourcesApplied` — expected == applied for both slots. The floor for a
- *     visible present; false ⇒ hold.
- *   - `resident` — the STRONGER condition a PRE-PAINT (paint-atomic) flip needs:
- *     sources applied AND framing dims known AND (for a cached diff) the result
- *     already in the per-device cache, so the flip can paint on its own commit
- *     with no async gap and no multi-pass recompute on the paint critical path.
- * `contentKey` is the flip detector: it folds in sources + op + mode but NOT the
- * viewport/exposure, so a pan/zoom is not mistaken for a slot flip.
- */
-interface RenderSnapshot {
-  /** Content stage: which pipeline this frame drives. */
-  mode: "image" | "diff" | "compositor";
-  /** Source identity this frame expects in slot A (== the pool's `applied` stamp). */
-  primaryId: string;
-  /** Source identity this frame expects in slot B, or null when there is no operand. */
-  bId: string | null;
-  /** Resolved diff kernel id (diff mode), else "". */
-  kernelId: string;
-  /** A cached (multi-pass FLIP/HDR-FLIP/SSIM) diff — its result lives in the cache. */
-  isCachedDiff: boolean;
-  /** Compositor param (split position / blend alpha); 0 otherwise. */
-  contentParam: number;
-  /** Flip detector — sources ⊗ op ⊗ mode, excluding viewport/exposure. */
-  contentKey: string;
-  /** Expected sources are actually bound in the pool right now (the present floor). */
-  sourcesApplied: boolean;
-  /** Fully resident: `sourcesApplied` + dims + (cached) result — a pre-paint flip is legal. */
-  resident: boolean;
-}
 
 /** The IDENTITY-TRANSFER curves — the ones whose tone-map "operator" is a pure
  *  clamp, the display transfer living entirely in the output-encode stage. A
@@ -1512,65 +1432,52 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const sdrPlain = !hdrMode && sdrColormap === "none";
 
   // ----------------------------------------------------------------------
-  // THE RENDER SNAPSHOT — assembled ONCE here from the current commit's props
-  // and the pool's applied-source stamps. `renderPass` (the present gate), the
-  // pre-paint paint-atomic effect, the flip detector, and the paint-phase log
-  // all read it; none re-derives its own "which sources / which op / resident?"
-  // view. See the `RenderSnapshot` doc (top of file) for the invariant it owns.
+  // THE RENDER SNAPSHOT — assembled ONCE from the current commit's props and the
+  // pool's applied-source stamps. `renderPass` (the present gate), the pre-paint
+  // paint-atomic effect, the flip detector, and the paint-phase log all read it;
+  // none re-derives its own "which sources / which op / resident?" view. See
+  // `render-snapshot.ts` for the invariant it owns.
   // ----------------------------------------------------------------------
-  const snapshotMode: RenderSnapshot["mode"] = diffMode ? "diff" : compositorMode ? "compositor" : "image";
-  // The source identities this frame expects — the SAME expressions the upload
-  // effects stamp into `appliedPrimaryIdRef`/`appliedBIdRef`, so applied and
-  // expected converge the instant the pool binds the sources.
-  const primaryId = hasCompare
-    ? `A:${contentKeyA}`
-    : hdrMode
-      ? deepActive
-        ? "deep"
-        : "hdr"
-      : `img:${(props as SdrImageProps).imageUrl ?? ""}`;
-  const bId: string | null = hasCompare && !!compareSource?.b ? `B:${contentKeyB}` : null;
-  const isCachedDiff = (diffMode ? getDiffKernel(resolvedKernelId) : undefined)?.kind === "multipass";
-  // Present floor: the pool has bound exactly the sources this frame expects.
-  const sourcesApplied =
-    paneReady &&
-    appliedPrimaryIdRef.current === primaryId &&
-    appliedBIdRef.current === bId;
-  const snapshot: RenderSnapshot = {
-    mode: snapshotMode,
-    primaryId,
-    bId,
-    kernelId: diffMode ? resolvedKernelId : "",
-    isCachedDiff,
-    contentParam: compositorMode ? (compareOpMode === "split" ? splitPosition : blendAlpha) : 0,
-    // Flip detector — sources ⊗ op ⊗ mode, excluding viewport/exposure so a
-    // mere pan/zoom is not mistaken for a slot flip (which would trip the
-    // pre-paint path). Must change iff the pre-paint render should re-fire.
-    contentKey: `${primaryId}|${bId}|${diffMode ? resolvedKernelId : ""}|${compositorMode ? compareOpMode : ""}`,
-    sourcesApplied,
-    // Fully resident: sources applied + framing dims known + (for a cached diff)
-    // the multi-pass result already in the per-device cache — the condition a
-    // PRE-PAINT flip needs to paint atomically with no async gap or recompute.
-    resident:
-      sourcesApplied &&
-      !!naturalDims &&
-      ((diffMode || compositorMode) ? !!refDims : true) &&
-      (isCachedDiff
-        ? !!paneHandleRef.current?.isDiffResultCached(
-            resolvedKernelId,
-            { a: contentKeyA, b: contentKeyB },
-            resolvedKernelId === "hdr-flip" && hdrExposures
-              ? {
-                  ppd: 67,
-                  startExposure: hdrExposures.startExposure,
-                  stopExposure: hdrExposures.stopExposure,
-                  numExposures: hdrExposures.numExposures,
-                }
-              : undefined,
-            diffMapping ?? undefined,
-          )
-        : true),
-  };
+  const snapshot = buildRenderSnapshot({
+    diffMode,
+    compositorMode,
+    hasCompare,
+    hdrMode,
+    deepActive,
+    imageUrl: (props as SdrImageProps).imageUrl ?? "",
+    contentKeyA,
+    contentKeyB,
+    hasBOperand: !!compareSource?.b,
+    resolvedKernelId,
+    compareOpMode,
+    splitPosition,
+    blendAlpha,
+    paneReady,
+    // Read the pool's applied stamps at render time (the same timing the previous
+    // inline `targetResident` used); the present gate in `renderPass` re-reads
+    // them at CALL time for imperative repaints.
+    appliedPrimaryId: appliedPrimaryIdRef.current,
+    appliedBId: appliedBIdRef.current,
+    naturalDims,
+    refDims,
+    // A cached diff's result is resident iff the per-device cache HITs — a
+    // non-mutating pool peek (a cold cache stays on the post-paint path rather
+    // than recomputing multi-pass on the paint critical path).
+    isCachedResultResident: () =>
+      !!paneHandleRef.current?.isDiffResultCached(
+        resolvedKernelId,
+        { a: contentKeyA, b: contentKeyB },
+        resolvedKernelId === "hdr-flip" && hdrExposures
+          ? {
+              ppd: 67,
+              startExposure: hdrExposures.startExposure,
+              stopExposure: hdrExposures.stopExposure,
+              numExposures: hdrExposures.numExposures,
+            }
+          : undefined,
+        diffMapping ?? undefined,
+      ),
+  });
   // The render pass, extracted into a stable callback so the screenshot path
   // (`useImageController`'s `toPNG`) can force a fresh, SYNCHRONOUS repaint
   // before reading the WebGPU canvas back (see that hook's module doc). The
@@ -1579,13 +1486,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const handle = paneHandleRef.current;
     if (!handle || !paneReady || !naturalDims) return false;
     const paneEl = paneRef.current;
-    // Q24 fix: `viewportToUvRect`'s `paneBox` and the canvas's own CSS/
-    // backing-store size below now BOTH key off `imgWrapperRef` (the
-    // padding-free content box `PixelAxes`/`ImageOverlay` already measure
-    // for their own letterbox math) — previously the uv math used `paneEl`'s
-    // box (WITH padding, whenever `showAxes` is on) while the canvas was
-    // sized against `wrapEl` (WITHOUT padding), a second coordinate-space
-    // mismatch on top of the canvas-vs-pane one below.
+    // Both the uv math and the canvas backing store key off `imgWrapperRef`, the
+    // padding-free content box the axes/overlay also measure — one coordinate
+    // space, so the sampled window and the canvas rect never disagree.
     const wrapEl = imgWrapperRef.current;
     const wrapBox = wrapEl
       ? wrapEl.getBoundingClientRect()
@@ -1597,26 +1500,19 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
 
-    // Q24 fix: size the canvas's backing store / WebGPU surface to the FULL
-    // content box (`wrapBox`) x `devicePixelRatio` — NOT a computed
-    // letterboxed sub-rect (Q22's approach, which confined zoom/pan to the
-    // image's own aspect box, leaving dead canvas space at any zoom — see
-    // `viewportToUvRect`'s doc comment for the matching uv-math fix). The
-    // canvas's CSS LAYOUT box is just `w-full h-full` of `imgWrapperRef`
-    // (the JSX below) — no inline style needed — so it already equals
-    // `wrapBox`; only the DEVICE-PIXEL backing store needs computing here
-    // (Q22's crispness fix, preserved). Letterboxing at rest, and
-    // checkerboard in any genuinely-empty region at any zoom, is now
-    // entirely the shader's job (Q18's existing OOB -> transparent path).
+    // The canvas backing store / WebGPU surface span the FULL content box ×
+    // devicePixelRatio; the image is placed as a quad inside that viewport by
+    // `viewportToUvRect` (letterboxed at rest, pannable/zoomable into the
+    // margins). The CSS layout box is `w-full h-full` of the wrapper, so only
+    // the device-pixel backing store is computed here; letterbox + checkerboard
+    // in any empty region is the shader's OOB→transparent path.
     if (wrapBox.width > 0 && wrapBox.height > 0) {
       handle.resize(Math.round(wrapBox.width * dpr), Math.round(wrapBox.height * dpr));
     }
 
-    // Q20: nearest once a source texel is >= PIXEL_VALUE_MIN_SCREEN_PX on
-    // screen (the SAME threshold that makes PixelValueOverlay start drawing
-    // per-pixel numbers), linear below it — see `screenPxPerTexel`'s doc
-    // comment. Uses `wrapBox` directly — the canvas's own box now matches it
-    // exactly (Q24), so no separate measurement/fallback is needed.
+    // Nearest filtering once a source texel is >= PIXEL_VALUE_MIN_SCREEN_PX on
+    // screen (the same threshold at which the pixel overlay starts drawing
+    // per-texel numbers), linear below it — see `screenPxPerTexel`.
     const filter: "nearest" | "linear" =
       screenPxPerTexel(rawUv, wrapBox, naturalDims.w, naturalDims.h) >= PIXEL_VALUE_MIN_SCREEN_PX
         ? "nearest"
@@ -1765,16 +1661,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           // DIRECT pointwise op: the pool injects `srcB`; `cairnContent(a,b,opId)`.
           diffEntryRef.current = null;
           const opId = contentOpId(kernelId);
-          // PRIMARY-IDENTITY GUARD (the reference-flash floor). `contentOpId` returns
-          // 0 = IDENTITY (`cairnContent` → `return a`) for ANY id not registered as a
-          // direct content op (a transiently-unrecognized/mis-resolved `kernelId`).
-          // Rendering opId 0 here would blit the PRIMARY — which in diff mode IS the
-          // REFERENCE operand — onto the VISIBLE surface as a plain image: exactly the
-          // reported "the diff pane shows the reference for one frame instead of the
-          // error map." A diff present must ALWAYS come from the diff pipeline for the
-          // CURRENT op; never an identity blit of the reference. So HOLD the previous
-          // frame (WebGPU keeps the last present) until a valid direct op resolves —
-          // the guard re-fires on the next commit when `resolvedKernelId` settles.
+          // IDENTITY-OP FLOOR (snapshot invariant). `contentOpId` returns 0 =
+          // IDENTITY for any id not registered as a direct content op (a
+          // transiently mis-resolved kernel). Blitting opId 0 in diff mode would
+          // present the PRIMARY — which here IS the reference operand — as a plain
+          // image (the reference-flash). A diff present must always come from the
+          // diff pipeline for the current op, so HOLD until a valid op resolves.
           if (opId === 0) return false;
           const ok = handle.render({ ...diffDisplay, contentOpId: opId });
           if (!ok) setEngineFailed(true);
@@ -1926,31 +1818,20 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             uv,
             filter,
           };
-    // C1 fix (whole-branch review): `handle.render()` is called SYNCHRONOUSLY
-    // in this effect, so an uncaught throw here would unmount this pane's
-    // whole subtree in React 18. `engine/pool.ts`'s `attemptRender` already
-    // converts its own non-context-lost hard failures into a `false` return
-    // rather than throwing (see that function's doc) — the try/catch below
-    // is belt-and-suspenders for anything unforeseen that still throws.
-    // Either path sets `engineFailed`, which makes this component render the
-    // LEGACY CPU pane instead (see the bailout branch below) — a pane never
-    // blanks.
-    // COMPARE PRESENT-GATE (structural invariant — the reference-flash floor).
-    // Reaching this plain identity/image blit while a COMPARE is intended
-    // (`hasCompare`) would present a raw render of the PRIMARY texture — which in
-    // compare mode IS the reference operand — onto the VISIBLE surface before the
-    // diff result. That frame is never presentable: HOLD the previous frame
-    // (WebGPU keeps the last present) instead of flashing the reference. The
-    // diff/compositor branches above return for every well-formed compare, so this
-    // only fires if a stale/degenerate render slipped through (e.g. an unrecognized
-    // `compareSource.mode`) — the belt-and-suspenders floor the reference-flash
-    // post-mortem demands. The params are tagged `compareIntended` so the pool's
-    // render-log oracle (`isPipelineMismatch`) asserts ZERO such presents reach the
-    // surface. (The MEASURABLE real-path leak — a diff `state` emitted as a plain
-    // image on a cold flip, `hasCompare` already false here — is closed upstream in
-    // `LeafView`'s reference-leak guard + diff-pair prefetch; this gate is the
-    // last-line pane invariant.)
+    // COMPARE-INTENDED FLOOR (snapshot invariant). The diff/compositor branches
+    // above return for every well-formed compare, so reaching this plain image
+    // blit while `hasCompare` means a degenerate render slipped through (e.g. an
+    // unrecognized `compareSource.mode`). Blitting the primary — which in compare
+    // mode IS the reference — would flash the reference, so HOLD instead. Tagged
+    // `compareIntended` so the render-log oracle (`isPipelineMismatch`) asserts
+    // zero such presents reach the surface. The real-path leak (a diff `state`
+    // emitted as a plain image on a cold flip) is closed upstream by `LeafView`'s
+    // reference-leak guard + diff-pair prefetch; this is the last-line floor.
     if (hasCompare) return false;
+    // `handle.render()` is synchronous here, so a throw would unmount the subtree;
+    // `attemptRender` already converts hard failures to a `false` return, and the
+    // try/catch is belt-and-suspenders. Either way `engineFailed` falls this pane
+    // back to the CPU pane — it never blanks.
     try {
       const ok = handle.render({ ...params, compareIntended: hasCompare, authoredColormap: authoredColormapIsLut });
       if (!ok) setEngineFailed(true);
@@ -2267,134 +2148,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
   // notation leading button now live in the shared `ImagePaneShell`.
 
-  // -----------------------------------------------------------------------
-  // TEV per-pixel value overlay sampler.
-  // -----------------------------------------------------------------------
-  const samplePixel = useCallback(
-    (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
-      if (hdrMode) {
-        const hdr = hdrDataRef.current;
-        const dims = naturalDims;
-        if (!hdr || !dims || px < 0 || py < 0 || px >= dims.w || py >= dims.h) return null;
-        const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
-        const base = (py * dims.w + px) * c;
-        const src = hdr.data;
-        // F16 pipeline: a half-bits source reads one sample per pixel, widened
-        // lazily (the overlay only touches single pixels — see `../image/half.ts`).
-        const readV =
-          hdr.precision === "f16-bits"
-            ? (k: number) => halfToFloat(src[k] ?? 0)
-            : (k: number) => src[k] ?? 0;
-        const values =
-          c === 1
-            ? [readV(base)]
-            : [readV(base), readV(base + 1), readV(base + 2)];
-        return buildChannelSample(values, "unit", notationArg);
-      }
-      const vd = sdrImageDataRef.current;
-      if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
-      const i = (py * vd.width + px) * 4;
-      const r = vd.data[i]!;
-      const g = vd.data[i + 1]!;
-      const b = vd.data[i + 2]!;
-      // A false-colored (colormap) pixel prints one untinted line — its display
-      // value IS a single scalar. An RGB pixel ALWAYS prints three channel-tinted
-      // lines, even when the channels happen to be equal (a bright/gray pixel is
-      // still RGB — do NOT collapse it to one value on value equality).
-      const single = sdrColormap !== "none";
-      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notationArg);
-    },
-    [hdrMode, naturalDims, sdrColormap],
-  );
-
-  // DIFF per-pixel readout — the diff-TEV numbers. A DIRECT op reads its `cpu` twin
-  // over the two RAW source pixels (NORMALIZED to match the GPU's `textureLoad`:
-  // uint8 → /255, float → raw); a CACHED metric reads the RESULT readback at the
-  // result stride (like `GpuComparePane`'s `sampleDiff`). Values are floats.
-  const sampleDiffPixel = useCallback(
-    (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
-      const kernel = getDiffKernel(resolvedKernelId);
-      // CACHED metric — the RESULT readback (min-cropped resolution).
-      if (kernel?.kind === "multipass") {
-        const arr = diffSamplesRef.current;
-        const rdims = diffResultDimsRef.current;
-        if (!arr || !rdims || px < 0 || py < 0 || px >= rdims.w || py >= rdims.h) return null;
-        const base = (py * rdims.w + px) * 4;
-        const values =
-          kernel.output === "scalar"
-            ? [arr[base] ?? 0]
-            : [arr[base] ?? 0, arr[base + 1] ?? 0, arr[base + 2] ?? 0];
-        return buildChannelSample(values, "unit", notationArg);
-      }
-      // DIRECT op — the cpu twin over the two source pixels.
-      const op = getContentOp(resolvedKernelId);
-      if (!op || !isDirectContentOp(op)) return null;
-      // Slot A = the primary `source`.
-      const readA = (): number[] | null => {
-        if (hdrMode) {
-          const hdr = hdrDataRef.current;
-          const dims = naturalDims;
-          if (!hdr || !dims || px < 0 || py < 0 || px >= dims.w || py >= dims.h) return null;
-          const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
-          const b0 = (py * dims.w + px) * c;
-          const rd =
-            hdr.precision === "f16-bits" ? (k: number) => halfToFloat(hdr.data[k] ?? 0) : (k: number) => hdr.data[k] ?? 0;
-          return c === 1 ? [rd(b0), rd(b0), rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
-        }
-        const vd = sdrImageDataRef.current;
-        if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
-        const i = (py * vd.width + px) * 4;
-        return [vd.data[i]! / 255, vd.data[i + 1]! / 255, vd.data[i + 2]! / 255];
-      };
-      // Slot B = the reference `compareSource.b`.
-      const readB = (): number[] | null => {
-        const fl = refFloatRef.current;
-        if (fl && fl.dtype === "float") {
-          const { h, w, c } = shapeDims(fl.shape);
-          if (px < 0 || py < 0 || px >= w || py >= h) return null;
-          const b0 = (py * w + px) * c;
-          const rd =
-            fl.precision === "f16-bits" ? (k: number) => halfToFloat(fl.data[k] ?? 0) : (k: number) => fl.data[k] ?? 0;
-          return c === 1 ? [rd(b0), rd(b0), rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
-        }
-        const u8 = refU8Ref.current;
-        if (!u8 || px < 0 || py < 0 || px >= u8.width || py >= u8.height) return null;
-        const i = (py * u8.width + px) * 4;
-        return [u8.data[i]! / 255, u8.data[i + 1]! / 255, u8.data[i + 2]! / 255];
-      };
-      const a = readA();
-      const b = readB();
-      if (!a || !b) return null;
-      return buildChannelSample(op.cpu([a, b], 3), "unit", notationArg);
-    },
-    [resolvedKernelId, hdrMode, naturalDims],
-  );
-
-  // COMPOSITOR (split/blend) FOREGROUND-side readout — the TEV numbers for slot
-  // `b` = `compareSource.b` (the reference side reuses `samplePixel` over the
-  // primary source). Reads the retained foreground buffer at ITS OWN grid
-  // (`refFloatRef`/`refU8Ref`), so the per-side `sourceDims` (#88 fix) maps its
-  // texels onto their pixels even when the two resolutions differ. Mirrors
-  // `GpuComparePane`'s `sampleFg`.
-  const sampleForeground = useCallback(
-    (px: number, py: number, notationArg: PixelValueNotation): PixelSample | null => {
-      const fl = refFloatRef.current;
-      if (fl && fl.dtype === "float") {
-        const { h, w, c } = shapeDims(fl.shape);
-        if (px < 0 || py < 0 || px >= w || py >= h) return null;
-        const b0 = (py * w + px) * c;
-        const rd =
-          fl.precision === "f16-bits" ? (k: number) => halfToFloat(fl.data[k] ?? 0) : (k: number) => fl.data[k] ?? 0;
-        const values = c === 1 ? [rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
-        return buildChannelSample(values, "unit", notationArg);
-      }
-      const u8 = refU8Ref.current;
-      if (!u8 || px < 0 || py < 0 || px >= u8.width || py >= u8.height) return null;
-      const i = (py * u8.width + px) * 4;
-      return buildChannelSample([u8.data[i]!, u8.data[i + 1]!, u8.data[i + 2]!], "uint8", notationArg);
-    },
-    [],
-  );
+  // TEV per-pixel value overlays: primary (`samplePixel`), diff readout
+  // (`sampleDiffPixel`), and split/blend foreground (`sampleForeground`). The
+  // read-only samplers over the retained CPU buffers live in `usePixelSamplers`.
+  const { samplePixel, sampleDiffPixel, sampleForeground } = usePixelSamplers({
+    hdrMode,
+    naturalDims,
+    sdrColormap,
+    resolvedKernelId,
+    hdrDataRef,
+    sdrImageDataRef,
+    refFloatRef,
+    refU8Ref,
+    diffSamplesRef,
+    diffResultDimsRef,
+  });
 
   // In-pane HISTOGRAM source — bins the RAW retained buffer (float scene values
   // in HDR mode, RGBA source bytes in SDR mode), NOT the display pixels. For a
