@@ -310,3 +310,43 @@ curve `split` (a light peer still adopts it). 633 node tests green (was 629). AL
 parity harnesses green (compare-settings-sync / page-wide-selection / cpu-compare-
 fallback / realstack). typecheck 0; 243 pytest; core + gpu-image bundles rebuilt +
 synced. `uv.lock` untouched.
+
+---
+
+## M4 — DONE: ONE shared content-kind display-encoding sync rule (three panes, one source)
+
+**Design.** The "don't adopt a diff peer's scalar-error colormap onto a light pane"
+rule (orange-frame fix) lived as THREE hand-copies whose predicate diverged AND gated
+on three different notions of "diff": GpuImagePane's boolean `diffMode`, the CPU SDR
+pane's legacy `DiffMode` string enum (`diffMode !== "none"`), the CPU HDR pane's
+unconditional `patch.compareMode !== "diff"` (correct only by accident). A sync fix
+added to one silently missed the other two. New module
+`renderers/image-display-encoding-sync.ts` single-sources:
+- `shouldAdoptDisplayEncoding(patch, isDiffFace)` — the ONE scoping predicate;
+- `adoptRemoteDisplayEncoding(setEncoding, patch, isDiffFace)` — the scoped
+  encoding/colormap/tonemap adoption (identical across all three panes);
+- `diffFaceTag(isDiffFace)` — the M3 publisher FACE tag.
+All parameterized by ONE boolean capability, `isDiffFace`, supplied explicitly per
+pane: GpuImagePane `diffMode`; CPU SDR `diffMode !== "none"`; CPU HDR constant `false`
+(it can never be a diff face — now an explicit parameter, not an accidental predicate).
+
+**Scope (deliberate).** The genuinely per-capability STATE stays pane-local — the CPU
+SDR pane has no exposure/offset/peak/bounds sliders; only GpuImagePane has the diff
+kernel + compositor params — so relocating all `useState` into a mega-hook would
+encode differences as branches, not remove duplication. What was TRIPLICATED-AND-
+DIVERGENT was the scoping RULE + scoped-encoding adoption + the face tag; those now
+exist once. The unconditional display keys (gamma/EV/offset/reduce/bounds) remain each
+pane's own `applyRemoteSettings` tail (a flat list of independent setters, not a
+drift-prone rule).
+
+**Deleted code.** Three copies of the `adoptDisplayEncoding` predicate + the
+encoding/colormap/tonemap adoption block (GpuImagePane, CPU SDR, CPU HDR); the three
+inline `compareMode:"diff"` tag literals (folded into `diffFaceTag`).
+
+**Evidence.** New `image-display-encoding-sync.test.ts` (+6 tests: diff-tag refused by
+a light face / adopted by a diff face; untagged image encoding adopted by every face;
+split/blend adopted by a light face; encoding-primary back-compat fallbacks; a
+diff-tag never reaches a light store; the tag). 639 node tests green (was 633). ALL 31
+parity harnesses green (compare-settings-sync / cpu-compare-fallback / page-wide-
+selection / realstack). typecheck 0; 243 pytest; core + gpu-image bundles rebuilt +
+synced. `uv.lock` untouched.

@@ -111,6 +111,10 @@ import { u8HistogramSource, floatHistogramSource } from "./image-histogram-sourc
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
+  adoptRemoteDisplayEncoding,
+  diffFaceTag,
+} from "./image-display-encoding-sync";
+import {
   displayToolbarButton,
   reduceSegment,
   usePaneEncoding,
@@ -845,15 +849,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // branch below (`setDiffColormapOverride`). split/blend peers publish a LIGHT
       // curve (compareMode "split"/"blend"), which a light image adopts fine — only
       // `"diff"` (the scalar-error face) is scoped out.
-      const adoptDisplayEncoding = !(patch.compareMode === "diff" && !diffMode);
-      // The unified `encoding` key is primary; `colormap`/`tonemap` are honored
-      // for back-compat (a compare-pane peer publishes those, not `encoding`).
-      if (adoptDisplayEncoding) {
-        if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-        else if (patch.colormap !== undefined && patch.colormap !== "none")
-          enc.setEncoding(patch.colormap);
-        else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
-      }
+      // ONE content-kind scoping rule + scoped-encoding adoption, shared by all three
+      // panes (`image-display-encoding-sync.ts`), parameterized by this pane's
+      // `isDiffFace` capability (here the boolean `diffMode`).
+      adoptRemoteDisplayEncoding(enc.setEncoding, patch, diffMode);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
@@ -939,12 +938,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         encoding: id,
         colormap: isLut ? id : "none",
         tonemap: isLut ? effectiveTonemap : id,
-        // FACE TAG (M3): a scoped display write from a DIFF pane is the scalar-error
-        // face — tag it `"diff"` so a light peer scopes it out AND the bus's mode-aware
-        // merge keeps the snapshot tag coherent (an untagged diff write would erase the
-        // tag and let a late light joiner adopt the diff's colormap). An image pane
-        // omits the tag, so its colormap syncs to every peer.
-        ...(diffMode ? { compareMode: "diff" as const } : {}),
+        // FACE TAG (M3/M4) — one source (`diffFaceTag`): a scoped display write from a
+        // DIFF pane is the scalar-error face → tag `"diff"` so a light peer scopes it
+        // out and the bus's mode-aware merge stays coherent; an image pane omits it.
+        ...diffFaceTag(diffMode),
       });
     },
     [enc, publishSettings, effectiveTonemap, diffMode],
@@ -1016,10 +1013,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
         colormap: id,
         tonemap: effectiveTonemap,
-        // The diff colormap IS the scalar-error face (M3) — tag it `"diff"` so a light
-        // peer scopes it out and the snapshot tag stays coherent under the mode-aware
-        // merge. (This is a diff-only menu, so the tag is unconditional.)
-        compareMode: "diff" as const,
+        // The diff colormap IS the scalar-error face — always tagged `"diff"` (one
+        // source, `diffFaceTag`); a diff-only menu, so the capability is constant.
+        ...diffFaceTag(true),
       });
     },
     [enc, publishSettings, effectiveTonemap],

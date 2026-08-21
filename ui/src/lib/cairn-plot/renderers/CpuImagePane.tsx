@@ -97,6 +97,10 @@ import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
+import {
+  adoptRemoteDisplayEncoding,
+  diffFaceTag,
+} from "./image-display-encoding-sync";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
   computeDataIndex,
@@ -469,16 +473,10 @@ function CpuSdrImagePane(
   // no in-pane exposure/offset — see the graceful-degradation note at the sliders).
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
-      // Content-kind scoping (orange-frame fix, mirrors GpuImagePane): a DIFF
-      // peer's scalar-error display encoding (`compareMode:"diff"`) must not
-      // false-color a LIGHT image — a non-diff pane ignores it. See GpuImagePane.
-      const adoptDisplayEncoding = !(patch.compareMode === "diff" && diffMode === "none");
-      if (adoptDisplayEncoding) {
-        if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-        else if (patch.colormap !== undefined && patch.colormap !== "none")
-          enc.setEncoding(patch.colormap);
-        else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
-      }
+      // ONE content-kind scoping rule + scoped-encoding adoption, shared by all three
+      // panes (`image-display-encoding-sync.ts`). This SDR pane's `isDiffFace`
+      // capability is the legacy `DiffMode` string enum reduced to the Phase-2c boolean.
+      adoptRemoteDisplayEncoding(enc.setEncoding, patch, diffMode !== "none");
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
     },
     [enc, setTonemapGamma, diffMode],
@@ -489,10 +487,10 @@ function CpuSdrImagePane(
       colormap: enc.colormap,
       tonemap: sdrTransfer,
       tonemapGamma,
-      // FACE TAG (M3): when this SDR pane is itself a DIFF, its colormap is the
-      // scalar-error face — tag it `"diff"` so a light peer scopes it out (matches
-      // GpuImagePane) and the bus's mode-aware merge keeps the snapshot coherent.
-      ...(diffMode !== "none" ? { compareMode: "diff" as const } : {}),
+      // FACE TAG (M3/M4) — one source (`diffFaceTag`): when this SDR pane is itself a
+      // DIFF, its colormap is the scalar-error face → tag `"diff"` so a light peer
+      // scopes it out and the bus's mode-aware merge stays coherent.
+      ...diffFaceTag(diffMode !== "none"),
     }),
     [enc.encodingId, enc.colormap, sdrTransfer, tonemapGamma, diffMode],
   );
@@ -510,10 +508,9 @@ function CpuSdrImagePane(
         encoding: id,
         colormap: isLut ? id : "none",
         tonemap: isLut ? sdrTransfer : id,
-        // FACE TAG (M3): a scoped display write from a DIFF SDR pane is the scalar-
-        // error face — tag `"diff"` so a light peer scopes it out and the mode-aware
-        // merge does not clear the tag. An image SDR pane omits it (syncs to all peers).
-        ...(diffMode !== "none" ? { compareMode: "diff" as const } : {}),
+        // FACE TAG (M3/M4) — one source (`diffFaceTag`): a scoped display write from a
+        // DIFF SDR pane is the scalar-error face → tag `"diff"`; an image SDR pane omits it.
+        ...diffFaceTag(diffMode !== "none"),
       });
     },
     [enc, publishSettings, sdrTransfer, diffMode],
@@ -1205,20 +1202,12 @@ function CpuHdrImagePane(
   // pre-registry peers), the Gamma γ, exposure/offset, and the norm/bounds.
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
-      // Content-kind scoping (orange-frame fix, mirrors GpuImagePane): this CPU
-      // HDR/float pane always renders LIGHT image content (the CPU compare path
-      // is a separate degraded reference render), so a DIFF peer's scalar-error
-      // display encoding (`compareMode:"diff"`) must never be adopted here — it
-      // would false-color the light image through the diff's magma. See GpuImagePane.
-      const adoptDisplayEncoding = patch.compareMode !== "diff";
-      // The unified `encoding` key is primary; `colormap`/`tonemap` are honored
-      // for back-compat (a compare-pane peer publishes those, not `encoding`).
-      if (adoptDisplayEncoding) {
-        if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-        else if (patch.colormap !== undefined && patch.colormap !== "none")
-          enc.setEncoding(patch.colormap);
-        else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
-      }
+      // ONE content-kind scoping rule + scoped-encoding adoption, shared by all three
+      // panes (`image-display-encoding-sync.ts`). This CPU HDR/float pane ALWAYS
+      // renders LIGHT content (the CPU compare path is a separate degraded reference
+      // render), so its `isDiffFace` capability is CONSTANT false — a diff peer's
+      // scalar-error encoding is always scoped out.
+      adoptRemoteDisplayEncoding(enc.setEncoding, patch, false);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
       if (patch.offset !== undefined) setDisplayOffset(patch.offset);
