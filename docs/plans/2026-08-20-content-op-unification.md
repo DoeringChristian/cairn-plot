@@ -1466,3 +1466,88 @@ test-only `__cairnImagePaneProbe` seam (image encoding get/change/home; no produ
 real-stack GPU harness PHASES F+G — pre-fix reproduces, post-fix fixed); 243 pytest; core +
 gpu-image bundles rebuilt + synced + committed; report (63 blocks) + gallery (27 types) regen clean.
 `uv.lock` left untouched.
+
+## Follow-up — DONE: ONE settings model — settings belong to the VIEWPORT
+
+**The model (user's words, verbatim three-line form):**
+1. SETTINGS BELONG TO THE VIEWPORT — the thing actually visible. A stack has a
+   SINGLE viewport (all slots render under its settings — the only sharing rule);
+   a grid has multiple viewports, each with its own settings.
+2. DEFAULTS BELONG TO AN IMAGE/DIFF — its authored descriptor props (colormap /
+   tonemap / exposure / peak / …; for a diff also mode / kernel).
+3. DOUBLE-CLICK (or HOME) ON A VIEWPORT: the viewport TAKES ON the defaults of the
+   image/diff CURRENTLY VISIBLE in it. Only that viewport — never other grid cells,
+   never other selected viewports.
+
+The three divergent mechanisms 9f3eb91/318942d left are now ONE rule: **per-pane
+state IS the viewport's settings; it persists until a user pick or HOME.**
+
+**DELETED (the special cases).**
+- 9f3eb91's `inStack` / `inStackedGrid` RESEED-SUPPRESSION special case in
+  `usePaneEncoding` (`display-encoding.ts`) and the `inStack` diff-colormap branch in
+  `GpuImagePane`. The `inStack` config field and the per-slot arity-memory suppression
+  are gone. (`InStackedGridContext` itself STAYS — it still scopes `useSplitFlipKeys`
+  arrow aliases, `reserveCompareChrome`, and the stacked aspect latch; only its use for
+  reseed-suppression was removed.)
+- The per-flip CONTROLLED-SURFACE RESEED as the default. It no longer fires for an
+  interactive viewport at all — a slot flip / re-lower does NOT touch viewport settings.
+  This was generalized from ENCODING + diff-colormap to ALL display settings: `peak`,
+  `tonemapGamma`, and `colorBounds` moved off `useResettableState` (mount-captured seed)
+  onto plain `useState` + a current-prop seed, so they persist across flips too and their
+  HOME target / modified-dot track the CURRENTLY-VISIBLE slot (not the mount slot) — the
+  reg (b) fix: a stack now shares ALL settings, not only encoding/diff-colormap.
+
+**KEPT (the controlled-surface contract).** The reseed-on-prop-change survives for exactly
+ONE case: a HOST-DRIVEN CONTROLLED SURFACE, identified by `toolbar === false` (the
+documented host-menu seam — `image-backend.ts` "Host-driven when `toolbar={false}`"; the
+`toolbar={false}` cards + the compositor's CPU side panes). There the host drives
+colormap/tonemap/peak/… as props and the pane FOLLOWS them (non-interactive contract).
+`toolbar !== false` (its own toolbar visible) ⇒ an interactive viewport that OWNS its
+settings — a standalone pane, a grid cell, OR the ONE reused pane of a stacked viewport
+behave IDENTICALLY (nothing special-cases the stack). The `toolbar` axis is the code's own
+explicit contract, so the "flip vs host-driven" distinction is unambiguous — no guess.
+
+**318942d Regression-1 threading STAYS.** HOME on a diff-visible viewport still routes the
+compare reset through `compareSource.onCompareReset()` (the hoisted `useCompareControl` in
+`NodeDispatch`), restoring the descriptor mode/kernel/split/blend. The compare controls
+already persist across flips owner-side (instance reused at a stable tree position) — that
+is the same "viewport keeps its settings" rule, one layer up.
+
+**HOME-locality coexists with selection mirroring.** Multi-select settings-sync is unchanged
+— it MIRRORS a control CHANGE between selected viewports' (per-viewport) settings via the
+`change*` publish wrappers + the `image-settings-sync` bus. HOME (`onReset`) uses the RAW
+local setters (`enc.resetEncoding` / `setPeak(peakSeed)` / …) — it never publishes, so it is
+EXEMPT from mirroring: it re-seeds ONLY the clicked viewport to ITS OWN authored default;
+peers keep their settings, and the bus's join-time `getLast` adoption (design req 5) does not
+re-apply after a stable-selection local HOME, so the sync neither absorbs nor vetoes it.
+(Measured: reg (a) does not reproduce at the pane — HOME is local by construction; PHASE H
+guards it end-to-end through a real page-wide selection.)
+
+**Harness updates (justified).**
+- `stacked-diff-flip-realstack-gpu` — **PHASE H added** (reg a): a normal side-by-side grid
+  of two distinct-default scalar viewports, multi-selected (slot0 anchor). A pick mirrors to
+  the peer (sync-over); HOME on the NON-ANCHOR resets ONLY it to its own default while the
+  neighbour keeps `turbo`; HOME on the ANCHOR is local too. Covers "HOME resets only the
+  clicked viewport" AND "grid cells unaffected by a neighbour's HOME".
+  **PHASE I added** (reg b, beyond encoding): a stacked two-scalar grid authored with
+  DISTINCT peaks — a `changePeak` pick SURVIVES a flip (post-fix 5) where the pre-fix
+  per-flip reseed resets it to the slot's authored peak (3); plus a diff KERNEL pick that
+  survives an image↔diff flip. Proves the stack shares settings BEYOND encoding + that a flip
+  does not change viewport settings. New probe fields: `__cairnImagePaneProbe.peak/changePeak`
+  and `controlledSurface` (replacing the deleted `inStack`); `__cairnImageDiffProbe` already
+  exposed `diffKernel`/`changeDiffKernel`.
+- **PHASES F + G unchanged** (only re-verified): PHASE F (reg 1 — HOME restores the authored
+  compare mode) is untouched by this change (the 318942d threading stays). PHASE G (stack-wide
+  shared encoding + diff-colormap) still passes verbatim — the new model SUBSUMES it (a stack
+  is one viewport), and its `__cairnDisableStackShared` pre/post toggle still reproduces the
+  wipe (it now forces the controlled-surface reseed on a viewport). No expectation needed to
+  change; the model preserves the behaviour they already assert.
+- **`compare-settings-sync` + `selection-stage` unchanged** (re-verified green): their
+  expectations already encode the model — a stacked `cp.Grid` shares by construction, a
+  multi-selection MIRRORS changes, and single-pane HOME is local. Nothing in them contradicts
+  the viewport model, so no assertion changed; changing them would only weaken guards that
+  still hold.
+
+**Gates.** typecheck; 628 node tests; ALL 31 parity harnesses (metal-3, incl. realstack
+PHASES H+I — pre-fix reproduces the peak wipe, post-fix shares); 243 pytest; core + gpu-image
+bundles rebuilt + synced + committed; report + gallery regen clean. `uv.lock` left untouched.

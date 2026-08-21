@@ -111,7 +111,6 @@ import {
   type ReduceMode,
 } from "../image/encodings";
 import { getContentOp, isDirectContentOp, type DirectContentOp } from "../image/content-ops";
-import { useResettableState } from "../hooks/use-resettable-state";
 import { useDeepFlatten } from "./use-deep-flatten";
 import {
   isHdrProps,
@@ -416,6 +415,16 @@ function CpuSdrImagePane(
     toolbar = true,
   } = props;
 
+  // CONTROLLED SURFACE (`toolbar={false}` host-menu contract) vs INTERACTIVE
+  // VIEWPORT — the ONE axis governing whether a descriptor prop change reseeds the
+  // display settings (see GpuImagePane). A viewport OWNS its settings (persist across
+  // flips, HOME re-seeds to the visible slot); a controlled surface follows the host
+  // props. `__cairnDisableStackShared` (test-only) forces the reseed for pre/post.
+  const controlledSurface =
+    toolbar === false ||
+    (typeof window !== "undefined" &&
+      !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
+
   // Colormap: the `colormap` prop SEEDS a view-local override so the toolbar
   // COLORMAP menu can switch it in-pane (diff-kernels toolbar track). Re-seeds
   // on prop change (the app card's colormap control) — a controlled surface
@@ -441,17 +450,18 @@ function CpuSdrImagePane(
       const s = toSdrTonemap(t);
       return s === "gamma" || s === "linear" ? s : "srgb";
     },
-    // In a stack the encoding is the stack's SHARED setting (persists across flips).
-    inStack: !!props.inStackedGrid,
+    controlledSurface,
   });
   const colormap = enc.colormap as Colormap;
   const sdrTransfer = enc.curveId as TonemapOperator;
-  const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
-    gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT,
-  );
+  const gammaSeed = gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT;
+  const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
+  // γ is a viewport setting — persists across flips; reseeds only on a controlled
+  // surface. HOME re-seeds it to the visible slot below.
   useEffect(() => {
-    if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
-  }, [gammaProp, setTonemapGamma]);
+    if (controlledSurface && gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
+  }, [gammaProp, controlledSurface, setTonemapGamma]);
+  const gammaModified = tonemapGamma !== gammaSeed;
 
   // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
   // CPU SDR path syncs the ONE encoding (+ derived colormap/tonemap for
@@ -1022,12 +1032,12 @@ function CpuSdrImagePane(
       }
       onReset={() => {
         enc.resetEncoding();
-        gammaMeta.reset();
+        setTonemapGamma(gammaSeed); // γ back to the VISIBLE slot's descriptor
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
         enc.encodingModified ||
-        gammaMeta.isModified ||
+        gammaModified ||
         !!props.channelModified
       }
       histogram={histogramSource}
@@ -1085,6 +1095,14 @@ function CpuHdrImagePane(
     toolbar = true,
   } = props;
 
+  // CONTROLLED SURFACE vs INTERACTIVE VIEWPORT (see the SDR body / GpuImagePane): a
+  // viewport OWNS its settings (persist across flips, HOME re-seeds to the visible
+  // slot); a `toolbar={false}` controlled surface follows the host props.
+  const controlledSurface =
+    toolbar === false ||
+    (typeof window !== "undefined" &&
+      !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
+
   // DEEP EXR depth slider: `hdr` is the live-flattened effective source; the
   // depth slider + HOME reset ride the shell (absent for non-deep sources).
   const deepFlatten = useDeepFlatten(props.hdr);
@@ -1112,21 +1130,21 @@ function CpuHdrImagePane(
     propColormap,
     propTonemap: tonemap,
     resolveDefaultCurve,
-    // In a stack the encoding is the stack's SHARED setting (persists across flips).
-    inStack: !!(props as { inStackedGrid?: boolean }).inStackedGrid,
+    controlledSurface,
   });
   const colormap = enc.colormap as Colormap;
   const tonemapOp = enc.curveId as TonemapOperator;
 
   // Gamma(γ) for the Gamma operator (the γ slider is gated by the active
   // encoding's param manifest — only the Gamma curve declares γ). Seeded from the
-  // descriptor `gamma=`, else the default 2.2; HOME restores it.
-  const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
-    gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT,
-  );
+  // descriptor `gamma=`, else the default 2.2. A viewport setting: persists across
+  // flips; reseeds only on a controlled surface; HOME re-seeds to the visible slot.
+  const gammaSeed = gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT;
+  const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
   useEffect(() => {
-    if (gamma && gamma > 0) setTonemapGamma(gamma);
-  }, [gamma, setTonemapGamma]);
+    if (controlledSurface && gamma && gamma > 0) setTonemapGamma(gamma);
+  }, [gamma, controlledSurface, setTonemapGamma]);
+  const gammaModified = tonemapGamma !== gammaSeed;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -1152,13 +1170,17 @@ function CpuHdrImagePane(
   // sourceArity>1.
   const [reduceOverride, setReduceOverride] = useState<ReduceMode | null>(null);
   const effectiveReduce = reduceOverride ?? defaultReduceMode(sourceArity);
-  const [colorBounds, setColorBounds, boundsMeta] = useResettableState<[number, number] | null>(
-    propColorRange ?? null,
-  );
+  const [colorBounds, setColorBounds] = useState<[number, number] | null>(propColorRange ?? null);
+  // Bounds are a viewport setting — persist across flips; reseed only on a controlled
+  // surface. HOME re-seeds to the visible slot below.
   useEffect(() => {
-    setColorBounds(propColorRange ?? null);
+    if (controlledSurface) setColorBounds(propColorRange ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propColorRange?.[0], propColorRange?.[1]]);
+  }, [propColorRange?.[0], propColorRange?.[1], controlledSurface]);
+  const boundsSeedVal: [number, number] | null = propColorRange ?? null;
+  const boundsModified =
+    (colorBounds?.[0] ?? null) !== (boundsSeedVal?.[0] ?? null) ||
+    (colorBounds?.[1] ?? null) !== (boundsSeedVal?.[1] ?? null);
   const boundsEngaged =
     enc.isLut && enc.hasParam("min") && !!colorBounds && Number.isFinite(colorBounds[0]) && Number.isFinite(colorBounds[1]);
   const boundsRange = useMemo(() => {
@@ -1491,17 +1513,17 @@ function CpuHdrImagePane(
       onReset={() => {
         deepFlatten.reset();
         enc.resetEncoding();
-        gammaMeta.reset();
+        setTonemapGamma(gammaSeed); // γ back to the VISIBLE slot's descriptor
         setReduceOverride(null); // reduce back to the k-based default
-        boundsMeta.reset();
+        setColorBounds(boundsSeedVal); // min/max back to the visible slot's colorRange
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
         deepFlatten.isModified ||
         enc.encodingModified ||
-        gammaMeta.isModified ||
+        gammaModified ||
         reduceOverride !== null ||
-        boundsMeta.isModified ||
+        boundsModified ||
         !!props.channelModified
       }
       histogram={histogramSource}

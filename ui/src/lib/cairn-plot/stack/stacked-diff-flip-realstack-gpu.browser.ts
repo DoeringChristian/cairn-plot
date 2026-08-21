@@ -246,6 +246,42 @@ function stackedTwoScalarGrid(): PlotDescriptor {
     },
   } as unknown as PlotDescriptor;
 }
+// Two scalar slots with DISTINCT authored PEAK values — the "shares settings BEYOND
+// encoding" test (reg b): peak is a viewport setting too, so a pick persists across
+// flips (post-fix) where the pre-fix per-flip reseed would reset it to each slot's
+// authored peak.
+const peakScalarLeaf = (label: string, peak: number) => ({
+  kind: "plot" as const,
+  renderer: "image",
+  data: imghdr("runtime:scalar"),
+  props: { toolbar: true, label, peak },
+});
+function stackedTwoPeakGrid(): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: 2,
+      gap: 8,
+      mode: "stacked",
+      children: [peakScalarLeaf("Peak 8", 8), peakScalarLeaf("Peak 3", 3)],
+    },
+  } as unknown as PlotDescriptor;
+}
+// The SAME two distinct-default scalar slots, but a NORMAL side-by-side grid — TWO
+// separate viewports (each its own settings), for the HOME-while-selected locality
+// test (reg a): multi-select syncs settings BETWEEN them, but HOME on one is LOCAL.
+function sideBySideTwoScalarGrid(): PlotDescriptor {
+  return {
+    mode: "local",
+    root: {
+      kind: "grid",
+      cols: 2,
+      gap: 8,
+      children: [magmaScalarLeaf("Magma scalar"), scalarPlainLeaf("Plain scalar")],
+    },
+  } as unknown as PlotDescriptor;
+}
 
 // ---- oracle ------------------------------------------------------------------
 /** An IMAGE-mode present (identity op, no `b`) that is `isScalar` with a bound
@@ -294,15 +330,19 @@ const activeIdx = (hostId: string): number => {
 interface DiffProbe {
   compareMode: "diff" | "split" | "blend";
   colormap: string;
+  diffKernel: string;
   changeCompareMode: (m: "diff" | "split" | "blend") => void;
   changeColormap: (id: string) => void;
+  changeDiffKernel: (id: string) => void;
   home: () => void;
 }
 interface ImgProbe {
   encodingId: string;
   colormap: string;
-  inStack: boolean;
+  controlledSurface: boolean;
+  peak: number;
   changeEncoding: (id: string) => void;
+  changePeak: (v: number) => void;
   home: () => void;
 }
 function findProbe<T>(hostId: string, key: string): T | null {
@@ -893,7 +933,152 @@ async function main(): Promise<void> {
     report(g2.afterFlip === "turbo", `PHASE G2 POST-FIX: the diff colormap pick SURVIVES an image↔diff flip (${g2.afterFlip})`);
     if (g2.afterFlip !== "turbo") allOk = false;
 
-    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings`);
+    // ============ PHASE H — HOME IS LOCAL WHILE MULTI-SELECTED (reg a) ===========
+    // Two SEPARATE viewports (a normal side-by-side grid: slot0 authored magma,
+    // slot1 a plain scalar with a curve default). Multi-select forms ONE settings-
+    // sync group (slot0 = anchor). A pick on one MIRRORS to the peer (sync-over) —
+    // that stays. But HOME on a viewport is LOCAL: it re-seeds ONLY that viewport to
+    // ITS OWN authored default; the sync must NOT absorb or veto it, and the peer
+    // (neighbor) is untouched. Storage is always per-viewport.
+    interface HResult {
+      seed0: string; // slot0 authored default (magma)
+      seed1: string; // slot1 authored default (a curve, NOT magma)
+      syncedPeer: string; // after slot0 picks turbo → peer (slot1) follows to turbo
+      homePeer1: string; // HOME slot1 (non-anchor) → slot1's OWN default, not turbo/magma
+      homePeerKept0: string; // slot0 (anchor) still turbo — its setting untouched
+      homeAnchor0: string; // re-sync turbo, HOME slot0 (anchor) → slot0's default magma
+      homeAnchorKept1: string; // slot1 kept its value — HOME on the anchor is local too
+    }
+    const runH = async (hostId: string): Promise<HResult> => {
+      __resetGlobalSelectionStoreForTest();
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:520px;height:280px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: sideBySideTwoScalarGrid() }));
+      await waitFor(() => allImgProbes(hostId).length >= 2, 12000);
+      await sleep(200);
+      const p = () => allImgProbes(hostId);
+      const seed0 = p()[0]?.encodingId ?? "?";
+      const seed1 = p()[1]?.encodingId ?? "?";
+      // Form the page-wide selection: slot0 first ⇒ anchor. The anchor seeds the
+      // group, so slot1 adopts slot0's magma on join (expected mirror behaviour).
+      const ids = framePaneIds(hostId);
+      const store = getGlobalSelectionStore();
+      store.select(ids[0], "replace");
+      store.select(ids[1], "toggle");
+      await sleep(300);
+      // A pick on the anchor mirrors to the peer.
+      p()[0]!.changeEncoding("turbo");
+      await waitFor(() => p()[1]?.encodingId === "turbo", 4000);
+      const syncedPeer = p()[1]?.encodingId ?? "?";
+      // HOME the NON-ANCHOR peer (slot1): local — back to slot1's OWN authored default.
+      p()[1]!.home();
+      await sleep(250);
+      const homePeer1 = p()[1]?.encodingId ?? "?";
+      const homePeerKept0 = p()[0]?.encodingId ?? "?";
+      // Re-sync, then HOME the ANCHOR (slot0): also local — back to slot0's magma.
+      p()[0]!.changeEncoding("turbo");
+      await waitFor(() => p()[1]?.encodingId === "turbo", 4000);
+      p()[0]!.home();
+      await sleep(250);
+      const homeAnchor0 = p()[0]?.encodingId ?? "?";
+      const homeAnchorKept1 = p()[1]?.encodingId ?? "?";
+      root.unmount();
+      host.remove();
+      __resetGlobalSelectionStoreForTest();
+      note(
+        `PHASE H: seed0=${seed0} seed1=${seed1} syncedPeer=${syncedPeer} homePeer1=${homePeer1} ` +
+          `homePeerKept0=${homePeerKept0} homeAnchor0=${homeAnchor0} homeAnchorKept1=${homeAnchorKept1}`,
+      );
+      return { seed0, seed1, syncedPeer, homePeer1, homePeerKept0, homeAnchor0, homeAnchorKept1 };
+    };
+    const h = await runH("hSel");
+    report(h.seed0 === "magma" && h.seed1 !== "magma", `PHASE H setup: two viewports with DISTINCT authored defaults (slot0=${h.seed0}, slot1=${h.seed1})`);
+    report(h.syncedPeer === "turbo", `PHASE H: multi-select mirrors a pick between viewports (peer→turbo: ${h.syncedPeer})`);
+    report(h.homePeer1 === h.seed1, `PHASE H: HOME on a selected NON-ANCHOR resets ONLY it, to its OWN default — sync does not veto it (${h.homePeer1})`);
+    report(h.homePeerKept0 === "turbo", `PHASE H: the neighbour (anchor) is UNTOUCHED by a peer's HOME (still turbo: ${h.homePeerKept0})`);
+    report(h.homeAnchor0 === "magma", `PHASE H: HOME on a selected ANCHOR is local too, to its own default (${h.homeAnchor0})`);
+    report(h.homeAnchorKept1 === "turbo", `PHASE H: the neighbour keeps its setting after the anchor's HOME (${h.homeAnchorKept1})`);
+    if (
+      h.seed0 !== "magma" || h.seed1 === "magma" || h.syncedPeer !== "turbo" ||
+      h.homePeer1 !== h.seed1 || h.homePeerKept0 !== "turbo" ||
+      h.homeAnchor0 !== "magma" || h.homeAnchorKept1 !== "turbo"
+    ) allOk = false;
+
+    // ============ PHASE I — A STACK SHARES SETTINGS BEYOND ENCODING (reg b) ======
+    // The stack must share ALL settings across its slots, not only encoding/diff-
+    // colormap. Sample PEAK (an image setting) and the diff KERNEL: a pick persists
+    // across flips (a flip does NOT change viewport settings). PEAK has a pre/post
+    // contrast — the pre-fix per-flip reseed resets it to each slot's authored peak.
+    const runIPeak = async (hostId: string, disable: boolean): Promise<{ seed0: string; afterPick: string; afterFlip: string }> => {
+      (window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared = disable;
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: stackedTwoPeakGrid() }));
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000);
+      await sleep(150);
+      const seed0 = String(imgProbe(hostId)?.peak ?? "?"); // slot0 authored peak (8)
+      imgProbe(hostId)!.changePeak(5); // a pick on slot0
+      await waitFor(() => imgProbe(hostId)?.peak === 5, 4000);
+      const afterPick = String(imgProbe(hostId)?.peak ?? "?");
+      key("2"); // flip to slot1 (authored peak 3)
+      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await sleep(200);
+      const afterFlip = String(imgProbe(hostId)?.peak ?? "?"); // post: 5 (shared); pre: 3
+      root.unmount();
+      host.remove();
+      (window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared = false;
+      note(`PHASE I peak (${disable ? "pre-fix" : "post-fix"}): seed0=${seed0} afterPick=${afterPick} afterFlip=${afterFlip}`);
+      return { seed0, afterPick, afterFlip };
+    };
+    const iPre = await runIPeak("iPeakPre", true);
+    report(iPre.seed0 === "8" && iPre.afterPick === "5", `PHASE I setup: slot0 authored peak 8, pick 5 (${iPre.seed0}/${iPre.afterPick})`);
+    report(iPre.afterFlip === "3", `PHASE I PRE-FIX: peak is RESET by a flip to slot1's authored peak (bug reproduced: ${iPre.afterFlip})`);
+    const iPost = await runIPeak("iPeakPost", false);
+    report(iPost.afterFlip === "5", `PHASE I POST-FIX: peak (a setting BEYOND encoding) is SHARED — the pick survives the flip (${iPost.afterFlip})`);
+    if (iPost.afterFlip !== "5") allOk = false;
+
+    // KERNEL: a diff-kernel pick survives an image↔diff flip (shared viewport setting).
+    const runIKernel = async (hostId: string): Promise<{ picked: string; afterFlip: string }> => {
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      key("2");
+      await waitFor(() => activeIdx(hostId) === 1 && !!diffProbe(hostId), 4000);
+      await sleep(150);
+      diffProbe(hostId)!.changeDiffKernel("squared");
+      await waitFor(() => diffProbe(hostId)?.diffKernel === "squared", 4000);
+      const picked = diffProbe(hostId)?.diffKernel ?? "?";
+      key("1"); // flip to the image slot
+      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await sleep(150);
+      key("2"); // back to the diff
+      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await sleep(200);
+      const afterFlip = diffProbe(hostId)?.diffKernel ?? "?";
+      root.unmount();
+      host.remove();
+      note(`PHASE I kernel: picked=${picked} afterFlip=${afterFlip}`);
+      return { picked, afterFlip };
+    };
+    const iK = await runIKernel("iKernel");
+    report(iK.picked === "squared", `PHASE I setup: diff kernel picked squared (${iK.picked})`);
+    report(iK.afterFlip === "squared", `PHASE I: the diff KERNEL pick survives an image↔diff flip (shared: ${iK.afterFlip})`);
+    if (iK.afterFlip !== "squared") allOk = false;
+
+    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings + HOME-local-while-selected + shares settings beyond encoding (peak/kernel)`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

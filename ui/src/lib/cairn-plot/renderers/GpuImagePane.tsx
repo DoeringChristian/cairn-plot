@@ -555,12 +555,24 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (t: string | null | undefined) => resolveEffectiveTonemap(t, false),
     [],
   );
-  // STACK membership: the ONE reused renderer of a STACKED viewport owns the stack's
-  // SHARED display settings (a pick applies to every slot + survives flips; each
-  // image's authored props are seeds only; HOME adopts the focused slot's; exit to
-  // grid discards). Threaded as `inStackedGrid` for a plain image (from the CORE-side
-  // `InStackedGridContext`) and via `compareSource.inStackedGrid` for a compare.
-  const inStack = !!backendProps.inStackedGrid || !!compareSource?.inStackedGrid;
+  // CONTROLLED SURFACE vs INTERACTIVE VIEWPORT — the ONE axis that governs whether a
+  // descriptor prop change RESEEDS the pane's display settings. `toolbar === false`
+  // is the host-driven controlled-surface seam (a card/host hides the toolbar and
+  // drives colormap/tonemap/peak/… as props from its OWN menu): there the settings
+  // FOLLOW the props (the non-interactive contract, reseed on change). Otherwise this
+  // is an interactive VIEWPORT — a standalone pane, a grid cell, or the ONE reused
+  // renderer of a STACKED viewport — and it OWNS its settings: seeded once from the
+  // initially-visible image, they PERSIST across slot flips / re-lowers and change
+  // only on a user pick or HOME (which re-seeds to the CURRENTLY-VISIBLE image). A
+  // stacked viewport is exactly this rule with one shared pane, so its slots share
+  // ALL settings by construction — nothing special-cases the stack. `__cairnDisable-
+  // StackShared` (test-only, the `__cairnDisableSyncResolve` idiom) forces the
+  // controlled-surface reseed on a viewport so one harness run measures pre-fix
+  // (flip wipes the shared setting) vs post-fix (shared, survives) with one driver.
+  const disableStackShared =
+    typeof window !== "undefined" &&
+    !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared;
+  const controlledSurface = toolbar === false || disableStackShared;
   const enc = usePaneEncoding({
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,
@@ -568,7 +580,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     propColormap,
     propTonemap,
     resolveDefaultCurve,
-    inStack,
+    controlledSurface,
   });
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
@@ -614,15 +626,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     propPeak != null && propPeak > 0
       ? propPeak
       : (aliasPeakHint(propTonemap) ?? EXTENDED_TONEMAP_PEAK_DEFAULT);
-  const [peak, setPeak, peakMeta] = useResettableState(seedPeak());
-  // Re-seed on `peak`/`tonemap` prop change so PEAK stays a CONTROLLED surface
-  // (host-menu contract) — the descriptor value drives it until the user picks a
-  // new one locally (impossible while the toolbar is hidden). Mirrors the
-  // colormap/tonemap/gamma re-seed effects.
+  const [peak, setPeak] = useState(seedPeak());
+  // PEAK is a viewport setting: it PERSISTS across slot flips. Re-seed ONLY on a
+  // CONTROLLED SURFACE (`toolbar={false}` host-menu contract) — there the descriptor
+  // value drives it (the user cannot pick locally). On an interactive viewport a
+  // prop change (a flip) leaves it untouched; HOME re-seeds it to the currently-
+  // visible slot below. Mirrors the encoding/gamma/bounds reseed gating.
   useEffect(() => {
-    setPeak(seedPeak());
+    if (controlledSurface) setPeak(seedPeak());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propPeak, propTonemap]);
+  }, [propPeak, propTonemap, controlledSurface]);
+  // HOME target + modified dot track the CURRENTLY-VISIBLE slot's descriptor (not a
+  // mount-captured seed): HOME adopts the visible image's default, and the dot lights
+  // when the shared setting differs from it.
+  const peakSeed = seedPeak();
+  const peakModified = peak !== peakSeed;
 
   // Gamma(γ) for the Gamma display operator (HDR panes AND the SDR display-
   // transfer path). View-local; the slider is shown ONLY while the Gamma
@@ -632,12 +650,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const propGamma: number | undefined = hdrMode
     ? (props as HdrImageProps).gamma
     : (props as SdrImageProps).gamma;
-  const [tonemapGamma, setTonemapGamma, gammaMeta] = useResettableState(
-    propGamma && propGamma > 0 ? propGamma : TONEMAP_GAMMA_DEFAULT,
-  );
+  const gammaSeed = propGamma && propGamma > 0 ? propGamma : TONEMAP_GAMMA_DEFAULT;
+  const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
+  // γ is a viewport setting — persists across flips; reseeds only on a controlled
+  // surface (host-menu contract). HOME re-seeds it to the visible slot below.
   useEffect(() => {
-    if (propGamma && propGamma > 0) setTonemapGamma(propGamma);
-  }, [propGamma, setTonemapGamma]);
+    if (controlledSurface && propGamma && propGamma > 0) setTonemapGamma(propGamma);
+  }, [propGamma, controlledSurface, setTonemapGamma]);
+  const gammaModified = tonemapGamma !== gammaSeed;
 
   // (SDR display-transfer state removed — §B: the plain-SDR pane now shares the
   // SAME unified operator state as the HDR pane, `effectiveTonemap` above, and
@@ -675,13 +695,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // (luminance for k≥3). A user pick still overrides it.
   const activeIsTurbo = !!getEncoding(enc.encodingId)?.turbo;
   const effectiveReduce = reduceOverride ?? (activeIsTurbo ? "mean" : defaultReduceMode(sourceArity));
-  const boundsSeed = useResettableState<[number, number] | null>(propColorRange ?? null);
-  const [colorBounds, setColorBounds, boundsMeta] = boundsSeed;
-  // Re-seed on descriptor change (controlled surface, mirrors the peak/γ effects).
+  const [colorBounds, setColorBounds] = useState<[number, number] | null>(propColorRange ?? null);
+  // Bounds are a viewport setting — persist across flips; reseed only on a controlled
+  // surface (mirrors the peak/γ gating). HOME re-seeds to the visible slot below.
   useEffect(() => {
-    setColorBounds(propColorRange ?? null);
+    if (controlledSurface) setColorBounds(propColorRange ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propColorRange?.[0], propColorRange?.[1]]);
+  }, [propColorRange?.[0], propColorRange?.[1], controlledSurface]);
+  const boundsSeedVal: [number, number] | null = propColorRange ?? null;
+  const boundsModified =
+    (colorBounds?.[0] ?? null) !== (boundsSeedVal?.[0] ?? null) ||
+    (colorBounds?.[1] ?? null) !== (boundsSeedVal?.[1] ?? null);
   // The bounds skin is engaged iff a DATA encoding is active (a lut that declares
   // min/max, OR the gray-none data path) AND a finite colorRange seeds it (min<max).
   // Light curves (reinhard/aces on a scalar, RGB curves) never use bounds.
@@ -737,13 +761,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     [setDiffKernelState, compareSource?.onDiffKernelChange],
   );
   // Explicit diff-colormap OVERRIDE (null = follow the kernel default). Sticks across
-  // kernel switches; HOME clears it. Seeded from the descriptor colormap. Like the
-  // image `enc`, the diff colormap is a field of the stack's SHARED settings — in a
-  // stack it PERSISTS across flips (a pick applies to every diff slot; each diff's
-  // authored colormap is a SEED only), so the descriptor RESEED is SUPPRESSED while
-  // in a stack. HOME re-seeds it to the focused slot's authored colormap.
-  const [diffColormapOverride, setDiffColormapOverride, diffColormapMeta] =
-    useResettableState<Colormap | null>(diffSeedColormap);
+  // kernel switches; HOME clears it. Like the image `enc`, the diff colormap is a
+  // VIEWPORT setting: on an interactive viewport it is SEEDED ONCE from the first
+  // compare descriptor then PERSISTS across flips (a pick applies to every diff slot;
+  // each diff's authored colormap is a SEED only); on a CONTROLLED SURFACE it reseeds
+  // from the descriptor (host-menu contract). HOME re-seeds it to the visible slot.
+  const [diffColormapOverride, setDiffColormapOverride] =
+    useState<Colormap | null>(diffSeedColormap);
   const diffReseededRef = useRef(false);
   useEffect(() => {
     // Anti-churn: only (re)seed from a PRESENT compare descriptor, so an image slot in
@@ -752,22 +776,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const c = compareSource.colormap;
     const desc: Colormap | null =
       c == null || c === "none" ? null : (c as string) === "viridis" ? ("turbo" as Colormap) : (c as Colormap);
-    const disableStackShared =
-      typeof window !== "undefined" &&
-      !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared;
-    if (inStack && !disableStackShared) {
-      // SHARED stack setting: seed ONCE from the first compare descriptor, then leave
-      // it — a flip to another diff slot keeps the shared pick (HOME re-seeds).
+    if (!controlledSurface) {
+      // VIEWPORT: seed ONCE from the first present compare descriptor, then leave it —
+      // a flip to another diff slot keeps the shared pick (HOME re-seeds).
       if (!diffReseededRef.current) {
         diffReseededRef.current = true;
         setDiffColormapOverride(desc);
       }
       return;
     }
-    // Non-stack (or pre-fix toggle): controlled surface — reseed from the descriptor.
+    // CONTROLLED SURFACE: reseed from the descriptor.
     setDiffColormapOverride(desc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareSource?.colormap, !!compareSource, inStack]);
+  }, [compareSource?.colormap, !!compareSource, controlledSurface]);
+  // HOME target + modified dot for the diff colormap track the visible slot's seed.
+  const diffColormapModified = (diffColormapOverride ?? null) !== (diffSeedColormap ?? null);
 
   // Cheap pure derivations (recomputed each render): the concrete kernel id (float
   // sources auto-dispatch flip→hdr-flip) and the EFFECTIVE diff colormap (override
@@ -2193,16 +2216,22 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       get colormap() {
         return enc.colormap;
       },
-      get inStack() {
-        return inStack;
+      get controlledSurface() {
+        return controlledSurface;
       },
-      changeEncoding, // a user pick → the stack's shared encoding (applies to all slots)
-      home: () => enc.resetEncoding(), // HOME re-seeds to the focused slot's authored default
+      // PEAK is a viewport setting BEYOND the encoding — sampled to prove a stack
+      // shares ALL settings across flips (reg b), not only encoding/diff-colormap.
+      get peak() {
+        return peak;
+      },
+      changePeak, // a user pick → the viewport's peak (a stack shares it across slots)
+      changeEncoding, // a user pick → the viewport's encoding (a stack shares it across slots)
+      home: () => enc.resetEncoding(), // HOME re-seeds to the visible slot's authored default
     };
     return () => {
       if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
     };
-  }, [enc.encodingId, enc.colormap, inStack, changeEncoding, enc]);
+  }, [enc.encodingId, enc.colormap, controlledSurface, peak, changePeak, changeEncoding, enc]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
@@ -2709,10 +2738,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       }
       onReset={() => {
         enc.resetEncoding();
-        peakMeta.reset();
-        gammaMeta.reset();
+        setPeak(peakSeed); // peak back to the VISIBLE slot's descriptor
+        setTonemapGamma(gammaSeed); // γ back to the visible slot's descriptor
         setReduceOverride(null); // reduce back to the k-based default
-        boundsMeta.reset(); // min/max back to the descriptor colorRange seed
+        setColorBounds(boundsSeedVal); // min/max back to the visible slot's colorRange
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
         // COMPARE HOME: the VIEW MODE / kernel / split / blend live in the owner's
@@ -2742,14 +2771,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       }}
       extraModified={
         enc.encodingModified ||
-        peakMeta.isModified ||
-        gammaMeta.isModified ||
+        peakModified ||
+        gammaModified ||
         reduceOverride !== null ||
-        boundsMeta.isModified ||
+        boundsModified ||
         deepFlatten.isModified ||
         !!props.channelModified ||
         (hasCompare && !!compareSource?.compareModified) ||
-        (diffMode && diffColormapMeta.isModified)
+        (diffMode && diffColormapModified)
       }
       // DIFF / RESERVING image slot: the caption chip (in `extraChips`) carries the
       // labeling, so the shell's own bottom-left LabelChip is suppressed — otherwise

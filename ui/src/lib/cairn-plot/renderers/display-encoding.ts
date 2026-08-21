@@ -247,17 +247,21 @@ export interface PaneEncodingConfig {
    *  `resolveEffectiveTonemap`; the CPU-SDR transfer path coerces to
    *  srgb/gamma/linear). Must return a curve id. */
   resolveDefaultCurve: (propTonemap: string | null | undefined) => string;
-  /** True when this pane is the ONE reused renderer of a STACKED viewport. A stack
-   *  owns ONE SHARED settings object: every slot renders under the stack's current
-   *  encoding, a pick anywhere applies to all slots, and each image's authored
-   *  descriptor props act as SEEDS only. The reused pane's `encodingId` state IS that
-   *  shared setting (persists across flips, discarded when the stack unmounts on exit
-   *  to grid layout) — so in a stack the per-flip CONTROLLED-SURFACE RESEED is
-   *  SUPPRESSED (a flip keeps the shared encoding; arity gating adapts applicability),
-   *  while HOME (`resetEncoding`) re-seeds to the FOCUSED slot's authored defaults.
-   *  Absent/false (a standalone pane or a normal grid cell) ⇒ the controlled-surface
-   *  reseed applies as before (a descriptor prop change reseeds). */
-  inStack?: boolean;
+  /** True when this pane is a HOST-DRIVEN CONTROLLED SURFACE (`toolbar={false}` —
+   *  a card / host that drives colormap/tonemap as props from its OWN menu, with
+   *  the pane's toolbar hidden so the user cannot pick locally). Then a descriptor
+   *  prop change RESEEDS `encodingId` — the controlled-surface (non-interactive)
+   *  contract: the pane follows the host's props.
+   *
+   *  Absent/false ⇒ an INTERACTIVE VIEWPORT (its own toolbar visible): the viewport
+   *  OWNS its encoding. Per the settings-belong-to-the-viewport model, `encodingId`
+   *  is SEEDED ONCE from the initially-visible image and thereafter PERSISTS across
+   *  every content change — a stacked viewport's slot flips, a re-lower — changing
+   *  ONLY on a user pick (`setEncoding`) or HOME (`resetEncoding`). A slot flip does
+   *  NOT touch it (arity gating keeps it applicable per slot); HOME re-seeds it to
+   *  the CURRENTLY-VISIBLE image's authored default. This is the ONE rule for a
+   *  stack (one viewport, one shared setting) AND a grid cell (its own viewport). */
+  controlledSurface?: boolean;
 }
 
 /** What a pane needs from the unified encoding state. */
@@ -327,32 +331,27 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   // Track the last props/arity so ONE effect can tell prop-reseed from arity-flip.
   const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
   const prevArityRef = useRef<number>(arity);
-  // Test-only toggle (matches the `__cairnDisableSyncResolve` idiom): when set, a
-  // stacked pane behaves like a NON-stack (the per-flip reseed fires), restoring the
-  // PRE-FIX behavior where a slot flip WIPES the shared pick. Lets one harness run
-  // measure pre-fix (wipe) vs post-fix (shared, survives) with the same driver.
-  const disableStackShared =
-    typeof window !== "undefined" &&
-    !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared;
-  const inStack = !!config.inStack && !disableStackShared;
+  const controlledSurface = !!config.controlledSurface;
 
   // CONTROLLED-SURFACE RESEED, done DURING RENDER (React's supported "adjust state
-  // during render" pattern — guarded to fire once, so the COMMITTED flip frame
-  // already carries the reseeded encoding, no one-frame lag). It reseeds `encodingId`
-  // to the descriptor seed when `propColormap`/`propTonemap` change.
+  // during render" pattern — guarded to fire once, so the COMMITTED frame already
+  // carries the reseeded encoding, no one-frame lag). It reseeds `encodingId` to the
+  // descriptor seed when `propColormap`/`propTonemap` change.
   //
-  // IN A STACK the reseed is SUPPRESSED: the stack owns ONE shared settings object,
-  // so `encodingId` is that shared setting — it PERSISTS across flips (a pick applies
-  // to every slot), and each slot's authored descriptor is a SEED only (adopted by
-  // HOME via `resetEncoding`, not by the flip). Applicability across differing slot
-  // arities is handled by the arity effect below (existing gating). Non-stack (a
-  // standalone pane / a normal grid cell) keeps the reseed: a descriptor prop change
-  // reseeds the controlled surface as before.
+  // This fires ONLY for a HOST-DRIVEN CONTROLLED SURFACE (`toolbar={false}`): the
+  // host drives the props and the pane follows them (the non-interactive contract).
+  // For an INTERACTIVE VIEWPORT the reseed is SUPPRESSED — the viewport OWNS its
+  // encoding: it PERSISTS across every content change (a stacked viewport's slot
+  // flips, a re-lower), each slot's authored descriptor being a SEED only (adopted
+  // by HOME via `resetEncoding`, never by a flip). Applicability across differing
+  // slot arities is handled by the arity effect below (existing gating). This is the
+  // ONE rule — a stack (one shared viewport setting) and a grid cell (its own
+  // viewport) behave identically; nothing special-cases the stack.
   const propsKey = `${propColormap} ${String(propTonemap)}`;
   if (propsKey !== prevPropsRef.current) {
     prevPropsRef.current = propsKey;
     prevArityRef.current = arity;
-    if (!inStack) {
+    if (controlledSurface) {
       memoryRef.current.clear();
       setEncodingId(seedFor(arity));
     }
@@ -360,15 +359,14 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
 
   useEffect(() => {
     // ARITY-flip reseed only (the render-time reseed absorbed any concurrent prop
-    // change + stamped prevArityRef). Non-stack: the channel selector's per-arity
-    // memory restores the last encoding at each k. IN A STACK memory is OFF — the
-    // shared encoding is the single source, so on a differing-arity flip it is kept
-    // if applicable at the new arity, else falls back to the default curve (arity
-    // gating = applicability; no memory that would diverge per slot).
+    // change + stamped prevArityRef). The channel selector's per-arity memory
+    // restores the last encoding chosen at each k (a within-viewport gesture); if
+    // none, the encoding is kept where applicable at the new arity, else falls back
+    // to the default curve (arity gating = applicability).
     if (arity !== prevArityRef.current) {
       prevArityRef.current = arity;
       const avail = idsFor(arity);
-      const remembered = inStack ? undefined : memoryRef.current.get(arity);
+      const remembered = memoryRef.current.get(arity);
       let next: string;
       if (remembered && avail.all.includes(remembered)) next = remembered;
       else if (avail.all.includes(encodingId)) next = encodingId;
