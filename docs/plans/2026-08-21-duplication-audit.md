@@ -438,22 +438,76 @@ the group's shared DISPLAY snapshot the anchor seeds on selection formation (whi
 carries `encoding` + the whole display look). typecheck; 641 node tests; ALL 31 parity
 harnesses green (PHASE K + compare-settings-sync live kernel mirror + page-wide-selection).
 
-**Browser verification — OPEN (honest).** On the served report's `FLIP vs SSIM vs
-absolute` grid (three descriptor diffs), a real page-wide multi-selection STILL collapses
-the two non-anchor kernels onto the anchor's metric (ssim/absolute → flip), measured live
-by stable `data-plot-pane-id`. Instrumentation established: (a) the anchor's seed broadcast
-is a 10-key display snapshot that DOES carry `diffKernel:flip` alongside `encoding` (so the
-receiver guards above correctly BLOCK it — verified in the served bundle); (b) yet the
-non-anchor `control.diffKernel` flips ~1 s AFTER the broadcast, i.e. not synchronously with
-any bus patch; (c) no `{diffKernel}`-only (dedicated-pick) broadcast fires, and no traced
-`setDiffKernel`/`onDiffKernelChange` caller runs on formation. The observed state change
-therefore contradicts every traced code path (guarded subscription blocked; no dedicated
-pick; no owner-callback caller) — the mechanism is a DELAYED render/re-lower interaction I
-could not root-cause within the timebox. The automated 2-diff regression (PHASE K, real
-PlotApp GPU tree) does NOT reproduce it, so the harness gate is green while the live 3-diff
-path is not. FLAGGED as an open follow-up: the anchor snapshot should not carry `diffKernel`
-at all (its source `settingsSnapshot` is 9-key and omits it — the extra key's runtime
-origin is itself unexplained and is the next thread to pull).
+### M2 — ADDENDUM RESOLVED (CLOSED): the live 3-diff collapse was a STALE SERVED-REPORT artifact, not a current-source bug
+
+**Mechanism (caught red-handed, live, hardware WebGPU — Apple metal-3).** The OPEN
+residual was measured against a **stale served `report.html`** (compounded by a browser
+HTTP cache serving that same stale copy on reload). Both documented "threads" resolve to
+one fact: **the served report inlined a PRE-M2 bundle**, generated once before the M2
+hardening landed and never regenerated (`examples/rendered/report.html` is gitignored — a
+local render output; the served `/tmp/report.html` was that stale artifact). Instrumenting
+the live page (`EventTarget.prototype.dispatchEvent` wrap capturing every
+`image-settings-state` patch + a 20 ms `__cairnImageDiffProbe.diffKernel` poller keyed on
+`data-plot-pane-id`) established, on the STALE bundle:
+
+- **Thread 1 (the 10th key).** The anchor's seed broadcast was literally
+  `{"encoding":"turbo","colormap":"turbo",…,"reduce":"mean","diffKernel":"flip","compareMode":"diff"}`
+  — `diffKernel` sitting **between `reduce` and `compareMode`** in object-construction
+  order, i.e. a LITERAL key of the diff-face `settingsSnapshot` object in that old bundle
+  (`grep` of the served html: `reduce:we,diffKernel:$e,compareMode`). Current-source
+  `settingsSnapshot` (`GpuImagePane.tsx:902`) omits it (9 keys) — hence "9 at source, 10 on
+  the wire." The "extra key" was never injected at runtime; the running code was simply
+  older than the source.
+- **Thread 2 (the ~1 s delayed, staggered collapse).** The stale bundle carried **none of
+  the M2 receiver defenses**: `grep` of the served html found ZERO `["diffKernel"]`
+  (no EPHEMERAL strip) and ZERO `diffKernel!==void 0&&…encoding===void 0` guards — the
+  receivers adopted the kernel UNCONDITIONALLY (`m.diffKernel!==void 0&&V(m.diffKernel)` in
+  `useCompareControl`; `_.diffKernel!==void 0&&ur(_.diffKernel)` in `applyRemoteSettings`).
+  So the anchor seed's `diffKernel:flip` propagated to every non-anchor's `kernelOverride`.
+  The "~1 s, staggered" timing (cp-pane-41 +0.8 s, cp-pane-42 +2.8 s) is a
+  render/detection artifact — each non-anchor pane's heavy diff GPU re-render completes at
+  a different time during the eager multi-pane load, so the (already-set) collapsed kernel
+  only becomes observable when that pane re-lowers. Not a deferred code path.
+
+**Proof it is fixed in current source (before/after, same clicks, same grid).** Rebuilding
+the bundles from HEAD is **byte-identical** to the committed `_assets` (so the shipped
+library already contains the fix). Regenerating the report from current source and reloading
+with a cache-buster: the anchor seed is now the **9-key** `{encoding:magma,colormap:magma,
+…,reduce:mean,compareMode:"diff"}` (NO `diffKernel`), the receivers guard on
+`encoding===undefined`, and a real page-wide 3-diff shift-click selection leaves the kernels
+**flip / ssim / absolute — NO collapse**. The stale served copy collapses; the regenerated
+copy does not. Three independent defenses each block the regression: (1) the 9-key snapshot,
+(2) `EPHEMERAL_KEYS=["diffKernel"]` stripped from the replayable snapshot, (3) the
+`encoding===undefined` receiver guards.
+
+**Why the harness stayed green while the live stale-report path didn't** (the addendum's
+puzzle, now explained). The harness forms the group with a synchronous `store.select`, which
+races the anchor seed AHEAD of the joiners' `useCompareControl` bus subscription; the
+joiners then read `getLastImageSettings`, from which the EPHEMERAL strip has already removed
+`diffKernel`. So even with the receiver guard removed, the harness cannot reproduce the
+BEHAVIORAL collapse — the live browser's real-click staggered formation is what lets a
+joiner receive the live seed. The robust, timing-independent invariant is therefore pinned
+at the PUBLISH level, not the adopt level.
+
+**Regression pin added — `stacked-diff-flip-realstack-gpu` PHASE L (3-diff).** The exact
+`FLIP vs SSIM vs absolute` grid (`sideBySideThreeDiffGrid`): forms a 3-pane selection and
+asserts (a) the anchor SEED published on formation carries **no `diffKernel` key** (captured
+via a scoped `dispatchEvent` wrap — this directly catches the pre-M2 snapshot regression and
+FAILED under a negative control that re-added the key), (b) the three kernels do NOT collapse
+onto the anchor, and (c) an explicit pick still publishes `{diffKernel}` and MIRRORS to BOTH
+peers. Negative control (re-add the 10th key + drop the guard) makes PHASE L's seed-omits-
+kernel assertion FAIL; reverting makes it PASS.
+
+**Gates (all green).** typecheck 0 · **661** node tests · **250** pytest (+10 skipped) ·
+**33/33** parity harnesses (hardware WebGPU), incl. `stacked-diff-flip-realstack-gpu` PHASE
+K + new PHASE L · bundles byte-identical to committed `_assets` (no shipped-code change —
+the fix already landed in the M2 cluster; this addendum only ADDS the 3-diff regression pin
+and corrects the record). `uv.lock` untouched.
+
+**Operational note.** The served report must be regenerated after any bundle change (the
+served `/tmp/report.html` inlines the bundle at generation time and does not auto-refresh),
+and a browser reload must bypass the HTTP cache (cache-buster query) — the stale-artifact +
+cache combination is precisely what produced this false-positive "OPEN residual."
 
 ---
 
@@ -527,7 +581,7 @@ and their branches deleted.
 | D1 | object-contain letterbox reimplemented in 4 sites | **FIXED (pre-wave)** | tip — collapsed onto the ONE `computeFit` primitive |
 | D2 | diff-id→default-color hardcoded in two registries | **FIXED (pre-wave)** | tip — kernel table is the source; content-op derives (drift test) |
 | D3 | `viridis→turbo` alias written as three literals, no cross-language test | **GUARDED** | ws2-contracts — ONE `COLORMAP_ALIASES` table (TS) + Python `_COLORMAP_ALIASES`, contract-pinned by KEY and VALUE |
-| M2* | **Live 3-diff multi-select kernel collapse (M2 addendum residual)** | **OPEN** | served-report 3-diff (FLIP/SSIM/absolute) page-wide selection still collapses the two non-anchor kernels onto the anchor; mechanism contradicts every traced path (guarded subscription blocked, no dedicated pick, no owner-callback caller); the anchor snapshot's extra 10th `diffKernel` key origin is unexplained. **Stays OPEN** — next thread. |
+| M2* | **Live 3-diff multi-select kernel collapse (M2 addendum residual)** | **CLOSED** | NOT a current-source bug: the collapse reproduced only against a STALE served `report.html` (pre-M2 bundle: snapshot carried a literal `diffKernel` 10th key, receivers adopted it with NO guard/EPHEMERAL strip) + a browser HTTP cache. Current source omits the key, strips it EPHEMERAL, and guards receivers on `encoding===undefined`; a regenerated + cache-busted report does NOT collapse (live before/after, hardware WebGPU). Pinned by new 3-diff `stacked-diff-flip-realstack-gpu` PHASE L (seed omits kernel + no collapse + pick mirrors; negative-control-verified). |
 
 **Beyond the 23:** ws5-reduce is a duplication-reduction consolidation not tied to a
 single numbered finding — it hardens the "reduce-to-scalar is single-sourced"
@@ -535,4 +589,4 @@ swept-and-cleared item by making the general GPU reduction family (`runReduce` +
 `engine/reduce/registry.ts`) the ONE backing for all four metric scalars, and
 retiring the bespoke `reduce.wgsl.ts`.
 
-**Scoreboard:** 11 FIXED (7 landed pre-wave on the tip, 4 this wave: H1, M7 + the L4/L5/L6/L8/L11 dead-code removals) · 2 FIXED-partial (L9, L10) · 4 GUARDED (M2, M5, M6, D3) · 2 SKIPPED-with-reason (L2, L7) · 3 OPEN-residual (L1, L3, and the M2 live 3-diff collapse).
+**Scoreboard:** 11 FIXED (7 landed pre-wave on the tip, 4 this wave: H1, M7 + the L4/L5/L6/L8/L11 dead-code removals) · 2 FIXED-partial (L9, L10) · 4 GUARDED (M2, M5, M6, D3) · 2 SKIPPED-with-reason (L2, L7) · 2 OPEN-residual (L1, L3). The M2 live 3-diff collapse is now **CLOSED** (M2* above): it was a stale served-report artifact, not a current-source bug — current source already fixes it (three independent defenses), now pinned by `stacked-diff-flip-realstack-gpu` PHASE L.
