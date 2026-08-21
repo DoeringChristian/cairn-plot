@@ -9,6 +9,7 @@ import {
   type CameraState,
 } from "./camera-sync";
 import { poolAcquire, poolRelease, poolTouch } from "./context-pool";
+import { recordContextLossEvent } from "../engine/test-hooks";
 
 /**
  * How long (ms) a viewer sits idle — no orbit/zoom, no data/color/size
@@ -869,8 +870,14 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     // way, and this hook shouldn't rely on an internal three.js detail).
     const onContextLost = (event: Event) => {
       event.preventDefault();
+      // Context-loss instrumentation (test-only; no-op unless the paneRenderLog
+      // capture is armed). This IS the "THREE.WebGLRenderer: Context Lost" the
+      // user sees under fast-flip load — timestamped so a repro can correlate it
+      // with a flip. (Benign here: `onContextRestored` re-renders on recovery.)
+      recordContextLossEvent("three-webgl-context-lost", { sourceId: sourceIdRef.current });
     };
     const onContextRestored = () => {
+      recordContextLossEvent("three-webgl-context-restored", { sourceId: sourceIdRef.current });
       parkedRef.current = false;
       requestRender();
       setCachedImageUrl(null);

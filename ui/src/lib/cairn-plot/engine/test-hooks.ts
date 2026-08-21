@@ -89,6 +89,55 @@ export interface PaneRenderRecord {
   contentParam?: number;
 }
 
+/**
+ * DEEP-MODE (paneRenderLog=2) OUTPUT-COLOR SAMPLE — the CAUSE-AGNOSTIC flash
+ * catcher. Where {@link PaneRenderRecord} proves the (source ⊗ encode) PARAMS
+ * were coherent, this records the ACTUAL COLOR a present produced: the pool
+ * renders an extra tiny (8×8) pass with the SAME primary texture + params into
+ * an offscreen readback texture (NOT the rotating swapchain) and averages it to
+ * one RGB fingerprint. A present whose color matches NONE of the settled slots'
+ * fingerprints is flagged — the orange flash caught by its actual color, no
+ * matter WHY the params/texture produced it. Zero cost unless armed at level 2.
+ */
+export interface DeepColorSample {
+  /** Mean RGB of the 8×8 sample, each channel normalized to [0,1] (HDR frames
+   *  are tone-normalized by their own max so hue stays comparable). */
+  r: number;
+  g: number;
+  b: number;
+  /** HSV hue in degrees [0,360) of the mean color (for human readability). */
+  hue: number;
+  /** HSV value/brightness [0,1] and saturation [0,1] of the mean color. */
+  value: number;
+  saturation: number;
+  /** The slot signature this present belongs to (mode|sourceKey|op|colormapSig).
+   *  Baselines are grouped by it; a settled slot has ≥ MIN_SETTLED samples. */
+  slot: string;
+  /** Distance (Euclidean, normalized RGB) from this present's color to its OWN
+   *  slot's SETTLED fingerprint. Large = a present of a settled slot whose color
+   *  jumped (a garbage/torn present under the same params) = the anomaly. */
+  distToOwnSettled: number;
+  /** The originating present's ground-truth record (source keys + full encode
+   *  fingerprint) — so an anomaly carries WHY as well as WHAT color. */
+  record: PaneRenderRecord;
+  /** `performance.now()` (or `Date.now()`) at capture, for correlating a flash
+   *  with a flip / a context-loss event. */
+  t: number;
+}
+
+/** A context/device-loss event captured while the user-facing log is armed —
+ *  timestamped so a repro can correlate a graphics-context loss with the exact
+ *  flip that triggered a flash. */
+export interface ContextLossEvent {
+  /** "webgpu-device-lost" (the 2D image/diff pane's own device) |
+   *  "three-webgl-context-lost" / "three-webgl-context-restored" (a 3D viewer). */
+  kind: string;
+  /** `performance.now()` (or `Date.now()`) at the event. */
+  t: number;
+  /** Optional structured detail (device-lost reason/message, viewer id, …). */
+  detail?: unknown;
+}
+
 let paneRenderLog: PaneRenderRecord[] | null = null;
 
 /** Begin (or reset) capturing per-present records. */
@@ -123,8 +172,9 @@ export function recordPaneRender(record: PaneRenderRecord): void {
     orangeSuspects.push(record);
     // eslint-disable-next-line no-console
     console.warn(
-      "cairn-plot paneRenderLog: ORANGE-suspect present — a plain image (identity op, no `b`) " +
-        "rendered through a SCALAR COLORMAP (a light image false-colored). Record captured on " +
+      "cairn-plot paneRenderLog: ORANGE-suspect present — a MULTI-CHANNEL (k>1) light image " +
+        "(identity op, no `b`) collapsed through a SCALAR COLORMAP (reduce → false-color): a " +
+        "light source forced onto the colormap's upper ramp = orange. Record captured on " +
         "`window.__cairnPaneRenderLogSuspects`.",
       record,
     );
@@ -142,40 +192,266 @@ export function recordPaneRender(record: PaneRenderRecord): void {
 //
 // When armed:
 //   - the pool logs every present (bounded ring, so no unbounded growth);
-//   - each ORANGE-suspect present (an image-mode blit carrying a scalar colormap
-//     — a plain image false-colored, the artefact BY CONSTRUCTION) is
-//     `console.warn`ed AND pushed to `window.__cairnPaneRenderLogSuspects`;
+//   - each ORANGE-suspect present (a MULTI-CHANNEL light image collapsed through
+//     a scalar colormap, the artefact BY CONSTRUCTION) is `console.warn`ed AND
+//     pushed to `window.__cairnPaneRenderLogSuspects`;
 //   - `window.__cairnPaneRenderLogRecords()` returns the full bounded buffer.
+//   - context/device-loss events are timestamped to `window.__cairnContextLossEvents`.
 // A repro then dumps `__cairnPaneRenderLogSuspects` (or copies the console).
+//
+// LEVEL 2 (`?paneRenderLog=2`) additionally arms the DEEP OUTPUT-COLOR DETECTOR:
+// the pool renders a tiny extra 8×8 pass per present and averages its color, and
+// any present whose color matches NO settled slot is flagged to
+// `window.__cairnPaneRenderLogHueAnomalies` — the cause-agnostic flash catcher
+// (it sees the orange by its actual color regardless of WHY it happened). Cheap
+// enough to hold 60fps (an 8×8 render + a 256-byte async readback per present);
+// zero cost at level ≤ 1 or unarmed.
 // ---------------------------------------------------------------------------
 const USER_CAPTURE_MAX_RECORDS = 5000;
 const USER_CAPTURE_MAX_SUSPECTS = 500;
+const USER_CAPTURE_MAX_HUE_ANOMALIES = 500;
+const USER_CAPTURE_MAX_CONTEXT_EVENTS = 500;
 let userCaptureArmed = false;
 let orangeSuspects: PaneRenderRecord[] = [];
 
 /** The orange-frame signature: an IMAGE-mode present (identity op, no `b`) that is
- *  `isScalar` with a bound colormap LUT — a plain image collapsed through a scalar
- *  colormap (the diff's magma reaching a light image), which lands a near-white
- *  image on the colormap's upper ramp = orange. */
-function isOrangeSuspect(r: PaneRenderRecord): boolean {
+ *  `isScalar` with a bound colormap LUT AND whose source is MULTI-CHANNEL (k>1) —
+ *  a LIGHT image (RGB/RGBA) reduced-and-collapsed through a scalar colormap (the
+ *  diff's magma reaching a light image), which lands a near-white image on the
+ *  colormap's upper ramp = orange.
+ *
+ *  FALSE-POSITIVE EXEMPTION (the k=1 authored-colormap case): a k=1 SCALAR pane
+ *  whose colormap is DESCRIPTOR-AUTHORED — a scalar float image the author drew
+ *  with magma/viridis/…, its NORMAL render — is ALSO `mode:image, !op, !b,
+ *  isScalar, hasColormap`, but it is entirely legitimate, not the artefact. The
+ *  earlier predicate flagged it on EVERY normal present (the user's console spam).
+ *  Only a MULTI-channel source (`channelCount > 1`) can be the "a light image got
+ *  false-colored" mismatch class, so gating on `channelCount > 1` exempts the
+ *  authored scalar pane while still catching the real ch>1-colormap-on-identity
+ *  mismatch. (A cached diff is `mode:"cached-diff"` and a direct diff/compositor
+ *  op has a nonzero `contentOpId` + `hasSrcB`, so both are already exempt.) */
+export function isOrangeSuspect(r: PaneRenderRecord): boolean {
   return (
     r.mode === "image" &&
     !r.contentOpId &&
     !r.hasSrcB &&
     r.isScalar === true &&
-    r.hasColormap === true
+    r.hasColormap === true &&
+    r.channelCount != null &&
+    r.channelCount > 1
   );
 }
 
-function paneRenderLogFlagSet(): boolean {
-  if (typeof window === "undefined") return false;
+/** Parse the requested capture level from the URL flag / window global.
+ *  `?paneRenderLog=1` or `=2` (or `window.__cairnPaneRenderLog = 1|2`). Any
+ *  truthy legacy value (`=1`, `true`) is level 1. Returns 0 when the flag is
+ *  absent. */
+function paneRenderLogLevel(): 0 | 1 | 2 {
+  if (typeof window === "undefined") return 0;
+  let raw: string | null = null;
   try {
-    if (new URLSearchParams(location.search).get("paneRenderLog") === "1") return true;
+    raw = new URLSearchParams(location.search).get("paneRenderLog");
   } catch {
     /* ignore */
   }
   const w = window as unknown as { __cairnPaneRenderLog?: unknown };
-  return w.__cairnPaneRenderLog === 1 || w.__cairnPaneRenderLog === true;
+  const g = w.__cairnPaneRenderLog;
+  if (raw === "2" || g === 2 || g === "2") return 2;
+  if (raw === "1" || g === 1 || g === true || raw === "true") return 1;
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// DEEP OUTPUT-COLOR DETECTOR (level 2). Fed the averaged RGB of the pool's extra
+// 8×8 sample pass per present. Groups presents by SLOT SIGNATURE (the source +
+// op + encode that SHOULD map to one stable color) and learns each slot's
+// settled color (an EMA). A present of an ALREADY-SETTLED slot whose color jumps
+// far from that slot's own settled fingerprint is a hue anomaly = the flash
+// caught by color. Cause-agnostic: it does not care whether a garbage cached-
+// result texture, a stale binding, or a driver artefact produced the color —
+// only that the SAME slot suddenly presented a very different color. (A NEW slot
+// signature — a genuinely different legitimate content — is given grace until it
+// settles, so a normal flip to a new slot is never flagged. Cross-signature
+// param mismatches — a light image with a scalar colormap bound — are the PARAM
+// oracle's job; see `isOrangeSuspect`.)
+// ---------------------------------------------------------------------------
+/** A slot is "settled" once it has this many samples (its EMA has converged). */
+const DEEP_MIN_SETTLED = 4;
+/** Normalized-RGB Euclidean distance beyond which a color "matches no settled
+ *  slot". ~0.35 cleanly separates the near-white/orange flash from a slot's own
+ *  settled magma/light color while tolerating anti-alias/tone jitter. */
+const DEEP_ANOMALY_DIST = 0.35;
+/** EMA weight for a slot's settled color (small = stable baseline). */
+const DEEP_EMA_ALPHA = 0.25;
+/** Below this brightness the 8×8 sample is a held/blank frame with no meaningful
+ *  hue — never flagged as a COLOR anomaly (a blank hold is not the orange). */
+const DEEP_MIN_VALUE = 0.06;
+
+interface SlotBaseline {
+  r: number;
+  g: number;
+  b: number;
+  n: number;
+}
+let deepDetectorArmed = false;
+let hueAnomalies: DeepColorSample[] = [];
+let deepSampleCount = 0;
+const slotBaselines = new Map<string, SlotBaseline>();
+
+/** True while the level-2 deep color detector is armed (pool gate). */
+export function deepColorDetectorActive(): boolean {
+  return deepDetectorArmed;
+}
+
+/** Test-only: force the deep detector on/off (harness drives it directly rather
+ *  than through the URL flag). Resets baselines + anomalies. */
+export function setDeepColorDetectorForTest(on: boolean): void {
+  deepDetectorArmed = on;
+  slotBaselines.clear();
+  hueAnomalies = [];
+  deepSampleCount = 0;
+}
+
+/** Test-only accessor for the captured hue anomalies. */
+export function getHueAnomalies(): DeepColorSample[] {
+  return hueAnomalies;
+}
+
+/** Test-only: how many presents the deep detector actually sampled + how many
+ *  distinct slots it settled. A harness asserts `samples > 0` so a "zero
+ *  anomalies" pass can't be vacuous (the 8×8 sample pass really ran). */
+export function getDeepColorStats(): { samples: number; settledSlots: number } {
+  let settledSlots = 0;
+  for (const b of slotBaselines.values()) if (b.n >= DEEP_MIN_SETTLED) settledSlots++;
+  return { samples: deepSampleCount, settledSlots };
+}
+
+function rgbToHsv(r: number, g: number, b: number): { hue: number; saturation: number; value: number } {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let hue = 0;
+  if (d > 1e-6) {
+    if (max === r) hue = ((g - b) / d) % 6;
+    else if (max === g) hue = (b - r) / d + 2;
+    else hue = (r - g) / d + 4;
+    hue *= 60;
+    if (hue < 0) hue += 360;
+  }
+  const saturation = max > 1e-6 ? d / max : 0;
+  return { hue, saturation, value: max };
+}
+
+/** The slot signature: presents that SHOULD be the same color share it. Groups
+ *  by the PANE (`paneId` — critical: an unkeyed single-image pane has an empty
+ *  `sourceKey`, so WITHOUT the pane id every distinct plain image on a page would
+ *  alias to one baseline and read as a color jump against each other) + the
+ *  source identity + the op + the encode. A legitimate slot-to-slot difference
+ *  (image vs diff, or one pane vs another) forms distinct baselines; only the
+ *  SAME slot presenting a jumped color is an anomaly. */
+function slotSignature(r: PaneRenderRecord, paneId: number): string {
+  return `p${paneId}|${r.mode}|${r.sourceKey ?? ""}|${r.sourceBKey ?? ""}|${r.contentOpId ?? 0}|${r.isScalar ? "s" : "l"}|${r.colormapSig ?? ""}|${r.reduce ?? ""}`;
+}
+
+/**
+ * Record one deep-mode color sample (pool → here, level 2 only). `rgb` is the
+ * mean of the 8×8 sample pass, each channel already normalized to [0,1]. Learns
+ * the present's own slot baseline (EMA) and flags the sample when its color is
+ * far from EVERY currently-settled slot — a color matching no settled slot is
+ * the flash, caught by its actual color.
+ */
+export function recordDeepColorSample(
+  record: PaneRenderRecord,
+  rgb: { r: number; g: number; b: number },
+  paneId = 0,
+): void {
+  if (!deepDetectorArmed) return;
+  deepSampleCount++;
+  const { r, g, b } = rgb;
+  const { hue, saturation, value } = rgbToHsv(r, g, b);
+  const slot = slotSignature(record, paneId);
+  const base = slotBaselines.get(slot);
+
+  // Judge against the present's OWN slot fingerprint, but only once that slot is
+  // SETTLED (enough samples that its EMA is trustworthy). A new/unsettled slot is
+  // given grace (only learned), so a normal flip to a different legitimate slot
+  // is never flagged.
+  const distToOwnSettled = base && base.n >= DEEP_MIN_SETTLED ? Math.hypot(r - base.r, g - base.g, b - base.b) : 0;
+  const isAnomaly =
+    base != null &&
+    base.n >= DEEP_MIN_SETTLED &&
+    value >= DEEP_MIN_VALUE &&
+    distToOwnSettled > DEEP_ANOMALY_DIST;
+
+  if (isAnomaly && hueAnomalies.length < USER_CAPTURE_MAX_HUE_ANOMALIES) {
+    const sample: DeepColorSample = {
+      r, g, b, hue, value, saturation, slot,
+      distToOwnSettled,
+      record,
+      t: nowMs(),
+    };
+    hueAnomalies.push(sample);
+    if (userCaptureArmed) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `cairn-plot paneRenderLog(deep): HUE-ANOMALY present — output color rgb(${(r * 255) | 0},${(g * 255) | 0},${(b * 255) | 0}) ` +
+          `hue ${hue.toFixed(0)}° jumped from its slot's settled color (Δ=${distToOwnSettled.toFixed(2)}). ` +
+          `The flash caught by its actual color. Captured on window.__cairnPaneRenderLogHueAnomalies.`,
+        sample,
+      );
+    }
+  }
+
+  // Learn this present's own slot baseline (EMA toward the observed color) — but
+  // do NOT fold a flagged anomaly into the baseline, so one flash can't drag the
+  // settled fingerprint toward itself.
+  if (!base) {
+    slotBaselines.set(slot, { r, g, b, n: 1 });
+  } else if (!isAnomaly) {
+    base.r += (r - base.r) * DEEP_EMA_ALPHA;
+    base.g += (g - base.g) * DEEP_EMA_ALPHA;
+    base.b += (b - base.b) * DEEP_EMA_ALPHA;
+    base.n += 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CONTEXT-LOSS INSTRUMENTATION (armed at any level). A timestamped log of
+// WebGPU device-loss (the 2D image/diff pane's own device) and THREE/WebGL
+// context loss+restore (the 3D viewers) so a repro can correlate a graphics
+// context loss with the exact flip that triggered a flash. Fired only from the
+// (rare) loss/restore events themselves and gated on `userCaptureArmed`, so it
+// is zero-cost in production and near-zero even when armed.
+// ---------------------------------------------------------------------------
+let contextLossEvents: ContextLossEvent[] = [];
+
+function nowMs(): number {
+  try {
+    if (typeof performance !== "undefined" && typeof performance.now === "function") return performance.now();
+  } catch {
+    /* ignore */
+  }
+  return Date.now();
+}
+
+/** True while context-loss instrumentation should record (any armed level). */
+export function contextLossInstrumentationActive(): boolean {
+  return userCaptureArmed;
+}
+
+/** Record a context/device-loss event (no-op unless the user log is armed). */
+export function recordContextLossEvent(kind: string, detail?: unknown): void {
+  if (!userCaptureArmed) return;
+  if (contextLossEvents.length >= USER_CAPTURE_MAX_CONTEXT_EVENTS) return;
+  const ev: ContextLossEvent = { kind, t: nowMs(), detail };
+  contextLossEvents.push(ev);
+  // eslint-disable-next-line no-console
+  console.warn(`cairn-plot paneRenderLog: CONTEXT-LOSS event [${kind}] @ ${ev.t.toFixed(0)}ms — captured on window.__cairnContextLossEvents.`, ev);
+}
+
+/** Test-only accessor for the captured context-loss events. */
+export function getContextLossEvents(): ContextLossEvent[] {
+  return contextLossEvents;
 }
 
 /** Arm the user-facing capture if the flag is set. Idempotent; safe to call more
@@ -183,20 +459,47 @@ function paneRenderLogFlagSet(): boolean {
  *  bounded log. Returns whether capture is now armed. */
 export function armPaneRenderLogFromFlag(): boolean {
   if (userCaptureArmed) return true;
-  if (!paneRenderLogFlagSet()) return false;
+  const level = paneRenderLogLevel();
+  if (level === 0) return false;
   userCaptureArmed = true;
-  orangeSuspects = [];
+  slotBaselines.clear();
+  deepDetectorArmed = level >= 2;
   startPaneRenderLog();
   const w = window as unknown as {
     __cairnPaneRenderLogRecords?: () => PaneRenderRecord[];
     __cairnPaneRenderLogSuspects?: PaneRenderRecord[];
+    __cairnPaneRenderLogHueAnomalies?: DeepColorSample[];
+    __cairnContextLossEvents?: ContextLossEvent[];
   };
-  w.__cairnPaneRenderLogRecords = () => getPaneRenderLog();
+  // The plot ships as THREE co-resident inlined bundles (core / gpu-image /
+  // three), each with its OWN copy of this module — presents land in the
+  // gpu-image copy, WebGPU device-loss in the gpu-image copy, THREE context-loss
+  // in the three copy. SHARE the capture arrays via the window globals (reuse an
+  // array a sibling instance already installed) so a user reading
+  // `window.__cairnPaneRenderLogSuspects` / `…HueAnomalies` / `…ContextLossEvents`
+  // sees EVERY instance's records in one place, regardless of arm order.
+  orangeSuspects = w.__cairnPaneRenderLogSuspects ?? [];
+  hueAnomalies = w.__cairnPaneRenderLogHueAnomalies ?? [];
+  contextLossEvents = w.__cairnContextLossEvents ?? [];
   w.__cairnPaneRenderLogSuspects = orangeSuspects;
+  w.__cairnPaneRenderLogHueAnomalies = hueAnomalies;
+  w.__cairnContextLossEvents = contextLossEvents;
+  // The full per-present RING is per-instance; presents only ever occur in the
+  // gpu-image copy, so a getter that returns the LONGEST of the instances' rings
+  // (installed once, then each instance registers its own getter) reliably
+  // surfaces the buffer with content regardless of arm order.
+  const wg = w as unknown as { __cairnPaneRenderLogGetters?: Array<() => PaneRenderRecord[]> };
+  (wg.__cairnPaneRenderLogGetters ??= []).push(() => getPaneRenderLog());
+  w.__cairnPaneRenderLogRecords = () =>
+    (wg.__cairnPaneRenderLogGetters ?? []).map((g) => g()).sort((a, b) => b.length - a.length)[0] ?? [];
   // eslint-disable-next-line no-console
   console.info(
-    "cairn-plot: paneRenderLog capture ARMED — orange-suspect presents will be logged to the console " +
-      "and collected on window.__cairnPaneRenderLogSuspects (full buffer: window.__cairnPaneRenderLogRecords()).",
+    `cairn-plot: paneRenderLog capture ARMED (level ${level}) — orange-suspect presents on ` +
+      "window.__cairnPaneRenderLogSuspects, context-loss events on window.__cairnContextLossEvents" +
+      (level >= 2
+        ? ", DEEP color anomalies on window.__cairnPaneRenderLogHueAnomalies (extra 8×8 sample per present)"
+        : "") +
+      " (full render buffer: window.__cairnPaneRenderLogRecords()).",
   );
   return true;
 }

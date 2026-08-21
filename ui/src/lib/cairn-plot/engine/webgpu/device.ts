@@ -118,6 +118,7 @@ import type {
 } from "../types";
 import type { DeepSampleBuffers, DeepGpuCsrSpec } from "../types";
 import { configureHDRSurface, configureSDRSurface, type SurfaceConfigResult } from "./surface";
+import { recordContextLossEvent } from "../test-hooks";
 import { reduceWGSL } from "../shaders/reduce.wgsl";
 import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl";
 
@@ -636,6 +637,13 @@ export async function createWebGPUDevice(): Promise<Device> {
   gpuDevice.lost.then(
     (info) => {
       lostRef.info = info;
+      // Context-loss instrumentation (test-only; no-op unless the user-facing
+      // paneRenderLog capture is armed). A WebGPU device loss means EVERY 2D
+      // image/diff pane on the page is now on a dead device — surfaced with a
+      // timestamp so a repro can correlate it with a flip/flash. (`reason:
+      // "destroyed"` is the ordinary teardown path, still recorded for
+      // completeness — a repro filters on `reason: "unknown"`, the real loss.)
+      recordContextLossEvent("webgpu-device-lost", { reason: info.reason, message: info.message });
     },
     () => {
       /* `.lost` never rejects, but be defensive */

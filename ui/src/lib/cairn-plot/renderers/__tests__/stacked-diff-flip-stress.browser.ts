@@ -40,6 +40,9 @@ import {
   startPaneRenderLog,
   stopPaneRenderLog,
   getPaneRenderLog,
+  setDeepColorDetectorForTest,
+  getHueAnomalies,
+  getDeepColorStats,
   type PaneRenderRecord,
 } from "../../engine/test-hooks";
 
@@ -419,6 +422,13 @@ async function main(): Promise<void> {
     let anyFullMismatch = 0;
     let anyOrange = 0;
     let anySrcIncoherent = 0;
+    // DEEP-MODE (paneRenderLog=2) proof: arm the output-COLOR detector for the
+    // storms so every present's actual color (the pool's extra 8×8 sample pass +
+    // readback) is fingerprinted. A present of a settled slot whose color jumps —
+    // the reported orange flash — would land in `getHueAnomalies()` regardless of
+    // WHY (garbage texture / torn params / driver artefact). On real Metal here we
+    // expect ZERO. This also proves the sampler holds up under a flip storm.
+    setDeepColorDetectorForTest(true);
     for (const [name, factory] of [
       ["image↔FLIP(cached-magma)", diffProps],
       ["image↔absolute(direct-magma)", diffMagmaProps],
@@ -438,6 +448,25 @@ async function main(): Promise<void> {
         }
       }
     }
+    // Give the async 8×8 readbacks kicked off by the last storm's presents time
+    // to resolve before reading the anomaly buffer.
+    await sleep(400);
+    const deepAnomalies = getHueAnomalies();
+    const deepStats = getDeepColorStats();
+    setDeepColorDetectorForTest(false);
+    note(
+      `DEEP color detector: ${deepStats.samples} presents sampled, ${deepStats.settledSlots} settled slot(s), ` +
+        `${deepAnomalies.length} hue-anomaly present(s) across all storms`,
+    );
+    if (deepAnomalies.length) {
+      for (const a of deepAnomalies.slice(0, 4)) {
+        note(`    hue ${a.hue.toFixed(0)}° rgb(${(a.r * 255) | 0},${(a.g * 255) | 0},${(a.b * 255) | 0}) Δ=${a.distToOwnSettled.toFixed(2)} slot=${a.slot}`);
+      }
+    }
+    // Non-vacuous: the 8×8 sample pass really ran (samples > 0, slots settled) AND
+    // saw zero color jumps from any settled slot's fingerprint.
+    report(deepStats.samples > 0 && deepStats.settledSlots > 0, `deep detector actually sampled the storm (${deepStats.samples} samples, ${deepStats.settledSlots} settled slots)`);
+    report(deepAnomalies.length === 0, `deep output-color detector saw ZERO hue anomalies across the storms (${deepAnomalies.length})`);
 
     // ---- SYNCED-PAIR storm (the report's real shape): TWO panes in ONE
     // settings-sync selection group, flipped in OPPOSITE phase. A diff peer

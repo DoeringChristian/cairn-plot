@@ -521,6 +521,99 @@ console). Present on the GPU path (where the artefact is visible).
 harness, stable ×3); 243 pytest; core + gpu-image bundles rebuilt + synced + committed; report (63
 blocks) + gallery (27 types) regen clean. `uv.lock` left untouched.
 
+## Follow-up — DONE: oracle false-positive fix + deep output-color detector (paneRenderLog=2) + context-loss instrumentation; ORANGE not reproduced on Metal
+
+**New evidence (user's live env, armed `?paneRenderLog=1`).** After 0758207 the user
+STILL sees a 1-frame ORANGE flash on fast image↔diff STACKED flips (Validation stack:
+slot A = scalar float image with AUTHORED magma, slot B = FLIP diff magma — BOTH magma
+scalar, so the orange = magma UPPER RAMP = a high scalar value). Their console SPAMMED
+"ORANGE-suspect" warnings that were FALSE POSITIVES (`channelCount: 1`), and — the crux —
+`THREE.WebGLRenderer: Context Lost.` appeared under fast-flip load on the 27+-section
+report. Three work items: (1) fix the oracle's false positives, (2) add a cause-agnostic
+output-COLOR detector, (3) investigate context loss as the cause.
+
+**1. Oracle false-positive fix (`engine/test-hooks.ts`, DONE).** `isOrangeSuspect` now
+additionally requires `channelCount > 1`. The false positive was the LEGITIMATE k=1
+authored-colormap scalar pane (a scalar float image the author drew with magma — its
+NORMAL render is `mode:image, !op, !b, isScalar, hasColormap`), which the old predicate
+flagged on EVERY present. Only a MULTI-channel LIGHT image (k>1) collapsed through a
+scalar colormap (reduce→false-color) can be the real mismatch class, so gating on k>1
+exempts the authored scalar pane while still catching `ch>1 + colormap on identity`.
+(cached-diff and direct diff/compositor ops were already exempt by mode/op/`hasSrcB`.)
+Node regression test added (`test-hooks.test.ts`). LIVE-confirmed on the served report:
+the authored magma scalar present (`channelCountDist {1:1}`) yields **0 suspects** — the
+console spam is gone.
+
+**2. Deep output-COLOR detector — `?paneRenderLog=2` (`test-hooks.ts` + `engine/pool.ts`,
+DONE).** Level 2 arms a cause-agnostic flash catcher: per armed present the pool renders an
+EXTRA tiny 8×8 pass with the SAME primary texture + params into a per-pane offscreen
+readback texture (NOT the rotating swapchain), reads it back (256 B), and averages it to one
+RGB. Presents are grouped by a SLOT SIGNATURE (`paneId` + source keys + op + encode — the
+`paneId` is load-bearing: an unkeyed single-image pane has an empty `sourceKey`, so without
+it every distinct plain image on a page aliases to one baseline and reads as a color jump —
+this was caught LIVE, 4 false anomalies on the first build, fixed by the pane id) and each
+slot learns its settled color (EMA, anomalies not folded in). A SETTLED slot presenting a
+color far from its OWN fingerprint (normalized-RGB Δ > 0.35, value-gated so a held/blank
+frame isn't flagged) is logged to `window.__cairnPaneRenderLogHueAnomalies` + console — the
+orange flash caught by its actual color, regardless of WHY. **Cost:** an 8×8 render + a
+256-B async fire-and-forget readback per present, fully guarded (never disturbs the real
+present); ZERO cost at level ≤ 1 / unarmed (`deepColorDetectorActive()` gate). Cross-signature
+param mismatches remain the PARAM oracle's job; the detector's unique value is a SAME-slot
+color jump (e.g. a garbage cached-result texture) — the vector no param oracle can see.
+
+**3. Context-loss instrumentation + investigation (`test-hooks.ts` + `webgpu/device.ts` +
+`three/use-scene3d.ts`, DONE).** Armed at any level, WebGPU `device.lost` and THREE
+`webglcontextlost`/`restored` are timestamped to `window.__cairnContextLossEvents` (+ console).
+The capture arrays are now SHARED across the three co-resident inlined bundles (core /
+gpu-image / three each carry a test-hooks copy — presents land in gpu-image, device-loss in
+gpu-image, THREE loss in three): arm reuses a sibling instance's window array so a user reads
+ALL instances' records in one place (before this, last-armed-wins fragmented the buffers —
+device-loss read 0 while THREE loss landed in a different copy's array).
+**Findings (code + LIVE, real Metal, Apple Silicon):**
+- WebGPU present ALWAYS uses `loadOp:"clear"` (black) and getCurrentTexture is spec-cleared
+  after `configure` — the WebGPU swapchain is NEVER presented uninitialized; orange cannot
+  come from an unwritten swapchain on the 2D path.
+- The diff-cache is per-Device (`WeakMap<Device, DiffCache>`) — a recreated device gets a
+  FRESH cache (no dead-device textures). BUT `getSharedDevice()` memoizes the device promise
+  permanently and NOTHING wires `gpuDevice.lost → resetSharedDevice()` — there is no WebGPU
+  device-loss RECOVERY. A genuine robustness gap (a lost WebGPU device bricks every 2D pane
+  until reload), but it produces BLANK/CPU-fallback, not orange — reported as a recommendation,
+  NOT fixed (a speculative recovery refactor is unwarranted by the evidence; repo discipline).
+- The `THREE.WebGLRenderer: Context Lost` is the WebGL 3D viewers (capped at
+  `MAX_LIVE_CONTEXTS=16`, with a deliberate 1-frame over-cap allowance during a sync storm —
+  the trigger). It is ALREADY handled: `use-scene3d`'s `webglcontextrestored` re-renders on
+  recovery (parks + cached snapshot). Benign, and on the 2D-separate WebGL context — it does
+  NOT touch the WebGPU image/diff pane's color.
+
+**LIVE PROOF (served `/private/tmp` @ 8765, real report `?eager=1&paneRenderLog=2`, Apple
+Metal).** Fresh load + a flip storm on the Validation `[a: official FLIP, b: prediction]`
+stacked magma pane (≈120 arrow-key flips, present buffer 36→**197**: 74 cached-diff + 91
+scalar-magma — the exact orange path): **suspects 0, hue-anomalies 0, webgpu-device-lost 0.**
+The only context-loss events were **5 `three-webgl-context-lost` at 2477–3386 ms** — i.e.
+during the INITIAL 3D-viewer mount burst, NOT during the flip storm (tens of seconds later):
+context loss does NOT correlate with flips and never coincided with any orange/hue anomaly.
+Console during the whole run: only the 3 level-2 ARM lines (one per bundle) — no ORANGE, no
+HUE-ANOMALY, no device-loss. Also proven headlessly: `stacked-diff-flip-stress` now arms the
+deep detector across its FLIP + direct-magma storms (×3 each) and asserts the 8×8 sampler
+actually ran (`samples > 0`, settled slots > 0) AND saw **0 hue anomalies**.
+
+**VERDICT (honest).** The reported orange was NOT reproduced on this Apple-Silicon Metal
+hardware — neither the param oracle nor the deep color detector caught a single anomalous
+present across a real report-page flip storm, and the observed context loss is the benign,
+auto-recovered WebGL/THREE kind confined to initial mount (zero WebGPU device loss, no flip
+correlation). No pane fix is warranted by the evidence. What LANDED: the oracle false-positive
+fix (the user's console is now quiet), the `?paneRenderLog=2` deep color detector (the
+cause-agnostic flash catcher), and context-loss instrumentation. If the flash recurs on the
+USER's hardware, their next repro with `?paneRenderLog=2` captures it BY COLOR on
+`window.__cairnPaneRenderLogHueAnomalies` (each carries the output rgb/hue + the present's full
+source⊗encode record) and any correlated loss on `window.__cairnContextLossEvents` — cause-
+agnostic evidence no param oracle can produce.
+
+**Gates.** typecheck; 622 node tests (615 + 7 new `test-hooks`); ALL 30 parity harnesses
+(metal, incl. the deep-mode stress assertion); 243 pytest; core + gpu-image + three bundles
+rebuilt + synced + committed; report (63 blocks) + gallery regen clean; live report deep-mode
+storm proof. `uv.lock` left untouched.
+
 ## Follow-up — INVESTIGATION: reported one-frame ORANGE viewport flash (sharpened oracle; NOT reproduced at the pane)
 
 **User report (after 9368ee2 + c459c34).** Fast image↔diff STACKED flips still

@@ -56,7 +56,14 @@ import {
 } from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
 import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
-import { forceEngineFailRequested, recordPaneRender, isPaneRenderLogActive } from "./test-hooks";
+import {
+  forceEngineFailRequested,
+  recordPaneRender,
+  isPaneRenderLogActive,
+  deepColorDetectorActive,
+  recordDeepColorSample,
+  type PaneRenderRecord,
+} from "./test-hooks";
 
 /**
  * Test-only: the FULL display-encode fingerprint of an `ImageParams`, for the
@@ -303,7 +310,14 @@ export interface PaneHandle {
   dispose(): void;
 }
 
+let paneIdCounter = 0;
+
 interface PaneEntry {
+  /** Monotonic per-pane id — used ONLY by the deep color detector's slot
+   *  signature (test-only) to keep distinct panes' baselines separate (an
+   *  unkeyed single-image pane has an empty `sourceKey`, so without this every
+   *  plain image on a page would alias to one baseline). */
+  paneId: number;
   canvas: HTMLCanvasElement;
   device: Device;
   hdr: boolean;
@@ -338,6 +352,12 @@ interface PaneEntry {
   deepZFar: number;
   /** GPU storage buffers for `deep` (freed on park/dispose, rebuilt on restore). */
   deepBuffers: DeepSampleBuffers | null;
+  /** DEEP OUTPUT-COLOR DETECTOR (test-only, `?paneRenderLog=2`) — a tiny 8×8
+   *  offscreen render target the pool re-renders each present into (SAME primary
+   *  texture + params) to read back the present's actual mean color. Lazily
+   *  allocated on first armed present, freed on park/dispose. Null in production
+   *  (the detector is never armed) and at level ≤ 1. */
+  deepSampleTex: Texture | null;
   parked: boolean;
   disposed: boolean;
   /** Last-reported on-screen visibility (`PaneHandle.setVisible`) — read by
@@ -441,6 +461,10 @@ function parkEntry(entry: PaneEntry): void {
     entry.deepBuffers.destroy();
     entry.deepBuffers = null;
   }
+  if (entry.deepSampleTex) {
+    entry.deepSampleTex.destroy();
+    entry.deepSampleTex = null;
+  }
   entry.surface = null;
   entry.parked = true;
 }
@@ -520,6 +544,68 @@ function activateEntry(entry: PaneEntry): void {
   evictOverCap(entry);
 }
 
+const DEEP_SAMPLE_DIM = 8;
+
+/**
+ * DEEP OUTPUT-COLOR DETECTOR (test-only, `?paneRenderLog=2`). Re-renders the
+ * present that just happened into a tiny 8×8 offscreen texture (SAME primary
+ * texture + params — NOT the swapchain, which rotates and can't be read post-
+ * present) and reads back its mean color, feeding it to
+ * {@link recordDeepColorSample}. Fire-and-forget + fully guarded: a failure here
+ * NEVER disturbs the real present (which already happened). Called only when the
+ * detector is armed, so production pays nothing.
+ */
+function sampleDeepColor(
+  entry: PaneEntry,
+  primary: Texture,
+  params: ImageParams,
+  record: PaneRenderRecord,
+): void {
+  try {
+    const fmt: TextureFormat = entry.hdr ? "rgba16float" : "rgba8unorm";
+    if (!entry.deepSampleTex) {
+      entry.deepSampleTex = entry.device.createTexture(DEEP_SAMPLE_DIM, DEEP_SAMPLE_DIM, fmt);
+    }
+    const target = entry.deepSampleTex;
+    // Same primary + params as the real present (incl. any injected srcB).
+    renderImage(entry.device, target, primary, params);
+    entry.device
+      .readback(target)
+      .then((px) => {
+        recordDeepColorSample(record, averageSampleRgb(px, entry.hdr), entry.paneId);
+      })
+      .catch(() => {
+        /* readback can reject on device teardown — best-effort, drop it */
+      });
+  } catch {
+    /* never let the detector disturb rendering */
+  }
+}
+
+/** Average an 8×8 readback (RGBA) to one normalized-[0,1] RGB, weighting by
+ *  alpha so fully-transparent out-of-bounds border texels don't drag the color.
+ *  8-bit reads are /255; HDR (float) reads are tone-normalized by the frame's own
+ *  max channel so a bright HDR color still yields a comparable hue. */
+function averageSampleRgb(px: Uint8Array | Float32Array, hdr: boolean): { r: number; g: number; b: number } {
+  let sr = 0, sg = 0, sb = 0, sa = 0;
+  const scale = hdr ? 1 : 1 / 255;
+  for (let i = 0; i + 3 < px.length; i += 4) {
+    const a = (px[i + 3] as number) * (hdr ? 1 : 1 / 255);
+    const w = a <= 0 ? 0 : a;
+    sr += (px[i] as number) * scale * w;
+    sg += (px[i + 1] as number) * scale * w;
+    sb += (px[i + 2] as number) * scale * w;
+    sa += w;
+  }
+  if (sa <= 0) return { r: 0, g: 0, b: 0 };
+  let r = sr / sa, g = sg / sa, b = sb / sa;
+  if (hdr) {
+    const m = Math.max(r, g, b, 1);
+    r /= m; g /= m; b /= m; // tone-normalize so hue stays comparable to SDR
+  }
+  return { r: Math.min(1, r), g: Math.min(1, g), b: Math.min(1, b) };
+}
+
 /**
  * Runs the IMAGE render pass for `entry`.
  *
@@ -544,7 +630,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
     // — record + display fingerprint — is paid unless a harness started the log):
     // the GROUND-TRUTH bound keys + full display-encode combo at this present.
     if (isPaneRenderLogActive()) {
-      recordPaneRender({
+      const record: PaneRenderRecord = {
         mode: "image",
         sourceKey: entry.sourceKey,
         sourceBKey: entry.sourceBKey,
@@ -552,7 +638,10 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
         hasSrcB: entry.srcTextureB != null,
         isScalar: params.isScalar,
         ...displayFingerprint(params),
-      });
+      };
+      recordPaneRender(record);
+      // Level-2 deep detector: sample this present's actual output color.
+      if (deepColorDetectorActive()) sampleDeepColor(entry, entry.srcTexture, p, record);
     }
     return true;
   } catch (err) {
@@ -610,7 +699,7 @@ function attemptRenderDiffCached(
     // diff blits the RESULT as the primary — the bound SOURCE keys still record
     // which operands the result was computed from (stale = an artefact).
     if (isPaneRenderLogActive()) {
-      recordPaneRender({
+      const record: PaneRenderRecord = {
         mode: "cached-diff",
         sourceKey: entry.sourceKey,
         sourceBKey: entry.sourceBKey,
@@ -618,7 +707,12 @@ function attemptRenderDiffCached(
         hasSrcB: entry.srcTextureB != null,
         isScalar: displayParams.isScalar,
         ...displayFingerprint(displayParams),
-      });
+      };
+      recordPaneRender(record);
+      // Level-2 deep detector: the cached result is the primary; sample the
+      // actual displayed color (the FLIP magma map) so a garbage/uninitialized
+      // result texture would flash here by its real color.
+      if (deepColorDetectorActive()) sampleDeepColor(entry, cacheEntry.texture, displayParams, record);
     }
     return cacheEntry;
   } catch (err) {
@@ -834,6 +928,7 @@ export async function acquirePane(
 ): Promise<PaneHandle> {
   const device = await getSharedDevice();
   const entry: PaneEntry = {
+    paneId: ++paneIdCounter,
     canvas,
     device,
     hdr: opts?.hdr ?? false,
@@ -849,6 +944,7 @@ export async function acquirePane(
     deepZNear: -Infinity,
     deepZFar: Infinity,
     deepBuffers: null,
+    deepSampleTex: null,
     parked: true,
     disposed: false,
     visible: true,
