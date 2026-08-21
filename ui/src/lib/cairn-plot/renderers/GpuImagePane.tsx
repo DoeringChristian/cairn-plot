@@ -187,6 +187,54 @@ import {
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
 const NULL_HDR: HdrData = { data: new Float32Array(0), shape: [0, 0], dtype: "<f4" };
 
+/**
+ * RenderSnapshot — the ONE per-commit description of what this frame presents,
+ * assembled in a single place (see `buildRenderSnapshot` in the component body).
+ *
+ * The pane's whole coherency story is this one struct plus one rule:
+ *
+ *   A frame is presentable only when its entire input set — the two source
+ *   slots, the content op, and the display encoding — is derived from a SINGLE
+ *   React commit. Otherwise hold the previous frame (WebGPU keeps the last
+ *   present) until the lagging input catches up.
+ *
+ * Content op + encoding are pure synchronous derivations of the props, so they
+ * are coherent by construction the instant a commit runs. The two SOURCE
+ * textures are not: an SDR primary and a first-visit `b` decode async, so the
+ * pool applies them one or more commits after the props flip. `primaryId`/`bId`
+ * are the identities THIS frame expects; the upload effects stamp the same ids
+ * into `appliedPrimaryIdRef`/`appliedBIdRef` once the pool has actually bound
+ * them. Comparing expected-vs-applied is therefore the entire present gate:
+ *   - `sourcesApplied` — expected == applied for both slots. The floor for a
+ *     visible present; false ⇒ hold.
+ *   - `resident` — the STRONGER condition a PRE-PAINT (paint-atomic) flip needs:
+ *     sources applied AND framing dims known AND (for a cached diff) the result
+ *     already in the per-device cache, so the flip can paint on its own commit
+ *     with no async gap and no multi-pass recompute on the paint critical path.
+ * `contentKey` is the flip detector: it folds in sources + op + mode but NOT the
+ * viewport/exposure, so a pan/zoom is not mistaken for a slot flip.
+ */
+interface RenderSnapshot {
+  /** Content stage: which pipeline this frame drives. */
+  mode: "image" | "diff" | "compositor";
+  /** Source identity this frame expects in slot A (== the pool's `applied` stamp). */
+  primaryId: string;
+  /** Source identity this frame expects in slot B, or null when there is no operand. */
+  bId: string | null;
+  /** Resolved diff kernel id (diff mode), else "". */
+  kernelId: string;
+  /** A cached (multi-pass FLIP/HDR-FLIP/SSIM) diff — its result lives in the cache. */
+  isCachedDiff: boolean;
+  /** Compositor param (split position / blend alpha); 0 otherwise. */
+  contentParam: number;
+  /** Flip detector — sources ⊗ op ⊗ mode, excluding viewport/exposure. */
+  contentKey: string;
+  /** Expected sources are actually bound in the pool right now (the present floor). */
+  sourcesApplied: boolean;
+  /** Fully resident: `sourcesApplied` + dims + (cached) result — a pre-paint flip is legal. */
+  resident: boolean;
+}
+
 /** The IDENTITY-TRANSFER curves — the ones whose tone-map "operator" is a pure
  *  clamp, the display transfer living entirely in the output-encode stage. A
  *  single-channel "none" source on one of these renders through the gray DATA path
@@ -524,15 +572,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // PRE-PAINT (a `useLayoutEffect`), so the first painted frame already shows the
   // new slot. NON-resident targets keep today's hold-previous-frame behavior (that
   // hold is correct for genuinely-async loads). `lastContentIdentityRef` records
-  // the content identity most recently acted on (flip detector — a viewport/
+  // the `snapshot.contentKey` most recently acted on (flip detector — a viewport/
   // exposure change is NOT a flip); `lastRenderedRef` dedupes the pre-paint render
   // against the post-paint effect so a resident flip submits exactly once.
   const lastContentIdentityRef = useRef<string | undefined>(undefined);
   const lastRenderedRef = useRef<{ id: object; uv: number; ct: number } | null>(null);
-  // Monotonic content EPOCH — bumped whenever `contentIdentity` changes (a flip),
-  // for the paint-phase oracle (a harness groups submits by epoch to find each
-  // flip's FIRST render's phase — layout=paint-atomic vs post=stale first frame).
-  // Test-only signal; the increment is a pure derivation of `contentIdentity`.
+  // Monotonic content EPOCH — bumped whenever `snapshot.contentKey` changes (a
+  // flip), for the paint-phase oracle (a harness groups submits by epoch to find
+  // each flip's FIRST render's phase — layout=paint-atomic vs post=stale first
+  // frame). Test-only signal; the increment is a pure derivation of the key.
   const contentEpochRef = useRef(0);
   const contentEpochIdentityRef = useRef<string | undefined>(undefined);
   const lastCommitEpochRef = useRef(-1);
@@ -1463,55 +1511,66 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // already false-colored / display-ready, so it stays a raw passthrough.
   const sdrPlain = !hdrMode && sdrColormap === "none";
 
-  // -----------------------------------------------------------------------
-  // PAINT-ATOMIC FLIP derivations. The content IDENTITY this frame intends —
-  // hoisted out of `renderPass` (below) so both the render closure AND the
-  // residency check read ONE source of truth. These mirror the identities the
-  // upload effects stamp into `appliedPrimaryIdRef`/`appliedBIdRef`.
-  const expectedPrimaryId = hasCompare
+  // ----------------------------------------------------------------------
+  // THE RENDER SNAPSHOT — assembled ONCE here from the current commit's props
+  // and the pool's applied-source stamps. `renderPass` (the present gate), the
+  // pre-paint paint-atomic effect, the flip detector, and the paint-phase log
+  // all read it; none re-derives its own "which sources / which op / resident?"
+  // view. See the `RenderSnapshot` doc (top of file) for the invariant it owns.
+  // ----------------------------------------------------------------------
+  const snapshotMode: RenderSnapshot["mode"] = diffMode ? "diff" : compositorMode ? "compositor" : "image";
+  // The source identities this frame expects — the SAME expressions the upload
+  // effects stamp into `appliedPrimaryIdRef`/`appliedBIdRef`, so applied and
+  // expected converge the instant the pool binds the sources.
+  const primaryId = hasCompare
     ? `A:${contentKeyA}`
     : hdrMode
       ? deepActive
         ? "deep"
         : "hdr"
       : `img:${(props as SdrImageProps).imageUrl ?? ""}`;
-  const expectedBId: string | null = hasCompare && !!compareSource?.b ? `B:${contentKeyB}` : null;
-  // A slot FLIP changes the content op / sources / mode — NOT the viewport or
-  // exposure. This string is the flip detector: it excludes zoom/pan/EV so a mere
-  // pan does not trip the pre-paint path (that stays on the post-paint effect).
-  const contentIdentity = `${expectedPrimaryId}|${expectedBId}|${diffMode ? resolvedKernelId : ""}|${
-    compositorMode ? compareOpMode : ""
-  }`;
-  // Is the target content FULLY RESIDENT right now (so its render can run
-  // PRE-PAINT without an async gap or a multi-pass recompute)? Both source slots'
-  // applied identities must already equal what this frame expects (retained
-  // textures + synchronously-bound decode), the framing dims must be known, and —
-  // for a CACHED diff (FLIP/HDR-FLIP/SSIM) — the diff RESULT must already be in
-  // the per-device cache (else a pre-paint render would recompute multi-pass on
-  // the critical path). Read at body scope so the layout effect can gate on it.
-  const cachedDiffKernel = diffMode ? getDiffKernel(resolvedKernelId) : undefined;
-  const isCachedDiff = cachedDiffKernel?.kind === "multipass";
-  const targetResident =
+  const bId: string | null = hasCompare && !!compareSource?.b ? `B:${contentKeyB}` : null;
+  const isCachedDiff = (diffMode ? getDiffKernel(resolvedKernelId) : undefined)?.kind === "multipass";
+  // Present floor: the pool has bound exactly the sources this frame expects.
+  const sourcesApplied =
     paneReady &&
-    appliedPrimaryIdRef.current === expectedPrimaryId &&
-    appliedBIdRef.current === expectedBId &&
-    !!naturalDims &&
-    ((diffMode || compositorMode) ? !!refDims : true) &&
-    (isCachedDiff
-      ? !!paneHandleRef.current?.isDiffResultCached(
-          resolvedKernelId,
-          { a: contentKeyA, b: contentKeyB },
-          resolvedKernelId === "hdr-flip" && hdrExposures
-            ? {
-                ppd: 67,
-                startExposure: hdrExposures.startExposure,
-                stopExposure: hdrExposures.stopExposure,
-                numExposures: hdrExposures.numExposures,
-              }
-            : undefined,
-          diffMapping ?? undefined,
-        )
-      : true);
+    appliedPrimaryIdRef.current === primaryId &&
+    appliedBIdRef.current === bId;
+  const snapshot: RenderSnapshot = {
+    mode: snapshotMode,
+    primaryId,
+    bId,
+    kernelId: diffMode ? resolvedKernelId : "",
+    isCachedDiff,
+    contentParam: compositorMode ? (compareOpMode === "split" ? splitPosition : blendAlpha) : 0,
+    // Flip detector — sources ⊗ op ⊗ mode, excluding viewport/exposure so a
+    // mere pan/zoom is not mistaken for a slot flip (which would trip the
+    // pre-paint path). Must change iff the pre-paint render should re-fire.
+    contentKey: `${primaryId}|${bId}|${diffMode ? resolvedKernelId : ""}|${compositorMode ? compareOpMode : ""}`,
+    sourcesApplied,
+    // Fully resident: sources applied + framing dims known + (for a cached diff)
+    // the multi-pass result already in the per-device cache — the condition a
+    // PRE-PAINT flip needs to paint atomically with no async gap or recompute.
+    resident:
+      sourcesApplied &&
+      !!naturalDims &&
+      ((diffMode || compositorMode) ? !!refDims : true) &&
+      (isCachedDiff
+        ? !!paneHandleRef.current?.isDiffResultCached(
+            resolvedKernelId,
+            { a: contentKeyA, b: contentKeyB },
+            resolvedKernelId === "hdr-flip" && hdrExposures
+              ? {
+                  ppd: 67,
+                  startExposure: hdrExposures.startExposure,
+                  stopExposure: hdrExposures.stopExposure,
+                  numExposures: hdrExposures.numExposures,
+                }
+              : undefined,
+            diffMapping ?? undefined,
+          )
+        : true),
+  };
   // The render pass, extracted into a stable callback so the screenshot path
   // (`useImageController`'s `toPNG`) can force a fresh, SYNCHRONOUS repaint
   // before reading the WebGPU canvas back (see that hook's module doc). The
@@ -1564,24 +1623,22 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         : "linear";
     const uv = rawUv;
 
-    // ---- PRESENT-COHERENCY GUARD ---------------------------------------
-    // The content this frame is ABOUT to present (op + display encoding + the
-    // compositor/diff params below) is derived SYNCHRONOUSLY from the current
-    // props, but the pool's actual source TEXTURES are applied through separate,
-    // partly-async effects. Present ONLY when the pool has the sources THIS frame
-    // expects bound; otherwise HOLD the previous frame (WebGPU keeps the last
-    // present) — the pending async application will bump `uploadVersion`/
-    // `refUploadVersion` and re-fire this pass once the sources are coherent.
-    // Without this, a rapid image↔diff flip presents the PREVIOUS slot's textures
-    // under the new op (the measured artefact: an identity blit sampling the
-    // retained diff reference on a diff→image flip). `expected*` mirror the
-    // identities the upload effects stamp into `applied*` (same expressions), so
-    // this converges and never deadlocks. General: it equally gates a plain
-    // image→image URL swap (single-pane), not only stacks.
-    // `expectedPrimaryId`/`expectedBId` are hoisted to body scope (shared with the
-    // residency check); the guard here is unchanged — HOLD (return false = not
-    // submitted) when the pool's applied sources don't yet match this frame.
-    if (appliedPrimaryIdRef.current !== expectedPrimaryId || appliedBIdRef.current !== expectedBId) {
+    // ---- PRESENT GATE (the snapshot's one rule) ------------------------
+    // Present ONLY when the pool has bound exactly the sources this frame's
+    // snapshot expects; otherwise HOLD the previous frame (WebGPU keeps the last
+    // present) until the pending async upload lands, bumps `uploadVersion`/
+    // `refUploadVersion`, and re-fires this pass. Op + display encoding are pure
+    // synchronous derivations of the props (coherent by construction), so gating
+    // the two async-lagging SOURCE identities is necessary and sufficient — a
+    // present can never mix a new op with a previous slot's textures (the measured
+    // artefact: an identity blit sampling the retained diff reference on a
+    // diff→image flip). General: it equally gates a plain single-pane image→image
+    // URL swap. Deadlock-free — `applied*` is stamped from the same expressions
+    // that build `snapshot.primaryId`/`bId`, so they converge. Read the applied
+    // refs at CALL time (fresh) so an imperative repaint — screenshot / probe
+    // readback / deep-window — gates against the pool's live binding, not the
+    // render-time value.
+    if (appliedPrimaryIdRef.current !== snapshot.primaryId || appliedBIdRef.current !== snapshot.bId) {
       return false;
     }
 
@@ -1934,8 +1991,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // one ref, so a resident flip renders exactly once (pre-paint), and the post-paint
   // effect skips the duplicate.
   const renderId = useMemo(() => ({}), [renderPass]);
-  if (contentEpochIdentityRef.current !== contentIdentity) {
-    contentEpochIdentityRef.current = contentIdentity;
+  if (contentEpochIdentityRef.current !== snapshot.contentKey) {
+    contentEpochIdentityRef.current = snapshot.contentKey;
     contentEpochRef.current += 1;
   }
   const contentEpoch = contentEpochRef.current;
@@ -1950,9 +2007,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // PRE-PAINT (paint-atomic) render for a RESIDENT slot flip. Runs in the layout
   // phase — BEFORE the browser paints — so the first painted frame after the flip
   // already shows the new slot instead of the held previous one. Gated on a genuine
-  // content flip (`contentIdentity` changed) AND full residency (`targetResident`),
-  // so pan/zoom/exposure (not a flip) and non-resident targets (genuinely async
-  // loads, correctly held) stay on the post-paint path below. The upload effects
+  // content flip (`snapshot.contentKey` changed) AND full residency
+  // (`snapshot.resident`), so pan/zoom/exposure (not a flip) and non-resident
+  // targets (genuinely async loads, correctly held) stay on the post-paint path
+  // below. The upload effects
   // above are `useLayoutEffect`, so on a resident flip they bind the sources +
   // `setRefDims`/`setNaturalDims` synchronously in this same commit; React flushes
   // the resulting state update (a 2nd render pass) BEFORE paint, and this effect
@@ -1965,30 +2023,30 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       lastCommitEpochRef.current = contentEpoch;
       recordPaintPhase({
         phase: "commit",
-        kind: diffMode ? "diff" : compositorMode ? "compositor" : "image",
+        kind: snapshot.mode,
         submitted: false,
-        resident: targetResident,
+        resident: snapshot.resident,
         epoch: contentEpoch,
         t: performance.now(),
       });
     }
-    if (contentIdentity === lastContentIdentityRef.current) return; // not a flip
-    if (!targetResident) return; // non-resident → keep the post-paint hold path
+    if (snapshot.contentKey === lastContentIdentityRef.current) return; // not a flip
+    if (!snapshot.resident) return; // non-resident → keep the post-paint hold path
     if (alreadyRendered()) return;
-    lastContentIdentityRef.current = contentIdentity;
+    lastContentIdentityRef.current = snapshot.contentKey;
     const submitted = renderPass();
     if (submitted) markRendered();
     if (isPaintPhaseLogActive())
       recordPaintPhase({
         phase: "layout",
-        kind: diffMode ? "diff" : compositorMode ? "compositor" : "image",
+        kind: snapshot.mode,
         submitted,
-        resident: targetResident,
+        resident: snapshot.resident,
         epoch: contentEpoch,
         t: performance.now(),
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderId, uploadVersion, containerTick, targetResident, contentIdentity]);
+  }, [renderId, uploadVersion, containerTick, snapshot.resident, snapshot.contentKey]);
 
   // POST-PAINT render — the general path (pan/zoom/exposure/param changes,
   // park/restore/resize, and NON-resident flips whose async load resolves later and
@@ -1996,16 +2054,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // submitted for this exact key (dedupe), and keeps the flip detector current for
   // non-flip renders.
   useEffect(() => {
-    lastContentIdentityRef.current = contentIdentity;
+    lastContentIdentityRef.current = snapshot.contentKey;
     if (alreadyRendered()) return;
     const submitted = renderPass();
     if (submitted) markRendered();
     if (submitted && isPaintPhaseLogActive())
       recordPaintPhase({
         phase: "post",
-        kind: diffMode ? "diff" : compositorMode ? "compositor" : "image",
+        kind: snapshot.mode,
         submitted,
-        resident: targetResident,
+        resident: snapshot.resident,
         epoch: contentEpoch,
         t: performance.now(),
       });
