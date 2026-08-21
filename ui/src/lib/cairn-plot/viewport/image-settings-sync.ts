@@ -108,6 +108,19 @@ const lastStates = new Map<string, ImageSyncSettings>();
  *  M2 "one authoritative kernel store" fix — the owner is `useCompareControl`.) */
 const EPHEMERAL_KEYS: ReadonlyArray<keyof ImageSyncSettings> = ["diffKernel"];
 
+/** The SCOPED display-encoding keys — the ones a receiver's `adoptDisplayEncoding`
+ *  gate accepts/refuses by the `compareMode` FACE tag (`GpuImagePane`/`CpuImagePane`
+ *  `applyRemoteSettings`). `compareMode` qualifies EXACTLY these keys: a diff's
+ *  scalar-error colormap is tagged `"diff"` so a light pane scopes it out; an image's
+ *  colormap carries no tag so every peer adopts it. (The unconditional display keys —
+ *  exposureEV/offset/peak/gamma/reduce/bounds — are applied regardless of face, so
+ *  they do NOT participate in the tag.) */
+const SCOPED_DISPLAY_KEYS: ReadonlyArray<keyof ImageSyncSettings> = [
+  "encoding",
+  "colormap",
+  "tonemap",
+];
+
 function busFor(groupId: string): EventTarget {
   let bus = buses.get(groupId);
   if (!bus) {
@@ -126,7 +139,40 @@ export function publishImageSettings(
   sourceId: string,
   patch: ImageSyncSettings,
 ): void {
-  const merged: ImageSyncSettings = { ...(lastStates.get(groupId) ?? {}), ...patch };
+  const prev = lastStates.get(groupId) ?? {};
+  // Merge every key EXCEPT `compareMode` by spread; `compareMode` is the FACE TAG
+  // for the SCOPED display keys and is reconciled specially below.
+  const merged: ImageSyncSettings = { ...prev, ...patch };
+
+  // MODE-AWARE TAG RECONCILE (M3). A flat spread let a stale `compareMode:"diff"`
+  // ride over a LATER image colormap: a diff seeds `{colormap:magma, compareMode:
+  // "diff"}`, then an image publishes `{colormap:turbo}` (no tag) → the flat merge
+  // yields `{colormap:turbo, compareMode:"diff"}`, so a LATE-joining light pane reads
+  // a poisoned snapshot and either refuses the group's real image colormap or adopts
+  // the diff's magma onto light content (the orange-frame class) — a replay a LIVE
+  // listener never saw (live, the untagged image patch adopts fine). The `compareMode`
+  // tag now travels WITH the scoped display keys it qualifies:
+  //   • a patch that WRITES a scoped key re-tags the snapshot to THAT patch's face
+  //     (its `compareMode`, or CLEARED when the patch carries none — an image write
+  //     erases a prior diff's tag), so replay == what a live listener applied.
+  //   • a BARE `compareMode` patch (a mode switch with no display key) is broadcast
+  //     LIVE (peers' `useCompareControl` adopt the mode) but must NOT re-tag the
+  //     stale display keys already in the snapshot — so it leaves the tag untouched.
+  const writesScopedDisplay = SCOPED_DISPLAY_KEYS.some((k) => patch[k] !== undefined);
+  if (writesScopedDisplay) {
+    if (patch.compareMode === undefined) delete merged.compareMode;
+    else merged.compareMode = patch.compareMode;
+  } else if (!("compareMode" in patch)) {
+    // no scoped write AND the patch didn't mention compareMode → keep the prior tag
+    merged.compareMode = prev.compareMode;
+    if (merged.compareMode === undefined) delete merged.compareMode;
+  } else {
+    // BARE compareMode patch (mode switch): keep the snapshot's EXISTING display tag,
+    // not this mode value — the tag qualifies display keys, which this patch doesn't touch.
+    if (prev.compareMode === undefined) delete merged.compareMode;
+    else merged.compareMode = prev.compareMode;
+  }
+
   for (const k of EPHEMERAL_KEYS) delete merged[k];
   lastStates.set(groupId, merged);
   busFor(groupId).dispatchEvent(

@@ -489,8 +489,12 @@ function CpuSdrImagePane(
       colormap: enc.colormap,
       tonemap: sdrTransfer,
       tonemapGamma,
+      // FACE TAG (M3): when this SDR pane is itself a DIFF, its colormap is the
+      // scalar-error face — tag it `"diff"` so a light peer scopes it out (matches
+      // GpuImagePane) and the bus's mode-aware merge keeps the snapshot coherent.
+      ...(diffMode !== "none" ? { compareMode: "diff" as const } : {}),
     }),
-    [enc.encodingId, enc.colormap, sdrTransfer, tonemapGamma],
+    [enc.encodingId, enc.colormap, sdrTransfer, tonemapGamma, diffMode],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -506,9 +510,13 @@ function CpuSdrImagePane(
         encoding: id,
         colormap: isLut ? id : "none",
         tonemap: isLut ? sdrTransfer : id,
+        // FACE TAG (M3): a scoped display write from a DIFF SDR pane is the scalar-
+        // error face — tag `"diff"` so a light peer scopes it out and the mode-aware
+        // merge does not clear the tag. An image SDR pane omits it (syncs to all peers).
+        ...(diffMode !== "none" ? { compareMode: "diff" as const } : {}),
       });
     },
-    [enc, publishSettings, sdrTransfer],
+    [enc, publishSettings, sdrTransfer, diffMode],
   );
   const changeGamma = useCallback(
     (v: number) => {

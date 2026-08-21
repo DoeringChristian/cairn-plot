@@ -939,9 +939,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         encoding: id,
         colormap: isLut ? id : "none",
         tonemap: isLut ? effectiveTonemap : id,
+        // FACE TAG (M3): a scoped display write from a DIFF pane is the scalar-error
+        // face — tag it `"diff"` so a light peer scopes it out AND the bus's mode-aware
+        // merge keeps the snapshot tag coherent (an untagged diff write would erase the
+        // tag and let a late light joiner adopt the diff's colormap). An image pane
+        // omits the tag, so its colormap syncs to every peer.
+        ...(diffMode ? { compareMode: "diff" as const } : {}),
       });
     },
-    [enc, publishSettings, effectiveTonemap],
+    [enc, publishSettings, effectiveTonemap, diffMode],
   );
   const changeExposure = useCallback(
     (ev: number) => {
@@ -1010,6 +1016,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
         colormap: id,
         tonemap: effectiveTonemap,
+        // The diff colormap IS the scalar-error face (M3) — tag it `"diff"` so a light
+        // peer scopes it out and the snapshot tag stays coherent under the mode-aware
+        // merge. (This is a diff-only menu, so the tag is unconditional.)
+        compareMode: "diff" as const,
       });
     },
     [enc, publishSettings, effectiveTonemap],

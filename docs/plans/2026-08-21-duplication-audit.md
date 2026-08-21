@@ -268,3 +268,45 @@ entry in the accumulated `lastStates` merge.
   mirror step) and `page-wide-selection`.
 - typecheck 0; 243 pytest; core + gpu-image bundles rebuilt (gpu-image → 380.35 KB) +
   synced + committed. `uv.lock` untouched.
+
+---
+
+## M3 — DONE: mode-aware snapshot merge (the compareMode FACE tag travels with the scoped display keys)
+
+**Design.** The bus accumulated every patch with a flat spread, so a stale
+`compareMode:"diff"` tag rode over a LATER image colormap: a diff seeds
+`{colormap:magma, compareMode:"diff"}`, an image publishes `{colormap:turbo}` (no
+tag) → the flat merge yields `{colormap:turbo, compareMode:"diff"}`. A LATE-joining
+light pane read that poisoned snapshot and either refused the group's real image
+colormap or adopted the diff's magma onto light content (the orange-frame class) —
+a replay a LIVE listener never saw (live, the untagged image patch adopts fine).
+
+`compareMode` is the FACE tag for exactly the SCOPED display keys the receiver's
+`adoptDisplayEncoding` gate reads (`encoding`/`colormap`/`tonemap`). `publishImageSettings`
+now reconciles it mode-aware (`SCOPED_DISPLAY_KEYS`):
+- a patch that WRITES a scoped key re-tags the snapshot to THAT patch's face (its
+  `compareMode`, or CLEARED when it carries none — an image write erases a prior
+  diff tag), so the replay equals what a live listener applied;
+- a BARE `compareMode` patch (a mode switch, no display key) broadcasts LIVE (peers'
+  `useCompareControl` adopt the mode) but does NOT re-tag stale display keys.
+
+**Publisher coherence (the other half of the anchor's fix — "carry compareMode on
+every field … and clear it").** Diff-face SCOPED-display publishes now carry the tag
+so an untagged live write can't erase it: `GpuImagePane.changeEncoding` (tags `"diff"`
+when `diffMode`) + `changeDiffColormap` (always `"diff"`); the CPU SDR pane's
+`changeEncoding` + `settingsSnapshot` gained the same `diffMode !== "none"` tag (its
+snapshot never tagged its scalar-error face before — a latent CPU orange leak, now
+closed). The CPU HDR pane can never be a diff, so it stays untagged. Image / split /
+blend publishes stay untagged-or-mode-tagged (a light peer adopts them — only the
+scalar-error `"diff"` face scopes out).
+
+**Deleted code.** The flat `{...prev, ...patch}` snapshot accumulation (replaced by
+the mode-aware reconcile); the CPU SDR diff's silently-untagged scalar-error snapshot.
+
+**Evidence.** +4 unit tests in `image-settings-sync.test.ts`: image colormap CLEARS a
+prior diff tag (no poisoned replay); a bare mode switch does NOT re-tag stale keys; a
+diff tag PERSISTS across a non-scoped (exposure) update; a split face tags the light
+curve `split` (a light peer still adopts it). 633 node tests green (was 629). ALL 31
+parity harnesses green (compare-settings-sync / page-wide-selection / cpu-compare-
+fallback / realstack). typecheck 0; 243 pytest; core + gpu-image bundles rebuilt +
+synced. `uv.lock` untouched.
