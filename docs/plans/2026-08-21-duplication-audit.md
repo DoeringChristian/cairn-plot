@@ -383,3 +383,47 @@ select` import is surface-internal); 243 pytest; core + gpu-image bundles rebuil
 synced. (Note: `reframe.ts`'s runtime-value import carries the `.ts` extension the
 node type-stripping runner requires, matching `region-select.ts`'s own `clamp.ts`
 import.) `uv.lock` untouched.
+
+---
+
+## D2 — DONE: ONE source for the diff-id → default-color rule (kernel table; content-op derives)
+
+**Design + direction.** The diff-id → default-color decision was stated in TWO tables:
+the kernel `defaultColormap` (per `*.wgsl.ts`, the LIVE runtime seed via
+`kernelDefaultColormap`, consumed by `GpuImagePane`) and the content-op
+`defaultEncoding` (`content-ops/ops.ts`, consumed only by the parity/registry TESTS).
+Per the audit's suggested consolidation ("derive the pointwise op's `defaultEncoding`
+from `kernelDefaultColormap(op.id)`") I kept the KERNEL table as the single source —
+it is the live authority and the per-kernel home — and DERIVED the content-op side
+(zero runtime risk: the live read path is untouched; no import cycle since content-ops
+already depend on kernels). The design doc's "`defaultEncoding` generalizes the kernel
+defaults" still holds: the diff SUBSET now RESOLVES from the kernel table, while the
+compositor/identity ops keep their standalone `srgb` literal (no kernel to derive from).
+
+- `content-ops/ops.ts` imports `kernelDefaultColormap` from the kernels barrel (whose
+  import registers every built-in kernel as a load-time side effect BEFORE ops.ts's
+  body runs — ES modules evaluate imports first, so the lookup resolves at
+  op-construction). `pointwise(id, …)` → `defaultEncoding: kernelDefaultColormap(id)`
+  (op id == kernel id); `cached(id, …, kernelId)` → `kernelDefaultColormap(kernelId)`.
+- Values are byte-identical to the deleted literals (verified: signed/relative_signed →
+  red-green, absolute/squared/relative_* → turbo, flip/hdr-flip/ssim → magma), so no
+  test expectation changed.
+
+**Deleted code.** The content-op `defaultEncoding` literals for the diff subset
+(`range === "R" ? "red-green" : "turbo"` and the cached `"magma"`) — now one derivation.
+
+**Drift test.** `registry-drift.test.ts` +2: every diff op's `defaultEncoding` equals
+its kernel's `defaultColormap` read via an INDEPENDENT path (`getDiffKernel(...).default-
+Colormap`), so re-hardcoding a content-op literal that drifts, OR changing a kernel
+default without the op following, fails; and the compositor/identity ops keep a
+non-kernel `srgb` literal. 641 node tests green (was 639). ALL 31 parity harnesses
+green; typecheck 0; `check:plot-boundary` OK; 243 pytest; core + gpu-image bundles
+rebuilt + synced. `uv.lock` untouched.
+
+**Direction note.** The brief named the ContentOp registry as the "design-doc-canonical
+home". I made the kernel table the SOURCE for the overlapping diff subset (content-op
+derives) because the kernel table is the LIVE runtime authority and the reverse would
+rewire that live path across every `*.wgsl.ts` and risk a content-ops⇄kernels cycle —
+against the "zero behavior change" mandate. The content-op registry remains the
+canonical home for the SUPERSET concept (it alone covers identity/split/blend); only
+the shared diff subset resolves from the kernel table. Drift is now impossible either way.

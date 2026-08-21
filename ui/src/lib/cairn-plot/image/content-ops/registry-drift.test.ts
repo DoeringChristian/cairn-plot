@@ -16,6 +16,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildContentOpWGSL, getContentOp, listDirectContentOps, CONTENT_OP_ID } from "./index.ts";
 import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
+import { CONTENT_OPS } from "./ops.ts";
+import type { CachedContentOp } from "./registry.ts";
+import { getDiffKernel } from "../../engine/kernels/index.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
   const assembled = buildContentOpWGSL();
@@ -58,6 +61,38 @@ test("the assembled dispatch has identity as the fallthrough + a branch per non-
       assembled.includes(`if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.wgsl}; }`),
       `dispatch branch missing for ${op.id}`,
     );
+  }
+});
+
+// D2: the diff-id → default-color rule has ONE source (the kernel table's
+// `defaultColormap`); a diff op's `defaultEncoding` is DERIVED from it, not a second
+// literal. This guard reads the kernel default via an INDEPENDENT path
+// (`getDiffKernel(...).defaultColormap`) and pins the equality — so re-hardcoding a
+// content-op literal that drifts from the kernel, OR changing a kernel default without
+// the op following, FAILS here.
+test("D2 drift: every diff op's defaultEncoding equals its kernel's defaultColormap", () => {
+  const diffOps = CONTENT_OPS.filter((op) => op.sourceArity === 2 && op.outputArity === 1);
+  assert.ok(diffOps.length >= 9, `expected the 6 pointwise + 3 cached diff ops, got ${diffOps.length}`);
+  for (const op of diffOps) {
+    // pointwise: op.id IS the kernel id; cached: op.kernelId.
+    const kernelId = op.renderClass === "cached" ? (op as CachedContentOp).kernelId : op.id;
+    const kernel = getDiffKernel(kernelId);
+    assert.ok(kernel, `diff op "${op.id}" must map to a registered kernel "${kernelId}"`);
+    assert.equal(
+      op.defaultEncoding,
+      kernel!.defaultColormap,
+      `content-op "${op.id}" defaultEncoding (${op.defaultEncoding}) drifted from kernel "${kernelId}" defaultColormap (${kernel!.defaultColormap})`,
+    );
+  }
+});
+
+test("D2: compositor/identity ops keep a NON-kernel literal encoding (no kernel default to derive)", () => {
+  // identity + split/blend have no kernel — their `defaultEncoding` is a legitimate
+  // standalone literal (srgb), NOT part of the derived diff subset.
+  for (const id of ["identity", "split", "blend"]) {
+    const op = getContentOp(id)!;
+    assert.equal(op.defaultEncoding, "srgb", `${id} should keep its literal srgb encoding`);
+    assert.equal(getDiffKernel(id), undefined, `${id} must not be a diff kernel`);
   }
 });
 

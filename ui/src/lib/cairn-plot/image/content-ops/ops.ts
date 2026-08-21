@@ -22,6 +22,12 @@
  *    multi-pass kernel; `defaultEncoding` magma (the reference FLIP convention).
  */
 import { registerContentOp, type ContentOp, type DirectContentOp, type CachedContentOp } from "./registry.ts";
+// D2: the diff subset's `defaultEncoding` is DERIVED from the kernel table's
+// per-kernel `defaultColormap` (the single source for the id→default-color rule) so
+// the two can't drift. Importing the barrel registers every built-in kernel as a
+// load-time side effect BEFORE this module's body runs (ES modules evaluate imports
+// first), so `kernelDefaultColormap` resolves correctly at op-construction time.
+import { kernelDefaultColormap } from "../../engine/kernels/index.ts";
 
 /**
  * IDENTITY — the single-source passthrough. This is "where the source sample
@@ -73,7 +79,10 @@ function pointwise(
     // applied (the per-channel error vec4 is REDUCED to the scalar the LUT indexes).
     outputArity: 1,
     outputRange: range,
-    defaultEncoding: range === "R" ? "red-green" : "turbo",
+    // DERIVED from the kernel table (D2) — for a pointwise op `id === kernel id`, so
+    // this IS the kernel's `defaultColormap` (signed→red-green, magnitude→turbo). One
+    // source; the drift test pins the equality.
+    defaultEncoding: kernelDefaultColormap(id),
     params: [],
     wgsl,
     cpu: (sources) => {
@@ -214,7 +223,9 @@ function cached(id: string, label: string, kernelId: string): CachedContentOp {
     renderClass: "cached",
     outputArity: 1, // scalar perceptual error → colormaps offered (magma default)
     outputRange: "R+",
-    defaultEncoding: "magma",
+    // DERIVED from the kernel table (D2) — the cached metric's kernel `defaultColormap`
+    // (FLIP/HDR-FLIP/SSIM → magma). One source; the drift test pins the equality.
+    defaultEncoding: kernelDefaultColormap(kernelId),
     params: [],
     kernelId,
   };
