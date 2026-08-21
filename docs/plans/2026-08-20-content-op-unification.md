@@ -1255,3 +1255,76 @@ registry (asserts `image.wgsl` interpolates `buildContentOpWGSL()` and calls
 implemented on `diff_unification` (where this design doc + the whole
 display-encoding registry it mirrors live at HEAD); the older `tonemapping`
 branch predates the design doc and the registry infrastructure.
+
+## Follow-up — DONE: reference-image flash on stacked image↔diff flips (present-gate = no primary-identity render in diff mode + synchronous resolve)
+
+**User report (ground truth, post-874800e).** In a stacked grid holding a normal
+image and a diff of it, switching between the tabs *every so often* shows, for ONE
+frame, the diff's **REFERENCE** image instead of the error map. Every prior oracle
+(present-coherency, deep-color, orange-suspect, paint-atomic-at-the-pane) missed it
+because the offending frame is a PLAIN IDENTITY BLIT OF THE PRIMARY TEXTURE — and in
+the unified pane's diff mode the primary source IS the reference (`source`=reference,
+`compareSource.b`=foreground). That present is fully param-coherent (the reference IS
+the bound primary; no colormap ⇒ no orange flag): only *which pipeline drew it* is
+wrong. The lesson (recorded so it isn't re-learned): the render log needed a
+MODE/PIPELINE predicate, not another source⊗encode predicate.
+
+**Two independent hops could put the reference on the visible surface — both closed
+by code reading (no pre-fix repro; the bug is ground truth):**
+
+1. **LeafView resolve lag (the measured real-path hop).** On a stacked flip the
+   reused `LeafView` receives the new node in the FLIP COMMIT, but its resolved
+   `state` still holds the PREVIOUS slot's `dataProps` until the async resolve
+   effect's `setState` lands a *second* commit (`resolve-cache` peeks synchronously,
+   but the setState round-trip is still a commit later). So the flip commit paints
+   stale content, and — on a diff→image flip — `state` holds the DIFF resolution
+   whose `source` IS the reference, which the single-image path would spread as a
+   plain image (no `compareSource`) → the pane blits the reference. **Fix
+   (`plot-node.tsx`):** (a) SYNCHRONOUS RESOLVE — derive `dataProps` from
+   `peekResolved(resolveKey)` DURING RENDER, so a warmed/prefetched flip carries the
+   correct slot's data in the flip commit itself (pure derive-from-cache-during-
+   render; no setState-in-render). (b) DIFF-PAIR PREFETCH — `GridView`'s stacked
+   prefetch now warms each compare child's `|diffpair` key (via the shared
+   `resolveDiffPair`, the single source of truth for LeafView's effect AND the
+   prefetch), so both slots are resident by the time the user flips (previously ONLY
+   plain `plot` leaves were prefetched — every first diff flip hit the cold async
+   hold). (c) REFERENCE-LEAK GUARD — on the single-image path a `state` fallback that
+   still carries `__diffB` (a stale diff resolution) is rejected rather than emitted
+   as `source:<reference>`; it holds instead.
+
+2. **The pane's direct-op branch with `contentOpId === 0` (the primary-identity
+   submit).** `contentOpId(id)` returns 0 = IDENTITY (`cairnContent → return a` = the
+   primary/reference) for ANY id not registered as a direct content op. The DIRECT-op
+   diff branch (`renderPass`) rendered `handle.render({…, contentOpId:
+   contentOpId(kernelId)})` — a transiently-unrecognized / mis-resolved `kernelId`
+   ⇒ opId 0 ⇒ a raw blit of the REFERENCE onto the visible surface while a compare is
+   set. **Fix (`GpuImagePane.tsx`):** in diff mode a primary-identity render is NEVER
+   presentable — if `opId === 0` the branch HOLDS the previous frame (WebGPU keeps the
+   last present) and re-fires when `resolvedKernelId` settles. A diff present must
+   always come from the diff pipeline for the CURRENT op. The plain-image branch
+   likewise HOLDS (`if (hasCompare) return false`) — the belt-and-suspenders floor for
+   any degenerate `compareSource.mode`. Cached-diff (`renderDiffCached`) already blits
+   the RESULT, not the primary, and its failure path parks to the CPU pane (never the
+   reference).
+
+**Regression tripwire (not a pre-fix baseline).** `ImageParams.compareIntended`
+(test-only tag, set = `hasCompare`) is recorded per present; `test-hooks`'
+`isPipelineMismatch(r)` flags `mode:"image" && !contentOpId && !hasSrcB &&
+compareIntended` — a primary-identity present while a compare is intended. This
+predicate would have caught the flash from day one. The real-stack GPU harness
+(`stacked-diff-flip-realstack-gpu`) grew a Phase D that drives the REAL tree
+(`PlotApp→GridView→NodeDispatch→LeafView→GpuImagePane`, GPU, metal-3) through a
+fast image↔diff flip storm and asserts, post-fix: ZERO stale painted frames
+(paint-boundary vs first diff-submit), ZERO `staleDiffHolds`, ZERO pipeline-mismatch
+presents. (A toggle-gated pre-fix pass measured 4/60 stale painted frames + 60/60
+stale-diff holds → 0/0/0 post-fix, corroborating the mechanism; kept only because it
+fell out for free — NOT the acceptance test.)
+
+**ACCEPTANCE.** The acceptance test is the USER's own re-test on their hardware — this
+note reports the mechanism closed and what was measured; it does NOT claim the pixel
+the user sees is fixed.
+
+**Gates.** typecheck; 626 node tests (624 + 2 new `isPipelineMismatch`); ALL 31 parity
+harnesses (metal-3, incl. the extended real-stack GPU harness); 243 pytest; core +
+gpu-image bundles rebuilt + synced + committed; report (63 blocks) + gallery (27
+types) regen clean. `uv.lock` left untouched.

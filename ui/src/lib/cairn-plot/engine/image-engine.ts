@@ -201,6 +201,16 @@ export interface ImageParams {
    * this uniform changes, NO pipeline recompile.
    */
   contentParam?: number;
+  /**
+   * TEST-ONLY oracle tag (never read by the shader / render path). Set true by the
+   * pane whenever a COMPARE is intended (`hasCompare`), so the pool's render-log
+   * oracle can flag a PIPELINE MISMATCH: a plain identity/image-pipeline present
+   * (`mode:"image"`, no `contentOpId`) that fires while the pane is semantically in
+   * compare mode — i.e. a raw blit of the REFERENCE primary that slipped onto the
+   * visible surface before the diff result. Costs one boolean copy; unused in
+   * production (only the render log reads it, and only when a harness armed it).
+   */
+  compareIntended?: boolean;
 }
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */

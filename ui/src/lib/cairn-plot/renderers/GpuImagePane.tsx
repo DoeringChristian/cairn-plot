@@ -1701,7 +1701,19 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         } else {
           // DIRECT pointwise op: the pool injects `srcB`; `cairnContent(a,b,opId)`.
           diffEntryRef.current = null;
-          const ok = handle.render({ ...diffDisplay, contentOpId: contentOpId(kernelId) });
+          const opId = contentOpId(kernelId);
+          // PRIMARY-IDENTITY GUARD (the reference-flash floor). `contentOpId` returns
+          // 0 = IDENTITY (`cairnContent` → `return a`) for ANY id not registered as a
+          // direct content op (a transiently-unrecognized/mis-resolved `kernelId`).
+          // Rendering opId 0 here would blit the PRIMARY — which in diff mode IS the
+          // REFERENCE operand — onto the VISIBLE surface as a plain image: exactly the
+          // reported "the diff pane shows the reference for one frame instead of the
+          // error map." A diff present must ALWAYS come from the diff pipeline for the
+          // CURRENT op; never an identity blit of the reference. So HOLD the previous
+          // frame (WebGPU keeps the last present) until a valid direct op resolves —
+          // the guard re-fires on the next commit when `resolvedKernelId` settles.
+          if (opId === 0) return false;
+          const ok = handle.render({ ...diffDisplay, contentOpId: opId });
           if (!ok) setEngineFailed(true);
         }
       } catch (err) {
@@ -1860,8 +1872,24 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // Either path sets `engineFailed`, which makes this component render the
     // LEGACY CPU pane instead (see the bailout branch below) — a pane never
     // blanks.
+    // COMPARE PRESENT-GATE (structural invariant — the reference-flash floor).
+    // Reaching this plain identity/image blit while a COMPARE is intended
+    // (`hasCompare`) would present a raw render of the PRIMARY texture — which in
+    // compare mode IS the reference operand — onto the VISIBLE surface before the
+    // diff result. That frame is never presentable: HOLD the previous frame
+    // (WebGPU keeps the last present) instead of flashing the reference. The
+    // diff/compositor branches above return for every well-formed compare, so this
+    // only fires if a stale/degenerate render slipped through (e.g. an unrecognized
+    // `compareSource.mode`) — the belt-and-suspenders floor the reference-flash
+    // post-mortem demands. The params are tagged `compareIntended` so the pool's
+    // render-log oracle (`isPipelineMismatch`) asserts ZERO such presents reach the
+    // surface. (The MEASURABLE real-path leak — a diff `state` emitted as a plain
+    // image on a cold flip, `hasCompare` already false here — is closed upstream in
+    // `LeafView`'s reference-leak guard + diff-pair prefetch; this gate is the
+    // last-line pane invariant.)
+    if (hasCompare) return false;
     try {
-      const ok = handle.render(params);
+      const ok = handle.render({ ...params, compareIntended: hasCompare });
       if (!ok) setEngineFailed(true);
     } catch (err) {
       // eslint-disable-next-line no-console

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   isOrangeSuspect,
+  isPipelineMismatch,
   recordDeepColorSample,
   setDeepColorDetectorForTest,
   getHueAnomalies,
@@ -42,6 +43,33 @@ test("oracle FALSE-POSITIVE fix: a k=1 authored-colormap scalar pane is NOT an o
 
 test("oracle still flags the REAL class: a k>1 light image on a scalar colormap (identity) IS a suspect", () => {
   assert.equal(isOrangeSuspect(lightCollapsedThroughColormap), true);
+});
+
+// The PIPELINE-MISMATCH class: a plain identity/image present carrying the
+// compare-intended tag = a raw reference-primary blit that reached the surface
+// while the pane was semantically in compare mode (the reference-image flash).
+const identityWhileCompareIntended: PaneRenderRecord = {
+  mode: "image",
+  sourceKey: "A:ref",
+  sourceBKey: undefined,
+  contentOpId: 0,
+  hasSrcB: false,
+  isScalar: false,
+  compareIntended: true,
+};
+
+test("pipeline-mismatch oracle: an identity present while a compare is intended IS a mismatch", () => {
+  assert.equal(isPipelineMismatch(identityWhileCompareIntended), true);
+});
+
+test("pipeline-mismatch oracle exempts legit compare presents + plain images", () => {
+  // A cached-diff present (the correct diff pipeline) — never a mismatch.
+  assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, mode: "cached-diff" }), false);
+  // A direct-op diff (contentOpId set, b bound) — the correct diff pipeline.
+  assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, contentOpId: 3, hasSrcB: true }), false);
+  // A plain image with no compare intended (a genuine single-image pane).
+  assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, compareIntended: false }), false);
+  assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, compareIntended: undefined }), false);
 });
 
 test("oracle exempts already-excluded classes (cached-diff, direct op, non-scalar, no colormap)", () => {

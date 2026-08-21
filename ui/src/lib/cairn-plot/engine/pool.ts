@@ -654,6 +654,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
         contentOpId: params.contentOpId,
         hasSrcB: entry.srcTextureB != null,
         isScalar: params.isScalar,
+        compareIntended: params.compareIntended,
         ...displayFingerprint(params),
       };
       recordPaneRender(record);

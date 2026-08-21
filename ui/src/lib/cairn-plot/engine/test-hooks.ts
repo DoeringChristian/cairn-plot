@@ -87,6 +87,29 @@ export interface PaneRenderRecord {
   colormapSig?: number;
   /** `params.contentParam` (split divider / blend alpha). */
   contentParam?: number;
+  /** `params.compareIntended` — the pane set this true iff a COMPARE was intended
+   *  (`hasCompare`) for this present. With `mode:"image"` + no `contentOpId` it is
+   *  the PIPELINE-MISMATCH signal: a raw identity blit of the reference primary
+   *  presenting while the pane is semantically in compare mode. See
+   *  {@link isPipelineMismatch}. */
+  compareIntended?: boolean;
+}
+
+/**
+ * PIPELINE-MISMATCH oracle (the reference-image flash, caught by PIPELINE not by
+ * params). A present is a mismatch iff the pane was semantically in COMPARE mode
+ * (`compareIntended`) yet the frame was produced by the plain IDENTITY/IMAGE
+ * pipeline (`mode:"image"`, no `contentOpId`, no bound `b`) — i.e. a raw blit of
+ * the REFERENCE primary reached the visible surface instead of the diff result.
+ * This present is fully param-COHERENT (the reference texture IS the bound
+ * primary, no colormap ⇒ no orange-suspect flag), which is exactly why every
+ * prior source⊗encode oracle missed it — only WHICH PIPELINE drew it is wrong.
+ * Would have caught the user's flash from day one. Post-fix (the pane's compare
+ * present-gate suppresses any identity present while a compare is intended) this
+ * is 0.
+ */
+export function isPipelineMismatch(r: PaneRenderRecord): boolean {
+  return r.mode === "image" && !r.contentOpId && !r.hasSrcB && r.compareIntended === true;
 }
 
 /**

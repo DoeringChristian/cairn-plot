@@ -57,7 +57,12 @@ import {
   startPaneRenderLog,
   stopPaneRenderLog,
   getPaneRenderLog,
+  startPaintPhaseLog,
+  stopPaintPhaseLog,
+  getPaintPhaseLog,
+  isPipelineMismatch,
   type PaneRenderRecord,
+  type PaintPhaseRecord,
 } from "../engine/test-hooks";
 import {
   getGlobalSelectionStore,
@@ -440,7 +445,135 @@ async function main(): Promise<void> {
     rootC.unmount();
     __resetGlobalSelectionStoreForTest();
 
-    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free`);
+    // ============ PHASE D — REAL-PATH PAINT ATOMICITY (the acceptance metric) ===
+    // Drive the REAL tree (PlotApp→GridView→NodeDispatch→LeafView→GpuImagePane)
+    // through an image↔diff stacked flip storm FASTER than the frame rate and count
+    // PAINTED FRAMES that show the outgoing slot after a flip committed — the
+    // reported flash. Unlike the pane-level `stacked-diff-flip-paint` harness (which
+    // drives the pane's props DIRECTLY = one commit, so it measured 0), THIS exercises
+    // the LeafView async-resolve two-commit path where the flash actually lives.
+    //
+    // MEASUREMENT. The pane records (paint-phase log) a per-flip commit marker + the
+    // new slot's first SUBMIT, `performance.now()`-stamped; a free-running rAF loop
+    // records every browser PAINT boundary. For an image→DIFF flip (target kind
+    // "diff", unambiguous) a paint strictly between the flip keydown and the first
+    // "diff" submit = a stale painted frame. We measure PRE-FIX (sync-resolve toggled
+    // OFF → the async two-commit resolve, the coordinator's mechanism) and POST-FIX
+    // (sync-resolve during-render + diff-pair prefetch) with the SAME driver, plus
+    // `staleDiffHolds` (LeafView's stale-window counter) and the render-log
+    // pipeline-mismatch oracle. Acceptance of the USER's symptom remains the user's
+    // own re-test — this proves the mechanism the pivot named is closed on the real
+    // path, not that the pixel the user sees is fixed.
+    const measureRealPath = async (
+      hostId: string,
+      disabled: boolean,
+    ): Promise<{ measured: number; stale: number; preStale: number; holds: number; mismatch: number; presents: number }> => {
+      (window as unknown as { __cairnDisableSyncResolve?: boolean }).__cairnDisableSyncResolve = disabled;
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:520px;height:280px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      host
+        .querySelector<HTMLElement>("[data-cairn-grid-root]")
+        ?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      // Warm BOTH slots (resident flips; also lets the diff-pair prefetch settle).
+      key("2");
+      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await sleep(250);
+      key("1");
+      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await sleep(250);
+
+      const stats = (window as unknown as { __cairnLeafResolveStats?: { staleDiffHolds: number; placeholderMounts: number } })
+        .__cairnLeafResolveStats;
+      if (stats) {
+        stats.staleDiffHolds = 0;
+        stats.placeholderMounts = 0;
+      }
+
+      let collecting = true;
+      const paints: number[] = [];
+      const paintLoop = (): void => {
+        paints.push(performance.now());
+        if (collecting) requestAnimationFrame(paintLoop);
+      };
+      requestAnimationFrame(paintLoop);
+
+      startPaneRenderLog();
+      startPaintPhaseLog();
+      const flips: { t: number; target: "image" | "diff" }[] = [];
+      const ITER = 120;
+      for (let i = 0; i < ITER; i++) {
+        const toDiff = activeIdx(hostId) === 0;
+        flips.push({ t: performance.now(), target: toDiff ? "diff" : "image" });
+        key(toDiff ? "2" : "1");
+        await sleep(4); // ~4ms task gap vs ~16ms paint = the fast-flip artefact window
+      }
+      await sleep(400);
+      collecting = false;
+      const paintLog = getPaintPhaseLog();
+      const renderLog = getPaneRenderLog();
+      stopPaintPhaseLog();
+      stopPaneRenderLog();
+      root.unmount();
+      (window as unknown as { __cairnDisableSyncResolve?: boolean }).__cairnDisableSyncResolve = false;
+
+      // First submit per content epoch, time-ordered; then the diff-kind ones.
+      const firstSubmit = new Map<number, PaintPhaseRecord>();
+      for (const r of paintLog) if (r.submitted && !firstSubmit.has(r.epoch)) firstSubmit.set(r.epoch, r);
+      const diffSubmits = [...firstSubmit.values()]
+        .filter((s) => s.kind === "diff")
+        .map((s) => s.t)
+        .sort((a, b) => a - b);
+      // Pair each image→diff flip with the next diff submit at/after its keydown;
+      // a paint boundary strictly in that window is a stale first painted frame.
+      let measured = 0;
+      let stale = 0;
+      let di = 0;
+      for (const f of flips) {
+        if (f.target !== "diff") continue;
+        while (di < diffSubmits.length && diffSubmits[di] < f.t - 0.01) di++;
+        if (di >= diffSubmits.length) break;
+        const ready = diffSubmits[di];
+        di++;
+        measured++;
+        if (paints.some((p) => p > f.t + 0.01 && p < ready - 0.01)) stale++;
+      }
+      const mismatch = renderLog.filter(isPipelineMismatch).length;
+      const holds = stats ? stats.staleDiffHolds : -1;
+      note(
+        `PHASE D real-path (${hostId}, sync-resolve ${disabled ? "DISABLED=pre-fix" : "ENABLED=post-fix"}): ` +
+          `measured ${measured} img→diff flips, STALE painted frames=${stale}, staleDiffHolds=${holds}, ` +
+          `pipeline-mismatch presents=${mismatch}, total presents=${renderLog.length}`,
+      );
+      return { measured, stale, preStale: 0, holds, mismatch, presents: renderLog.length };
+    };
+
+    const preFix = await measureRealPath("rpD-pre", true);
+    const postFix = await measureRealPath("rpD-post", false);
+
+    // PRE-FIX must exercise the stale window (the harness detects the bug it guards):
+    // the async two-commit resolve holds the previous slot at least once per
+    // image→diff flip (`staleDiffHolds > 0`) and paints at least one stale frame.
+    report(
+      preFix.holds > 0,
+      `PRE-FIX (sync-resolve OFF) exercises the stale-diff window: staleDiffHolds=${preFix.holds} (>0), stale painted frames=${preFix.stale}`,
+    );
+    // POST-FIX acceptance: zero stale painted frames, zero stale-diff holds on
+    // resident flips, zero pipeline-mismatch presents.
+    report(postFix.measured >= 20, `POST-FIX storm exercised real resident img→diff flips (${postFix.measured})`);
+    report(
+      postFix.stale === 0,
+      `POST-FIX: ZERO stale painted frames on real-path img→diff flips (${postFix.stale} of ${postFix.measured}; pre-fix ${preFix.stale})`,
+    );
+    report(postFix.holds === 0, `POST-FIX: ZERO stale-diff holds on resident flips (${postFix.holds}; pre-fix ${preFix.holds})`);
+    report(postFix.mismatch === 0, `POST-FIX: ZERO pipeline-mismatch presents (identity blit while a compare is intended) (${postFix.mismatch})`);
+    if (postFix.stale !== 0 || postFix.holds !== 0 || postFix.mismatch !== 0 || postFix.measured < 20) allOk = false;
+
+    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

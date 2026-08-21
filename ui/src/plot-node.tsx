@@ -276,23 +276,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // `compareSource.b` = foreground (`diff = source − b`, byte-parity with the
     // compare pane's `texA − texB`).
     if (diffSpec && diffFgData) {
-      resolveCached(key, async () => {
-        const [refFrame, fgFrame] = await Promise.all([
-          resolveFrame(node.data, source),
-          resolveFrame(diffFgData, source),
-        ]);
-        const refSource = frameToSource(refFrame);
-        const bSource = frameToSource(fgFrame);
-        if (!refSource) throw new Error("compare reference did not resolve to an image source");
-        if (!bSource) throw new Error("compare foreground did not resolve to an image source");
-        return {
-          source: refSource,
-          __diffB: bSource,
-          __diffContentKeyA: frameContentKey(refFrame, "diff:a"),
-          __diffContentKeyB: frameContentKey(fgFrame, "diff:b"),
-          __diffOverlay: fgFrame.overlay,
-        } as Record<string, unknown>;
-      }).then(
+      resolveCached(key, () => resolveDiffPair(node.data, diffFgData, source)).then(
         (dataProps) => {
           if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
         },
@@ -365,13 +349,56 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     [settingsGroupId],
   );
 
+  // SYNCHRONOUS RESOLVE (cache hit) — the FLIP-COMMIT fix. On a stacked flip the
+  // node/diffSpec swap in ONE React commit, but `state` still holds the PREVIOUS
+  // slot's dataProps until the resolve EFFECT's `setState` lands a commit LATER
+  // (the effect peeks the cache synchronously, but the setState round-trip is a
+  // second commit). That intervening window paints the OLD slot inside the NEW
+  // tab — the reported image-inside-the-diff-tab flash — because the pane's
+  // pre-paint render (874800e) only makes the RESOLVE commit atomic, not the flip
+  // commit. FIX: read the CURRENT resolveKey from the cache DURING RENDER, so a
+  // warmed flip (prefetched on stack entry, or previously visited) carries the new
+  // slot's dataProps in the flip commit ITSELF — the pane's pre-paint render then
+  // paints the new slot on the first frame. A genuine MISS returns undefined and
+  // falls back to `state` (loading on a cold mount, or the previous frame held —
+  // the c459c34 hold, still correct for async first loads). This is a pure
+  // derive-from-cache-during-render (no setState-in-render): `peekResolved` returns
+  // the SAME cached object across renders, so `dataProps` stays reference-stable.
+  // TEST-ONLY toggle (`window.__cairnDisableSyncResolve`) — reverts to the pre-fix
+  // ASYNC-ONLY resolve (no synchronous cache read, no stale-diff rejection) so ONE
+  // harness can measure the pre-fix stale-painted-frame / reference-leak rate and
+  // the post-fix rate against the identical driver. Zero production cost (one
+  // window read; the flag is never set outside a harness).
+  const syncResolveDisabled =
+    typeof window !== "undefined" &&
+    (window as unknown as { __cairnDisableSyncResolve?: boolean }).__cairnDisableSyncResolve === true;
+  const resolvedNow = syncResolveDisabled ? undefined : peekResolved<Record<string, unknown>>(resolveKey);
+  const stateReady = state.status === "ready" ? state.dataProps : undefined;
+  // REFERENCE-LEAK GUARD (the confirmed artefact): on a diff→image flip the reused
+  // LeafView's `state` still holds the DIFF resolution — whose `source` IS the diff
+  // REFERENCE operand — for the commit right after the node swaps. On the
+  // single-image path (`!diffSpec`) a `state` fallback that carries `__diffB` would
+  // therefore spread `source: <reference>` and the pane, seeing NO `compareSource`,
+  // would present a PLAIN IDENTITY render of the reference — the reported
+  // reference-image flash inside the (freshly-flipped) tab. Reject that stale-diff
+  // fallback: use the SYNCHRONOUS cache read for THIS node's own resolveKey
+  // (prefetched image slot ⇒ a hit ⇒ correct image in the flip commit itself), and
+  // if it misses, HOLD as not-ready rather than emit the reference. Prefetch (both
+  // slots warmed on stack entry) makes the miss path essentially unreachable after
+  // mount, so the hold is a rare first-interaction transient, never the reference.
+  const staleDiffFallback = !syncResolveDisabled && !diffSpec && stateReady?.__diffB !== undefined;
+  const dataProps: Record<string, unknown> | undefined =
+    resolvedNow ?? (staleDiffFallback ? undefined : stateReady);
+  const status: "loading" | "error" | "ready" =
+    dataProps !== undefined ? "ready" : state.status === "error" ? "error" : "loading";
+
   // Merge the shared block + the live sync group ids over the resolved data
   // props at render (leaf `node.props` win over `shared`, data props win over
   // all). The viewport-sync group id is the selection override when this pane is
   // in a ≥2 selection, else the grid-wide static `shared.sync.viewport` group;
   // the settings-sync group + anchor flag come only from an active selection.
   const mergedProps = useMemo<Record<string, unknown>>(() => {
-    if (state.status !== "ready") return {};
+    if (!dataProps) return {};
     // COMPARE path (diff + split/blend): the resolved reference `source` + the
     // LIVE `compareSource` (the decoded foreground + content keys from the cache,
     // plus the per-render mode/kernel/split/blend settings + callbacks). No
@@ -379,7 +406,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // `node.props` carries the synth leaf's view controls
     // (interpolation/showAxes/toolbar/pixelValueNotation).
     if (diffSpec) {
-      const dp = state.dataProps;
+      const dp = dataProps;
       // SYNCHRONOUS HOLD (Finding 2): a reused LeafView just flipped INTO diff but
       // `state` still holds the PREVIOUS slot's single-image dataProps (no
       // `__diffB`). Emitting a `compareSource` with `b: undefined` would drive the
@@ -448,12 +475,12 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // The channel tree is FORMAT-AGNOSTIC: EXRs carry their described tree;
     // any other multi-channel source gets a synthesized R/G/B/A tree — after
     // decode the file type has no bearing on what a channel selection means.
-    const described = state.dataProps.exrTree as ChannelMenuTree | undefined;
+    const described = dataProps.exrTree as ChannelMenuTree | undefined;
     // A deep-only described tree offers nothing to select — fall back to the
     // synthetic RGBA tree over the FLATTENED pixels (format-agnostic slice).
     const exrTree =
       (described && treeHasSelectableChannels(described) ? described : undefined) ??
-      (syntheticChannelTree(state.dataProps.source as never) as ChannelMenuTree | null) ??
+      (syntheticChannelTree(dataProps.source as never) as ChannelMenuTree | null) ??
       undefined;
     // In a stacked mixed grid the diff sibling has NO channel menu (a compare
     // resolves both operands without a channel strip), so suppress it here too —
@@ -471,14 +498,14 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         sharedProps.onChannelReset = () => selectChannels({});
       }
     }
-    return { ...sharedProps, ...(node.props ?? {}), ...state.dataProps };
-  }, [state, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare]);
+    return { ...sharedProps, ...(node.props ?? {}), ...dataProps };
+  }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
-  const rendererMissing = state.status === "ready" && !getRenderer(node.renderer);
+  const rendererMissing = status === "ready" && !getRenderer(node.renderer);
   useEffect(() => {
-    if (state.status !== "ready" || getRenderer(node.renderer)) return;
+    if (status !== "ready" || getRenderer(node.renderer)) return;
     const name = node.renderer;
     let settled = false;
     const unsub = onRegister(() => {
@@ -498,13 +525,15 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       unsub();
       clearTimeout(timer);
     };
-  }, [state, rendererMissing, node.renderer]);
+  }, [status, rendererMissing, node.renderer]);
 
-  if (state.status === "loading") {
+  if (status === "loading") {
     leafResolveStats.placeholderMounts++;
     return <Message text="Loading…" />;
   }
-  if (state.status === "error") return <Message text={`Plot error: ${state.message}`} error />;
+  if (status === "error") {
+    return <Message text={`Plot error: ${state.status === "error" ? state.message : "unknown"}`} error />;
+  }
   const Renderer = getRenderer(node.renderer);
   return Renderer ? (
     <Suspense fallback={<Message text="Loading renderer…" />}>
@@ -663,6 +692,37 @@ function frameToSource(f: ResolvedCompareFrame): DecodedSource | null {
  *  float payload's content key, NOT the decoded bytes (survives remount). */
 function frameContentKey(f: ResolvedCompareFrame, fallback: string): string {
   return f.float?.contentKey ?? f.url ?? fallback;
+}
+
+/** Resolve BOTH operands of a diff pair (reference = `refData`, foreground =
+ *  `fgData`) and pack the decoded reference `source` + the foreground (`__diffB`)
+ *  + content keys into the dataProps `LeafView` folds into a `compareSource`. ONE
+ *  source of truth, shared by `LeafView`'s resolve effect AND the stacked PREFETCH
+ *  (`GridView`), so a `[image, diff]` stack warms its `|diffpair` key on mount and
+ *  the FIRST flip into the diff tab is a synchronous cache hit — the flip commit
+ *  carries the full diff dataProps, so it is paint-atomic (no async hold, no
+ *  outgoing-slot frame inside the incoming tab). SIGN convention: `source` =
+ *  reference, `compareSource.b` = foreground (`diff = source − b`). */
+async function resolveDiffPair(
+  refData: DataSpec,
+  fgData: DataSpec,
+  source: DataSource,
+): Promise<Record<string, unknown>> {
+  const [refFrame, fgFrame] = await Promise.all([
+    resolveFrame(refData, source),
+    resolveFrame(fgData, source),
+  ]);
+  const refSource = frameToSource(refFrame);
+  const bSource = frameToSource(fgFrame);
+  if (!refSource) throw new Error("compare reference did not resolve to an image source");
+  if (!bSource) throw new Error("compare foreground did not resolve to an image source");
+  return {
+    source: refSource,
+    __diffB: bSource,
+    __diffContentKeyA: frameContentKey(refFrame, "diff:a"),
+    __diffContentKeyB: frameContentKey(fgFrame, "diff:b"),
+    __diffOverlay: fgFrame.overlay,
+  };
 }
 
 /** The LIVE compare settings + resolved foreground operand a compare node hands
@@ -1183,11 +1243,25 @@ function GridView({ node }: { node: GridNode }) {
   // resolve on first visit and cache thereafter (still flash-free via the cache).
   useEffect(() => {
     if (effectiveMode !== "stacked") return;
-    prefetchResolved(
-      children
-        .filter((c): c is PlotLeafNode => c.kind === "plot")
-        .map((c) => ({ key: sourceKey(c), run: () => resolveDataProps(c.data, source) })),
-    );
+    const entries: Array<{ key: string; run: () => Promise<unknown> }> = [];
+    for (const c of children) {
+      if (c.kind === "plot") {
+        entries.push({ key: sourceKey(c), run: () => resolveDataProps(c.data, source) });
+      } else if (c.kind === "compare") {
+        // Warm the DIFF PAIR under the SAME `|diffpair` key `LeafView` resolves it
+        // by (the memoized synth leaf's `sourceKey` — stable across renders/flips),
+        // so a first flip into the diff tab is a synchronous cache hit and the flip
+        // commit is paint-atomic, not a cold async resolve that holds the outgoing
+        // slot for a frame. Previously compare children were skipped, so EVERY first
+        // diff flip hit the async hold path — a prime source of the reported flash.
+        const synth = synthDiffLeafOf(c);
+        entries.push({
+          key: sourceKey(synth.leaf) + "|diffpair",
+          run: () => resolveDiffPair(synth.leaf.data, synth.fgData, source),
+        });
+      }
+    }
+    prefetchResolved(entries);
   }, [effectiveMode, children, source]);
   const grid = (
     <ChartFillContext.Provider value={fill}>
