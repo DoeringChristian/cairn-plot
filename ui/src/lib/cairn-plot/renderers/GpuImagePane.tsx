@@ -559,29 +559,40 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (c == null || c === "none") return null;
     return (c as string) === "viridis" ? ("turbo" as Colormap) : c;
   })();
-  const [diffKernel, setDiffKernelState, diffKernelMeta] = useResettableState<string>(
+  // The diff KERNEL (which error metric) is a per-VIEWPORT content-op choice OWNED
+  // by the hoisted `useCompareControl` (descriptor path) — surfaced here as
+  // `compareSource.opId` and mutated via `compareSource.onDiffKernelChange`. When
+  // that owner is present the pane DERIVES the kernel straight from `opId` (ONE
+  // authoritative store — no parallel pane-local seed/reseed to hand-sync; M2). The
+  // owner also carries the bus subscription (`plot-node.tsx`) AND the HOME reset
+  // (`onCompareReset`), so a remote kernel patch and HOME both flow through it, not
+  // a second copy here. A cross-type consumer with NO owner (the live-3D snapshot
+  // compare, `OffscreenComparePanes`, which threads no `onDiffKernelChange`) keeps a
+  // local fallback store so its own MODE menu still functions.
+  const hasKernelOwner = !!compareSource?.onDiffKernelChange;
+  const [localKernel, setLocalKernel, localKernelMeta] = useResettableState<string>(
     compareSource?.opId ?? "absolute",
   );
   useLayoutEffect(() => {
-    // Only (re)seed from a PRESENT compare descriptor (anti-churn — the epic's
-    // paint-atomic note): an image slot in a stacked image↔diff flip keeps the last
-    // compare kernel DORMANT rather than resetting to "absolute" then re-applying it
-    // post-paint on flip-back (a transient wrong-kernel present). PRE-PAINT
-    // (`useLayoutEffect`) so the FIRST flip to a diff — where the mount default
-    // "absolute" would otherwise present for one frame (a direct-absolute/turbo blit)
-    // before the descriptor's "flip" (cached/magma) settled — lands the correct kernel
-    // BEFORE the diff paints. Deps exclude the viewport, so pan/zoom is untouched.
-    if (!compareSource) return;
-    setDiffKernelState(compareSource.opId ?? "absolute");
+    // Fallback store follows the descriptor ONLY when there is no owner (the owner
+    // path derives directly, so this reseed would be redundant AND could fight the
+    // derivation). Anti-churn (paint-atomic note): reseed only from a PRESENT compare
+    // descriptor — an image slot in a stacked image↔diff flip keeps the last kernel
+    // DORMANT rather than resetting to "absolute" then re-applying post-paint.
+    if (hasKernelOwner || !compareSource) return;
+    setLocalKernel(compareSource.opId ?? "absolute");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareSource?.opId, !!compareSource]);
+  }, [hasKernelOwner, compareSource?.opId, !!compareSource]);
+  const diffKernel = hasKernelOwner ? (compareSource!.opId ?? "absolute") : localKernel;
   const setDiffKernel = useCallback(
     (id: string) => {
-      setDiffKernelState(id);
-      compareSource?.onDiffKernelChange?.(id);
+      // ONE write path: route to the owner when present (it re-derives `opId` back
+      // into this pane), else the local fallback store.
+      if (compareSource?.onDiffKernelChange) compareSource.onDiffKernelChange(id);
+      else setLocalKernel(id);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [setDiffKernelState, compareSource?.onDiffKernelChange],
+    [compareSource?.onDiffKernelChange, setLocalKernel],
   );
   // Cheap pure derivations: the concrete kernel id (float sources auto-dispatch
   // flip→hdr-flip) and the diff's DEFAULT colormap (authored override else the
@@ -856,12 +867,18 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // DIFF face (state-unification): the diff colormap is now the SAME `enc` store
       // adopted by the `adoptDisplayEncoding` block above (a diff peer publishes its
       // scalar-error `encoding`, which this pane — when itself in diff mode — sets on
-      // `enc`), so there is no separate diff-colormap adoption. Only the diff KERNEL
-      // remains compare-specific.
-      if (patch.diffKernel !== undefined) setDiffKernelState(patch.diffKernel);
+      // `enc`), so there is no separate diff-colormap adoption.
+      //
+      // The diff KERNEL is NOT adopted here when an owner is present (M2): the owner
+      // (`useCompareControl`) carries the group's kernel subscription itself, so a
+      // second write here would be a redundant parallel copy. Only the no-owner
+      // cross-type pane (which has no owner subscription) adopts a live kernel patch
+      // into its local fallback store. (The kernel is EPHEMERAL on the bus, so this
+      // fires only for an explicit live pick, never a join/re-form snapshot.)
+      if (patch.diffKernel !== undefined && !hasKernelOwner) setLocalKernel(patch.diffKernel);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enc, setTonemapGamma, setPeak, setColorBounds, diffMode, setDiffKernelState],
+    [enc, setTonemapGamma, setPeak, setColorBounds, diffMode, hasKernelOwner, setLocalKernel],
   );
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings =>
@@ -2196,7 +2213,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         if (compareSource?.onCompareReset) {
           if (!disableCompareHomeReset) compareSource.onCompareReset();
         } else {
-          setDiffKernel(diffKernelMeta.default); // direct-pane fallback (no hoisted owner)
+          setDiffKernel(localKernelMeta.default); // direct-pane fallback (no hoisted owner)
         }
         // Clear the override → the DERIVED diff colormap falls back to the (reset)
         // kernel's default, re-resolved every render (ordering-independent, no matter
@@ -2207,7 +2224,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, diffKernelMeta, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, localKernelMeta, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2768,7 +2785,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           } else {
             // Direct-pane fallback (cross-type card / diff harness — no hoisted
             // owner): the mode is fixed by the caller, so reset only the local kernel.
-            setDiffKernel(diffKernelMeta.default);
+            setDiffKernel(localKernelMeta.default);
           }
         }
         // The diff colormap is DERIVED from `enc`. `enc.resetEncoding()` at the top of

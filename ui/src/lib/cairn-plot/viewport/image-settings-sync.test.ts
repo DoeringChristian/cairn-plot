@@ -97,9 +97,11 @@ test("the broadened payload carries compare-only keys through publish/subscribe"
   ]);
 });
 
-test("getLastImageSettings merges compare-only AND shared keys for a late joiner", () => {
+test("getLastImageSettings merges compare-only shared keys for a late joiner (mode/split/blend persist)", () => {
   const g = freshGroup();
   // A compare anchor seeds BOTH the shared look and its compare-only settings.
+  // compareMode / splitPosition / blendAlpha PERSIST (a split/blend joiner must
+  // align to the group's mode + divider/alpha).
   publishImageSettings(g, "anchor", {
     colormap: "turbo",
     tonemap: "aces",
@@ -107,15 +109,30 @@ test("getLastImageSettings merges compare-only AND shared keys for a late joiner
     splitPosition: 0.25,
     blendAlpha: 0.75,
   });
-  publishImageSettings(g, "anchor", { diffKernel: "ssim" });
   assert.deepEqual(getLastImageSettings(g), {
     colormap: "turbo",
     tonemap: "aces",
     compareMode: "split",
     splitPosition: 0.25,
     blendAlpha: 0.75,
-    diffKernel: "ssim",
   });
+});
+
+test("diffKernel is EPHEMERAL: live-broadcast to peers but NOT persisted into the snapshot", () => {
+  // The M2 viewport-owned model: a diff kernel is a per-viewport content-op choice
+  // (distinct diffs legitimately hold distinct kernels). An explicit pick mirrors
+  // to already-selected peers, but re-forming/joining a selection must NOT collapse
+  // distinct kernels onto the anchor's metric — so the kernel never accumulates.
+  const g = freshGroup();
+  const live: ImageSyncSettings[] = [];
+  const off = subscribeImageSettings(g, "peer", (p) => live.push(p));
+  publishImageSettings(g, "anchor", { colormap: "turbo", diffKernel: "ssim" });
+  off();
+  // LIVE: an already-selected peer mirrors the full patch, kernel included.
+  assert.deepEqual(live, [{ colormap: "turbo", diffKernel: "ssim" }]);
+  // SNAPSHOT (what a late joiner / re-formed selection reads): the shared colormap
+  // persists, the ephemeral kernel does NOT — so no kernel collapse on join.
+  assert.deepEqual(getLastImageSettings(g), { colormap: "turbo" });
 });
 
 // PARTIAL-APPLY contract: a subscriber APPLIES ONLY THE KEYS IT OWNS. An image

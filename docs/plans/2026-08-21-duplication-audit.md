@@ -216,3 +216,55 @@ The original run's fifth planned dimension — **the same ALGORITHM re-expressed
 
 ### Swept and cleared (consolidated — no finding)
 Recorded so the negative space is explicit: **colormap/LUT sampling** is a single stack (`COLORMAP_STOPS` → `getColormapLUT`/`colormapFloatLUT`/`applyColormap`, one canonical table, `aliasColormap` the only fork → D3); **f16/float conversion** is centralized in `image/half.ts` (`halfToFloat`/`f16BitsToFloat32`), and the per-sample `isF16 ? halfToFloat(raw) : raw` accessor idiom (`gpu-image-samplers.ts:72`, `image-histogram-source.ts:78`, `CpuImagePane.tsx:1356`) all delegate to that one primitive — a 1-liner branch, not a drift-prone algorithm; **diff colormap index mode** is one place (`engine/diff-cmap-mode.ts`'s `resolveColormapMode`, shared GPU/CPU); **pixel-value formatting** funnels through `formatChannelValue`→`formatNum`; **reduce-to-scalar / data-index** math is single-sourced with byte-parallel WGSL twins (`encodings/registry.ts`); **npy/exr parsing** is not duplicated worker↔main — the worker (`exr-worker.ts`) and the main-thread path both call the one `decodeExrPreferWasm` core; **menu builders** derive from single option lists (`COLORMAP_OPTIONS`, `REDUCE_MENU_OPTIONS`). Channel-name derivation (`floatChannelNames` Y/RGB/RGBA/Cn vs `channel-slice.ts`'s `RGBA.slice`) uses different rules for different purposes and is not the same algorithm.
+---
+
+## M2 — DONE: ONE authoritative diff-kernel store (owner-derived) + ephemeral kernel sync
+
+**Design.** The diff KERNEL (which error metric) had TWO stores kept convergent by
+hand: the hoisted `useCompareControl.kernelOverride` (`plot-node.tsx`) and
+`GpuImagePane`'s pane-local `diffKernel` `useResettableState` (seeded from
+`compareSource.opId`, reseeded by a `useLayoutEffect`). M2 makes the hoisted owner
+AUTHORITATIVE and the pane DERIVE:
+- `GpuImagePane` now computes `diffKernel = compareSource.opId` directly whenever an
+  owner is present (`hasKernelOwner = !!compareSource.onDiffKernelChange`) — no
+  parallel pane-local seed/reseed. A cross-type consumer with NO owner (the live-3D
+  snapshot compare `OffscreenComparePanes`, which threads no `onDiffKernelChange`)
+  keeps a local fallback store so its own menu still works.
+- ONE write path: `setDiffKernel` routes to `compareSource.onDiffKernelChange` when
+  present (the owner re-derives `opId` back into the pane), else the local fallback.
+- ONE HOME path: unchanged — `compareSource.onCompareReset()` when owner present,
+  else the local fallback's default.
+- `applyRemoteSettings` no longer writes the kernel when an owner is present (the
+  owner carries the group's kernel subscription itself); only the no-owner pane
+  adopts a live kernel patch into its fallback store.
+
+**The multi-select collapse fix (viewport-owned model).** The diff kernel is a
+per-VIEWPORT content-op choice: distinct diffs in one selection legitimately hold
+DISTINCT kernels (FLIP/SSIM/absolute → magma/magma/turbo). `changeDiffKernel`
+published `{diffKernel}` which `publishImageSettings` accumulated into the replayable
+`lastStates` snapshot — so a pane joining / a selection re-forming read a stale
+`diffKernel` off `getLast` and COLLAPSED every peer onto the anchor's metric.
+`diffKernel` is now an EPHEMERAL bus key (`image-settings-sync.ts` `EPHEMERAL_KEYS`):
+broadcast LIVE to already-selected peers (an explicit pick still MIRRORS) but stripped
+from the accumulated snapshot (formation / late-join / re-form never inherit it).
+`compareMode`/`splitPosition`/`blendAlpha` stay persisted (a split/blend joiner must
+align to the group's mode + divider/alpha) — only the kernel is ephemeral.
+
+**Deleted code.** `GpuImagePane`'s parallel kernel store: the `diffKernel`
+`useResettableState` reseed-from-`compareSource.opId` semantics (the pane-local store
+is now only a no-owner fallback, `localKernel`, not a hand-synced twin of the owner);
+`setDiffKernelState` as the applyRemoteSettings write in the owned path; the diffKernel
+entry in the accumulated `lastStates` merge.
+
+**Evidence.**
+- Unit: `image-settings-sync.test.ts` +1 test "diffKernel is EPHEMERAL: live-broadcast
+  to peers but NOT persisted into the snapshot"; the prior "merges compare-only AND
+  shared keys" test updated to the viewport-owned model (mode/split/blend persist,
+  kernel does not). 629 node tests green (was 628).
+- Harness: `stacked-diff-flip-realstack-gpu` gains PHASE K (real PlotApp GPU tree):
+  multi-selecting two DISTINCT-kernel diffs (FLIP + absolute) does NOT collapse them on
+  formation, and an explicit kernel pick still MIRRORS to the selected peer. ALL 31
+  parity harnesses green (hardware WebGPU), incl. `compare-settings-sync` (live KERNEL
+  mirror step) and `page-wide-selection`.
+- typecheck 0; 243 pytest; core + gpu-image bundles rebuilt (gpu-image → 380.35 KB) +
+  synced + committed. `uv.lock` untouched.

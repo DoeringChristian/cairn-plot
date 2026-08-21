@@ -1201,7 +1201,60 @@ async function main(): Promise<void> {
     report(j.kept1 === "red-blue", `PHASE J (scenario 1): the multi-select neighbour KEEPS the picked colormap through the other's HOME — local HOME (${j.kept1})`);
     if (j.seed0 !== "magma" || j.seed1 !== "turbo" || j.home1Solo !== "turbo" || j.home0Solo !== "magma" || j.mirrored1 !== "red-blue" || j.home0 === "red-blue" || j.kept1 !== "red-blue") allOk = false;
 
-    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings + HOME-local-while-selected + shares settings beyond encoding (peak/kernel) + diff colormap IS the viewport encoding (scenario 1 diff-grid HOME→kernel default, scenario 2 image adopts diff colormap)`);
+    // ============ PHASE K — MULTI-SELECT KERNEL: NO COLLAPSE ON FORMATION (M2) ===
+    // Two side-by-side DIFF viewports with DISTINCT kernels (slot0 FLIP, slot1
+    // absolute). Multi-selecting them forms ONE sync group — but the diff KERNEL is a
+    // per-VIEWPORT content-op choice OWNED by `useCompareControl`, so FORMING the
+    // selection must NOT collapse the two distinct kernels onto the anchor's metric
+    // (pre-M2 the kernel rode the accumulated snapshot and a joiner adopted it). An
+    // EXPLICIT kernel pick on one, however, MIRRORS to the selected peer like any
+    // change (the kernel is EPHEMERAL on the bus — live-broadcast, not persisted).
+    interface KResult {
+      seed0: string; // slot0 FLIP kernel
+      seed1: string; // slot1 absolute kernel
+      afterSelect0: string; // slot0 kernel AFTER multi-select forms (must stay flip)
+      afterSelect1: string; // slot1 kernel AFTER multi-select forms (must stay absolute)
+      mirrored1: string; // slot1 kernel after slot0 picks "squared" (must mirror → squared)
+    }
+    const runK = async (hostId: string): Promise<KResult> => {
+      __resetGlobalSelectionStoreForTest();
+      const host = document.createElement("div");
+      host.id = hostId;
+      host.style.cssText = "width:560px;height:300px;background:#222;position:relative";
+      document.body.appendChild(host);
+      const root: Root = createRoot(host);
+      root.render(createElement(PlotApp, { descriptor: sideBySideTwoDiffGrid() }));
+      await waitFor(() => allDiffProbes(hostId).length >= 2, 12000);
+      await sleep(250);
+      const d = () => allDiffProbes(hostId);
+      const seed0 = d()[0]?.diffKernel ?? "?";
+      const seed1 = d()[1]?.diffKernel ?? "?";
+      const ids = framePaneIds(hostId);
+      const store = getGlobalSelectionStore();
+      store.select(ids[0], "replace"); // slot0 anchor
+      store.select(ids[1], "toggle"); // + slot1 → ONE group
+      await sleep(350); // let the anchor seed + joiner adopt run
+      const afterSelect0 = d()[0]?.diffKernel ?? "?"; // must still be flip
+      const afterSelect1 = d()[1]?.diffKernel ?? "?"; // must still be absolute
+      d()[0]!.changeDiffKernel("squared"); // explicit pick on the anchor
+      await waitFor(() => d()[1]?.diffKernel === "squared", 4000).catch(() => {});
+      const mirrored1 = d()[1]?.diffKernel ?? "?";
+      root.unmount();
+      host.remove();
+      __resetGlobalSelectionStoreForTest();
+      note(`PHASE K: seed=[${seed0},${seed1}] afterSelect=[${afterSelect0},${afterSelect1}] mirrored1=${mirrored1}`);
+      return { seed0, seed1, afterSelect0, afterSelect1, mirrored1 };
+    };
+    const k = await runK("kKernelGrid");
+    report(k.seed0 === "flip" && k.seed1 === "absolute", `PHASE K setup: two DIFF viewports with DISTINCT kernels (${k.seed0}/${k.seed1})`);
+    report(
+      k.afterSelect0 === "flip" && k.afterSelect1 === "absolute",
+      `PHASE K (M2): multi-selecting DISTINCT-kernel diffs does NOT collapse them on formation (${k.afterSelect0}/${k.afterSelect1})`,
+    );
+    report(k.mirrored1 === "squared", `PHASE K (M2): an EXPLICIT kernel pick still MIRRORS to the selected peer (peer→squared: ${k.mirrored1})`);
+    if (k.seed0 !== "flip" || k.seed1 !== "absolute" || k.afterSelect0 !== "flip" || k.afterSelect1 !== "absolute" || k.mirrored1 !== "squared") allOk = false;
+
+    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings + HOME-local-while-selected + shares settings beyond encoding (peak/kernel) + diff colormap IS the viewport encoding (scenario 1 diff-grid HOME→kernel default, scenario 2 image adopts diff colormap) + M2 multi-select kernels don't collapse on formation but mirror on pick`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

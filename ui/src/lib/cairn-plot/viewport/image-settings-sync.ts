@@ -93,6 +93,21 @@ const EVENT_TYPE = "image-settings-state";
 const buses = new Map<string, EventTarget>();
 const lastStates = new Map<string, ImageSyncSettings>();
 
+/** EPHEMERAL keys — broadcast LIVE to already-selected peers but NOT accumulated
+ *  into the replayable group snapshot (`lastStates`).
+ *
+ *  The diff KERNEL (which error metric) is a per-VIEWPORT content-op choice, like
+ *  the compare mode: distinct diffs in one selection legitimately hold DISTINCT
+ *  kernels (a FLIP/SSIM/absolute grid — magma/magma/turbo per kernel). An explicit
+ *  kernel PICK still MIRRORS to selected peers (it rides the live event below like
+ *  any change), but it must NOT persist into the snapshot — otherwise a pane
+ *  JOINING or a selection RE-FORMING reads a stale `diffKernel` off `getLast` and
+ *  COLLAPSES every peer onto the anchor's metric. Selection FORMATION publishes the
+ *  anchor's snapshot, which already omits `diffKernel`; keeping it out of the
+ *  accumulated merge closes the join/re-form path too. (This is the bus half of the
+ *  M2 "one authoritative kernel store" fix — the owner is `useCompareControl`.) */
+const EPHEMERAL_KEYS: ReadonlyArray<keyof ImageSyncSettings> = ["diffKernel"];
+
 function busFor(groupId: string): EventTarget {
   let bus = buses.get(groupId);
   if (!bus) {
@@ -103,13 +118,16 @@ function busFor(groupId: string): EventTarget {
 }
 
 /** Broadcasts a settings `patch` to every other subscriber of `groupId`, and
- *  merges it into the group's accumulated snapshot (for late joiners). */
+ *  merges it into the group's accumulated snapshot (for late joiners). The full
+ *  `patch` is delivered LIVE (peers mirror every key); only the accumulated
+ *  snapshot drops the {@link EPHEMERAL_KEYS} so a late joiner never inherits them. */
 export function publishImageSettings(
   groupId: string,
   sourceId: string,
   patch: ImageSyncSettings,
 ): void {
-  const merged = { ...(lastStates.get(groupId) ?? {}), ...patch };
+  const merged: ImageSyncSettings = { ...(lastStates.get(groupId) ?? {}), ...patch };
+  for (const k of EPHEMERAL_KEYS) delete merged[k];
   lastStates.set(groupId, merged);
   busFor(groupId).dispatchEvent(
     new CustomEvent<SettingsStateDetail>(EVENT_TYPE, { detail: { patch, sourceId } }),
