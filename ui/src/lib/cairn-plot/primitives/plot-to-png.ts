@@ -166,21 +166,6 @@ function largestVisibleImg(root: HTMLElement): HTMLImageElement | null {
   return best;
 }
 
-/** Rasterize an `<svg>` (SVG charts). */
-export async function svgToPng(
-  svg: SVGSVGElement,
-  opts?: PlotToPngOptions,
-): Promise<Blob> {
-  const rect = svg.getBoundingClientRect();
-  const w = rect.width || Number(svg.getAttribute("width")) || 300;
-  const h = rect.height || Number(svg.getAttribute("height")) || 150;
-  const bg = opts?.background ?? resolveBackground(svg);
-  const img = await svgToImage(svg, w, h);
-  return rasterize(w, h, pickScale(opts), bg, (ctx) =>
-    ctx.drawImage(img, 0, 0, w, h),
-  );
-}
-
 /**
  * Export the renderable content under `root`. Prefers an `<svg>` chart,
  * compositing any sibling `<canvas>` layers underneath it (Heatmap draws cells

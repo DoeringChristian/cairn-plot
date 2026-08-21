@@ -5,8 +5,8 @@
  * navigate/reload between assertions without stale state).
  *
  * When the page URL carries `?forceEngineFail`, `engine/pool.ts`'s
- * `activateEntry()` and `media-compare/GpuComparePane.tsx`'s device/surface
- * acquisition both throw synthetically instead of touching real GPU
+ * `activateEntry()` device/surface acquisition throws synthetically instead
+ * of touching real GPU
  * resources — deterministically exercising the C1 hard-failure path (any
  * GPU init failure, e.g. driver/context exhaustion) without needing to
  * actually exhaust a real GPU resource cap. This is also the mechanism used
@@ -548,11 +548,6 @@ function nowMs(): number {
   return Date.now();
 }
 
-/** True while context-loss instrumentation should record (any armed level). */
-export function contextLossInstrumentationActive(): boolean {
-  return userCaptureArmed;
-}
-
 /** Record a context/device-loss event (no-op unless the user log is armed). */
 export function recordContextLossEvent(kind: string, detail?: unknown): void {
   if (!userCaptureArmed) return;
@@ -561,11 +556,6 @@ export function recordContextLossEvent(kind: string, detail?: unknown): void {
   contextLossEvents.push(ev);
   // eslint-disable-next-line no-console
   console.warn(`cairn-plot paneRenderLog: CONTEXT-LOSS event [${kind}] @ ${ev.t.toFixed(0)}ms — captured on window.__cairnContextLossEvents.`, ev);
-}
-
-/** Test-only accessor for the captured context-loss events. */
-export function getContextLossEvents(): ContextLossEvent[] {
-  return contextLossEvents;
 }
 
 /** Arm the user-facing capture if the flag is set. Idempotent; safe to call more

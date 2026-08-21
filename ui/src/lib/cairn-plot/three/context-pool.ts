@@ -153,8 +153,3 @@ export function poolRelease(id: string): void {
   live.delete(id);
   touchedThisFrame.delete(id);
 }
-
-/** Current live-context count — exposed for tests/diagnostics only. */
-export function poolLiveCount(): number {
-  return live.size;
-}

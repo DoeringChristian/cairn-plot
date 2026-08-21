@@ -89,17 +89,16 @@ const activeIdx = (): number => {
 // blend `GpuComparePane` OR (post Phase 2c routing) the diff `GpuImagePane`.
 const stackPane = () => mountEl().querySelector<HTMLElement>('[data-cairn-stacked-pane="active"]');
 const stackPaneCount = () => mountEl().querySelectorAll('[data-cairn-stacked-pane]').length;
-/** The (single) compare/diff probe — `__cairnCompareProbe` (slide/blend) OR
- *  `__cairnImageDiffProbe` (diff `GpuImagePane`); the stacked grid renders ONE
- *  reused pane, so a diff-mode compare swaps its lowering to the image pane. */
+/** The (single) compare/diff probe — `__cairnImageDiffProbe`, exposed by the
+ *  unified `GpuImagePane` in diff mode; the stacked grid renders ONE reused
+ *  pane, so a diff-mode compare swaps its lowering to the image pane. */
 function probe(): CompareProbe | undefined {
   const sp = stackPane();
   if (!sp) return undefined;
   type SeamEl = HTMLElement & {
-    __cairnCompareProbe?: CompareProbe;
     __cairnImageDiffProbe?: CompareProbe;
   };
-  const seam = (el: SeamEl) => el.__cairnCompareProbe ?? el.__cairnImageDiffProbe;
+  const seam = (el: SeamEl) => el.__cairnImageDiffProbe;
   if (seam(sp as SeamEl)) return seam(sp as SeamEl);
   for (const n of Array.from(sp.querySelectorAll("*")) as SeamEl[]) {
     const p = seam(n);

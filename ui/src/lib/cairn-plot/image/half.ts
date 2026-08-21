@@ -50,9 +50,6 @@ type Float16Ctor = {
 };
 const Float16: Float16Ctor | undefined = (globalThis as { Float16Array?: Float16Ctor }).Float16Array;
 
-/** True iff this runtime has a native `Float16Array` (used by tests/diagnostics). */
-export const hasFloat16Array = Float16 !== undefined;
-
 /**
  * Widen a `Uint16Array` of `count` (default: all) raw binary16 bit patterns
  * into a fresh `Float32Array` of float values — the LAZY f16→f32 conversion the

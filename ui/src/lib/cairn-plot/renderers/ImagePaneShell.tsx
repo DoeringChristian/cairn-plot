@@ -1,12 +1,13 @@
 /**
  * ImagePaneShell — the ONE shared frame every image viewer pane renders inside.
  *
- * cairn-plot ships three panes that are all "an image in a zoom/pan viewport
+ * cairn-plot ships two panes that are both "an image in a zoom/pan viewport
  * with a toolbar, a TEV pixel-value overlay and a label chip", differing only
  * in HOW they put pixels on screen:
  *   - `renderers/CpuImagePane.tsx`  — 2D-canvas / `<img>` + CSS-transform zoom.
- *   - `renderers/GpuImagePane.tsx`  — WebGPU engine, zoom via a sampled uvRect.
- *   - `media-compare/GpuComparePane.tsx` — WebGPU split/blend/diff compositor.
+ *   - `renderers/GpuImagePane.tsx`  — WebGPU engine, zoom via a sampled uvRect;
+ *     also owns the split/blend/diff compositor (content-op unification, Phase
+ *     4 — the standalone `media-compare/GpuComparePane.tsx` it replaced is gone).
  * Everything AROUND the pixels — the pane root, the `useImageViewport`
  * wheel/drag/dblclick wiring, the `PlotToolbar` + `useImageController` adapter
  * (with the pixel-notation leading button), the `PixelValueOverlay` mount +
