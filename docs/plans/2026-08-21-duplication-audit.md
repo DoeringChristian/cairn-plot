@@ -1,0 +1,167 @@
+# Post-Unification Audit: Duplicate-State & Drift Findings
+
+Branch `diff_unification` of `cairn-plot`. Every entry below is anchored to code read directly; all findings are confirmed real. Ranked by user-visible severity, then grouped by the structural theme that produced them. The recurring root cause is the epic's signature: **a surface (menu / registry / prop type / enum) was unified while the state or logic backing it was left as two-or-more hand-synchronized copies.**
+
+---
+
+## HIGH — Documented controls silently do nothing on the default renderer
+
+### H1. The `processing` block (brightness/contrast/offset/flipSign, and exposure/offset on the `data=` path) is dropped by GpuImagePane, the DEFAULT renderer
+**Claim:** Python emits a `processing` block for 8-bit images that only `CpuImagePane` reads; the default WebGPU pane ignores it entirely, so documented, validated kwargs render nothing on most machines.
+
+**Anchors / evidence:**
+- Python packs the knobs into `props['processing'] = {brightness, contrast, gamma, exposure, offset, flipSign}` — `src/cairn_plot/components.py:743-750`, called from the 8-bit path at `components.py:1226-1233`; docstring promises they work (`components.py:982`).
+- Only consumer is CPU: `CpuImagePane.tsx:586-587` (`useGammaFilter(processing)` → `post-processing.tsx:26-29`).
+- `GpuImagePane.tsx` has **zero** references to `processing`/`brightness`/`contrast`/`flipSign`; it reads only top-level `props.exposure`/`props.offset` (`image-backend.ts:543-544`, `GpuImagePane.tsx:1470-1474`).
+- GPU is the default for uint8: addon sets `__cairnPlotUseGpuImage=true` on load (`plot-gpu-image-addon.tsx:120`), `resolveImageRenderer` returns the GPU pane in `auto` (`plot-renderers.tsx:121,157`).
+- Extra inconsistency: the top-level *lift* that would make exposure/offset work on GPU exists **only on the `url=` path** (`components.py:1124-1140`, mirrored `builders.ts:280-290`); the `data=` path never got it.
+
+**Risk:** `cp.Image(uint8_array, brightness=…, contrast=…, flip_sign=…)` has no visible effect on WebGPU, contradicting the API docs. The same `exposure=`/`offset=` kwarg produces different pixels depending on `data=` vs `url=` **and** on which backend the viewer happens to get — a silent, non-deterministic drop of a documented control.
+
+**Suggested consolidation:** Give the `data=` 8-bit path the same top-level lift the `url=` path uses, and wire GpuImagePane to read the unified exposure/offset/brightness/contrast/flipSign surface (or apply `processing` in the GPU shader) so a single knob resolves identically on both backends.
+
+---
+
+## MEDIUM — Twin state stores for one concept (still hand-coherent, one missed branch from a bug)
+
+### M1. Diff colormap vs. image display-encoding are two stores for "how this pane maps values to color" (the exemplar bug class, still structurally present)
+**Claim:** On the one unified pane, the diff-mode colormap and the image-mode encoding are two independent React stores; the menu/registry is unified but every settings path must hand-branch on `diffMode` to hit the right store.
+
+**Anchors / evidence:**
+- Store A (diff face): `diffColormapOverride` useState — `GpuImagePane.tsx:769-770`; consumed as `effectiveDiffColormap` at `:801`; persisted by its own once-seed `diffReseededRef` effect (`:771-791`); publisher `changeDiffColormap` (`:980-993`); modified-dot `diffColormapModified` (`:793`); reset branch `:2768-2770`.
+- Store B (image face): `enc = usePaneEncoding(...)` — `:576`; drives image face via `enc.colormap`/`enc.encodingId`; persisted by usePaneEncoding's own per-arity memory + render-time reseed (`display-encoding.ts:330-358`); publisher `changeEncoding` (`:917-928`); reset `enc.resetEncoding()` (`:2740`).
+- Neither store reads the other. `settingsSnapshot` forks into two entirely different payload shapes by `diffMode` (`:870-909`); `applyRemoteSettings` routes an incoming colormap patch to `enc.setEncoding` normally but to `setDiffColormapOverride` when `diffMode` (`:843-864`).
+
+**Risk:** Any settings/sync/persistence path that forgets the `diffMode` branch reads/writes the wrong store. Not hypothetical — the documented "orange-frame fix" (`:824-840`, measured `stacked-diff-flip-realstack-gpu` 97/97) arose exactly here: a diff's scalar-error colormap leaked onto light image content because the two split stores had to be manually mode-scoped in the sync bus. Divergent persistence (usePaneEncoding memory vs `diffReseededRef`) are parallel hand-maintained copies that can drift.
+
+**Nuance:** A diff's scalar-error false-color and an image's light→RGB encoding are arguably two *faces*, so a naive one-store merge is wrong (it would carry magma onto the image). The correct fix is a single store modeling two mode-scoped faces.
+
+**Suggested consolidation:** Fold both faces into one `usePaneEncoding`-style store keyed by mode (as `enc` already models curve XOR lut XOR none under one id), so seed/reseed/publish/modified/reset/snapshot/apply-remote each touch one store instead of six hand-synced sites.
+
+### M2. The diff KERNEL (which error metric) is held in two stores — the hoisted per-node override and a pane-local state
+**Claim:** The chosen diff metric lives in both `useCompareControl`'s hoisted `kernelOverride` and GpuImagePane's pane-local `diffKernel`, kept convergent only by a callback, a prop-reseed effect, two independent bus subscriptions, and a split HOME path.
+
+**Anchors / evidence:**
+- Store A: `plot-node.tsx:1480` `kernelOverride` → returned as `diffKernel` (`:1516`) → `diffSpec.diffKernel` (`:1566`) → `compareSource.opId` (mergedProps `:437`); its own bus subscription at `:1488-1490`.
+- Store B: `GpuImagePane.tsx:741-742` pane-local `diffKernel`, seeded from `compareSource.opId`, reseeded by effect `:744-754`, rendered via `resolvedKernelId` (`:800`).
+- Menu pick writes **both** (`:755-762`); a remote bus patch in `applyRemoteSettings` writes **only** the pane-local store (`:865`) while the owner independently writes its own override. HOME is split: with an owner it routes through `compareSource.onCompareReset()`, else it resets pane-local `setDiffKernel(diffKernelMeta.default)` (`:2190-2194`, `:2756-2762`).
+
+**Risk:** The hoisted owner is per-node and unmounts on stacked/enlarge flip-away, so the chosen metric can silently reset to descriptor on flip-back — while its *sibling* on the same menu (diff colormap) is deliberately made to persist (`:771-791`), giving two controls in one menu inconsistent behavior. The no-owner HOME fallback resets to `diffKernelMeta.default` (first-mount seed) rather than the live descriptor. (No live misfire reproduced — paths currently converge — but the convergence is accidental.)
+
+**Suggested consolidation:** Make one store authoritative (the hoisted owner when present) and have the pane derive from it, rather than seeding a parallel pane-local copy; unify the bus write and HOME reset onto that single owner.
+
+### M3. Settings-sync bus keeps a flat `lastStates` snapshot that cannot represent per-patch `compareMode` scoping — late-join replay is poisoned
+**Claim:** The bus merges every patch into one flat object, losing the association between a colormap and the mode it was published under; a stale `compareMode:'diff'` tag then poisons the snapshot replayed to late joiners.
+
+**Anchors / evidence:**
+- Pure spread merge, no key deletion: `image-settings-sync.ts:112` `const merged = {...(lastStates.get(groupId) ?? {}), ...patch}`.
+- JOIN replays merged snapshot: `use-synced-image-settings.ts:52-53`.
+- Live apply gates on the single `compareMode`: `adoptDisplayEncoding = !(patch.compareMode === 'diff' && !diffMode)` (`GpuImagePane.tsx:840`, mirror `CpuImagePane.tsx:475`). Image publishes omit `compareMode` (`GpuImagePane.tsx:889-908`), so `colormap:turbo` merges over a prior diff's `compareMode:'diff'` → `{colormap:turbo, compareMode:'diff'}`.
+- Cross-type groups are the intended orange-frame-fix target (`image-settings-sync.ts:33-41`, `GpuImagePane.tsx:824-839`), so the sequence is reachable.
+
+**Risk:** A late-joining light-image pane reads the poisoned snapshot and either (a) refuses the group's real image colormap (visibly fails to sync) or (b) adopts a diff's magma onto a light image (the orange-frame class the per-patch scoping was written to prevent). Only bites panes that join **after** a mode-crossing publish — evades the per-patch live path the code was tested on.
+
+**Suggested consolidation:** Store `lastStates` per content-kind/face (or carry `compareMode` on every field, image publishes included, and clear it), so replay reconstructs per-patch scoping instead of a lossy flat merge.
+
+### M4. The image display-settings management block is triplicated across GpuImagePane, CpuSdrImagePane, CpuHdrImagePane — and the three copies already diverge
+**Claim:** view-local state + controlledSurface reseed effects + `applyRemoteSettings` + `settingsSnapshot` + `change*` publishers + `onReset` + `extraModified` are three parallel implementations of one behavior, and the "don't adopt a diff peer's scalar colormap onto a light pane" rule is spelled three different ways over three different notions of "diff".
+
+**Anchors / evidence:**
+- Three hand-copies: `applyRemoteSettings` (`GpuImagePane.tsx:822`, `CpuImagePane.tsx:470`, `:1198`); `settingsSnapshot` (`GpuImagePane.tsx:870`, `CpuImagePane.tsx:486`, `:1226`); reseed effects (`GpuImagePane.tsx:635/657/701`, `CpuImagePane.tsx:461/1145/1177`); `onReset`/`extraModified` (`GpuImagePane.tsx:2739/2772`, `CpuImagePane.tsx:1033/1038`, `:1513/1521`).
+- The scoping predicate diverges **and** gates on different diff concepts: `GpuImagePane.tsx:840` boolean unified `diffMode`; `CpuImagePane.tsx:475` a legacy string `DiffMode` enum (file header line 13) merely sharing the name; `CpuImagePane.tsx:1205` unconditional (`patch.compareMode !== "diff"`), correct-by-accident only because CpuHdr can never be a diff face.
+
+**Risk:** A sync fix or newly-synced control added to one backend silently misses the other two; HOME/reset clears a different set depending on which backend and dtype rendered the pane. No live misrender today, but any future edit to the rule — or CpuHdr gaining a compare face — silently desyncs one pane (the exact failure mode that produced the original orange-frame bug).
+
+**Suggested consolidation:** Extract one shared hook (`useImageDisplaySettings`) parameterized by backend/dtype capability, so `applyRemoteSettings`/snapshot/publishers/reset/scoping-rule exist once. Unify the two `diffMode` semantics on the boolean Phase-2c concept.
+
+---
+
+## MEDIUM — Python ↔ TS contract drift (guarded on the wrong axis)
+
+### M5. Four validation enums are hardcoded twice (Python + TS) and covered by no cross-language contract test
+**Claim:** compare view-modes, aligns, fits, and pixel-value notations exist as independent Python and TS copies, absent from the contract JSON and both contract tests, so the two faces can silently diverge.
+
+**Anchors / evidence:**
+- Python: `_COMPARE_VIEW_MODES` (`components.py:152`), `_COMPARE_ALIGNS` (`:176`), `_COMPARE_FITS` (`:177`), `_PIXEL_VALUE_NOTATIONS` (`:788`).
+- TS twins: `COMPARE_VIEW_MODES` (`validate.ts:54`), `COMPARE_ALIGNS` (`:62-68`), `COMPARE_FITS` (`:69`), `PIXEL_VALUE_NOTATIONS` (`:70`); a **third** pixel-notation copy as a type union at `PixelValueOverlay.tsx:92`.
+- `schema/cairn-plot-contracts.json` holds only colormaps/tonemapOperators/aliases/displayTransfers/compareKernelPublicNames/builders; `test_contracts.py` and `contracts.test.ts` assert only those — the four enums are guarded by neither.
+
+**Risk:** Adding/renaming a compare align, fit, view-mode, or pixel notation on one face passes all tests while the other rejects it — a latent cross-face break with no CI signal. (Somewhat softened by the validators throwing loudly rather than mis-rendering.)
+
+**Suggested consolidation:** Move all four enums into `cairn-plot-contracts.json` and assert them in both contract tests (as the colormap/tonemap sets already are); collapse the third pixel-notation type union to derive from the runtime list.
+
+### M6. The public-mode → kernel-id mapping that emits `diffSubmode` is duplicated verbatim in Python and TS; contract guards only the KEYS
+**Claim:** Both languages hand-maintain an identical public-name→kernel-id table whose VALUES (the ids) are never checked against the kernel registry, so a kernel-id rename drifts both tables with no test failure.
+
+**Anchors / evidence:**
+- Python `_COMPARE_KERNEL_MODES` (`components.py:153-169`), emitted as `built['diffSubmode']` (`:2015,2034`).
+- TS `COMPARE_KERNEL_MODES` (`validate.ts:41-51`), emitted at `builders.ts:336,344`.
+- True source of truth is the kernel registry `{publicName,id}` pairs (`absolute.wgsl.ts:7/9`, etc.) with `kernelIdForPublicName()` (`engine/kernels/index.ts:88-91`) — which the builder ignores; ids mirrored a fourth time in `ops.ts:87-137`.
+- Guards check keys only: `test_contracts.py:54` (`.keys()`), `contracts.test.ts` (`listDiffKernelPublicNames()`), `builders.test.ts:147` (`Object.keys(...)`).
+
+**Risk:** Rename kernel id `absolute`→`abs_error` in the registry without touching the two tables → all guards stay green (public name `abs` unchanged) but both faces emit stale `diffSubmode` → `getDiffKernel` fails to resolve → broken/blank Absolute-Error diff in every pane, both authoring paths, zero test failures.
+
+**Suggested consolidation:** Have the builder call `kernelIdForPublicName()` (registry-derived) instead of a hardcoded table, and add a contract assertion that every emitted `diffSubmode` value resolves to a registered kernel id.
+
+### M7. `overlay`/`overlaySettings` honored on uint8 path, silently dropped on float/HDR path
+**Claim:** The unified `ImageBackendProps` declares `overlay`/`overlaySettings` for any dtype, but they are threaded only in the uint8 branch and hard-nulled for the float surface — the same latent-drop shape as the fixed colormap-on-float bug.
+
+**Anchors / evidence:**
+- Declared for all dtypes: `image-backend.ts:384-385`.
+- Threaded only in uint8 branch of `useLegacyImageProps` (`:556-557`); float branch (`:505-532`) omits them; `HdrImageProps` has no overlay field.
+- GpuImagePane hard-nulls for float: `const overlay = hdrMode ? undefined : (props as SdrImageProps).overlay;` (`GpuImagePane.tsx:2429-2430`).
+- Reachable: `plot-descriptor.ts` returns `decodedToSource(decoded)` **with** `overlay: parseOverlay(...)` for float decodes (`:313/315`, `:344/346`, `:352/354`; `decodedToSource:457-473`); `plot-renderers.tsx:353-354` forwards regardless of dtype. Overlays default-on (`DEFAULT_OVERLAY_SETTINGS.enabled=true`, `types.ts:122-123`).
+
+**Risk:** Identical detection metadata draws boxes/masks on a uint8 PNG but renders **nothing** on an EXR/float image — no error, no warning. Float/EXR is exactly where per-region overlays matter most. (`processing` being SDR-only here is intentional per its docstring — not part of this defect.)
+
+**Suggested consolidation:** Move `overlay`/`overlaySettings` onto the shared `ImageBackendProps` consumption (both branches of `useLegacyImageProps`, `HdrImageProps`) and drop the `hdrMode ? undefined` null-out so the overlay compositor runs on the float surface too.
+
+---
+
+## LOW — Latent divergences, dead code, and naming/doc rot
+
+### Backend/cache divergence (recoverable resets, extra work — no data loss)
+
+**L1. Engine-failure fallback discards live GPU-pane state.** `if (engineFailed) return <CpuImagePane {...backendProps} />` forwards the ORIGINAL descriptor props (`GpuImagePane.tsx:2441-2444`, captured `:343`), not the live state; CpuImagePane re-seeds from those props (`CpuImagePane.tsx:486-500`). Both panes hold independent useState for the same settings (Gpu `:576/629/654/673/674/692/698/741/769`; Cpu `:443/458/1126/1143/1158/1159/1171/1173`). A hard GPU failure mid-session (`renderPass`→`setEngineFailed(true)`, `:1881-1888`) resets exposure/offset/peak/gamma/bounds/colormap/kernel to descriptor; the CPU SDR path even lacks EV/offset sliders so those can't be re-applied. Rare error path. *Fix: seed CpuImagePane from the live settings snapshot on fallback, not descriptor props.*
+
+**L2. Flip-back served by two independent LRU caches at the same cap.** `uploadCacheRef` (CPU upload, keyed on `b`, capped via `rememberUpload`, `GpuImagePane.tsx:463/511`, touched only in setSourceB `:1406-1418`) and pool `retained` (GPU textures, keyed on both `a` and `b`, `pool.ts:362/438`) evict on different key sets. Since the pool spends slots on `contentKeyA`, past ~5 distinct diff slots a flip-back is a CPU-upload HIT but pool MISS → a synchronous re-upload. Divergence is one-directional (upload set is a superset), and the re-upload is synchronous inside the pre-paint fast path, so no flicker — just sub-frame GPU churn. *Fix: key both caches identically or drive upload residency off the pool.*
+
+### Dead code / stranded seams (no runtime behavior)
+
+**L3. Four orphaned `ViewportCapabilities` descriptors.** `meshViewportCapabilities` (`mesh-viewport.tsx:503`), `pointCloudViewportCapabilities` (`pointcloud-viewport.tsx:447`), `boxesViewportCapabilities` (`boxes-viewport.tsx:463`), `volumeViewportCapabilities` (`volume-viewport.tsx:404`) appear only in their own files (cross-file mentions are prose comments claiming they "mirror" each other). Only `imageViewportCapabilities` reaches a barrel (`viewport/index.ts:15`, `index.ts:251`) — and even it has no in-repo consumer. The intended viewport-module registry was never built. *Fix: delete the four dead consts, or build the registry that consumes them.*
+
+**L4. `diffCacheSize`/`clearDiffCache` dead.** Exported at `diff-engine.ts:444/449`, no caller in either repo; their only historical consumer was the deleted `GpuComparePane`. Leaves the diff-result LRU cap (from the `ce554bb4` diff-cache-caps work) with **no** test asserting it evicts or clears. *Fix: either wire these into an eviction test or remove them.*
+
+**L5. Context-loss test hooks dead.** `getContextLossEvents` (`test-hooks.ts:567`) and `contextLossInstrumentationActive` (`:552`) have zero callers; both duplicate live paths (the `window.__cairnContextLossEvents` global and the `userCaptureArmed` check). Note the write path *is* live (`use-scene3d.ts:877/880`, `webgpu/device.ts:646`) — only these two read accessors are stranded. *Fix: remove the two dead accessors.*
+
+**L6. Misc dead utility exports.** Each occurs once repo-wide with no barrel re-export: `svgToPng` (`plot-to-png.ts:170`), `poolLiveCount` (`context-pool.ts:158`), `PLOT_MARGIN` (`theme.ts:51`), `hasFloat16Array` (`half.ts:54`), `__resetCapabilityNoticeForTests` (`capability-notice.ts:318`). Two are load-bearing-*looking* test seams implying coverage that doesn't exist. *Fix: delete, or wire the test seams into their tests.*
+
+**L7. Dead `NormMode`/log/power configuration surface.** `type NormMode = 'linear'|'log'|'power'` (`registry.ts:122`), `NORM_ID` (`:132`), and the log/power shader branches (`wgsl.ts:229-234`) are unreachable — no producer ever emits non-`linear` (panes hardcode linear and say so: `CpuImagePane.tsx:1218`, `GpuImagePane.tsx:854/1802/1822/2695`); `norm` was never a Python kwarg. Deliberately retained inert substrate, covered by parity tests. *Fix: none required; document as intentional or prune the unreachable branches.*
+
+**L8. Selection-sync field lists non-uniform + phantom `interpolation` field.** CpuSdr syncs only encoding/colormap/tonemap/tonemapGamma (`CpuImagePane.tsx:486-494`) while CpuHdr (`:1226-1237`) and Gpu (`GpuImagePane.tsx:870-909`) add exposureEV/offset/reduce/bounds. This tracks genuine per-pane capability differences (SDR pane has no exposure/bounds *state*), so it is not a dropped sync — but `ImageSyncSettings.interpolation` (`image-settings-sync.ts:56`) is declared and never published or applied by any pane (`GpuImagePane.tsx:2427` treats it prop-only). *Fix: remove the dead `interpolation` field and its stale docstring line (`image-settings-sync.ts:6`).*
+
+### Naming / documentation rot (test fidelity, maintainer confidence)
+
+**L9. `GpuComparePane` cited as authoritative spec in ~27 files after deletion.** No definition exists (deleted in `28e4275`; the `.worktrees/*` copies are other branches). Parity claims point at an unopenable component: "Mirrors GpuComparePane's diff kernel" (`GpuImagePane.tsx:731`), "byte-identical to GpuComparePane's compose" (`:1595`), `ops.ts:151/195`, `image.wgsl.ts:414`; several comments cite the nonexistent path `media-compare/GpuComparePane.tsx` as current (`ImagePaneShell.tsx:9`, `ssim-metric.ts:14`, `test-hooks.ts:8`, `LabelChip.tsx:14`, `RefBadge.tsx:11`). A meaningful subset are honest "now deleted (Phase 4)" breadcrumbs (`compositor.tsx:70`, `media-compare/index.ts:93`, etc.) — legitimate, not rot. Comment-only, zero runtime impact. *Fix: rewrite parity claims to reference the unified pane + content-op registry as the source of truth.*
+
+**L10. Probe-seam naming unconsolidated.** One `paneRef` element carries three probes — `__cairnImageDiffProbe` (`GpuImagePane.tsx:2094`), `__cairnImagePaneProbe` (`:2212`), `__cairnChromeProbe` (`:2416`); the "Diff" probe also carries split/blend compositor seams (`:2125`), making its name a misnomer. Legacy `__cairnCompareProbe` is never assigned yet read as a dead `??` fallback in **two** harnesses (`compare-settings-sync.browser.ts:186`, `grid-stacked-persist.browser.ts:102`) — the claimed third harness only mentions it in a comment. Probe `.home` seams reset a strict subset of the real `onReset` (`:2186-2196`/`:2229` vs `:2739-2768`) yet claim to match it. Test-only. *Fix: rename the misnamed probe, delete the dead `__cairnCompareProbe` fallback, and make probe `.home` call the real `onReset` so HOME-regression tests have real coverage.*
+
+**L11. Stale "side" compare-mode comment.** `types.ts:70-72` documents `MediaCompareModeKind` as `(normal | side | split | blend | diff)`, but the enum is `'normal'|'split'|'blend'|'diff'` — no `side` (`mode.ts:14`, array `:16-21`). Doc-only. *Fix: correct the comment.*
+
+---
+
+## Systemic patterns
+
+The findings collapse into five recurring root causes, all traceable to the unification epic collapsing surfaces faster than the state/logic behind them:
+
+1. **Unified surface, un-unified backing state.** One menu/registry/prop-type over two-or-more hand-synced stores, coherent only because every seed/reseed/publish/reset/snapshot/apply-remote site remembers to touch all copies (M1, M2, M4). The seed bug (diff colormap vs encoding) is the exemplar; M3 is the same failure in the sync bus, where a *flat* snapshot structurally cannot represent the per-patch scoping the live path depends on.
+
+2. **Per-dtype / per-backend fan-out that silently drops a unified prop on one branch.** A prop declared once on the unified type is threaded on the uint8/GPU path but omitted on the float/CPU path — no error, just a missing effect (H1, M7, L1, L8). This is the highest-severity class because the drop is invisible and depends on the viewer's hardware.
+
+3. **Cross-language duplication guarded on the wrong axis.** Python and TS hand-maintain identical tables/enums; the contract test checks the *keys* (or a subset of sets) but not the *values* or the full set, so drift passes CI (M5, M6). The registry that should be the single source of truth already exists (`kernelIdForPublicName`) but the builders bypass it.
+
+4. **Registry-that-was-never-built.** Descriptors/accessors were exported in anticipation of a consuming registry (viewport modules, cache introspection, context-loss instrumentation) that never landed, leaving orphaned exports that read as live features (L3, L4, L5, L6).
+
+5. **Deleted-behavior surfaces and phantom specs.** Removed components/modes (`GpuComparePane`, the norm picker, `side` mode) survive as unreachable config, dead probe fallbacks, and parity comments pointing at code that no longer exists (L7, L9, L10, L11) — corrosive to maintainer confidence and the primary way a future edit re-derives wrong behavior.
+
+The single highest-leverage remediation is a shared `useImageDisplaySettings` hook that owns one mode-scoped store plus one copy each of apply-remote/snapshot/publish/reset — it directly closes M1, M2, M4, and structurally prevents the class behind M3 and M7.
