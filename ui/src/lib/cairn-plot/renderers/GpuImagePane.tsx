@@ -888,9 +888,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // (`useCompareControl`) carries the group's kernel subscription itself, so a
       // second write here would be a redundant parallel copy. Only the no-owner
       // cross-type pane (which has no owner subscription) adopts a live kernel patch
-      // into its local fallback store. (The kernel is EPHEMERAL on the bus, so this
-      // fires only for an explicit live pick, never a join/re-form snapshot.)
-      if (patch.diffKernel !== undefined && !hasKernelOwner) setLocalKernel(patch.diffKernel);
+      // into its local fallback store — and, like the owner, ONLY from a DEDICATED
+      // kernel pick (`{diffKernel}`, no `encoding`), never from the group's shared
+      // DISPLAY snapshot the anchor seeds on formation (which would collapse distinct
+      // kernels onto the anchor's metric).
+      if (patch.diffKernel !== undefined && patch.encoding === undefined && !hasKernelOwner) {
+        setLocalKernel(patch.diffKernel);
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [enc, setTonemapGamma, setPeak, setColorBounds, diffMode, hasKernelOwner, setLocalKernel],

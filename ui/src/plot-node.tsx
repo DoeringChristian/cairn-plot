@@ -1487,7 +1487,16 @@ function useCompareControl(node: PlotNode, settingsSyncGroupId: string | undefin
     if (!settingsSyncGroupId) return;
     return subscribeImageSettings(settingsSyncGroupId, idRef.current!, (patch) => {
       if (patch.compareMode !== undefined) setViewMode(patch.compareMode as CompareViewMode);
-      if (patch.diffKernel !== undefined) setDiffKernel(patch.diffKernel);
+      // The diff KERNEL is a per-VIEWPORT content-op choice (M2): distinct diffs in
+      // one selection legitimately hold distinct kernels. It mirrors on an EXPLICIT
+      // pick (`changeDiffKernel` publishes a DEDICATED `{diffKernel}` patch — no
+      // `encoding`), but must NOT be adopted from the group's shared DISPLAY snapshot
+      // the anchor seeds on selection FORMATION (which carries `encoding` + the whole
+      // display look) — that would collapse every peer onto the anchor's metric. So
+      // adopt the kernel only from a dedicated pick, never from a display snapshot.
+      if (patch.diffKernel !== undefined && patch.encoding === undefined) {
+        setDiffKernel(patch.diffKernel);
+      }
       if (patch.splitPosition !== undefined) setSplitPos(patch.splitPosition);
       if (patch.blendAlpha !== undefined) setBlendAlpha(patch.blendAlpha);
     });

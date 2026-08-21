@@ -427,3 +427,30 @@ rewire that live path across every `*.wgsl.ts` and risk a content-ops⇄kernels 
 against the "zero behavior change" mandate. The content-op registry remains the
 canonical home for the SUPERSET concept (it alone covers identity/split/blend); only
 the shared diff subset resolves from the kernel table. Drift is now impossible either way.
+
+### M2 — ADDENDUM: receiver-side kernel scoping + OPEN residual (live 3-diff collapse)
+
+**Landed (the brief's "scope kernel sync at the path above GpuImagePane").** The diff
+kernel is a per-viewport content choice, so `useCompareControl`'s bus subscription (and
+the no-owner pane's `applyRemoteSettings`) now adopt `diffKernel` ONLY from a DEDICATED
+kernel pick (`changeDiffKernel` publishes `{diffKernel}` with no `encoding`), never from
+the group's shared DISPLAY snapshot the anchor seeds on selection formation (which
+carries `encoding` + the whole display look). typecheck; 641 node tests; ALL 31 parity
+harnesses green (PHASE K + compare-settings-sync live kernel mirror + page-wide-selection).
+
+**Browser verification — OPEN (honest).** On the served report's `FLIP vs SSIM vs
+absolute` grid (three descriptor diffs), a real page-wide multi-selection STILL collapses
+the two non-anchor kernels onto the anchor's metric (ssim/absolute → flip), measured live
+by stable `data-plot-pane-id`. Instrumentation established: (a) the anchor's seed broadcast
+is a 10-key display snapshot that DOES carry `diffKernel:flip` alongside `encoding` (so the
+receiver guards above correctly BLOCK it — verified in the served bundle); (b) yet the
+non-anchor `control.diffKernel` flips ~1 s AFTER the broadcast, i.e. not synchronously with
+any bus patch; (c) no `{diffKernel}`-only (dedicated-pick) broadcast fires, and no traced
+`setDiffKernel`/`onDiffKernelChange` caller runs on formation. The observed state change
+therefore contradicts every traced code path (guarded subscription blocked; no dedicated
+pick; no owner-callback caller) — the mechanism is a DELAYED render/re-lower interaction I
+could not root-cause within the timebox. The automated 2-diff regression (PHASE K, real
+PlotApp GPU tree) does NOT reproduce it, so the harness gate is green while the live 3-diff
+path is not. FLAGGED as an open follow-up: the anchor snapshot should not carry `diffKernel`
+at all (its source `settingsSnapshot` is 9-key and omits it — the extra key's runtime
+origin is itself unexplained and is the next thread to pull).
