@@ -45,12 +45,6 @@ export const GRID = {
 } as const;
 
 /**
- * Baseline plot margins (px). One canonical gutter for every renderer;
- * renderers with a colorbar extend `right` locally.
- */
-export const PLOT_MARGIN = { top: 12, right: 16, bottom: 28, left: 48 } as const;
-
-/**
  * Pad an AUTO-computed numeric domain so data marks don't touch the plot frame
  * in the home/default position. `frac` is the fraction of the data range added
  * on EACH side (5% by default). Never apply to an explicit, user-set domain —

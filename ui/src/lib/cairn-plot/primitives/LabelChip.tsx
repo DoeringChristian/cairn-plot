@@ -11,7 +11,8 @@
 //   1. this shared chip (bottom-left, grip iff draggable, `aria-hidden` grip),
 //   2. `compositor.tsx`'s inline `<span>` (bottom-right, grip ALWAYS, drag
 //      gated `isDraggable && !modifierActive`), and
-//   3. `GpuComparePane.tsx`'s inline `<span>` (bottom-right, no grip, static).
+//   3. `GpuComparePane.tsx`'s inline `<span>` (bottom-right, no grip, static;
+//      that pane is now deleted — content-op unification, Phase 4).
 // All now route through here; each site keeps its exact drag semantics by
 // passing an already-computed `draggable` (the caller folds in `modifierActive`)
 // and choosing `grip` explicitly.

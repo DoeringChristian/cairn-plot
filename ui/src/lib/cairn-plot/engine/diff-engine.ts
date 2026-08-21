@@ -440,16 +440,6 @@ export async function ensureDiffResultReadback(
   return entry.resultSamplesPending;
 }
 
-/** Test/introspection: current cache entry count for a device. */
-export function diffCacheSize(device: Device): number {
-  return cacheFor(device).size;
-}
-
-/** Test/teardown: drop + destroy all cached entries for a device. */
-export function clearDiffCache(device: Device): void {
-  cacheFor(device).clear();
-}
-
 // ===========================================================================
 // Display blit: sample the cached RESULT texture through the uv-window, map via
 // displayRange, apply the diff colormap.

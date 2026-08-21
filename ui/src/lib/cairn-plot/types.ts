@@ -69,7 +69,7 @@ export type Colormap = "none" | ColormapName;
 export type Interpolation = "auto" | "pixelated" | "crisp-edges";
 // The old per-card "compare mode" enum (side-by-side | split | blend) was
 // replaced by the unified media-compare/mode.ts MediaCompareModeKind
-// (normal | side | split | blend | diff) — see spec-visual-compare.md.
+// (normal | split | blend | diff) — see spec-visual-compare.md.
 
 export interface ImageProcessing {
   brightness: number;

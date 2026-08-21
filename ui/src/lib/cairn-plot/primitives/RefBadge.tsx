@@ -8,7 +8,7 @@
 // Position: TOP-LEFT, accent-tinted. This unifies three former divergent
 // copies that caused the reported bug:
 //   1. an accent top-left `<span>` (image split/slide) — duplicated verbatim in
-//      compositor.tsx (CPU pane) AND GpuComparePane.tsx (GPU pane),
+//      compositor.tsx (CPU pane) AND the now-deleted GpuComparePane (GPU pane),
 //   2. a GRAY, BOTTOM-LEFT `LabelChip label="REF"` (image `side` mode), and
 //   3. a GRAY, BOTTOM-LEFT `LabelChip label="REF"` (every 3D compare viewport).
 // (1) looked different from (2)/(3) AND sat in a different corner — the exact

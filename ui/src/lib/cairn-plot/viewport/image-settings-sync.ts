@@ -3,7 +3,7 @@
  * mirror of `image-viewport-sync.ts`'s zoom/pan bus. One `EventTarget` per
  * `groupId`. A pane publishes a PARTIAL settings patch whenever the user changes
  * one of its display controls (colormap, tonemap operator, tonemap gamma, HDR
- * peak, exposure EV, offset, interpolation); every other pane in the same group
+ * peak, exposure EV, offset); every other pane in the same group
  * applies the incoming fields to its own view-local override state.
  *
  * Unlike the viewport bus (whose payload is the FULL `{zoom,pan}` each time),
@@ -53,7 +53,6 @@ export interface ImageSyncSettings {
   peak?: number;
   exposureEV?: number;
   offset?: number;
-  interpolation?: string;
   /** DATA-encoding norm (Phase 4) — the nonlinear reshape of a colormap LUT's
    *  index (`linear`/`log`/`power`). Only meaningful while a lut encoding is
    *  active; ignored otherwise. */

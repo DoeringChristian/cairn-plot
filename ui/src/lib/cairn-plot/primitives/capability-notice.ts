@@ -313,10 +313,3 @@ export function reportCapabilityLimit(kind: CapabilityLimit): void {
     window.addEventListener("DOMContentLoaded", show, { once: true });
   }
 }
-
-/** Test-only: reset the module singleton state between cases. */
-export function __resetCapabilityNoticeForTests(): void {
-  reported.clear();
-  memoryDismissed.clear();
-  removeBanner();
-}

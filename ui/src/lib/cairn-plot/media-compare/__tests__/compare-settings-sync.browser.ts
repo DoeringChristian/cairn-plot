@@ -172,18 +172,16 @@ function frames(): HTMLElement[] {
     document.querySelectorAll<HTMLElement>('[data-plot-pane-id][data-selectable="true"]'),
   );
 }
-/** The compare/diff probe within a pane frame — `__cairnCompareProbe` (slide/
- *  blend `GpuComparePane`) OR `__cairnImageDiffProbe` (diff `GpuImagePane`). Both
- *  expose the same driven surface (compareMode/diffKernel/colormap/encodingId/
- *  changeCompareMode/changeDiffKernel/changeColormap/home), so a single unified
- *  accessor drives whichever pane is live across a mode switch. */
+/** The compare/diff probe within a pane frame — `__cairnImageDiffProbe`, exposed
+ *  by the unified `GpuImagePane` in diff mode. It drives the compare surface
+ *  (compareMode/diffKernel/colormap/encodingId/changeCompareMode/changeDiffKernel/
+ *  changeColormap/home) whichever lowering is live across a mode switch. */
 function probeOf(frame: HTMLElement | undefined): CompareSyncProbe | undefined {
   if (!frame) return undefined;
   type SeamEl = HTMLElement & {
-    __cairnCompareProbe?: CompareSyncProbe;
     __cairnImageDiffProbe?: CompareSyncProbe;
   };
-  const seam = (el: SeamEl) => el.__cairnCompareProbe ?? el.__cairnImageDiffProbe;
+  const seam = (el: SeamEl) => el.__cairnImageDiffProbe;
   if (seam(frame as SeamEl)) return seam(frame as SeamEl);
   for (const n of Array.from(frame.querySelectorAll("*")) as SeamEl[]) {
     const p = seam(n);
