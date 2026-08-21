@@ -1521,6 +1521,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const baseOffset = hdrMode
     ? ((props as HdrImageProps).offset ?? 0)
     : ((props as SdrImageProps).offset ?? 0);
+  // DISPLAY-space post-processing (the 8-bit `processing` block's brightness/
+  // contrast/flipSign) — honored IN-SHADER (u_bind14 via ImageParams) so a single
+  // knob renders IDENTICALLY to the CPU SDR pane's CSS filter (audit H1: this pane,
+  // the DEFAULT renderer, previously ignored the whole block). exposure/offset are
+  // NOT here — they are lifted top-level and applied in scene-linear space above.
+  // A float/HDR source never carries a `processing` block (Python drops
+  // brightness/contrast/flip_sign on the float path), so this is identity there;
+  // spread into the plain-image params below (identity default = bit-for-bit the
+  // pre-processing render for every image with no processing set).
+  const processing = hdrMode ? undefined : (props as SdrImageProps).processing;
+  const displayAdjust: Pick<ImageParams, "brightness" | "contrast" | "flipSign"> = {
+    brightness: processing?.brightness ?? 0,
+    contrast: processing?.contrast ?? 0,
+    flipSign: processing?.flipSign ?? false,
+  };
   // The plain (non-colormap) SDR path runs the tev display-transfer pipeline
   // (sRGB-DECODE → exposure → operator → encode); a colormapped SDR image is
   // already false-colored / display-ready, so it stays a raw passthrough.
@@ -1901,6 +1916,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             srgbDecode: !hdrMode,
             uv,
             filter,
+            // DISPLAY-space brightness/contrast/flipSign (identity when unset).
+            ...displayAdjust,
           }
         : {
             exposureEV: 0,
@@ -1912,6 +1929,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             srgbDecode: false,
             uv,
             filter,
+            // DISPLAY-space brightness/contrast/flipSign (identity when unset) —
+            // an 8-bit COLORMAPPED image reaches this raw-passthrough branch; the
+            // CPU SDR pane applies its CSS filter over the colormapped element too.
+            ...displayAdjust,
           };
     // COMPARE-INTENDED FLOOR (snapshot invariant). The diff/compositor branches
     // above return for every well-formed compare, so reaching this plain image

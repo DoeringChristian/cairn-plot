@@ -68,6 +68,7 @@ import {
   outputEncode,
   extendedOutputEncode,
   srgbEotf,
+  applyDisplayAdjust,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
 } from "../../image/tonemap";
@@ -143,6 +144,17 @@ const BOUNDARY_LUT = buildBoundaryColormap();
  * `params.isScalar`.
  */
 function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float32Array): RgbTriple {
+  // FINAL display-space post-processing (u_bind14 / cairnDisplayAdjust): the
+  // brightness/contrast/flipSign affine applied to the ENCODED color, mirroring
+  // image.wgsl.ts's cairnDisplayAdjust via the REAL applyDisplayAdjust from
+  // image/tonemap.ts (the CPU source of truth). Identity when all three are unset,
+  // so every pre-existing case is unaffected.
+  const adjust = {
+    brightness: params.brightness ?? 0,
+    contrast: params.contrast ?? 0,
+    flipSign: params.flipSign ?? false,
+  };
+  const withAdjust = (rgb: RgbTriple): RgbTriple => applyDisplayAdjust(rgb, adjust);
   // 0) [SDR display-transfer path] sRGB-DECODE the source to linear FIRST
   //    (mirrors image.wgsl.ts's srgbDecode branch).
   const decoded: RgbTriple = params.srgbDecode
@@ -162,7 +174,7 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
     // diff blit convention). The LUT holds sRGB-encoded colors, so no re-encode.
     const lut = colormap!;
     const idx = Math.max(0, Math.min(255, Math.round(clamp01(exposed[0]) * 255)));
-    return [lut[idx * 4 + 0]!, lut[idx * 4 + 1]!, lut[idx * 4 + 2]!];
+    return withAdjust([lut[idx * 4 + 0]!, lut[idx * 4 + 1]!, lut[idx * 4 + 2]!]);
   }
   const rgb = exposed;
 
@@ -180,13 +192,17 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
     // The extended-surface path ENCODES (not skips): a float16 srgb/display-p3
     // canvas stores transfer-encoded signals per W3C ColorWeb-CG. Extended
     // (unclamped, origin-mirrored) sRGB OETF / power curve.
-    return [
+    return withAdjust([
       extendedOutputEncode(toned[0], params.gamma),
       extendedOutputEncode(toned[1], params.gamma),
       extendedOutputEncode(toned[2], params.gamma),
-    ];
+    ]);
   }
-  return [outputEncode(toned[0], params.gamma), outputEncode(toned[1], params.gamma), outputEncode(toned[2], params.gamma)];
+  return withAdjust([
+    outputEncode(toned[0], params.gamma),
+    outputEncode(toned[1], params.gamma),
+    outputEncode(toned[2], params.gamma),
+  ]);
 }
 
 function buildSrcTexture(device: Device, pixels: number[][]): Texture {
@@ -461,6 +477,75 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // parity through the same srgbEotf + outputEncode.
     const caseLabel = `${label}/srgbDecode/operator=gamma/γ=2.2`;
     const params: ImageParams = { exposureEV: 0, operator: "gamma", gamma: 2.2, isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
+  }
+
+  // DISPLAY-space post-processing (u_bind14 / cairnDisplayAdjust): the 8-bit
+  // `processing` block's brightness/contrast/flipSign, applied as a FINAL affine
+  // in the ENCODED display space AFTER the output-encode — the numeric mirror of
+  // the CPU SDR pane's CSS filter (audit H1). Each case renders the plain 8-bit
+  // path (srgbDecode + operator srgb, an identity sRGB round-trip so the encoded
+  // color equals the source code value) and asserts the GPU readback equals
+  // computeExpectedRGB — which now applies the REAL applyDisplayAdjust from
+  // image/tonemap.ts. Values are chosen to also exercise the [0,1] clamp on both
+  // sides (brightness pushes ch>1, contrast pushes ch<0), proving the surface/
+  // readback clamp matches CSS rasterization. Deltas relative to the un-processed
+  // srgb-roundtrip case above prove the stage is actually WIRED, not ignored.
+  {
+    const caseLabel = `${label}/processing/brightness`;
+    const params: ImageParams = {
+      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      brightness: 0.5, // brightness(1.5): 0.735→1.10 clamps to 1.0 on both sides
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
+  }
+  {
+    const caseLabel = `${label}/processing/contrast`;
+    const params: ImageParams = {
+      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      contrast: 0.5, // contrast(1.5): 0.0→-0.25 clamps to 0 on both sides
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
+  }
+  {
+    const caseLabel = `${label}/processing/flipSign`;
+    const params: ImageParams = {
+      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      flipSign: true, // invert(1): out = 1 - in
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
+  }
+  {
+    // Combined brightness + contrast + flipSign, applied in list order
+    // (brightness → contrast → invert) — pins the STAGE ORDER, not just each knob.
+    const caseLabel = `${label}/processing/combined`;
+    const params: ImageParams = {
+      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      brightness: 0.2, contrast: 0.3, flipSign: true,
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
+  }
+  {
+    // Processing on the SCALAR + colormap path (u_bind14 is applied after the LUT
+    // sample too — the CPU SDR pane's CSS filter also runs over a colormapped
+    // element). brightness=0.25 scales the magma LUT display color; parity via the
+    // same applyDisplayAdjust over the LUT reference.
+    const caseLabel = `${label}/processing/scalar-colormap-brightness`;
+    const params: ImageParams = {
+      exposureEV: 0, operator: "linear", isScalar: true, hdrOut: false, uv: uvFull,
+      filter: "nearest", colormap: VIRIDIS_FLOAT_LUT, brightness: 0.25,
+    };
+    results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SCALAR_PIXELS, params, VIRIDIS_FLOAT_LUT));
+  }
+  {
+    // IDENTITY GUARD: brightness=0, contrast=0, flipSign=false must reproduce the
+    // plain srgb-roundtrip byte-for-byte (the zero-filled default path). Proves the
+    // stage is a true no-op when unset, so no existing case shifts.
+    const caseLabel = `${label}/processing/identity-is-noop`;
+    const params: ImageParams = {
+      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      brightness: 0, contrast: 0, flipSign: false,
+    };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
   }
 

@@ -294,6 +294,65 @@ export function outputEncode(x: number, gamma?: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// DISPLAY-SPACE post-processing (`ImageProcessing`'s brightness/contrast/flipSign).
+//
+// WHY THIS EXISTS. The 8-bit `processing` block (brightness/contrast/flipSign)
+// is a DISPLAY-space adjustment applied to already-encoded (sRGB) pixels — on
+// the CPU SDR pane it is a CSS `filter` string (`media-compare/post-processing`'s
+// `buildProcessingFilterList`): `brightness(1+b) contrast(1+c) invert(1)?`. The
+// DEFAULT WebGPU pane (`GpuImagePane`) ignored the block entirely, so
+// `cp.Image(uint8, brightness=…, contrast=…, flip_sign=…)` rendered nothing on
+// most machines (audit H1). This is the ONE numeric definition of that CSS math,
+// applied as a FINAL display-space stage AFTER the output-encode — used by the
+// engine parity harness as the CPU source of truth and ported BYTE-IDENTICALLY
+// into `engine/shaders/image.wgsl.ts` (`cairnDisplayAdjust`) so one knob resolves
+// to the same pixels on the CPU (CSS) and GPU (shader) backends.
+//
+// The CSS functions are LINEAR affines in the element's (encoded) color space,
+// applied in list order (brightness, then contrast, then invert):
+//   brightness(a): out = in · a                (a = 1 + brightness)
+//   contrast(a):   out = (in − 0.5)·a + 0.5     (a = 1 + contrast)
+//   invert(1):     out = 1 − in                 (flipSign)
+// NOTE `exposure` is NOT folded in here (unlike `buildProcessingFilterList`,
+// which folds `2^exposure` into the brightness factor): exposure/offset are now
+// lifted TOP-LEVEL and applied in SCENE-LINEAR space (before the operator), so the
+// `processing.exposure`/`processing.offset` slots are 0 on the unified path and
+// this stage is purely the brightness/contrast/flipSign display affine. Values are
+// returned UNCLAMPED; the surface write (`rgba8unorm` / `byteOf`) clamps to [0,1],
+// matching CSS's rasterization-time clamp.
+export interface DisplayAdjust {
+  /** CSS `brightness(1 + brightness)` gain (0 = identity). */
+  brightness: number;
+  /** CSS `contrast(1 + contrast)` gain (0 = identity). */
+  contrast: number;
+  /** CSS `invert(1)` when true (sign flip; 1 − x per channel). */
+  flipSign: boolean;
+}
+
+/** Identity display-adjust (brightness 0, contrast 0, no flip) — the default that
+ *  leaves the encoded color untouched (bit-for-bit the pre-processing path). */
+export const IDENTITY_DISPLAY_ADJUST: DisplayAdjust = { brightness: 0, contrast: 0, flipSign: false };
+
+/** True when the adjust is a no-op (skip the stage entirely). */
+export function isIdentityDisplayAdjust(a: DisplayAdjust): boolean {
+  return a.brightness === 0 && a.contrast === 0 && !a.flipSign;
+}
+
+/** Apply the display-space brightness/contrast/flipSign affine to ONE encoded
+ *  channel value (see the block comment for the exact CSS math). Unclamped. */
+export function applyDisplayAdjust1(x: number, a: DisplayAdjust): number {
+  let v = x * (1 + a.brightness);
+  v = (v - 0.5) * (1 + a.contrast) + 0.5;
+  if (a.flipSign) v = 1 - v;
+  return v;
+}
+
+/** Apply {@link applyDisplayAdjust1} to an RGB triple. */
+export function applyDisplayAdjust(rgb: RgbTriple, a: DisplayAdjust): RgbTriple {
+  return [applyDisplayAdjust1(rgb[0], a), applyDisplayAdjust1(rgb[1], a), applyDisplayAdjust1(rgb[2], a)];
+}
+
+// ---------------------------------------------------------------------------
 // EXTENDED output-encode (the HDR-out / extended-surface transfer).
 //
 // WHY THIS EXISTS. When a pane engages its true-HDR surface (`hdrOut:true` —

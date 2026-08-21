@@ -1223,14 +1223,32 @@ class Image(Component):
         # the operator, not the CSS `processing` block; peak extends onto an HDR
         # surface (§B).
         transfer = _image_sdr_transfer_props(tonemap=tonemap, gamma=gamma, peak=peak)
+        # `exposure`/`offset` are lifted TOP-LEVEL (in-shader), NOT routed into the
+        # CSS-filter `processing` block (hence exposure=None/offset=None here) —
+        # the SAME lift the `url=` path uses above. The DEFAULT WebGPU pane
+        # (GpuImagePane) reads exposure/offset TOP-LEVEL and applies them in
+        # scene-linear space; it never reads the `processing` block. Emitting
+        # exposure/offset only inside `processing` (the old 8-bit behavior) meant
+        # `cp.Image(uint8, exposure=…)` was silently dropped on the default
+        # renderer, and produced different pixels than the `url=` path for the
+        # same kwarg. Now BOTH paths + BOTH backends read them top-level; the
+        # CPU-fallback `<img>` pane folds them back into its CSS filter
+        # (CpuSdrImagePane), so no data= behavior is lost. brightness/contrast/
+        # flipSign STAY in `processing` (display-space knobs, honored in-shader on
+        # GPU and via the CSS filter on CPU — identical on both). Same "lift out
+        # of processing" mechanism as `gamma`.
         self._props = _image_display_props(
-            exposure=exposure, gamma=(None if transfer else gamma),
+            exposure=None, gamma=(None if transfer else gamma),
             brightness=brightness,
-            contrast=contrast, offset=offset, flip_sign=flip_sign,
+            contrast=contrast, offset=None, flip_sign=flip_sign,
             colormap=colormap, interpolation=interpolation, show_axes=show_axes,
             pixel_value_notation=pixel_value_notation,
         )
         self._props.update(transfer)
+        if exposure is not None:
+            self._props["exposure"] = float(exposure)
+        if offset is not None:
+            self._props["offset"] = float(offset)
 
         if _is_data_ref(data):
             ai = _artifact_info_of(data)

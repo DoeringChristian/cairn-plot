@@ -812,6 +812,20 @@ identity twins keep their `(sources,k)` shape (optional arg). `content-ops.brows
 proves split/blend GPU render === the composed cpu twin on BOTH an SDR (clamp +
 sRGB OETF) and an HDR (`rgba16float`, extended unclamped encode) surface.
 
+> **Uniform-buffer budget — image shader is AT the WebGPU minimum (post `ws1-h1` merge).**
+> The `diff_unification` serial integration merged `ws1-h1` (H1 display-adjust:
+> `GpuImagePane` honors processing brightness/contrast/flipSign in-shader), which
+> added `u_bind14: vec4<f32>` — the DISPLAY-space post-encode affine packed as
+> `[brightness, contrast, flipSign?1:0, 0]` (`vec4(0)` = identity), applied AFTER
+> the compositor `u_bind13`. With this, the image fragment shader binds exactly
+> **12 uniform buffers** — logical `u_bind2,3,4,5,6,7,8,9,10,12,13,14` (`u_bind0/1`
+> and `u_bind11` are textures, not uniforms). That is exactly the WebGPU guaranteed
+> `maxUniformBuffersPerShaderStage` minimum (12). **No headroom remains**: any
+> further per-pass scalar/vector uniform MUST pack into an existing `u_bindN` vec4
+> (as `u_bind14` reuses one slot for three scalars) rather than claim a 13th buffer,
+> or the pipeline will exceed the guaranteed minimum and fail on baseline-conformant
+> devices.
+
 **Pane + chrome (04a5e64).** `GpuImagePane` renders the compositor behind
 `compareSource.opId ∈ {split,blend}` (later `compareSource.mode`), through the
 pool: `render({contentOpId, contentParam})`, the pool injects `srcB`, one LIGHT

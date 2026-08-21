@@ -198,6 +198,50 @@ def test_url_image_exposure_offset_are_top_level_not_processing() -> None:
     assert "offset" not in plain._props
 
 
+def test_data_uint8_exposure_offset_are_top_level_not_processing() -> None:
+    # H1: cp.Image(uint8_array, exposure=…, offset=…) — the DEFAULT WebGPU pane
+    # (GpuImagePane) reads exposure/offset TOP-LEVEL and never reads the CSS-filter
+    # `processing` block, so emitting them ONLY inside `processing` (the old 8-bit
+    # `data=` behavior) silently dropped them on the default renderer AND produced
+    # different pixels than the `url=` path for the same kwarg. The `data=` 8-bit
+    # path now gets the SAME top-level lift the `url=` path has.
+    import numpy as np
+
+    import cairn_plot as cp
+
+    img = cp.Image(
+        np.zeros((4, 4, 3), dtype=np.uint8),
+        exposure=-1.0,
+        offset=0.1,
+        tonemap="aces",
+    )
+    props = img._props
+    assert props.get("exposure") == -1.0, "exposure must be top-level"
+    assert props.get("offset") == 0.1, "offset must be top-level"
+    assert props.get("tonemap") == "aces"
+    # never ALSO in the CSS-filter processing block (would double-apply).
+    proc = props.get("processing", {})
+    assert proc.get("exposure", 0.0) == 0.0
+    assert proc.get("offset", 0.0) == 0.0
+
+    # brightness/contrast/flip_sign STAY in the display-space `processing` block —
+    # they are the display-space knobs (honored in-shader on GPU, via CSS on CPU).
+    proc2 = cp.Image(
+        np.zeros((4, 4, 3), dtype=np.uint8),
+        brightness=0.2,
+        contrast=0.3,
+        flip_sign=True,
+    )._props.get("processing", {})
+    assert proc2.get("brightness") == 0.2
+    assert proc2.get("contrast") == 0.3
+    assert proc2.get("flipSign") is True
+
+    # With no exposure/offset the keys are absent (renderer defaults hold).
+    plain = cp.Image(np.zeros((4, 4, 3), dtype=np.uint8), tonemap="aces")._props
+    assert "exposure" not in plain
+    assert "offset" not in plain
+
+
 def test_float_image_colormap_is_emitted_not_ignored() -> None:
     # cp.Image(float, colormap=...) — the unified float surface honours named
     # colormaps (LUT + analytic display encodings), so the float/imghdr path

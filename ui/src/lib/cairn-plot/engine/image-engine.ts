@@ -202,6 +202,19 @@ export interface ImageParams {
    */
   contentParam?: number;
   /**
+   * DISPLAY-space post-processing (the 8-bit `ImageProcessing` block's
+   * brightness/contrast/flipSign) — applied as a FINAL affine in the ENCODED
+   * (display) color space AFTER the output-encode, the numeric mirror of the CPU
+   * SDR pane's CSS `filter` (`applyDisplayAdjust1` in image/tonemap.ts). Packed
+   * into u_bind14 as [brightness, contrast, flipSign?1:0, 0]. All unset/omitted →
+   * the zero-filled identity (bit-for-bit the pre-processing path). exposure/offset
+   * are NOT here — those are scene-linear (exposureEV/offset). Unset = identity. */
+  brightness?: number;
+  /** See {@link brightness}. CSS `contrast(1 + contrast)` gain; unset = 0 (identity). */
+  contrast?: number;
+  /** See {@link brightness}. CSS `invert(1)` sign flip; unset = false (identity). */
+  flipSign?: boolean;
+  /**
    * TEST-ONLY oracle tag (never read by the shader / render path). Set true by the
    * pane whenever a COMPARE is intended (`hasCompare`), so the pool's render-log
    * oracle can flag a PIPELINE MISMATCH: a plain identity/image-pipeline present
@@ -342,6 +355,15 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // u_bind13 = COMPOSITOR param (split divider position / blend alpha) in .x;
   // .yzw reserved. Default 0 — the diff/identity ops ignore it.
   const contentParamVec = new Float32Array([params.contentParam ?? 0, 0, 0, 0]);
+  // u_bind14 = DISPLAY-space post-processing (brightness/contrast/flipSign) —
+  // [brightness, contrast, flipSign?1:0, 0]. Default vec4(0) = cairnDisplayAdjust
+  // identity, so an image with no processing renders bit-for-bit as before.
+  const displayAdjustVec = new Float32Array([
+    params.brightness ?? 0,
+    params.contrast ?? 0,
+    params.flipSign ? 1 : 0,
+    0,
+  ]);
   // Logical binding 11 = the SECOND source slot `b` (arity-2 diff ops). Bind the
   // caller's srcB, or a 1x1 placeholder for the single-image path — WebGPU
   // requires every declared texture binding to have a resource, and the IDENTITY
@@ -366,6 +388,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 11, resource: srcB },
       { binding: 12, resource: { uniform: contentOpIdVec } },
       { binding: 13, resource: { uniform: contentParamVec } },
+      { binding: 14, resource: { uniform: displayAdjustVec } },
     ]);
     device.renderFullscreen(target, pipeline, bindGroup);
   } finally {
