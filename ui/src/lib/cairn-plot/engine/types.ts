@@ -94,6 +94,19 @@ export interface Device {
     width: number,
     height: number,
   ): Promise<{ sumSq: number; sumAbs: number }>;
+  /**
+   * GPU-side parallel MEAN of ONE channel over the `[0,width)x[0,height)` region
+   * of `tex` (the reduction family's `channel` program under the `mean` op —
+   * `engine/reduce/registry.ts`). Drives the SSIM error-map mean scalar
+   * (`diff-engine.ts`'s `ensureSsimScalar` → `1 - mean`) WITHOUT the full
+   * result-texture readback the CPU loop needed — only a small per-workgroup
+   * partial buffer is read back. Always present on the engine's WebGPU backend;
+   * optional in the type as a defensive contract — the SSIM scalar keeps a
+   * readback + CPU-average fallback for a device without it. `width`/`height`
+   * are the RESULT grid (the mapped/compared region). Returns `NaN` for an
+   * empty region.
+   */
+  reduceTextureChannelMean?(tex: Texture, channel: number, width: number, height: number): Promise<number>;
   destroy(): void;
   /**
    * True while this device's underlying GPU context is LOST and awaiting

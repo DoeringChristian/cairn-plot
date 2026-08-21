@@ -543,8 +543,9 @@ function metricsFromSums(sumSq: number, sumAbs: number, channelCount: number): D
 /**
  * Computes `{mse, psnr, mae}` between `texA` and `texB` over their overlapping
  * `min(width) x min(height)` region (RGB channels; peak = 1.0). The O(N)
- * per-pixel diffing runs on the GPU (`Device.reduceDiffSumSquaredAbs` ->
- * `engine/shaders/reduce.wgsl.ts`); a `readback()` + CPU-loop path below is
+ * per-pixel diffing runs on the GPU (`Device.reduceDiffSumSquaredAbs` -> the
+ * reduction family's `diffSqAbs`/`sum` variant, `engine/reduce/registry.ts`); a
+ * `readback()` + CPU-loop path below is
  * kept as a defensive fallback for a device that doesn't implement the GPU
  * reduction (the engine's one backend, WebGPU, always does) — same
  * `metricsFromSums` formula either way, so the two paths agree.
