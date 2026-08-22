@@ -194,4 +194,124 @@ unrepresentable — none were removed in this session.
 
 ---
 
+---
+
+# Shift 2 — P1 remainder + P2 down-payment
+
+**Forked from** `f3114ea` (shift 1 HEAD). Behavior-preserving throughout; full
+gate green at every commit (typecheck 0 · node 661 · **harness 33** — byte-pins +
+WebGPU parity + paint-atomic flip incl., run headlessly on Apple Metal · pytest
+260 · boundary OK · bundles rebuilt + synced + committed).
+
+**Rule lens applied (coordinator clarification):** "STOP on semantics" = *user-
+visible* only (pixels / presentation timing / UI semantics / descriptor
+contracts). INTERNAL design contracts were decided here. Under that lens most of
+shift 1's 9 stop-items unlocked; the one genuinely user-visible item stayed
+stopped.
+
+## Phases landed
+
+| Commit | Phase | Stop-item | What it made unrepresentable |
+|---|---|---|---|
+| `0a8068d` | **P1c — pool owns applied binding identity** | 1 | the pane's `appliedPrimaryIdRef`/`appliedBIdRef` twin + its 6 stamps |
+| `164d2b3` | **P1d — one `engineFailed` transition** | 5 | the three dead render `try/catch` blocks |
+| `fcfbcd3` | **P1e — pool owns decoded-upload retention** | 3 | the pane's hand-rolled `uploadCacheRef` LRU |
+| `6853ade` | **P2a — name the controlled/owned policy** | — | 6 hand-copied `if (controlledSurface) setX` reseed effects |
+
+### The applied-id namespace (the naming contract I was asked to pick)
+
+**Chosen:** the pane-authored logical-source token that `render-snapshot.ts`
+*already* uses for the EXPECTED side — `A:<keyA>` / `B:<keyB>` (compare), `deep`,
+`hdr`, `img:<url>` (single). The pool stores it **opaquely** (never parses or
+branches on it) as `PaneEntry.appliedPrimaryId`/`appliedBId`, echoed via
+`PaneHandle` getters; the applied id is now an ARGUMENT of the bind call, written
+once, co-located with the GPU bind it describes.
+
+**Why this, not "re-express `primaryId` in the pool's bind keys"** (shift 1's open
+question): the pool's own retention keys are LOSSY for the present gate — the
+single / HDR / deep paths all bind UNKEYED (`contentKey === undefined`), so the
+pool cannot tell `hdr` from `img:<url>` from `deep` by its bind keys alone, yet
+the gate must (an HDR→SDR flip has to hold until the SDR primary lands). So the
+canonical id must be the pane's logical token (a superset carrying mode + url +
+key). One namespace, one owner each side (`render-snapshot` = expected, pool =
+applied), gate = `expected === applied`, and the paint-atomic gate's BEHAVIOR is
+unchanged (still pinned by the flip-paint harness).
+
+### Other internal contracts decided
+
+- **`getRetainedUpload` / one budget (stop-item 3, open Q).** The decoded CPU
+  bytes and the GPU texture for a key are the SAME retained entry → ONE cap (the
+  pool's `MAX_RETAINED_SOURCE_TEXTURES`). Lifecycle matched to the deleted pane
+  ref EXACTLY: `retainedUploads` survives park (re-decoding on a post-restore
+  flip-back is the exact stale-frame gap it closes) and clears on dispose — so
+  the flip-back-after-park path is byte-preserved.
+- **`submit()` ownership (stop-item 5, open Q "which calls can throw").** None of
+  the synchronous render calls can — `render`/`renderDiffCached` carry the
+  documented NEVER-THROWS contract; only async `acquirePane` rejects (its
+  `.catch` untouched). So the three `try/catch` throw-arms were unreachable dead
+  code; collapsed to one local `submit(ok)`.
+
+## Accounting (vs shift-1 HEAD `f3114ea`)
+
+| file | if | loc | note |
+|---|---|---|---|
+| GpuImagePane.tsx | 114 → **108** | 2919 → 2894 | −2 refs, −3 try/catch, −1 LRU cb, −3 reseed effects |
+| CpuImagePane.tsx | 61 → **60** | 1654 → 1664 | −3 reseed effects → hook calls |
+| pool.ts | 68 → 72 | 1021 → 1108 | +2 owner fields, +1 map, +`getRetainedUpload`, +`retainUpload`; mostly owner docs |
+| use-surface-settings.ts | — | +50 | new seam (mostly doc) |
+
+`if`/LOC understate the change (as in shift 1): the load-bearing wins are
+**3 deleted state cells** (`appliedPrimaryIdRef`, `appliedBIdRef`,
+`uploadCacheRef`) + a deleted LRU callback, **6 hand-sync stamps** folded into 4
+bind calls, **3 dead `try/catch`**, and **6 hand-copied reseed effects** → 1
+named hook — each traded for a small documented OWNER in the pool / the seam.
+
+## Human-readability summary
+
+- **"Which source is bound in each slot?"** — one answer, the pool
+  (`handle.appliedPrimaryId`/`appliedBId`), in the same namespace the frame's
+  expected id uses. No pane-side twin to hand-sync; the present gate reads
+  `expected === applied`.
+- **"Where are decoded reference bytes retained?"** — the pool, under the same
+  key + cap as the GPU texture. The pane no longer keeps a second LRU.
+- **"Does a pool render call need a `try/catch`?"** — no; it can't throw. A falsy
+  return is the whole failure signal, folded into one `submit`.
+- **"Does this pane follow host props or own its settings?"** — asked once, at
+  `useControlledReseed`; every field flows through it instead of re-deciding.
+
+## Stopped / deferred (with reasons)
+
+- **Stop-item 4 — backing-size floor → required precondition. STILL STOPPED
+  (the one genuinely user-visible item).** Making render a no-op until first
+  `resize()` risks a blank frame before the container is measured. Untouched.
+- **Stop-item 2 — 5 `*Version` counters → one `poolRevision`. DEFERRED to P3
+  (dependency-ordering, not a stop).** Verified in-tree: `uploadVersion` /
+  `containerTick` are the exact inputs to the TWO racing render effects and their
+  shared `lastRenderedRef` dedupe — the P3 scheduler target. The five bumps are
+  also *semantically distinct* (open Q 2): `pixelDataVersion` drives the
+  histogram, `diffOverlayVersion`/`refUploadVersion` the overlay/diff effects — a
+  naive single revision over-fires them. The collapse is structural only once the
+  single scheduler is rewritten (P3); doing it now would re-wire dep arrays P3
+  immediately redoes. Left intact.
+- **P2 remainder (the encoding seam).** `initialEncSeedRef`, the `EncodingState`
+  sum (`overridden → kind:'picked'`), the `display-encoding.ts` render-time
+  reseed + its two tracking refs, `NONE_GRAY_CURVES`, `hasKernelOwner`, and the
+  `PaneSettings`/`normalizeSettingsPatch` serializer remain. These carry
+  UI-semantics risk (per-field seed CONDITIONS differ) and want their own
+  gate-heavy shift; P2a is the low-risk down-payment that names the policy.
+
+## Remaining (unchanged from shift 1's plan, minus what landed)
+
+- **P2 (remainder)** — encoding seam above; `PaneSettings` scoped (de)serializer;
+  tagged `encoding {id,face}`; `hasKernelOwner` dual store.
+- **P3 — render dispatch & scheduler** — one `(renderKey, phase)` scheduler
+  (folds in stop-item 2's `poolRevision`); exhaustive `mode` dispatch;
+  `contentOpId → null` (the `opId === 0` floor preserved verbatim in P1d awaits
+  it); branded kernel id. Deletes the two racing effects + `lastRenderedRef`.
+- **P4 / P5** — as shift 1's plan (stack/LeafView ownership; dtype split + oracle
+  retirement). No oracles removed this shift (their target states are not yet
+  unrepresentable).
+
+---
+
 *Anthropic Cairn — structure-refactor execution report.*
