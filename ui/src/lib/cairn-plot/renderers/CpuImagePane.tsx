@@ -96,6 +96,7 @@ import {
 import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
+import { useControlledReseed } from "./use-surface-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
   adoptRemoteDisplayEncoding,
@@ -462,9 +463,13 @@ function CpuSdrImagePane(
   const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
   // γ is a viewport setting — persists across flips; reseeds only on a controlled
   // surface. HOME re-seeds it to the visible slot below.
-  useEffect(() => {
-    if (controlledSurface && gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
-  }, [gammaProp, controlledSurface, setTonemapGamma]);
+  useControlledReseed(
+    controlledSurface,
+    () => {
+      if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
+    },
+    [gammaProp],
+  );
   const gammaModified = tonemapGamma !== gammaSeed;
 
   // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
@@ -1148,9 +1153,13 @@ function CpuHdrImagePane(
   // flips; reseeds only on a controlled surface; HOME re-seeds to the visible slot.
   const gammaSeed = gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT;
   const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
-  useEffect(() => {
-    if (controlledSurface && gamma && gamma > 0) setTonemapGamma(gamma);
-  }, [gamma, controlledSurface, setTonemapGamma]);
+  useControlledReseed(
+    controlledSurface,
+    () => {
+      if (gamma && gamma > 0) setTonemapGamma(gamma);
+    },
+    [gamma],
+  );
   const gammaModified = tonemapGamma !== gammaSeed;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1180,10 +1189,11 @@ function CpuHdrImagePane(
   const [colorBounds, setColorBounds] = useState<[number, number] | null>(propColorRange ?? null);
   // Bounds are a viewport setting — persist across flips; reseed only on a controlled
   // surface. HOME re-seeds to the visible slot below.
-  useEffect(() => {
-    if (controlledSurface) setColorBounds(propColorRange ?? null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propColorRange?.[0], propColorRange?.[1], controlledSurface]);
+  useControlledReseed(
+    controlledSurface,
+    () => setColorBounds(propColorRange ?? null),
+    [propColorRange?.[0], propColorRange?.[1]],
+  );
   const boundsSeedVal: [number, number] | null = propColorRange ?? null;
   const boundsModified =
     (colorBounds?.[0] ?? null) !== (boundsSeedVal?.[0] ?? null) ||

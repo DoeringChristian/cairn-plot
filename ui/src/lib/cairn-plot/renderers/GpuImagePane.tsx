@@ -108,6 +108,7 @@ import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSyncedImageSettings } from "./use-synced-image-settings";
+import { useControlledReseed } from "./use-surface-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
   adoptRemoteDisplayEncoding,
@@ -735,10 +736,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // value drives it (the user cannot pick locally). On an interactive viewport a
   // prop change (a flip) leaves it untouched; HOME re-seeds it to the currently-
   // visible slot below. Mirrors the encoding/gamma/bounds reseed gating.
-  useEffect(() => {
-    if (controlledSurface) setPeak(seedPeak());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propPeak, propTonemap, controlledSurface]);
+  useControlledReseed(controlledSurface, () => setPeak(seedPeak()), [propPeak, propTonemap]);
   // HOME target + modified dot track the CURRENTLY-VISIBLE slot's descriptor (not a
   // mount-captured seed): HOME adopts the visible image's default, and the dot lights
   // when the shared setting differs from it.
@@ -757,9 +755,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
   // γ is a viewport setting — persists across flips; reseeds only on a controlled
   // surface (host-menu contract). HOME re-seeds it to the visible slot below.
-  useEffect(() => {
-    if (controlledSurface && propGamma && propGamma > 0) setTonemapGamma(propGamma);
-  }, [propGamma, controlledSurface, setTonemapGamma]);
+  useControlledReseed(
+    controlledSurface,
+    () => {
+      if (propGamma && propGamma > 0) setTonemapGamma(propGamma);
+    },
+    [propGamma],
+  );
   const gammaModified = tonemapGamma !== gammaSeed;
 
   // (SDR display-transfer state removed — §B: the plain-SDR pane now shares the
@@ -801,10 +803,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const [colorBounds, setColorBounds] = useState<[number, number] | null>(propColorRange ?? null);
   // Bounds are a viewport setting — persist across flips; reseed only on a controlled
   // surface (mirrors the peak/γ gating). HOME re-seeds to the visible slot below.
-  useEffect(() => {
-    if (controlledSurface) setColorBounds(propColorRange ?? null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propColorRange?.[0], propColorRange?.[1], controlledSurface]);
+  useControlledReseed(
+    controlledSurface,
+    () => setColorBounds(propColorRange ?? null),
+    [propColorRange?.[0], propColorRange?.[1]],
+  );
   const boundsSeedVal: [number, number] | null = propColorRange ?? null;
   const boundsModified =
     (colorBounds?.[0] ?? null) !== (boundsSeedVal?.[0] ?? null) ||
