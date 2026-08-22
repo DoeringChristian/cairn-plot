@@ -42,7 +42,7 @@
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
 import { getSharedDevice } from "./device";
-import { renderImage, computeMetrics, type ImageParams, type DiffMetrics } from "./image-engine";
+import { renderImage, computeMetrics, scalarModeFor, type ImageParams, type DiffMetrics } from "./image-engine";
 // Phase 2b: the CACHED-op render path (FLIP / HDR-FLIP / SSIM) runs the diff
 // engine's content-keyed compute + cache from INSIDE the pool (the pool owns the
 // two source textures a cached op reduces). Safe to import here: `pool.ts` is
@@ -84,7 +84,7 @@ function displayFingerprint(params: ImageParams): {
   colormapSig?: number;
   contentParam?: number;
 } {
-  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : params.turbo ? 3 : 0;
+  const scalarMode = scalarModeFor(params);
   const lut = params.isScalar ? params.colormap : undefined;
   let colormapSig: number | undefined;
   if (lut && lut.length >= 1024) {

@@ -35,7 +35,7 @@
 import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./types";
 import { imageWGSL } from "./shaders/image.wgsl";
 import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl";
-import { computeCompareMapping, type CompareMapping } from "./compare-align";
+import { resolveMapping, type CompareMapping } from "./compare-align";
 import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../image/tonemap";
 // The operatorId uniform values are GENERATED from the display-encoding registry
 // (image/encodings) — the SAME source the shader's assembled `applyOperator`
@@ -292,6 +292,18 @@ function buildColormapTexture(device: Device, colormap: Float32Array | undefined
 }
 
 /**
+ * The 4-way scalar/LUT color-path selector, encoded into `u_bind10.z` (see the
+ * shader's `scalarMode` switch): 0 = LUT sample, 1 = ANALYTIC signed color
+ * (tev red-green), 2 = GRAY NONE (plain-grayscale data encoding), 3 = TURBO
+ * false-color. The three flags are mutually exclusive by construction; this is
+ * their single canonical resolution, shared by the render pass and the pool's
+ * display fingerprint so the two can never disagree on the path.
+ */
+export function scalarModeFor(params: Pick<ImageParams, "analytic" | "grayNone" | "turbo">): number {
+  return params.analytic ? 1 : params.grayNone ? 2 : params.turbo ? 3 : 0;
+}
+
+/**
  * Runs the IMAGE render pass: samples `src` through the exposure/colormap/
  * tone-map/output-encode pipeline (see module doc comment) and writes the
  * result to `target`. Allocates (and frees) a per-call colormap texture and
@@ -345,7 +357,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // the FIXED log2 index, bypassing the norm path). u_bind10.w = the GRAY-NONE
   // encode-gamma (0 = sRGB OETF, >0 = 1/γ power curve) — a separate slot from the
   // power-norm exponent (which rides gamma/u_bind2.z). Both default to 0.
-  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : params.turbo ? 3 : 0;
+  const scalarMode = scalarModeFor(params);
   const grayEncodeGamma =
     typeof params.grayEncodeGamma === "number" && params.grayEncodeGamma > 0 ? params.grayEncodeGamma : 0;
   const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, grayEncodeGamma]);
@@ -560,9 +572,7 @@ export async function computeMetrics(
   texB: Texture,
   mapping?: CompareMapping,
 ): Promise<DiffMetrics> {
-  const map =
-    mapping ??
-    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const map = resolveMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, mapping);
   const width = map.result.w;
   const height = map.result.h;
   const channelCount = width * height * 3;

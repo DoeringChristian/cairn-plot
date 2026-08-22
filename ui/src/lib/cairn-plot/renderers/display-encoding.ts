@@ -32,6 +32,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../controls/ToolbarConfig";
 import { getEncoding, listEncodingsByKind, type ReduceMode } from "../image/encodings/index.ts";
+import { aliasColormap } from "../colormaps/lut.ts";
 
 /** The DATA-encoding multi-channel REDUCE options, in order (the multi-channel-
  *  colormap follow-up). Shown ONLY while a colormap LUT is active AND the source
@@ -301,8 +302,8 @@ export interface PaneEncoding {
 export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const { mode, arity, curveSet, propTonemap, resolveDefaultCurve } = config;
   // Back-compat: `viridis` was REMOVED → alias an incoming descriptor colormap to
-  // `turbo` so the seed resolves to a real lut id (mirrors `aliasColormap`).
-  const propColormap = config.propColormap === "viridis" ? "turbo" : config.propColormap;
+  // `turbo` so the seed resolves to a real lut id — via the one alias owner.
+  const propColormap = aliasColormap(config.propColormap);
 
   const idsFor = useCallback(
     (a: number): DisplayEncodingIds => resolveDisplayEncodingIds({ mode, arity: a, curveSet }),
@@ -391,7 +392,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const setEncoding = useCallback(
     (rawId: string) => {
       // Back-compat: a sync peer may still publish `viridis` → alias to `turbo`.
-      const id = rawId === "viridis" ? "turbo" : rawId;
+      const id = aliasColormap(rawId);
       memoryRef.current.set(arity, id);
       setEncodingId(id); // in a stack this IS the shared setting (applies to all slots)
       setOverridden(true); // an explicit user pick — the diff face now follows it too

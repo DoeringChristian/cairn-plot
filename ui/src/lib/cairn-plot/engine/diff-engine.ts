@@ -37,7 +37,7 @@ import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../
 import { makeCpuMapSampler } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
-import { computeCompareMapping, mappingKey, type CompareMapping } from "./compare-align";
+import { resolveMapping, mappingKey, type CompareMapping } from "./compare-align";
 import { meanSsimFromErrorMap } from "./ssim-metric";
 import { ssimMeanFromLuminanceChunked, ssimLuminance, defaultYield, SSIM_CHUNK_ROWS } from "./kernels/ssim-reference";
 import { guardedSsimScalar } from "./ssim-scalar-guard";
@@ -118,9 +118,7 @@ export function computeDiff(
   if (!kernel) throw new Error(`computeDiff: unknown diff kernel "${kernelId}"`);
   // The RESULT grid + per-source sample mapping. Absent ⇒ legacy top-left crop
   // (result = min(A,B), zero offsets) — identical to the prior behavior.
-  const map =
-    mapping ??
-    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const map = resolveMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, mapping);
   const width = map.result.w;
   const height = map.result.h;
   const fitFill = map.fit === "fill" ? 1 : 0;
@@ -241,8 +239,7 @@ export function hasDiff(
   contentKeyB: string,
   mapping?: CompareMapping,
 ): boolean {
-  const map =
-    mapping ?? computeCompareMapping({ w: dimsA.w, h: dimsA.h }, { w: dimsB.w, h: dimsB.h }, "top-left", "crop", "b");
+  const map = resolveMapping({ w: dimsA.w, h: dimsA.h }, { w: dimsB.w, h: dimsB.h }, mapping);
   const key = diffCacheKey(contentKeyA, contentKeyB, kernelId, params, map);
   return cacheFor(device).has(key);
 }
@@ -266,9 +263,7 @@ export function ensureDiff(
   const kernel = getDiffKernel(kernelId);
   if (!kernel) throw new Error(`ensureDiff: unknown diff kernel "${kernelId}"`);
   const cache = cacheFor(device);
-  const map =
-    mapping ??
-    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const map = resolveMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, mapping);
   const key = diffCacheKey(contentKeyA, contentKeyB, kernelId, params, map);
   const hit = cache.get(key);
   if (hit) return hit;
@@ -397,9 +392,7 @@ async function ssimScalarReference(
   texB: Texture,
   mapping?: CompareMapping,
 ): Promise<number> {
-  const map =
-    mapping ??
-    computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
+  const map = resolveMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, mapping);
   const width = map.result.w;
   const height = map.result.h;
   const n = width * height;

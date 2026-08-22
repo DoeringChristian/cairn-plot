@@ -111,6 +111,17 @@ export function computeCompareMapping(
   };
 }
 
+/**
+ * The compare mapping to use, defaulting an absent one to the legacy top-left
+ * crop (result = min(A,B), zero offsets). The SINGLE owner of that default:
+ * five diff/metric callers previously copy-pasted this exact expression, and
+ * the content-keyed diff cache is only coherent while they all agree on it
+ * byte-for-byte — so the agreement is now structural, not a convention.
+ */
+export function resolveMapping(a: Dims, b: Dims, mapping?: CompareMapping): CompareMapping {
+  return mapping ?? computeCompareMapping(a, b, "top-left", "crop", "b");
+}
+
 /** Stable signature for the diff cache key (align/fit change the RESULT). */
 export function mappingKey(m: CompareMapping): string {
   return `${m.fit}:${m.result.w}x${m.result.h}:${m.offsetA.x},${m.offsetA.y}:${m.offsetB.x},${m.offsetB.y}`;
