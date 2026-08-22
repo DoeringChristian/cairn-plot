@@ -490,17 +490,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // image↔diff flipping a `renderPass` can therefore fire while the pool still has
   // the PREVIOUS slot's textures bound — presenting a stale/mismatched frame (the
   // measured artefact: an identity blit sampling the retained diff reference on a
-  // diff→image flip). These refs record the content IDENTITY the pool has actually
-  // applied for each slot; `renderPass` presents only when the applied identities
-  // match the identities the CURRENT render expects (`expectedPrimaryId`/
-  // `expectedBId` below), else it HOLDS the previous frame (WebGPU keeps the last
-  // present) until the pending async application lands + bumps a version → re-fire.
-  // General by construction: it protects every single-pane source swap, not just
-  // stacks (an image→image URL swap is gated the same way). Deadlock-free: the
-  // applied values are set from the SAME expressions `renderPass` uses, so they
-  // converge once the (always-scheduled) upload effect completes.
-  const appliedPrimaryIdRef = useRef<string | undefined>(undefined);
-  const appliedBIdRef = useRef<string | null | undefined>(undefined);
+  // diff→image flip). The APPLIED binding identity for each slot is owned by the
+  // POOL (`PaneHandle.appliedPrimaryId`/`appliedBId`), stamped inside the bind
+  // call itself — no pane-side twin ref to hand-sync. `renderPass` presents only
+  // when the pool's applied identities match the identities the CURRENT render
+  // expects (`snapshot.primaryId`/`bId`), else it HOLDS the previous frame (WebGPU
+  // keeps the last present) until the pending async application lands + bumps a
+  // version → re-fire. General by construction: it protects every single-pane
+  // source swap, not just stacks (an image→image URL swap is gated the same way).
+  // Deadlock-free: the applied ids are stamped from the SAME expressions
+  // `render-snapshot` uses for the expected ids, so they converge once the
+  // (always-scheduled) upload effect completes.
   // -----------------------------------------------------------------------
   // PAINT-ATOMIC FLIPS (residual one-frame stale flash). The coherency guard
   // above proves every PRESENT is coherent, but a slot FLIP (image↔diff) commits
@@ -1280,8 +1280,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   // HDR mode: decode/retain source, upload on identity change.
   // -----------------------------------------------------------------------
-  // LAYOUT effect (paint-atomic flips): the synchronous HDR upload + `appliedPrimaryIdRef`
-  // stamp must land BEFORE paint so a resident float compare/image flip renders
+  // LAYOUT effect (paint-atomic flips): the synchronous HDR upload + the pool's
+  // applied-id stamp must land BEFORE paint so a resident float compare/image flip renders
   // pre-paint. Only runs on source/identity change (never per pan/zoom frame — its
   // deps exclude the viewport), so promoting it out of the passive phase is free.
   useLayoutEffect(() => {
@@ -1294,9 +1294,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // back rebinds the resident float texture (no GPU re-upload). This effect is
     // already SYNCHRONOUS (no async decode), so there is no flip-back gap to close
     // beyond the upload itself. Unkeyed for the single-image path.
-    paneHandleRef.current?.setSource(upload, hasCompare ? contentKeyA : undefined);
-    // Coherency guard: mirrors `expectedPrimaryId` (compare → `A:<keyA>`, else "hdr").
-    appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : "hdr";
+    // The applied id (compare → `A:<keyA>`, else "hdr") is stamped INTO the bind
+    // call — the pool owns it (`render-snapshot`'s expected side reads it back).
+    paneHandleRef.current?.setSource(
+      upload,
+      hasCompare ? contentKeyA : undefined,
+      hasCompare ? `A:${contentKeyA}` : "hdr",
+    );
     setNaturalDims((prev) =>
       prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
     );
@@ -1320,8 +1324,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       .getGpuCsr()
       .then((csr) => {
         if (cancelled) return;
-        paneHandleRef.current?.setDeepSource(csr, deep.zMin, deep.zMax);
-        appliedPrimaryIdRef.current = "deep"; // coherency guard: mirrors expectedPrimaryId
+        paneHandleRef.current?.setDeepSource(csr, deep.zMin, deep.zMax, "deep");
         setNaturalDims((prev) =>
           prev && prev.w === csr.width && prev.h === csr.height ? prev : { w: csr.width, h: csr.height },
         );
@@ -1342,7 +1345,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // parity with ImagePane), retain for the overlay, upload on change.
   // -----------------------------------------------------------------------
   // LAYOUT effect (paint-atomic flips): the resident SYNCHRONOUS fast-path (cache
-  // hit → `applySdr`) must stamp `appliedPrimaryIdRef` + `naturalDims` BEFORE paint
+  // hit → `applySdr`) must stamp the pool's applied id + `naturalDims` BEFORE paint
   // so a resident image/compare-primary flip renders pre-paint. The async decode
   // path is unchanged (kicks off here, resolves post-paint → the held-frame path).
   // Deps exclude the viewport, so this never runs per pan/zoom frame.
@@ -1356,7 +1359,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const colormap = hasCompare ? "none" : sdrColormap;
     if (!imageUrl) {
       sdrImageDataRef.current = null;
-      appliedPrimaryIdRef.current = `img:`;
+      // No primary source to bind — `setNaturalDims(null)` dominates the present
+      // gate (`resident`/renderPass both bail on a null `naturalDims`), so the
+      // pool's applied id is irrelevant here and needs no stamp.
       setNaturalDims(null);
       setPixelDataVersion((v) => v + 1);
       // Q24 fix: no explicit inline CSS size to drop anymore — the canvas is
@@ -1379,10 +1384,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         height: display.height,
         format: "rgba8unorm",
       };
-      paneHandleRef.current?.setSource(upload, primaryKey);
-      // Coherency guard: record which primary content the pool now holds — mirrors
-      // `expectedPrimaryId` in renderPass (compare → `A:<keyA>`, else `img:<url>`).
-      appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : `img:${imageUrl}`;
+      // Applied id (compare → `A:<keyA>`, else `img:<url>`) stamped into the bind —
+      // the pool owns it; `render-snapshot`'s expected side reads it back.
+      paneHandleRef.current?.setSource(upload, primaryKey, hasCompare ? `A:${contentKeyA}` : `img:${imageUrl}`);
       setNaturalDims((prev) =>
         prev && prev.w === display.width && prev.h === display.height ? prev : { w: display.width, h: display.height },
       );
@@ -1394,7 +1398,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // CPU false-color, i.e. every compare primary AND every plain non-colormapped
     // image): if the decode is already resident, bind SYNCHRONOUSLY so the target
     // presents on THIS commit with no async gap. In a `useLayoutEffect` (below)
-    // this stamps `appliedPrimaryIdRef` + `naturalDims` before paint, so a resident
+    // this stamps the pool's applied id + `naturalDims` before paint, so a resident
     // slot flip renders pre-paint (no one-frame stale flash). The plain-image case
     // matters for the diff→image direction: without it the image slot's primary
     // uploads async and the diff frame is held for one paint. A colormapped image
@@ -1459,7 +1463,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // a URL). Byte-parity is proven at the engine level by content-ops.browser.ts.
   // -----------------------------------------------------------------------
   // LAYOUT effect (paint-atomic flips): the resident SYNCHRONOUS fast-path (upload
-  // cache hit → `apply`) must stamp `appliedBIdRef` + `refDims` BEFORE paint so a
+  // cache hit → `apply`) must stamp the pool's applied `b` id + `refDims` BEFORE paint so a
   // resident diff/compositor flip renders pre-paint (the diff RESULT then blits
   // this commit). The async decode path is unchanged (resolves post-paint → held
   // frame). Deps exclude the viewport, so this never runs per pan/zoom frame.
@@ -1467,8 +1471,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (!paneReady) return;
     const b = hasCompare ? compareSource?.b : undefined;
     if (!b) {
-      paneHandleRef.current?.setSourceB(null);
-      appliedBIdRef.current = null; // coherency guard: no `b` operand bound
+      paneHandleRef.current?.setSourceB(null); // pool records applied `b` id = null
       setRefDims(null);
       refFloatRef.current = null;
       refU8Ref.current = null;
@@ -1480,10 +1483,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // flip back to a resident diff slot presents the cached RESULT on the same
     // commit — no async gap, no intermediate frame.
     const apply = (upload: SourceUpload) => {
-      paneHandleRef.current?.setSourceB(upload, key);
-      // Coherency guard: record the `b` operand the pool now holds — mirrors
-      // `expectedBId` in renderPass (`B:<keyB>`).
-      appliedBIdRef.current = `B:${key}`;
+      // Applied `b` id (`B:<keyB>`) stamped into the bind — the pool owns it.
+      paneHandleRef.current?.setSourceB(upload, key, `B:${key}`);
       // Retain the reference pixels for the DIRECT-op cpu-twin readout.
       if (b.dtype === "float") {
         refFloatRef.current = b;
@@ -1608,11 +1609,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     splitPosition,
     blendAlpha,
     paneReady,
-    // Read the pool's applied stamps at render time (the same timing the previous
-    // inline `targetResident` used); the present gate in `renderPass` re-reads
-    // them at CALL time for imperative repaints.
-    appliedPrimaryId: appliedPrimaryIdRef.current,
-    appliedBId: appliedBIdRef.current,
+    // Read the pool's applied binding ids at render time (the same timing the
+    // previous inline `targetResident` used); the present gate in `renderPass`
+    // re-reads them at CALL time for imperative repaints.
+    appliedPrimaryId: paneHandleRef.current?.appliedPrimaryId,
+    appliedBId: paneHandleRef.current?.appliedBId,
     naturalDims,
     refDims,
     // A cached diff's result is resident iff the per-device cache HITs — a
@@ -1684,12 +1685,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // present can never mix a new op with a previous slot's textures (the measured
     // artefact: an identity blit sampling the retained diff reference on a
     // diff→image flip). General: it equally gates a plain single-pane image→image
-    // URL swap. Deadlock-free — `applied*` is stamped from the same expressions
-    // that build `snapshot.primaryId`/`bId`, so they converge. Read the applied
-    // refs at CALL time (fresh) so an imperative repaint — screenshot / probe
-    // readback / deep-window — gates against the pool's live binding, not the
-    // render-time value.
-    if (appliedPrimaryIdRef.current !== snapshot.primaryId || appliedBIdRef.current !== snapshot.bId) {
+    // URL swap. Deadlock-free — the pool's applied ids are stamped from the same
+    // expressions that build `snapshot.primaryId`/`bId`, so they converge. Read
+    // the POOL's applied ids at CALL time (fresh) so an imperative repaint —
+    // screenshot / probe readback / deep-window — gates against the pool's live
+    // binding, not the render-time value.
+    if (handle.appliedPrimaryId !== snapshot.primaryId || handle.appliedBId !== snapshot.bId) {
       return false;
     }
 

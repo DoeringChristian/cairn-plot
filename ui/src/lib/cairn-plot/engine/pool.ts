@@ -149,6 +149,17 @@ export interface PaneHandle {
   /** True while this pane's GPU resources are freed (parked). */
   readonly isParked: boolean;
   /**
+   * The LOGICAL source identity currently bound in slot A / slot B, in the
+   * canonical namespace `render-snapshot.ts` expects (see `PaneEntry`'s
+   * `appliedPrimaryId` doc). The pane's present gate compares its EXPECTED ids
+   * against these APPLIED ids — equal ⇒ the pool holds exactly what this frame
+   * needs. Written by the bind methods (`setSource`/`setDeepSource` set the
+   * primary; `setSourceB` sets `b`, or `null` when cleared); the pool never
+   * interprets the tokens. `undefined` until the first bind.
+   */
+  readonly appliedPrimaryId: string | undefined;
+  readonly appliedBId: string | null | undefined;
+  /**
    * Replace the CPU source buffer. Retained by the pool so `park()`/restore
    * cycles don't need the caller to re-supply it. If the pane is currently
    * live, uploads immediately; if parked, the upload is deferred to the next
@@ -172,7 +183,7 @@ export interface PaneHandle {
    * plain single-image path (unkeyed, exclusive, freed on replace) — byte- and
    * lifecycle-identical to before.
    */
-  setSource(src: SourceUpload, contentKey?: string): void;
+  setSource(src: SourceUpload, contentKey?: string, appliedId?: string): void;
   /**
    * Set (or clear) the SECOND source buffer `b` — the reference/baseline operand
    * of an arity-2 diff CONTENT op (`image/content-ops`). Retained by the pool
@@ -189,7 +200,7 @@ export interface PaneHandle {
    * retention {@link setSource} documents — a stacked flip back to a diff slot
    * rebinds the reference texture synchronously instead of re-uploading it.
    */
-  setSourceB(src: SourceUpload | null, contentKey?: string): void;
+  setSourceB(src: SourceUpload | null, contentKey?: string, appliedId?: string): void;
   /**
    * DEEP-EXR GPU composite source (the depth slider on GPU panes). Uploads the
    * Z-sorted samples to GPU storage buffers ONCE and composites the window
@@ -199,7 +210,7 @@ export interface PaneHandle {
    * prior CPU/deep source. If live, uploads + composites immediately; if parked,
    * deferred to the next `render()`/`restore()`.
    */
-  setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number): void;
+  setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number, appliedId?: string): void;
   /**
    * Re-composite the retained deep samples over a new Z WINDOW (no re-upload) —
    * the real-time depth-slider path. No-op unless a {@link setDeepSource} is
@@ -354,6 +365,23 @@ interface PaneEntry {
    *  key (kept for instant flip-back). */
   sourceKey: string | undefined;
   sourceBKey: string | undefined;
+  /**
+   * APPLIED BINDING IDENTITY — the pool's authoritative record of the LOGICAL
+   * source currently bound in each slot, in the ONE canonical id namespace
+   * shared with `renderers/render-snapshot.ts`'s EXPECTED side (`primaryId`/
+   * `bId`): `A:<keyA>` / `B:<keyB>` (compare), `deep`, `hdr`, `img:<url>`
+   * (single). The pool treats these as OPAQUE tokens — it never parses or
+   * branches on them; it only stores what the caller hands its bind methods and
+   * echoes it back via `PaneHandle.appliedPrimaryId`/`appliedBId`. This replaces
+   * the pane's former `appliedPrimaryIdRef`/`appliedBIdRef` twin: the applied id
+   * is now written exactly once per bind, co-located with the actual GPU bind it
+   * describes, so it can never drift from what the pool physically holds. The
+   * present gate is `expected === applied` (one owner each side). `undefined` =
+   * nothing bound yet; `appliedBId === null` = the `b` slot is explicitly empty
+   * (the single-image path). Retained across park/restore (the logical binding
+   * survives; only the GPU texture is freed and re-uploaded). */
+  appliedPrimaryId: string | undefined;
+  appliedBId: string | null | undefined;
   /** CONTENT-KEYED source-texture LRU (insertion-order = LRU order), capped at
    *  {@link MAX_RETAINED_SOURCE_TEXTURES}. Holds the keyed textures BOTH slots
    *  bind (a stacked pane's recently-shown slots), so a flip back to a resident
@@ -791,8 +819,15 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     get isParked() {
       return entry.surface === null;
     },
-    setSource(src: SourceUpload, contentKey?: string): void {
+    get appliedPrimaryId() {
+      return entry.appliedPrimaryId;
+    },
+    get appliedBId() {
+      return entry.appliedBId;
+    },
+    setSource(src: SourceUpload, contentKey?: string, appliedId?: string): void {
       if (entry.disposed) return;
+      entry.appliedPrimaryId = appliedId;
       entry.source = src;
       // A plain CPU source supersedes any prior DEEP composite source.
       entry.deep = null;
@@ -821,8 +856,11 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         entry.sourceKey = contentKey;
       }
     },
-    setSourceB(src: SourceUpload | null, contentKey?: string): void {
+    setSourceB(src: SourceUpload | null, contentKey?: string, appliedId?: string): void {
       if (entry.disposed) return;
+      // `null` applied id ⇒ the `b` slot is explicitly empty (single-image path);
+      // otherwise the caller's opaque token for the bound reference operand.
+      entry.appliedBId = src ? appliedId : null;
       entry.sourceB = src;
       if (entry.surface) {
         const prev = entry.srcTextureB;
@@ -842,8 +880,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         entry.sourceBKey = src ? contentKey : undefined;
       }
     },
-    setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number): void {
+    setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number, appliedId?: string): void {
       if (entry.disposed) return;
+      entry.appliedPrimaryId = appliedId;
       entry.deep = spec;
       entry.deepZNear = zNear;
       entry.deepZFar = zFar;
@@ -979,6 +1018,8 @@ export async function acquirePane(
     srcTextureB: null,
     sourceKey: undefined,
     sourceBKey: undefined,
+    appliedPrimaryId: undefined,
+    appliedBId: undefined,
     retained: new Map(),
     deep: null,
     deepZNear: -Infinity,
