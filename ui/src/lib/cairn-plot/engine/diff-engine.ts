@@ -38,7 +38,6 @@ import { makeCpuMapSampler } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
 import { resolveMapping, mappingKey, type CompareMapping } from "./compare-align";
-import { meanSsimFromErrorMap } from "./ssim-metric";
 import { ssimMeanFromLuminanceChunked, ssimLuminance, defaultYield, SSIM_CHUNK_ROWS } from "./kernels/ssim-reference";
 import { guardedSsimScalar } from "./ssim-scalar-guard";
 
@@ -356,27 +355,20 @@ async function computeSsimScalar(
 }
 
 /**
- * Mean SSIM (`1 − mean(1−SSIM)`) from the cached `ssim` RESULT texture. Prefers
- * the GPU reduction (`Device.reduceTextureChannelMean` — the reduction family's
- * `channel`/`mean` variant over the R channel, a KB partial readback), and
- * FALLS BACK to reading the full RESULT texture back once and averaging on the
- * CPU (`meanSsimFromErrorMap`, the pre-existing loop, now the parity reference)
- * for a device without the GPU reduction. Both average the R channel over the
- * FULL result grid (`entry.width*entry.height`, the mapped region) so the
- * displayed value is identical. A throw here (e.g. device lost mid-map)
- * propagates to `computeSsimScalar`'s outer catch → the source-based CPU
- * fallback.
+ * Mean SSIM (`1 − mean(1−SSIM)`) from the cached `ssim` RESULT texture via the
+ * GPU reduction (`Device.reduceTextureChannelMean` — the reduction family's
+ * `channel`/`mean` variant over the R channel, a KB partial readback), averaged
+ * over the FULL result grid (`entry.width*entry.height`, the mapped region). A
+ * throw here (e.g. device lost mid-map) propagates to `computeSsimScalar`'s
+ * outer catch → the source-based CPU fallback. (`meanSsimFromErrorMap`, the
+ * pre-existing CPU loop, remains the parity REFERENCE the harness pins against;
+ * the reduction method is required, so no per-device capability fallback here.)
  */
 async function reduceSsimMean(device: Device, entry: DiffCacheEntry): Promise<number> {
   const n = entry.width * entry.height;
   if (n <= 0) return NaN;
-  if (device.reduceTextureChannelMean) {
-    const mean = await device.reduceTextureChannelMean(entry.texture, 0, entry.width, entry.height);
-    return 1 - mean;
-  }
-  // Fallback: the RESULT readback (cached for the TEV overlay) + the CPU loop.
-  const samples = await ensureDiffResultReadback(device, entry);
-  return meanSsimFromErrorMap(samples, entry.width, entry.height);
+  const mean = await device.reduceTextureChannelMean(entry.texture, 0, entry.width, entry.height);
+  return 1 - mean;
 }
 
 /**

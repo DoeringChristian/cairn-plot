@@ -588,15 +588,15 @@ export async function computeMetrics(
     map.fit === "crop" &&
     map.offsetA.x === 0 && map.offsetA.y === 0 &&
     map.offsetB.x === 0 && map.offsetB.y === 0;
-  if (isDefault && device.reduceDiffSumSquaredAbs) {
+  if (isDefault) {
+    // Default top-left crop → the GPU reduction covers exactly this region.
     const { sumSq, sumAbs } = await device.reduceDiffSumSquaredAbs(texA, texB, width, height);
     return metricsFromSums(sumSq, sumAbs, channelCount);
   }
 
-  // Readback + CPU reduce, applying the align/fit mapping per source (mirrors
-  // SOURCE_MAP_WGSL): integer texel offset under crop; normalized-uv bilinear
-  // rescale under fill. Also the defensive fallback for a device with no GPU
-  // reduction.
+  // Non-default mapping (alignment offset or `fit:"fill"`): readback + CPU
+  // reduce, applying the align/fit mapping per source (mirrors SOURCE_MAP_WGSL):
+  // integer texel offset under crop; normalized-uv bilinear rescale under fill.
   const a = await device.readback(texA);
   const b = await device.readback(texB);
   const normA = a instanceof Uint8Array ? 255 : 1;

@@ -81,14 +81,14 @@ export interface Device {
    * GPU-side parallel reduction (Task 7) over the `[0,width)x[0,height)`
    * region of `texA`/`texB` (RGB channels only): sum of squared per-channel
    * diffs (`sumSq`) and sum of absolute per-channel diffs (`sumAbs`), used by
-   * `engine/image-engine.ts`'s `computeMetrics`. Always present on the
-   * engine's one backend (WebGPU); optional in the type as a defensive
-   * contract — `computeMetrics` still has a `readback()` + CPU-loop fallback
-   * for a hypothetical device without it. `width`/`height` may be smaller
-   * than either texture's own dimensions (the caller passes the
-   * `min(texA,texB)` comparison region).
+   * `engine/image-engine.ts`'s `computeMetrics`. REQUIRED — the engine's one
+   * backend (WebGPU) always provides it and the reduction parity harness fails
+   * a device that lacks it, so `computeMetrics` never needs a capability
+   * fallback (only the legitimate non-default-mapping CPU path remains).
+   * `width`/`height` may be smaller than either texture's own dimensions (the
+   * caller passes the `min(texA,texB)` comparison region).
    */
-  reduceDiffSumSquaredAbs?(
+  reduceDiffSumSquaredAbs(
     texA: Texture,
     texB: Texture,
     width: number,
@@ -100,13 +100,12 @@ export interface Device {
    * `engine/reduce/registry.ts`). Drives the SSIM error-map mean scalar
    * (`diff-engine.ts`'s `ensureSsimScalar` → `1 - mean`) WITHOUT the full
    * result-texture readback the CPU loop needed — only a small per-workgroup
-   * partial buffer is read back. Always present on the engine's WebGPU backend;
-   * optional in the type as a defensive contract — the SSIM scalar keeps a
-   * readback + CPU-average fallback for a device without it. `width`/`height`
-   * are the RESULT grid (the mapped/compared region). Returns `NaN` for an
-   * empty region.
+   * partial buffer is read back. REQUIRED — always present on the engine's
+   * WebGPU backend and asserted by the reduction parity harness, so the SSIM
+   * scalar needs no capability fallback. `width`/`height` are the RESULT grid
+   * (the mapped/compared region). Returns `NaN` for an empty region.
    */
-  reduceTextureChannelMean?(tex: Texture, channel: number, width: number, height: number): Promise<number>;
+  reduceTextureChannelMean(tex: Texture, channel: number, width: number, height: number): Promise<number>;
   destroy(): void;
   /**
    * True while this device's underlying GPU context is LOST and awaiting
