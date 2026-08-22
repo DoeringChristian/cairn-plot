@@ -202,6 +202,16 @@ export interface PaneHandle {
    */
   setSourceB(src: SourceUpload | null, contentKey?: string, appliedId?: string): void;
   /**
+   * The retained decoded `SourceUpload` a prior keyed {@link setSourceB} bound
+   * under `key`, or `null` if none is resident. The pane's flip-back fast path
+   * reads this to rebind a reference operand SYNCHRONOUSLY (no async re-decode)
+   * on a return to an already-shown diff slot; the following {@link setSourceB}
+   * re-inserts the same key as most-recently-used. Survives park, cleared on
+   * dispose (see {@link PaneEntry.retainedUploads}). A pure read — no LRU touch,
+   * no GPU work.
+   */
+  getRetainedUpload(key: string): SourceUpload | null;
+  /**
    * DEEP-EXR GPU composite source (the depth slider on GPU panes). Uploads the
    * Z-sorted samples to GPU storage buffers ONCE and composites the window
    * [`zNear`, `zFar`] into this pane's `rgba16float` source texture — the texture
@@ -388,6 +398,19 @@ interface PaneEntry {
    *  key rebinds without a re-upload. Owns its textures: freed wholesale on
    *  `freeGpuResources`/`dispose` (an off-screen pane retains nothing). */
   retained: Map<string, Texture>;
+  /** CONTENT-KEYED DECODED-UPLOAD retention (insertion-order = LRU), capped at
+   *  {@link MAX_RETAINED_SOURCE_TEXTURES}. Holds the CPU-side `SourceUpload`
+   *  bytes a keyed `setSourceB` bound, so a flip BACK to that reference slot can
+   *  rebind SYNCHRONOUSLY (`getRetainedUpload` → `setSourceB`) with no async
+   *  re-decode gap — the CPU companion of `retained`'s GPU-texture cache, under
+   *  the SAME single cap (open-question 3's answer: ONE budget, the pool's).
+   *  This replaces `GpuImagePane`'s former hand-rolled `uploadCacheRef` LRU: the
+   *  pool owns retention, so the pane no longer maintains a second LRU "bounded
+   *  to the pool's cap" by hand. Unlike `retained` (GPU textures, freed on park),
+   *  this SURVIVES park — CPU bytes cost nothing to keep and re-decoding on a
+   *  post-restore flip-back is the exact stale-frame gap the retention closes;
+   *  cleared only on `dispose` (matching the pane ref's former lifetime). */
+  retainedUploads: Map<string, SourceUpload>;
   /** DEEP-EXR GPU composite source (retained CSR) — mutually exclusive with
    *  `source`; when set, `srcTexture` is filled by `compositeDeep`, not a CPU
    *  upload. See `PaneHandle.setDeepSource`. */
@@ -482,6 +505,20 @@ function evictRetained(entry: PaneEntry): void {
  *  textures stay in `retained` for flip-back; the caller drops the slot's ref. */
 function releaseUnkeyedSlotTexture(tex: Texture | null, key: string | undefined): void {
   if (tex && key === undefined) tex.destroy();
+}
+
+/** Insert (or touch to most-recently-used) a decoded upload under `key`, then
+ *  evict the LRU entries down to the cap. CPU bytes only — no GPU work, and no
+ *  "currently bound" exemption is needed (unlike `evictRetained`'s textures). */
+function retainUpload(entry: PaneEntry, key: string, upload: SourceUpload): void {
+  const m = entry.retainedUploads;
+  if (m.has(key)) m.delete(key); // re-insert → most-recently-used
+  m.set(key, upload);
+  while (m.size > MAX_RETAINED_SOURCE_TEXTURES) {
+    const oldest = m.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    m.delete(oldest);
+  }
 }
 
 /** Destroy every retained texture and clear the map (park/dispose). */
@@ -861,6 +898,10 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       // `null` applied id ⇒ the `b` slot is explicitly empty (single-image path);
       // otherwise the caller's opaque token for the bound reference operand.
       entry.appliedBId = src ? appliedId : null;
+      // Retain the decoded CPU bytes for a keyed operand so a flip-back rebinds
+      // synchronously (`getRetainedUpload`) — the CPU companion of the GPU-texture
+      // retention below, under the same cap.
+      if (src && contentKey !== undefined) retainUpload(entry, contentKey, src);
       entry.sourceB = src;
       if (entry.surface) {
         const prev = entry.srcTextureB;
@@ -879,6 +920,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         // Parked: picked up by the next activateEntry().
         entry.sourceBKey = src ? contentKey : undefined;
       }
+    },
+    getRetainedUpload(key: string): SourceUpload | null {
+      return entry.retainedUploads.get(key) ?? null;
     },
     setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number, appliedId?: string): void {
       if (entry.disposed) return;
@@ -985,6 +1029,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       entry.sourceB = null;
       entry.sourceKey = undefined;
       entry.sourceBKey = undefined;
+      entry.retainedUploads.clear(); // CPU-byte retention outlives park, dies with the pane
       entry.deep = null;
       entry.disposed = true;
     },
@@ -1021,6 +1066,7 @@ export async function acquirePane(
     appliedPrimaryId: undefined,
     appliedBId: undefined,
     retained: new Map(),
+    retainedUploads: new Map(),
     deep: null,
     deepZNear: -Infinity,
     deepZFar: Infinity,

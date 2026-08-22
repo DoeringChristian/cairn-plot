@@ -92,7 +92,6 @@ import {
   acquirePane,
   releasePane,
   getCanvasSurfaceForTest,
-  MAX_RETAINED_SOURCE_TEXTURES as POOL_MAX_RETAINED_SOURCE_TEXTURES,
   type PaneHandle,
   type SourceUpload,
 } from "../engine/pool";
@@ -473,14 +472,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // flicker). A stacked viewport reuses ONE pane across its slots; flipping BACK
   // to an already-shown COMPARE slot must present the (content-keyed, still-cached)
   // diff RESULT SYNCHRONOUSLY — never through an async decode+upload gap that
-  // paints a transient/intermediate frame. This caches the DECODED `SourceUpload`
-  // (the primary reference `a` + foreground `b`) keyed by the slot's content keys,
-  // so a flip back binds without re-decoding; the POOL separately retains the GPU
-  // texture (`PaneHandle.setSource(..., contentKey)`), so neither re-decode nor
-  // re-upload happens. Bounded (LRU) to the pool's retention cap so CPU-buffer
-  // memory can't grow unbounded across many flips. See the setSource/setSourceB
-  // effects below for the synchronous fast-path.
-  const uploadCacheRef = useRef<Map<string, { upload: SourceUpload; ref: DecodedSource }>>(new Map());
+  // paints a transient/intermediate frame. The decoded `b`-operand `SourceUpload`
+  // is retained BY THE POOL, keyed by the slot's content key
+  // (`PaneHandle.getRetainedUpload`), alongside the pool's GPU-texture retention
+  // under the same key and cap — so a flip back binds without re-decoding OR
+  // re-uploading. The pane no longer keeps its own LRU (see the setSourceB effect
+  // below for the synchronous fast-path).
   // -----------------------------------------------------------------------
   // PRESENT-COHERENCY GUARD (residual fast-flip flicker). The pane's content
   // config — which primary/`b` source, and whether it's a diff/composite/plain
@@ -524,16 +521,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const contentEpochRef = useRef(0);
   const contentEpochIdentityRef = useRef<string | undefined>(undefined);
   const lastCommitEpochRef = useRef(-1);
-  const rememberUpload = useCallback((key: string, upload: SourceUpload, ref: DecodedSource) => {
-    const m = uploadCacheRef.current;
-    if (m.has(key)) m.delete(key);
-    m.set(key, { upload, ref });
-    while (m.size > POOL_MAX_RETAINED_SOURCE_TEXTURES) {
-      const oldest = m.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      m.delete(oldest);
-    }
-  }, []);
   // Content-identity diff-cache keys (`a` = primary/`source`, `b` = reference):
   // a float side keys on its ORIGINAL content key (URL), not the decoded bytes.
   // Declared here (before the source-upload effects) so those effects can key the
@@ -1498,19 +1485,18 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       );
       setRefUploadVersion((v) => v + 1);
     };
-    const cached = uploadCacheRef.current.get(key);
-    if (cached) {
-      // FLIP-BACK FAST PATH: decoded upload already resident (and the pool retains
-      // the GPU texture under `key`) — bind synchronously, no `.then`.
-      uploadCacheRef.current.delete(key); // touch → most-recently-used
-      uploadCacheRef.current.set(key, cached);
-      apply(cached.upload);
+    // FLIP-BACK FAST PATH: the pool retains the decoded upload under `key` (and
+    // its GPU texture) — rebind SYNCHRONOUSLY, no `.then`. `apply` → `setSourceB`
+    // re-inserts the key as most-recently-used.
+    const retained = paneHandleRef.current?.getRetainedUpload(key);
+    if (retained) {
+      apply(retained);
       return;
     }
     let cancelled = false;
     decodedSourceToUpload(b).then((upload) => {
       if (cancelled || !upload) return;
-      rememberUpload(key, upload, b);
+      // `apply` → `setSourceB(upload, key, …)` retains the bytes in the pool.
       apply(upload);
     });
     return () => {
