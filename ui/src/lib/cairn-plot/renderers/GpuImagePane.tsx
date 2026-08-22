@@ -621,6 +621,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
   const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
   const diffDefaultColormap = (diffSeedColormap ?? kernelDefaultColormap(resolvedKernelId)) as Colormap;
+  // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
+  // the INITIALLY-VISIBLE face's defaults — diff → authored/kernel default colormap,
+  // image → authored props — and then PERSISTS. Flips and kernel switches never
+  // reseed; only a pick or HOME (which copies the currently-visible face's defaults)
+  // assigns a new value. Frozen in a ref so later prop churn can't re-derive it.
+  const initialEncSeedRef = useRef<Colormap | null>(null);
+  if (initialEncSeedRef.current == null) {
+    initialEncSeedRef.current = hasCompare && diffMode ? diffDefaultColormap : propColormap;
+  }
 
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
   // colormap + tonemap overrides — selecting a LUT deactivates the curve and
@@ -665,11 +674,30 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // colormap picked on the diff shows on the scalar image and vice-versa (one setting),
     // an un-picked diff shows its kernel default (no flip reseed → no flicker), and HOME
     // clears the override so the diff falls back to its default.
-    propColormap,
+    // Controlled surfaces follow live props (host contract); interactive viewports
+    // seed once from the initially-visible face (one-concrete-value model).
+    propColormap: controlledSurface ? propColormap : (initialEncSeedRef.current ?? propColormap),
     propTonemap,
     resolveDefaultCurve,
     controlledSurface,
   });
+  // HOME / double-click: assign the viewport's encoding CONCRETELY from the
+  // CURRENTLY-VISIBLE face's defaults (diff → authored/kernel default; image →
+  // authored colormap else the default curve). Identical for the home button and
+  // double-click; flipping never changes the value.
+  const assignVisibleFaceDefaultEncoding = () => {
+    // HOME resets EVERYTHING for a diff — kernel back to the descriptor default
+    // (via onCompareReset / the local fallback) AND the colormap to THAT (post-
+    // reset) kernel's default — so the colormap target derives from the
+    // descriptor kernel, not the momentarily-still-current one.
+    enc.setEncoding(
+      diffMode
+        ? ((diffSeedColormap ?? kernelDefaultColormap(localKernelMeta.default)) as Colormap)
+        : propColormap !== "none"
+          ? propColormap
+          : resolveDefaultCurve(propTonemap),
+    );
+  };
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
   // each path's "no colormap" condition (`sdrPlain`) is exact.
@@ -826,7 +854,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // falls back to its kernel default), and switching kernels re-derives the default
   // while un-picked (the derivation re-resolves every render — ordering-independent).
   // -----------------------------------------------------------------------
-  const effectiveDiffColormap = (enc.overridden ? enc.colormap : diffDefaultColormap) as Colormap;
+  // ONE-CONCRETE-VALUE model: the viewport's encoding ALWAYS applies — to every
+  // face, on every flip. `diffDefaultColormap` is only the SOURCE copied in at
+  // init/HOME (see `assignVisibleFaceDefaultEncoding`), never a live fallback.
+  const effectiveDiffColormap = enc.colormap as Colormap;
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
@@ -1017,9 +1048,23 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // pick (`enc.overridden`) sticks across the switch — the old `resolveDiffColormap`
       // default-vs-override behaviour, for free.
       setDiffKernel(id);
+      // USER RULING: switching to another error SELECTS THAT ERROR'S DEFAULT
+      // colormap (a kernel switch re-copies its default into the viewport's one
+      // concrete value, exactly like HOME would for that kernel). Published by
+      // VALUE so mirrored peers converge on the same colormap.
+      const kernelDefault = kernelDefaultColormap(id) as Colormap;
+      enc.setEncoding(kernelDefault);
+      // TWO patches: a DEDICATED kernel pick (the only shape the M2 adoption guard
+      // accepts for diffKernel), then the display keys carrying the new default.
       publishSettings({ diffKernel: id });
+      publishSettings({
+        encoding: deriveCompareEncodingId("scalar", effectiveTonemap, kernelDefault),
+        colormap: kernelDefault,
+        tonemap: effectiveTonemap,
+        ...diffFaceTag(true),
+      });
     },
-    [setDiffKernel, publishSettings],
+    [setDiffKernel, publishSettings, enc, effectiveTonemap],
   );
   const changeDiffColormap = useCallback(
     (id: Colormap) => {
@@ -2262,10 +2307,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         } else {
           setDiffKernel(localKernelMeta.default); // direct-pane fallback (no hoisted owner)
         }
-        // Clear the override → the DERIVED diff colormap falls back to the (reset)
-        // kernel's default, re-resolved every render (ordering-independent, no matter
-        // which kernel HOME lands on).
-        enc.resetEncoding();
+        // HOME copies the CURRENTLY-VISIBLE face's defaults into the viewport's
+        // one concrete encoding value (identical to double-click).
+        assignVisibleFaceDefaultEncoding();
       },
     };
     return () => {
@@ -2299,7 +2343,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       },
       changePeak, // a user pick → the viewport's peak (a stack shares it across slots)
       changeEncoding, // a user pick → the viewport's encoding (a stack shares it across slots)
-      home: () => enc.resetEncoding(), // HOME re-seeds to the visible slot's authored default
+      home: () => assignVisibleFaceDefaultEncoding(), // HOME copies the visible face's defaults
     };
     return () => {
       if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
@@ -2815,7 +2859,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           : undefined
       }
       onReset={() => {
-        enc.resetEncoding();
+        assignVisibleFaceDefaultEncoding();
         setPeak(peakSeed); // peak back to the VISIBLE slot's descriptor
         setTonemapGamma(gammaSeed); // γ back to the visible slot's descriptor
         setReduceOverride(null); // reduce back to the k-based default

@@ -139,7 +139,7 @@ function diffProps(): Record<string, unknown> {
   };
 }
 
-function probeEl(container: HTMLElement): (HTMLElement & { __cairnImageDiffProbe?: { canvas: HTMLCanvasElement | null; requestRender: () => void } }) | null {
+function probeEl(container: HTMLElement): (HTMLElement & { __cairnImageDiffProbe?: { canvas: HTMLCanvasElement | null; requestRender: () => void; compareMode?: string; home?: () => void } }) | null {
   return container.querySelector("[data-gpu-image-viewport]") as never;
 }
 
@@ -202,8 +202,15 @@ async function main(): Promise<void> {
     note(`mounted image slot; uploads so far=${uploadsAfterImage0}, computeCount=${getDiffComputeCount()}`);
 
     // ---- flip to DIFF (visit 1): first compute -----------------------------
+    // ONE-CONCRETE-VALUE model: the viewport seeded from the IMAGE slot, so the
+    // first diff visit renders under those settings (no colormap — a dark raw
+    // error field). HOME adopts the diff's kernel-default colormap (the user
+    // gesture that colors it); the retention/no-recompute assertions that are
+    // this harness's purpose are unaffected.
     const compBeforeFirstDiff = getDiffComputeCount();
     flip("diff");
+    await waitFor(() => probeEl(container)?.__cairnImageDiffProbe?.compareMode === "diff", 8000);
+    probeEl(container)?.__cairnImageDiffProbe?.home?.();
     const diff1 = await paintDiff();
     const compAfterVisit1 = getDiffComputeCount();
     report(nonZero(diff1), `visit1 diff paints non-blank`);

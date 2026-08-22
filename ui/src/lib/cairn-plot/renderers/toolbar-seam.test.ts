@@ -92,7 +92,14 @@ test("GpuImagePane: encoding + peak re-seed from their props (controlled while t
   // `usePaneEncoding` (`display-encoding.ts`), which the pane feeds the live
   // descriptor `propColormap` + `propTonemap`; peak keeps its own re-seed effect.
   assert.match(gpu, /usePaneEncoding\(\{/, "the pane must own its encoding via usePaneEncoding");
-  assert.match(gpu, /\n\s*propColormap,/, "usePaneEncoding must be fed propColormap (controlled)");
+  // One-concrete-value model: a CONTROLLED surface (toolbar={false}) still feeds the
+  // LIVE descriptor propColormap (host contract); an interactive viewport seeds once
+  // from the initially-visible face and persists.
+  assert.match(
+    gpu,
+    /propColormap:\s*controlledSurface\s*\?\s*propColormap/,
+    "usePaneEncoding must feed live propColormap when controlled",
+  );
   assert.match(gpu, /\n\s*propTonemap,/, "usePaneEncoding must be fed propTonemap (controlled)");
   assert.match(gpu, /setPeak\(seedPeak\(\)\)/, "peak must re-seed from its prop");
 });

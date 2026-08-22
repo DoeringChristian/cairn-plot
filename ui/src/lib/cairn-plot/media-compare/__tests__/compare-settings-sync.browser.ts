@@ -483,11 +483,13 @@ async function run(): Promise<boolean> {
   const picked = await waitFor(() => A().colormap === "magma");
   report(picked, `OVERRIDE: user picks magma (A.colormap=${A().colormap})`);
   ok = ok && picked;
-  // (d) switch kernel again → the pick STICKS (does NOT revert to the new default).
+  // (d) switch kernel again → the NEW kernel's default is SELECTED (user ruling:
+  // "if I switch to another error, it should select that error's default colormap"
+  // — a kernel switch re-copies its default, superseding the old pick-sticks rule).
   A().changeDiffKernel("signed");
-  const stuck = await waitFor(() => A().diffKernel === "signed" && A().colormap === "magma");
-  report(stuck, `STICK: kernel→signed but the magma pick sticks (A.colormap=${A().colormap})`);
-  ok = ok && stuck;
+  const followed = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green");
+  report(followed, `SWITCH: kernel→signed selects red-green default (A.colormap=${A().colormap})`);
+  ok = ok && followed;
   // (e) HOME clears the override → back to the (reset) kernel's DEFAULT colormap.
   A().home();
   const homeReset = await waitFor(
