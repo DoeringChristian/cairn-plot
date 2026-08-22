@@ -343,7 +343,7 @@ interface PaneEntry {
   source: SourceUpload | null;
   /** SECOND source slot `b` (the reference/baseline of an arity-2 diff CONTENT
    *  op) — the retained CPU buffer + its uploaded texture, mirroring `source`/
-   *  `srcTexture`. Uploaded in `activateEntry`, freed in `parkEntry`, re-uploaded
+   *  `srcTexture`. Uploaded in `activateEntry`, freed in `freeGpuResources`, re-uploaded
    *  on restore. Null for the single-image path (the common case). See
    *  `PaneHandle.setSourceB`. */
   sourceB: SourceUpload | null;
@@ -358,7 +358,7 @@ interface PaneEntry {
    *  {@link MAX_RETAINED_SOURCE_TEXTURES}. Holds the keyed textures BOTH slots
    *  bind (a stacked pane's recently-shown slots), so a flip back to a resident
    *  key rebinds without a re-upload. Owns its textures: freed wholesale on
-   *  `parkEntry`/`dispose` (an off-screen pane retains nothing). */
+   *  `freeGpuResources`/`dispose` (an off-screen pane retains nothing). */
   retained: Map<string, Texture>;
   /** DEEP-EXR GPU composite source (retained CSR) — mutually exclusive with
    *  `source`; when set, `srcTexture` is filled by `compositeDeep`, not a CPU
@@ -375,7 +375,6 @@ interface PaneEntry {
    *  allocated on first armed present, freed on park/dispose. Null in production
    *  (the detector is never armed) and at level ≤ 1. */
   deepSampleTex: Texture | null;
-  parked: boolean;
   disposed: boolean;
   /** Last-reported on-screen visibility (`PaneHandle.setVisible`) — read by
    *  `evictOverCap` to prefer parking off-screen panes first. */
@@ -463,9 +462,16 @@ function clearRetained(entry: PaneEntry): void {
   entry.retained.clear();
 }
 
-/** Free `entry`'s live GPU resources; leaves `entry.source` (CPU buffer) intact. */
-function parkEntry(entry: PaneEntry): void {
-  if (entry.parked) return;
+/**
+ * Free `entry`'s live GPU resources ("park" it); leaves `entry.source` (the CPU
+ * buffer) intact for a later restore. IDEMPOTENT by construction — every field
+ * is nulled after release and `untrack` is a no-op when absent — so it needs no
+ * `parked` fast-exit guard. `parked` is no longer a stored twin of this fact: a
+ * pane is parked exactly when `entry.surface === null`, which this establishes,
+ * so an interrupted `activateEntry` can never leave a "parked but allocated"
+ * entry the callers used to have to un-poke before re-parking.
+ */
+function freeGpuResources(entry: PaneEntry): void {
   untrack(entry);
   // Free the currently-bound slot textures IF unkeyed; keyed ones are owned by
   // `retained` and freed by `clearRetained` below (no double-destroy).
@@ -483,7 +489,6 @@ function parkEntry(entry: PaneEntry): void {
     entry.deepSampleTex = null;
   }
   entry.surface = null;
-  entry.parked = true;
 }
 
 /**
@@ -499,7 +504,7 @@ function evictOverCap(except: PaneEntry): void {
   while (live.length > MAX_LIVE_SWAPCHAINS) {
     const victim = live.find((e) => e !== except && !e.visible) ?? live.find((e) => e !== except);
     if (!victim) break;
-    parkEntry(victim);
+    freeGpuResources(victim);
   }
 }
 
@@ -519,7 +524,8 @@ function activateEntry(entry: PaneEntry): void {
   if (forceEngineFailRequested()) {
     throw new Error("cairn-plot engine: forced pane activation failure (?forceEngineFail test hook)");
   }
-  if (!entry.parked && entry.surface) {
+  if (entry.surface) {
+    // Already live (a non-null surface IS "not parked") — just refresh LRU.
     touchMostRecentlyUsed(entry);
     evictOverCap(entry);
     return;
@@ -556,7 +562,6 @@ function activateEntry(entry: PaneEntry): void {
   if (entry.sourceB) {
     entry.srcTextureB = uploadOrBindSource(entry, entry.sourceB, entry.sourceBKey);
   }
-  entry.parked = false;
   touchMostRecentlyUsed(entry);
   evictOverCap(entry);
 }
@@ -666,11 +671,9 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane activation/render failed, falling back to legacy pane", err);
-    // Force a full teardown regardless of `parkEntry`'s early-return guard
-    // (`entry.parked` may still read `true` if the throw happened mid
-    // `activateEntry()`, before it flips to `false` — see that function).
-    entry.parked = false;
-    parkEntry(entry);
+    // Tear down whatever `activateEntry` allocated before it threw. Idempotent
+    // and surface-derived, so a mid-activation throw needs no un-poke first.
+    freeGpuResources(entry);
     return false;
   }
 }
@@ -737,8 +740,7 @@ function attemptRenderDiffCached(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: cached-diff pane render failed, falling back to legacy pane", err);
-    entry.parked = false;
-    parkEntry(entry);
+    freeGpuResources(entry);
     return null;
   }
 }
@@ -759,8 +761,7 @@ function attemptComputeMetrics(entry: PaneEntry, mapping?: CompareMapping): Prom
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane metrics compute failed", err);
-    entry.parked = false;
-    parkEntry(entry);
+    freeGpuResources(entry);
     return null;
   }
 }
@@ -779,8 +780,7 @@ function attemptComputeSsim(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane SSIM compute failed", err);
-    entry.parked = false;
-    parkEntry(entry);
+    freeGpuResources(entry);
     return null;
   }
 }
@@ -789,7 +789,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
   return {
     canvas: entry.canvas,
     get isParked() {
-      return entry.parked;
+      return entry.surface === null;
     },
     setSource(src: SourceUpload, contentKey?: string): void {
       if (entry.disposed) return;
@@ -803,7 +803,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       // Q22 fix: no canvas/surface sizing here — that's `resize()`'s job now,
       // driven by the pane's ON-SCREEN display size, not this source
       // texture's own resolution.
-      if (!entry.parked && entry.surface) {
+      if (entry.surface) {
         const prev = entry.srcTexture;
         const prevKey = entry.sourceKey;
         // Content-keyed retention: a keyed hit rebinds the resident texture (no
@@ -824,7 +824,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     setSourceB(src: SourceUpload | null, contentKey?: string): void {
       if (entry.disposed) return;
       entry.sourceB = src;
-      if (!entry.parked && entry.surface) {
+      if (entry.surface) {
         const prev = entry.srcTextureB;
         const prevKey = entry.sourceBKey;
         if (src) {
@@ -848,7 +848,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       entry.deepZNear = zNear;
       entry.deepZFar = zFar;
       entry.source = null; // mutually exclusive with a CPU source
-      if (!entry.parked && entry.surface) {
+      if (entry.surface) {
         // Rebuild the composite target + storage buffers, then composite once.
         // A deep source is never a keyed (compare) source, but free the prior
         // texture retention-safely regardless (keyed → owned by `retained`).
@@ -866,7 +866,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       if (entry.disposed) return;
       entry.deepZNear = zNear;
       entry.deepZFar = zFar;
-      if (!entry.parked && entry.deepBuffers && entry.srcTexture) {
+      if (entry.deepBuffers && entry.srcTexture) {
         entry.device.compositeDeep!(entry.deepBuffers, entry.srcTexture, zNear, zFar);
       }
     },
@@ -877,7 +877,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       if (entry.backingWidth === w && entry.backingHeight === h) return;
       entry.backingWidth = w;
       entry.backingHeight = h;
-      if (!entry.parked && entry.surface) {
+      if (entry.surface) {
         entry.canvas.width = w;
         entry.canvas.height = h;
         entry.surface.configure(w, h);
@@ -929,7 +929,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     park(): void {
       if (entry.disposed) return;
-      parkEntry(entry);
+      freeGpuResources(entry);
     },
     restore(): void {
       if (entry.disposed || (!entry.source && !entry.deep)) return;
@@ -941,7 +941,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     dispose(): void {
       if (entry.disposed) return;
-      parkEntry(entry); // frees srcTexture + srcTextureB + retained + deepBuffers
+      freeGpuResources(entry); // frees srcTexture + srcTextureB + retained + deepBuffers
       entry.source = null;
       entry.sourceB = null;
       entry.sourceKey = undefined;
@@ -985,7 +985,6 @@ export async function acquirePane(
     deepZFar: Infinity,
     deepBuffers: null,
     deepSampleTex: null,
-    parked: true,
     disposed: false,
     visible: true,
     backingWidth: 0,
