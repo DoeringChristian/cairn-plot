@@ -1641,6 +1641,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const renderPass = useCallback((): boolean => {
     const handle = paneHandleRef.current;
     if (!handle || !paneReady || !naturalDims) return false;
+    // ONE failure transition for every pool submit. The pool's render methods
+    // have a documented NEVER-THROWS contract (`PaneHandle.render`/
+    // `renderDiffCached` catch any hard GPU failure internally, park the entry,
+    // and return `false`/`null`), so a falsy return is the ONLY failure signal —
+    // it folds into a single `engineFailed` flip that falls this pane back to the
+    // CPU pane. The former per-call `try/catch` wrappers were dead defensive code
+    // (their throw arm was unreachable given that contract).
+    const submit = (ok: boolean): void => {
+      if (!ok) setEngineFailed(true);
+    };
     const paneEl = paneRef.current;
     // Both the uv math and the canvas backing store key off `imgWrapperRef`, the
     // padding-free content box the axes/overlay also measure — one coordinate
@@ -1733,14 +1743,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         contentOpId: contentOpId(compareOpMode!),
         contentParam: compareOpMode === "split" ? splitPosition : blendAlpha,
       };
-      try {
-        const ok = handle.render(compositeParams);
-        if (!ok) setEngineFailed(true);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn("cairn-plot: GpuImagePane compositor render failed, falling back to legacy pane", err);
-        setEngineFailed(true);
-      }
+      submit(handle.render(compositeParams));
       return true;
     }
 
@@ -1785,52 +1788,45 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ...(isTurbo ? { turbo: true } : {}),
         ...(lut ? { colormap: lut } : {}),
       };
-      try {
-        if (kernel?.kind === "multipass") {
-          // CACHED metric: the pool owns the content-keyed compute+cache; the RESULT
-          // (a scalar error) is displayed via IDENTITY content + isScalar colormap.
-          const computeParams =
-            kernelId === "hdr-flip" && hdrExposures
-              ? {
-                  ppd: 67,
-                  startExposure: hdrExposures.startExposure,
-                  stopExposure: hdrExposures.stopExposure,
-                  numExposures: hdrExposures.numExposures,
-                }
-              : undefined;
-          const cachedDisplay: ImageParams = {
-            ...diffDisplay,
-            channelCount: 1,
-            isScalar: true,
-            norm: "linear",
-          };
-          const entry = handle.renderDiffCached(
-            kernelId,
-            { a: contentKeyA, b: contentKeyB },
-            computeParams,
-            cachedDisplay,
-            diffMapping ?? undefined,
-          );
-          if (entry) diffEntryRef.current = entry;
-          else setEngineFailed(true);
-        } else {
-          // DIRECT pointwise op: the pool injects `srcB`; `cairnContent(a,b,opId)`.
-          diffEntryRef.current = null;
-          const opId = contentOpId(kernelId);
-          // IDENTITY-OP FLOOR (snapshot invariant). `contentOpId` returns 0 =
-          // IDENTITY for any id not registered as a direct content op (a
-          // transiently mis-resolved kernel). Blitting opId 0 in diff mode would
-          // present the PRIMARY — which here IS the reference operand — as a plain
-          // image (the reference-flash). A diff present must always come from the
-          // diff pipeline for the current op, so HOLD until a valid op resolves.
-          if (opId === 0) return false;
-          const ok = handle.render({ ...diffDisplay, contentOpId: opId });
-          if (!ok) setEngineFailed(true);
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn("cairn-plot: GpuImagePane diff render failed, falling back to legacy pane", err);
-        setEngineFailed(true);
+      if (kernel?.kind === "multipass") {
+        // CACHED metric: the pool owns the content-keyed compute+cache; the RESULT
+        // (a scalar error) is displayed via IDENTITY content + isScalar colormap.
+        const computeParams =
+          kernelId === "hdr-flip" && hdrExposures
+            ? {
+                ppd: 67,
+                startExposure: hdrExposures.startExposure,
+                stopExposure: hdrExposures.stopExposure,
+                numExposures: hdrExposures.numExposures,
+              }
+            : undefined;
+        const cachedDisplay: ImageParams = {
+          ...diffDisplay,
+          channelCount: 1,
+          isScalar: true,
+          norm: "linear",
+        };
+        const entry = handle.renderDiffCached(
+          kernelId,
+          { a: contentKeyA, b: contentKeyB },
+          computeParams,
+          cachedDisplay,
+          diffMapping ?? undefined,
+        );
+        if (entry) diffEntryRef.current = entry;
+        else setEngineFailed(true);
+      } else {
+        // DIRECT pointwise op: the pool injects `srcB`; `cairnContent(a,b,opId)`.
+        diffEntryRef.current = null;
+        const opId = contentOpId(kernelId);
+        // IDENTITY-OP FLOOR (snapshot invariant). `contentOpId` returns 0 =
+        // IDENTITY for any id not registered as a direct content op (a
+        // transiently mis-resolved kernel). Blitting opId 0 in diff mode would
+        // present the PRIMARY — which here IS the reference operand — as a plain
+        // image (the reference-flash). A diff present must always come from the
+        // diff pipeline for the current op, so HOLD until a valid op resolves.
+        if (opId === 0) return false;
+        submit(handle.render({ ...diffDisplay, contentOpId: opId }));
       }
       return true;
     }
@@ -1990,18 +1986,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // emitted as a plain image on a cold flip) is closed upstream by `LeafView`'s
     // reference-leak guard + diff-pair prefetch; this is the last-line floor.
     if (hasCompare) return false;
-    // `handle.render()` is synchronous here, so a throw would unmount the subtree;
-    // `attemptRender` already converts hard failures to a `false` return, and the
-    // try/catch is belt-and-suspenders. Either way `engineFailed` falls this pane
-    // back to the CPU pane — it never blanks.
-    try {
-      const ok = handle.render({ ...params, compareIntended: hasCompare, authoredColormap: authoredColormapIsLut });
-      if (!ok) setEngineFailed(true);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("cairn-plot: GpuImagePane render failed, falling back to legacy pane", err);
-      setEngineFailed(true);
-    }
+    submit(handle.render({ ...params, compareIntended: hasCompare, authoredColormap: authoredColormapIsLut }));
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr,
