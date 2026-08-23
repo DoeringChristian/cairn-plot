@@ -609,15 +609,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
   const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
   const diffDefaultColormap = (diffSeedColormap ?? kernelDefaultColormap(resolvedKernelId)) as Colormap;
-  // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
-  // the INITIALLY-VISIBLE face's defaults — diff → authored/kernel default colormap,
-  // image → authored props — and then PERSISTS. Flips and kernel switches never
-  // reseed; only a pick or HOME (which copies the currently-visible face's defaults)
-  // assigns a new value. Frozen in a ref so later prop churn can't re-derive it.
-  const initialEncSeedRef = useRef<Colormap | null>(null);
-  if (initialEncSeedRef.current == null) {
-    initialEncSeedRef.current = hasCompare && diffMode ? diffDefaultColormap : propColormap;
-  }
 
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
   // colormap + tonemap overrides — selecting a LUT deactivates the curve and
@@ -663,8 +654,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // an un-picked diff shows its kernel default (no flip reseed → no flicker), and HOME
     // clears the override so the diff falls back to its default.
     // Controlled surfaces follow live props (host contract); interactive viewports
-    // seed once from the initially-visible face (one-concrete-value model).
-    propColormap: controlledSurface ? propColormap : (initialEncSeedRef.current ?? propColormap),
+    // seed once from the initially-visible face (one-concrete-value model). The
+    // ONCE-only freeze now lives in the hook (`freezeSeedColormap`) instead of a
+    // pane-side ref — the seed COLORMAP is captured at first render there, so this
+    // passes the LIVE initially-visible-face expression (diff → kernel default,
+    // image → authored) and lets the hook own the freeze.
+    propColormap: controlledSurface
+      ? propColormap
+      : hasCompare && diffMode
+        ? diffDefaultColormap
+        : propColormap,
+    freezeSeedColormap: !controlledSurface,
     propTonemap,
     resolveDefaultCurve,
     controlledSurface,

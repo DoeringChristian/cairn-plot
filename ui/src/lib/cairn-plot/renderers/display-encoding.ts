@@ -276,6 +276,17 @@ export interface PaneEncodingConfig {
    *  the CURRENTLY-VISIBLE image's authored default. This is the ONE rule for a
    *  stack (one viewport, one shared setting) AND a grid cell (its own viewport). */
   controlledSurface?: boolean;
+  /** OWNED-SEED FREEZE (spec §2.3, absorbs GpuImagePane's old `initialEncSeedRef`).
+   *  When true, the OWNED (`!controlledSurface`) seed COLORMAP is captured ONCE at
+   *  first render and reused thereafter, so `encodingId`'s initial seed, HOME
+   *  (`resetEncoding`), and `encodingModified` all compare against the
+   *  initially-visible face's colormap rather than re-deriving from later prop
+   *  churn — the one-concrete-value model. `propTonemap` stays LIVE (the freeze is
+   *  colormap-only, matching the retired ref). This is a per-pane POLICY BYTE
+   *  (encoded as data, not unified timing): GpuImagePane sets it; CpuImagePane
+   *  omits it (its owned seed intentionally tracks the live descriptor colormap).
+   *  Ignored on a controlled surface (that path reseeds from live props anyway). */
+  freezeSeedColormap?: boolean;
 }
 
 /** What a pane needs from the unified encoding state. */
@@ -316,7 +327,20 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const { mode, arity, curveSet, propTonemap, resolveDefaultCurve } = config;
   // Back-compat: `viridis` was REMOVED → alias an incoming descriptor colormap to
   // `turbo` so the seed resolves to a real lut id — via the one alias owner.
-  const propColormap = aliasColormap(config.propColormap);
+  const liveColormap = aliasColormap(config.propColormap);
+  // OWNED-SEED FREEZE (spec §2.3): the once-only seed COLORMAP now lives in this
+  // hook's lazy initializer (absorbs GpuImagePane's old `initialEncSeedRef`). When
+  // `freezeSeedColormap` is set the aliased colormap is captured at first render and
+  // reused for every `seedFor`, so the owned viewport's seed is a single concrete
+  // value; `propTonemap` stays live (colormap-only freeze, matching the retired
+  // ref). Controlled surfaces and CpuImagePane (which omit the flag) see live props.
+  const seedColormapRef = useRef<string | null>(null);
+  if (config.freezeSeedColormap && seedColormapRef.current === null) {
+    seedColormapRef.current = liveColormap;
+  }
+  const propColormap = config.freezeSeedColormap
+    ? (seedColormapRef.current ?? liveColormap)
+    : liveColormap;
 
   const idsFor = useCallback(
     (a: number): DisplayEncodingIds => resolveDisplayEncodingIds({ mode, arity: a, curveSet }),
