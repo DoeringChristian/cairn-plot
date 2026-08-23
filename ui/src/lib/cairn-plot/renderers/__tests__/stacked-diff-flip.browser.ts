@@ -8,7 +8,16 @@
  * Measures across `image → diff → image → diff → image → diff`:
  *   - getDiffComputeCount() delta  → is the RESULT recomputed on each visit?
  *   - source-upload count (device.createTexture of the 64×64 source formats)
- *   - blank-frame after each flip-to-diff (readback immediately)
+ *   - each diff visit presents non-blank content (a sampled fingerprint)
+ *
+ * READBACK NOTE. The "paints non-blank" + "identical settled content" assertions
+ * read the ENGINE-LEVEL surface via the probe's `readbackSurface()` seam — a
+ * fresh `renderPass()` then `device.readback()` of the POOL-OWNED surface (the
+ * deterministic path `content-ops.browser.ts` uses). We do NOT sample the
+ * composited canvas via `createImageBitmap`: an in-DOM WebGPU swapchain rotates
+ * its back-buffer on present, so `createImageBitmap` reads BLANK on some builds
+ * (CI Chromium hits this where local SwiftShader does not). A canvas-bitmap read
+ * is kept ONLY as an advisory NOTE (never a FAIL) for local eyes.
  */
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -86,15 +95,22 @@ const FG_URL = makeImageUrl((x) => [Math.round((x / 63) * 255), 128, 64]);
 const REF_URL = makeImageUrl((_x, y) => [Math.round((y / 63) * 255), 128, 64]);
 const PLAIN_URL = makeImageUrl((x, y) => [x * 3, y * 3, 128]);
 
+/** Read the COMPOSITED canvas content via `createImageBitmap`. ADVISORY ONLY —
+ *  used to emit a local-eyes NOTE; on some builds (CI Chromium) an in-DOM
+ *  swapchain reads BLANK here, so this never drives a FAIL. */
 async function readCanvasBytes(canvas: HTMLCanvasElement | null): Promise<Uint8Array | null> {
   if (!canvas) return null;
-  const bmp = await createImageBitmap(canvas);
-  const tmp = document.createElement("canvas");
-  tmp.width = bmp.width;
-  tmp.height = bmp.height;
-  const ctx = tmp.getContext("2d")!;
-  ctx.drawImage(bmp, 0, 0);
-  return new Uint8Array(ctx.getImageData(0, 0, tmp.width, tmp.height).data.buffer);
+  try {
+    const bmp = await createImageBitmap(canvas);
+    const tmp = document.createElement("canvas");
+    tmp.width = bmp.width;
+    tmp.height = bmp.height;
+    const ctx = tmp.getContext("2d")!;
+    ctx.drawImage(bmp, 0, 0);
+    return new Uint8Array(ctx.getImageData(0, 0, tmp.width, tmp.height).data.buffer);
+  } catch {
+    return null;
+  }
 }
 function nonZero(bytes: Uint8Array | null): boolean {
   if (!bytes) return false;
@@ -139,7 +155,18 @@ function diffProps(): Record<string, unknown> {
   };
 }
 
-function probeEl(container: HTMLElement): (HTMLElement & { __cairnImageDiffProbe?: { canvas: HTMLCanvasElement | null; requestRender: () => void; compareMode?: string; home?: () => void } }) | null {
+interface FlipProbe {
+  canvas: HTMLCanvasElement | null;
+  requestRender: () => void;
+  compareMode?: string;
+  home?: () => void;
+  // Engine-level readback of the pool-owned surface (fresh renderPass + device
+  // .readback) — deterministic across swapchain rotation, unlike the composited
+  // canvas. This is the seam the content assertions read.
+  readbackSurface?: () => Promise<{ data: Uint8Array; width: number; height: number } | null>;
+}
+
+function probeEl(container: HTMLElement): (HTMLElement & { __cairnImageDiffProbe?: FlipProbe }) | null {
   return container.querySelector("[data-gpu-image-viewport]") as never;
 }
 
@@ -173,22 +200,37 @@ async function main(): Promise<void> {
       root.render(h(GpuImagePane, (mode === "image" ? imageProps() : diffProps()) as never));
     };
 
-    // Wait until the reused pane paints a non-blank diff.
+    // Engine-level surface readback (the ASSERTED content) — fresh renderPass +
+    // device.readback of the pool-owned surface, deterministic across swapchain
+    // rotation where a composited-canvas read is not.
+    const readSurface = async (): Promise<Uint8Array | null> => {
+      const p = probeEl(container)?.__cairnImageDiffProbe;
+      if (!p?.readbackSurface) return null;
+      const r = await p.readbackSurface();
+      return r ? r.data : null;
+    };
+    // Advisory NOTE (never a FAIL): what the COMPOSITED canvas shows.
+    const noteCanvas = async (label: string): Promise<void> => {
+      const bytes = await readCanvasBytes(probeEl(container)?.__cairnImageDiffProbe?.canvas ?? null);
+      note(bytes
+        ? `${label}: composited canvas nonZero=${nonZero(bytes)}, mean=${mean16(bytes).toFixed(1)}`
+        : `${label}: composited-canvas readback BLANK/unavailable (expected on CI Chromium; assertion uses the engine surface)`);
+    };
+
+    // Wait until the reused pane paints a non-blank diff (engine surface).
     const paintDiff = async (): Promise<Uint8Array | null> => {
       await waitFor(async () => {
         const p = probeEl(container)?.__cairnImageDiffProbe;
-        if (!p?.canvas) return false;
-        p.requestRender();
-        return nonZero(await readCanvasBytes(p.canvas));
+        if (!p?.readbackSurface) return false;
+        return nonZero(await readSurface());
       }, 8000, 80);
-      return readCanvasBytes(probeEl(container)?.__cairnImageDiffProbe?.canvas ?? null);
+      return readSurface();
     };
     const paintImage = async (): Promise<void> => {
       await waitFor(async () => {
         const p = probeEl(container)?.__cairnImageDiffProbe;
-        if (!p?.canvas) return false;
-        p.requestRender();
-        return nonZero(await readCanvasBytes(p.canvas));
+        if (!p?.readbackSurface) return false;
+        return nonZero(await readSurface());
       }, 8000, 80);
     };
 
@@ -223,6 +265,7 @@ async function main(): Promise<void> {
     const compAfterVisit1 = getDiffComputeCount();
     report(nonZero(diff1), `visit1 diff paints non-blank`);
     allOk = allOk && nonZero(diff1);
+    await noteCanvas("visit1");
     note(`visit1: computeCount ${compBeforeFirstDiff} → ${compAfterVisit1} (Δ=${compAfterVisit1 - compBeforeFirstDiff}), uploads=${uploadCount}`);
     const settled1 = mean16(diff1);
 
