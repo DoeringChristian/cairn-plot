@@ -210,6 +210,14 @@ async function main(): Promise<void> {
     const compBeforeFirstDiff = getDiffComputeCount();
     flip("diff");
     await waitFor(() => probeEl(container)?.__cairnImageDiffProbe?.compareMode === "diff", 8000);
+    // The probe object is re-set on every render; on slow software adapters
+    // `home()` may not yet be wired at the instant compareMode flips to "diff".
+    // Calling it too early is a silent no-op (optional chaining), leaving the
+    // diff as the UNCOLORED raw error field — near-zero on SwiftShader, which
+    // then burns paintDiff's full budget every poll (the cumulative stall the CI
+    // TIMEOUT reported here). Wait until home() is actually exposed, THEN invoke
+    // it so the kernel-default colormap makes the diff frame promptly non-blank.
+    await waitFor(() => typeof probeEl(container)?.__cairnImageDiffProbe?.home === "function", 8000);
     probeEl(container)?.__cairnImageDiffProbe?.home?.();
     const diff1 = await paintDiff();
     const compAfterVisit1 = getDiffComputeCount();
