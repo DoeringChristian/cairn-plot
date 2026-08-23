@@ -61,7 +61,7 @@ import { HALF_ONE, f16BitsToFloat32 } from "../image/half";
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
 // imports are safe here: this file only ships in the gpu-image addon bundle,
 // never `core.iife.js`.
-import { contentOpId } from "../image/content-ops/index";
+import { contentOpId, contentOpIdOrNull } from "../image/content-ops/index";
 import {
   getDiffKernel,
   resolveDiffKernelId,
@@ -88,6 +88,7 @@ import PixelValueOverlay, {
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { useResettableState } from "../hooks/use-resettable-state";
+import { useRenderScheduler, useRevisions } from "./use-render-scheduler";
 import {
   acquirePane,
   releasePane,
@@ -96,7 +97,6 @@ import {
   type SourceUpload,
 } from "../engine/pool";
 import { getSharedDevice } from "../engine/device";
-import { isPaintPhaseLogActive, recordPaintPhase } from "../engine/test-hooks";
 import type { ImageParams } from "../engine/image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
 // when the engine fails to activate/render (see `engineFailed` state below).
@@ -452,8 +452,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const [engineFailed, setEngineFailed] = useState(false);
   const [paneReady, setPaneReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
-  const [uploadVersion, setUploadVersion] = useState(0);
-  const [containerTick, setContainerTick] = useState(0);
+  // The pane's five async-landing triggers on ONE mechanism (see `useRevisions`).
+  // Each `*Version`/`*Tick` below is a thin NAMED read-view of one counter — the
+  // five formerly-separate `useState`s collapsed to one cell so the triggers stay
+  // semantically distinct (each with its own consumers + dep arrays) while sharing
+  // one owner. `bumpRevision(source)` is what the async effects call when work lands.
+  const [revisions, bumpRevision] = useRevisions();
+  const uploadVersion = revisions.source; // a primary/deep source texture (re)uploaded
+  // `revisions.container` (container resized OR restored from park) is consumed
+  // only by the render scheduler — passed to it directly below, no local alias.
   // The DISPLAYED uv window, for `PixelValueOverlay`'s
   // `sourceWindow` — see that prop's doc for why the GPU pane must supply
   // this explicitly (its canvas CSS box doesn't grow with zoom the way the
@@ -464,7 +471,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // valueDataRef / HdrImagePane's `hdr.data`).
   const hdrDataRef = useRef<HdrData | null>(null);
   const sdrImageDataRef = useRef<ImageData | null>(null);
-  const [pixelDataVersion, setPixelDataVersion] = useState(0);
+  const pixelDataVersion = revisions.pixels; // retained CPU pixel bytes changed (histogram/overlay)
   // DIFF reference (`b`) retained pixels — the diff TEV readout's `b` operand for a
   // DIRECT op's cpu twin. Float → the raw DecodedSource; uint8 → the decoded RGBA.
   const refFloatRef = useRef<DecodedSource | null>(null);
@@ -500,28 +507,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `render-snapshot` uses for the expected ids, so they converge once the
   // (always-scheduled) upload effect completes.
   // -----------------------------------------------------------------------
-  // PAINT-ATOMIC FLIPS (residual one-frame stale flash). The coherency guard
-  // above proves every PRESENT is coherent, but a slot FLIP (image↔diff) commits
-  // the tab strip instantly while the pane's engine render for the new slot runs
-  // in a POST-PAINT (passive) effect — so the FIRST painted frame after the flip
-  // still shows the HELD previous slot (the reported "image for one frame inside
-  // the diff tab"). When the target is FULLY RESIDENT (retained source textures +,
-  // for a cached op, the diff RESULT cache HIT) the render can instead run
-  // PRE-PAINT (a `useLayoutEffect`), so the first painted frame already shows the
-  // new slot. NON-resident targets keep today's hold-previous-frame behavior (that
-  // hold is correct for genuinely-async loads). `lastContentIdentityRef` records
-  // the `snapshot.contentKey` most recently acted on (flip detector — a viewport/
-  // exposure change is NOT a flip); `lastRenderedRef` dedupes the pre-paint render
-  // against the post-paint effect so a resident flip submits exactly once.
-  const lastContentIdentityRef = useRef<string | undefined>(undefined);
-  const lastRenderedRef = useRef<{ id: object; uv: number; ct: number } | null>(null);
-  // Monotonic content EPOCH — bumped whenever `snapshot.contentKey` changes (a
-  // flip), for the paint-phase oracle (a harness groups submits by epoch to find
-  // each flip's FIRST render's phase — layout=paint-atomic vs post=stale first
-  // frame). Test-only signal; the increment is a pure derivation of the key.
-  const contentEpochRef = useRef(0);
-  const contentEpochIdentityRef = useRef<string | undefined>(undefined);
-  const lastCommitEpochRef = useRef(-1);
+  // PAINT-ATOMIC FLIPS (residual one-frame stale flash). The coherency guard above
+  // proves every PRESENT is coherent, but a slot FLIP (image↔diff) commits the tab
+  // strip instantly while a POST-PAINT (passive) render for the new slot would let
+  // the FIRST painted frame still show the HELD previous slot. When the target is
+  // FULLY RESIDENT the render runs PRE-PAINT instead. Both this phase decision and
+  // the flip/dedupe bookkeeping (formerly the `lastContentIdentityRef`/
+  // `lastRenderedRef`/`contentEpoch*` refs + two racing effects) are OWNED by
+  // `useRenderScheduler` (see its module doc); the pane hands it `snapshot` + the
+  // `renderPass` callback + the two forcing revisions and lists no scheduler refs.
+  // -----------------------------------------------------------------------
   // Content-identity diff-cache keys (`a` = primary/`source`, `b` = reference):
   // a float side keys on its ORIGINAL content key (URL), not the decoded bytes.
   // Declared here (before the source-upload effects) so those effects can key the
@@ -853,9 +848,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
   const [diffMetrics, setDiffMetrics] = useState<DiffMetrics | null>(null);
   const [diffSsim, setDiffSsim] = useState<number | null>(null);
-  const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
+  const diffOverlayVersion = revisions.diffOverlay; // cached-diff RESULT readback landed (overlay)
   const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
-  const [refUploadVersion, setRefUploadVersion] = useState(0);
+  const refUploadVersion = revisions.reference; // the diff `b` operand (re)uploaded
   const diffEntryRef = useRef<DiffCacheEntry | null>(null);
   const diffSamplesRef = useRef<Float32Array | null>(null);
   const diffResultDimsRef = useRef<{ w: number; h: number } | null>(null);
@@ -1234,7 +1229,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   useEffect(() => {
     const el = paneRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setContainerTick((t) => t + 1));
+    const ro = new ResizeObserver(() => bumpRevision("container"));
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -1255,7 +1250,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         if (entry.isIntersecting) {
           if (handle.isParked) {
             handle.restore();
-            setContainerTick((t) => t + 1); // force a re-render pass
+            bumpRevision("container"); // force a re-render pass
           }
         } else {
           handle.park();
@@ -1294,8 +1289,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     setNaturalDims((prev) =>
       prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
     );
-    setPixelDataVersion((v) => v + 1);
-    setUploadVersion((v) => v + 1);
+    bumpRevision("pixels");
+    bumpRevision("source");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hdrMode, paneReady, deepActive, hdrMode ? deepFlatten.hdr : null, hasCompare, hasCompare ? contentKeyA : null]);
 
@@ -1318,8 +1313,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         setNaturalDims((prev) =>
           prev && prev.w === csr.width && prev.h === csr.height ? prev : { w: csr.width, h: csr.height },
         );
-        setPixelDataVersion((v) => v + 1);
-        setUploadVersion((v) => v + 1);
+        bumpRevision("pixels");
+        bumpRevision("source");
       })
       .catch((err) => {
         if (!cancelled) console.warn("[cairn] deep GPU CSR upload failed:", err);
@@ -1353,7 +1348,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // gate (`resident`/renderPass both bail on a null `naturalDims`), so the
       // pool's applied id is irrelevant here and needs no stamp.
       setNaturalDims(null);
-      setPixelDataVersion((v) => v + 1);
+      bumpRevision("pixels");
       // Q24 fix: no explicit inline CSS size to drop anymore — the canvas is
       // always `w-full h-full` of `imgWrapperRef` (see the JSX below); only
       // its device-pixel backing store is set imperatively, and the
@@ -1381,8 +1376,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         prev && prev.w === display.width && prev.h === display.height ? prev : { w: display.width, h: display.height },
       );
       p2.onNaturalSize?.(display.width, display.height);
-      setPixelDataVersion((v) => v + 1);
-      setUploadVersion((v) => v + 1);
+      bumpRevision("pixels");
+      bumpRevision("source");
     };
     // FLIP-BACK / PAINT-ATOMIC FAST PATH (colormap "none" — a raw source with no
     // CPU false-color, i.e. every compare primary AND every plain non-colormapped
@@ -1486,7 +1481,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setRefDims((prev) =>
         prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
       );
-      setRefUploadVersion((v) => v + 1);
+      bumpRevision("reference");
     };
     // FLIP-BACK FAST PATH: the pool retains the decoded upload under `key` (and
     // its GPU texture) — rebind SYNCHRONOUSLY, no `.then`. `apply` → `setSourceB`
@@ -1693,6 +1688,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       return false;
     }
 
+    // ---- MODE DISPATCH — exhaustive on `snapshot.mode` (data, not a fall-through
+    // chain with a defensive tail). Each arm RETURNS; the `default` is a
+    // compile-time exhaustiveness check (`never`), so a NEW content mode is a TYPE
+    // error at this boundary, never a silent plain-image blit. `snapshot.mode` is
+    // 1:1 with `compositorMode`/`diffMode` (its own definition), so each arm's body
+    // is byte-unchanged. The degenerate `hasCompare` case (an unrecognized
+    // `compareSource.mode` maps to mode "image" WITH a compare) is guarded INSIDE
+    // the image arm, not as a shared tail.
+    switch (snapshot.mode) {
     // ---- COMPOSITOR path (split / blend, Phase 3) -----------------------
     // Renders a LIGHT composite of the two operands (slot a = reference =
     // `source`, slot b = foreground = `compareSource.b`) through the SAME unified
@@ -1704,7 +1708,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // split; blend mixes the RAW light (the unified model — the cpu twin mirrors
     // it, proven by content-ops.browser). Driven live (divider drag / blend
     // slider) — only the compositor param uniform changes, no recompile.
-    if (compositorMode) {
+    case "compositor": {
       // Wait for the foreground slot to upload (else the composite would sample
       // the 1×1 placeholder for slot b). Re-fires on `refUploadVersion`.
       if (!refDims) return false;
@@ -1743,7 +1747,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // display-encoding machinery: analytic red-green (signed), turbo-log2
     // (magnitude), a plain LUT (magma/…) or raw per-channel error ("none"). Proven
     // byte-identical to the composed cpu twin by content-ops.browser.ts.
-    if (diffMode) {
+    case "diff": {
       // Wait for the reference slot to upload (else a direct op would sample the
       // 1×1 placeholder). The render effect re-fires on `refUploadVersion`.
       if (!refDims) return false;
@@ -1807,18 +1811,23 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       } else {
         // DIRECT pointwise op: the pool injects `srcB`; `cairnContent(a,b,opId)`.
         diffEntryRef.current = null;
-        const opId = contentOpId(kernelId);
-        // IDENTITY-OP FLOOR (snapshot invariant). `contentOpId` returns 0 =
-        // IDENTITY for any id not registered as a direct content op (a
-        // transiently mis-resolved kernel). Blitting opId 0 in diff mode would
-        // present the PRIMARY — which here IS the reference operand — as a plain
-        // image (the reference-flash). A diff present must always come from the
-        // diff pipeline for the current op, so HOLD until a valid op resolves.
-        if (opId === 0) return false;
+        // Resolve the direct-op id at the NULL-returning boundary: an unresolved /
+        // transiently mis-resolved diff kernel yields `null` (HOLD), which is now
+        // DISTINCT from a real IDENTITY (0). The former `opId === 0` floor collided
+        // the two — blitting identity in diff mode presents the PRIMARY (which here
+        // IS the reference operand) as a plain image (the reference-flash). No diff
+        // kernel dispatches to identity, so `null` is the unambiguous "hold until a
+        // valid op resolves". The WGSL encoding (0 = identity fallthrough) is
+        // untouched; this only splits the meaning the sentinel `0` collided on the
+        // TS side (see `content-ops/wgsl.ts` `contentOpIdOrNull`).
+        const opId = contentOpIdOrNull(kernelId);
+        if (opId === null) return false;
         submit(handle.render({ ...diffDisplay, contentOpId: opId }));
       }
       return true;
     }
+    // ---- IMAGE path (single-image / plain SDR / HDR / colormapped) ------
+    case "image": {
     // TONE-MAP operator = the operator ACTUALLY in effect (`effectiveTonemap`,
     // the toolbar menu's value): the view-local override if the user picked one,
     // else the effective default (Linear on an engaged HDR surface, sRGB on SDR).
@@ -1977,6 +1986,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (hasCompare) return false;
     submit(handle.render({ ...params, compareIntended: hasCompare, authoredColormap: authoredColormapIsLut }));
     return true;
+    }
+    // Exhaustiveness — `snapshot.mode` is a closed union; a new arm is a TYPE error
+    // here (this line stops compiling), never a runtime plain-image fallthrough.
+    default: {
+      const _never: never = snapshot.mode;
+      return _never;
+    }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr,
     // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
@@ -1999,93 +2016,18 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
   renderPassRef.current = renderPass;
 
-  // Dedupe identity: a fresh object per `renderPass` recreation (i.e. whenever any
-  // pixel-affecting dep changes). Paired with `uploadVersion`/`containerTick` (the
-  // forced-re-render triggers — re-upload, park/restore, resize) it uniquely keys a
-  // render. `renderPass` returns whether it actually SUBMITTED (a held/guarded frame
-  // returns false), so a hold does NOT mark the key done and a later retry still
-  // fires. Both the pre-paint layout effect and the post-paint effect consult this
-  // one ref, so a resident flip renders exactly once (pre-paint), and the post-paint
-  // effect skips the duplicate.
-  const renderId = useMemo(() => ({}), [renderPass]);
-  if (contentEpochIdentityRef.current !== snapshot.contentKey) {
-    contentEpochIdentityRef.current = snapshot.contentKey;
-    contentEpochRef.current += 1;
-  }
-  const contentEpoch = contentEpochRef.current;
-  const alreadyRendered = (): boolean => {
-    const r = lastRenderedRef.current;
-    return !!r && r.id === renderId && r.uv === uploadVersion && r.ct === containerTick;
-  };
-  const markRendered = (): void => {
-    lastRenderedRef.current = { id: renderId, uv: uploadVersion, ct: containerTick };
-  };
-
-  // PRE-PAINT (paint-atomic) render for a RESIDENT slot flip. Runs in the layout
-  // phase — BEFORE the browser paints — so the first painted frame after the flip
-  // already shows the new slot instead of the held previous one. Gated on a genuine
-  // content flip (`snapshot.contentKey` changed) AND full residency
-  // (`snapshot.resident`), so pan/zoom/exposure (not a flip) and non-resident
-  // targets (genuinely async loads, correctly held) stay on the post-paint path
-  // below. The upload effects
-  // above are `useLayoutEffect`, so on a resident flip they bind the sources +
-  // `setRefDims`/`setNaturalDims` synchronously in this same commit; React flushes
-  // the resulting state update (a 2nd render pass) BEFORE paint, and this effect
-  // then re-fires with residency satisfied and submits the new slot pre-paint.
-  useLayoutEffect(() => {
-    // Emit a pre-paint COMMIT marker once per flip (before any early-return), so a
-    // harness can classify the new slot's submit time against the flip's commit
-    // boundary (a paint between commit and submit = a stale first frame).
-    if (isPaintPhaseLogActive() && lastCommitEpochRef.current !== contentEpoch) {
-      lastCommitEpochRef.current = contentEpoch;
-      recordPaintPhase({
-        phase: "commit",
-        kind: snapshot.mode,
-        submitted: false,
-        resident: snapshot.resident,
-        epoch: contentEpoch,
-        t: performance.now(),
-      });
-    }
-    if (snapshot.contentKey === lastContentIdentityRef.current) return; // not a flip
-    if (!snapshot.resident) return; // non-resident → keep the post-paint hold path
-    if (alreadyRendered()) return;
-    lastContentIdentityRef.current = snapshot.contentKey;
-    const submitted = renderPass();
-    if (submitted) markRendered();
-    if (isPaintPhaseLogActive())
-      recordPaintPhase({
-        phase: "layout",
-        kind: snapshot.mode,
-        submitted,
-        resident: snapshot.resident,
-        epoch: contentEpoch,
-        t: performance.now(),
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderId, uploadVersion, containerTick, snapshot.resident, snapshot.contentKey]);
-
-  // POST-PAINT render — the general path (pan/zoom/exposure/param changes,
-  // park/restore/resize, and NON-resident flips whose async load resolves later and
-  // is correctly held until ready). Skips the render the pre-paint effect already
-  // submitted for this exact key (dedupe), and keeps the flip detector current for
-  // non-flip renders.
-  useEffect(() => {
-    lastContentIdentityRef.current = snapshot.contentKey;
-    if (alreadyRendered()) return;
-    const submitted = renderPass();
-    if (submitted) markRendered();
-    if (submitted && isPaintPhaseLogActive())
-      recordPaintPhase({
-        phase: "post",
-        kind: snapshot.mode,
-        submitted,
-        resident: snapshot.resident,
-        epoch: contentEpoch,
-        t: performance.now(),
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderId, uploadVersion, containerTick]);
+  // THE RENDER SCHEDULER — one owner drives both paint-phase hook slots. It
+  // computes `(renderKey, phase)` once per commit and dedupes internally: a
+  // resident slot flip submits PRE-PAINT (paint-atomic), everything else POST-PAINT,
+  // exactly once each. `source`/`container` are the two forcing revisions (a source
+  // (re)upload; a resize or park→restore) that re-fire a render without changing
+  // `renderPass`'s identity. See `use-render-scheduler.ts` for the invariant.
+  useRenderScheduler({
+    snapshot,
+    renderPass,
+    sourceRev: revisions.source,
+    containerRev: revisions.container,
+  });
 
   // -----------------------------------------------------------------------
   // DIFF metrics (MSE/PSNR/MAE) + mean-SSIM — source-data metrics computed over
@@ -2146,7 +2088,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Direct op: no result readback — the cpu twin drives the readout.
       diffSamplesRef.current = null;
       diffResultDimsRef.current = null;
-      setDiffOverlayVersion((v) => v + 1);
+      bumpRevision("diffOverlay");
       return;
     }
     const entry = diffEntryRef.current;
@@ -2154,14 +2096,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     let cancelled = false;
     diffSamplesRef.current = null;
     diffResultDimsRef.current = null;
-    setDiffOverlayVersion((v) => v + 1);
+    bumpRevision("diffOverlay");
     paneHandleRef.current
       ?.readDiffResult(entry)
       ?.then((arr) => {
         if (cancelled) return;
         diffSamplesRef.current = arr;
         diffResultDimsRef.current = { w: entry.width, h: entry.height };
-        setDiffOverlayVersion((v) => v + 1);
+        bumpRevision("diffOverlay");
       })
       .catch(() => {
         /* readback failure — leave numbers blank (display-only) */

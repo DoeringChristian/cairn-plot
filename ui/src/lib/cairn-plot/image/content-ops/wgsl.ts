@@ -54,10 +54,28 @@ export const CONTENT_OP_ID: Record<string, number> = new Proxy(
 ) as Record<string, number>;
 
 /** The dispatch id for a content-op id (0 = identity for an unknown/undefined id,
- *  matching the shader's fallthrough). */
+ *  matching the shader's fallthrough). Use at a boundary where identity IS the
+ *  intended default (the compositor split/blend ids are always registered);
+ *  where "unknown" must be told apart from "identity", use {@link contentOpIdOrNull}. */
 export function contentOpId(id: string | undefined | null): number {
   if (!id) return 0;
   return contentOpDispatchIds()[id] ?? 0;
+}
+
+/** The dispatch id for a direct content-op id, or `null` when the id is not a
+ *  registered direct op (undefined / a transiently mis-resolved kernel).
+ *
+ * The plain {@link contentOpId} folds "unknown" into `0` — the shader's IDENTITY
+ * fallthrough — which is correct for the WGSL dispatch (a zero-filled uniform must
+ * mean identity) but WRONG for the TS-side diff dispatch: an unresolved diff
+ * kernel returning `0` would blit the PRIMARY (which in diff mode is the reference
+ * operand) as a plain image (the reference-flash). No diff kernel legitimately
+ * dispatches to identity, so a `null` here is unambiguously "hold until a valid op
+ * resolves". The shader encoding is untouched — this only distinguishes the two
+ * meanings the sentinel `0` collided on the TS side. */
+export function contentOpIdOrNull(id: string | undefined | null): number | null {
+  if (!id) return null;
+  return contentOpDispatchIds()[id] ?? null;
 }
 
 /**
