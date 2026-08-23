@@ -20,11 +20,17 @@
  *      no re-decode; the metrics chip (`data-gpu-compare-metrics`) is present.
  *   4. HOME resets the kernel/colormap override back to the descriptor default.
  *
- * READBACK NOTE. The pane canvases are in the DOM (composited), so their WebGPU
- * swapchain texture rotates to a fresh back-buffer once a frame composites — a
- * direct `device.readback(surface)` then reads a BLANK texture. This harness reads
- * the COMPOSITED content via `createImageBitmap(canvas)` instead (the same reason
- * `gpu-image-pane.browser.ts` uses it), which is stable across the rotation.
+ * READBACK NOTE. Content assertions read the ENGINE-LEVEL surface via the probe's
+ * `readbackSurface()` seam — a fresh synchronous `renderPass()` then
+ * `device.readback()` of the POOL-OWNED surface (the same deterministic path
+ * `engine/__tests__/content-ops.browser.ts` and `GpuComparePane.readbackSurface`
+ * use). We do NOT sample the composited canvas via `createImageBitmap(canvas)`:
+ * an in-DOM WebGPU swapchain rotates to a fresh back-buffer once a frame
+ * composites, so `createImageBitmap` reads a BLANK texture on some builds (CI's
+ * Chromium hits this deterministically where local SwiftShader does not — the
+ * gotcha the 8104cbd deep-sampler design already routed around). A canvas-bitmap
+ * read is kept ONLY as an advisory NOTE (never a FAIL) so local eyes still get
+ * the composited view.
  */
 import React from "react";
 import { createRoot } from "react-dom/client";
@@ -45,6 +51,10 @@ interface DiffProbe {
   changeDiffKernel: (id: string) => void;
   changeDiffColormap: (id: string) => void;
   home: () => void;
+  // Engine-level readback of the pool-owned surface (fresh renderPass + device
+  // .readback) — deterministic across swapchain rotation, unlike the composited
+  // canvas. This is the seam the content assertions read.
+  readbackSurface: () => Promise<{ data: Uint8Array; width: number; height: number } | null>;
 }
 
 function report(pass: boolean, message: string): void {
@@ -56,6 +66,18 @@ function report(pass: boolean, message: string): void {
     const p = document.createElement("div");
     p.textContent = line;
     p.style.color = pass ? "green" : "red";
+    el.appendChild(p);
+  }
+}
+
+function note(message: string): void {
+  // eslint-disable-next-line no-console
+  console.log("NOTE:", message);
+  const el = document.getElementById("result");
+  if (el) {
+    const p = document.createElement("div");
+    p.textContent = "NOTE: " + message;
+    p.style.color = "#88f";
     el.appendChild(p);
   }
 }
@@ -110,17 +132,43 @@ function makeImageUrl(fill: (x: number, y: number) => [number, number, number]):
 const FG_URL = makeImageUrl((x) => [Math.round((x / 63) * 255), 128, 64]);
 const REF_URL = makeImageUrl((_x, y) => [Math.round((y / 63) * 255), 128, 64]);
 
-/** Read the COMPOSITED canvas content (stable across swapchain rotation for an
- *  in-DOM canvas) as RGBA bytes. */
+/** Engine-level readback of the pool-owned surface (the ASSERTED content) — a
+ *  fresh `renderPass()` then `device.readback()`, deterministic across swapchain
+ *  rotation where a composited-canvas read is not. */
+async function readSurfaceBytes(probe: ProbeRef): Promise<Uint8Array | null> {
+  const r = await probe().readbackSurface();
+  return r ? r.data : null;
+}
+
+/** Read the COMPOSITED canvas content via `createImageBitmap`. ADVISORY ONLY —
+ *  used to emit a local-eyes NOTE; on some builds (CI Chromium) an in-DOM
+ *  swapchain reads BLANK here, so this is never allowed to drive a FAIL. */
 async function readCanvasBytes(canvas: HTMLCanvasElement | null): Promise<Uint8Array | null> {
   if (!canvas) return null;
-  const bmp = await createImageBitmap(canvas);
-  const tmp = document.createElement("canvas");
-  tmp.width = bmp.width;
-  tmp.height = bmp.height;
-  const ctx = tmp.getContext("2d")!;
-  ctx.drawImage(bmp, 0, 0);
-  return new Uint8Array(ctx.getImageData(0, 0, tmp.width, tmp.height).data.buffer);
+  try {
+    const bmp = await createImageBitmap(canvas);
+    const tmp = document.createElement("canvas");
+    tmp.width = bmp.width;
+    tmp.height = bmp.height;
+    const ctx = tmp.getContext("2d")!;
+    ctx.drawImage(bmp, 0, 0);
+    return new Uint8Array(ctx.getImageData(0, 0, tmp.width, tmp.height).data.buffer);
+  } catch {
+    return null;
+  }
+}
+
+/** Advisory NOTE (never a FAIL): report what the COMPOSITED canvas shows, so
+ *  local eyes still get the pixel view even though the assertion reads the
+ *  engine surface. */
+async function noteCanvas(label: string, probe: ProbeRef): Promise<void> {
+  const bytes = await readCanvasBytes(probe().canvas);
+  if (!bytes) {
+    note(`${label}: composited-canvas readback BLANK/unavailable (expected on CI Chromium; assertion uses the engine surface)`);
+    return;
+  }
+  const { red, green } = redGreenPresence(bytes);
+  note(`${label}: composited canvas nonZero=${nonZero(bytes)}, red px=${red}, green px=${green}`);
 }
 
 function nonZero(bytes: Uint8Array): boolean {
@@ -208,12 +256,11 @@ async function paintedBytes(
 ): Promise<Uint8Array | null> {
   let last: Uint8Array | null = null;
   await waitFor(async () => {
-    probe().requestRender();
-    const bytes = await readCanvasBytes(probe().canvas);
+    const bytes = await readSurfaceBytes(probe);
     if (bytes) last = bytes;
     return !!bytes && want(bytes);
   }, timeoutMs, 120);
-  const fresh = await readCanvasBytes(probe().canvas);
+  const fresh = await readSurfaceBytes(probe);
   return fresh ?? last;
 }
 
@@ -230,8 +277,7 @@ async function paintedUntilChanged(
 ): Promise<Uint8Array | null> {
   let last: Uint8Array | null = null;
   await waitFor(async () => {
-    probe().requestRender();
-    const bytes = await readCanvasBytes(probe().canvas);
+    const bytes = await readSurfaceBytes(probe);
     if (bytes) last = bytes;
     return !!bytes && sameFrac(baseline, bytes) < 0.98;
   }, timeoutMs, 120);
@@ -264,6 +310,7 @@ async function main(): Promise<void> {
       const ok = red > 20 && green > 20 && probe().colormap === "red-green";
       if (!ok) allOk = false;
       report(ok, `[case1] signed diff renders red-green diverging map (colormap="${probe().colormap}", red px=${red}, green px=${green})`);
+      await noteCanvas("[case1]", probe);
     }
 
     // ---- Case 3a: metrics chip present -----------------------------------
@@ -272,12 +319,12 @@ async function main(): Promise<void> {
     report(chipPresent, `[case3a] metrics chip (data-gpu-compare-metrics) present + SSIM=${probe().ssimText}`);
 
     // ---- Case 3b: MODE menu switches kernels (no re-decode) --------------
-    const before = await readCanvasBytes(probe().canvas);
+    const before = await readSurfaceBytes(probe);
     probe().changeDiffKernel("absolute");
     await waitFor(() => probe().resolvedKernelId === "absolute", 3000);
-    // Poll for the switched frame to composite rather than sleeping a fixed
+    // Poll for the switched frame to render rather than sleeping a fixed
     // amount — the absolute-kernel frame lands later on slow software adapters.
-    const after = before ? await paintedUntilChanged(probe, before) : await readCanvasBytes(probe().canvas);
+    const after = before ? await paintedUntilChanged(probe, before) : await readSurfaceBytes(probe);
     const switched =
       probe().resolvedKernelId === "absolute" && !!before && !!after && sameFrac(before, after) < 0.98;
     if (!switched) allOk = false;
@@ -303,6 +350,7 @@ async function main(): Promise<void> {
     const flipOk = flipProbe().colormap === "magma" && !!flipBytes && nonZero(flipBytes);
     if (!flipOk) allOk = false;
     report(flipOk, `[case2] FLIP diff renders non-degenerate (colormap="${flipProbe().colormap}")`);
+    await noteCanvas("[case2]", flipProbe);
 
     report(allOk, `all GpuImagePane diff-capability cases`);
     setOverallStatus(allOk);
