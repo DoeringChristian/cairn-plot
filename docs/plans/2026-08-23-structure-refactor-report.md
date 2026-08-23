@@ -630,4 +630,179 @@ owner). The scheduler/LeafView oracles the plan slates for retirement
 
 ---
 
+# Shift 5 — P4: `ResolvedLeaf` union over the resolve-cache payload
+
+**Forked from** `108316a` (shift-4 HEAD). Behavior-preserving throughout; full
+gate green at the landed commit (typecheck 0 · node 661 · pytest 260 · schema +
+boundary + plot-assets OK · harness 36/40 via `--all`, IDENTICAL to the untouched
+base — the same 4 gesture/URL-only interaction harnesses fail HEADLESSLY at
+`108316a` and after, byte-identical signatures: `resettable-state`,
+`plot-legend-interaction`, `engine-fallback`, `gpu-image-pane`; every parity +
+interaction harness that settles headlessly — flip-paint, flip-stress,
+flip-chrome, flip-resolve, realstack-gpu, grid-stacked, grid-stacked-persist,
+selection-stage, compare-settings-sync — is PASS · `core.iife.js` rebuilt +
+synced + committed).
+
+## Phase landed
+
+| Commit | Phase | What it made unrepresentable |
+|---|---|---|
+| `d000486` | **P4a — `ResolvedLeaf` discriminated union** | the half-built `compareSource` (undefined `b`) — the diff-operand-missing state |
+
+### The `ResolvedLeaf` design (two sentences)
+
+The leaf resolve-cache paid out an untyped `Record<string, unknown>` whose diff
+variant smuggled its foreground operand + content keys + overlay through the
+`__diffB` / `__diffContentKeyA` / `__diffContentKeyB` / `__diffOverlay` string
+side-channel (with `as DecodedSource` casts), so a `compareSource` whose `b` is
+`undefined` was *representable* and had to be hand-guarded (`dp.__diffB ===
+undefined`). Typing the payload as `type ResolvedLeaf = { kind:"single"; props } |
+{ kind:"diff"; source; foreground; contentKeyA; contentKeyB; overlay? }` makes the
+diff variant STRUCTURALLY carry `foreground: DecodedSource` (non-optional) — the
+undefined-operand state is now unrepresentable, not merely guarded — and every
+read collapses to one `kind` discriminant.
+
+### Traced changes
+
+- **`resolveDiffPair`** returns a `kind:"diff"` leaf; the single resolve wraps in
+  `kind:"single"`; the GridView plot **prefetch** wraps in `kind:"single"` (same
+  key, same payload shape — prefetch/read agree by construction).
+- **`staleDiffFallback`** (reject a held DIFF leaf on the single-image path — its
+  `source` is the diff REFERENCE): `stateReady?.__diffB !== undefined` →
+  `stateReady?.kind === "diff"`.
+- **the diff-HOLD** (reused LeafView flipped into diff, held leaf still the
+  previous single): `dp.__diffB === undefined` → `resolved.kind !== "diff"`; the
+  held frame renders `resolved.props.source`. A held single under a diff render is
+  the ONLY remaining hold — a benign frame-preservation, never a broken pane.
+- **single-path discriminant guard** (`if (resolved.kind !== "single") return {}`)
+  — a provably-unreachable proof (a held diff is already rejected, and a
+  non-`|diffpair` key resolves single), the one added `if`.
+- the `state` HOLD cell, the diff-pair prefetch, the reject-stale-diff and the
+  single-frame hold all STAND — the union removes only the untyped side-channel
+  (4 string sentinels + 2 casts) and the undefined-operand representability.
+
+## Oracles retired
+
+**`staleDiffHolds` — NOT retired this shift (its structural target WAS achieved).**
+The union made the counter's *original* target — a `compareSource` with an
+undefined operand — unrepresentable at the type level (that is the achievement the
+brief named). But the counter, as wired, now witnesses a DIFFERENT, still-
+representable transition: the reused-`LeafView` lag (flip-into-diff on a cache
+miss holds the previous single leaf for one commit). Two arbiters consume it as a
+**deterministic** witness — `stacked-diff-flip-resolve` reports it, and
+`stacked-diff-flip-realstack-gpu` asserts `preFix.holds > 0` (proof the harness
+*exercises* the stale window — a reliable stand-in for the flaky `stale`
+painted-frame count) and gates POST-FIX on `postFix.holds === 0`. Removing the
+counter would force those self-checks onto the probabilistic painted-frame
+measure (flake risk) or delete them (weakening the arbiter). The counter's lag
+target only becomes unrepresentable when the reused-instance `state` HOLD cell
+is removed — the subscribable resolve-cache / `useSyncExternalStore` rewrite (§2.6)
+— and THAT carries user-visible risk (dropping the "hold last frame on a cold
+source/channel swap" behaviour → a `Loading…` flash the guardrail forbids). So the
+counter stays as the deterministic arbiter witness; its retirement is bound to the
+subscribable-cache rework, deferred. `placeholderMounts` is a separate, still-live
+no-flash oracle and is untouched.
+
+## Accounting (vs shift-4 HEAD `108316a`)
+
+| file | if | loc | note |
+|---|---|---|---|
+| plot-node.tsx | 87 → **88** | 1626 → **1664** | +1 single-path discriminant guard (the `__diffB===undefined` if swapped to `kind!=="diff"`, net 0); +38 LOC = the `ResolvedLeaf` type + doc |
+
+Net `if` **+1**, LOC **+38** — the counts UNDERSTATE the change (as every shift):
+the load-bearing win is **−4 string sentinels** (`__diffB`, `__diffContentKeyA`,
+`__diffContentKeyB`, `__diffOverlay`) + **−2 `as DecodedSource`/`as string`
+casts**, the diff payload made fully structured, and the **undefined-operand state
+made type-impossible** (a symptom-shape retired at the type level, not guarded).
+No new module; `resolve-cache.ts` stays framework-free (the domain `ResolvedLeaf`
+type lives with its producer/consumer in `plot-node.tsx`, not in the generic
+cache). Cumulative across shifts 1–5 the touched-file `if` total is 412 (this
+shift the only spec-touched file changed was `plot-node.tsx`).
+
+## Human-readability summary
+
+- **"What did this leaf resolve to?"** — one tagged value. `kind:"single"` is an
+  opaque prop bag spread into the renderer; `kind:"diff"` carries `source` +
+  `foreground` + content keys, and a diff ALWAYS has its foreground. No `__diff*`
+  side-channel to decode, no cast.
+- **"Can a compare pane be driven with a missing operand?"** — no; it can't be
+  constructed. A `kind:"diff"` leaf structurally holds `foreground`, so the
+  half-built `compareSource` is a type error, not a runtime guard.
+- **"What happens mid-flip into diff before the pair resolves?"** — the pane holds
+  its last single frame (`resolved.kind !== "diff"`), exactly as before — the only
+  hold left, and a benign one.
+
+## Stopped / deferred — the rest of P4 (each entangled or user-visible)
+
+The `ResolvedLeaf` union (§2.6's typed-payload half) landed; the remaining P4
+owners are each a genuine restructure carrying user-visible risk, none a safe
+separable green slice under land-green-or-revert:
+
+- **Subscribable resolve-cache + `useSyncExternalStore` (§2.6).** Would make the
+  resolved value a pure function of `resolveKey` and delete the LeafView `state`
+  lag cell (and with it `staleDiffHolds`'s lag target + `__cairnDisableSyncResolve`).
+  BUT the `state` cell also implements the deliberate **"hold the last frame on a
+  cold source/channel-layer swap"** UX (never drop to `Loading…`); a pure
+  key-function read loses that hold → a placeholder flash on a channel switch. That
+  is a USER-VISIBLE regression the guardrail forbids, so the naive replacement is
+  unsafe; a hold-preserving design is its own careful shift. Deferred.
+- **Stack-owned chrome skeleton / `reserveOnly` ×N + `StackHasCompareContext`
+  (§2.7).** GridView deciding the stack's chrome shape as the max over children
+  and handing each slot a fixed skeleton restructures how `reserveCompareChrome`
+  flows (today a context read in LeafView). Touches the chrome-stability arbiter
+  (`stacked-diff-flip-chrome`); a partial move risks a one-flip chrome pop.
+  Deferred whole.
+- **Stack-owned `CompareControl` map (§2.7).** `useCompareControl` runs
+  UNCONDITIONALLY for every node in `NodeDispatch` (rules-of-hooks). A stack-owned
+  `Map<compareNodeId, CompareControl>` moves hook OWNERSHIP up to GridView and
+  changes the control's identity/lifetime — today its survival across a flip is
+  guaranteed by `NodeDispatch` instance reuse. Entangled with the reused-instance
+  semantics; not a mechanical lift. Deferred.
+- **Aspect latch as a reducer (§2.7).** `stackAspectRef` is written DURING RENDER
+  to freeze the stacked viewport aspect. Converting it to a committed reducer set
+  on stack entry changes WHEN the latch establishes — timing-adjacent to the
+  canvas-resize-on-flip it prevents (a one-frame unlatched flash risk), a sibling
+  of the open render-time-reseed-timing ruling. Deferred.
+- **mode/active reconcile keyed to child identity (§2.7).** Storing `active` as the
+  child's stable id (not an index) via a reducer changes which tab stays active
+  across a `children` change — a user-visible selection-persistence decision.
+  Deferred.
+
+## Remaining phases
+
+- **P4 (remainder)** — the five owners above: subscribable resolve-cache (+ the
+  `staleDiffHolds` / `__cairnDisableSyncResolve` retirements it unlocks),
+  stack-owned chrome skeleton (`reserveOnly` ×N + `StackHasCompareContext`),
+  stack-owned `CompareControl` map, aspect-latch reducer, mode/active reconcile.
+  Each is its own gate-heavy, arbiter-pinned slice; `leafResolveStats`
+  (`placeholderMounts` + `staleDiffHolds`) retires with the subscribable-cache
+  rewrite, not before.
+- **P5 — dtype split & oracle retirement** — HDR/SDR pane bodies (or a normalized
+  internal source struct); the `notifyPresent` observer seam (moves
+  `displayFingerprint`/`sampleDeepColor`/`paneId`/`deepSampleTex` + the
+  bug-signature oracles to the harness); `scalarMode` one enum field; one shared
+  test-hooks runtime chunk. Deletes the union `hdrMode ? … : …` dep ternaries +
+  `as HdrImageProps` casts + 3 parallel upload effects; the auto-armed
+  `isPipelineMismatch`/`isOrangeSuspect` predicates; the `__cairnDisable*` toggles.
+  The paint-phase log + `isPipelineMismatch` retire HERE, asserted-zero then
+  deleted, once the observer seam + dtype split make their target flashes
+  unrepresentable.
+
+## Open items needing the user's ruling (carried forward — none decided here)
+
+1. **Render-time reseed timing (P2, per-field STOP).** Unchanged from shift 4.
+2. **Backing-size floor → required precondition (P1 stop-item 4).** Unchanged.
+3. **`PaneSettings` per-pane field-SCOPE (de)serializer (P2 design question).**
+   Unchanged.
+4. **Hold-last-frame vs subscribable resolve-cache (P4, NEW).** The LeafView `state`
+   cell serves DOUBLE duty: the (now type-retired) stale-diff lag AND the
+   deliberate "hold the last frame on a cold source/channel swap, never flash
+   `Loading…`". The subscribable `useSyncExternalStore` rewrite that would delete
+   the cell (and retire `staleDiffHolds` + `__cairnDisableSyncResolve`) also drops
+   the hold unless it is re-expressed. **Ruling needed:** is a `Loading…` flash on
+   a cold channel-layer swap acceptable, or must the last-frame hold be preserved
+   (a hold-carrying design in the subscribable rework)?
+
+---
+
 *Anthropic Cairn — structure-refactor execution report.*
