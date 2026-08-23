@@ -109,7 +109,13 @@ test("display-encoding: usePaneEncoding re-seeds when the descriptor props chang
   // keyed on the descriptor seed reseeds the single encoding id + clears the
   // per-arity override memory when the host changes colormap/tonemap.
   const de = read("renderers/display-encoding.ts");
-  assert.match(de, /setEncodingId\(seedFor\(arity\)\)/, "the hook must reseed from the props");
+  // The reseed moves the ONE `EncodingState` cell (spec §2.4) back to the prop
+  // seed with `kind:"default"` — the id + pick-ness travel together.
+  assert.match(
+    de,
+    /setEncState\(\{\s*id:\s*seedFor\(arity\),\s*kind:\s*"default"\s*\}\)/,
+    "the hook must reseed from the props",
+  );
   assert.match(de, /memoryRef\.current\.clear\(\)/, "a prop reseed must forget per-arity overrides");
 });
 

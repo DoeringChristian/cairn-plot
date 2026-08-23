@@ -232,6 +232,19 @@ export function deriveCompareEncodingId(
   return curveId;
 }
 
+/**
+ * The pane's encoding state as an explicit SUM (spec §2.4) — the ONE cell that
+ * replaces the `encodingId` ∥ `overridden` twin that used to be two `useState`s
+ * set together by hand. `id` is the active encoding; `kind` is whether the user
+ * has EXPLICITLY picked it (`"picked"`) since mount / HOME / a controlled reseed,
+ * or it is still following its authored/derived seed (`"default"`). Picked-ness
+ * is now a fact the value CARRIES, not a boolean synced beside it: every writer
+ * moves the whole `EncodingState`, so the two can no longer disagree.
+ */
+export type EncodingState =
+  | { id: string; kind: "default" }
+  | { id: string; kind: "picked" };
+
 /** Config for {@link usePaneEncoding}. */
 export interface PaneEncodingConfig {
   /** Surface mode (see `resolveDisplayEncodingIds`). */
@@ -331,19 +344,23 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     [idsFor, pickDefaultCurve, propColormap],
   );
 
-  const [encodingId, setEncodingId] = useState<string>(() => seedFor(arity));
+  // ONE state cell (spec §2.4): the active id AND whether the user has explicitly
+  // picked it, moved together so they cannot drift. `encodingId`/`overridden` are
+  // derived read-views of it — the DIFF face's default-vs-override signal
+  // (`overridden`: a pick applies across faces) and the id every consumer reads.
+  // `overridden` stays DISTINCT from `encodingModified` (value ≠ seed), which a
+  // PERSISTED cross-slot value can trip without a user pick.
+  const [encState, setEncState] = useState<EncodingState>(() => ({
+    id: seedFor(arity),
+    kind: "default",
+  }));
+  const encodingId = encState.id;
+  const overridden = encState.kind === "picked";
   const memoryRef = useRef<Map<number, string>>(new Map());
   // Track the last props/arity so ONE effect can tell prop-reseed from arity-flip.
   const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
   const prevArityRef = useRef<number>(arity);
   const controlledSurface = !!config.controlledSurface;
-  // OVERRIDDEN — has the user EXPLICITLY picked an encoding (a `setEncoding` since the
-  // last mount / HOME / controlled reseed)? This is the default-vs-override signal a
-  // DIFF face reads (state-unification): a diff shows its kernel default UNLESS the
-  // viewport is overridden, in which case the pick applies across faces (one setting).
-  // Distinct from `encodingModified` (value ≠ seed), which a PERSISTED cross-slot value
-  // can trip without a user pick.
-  const [overridden, setOverridden] = useState(false);
 
   // CONTROLLED-SURFACE RESEED, done DURING RENDER (React's supported "adjust state
   // during render" pattern — guarded to fire once, so the COMMITTED frame already
@@ -365,8 +382,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     prevArityRef.current = arity;
     if (controlledSurface) {
       memoryRef.current.clear();
-      setEncodingId(seedFor(arity));
-      setOverridden(false); // host drives → not a user override
+      setEncState({ id: seedFor(arity), kind: "default" }); // host drives → not a user pick
     }
   }
 
@@ -384,7 +400,9 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
       if (remembered && avail.all.includes(remembered)) next = remembered;
       else if (avail.all.includes(encodingId)) next = encodingId;
       else next = pickDefaultCurve(avail);
-      if (next !== encodingId) setEncodingId(next);
+      // Arity-flip moves the id but PRESERVES pick-ness (kind) — the user's
+      // override survives a channel-selector flip (existing behavior).
+      if (next !== encodingId) setEncState((s) => ({ id: next, kind: s.kind }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arity]);
@@ -394,8 +412,9 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
       // Back-compat: a sync peer may still publish `viridis` → alias to `turbo`.
       const id = aliasColormap(rawId);
       memoryRef.current.set(arity, id);
-      setEncodingId(id); // in a stack this IS the shared setting (applies to all slots)
-      setOverridden(true); // an explicit user pick — the diff face now follows it too
+      // In a stack this IS the shared setting (applies to all slots); an explicit
+      // user pick, so the diff face now follows it too (`kind:"picked"`).
+      setEncState({ id, kind: "picked" });
     },
     [arity],
   );
@@ -404,8 +423,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     // HOME: re-seed to the FOCUSED slot's authored defaults + clear the override, so a
     // diff face falls back to its kernel default (points 2+3 of the model).
     memoryRef.current.clear();
-    setEncodingId(seedFor(arity));
-    setOverridden(false);
+    setEncState({ id: seedFor(arity), kind: "default" });
   }, [seedFor, arity]);
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
