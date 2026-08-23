@@ -76,14 +76,14 @@
       const val = steps.map((i) => 2.2 * Math.exp(-i / 15) + 0.08);
       cp.line({ loss, val }, steps).mount("#p-line");
 
-      // ── Scatter: per-point color mapped through the viridis colorbar ─────
+      // ── Scatter: per-point color mapped through the plasma colorbar ──────
       const n = 200;
       const xs = Array.from({ length: n }, () => Math.random() * 10);
       const ys = xs.map((x) => Math.sin(x) + Math.random() * 0.4);
       const color = xs.map((x) => x);
       cp.scatter(xs, ys, {
         color,
-        colormap: "viridis",
+        colormap: "plasma",
         xLabel: "x",
         yLabel: "sin(x) + noise",
         colorLabel: "x",

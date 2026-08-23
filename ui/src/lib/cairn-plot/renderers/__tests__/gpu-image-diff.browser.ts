@@ -191,14 +191,51 @@ function mountUnifiedDiff(container: HTMLElement, opId: string): Promise<ProbeRe
   });
 }
 
-/** Force a render and read the composited pane bytes once they are non-degenerate. */
-async function paintedBytes(probe: ProbeRef): Promise<Uint8Array | null> {
+/**
+ * Force renders until the composited pane bytes satisfy `want` (default: any
+ * non-zero pixel), then return the freshest read. ROBUST TO SLOW SOFTWARE
+ * ADAPTERS: it polls the ACTUAL content condition rather than waiting a fixed
+ * delay, so a late first diff-paint on SwiftShader (where the pane may briefly
+ * composite the raw source gradient — non-zero, but PRE-diff — before the
+ * red-green/magma diff frame lands) cannot be sampled as a degenerate frame. If
+ * the condition never holds within the budget, the last painted frame is
+ * returned so the caller's assertion fails LOUDLY with the real pixel counts.
+ */
+async function paintedBytes(
+  probe: ProbeRef,
+  want: (bytes: Uint8Array) => boolean = nonZero,
+  timeoutMs = 8000,
+): Promise<Uint8Array | null> {
+  let last: Uint8Array | null = null;
   await waitFor(async () => {
     probe().requestRender();
     const bytes = await readCanvasBytes(probe().canvas);
-    return !!bytes && nonZero(bytes);
-  }, 8000, 120);
-  return readCanvasBytes(probe().canvas);
+    if (bytes) last = bytes;
+    return !!bytes && want(bytes);
+  }, timeoutMs, 120);
+  const fresh = await readCanvasBytes(probe().canvas);
+  return fresh ?? last;
+}
+
+/**
+ * Poll renders until the composited surface DIFFERS from `baseline` (a kernel
+ * switch has visibly composited), robust to slow software adapters — replaces a
+ * fixed post-switch delay. Returns the last read (changed if it diverged, else
+ * the final frame so the caller's `sameFrac` assertion reports the real value).
+ */
+async function paintedUntilChanged(
+  probe: ProbeRef,
+  baseline: Uint8Array,
+  timeoutMs = 8000,
+): Promise<Uint8Array | null> {
+  let last: Uint8Array | null = null;
+  await waitFor(async () => {
+    probe().requestRender();
+    const bytes = await readCanvasBytes(probe().canvas);
+    if (bytes) last = bytes;
+    return !!bytes && sameFrac(baseline, bytes) < 0.98;
+  }, timeoutMs, 120);
+  return last;
 }
 
 async function main(): Promise<void> {
@@ -212,7 +249,13 @@ async function main(): Promise<void> {
     document.body.appendChild(cUnified);
 
     const probe = await mountUnifiedDiff(cUnified, "signed");
-    const signedBytes = await paintedBytes(probe);
+    // Wait for the red-green diff frame ITSELF (both polarities present), not a
+    // generic non-zero paint — otherwise a slow adapter's pre-diff source frame
+    // is sampled and red/green come back 0.
+    const signedBytes = await paintedBytes(probe, (b) => {
+      const { red, green } = redGreenPresence(b);
+      return red > 20 && green > 20;
+    });
     if (!signedBytes) {
       report(false, `[case1] could not read back the unified diff surface`);
       allOk = false;
@@ -232,10 +275,9 @@ async function main(): Promise<void> {
     const before = await readCanvasBytes(probe().canvas);
     probe().changeDiffKernel("absolute");
     await waitFor(() => probe().resolvedKernelId === "absolute", 3000);
-    await sleep(300);
-    probe().requestRender();
-    await sleep(120);
-    const after = await readCanvasBytes(probe().canvas);
+    // Poll for the switched frame to composite rather than sleeping a fixed
+    // amount — the absolute-kernel frame lands later on slow software adapters.
+    const after = before ? await paintedUntilChanged(probe, before) : await readCanvasBytes(probe().canvas);
     const switched =
       probe().resolvedKernelId === "absolute" && !!before && !!after && sameFrac(before, after) < 0.98;
     if (!switched) allOk = false;
@@ -252,6 +294,11 @@ async function main(): Promise<void> {
     cFlip.style.cssText = "width:128px;height:128px;position:absolute;left:320px;top:0";
     document.body.appendChild(cFlip);
     const flipProbe = await mountUnifiedDiff(cFlip, "flip");
+    // FLIP is a cached multi-pass kernel displayed through magma — wait for the
+    // colormap to resolve, THEN poll for a non-degenerate composited frame. On
+    // slow software adapters the cached compute + blit lands well after mount, so
+    // a single early read would sample a degenerate (all-zero) frame.
+    await waitFor(() => flipProbe().colormap === "magma", 4000);
     const flipBytes = await paintedBytes(flipProbe);
     const flipOk = flipProbe().colormap === "magma" && !!flipBytes && nonZero(flipBytes);
     if (!flipOk) allOk = false;

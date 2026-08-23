@@ -7,7 +7,16 @@
 
 Behavior-preserving throughout. Full gate suite green at every commit
 (typecheck 0 · unit 661 · harness 33, byte-pins + WebGPU parity + paint-atomic
-flip incl. · pytest 260 · bundles rebuilt & in sync).
+flip incl. · **smoke:js 5/5** · pytest 260 · bundles rebuilt & in sync).
+
+> **Local gate checklist (run ALL before every commit).** The overnight full-gate
+> was missing `smoke:js`, which is why a stale example slipped through to CI (see
+> *CI-fix follow-up* at the end). The complete local gate is now:
+> `cd ui && npm run typecheck` · `node --experimental-strip-types --test
+> "src/lib/cairn-plot/**/*.test.ts"` · `npm run test:harness`
+> (SwiftShader via `HARNESS_FORCE_STRATEGY=swiftshader` to match Linux CI, not
+> just Apple Metal) · **`npm run smoke:js`** · `uv run pytest tests -q` ·
+> bundles rebuilt+synced+committed if plot sources changed.
 
 ---
 
@@ -802,6 +811,48 @@ separable green slice under land-green-or-revert:
    the hold unless it is re-expressed. **Ruling needed:** is a `Loading…` flash on
    a cold channel-layer swap acceptable, or must the last-frame hold be preserved
    (a hold-carrying design in the subscribable rework)?
+
+---
+
+## CI-fix follow-up (PR #36 — Linux + Chromium/SwiftShader)
+
+The refactor commits were each full-gate green on Apple Metal, but the CI runs on
+Linux Chromium with a **SwiftShader** software adapter (`architecture:"swiftshader"`)
+and included `smoke:js`, which the local gate did **not**. Four failures, none a
+scheduler/`ResolvedLeaf` regression:
+
+1. **`smoke:js` — 4/5 JS-API panes blank (scatter, image, compare, grid).**
+   ROOT CAUSE: pre-existing, not a refactor regression. `examples/demo_js_api.html`
+   asked `cp.scatter(..., { colormap: "viridis" })`, but `viridis` is not in the
+   contract-pinned colormap set (`turbo/plasma/magma/red-green/red-blue`). The
+   builder threw, aborting the single inline `<script>`, so every mount *after*
+   `line` never ran. Verified with the merge-base: at `cea027e` the set already
+   excluded `viridis` and the demo already used it — and none of the 11 refactor
+   commits touched `lut.ts`/`validate.ts`/the demo. Latent because `smoke:js` was
+   not in the local gate. FIX: demo now uses `colormap: "plasma"`. (Bisect
+   evidence: `window.cairnPlot` renders `line` fine on the branch; the throw is
+   purely the invalid colormap string.)
+2. **`engine/content-ops` — `DeviceLostError` on `runPoolDirectOpCase` readback.**
+   Software-backend teardown artifact, not a parity defect — the same category the
+   `backend-readback` and `gpu-compare-split-numbers` harnesses already treat as a
+   guarded SKIP. FIX: `main()`'s catch now converts `isDeviceLostError` into a loud
+   SKIP (report-true) instead of a FAIL.
+3. **`renderers/gpu-image-diff` — red/green px=0, FLIP degenerate on SwiftShader.**
+   Timing: the pane briefly composites the raw source frame (non-zero, but PRE-diff)
+   before the red-green/magma diff frame lands; the fixed-`nonZero` wait sampled it.
+   FIX: `paintedBytes` now polls the ACTUAL content predicate (red-green presence /
+   magma non-degeneracy), FLIP waits for its colormap to resolve first, and the
+   kernel-switch case polls for the surface to change instead of `sleep()`.
+4. **`renderers/stacked-diff-flip` — TIMEOUT at "visit1 diff paints non-blank".**
+   The recently-added `probe.home()` (which colors the first diff visit via the
+   kernel-default colormap) was called the instant `compareMode` flipped to `"diff"`;
+   on a slow adapter the re-set probe had not yet wired `home()`, so the optional
+   call was a silent no-op, leaving the uncolored near-zero raw error field to burn
+   the paint budget. FIX: wait for `home` to be a function before invoking it.
+
+All 33 harnesses pass locally under `HARNESS_FORCE_STRATEGY=swiftshader`; `smoke:js`
+is 5/5. `smoke:js` and the SwiftShader harness strategy are added to the local gate
+checklist above so this gap cannot reopen.
 
 ---
 
