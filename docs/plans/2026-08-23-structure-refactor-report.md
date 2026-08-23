@@ -446,4 +446,188 @@ contract.
 
 ---
 
+# Shift 4 — P3: the render scheduler, as ONE unit
+
+**Forked from** `2b04402` (shift-3 HEAD). Behavior-preserving throughout; full
+gate green (typecheck 0 · node 661 · pytest 260 · schema + boundary OK · harness
+36/40 via `--all`, IDENTICAL to the untouched base — the same 4 gesture/URL-only
+interaction harnesses fail HEADLESSLY at `2b04402` and after, with byte-identical
+signatures; every parity + interaction harness that settles headlessly —
+flip-paint, flip-stress, flip-chrome, flip-resolve, realstack-gpu, content-ops,
+compare-settings-sync, grid-stacked-persist — is PASS · bundles rebuilt + synced
++ committed).
+
+## Phase landed
+
+| Commit | Phase | What it made unrepresentable |
+|---|---|---|
+| `b858e68` | **P3 — render scheduler as one unit** | the two racing render effects + their shared `lastRenderedRef`/`lastContentIdentityRef` dance; the mode fall-through chain; the `opId === 0` IDENTITY∥unknown sentinel collision; the five separate `*Version` counter cells |
+
+Landed as ONE commit under land-green-or-revert (the unit is coherent — the
+`*Version` fold is structural only once the scheduler is rewritten, and the
+sentinel split is entangled with the same dispatch). No revert needed.
+
+### The three sub-changes (each traced)
+
+**1. One render scheduler** — `renderers/use-render-scheduler.ts`
+(`useRenderScheduler`), co-located with `render-snapshot.ts` (the template it
+extends). Computes `(renderKey, phase)` ONCE per commit — `phase =
+snapshot.resident && isFlip ? "layout" : "post"` — and drives BOTH hook slots (a
+`useLayoutEffect` + a `useEffect`; React cannot pick the effect type at runtime,
+so both slots exist, but the OWNER of a given commit's render is decided once).
+A single `renderKey` = `{ id: renderId, source, container }` dedupe, owned by the
+hook, guarantees a resident flip submits EXACTLY once even though both slots fire.
+This replaces the two inline effects that each RE-DERIVED the flip/residency
+decision and hand-synced a shared `lastRenderedRef`. The flip detector, the
+dedupe ref, and the paint-phase-oracle epoch machinery (all former pane-body
+refs) move INTO the hook; the pane now lists **no scheduler refs**.
+
+*Equivalence argument (why byte-identical):* the old layout effect read the flip
+detector AT EFFECT TIME; the new hook reads it at RENDER TIME to compute `phase`.
+Nothing mutates the detector between a commit's render and its layout slot (the
+upload effects don't touch it, and the scheduler slots are where it first could
+change this commit), so the two coincide. Each slot's flip-detector write order,
+the dedupe-check order, and the paint-phase record conditions (layout records
+regardless of `submitted`; post only if `submitted`) are preserved verbatim.
+Confirmed by the flip-paint arbiter: ZERO stale first-painted-frames on resident
+image↔diff and same-kind flips, after as before.
+
+**2. Exhaustive `mode` dispatch.** `renderPass`'s `if (compositorMode) … if
+(diffMode) … <image tail> if (hasCompare) return false` fall-through chain became
+`switch (snapshot.mode) { case "compositor" | "diff" | "image"; default: const
+_never: never = snapshot.mode }`. `snapshot.mode` is 1:1 with the
+`compositorMode`/`diffMode` booleans (its own definition), so each arm's body is
+byte-unchanged. The degenerate-compare guard (`hasCompare` with an unrecognized
+`compareSource.mode`, which maps to mode "image") is now a precondition INSIDE the
+image arm, not a shared tail. A NEW content mode is a compile-time TYPE error at
+this boundary, never a silent plain-image blit. (−2 `if` → 2 `case`.)
+
+**3. `contentOpId → null` at the TS boundary.** `content-ops/wgsl.ts` gains
+`contentOpIdOrNull(id): number | null` — the diff direct-op floor `if (opId === 0)
+return false` (0 = IDENTITY colliding with "unknown/mis-resolved kernel") becomes
+`const opId = contentOpIdOrNull(kernelId); if (opId === null) return false`. No
+diff kernel legitimately dispatches to identity, so this is byte-identical, but
+the sentinel collision is gone: `null` is unambiguously "hold". **The WGSL
+contract is untouched** — the compositor path still uses `contentOpId` (its
+split/blend ids are always registered), and the shader's `0 = identity`
+fallthrough / zero-filled-uniform default is unchanged (content-ops.browser
+byte-parity PASS).
+
+### The `*Version` fold (shift-2 stop-item 2)
+
+The five separate `*Version` `useState`s → ONE `useRevisions()` cell (one state
+object, a stable `bump(source)`). Five NAMED sources, kept semantically distinct
+(the shift-2/3 finding that a naive single revision over-fires them stands — they
+are *named* on one mechanism, not merged into one counter):
+
+| named source | trigger | consumers |
+|---|---|---|
+| `source` | primary/deep source texture (re)uploaded | scheduler render + diff metrics |
+| `container` | container resized OR restored from park | scheduler render |
+| `pixels` | retained CPU pixel bytes changed | histogram + pixel overlay |
+| `reference` | diff `b` operand (re)uploaded | scheduler render(diff) + metrics/overlay |
+| `diffOverlay` | cached-diff RESULT readback landed | overlay |
+
+The pane keeps thin named read-views (`uploadVersion = revisions.source`, …) so
+every consuming dep array is byte-unchanged — the fold is in the OWNERSHIP (five
+cells → one mechanism), not a churn of ~16 read sites. `container` has no read
+outside the scheduler, so it has no alias (passed straight to the hook).
+
+## Accounting (vs shift-3 HEAD `2b04402`)
+
+| file | if | loc | note |
+|---|---|---|---|
+| GpuImagePane.tsx | 107 → **95** | 2894 → 2836 | −5 scheduler refs, −2 effects → 1 hook call, −5 counter cells → aliases, −2 mode `if` → `case` |
+| content-ops/wgsl.ts | 7 → **8** | 94 → 112 | +`contentOpIdOrNull` (+1 `if`, +18 LOC all doc) |
+| use-render-scheduler.ts | **8** (new) | 199 (new) | the scheduler + `useRevisions`, mostly module doc |
+
+Net `if` in pre-existing files **−11**; the scheduler's 8 conditionals relocated
+into the named owner. Load-bearing wins: **−5 hand-synced state cells**
+(`lastContentIdentityRef`, `lastRenderedRef`, `contentEpochRef`,
+`contentEpochIdentityRef`, `lastCommitEpochRef`), **−2 racing effects → 1 owner**,
+**−5 counter cells → 1 mechanism**, **−1 mode fall-through → exhaustive switch**,
+**−1 sentinel collision** (opId 0 = identity ∥ unknown). One new module (the
+scheduler owner) — the exception the report has treated as justified for a named
+owner extending `render-snapshot.ts`.
+
+## Human-readability summary — what a reader now finds where
+
+- **"When does the pane render, and in which paint phase?"** — one place:
+  `use-render-scheduler.ts`. `phase = resident && isFlip ? "layout" : "post"`,
+  computed once, one `renderKey` dedupe. There is no second effect re-deriving the
+  same decision, and no module-level ref two effects hand-sync. The pane hands the
+  scheduler `snapshot` + `renderPass` + the two forcing revisions and owns nothing
+  of the bookkeeping.
+- **"Which pipeline does this frame drive?"** — `switch (snapshot.mode)` in
+  `renderPass`, exhaustive: compositor / diff / image, with a `never` default. Mode
+  is data; an unhandled one does not compile. No fall-through, no defensive tail.
+- **"What does an unresolved diff op do?"** — holds (`contentOpIdOrNull → null`),
+  told apart from a real identity. The shader still reads `0 = identity`.
+- **"What re-fires a render / a histogram / an overlay?"** — one mechanism,
+  `useRevisions`, with five NAMED sources; the name says who consumes it.
+- The **`render-snapshot.ts` template stays untouched** — the scheduler is the
+  consumer that now finally matches it (one owner, read by all, re-derived by none).
+
+## Oracles retired
+**None.** Per the retirement rule, P3's single owner does NOT make the surviving
+tripwires' target states unrepresentable: the **paint-phase log** is the flip-paint
+ARBITER (it measures whether resident flips actually paint pre-paint — a real,
+still-checkable property), and `isPipelineMismatch` / the `compareIntended` tag
+guard the degenerate-compare image blit (still representable — an unrecognized
+`compareSource.mode` still reaches the image arm). What P3 DID make
+unrepresentable — the two-racing-effects dedupe — was never an *oracle*; it was the
+`lastRenderedRef` dance itself, now gone by construction (internal to the one
+owner). The scheduler/LeafView oracles the plan slates for retirement
+(`leafResolveStats`, the resolve tripwires) belong to P4; none removed here.
+
+## Remaining phases (P4 / P5) — unchanged from shift-1's plan, minus what landed
+
+- **P4 — stack & LeafView ownership** — `ResolvedLeaf` discriminated union +
+  subscribable resolve-cache (LeafView reads via `useSyncExternalStore`);
+  stack-owned chrome skeleton + `CompareControl` map + aspect reducer + children
+  reconcile; `loweredRenderer()` / `resolvableFor()` shared by GridView prefetch
+  and LeafView. Deletes the LeafView lag `state` cell + `staleDiffFallback`, the
+  `__diffB` sentinel + diff-HOLD branch, the `__`-side-channel + casts,
+  `reserveOnly` ×7 + `StackHasCompareContext`, `useCompareControl`-everywhere,
+  `stackAspectRef`, the `effectiveMode`/`clampedActive` lag clamps, the
+  prefetch/read key drift, `leafResolveStats`, `__cairnDisableSyncResolve`. Its
+  oracles (`leafResolveStats`, the resolve tripwires) retire IN P4, once the
+  subscribable cache makes the lag-cell state unrepresentable.
+- **P5 — dtype split & oracle retirement** — HDR/SDR pane bodies (or a normalized
+  internal source struct up front); the `notifyPresent` observer seam (moves
+  `displayFingerprint`/`sampleDeepColor`/`paneId`/`deepSampleTex` + the
+  bug-signature oracles to the harness); `scalarMode` one enum field; one shared
+  test-hooks runtime chunk (kills the longest-ring heuristic). Deletes the union
+  `hdrMode ? … : …` dep ternaries + `as HdrImageProps` casts + 3 parallel upload
+  effects; the auto-armed `isPipelineMismatch`/`isEncodingGenerationMismatch`/
+  `isOrangeSuspect` predicates; the `__cairnDisable*` toggles. The paint-phase log
+  and `isPipelineMismatch` retire HERE (P5), asserted-zero then deleted, once the
+  observer seam + dtype split make their target flashes unrepresentable.
+
+## Open items needing the user's ruling (carried forward — none decided here)
+
+1. **Render-time reseed timing (P2, per-field STOP).** The encoding's controlled
+   reseed runs DURING RENDER (so the committed frame carries it, no one-frame lag);
+   `useControlledReseed` is a post-commit `useEffect` that peak/γ/bounds tolerate
+   but encoding does not. Folding encoding into the seam would either flash the
+   encoding or force render-time timing on the other fields — a user-visible change.
+   **Ruling needed:** accept encoding staying render-time (divergent timing encoded
+   as data), or a design that unifies without a flash?
+2. **Backing-size floor → required precondition (P1 stop-item 4, the one genuinely
+   user-visible STOP).** Making render a no-op until first `resize()` risks a blank
+   frame before the container is measured; today it falls back to source dims and
+   paints. **Ruling needed:** is a blank pre-measure frame acceptable, or must the
+   source-dims fallback stay?
+3. **`PaneSettings` per-pane field-SCOPE (de)serializer (P2 design question).** The
+   incoming legacy normalization is already single-source, and `viridis→turbo` is
+   already one `aliasColormap` owner, so a `normalizeSettingsPatch` wrapper would
+   add indirection without deleting duplication. The remaining win — a scoped
+   `PaneSettings` value over the UNCONDITIONAL fields — is a genuine design shift
+   because the panes have DIFFERENT capability sets (Gpu has exposure/peak; Cpu-SDR
+   does not), carrying the UI-semantics risk shift-2 flagged. **Ruling needed:** the
+   scope-tag design (one value, per-field `shared-look`|`diff-only`|`live-only`) vs.
+   keeping the per-pane explicit surfaces — its own gate-heavy shift either way.
+
+---
+
 *Anthropic Cairn — structure-refactor execution report.*
