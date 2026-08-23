@@ -314,4 +314,136 @@ named hook — each traded for a small documented OWNER in the pool / the seam.
 
 ---
 
+# Shift 3 — P2 remainder: the encoding seam
+
+**Forked from** `6758ebc` (shift-2 HEAD). Behavior-preserving throughout; full
+gate green at every commit (typecheck 0 · node 661 · harness 36/40 via `--all` —
+the same 4 gesture-only interaction harnesses fail HEADLESSLY at the untouched
+baseline `6758ebc` and are held harmless; every parity + interaction harness that
+settles headlessly, incl. flip-paint/stress/chrome/resolve, realstack-gpu,
+compare-settings-sync, grid-stacked-persist, is PASS · pytest 260 · schema +
+boundary OK · bundles rebuilt + synced + committed).
+
+## Phases landed
+
+| Commit | Phase | Stop-item | What it made unrepresentable |
+|---|---|---|---|
+| `99f7d56` | **P2f-1 — EncodingState sum** | P2 §2.4 | the `encodingId` ∥ `overridden` hand-synced twin cell |
+| `a3dc024` | **P2f-2 — fold `initialEncSeedRef`** | P2 §2.3 | the pane-side once-only encoding-seed ref (a 2nd home for the owned-seed policy) |
+
+### P2f-1 — `99f7d56` (EncodingState sum)
+`usePaneEncoding` held the active id and the picked-vs-default bit as TWO
+`useState`s set together by hand — a Class-1 twin that drifts if a writer touches
+one and not the other. Replaced by ONE `EncodingState = { id, kind:
+"default"|"picked" }` cell; `encodingId`/`overridden` are derived read-views
+(`overridden = kind === "picked"`). The three writers (controlled reseed,
+`setEncoding`, `resetEncoding`) each move the whole struct; the arity-flip
+functional update preserves `kind` (an override survives a channel flip, exactly
+as before). Behavior-identical. `encodingModified` (value ≠ seed) stays the
+distinct derived boolean it always was. **Finding:** `overridden` has NO in-tree
+consumer left — a shift-1/2-era decision (`effectiveDiffColormap = enc.colormap`)
+retired it; it is kept as a derived output per the spec's diff-face contract
+(cheap, and P4/P5 diff-face work may re-consume it) rather than sum-typed then
+read by no one.
+
+### P2f-2 — `a3dc024` (fold `initialEncSeedRef`)
+The owned viewport's seed COLORMAP was frozen by a pane-side ref in
+`GpuImagePane` and fed back into the hook — a second home for the "Owned seeds
+once" policy (spec §2.3). The freeze moved INTO the hook as a `freezeSeedColormap`
+config byte: it captures the aliased seed colormap once and reuses it for every
+`seedFor` (initial state, HOME, `encodingModified`). GpuImagePane now passes the
+LIVE initially-visible-face expression and lets the hook own the freeze
+(behavior-identical — same first-render capture). The `if
+(initialEncSeedRef.current == null)` guard did not vanish; it RELOCATED into the
+hook's `if (config.freezeSeedColormap && seedColormapRef.current === null)` — one
+owner (traced if-move, pane −1 / hook +1).
+
+## Accounting (vs shift-2 HEAD `6758ebc`)
+
+| file | if | loc | note |
+|---|---|---|---|
+| display-encoding.ts | 13 → **14** | 434 → 476 | +1 owned-freeze capture; +42 LOC = the `EncodingState` type + doc |
+| GpuImagePane.tsx | 108 → **107** | 2894 → 2894 | −1 (`initialEncSeedRef` guard); LOC flat |
+
+Net `if` across the shift: **0** (one guard relocated pane→hook). LOC **+42**, all
+type declaration + documentation. As in shifts 1–2 the counts understate: the
+load-bearing wins are **−1 state cell** (`overridden` `useState`), **−3
+hand-synced setter pairs → 3 single struct moves**, and **−1 pane-side ref**
+(`initialEncSeedRef`) with its policy centralized in the hook.
+
+## Human-readability summary
+- **"Has the user picked this encoding, or is it the default?"** — one cell
+  answers: `EncodingState.kind`. There is no separate boolean to keep in sync;
+  every writer moves the whole value.
+- **"Where is the owned viewport's seed frozen?"** — the hook (`usePaneEncoding`),
+  once, via `freezeSeedColormap`. No pane keeps its own seed ref.
+
+## Stopped / deferred (with reasons)
+
+- **Render-time reseed → `useControlledReseed` — PER-FIELD STOP (timing).** The
+  encoding's controlled reseed runs DURING RENDER (the supported adjust-state-in-
+  render pattern) so the committed frame carries it with no one-frame lag;
+  `useControlledReseed` is a post-commit `useEffect` (peak/γ/bounds tolerate the
+  lag, encoding does not — documented at the reseed site). Folding it in would
+  either flash the encoding or force render-time timing on peak/γ/bounds — a
+  user-visible change the guardrail forbids. It also structurally belongs to the
+  state OWNER (`usePaneEncoding` owns `encState`), not the call-site seam. Left in
+  the hook.
+- **CpuImagePane's owned seed stays LIVE while GpuImagePane's freezes — preserved
+  as DATA, not unified.** CpuImagePane omits `freezeSeedColormap`; its
+  `encodingModified`/HOME intentionally track the live descriptor colormap. The
+  divergence is encoded as the policy byte per the guardrail ("encode them as
+  data, don't unify their timing"), not forced to one timing.
+- **`PaneSettings`/`normalizeSettingsPatch` (§2.2) — NOT a boring win right now.**
+  The incoming legacy normalization is ALREADY single-source
+  (`image-display-encoding-sync.ts`: the `encoding ?? colormap ?? tonemap`
+  cascade + the orange-frame `isDiffFace` scoping + the face tag), and
+  `viridis→turbo` is already the one `aliasColormap` owner. A `normalizeSettingsPatch`
+  wrapper over already-single-source code would add indirection without deleting
+  duplication (violating the ≥2-patch / boring-code rule). The remaining
+  unification — a per-pane field-SCOPE `PaneSettings` (de)serializer over the
+  UNCONDITIONAL fields — is a genuine design shift (the panes have different
+  capability sets: Gpu has exposure/peak, Cpu-SDR does not), with the
+  UI-semantics risk shift-2 flagged. Its own shift.
+- **`NONE_GRAY_CURVES` off the registry / `hasKernelOwner` dual store.** Unchanged
+  from shift-2's assessment: `NONE_GRAY_CURVES` has ONE consumer (below the
+  ≥2-patch threshold for a new registry flag); `hasKernelOwner` needs the
+  kernel-owner ownership P3 introduces. Neither is a safe isolated edit.
+
+## P3 — assessed, NOT attempted this shift (design + why)
+
+**Scheduler design (two sentences).** Compute `(renderKey, phase)` once —
+`phase = snapshot.resident && isFlip ? "layout" : "post"` — keep both hook slots
+(a `useLayoutEffect` and a `useEffect`, since React cannot pick the effect type at
+runtime) but drive BOTH from one owner that dedupes on `renderKey` internally,
+replacing the two effects' shared `lastRenderedRef`/`alreadyRendered`/
+`markRendered` dance; `renderPass` then dispatches on the exhaustive `mode` enum
+(`image | diff | compositor`) with no shared floor tail, and the 5 `*Version`
+counters collapse to named `poolRevision`-style revision sources (distinct
+triggers, one mechanism). **Why deferred:** this is one coherent unit — the
+`*Version` fold is "structural only once the scheduler is rewritten" (shift-2's
+own finding, re-verified), and `contentOpId → null` (killing the `opId === 0`
+IDENTITY collision) is entangled with the WGSL contract where `0 = identity` is
+the shader's load-bearing fallthrough (pool.ts / image-engine.ts feed it straight
+into the uniform), so splitting unknown→null must touch the shader boundary. It is
+the single most delicate, arbiter-pinned code in the tree (flip-paint +
+flip-stress are the arbiters); a partial extraction would add an abstraction
+without the deletions that justify it. Correct as its own focused, gate-heavy
+shift — not a rushed end-of-shift slice under the land-green-or-revert rule.
+
+## Oracles retired this shift
+**None.** Per the retirement rule, no phase this shift made a tripwire's target
+state unrepresentable (the scheduler/LeafView oracles await P3/P4). `overridden`
+is not an oracle — it is a derived output, retained per the spec's diff-face
+contract.
+
+## Remaining (unchanged from shift-2's plan, minus what landed)
+- **P2** — render-time-reseed timing STOP (above); `PaneSettings` per-pane
+  field-scope serializer (its own shift); `NONE_GRAY_CURVES`; `hasKernelOwner`.
+- **P3** — the scheduler unit above (folds shift-2's stop-item 2 `poolRevision`).
+- **P4 / P5** — as shift-1's plan (stack/LeafView ownership; dtype split + oracle
+  retirement).
+
+---
+
 *Anthropic Cairn — structure-refactor execution report.*
