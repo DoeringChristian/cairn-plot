@@ -187,9 +187,10 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 // resolve effect (which peeks the cache SYNCHRONOUSLY on a hit) updates it. Two
 // artefacts could flash in that window: a `"Loading…"` PLACEHOLDER (only if state
 // ever reset to "loading" — it must not) and a STALE-DIFF render (diffSpec set but
-// `state.dataProps` has no `__diffB` yet — a half-built `compareSource` whose `b`
-// is undefined). This counter lets a harness prove BOTH are 0 across a flip storm.
-// No production code reads it; the increments are a couple of integers.
+// the held leaf is still the previous slot's `kind:"single"` — so no diff foreground
+// yet). The `ResolvedLeaf` union makes the half-built `compareSource` (undefined
+// `b`) unrepresentable; `staleDiffHolds` counts the benign single-frame HOLD that
+// replaces it. No production code reads it; the increments are a couple of integers.
 interface LeafResolveStats {
   placeholderMounts: number;
   staleDiffHolds: number;
@@ -198,6 +199,28 @@ const leafResolveStats: LeafResolveStats = { placeholderMounts: 0, staleDiffHold
 if (typeof window !== "undefined") {
   (window as unknown as { __cairnLeafResolveStats?: LeafResolveStats }).__cairnLeafResolveStats = leafResolveStats;
 }
+
+// The typed resolve-cache payload (P4). A leaf resolves to EXACTLY one of two
+// shapes and the `kind` tag says which — so a DIFF resolution STRUCTURALLY carries
+// its foreground operand (`foreground: DecodedSource`, non-optional), and a
+// `compareSource` whose `b` is undefined is now UNREPRESENTABLE (the former
+// `__diffB === undefined` half-built state can no longer be constructed). The
+// SINGLE shape stays an opaque prop bag — `resolveDataProps`'s record, spread into
+// the renderer verbatim; the DIFF shape is fully structured (built once in
+// `resolveDiffPair`). One value in the cache, one discriminant at every read —
+// replacing the `__diffB`/`__diffContentKey*`/`__diffOverlay` string side-channel.
+type ResolvedLeaf =
+  | { kind: "single"; props: Record<string, unknown> }
+  | {
+      kind: "diff";
+      /** The reference operand (`compareSource` reference; `diff = source − b`). */
+      source: DecodedSource;
+      /** The foreground operand (`compareSource.b`) — always present on a diff. */
+      foreground: DecodedSource;
+      contentKeyA: string;
+      contentKeyB: string;
+      overlay?: ImageOverlayData;
+    };
 
 // ---------------------------------------------------------------------------
 // Leaf — the former flat `PlotApp` body. Resolves the leaf's DataSpec against
@@ -257,32 +280,32 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "ready"; dataProps: Record<string, unknown> }
+    | { status: "ready"; leaf: ResolvedLeaf }
   >(() => {
-    const cached = peekResolved<Record<string, unknown>>(resolveKey);
-    return cached ? { status: "ready", dataProps: cached } : { status: "loading" };
+    const cached = peekResolved<ResolvedLeaf>(resolveKey);
+    return cached ? { status: "ready", leaf: cached } : { status: "loading" };
   });
   const [, bumpRegistry] = useState(0);
 
   const diffFgData = diffSpec?.fgData;
   useEffect(() => {
     const key = resolveKey;
-    const cached = peekResolved<Record<string, unknown>>(key);
+    const cached = peekResolved<ResolvedLeaf>(key);
     if (cached) {
-      setState({ status: "ready", dataProps: cached });
+      setState({ status: "ready", leaf: cached });
       return;
     }
     let cancelled = false;
     // DIFF path: resolve BOTH operands through the compare resolver and stash the
-    // decoded foreground (`__diffB`) + content keys alongside the reference
+    // decoded foreground + content keys alongside the reference
     // `source`; the LIVE diff settings are merged at render (they change without
     // a re-fetch). The reference/foreground SIGN convention: `source` = reference,
     // `compareSource.b` = foreground (`diff = source − b`, byte-parity with the
     // compare pane's `texA − texB`).
     if (diffSpec && diffFgData) {
       resolveCached(key, () => resolveDiffPair(node.data, diffFgData, source)).then(
-        (dataProps) => {
-          if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
+        (leaf) => {
+          if (!cancelled) setState({ status: "ready", leaf });
         },
         (err) => {
           if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
@@ -292,7 +315,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         cancelled = true;
       };
     }
-    resolveCached(key, async () => {
+    resolveCached(key, async (): Promise<ResolvedLeaf> => {
       const dp = await resolveDataProps(effectiveData, source);
       // FORMAT-AGNOSTIC channel selection: EXR selects at decode (dp.exrTree
       // present — the selector already rode `effectiveData`); everything else
@@ -300,12 +323,12 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       const describedSelectable =
         !!dp.exrTree && treeHasSelectableChannels(dp.exrTree as ChannelMenuTree);
       if (chSelRef.current?.layer != null && !describedSelectable) {
-        return applyChannelSlice(dp, chSelRef.current.layer);
+        return { kind: "single", props: await applyChannelSlice(dp, chSelRef.current.layer) };
       }
-      return dp;
+      return { kind: "single", props: dp };
     }).then(
-      (dataProps) => {
-        if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
+      (leaf) => {
+        if (!cancelled) setState({ status: "ready", leaf });
       },
       (err) => {
         if (cancelled) return;
@@ -376,25 +399,25 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const syncResolveDisabled =
     typeof window !== "undefined" &&
     (window as unknown as { __cairnDisableSyncResolve?: boolean }).__cairnDisableSyncResolve === true;
-  const resolvedNow = syncResolveDisabled ? undefined : peekResolved<Record<string, unknown>>(resolveKey);
-  const stateReady = state.status === "ready" ? state.dataProps : undefined;
+  const resolvedNow = syncResolveDisabled ? undefined : peekResolved<ResolvedLeaf>(resolveKey);
+  const stateReady = state.status === "ready" ? state.leaf : undefined;
   // REFERENCE-LEAK GUARD (the confirmed artefact): on a diff→image flip the reused
   // LeafView's `state` still holds the DIFF resolution — whose `source` IS the diff
   // REFERENCE operand — for the commit right after the node swaps. On the
-  // single-image path (`!diffSpec`) a `state` fallback that carries `__diffB` would
-  // therefore spread `source: <reference>` and the pane, seeing NO `compareSource`,
-  // would present a PLAIN IDENTITY render of the reference — the reported
-  // reference-image flash inside the (freshly-flipped) tab. Reject that stale-diff
-  // fallback: use the SYNCHRONOUS cache read for THIS node's own resolveKey
+  // single-image path (`!diffSpec`) a held DIFF leaf would therefore spread
+  // `source: <reference>` and the pane, seeing NO `compareSource`, would present a
+  // PLAIN IDENTITY render of the reference — the reported reference-image flash
+  // inside the (freshly-flipped) tab. Reject that stale-diff fallback by its `kind`
+  // discriminant: use the SYNCHRONOUS cache read for THIS node's own resolveKey
   // (prefetched image slot ⇒ a hit ⇒ correct image in the flip commit itself), and
   // if it misses, HOLD as not-ready rather than emit the reference. Prefetch (both
   // slots warmed on stack entry) makes the miss path essentially unreachable after
   // mount, so the hold is a rare first-interaction transient, never the reference.
-  const staleDiffFallback = !syncResolveDisabled && !diffSpec && stateReady?.__diffB !== undefined;
-  const dataProps: Record<string, unknown> | undefined =
+  const staleDiffFallback = !syncResolveDisabled && !diffSpec && stateReady?.kind === "diff";
+  const resolved: ResolvedLeaf | undefined =
     resolvedNow ?? (staleDiffFallback ? undefined : stateReady);
   const status: "loading" | "error" | "ready" =
-    dataProps !== undefined ? "ready" : state.status === "error" ? "error" : "loading";
+    resolved !== undefined ? "ready" : state.status === "error" ? "error" : "loading";
 
   // Merge the shared block + the live sync group ids over the resolved data
   // props at render (leaf `node.props` win over `shared`, data props win over
@@ -402,7 +425,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // in a ≥2 selection, else the grid-wide static `shared.sync.viewport` group;
   // the settings-sync group + anchor flag come only from an active selection.
   const mergedProps = useMemo<Record<string, unknown>>(() => {
-    if (!dataProps) return {};
+    if (!resolved) return {};
     // COMPARE path (diff + split/blend): the resolved reference `source` + the
     // LIVE `compareSource` (the decoded foreground + content keys from the cache,
     // plus the per-render mode/kernel/split/blend settings + callbacks). No
@@ -410,36 +433,41 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // `node.props` carries the synth leaf's view controls
     // (interpolation/showAxes/toolbar/pixelValueNotation).
     if (diffSpec) {
-      const dp = dataProps;
       // SYNCHRONOUS HOLD (Finding 2): a reused LeafView just flipped INTO diff but
-      // `state` still holds the PREVIOUS slot's single-image dataProps (no
-      // `__diffB`). Emitting a `compareSource` with `b: undefined` would drive the
-      // pane with no foreground operand for a frame. Instead render the PREVIOUS
-      // content — the plain image already on screen (`dp.source`) — and let the
-      // resolve effect (a synchronous cache-hit on a warmed/prefetched stack)
-      // swap in the real diff dataProps on the very next commit. No placeholder,
-      // no half-built compareSource: the pane simply keeps its last frame.
-      if (dp.__diffB === undefined) {
+      // the held leaf is still the PREVIOUS slot's SINGLE image (`kind !== "diff"`).
+      // A DIFF leaf STRUCTURALLY carries its foreground, so there is no half-built
+      // `compareSource` (undefined `b`) to emit — that state is now unrepresentable.
+      // Instead render the PREVIOUS content — the plain image already on screen
+      // (`resolved.props.source`) — and let the resolve effect (a synchronous
+      // cache-hit on a warmed/prefetched stack) swap in the diff leaf on the very
+      // next commit. No placeholder, no half-built compareSource: keep the frame.
+      if (resolved.kind !== "diff") {
         leafResolveStats.staleDiffHolds++;
         // Keep the reserved compare chrome on the held frame (we ARE rendering a
         // compare node in a stack, so its chrome must stay the compare skeleton —
         // otherwise the hold itself would pop plain-image chrome for one frame).
-        return { ...(node.props ?? {}), source: dp.source, reserveCompareChrome: true, inStackedGrid };
+        return {
+          ...(node.props ?? {}),
+          source: (resolved.props as { source?: unknown }).source,
+          reserveCompareChrome: true,
+          inStackedGrid,
+        };
       }
+      const dp = resolved;
       const dsync: Record<string, unknown> = {};
       const vpg = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
       if (vpg) dsync.viewportSyncGroupId = vpg;
       if (paneSync?.settingsSyncGroupId) dsync.settingsSyncGroupId = paneSync.settingsSyncGroupId;
       if (paneSync?.syncIsAnchor) dsync.syncIsAnchor = true;
       const compareSource: CompareSource = {
-        b: dp.__diffB as DecodedSource,
+        b: dp.foreground,
         opId: diffSpec.diffKernel,
         mode: diffSpec.mode,
         colormap: diffSpec.colormap,
         align: diffSpec.align,
         fit: diffSpec.fit,
-        contentKeyA: dp.__diffContentKeyA as string,
-        contentKeyB: dp.__diffContentKeyB as string,
+        contentKeyA: dp.contentKeyA,
+        contentKeyB: dp.contentKeyB,
         referenceLabel: diffSpec.referenceLabel,
         foregroundLabel: diffSpec.foregroundLabel,
         splitPosition: diffSpec.splitPosition,
@@ -457,10 +485,16 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         ...(node.props ?? {}),
         source: dp.source,
         compareSource,
-        ...(dp.__diffOverlay ? { overlay: dp.__diffOverlay } : {}),
+        ...(dp.overlay ? { overlay: dp.overlay } : {}),
         ...dsync,
       };
     }
+    // SINGLE-IMAGE path (`!diffSpec`): the opaque resolved prop bag, spread into
+    // the renderer. `resolved` is a single leaf here — a held DIFF leaf is already
+    // rejected by `staleDiffFallback`, and `resolvedNow` for a non-`|diffpair` key
+    // is single — so the guard is a discriminant proof, never a live branch.
+    if (resolved.kind !== "single") return {};
+    const dataProps = resolved.props;
     const sharedProps: Record<string, unknown> = {};
     // Stacked mixed grid: reserve the compare chrome on this plain-image slot so a
     // flip to the diff sibling (the ONE reused pane) never pops the MODE menu /
@@ -505,7 +539,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       }
     }
     return { ...sharedProps, ...(node.props ?? {}), ...dataProps, inStackedGrid };
-  }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare, inStackedGrid]);
+  }, [resolved, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare, inStackedGrid]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -701,8 +735,8 @@ function frameContentKey(f: ResolvedCompareFrame, fallback: string): string {
 }
 
 /** Resolve BOTH operands of a diff pair (reference = `refData`, foreground =
- *  `fgData`) and pack the decoded reference `source` + the foreground (`__diffB`)
- *  + content keys into the dataProps `LeafView` folds into a `compareSource`. ONE
+ *  `fgData`) into a `kind:"diff"` {@link ResolvedLeaf} — the decoded reference
+ *  `source` + the foreground + content keys `LeafView` folds into a `compareSource`. ONE
  *  source of truth, shared by `LeafView`'s resolve effect AND the stacked PREFETCH
  *  (`GridView`), so a `[image, diff]` stack warms its `|diffpair` key on mount and
  *  the FIRST flip into the diff tab is a synchronous cache hit — the flip commit
@@ -713,7 +747,7 @@ async function resolveDiffPair(
   refData: DataSpec,
   fgData: DataSpec,
   source: DataSource,
-): Promise<Record<string, unknown>> {
+): Promise<ResolvedLeaf> {
   const [refFrame, fgFrame] = await Promise.all([
     resolveFrame(refData, source),
     resolveFrame(fgData, source),
@@ -723,11 +757,12 @@ async function resolveDiffPair(
   if (!refSource) throw new Error("compare reference did not resolve to an image source");
   if (!bSource) throw new Error("compare foreground did not resolve to an image source");
   return {
+    kind: "diff",
     source: refSource,
-    __diffB: bSource,
-    __diffContentKeyA: frameContentKey(refFrame, "diff:a"),
-    __diffContentKeyB: frameContentKey(fgFrame, "diff:b"),
-    __diffOverlay: fgFrame.overlay,
+    foreground: bSource,
+    contentKeyA: frameContentKey(refFrame, "diff:a"),
+    contentKeyB: frameContentKey(fgFrame, "diff:b"),
+    overlay: fgFrame.overlay,
   };
 }
 
@@ -1263,7 +1298,10 @@ function GridView({ node }: { node: GridNode }) {
     const entries: Array<{ key: string; run: () => Promise<unknown> }> = [];
     for (const c of children) {
       if (c.kind === "plot") {
-        entries.push({ key: sourceKey(c), run: () => resolveDataProps(c.data, source) });
+        entries.push({
+          key: sourceKey(c),
+          run: async (): Promise<ResolvedLeaf> => ({ kind: "single", props: await resolveDataProps(c.data, source) }),
+        });
       } else if (c.kind === "compare") {
         // Warm the DIFF PAIR under the SAME `|diffpair` key `LeafView` resolves it
         // by (the memoized synth leaf's `sourceKey` — stable across renders/flips),
