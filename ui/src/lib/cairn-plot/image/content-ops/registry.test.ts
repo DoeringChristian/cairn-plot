@@ -62,7 +62,8 @@ test("pointwise diffs are arity-2 direct ops, scalar-gated, range-matched defaul
     // signed variants → diverging red-green (ℝ); magnitudes → turbo (ℝ⁺).
     const signed = opId === "signed" || opId === "relative_signed";
     assert.equal(op!.outputRange, signed ? "R" : "R+", `${opId} range`);
-    assert.equal(op!.defaultEncoding, signed ? "red-green" : "turbo", `${opId} default encoding`);
+    // `defaultEncoding` is asserted against the ONE kernel→default-colormap table in
+    // engine/kernels/kernel-default-colormap.test.ts (no second literal pin here).
   }
 });
 
@@ -75,7 +76,8 @@ test("cached metrics are arity-2 cached ops (magma default) delegating to a kern
     assert.equal(op!.sourceArity, 2, `${opId} sourceArity`);
     assert.equal(op!.outputArity, 1, `${opId} scalar-metric DISPLAY gating`);
     assert.equal(op!.outputRange, "R+", `${opId} range`);
-    assert.equal(op!.defaultEncoding, "magma", `${opId} default encoding`);
+    // `defaultEncoding` (magma) is asserted against the ONE kernel→default-colormap
+    // table in kernel-default-colormap.test.ts (no second literal pin here).
     assert.equal((op as { kernelId: string }).kernelId, opId, `${opId} delegates to its kernel id`);
   }
 });

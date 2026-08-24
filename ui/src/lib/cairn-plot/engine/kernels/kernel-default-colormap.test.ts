@@ -1,9 +1,14 @@
 /**
- * Node test: the PER-KERNEL DEFAULT COLORMAPS follow-up — every registered diff
- * kernel declares a `defaultColormap` matching its OUTPUT RANGE (`displayRange`),
- * and the pure resolution (`resolveDiffColormap`) applies that default UNLESS the
- * user has explicitly overridden (a pick that STICKS across kernel switches; a
- * `null` override = "follow the kernel default").
+ * Node test: the PER-KERNEL DEFAULT COLORMAPS — the ONE table-driven pin for the
+ * kernel→default-colormap table, asserted against EVERY surface that must agree with
+ * it (so no surface re-pins the literals independently):
+ *   - the kernel registry's own `defaultColormap`;
+ *   - `kernelDefaultColormap(id)` (the resolver, + turbo fallback for unknown ids);
+ *   - `resolveDiffColormap(id, null)` (a `null` override follows the kernel default);
+ *   - the CONTENT-OP registry's `defaultEncoding` (image/content-ops/ops.ts derives it
+ *     from `kernelDefaultColormap`, so it must equal the table — content-ops/registry
+ *     .test.ts no longer re-pins these literals).
+ * A pick that STICKS across kernel switches is exercised at the bottom.
  *
  *   node --experimental-strip-types --test \
  *     src/lib/cairn-plot/engine/kernels/kernel-default-colormap.test.ts
@@ -11,9 +16,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { listDiffKernels, kernelDefaultColormap, resolveDiffColormap } from "./index.ts";
+import { getContentOp } from "../../image/content-ops/index.ts";
 import { COLORMAP_NAMES, DIVERGING_COLORMAPS } from "../../colormaps/lut.ts";
 
-/** The requested defaults the directive specifies (per kernel id). */
+/** THE kernel→default-colormap table — the single intentional pin every surface below
+ *  is asserted against (per kernel id). */
 const EXPECTED: Record<string, string> = {
   absolute: "turbo",
   squared: "turbo",
@@ -70,10 +77,21 @@ test("kernelDefaultColormap resolves the kernel's default (turbo fallback for un
 });
 
 test("resolveDiffColormap: null override follows the kernel default", () => {
-  assert.equal(resolveDiffColormap("absolute", null), "turbo");
-  assert.equal(resolveDiffColormap("signed", null), "red-green");
-  assert.equal(resolveDiffColormap("flip", null), "magma");
-  assert.equal(resolveDiffColormap("ssim", null), "magma");
+  for (const [id, want] of Object.entries(EXPECTED)) {
+    assert.equal(resolveDiffColormap(id, null), want, `resolveDiffColormap("${id}", null) should be ${want}`);
+  }
+});
+
+test("content-op defaultEncoding follows the SAME kernel table (derived — not a second literal pin)", () => {
+  // image/content-ops/ops.ts sets a diff op's `defaultEncoding` to
+  // `kernelDefaultColormap(id)`, so the content-op surface must equal this table for
+  // every id that has a content op (kernel-only ids like `flip-ldr-forced` have none).
+  // This is the assertion that lets content-ops/registry.test.ts drop its literal pins.
+  for (const [id, want] of Object.entries(EXPECTED)) {
+    const op = getContentOp(id);
+    if (!op) continue;
+    assert.equal(op.defaultEncoding, want, `content-op "${id}" defaultEncoding should follow the kernel table (${want})`);
+  }
 });
 
 test("resolveDiffColormap: an EXPLICIT override STICKS across kernel switches", () => {
