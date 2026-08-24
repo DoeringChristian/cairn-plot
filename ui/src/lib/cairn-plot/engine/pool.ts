@@ -250,6 +250,11 @@ export interface PaneHandle {
    * `MAX_LIVE_SWAPCHAINS`. No-op (does not throw) if no source has been set
    * yet or the handle was disposed.
    *
+   * MEASURE-THEN-RENDER CONTRACT: a render before the first `resize()` (no backing
+   * size yet) is a no-op SUCCESS — the pane is briefly blank until its container is
+   * measured, by design. There is no source-dims fallback: the surface is only ever
+   * configured to the on-screen backing size (`resize()`).
+   *
    * NEVER THROWS (C1 fix — whole-branch review): a hard GPU failure while
    * (re)activating this pane's resources or while running the render pass
    * itself is caught here, the entry is parked, and `false` is returned
@@ -431,12 +436,11 @@ interface PaneEntry {
    *  `evictOverCap` to prefer parking off-screen panes first. */
   visible: boolean;
   /**
-   * Q22 fix: the canvas backing-store / surface size (DEVICE pixels, i.e.
-   * already display-css-size * dpr), as last requested via
-   * `PaneHandle.resize()`. 0 until the first `resize()` call — `activateEntry`
-   * falls back to the retained source's dimensions in that narrow window (a
-   * pane rendering before its container has ever been measured) so
-   * `Surface.configure()` never sees a zero size.
+   * The canvas backing-store / surface size (DEVICE pixels, i.e. already
+   * display-css-size * dpr), as last requested via `PaneHandle.resize()`. 0 until
+   * the first `resize()` call — while 0, `activateEntry` is a no-op (MEASURE-THEN-
+   * RENDER: a pane rendered before its container is measured is briefly blank; there
+   * is no source-dims fallback, so `Surface.configure()` is never called at 0 size).
    */
   backingWidth: number;
   backingHeight: number;
@@ -595,16 +599,17 @@ function activateEntry(entry: PaneEntry): void {
     evictOverCap(entry);
     return;
   }
+  // MEASURE-THEN-RENDER (the pane contract). A pane has NO backing size until its
+  // container is measured (`PaneHandle.resize()`); until then there is nothing to
+  // configure, so activation is DEFERRED — the surface stays null and the render
+  // callers treat this entry as a no-op (a pane rendered pre-measure is briefly
+  // blank, by contract — see `PaneHandle.render`). The on-screen backing size is the
+  // ONLY size the surface is ever configured to: there is no source-dims floor.
+  if (!entry.backingWidth || !entry.backingHeight) return;
   const device = entry.device;
   entry.surface = device.createSurface(entry.canvas, { hdr: entry.hdr });
-  // Q22 fix: the backing store / surface are sized to the ON-SCREEN display
-  // resolution (`backingWidth/backingHeight`, set via `resize()`), NEVER the
-  // source image's own resolution — falls back to the source's dims only in
-  // the narrow window before the caller's first `resize()` call (e.g. a
-  // render requested before the pane's container has been measured), so
-  // `configure()` never sees a zero size.
-  const w = entry.backingWidth || entry.source?.width || entry.deep?.width || 1;
-  const h = entry.backingHeight || entry.source?.height || entry.deep?.height || 1;
+  const w = entry.backingWidth;
+  const h = entry.backingHeight;
   entry.canvas.width = w;
   entry.canvas.height = h;
   entry.surface.configure(w, h);
@@ -704,6 +709,10 @@ function averageSampleRgb(px: Uint8Array | Float32Array, hdr: boolean): { r: num
  */
 function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   if (entry.disposed || (!entry.source && !entry.deep)) return true;
+  // MEASURE-THEN-RENDER: nothing to present until the container is measured (backing
+  // size set via `resize()`). A no-op SUCCESS (not a failure) so the caller does NOT
+  // fall back to the legacy pane; the first render after the first `resize()` paints.
+  if (!entry.backingWidth || !entry.backingHeight) return true;
   try {
     activateEntry(entry);
     if (!entry.surface || !entry.srcTexture) return false;
@@ -762,6 +771,9 @@ function attemptRenderDiffCached(
   if (entry.disposed || (!entry.source && !entry.deep) || !entry.sourceB) return null;
   try {
     activateEntry(entry);
+    // MEASURE-THEN-RENDER: unmeasured ⇒ `activateEntry` deferred (no surface). The
+    // caller (GpuImagePane.renderPass) already holds pre-measure, so this is a
+    // defensive no-op path for any direct caller — a null result the pane retries.
     if (!entry.surface || !entry.srcTexture || !entry.srcTextureB) return null;
     // Content-keyed cache: a pure function of the SOURCE content (not the
     // viewport / exposure / colormap), so the expensive multi-pass compute runs
