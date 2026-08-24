@@ -344,34 +344,39 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   // can trip without a user pick.
   const [overridden, setOverridden] = useState(false);
 
-  // CONTROLLED-SURFACE RESEED, done DURING RENDER (React's supported "adjust state
-  // during render" pattern — guarded to fire once, so the COMMITTED frame already
-  // carries the reseeded encoding, no one-frame lag). It reseeds `encodingId` to the
-  // descriptor seed when `propColormap`/`propTonemap` change.
-  //
-  // This fires ONLY for a HOST-DRIVEN CONTROLLED SURFACE (`toolbar={false}`): the
-  // host drives the props and the pane follows them (the non-interactive contract).
-  // For an INTERACTIVE VIEWPORT the reseed is SUPPRESSED — the viewport OWNS its
-  // encoding: it PERSISTS across every content change (a stacked viewport's slot
-  // flips, a re-lower), each slot's authored descriptor being a SEED only (adopted
-  // by HOME via `resetEncoding`, never by a flip). Applicability across differing
-  // slot arities is handled by the arity effect below (existing gating). This is the
-  // ONE rule — a stack (one shared viewport setting) and a grid cell (its own
-  // viewport) behave identically; nothing special-cases the stack.
+  // A prop change is RECORDED here so the ARITY effect below can tell a prop-reseed
+  // from a pure arity flip (it must not re-fire when a concurrent prop change already
+  // stamped the arity). For an INTERACTIVE VIEWPORT this is the WHOLE story: props are
+  // SEEDS, the encoding PERSISTS across every content change (a stacked viewport's slot
+  // flips, a re-lower) and is NEVER reseeded by a prop change — the descriptor is
+  // adopted only by HOME (`resetEncoding`). This render-body stamp is a pure record,
+  // no state write, so interactive behavior is unchanged.
   const propsKey = `${propColormap} ${String(propTonemap)}`;
   if (propsKey !== prevPropsRef.current) {
     prevPropsRef.current = propsKey;
     prevArityRef.current = arity;
-    if (controlledSurface) {
-      memoryRef.current.clear();
-      setEncodingId(seedFor(arity));
-      setOverridden(false); // host drives → not a user override
-    }
   }
 
+  // CONTROLLED-SURFACE RESEED — POST-COMMIT (`useEffect`), the SAME adoption timing as
+  // peak/gamma/bounds. ONE documented timing for every `toolbar={false}` controlled
+  // prop: the host drives the props, the pane adopts them on the NEXT commit. A one-
+  // frame trail on a host-driven change is accepted (user ruling — a cleaner interface
+  // for the host beats render-time reseed timing that only encoding used). Fires ONLY
+  // for a controlled surface; an interactive viewport OWNS its encoding (persists —
+  // see above), so this is a no-op there. Applicability across differing slot arities
+  // stays with the arity effect below.
   useEffect(() => {
-    // ARITY-flip reseed only (the render-time reseed absorbed any concurrent prop
-    // change + stamped prevArityRef). The channel selector's per-arity memory
+    if (!controlledSurface) return;
+    memoryRef.current.clear();
+    setEncodingId(seedFor(arity));
+    setOverridden(false); // host drives → not a user override
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propColormap, propTonemap, controlledSurface]);
+
+  useEffect(() => {
+    // ARITY-flip reseed only (a concurrent prop change was already recorded by the
+    // render-body stamp, which advanced prevArityRef — so this no-ops for it, and the
+    // controlled reseed effect above owns any prop-driven reseed). The per-arity memory
     // restores the last encoding chosen at each k (a within-viewport gesture); if
     // none, the encoding is kept where applicable at the new arity, else falls back
     // to the default curve (arity gating = applicability).
