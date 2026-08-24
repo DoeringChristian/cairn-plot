@@ -1634,11 +1634,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // padding-free content box the axes/overlay also measure — one coordinate
     // space, so the sampled window and the canvas rect never disagree.
     const wrapEl = imgWrapperRef.current;
-    const wrapBox = wrapEl
-      ? wrapEl.getBoundingClientRect()
-      : paneEl
-        ? paneEl.getBoundingClientRect()
-        : { width: naturalDims.w, height: naturalDims.h };
+    // MEASURE-THEN-RENDER (pane contract): present only once the container has a real
+    // layout box — its size drives `handle.resize()` → the surface backing size. No
+    // source-dims fallback: a pane with no measured box (pre-layout, or a hidden
+    // stack slot) HOLDS (blank), and the ResizeObserver re-runs this pass
+    // (`containerTick`) the moment layout arrives. This is why the pool needs no
+    // backing-size floor.
+    const measureEl = wrapEl ?? paneEl;
+    const wrapBox = measureEl ? measureEl.getBoundingClientRect() : null;
+    if (!wrapBox || wrapBox.width <= 0 || wrapBox.height <= 0) return false;
     const rawUv = viewportToUvRect({ zoom, pan }, wrapBox, naturalDims.w, naturalDims.h);
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
@@ -1650,9 +1654,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // margins). The CSS layout box is `w-full h-full` of the wrapper, so only
     // the device-pixel backing store is computed here; letterbox + checkerboard
     // in any empty region is the shader's OOB→transparent path.
-    if (wrapBox.width > 0 && wrapBox.height > 0) {
-      handle.resize(Math.round(wrapBox.width * dpr), Math.round(wrapBox.height * dpr));
-    }
+    // The measured box is guaranteed positive by the measure-then-render gate above.
+    handle.resize(Math.round(wrapBox.width * dpr), Math.round(wrapBox.height * dpr));
 
     // Nearest filtering once a source texel is >= PIXEL_VALUE_MIN_SCREEN_PX on
     // screen (the same threshold at which the pixel overlay starts drawing
