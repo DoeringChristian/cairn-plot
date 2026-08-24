@@ -1433,9 +1433,12 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
  * group (a homogeneous stack) `syncedSettings` is null and the ONE reused instance
  * shares settings by construction.
  */
+const compareResetSourceId = "compare-home-reset";
+
 function useCompareControl(
   node: PlotNode,
   syncedSettings: ImageSyncSettings | null | undefined,
+  settingsSyncGroupId?: string,
 ): CompareControl {
   const cmp = node.kind === "compare" ? node : null;
   const props = (cmp?.props ?? {}) as Record<string, unknown>;
@@ -1455,23 +1458,19 @@ function useCompareControl(
   const [kernelOverride, setDiffKernel] = useState<string | null>(null);
   const [splitOverride, setSplitPos] = useState<number | null>(null);
 
-  // Adopt the compare-owned keys BY VALUE from the group's `syncedSettings` (ruling
-  // 4) — mode / kernel / split all mirror, including on selection FORMATION (the
-  // node receiver seeds a non-anchor from the group snapshot; the anchor fills from
-  // its own pane's seed). Keyed on the VALUES so it fires only on a real change and
-  // a LOCAL HOME (which does not publish → `syncedSettings` unchanged) is not undone.
+  // ONE precedence, derived every render (no adoption effects): settings store >
+  // local override > descriptor. Every change publishes to the store (the panes
+  // publish mode/kernel/split; HOME publishes the descriptor defaults), so the
+  // store is the single source of truth and simply propagates down.
   const syncMode = syncedSettings?.compareMode;
   const syncKernel = syncedSettings?.diffKernel;
   const syncSplit = syncedSettings?.splitPosition;
-  useEffect(() => {
-    if (syncMode !== undefined) setViewMode(normalizeCompareViewMode(syncMode));
-  }, [syncMode]);
-  useEffect(() => {
-    if (syncKernel !== undefined) setDiffKernel(syncKernel);
-  }, [syncKernel]);
-  useEffect(() => {
-    if (syncSplit !== undefined) setSplitPos(syncSplit);
-  }, [syncSplit]);
+  const viewMode =
+    syncMode !== undefined
+      ? normalizeCompareViewMode(syncMode)
+      : (viewModeOverride ?? descriptorMode);
+  const diffKernel = syncKernel !== undefined ? syncKernel : (kernelOverride ?? descriptorKernel);
+  const splitPos = syncSplit !== undefined ? syncSplit : (splitOverride ?? descriptorSplit);
 
   // HOME / double-click: drop every override so the control follows the DESCRIPTOR
   // again. This is the compare half of the pane's HOME the old `GpuComparePane` did
@@ -1482,18 +1481,28 @@ function useCompareControl(
     setViewMode(null);
     setDiffKernel(null);
     setSplitPos(null);
-  }, []);
+    // HOME is a GROUP action (settings are set on the group; a lone viewport is a
+    // group of one): publish the DESCRIPTOR defaults by value so every synced
+    // member resets with the clicked viewport — and so a re-lowered pane adopts
+    // the RESET values instead of the group's stale pre-HOME state (the
+    // "colormap only resets on the second double-click" bug).
+    if (settingsSyncGroupId) {
+      publishImageSettings(settingsSyncGroupId, compareResetSourceId, {
+        compareMode: descriptorMode,
+        diffKernel: descriptorKernel,
+        splitPosition: descriptorSplit,
+      });
+    }
+  }, [settingsSyncGroupId, descriptorMode, descriptorKernel, descriptorSplit]);
   const modified =
-    (viewModeOverride !== null && viewModeOverride !== descriptorMode) ||
-    (kernelOverride !== null && kernelOverride !== descriptorKernel) ||
-    (splitOverride !== null && splitOverride !== descriptorSplit);
+    viewMode !== descriptorMode || diffKernel !== descriptorKernel || splitPos !== descriptorSplit;
 
   return {
-    viewMode: viewModeOverride ?? descriptorMode,
+    viewMode,
     setViewMode,
-    diffKernel: kernelOverride ?? descriptorKernel,
+    diffKernel,
     setDiffKernel,
-    splitPos: splitOverride ?? descriptorSplit,
+    splitPos,
     setSplitPos,
     reset,
     modified,
@@ -1519,7 +1528,7 @@ function NodeDispatch({ node }: { node: PlotNode }) {
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
   // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
-  const control = useCompareControl(node, paneSync?.syncedSettings);
+  const control = useCompareControl(node, paneSync?.syncedSettings, paneSync?.settingsSyncGroupId);
   // Static synth-leaf derivation (memoized on the node object) — only meaningful
   // for a compare node; computed unconditionally to keep hook order stable.
   const synth = node.kind === "compare" ? synthDiffLeafOf(node) : null;

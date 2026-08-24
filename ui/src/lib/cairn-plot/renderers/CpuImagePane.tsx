@@ -459,7 +459,8 @@ function CpuSdrImagePane(
       return s === "gamma" || s === "linear" ? s : "srgb";
     },
     controlledSurface,
-    controlledReseedKey: synced,
+    // The settings store rules when present; picks publish and flow back down.
+    settings: synced,
   });
   const colormap = enc.colormap as Colormap;
   const sdrTransfer = enc.curveId as TonemapOperator;
@@ -1132,7 +1133,8 @@ function CpuHdrImagePane(
     propTonemap: synced?.tonemap ?? tonemap,
     resolveDefaultCurve,
     controlledSurface,
-    controlledReseedKey: synced,
+    // The settings store rules when present; picks publish and flow back down.
+    settings: synced,
   });
   const colormap = enc.colormap as Colormap;
   const tonemapOp = enc.curveId as TonemapOperator;

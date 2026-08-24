@@ -623,7 +623,7 @@ function SelectionStage({
                       onPickReference={() => store.setReference(cells[stackActiveClamped]!.reprPaneId)}
                       viewportSyncGroupId={viewportSyncGroupId}
                       settingsSyncGroupId={settingsSyncGroupId}
-                      isAnchor={false}
+                      isAnchor={true}
                     />
                   </div>
                 </InStackedGridContext.Provider>
@@ -637,7 +637,7 @@ function SelectionStage({
                     onPickReference={() => store.setReference(spec.reprPaneId)}
                     viewportSyncGroupId={viewportSyncGroupId}
                     settingsSyncGroupId={settingsSyncGroupId}
-                    isAnchor={false}
+                    isAnchor={i === 0}
                   />
                 ))
               )}

@@ -684,9 +684,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     propTonemap: syncedTonemap ?? propTonemap,
     resolveDefaultCurve,
     controlledSurface,
-    // A fresh object per bus patch → re-apply the controlled seed even on a same-
-    // value re-publish (so a peer's re-pick re-mirrors after this pane's local HOME).
-    controlledReseedKey: synced,
+    // The settings store rules when present; picks publish and flow back down.
+    settings: synced,
   });
   // HOME / double-click: assign the viewport's encoding CONCRETELY from the
   // CURRENTLY-VISIBLE face's defaults (diff → authored/kernel default; image →
@@ -1051,6 +1050,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // ONE patch by value: the kernel + the display keys carrying its new default,
       // mirrored to peers (ruling 3/4).
       publishSettings({
+        compareMode: "diff",
         diffKernel: id,
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, kernelDefault),
         colormap: kernelDefault,
@@ -2757,6 +2757,33 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         setTonemapGamma(gammaSeed); // γ back to the visible slot's descriptor
         setReduceOverride(null); // reduce back to the k-based default
         setColorBounds(boundsSeedVal); // min/max back to the visible slot's colorRange
+        {
+          // HOME is a GROUP action: publish the clicked viewport's IMAGE/DIFF
+          // DEFAULTS by value so every synced member resets to them, and so a
+          // re-lowered/remounted pane adopts the RESET state (not the group's
+          // stale pre-HOME snapshot — the second-double-click colormap bug).
+          const homeColormap = (
+            diffMode
+              ? ((diffSeedColormap ?? kernelDefaultColormap(localKernelMeta.default)) as Colormap)
+              : propColormap
+          ) as Colormap;
+          const homeEncoding = diffMode
+            ? deriveCompareEncodingId("scalar", effectiveTonemap, homeColormap)
+            : homeColormap !== "none"
+              ? homeColormap
+              : resolveDefaultCurve(propTonemap);
+          publishSettings({
+            encoding: homeEncoding,
+            colormap: homeColormap,
+            tonemap: diffMode ? effectiveTonemap : propTonemap,
+            peak: peakSeed,
+            tonemapGamma: gammaSeed,
+            exposureEV: 0,
+            offset: 0,
+            reduce: activeIsTurbo ? "mean" : defaultReduceMode(sourceArity),
+            ...(boundsSeedVal ? { colorMin: boundsSeedVal[0], colorMax: boundsSeedVal[1] } : {}),
+          });
+        }
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
         // COMPARE HOME: the VIEW MODE / kernel / split / blend live in the owner's
