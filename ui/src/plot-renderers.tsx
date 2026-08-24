@@ -46,6 +46,7 @@ import {
   type ImageBackend,
   type RenderMode,
 } from "./lib/cairn-plot/renderers/image-backend";
+import { warnGpuUnavailable } from "./lib/cairn-plot/primitives/capability-notice";
 import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
 import { useSyncedImageViewport } from "./lib/cairn-plot/renderers/use-synced-image-viewport";
@@ -143,7 +144,14 @@ function resolveImageRenderer(mode: RenderMode): ImageBackend {
   const gpuPane = window.__cairnPlotGpuImagePane as ImageBackend | undefined;
   if (mode === "gpu") {
     if (gpuPane) return gpuPane;
-    if (!warnedForcedGpuUnavailable) {
+    // WebGPU GENUINELY absent (`navigator.gpu` hidden — unsupported browser OR
+    // an insecure origin, which `[SecureContext]`-gates it away) → the shared
+    // bootstrap-level, two-case, once-per-page warn (device-acquisition/
+    // fallback seam). If `navigator.gpu` IS present the pane just isn't
+    // registered YET (addon still loading) — that's the forced-race note.
+    if (!("gpu" in navigator)) {
+      warnGpuUnavailable();
+    } else if (!warnedForcedGpuUnavailable) {
       warnedForcedGpuUnavailable = true;
       // eslint-disable-next-line no-console
       console.warn(

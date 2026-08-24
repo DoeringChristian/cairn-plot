@@ -19,6 +19,9 @@ import {
   pickEnableHint,
   limitMessage,
   noWebgpuKind,
+  gpuUnavailableConsoleMessage,
+  warnGpuUnavailable,
+  __resetGpuUnavailableWarnedForTest,
   capabilityNoticeStorageKey,
   type CapabilityLimit,
 } from "./capability-notice.ts";
@@ -130,6 +133,54 @@ test("pickEnableHint: display sub-case ignores browser, browser sub-case ignores
   assert.match(pickEnableHint("no-hdr-display", { userAgent: FIREFOX_MAC }), /macOS/);
   // no-hdr-browser hint is browser-driven even on an HDR-capable OS.
   assert.match(pickEnableHint("no-hdr-browser", { userAgent: FIREFOX_MAC }), /Firefox/);
+});
+
+test("gpuUnavailableConsoleMessage: two distinct console cases (insecure vs unsupported)", () => {
+  const insecure = gpuUnavailableConsoleMessage("no-webgpu-insecure");
+  assert.match(insecure, /not a secure context/);
+  assert.match(insecure, /http:\/\/localhost or https/);
+  const unsupported = gpuUnavailableConsoleMessage("no-webgpu");
+  assert.match(unsupported, /unavailable in this browser/);
+  assert.match(unsupported, /browser-support\.md/);
+  assert.notEqual(insecure, unsupported);
+  // Both are prefixed for greppability in the console.
+  assert.match(insecure, /^cairn-plot: WebGPU is unavailable/);
+  assert.match(unsupported, /^cairn-plot: WebGPU is unavailable/);
+});
+
+test("warnGpuUnavailable: classifies from env, and fires at most ONCE per page", () => {
+  const orig = console.warn;
+  const seen: string[] = [];
+  console.warn = (...a: unknown[]) => void seen.push(String(a[0]));
+  try {
+    // (a) insecure origin: gpu hidden + not secure → the insecure console case.
+    __resetGpuUnavailableWarnedForTest();
+    seen.length = 0;
+    let kind = warnGpuUnavailable({ hasGpu: false, isSecureContext: false });
+    assert.equal(kind, "no-webgpu-insecure");
+    assert.equal(seen.length, 1);
+    assert.match(seen[0]!, /not a secure context/);
+    // Once-per-page: a second call is suppressed (returns null, no extra warn).
+    kind = warnGpuUnavailable({ hasGpu: false, isSecureContext: false });
+    assert.equal(kind, null);
+    assert.equal(seen.length, 1);
+
+    // (b) unsupported browser: gpu hidden on a SECURE origin → the browser case.
+    __resetGpuUnavailableWarnedForTest();
+    seen.length = 0;
+    kind = warnGpuUnavailable({ hasGpu: false, isSecureContext: true });
+    assert.equal(kind, "no-webgpu");
+    assert.equal(seen.length, 1);
+    assert.match(seen[0]!, /unavailable in this browser/);
+
+    // gpu PRESENT but init failed ⇒ unsupported (never the insecure case).
+    __resetGpuUnavailableWarnedForTest();
+    seen.length = 0;
+    kind = warnGpuUnavailable({ hasGpu: true, isSecureContext: false });
+    assert.equal(kind, "no-webgpu");
+  } finally {
+    console.warn = orig;
+  }
 });
 
 test("capabilityNoticeStorageKey: namespaced by kind + pathname", () => {

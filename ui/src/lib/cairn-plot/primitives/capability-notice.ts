@@ -49,6 +49,13 @@
  * `location.pathname`, falling back to `sessionStorage` then in-memory when
  * storage is denied (`file://`, private mode) so it still dismisses for the
  * session.
+ *
+ * CONSOLE SEAM: separately from the DOM banner, {@link warnGpuUnavailable}
+ * emits ONE plain `console.warn` per page at the shared device-acquisition /
+ * renderer-fallback seam (the gpu-image addon's `getSharedDevice()` reject and
+ * `plot-renderers.tsx`'s forced-gpu fallback), carrying the SAME insecure-origin
+ * vs unsupported-browser split — so the degraded GPU state is legible in the
+ * devtools console of EVERY entry path, even where the banner cannot mount.
  */
 
 export type CapabilityLimit =
@@ -182,6 +189,67 @@ export function pickEnableHint(kind: CapabilityLimit, env: HintEnv): string {
     default:
       return "Chrome/Edge: enable chrome://flags/#enable-unsafe-webgpu and hardware acceleration.";
   }
+}
+
+// --- bootstrap-level console.warn (independent of the DOM banner) -----------
+//
+// The in-page banner above only renders where a `<body>` exists AND the page
+// carries GPU-preferring content. Separately, at the shared device-acquisition
+// / renderer-fallback seam (`getSharedDevice()` reject in the gpu-image addon;
+// `resolveImageRenderer` forced-gpu fallback in core) we ALSO emit ONE plain
+// `console.warn` per page so the degraded GPU state is legible in the devtools
+// console of EVERY entry path — report pages, bare `_repr_html_` embeds, and
+// the JS API — even when the banner cannot mount. It carries the SAME two-case
+// distinction (insecure origin vs unsupported browser).
+
+/** The bootstrap-level console message for the GPU-unavailable condition, with
+ *  the two-case distinction. Pure — DOM-free, unit-testable. */
+export function gpuUnavailableConsoleMessage(
+  kind: "no-webgpu" | "no-webgpu-insecure",
+): string {
+  if (kind === "no-webgpu-insecure") {
+    return (
+      "cairn-plot: WebGPU is unavailable because this page is not a secure context " +
+      "(served over plain HTTP on a non-localhost origin). GPU features (diff kernels, HDR) " +
+      "are disabled; open via http://localhost or https to enable them."
+    );
+  }
+  return (
+    "cairn-plot: WebGPU is unavailable in this browser — GPU features (diff kernels, HDR) " +
+    "are disabled and rendering falls back to the CPU backend. See docs/browser-support.md " +
+    "to enable WebGPU."
+  );
+}
+
+/** Once-per-page guard for {@link warnGpuUnavailable} — module state resets on
+ *  each document load, so this is per page (not per pane). */
+let gpuUnavailableWarned = false;
+
+/**
+ * Emit the bootstrap-level GPU-unavailable `console.warn` at MOST once per page,
+ * classifying insecure-origin vs unsupported-browser via {@link noWebgpuKind}.
+ * `env` lets a caller pass the live gpu-presence + secure-context it already
+ * computed (the addon does); omitted fields are read from `navigator`/`window`
+ * (with the same secure-by-default fallback as the addon). Safe in non-DOM
+ * environments (no-op). Returns the kind it warned (or `null` if suppressed) so
+ * callers/tests can assert on it. */
+export function warnGpuUnavailable(env?: Partial<NoWebgpuEnv>): CapabilityLimit | null {
+  if (gpuUnavailableWarned) return null;
+  gpuUnavailableWarned = true;
+  const hasGpu =
+    env?.hasGpu ?? (typeof navigator !== "undefined" && "gpu" in navigator);
+  const isSecureContext =
+    env?.isSecureContext ??
+    (typeof window === "undefined" || window.isSecureContext !== false);
+  const kind = noWebgpuKind({ hasGpu, isSecureContext });
+  // eslint-disable-next-line no-console
+  console.warn(gpuUnavailableConsoleMessage(kind));
+  return kind;
+}
+
+/** TEST-ONLY: reset the once-per-page console.warn guard. */
+export function __resetGpuUnavailableWarnedForTest(): void {
+  gpuUnavailableWarned = false;
 }
 
 /** The one-line limitation message per kind. Exported for the unit test. */
