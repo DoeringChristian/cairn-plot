@@ -18,6 +18,7 @@ import {
   detectOS,
   pickEnableHint,
   limitMessage,
+  noWebgpuKind,
   capabilityNoticeStorageKey,
   type CapabilityLimit,
 } from "./capability-notice.ts";
@@ -58,15 +59,48 @@ test("detectOS: macOS / Windows / other", () => {
   assert.equal(detectOS(CHROME_LINUX), "other");
 });
 
-test("limitMessage: three distinct diagnosed messages", () => {
+test("limitMessage: four distinct diagnosed messages", () => {
   assert.match(limitMessage("no-webgpu"), /GPU renderer unavailable/);
+  assert.match(limitMessage("no-webgpu-insecure"), /insecure origin/);
   assert.match(limitMessage("no-hdr-browser"), /fundamental browser limitation/);
   assert.match(limitMessage("no-hdr-display"), /display\/OS is not in HDR mode/);
-  // All three are genuinely distinct strings.
+  // All four are genuinely distinct strings.
   const msgs = new Set(
-    (["no-webgpu", "no-hdr-browser", "no-hdr-display"] as CapabilityLimit[]).map(limitMessage),
+    (["no-webgpu", "no-webgpu-insecure", "no-hdr-browser", "no-hdr-display"] as CapabilityLimit[]).map(
+      limitMessage,
+    ),
   );
-  assert.equal(msgs.size, 3);
+  assert.equal(msgs.size, 4);
+});
+
+test("noWebgpuKind: insecure origin (gpu hidden + not secure) vs unsupported browser", () => {
+  // navigator.gpu is [SecureContext]-gated: absent + insecure ⇒ the ORIGIN
+  // disabled it, a fixable misconfiguration.
+  assert.equal(
+    noWebgpuKind({ hasGpu: false, isSecureContext: false }),
+    "no-webgpu-insecure",
+  );
+  // gpu absent on a SECURE origin ⇒ genuinely unsupported browser.
+  assert.equal(noWebgpuKind({ hasGpu: false, isSecureContext: true }), "no-webgpu");
+  // gpu PRESENT but init failed (e.g. requestAdapter returned null) ⇒ unsupported,
+  // regardless of origin — the insecure-origin path only fires when gpu is hidden.
+  assert.equal(noWebgpuKind({ hasGpu: true, isSecureContext: false }), "no-webgpu");
+  assert.equal(noWebgpuKind({ hasGpu: true, isSecureContext: true }), "no-webgpu");
+});
+
+test("pickEnableHint: no-webgpu-insecure points at localhost/https (origin-fix, not browser)", () => {
+  // Same origin-fix hint on every browser — the origin, not the browser, is wrong.
+  for (const ua of [FIREFOX, SAFARI, CHROME_MAC, CHROME_WIN, CHROME_LINUX]) {
+    const hint = pickEnableHint("no-webgpu-insecure", { userAgent: ua });
+    assert.match(hint, /localhost/);
+    assert.match(hint, /https/);
+    assert.match(hint, /ssh -L/);
+  }
+  // And it must NOT hand out browser-enable steps (those are the no-webgpu path).
+  assert.doesNotMatch(
+    pickEnableHint("no-webgpu-insecure", { userAgent: FIREFOX }),
+    /dom\.webgpu\.enabled/,
+  );
 });
 
 test("pickEnableHint: no-webgpu is browser-specific (WebGPU enable steps)", () => {
@@ -99,7 +133,12 @@ test("pickEnableHint: display sub-case ignores browser, browser sub-case ignores
 });
 
 test("capabilityNoticeStorageKey: namespaced by kind + pathname", () => {
-  const kinds: CapabilityLimit[] = ["no-webgpu", "no-hdr-browser", "no-hdr-display"];
+  const kinds: CapabilityLimit[] = [
+    "no-webgpu",
+    "no-webgpu-insecure",
+    "no-hdr-browser",
+    "no-hdr-display",
+  ];
   for (const kind of kinds) {
     assert.equal(
       capabilityNoticeStorageKey(kind, "/examples/rendered/gallery.html"),

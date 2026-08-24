@@ -85,7 +85,10 @@ python examples/demo_url_images.py --open     # URL-referenced EXR images (needs
   the page bakes no pixels; the browser fetches and decodes EXR (ZIP + PIZ)
   client-side. See [`docs/API.md`](docs/API.md) for the full 0.1 API contract,
   and [`docs/browser-support.md`](docs/browser-support.md) for enabling
-  WebGPU / HDR output per browser (Chrome, Brave, Firefox, Safari).
+  WebGPU / HDR output per browser (Chrome, Brave, Firefox, Safari) — including
+  the [secure-context requirement](docs/browser-support.md#secure-context-required-for-webgpu)
+  (WebGPU is hidden on plain-HTTP non-localhost origins, which silently drops
+  the GPU-only compare kernels — open via `http://localhost` or https).
 
 ## HTML / JS library
 
