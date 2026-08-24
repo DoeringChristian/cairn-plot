@@ -374,8 +374,7 @@ def build_gallery() -> list[tuple[str, object]]:
                          split_position=0.25),
               cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="slide",
                          split_position=0.5)],
-             [cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="blend",
-                         blend_alpha=0.5),
+             [cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs"),
               cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue")]],
         ),
     ))

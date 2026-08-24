@@ -198,12 +198,13 @@ export interface GridNode {
   mode?: "normal" | "stacked";
 }
 
-/** Two DataSpec frames composited into one pane (split/blend/diff).
- *  `split`/`blend`/`diff` composite them through the shared compositor / GPU
- *  compare pane. */
+/** Two DataSpec frames composited into one pane (split/diff).
+ *  `split`/`diff` composite them through the shared compositor / GPU compare
+ *  pane. A legacy `"blend"` (removed view mode) is tolerated on read and aliases
+ *  to `"split"` (see `normalizeCompareViewMode` in `plot-node.tsx`). */
 export interface CompareNode {
   kind: "compare";
-  mode: "split" | "blend" | "diff";
+  mode: "split" | "diff";
   a: DataSpec;
   b: DataSpec;
   /** Which frame is the reference/baseline (0 = `a`, 1 = `b`). Default 0. */

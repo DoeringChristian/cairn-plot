@@ -118,7 +118,7 @@ _IMAGE_RENDERERS = frozenset({"image"})
 def _node_has_image(node: Any) -> bool:
     """Recursively: does this ``PlotNode`` dict need the WebGPU/WebGL2 image
     engine addon? True for a ``plot`` leaf whose renderer is
-    ``image``/``imagehdr``, for ANY ``compare`` node (split/blend/diff compare
+    ``image``/``imagehdr``, for ANY ``compare`` node (split/diff compare
     always renders two images — every mode now lowers to the unified
     ``GpuImagePane`` via ``compareSource``, the same addon carries it, once it's
     loaded), and recursively through ``grid`` children. Mirrors

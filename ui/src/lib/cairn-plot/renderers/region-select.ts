@@ -121,7 +121,7 @@ export function texelToScreen(tx: number, ty: number, p: ScreenToTexelParams): {
  * The framing quad (the on-screen rect where the full framing image renders,
  * letterbox + zoom/pan baked into `p.box`/`p.sourceWindow`) is ONE object-contain
  * fit. WITHIN that quad, whichever source is sampled is spread across its OWN
- * `sourceDims.w × sourceDims.h` grid: the compare split/blend shader samples both
+ * `sourceDims.w × sourceDims.h` grid: the compare split shader samples both
  * operands through ONE normalized uv window, each scaled by its own
  * `textureDimensions`, so a mismatched-resolution side fills the SAME quad with
  * its own texel count (and its cells go rectangular when the two aspects differ).

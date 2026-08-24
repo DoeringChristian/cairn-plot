@@ -124,7 +124,6 @@ export function ImageViewportPane({
   onCompareModeChange,
   splitPosition,
   onSplitPositionChange,
-  blendAlpha,
   onNaturalSize,
   label,
   isBaseline,
@@ -167,7 +166,6 @@ export function ImageViewportPane({
       pan={view.pan}
       onViewportChange={(v) => onViewChange({ kind: "image2d", zoom: v.zoom, pan: v.pan })}
       splitPosition={splitPosition}
-      blendAlpha={blendAlpha}
       onSplitPositionChange={onSplitPositionChange}
       label={label}
       isDraggable={isDraggable}
@@ -181,7 +179,7 @@ export function ImageViewportPane({
 }
 
 /**
- * ImageViewport's capability descriptor — all five core modes, image
+ * ImageViewport's capability descriptor — all core modes, image
  * post-processing + overlays, no native modes, no camera sync, "tracked"
  * reset-view (matches `imageViewModified` in ImageGalleryCard today).
  * `maxPanes`/`webglContextsPerPane` are unenforced-large/0 — image has no
@@ -189,7 +187,7 @@ export function ImageViewportPane({
  * `image/webgl-diff.ts`) and no card-imposed pane cap today.
  */
 export const imageViewportCapabilities: ViewportCapabilities<never> = {
-  coreModes: ["normal", "split", "blend", "diff"],
+  coreModes: ["normal", "split", "diff"],
   nativeModes: [],
   hasSteps: true,
   postProcessing: true,

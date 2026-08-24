@@ -44,7 +44,7 @@ import type {
 declare global {
   interface Window {
     /** Opt-in flag (same one `plot-gpu-image-addon.tsx` gates `GpuImagePane`
-     *  on): `true` routes split/blend/diff through the engine. */
+     *  on): `true` routes split/diff through the engine. */
     __cairnPlotUseGpuImage?: boolean;
   }
 }
@@ -127,20 +127,19 @@ const DEFAULT_PROCESSING: ImageProcessing = {
 };
 
 // ---------------------------------------------------------------------------
-// MediaComparePane — the split/blend compositor.
+// MediaComparePane — the split compositor.
 //
 // Absorbed from renderers/CompareImagePane.tsx verbatim (mechanics
-// unchanged: clip-path drag handle for split, opacity cross-fade for blend).
-// This is now the ONE split/blend implementation; CompareImagePane.tsx is
-// deleted (spec-visual-compare.md quality bar #2).
+// unchanged: clip-path drag handle for split). This is now the ONE split
+// implementation; CompareImagePane.tsx is deleted (spec-visual-compare.md
+// quality bar #2).
 // ---------------------------------------------------------------------------
 
 export interface MediaComparePaneProps {
   imageUrl: string | null;
   baselineUrl: string | null;
-  mode: Extract<MediaCompareModeKind, "split" | "blend">;
+  mode: Extract<MediaCompareModeKind, "split">;
   splitPosition: number;
-  blendAlpha: number;
   onSplitPositionChange?: (p: number) => void;
 
   zoom: number;
@@ -152,7 +151,7 @@ export interface MediaComparePaneProps {
 
   label?: string;
   /** Per-side captions (`cp.Image(label=...)`): reference bottom-left, foreground
-   *  bottom-right in slide/blend. Supersede the legacy single `label`. */
+   *  bottom-right in slide. Supersede the legacy single `label`. */
   referenceLabel?: string;
   foregroundLabel?: string;
   isDraggable?: boolean;
@@ -168,16 +167,15 @@ export interface MediaComparePaneProps {
 
 /**
  * Compare pane that stacks two images (prediction over baseline/reference) and
- * blends them via either a draggable split (clipPath) or an opacity blend.
- * Self-contained: zoom/pan interaction runs through `useImageViewport`; the
- * gamma filter comes from the shared `useGammaFilter` helper.
+ * reveals them via a draggable split (clipPath). Self-contained: zoom/pan
+ * interaction runs through `useImageViewport`; the gamma filter comes from the
+ * shared `useGammaFilter` helper.
  */
 export function MediaComparePane({
   imageUrl,
   baselineUrl,
   mode,
   splitPosition,
-  blendAlpha,
   onSplitPositionChange,
   zoom,
   pan,
@@ -204,7 +202,7 @@ export function MediaComparePane({
   const [notation, setNotation] = useState<PixelValueNotation>(pixelValueNotation);
   const [overlayActive, setOverlayActive] = useState(false);
 
-  // TEV-style per-pixel value overlay. The split/blend compositor draws raw
+  // TEV-style per-pixel value overlay. The split compositor draws raw
   // <img>s (not ImagePane), so it carries its own overlay so pixel values still
   // appear when you zoom in far enough here too. In SPLIT mode BOTH sources are
   // sampled: the reference (left of the divider) and the foreground/comparison
@@ -328,7 +326,6 @@ export function MediaComparePane({
               style={{
                 filter: filterStr,
                 imageRendering: imgRendering,
-                ...(mode === "blend" ? { opacity: blendAlpha } : {}),
               }}
               onLoad={(e) => {
                 const img = e.currentTarget;
@@ -358,7 +355,6 @@ export function MediaComparePane({
                 style={{
                   filter: filterStr,
                   imageRendering: imgRendering,
-                  ...(mode === "blend" ? { opacity: 1 - blendAlpha } : {}),
                 }}
                 onLoad={(e) => {
                   const img = e.currentTarget;
@@ -379,7 +375,7 @@ export function MediaComparePane({
             source, clipped at the divider so the numbers under the divider
             always match the image actually shown there; the clip is driven by
             `splitPosition`, so it re-reveals per side live as the divider moves.
-            Blend/normal show a single foreground overlay. */}
+            Normal shows a single foreground overlay. */}
         {mode === "split" ? (
           <>
             {baselineUrl && refDims && (
@@ -438,9 +434,9 @@ export function MediaComparePane({
           <PixelNotationToggle notation={notation} onChange={setNotation} />
         )}
       </div>
-      {/* REF badge: only in `split`/slide, where the reference side is
-          distinctly visible left of the divider. Hidden in `blend` (fused).
-          Shared `RefBadge` — identical element/corner in every compare mode. */}
+      {/* REF badge: shown in `split`/slide, where the reference side is
+          distinctly visible left of the divider. Shared `RefBadge` — identical
+          element/corner in every compare mode. */}
       {mode === "split" && <RefBadge />}
       {/* Per-side captions: REFERENCE bottom-left (static), FOREGROUND bottom-
           right (draggable, keeping the old single-label semantics). Drag is
@@ -476,8 +472,8 @@ export function MediaComparePane({
 // CompositeMediaPane — the single compositor entry point.
 //
 // Given a foreground (prediction) source and a reference (baseline) source,
-// renders whichever of the four core modes is active: normal (single pane,
-// reference tracked but not shown) | split/blend (MediaComparePane above) |
+// renders whichever of the three core modes is active: normal (single pane,
+// reference tracked but not shown) | split (MediaComparePane above) |
 // diff (delegates to ImagePane's existing pixel-diff pipeline —
 // cairn-plot/image/diff.ts + webgl-diff.ts, NOT duplicated here). This is what
 // ImageGalleryCard's per-pane rendering now calls instead of its own
@@ -487,7 +483,7 @@ export function MediaComparePane({
 // `baselineUrl == null` always forces "normal" regardless of `mode` — a mode
 // selection with no resolved reference has nothing to compare against. The
 // caller decides *whether* a reference resolves for this pane (including
-// card-specific nuances like "hide split/blend against a content-addressed
+// card-specific nuances like "hide split against a content-addressed
 // duplicate of itself") and passes `baselineUrl: null` to opt a pane out.
 // ---------------------------------------------------------------------------
 
@@ -566,7 +562,7 @@ export function isEngineOnlyDiff(kernel: string): boolean {
 
 /** Tone-map a float compare side to a display PNG data-URL on the CPU (the CPU
  *  compare panes take only URL sources). A visual approximation good enough for a
- *  slide/blend OVERLAY — those aren't pixel math (that's what a float DIFF needs
+ *  slide OVERLAY — those aren't pixel math (that's what a float DIFF needs
  *  the GPU for). Returns `null` if the browser can't rasterize. */
 function floatSourceToDataUrl(src: CompareFloatSource, tonemap: string, gamma?: number): string | null {
   try {
@@ -593,7 +589,7 @@ function floatSourceToDataUrl(src: CompareFloatSource, tonemap: string, gamma?: 
  * CPU fallback for a FLOAT compare when the WebGPU engine is unavailable (render
  * mode `cpu`, addon not loaded, or no WebGPU). Instead of a bare "unavailable"
  * placeholder with NO image, tone-map the float side(s) to display URLs on the
- * CPU and show a real slide/blend of them + a small notice. `diff` (pixel math)
+ * CPU and show a real slide of them + a small notice. `diff` (pixel math)
  * is GPU-only for float, so it degrades to a SLIDE with a "diff needs WebGPU"
  * notice. If the browser can't even rasterize, fall back to the placeholder.
  */
@@ -606,7 +602,6 @@ function CpuFloatComparePane({
   tonemap,
   tonemap_gamma,
   splitPosition,
-  blendAlpha,
   onSplitPositionChange,
   zoom,
   pan,
@@ -631,7 +626,6 @@ function CpuFloatComparePane({
   | "tonemap"
   | "tonemap_gamma"
   | "splitPosition"
-  | "blendAlpha"
   | "onSplitPositionChange"
   | "zoom"
   | "pan"
@@ -680,8 +674,8 @@ function CpuFloatComparePane({
     );
   }
   const wantDiff = mode === "diff";
-  // diff is GPU-only for float → slide; blend stays blend; anything else → slide.
-  const cpuMode: Extract<MediaCompareModeKind, "split" | "blend"> = mode === "blend" ? "blend" : "split";
+  // diff is GPU-only for float → slide; everything else → slide.
+  const cpuMode: Extract<MediaCompareModeKind, "split"> = "split";
   return (
     <div className="relative h-full w-full">
       <MediaComparePane
@@ -689,7 +683,6 @@ function CpuFloatComparePane({
         baselineUrl={refUrl}
         mode={cpuMode}
         splitPosition={splitPosition ?? 0.5}
-        blendAlpha={blendAlpha ?? 0.5}
         onSplitPositionChange={onSplitPositionChange}
         zoom={zoom}
         pan={pan}
@@ -729,14 +722,14 @@ export interface CompositeMediaPaneProps {
   diffKernel?: string;
   /** Mismatched-size diff operand handling (engine compare pane, diff modes):
    *  `align` = overlap anchor (default "top-left"); `fit` = "crop" (default) |
-   *  "fill". Ignored in split/blend. */
+   *  "fill". Ignored in split. */
   align?: CompareAlign;
   fit?: CompareFit;
   /** Fired when the engine pane's diff kernel changes (menu). */
   onDiffKernelChange?: (kernelId: string) => void;
-  /** Fired when the engine pane's compare mode changes (split/blend/diff menu).
+  /** Fired when the engine pane's compare mode changes (split/diff menu).
    *  Lets `CompareView` keep its lifted view-mode state in sync. */
-  onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
+  onCompareModeChange?: (mode: "split" | "diff") => void;
   colormap: Colormap;
   interpolation: Interpolation;
   showAxes?: boolean;
@@ -762,25 +755,21 @@ export interface CompositeMediaPaneProps {
   pan: { x: number; y: number };
   onViewportChange?: (v: ImageViewport) => void;
 
-  /** Used only when the effective mode is "split" | "blend". */
+  /** Used only when the effective mode is "split". */
   splitPosition?: number;
-  blendAlpha?: number;
   onSplitPositionChange?: (p: number) => void;
-  /** Fired when the engine pane's blend alpha changes (via a synced peer patch).
-   *  Lets `CompareView` hold blend alpha as lifted state. */
-  onBlendAlphaChange?: (a: number) => void;
 
   /** Multi-pane SELECTION settings-sync — forwarded to the engine compare pane
    *  (`GpuComparePane`) so a selected compare pane joins the ONE shared settings
    *  bus (mode / kernel / colormap / tonemap / … sync), the same bus the image
    *  panes use. Threaded from `PaneSyncContext` via `CompareView`. Only the
-   *  engine-composited (split/blend/diff) pane participates. */
+   *  engine-composited (split/diff) pane participates. */
   settingsSyncGroupId?: string;
   syncIsAnchor?: boolean;
 
   label: string;
   /** Per-side captions (`cp.Image(label=...)`): reference bottom-left, foreground
-   *  bottom-right in slide/blend; folded into the diff caption in diff mode. */
+   *  bottom-right in slide; folded into the diff caption in diff mode. */
   referenceLabel?: string;
   foregroundLabel?: string;
   isDraggable?: boolean;
@@ -824,9 +813,7 @@ export function CompositeMediaPane({
   pan,
   onViewportChange,
   splitPosition,
-  blendAlpha,
   onSplitPositionChange,
-  onBlendAlphaChange,
   settingsSyncGroupId,
   syncIsAnchor,
   label,
@@ -860,19 +847,19 @@ export function CompositeMediaPane({
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
 
-  // The engine pane composites only split/blend/diff (normal is a single image).
+  // The engine pane composites only split/diff (normal is a single image).
   const engineComposited =
-    effectiveMode === "split" || effectiveMode === "blend" || effectiveMode === "diff";
+    effectiveMode === "split" || effectiveMode === "diff";
 
   // Float sides are GPU-only for the COMPOSITED modes (`rgba32float` upload — the
-  // legacy CPU split/blend/diff panes take only URL sources). The engine pane
+  // legacy CPU split/diff panes take only URL sources). The engine pane
   // below ingests them when available; when it ISN'T, the CPU fallback further
-  // down tone-maps them for a slide/blend + a small notice — never a blank pane.
+  // down tone-maps them for a slide + a small notice — never a blank pane.
   // `useGpuCompareReadyTick` above forces a re-render once the gpu-image addon
   // finishes initializing, so on a WebGPU browser this resolves to the real GPU
   // pane below once ready.
 
-  // Engine-backed split/blend/diff (opt-in — see `resolveGpuImagePane`) on the
+  // Engine-backed split/diff (opt-in — see `resolveGpuImagePane`) on the
   // UNIFIED image pane (`GpuImagePane` + `compareSource`) — the SAME pane a
   // descriptor image-compare leaf lowers to (`plot-node.tsx`'s `LeafView`).
   // Slot convention (matches the unified pane + the deleted `GpuComparePane`'s
@@ -898,10 +885,9 @@ export function CompositeMediaPane({
     const compareSource: CompareSource = {
       b: foregroundSource,
       opId: diffKernel ?? diffSubmode,
-      mode: effectiveMode as "split" | "blend" | "diff",
+      mode: effectiveMode as "split" | "diff",
       colormap,
       splitPosition: splitPosition ?? 0.5,
-      blendAlpha: blendAlpha ?? 0.5,
       align,
       fit,
       contentKeyA,
@@ -913,7 +899,6 @@ export function CompositeMediaPane({
       onDiffKernelChange,
       onCompareModeChange,
       onSplitPositionChange,
-      onBlendAlphaChange,
     };
     return (
       <GpuImagePane
@@ -943,8 +928,8 @@ export function CompositeMediaPane({
   }
 
   // CPU FALLBACK (no GPU engine for this composite). Float compositing is
-  // GPU-only, so tone-map the float side(s) on the CPU and show a real slide/
-  // blend + a small notice — a float `diff`, being pixel math, degrades to a
+  // GPU-only, so tone-map the float side(s) on the CPU and show a real slide
+  // + a small notice — a float `diff`, being pixel math, degrades to a
   // slide. Never a bare "unavailable" placeholder with no image.
   if (hasFloatSide) {
     return (
@@ -957,7 +942,6 @@ export function CompositeMediaPane({
         tonemap={tonemap}
         tonemap_gamma={tonemap_gamma}
         splitPosition={splitPosition}
-        blendAlpha={blendAlpha}
         onSplitPositionChange={onSplitPositionChange}
         zoom={zoom}
         pan={pan}
@@ -976,14 +960,13 @@ export function CompositeMediaPane({
     );
   }
 
-  if (effectiveMode === "split" || effectiveMode === "blend") {
+  if (effectiveMode === "split") {
     return (
       <MediaComparePane
         imageUrl={imageUrl}
         baselineUrl={baselineUrl}
         mode={effectiveMode}
         splitPosition={splitPosition ?? 0.5}
-        blendAlpha={blendAlpha ?? 0.5}
         onSplitPositionChange={onSplitPositionChange}
         zoom={zoom}
         pan={pan}
@@ -1014,7 +997,6 @@ export function CompositeMediaPane({
           baselineUrl={baselineUrl}
           mode="split"
           splitPosition={splitPosition ?? 0.5}
-          blendAlpha={blendAlpha ?? 0.5}
           onSplitPositionChange={onSplitPositionChange}
           zoom={zoom}
           pan={pan}
@@ -1076,7 +1058,7 @@ export function CompositeMediaPane({
 // CrossTypeCompositeMediaPane — a thin wrapper around `CompositeMediaPane`
 // (NOT a second compare path) for WS-VC6's cross-type `diff`.
 //
-// Every other mode (normal/split/blend) works on the raw `imageUrl`/
+// Every other mode (normal/split) works on the raw `imageUrl`/
 // `baselineUrl` unchanged — CSS `object-fit: contain` already handles
 // mismatched aspect visually. `diff` does per-pixel math, so when
 // `alignForDiff` is set (only ever true for a cross-type pane — see

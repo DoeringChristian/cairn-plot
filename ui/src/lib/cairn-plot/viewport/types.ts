@@ -25,7 +25,7 @@ import type { CompareFloatSource } from "../media-compare/compositor";
 // ---------------------------------------------------------------------------
 
 /**
- * Type-agnostic frame the compositor consumes for split/blend/diff
+ * Type-agnostic frame the compositor consumes for split/diff
  * compositing (and, in WS-VC6, cross-type compare). The image path yields
  * `{kind:"url"}` today (an artifact URL — zero-copy, no snapshot needed); the
  * 3D path (WS-VC4/5) will yield `{kind:"canvas"}` (live/offscreen WebGL
@@ -81,9 +81,9 @@ export interface NativeModeSpec<M extends string = string> {
  * place that interprets it.
  */
 export interface ViewportCapabilities<M extends string = never> {
-  /** Which of the five core (compositor-driven) modes this type supports.
-   *  Image: all five. A hypothetical type with no baseline concept at all
-   *  could omit "diff", etc. — VC3 always passes all five for image. */
+  /** Which of the three core (compositor-driven) modes this type supports.
+   *  Image: all three. A hypothetical type with no baseline concept at all
+   *  could omit "diff", etc. — VC3 always passes all three for image. */
   coreModes: readonly MediaCompareModeKind[];
   /** Card-native modes (3D geometry diffs) appended to the same selector.
    *  `[]` for image. */
@@ -212,7 +212,7 @@ export interface ViewportDataResult<TData> {
  * formalizes the existing de-facto contract (ImagePane props ∪ Scene3D's
  * `onFrame`): the card resolves data/reference/mode/settings for a pane and
  * hands them to the module; the module owns everything about how that one
- * pane is drawn (compositing side/split/blend/diff, or — VC4 — orbit
+ * pane is drawn (compositing side/split/diff, or — VC4 — orbit
  * controls + the live/offscreen WebGL canvas).
  */
 export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
@@ -238,7 +238,7 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   view: TView;
   onViewChange: (v: TView) => void;
   /** The active core mode (drives compositor dispatch: normal/split/
-   *  blend/diff — mirrors `CompositeMediaPaneProps.mode`). `reference == null`
+   *  diff — mirrors `CompositeMediaPaneProps.mode`). `reference == null`
    *  always forces "normal" behavior regardless of `mode` (same rule as
    *  `CompositeMediaPane` today) — the module, not the card, applies that
    *  fallback, so the card can pass the user's selected mode unconditionally. */
@@ -254,17 +254,15 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
   /** Fired when the engine compare pane's diff kernel changes (its MODE menu) —
    *  lets the host persist the new kernel. Threaded to `onDiffKernelChange`. */
   onDiffKernelChange?: (kernelId: string) => void;
-  /** Fired when the engine compare pane's compare mode changes (split/blend/diff
+  /** Fired when the engine compare pane's compare mode changes (split/diff
    *  menu). Threaded to `onCompareModeChange`. */
-  onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
+  onCompareModeChange?: (mode: "split" | "diff") => void;
   /** A card-native (non-compositor) mode name, when `mode` doesn't apply —
    *  reserved for VC4's geometry diffs; unused by ImageViewport. */
   nativeMode?: string;
   /** mode: "split" — clip-path drag-handle position, 0..1. */
   splitPosition?: number;
   onSplitPositionChange?: (p: number) => void;
-  /** mode: "blend" — foreground opacity, 0..1. */
-  blendAlpha?: number;
   /** Emit a compositor-consumable frame after each render — the bridge for
    *  cross-type/screenshot compositing (WS-VC6). Not called by ImageViewport
    *  in VC3 (see `FrameSource`'s doc comment). */
@@ -305,7 +303,7 @@ export interface ViewportPaneProps<TData, TView extends ViewState, TSettings> {
    *  cross-type-frame.tsx`). `undefined`/`null` = no cross-type reference for
    *  this pane (the normal same-type `reference` field applies, if any); the
    *  module then falls back to its native reference handling unchanged.
-   *  Only meaningful for the image-space compositor modes (split/blend/
+   *  Only meaningful for the image-space compositor modes (split/
    *  diff) — native (geometry) `nativeModes` never receive this and stay
    *  same-type by construction (their `enabledFor` sees a `null` `reference`
    *  item, so they self-disable). */

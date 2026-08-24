@@ -160,14 +160,14 @@ export function displayToolbarButton(args: {
 /**
  * The ONE DISPLAY menu for the COMPARE pane — the mode-dependent twin of
  * {@link displayToolbarButton}, replacing the compare pane's separate
- * tone-map (slide/blend) + colormap (diff) buttons. The compare pane's two
- * encoding FACES are structurally exclusive by MODE (a slide/blend composite is
+ * tone-map (slide) + colormap (diff) buttons. The compare pane's two
+ * encoding FACES are structurally exclusive by MODE (a slide composite is
  * LIGHT → curves; a diff is a SCALAR error map → data LUTs), so only ONE section
  * ever applies — that IS the arity gating, so each face renders as a single
  * section (no hairline header, exactly like the image panes' Display menu when
  * only one section is applicable).
  *
- *  - `mode:"light"` (slide/blend): the LIGHT curves (Linear · sRGB · Gamma ·
+ *  - `mode:"light"` (slide): the LIGHT curves (Linear · sRGB · Gamma ·
  *    Reinhard · ACES). `value` is the active curve id. Luts are gated out — a
  *    colormap on a light composite is meaningless (the compose path has no LUT
  *    stage). The `normal` remap is gated out too (the compose shader assembles
@@ -217,7 +217,7 @@ export function compareDisplayToolbarButton(args: {
  * compare-pane-on-DISPLAY-conventions follow-up), derived from the pane's two
  * mode-scoped faces so it carries the SAME `encoding` key the image panes
  * publish. In diff mode the active encoding IS the chosen colormap LUT (a data
- * encoding); with no colormap (`"none"`) OR in slide/blend the active encoding is
+ * encoding); with no colormap (`"none"`) OR in slide the active encoding is
  * the LIGHT curve — always a valid registry id, so an image-pane peer applying
  * `encoding` never lands on a non-registry token. The pane also publishes the
  * derived `colormap`/`tonemap` for pre-registry back-compat.

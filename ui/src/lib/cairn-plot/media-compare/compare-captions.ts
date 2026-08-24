@@ -2,7 +2,7 @@
 // compareCaptions — the ONE place that turns a compare pane's per-side image
 // labels (captions) into the two chips it shows, by mode. Shared by the CPU
 // `MediaComparePane` and the GPU `GpuComparePane` so both label identically:
-//   - split / blend: the REFERENCE caption bottom-LEFT, the FOREGROUND caption
+//   - split: the REFERENCE caption bottom-LEFT, the FOREGROUND caption
 //     bottom-RIGHT (the full-height divider passes over them as it slides);
 //   - diff:          ONE bottom-LEFT caption "<metric> · <fg> compared to <ref>"
 //     naming the error map, where <metric> is the active diff kernel's display
@@ -11,10 +11,10 @@
 import { listDiffMenuModes } from "../engine/kernels";
 
 export interface CompareCaptions {
-  /** Bottom-LEFT chip: the reference caption (slide/blend) OR the whole diff
+  /** Bottom-LEFT chip: the reference caption (slide) OR the whole diff
    *  caption (diff). Undefined ⇒ render nothing. */
   left?: string;
-  /** Bottom-RIGHT chip: the foreground caption (slide/blend only). */
+  /** Bottom-RIGHT chip: the foreground caption (slide only). */
   right?: string;
 }
 
@@ -39,6 +39,6 @@ export function compareCaptions(opts: {
     const prefix = metric ? `${metric} · ` : "";
     return { left: `${prefix}${fg} compared to ${ref}` };
   }
-  // split / blend (and any non-diff composited mode): reference left, fg right.
+  // split (and any non-diff composited mode): reference left, fg right.
   return { left: referenceLabel || undefined, right: foregroundLabel || undefined };
 }

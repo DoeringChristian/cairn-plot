@@ -209,17 +209,17 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
 }
 
 /**
- * COMPOSITOR ops (Phase 3): drive `split`/`blend` through the unified image path
- * as a LIGHT composite (isScalar false) and assert the readback === the composed
- * cpu twin, on BOTH an SDR (rgba8unorm) surface — clamp + sRGB OETF — and an HDR
+ * COMPOSITOR op (Phase 3): drive `split` through the unified image path as a
+ * LIGHT composite (isScalar false) and assert the readback === the composed cpu
+ * twin, on BOTH an SDR (rgba8unorm) surface — clamp + sRGB OETF — and an HDR
  * (rgba16float) surface — the extended (unclamped) encode, so an over-range
  * composite survives. The two operands are an N-wide strip so the fragment SCREEN
  * uv.x = (i+0.5)/N straddles the split divider (`param` 0.5) — proving the
- * per-texel `uv.x < param` cut — and blend mixes at alpha `param` (0.25). The cpu
- * twin is `op.cpu([a,b], 3, {uv,param})` → the display twin (operator srgb =
- * clamp, then output-encode), the SAME two-registry composition the diff case uses.
+ * per-texel `uv.x < param` cut. The cpu twin is `op.cpu([a,b], 3, {uv,param})` →
+ * the display twin (operator srgb = clamp, then output-encode), the SAME
+ * two-registry composition the diff case uses.
  */
-async function runCompositorOpCase(device: Device, opId: "split" | "blend", param: number): Promise<boolean> {
+async function runCompositorOpCase(device: Device, opId: "split", param: number): Promise<boolean> {
   const op = getContentOp(opId);
   if (!op || !isDirectContentOp(op)) {
     report(false, `[${opId}] not a registered direct content op`);
@@ -602,10 +602,9 @@ async function main(): Promise<void> {
       if (!(await runDiffOpCase(device, opId))) allOk = false;
     }
     report(allOk, `all ${DIRECT_DIFF_OPS.length} direct diff ops: GPU cairnContent + display === composed cpu twin`);
-    // Phase 3 — COMPOSITOR ops (split/blend): light composite === composed cpu twin.
+    // Phase 3 — COMPOSITOR op (split): light composite === composed cpu twin.
     if (!(await runCompositorOpCase(device, "split", 0.5))) allOk = false;
-    if (!(await runCompositorOpCase(device, "blend", 0.25))) allOk = false;
-    report(allOk, `compositor ops (split/blend): GPU composite === composed cpu twin (SDR + HDR)`);
+    report(allOk, `compositor op (split): GPU composite === composed cpu twin (SDR + HDR)`);
     // Phase 2b — POOL wiring: the second source slot + the cached-op render path.
     for (const opId of DIRECT_DIFF_OPS) {
       if (!(await runPoolDirectOpCase(device, opId))) allOk = false;

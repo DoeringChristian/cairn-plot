@@ -8,13 +8,13 @@
  * show:
  *
  *   - `samplePixel`      — the primary source (a plain image, or the reference
- *                          side of a split/blend composite).
+ *                          side of a split composite).
  *   - `sampleDiffPixel`  — the diff readout: a DIRECT op re-runs its `cpu` twin
  *                          over the two raw operands (normalized to the GPU's
  *                          `textureLoad`: uint8 -> /255, float -> raw); a CACHED
  *                          metric reads back its result texture at the result
  *                          stride.
- *   - `sampleForeground` — the foreground operand `b` of a split/blend composite,
+ *   - `sampleForeground` — the foreground operand `b` of a split composite,
  *                          read at ITS OWN grid so per-side pixel numbers land on
  *                          their own texels when the two resolutions differ.
  *

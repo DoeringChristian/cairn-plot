@@ -34,6 +34,16 @@ import {
 type Opts = Record<string, unknown>;
 type Runtime = Array<[string, RuntimeStoreEntry]>;
 
+// Back-compat: the removed `blend` compare view mode aliases to `slide`. Warn
+// once per session (never hard-fail an old builder call / baked descriptor).
+let warnedBlendRemoved = false;
+function warnBlendRemoved(): void {
+  if (warnedBlendRemoved) return;
+  warnedBlendRemoved = true;
+  // eslint-disable-next-line no-console
+  console.warn("cairn-plot: the 'blend' compare mode was removed; using 'slide' instead.");
+}
+
 /** The camelCase builder names shared by BOTH faces — pinned to
  *  `schema/cairn-plot-contracts.json`'s `builders` by the parity test, so the
  *  JS namespace and the Python composable surface can't drift. */
@@ -324,13 +334,16 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
     },
 
     compare(a, b, opts = {}) {
-      const mode = checkCompareMode(String(opts.mode ?? "slide"));
+      // Back-compat: the removed `blend` view mode aliases to `slide` (warn once,
+      // never hard-fail an old builder call).
+      const rawMode = String(opts.mode ?? "slide");
+      const mode = checkCompareMode(rawMode === "blend" ? "slide" : rawMode);
+      if (rawMode === "blend") warnBlendRemoved();
       const align = checkAlign(String(opts.align ?? "top-left"));
       const fit = checkFit(String(opts.fit ?? "crop"));
-      let internalMode: "split" | "blend" | "diff";
+      let internalMode: "split" | "diff";
       let diffKernel: string | null = null;
       if (mode === "slide") internalMode = "split";
-      else if (mode === "blend") internalMode = "blend";
       else {
         internalMode = "diff";
         diffKernel = COMPARE_KERNEL_MODES[mode]!;
@@ -340,7 +353,6 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       const B = compareSide(b);
       const built = imageDisplayProps(opts);
       if (opts.splitPosition != null) built.splitPosition = num(opts.splitPosition);
-      if (opts.blendAlpha != null) built.blendAlpha = num(opts.blendAlpha);
       if (diffKernel != null) built.diffSubmode = diffKernel;
       // Host seam: `toolbar:false` only when explicitly disabled (mirrors Python
       // `cp.Compare(toolbar=...)`); omitted at the default `true`.

@@ -97,24 +97,22 @@ test("the broadened payload carries compare-only keys through publish/subscribe"
   ]);
 });
 
-test("getLastImageSettings merges compare-only shared keys for a late joiner (mode/split/blend persist)", () => {
+test("getLastImageSettings merges compare-only shared keys for a late joiner (mode/split persist)", () => {
   const g = freshGroup();
   // A compare anchor seeds BOTH the shared look and its compare-only settings.
-  // compareMode / splitPosition / blendAlpha PERSIST (a split/blend joiner must
-  // align to the group's mode + divider/alpha).
+  // compareMode / splitPosition PERSIST (a split joiner must align to the
+  // group's mode + divider).
   publishImageSettings(g, "anchor", {
     colormap: "turbo",
     tonemap: "aces",
     compareMode: "split",
     splitPosition: 0.25,
-    blendAlpha: 0.75,
   });
   assert.deepEqual(getLastImageSettings(g), {
     colormap: "turbo",
     tonemap: "aces",
     compareMode: "split",
     splitPosition: 0.25,
-    blendAlpha: 0.75,
   });
 });
 
@@ -161,7 +159,7 @@ test("flat merge: a later colormap overwrites the field but leaves other keys (i
   });
 });
 
-test("flat merge: compareMode / split / blend persist for a late joiner", () => {
+test("flat merge: compareMode / split persist for a late joiner", () => {
   const g = freshGroup();
   publishImageSettings(g, "split", {
     encoding: "srgb",

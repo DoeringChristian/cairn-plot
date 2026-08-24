@@ -501,7 +501,7 @@ export function meshActiveColorbar(args: {
  * pre-refactor `MAX_PANES` WebGL budget mitigation).
  */
 export const meshViewportCapabilities: ViewportCapabilities<MeshNativeMode> = {
-  coreModes: ["normal", "split", "blend", "diff"],
+  coreModes: ["normal", "split", "diff"],
   nativeModes: [
     {
       mode: "diff-property",

@@ -367,26 +367,24 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // the pane renders a COMPARE of `source` (reference/`a`) against
   // `compareSource.b` (foreground). The single-image path is byte-identical when
   // absent. The `opId` selects the mode:
-  //   - `compositorMode` (Phase 3): `split`/`blend` — a LIGHT composite (divider /
-  //     alpha), displayed as a plain image with the divider + per-side chrome.
+  //   - `compositorMode` (Phase 3): `split` — a LIGHT composite (divider),
+  //     displayed as a plain image with the divider + per-side chrome.
   //   - `diffMode` (Phase 2c): a diff kernel — the scalar-error display.
   // `hasCompare` gates the SHARED operand plumbing (upload `b`, mapping, metrics).
   const compareSource: CompareSource | undefined = backendProps.compareSource;
   const hasCompare = !!compareSource;
   // The compare mode is EXPLICIT (`compareSource.mode`, default "diff"), so `opId`
   // stays the diff kernel even in a compositor mode (switching INTO diff restores it).
-  const compareMode: "diff" | "split" | "blend" | null = hasCompare
-    ? (compareSource!.mode ?? "diff")
+  // A legacy "blend" (removed view mode) aliases to "split".
+  const compareMode: "diff" | "split" | null = hasCompare
+    ? ((compareSource!.mode as string) === "blend" ? "split" : (compareSource!.mode ?? "diff"))
     : null;
-  const compositorMode = compareMode === "split" || compareMode === "blend";
+  const compositorMode = compareMode === "split";
   const diffMode = compareMode === "diff";
-  // The concrete compositor mode ("split" | "blend"), or null. Drives the divider,
-  // the flip keys, the per-side captions/readout, and the compositor render.
-  const compareOpMode: "split" | "blend" | null = compositorMode
-    ? (compareMode as "split" | "blend")
-    : null;
+  // The concrete compositor mode ("split"), or null. Drives the divider, the flip
+  // keys, the per-side captions/readout, and the compositor render.
+  const compareOpMode: "split" | null = compositorMode ? "split" : null;
   const splitPosition = compareSource?.splitPosition ?? 0.5;
-  const blendAlpha = compareSource?.blendAlpha ?? 0.5;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -928,15 +926,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             offset: displayOffset,
             reduce: effectiveReduce,
             ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
-            // COMPOSITOR (split/blend): the LIGHT display look above (a compare
-            // peer follows it) PLUS the compare-only keys so a selected peer's
-            // control follows the mode + divider/alpha (`useCompareControl` reads
-            // them). Omitted in the plain single-image case.
+            // COMPOSITOR (split): the LIGHT display look above (a compare peer
+            // follows it) PLUS the compare-only keys so a selected peer's control
+            // follows the mode + divider (`useCompareControl` reads them). Omitted
+            // in the plain single-image case.
             ...(compositorMode
-              ? { compareMode: compareOpMode as string, splitPosition, blendAlpha }
+              ? { compareMode: compareOpMode as string, splitPosition }
               : {}),
           },
-    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, blendAlpha],
+    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -1040,23 +1038,23 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     },
     [enc, publishSettings, effectiveTonemap],
   );
-  // MODE menu picking SLIDE/BLEND delegates to the owner (which remounts to
-  // `GpuComparePane` — the documented slide/blend remount) AND broadcasts on the
+  // MODE menu picking SLIDE delegates to the owner (which remounts to
+  // `GpuComparePane` — the documented slide remount) AND broadcasts on the
   // shared settings bus so a selected PEER pane follows the switch out of diff
   // (its router — `NodeDispatch` — reads `compareMode` and reroutes; a diff
   // `GpuImagePane` can't apply it itself). Mirrors `GpuComparePane.changeCompareMode`.
   const changeCompareMode = useCallback(
-    (mode: "split" | "blend" | "diff") => {
+    (mode: "split" | "diff") => {
       compareSource?.onCompareModeChange?.(mode);
       publishSettings({ compareMode: mode });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onCompareModeChange, publishSettings],
   );
-  // COMPOSITOR param publish sites (Phase 3): the divider / flip keys / blend
-  // slider both LIFT the value to the owner (so the reused-instance control state
-  // survives) AND broadcast on the shared bus (a selected peer's control follows —
-  // `useCompareControl` subscribes to `splitPosition`/`blendAlpha`). Mirrors
+  // COMPOSITOR param publish sites (Phase 3): the divider / flip keys both LIFT
+  // the value to the owner (so the reused-instance control state survives) AND
+  // broadcast on the shared bus (a selected peer's control follows —
+  // `useCompareControl` subscribes to `splitPosition`). Mirrors
   // `GpuComparePane.changeSplit`. NO recompile — only the compositor param uniform.
   const changeSplit = useCallback(
     (p: number) => {
@@ -1065,14 +1063,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onSplitPositionChange, publishSettings],
-  );
-  const changeBlend = useCallback(
-    (a: number) => {
-      compareSource?.onBlendAlphaChange?.(a);
-      publishSettings({ blendAlpha: a });
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compareSource?.onBlendAlphaChange, publishSettings],
   );
   // SPLIT flip keys ([ / ] always; ←/→/h/l when not in a stacked grid) — ported
   // from `GpuComparePane`. Active only in split mode; `inStackedGrid`/`inOverlay`
@@ -1561,7 +1551,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     resolvedKernelId,
     compareOpMode,
     splitPosition,
-    blendAlpha,
     paneReady,
     // Read the pool's applied stamps at render time (the same timing the previous
     // inline `targetResident` used); the present gate in `renderPass` re-reads
@@ -1651,17 +1640,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       return false;
     }
 
-    // ---- COMPOSITOR path (split / blend, Phase 3) -----------------------
+    // ---- COMPOSITOR path (split, Phase 3) -------------------------------
     // Renders a LIGHT composite of the two operands (slot a = reference =
     // `source`, slot b = foreground = `compareSource.b`) through the SAME unified
-    // image pipeline: `render({contentOpId: split|blend, contentParam})`, the pool
+    // image pipeline: `render({contentOpId: split, contentParam})`, the pool
     // injects `srcB`, and `cairnContent` composites by the fragment uv against the
     // compositor param. The composite is ordinary scene light → the DISPLAY stage
     // (operator × peak × surface, output-encode) runs EXACTLY as a plain image
     // (isScalar false). Byte-identical to `GpuComparePane`'s compose for a hard
-    // split; blend mixes the RAW light (the unified model — the cpu twin mirrors
-    // it, proven by content-ops.browser). Driven live (divider drag / blend
-    // slider) — only the compositor param uniform changes, no recompile.
+    // split. Driven live (divider drag) — only the compositor param uniform
+    // changes, no recompile.
     if (compositorMode) {
       // Wait for the foreground slot to upload (else the composite would sample
       // the 1×1 placeholder for slot b). Re-fires on `refUploadVersion`.
@@ -1688,7 +1676,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         uv,
         filter,
         contentOpId: contentOpId(compareOpMode!),
-        contentParam: compareOpMode === "split" ? splitPosition : blendAlpha,
+        contentParam: splitPosition,
       };
       try {
         const ok = handle.render(compositeParams);
@@ -1965,9 +1953,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
     // change, or the hdr-flip exposures resolve.
     diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffColormap, diffMapping, hdrExposures, contentKeyA, contentKeyB,
-    // COMPOSITOR deps: re-render on a divider drag / blend-slider / mode change
+    // COMPOSITOR deps: re-render on a divider drag / mode change
     // (only the compositor param uniform changes — no recompile).
-    compositorMode, compareOpMode, splitPosition, blendAlpha,
+    compositorMode, compareOpMode, splitPosition,
     // PRESENT-COHERENCY GUARD deps: `expectedPrimaryId`/`expectedBId` read these,
     // so renderPass must be recreated (and re-evaluate the guard) when the pane's
     // intended source IDENTITY changes — notably a plain image→image URL swap
@@ -2170,7 +2158,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // The LIVE compare mode — a unified harness reads `compareMode` off whichever
       // probe (compare | diff) is live to follow mode across a split↔diff switch.
       get compareMode() {
-        return (diffMode ? "diff" : compareOpMode) as "split" | "blend" | "diff";
+        return (diffMode ? "diff" : compareOpMode) as "split" | "diff";
       },
       get diffKernel() {
         return diffKernel;
@@ -2195,15 +2183,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       get ssimText() {
         return formatSsim(diffSsim);
       },
-      // COMPOSITOR (split/blend) seams — mirror `GpuComparePane`'s `__cairnCompareProbe`.
+      // COMPOSITOR (split) seams — mirror `GpuComparePane`'s `__cairnCompareProbe`.
       get splitPosition() {
         return splitPosition;
       },
-      get blendAlpha() {
-        return blendAlpha;
-      },
       changeSplit,
-      changeBlend,
       // The FRAMING grid (primary/reference footprint) + the per-side source grids
       // ("a" = reference = the framing dims, "b" = foreground = its own dims).
       get dims() {
@@ -2273,7 +2257,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, blendAlpha, changeSplit, changeBlend, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, localKernelMeta, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, localKernelMeta, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2350,22 +2334,21 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   const compareLeadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
     if (!hasCompare) return [];
-    // The ONE compare MODE menu (Slide · Blend · <kernels>), current value = the
-    // live mode. onKernel switches INTO diff (an op-switch on the reused instance
+    // The ONE compare MODE menu (Slide · <kernels>), current value = the live
+    // mode. onKernel switches INTO diff (an op-switch on the reused instance
     // — no remount, since [image, split, diff] all key `plot:image`).
     const modeMenu = buildCompareModeMenu({
       mode: compositorMode ? compareOpMode! : "diff",
       kernel: diffKernel,
       kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
       onSlide: () => changeCompareMode("split"),
-      onBlend: () => changeCompareMode("blend"),
       onKernel: (id) => {
         if (compositorMode) changeCompareMode("diff");
         changeDiffKernel(id);
       },
     });
     if (compositorMode) {
-      // SPLIT/BLEND composite LIGHT — the SAME unified image DISPLAY menu (curves;
+      // SPLIT composite LIGHT — the SAME unified image DISPLAY menu (curves;
       // luts gated off at k=3) as a plain image, so the composite is displayed
       // exactly as an image would be.
       return [modeMenu, displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding })];

@@ -62,16 +62,15 @@ export interface ImageSyncSettings {
    *  affine is engaged (else the exposure/offset skin). */
   colorMin?: number;
   colorMax?: number;
-  /** Composited compare mode: "split" | "blend" | "diff". The real mode the
-   *  compare owner (`useCompareControl`) mirrors; applied only by compare panes. */
+  /** Composited compare mode: "split" | "diff". The real mode the compare owner
+   *  (`useCompareControl`) mirrors; applied only by compare panes. A legacy
+   *  "blend" from an old peer is aliased to "split" on read. */
   compareMode?: string;
   /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). A normal
    *  synced value — a selected group mirrors the first viewport's kernel. */
   diffKernel?: string;
   /** Split-divider position in [0,1]. */
   splitPosition?: number;
-  /** Blend-mode alpha in [0,1]. */
-  blendAlpha?: number;
   /** EXR channel-strip selection ({part, layer} or null = the node default) —
    *  applied by image LEAVES (LeafView), ignored by compare panes. Synced BY
    *  NAME so a group flips every pane to the same part/layer. */

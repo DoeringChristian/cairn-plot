@@ -268,10 +268,10 @@ export type DecodedSource = FloatSource | Uint8Source;
 //   - DIFF (Phase 2c): a pointwise DIRECT op (signed/absolute/…) samples both
 //     slots inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) runs through
 //     `renderDiffCached`; displayed as a scalar error (colormap).
-//   - SPLIT / BLEND (Phase 3): a compositor DIRECT op composites the two slots by
-//     the fragment uv against the compositor param (`splitPosition`/`blendAlpha`);
-//     displayed as ordinary LIGHT (curves) — a divider gesture + per-side captions
-//     + per-side TEV readout ride the pane's chrome.
+//   - SPLIT (Phase 3): a compositor DIRECT op composites the two slots by the
+//     fragment uv against the compositor param (`splitPosition`); displayed as
+//     ordinary LIGHT (curves) — a divider gesture + per-side captions + per-side
+//     TEV readout ride the pane's chrome.
 // The single-image path is byte-identical when `compareSource` is ABSENT.
 // ---------------------------------------------------------------------------
 
@@ -304,23 +304,18 @@ export interface CompareSource {
    *  restores it). Resolved to a concrete kernel id by `resolveDiffKernelId`. */
   opId: string;
   /** The COMPARE mode: `"diff"` (the scalar-error diff of {@link opId}, the
-   *  default when absent) OR the Phase-3 compositor modes `"split"` / `"blend"` (a
-   *  LIGHT composite of the two operands by divider / alpha). Selecting a mode is
-   *  an OP switch on the reused pane — the display + chrome change, no remount. */
-  mode?: "diff" | "split" | "blend";
+   *  default when absent) OR the Phase-3 compositor mode `"split"` (a LIGHT
+   *  composite of the two operands by divider). Selecting a mode is an OP switch
+   *  on the reused pane — the display + chrome change, no remount. */
+  mode?: "diff" | "split";
   /** Split-divider position `[0,1]` (`opId:"split"`) — the reference is shown
    *  where the fragment `uv.x < splitPosition`. Controlled: the pane's divider /
    *  `[`·`]` keys report up via {@link onSplitPositionChange}; the owner lifts it
    *  and the new value flows back. Default 0.5. */
   splitPosition?: number;
-  /** Blend mix alpha `[0,1]` (`opId:"blend"`) — `mix(reference, foreground,
-   *  blendAlpha)`. Controlled like {@link splitPosition}. Default 0.5. */
-  blendAlpha?: number;
   /** Fired when the split divider / flip keys move the divider — lifts the split
    *  position to the owner (`CompareView`'s lifted `splitPos`). */
   onSplitPositionChange?: (pos: number) => void;
-  /** Fired when the blend alpha changes (owner lifts it). */
-  onBlendAlphaChange?: (alpha: number) => void;
   /** True when this compare pane is inside a STACKED grid — threaded from the CORE
    *  side (the addon bundle's context identity differs) so `useSplitFlipKeys`
    *  scopes the `←`/`→`/`h`/`l` flip aliases correctly (`[`·`]` always flip). */
@@ -346,21 +341,21 @@ export interface CompareSource {
   /** Fired when the pane's diff MODE changes via its own MODE menu — lets an owner
    *  (`CompareView`) keep its lifted mode/kernel state coherent (Phase 2c routing). */
   onDiffKernelChange?: (kernelId: string) => void;
-  /** Fired when the pane's MODE menu switches mode (slide ↔ blend ↔ diff) — the
-   *  owner lifts it (`CompareView`'s `viewMode`). Phase 3: split/blend now ALSO
-   *  render on THIS unified pane, so a mode switch is an OP switch on the reused
+  /** Fired when the pane's MODE menu switches mode (slide ↔ diff) — the
+   *  owner lifts it (`CompareView`'s `viewMode`). Phase 3: split now ALSO
+   *  renders on THIS unified pane, so a mode switch is an OP switch on the reused
    *  instance (NO remount) — not the old route-to-`GpuComparePane` remount. */
-  onCompareModeChange?: (mode: "split" | "blend" | "diff") => void;
+  onCompareModeChange?: (mode: "split" | "diff") => void;
   /** HOME / double-click reset for the HOISTED compare control (mode + kernel +
-   *  split + blend). The compare VIEW-MODE / kernel / split / blend state lives in
-   *  the owner's `useCompareControl` (hoisted out of the pane so it survives stacked
-   *  flips), so the pane's own HOME handler cannot reach it — it calls this to
-   *  restore those to the DESCRIPTOR (the old `GpuComparePane` reset every view-local
+   *  split). The compare VIEW-MODE / kernel / split state lives in the owner's
+   *  `useCompareControl` (hoisted out of the pane so it survives stacked flips),
+   *  so the pane's own HOME handler cannot reach it — it calls this to restore
+   *  those to the DESCRIPTOR (the old `GpuComparePane` reset every view-local
    *  selection incl. the mode; the unified pane must too). Diff↔slide transitions
    *  re-lower via `NodeDispatch`. Colormap/encoding are display-only + pane-local, so
    *  the pane resets those itself. */
   onCompareReset?: () => void;
-  /** True when the hoisted compare control (mode / kernel / split / blend) differs
+  /** True when the hoisted compare control (mode / kernel / split) differs
    *  from the descriptor — folds into the pane's HOME-enabled ("modified") state. */
   compareModified?: boolean;
 }

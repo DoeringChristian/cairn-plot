@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html as _html
 import logging
+import warnings
 from typing import Any, Sequence
 
 log = logging.getLogger(__name__)
@@ -142,14 +143,18 @@ def _check_image_colormap(value: str) -> str:
 
 # The compare compositor's INTERNAL descriptor modes — each lowers to a
 # `compare` node composited through the shared compare stack / GPU compare pane.
-_COMPARE_NODE_MODES = ("split", "blend", "diff")
+# The `blend` view mode was removed (user ruling: no one realistically needs it).
+_COMPARE_NODE_MODES = ("split", "diff")
 
 # The PUBLIC flat `cp.Compare(mode=...)` enum (diff-kernels spec). View modes +
 # the diff-kernel short names; each kernel short name maps to a registry kernel
 # id (== the descriptor `diffSubmode`, mirrored by the TS `listDiffKernels()`
 # `publicName`s). `"slide"` is the public name for the internal `"split"` and is
-# the default view.
-_COMPARE_VIEW_MODES = {"slide", "blend"}
+# the default view. `"blend"` was removed; it is still ACCEPTED as a deprecated
+# alias for `"slide"` (see `_normalize_compare_mode`) so old code keeps working.
+_COMPARE_VIEW_MODES = {"slide"}
+# Deprecated public view modes that alias to a surviving mode (warn on use).
+_COMPARE_DEPRECATED_VIEW_ALIASES = {"blend": "slide"}
 _COMPARE_KERNEL_MODES = {
     "signed": "signed",
     "abs": "absolute",
@@ -167,7 +172,7 @@ _COMPARE_KERNEL_MODES = {
     # ERROR field 1 - SSIM. GPU-only kernel (like FLIP); registry drop-in.
     "ssim": "ssim",
 }
-_COMPARE_PUBLIC_MODES = ("slide", "blend", *_COMPARE_KERNEL_MODES.keys())
+_COMPARE_PUBLIC_MODES = ("slide", *_COMPARE_KERNEL_MODES.keys())
 
 # Mismatched-size operand handling for `cp.Compare(align=..., fit=...)` (diff
 # modes): `align` = where the smaller extent sits within the larger before the
@@ -1950,10 +1955,10 @@ class Compare(Component):
 
     Flat ``mode`` enum:
 
-    * View compositions: ``"slide"`` (draggable divider — the DEFAULT) and
-      ``"blend"`` (opacity mix). ``"slide"`` lowers to a ``compare`` node with
-      ``mode="split"``; the view-mode menu can switch between the compositions
-      client-side.
+    * View composition: ``"slide"`` (draggable divider — the DEFAULT), which
+      lowers to a ``compare`` node with ``mode="split"``. (The legacy ``"blend"``
+      opacity-mix mode was removed; passing it aliases to ``"slide"`` with a
+      ``DeprecationWarning``.)
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
       ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
       a ``compare`` node with ``mode="diff"`` and the kernel id as ``diffSubmode``
@@ -1978,8 +1983,8 @@ class Compare(Component):
 
     HOST-CONTROLLED PANES: ``toolbar=False`` hides the compare pane's toolbar so a
     host drives the view from its own menu; ``mode`` / diff kernel / ``colormap`` /
-    ``split_position`` / ``blend_alpha`` remain controllable via the descriptor. See
-    the "Host-controlled panes" section of ``docs/API.md``."""
+    ``split_position`` remain controllable via the descriptor. See the
+    "Host-controlled panes" section of ``docs/API.md``."""
 
     _label = "compare"
 
@@ -2006,8 +2011,26 @@ class Compare(Component):
         toolbar: bool | None = None,
         props: dict[str, Any] | None = None,
     ) -> None:
+        # Back-compat: the removed `blend` view mode aliases to `slide` (do not
+        # hard-error old code) with a one-time deprecation warning.
+        if mode in _COMPARE_DEPRECATED_VIEW_ALIASES:
+            aliased = _COMPARE_DEPRECATED_VIEW_ALIASES[mode]
+            warnings.warn(
+                f"cp.Compare(mode={mode!r}) is deprecated; the {mode!r} view mode "
+                f"was removed — using {aliased!r} instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            mode = aliased
         self._mode = mode
         toolbar = _check_toolbar(toolbar)
+        if blend_alpha is not None:
+            warnings.warn(
+                "cp.Compare(blend_alpha=...) is deprecated and ignored; the blend "
+                "view mode was removed.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if mode not in _COMPARE_PUBLIC_MODES:
             raise ValueError(
                 f"cp.Compare(mode=...) must be one of {_COMPARE_PUBLIC_MODES!r}, "
@@ -2027,8 +2050,6 @@ class Compare(Component):
         diff_kernel: str | None = None
         if mode == "slide":
             internal_mode = "split"
-        elif mode == "blend":
-            internal_mode = "blend"
         else:
             internal_mode, diff_kernel = "diff", _COMPARE_KERNEL_MODES[mode]
         self._internal_mode = internal_mode
@@ -2044,8 +2065,6 @@ class Compare(Component):
         )
         if split_position is not None:
             built["splitPosition"] = float(split_position)
-        if blend_alpha is not None:
-            built["blendAlpha"] = float(blend_alpha)
         if diff_kernel is not None:
             # Carried as `diffSubmode` (the kernel id) — the pane initializes its
             # diff kernel from this; the toolbar menu (next track) preselects it.

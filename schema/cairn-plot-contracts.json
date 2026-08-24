@@ -57,8 +57,7 @@
   },
   "$comment_compareEnums": "Compare view-compositions + mismatched-size operand handling (audit M5): `compareViewModes` = `cp.Compare(mode=)` non-diff views; `compareAligns`/`compareFits` = `cp.Compare(align=, fit=)`. Python `_COMPARE_VIEW_MODES`/`_COMPARE_ALIGNS`/`_COMPARE_FITS` (components.py) <-> TS `COMPARE_VIEW_MODES`/`COMPARE_ALIGNS`/`COMPARE_FITS` (builder/validate.ts).",
   "compareViewModes": [
-    "slide",
-    "blend"
+    "slide"
   ],
   "compareAligns": [
     "top-left",

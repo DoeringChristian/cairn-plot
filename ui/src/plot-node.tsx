@@ -393,13 +393,11 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         referenceLabel: diffSpec.referenceLabel,
         foregroundLabel: diffSpec.foregroundLabel,
         splitPosition: diffSpec.splitPosition,
-        blendAlpha: diffSpec.blendAlpha,
         inStackedGrid: diffSpec.inStackedGrid,
         inOverlay: diffSpec.inOverlay,
         onDiffKernelChange: diffSpec.onDiffKernelChange,
         onCompareModeChange: diffSpec.onCompareModeChange,
         onSplitPositionChange: diffSpec.onSplitPositionChange,
-        onBlendAlphaChange: diffSpec.onBlendAlphaChange,
         onCompareReset: diffSpec.onCompareReset,
         compareModified: diffSpec.compareModified,
       };
@@ -609,8 +607,26 @@ async function resolveFrame(
 }
 
 /** The compare view modes the client can switch between (the flat Python enum,
- *  minus the kernel short names which ride on `diff` via `diffKernel`). */
-type CompareViewMode = "split" | "blend" | "diff";
+ *  minus the kernel short names which ride on `diff` via `diffKernel`). The
+ *  `blend` mode was removed (user ruling); a legacy `blend` aliases to `split`
+ *  on read (see `normalizeCompareViewMode`). */
+type CompareViewMode = "split" | "diff";
+
+// Back-compat: a legacy descriptor / synced patch may still carry the removed
+// `"blend"` view mode. Alias it to `"split"` on read (never hard-fail an old
+// baked report) and warn ONCE per session.
+let warnedBlendRemoved = false;
+function normalizeCompareViewMode(mode: string | undefined | null): CompareViewMode {
+  if (mode === "blend") {
+    if (!warnedBlendRemoved) {
+      warnedBlendRemoved = true;
+      // eslint-disable-next-line no-console
+      console.warn("cairn-plot: the 'blend' compare mode was removed; rendering as 'split'.");
+    }
+    return "split";
+  }
+  return mode === "diff" ? "diff" : "split";
+}
 
 // ---------------------------------------------------------------------------
 // DIFF ROUTING (content-op unification, Phase 2c Landing 2). A compare node in
@@ -676,15 +692,15 @@ async function resolveDiffPair(
 }
 
 /** The LIVE compare settings + resolved foreground operand a compare node hands
- *  `LeafView` (Phase 3: EVERY mode — diff AND split/blend — lowers here, so the
+ *  `LeafView` (Phase 3: EVERY mode — diff AND split — lowers here, so the
  *  whole compare family renders through the ONE unified pane). The reference
  *  operand IS the synthesized leaf's `node.data` (resolved through the leaf's own
  *  cache); this carries everything else. */
 interface DiffLeafSpec {
   /** The foreground/comparison operand (`compareSource.b`). */
   fgData: DataSpec;
-  /** The compare MODE (`diff` | `split` | `blend`) — lifted state. Diff renders
-   *  the scalar-error kernel; split/blend render the LIGHT compositor. */
+  /** The compare MODE (`diff` | `split`) — lifted state. Diff renders the
+   *  scalar-error kernel; split renders the LIGHT slide compositor. */
   mode: CompareViewMode;
   /** The diff KERNEL (a menu token) — always a real kernel, seeds the pane's diff
    *  face even while `mode` is a compositor mode. */
@@ -693,8 +709,6 @@ interface DiffLeafSpec {
   colormap: CompareSource["colormap"];
   /** Split-divider position (`mode:"split"`) — lifted control state. */
   splitPosition: number;
-  /** Blend alpha (`mode:"blend"`) — lifted control state. */
-  blendAlpha: number;
   align?: CompareAlign;
   fit?: CompareFit;
   referenceLabel?: string;
@@ -704,14 +718,13 @@ interface DiffLeafSpec {
    *  would miss across the bundle boundary). */
   inStackedGrid: boolean;
   inOverlay: boolean;
-  /** Pane MODE / divider / blend callbacks → the lifted control (keeps routing +
+  /** Pane MODE / divider callbacks → the lifted control (keeps routing +
    *  the reused-instance control state coherent). */
   onDiffKernelChange: (id: string) => void;
   onCompareModeChange: (mode: CompareViewMode) => void;
   onSplitPositionChange: (p: number) => void;
-  onBlendAlphaChange: (a: number) => void;
   /** HOME / double-click on the pane: restore the hoisted compare control (mode +
-   *  kernel + split + blend) to the descriptor. */
+   *  kernel + split) to the descriptor. */
   onCompareReset: () => void;
   /** True when the hoisted compare control differs from the descriptor (HOME dot). */
   compareModified: boolean;
@@ -768,13 +781,11 @@ interface CompareControl {
   setDiffKernel: (id: string) => void;
   splitPos: number;
   setSplitPos: (p: number) => void;
-  blendAlpha: number;
-  setBlendAlpha: (a: number) => void;
   /** HOME / double-click: drop every override → the control follows the DESCRIPTOR
-   *  again (mode + kernel + split + blend). The pane's own HOME can't reach this
+   *  again (mode + kernel + split). The pane's own HOME can't reach this
    *  hoisted state, so it calls this via `compareSource.onCompareReset`. */
   reset: () => void;
-  /** True when any of mode/kernel/split/blend differs from the descriptor. */
+  /** True when any of mode/kernel/split differs from the descriptor. */
   modified: boolean;
 }
 
@@ -1406,13 +1417,14 @@ function useCompareControl(
 ): CompareControl {
   const cmp = node.kind === "compare" ? node : null;
   const props = (cmp?.props ?? {}) as Record<string, unknown>;
+  // `normalizeCompareViewMode` folds the removed `"blend"` (and legacy `"side"`)
+  // into `"split"` so an old baked descriptor still lowers.
   const descriptorMode: CompareViewMode = cmp
-    ? ((cmp.mode as string) === "side" ? "split" : cmp.mode)
+    ? normalizeCompareViewMode(cmp.mode as string)
     : "split";
   const descriptorKernel =
     (props.diffSubmode as string | undefined) ?? (cmp?.diffSubmode as string | undefined) ?? "absolute";
   const descriptorSplit = (props.splitPosition as number | undefined) ?? 0.5;
-  const descriptorBlend = (props.blendAlpha as number | undefined) ?? 0.5;
 
   // Overrides (null ⇒ follow the descriptor). A live change (menu callback or a
   // bus patch) sets the override; it survives flips because this hook's owner is
@@ -1420,21 +1432,19 @@ function useCompareControl(
   const [viewModeOverride, setViewMode] = useState<CompareViewMode | null>(null);
   const [kernelOverride, setDiffKernel] = useState<string | null>(null);
   const [splitOverride, setSplitPos] = useState<number | null>(null);
-  const [blendOverride, setBlendAlpha] = useState<number | null>(null);
 
   const idRef = useRef<string>();
   if (!idRef.current) idRef.current = makeImageViewportSyncSourceId();
   useEffect(() => {
     if (!settingsSyncGroupId) return;
     // The apply is the ONE interface: it adopts every compare-owned key by value
-    // (ruling 4). The diff KERNEL / compare mode / split / blend all mirror,
-    // including on selection FORMATION where the anchor seeds its CURRENT values
-    // (ruling 3).
+    // (ruling 4). The diff KERNEL / compare mode / split all mirror, including on
+    // selection FORMATION where the anchor seeds its CURRENT values (ruling 3). A
+    // legacy `blend` compareMode aliases to `split` on read.
     const apply = (patch: ImageSyncSettings) => {
-      if (patch.compareMode !== undefined) setViewMode(patch.compareMode as CompareViewMode);
+      if (patch.compareMode !== undefined) setViewMode(normalizeCompareViewMode(patch.compareMode));
       if (patch.diffKernel !== undefined) setDiffKernel(patch.diffKernel);
       if (patch.splitPosition !== undefined) setSplitPos(patch.splitPosition);
-      if (patch.blendAlpha !== undefined) setBlendAlpha(patch.blendAlpha);
     };
     // A NON-anchor catches up to the group's current settings on JOIN (the anchor
     // OWNS the group state, so it never adopts — mirrors `useSyncedImageSettings`).
@@ -1455,13 +1465,11 @@ function useCompareControl(
     setViewMode(null);
     setDiffKernel(null);
     setSplitPos(null);
-    setBlendAlpha(null);
   }, []);
   const modified =
     (viewModeOverride !== null && viewModeOverride !== descriptorMode) ||
     (kernelOverride !== null && kernelOverride !== descriptorKernel) ||
-    (splitOverride !== null && splitOverride !== descriptorSplit) ||
-    (blendOverride !== null && blendOverride !== descriptorBlend);
+    (splitOverride !== null && splitOverride !== descriptorSplit);
 
   return {
     viewMode: viewModeOverride ?? descriptorMode,
@@ -1470,8 +1478,6 @@ function useCompareControl(
     setDiffKernel,
     splitPos: splitOverride ?? descriptorSplit,
     setSplitPos,
-    blendAlpha: blendOverride ?? descriptorBlend,
-    setBlendAlpha,
     reset,
     modified,
   };
@@ -1522,7 +1528,6 @@ function NodeDispatch({ node }: { node: PlotNode }) {
             (shared?.colormap as CompareSource["colormap"]) ??
             "none") as CompareSource["colormap"],
         splitPosition: control.splitPos,
-        blendAlpha: control.blendAlpha,
         align: synth.align,
         fit: synth.fit,
         referenceLabel: synth.referenceLabel,
@@ -1532,7 +1537,6 @@ function NodeDispatch({ node }: { node: PlotNode }) {
         onDiffKernelChange: control.setDiffKernel,
         onCompareModeChange: control.setViewMode,
         onSplitPositionChange: control.setSplitPos,
-        onBlendAlphaChange: control.setBlendAlpha,
         onCompareReset: control.reset,
         compareModified: control.modified,
       };

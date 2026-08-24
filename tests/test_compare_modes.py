@@ -19,12 +19,22 @@ def _img():
 
 
 def test_view_modes_lower_to_descriptor():
-    # slide -> internal split; blend -> blend.
+    # slide -> internal split.
     slide = cp.Compare(_img(), _img(), mode="slide", split_position=0.25).to_node()
     assert slide["kind"] == "compare" and slide["mode"] == "split"
     assert slide["props"]["splitPosition"] == 0.25
-    blend = cp.Compare(_img(), _img(), mode="blend", blend_alpha=0.5).to_node()
-    assert blend["mode"] == "blend"
+
+
+def test_blend_mode_aliases_to_slide_with_deprecation():
+    # The blend view mode was removed; passing it aliases to slide (split) with a
+    # DeprecationWarning rather than hard-failing an old baked report / call.
+    with pytest.warns(DeprecationWarning):
+        node = cp.Compare(_img(), _img(), mode="blend").to_node()
+    assert node["mode"] == "split"
+    # A stray blend_alpha kwarg is accepted, warns, and is NOT emitted to the node.
+    with pytest.warns(DeprecationWarning):
+        node2 = cp.Compare(_img(), _img(), blend_alpha=0.5).to_node()
+    assert "blendAlpha" not in node2.get("props", {})
 
 
 def test_default_mode_is_slide():

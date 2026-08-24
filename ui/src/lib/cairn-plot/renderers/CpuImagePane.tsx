@@ -1584,7 +1584,7 @@ function cpuCompareChrome(cs: ImageBackendProps["compareSource"]): ReactNode {
       />
     );
   }
-  // split / blend: REFERENCE bottom-left, FOREGROUND bottom-right (the foreground
+  // split: REFERENCE bottom-left, FOREGROUND bottom-right (the foreground
   // chip is the selection stage's click-to-set-reference affordance).
   return (
     <>
@@ -1615,7 +1615,7 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
   // surface the image tab uses (diff → data-URL) to preserve the
   // homogeneous-stack no-remount flip in CPU mode, which `stack/grid-stacked`
   // codifies (a canvas-based diff reintroduces a surface swap). The cross-type
-  // consumers already get a real CPU split/blend/diff via the compositor's
+  // consumers already get a real CPU split/diff via the compositor's
   // `MediaComparePane` / `CpuImagePane`-diff / `CpuFloatComparePane` fallbacks.
   const isCompare = !!backendProps.compareSource;
   const sync = {

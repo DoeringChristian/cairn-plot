@@ -87,9 +87,9 @@ test("D2 drift: every diff op's defaultEncoding equals its kernel's defaultColor
 });
 
 test("D2: compositor/identity ops keep a NON-kernel literal encoding (no kernel default to derive)", () => {
-  // identity + split/blend have no kernel — their `defaultEncoding` is a legitimate
+  // identity + split have no kernel — their `defaultEncoding` is a legitimate
   // standalone literal (srgb), NOT part of the derived diff subset.
-  for (const id of ["identity", "split", "blend"]) {
+  for (const id of ["identity", "split"]) {
     const op = getContentOp(id)!;
     assert.equal(op.defaultEncoding, "srgb", `${id} should keep its literal srgb encoding`);
     assert.equal(getDiffKernel(id), undefined, `${id} must not be a diff kernel`);

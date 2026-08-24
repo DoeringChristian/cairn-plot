@@ -217,7 +217,6 @@ export type {
   MediaCompareModeKind,
   MediaCompareMode,
   SplitConfig,
-  BlendConfig,
   DiffConfig,
   StepArtifactPoint,
   MissingArtifactMode,

@@ -402,7 +402,7 @@ export function volumeActiveColorbar(args: {
  * shape). `maxPanes: 4` + `webglContextsPerPane: 1` WebGL budget parity.
  */
 export const volumeViewportCapabilities: ViewportCapabilities<VolumeNativeMode> = {
-  coreModes: ["normal", "split", "blend", "diff"],
+  coreModes: ["normal", "split", "diff"],
   nativeModes: [
     {
       mode: "diff-value",

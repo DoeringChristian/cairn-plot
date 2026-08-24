@@ -4,19 +4,18 @@ import type { Colormap, DiffMode } from "../types";
 // The unified visual-media comparison mode.
 //
 // Every visual-media card (image today; mesh/pointcloud/boxes3d/volume in
-// WS-VC2) picks ONE of these four core modes — never a combination. This is
+// WS-VC2) picks ONE of these three core modes — never a combination. This is
 // the "exclusive mode" contract from spec-visual-compare.md: split+diff is no
 // longer an independently combinable axis. A previously "diff-colored" overlay
 // configuration now IS the "diff" mode.
 // ---------------------------------------------------------------------------
 
-/** The four core modes, shared by every media-compare card. */
-export type MediaCompareModeKind = "normal" | "split" | "blend" | "diff";
+/** The three core modes, shared by every media-compare card. */
+export type MediaCompareModeKind = "normal" | "split" | "diff";
 
 export const MEDIA_COMPARE_MODE_KINDS: readonly MediaCompareModeKind[] = [
   "normal",
   "split",
-  "blend",
   "diff",
 ];
 
@@ -29,13 +28,13 @@ export function isCoreCompareMode(mode: string): mode is MediaCompareModeKind {
  *
  * 3D cards append NATIVE modes to the same conceptual enum instead of
  * forking a parallel one: union your own string-literal mode names with
- * the five core kinds via the `TExtra` parameter, e.g.
+ * the three core kinds via the `TExtra` parameter, e.g.
  *
  *   type MeshCompareMode = MediaCompareMode<"diff-property" | "diff-geometry">;
  *   type PointCloudCompareMode = MediaCompareMode<"diff-property" | "diff-position" | "density">;
  *
- * The shared compositor (`compositor.tsx`) only knows how to render the four
- * core kinds (normal/split/blend/diff — image-space, works on any
+ * The shared compositor (`compositor.tsx`) only knows how to render the three
+ * core kinds (normal/split/diff — image-space, works on any
  * rendered canvas per spec). Card-native kinds are NOT run through the
  * compositor; the card renders them itself (e.g. a per-vertex delta pass)
  * and is responsible for disabling them when preconditions fail (mismatched
@@ -51,11 +50,6 @@ export type MediaCompareMode<TExtra extends string = never> = MediaCompareModeKi
 /** mode: "split" — clip-path position of the drag handle, 0..1. */
 export interface SplitConfig {
   position: number;
-}
-
-/** mode: "blend" — foreground (prediction) opacity, 0..1. */
-export interface BlendConfig {
-  alpha: number;
 }
 
 /**

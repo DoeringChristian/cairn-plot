@@ -46,18 +46,17 @@ export type ComparePaneSource =
   | { kind: "frame"; frameSource: FrameSource };
 
 export interface OffscreenComparePanesProps {
-  /** One of the core "one-pane" media-compare kinds (split/blend/diff)
+  /** One of the core "one-pane" media-compare kinds (split/diff)
    *  — "normal" doesn't need offscreen compositing (the card-level caller
    *  renders the primary viewer directly for "normal"). Cross-type (WS-VC6)
-   *  references route through this shared compositor for split/blend/diff. */
-  mode: Extract<MediaCompareModeKind, "split" | "blend" | "diff">;
+   *  references route through this shared compositor for split/diff. */
+  mode: Extract<MediaCompareModeKind, "split" | "diff">;
   primary: ComparePaneSource;
   reference: ComparePaneSource;
   diffSubmode: DiffMode;
   colormap: Colormap;
   splitPosition: number;
   onSplitPositionChange: (p: number) => void;
-  blendAlpha: number;
   primaryLabel: string;
   /** WS-VC6: route `diff` through the resample/letterbox alignment step
    *  (only meaningful — and only ever passed — for a cross-type pane; a
@@ -72,17 +71,17 @@ export interface OffscreenComparePanesProps {
    *
    * Before this, `OffscreenComparePanes` always minted its own private
    * `compare3d-${useId()}` group, completely disconnected from the card-
-   * level toggle — so orbiting a split/blend/diff pane never propagated to
+   * level toggle — so orbiting a split/diff pane never propagated to
    * any OTHER pane on the same card (e.g. a multi-series comparison with
    * several split panes), even with "Sync 3D views" on. This is the WS-3DR2
    * fix for that (user-reported as "pointcloud split sync broken", but the
-   * same bug affected split/blend/diff for every 3D type — mesh/boxes/
+   * same bug affected split/diff for every 3D type — mesh/boxes/
    * volume too, since they all route through this one component).
    *
    * `null`/absent (card sync off, or no card-level group applies) falls
    * back to the original private-per-mount group — the primary/reference
    * pair (+ interaction controller) still always mirror each other (WS-VCP
-   * fix 3's equivalent for split/blend/diff), just scoped to this one pane,
+   * fix 3's equivalent for split/diff), just scoped to this one pane,
    * matching pre-WS-3DR2 behavior exactly when sync is off.
    */
   syncGroupId?: string | null;
@@ -161,7 +160,7 @@ function useCompareCameraController(
  * (identical camera, per spec-visual-compare.md WS-VC2 §B), snapshots each
  * one's canvas to a data URL (`useOffscreenSnapshot`), and feeds those into
  * the SAME `CompositeMediaPane` an image card uses — this is the ONE
- * compositor (split/blend/pixel-diff), reused rather than forked, with
+ * compositor (split/pixel-diff), reused rather than forked, with
  * rendered-3D-canvas data URLs standing in for the artifact image URLs an
  * image card would fetch. Shared by every 3D card's 2-series compare
  * feature (mesh/pointcloud/boxes3d/volume) — not a per-card copy.
@@ -191,7 +190,6 @@ export function OffscreenComparePanes({
   colormap,
   splitPosition,
   onSplitPositionChange,
-  blendAlpha,
   primaryLabel,
   alignForDiff,
   syncGroupId,
@@ -244,7 +242,6 @@ export function OffscreenComparePanes({
         zoom={1}
         pan={{ x: 0, y: 0 }}
         splitPosition={splitPosition}
-        blendAlpha={blendAlpha}
         onSplitPositionChange={onSplitPositionChange}
         label={primaryLabel}
       />

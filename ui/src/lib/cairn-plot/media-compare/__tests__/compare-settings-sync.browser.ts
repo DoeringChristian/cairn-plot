@@ -61,7 +61,7 @@ interface CompareSyncProbe {
   // ONE derived encoding id. (The DATA-encoding norm getter/changeNorm were removed
   // with the norm picker — norm-UI-removal follow-up.)
   encodingId: string;
-  changeCompareMode: (m: "split" | "blend" | "diff") => void;
+  changeCompareMode: (m: "split" | "diff") => void;
   changeDiffKernel: (id: string) => void;
   changeColormap: (id: string) => void;
   changeTonemap: (id: string) => void;
@@ -264,13 +264,7 @@ async function run(): Promise<boolean> {
   const A = () => probeOf(frames()[0])!;
   const B = () => probeOf(frames()[1])!;
 
-  // --- 1. compare MODE: split → blend --------------------------------------
-  A().changeCompareMode("blend");
-  const modeBlend = await waitFor(() => B().compareMode === "blend");
-  report(modeBlend, `MODE sync: A→blend, B follows (B.compareMode=${B().compareMode})`);
-  ok = ok && modeBlend;
-
-  // --- 2. compare MODE: blend → diff ---------------------------------------
+  // --- 1. compare MODE: → diff (the blend view mode was removed) -----------
   A().changeCompareMode("diff");
   const modeDiff = await waitFor(() => B().compareMode === "diff");
   report(modeDiff, `MODE sync: A→diff, B follows (B.compareMode=${B().compareMode})`);

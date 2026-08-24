@@ -50,8 +50,9 @@ export const COMPARE_KERNEL_MODES: Readonly<Record<string, string>> = {
   ssim: "ssim",
 };
 
-/** View compositions (mirrors Python `_COMPARE_VIEW_MODES`). */
-export const COMPARE_VIEW_MODES: readonly string[] = ["slide", "blend"];
+/** View compositions (mirrors Python `_COMPARE_VIEW_MODES`). The legacy `blend`
+ *  view mode was removed; `builders.ts` aliases an incoming `blend` to `slide`. */
+export const COMPARE_VIEW_MODES: readonly string[] = ["slide"];
 
 /** The full public `compare(mode=)` enum (mirrors Python `_COMPARE_PUBLIC_MODES`). */
 export const COMPARE_PUBLIC_MODES: readonly string[] = [

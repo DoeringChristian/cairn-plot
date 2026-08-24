@@ -73,8 +73,8 @@ export interface MediaCompareSettings {
   /** Pins the series-same-step baseline to one fixed step instead of tracking
    *  the primary's current step 1:1. */
   refFixedStep?: number;
-  /** Opt-in for cross-type (image<->3D) pixel `diff` (split/blend cross-
-   *  type are offered unconditionally; `diff` additionally resamples both
+  /** Opt-in for cross-type (image<->3D) pixel `diff` (split cross-
+   *  type is offered unconditionally; `diff` additionally resamples both
    *  rasters, so it's gated behind this explicit confirmation). */
   crossTypeDiffOptIn?: boolean;
   /** "Sync 3D views" camera-lockstep toggle (capability: `cameraSync`). */
@@ -82,7 +82,6 @@ export interface MediaCompareSettings {
   /** Legacy exclusive-mode axis #2 (kept for rollback). */
   compareMode?: "side-by-side" | "split" | "blend";
   splitPosition?: number;
-  blendAlpha?: number;
   splitSynced?: boolean;
 
   // Rendering (capability-gated) -----------------------------------------
@@ -109,7 +108,6 @@ export const DEFAULT_MEDIA_COMPARE_SETTINGS = {
   diffMode: "none",
   diffColormap: "red-green",
   splitPosition: 0.5,
-  blendAlpha: 0.5,
 } as const satisfies Partial<MediaCompareSettings>;
 
 // ---------------------------------------------------------------------------
@@ -121,11 +119,10 @@ export interface LabelledOption<V extends string> {
   label: string;
 }
 
-/** The four core (image-space) media-compare kinds, labelled once. */
+/** The three core (image-space) media-compare kinds, labelled once. */
 export const CORE_COMPARE_MODE_OPTIONS: ReadonlyArray<LabelledOption<MediaCompareModeKind>> = [
   { value: "normal", label: "Normal (primary only)" },
   { value: "split", label: "Slide (image-space, default)" },
-  { value: "blend", label: "Blend (image-space)" },
   { value: "diff", label: "Pixel diff (image-space)" },
 ];
 
@@ -209,7 +206,7 @@ export interface CompareModeExtras {
 
 /**
  * Enumerate the ordered compare-mode options for the given capabilities: the
- * four core (image-space) kinds first — always enabled — then each native
+ * three core (image-space) kinds first — always enabled — then each native
  * kind, disabled when `topologyOk` is false, then (when `extras.engineKernels`
  * is supplied) each engine diff KERNEL, disabled when `extras.gpuAvailable` is
  * false. This is exactly the option list the compare-mode `<Select>` renders;

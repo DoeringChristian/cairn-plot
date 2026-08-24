@@ -15,7 +15,6 @@ export {
   MEDIA_COMPARE_MODE_KINDS,
   isCoreCompareMode,
   type SplitConfig,
-  type BlendConfig,
   type DiffConfig,
 } from "./mode";
 

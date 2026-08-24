@@ -46,7 +46,7 @@ export interface RenderSnapshot {
   kernelId: string;
   /** A cached (multi-pass FLIP/HDR-FLIP/SSIM) diff — its result lives in the cache. */
   isCachedDiff: boolean;
-  /** Compositor param (split position / blend alpha); 0 otherwise. */
+  /** Compositor param (split position); 0 otherwise. */
   contentParam: number;
   /** Flip detector — sources ⊗ op ⊗ mode, excluding viewport/exposure. */
   contentKey: string;
@@ -70,10 +70,9 @@ export interface RenderSnapshotInput {
   hasBOperand: boolean;
   /** The concrete diff kernel id (float sources auto-dispatch flip -> hdr-flip). */
   resolvedKernelId: string;
-  /** The active compositor mode ("split" | "blend"), or null. */
-  compareOpMode: "split" | "blend" | null;
+  /** The active compositor mode ("split"), or null. */
+  compareOpMode: "split" | null;
   splitPosition: number;
-  blendAlpha: number;
   paneReady: boolean;
   /** The source ids the POOL has actually applied (upload-effect stamps, ref.current). */
   appliedPrimaryId: string | undefined;
@@ -100,7 +99,6 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
     resolvedKernelId,
     compareOpMode,
     splitPosition,
-    blendAlpha,
     paneReady,
     appliedPrimaryId,
     appliedBId,
@@ -130,7 +128,7 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
     bId,
     kernelId: diffMode ? resolvedKernelId : "",
     isCachedDiff,
-    contentParam: compositorMode ? (compareOpMode === "split" ? splitPosition : blendAlpha) : 0,
+    contentParam: compositorMode ? splitPosition : 0,
     contentKey: `${primaryId}|${bId}|${diffMode ? resolvedKernelId : ""}|${compositorMode ? compareOpMode : ""}`,
     sourcesApplied,
     resident:

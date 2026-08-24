@@ -44,7 +44,7 @@
 /**
  * Render class of a content op:
  *  - `direct`: inlined into the display shader — a few ALU ops on 1–2 sampled
- *    texels, per frame (no cache; divider drag / blend slider are free). Its
+ *    texels, per frame (no cache; divider drag is free). Its
  *    {@link DirectContentOp.wgsl} is a WGSL EXPRESSION over the sampled slots.
  *  - `cached`: a multi-pass compute into a result texture keyed by (source keys,
  *    op id, params) the display shader samples (zoom/encoding never recompute).
@@ -66,7 +66,7 @@ export type OutputRange = "R+" | "R" | "light";
 /**
  * DYNAMIC OUTPUT ARITY (the identity decision, documented). The k the DISPLAY
  * stage's arity-GATING sees is either a FIXED number (a scalar error gates as
- * k=1 — colormaps offered, defaultEncoding applied; split/blend gate as k=3 —
+ * k=1 — colormaps offered, defaultEncoding applied; split gates as k=3 —
  * curves) OR the marker `"source"` — a PASSTHROUGH whose output arity equals the
  * source channel count. Identity is `"source"`: an RGB source stays k=3, a scalar
  * source stays k=1. Resolve it against a concrete source arity with
@@ -79,26 +79,26 @@ export type OutputArity = number | "source";
 
 /**
  * Named parameters a content op may DECLARE it reads (its toolbar-row manifest,
- * UI-gating only). Phase 1/2 diff ops declare NONE. The Phase-3 COMPOSITOR ops
- * declare `split` (the divider position) / `blend` (the mix alpha) — the single
- * per-frame scalar each reads from the compositor param uniform (`u_bind13.x`),
- * driven live (divider drag / blend slider) with NO shader recompile.
+ * UI-gating only). Phase 1/2 diff ops declare NONE. The Phase-3 COMPOSITOR op
+ * declares `split` (the divider position) — the single per-frame scalar it reads
+ * from the compositor param uniform (`u_bind13.x`), driven live (divider drag)
+ * with NO shader recompile.
  */
-export type ContentParamName = "split" | "blend";
+export type ContentParamName = "split";
 
 /**
  * The per-frame context a `direct` op's {@link DirectContentOp.cpu} twin reads
  * beyond the sampled slots — the CPU mirror of the extra shader inputs
- * `cairnContent(a, b, uv, param, opId)` passes. Only the Phase-3 COMPOSITOR ops
- * (split/blend) read it; the identity + diff twins ignore it (so their twins keep
+ * `cairnContent(a, b, uv, param, opId)` passes. Only the Phase-3 COMPOSITOR op
+ * (split) reads it; the identity + diff twins ignore it (so their twins keep
  * the plain `(sources, k)` shape). `uv` is the fragment's SCREEN-space uv (the
  * split divider is a dest-space cut, exactly like the GPU `uv.x < param`); `param`
- * is the compositor scalar (divider position for split, alpha for blend).
+ * is the compositor scalar (divider position for split).
  */
 export interface ContentOpCpuCtx {
   /** Fragment SCREEN-space uv (dest space) — the divider test reads `uv[0]`. */
   readonly uv: readonly [number, number];
-  /** The compositor scalar (`u_bind13.x`): split divider position, or blend alpha. */
+  /** The compositor scalar (`u_bind13.x`): the split divider position. */
   readonly param: number;
 }
 
@@ -147,12 +147,12 @@ export interface DirectContentOp extends ContentOpBase {
   renderClass: "direct";
   /**
    * WGSL — an EXPRESSION over the sampled source slot(s) `a`/`b` (each
-   * `vec4<f32>`) and — for the COMPOSITOR ops — the fragment SCREEN uv `uv`
+   * `vec4<f32>`) and — for the COMPOSITOR op — the fragment SCREEN uv `uv`
    * (`vec2<f32>`) + the compositor param `param` (`vec4<f32>`, scalar in `.x`),
    * evaluating to the content `vec4<f32>`. Assembled into `cairnContent`'s opId
    * dispatch by `./wgsl.ts`. Identity is `a` (the passthrough); a pointwise diff
    * is e.g. `vec4<f32>(a.rgb - b.rgb, 1.0)`; split is `select(b, a, uv.x <
-   * param.x)`; blend is `mix(a, b, param.x)`.
+   * param.x)`.
    */
   wgsl: string;
   /**
@@ -160,7 +160,7 @@ export interface DirectContentOp extends ContentOpBase {
    * (`sources[0]` = slot A, `sources[1]` = slot B) into the content channel
    * vector, for a `k`-channel source. Identity returns `sources[0]` unchanged; a
    * pointwise diff returns the per-channel raw error (the diff pixel-value
-   * readout's single source of truth). The COMPOSITOR ops (split/blend) also read
+   * readout's single source of truth). The COMPOSITOR op (split) also reads
    * the per-frame {@link ContentOpCpuCtx} (`uv`/`param`) — the diff + identity
    * twins ignore it (optional arg), keeping their `(sources, k)` shape.
    */

@@ -17,7 +17,7 @@ import {
 } from "./compare-settings.ts";
 import { MEDIA_COMPARE_MODE_KINDS } from "./mode.ts";
 
-test("CORE_COMPARE_MODE_OPTIONS covers exactly the four core kinds", () => {
+test("CORE_COMPARE_MODE_OPTIONS covers exactly the three core kinds", () => {
   const values = CORE_COMPARE_MODE_OPTIONS.map((o) => o.value).sort();
   assert.deepEqual(values, [...MEDIA_COMPARE_MODE_KINDS].sort());
   for (const o of CORE_COMPARE_MODE_OPTIONS) {
@@ -37,9 +37,9 @@ test("diff option lists are non-empty and well-formed", () => {
   );
 });
 
-test("enumerate: no native modes → the four core kinds, all enabled", () => {
+test("enumerate: no native modes → the three core kinds, all enabled", () => {
   const opts = enumerateCompareModeOptions({ nativeModes: [], topologyOk: true });
-  assert.equal(opts.length, 4);
+  assert.equal(opts.length, 3);
   assert.ok(opts.every((o) => !o.native && !o.disabled));
   assert.deepEqual(opts.map((o) => o.value).sort(), [...MEDIA_COMPARE_MODE_KINDS].sort());
 });
@@ -51,12 +51,12 @@ test("enumerate: core kinds always precede native and are never disabled", () =>
   ] as const;
 
   const ok = enumerateCompareModeOptions({ nativeModes, topologyOk: true });
-  assert.equal(ok.length, 6, "4 core + 2 native");
-  // First four are core, enabled, non-native.
-  assert.ok(ok.slice(0, 4).every((o) => !o.native && !o.disabled));
+  assert.equal(ok.length, 5, "3 core + 2 native");
+  // First three are core, enabled, non-native.
+  assert.ok(ok.slice(0, 3).every((o) => !o.native && !o.disabled));
   // Trailing native modes enabled when topology holds.
-  assert.ok(ok.slice(4).every((o) => o.native && !o.disabled));
-  assert.deepEqual(ok.slice(4).map((o) => o.value), ["diff-property", "diff-geometry"]);
+  assert.ok(ok.slice(3).every((o) => o.native && !o.disabled));
+  assert.deepEqual(ok.slice(3).map((o) => o.value), ["diff-property", "diff-geometry"]);
 });
 
 test("enumerate: native modes are disabled when topology mismatches; core stay enabled", () => {
@@ -86,11 +86,11 @@ test("enumerate: engine kernels append after core+native, GPU-enabled by default
     { nativeModes: [], topologyOk: true },
     { engineKernels: ENGINE_KERNELS },
   );
-  assert.equal(opts.length, 4 + ENGINE_KERNELS.length);
+  assert.equal(opts.length, 3 + ENGINE_KERNELS.length);
   const kernels = opts.filter((o) => o.kernel);
   assert.equal(kernels.length, ENGINE_KERNELS.length);
-  // Kernels trail the four core kinds and are enabled (GPU assumed available).
-  assert.deepEqual(opts.slice(4).map((o) => o.value), ["absolute", "hdr-flip", "ssim"]);
+  // Kernels trail the three core kinds and are enabled (GPU assumed available).
+  assert.deepEqual(opts.slice(3).map((o) => o.value), ["absolute", "hdr-flip", "ssim"]);
   assert.ok(kernels.every((o) => o.kernel && !o.native && !o.disabled));
 });
 
@@ -111,17 +111,16 @@ test("enumerate: core, native, and engine kernels coexist in order", () => {
     { nativeModes, topologyOk: true },
     { engineKernels: ENGINE_KERNELS },
   );
-  assert.equal(opts.length, 4 + 1 + ENGINE_KERNELS.length);
-  assert.ok(opts.slice(0, 4).every((o) => !o.native && !o.kernel));
-  assert.equal(opts[4]!.native, true);
-  assert.ok(opts.slice(5).every((o) => o.kernel));
+  assert.equal(opts.length, 3 + 1 + ENGINE_KERNELS.length);
+  assert.ok(opts.slice(0, 3).every((o) => !o.native && !o.kernel));
+  assert.equal(opts[3]!.native, true);
+  assert.ok(opts.slice(4).every((o) => o.kernel));
 });
 
 test("DEFAULT_MEDIA_COMPARE_SETTINGS carries neutral compare baselines", () => {
   assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.mode, "split");
   assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.diffMode, "none");
   assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.splitPosition, 0.5);
-  assert.equal(DEFAULT_MEDIA_COMPARE_SETTINGS.blendAlpha, 0.5);
   // The default diff colormap is a valid native-diff colormap option.
   assert.ok(
     DIFF_COLORMAP_OPTIONS.some((o) => o.value === DEFAULT_MEDIA_COMPARE_SETTINGS.diffColormap),

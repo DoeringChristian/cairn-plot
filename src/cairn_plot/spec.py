@@ -188,7 +188,7 @@ class CompareSpec(_Strict):
     """`PlotNode{kind:"compare"}` — two DataSpec frames composited into one pane."""
 
     kind: Literal["compare"]
-    mode: Literal["split", "blend", "diff"]
+    mode: Literal["split", "diff"]
     a: DataSpec
     b: DataSpec
     baselineIndex: Optional[Literal[0, 1]] = None

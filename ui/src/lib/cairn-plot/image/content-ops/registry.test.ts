@@ -27,7 +27,7 @@ import {
 } from "./index.ts";
 
 const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
-const COMPOSITOR = ["split", "blend"];
+const COMPOSITOR = ["split"];
 const CACHED = ["flip", "hdr-flip", "ssim"];
 
 test("the expected op set is registered (identity + pointwise diffs + compositor + cached metrics)", () => {
@@ -82,7 +82,7 @@ test("cached metrics are arity-2 cached ops (magma default) delegating to a kern
   }
 });
 
-test("compositor ops are arity-2 direct LIGHT ops (k=3, srgb default) with a split/blend param", () => {
+test("compositor ops are arity-2 direct LIGHT ops (k=3, srgb default) with a split param", () => {
   for (const opId of COMPOSITOR) {
     const op = getContentOp(opId);
     assert.ok(op && isDirectContentOp(op), `${opId} must be a registered direct op`);
@@ -99,20 +99,10 @@ test("compositor cpu twins composite over the fragment uv + param (readout parit
   const a = [0.8, 0.6, 0.4];
   const b = [0.2, 0.3, 0.1];
   const splitOp = getContentOp("split")!;
-  const blendOp = getContentOp("blend")!;
-  assert.ok(isDirectContentOp(splitOp) && isDirectContentOp(blendOp));
+  assert.ok(isDirectContentOp(splitOp));
   // split: uv.x < param → reference (a); else foreground (b).
   assert.deepEqual(splitOp.cpu([a, b], 3, { uv: [0.2, 0.5], param: 0.5 }), a);
   assert.deepEqual(splitOp.cpu([a, b], 3, { uv: [0.8, 0.5], param: 0.5 }), b);
-  // blend: mix(a, b, alpha) per channel.
-  const near = (got: number[], exp: number[]) => {
-    for (let i = 0; i < 3; i++) assert.ok(Math.abs(got[i]! - exp[i]!) < 1e-9, `${got} !~ ${exp}`);
-  };
-  near(blendOp.cpu([a, b], 3, { uv: [0.5, 0.5], param: 0.25 }), [
-    a[0]! * 0.75 + b[0]! * 0.25,
-    a[1]! * 0.75 + b[1]! * 0.25,
-    a[2]! * 0.75 + b[2]! * 0.25,
-  ]);
   // No ctx → param/uv default 0: split picks foreground everywhere (uv.x 0 < 0 is false).
   assert.deepEqual(splitOp.cpu([a, b], 3), b);
 });

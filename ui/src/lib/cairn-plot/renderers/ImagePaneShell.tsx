@@ -6,7 +6,7 @@
  * in HOW they put pixels on screen:
  *   - `renderers/CpuImagePane.tsx`  — 2D-canvas / `<img>` + CSS-transform zoom.
  *   - `renderers/GpuImagePane.tsx`  — WebGPU engine, zoom via a sampled uvRect;
- *     also owns the split/blend/diff compositor (content-op unification, Phase
+ *     also owns the split/diff compositor (content-op unification, Phase
  *     4 — the standalone `media-compare/GpuComparePane.tsx` it replaced is gone).
  * Everything AROUND the pixels — the pane root, the `useImageViewport`
  * wheel/drag/dblclick wiring, the `PlotToolbar` + `useImageController` adapter

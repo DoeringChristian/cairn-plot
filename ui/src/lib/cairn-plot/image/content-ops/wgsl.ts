@@ -66,7 +66,7 @@ export function contentOpId(id: string | undefined | null): number {
  * `direct` ops (mirroring `buildApplyOperatorWGSL`), with IDENTITY as the
  * fallthrough (`return a;`). Each non-identity direct op emits `if (opId == N) {
  * return <expr>; }` where `<expr>` is the op's `wgsl`. Diff/identity exprs read
- * only `a`,`b`; the COMPOSITOR ops (split/blend) also read `uv` (the fragment
+ * only `a`,`b`; the COMPOSITOR op (split) also reads `uv` (the fragment
  * SCREEN uv — the divider is a dest-space cut) and `param` (the compositor scalar
  * in `.x`). Cached ops assemble no WGSL here — their result texture is bound as
  * slot `a` + displayed via identity.
