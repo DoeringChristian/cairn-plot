@@ -361,7 +361,6 @@ function ImageStandalone(p: P) {
       channelMenu={p.channelMenu}
       channelModified={p.channelModified}
       onChannelReset={p.onChannelReset}
-      reserveCompareChrome={p.reserveCompareChrome}
       inStackedGrid={p.inStackedGrid}
     />
   );

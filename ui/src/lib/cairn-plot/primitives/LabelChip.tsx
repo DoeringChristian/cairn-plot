@@ -29,14 +29,9 @@ export default function LabelChip({
   grip = isDraggable,
   onDragStart,
   attrs,
-  hidden = false,
 }: {
   label: string;
   corner?: LabelChipCorner;
-  /** Render PRESENT-BUT-INVISIBLE (`visibility:hidden`). A stacked image↔diff
-   *  flip reuses ONE pane, so an empty caption slot stays MOUNTED (no add/remove
-   *  churn) but is visually absent — the pixels change, the DOM never does. */
-  hidden?: boolean;
   /** Whether the chip is draggable RIGHT NOW — drives the `draggable` attr, the
    *  grab cursor and the `cairn-drag-grip` class. Callers that gate on a live
    *  modifier key (compositor) pass the already-combined value. */
@@ -55,7 +50,7 @@ export default function LabelChip({
   const cornerClass = corner === "bottom-right" ? "bottom-1 right-1" : "bottom-1 left-1";
   return (
     <span
-      className={`absolute ${cornerClass} z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}${hidden ? " invisible" : ""}`}
+      className={`absolute ${cornerClass} z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
       draggable={isDraggable}
       onDragStart={onDragStart}
       style={{ cursor: isDraggable ? "grab" : undefined }}

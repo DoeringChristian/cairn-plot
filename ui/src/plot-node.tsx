@@ -80,7 +80,7 @@ import {
   GridModeToggle,
   stackLabelFor,
 } from "./lib/cairn-plot/stack/StackedView";
-import { InStackedGridContext, StackHasCompareContext } from "./lib/cairn-plot/stack/stack-context";
+import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
 import { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import {
   ChartFillContext,
@@ -232,10 +232,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const { source, shared, viewportSyncGroupId } = useSharedPlot();
   // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
   const paneSync = useContext(PaneSyncContext);
-  // In a STACKED grid that also holds a compare child, a plain-image slot reserves
-  // the compare chrome so the image↔diff flip is DOM-stable (threaded to the pane
-  // as `reserveCompareChrome`; the diff path already renders the real chrome).
-  const stackHasCompare = useContext(StackHasCompareContext);
   // True inside a STACKED viewport — threaded to the pane so it treats its display
   // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
   // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
@@ -443,13 +439,12 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       // next commit. No placeholder, no half-built compareSource: keep the frame.
       if (resolved.kind !== "diff") {
         leafResolveStats.staleDiffHolds++;
-        // Keep the reserved compare chrome on the held frame (we ARE rendering a
-        // compare node in a stack, so its chrome must stay the compare skeleton —
-        // otherwise the hold itself would pop plain-image chrome for one frame).
+        // Hold the previous single-image frame for this one commit (pixel
+        // correctness — never a `compareSource` with an undefined `b`); the resolve
+        // effect swaps in the diff leaf on the next commit.
         return {
           ...(node.props ?? {}),
           source: (resolved.props as { source?: unknown }).source,
-          reserveCompareChrome: true,
           inStackedGrid,
         };
       }
@@ -496,10 +491,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     if (resolved.kind !== "single") return {};
     const dataProps = resolved.props;
     const sharedProps: Record<string, unknown> = {};
-    // Stacked mixed grid: reserve the compare chrome on this plain-image slot so a
-    // flip to the diff sibling (the ONE reused pane) never pops the MODE menu /
-    // metrics chips. Only meaningful for the image renderer; harmless elsewhere.
-    if (stackHasCompare) sharedProps.reserveCompareChrome = true;
     if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
     if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
     const vpGroup = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
@@ -522,10 +513,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       (described && treeHasSelectableChannels(described) ? described : undefined) ??
       (syntheticChannelTree(dataProps.source as never) as ChannelMenuTree | null) ??
       undefined;
-    // In a stacked mixed grid the diff sibling has NO channel menu (a compare
-    // resolves both operands without a channel strip), so suppress it here too —
-    // otherwise the CHANNELS menu would be image-slot-only and churn on the flip.
-    if (!stackHasCompare && exrTree && (node.data.kind === "image" || node.data.kind === "imghdr" || node.data.kind === "inline" || node.data.kind === "url")) {
+    if (exrTree && (node.data.kind === "image" || node.data.kind === "imghdr" || node.data.kind === "inline" || node.data.kind === "url")) {
       const effSel: ChannelSelection =
         chSel ??
         (node.data.kind === "image"
@@ -539,7 +527,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       }
     }
     return { ...sharedProps, ...(node.props ?? {}), ...dataProps, inStackedGrid };
-  }, [resolved, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, stackHasCompare, inStackedGrid]);
+  }, [resolved, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, inStackedGrid]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -1261,14 +1249,8 @@ function GridView({ node }: { node: GridNode }) {
   // shared BY CONSTRUCTION, no sync-group + PaneSyncContext plumbing needed (the
   // 341c577 mixed-stack mount-swap machinery is retired).
   const activeChild = children[clampedActive];
-  // A mixed stack (≥1 compare child alongside plain images) makes the image slots
-  // RESERVE the compare chrome so the image↔diff flip is DOM-stable (no popping
-  // MODE menu / metrics chips). Homogeneous stacks (all-image or all-compare) don't
-  // need it — the chrome is already identical across their flips.
-  const stackHasCompare = children.some((c) => c.kind === "compare");
   const stackedPane = activeChild ? (
     <InStackedGridContext.Provider value={true}>
-      <StackHasCompareContext.Provider value={stackHasCompare}>
       <GridUniformAspectContext.Provider value={stackedAspectApi}>
         <div
           data-cairn-stacked-view=""
@@ -1283,7 +1265,6 @@ function GridView({ node }: { node: GridNode }) {
           </div>
         </div>
       </GridUniformAspectContext.Provider>
-      </StackHasCompareContext.Provider>
     </InStackedGridContext.Provider>
   ) : null;
   // Keyboard tab-flip attaches to the WHOLE grid area (header + pane) so keys
