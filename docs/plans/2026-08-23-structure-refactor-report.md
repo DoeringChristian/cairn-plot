@@ -856,4 +856,77 @@ checklist above so this gap cannot reopen.
 
 ---
 
-*Anthropic Cairn — structure-refactor execution report.*
+# Shift 6 — the cleanup wave: three deferred rulings IMPLEMENTED
+
+**Authored on `main` (9c7dd79), cherry-picked here favoring this branch's structure.**
+The three items shifts 1–5 kept STOPPED as user-visible were RULED and implemented as
+staged green commits. Each was gated: typecheck 0 · node 662 · harness `--all` on BOTH
+hardware-Metal and `HARNESS_FORCE_STRATEGY=swiftshader` (the same 4 known headless-
+gesture fails, no new); the stacked-diff-flip family (paint/stress/flip/realstack/
+resolve) all PASS; bundles rebuilt + synced.
+
+## Rulings — now IMPLEMENTED (were the carried-forward open items)
+
+1. **Render-time reseed timing (P2 per-field STOP) → POST-COMMIT.** The encoding's
+   controlled-surface reseed moved from the render body onto a `useEffect` — the SAME
+   adoption timing as peak/γ/bounds. ONE documented timing for every `toolbar={false}`
+   controlled prop; the one-frame trail on host-driven changes is accepted. The
+   `EncodingState` sum moves WHOLE (`setEncState({id, kind:"default"})`), so the twin
+   still cannot drift. Interactive viewports unchanged (the render-body prop-change stamp
+   stays a pure record advancing `prevArityRef`).
+2. **Backing-size floor (P1 stop-item 4, the genuinely user-visible STOP) → REQUIRED
+   PRECONDITION.** The `backingWidth || source.width || deep.width || 1` floor is
+   DELETED; `activateEntry` defers until measured and `renderPass` HOLDS (blank) until
+   the container has a real box. Pane contract is measure-then-render (documented at
+   `PaneHandle.render`/`resize`/`backingWidth`). A pre-measure pane is briefly blank —
+   accepted.
+3. **Hold-last-frame vs subscribable resolve-cache (P4, the NEW shift-5 ruling) →
+   SUBSCRIBABLE, brief loading acceptable.** The leaf resolve-cache is now a subscribable
+   external store (`subscribeResolveCache` + `resolveCacheVersion`); `LeafView` reads its
+   `ResolvedLeaf` via `useSyncExternalStore`, PURELY keyed by the current `resolveKey` —
+   the `state` HOLD cell is DELETED. Warm/prefetched flips are instant (unchanged); a
+   cold swap renders a brief `"Loading…"` instead of holding. The `ResolvedLeaf` union
+   (P4a) already made the undefined-operand `compareSource` type-impossible; the pure read
+   now also makes the reused-instance lag unrepresentable — BOTH halves of the
+   stale-operand window are gone by construction.
+
+## Oracles retired (retirement rule — target states now unrepresentable)
+
+- **`staleDiffHolds`** and **`__cairnDisableSyncResolve`** — RETIRED. The subscribable
+  read removes the reused-instance `state` lag the counter witnessed; there is a single
+  resolve path, nothing to toggle. `stacked-diff-flip-resolve` keeps `placeholderMounts
+  === 0` on the WARM storm; `stacked-diff-flip-realstack-gpu` Phase D drops the pre/post
+  toggle + holds and asserts the ONE "no stale-operand frame" invariant (ZERO stale
+  painted frames + ZERO pipeline-mismatch presents on resident img→diff flips).
+- `placeholderMounts` stays (warm-flip no-flash oracle). `isPipelineMismatch` /
+  paint-phase log stay — their P5 targets (dtype split / observer seam) are untouched.
+
+## No-ruling residue
+
+- **Kernel→default-colormap pins consolidated** into ONE table-driven test
+  (`kernel-default-colormap.test.ts`) asserting every surface — kernel `defaultColormap`,
+  `kernelDefaultColormap`, `resolveDiffColormap(id,null)`, content-op `defaultEncoding` —
+  against the single table; `content-ops/registry.test.ts` drops its duplicate literals.
+- **`overridden`** — NOT deleted by the wave. On this branch P2f-1 kept it as a derived
+  output with no consumer; the series was authored on `main` where it still HAS live
+  consumers, so the commits do not touch it. Retiring the vestigial output here remains
+  a separate branch-local cleanup (unchanged from shift-3's note).
+- **Stacked-diff-flip harness-runtime rationalization** (fold overlapping stress/paint/
+  resolve oracles) — DEFERRED. A runtime optimization, not a ruling; the stress harness
+  (~32–42 s) still dominates. Left for a focused follow-up.
+- **No `PaneSettings` wrapper** added (normalization is already single-source —
+  shift-3's analysis stands).
+
+## P5 status
+
+P5 (dtype split, `notifyPresent` observer seam, moving the bug-signature oracles +
+`paneId`/`deepSampleTex` to the harness, `scalarMode` enum, shared test-hooks chunk) is
+UNCHANGED — not started. The wave retired only the oracles whose targets items 1–3 made
+unrepresentable (`staleDiffHolds`, `__cairnDisableSyncResolve`); the P5 tripwires
+(`isPipelineMismatch`, `isEncodingGenerationMismatch`, `isOrangeSuspect`, the paint-phase
+log) remain assert-zero until P5 makes their targets unrepresentable.
+
+---
+
+*Anthropic Cairn — structure-refactor execution report. Shift 6 records the 2026-08-24
+cleanup wave (three rulings implemented, cherry-picked from `main`).*
