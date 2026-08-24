@@ -95,7 +95,7 @@ import {
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
-import { useSyncedImageSettings } from "./use-synced-image-settings";
+import { usePublishImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
@@ -385,6 +385,9 @@ function CpuSdrImagePane(
     toolbar?: boolean;
     settingsSyncGroupId?: string;
     syncIsAnchor?: boolean;
+    /** SINGLE-RECEIVER sync: the group's complete settings, driven down from the
+     *  node-level receiver (see image-backend `ImageBackendProps.syncedSettings`). */
+    syncedSettings?: ImageSyncSettings;
     /** COMPARE chrome (caption chips + REF badge) when this pane renders a
      *  compare's reference (degraded CPU fallback); suppresses the label chip. */
     compareChrome?: ReactNode;
@@ -420,8 +423,13 @@ function CpuSdrImagePane(
   // display settings (see GpuImagePane). A viewport OWNS its settings (persist across
   // flips, HOME re-seeds to the visible slot); a controlled surface follows the host
   // props. `__cairnDisableStackShared` (test-only) forces the reseed for pre/post.
+  // SINGLE-RECEIVER sync: a group's complete settings, driven down from the node.
+  // Present ⇒ controlled surface (follows these display keys) with the toolbar
+  // still visible; the pane never subscribes to the bus itself.
+  const synced = props.syncedSettings;
   const controlledSurface =
     toolbar === false ||
+    !!synced ||
     (typeof window !== "undefined" &&
       !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
 
@@ -444,13 +452,14 @@ function CpuSdrImagePane(
     mode: "sdr",
     arity: 1,
     curveSet: SDR_DISPLAY_TRANSFER_OPERATORS,
-    propColormap: colormapProp,
-    propTonemap: tonemapProp,
+    propColormap: synced?.colormap ?? colormapProp,
+    propTonemap: synced?.tonemap ?? tonemapProp,
     resolveDefaultCurve: (t) => {
       const s = toSdrTonemap(t);
       return s === "gamma" || s === "linear" ? s : "srgb";
     },
     controlledSurface,
+    controlledReseedKey: synced,
   });
   const colormap = enc.colormap as Colormap;
   const sdrTransfer = enc.curveId as TonemapOperator;
@@ -459,25 +468,16 @@ function CpuSdrImagePane(
   // γ is a viewport setting — persists across flips; reseeds only on a controlled
   // surface. HOME re-seeds it to the visible slot below.
   useEffect(() => {
-    if (controlledSurface && gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
-  }, [gammaProp, controlledSurface, setTonemapGamma]);
+    if (!controlledSurface) return;
+    if (synced?.tonemapGamma != null && synced.tonemapGamma > 0) setTonemapGamma(synced.tonemapGamma);
+    else if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
+  }, [synced?.tonemapGamma, gammaProp, controlledSurface, setTonemapGamma]);
   const gammaModified = tonemapGamma !== gammaSeed;
 
-  // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
-  // CPU SDR path syncs the ONE encoding (+ derived colormap/tonemap for
-  // pre-registry peers) and the Gamma-transfer γ (the controls it owns; it has
-  // no in-pane exposure/offset — see the graceful-degradation note at the sliders).
-  const applyRemoteSettings = useCallback(
-    (patch: ImageSyncSettings) => {
-      // Adopt the peer's display encoding BY VALUE — no content-kind scoping
-      // (ruling 5: applicability decided at RENDER via arity gating).
-      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-      else if (patch.colormap !== undefined && patch.colormap !== "none") enc.setEncoding(patch.colormap);
-      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
-      if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
-    },
-    [enc, setTonemapGamma],
-  );
+  // Multi-viewport SELECTION: settings sync (SINGLE-RECEIVER model). This pane
+  // PUBLISHES its encoding + Gamma-γ edits and (as anchor) seeds the group; it is
+  // NOT a bus subscriber — incoming settings arrive TOP-DOWN via `synced` (the
+  // controlled reseed above). See use-synced-image-settings.
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
       encoding: enc.encodingId,
@@ -487,11 +487,10 @@ function CpuSdrImagePane(
     }),
     [enc.encodingId, enc.colormap, sdrTransfer, tonemapGamma],
   );
-  const publishSettings = useSyncedImageSettings(
+  const publishSettings = usePublishImageSettings(
     props.settingsSyncGroupId,
     !!props.syncIsAnchor,
     settingsSnapshot,
-    applyRemoteSettings,
   );
   const changeEncoding = useCallback(
     (id: string) => {
@@ -1069,6 +1068,9 @@ function CpuHdrImagePane(
     toolbar?: boolean;
     settingsSyncGroupId?: string;
     syncIsAnchor?: boolean;
+    /** SINGLE-RECEIVER sync: the group's complete settings, driven down from the
+     *  node-level receiver (see image-backend `ImageBackendProps.syncedSettings`). */
+    syncedSettings?: ImageSyncSettings;
     /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
      *  fallback; suppresses the label chip. See {@link cpuCompareChrome}. */
     compareChrome?: ReactNode;
@@ -1095,8 +1097,10 @@ function CpuHdrImagePane(
   // CONTROLLED SURFACE vs INTERACTIVE VIEWPORT (see the SDR body / GpuImagePane): a
   // viewport OWNS its settings (persist across flips, HOME re-seeds to the visible
   // slot); a `toolbar={false}` controlled surface follows the host props.
+  const synced = props.syncedSettings;
   const controlledSurface =
     toolbar === false ||
+    !!synced ||
     (typeof window !== "undefined" &&
       !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
 
@@ -1124,10 +1128,11 @@ function CpuHdrImagePane(
     mode: "arity",
     arity: sourceArity,
     curveSet: SDR_TONEMAP_OPERATORS,
-    propColormap,
-    propTonemap: tonemap,
+    propColormap: synced?.colormap ?? propColormap,
+    propTonemap: synced?.tonemap ?? tonemap,
     resolveDefaultCurve,
     controlledSurface,
+    controlledReseedKey: synced,
   });
   const colormap = enc.colormap as Colormap;
   const tonemapOp = enc.curveId as TonemapOperator;
@@ -1139,8 +1144,10 @@ function CpuHdrImagePane(
   const gammaSeed = gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT;
   const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
   useEffect(() => {
-    if (controlledSurface && gamma && gamma > 0) setTonemapGamma(gamma);
-  }, [gamma, controlledSurface, setTonemapGamma]);
+    if (!controlledSurface) return;
+    if (synced?.tonemapGamma != null && synced.tonemapGamma > 0) setTonemapGamma(synced.tonemapGamma);
+    else if (gamma && gamma > 0) setTonemapGamma(gamma);
+  }, [synced?.tonemapGamma, gamma, controlledSurface, setTonemapGamma]);
   const gammaModified = tonemapGamma !== gammaSeed;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1154,6 +1161,15 @@ function CpuHdrImagePane(
   // change already does), never a diff. The display EV ADDS to the prop exposure.
   const [displayEV, setDisplayEV] = useState(0);
   const [displayOffset, setDisplayOffset] = useState(0);
+  // EXPOSURE/OFFSET have no descriptor prop, so only a SYNC group drives them (the
+  // node-level receiver hands them down by value; local HOME resets to 0 without
+  // publishing, so `synced` is unchanged and this does not fight HOME).
+  useEffect(() => {
+    if (controlledSurface && synced?.exposureEV !== undefined) setDisplayEV(synced.exposureEV);
+  }, [synced?.exposureEV, controlledSurface]);
+  useEffect(() => {
+    if (controlledSurface && synced?.offset !== undefined) setDisplayOffset(synced.offset);
+  }, [synced?.offset, controlledSurface]);
 
   // DATA-ENCODING BOUNDS (Phase 4) — mirrors GpuImagePane. `colorRange` (grid-
   // shared descriptor) SEEDS the min/max BOUNDS skin — the ALTERNATIVE to EV/OFF
@@ -1166,14 +1182,25 @@ function CpuHdrImagePane(
   // mean for k=2); the segmented control shows only while a lut is active AND
   // sourceArity>1.
   const [reduceOverride, setReduceOverride] = useState<ReduceMode | null>(null);
+  // REDUCE mirrors by value in a sync group (no descriptor prop, like EV/offset).
+  useEffect(() => {
+    if (controlledSurface && synced?.reduce !== undefined) setReduceOverride(synced.reduce as ReduceMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [synced?.reduce, controlledSurface]);
   const effectiveReduce = reduceOverride ?? defaultReduceMode(sourceArity);
   const [colorBounds, setColorBounds] = useState<[number, number] | null>(propColorRange ?? null);
   // Bounds are a viewport setting — persist across flips; reseed only on a controlled
-  // surface. HOME re-seeds to the visible slot below.
+  // surface. A sync group drives bounds by value (only when it carries them — an
+  // absent colorMin/Max must NOT clobber); the host seam reseeds from colorRange.
   useEffect(() => {
-    if (controlledSurface) setColorBounds(propColorRange ?? null);
+    if (!controlledSurface) return;
+    if (synced) {
+      if (synced.colorMin != null && synced.colorMax != null) setColorBounds([synced.colorMin, synced.colorMax]);
+    } else {
+      setColorBounds(propColorRange ?? null);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propColorRange?.[0], propColorRange?.[1], controlledSurface]);
+  }, [synced?.colorMin, synced?.colorMax, propColorRange?.[0], propColorRange?.[1], controlledSurface]);
   const boundsSeedVal: [number, number] | null = propColorRange ?? null;
   const boundsModified =
     (colorBounds?.[0] ?? null) !== (boundsSeedVal?.[0] ?? null) ||
@@ -1189,28 +1216,10 @@ function CpuHdrImagePane(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
-  // Multi-viewport SELECTION: settings sync (see use-synced-image-settings). The
-  // CPU HDR path syncs the ONE encoding (+ derived colormap/tonemap for
-  // pre-registry peers), the Gamma γ, exposure/offset, and the norm/bounds.
-  const applyRemoteSettings = useCallback(
-    (patch: ImageSyncSettings) => {
-      // Adopt the peer's display encoding BY VALUE — no content-kind scoping
-      // (ruling 5: applicability decided at RENDER via arity gating).
-      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
-      else if (patch.colormap !== undefined && patch.colormap !== "none") enc.setEncoding(patch.colormap);
-      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
-      if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
-      if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
-      if (patch.offset !== undefined) setDisplayOffset(patch.offset);
-      // `patch.norm` is still ACCEPTED for back-compat (a stale peer may emit it)
-      // but IGNORED — the norm picker is gone and the effective norm is linear.
-      if (patch.reduce !== undefined) setReduceOverride(patch.reduce as ReduceMode);
-      if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
-        setColorBounds([patch.colorMin, patch.colorMax]);
-      }
-    },
-    [enc, setTonemapGamma, setColorBounds],
-  );
+  // Multi-viewport SELECTION: settings sync (SINGLE-RECEIVER model). This pane
+  // PUBLISHES its encoding / γ / exposure / offset / reduce / bounds edits and (as
+  // anchor) seeds the group; it is NOT a bus subscriber — incoming settings arrive
+  // TOP-DOWN via `synced` (the controlled reseeds above). See use-synced-image-settings.
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
       encoding: enc.encodingId,
@@ -1224,11 +1233,10 @@ function CpuHdrImagePane(
     }),
     [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds],
   );
-  const publishSettings = useSyncedImageSettings(
+  const publishSettings = usePublishImageSettings(
     props.settingsSyncGroupId,
     !!props.syncIsAnchor,
     settingsSnapshot,
-    applyRemoteSettings,
   );
   const changeEncoding = useCallback(
     (id: string) => {
@@ -1621,6 +1629,7 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
   const sync = {
     settingsSyncGroupId: backendProps.settingsSyncGroupId,
     syncIsAnchor: backendProps.syncIsAnchor,
+    syncedSettings: backendProps.syncedSettings,
     channelMenu: backendProps.channelMenu,
     channelModified: backendProps.channelModified,
     onChannelReset: backendProps.onChannelReset,

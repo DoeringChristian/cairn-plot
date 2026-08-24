@@ -92,16 +92,29 @@ test("GpuImagePane: encoding + peak re-seed from their props (controlled while t
   // `usePaneEncoding` (`display-encoding.ts`), which the pane feeds the live
   // descriptor `propColormap` + `propTonemap`; peak keeps its own re-seed effect.
   assert.match(gpu, /usePaneEncoding\(\{/, "the pane must own its encoding via usePaneEncoding");
-  // One-concrete-value model: a CONTROLLED surface (toolbar={false}) still feeds the
-  // LIVE descriptor propColormap (host contract); an interactive viewport seeds once
-  // from the initially-visible face and persists.
+  // One-concrete-value model: a CONTROLLED surface (toolbar={false} OR a sync group)
+  // feeds the LIVE controlled colormap — the synced value when a group drives it,
+  // else the descriptor prop; an interactive viewport seeds once from the initially-
+  // visible face and persists. Single-receiver refactor: the node-level receiver is
+  // the host, handing `syncedSettings` down so the controlled feed prefers it.
   assert.match(
     gpu,
-    /propColormap:\s*controlledSurface\s*\?\s*propColormap/,
-    "usePaneEncoding must feed live propColormap when controlled",
+    /propColormap:\s*controlledSurface[\s\S]*?\?\s*\(syncedColormap\s*\?\?\s*propColormap\)/,
+    "usePaneEncoding must feed the live controlled colormap (syncedColormap ?? propColormap) when controlled",
   );
-  assert.match(gpu, /\n\s*propTonemap,/, "usePaneEncoding must be fed propTonemap (controlled)");
-  assert.match(gpu, /setPeak\(seedPeak\(\)\)/, "peak must re-seed from its prop");
+  assert.match(
+    gpu,
+    /propTonemap:\s*syncedTonemap\s*\?\?\s*propTonemap,/,
+    "usePaneEncoding must be fed the live controlled tonemap (syncedTonemap ?? propTonemap)",
+  );
+  // Peak re-seeds from the controlled value: the synced peak when a group drives
+  // it, else the descriptor seed (`seedPeak()`). `seedPeak`/`peakSeed` stay
+  // descriptor-based so a LOCAL HOME still targets the visible slot's default.
+  assert.match(
+    gpu,
+    /setPeak\(\s*synced\?\.peak[\s\S]*?:\s*seedPeak\(\)\s*\)/,
+    "peak must re-seed from the controlled value (synced peak else seedPeak())",
+  );
 });
 
 test("display-encoding: usePaneEncoding re-seeds when the descriptor props change", () => {

@@ -111,11 +111,10 @@ import {
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
 import {
-  getLastImageSettings,
   publishImageSettings,
-  subscribeImageSettings,
   type ImageSyncSettings,
 } from "./lib/cairn-plot/viewport/image-settings-sync";
+import { useReceiveImageSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
 import { makeImageViewportSyncSourceId } from "./lib/cairn-plot/viewport/image-viewport-sync";
 
 /**
@@ -175,6 +174,13 @@ interface PaneSyncCtx {
   viewportSyncGroupId?: string;
   settingsSyncGroupId?: string;
   syncIsAnchor?: boolean;
+  /** The group's COMPLETE accumulated display settings, from the ONE node-level
+   *  bus receiver (`useReceiveImageSettings`, run by the context PROVIDER —
+   *  `PaneSelectionFrame` / the enlarge `StageCell`). The provider is the single
+   *  subscriber per viewport; every consumer (the pane's controlled display props,
+   *  `useCompareControl`'s mode/kernel/split, `LeafView`'s channel select) reads
+   *  these from context — no consumer subscribes to the bus itself. */
+  syncedSettings?: ImageSyncSettings | null;
 }
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
 
@@ -316,18 +322,19 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // Selection change handler + SYNC: inside a settings-sync group (the compare/
   // enlarge stage, a page-wide multi-selection) a strip pick broadcasts so every
   // pane in the group flips to the same part/layer BY NAME (compare diffuse of
-  // run A vs diffuse of run B). Same bus + echo-guard as colormap/tonemap.
+  // run A vs diffuse of run B). SINGLE-RECEIVER model: the channel selection
+  // arrives TOP-DOWN via `paneSync.syncedSettings.channelSelect` (the ONE node-
+  // level bus receiver in the context PROVIDER) — this leaf does NOT subscribe; it
+  // only PUBLISHES its own picks. The apply is keyed on the value reference (stable
+  // until a new channelSelect is published), so it fires only on a real change.
   const chSyncIdRef = useRef<string>();
   if (!chSyncIdRef.current) chSyncIdRef.current = makeImageViewportSyncSourceId();
   const settingsGroupId = paneSync?.settingsSyncGroupId;
+  const syncedChannelSelect = paneSync?.syncedSettings?.channelSelect;
   useEffect(() => {
-    if (!settingsGroupId) return;
-    return subscribeImageSettings(settingsGroupId, chSyncIdRef.current!, (patch) => {
-      if (patch.channelSelect !== undefined) {
-        setChSel(patch.channelSelect as ChannelSelection | null);
-      }
-    });
-  }, [settingsGroupId]);
+    if (!settingsGroupId || syncedChannelSelect === undefined) return;
+    setChSel(syncedChannelSelect as ChannelSelection | null);
+  }, [settingsGroupId, syncedChannelSelect]);
   const selectChannels = useCallback(
     (sel: ChannelSelection) => {
       const next = sel.part == null && sel.layer == null ? null : sel;
@@ -381,6 +388,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       if (vpg) dsync.viewportSyncGroupId = vpg;
       if (paneSync?.settingsSyncGroupId) dsync.settingsSyncGroupId = paneSync.settingsSyncGroupId;
       if (paneSync?.syncIsAnchor) dsync.syncIsAnchor = true;
+      if (paneSync?.syncedSettings) dsync.syncedSettings = paneSync.syncedSettings;
       const compareSource: CompareSource = {
         b: dp.__diffB as DecodedSource,
         opId: diffSpec.diffKernel,
@@ -418,6 +426,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       sharedProps.settingsSyncGroupId = paneSync.settingsSyncGroupId;
     }
     if (paneSync?.syncIsAnchor) sharedProps.syncIsAnchor = true;
+    if (paneSync?.syncedSettings) sharedProps.syncedSettings = paneSync.syncedSettings;
     // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
     // selection state) and handed to the pane as a standard ToolbarButtonSpec —
     // the pane renders it with its other leading menus and folds the override
@@ -936,6 +945,18 @@ function PaneSelectionFrame({
   const groups =
     selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
 
+  // The ONE bus receiver for THIS viewport (single-receiver model): subscribes to
+  // the selection's settings group, accumulates the group's COMPLETE settings, and
+  // hands them DOWN via `PaneSyncContext.syncedSettings`. Every consumer (the pane's
+  // controlled display props, `useCompareControl`, `LeafView`'s channel select)
+  // reads from context — nothing below subscribes to the bus. Inert (null) outside
+  // a ≥2 selection. Absent an own selection group, the inherited context's
+  // `syncedSettings` (an enclosing stage) passes through with the group id.
+  const receivedSettings = useReceiveImageSettings(
+    groups?.settingsGroupId,
+    groups?.isAnchor ?? false,
+  );
+
   const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
     // A press that STARTS on an interactive control (toolbar button, slider,
@@ -1011,9 +1032,10 @@ function PaneSelectionFrame({
             viewportSyncGroupId: groups.viewportGroupId,
             settingsSyncGroupId: groups.settingsGroupId,
             syncIsAnchor: groups.isAnchor,
+            syncedSettings: receivedSettings,
           }
         : null,
-    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor],
+    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, receivedSettings],
   );
 
   return (
@@ -1400,20 +1422,20 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
  * `PaneSelectionFrame`, so it can read the pane's own sync identity — and called
  * UNCONDITIONALLY for every node (inert for non-compare, rules-of-hooks safe),
  * so a stacked `NodeDispatch` reused across an image↔diff flip keeps ONE mode
- * state that survives the flip. The mode/kernel/split/blend are seeded from the
+ * state that survives the flip. The mode/kernel/split are seeded from the
  * descriptor and updated from two sources: the panes' menu callbacks
- * (`setViewMode`/…) AND a READ-ONLY subscription to the settings-sync bus — the
- * latter so mode still syncs across a page-wide selection even when the mounted
- * pane is a DIFF `GpuImagePane` (which can't itself apply a `compareMode` patch —
- * that's a routing decision above the pane). Never PUBLISHES (the panes already
- * publish these keys); only reads. Absent a group (a homogeneous stack) the
- * subscription is inert and the ONE reused instance shares settings by
- * construction.
+ * (`setViewMode`/…) AND the group's `syncedSettings` handed down from the ONE
+ * node-level bus receiver (`PaneSelectionFrame`/stage) — so mode still syncs
+ * across a page-wide selection even when the mounted pane is a DIFF `GpuImagePane`
+ * (which can't itself apply a `compareMode` patch — that's a routing decision
+ * above the pane). Never PUBLISHES (the panes already publish these keys) and
+ * NEVER subscribes to the bus (the receiver is the single subscriber). Absent a
+ * group (a homogeneous stack) `syncedSettings` is null and the ONE reused instance
+ * shares settings by construction.
  */
 function useCompareControl(
   node: PlotNode,
-  settingsSyncGroupId: string | undefined,
-  isAnchor: boolean,
+  syncedSettings: ImageSyncSettings | null | undefined,
 ): CompareControl {
   const cmp = node.kind === "compare" ? node : null;
   const props = (cmp?.props ?? {}) as Record<string, unknown>;
@@ -1427,34 +1449,29 @@ function useCompareControl(
   const descriptorSplit = (props.splitPosition as number | undefined) ?? 0.5;
 
   // Overrides (null ⇒ follow the descriptor). A live change (menu callback or a
-  // bus patch) sets the override; it survives flips because this hook's owner is
+  // synced value) sets the override; it survives flips because this hook's owner is
   // reused, and re-seeds from the descriptor for a fresh compare while null.
   const [viewModeOverride, setViewMode] = useState<CompareViewMode | null>(null);
   const [kernelOverride, setDiffKernel] = useState<string | null>(null);
   const [splitOverride, setSplitPos] = useState<number | null>(null);
 
-  const idRef = useRef<string>();
-  if (!idRef.current) idRef.current = makeImageViewportSyncSourceId();
+  // Adopt the compare-owned keys BY VALUE from the group's `syncedSettings` (ruling
+  // 4) — mode / kernel / split all mirror, including on selection FORMATION (the
+  // node receiver seeds a non-anchor from the group snapshot; the anchor fills from
+  // its own pane's seed). Keyed on the VALUES so it fires only on a real change and
+  // a LOCAL HOME (which does not publish → `syncedSettings` unchanged) is not undone.
+  const syncMode = syncedSettings?.compareMode;
+  const syncKernel = syncedSettings?.diffKernel;
+  const syncSplit = syncedSettings?.splitPosition;
   useEffect(() => {
-    if (!settingsSyncGroupId) return;
-    // The apply is the ONE interface: it adopts every compare-owned key by value
-    // (ruling 4). The diff KERNEL / compare mode / split all mirror, including on
-    // selection FORMATION where the anchor seeds its CURRENT values (ruling 3). A
-    // legacy `blend` compareMode aliases to `split` on read.
-    const apply = (patch: ImageSyncSettings) => {
-      if (patch.compareMode !== undefined) setViewMode(normalizeCompareViewMode(patch.compareMode));
-      if (patch.diffKernel !== undefined) setDiffKernel(patch.diffKernel);
-      if (patch.splitPosition !== undefined) setSplitPos(patch.splitPosition);
-    };
-    // A NON-anchor catches up to the group's current settings on JOIN (the anchor
-    // OWNS the group state, so it never adopts — mirrors `useSyncedImageSettings`).
-    // Without this, a late-subscribing owner can miss the anchor's formation seed.
-    if (!isAnchor) {
-      const last = getLastImageSettings(settingsSyncGroupId);
-      if (last) apply(last);
-    }
-    return subscribeImageSettings(settingsSyncGroupId, idRef.current!, apply);
-  }, [settingsSyncGroupId, isAnchor]);
+    if (syncMode !== undefined) setViewMode(normalizeCompareViewMode(syncMode));
+  }, [syncMode]);
+  useEffect(() => {
+    if (syncKernel !== undefined) setDiffKernel(syncKernel);
+  }, [syncKernel]);
+  useEffect(() => {
+    if (syncSplit !== undefined) setSplitPos(syncSplit);
+  }, [syncSplit]);
 
   // HOME / double-click: drop every override so the control follows the DESCRIPTOR
   // again. This is the compare half of the pane's HOME the old `GpuComparePane` did
@@ -1502,7 +1519,7 @@ function NodeDispatch({ node }: { node: PlotNode }) {
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
   // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
-  const control = useCompareControl(node, paneSync?.settingsSyncGroupId, !!paneSync?.syncIsAnchor);
+  const control = useCompareControl(node, paneSync?.syncedSettings);
   // Static synth-leaf derivation (memoized on the node object) — only meaningful
   // for a compare node; computed unconditionally to keep hook order stable.
   const synth = node.kind === "compare" ? synthDiffLeafOf(node) : null;

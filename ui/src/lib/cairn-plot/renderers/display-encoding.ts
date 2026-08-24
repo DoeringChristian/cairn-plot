@@ -262,6 +262,16 @@ export interface PaneEncodingConfig {
    *  the CURRENTLY-VISIBLE image's authored default. This is the ONE rule for a
    *  stack (one viewport, one shared setting) AND a grid cell (its own viewport). */
   controlledSurface?: boolean;
+  /** SINGLE-RECEIVER re-sync key. The controlled reseed is normally edge-triggered
+   *  on the prop VALUE, so re-publishing the SAME value (a peer re-picks the color
+   *  it already had, after this viewport did a LOCAL HOME that diverged) would not
+   *  re-mirror. When a host drives via a fresh object per bus patch (the node-level
+   *  `useReceiveImageSettings` accumulates into a NEW object each patch), pass that
+   *  object here: a change of this key RE-APPLIES the controlled seed even when the
+   *  value is unchanged — matching the old level-triggered `applyRemoteSettings`.
+   *  Undefined ⇒ no effect (the `toolbar={false}` host seam + interactive viewports
+   *  are unchanged). */
+  controlledReseedKey?: unknown;
 }
 
 /** What a pane needs from the unified encoding state. */
@@ -370,8 +380,10 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     memoryRef.current.clear();
     setEncodingId(seedFor(arity));
     setOverridden(false); // host drives → not a user override
+    // `controlledReseedKey` re-fires this on EVERY bus patch (a fresh object) so a
+    // re-published SAME value re-mirrors after a local HOME — see the config doc.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [propColormap, propTonemap, controlledSurface]);
+  }, [propColormap, propTonemap, controlledSurface, config.controlledReseedKey]);
 
   useEffect(() => {
     // ARITY-flip reseed only (a concurrent prop change was already recorded by the

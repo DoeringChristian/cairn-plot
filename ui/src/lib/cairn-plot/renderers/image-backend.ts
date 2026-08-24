@@ -27,6 +27,7 @@ import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
 import type { Precision } from "../image/half.ts";
 import type { DeepFlattenController } from "../image/decoders.ts";
+import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`
@@ -375,6 +376,15 @@ export interface ImageBackendProps {
    *  byte-identical single-image path. Only the GPU backend honors it; the CPU
    *  backend ignores it (single-image fallback). */
   compareSource?: CompareSource;
+  /** SINGLE-RECEIVER settings sync (the node-level receiver model): the group's
+   *  COMPLETE accumulated display settings, driven DOWN from the ONE node-level
+   *  `useReceiveImageSettings` subscriber (`plot-node.tsx` / stage / compositor).
+   *  When present the pane is a CONTROLLED SURFACE — it follows these display keys
+   *  (colormap/tonemap/peak/gamma/EV/offset/reduce/bounds) via the same controlled
+   *  reseed the `toolbar={false}` host seam uses — while its own menus still
+   *  PUBLISH edits up (via `settingsSyncGroupId`). The pane itself is NEVER a bus
+   *  subscriber. Absent = interactive viewport (owns its own settings). */
+  syncedSettings?: ImageSyncSettings;
   // — display controls (full set) —
   colormap?: Colormap;
   tonemap?: string;
