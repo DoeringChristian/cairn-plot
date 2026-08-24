@@ -122,7 +122,7 @@ export interface LabelledOption<V extends string> {
 /** The three core (image-space) media-compare kinds, labelled once. */
 export const CORE_COMPARE_MODE_OPTIONS: ReadonlyArray<LabelledOption<MediaCompareModeKind>> = [
   { value: "normal", label: "Normal (primary only)" },
-  { value: "split", label: "Slide (image-space, default)" },
+  { value: "split", label: "Split (image-space, default)" },
   { value: "diff", label: "Pixel diff (image-space)" },
 ];
 

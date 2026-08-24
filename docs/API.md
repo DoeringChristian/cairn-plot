@@ -40,7 +40,7 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | Container | Purpose |
 | --- | --- |
 | `cp.Grid` | Lay out child components in a grid (per-column widths, optional viewport/camera sync via `Shared`). |
-| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`side` · `slide` · `blend`) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip` · `flip_ldr` · `ssim`). `flip` is perceptual FLIP — auto-dispatched LDR-FLIP for u8 sources, HDR-FLIP (multi-exposure) for float/HDR sources; `flip_ldr` forces the tone-mapped LDR comparison on float sources. `ssim` is structural similarity (Wang et al. 2004) on linear luminance — the map shows the error field `1 − SSIM`. `flip`/`ssim` are GPU-only. `colormap=` colors the diff map. |
+| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`split`; `slide`/`blend` are deprecated aliases) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip` · `flip_ldr` · `ssim`). `flip` is perceptual FLIP — auto-dispatched LDR-FLIP for u8 sources, HDR-FLIP (multi-exposure) for float/HDR sources; `flip_ldr` forces the tone-mapped LDR comparison on float sources. `ssim` is structural similarity (Wang et al. 2004) on linear luminance — the map shows the error field `1 − SSIM`. `flip`/`ssim` are GPU-only. `colormap=` colors the diff map. |
 | `cp.Shared` | Declare shared viewport/camera sync scope for children of a `Grid`. |
 | `cp.Component` | Base class for the above (subclassing seam). |
 
@@ -132,7 +132,7 @@ lowered data.
 | `cairnPlot.parallelCoordinates` | `parallelCoordinates(dimensions, { colormap })` | `cp.ParallelCoordinates` |
 | `cairnPlot.image` | `image(data, { shape, hdr, tonemap, exposure, gamma, peak, colormap, interpolation, showAxes, brightness, contrast, offset, flipSign, pixelValueNotation, toolbar })` | `cp.Image` |
 | `cairnPlot.table` | `table(rows \| { cols })` | `cp.Table` |
-| `cairnPlot.compare` | `compare(a, b, { mode, colormap, align, fit, splitPosition, blendAlpha, toolbar, ... })` | `cp.Compare` |
+| `cairnPlot.compare` | `compare(a, b, { mode, colormap, align, fit, splitPosition, toolbar, ... })` | `cp.Compare` |
 | `cairnPlot.grid` | `grid([[...handles]], { cols, colWidths, rowHeights, gap, shared })` | `cp.Grid` |
 | `cairnPlot.mesh` / `.pointcloud` / `.volume` / `.boxes` | `(...)` — **throw** a clear error naming `three.iife.js` when the three.js addon isn't loaded (registry-gated; JS 3D data baking is a follow-up — bake via Python for now). | `cp.Mesh` / … |
 
@@ -370,7 +370,7 @@ unsupported browser, pointing at the localhost/https fix — see
 [`docs/browser-support.md`](browser-support.md#secure-context-required-for-webgpu).
 
 **`cp.Compare` panes — unified tone-map (§A).** The engine-backed compare pane's
-**slide / split / blend** modes now expose the SAME unified TONEMAP menu + PEAK/γ
+**split** mode now exposes the SAME unified TONEMAP menu + PEAK/γ
 sliders as the single-image pane, wired through the SAME `resolveEffectiveTonemap`
 / `resolveRenderTonemap` + HOME contract. Both operands run through ONE display
 mapping in the compose shader (each u8 side sRGB-DECODED to scene-linear per side,
@@ -379,7 +379,7 @@ extended `rgba16float` surface (probed exactly like the single-image pane) when
 the browser + display support it. **DIFF** modes keep the menu **hidden** — a
 derived error map routes through **colormaps**, not a tone-map operator (error
 values aren't light). **Side** mode is two independent single-image panes, which
-already carry the menu. Parity: a slide compose with an operator applied is
+already carry the menu. Parity: a split compose with an operator applied is
 byte-identical to a single-pane render of the same operand (GPU harness,
 `renderCompose(split:0) === renderImage`).
 
@@ -413,10 +413,9 @@ from its prop on change, so the prop is the controlled value:
 | Gamma (γ) | `gamma` | re-seeds view-local | the Gamma operator's exponent |
 | Base exposure (EV) | `exposure` | read straight from props | render EV = `exposure` + toolbar slider (additive; HOME zeroes only the slider) |
 | Base offset | `offset` | read straight from props | render offset = `offset` + toolbar slider (additive) |
-| Compare mode | `mode` / view-mode | re-seeds + `onCompareModeChange` | side · slide · blend · diff |
+| Compare mode | `mode` / view-mode | re-seeds + `onCompareModeChange` | split · diff |
 | Diff kernel | `diffSubmode` / `diffKernel` | re-seeds + `onDiffKernelChange` | the pointwise ids + `flip`/`ssim` |
-| Split position | `splitPosition` | controlled + `onSplitPositionChange` | slide mode |
-| Blend alpha | `blendAlpha` | controlled | blend mode |
+| Split position | `splitPosition` | controlled + `onSplitPositionChange` | split mode |
 | Interpolation / axes / notation | `interpolation` / `showAxes` / `pixelValueNotation` | read straight from props | — |
 
 Notes on EV/offset: the toolbar's **EV/OFF sliders are additive runtime

@@ -265,37 +265,31 @@ def build_report() -> cp.Report:
         ]
     )
 
-    # ── compare (split / blend / diff) ───────────────────────────────────────
+    # ── compare (split / diff) ───────────────────────────────────────────────
     img_a = _gradient_image(120, 80)
     img_b = _gradient_image(120, 80, shift=0.18)  # a shifted variant to compare
     rep.md(
-        "## Compare — split · blend · diff\n\n"
+        "## Compare — split · diff\n\n"
         "`cp.Compare` puts two images under one exclusive comparison surface. "
-        "The four modes: **side** (two panes), **split** (a draggable divider), "
-        "**blend** (alpha crossfade), and **diff** (per-pixel error field with a "
-        "diverging colormap). Small images additionally show **TEV-style "
-        "per-pixel RGB values** when you zoom in far enough (Alt/Ctrl + wheel)."
+        "The modes: **split** (a draggable divider) and **diff** (per-pixel "
+        "error field with a diverging colormap). Small images additionally show "
+        "**TEV-style per-pixel RGB values** when you zoom in far enough "
+        "(Alt/Ctrl + wheel)."
     )
     small_a = _gradient_image(16, 16)
     small_b = _gradient_image(16, 16, shift=0.25)
     rep.md("### Zoomable split w/ TEV-style pixel values (small image)")
     rep.add(
         cp.Compare(
-            cp.Image(small_a, label="prediction"), cp.Image(small_b, label="reference"), mode="slide", split_position=0.5
+            cp.Image(small_a, label="prediction"), cp.Image(small_b, label="reference"), mode="split", split_position=0.5
         )
     )
-    rep.md("### All modes — slide · blend · diff")
+    rep.md("### All modes — split · diff")
     rep.grid(
         [
             [
-                cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="blend"),
                 cp.Compare(
-                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="slide", split_position=0.5
-                ),
-            ],
-            [
-                cp.Compare(
-                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="blend", blend_alpha=0.5
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="split", split_position=0.5
                 ),
                 cp.Compare(
                     cp.Image(img_a, label="prediction"),
@@ -350,7 +344,7 @@ def build_report() -> cp.Report:
         "compared against a shifted + noisy prediction as **flip** (left) and "
         "plain **abs** (right) for contrast.\n\n"
         "Each pane's toolbar (hover, top-right) carries two dropdowns: a **MODE** "
-        "menu — *slide · blend · every diff kernel* (signed · absolute · squared "
+        "menu — *split · every diff kernel* (signed · absolute · squared "
         "· relative_* · **flip**) — and a **COLORMAP** menu. Picking a kernel "
         "recomputes the diff once and re-blits; picking a colormap is "
         "display-only (no recompute); zoom/pan never recompute. FLIP is "
@@ -566,7 +560,7 @@ def _self_check(rep: cp.Report, html: str) -> None:
     # Every markdown section heading we wrote must be rendered to real HTML.
     for heading in ("<h1>cairn-plot — feature report</h1>", "<h2>2D charts</h2>",
                     "<h2>Images (SDR)</h2>", "<h2>3D (WebGL)</h2>",
-                    "<h2>Compare — split · blend · diff</h2>",
+                    "<h2>Compare — split · diff</h2>",
                     "<h3>Line — multi-series (loss / val_loss)</h3>"):
         if heading not in html:
             raise SystemExit(f"self-check FAILED: missing rendered heading {heading!r}")

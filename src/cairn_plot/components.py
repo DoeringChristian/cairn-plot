@@ -149,12 +149,13 @@ _COMPARE_NODE_MODES = ("split", "diff")
 # The PUBLIC flat `cp.Compare(mode=...)` enum (diff-kernels spec). View modes +
 # the diff-kernel short names; each kernel short name maps to a registry kernel
 # id (== the descriptor `diffSubmode`, mirrored by the TS `listDiffKernels()`
-# `publicName`s). `"slide"` is the public name for the internal `"split"` and is
-# the default view. `"blend"` was removed; it is still ACCEPTED as a deprecated
-# alias for `"slide"` (see `_normalize_compare_mode`) so old code keeps working.
-_COMPARE_VIEW_MODES = {"slide"}
-# Deprecated public view modes that alias to a surviving mode (warn on use).
-_COMPARE_DEPRECATED_VIEW_ALIASES = {"blend": "slide"}
+# `publicName`s). `"split"` is the single view mode (== the internal mode) and
+# the default. `"slide"` was its old public name and `"blend"` was removed;
+# both are still ACCEPTED as deprecated aliases so old code keeps working.
+_COMPARE_VIEW_MODES = {"split"}
+# Deprecated public view modes that alias to a surviving mode (warn on use):
+# `slide` = the old public name for `split`; `blend` = removed outright.
+_COMPARE_DEPRECATED_VIEW_ALIASES = {"blend": "split", "slide": "split"}
 _COMPARE_KERNEL_MODES = {
     "signed": "signed",
     "abs": "absolute",
@@ -172,7 +173,7 @@ _COMPARE_KERNEL_MODES = {
     # ERROR field 1 - SSIM. GPU-only kernel (like FLIP); registry drop-in.
     "ssim": "ssim",
 }
-_COMPARE_PUBLIC_MODES = ("slide", *_COMPARE_KERNEL_MODES.keys())
+_COMPARE_PUBLIC_MODES = ("split", *_COMPARE_KERNEL_MODES.keys())
 
 # Mismatched-size operand handling for `cp.Compare(align=..., fit=...)` (diff
 # modes): `align` = where the smaller extent sits within the larger before the
@@ -1023,7 +1024,7 @@ class Image(Component):
     every data path). It renders as a bottom-left ``LabelChip`` on the pane, and
     when the image is a ``cp.Compare`` operand its caption feeds the compare
     pane's per-side labels (reference bottom-left, foreground bottom-right in
-    slide/blend; folded into the diff caption in a diff mode).
+    split; folded into the diff caption in a diff mode).
 
     HOST-CONTROLLED PANES: pass ``toolbar=False`` to render the pane WITHOUT its
     ``PlotToolbar`` (so cairn can show its OWN menu). Every view control then stays
@@ -1955,9 +1956,10 @@ class Compare(Component):
 
     Flat ``mode`` enum:
 
-    * View composition: ``"slide"`` (draggable divider — the DEFAULT), which
-      lowers to a ``compare`` node with ``mode="split"``. (The legacy ``"blend"``
-      opacity-mix mode was removed; passing it aliases to ``"slide"`` with a
+    * View composition: ``"split"`` (draggable divider — the DEFAULT), which
+      lowers to a ``compare`` node with ``mode="split"``. (``"slide"`` is the
+      old public name for the same mode and the legacy ``"blend"`` opacity-mix
+      mode was removed; passing either aliases to ``"split"`` with a
       ``DeprecationWarning``.)
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
       ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
@@ -1993,7 +1995,7 @@ class Compare(Component):
         prediction: Any,
         reference: Any,
         *,
-        mode: str = "slide",
+        mode: str = "split",
         align: str = "top-left",
         fit: str = "crop",
         split_position: float | None = None,
@@ -2011,13 +2013,15 @@ class Compare(Component):
         toolbar: bool | None = None,
         props: dict[str, Any] | None = None,
     ) -> None:
-        # Back-compat: the removed `blend` view mode aliases to `slide` (do not
-        # hard-error old code) with a one-time deprecation warning.
+        # Back-compat: `slide` (the old public name for `split`) and the removed
+        # `blend` view mode alias to `split` (do not hard-error old code) with a
+        # deprecation warning.
         if mode in _COMPARE_DEPRECATED_VIEW_ALIASES:
             aliased = _COMPARE_DEPRECATED_VIEW_ALIASES[mode]
+            why = "was renamed" if mode == "slide" else "was removed"
             warnings.warn(
                 f"cp.Compare(mode={mode!r}) is deprecated; the {mode!r} view mode "
-                f"was removed — using {aliased!r} instead.",
+                f"{why} — using {aliased!r} instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -2048,7 +2052,7 @@ class Compare(Component):
         self._fit = fit
         # Lower the flat public mode → internal descriptor mode (+ diff kernel).
         diff_kernel: str | None = None
-        if mode == "slide":
+        if mode == "split":
             internal_mode = "split"
         else:
             internal_mode, diff_kernel = "diff", _COMPARE_KERNEL_MODES[mode]
@@ -2106,8 +2110,8 @@ class Compare(Component):
         # Thread each side's own caption onto the compare node, matched to the
         # a/b slots (`a` = reference/baseline, `b` = prediction/foreground). The
         # pane derives which is reference from `baselineIndex` and renders the
-        # reference label bottom-left, the foreground label bottom-right (slide/
-        # blend), or folds them into the diff caption. A hand-passed `props`
+        # reference label bottom-left, the foreground label bottom-right
+        # (split), or folds them into the diff caption. A hand-passed `props`
         # value still wins (`setdefault`).
         props = dict(self._props or {})
         label_a = _leaf_label_of(self._a)

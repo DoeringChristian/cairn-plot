@@ -127,7 +127,7 @@ function samples(): Record<string, any> {
     "image (url)": cp.image({ url: "https://example.com/a.png" }),
     table: cp.table([{ a: 1, b: "x" }, { a: 2, b: "y" }]),
     "compare (abs)": cp.compare(cp.image(f32, { shape: [2, 3] }), cp.image(f32, { shape: [2, 3] }), { mode: "abs" }),
-    "compare (slide)": cp.compare(cp.image({ url: "a.png" }), cp.image({ url: "b.png" }), { mode: "slide" }),
+    "compare (split)": cp.compare(cp.image({ url: "a.png" }), cp.image({ url: "b.png" }), { mode: "split" }),
     grid: cp.grid([[cp.line([1, 2, 3]), cp.bar([1, 2])]], { gap: 8 }),
   };
 }
@@ -174,7 +174,7 @@ test("image/compare emit props.toolbar=false only when explicitly disabled", () 
   assert.equal((hdr.node as any).props.offset, 0.2);
   // compare
   const cmp = cp.compare(cp.image(f32, { shape: [2, 3] }), cp.image(f32, { shape: [2, 3] }), {
-    mode: "slide",
+    mode: "split",
     toolbar: false,
   });
   assert.equal((cmp.node as any).props.toolbar, false);

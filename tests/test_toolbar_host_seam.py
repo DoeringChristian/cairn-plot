@@ -106,12 +106,12 @@ def test_image_hdr_offset_no_longer_ignored(caplog: pytest.LogCaptureFixture) ->
 
 
 def test_compare_toolbar_false_emits_prop() -> None:
-    node = cp.Compare(cp.Image(_sdr()), cp.Image(_sdr()), mode="slide", toolbar=False).to_node()
+    node = cp.Compare(cp.Image(_sdr()), cp.Image(_sdr()), mode="split", toolbar=False).to_node()
     assert node["props"]["toolbar"] is False
 
 
 def test_compare_toolbar_default_omitted() -> None:
-    node = cp.Compare(cp.Image(_sdr()), cp.Image(_sdr()), mode="slide").to_node()
+    node = cp.Compare(cp.Image(_sdr()), cp.Image(_sdr()), mode="split").to_node()
     assert (node.get("props") or {}).get("toolbar") is None
 
 

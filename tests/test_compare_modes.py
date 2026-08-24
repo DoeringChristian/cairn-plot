@@ -19,16 +19,25 @@ def _img():
 
 
 def test_view_modes_lower_to_descriptor():
-    # slide -> internal split.
-    slide = cp.Compare(_img(), _img(), mode="slide", split_position=0.25).to_node()
-    assert slide["kind"] == "compare" and slide["mode"] == "split"
-    assert slide["props"]["splitPosition"] == 0.25
+    # split (public == internal name).
+    split = cp.Compare(_img(), _img(), mode="split", split_position=0.25).to_node()
+    assert split["kind"] == "compare" and split["mode"] == "split"
+    assert split["props"]["splitPosition"] == 0.25
 
 
-def test_blend_mode_aliases_to_slide_with_deprecation():
-    # The blend view mode was removed; passing it aliases to slide (split) with a
+def test_slide_mode_aliases_to_split_with_deprecation():
+    # `slide` was the old public name for `split`; it still works with a
+    # DeprecationWarning rather than hard-failing old code.
+    with pytest.warns(DeprecationWarning, match="renamed"):
+        node = cp.Compare(_img(), _img(), mode="slide", split_position=0.25).to_node()
+    assert node["mode"] == "split"
+    assert node["props"]["splitPosition"] == 0.25
+
+
+def test_blend_mode_aliases_to_split_with_deprecation():
+    # The blend view mode was removed; passing it aliases to split with a
     # DeprecationWarning rather than hard-failing an old baked report / call.
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match="removed"):
         node = cp.Compare(_img(), _img(), mode="blend").to_node()
     assert node["mode"] == "split"
     # A stray blend_alpha kwarg is accepted, warns, and is NOT emitted to the node.
@@ -37,8 +46,8 @@ def test_blend_mode_aliases_to_slide_with_deprecation():
     assert "blendAlpha" not in node2.get("props", {})
 
 
-def test_default_mode_is_slide():
-    # The removed side-by-side view is gone; the default is now "slide" (split).
+def test_default_mode_is_split():
+    # The removed side-by-side view is gone; the default is "split".
     node = cp.Compare(_img(), _img()).to_node()
     assert node["kind"] == "compare"
     assert node["mode"] == "split"

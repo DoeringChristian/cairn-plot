@@ -102,7 +102,7 @@ def _render_pair(w: int = 128, h: int = 96) -> tuple[np.ndarray, np.ndarray]:
 def _detail_scene(w: int = 320, h: int = 240) -> np.ndarray:
     """A detail-rich float RGB scene in ``[0, 1]`` designed for MANUAL (visual)
     comparison — the kind of high-frequency content where blur, noise, and
-    resampling differences pop under the slide / flip tools:
+    resampling differences pop under the split / flip tools:
 
     * a **zone plate** (``sin(k·r²)`` chirp) — spatial frequency rises toward the
       edges, the classic resolution / aliasing test target;
@@ -360,19 +360,19 @@ def build_gallery() -> list[tuple[str, object]]:
     items.append((
         "Compare — zoomable split w/ TEV-style pixel values "
         "(Alt/Ctrl + wheel to zoom; per-pixel RGB appears when pixels get big)",
-        cp.Compare(cp.Image(small_a, label="prediction"), cp.Image(small_b, label="reference"), mode="slide",
+        cp.Compare(cp.Image(small_a, label="prediction"), cp.Image(small_b, label="reference"), mode="split",
                    split_position=0.5),
     ))
 
-    # ── image comparison: all four modes + diff submodes ──────────────────
+    # ── image comparison: split + diff submodes ───────────────────────────
     img_a = _gradient_image(120, 80)
     img_b = _gradient_image(120, 80, shift=0.18)  # a shifted variant to compare
     items.append((
-        "Compare — all modes (slide · blend · diff)",
+        "Compare — all modes (split · diff)",
         cp.Grid(
-            [[cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="slide",
+            [[cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="split",
                          split_position=0.25),
-              cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="slide",
+              cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="split",
                          split_position=0.5)],
              [cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs"),
               cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue")]],
@@ -406,8 +406,8 @@ def build_gallery() -> list[tuple[str, object]]:
     # ── detail-rich images for MANUAL comparison ─────────────────────────
     # A high-frequency "zone plate + hue wheel + checker" scene (great for
     # eyeballing resolution/blur/noise differences) against degraded
-    # predictions. Slide the divider (or press ←/→ to snap it) and switch the
-    # pane's MODE menu to blend/diff/FLIP to localise where each prediction
+    # predictions. Drag the divider (or press ←/→ to snap it) and switch the
+    # pane's MODE menu to diff/FLIP to localise where each prediction
     # loses detail. Standalone variants sit below so you can multi-SELECT any
     # two panes on the page and hit "Compare" to diff arbitrary pairs.
     # Build the variants in float (blur/noise math), then bake as compact uint8
@@ -421,10 +421,10 @@ def build_gallery() -> list[tuple[str, object]]:
     detail_dim = _u8(_scene * 0.8)
     items.append((
         "Manual comparison — detail-rich scene vs degraded predictions "
-        "(slide / ←→ / blend / diff · FLIP)",
+        "(split / ←→ / diff · FLIP)",
         cp.Grid(
-            [[cp.Compare(cp.Image(detail_blur, label="blurred"), cp.Image(detail, label="sharp"), mode="slide"),
-              cp.Compare(cp.Image(detail_noisy, label="noisy"), cp.Image(detail, label="clean"), mode="slide")]],
+            [[cp.Compare(cp.Image(detail_blur, label="blurred"), cp.Image(detail, label="sharp"), mode="split"),
+              cp.Compare(cp.Image(detail_noisy, label="noisy"), cp.Image(detail, label="clean"), mode="split")]],
         ),
     ))
     items.append((
@@ -439,14 +439,14 @@ def build_gallery() -> list[tuple[str, object]]:
     # A structured render vs a shifted+noisy prediction, shown as FLIP (a
     # perceptual LDR error metric — NVIDIA FLIP) beside a plain absolute diff.
     # In each pane the toolbar (hover top-right) exposes TWO dropdowns: a MODE
-    # menu — slide · blend · every diff kernel (signed · absolute · … · flip) —
+    # menu — split · every diff kernel (signed · absolute · … · flip) —
     # and a COLORMAP menu. Switching the kernel recomputes once and re-blits;
     # switching the colormap is display-only (no recompute); zoom/pan never
     # recompute. FLIP concentrates error on edges; abs shows raw magnitude.
     flip_pred, flip_ref = _render_pair()
     items.append((
         "Perceptual diff — FLIP vs absolute "
-        "(pane toolbar: MODE menu slide · blend · kernels; COLORMAP menu)",
+        "(pane toolbar: MODE menu split · kernels; COLORMAP menu)",
         cp.Grid(
             [[cp.Compare(cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
                          colormap="viridis"),

@@ -198,7 +198,7 @@ function compositor(
 
 const split = compositor(
   "split",
-  "Slide",
+  "Split",
   // Reference (a) LEFT of the divider (uv.x < param), foreground (b) right —
   // matching GpuComparePane's `select(colorB, colorA, uv.x < split)`.
   "select(b, a, uv.x < param.x)",

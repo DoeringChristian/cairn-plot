@@ -2341,7 +2341,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       mode: compositorMode ? compareOpMode! : "diff",
       kernel: diffKernel,
       kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
-      onSlide: () => changeCompareMode("split"),
+      onSplit: () => changeCompareMode("split"),
       onKernel: (id) => {
         if (compositorMode) changeCompareMode("diff");
         changeDiffKernel(id);

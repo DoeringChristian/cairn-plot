@@ -34,14 +34,16 @@ import {
 type Opts = Record<string, unknown>;
 type Runtime = Array<[string, RuntimeStoreEntry]>;
 
-// Back-compat: the removed `blend` compare view mode aliases to `slide`. Warn
-// once per session (never hard-fail an old builder call / baked descriptor).
-let warnedBlendRemoved = false;
-function warnBlendRemoved(): void {
-  if (warnedBlendRemoved) return;
-  warnedBlendRemoved = true;
+// Back-compat: `slide` (the old public name for `split`) and the removed
+// `blend` compare view mode alias to `split`. Warn once per session per alias
+// (never hard-fail an old builder call / baked descriptor).
+const warnedCompareModeAlias = new Set<string>();
+function warnCompareModeAlias(rawMode: string): void {
+  if (warnedCompareModeAlias.has(rawMode)) return;
+  warnedCompareModeAlias.add(rawMode);
+  const why = rawMode === "slide" ? "was renamed" : "was removed";
   // eslint-disable-next-line no-console
-  console.warn("cairn-plot: the 'blend' compare mode was removed; using 'slide' instead.");
+  console.warn(`cairn-plot: the '${rawMode}' compare mode ${why}; using 'split' instead.`);
 }
 
 /** The camelCase builder names shared by BOTH faces — pinned to
@@ -334,16 +336,17 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
     },
 
     compare(a, b, opts = {}) {
-      // Back-compat: the removed `blend` view mode aliases to `slide` (warn once,
-      // never hard-fail an old builder call).
-      const rawMode = String(opts.mode ?? "slide");
-      const mode = checkCompareMode(rawMode === "blend" ? "slide" : rawMode);
-      if (rawMode === "blend") warnBlendRemoved();
+      // Back-compat: `slide` / the removed `blend` view mode alias to `split`
+      // (warn once, never hard-fail an old builder call).
+      const rawMode = String(opts.mode ?? "split");
+      const aliased = rawMode === "blend" || rawMode === "slide";
+      const mode = checkCompareMode(aliased ? "split" : rawMode);
+      if (aliased) warnCompareModeAlias(rawMode);
       const align = checkAlign(String(opts.align ?? "top-left"));
       const fit = checkFit(String(opts.fit ?? "crop"));
       let internalMode: "split" | "diff";
       let diffKernel: string | null = null;
-      if (mode === "slide") internalMode = "split";
+      if (mode === "split") internalMode = "split";
       else {
         internalMode = "diff";
         diffKernel = COMPARE_KERNEL_MODES[mode]!;
