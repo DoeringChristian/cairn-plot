@@ -40,8 +40,34 @@ interface Entry<T> {
 
 const cache = new Map<string, Entry<unknown>>();
 
+// SUBSCRIBABLE STORE. The cache is a tiny external store a React leaf reads via
+// `useSyncExternalStore`: the resolved value for a key is then a PURE FUNCTION of the
+// key (+ this version), never a component-held `state` cell that can lag a flip by a
+// commit. `version` bumps whenever ANY key resolves or errors; a subscriber re-reads
+// `peekResolved(itsKey)` during the notified render. Still framework-free (a plain
+// listener set — no React import).
+let version = 0;
+const listeners = new Set<() => void>();
+function notifyResolveCache(): void {
+  version++;
+  for (const l of listeners) l();
+}
+/** Subscribe to cache changes (a key resolved/errored). Returns an unsubscribe. */
+export function subscribeResolveCache(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+/** A monotonic version that bumps on every resolution/error — the `getSnapshot` for
+ *  `useSyncExternalStore`. Stable ref (a plain number); reads are per-key via
+ *  `peekResolved`/`peekResolveError` during the notified render. */
+export function resolveCacheVersion(): number {
+  return version;
+}
+
 /** The resolved payload for `key`, or `undefined` if not yet resolved (or errored).
- *  Synchronous — lets a leaf seed its state without a loading frame on a cache hit. */
+ *  Synchronous — a leaf reads the new source in the SAME commit on a cache hit. */
 export function peekResolved<T>(key: string): T | undefined {
   return cache.get(key)?.data as T | undefined;
 }
@@ -62,9 +88,11 @@ export function resolveCached<T>(key: string, run: () => Promise<T>): Promise<T>
     (data) => {
       entry.data = data;
       entry.error = undefined;
+      notifyResolveCache(); // wake subscribed leaves — they re-read peekResolved(key)
     },
     (err) => {
       entry.error = err instanceof Error ? err.message : String(err);
+      notifyResolveCache();
       throw err;
     },
   );
@@ -86,4 +114,5 @@ export function prefetchResolved(entries: Array<{ key: string; run: () => Promis
  *  intact; ids stay stable). */
 export function __resetResolveCacheForTest(): void {
   cache.clear();
+  notifyResolveCache();
 }

@@ -618,9 +618,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // only on a user pick or HOME (which re-seeds to the CURRENTLY-VISIBLE image). A
   // stacked viewport is exactly this rule with one shared pane, so its slots share
   // ALL settings by construction — nothing special-cases the stack. `__cairnDisable-
-  // StackShared` (test-only, the `__cairnDisableSyncResolve` idiom) forces the
-  // controlled-surface reseed on a viewport so one harness run measures pre-fix
-  // (flip wipes the shared setting) vs post-fix (shared, survives) with one driver.
+  // StackShared` (test-only) forces the controlled-surface reseed on a viewport so one
+  // harness run measures pre-fix (flip wipes the shared setting) vs post-fix (shared,
+  // survives) with one driver.
   const disableStackShared =
     typeof window !== "undefined" &&
     !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared;

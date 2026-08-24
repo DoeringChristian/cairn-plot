@@ -5,25 +5,20 @@
  * (URL sources ⇒ `CpuImagePane`, no WebGPU needed — the resolve logic is
  * renderer-agnostic).
  *
- * WHAT IT PROVES. A stacked `[image, diff]` grid reuses ONE `LeafView` instance
- * across the flip, so right after the active node swaps its resolved `state`
- * still holds the PREVIOUS slot's dataProps until the resolve effect (which peeks
- * the resolve cache SYNCHRONOUSLY on a hit) updates it. Two artefacts could flash
- * in that one-commit window:
- *   1. a `"Loading…"` PLACEHOLDER — only if `state` ever reset to `"loading"`. It
- *      must NOT (the pane holds its last frame). Counter: `placeholderMounts`.
- *   2. a STALE-DIFF render — `diffSpec` set but `state.dataProps` has no `__diffB`
- *      yet, i.e. a `compareSource` whose `b` is undefined driving the pane with no
- *      foreground operand for a frame. The fix renders the PREVIOUS image content
- *      instead (a clean single-image hold, reserved chrome kept). Counter:
- *      `staleDiffHolds` — it firing is the EVIDENCE the transition window is real;
- *      the fix converts it into a benign hold rather than a half-built prop.
+ * WHAT IT PROVES. A stacked `[image, diff]` grid reuses ONE `LeafView` instance across
+ * the flip. `LeafView` reads its resolved value PURELY from the subscribable resolve-
+ * cache keyed by the CURRENT `resolveKey` (no component `state` cell), so a WARM/
+ * prefetched flip resolves the new slot SYNCHRONOUSLY in the flip commit — no
+ * placeholder — and never holds the previous slot's resolution. The stale-diff / half-
+ * built-`compareSource` window (a `compareSource` whose `b` is undefined) is now
+ * structurally UNREPRESENTABLE — the leaf only builds a `compareSource` from a RESOLVED
+ * diff pair — so its former `staleDiffHolds` witness is RETIRED. A COLD swap (cache
+ * miss) shows a brief `"Loading…"` (accepted); the storm below is WARM (both slots pre-
+ * visited), so it must NOT drop to a placeholder.
  *
- * `window.__cairnLeafResolveStats` exposes both counters (set in `plot-node.tsx`).
- * The harness warms the resolve cache for BOTH slots, resets the counters, storms
- * the flip, and asserts `placeholderMounts === 0` (no flash). `staleDiffHolds` is
- * reported as evidence (expected > 0 — the window is inherent to the reused
- * instance; what matters is it never surfaces a placeholder or a broken pane).
+ * `window.__cairnLeafResolveStats` exposes `placeholderMounts` (set in `plot-node.tsx`).
+ * The harness warms the resolve cache for BOTH slots, resets the counter, storms the
+ * flip, and asserts `placeholderMounts === 0` (no flash on warm flips).
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
@@ -109,7 +104,7 @@ function imageDiffGrid(): PlotDescriptor {
   } as unknown as PlotDescriptor;
 }
 
-interface LeafResolveStats { placeholderMounts: number; staleDiffHolds: number; }
+interface LeafResolveStats { placeholderMounts: number; }
 function stats(): LeafResolveStats {
   return (window as unknown as { __cairnLeafResolveStats: LeafResolveStats }).__cairnLeafResolveStats;
 }
@@ -161,7 +156,6 @@ async function main(): Promise<void> {
     // ---- STORM: reset counters, then rapid image↔diff flips -------------------
     const s = stats();
     s.placeholderMounts = 0;
-    s.staleDiffHolds = 0;
 
     const FLIPS = 40;
     let flipped = 0;
@@ -173,15 +167,12 @@ async function main(): Promise<void> {
     await sleep(200);
 
     note(`flip storm: ${flipped}/${FLIPS} flips landed`);
-    note(`placeholder ("Loading…") mounts during the storm = ${s.placeholderMounts}`);
-    note(`stale-diff HOLDS during the storm = ${s.staleDiffHolds} (evidence the reused-instance resolve window fires)`);
+    note(`placeholder ("Loading…") mounts during the WARM storm = ${s.placeholderMounts}`);
 
-    // (1) NO placeholder flash: state never reset to "loading" on a reused flip.
-    report(s.placeholderMounts === 0, `NO "Loading…" placeholder mounts across the flip storm (${s.placeholderMounts})`);
-
-    // (2) The stale-resolve window IS real (fires) but is handled by a clean hold —
-    // the harness proves it engaged rather than emitting a half-built compareSource.
-    report(s.staleDiffHolds > 0, `stale-resolve window fires + is HELD (not a broken compareSource): ${s.staleDiffHolds} holds`);
+    // NO placeholder flash on WARM flips: the pure resolve-cache read hits for both
+    // pre-visited slots, so a reused-instance flip never drops to "loading". (A cold
+    // swap would show a brief placeholder — accepted — but the storm is warm.)
+    report(s.placeholderMounts === 0, `NO "Loading…" placeholder mounts across the warm flip storm (${s.placeholderMounts})`);
 
     // No error/placeholder is currently on screen (settled coherently after the storm).
     const settled = await waitFor(
