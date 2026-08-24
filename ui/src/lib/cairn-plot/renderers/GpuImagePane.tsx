@@ -377,17 +377,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `hasCompare` gates the SHARED operand plumbing (upload `b`, mapping, metrics).
   const compareSource: CompareSource | undefined = backendProps.compareSource;
   const hasCompare = !!compareSource;
-  // CHROME RESERVATION (stacked image↔diff flip stability). A PLAIN-IMAGE pane
-  // that shares a stacked viewport with a compare child is the SAME reused
-  // instance the diff slot renders through, so its chrome must be structurally
-  // IDENTICAL to the diff slot's or the flip mounts/unmounts the MODE menu +
-  // metrics/caption chips (the residual popping). `reserveOnly` = this is that
-  // image slot (reserve, but no live compare); `renderCompareChrome` = build the
-  // compare chrome skeleton (either a real compare OR a reserving image). Ignored
-  // for a real compare (`hasCompare` already renders it). See
-  // `renderers/image-backend.ts` `reserveCompareChrome`.
-  const reserveOnly = !hasCompare && !!backendProps.reserveCompareChrome;
-  const renderCompareChrome = hasCompare || reserveOnly;
   // The compare mode is EXPLICIT (`compareSource.mode`, default "diff"), so `opId`
   // stays the diff kernel even in a compositor mode (switching INTO diff restores it).
   const compareMode: "diff" | "split" | "blend" | null = hasCompare
@@ -2391,28 +2380,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // (empty/undefined) when `!hasCompare`.
   // -----------------------------------------------------------------------
   const compareLeadingMenus = useMemo<ToolbarButtonSpec[]>(() => {
-    if (!renderCompareChrome) return [];
-    if (reserveOnly) {
-      // RESERVED image slot: the SAME two leading-menu slots the diff slot emits —
-      // a `compare-mode` menu + a `display` menu — so the toolbar's leading-button
-      // set is IDENTICAL across the flip (no reflow). The MODE menu is rendered
-      // DISABLED (greyed, non-interactive): this is a plain image, not a compare,
-      // so mode selection does not apply here — the slot is reserved, not faked.
-      // The display menu IS the image's own unified DISPLAY menu (real control).
-      const reservedModeMenu: ToolbarButtonSpec = {
-        ...buildCompareModeMenu({
-          mode: "diff",
-          kernel: diffKernel,
-          kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
-          onSlide: () => {},
-          onBlend: () => {},
-          onKernel: () => {},
-        }),
-        disabled: true,
-        title: "Compare / diff mode (available on the comparison slot)",
-      };
-      return [reservedModeMenu, displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding })];
-    }
+    if (!hasCompare) return [];
     // The ONE compare MODE menu (Slide · Blend · <kernels>), current value = the
     // live mode. onKernel switches INTO diff (an op-switch on the reused instance
     // — no remount, since [image, split, diff] all key `plot:image`).
@@ -2443,7 +2411,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       onSelectLut: (id) => changeDiffColormap(id as Colormap),
     });
     return [modeMenu, displayMenu];
-  }, [renderCompareChrome, reserveOnly, hasCompare, compositorMode, compareOpMode, diffKernel, effectiveDiffColormap, effectiveTonemap, enc.encodingId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffColormap]);
+  }, [hasCompare, compositorMode, compareOpMode, diffKernel, effectiveDiffColormap, effectiveTonemap, enc.encodingId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffColormap]);
 
   // Captions (same DOM / selectors as `GpuComparePane`): diff → ONE bottom-left
   // "<metric> · <fg> compared to <ref>"; split/blend → REFERENCE bottom-left +
@@ -2459,82 +2427,28 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       })
     : { left: undefined, right: undefined };
   const metricsBottomClass = compareCaps.right ? "bottom-7" : "bottom-1";
-  // The bottom-left caption slot is PERSISTENT across a stacked image↔diff flip:
-  // the compare slot shows the diff/reference caption, the reserved image slot
-  // shows the image's own label — the SAME `<span>`, only its TEXT changes, so
-  // the flip never mounts/unmounts a chip (the residual popping fix). Empty
-  // renders present-but-invisible.
-  const leftCaptionText = hasCompare ? (compareCaps.left ?? "") : (backendProps.label ?? "");
-  const compareChips = renderCompareChrome ? (
+  const compareChips = hasCompare ? (
     <>
-      {/* REF badge: split only (the left-of-divider side IS the reference).
-          Absent on both the image and diff slots of an image↔diff flip. */}
+      {/* REF badge: split only (the left-of-divider side IS the reference). */}
       {compareOpMode === "split" && <RefBadge />}
-      {/* Bottom-left caption — ALWAYS mounted (see leftCaptionText). */}
-      <LabelChip
-        label={leftCaptionText || " "}
-        hidden={!leftCaptionText}
-        corner="bottom-left"
-        attrs={{ "data-cairn-compare-caption": "reference" }}
-      />
-      {/* Foreground caption — split/blend only; absent on both slots of an
-          image↔diff flip (so it never churns there). */}
+      {compareCaps.left ? (
+        <LabelChip label={compareCaps.left} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+      ) : null}
       {compareCaps.right ? (
         <LabelChip label={compareCaps.right} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
       ) : null}
-      {/* Metrics chip — ALWAYS mounted; present-but-invisible (and empty) when
-          there is no live diff metric (the reserved image slot, or before the
-          first async metric compute), so the diff slot's metrics never pop in. */}
-      <span
-        className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}${diffMetrics ? "" : " invisible"}`}
-        data-gpu-compare-metrics
-      >
-        {diffMetrics
-          ? `MSE ${diffMetrics.mse.toExponential(2)} · PSNR ${
-              Number.isFinite(diffMetrics.psnr) ? diffMetrics.psnr.toFixed(1) : "∞"
-            } dB · MAE ${diffMetrics.mae.toExponential(2)} · SSIM ${formatSsim(diffSsim)}`
-          : ""}
-      </span>
+      {diffMetrics && (
+        <span
+          className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}`}
+          data-gpu-compare-metrics
+        >
+          MSE {diffMetrics.mse.toExponential(2)} · PSNR{" "}
+          {Number.isFinite(diffMetrics.psnr) ? diffMetrics.psnr.toFixed(1) : "∞"} dB · MAE {diffMetrics.mae.toExponential(2)} ·
+          SSIM {formatSsim(diffSsim)}
+        </span>
+      )}
     </>
   ) : undefined;
-
-  // CHROME-STABILITY probe (test-only). A compact STRUCTURAL signature of the
-  // toolbar the pane hands the shell this render — the leading-menu ids + which
-  // second-row controls (reduce / EV·OFF / peak / gamma / bounds / deep) are
-  // present. The `stacked-diff-flip-chrome` harness reads it in both modes and
-  // asserts image-slot === diff-slot (a CSS-INDEPENDENT proof that the flip
-  // changes no toolbar button count/width — the width-based fold can't be trusted
-  // in a headless page). Set UNCONDITIONALLY (both modes), unlike the
-  // compare-only `__cairnImageDiffProbe`. No production code reads it.
-  const chromeSig = useMemo(() => {
-    const lead = renderCompareChrome
-      ? [...(backendProps.channelMenu ? ["channel"] : []), ...compareLeadingMenus.map((m) => m.id)]
-      : [...(backendProps.channelMenu ? ["channel"] : []), "display"];
-    const evoff = diffMode || reserveOnly || (enc.hasParam("exposure") && !boundsEngaged);
-    const reduce = !diffMode && !reserveOnly && enc.hasParam("reduce") && sourceArity > 1;
-    const peakS = !diffMode && !reserveOnly && (hdrMode || sdrPlain) && hdrEngaged && activeIsCurve && !scalarNoneData;
-    const gammaS = !diffMode && !reserveOnly && (hdrMode || sdrPlain) && enc.hasParam("gamma");
-    const boundsS = !diffMode && !reserveOnly && boundsEngaged && !!colorBounds;
-    const deepN = deepFlatten.sliders?.length ?? 0;
-    const histBtn = renderCompareChrome ? 0 : histogramSource ? 1 : 0;
-    return [
-      `L:${lead.join(",")}`,
-      `hist:${histBtn}`,
-      `seg:${reduce ? "reduce" : ""}`,
-      `evoff:${evoff ? 1 : 0}`,
-      `x:${[peakS && "peak", gammaS && "gamma", boundsS && "min,max"].filter(Boolean).join(",")}`,
-      `deep:${deepN}`,
-      `chips:${renderCompareChrome ? "compare" : "plain"}`,
-    ].join("|");
-  }, [renderCompareChrome, reserveOnly, diffMode, backendProps.channelMenu, compareLeadingMenus, enc, boundsEngaged, sourceArity, hdrMode, sdrPlain, hdrEngaged, activeIsCurve, scalarNoneData, colorBounds, deepFlatten.sliders, histogramSource]);
-  useEffect(() => {
-    const el = paneRef.current as (HTMLDivElement & { __cairnChromeProbe?: unknown }) | null;
-    if (!el) return;
-    el.__cairnChromeProbe = { chromeSig };
-    return () => {
-      if (el) delete (el as { __cairnChromeProbe?: unknown }).__cairnChromeProbe;
-    };
-  }, [chromeSig]);
 
   // -----------------------------------------------------------------------
   // Render.
@@ -2710,22 +2624,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
       requestRender={renderPass}
-      // Histogram button: suppressed for a real compare (a scalar error has no
-      // channel histogram) AND for a RESERVING image slot — so the toolbar's
-      // leading-button set matches the diff slot's across the flip (the histogram
-      // button would otherwise be image-slot-only and churn). Plain images keep it.
-      histogram={renderCompareChrome ? undefined : histogramSource}
+      // Histogram button: suppressed for a compare (a scalar error has no channel
+      // histogram). Plain images — including an image slot in a mixed stack — keep it.
+      histogram={hasCompare ? undefined : histogramSource}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
       // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
       // menus. Selecting a LUT deactivates the curve and vice-versa structurally
       // (`enc` owns the single `encoding` id); the float pane gates luts to k=1
       // and `normal` to k=3, the 8-bit pane offers the full applicable set.
       leadingMenus={
-        renderCompareChrome
-          ? // COMPARE (diff OR split/blend) OR a RESERVING image slot: the MODE menu
-            // + the mode's DISPLAY menu. `compareLeadingMenus` renders the reserved
-            // (greyed) MODE menu + the image's own DISPLAY menu on the image slot,
-            // so the leading-button set is IDENTICAL across the image↔diff flip.
+        hasCompare
+          ? // COMPARE (diff OR split/blend): the MODE menu + the mode's DISPLAY menu.
             [...(props.channelMenu ? [props.channelMenu] : []), ...compareLeadingMenus]
           : [
               // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
@@ -2740,9 +2649,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // was REMOVED — norm-UI-removal follow-up.)
       rowSegments={[
         // The diff error is a k=1 scalar (reduce mean) — no reduce picker in diff mode.
-        // A RESERVING image slot ALSO suppresses reduce so its second row matches the
-        // (reduce-free) diff slot's — no LABEL churn across the image↔diff flip.
-        ...(!diffMode && !reserveOnly && enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
+        ...(!diffMode && enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the GPU shader applies them
       // in-pass (both HDR and SDR paths). Gated by the ACTIVE encoding's param
@@ -2750,11 +2657,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // for the paramless `normal` remap.
       displayAdjust={
         // DIFF: EV/OFF are always shown (they scale the colormap SENSITIVITY of the
-        // raw metric before the LUT — display-only, never a diff recompute). A
-        // RESERVING image slot ALSO always shows EV/OFF so its second-row slider set
-        // matches the diff slot's exactly — no slider (`LABEL.inline-flex`) churn
-        // across the image↔diff flip. (EV/OFF are always meaningful for an image.)
-        diffMode || reserveOnly
+        // raw metric before the LUT — display-only, never a diff recompute).
+        diffMode
           ? {
               exposureEV: displayEV,
               offset: displayOffset,
@@ -2778,7 +2682,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // active encoding is a CURVE (every curve respects `P` as its ceiling; the
       // paramless `normal` remap and colormap LUTs have no peak). γ rides the
       // active encoding's manifest (only the Gamma curve declares it).
-      extraSliders={diffMode || reserveOnly ? [] : [
+      extraSliders={diffMode ? [] : [
         // PEAK is the CURVE family's HDR ceiling — hidden for the gray-none DATA
         // path (a scalar as data has no tone-map ceiling; its raw value rides the
         // output-encode unclamped), the `normal` remap, and colormap LUTs.
@@ -2900,12 +2804,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         !!props.channelModified ||
         (hasCompare && !!compareSource?.compareModified)
       }
-      // DIFF / RESERVING image slot: the caption chip (in `extraChips`) carries the
-      // labeling, so the shell's own bottom-left LabelChip is suppressed — otherwise
-      // the flip would swap the shell's LabelChip for the caption's (a mount/unmount
-      // of two DIFFERENT bottom-left chips). One persistent chip, text swaps.
-      label={renderCompareChrome ? "" : label}
-      showLabelChip={!renderCompareChrome && !!label}
+      // DIFF: the caption chip (in `extraChips`) carries the labeling, so the
+      // shell's own bottom-left LabelChip is suppressed.
+      label={hasCompare ? "" : label}
+      showLabelChip={!hasCompare && !!label}
       extraChips={compareChips}
       isDraggable={isDraggable}
       onDragStart={onDragStart}

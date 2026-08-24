@@ -195,11 +195,22 @@ reserves the compare chrome skeleton on the image slot (persistent hidden chips,
 *disabled* reserved mode menu), so only text/content swaps. (2) **Stale-resolve
 hold (Finding 2):** `LeafView` now holds the previous single-image frame instead
 of emitting a `compareSource` with an undefined `b`.
-**Verdict: chrome part → (b) INDEPENDENT** — fixes a real distinct defect
-(toolbar/chip churn, a layout flicker, not the pixel flash). **Hold part →
+**Verdict: chrome part → REVERTED (2026-08-24 user ruling).** Originally classed
+(b) INDEPENDENT, but the ruling overturned that: the reserved-slot chrome
+(`StackHasCompareContext` → `reserveCompareChrome` → `reserveOnly`/
+`renderCompareChrome`, the *disabled* reserved MODE menu, the persistent hidden
+chips) was built for a flicker it did not cause — the real defect was the
+`LeafView` stale-resolve lag, fixed later by `a790e34`/`874800e`. Its only
+observable effect was a **pure regression**: a plain image inside a mixed
+`[image, diff]` stack lost its niche controls (CHANNELS, histogram, peak/gamma/
+bounds) and gained a greyed MODE menu. Toolbar contents changing across stacked
+cross-kind flips is acceptable and was never the problem. All the reservation
+machinery + the `stacked-diff-flip-chrome` harness were removed; the image slot
+now renders its full normal toolbar. **Hold part →
 REQUIRED (early form)** — the same "hold rather than present an incoherent frame"
-principle `a790e34` generalizes. The commit conflates two defects; only the hold
-is on the pixel-flash chain.
+principle `a790e34` generalizes; it was kept (minus the `reserveCompareChrome`
+flag it used to thread). The commit conflated two defects; only the hold is on the
+pixel-flash chain.
 
 ### `0758207` — sync-adoption scoping (diff colormap not applied to image peers)
 Reproduced the **orange flash** on the *real descriptor GPU stack* (prior harnesses
@@ -413,7 +424,7 @@ either whole (present) or not (hold), by construction.
 (`GpuImagePane.tsx`, the ~250-line render/effect region), plus a small shape change
 in `LeafView` and `usePaneEncoding`. No engine/pool rewrite. Estimate **1–2 focused
 days**, the risk concentrated in the flip path's subtlety — **but** the existing
-harnesses (`stacked-diff-flip-stress`, `-paint`, `-chrome`, `-resolve`,
+harnesses (`stacked-diff-flip-stress`, `-paint`, `-resolve`,
 `-realstack-gpu` Phases A–E) already codify every invariant to 0, so a refactor has
 a **strong regression net** that the original fixes did not.
 
