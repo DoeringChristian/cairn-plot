@@ -233,8 +233,24 @@ export class SelectionStore {
   }
 
   private emit(): void {
+    // A ≥2 selection EPISODE id: bumps each time a group FORMS (crossing from
+    // <2 to ≥2). Keys the per-episode sync-group ids so a fresh selection can
+    // NEVER read a previous selection's accumulated settings — a store that was
+    // never written is empty by construction, regardless of seed timing.
+    const isGroup = this.selected.length >= 2;
+    if (isGroup && !this.wasGroup) this.episode++;
+    this.wasGroup = isGroup;
     this.snapshot = { selected: this.selected, reference: this.reference() };
     for (const l of this.listeners) l();
+  }
+
+  private episode = 0;
+  private wasGroup = false;
+
+  /** The CURRENT selection episode (see `emit`). Stable while a group lives;
+   *  a new value = a new formation = fresh sync-group stores. */
+  selectionEpisode(): number {
+    return this.episode;
   }
 }
 
@@ -265,9 +281,15 @@ export function paneSyncGroups(
 ): PaneSyncGroups | null {
   const selected = store.getSelected();
   if (selected.length < 2 || !selected.includes(paneId)) return null;
+  // Group ids are PER-EPISODE (`selectionEpisode`): every formation gets fresh,
+  // never-written stores, so stale settings/zoom from a past selection cannot
+  // leak in — and the per-episode id CHANGES the anchor's formation-seed effect
+  // deps, so re-forming a group around the same anchor re-seeds (a static id
+  // left the old episode's store shadowing the new members).
+  const ep = store.selectionEpisode();
   return {
-    viewportGroupId: `${base}-vp`,
-    settingsGroupId: `${base}-st`,
+    viewportGroupId: `${base}-vp-${ep}`,
+    settingsGroupId: `${base}-st-${ep}`,
     isAnchor: selected[0] === paneId,
   };
 }

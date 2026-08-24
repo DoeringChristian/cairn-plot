@@ -76,7 +76,7 @@ import {
   stackLabelFor,
 } from "./lib/cairn-plot/stack/StackedView";
 import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
-import { useReceiveImageSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
+import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
 import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import { useOriginTheme } from "./lib/cairn-plot/primitives/themed-portal";
 import {
@@ -360,16 +360,22 @@ function StageCell({
   // pane's own content aspect flows up via `GridUniformAspectContext` (a
   // `GridCellReporter` inside `ImageStandalone`, since the stage provides that
   // context) — the SAME path `cp.Grid` uses.
-  // The ONE bus receiver for THIS stage cell's viewport (single-receiver model):
-  // subscribes to the stage's settings group, accumulates the group's COMPLETE
-  // settings, and hands them DOWN via `PaneSyncContext.syncedSettings`. Same hook
-  // the page-wide selection uses — NO stage-special apply path; every consumer
-  // (the pane's controlled display props, `useCompareControl`, channel select)
-  // reads from context, nothing below subscribes to the bus.
-  const receivedSettings = useReceiveImageSettings(settingsSyncGroupId, isAnchor);
+  // The ONE settings store for THIS stage cell's viewport (same hook + contract
+  // as the page-wide selection — NO stage-special apply path): a cell-local
+  // store plus the stage's group store (group > local > default, see
+  // use-synced-image-settings.ts). Handed DOWN via `PaneSyncContext`; nothing
+  // below subscribes to the bus.
+  const cellViewportId = useId();
+  const vst = useViewportSettings(`vp-st-stage-${cellViewportId}`, settingsSyncGroupId, isAnchor);
   const paneSync = useMemo(
-    () => ({ viewportSyncGroupId, settingsSyncGroupId, syncIsAnchor: isAnchor, syncedSettings: receivedSettings }),
-    [viewportSyncGroupId, settingsSyncGroupId, isAnchor, receivedSettings],
+    () => ({
+      viewportSyncGroupId,
+      settingsSyncGroupId,
+      syncIsAnchor: isAnchor,
+      syncedSettings: vst.settings,
+      setSyncedSettings: vst.set,
+    }),
+    [viewportSyncGroupId, settingsSyncGroupId, isAnchor, vst.settings, vst.set],
   );
 
   // GENERAL per-cell aspect bridge: forward whatever this cell's pane publishes on

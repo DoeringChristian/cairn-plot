@@ -110,12 +110,8 @@ import {
   applyChannelSlice,
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
-import {
-  publishImageSettings,
-  type ImageSyncSettings,
-} from "./lib/cairn-plot/viewport/image-settings-sync";
-import { useReceiveImageSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
-import { makeImageViewportSyncSourceId } from "./lib/cairn-plot/viewport/image-viewport-sync";
+import { type ImageSyncSettings } from "./lib/cairn-plot/viewport/image-settings-sync";
+import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -174,13 +170,18 @@ interface PaneSyncCtx {
   viewportSyncGroupId?: string;
   settingsSyncGroupId?: string;
   syncIsAnchor?: boolean;
-  /** The group's COMPLETE accumulated display settings, from the ONE node-level
-   *  bus receiver (`useReceiveImageSettings`, run by the context PROVIDER —
+  /** The viewport's EFFECTIVE settings — the `group > local` merge from the ONE
+   *  store hook per viewport (`useViewportSettings`, run by the context PROVIDER —
    *  `PaneSelectionFrame` / the enlarge `StageCell`). The provider is the single
-   *  subscriber per viewport; every consumer (the pane's controlled display props,
+   *  subscriber per viewport; every consumer (the pane's display props,
    *  `useCompareControl`'s mode/kernel/split, `LeafView`'s channel select) reads
-   *  these from context — no consumer subscribes to the bus itself. */
+   *  these top-down — no consumer subscribes to the bus itself. */
   syncedSettings?: ImageSyncSettings | null;
+  /** The ONE write path into the viewport's settings store: merges a patch into
+   *  the LOCAL store (gestures stick) and the GROUP store while selected (peers
+   *  follow). Threaded to the panes as a prop (the bundle split rules out
+   *  context on the addon side). */
+  setSyncedSettings?: (patch: ImageSyncSettings) => void;
 }
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
 
@@ -233,13 +234,28 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // are single-image concerns and are inert on this path.
   const isDiff = !!diffSpec;
 
-  // CHANNEL-STRIP selection override (EXR part/layer, view-local). `null` =
-  // follow the node's own `data.part`/`data.layer`. Deliberately NOT reset on a
-  // node swap: in a STACKED viewport the same LeafView instance flips between
-  // slots, and the picked layer must carry across (shared-settings semantics).
-  const [chSel, setChSel] = useState<ChannelSelection | null>(null);
+  // CHANNEL-STRIP selection override (EXR part/layer). `null` = follow the
+  // node's own `data.part`/`data.layer`. Resolves at RENDER through the one
+  // lookup: store value > local state (the local cell serves only a viewport
+  // with no store). Deliberately NOT reset on a node swap: in a STACKED
+  // viewport the same LeafView instance flips between slots, and the picked
+  // layer must carry across (shared-settings semantics).
+  const [localChSel, setChSel] = useState<ChannelSelection | null>(null);
+  const syncedChannelSelect = paneSync?.syncedSettings?.channelSelect;
+  const chSel =
+    syncedChannelSelect !== undefined
+      ? (syncedChannelSelect as ChannelSelection | null)
+      : localChSel;
   const chSelRef = useRef<ChannelSelection | null>(null);
   chSelRef.current = chSel;
+  // The ONE write path for a channel pick (store when present, local else) —
+  // shared by the strip handler and the failed-decode revert.
+  const setSyncedRef = useRef(paneSync?.setSyncedSettings);
+  setSyncedRef.current = paneSync?.setSyncedSettings;
+  const applyChannelSelect = useCallback((next: ChannelSelection | null) => {
+    setChSel(next);
+    setSyncedRef.current?.({ channelSelect: next });
+  }, []);
   // The EFFECTIVE data spec: the strip override merged over the node's data
   // (image specs only — the strip never renders for other kinds).
   const effectiveData = useMemo(() => {
@@ -311,7 +327,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       if (chSelRef.current) {
         // eslint-disable-next-line no-console
         console.warn("cairn-plot: channel selection failed, reverting:", err);
-        setChSel(null);
+        applyChannelSelect(null);
       }
     });
     return () => {
@@ -319,31 +335,14 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     };
   }, [node, source, selKey, effectiveData, resolveKey, diffSpec, diffFgData]);
 
-  // Selection change handler + SYNC: inside a settings-sync group (the compare/
-  // enlarge stage, a page-wide multi-selection) a strip pick broadcasts so every
-  // pane in the group flips to the same part/layer BY NAME (compare diffuse of
-  // run A vs diffuse of run B). SINGLE-RECEIVER model: the channel selection
-  // arrives TOP-DOWN via `paneSync.syncedSettings.channelSelect` (the ONE node-
-  // level bus receiver in the context PROVIDER) — this leaf does NOT subscribe; it
-  // only PUBLISHES its own picks. The apply is keyed on the value reference (stable
-  // until a new channelSelect is published), so it fires only on a real change.
-  const chSyncIdRef = useRef<string>();
-  if (!chSyncIdRef.current) chSyncIdRef.current = makeImageViewportSyncSourceId();
-  const settingsGroupId = paneSync?.settingsSyncGroupId;
-  const syncedChannelSelect = paneSync?.syncedSettings?.channelSelect;
-  useEffect(() => {
-    if (!settingsGroupId || syncedChannelSelect === undefined) return;
-    setChSel(syncedChannelSelect as ChannelSelection | null);
-  }, [settingsGroupId, syncedChannelSelect]);
+  // Strip pick: ONE store write (a group flips every pane to the same
+  // part/layer BY NAME; a lone viewport's pick sticks in its local store).
   const selectChannels = useCallback(
     (sel: ChannelSelection) => {
       const next = sel.part == null && sel.layer == null ? null : sel;
-      setChSel(next);
-      if (settingsGroupId) {
-        publishImageSettings(settingsGroupId, chSyncIdRef.current!, { channelSelect: next });
-      }
+      applyChannelSelect(next);
     },
-    [settingsGroupId],
+    [applyChannelSelect],
   );
 
   // PURE READ of THIS render's resolveKey (the flip-commit guarantee). `peekResolved`
@@ -389,6 +388,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       if (paneSync?.settingsSyncGroupId) dsync.settingsSyncGroupId = paneSync.settingsSyncGroupId;
       if (paneSync?.syncIsAnchor) dsync.syncIsAnchor = true;
       if (paneSync?.syncedSettings) dsync.syncedSettings = paneSync.syncedSettings;
+      if (paneSync?.setSyncedSettings) dsync.setSyncedSettings = paneSync.setSyncedSettings;
       const compareSource: CompareSource = {
         b: dp.__diffB as DecodedSource,
         opId: diffSpec.diffKernel,
@@ -427,6 +427,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     }
     if (paneSync?.syncIsAnchor) sharedProps.syncIsAnchor = true;
     if (paneSync?.syncedSettings) sharedProps.syncedSettings = paneSync.syncedSettings;
+    if (paneSync?.setSyncedSettings) sharedProps.setSyncedSettings = paneSync.setSyncedSettings;
     // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
     // selection state) and handed to the pane as a standard ToolbarButtonSpec —
     // the pane renders it with its other leading menus and folds the override
@@ -945,14 +946,14 @@ function PaneSelectionFrame({
   const groups =
     selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
 
-  // The ONE bus receiver for THIS viewport (single-receiver model): subscribes to
-  // the selection's settings group, accumulates the group's COMPLETE settings, and
-  // hands them DOWN via `PaneSyncContext.syncedSettings`. Every consumer (the pane's
-  // controlled display props, `useCompareControl`, `LeafView`'s channel select)
-  // reads from context — nothing below subscribes to the bus. Inert (null) outside
-  // a ≥2 selection. Absent an own selection group, the inherited context's
-  // `syncedSettings` (an enclosing stage) passes through with the group id.
-  const receivedSettings = useReceiveImageSettings(
+  // The ONE settings store per viewport (see use-synced-image-settings.ts for
+  // the contract): a LOCAL store keyed by the pane's stable id — every viewport
+  // is a group of one — plus the selection's group store while selected (group
+  // values SHADOW local ones; leaving a selection unmasks the pane's own).
+  // `settings`/`set` are handed DOWN via context/props; nothing below
+  // subscribes to the bus.
+  const vst = useViewportSettings(
+    `vp-st-${paneId}`,
     groups?.settingsGroupId,
     groups?.isAnchor ?? false,
   );
@@ -1025,6 +1026,10 @@ function PaneSelectionFrame({
     style.zIndex = 1;
   }
 
+  // Provider precedence: own-selection ctx > inherited ctx (an enclosing stage/
+  // overlay group must keep reaching a fresh unselected leaf — Bug 3) > the
+  // pane's LOCAL-store ctx (a lone viewport still has its group-of-one store, so
+  // its picks persist and survive re-lowers).
   const paneSync = useMemo<PaneSyncCtx | null>(
     () =>
       groups
@@ -1032,10 +1037,15 @@ function PaneSelectionFrame({
             viewportSyncGroupId: groups.viewportGroupId,
             settingsSyncGroupId: groups.settingsGroupId,
             syncIsAnchor: groups.isAnchor,
-            syncedSettings: receivedSettings,
+            syncedSettings: vst.settings,
+            setSyncedSettings: vst.set,
           }
         : null,
-    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, receivedSettings],
+    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set],
+  );
+  const localSync = useMemo<PaneSyncCtx | null>(
+    () => (selectable ? { syncedSettings: vst.settings, setSyncedSettings: vst.set } : null),
+    [selectable, vst.settings, vst.set],
   );
 
   return (
@@ -1049,7 +1059,7 @@ function PaneSelectionFrame({
       onPointerDownCapture={selectable ? onPointerDownCapture : undefined}
       onPointerUpCapture={selectable ? onPointerUpCapture : undefined}
     >
-      <PaneSyncContext.Provider value={paneSync ?? inheritedPaneSync}>
+      <PaneSyncContext.Provider value={paneSync ?? inheritedPaneSync ?? localSync}>
         <EnlargeInterceptContext.Provider value={enlargeIntercept}>
           {children}
         </EnlargeInterceptContext.Provider>
@@ -1433,12 +1443,10 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
  * group (a homogeneous stack) `syncedSettings` is null and the ONE reused instance
  * shares settings by construction.
  */
-const compareResetSourceId = "compare-home-reset";
-
 function useCompareControl(
   node: PlotNode,
   syncedSettings: ImageSyncSettings | null | undefined,
-  settingsSyncGroupId?: string,
+  setSettings?: (patch: ImageSyncSettings) => void,
 ): CompareControl {
   const cmp = node.kind === "compare" ? node : null;
   const props = (cmp?.props ?? {}) as Record<string, unknown>;
@@ -1481,19 +1489,15 @@ function useCompareControl(
     setViewMode(null);
     setDiffKernel(null);
     setSplitPos(null);
-    // HOME is a GROUP action (settings are set on the group; a lone viewport is a
-    // group of one): publish the DESCRIPTOR defaults by value so every synced
-    // member resets with the clicked viewport — and so a re-lowered pane adopts
-    // the RESET values instead of the group's stale pre-HOME state (the
-    // "colormap only resets on the second double-click" bug).
-    if (settingsSyncGroupId) {
-      publishImageSettings(settingsSyncGroupId, compareResetSourceId, {
-        compareMode: descriptorMode,
-        diffKernel: descriptorKernel,
-        splitPosition: descriptorSplit,
-      });
-    }
-  }, [settingsSyncGroupId, descriptorMode, descriptorKernel, descriptorSplit]);
+    // HOME is a STORE write (a lone viewport is a group of one): set the
+    // DESCRIPTOR defaults by value — local store + group store — so every synced
+    // member resets with the clicked viewport and the reset values persist.
+    setSettings?.({
+      compareMode: descriptorMode,
+      diffKernel: descriptorKernel,
+      splitPosition: descriptorSplit,
+    });
+  }, [setSettings, descriptorMode, descriptorKernel, descriptorSplit]);
   const modified =
     viewMode !== descriptorMode || diffKernel !== descriptorKernel || splitPos !== descriptorSplit;
 
@@ -1528,7 +1532,7 @@ function NodeDispatch({ node }: { node: PlotNode }) {
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
   // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
-  const control = useCompareControl(node, paneSync?.syncedSettings, paneSync?.settingsSyncGroupId);
+  const control = useCompareControl(node, paneSync?.syncedSettings, paneSync?.setSyncedSettings);
   // Static synth-leaf derivation (memoized on the node object) — only meaningful
   // for a compare node; computed unconditionally to keep hook order stable.
   const synth = node.kind === "compare" ? synthDiffLeafOf(node) : null;

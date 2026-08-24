@@ -376,15 +376,17 @@ export interface ImageBackendProps {
    *  byte-identical single-image path. Only the GPU backend honors it; the CPU
    *  backend ignores it (single-image fallback). */
   compareSource?: CompareSource;
-  /** SINGLE-RECEIVER settings sync (the node-level receiver model): the group's
-   *  COMPLETE accumulated display settings, driven DOWN from the ONE node-level
-   *  `useReceiveImageSettings` subscriber (`plot-node.tsx` / stage / compositor).
-   *  When present the pane is a CONTROLLED SURFACE — it follows these display keys
-   *  (colormap/tonemap/peak/gamma/EV/offset/reduce/bounds) via the same controlled
-   *  reseed the `toolbar={false}` host seam uses — while its own menus still
-   *  PUBLISH edits up (via `settingsSyncGroupId`). The pane itself is NEVER a bus
-   *  subscriber. Absent = interactive viewport (owns its own settings). */
+  /** The viewport's EFFECTIVE settings from its ONE store (`useViewportSettings`
+   *  at the node/stage/compositor level): the `group > local` merge, driven DOWN.
+   *  The pane derives its display values from these at RENDER (no adoption, no
+   *  local copy) and writes changes back via {@link setSyncedSettings}. The pane
+   *  itself is NEVER a bus subscriber. Absent = no store (a bare host mount);
+   *  the pane falls back to its own local state / prop seeds. */
   syncedSettings?: ImageSyncSettings;
+  /** The ONE write path into the viewport's settings store (local store always;
+   *  group store too while selected — gestures stick, borrowed values don't).
+   *  Every user gesture on a display control calls this; absent = no store. */
+  setSyncedSettings?: (patch: ImageSyncSettings) => void;
   // — display controls (full set) —
   colormap?: Colormap;
   tonemap?: string;

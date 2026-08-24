@@ -142,6 +142,15 @@ export function getLastImageSettings(groupId: string): ImageSyncSettings | undef
   return lastStates.get(groupId);
 }
 
+/** Drop `groupId`'s accumulated snapshot. A FORMING selection group must start
+ *  EMPTY (the anchor clears, then seeds its full snapshot): the page-wide
+ *  selection reuses one static group id, so without this the store accumulates
+ *  keys across selection episodes and a stale value from a past selection
+ *  (an old exposure, a dead compare mode) shadows every member of the next one. */
+export function clearImageSettings(groupId: string): void {
+  lastStates.delete(groupId);
+}
+
 /** Subscribes to settings broadcasts on `groupId`, ignoring the caller's own
  *  publishes (matched by `sourceId`). Returns an unsubscribe function. */
 export function subscribeImageSettings(

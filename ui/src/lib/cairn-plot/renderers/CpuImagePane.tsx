@@ -44,7 +44,7 @@
  * exposure+offset). Backend-seam mounts (`resolveImageRenderer` /
  * `GpuImagePane`'s C1 fallback) use the default `toolbar={true}`.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import PaneUnavailable from "../primitives/PaneUnavailable";
 import LabelChip from "../primitives/LabelChip";
@@ -95,7 +95,7 @@ import {
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
-import { usePublishImageSettings } from "./use-synced-image-settings";
+import { useSeedGroupOnFormation, useViewportSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
@@ -385,9 +385,11 @@ function CpuSdrImagePane(
     toolbar?: boolean;
     settingsSyncGroupId?: string;
     syncIsAnchor?: boolean;
-    /** SINGLE-RECEIVER sync: the group's complete settings, driven down from the
-     *  node-level receiver (see image-backend `ImageBackendProps.syncedSettings`). */
+    /** The viewport's effective settings from its store (group > local merge),
+     *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
     syncedSettings?: ImageSyncSettings;
+    /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
+    setSyncedSettings?: (patch: ImageSyncSettings) => void;
     /** COMPARE chrome (caption chips + REF badge) when this pane renders a
      *  compare's reference (degraded CPU fallback); suppresses the label chip. */
     compareChrome?: ReactNode;
@@ -423,10 +425,14 @@ function CpuSdrImagePane(
   // display settings (see GpuImagePane). A viewport OWNS its settings (persist across
   // flips, HOME re-seeds to the visible slot); a controlled surface follows the host
   // props. `__cairnDisableStackShared` (test-only) forces the reseed for pre/post.
-  // SINGLE-RECEIVER sync: a group's complete settings, driven down from the node.
-  // Present ⇒ controlled surface (follows these display keys) with the toolbar
-  // still visible; the pane never subscribes to the bus itself.
-  const synced = props.syncedSettings;
+  // The viewport's settings STORE (see use-synced-image-settings.ts): threaded
+  // down from its owner when present; a BARE mount owns its own group-of-one
+  // store — settings live ONLY in stores, never in pane state.
+  const sdrOwnStoreId = useId();
+  const sdrOwnStore = useViewportSettings(`vp-st-pane-${sdrOwnStoreId}`, undefined, false);
+  const sdrThreadedSet = props.setSyncedSettings;
+  const synced = sdrThreadedSet ? props.syncedSettings : sdrOwnStore.settings;
+  const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
   const controlledSurface =
     toolbar === false ||
     !!synced ||
@@ -465,20 +471,13 @@ function CpuSdrImagePane(
   const colormap = enc.colormap as Colormap;
   const sdrTransfer = enc.curveId as TonemapOperator;
   const gammaSeed = gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT;
-  const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
-  // γ is a viewport setting — persists across flips; reseeds only on a controlled
-  // surface. HOME re-seeds it to the visible slot below.
-  useEffect(() => {
-    if (!controlledSurface) return;
-    if (synced?.tonemapGamma != null && synced.tonemapGamma > 0) setTonemapGamma(synced.tonemapGamma);
-    else if (gammaProp && gammaProp > 0) setTonemapGamma(gammaProp);
-  }, [synced?.tonemapGamma, gammaProp, controlledSurface, setTonemapGamma]);
+  // γ resolves at RENDER: store value > descriptor seed (the one lookup).
+  const tonemapGamma =
+    synced?.tonemapGamma != null && synced.tonemapGamma > 0 ? synced.tonemapGamma : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
-  // Multi-viewport SELECTION: settings sync (SINGLE-RECEIVER model). This pane
-  // PUBLISHES its encoding + Gamma-γ edits and (as anchor) seeds the group; it is
-  // NOT a bus subscriber — incoming settings arrive TOP-DOWN via `synced` (the
-  // controlled reseed above). See use-synced-image-settings.
+  // Every gesture is ONE store write (`set`); values flow back down through the
+  // render lookup. The anchor seeds a forming group with its effective values.
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
       encoding: enc.encodingId,
@@ -488,9 +487,11 @@ function CpuSdrImagePane(
     }),
     [enc.encodingId, enc.colormap, sdrTransfer, tonemapGamma],
   );
-  const publishSettings = usePublishImageSettings(
+  const publishSettings = setSynced;
+  useSeedGroupOnFormation(
     props.settingsSyncGroupId,
     !!props.syncIsAnchor,
+    setSynced,
     settingsSnapshot,
   );
   const changeEncoding = useCallback(
@@ -506,11 +507,8 @@ function CpuSdrImagePane(
     [enc, publishSettings, sdrTransfer],
   );
   const changeGamma = useCallback(
-    (v: number) => {
-      setTonemapGamma(v);
-      publishSettings({ tonemapGamma: v });
-    },
-    [setTonemapGamma, publishSettings],
+    (v: number) => publishSettings({ tonemapGamma: v }),
+    [publishSettings],
   );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1027,7 +1025,17 @@ function CpuSdrImagePane(
       }
       onReset={() => {
         enc.resetEncoding();
-        setTonemapGamma(gammaSeed); // γ back to the VISIBLE slot's descriptor
+        // HOME is ONE store write: the visible slot's DEFAULTS by value.
+        {
+          const s = toSdrTonemap(tonemapProp);
+          const homeCurve = s === "gamma" || s === "linear" ? s : "srgb";
+          publishSettings({
+            encoding: colormapProp !== "none" ? colormapProp : homeCurve,
+            colormap: colormapProp,
+            tonemap: homeCurve,
+            tonemapGamma: gammaSeed,
+          });
+        }
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
@@ -1069,9 +1077,11 @@ function CpuHdrImagePane(
     toolbar?: boolean;
     settingsSyncGroupId?: string;
     syncIsAnchor?: boolean;
-    /** SINGLE-RECEIVER sync: the group's complete settings, driven down from the
-     *  node-level receiver (see image-backend `ImageBackendProps.syncedSettings`). */
+    /** The viewport's effective settings from its store (group > local merge),
+     *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
     syncedSettings?: ImageSyncSettings;
+    /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
+    setSyncedSettings?: (patch: ImageSyncSettings) => void;
     /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
      *  fallback; suppresses the label chip. See {@link cpuCompareChrome}. */
     compareChrome?: ReactNode;
@@ -1095,10 +1105,14 @@ function CpuHdrImagePane(
     toolbar = true,
   } = props;
 
-  // CONTROLLED SURFACE vs INTERACTIVE VIEWPORT (see the SDR body / GpuImagePane): a
-  // viewport OWNS its settings (persist across flips, HOME re-seeds to the visible
-  // slot); a `toolbar={false}` controlled surface follows the host props.
-  const synced = props.syncedSettings;
+  // The viewport's settings STORE (see use-synced-image-settings.ts): threaded
+  // down from its owner when present; a BARE mount owns its own group-of-one
+  // store — settings live ONLY in stores, never in pane state.
+  const hdrOwnStoreId = useId();
+  const hdrOwnStore = useViewportSettings(`vp-st-pane-${hdrOwnStoreId}`, undefined, false);
+  const hdrThreadedSet = props.setSyncedSettings;
+  const synced = hdrThreadedSet ? props.syncedSettings : hdrOwnStore.settings;
+  const setSynced = hdrThreadedSet ?? hdrOwnStore.set;
   const controlledSurface =
     toolbar === false ||
     !!synced ||
@@ -1144,12 +1158,9 @@ function CpuHdrImagePane(
   // descriptor `gamma=`, else the default 2.2. A viewport setting: persists across
   // flips; reseeds only on a controlled surface; HOME re-seeds to the visible slot.
   const gammaSeed = gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT;
-  const [tonemapGamma, setTonemapGamma] = useState(gammaSeed);
-  useEffect(() => {
-    if (!controlledSurface) return;
-    if (synced?.tonemapGamma != null && synced.tonemapGamma > 0) setTonemapGamma(synced.tonemapGamma);
-    else if (gamma && gamma > 0) setTonemapGamma(gamma);
-  }, [synced?.tonemapGamma, gamma, controlledSurface, setTonemapGamma]);
+  // γ resolves at RENDER: store value > descriptor seed (the one lookup).
+  const tonemapGamma =
+    synced?.tonemapGamma != null && synced.tonemapGamma > 0 ? synced.tonemapGamma : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1161,17 +1172,9 @@ function CpuHdrImagePane(
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
   // display-only — recomputes the CPU tone-map pass (like a tonemap/exposure
   // change already does), never a diff. The display EV ADDS to the prop exposure.
-  const [displayEV, setDisplayEV] = useState(0);
-  const [displayOffset, setDisplayOffset] = useState(0);
-  // EXPOSURE/OFFSET have no descriptor prop, so only a SYNC group drives them (the
-  // node-level receiver hands them down by value; local HOME resets to 0 without
-  // publishing, so `synced` is unchanged and this does not fight HOME).
-  useEffect(() => {
-    if (controlledSurface && synced?.exposureEV !== undefined) setDisplayEV(synced.exposureEV);
-  }, [synced?.exposureEV, controlledSurface]);
-  useEffect(() => {
-    if (controlledSurface && synced?.offset !== undefined) setDisplayOffset(synced.offset);
-  }, [synced?.offset, controlledSurface]);
+  // EV/OFFSET resolve at RENDER: store value > 0 (no descriptor prop).
+  const displayEV = synced?.exposureEV ?? 0;
+  const displayOffset = synced?.offset ?? 0;
 
   // DATA-ENCODING BOUNDS (Phase 4) — mirrors GpuImagePane. `colorRange` (grid-
   // shared descriptor) SEEDS the min/max BOUNDS skin — the ALTERNATIVE to EV/OFF
@@ -1183,26 +1186,18 @@ function CpuHdrImagePane(
   // GpuImagePane. `reduceOverride` null = the k-based default (luminance for k≥3,
   // mean for k=2); the segmented control shows only while a lut is active AND
   // sourceArity>1.
-  const [reduceOverride, setReduceOverride] = useState<ReduceMode | null>(null);
-  // REDUCE mirrors by value in a sync group (no descriptor prop, like EV/offset).
-  useEffect(() => {
-    if (controlledSurface && synced?.reduce !== undefined) setReduceOverride(synced.reduce as ReduceMode);
+  // REDUCE resolves at RENDER: store value > the k-based default.
+  const reduceDefault = defaultReduceMode(sourceArity);
+  const effectiveReduce = (synced?.reduce as ReduceMode | undefined) ?? reduceDefault;
+  // BOUNDS resolve at RENDER: store pair > descriptor colorRange.
+  const colorBounds = useMemo<[number, number] | null>(
+    () =>
+      synced?.colorMin != null && synced?.colorMax != null
+        ? [synced.colorMin, synced.colorMax]
+        : (propColorRange ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [synced?.reduce, controlledSurface]);
-  const effectiveReduce = reduceOverride ?? defaultReduceMode(sourceArity);
-  const [colorBounds, setColorBounds] = useState<[number, number] | null>(propColorRange ?? null);
-  // Bounds are a viewport setting — persist across flips; reseed only on a controlled
-  // surface. A sync group drives bounds by value (only when it carries them — an
-  // absent colorMin/Max must NOT clobber); the host seam reseeds from colorRange.
-  useEffect(() => {
-    if (!controlledSurface) return;
-    if (synced) {
-      if (synced.colorMin != null && synced.colorMax != null) setColorBounds([synced.colorMin, synced.colorMax]);
-    } else {
-      setColorBounds(propColorRange ?? null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [synced?.colorMin, synced?.colorMax, propColorRange?.[0], propColorRange?.[1], controlledSurface]);
+    [synced?.colorMin, synced?.colorMax, propColorRange?.[0], propColorRange?.[1]],
+  );
   const boundsSeedVal: [number, number] | null = propColorRange ?? null;
   const boundsModified =
     (colorBounds?.[0] ?? null) !== (boundsSeedVal?.[0] ?? null) ||
@@ -1235,11 +1230,15 @@ function CpuHdrImagePane(
     }),
     [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds],
   );
-  const publishSettings = usePublishImageSettings(
+  const publishSettings = setSynced;
+  useSeedGroupOnFormation(
     props.settingsSyncGroupId,
     !!props.syncIsAnchor,
+    setSynced,
     settingsSnapshot,
   );
+  // Every display gesture is ONE store write; the value flows back down through
+  // the render lookup — no pane state to keep consistent.
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);
@@ -1253,39 +1252,24 @@ function CpuHdrImagePane(
     [enc, publishSettings, tonemapOp],
   );
   const changeGamma = useCallback(
-    (v: number) => {
-      setTonemapGamma(v);
-      publishSettings({ tonemapGamma: v });
-    },
-    [setTonemapGamma, publishSettings],
+    (v: number) => publishSettings({ tonemapGamma: v }),
+    [publishSettings],
   );
   const changeExposure = useCallback(
-    (ev: number) => {
-      setDisplayEV(ev);
-      publishSettings({ exposureEV: ev });
-    },
+    (ev: number) => publishSettings({ exposureEV: ev }),
     [publishSettings],
   );
   const changeOffset = useCallback(
-    (off: number) => {
-      setDisplayOffset(off);
-      publishSettings({ offset: off });
-    },
+    (off: number) => publishSettings({ offset: off }),
     [publishSettings],
   );
   const changeReduce = useCallback(
-    (mode: ReduceMode) => {
-      setReduceOverride(mode);
-      publishSettings({ reduce: mode });
-    },
+    (mode: ReduceMode) => publishSettings({ reduce: mode }),
     [publishSettings],
   );
   const changeBounds = useCallback(
-    (next: [number, number]) => {
-      setColorBounds(next);
-      publishSettings({ colorMin: next[0], colorMax: next[1] });
-    },
-    [setColorBounds, publishSettings],
+    (next: [number, number]) => publishSettings({ colorMin: next[0], colorMax: next[1] }),
+    [publishSettings],
   );
 
   // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma /
@@ -1531,16 +1515,30 @@ function CpuHdrImagePane(
       onReset={() => {
         deepFlatten.reset();
         enc.resetEncoding();
-        setTonemapGamma(gammaSeed); // γ back to the VISIBLE slot's descriptor
-        setReduceOverride(null); // reduce back to the k-based default
-        setColorBounds(boundsSeedVal); // min/max back to the visible slot's colorRange
+        // HOME is ONE store write: the visible slot's DEFAULTS by value
+        // (explicit `undefined` CLEARS the bounds pair in the store).
+        {
+          const homeCurve = toSdrTonemap(tonemap);
+          publishSettings({
+            encoding: propColormap !== "none" ? propColormap : homeCurve,
+            colormap: propColormap,
+            tonemap: homeCurve,
+            tonemapGamma: gammaSeed,
+            exposureEV: 0,
+            offset: 0,
+            reduce: reduceDefault,
+            ...(boundsSeedVal
+              ? { colorMin: boundsSeedVal[0], colorMax: boundsSeedVal[1] }
+              : { colorMin: undefined, colorMax: undefined }),
+          });
+        }
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
         deepFlatten.isModified ||
         enc.encodingModified ||
         gammaModified ||
-        reduceOverride !== null ||
+        effectiveReduce !== reduceDefault ||
         boundsModified ||
         !!props.channelModified
       }

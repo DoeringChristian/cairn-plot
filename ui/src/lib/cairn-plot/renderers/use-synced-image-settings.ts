@@ -1,32 +1,34 @@
 /**
- * Settings-sync hooks over `image-settings-sync.ts` — split into the TWO halves
- * of the single-receiver model (the settings mirror of `use-synced-image-
- * viewport.ts`'s zoom/pan sync):
+ * THE viewport settings store hook — the single access point to display
+ * settings (`image-settings-sync.ts` is the underlying registry + transport).
  *
- *   - `useReceiveImageSettings(groupId, isAnchor)` — the ONE bus SUBSCRIBER per
- *     viewport, run at the NODE level (`plot-node.tsx`'s `PaneSelectionFrame`,
- *     the enlarge `StageCell`, the live-compare `CompositeMediaPane`). It stores
- *     the COMPLETE accumulated `ImageSyncSettings` for the group and returns it;
- *     the node routes those DOWN into the pane as controlled props (display keys)
- *     and into the lowering (`compareMode`/`diffKernel`/`splitPosition`). A NON-
- *     anchor adopts the group's accumulated snapshot on JOIN (eager formation +
- *     late joiners); the ANCHOR owns the state (its pane SEEDS the group), so it
- *     never pulls the snapshot — it fills only from live patches, INCLUDING its
- *     own pane's formation seed (heard via this receiver's DISTINCT `sourceId`),
- *     which is exactly what keeps the anchor's controlled props aligned to its
- *     pane's current settings at formation (no reseed wipe).
+ * THE CONTRACT (user ruling, 2026-08-24). Every viewport resolves each display
+ * setting at RENDER time through one lookup:
  *
- *   - `usePublishImageSettings(groupId, isAnchor, snapshot)` — the PUBLISH half a
- *     pane keeps: a `publish(patch)` for local control changes (menu pick / slider
- *     drag) + the ANCHOR formation seed (publish the pane's full current settings
- *     when a multi-selection forms). NO subscription — the pane is NEVER a bus
- *     receiver; it is driven top-down by the node's `useReceiveImageSettings`.
+ *     group store  >  local store  >  descriptor default
  *
- * The bus stays a dumb flat blackboard (no key knowledge); both hooks are React +
- * bus only (no key knowledge) so they stay in the core bundle and unit-testable.
+ * - Every viewport owns a LOCAL store (a group of one, keyed by a stable
+ *   per-viewport id). A user gesture on the viewport writes the local store —
+ *   AND the group store while selected — so *your own picks stick*.
+ * - Selection adds the GROUP store in front: group values SHADOW local values,
+ *   they never overwrite them. Peer patches land only in the group store, so
+ *   leaving a selection unmasks exactly the settings you had before joining —
+ *   borrowed values evaporate, your gestures survive.
+ * - Application is pure downward propagation: no consumer adopts values into
+ *   its own state (no adoption effects); applicability (does a LUT apply at
+ *   this arity?) is decided at render, never at sync (ruling 5).
+ *
+ * ONE hook, run at the NODE level (`plot-node.tsx`'s `PaneSelectionFrame`, the
+ * enlarge `StageCell`): the single bus subscriber per viewport. `settings` and
+ * `set` are handed DOWN to the panes as props (the core/addon bundle split
+ * rules out context). Panes never subscribe; they render `settings` and call
+ * `set(patch)` from genuine user gestures. The anchor still seeds a forming
+ * group with its full current settings (the pane-side formation effect — the
+ * pane owns the snapshot of its effective values).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import {
+  clearImageSettings,
   getLastImageSettings,
   publishImageSettings,
   subscribeImageSettings,
@@ -34,65 +36,85 @@ import {
 } from "../viewport/image-settings-sync";
 import { makeImageViewportSyncSourceId } from "../viewport/image-viewport-sync";
 
-/**
- * The ONE bus subscriber per viewport (node level). Accumulates the group's
- * complete settings and returns them (or `null` before any patch / outside a
- * group). See the module doc for the anchor-vs-joiner adoption contract.
- */
-export function useReceiveImageSettings(
-  groupId: string | null | undefined,
-  isAnchor: boolean,
-): ImageSyncSettings | null {
-  const [settings, setSettings] = useState<ImageSyncSettings | null>(null);
-  const sourceIdRef = useRef<string>();
-  if (!sourceIdRef.current) sourceIdRef.current = makeImageViewportSyncSourceId();
-
-  useEffect(() => {
-    if (!groupId) {
-      setSettings(null);
-      return;
-    }
-    // JOIN adoption (eager formation + late joiners): a NON-anchor snaps to the
-    // group's accumulated snapshot; the ANCHOR owns the state (its pane seeds it),
-    // so it starts empty and fills from live patches — including its own pane's
-    // formation seed (this receiver's sourceId differs from the pane's, so the
-    // seed is heard here), which aligns the anchor's controlled props to its pane.
-    setSettings(isAnchor ? null : (getLastImageSettings(groupId) ?? null));
-    return subscribeImageSettings(groupId, sourceIdRef.current!, (patch) => {
-      setSettings((prev) => ({ ...(prev ?? {}), ...patch }));
-    });
-  }, [groupId, isAnchor]);
-
-  return groupId ? settings : null;
+/** What a viewport gets from its settings store. */
+export interface ViewportSettings {
+  /** The merged effective settings (`{...local, ...group}`), or `null` while
+   *  both stores are empty. Group keys shadow local keys. */
+  settings: ImageSyncSettings | null;
+  /** Merge a patch: always into the LOCAL store (gestures stick), and into the
+   *  GROUP store while selected (peers follow). The one write path. */
+  set: (patch: ImageSyncSettings) => void;
 }
 
 /**
- * The PUBLISH half a pane keeps (no subscription). `publish(patch)` broadcasts a
- * local control change; the anchor also seeds the group with its full current
- * settings on formation so every member converges to it.
+ * The viewport's settings store. `viewportId` is the viewport's own stable
+ * store id (its "group of one"); `groupId` is the selection group while one
+ * exists. Both stores live in the shared registry (`lastStates`), so local
+ * settings survive re-lowers/remounts of the React tree.
  */
-export function usePublishImageSettings(
+export function useViewportSettings(
+  viewportId: string,
   groupId: string | null | undefined,
   isAnchor: boolean,
-  snapshot: () => ImageSyncSettings,
-): (patch: ImageSyncSettings) => void {
+): ViewportSettings {
   const sourceIdRef = useRef<string>();
   if (!sourceIdRef.current) sourceIdRef.current = makeImageViewportSyncSourceId();
+  // The registry is the state; React just needs a re-render signal on writes.
+  const [version, bump] = useReducer((c: number) => c + 1, 0);
+
+  useEffect(() => {
+    const sid = sourceIdRef.current!;
+    const unLocal = subscribeImageSettings(viewportId, sid, () => bump());
+    const unGroup = groupId ? subscribeImageSettings(groupId, sid, () => bump()) : undefined;
+    // Joining / leaving a group changes the lookup — re-render to apply it.
+    bump();
+    return () => {
+      unLocal();
+      unGroup?.();
+    };
+  }, [viewportId, groupId, isAnchor]);
+
+  const set = useCallback(
+    (patch: ImageSyncSettings) => {
+      const sid = sourceIdRef.current!;
+      publishImageSettings(viewportId, sid, patch); // gestures stick locally
+      if (groupId) publishImageSettings(groupId, sid, patch); // peers follow
+      bump(); // own writes are echo-filtered by the bus — re-render explicitly
+    },
+    [viewportId, groupId],
+  );
+
+  // Stable identity per write (children memo on it): re-merged only on a store
+  // write (`version`) or a lookup change (join/leave).
+  const settings = useMemo(() => {
+    const local = getLastImageSettings(viewportId);
+    const group = groupId ? getLastImageSettings(groupId) : undefined;
+    return local || group ? { ...local, ...group } : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewportId, groupId, version]);
+  return { settings, set };
+}
+
+/** Anchor formation seed, run by the PANE (it owns the snapshot of its
+ *  effective values): when a group forms around this viewport as the anchor,
+ *  the group store starts EMPTY (cleared — the static selection group id would
+ *  otherwise leak stale keys from past selections into every member) and is
+ *  seeded with the anchor's full current settings, so the group converges to
+ *  exactly the clicked viewport's state and nothing else. */
+export function useSeedGroupOnFormation(
+  groupId: string | null | undefined,
+  isAnchor: boolean,
+  set: ((patch: ImageSyncSettings) => void) | undefined,
+  snapshot: () => ImageSyncSettings,
+): void {
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
-
-  // Anchor seeds the group with its FULL current settings when the group forms,
-  // so every other member (and the anchor's own node receiver) aligns to it.
+  const setRef = useRef(set);
+  setRef.current = set;
   useEffect(() => {
     if (groupId && isAnchor) {
-      publishImageSettings(groupId, sourceIdRef.current!, snapshotRef.current());
+      clearImageSettings(groupId);
+      setRef.current?.(snapshotRef.current());
     }
   }, [groupId, isAnchor]);
-
-  return useCallback(
-    (patch: ImageSyncSettings) => {
-      if (groupId) publishImageSettings(groupId, sourceIdRef.current!, patch);
-    },
-    [groupId],
-  );
 }

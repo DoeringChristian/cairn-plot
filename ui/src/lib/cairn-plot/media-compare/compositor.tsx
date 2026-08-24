@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
 import { InStackedGridContext } from "../stack/stack-context";
 import { usePublishNaturalSize } from "../renderers/natural-size-report";
@@ -34,7 +34,7 @@ import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../renderers/image-backend";
-import { useReceiveImageSettings } from "../renderers/use-synced-image-settings";
+import { useViewportSettings } from "../renderers/use-synced-image-settings";
 import type {
   CompareSource,
   DecodedSource,
@@ -848,11 +848,17 @@ export function CompositeMediaPane({
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
 
-  // SINGLE-RECEIVER settings sync for the LIVE-compare (card / 3D-snapshot) path:
-  // this pane is NOT under a plot-node `PaneSelectionFrame`, so IT owns the ONE
-  // node-level bus receiver for its viewport and drives the composited pane via
-  // `syncedSettings` (the pane never subscribes). Inert (null) outside a group.
-  const syncedSettings = useReceiveImageSettings(settingsSyncGroupId, !!syncIsAnchor);
+  // The settings STORE for the LIVE-compare (card / 3D-snapshot) viewport: this
+  // pane is NOT under a plot-node `PaneSelectionFrame`, so IT owns the one store
+  // per viewport (local store + group while synced; group > local > default —
+  // see use-synced-image-settings.ts) and drives the composited pane top-down.
+  const compositorViewportId = useId();
+  const vst = useViewportSettings(
+    `vp-st-compositor-${compositorViewportId}`,
+    settingsSyncGroupId,
+    !!syncIsAnchor,
+  );
+  const syncedSettings = vst.settings;
 
   // The engine pane composites only split/diff (normal is a single image).
   const engineComposited =
@@ -915,6 +921,7 @@ export function CompositeMediaPane({
         settingsSyncGroupId={settingsSyncGroupId}
         syncIsAnchor={syncIsAnchor}
         syncedSettings={syncedSettings ?? undefined}
+        setSyncedSettings={vst.set}
         tonemap={tonemap}
         peak={peak}
         gamma={tonemap_gamma}

@@ -367,6 +367,7 @@ function ImageStandalone(p: P) {
       settingsSyncGroupId={p.settingsSyncGroupId}
       syncIsAnchor={!!p.syncIsAnchor}
       syncedSettings={p.syncedSettings}
+      setSyncedSettings={p.setSyncedSettings}
       channelMenu={p.channelMenu}
       channelModified={p.channelModified}
       onChannelReset={p.onChannelReset}
