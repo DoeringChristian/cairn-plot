@@ -179,4 +179,16 @@ Net effect: the four symptom-shapes stop being *expressible*.
 
 ---
 
-*Anthropic Cairn — cairn-plot structural proposal. For sign-off before any implementation.*
+## 5. Cleanup wave (2026-08-24) — the three deferred rulings, IMPLEMENTED on `main`
+
+The three items the structure-refactor shifts kept deferring as user-visible were RULED and implemented on `main` as staged, independently-green commits (each gated: typecheck · node 661 · harness `--all` on BOTH hardware-Metal and `HARNESS_FORCE_STRATEGY=swiftshader`, 35/39 = the same 4 known headless-gesture fails, no new; smoke:js 5/5; pytest 250; bundles synced).
+
+- **COLD SWAP → brief loading state is acceptable — IMPLEMENTED** (`6c8a53b`). The leaf resolve-cache is now a **subscribable external store** (`subscribeResolveCache` + `resolveCacheVersion`); `LeafView` reads its resolved value via `useSyncExternalStore`, **purely from the cache keyed by the current `resolveKey`** — no component `state` cell. A warm/prefetched flip resolves synchronously in the flip commit (instant, unchanged); a cold swap renders a brief `"Loading…"` instead of holding the previous frame. RETIRES: the LeafView `state` hold cell, `staleDiffFallback`, the `__diffB===undefined` diff-HOLD branch, `staleDiffHolds` (its target is now unrepresentable), `__cairnDisableSyncResolve`. The stale-diff / reference-flash window is unrepresentable, not guarded (the leaf only builds a `compareSource` from a RESOLVED diff pair — `b` is never undefined). `placeholderMounts` stays as the warm-flip no-flash oracle.
+- **RESEED TIMING → unify to post-commit — IMPLEMENTED** (`b5cafb8`). The encoding's controlled-surface reseed moved from the render body onto a post-commit `useEffect` — ONE documented adoption timing for every `toolbar={false}` controlled prop (matching peak/gamma/bounds). The one-frame trail on host-driven changes is accepted; interactive viewports are unchanged (the render-body prop-change *stamp* stays a pure record).
+- **SIZE FLOOR → require `resize()` before first render — IMPLEMENTED** (`46247df`). The `backingWidth || source.width || deep.width || 1` floor is deleted; `activateEntry` defers until measured and `renderPass` holds (blank) until the container has a real box. Pane contract is measure-then-render (documented at `PaneHandle.render`/`resize`/`backingWidth`).
+
+**No-ruling residue:** the kernel→default-colormap literal pins were consolidated into ONE table-driven test (`6ca9241`) asserting every surface (kernel `defaultColormap`, `kernelDefaultColormap`, `resolveDiffColormap(id,null)`, content-op `defaultEncoding`) against the single table; `content-ops/registry.test.ts` drops its duplicate literals. `staleDiffHolds`/`__cairnDisableSyncResolve` retired with the COLD-SWAP item (retirement rule). The vestigial `overridden` delete was **NOT applied on `main`** — unlike the structure-refactor branch, `overridden` still has live consumers here (the diff-colormap derivation `enc.overridden ? enc.colormap : diffDefaultColormap`), so it is not vestigial on `main`; it is retired only where its consumers are already gone (structure-refactor). The stacked-diff-flip harness-runtime rationalization was deferred (a runtime optimization, not a ruling).
+
+---
+
+*Anthropic Cairn — cairn-plot structural proposal. §5 records the 2026-08-24 cleanup wave (rulings implemented on `main`).*
