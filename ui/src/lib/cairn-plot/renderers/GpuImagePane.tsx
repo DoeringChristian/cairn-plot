@@ -111,10 +111,6 @@ import { u8HistogramSource, floatHistogramSource } from "./image-histogram-sourc
 import { useSyncedImageSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
-  adoptRemoteDisplayEncoding,
-  diffFaceTag,
-} from "./image-display-encoding-sync";
-import {
   displayToolbarButton,
   reduceSegment,
   usePaneEncoding,
@@ -869,26 +865,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   const applyRemoteSettings = useCallback(
     (patch: ImageSyncSettings) => {
-      // CONTENT-KIND SCOPING (orange-frame fix). A DIFF peer publishes its
-      // SCALAR-ERROR display face — `encoding`/`colormap` = a scalar colormap
-      // (magma/…) chosen to false-color an ERROR MAP, tagged `compareMode:"diff"`.
-      // Adopting that scalar colormap onto a pane rendering LIGHT content (a plain
-      // image, or a split/blend composite) runs the LIGHT image through the diff's
-      // magma — mean-reduced, a near-white image lands on the magma UPPER RAMP =
-      // the reported ORANGE frame (measured: `stacked-diff-flip-realstack-gpu`,
-      // diff-anchored selection = 97/97 image presents orange). A diff's
-      // scalar-error DISPLAY encoding is therefore DIFF-ONLY, exactly as the bus
-      // already treats the compare-only keys (`diffKernel`/`splitPosition`/…): a
-      // pane NOT itself in diff mode ignores it. Same-kind sync is intact — an
-      // image's own colormap PICK carries no `compareMode`, so it still syncs to
-      // image peers; a diff's colormap still reaches diff peers via the diffMode
-      // branch below (`setDiffColormapOverride`). split/blend peers publish a LIGHT
-      // curve (compareMode "split"/"blend"), which a light image adopts fine — only
-      // `"diff"` (the scalar-error face) is scoped out.
-      // ONE content-kind scoping rule + scoped-encoding adoption, shared by all three
-      // panes (`image-display-encoding-sync.ts`), parameterized by this pane's
-      // `isDiffFace` capability (here the boolean `diffMode`).
-      adoptRemoteDisplayEncoding(enc.setEncoding, patch, diffMode);
+      // Adopt the peer's display encoding BY VALUE — no content-kind scoping
+      // (ruling 5: applicability is decided at RENDER via arity gating, not at
+      // sync). A colormap LUT that lands on a light RGB face is stored and simply
+      // doesn't alter that render. The unified `encoding` id is primary;
+      // `colormap`/`tonemap` are back-compat for a pre-registry compare peer.
+      if (patch.encoding !== undefined) enc.setEncoding(patch.encoding);
+      else if (patch.colormap !== undefined && patch.colormap !== "none") enc.setEncoding(patch.colormap);
+      else if (patch.tonemap !== undefined) enc.setEncoding(patch.tonemap);
       if (patch.tonemapGamma !== undefined) setTonemapGamma(patch.tonemapGamma);
       if (patch.peak !== undefined) setPeak(patch.peak);
       if (patch.exposureEV !== undefined) setDisplayEV(patch.exposureEV);
@@ -899,20 +883,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (patch.colorMin !== undefined && patch.colorMax !== undefined) {
         setColorBounds([patch.colorMin, patch.colorMax]);
       }
-      // DIFF face (state-unification): the diff colormap is now the SAME `enc` store
-      // adopted by the `adoptDisplayEncoding` block above (a diff peer publishes its
-      // scalar-error `encoding`, which this pane — when itself in diff mode — sets on
-      // `enc`), so there is no separate diff-colormap adoption.
-      //
-      // The diff KERNEL is NOT adopted here when an owner is present (M2): the owner
-      // (`useCompareControl`) carries the group's kernel subscription itself, so a
-      // second write here would be a redundant parallel copy. Only the no-owner
-      // cross-type pane (which has no owner subscription) adopts a live kernel patch
-      // into its local fallback store — and, like the owner, ONLY from a DEDICATED
-      // kernel pick (`{diffKernel}`, no `encoding`), never from the group's shared
-      // DISPLAY snapshot the anchor seeds on formation (which would collapse distinct
-      // kernels onto the anchor's metric).
-      if (patch.diffKernel !== undefined && patch.encoding === undefined && !hasKernelOwner) {
+      // DIFF face: the diff colormap is the SAME `enc` store adopted above. The diff
+      // KERNEL is a normal synced value (ruling 3: a group mirrors the first
+      // viewport's kernel). When a kernel owner is present (`useCompareControl`) it
+      // carries the group's kernel subscription itself, so the pane only adopts a
+      // kernel patch into its local fallback store in the no-owner cross-type case.
+      if (patch.diffKernel !== undefined && !hasKernelOwner) {
         setLocalKernel(patch.diffKernel);
       }
     },
@@ -924,14 +900,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       diffMode
         ? {
             // DIFF face: the scalar-error encoding + the effective diff colormap
-            // (per-kernel default when unoverridden), tagged `compareMode:"diff"` so a
-            // plain-image peer scopes the scalar colormap OUT (orange-frame fix).
-            // The diff KERNEL is deliberately NOT in the snapshot: it is a per-pane
-            // CONTENT-op choice (like the compare mode), so multi-selecting diffs of
-            // DIFFERENT kernels (e.g. a FLIP/SSIM/absolute grid) must NOT force a
-            // joining peer to adopt the anchor's kernel — that would collapse them to
-            // one kernel and one default colormap (scenario 1). An EXPLICIT kernel
-            // change still syncs via `changeDiffKernel`'s live `{diffKernel}` patch.
+            // (per-kernel default when unoverridden), the real `compareMode:"diff"`,
+            // and the diff KERNEL — all the viewport's CURRENT values, so formation
+            // mirrors the first diff's settings to the group (ruling 3). A light peer
+            // stores the scalar colormap and simply doesn't false-color (ruling 5:
+            // arity gating at render).
             encoding: deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap),
             colormap: effectiveDiffColormap,
             tonemap: effectiveTonemap,
@@ -941,6 +914,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             offset: displayOffset,
             reduce: effectiveReduce,
             compareMode: "diff",
+            diffKernel,
           }
         : {
             // The ONE `encoding` id, plus the derived colormap/tonemap so a pre-registry
@@ -962,7 +936,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               ? { compareMode: compareOpMode as string, splitPosition, blendAlpha }
               : {}),
           },
-    [diffMode, effectiveDiffColormap, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, blendAlpha],
+    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, blendAlpha],
   );
   const publishSettings = useSyncedImageSettings(
     props.settingsSyncGroupId,
@@ -978,13 +952,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         encoding: id,
         colormap: isLut ? id : "none",
         tonemap: isLut ? effectiveTonemap : id,
-        // FACE TAG (M3/M4) — one source (`diffFaceTag`): a scoped display write from a
-        // DIFF pane is the scalar-error face → tag `"diff"` so a light peer scopes it
-        // out and the bus's mode-aware merge stays coherent; an image pane omits it.
-        ...diffFaceTag(diffMode),
       });
     },
-    [enc, publishSettings, effectiveTonemap, diffMode],
+    [enc, publishSettings, effectiveTonemap],
   );
   const changeExposure = useCallback(
     (ev: number) => {
@@ -1043,14 +1013,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // VALUE so mirrored peers converge on the same colormap.
       const kernelDefault = kernelDefaultColormap(id) as Colormap;
       enc.setEncoding(kernelDefault);
-      // TWO patches: a DEDICATED kernel pick (the only shape the M2 adoption guard
-      // accepts for diffKernel), then the display keys carrying the new default.
-      publishSettings({ diffKernel: id });
+      // ONE patch by value: the kernel + the display keys carrying its new default,
+      // mirrored to peers (ruling 3/4).
       publishSettings({
+        diffKernel: id,
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, kernelDefault),
         colormap: kernelDefault,
         tonemap: effectiveTonemap,
-        ...diffFaceTag(true),
       });
     },
     [setDiffKernel, publishSettings, enc, effectiveTonemap],
@@ -1067,9 +1036,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
         colormap: id,
         tonemap: effectiveTonemap,
-        // The diff colormap IS the scalar-error face — always tagged `"diff"` (one
-        // source, `diffFaceTag`); a diff-only menu, so the capability is constant.
-        ...diffFaceTag(true),
       });
     },
     [enc, publishSettings, effectiveTonemap],

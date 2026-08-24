@@ -191,4 +191,73 @@ The three items the structure-refactor shifts kept deferring as user-visible wer
 
 ---
 
-*Anthropic Cairn — cairn-plot structural proposal. §5 records the 2026-08-24 cleanup wave (rulings implemented on `main`).*
+## 6. Settings model — SIMPLIFIED to the user's four-sentence spec (2026-08-24)
+
+The Class-2 "Settings ownership" machinery above was superseded by a direct
+implementation of the user's spec, which is now the ENTIRE settings model:
+
+> Each viewport has a set of settings. When we select multiple, we sync the
+> settings of the FIRST viewport to the others. There should just be an interface
+> on the viewport that sets the settings and applies them. When double clicking
+> (HOME), we take the default settings for the image/diff and apply those to the
+> viewport.
+
+Standing rulings that shape it: (1) a viewport owns ONE concrete settings set —
+the full display vocabulary (encoding/colormap, curve, EV, offset, gamma, peak,
+reduce, bounds, diff kernel, compare mode, split/blend); (2) ONE interface on the
+pane sets state and renders (`applyRemoteSettings` on apply, `publishSettings` on
+local change — the mirror bus); (3) FORMATION-COPY: on multi-select the FIRST
+(anchor) viewport's CURRENT values are published to the others; (4) MIRRORING:
+while selected, any change on one applies to all others BY VALUE; (5)
+APPLICABILITY is decided at RENDER (arity gating), NOT at sync — a value that
+doesn't apply to a pane's current content is stored and simply doesn't alter that
+render; (6) HOME applies the visible image/diff's DEFAULTS to the CLICKED viewport
+only (local, never mirrors); (7) the enlarge/fullscreen stage's cells are a
+selection, so formation-copy + mirroring work there identically.
+
+**Interface (unchanged shape, simplified body).** `image-settings-sync.ts` is a
+flat bus: `publishImageSettings` does a plain `{...prev, ...patch}` merge into the
+per-group snapshot and broadcasts; `subscribeImageSettings` mirrors every patch to
+peers (echo-guarded by `sourceId`); `getLastImageSettings` seeds a late joiner.
+Each pane's `applyRemoteSettings(patch)` adopts every field it owns by value; its
+`settingsSnapshot()` is the anchor's formation seed. HOME stays on the pane's own
+reset chain (`assignVisibleFaceDefaultEncoding` / `useCompareControl.reset`).
+
+**DELETED machinery (this obsoletes the Class-2 plan's `PaneSettings`/tagged-encoding design):**
+
+- `renderers/image-display-encoding-sync.ts` — the whole shared scoping module
+  (`shouldAdoptDisplayEncoding` / `adoptRemoteDisplayEncoding` / `diffFaceTag`) and
+  its test. Adoption is now unconditional-by-value inlined in the three panes.
+- `viewport/image-settings-sync.ts` — `EPHEMERAL_KEYS` (the diff-kernel denylist),
+  `SCOPED_DISPLAY_KEYS`, and the 3-branch mode-aware `compareMode` FACE-TAG
+  reconcile (~60 lines). The merge is a plain flat spread; `compareMode` is just
+  the real composite mode, not a tag.
+- The **dedicated-kernel-pick shape**: `changeDiffKernel` published two patches
+  (`{diffKernel}` then the display keys) so the M2 guard could keep distinct
+  kernels; it now publishes ONE by-value patch and the diff `settingsSnapshot`
+  carries `diffKernel`, so formation mirrors the first viewport's kernel (ruling 3).
+- The receiver guards `patch.encoding === undefined` (in `useCompareControl` and the
+  pane's local-kernel fallback) — the kernel is adopted by value whenever present.
+
+**Harness expectation changes (each justified against the spec):**
+
+- `stacked-diff-flip-realstack-gpu.browser.ts` PHASE A / PHASE C(3): the
+  "a diff peer's scalar colormap is NOT adopted by a plain image (orange=0)"
+  oracles are RETIRED and inverted — under ruling 5 the image adopts the first
+  viewport's colormap by value and the GPU path false-colors it (orange > 0).
+- Same harness PHASE K / PHASE L: the "distinct-kernel diffs do NOT collapse on
+  formation" / "seed OMITS diffKernel" oracles are inverted — the anchor seed now
+  CARRIES the kernel and every peer adopts it (ruling 3); an explicit pick still
+  mirrors (ruling 4).
+- `image-settings-sync.test.ts`: the `EPHEMERAL diffKernel` and four M3
+  mode-aware-tag tests are replaced by flat-merge tests (kernel persists; a later
+  colormap overwrites its field but leaves other keys — incl. `compareMode` —
+  intact; no scoping).
+
+The enlarge-stage sync the user reported broken is fixed by the SAME deletion: the
+stage's cells already share one settings group, and removing the scoping/ephemeral
+guards restores unconditional live mirroring across them (no stage code change).
+
+---
+
+*Anthropic Cairn — cairn-plot structural proposal. §5 records the 2026-08-24 cleanup wave (rulings implemented on `main`). §6 records the settings-model simplification to the user's four-sentence spec.*

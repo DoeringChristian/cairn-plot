@@ -118,11 +118,11 @@ test("getLastImageSettings merges compare-only shared keys for a late joiner (mo
   });
 });
 
-test("diffKernel is EPHEMERAL: live-broadcast to peers but NOT persisted into the snapshot", () => {
-  // The M2 viewport-owned model: a diff kernel is a per-viewport content-op choice
-  // (distinct diffs legitimately hold distinct kernels). An explicit pick mirrors
-  // to already-selected peers, but re-forming/joining a selection must NOT collapse
-  // distinct kernels onto the anchor's metric — so the kernel never accumulates.
+test("diffKernel is a NORMAL synced value: broadcast live AND persisted into the snapshot", () => {
+  // Settings-model simplification (ruling 3/4): the diff kernel is part of the
+  // viewport's settings vocabulary and mirrors like any other field — a selected
+  // group adopts the first viewport's kernel (including on formation/join). The
+  // former EPHEMERAL_KEYS carve-out is gone.
   const g = freshGroup();
   const live: ImageSyncSettings[] = [];
   const off = subscribeImageSettings(g, "peer", (p) => live.push(p));
@@ -130,57 +130,38 @@ test("diffKernel is EPHEMERAL: live-broadcast to peers but NOT persisted into th
   off();
   // LIVE: an already-selected peer mirrors the full patch, kernel included.
   assert.deepEqual(live, [{ colormap: "turbo", diffKernel: "ssim" }]);
-  // SNAPSHOT (what a late joiner / re-formed selection reads): the shared colormap
-  // persists, the ephemeral kernel does NOT — so no kernel collapse on join.
-  assert.deepEqual(getLastImageSettings(g), { colormap: "turbo" });
+  // SNAPSHOT (what a late joiner / re-formed selection reads): the kernel PERSISTS.
+  assert.deepEqual(getLastImageSettings(g), { colormap: "turbo", diffKernel: "ssim" });
 });
 
-// --- M3: mode-aware snapshot merge (the `compareMode` FACE tag) --------------
+// --- Flat merge: no tag, no scoping, no special reconcile (ruling 5) ----------
+// The bus stores every key by value with a plain spread. `compareMode` is the
+// real composite mode, not a face tag; a value that doesn't apply to a pane's
+// content is stored and simply doesn't alter that render (applicability at
+// RENDER, not sync). These replace the retired M3 mode-aware-tag tests.
 
-test("M3: a later image colormap CLEARS a prior diff's compareMode tag (no poisoned replay)", () => {
+test("flat merge: a later colormap overwrites the field but leaves other keys (incl. compareMode) intact", () => {
   const g = freshGroup();
-  // A diff anchor seeds its scalar-error face, tagged diff.
+  // A diff seeds its scalar-error look + real diff mode.
   publishImageSettings(g, "diff", {
     encoding: "magma",
     colormap: "magma",
     tonemap: "srgb",
     compareMode: "diff",
   });
-  // An image then publishes its colormap (no compareMode — image writes carry no tag).
+  // An image then publishes turbo (no compareMode). Flat merge: colormap becomes
+  // turbo; compareMode is untouched — no tag-clearing magic. A light joiner stores
+  // turbo and doesn't false-color (arity gating at render).
   publishImageSettings(g, "image", { encoding: "turbo", colormap: "turbo", tonemap: "srgb" });
-  // A late joiner must read EXACTLY what a live listener saw: turbo, UNTAGGED — so a
-  // light pane adopts it (pre-fix the flat merge left {colormap:turbo, compareMode:diff}
-  // and a light joiner refused it / adopted the diff's magma = the orange-frame class).
-  const snap = getLastImageSettings(g)!;
-  assert.equal(snap.colormap, "turbo");
-  assert.equal("compareMode" in snap, false);
+  assert.deepEqual(getLastImageSettings(g), {
+    encoding: "turbo",
+    colormap: "turbo",
+    tonemap: "srgb",
+    compareMode: "diff",
+  });
 });
 
-test("M3: a BARE compareMode (mode switch) does NOT re-tag stale display keys", () => {
-  const g = freshGroup();
-  // An image seeds an untagged colormap.
-  publishImageSettings(g, "image", { encoding: "turbo", colormap: "turbo", tonemap: "srgb" });
-  // Some pane switches compare mode — a bare compareMode patch, no display key.
-  publishImageSettings(g, "mode", { compareMode: "diff" });
-  // The snapshot's display keys keep their (image) face — the bare switch must not
-  // poison them into looking like a diff's scalar-error face.
-  const snap = getLastImageSettings(g)!;
-  assert.equal(snap.colormap, "turbo");
-  assert.equal("compareMode" in snap, false);
-});
-
-test("M3: a diff face tag PERSISTS while the diff's scoped display keys stand", () => {
-  const g = freshGroup();
-  publishImageSettings(g, "diff", { encoding: "magma", colormap: "magma", compareMode: "diff" });
-  // A non-scoped update (exposure) must not disturb the face tag.
-  publishImageSettings(g, "diff", { exposureEV: 1.5 });
-  const snap = getLastImageSettings(g)!;
-  assert.equal(snap.colormap, "magma");
-  assert.equal(snap.compareMode, "diff"); // still diff-scoped (a light joiner refuses magma)
-  assert.equal(snap.exposureEV, 1.5);
-});
-
-test("M3: a compositor (split) face tags the LIGHT curve as split — a light peer still adopts it", () => {
+test("flat merge: compareMode / split / blend persist for a late joiner", () => {
   const g = freshGroup();
   publishImageSettings(g, "split", {
     encoding: "srgb",
@@ -189,9 +170,15 @@ test("M3: a compositor (split) face tags the LIGHT curve as split — a light pe
     compareMode: "split",
     splitPosition: 0.3,
   });
-  const snap = getLastImageSettings(g)!;
-  assert.equal(snap.compareMode, "split"); // tagged split (NOT diff) → light peers adopt
-  assert.equal(snap.splitPosition, 0.3);
+  publishImageSettings(g, "split", { exposureEV: 1.5 });
+  assert.deepEqual(getLastImageSettings(g), {
+    encoding: "srgb",
+    colormap: "none",
+    tonemap: "srgb",
+    compareMode: "split",
+    splitPosition: 0.3,
+    exposureEV: 1.5,
+  });
 });
 
 // PARTIAL-APPLY contract: a subscriber APPLIES ONLY THE KEYS IT OWNS. An image

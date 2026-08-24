@@ -309,13 +309,10 @@ function sideBySideTwoDiffGrid(): PlotDescriptor {
 }
 // THREE side-by-side DIFF viewports with DISTINCT kernels (flip → magma, ssim →
 // magma, absolute → turbo) — the served report's exact `FLIP vs SSIM vs absolute`
-// grid. Drives PHASE L: the M2 residual where a page-wide 3-diff multi-select
-// collapsed the two non-anchor kernels onto the anchor's metric. (The collapse
-// was a STALE-served-report artifact — a pre-M2 bundle whose diff-face
-// `settingsSnapshot` still carried `diffKernel` AND whose receivers adopted it
-// UNCONDITIONALLY; current source omits the key, strips it as an EPHEMERAL bus
-// key, AND guards the receiver on `encoding === undefined`. This phase pins all
-// three defenses against re-introduction at THREE distinct kernels.)
+// grid. Drives PHASE L: under the settings-model simplification (ruling 3) a
+// page-wide 3-diff multi-select MIRRORS the first viewport's kernel to the others
+// on formation — the diff-face `settingsSnapshot` carries `diffKernel` by value
+// and every receiver adopts it. This phase pins that at THREE distinct kernels.
 function sideBySideThreeDiffGrid(): PlotDescriptor {
   return {
     mode: "local",
@@ -509,11 +506,16 @@ async function main(): Promise<void> {
     );
     const imageAnchor = await runAdoption("m2", "image");
     report(imageAnchor.orange === 0, `CONTROL image-anchor selection: image stays plain (orange=${imageAnchor.orange})`);
+    // Settings-model simplification (ruling 3 + ruling 5): the FIRST viewport's
+    // settings are applied to the others BY VALUE, and applicability is a RENDER
+    // decision. A diff-anchored selection therefore MIRRORS the diff's scalar
+    // colormap onto the plain image, which the GPU path reduces-and-false-colors
+    // (isScalar:true → magma) — the former "non-adoption" oracle is retired.
     report(
-      diffAnchor.orange === 0,
-      `SYNC-ADOPTION diff-anchor selection: plain image is NOT false-colored by the diff's magma (orange=${diffAnchor.orange})`,
+      diffAnchor.orange > 0,
+      `SYNC-ADOPTION diff-anchor selection: plain image ADOPTS the first viewport's (diff's) colormap by value (orange=${diffAnchor.orange})`,
     );
-    if (diffAnchor.orange > 0) allOk = false;
+    if (diffAnchor.orange === 0) allOk = false;
 
     // ======================= PHASE B — STACKED FLIP STORM ===================
     const hostB = document.getElementById("m1")!;
@@ -567,12 +569,11 @@ async function main(): Promise<void> {
     report(stormOrange === 0, `stacked flip storm: no orange image presents (${stormOrange})`);
     if (stormOrange > 0) allOk = false;
 
-    // ============ PHASE C — DIFFERENTIAL: the fix is PRECISELY scoped =========
-    // A plain image in a real sync group must STILL adopt a SAME-KIND image
-    // colormap pick (a patch with NO `compareMode`) — else the fix over-scoped and
-    // broke same-content-kind sync. And it must IGNORE a DIFF patch (compareMode
-    // "diff"). Drives the bus directly (an external "peer" publish) against a live,
-    // selected, subscribed image pane.
+    // ============ PHASE C — BY-VALUE ADOPTION (no scoping) ====================
+    // A plain image in a real sync group adopts ANY peer's colormap BY VALUE —
+    // both a same-kind image pick AND a diff patch (ruling 5: no content-kind
+    // scoping; applicability is a render decision). Drives the bus directly (an
+    // external "peer" publish) against a live, selected, subscribed image pane.
     const hostC = document.getElementById("m2")!;
     hostC.style.cssText = "width:520px;height:280px;background:#222";
     const rootC: Root = createRoot(hostC);
@@ -628,7 +629,8 @@ async function main(): Promise<void> {
     await observeAfter(() =>
       publishImageSettings(grp, "ext-image-peer", { encoding: "srgb", colormap: "none" }),
     );
-    // (3) DIFF patch (compareMode "diff") → MUST be ignored → stays plain.
+    // (3) DIFF patch (compareMode "diff") → adopted BY VALUE, same as any other
+    // colormap (ruling 5: no scoping). The image false-colors → orange.
     const diffPatch = await observeAfter(() =>
       publishImageSettings(grp, "ext-diff-peer", {
         encoding: "magma",
@@ -639,10 +641,10 @@ async function main(): Promise<void> {
     );
     note(`PHASE C diff-patch (compareMode:diff): image presents=${diffPatch.total}, ORANGE=${diffPatch.orange}`);
     report(
-      diffPatch.orange === 0,
-      `a DIFF peer's scalar colormap is NOT adopted by a plain image (orange=${diffPatch.orange})`,
+      diffPatch.orange > 0,
+      `a DIFF peer's scalar colormap IS adopted by a plain image, by value (orange=${diffPatch.orange})`,
     );
-    if (diffPatch.orange > 0) allOk = false;
+    if (diffPatch.orange === 0) allOk = false;
     rootC.unmount();
     __resetGlobalSelectionStoreForTest();
 
@@ -1210,19 +1212,17 @@ async function main(): Promise<void> {
     report(j.kept1 === "red-blue", `PHASE J (scenario 1): the multi-select neighbour KEEPS the picked colormap through the other's HOME — local HOME (${j.kept1})`);
     if (j.seed0 !== "magma" || j.seed1 !== "turbo" || j.home1Solo !== "turbo" || j.home0Solo !== "magma" || j.mirrored1 !== "red-blue" || j.home0 === "red-blue" || j.kept1 !== "red-blue") allOk = false;
 
-    // ============ PHASE K — MULTI-SELECT KERNEL: NO COLLAPSE ON FORMATION (M2) ===
+    // ============ PHASE K — MULTI-SELECT KERNEL: FORMATION MIRRORS THE FIRST ===
     // Two side-by-side DIFF viewports with DISTINCT kernels (slot0 FLIP, slot1
-    // absolute). Multi-selecting them forms ONE sync group — but the diff KERNEL is a
-    // per-VIEWPORT content-op choice OWNED by `useCompareControl`, so FORMING the
-    // selection must NOT collapse the two distinct kernels onto the anchor's metric
-    // (pre-M2 the kernel rode the accumulated snapshot and a joiner adopted it). An
-    // EXPLICIT kernel pick on one, however, MIRRORS to the selected peer like any
-    // change (the kernel is EPHEMERAL on the bus — live-broadcast, not persisted).
+    // absolute). Multi-selecting them forms ONE sync group; the settings-model
+    // simplification (ruling 3) applies the FIRST viewport's CURRENT values — the
+    // kernel included — to the others, so slot1 ADOPTS the anchor's flip on
+    // formation. An EXPLICIT kernel pick then mirrors to the peer like any change.
     interface KResult {
       seed0: string; // slot0 FLIP kernel
       seed1: string; // slot1 absolute kernel
-      afterSelect0: string; // slot0 kernel AFTER multi-select forms (must stay flip)
-      afterSelect1: string; // slot1 kernel AFTER multi-select forms (must stay absolute)
+      afterSelect0: string; // slot0 kernel AFTER multi-select forms (anchor stays flip)
+      afterSelect1: string; // slot1 kernel AFTER multi-select forms (adopts anchor's flip)
       mirrored1: string; // slot1 kernel after slot0 picks "squared" (must mirror → squared)
     }
     const runK = async (hostId: string): Promise<KResult> => {
@@ -1243,8 +1243,8 @@ async function main(): Promise<void> {
       store.select(ids[0], "replace"); // slot0 anchor
       store.select(ids[1], "toggle"); // + slot1 → ONE group
       await sleep(350); // let the anchor seed + joiner adopt run
-      const afterSelect0 = d()[0]?.diffKernel ?? "?"; // must still be flip
-      const afterSelect1 = d()[1]?.diffKernel ?? "?"; // must still be absolute
+      const afterSelect0 = d()[0]?.diffKernel ?? "?"; // anchor stays flip
+      const afterSelect1 = d()[1]?.diffKernel ?? "?"; // adopts the anchor's flip (ruling 3)
       d()[0]!.changeDiffKernel("squared"); // explicit pick on the anchor
       await waitFor(() => d()[1]?.diffKernel === "squared", 4000).catch(() => {});
       const mirrored1 = d()[1]?.diffKernel ?? "?";
@@ -1257,29 +1257,24 @@ async function main(): Promise<void> {
     const k = await runK("kKernelGrid");
     report(k.seed0 === "flip" && k.seed1 === "absolute", `PHASE K setup: two DIFF viewports with DISTINCT kernels (${k.seed0}/${k.seed1})`);
     report(
-      k.afterSelect0 === "flip" && k.afterSelect1 === "absolute",
-      `PHASE K (M2): multi-selecting DISTINCT-kernel diffs does NOT collapse them on formation (${k.afterSelect0}/${k.afterSelect1})`,
+      k.afterSelect0 === "flip" && k.afterSelect1 === "flip",
+      `PHASE K (ruling 3): multi-selecting mirrors the FIRST viewport's kernel to the peer on formation (${k.afterSelect0}/${k.afterSelect1})`,
     );
-    report(k.mirrored1 === "squared", `PHASE K (M2): an EXPLICIT kernel pick still MIRRORS to the selected peer (peer→squared: ${k.mirrored1})`);
-    if (k.seed0 !== "flip" || k.seed1 !== "absolute" || k.afterSelect0 !== "flip" || k.afterSelect1 !== "absolute" || k.mirrored1 !== "squared") allOk = false;
+    report(k.mirrored1 === "squared", `PHASE K (ruling 4): an EXPLICIT kernel pick MIRRORS to the selected peer (peer→squared: ${k.mirrored1})`);
+    if (k.seed0 !== "flip" || k.seed1 !== "absolute" || k.afterSelect0 !== "flip" || k.afterSelect1 !== "flip" || k.mirrored1 !== "squared") allOk = false;
 
-    // ==== PHASE L — THREE-DIFF MULTI-SELECT: NO COLLAPSE + SNAPSHOT OMITS KERNEL (M2 residual) ====
-    // The served-report's `FLIP vs SSIM vs absolute` grid. The M2 addendum's OPEN
-    // residual was a page-wide 3-diff multi-select collapsing the two non-anchor
-    // kernels (ssim, absolute) onto the anchor's metric (flip) ~1 s after formation.
-    // ROOT CAUSE (caught live): the served report inlined a PRE-M2 bundle whose
-    // diff-face `settingsSnapshot` still emitted `diffKernel` between `reduce` and
-    // `compareMode` (10 keys), and whose receivers (`useCompareControl` +
-    // `applyRemoteSettings`) adopted it UNCONDITIONALLY — no `encoding === undefined`
-    // guard, no EPHEMERAL strip. Current source fixes all three; this phase pins them
-    // at THREE distinct kernels by (a) capturing every bus patch published during
-    // formation and asserting the anchor SEED carries NO `diffKernel` key, and
-    // (b) asserting the three kernels do NOT collapse — while an explicit pick still
-    // mirrors (the kernel is live-broadcast EPHEMERAL, not persisted).
+    // ==== PHASE L — THREE-DIFF MULTI-SELECT: FORMATION MIRRORS THE FIRST (ruling 3) ====
+    // The served-report's `FLIP vs SSIM vs absolute` grid. Under the settings-model
+    // simplification the anchor SEEDS its CURRENT values (kernel included) on
+    // formation, and every joiner adopts them BY VALUE — so a 3-diff multi-select
+    // collapses the two non-anchor kernels (ssim, absolute) onto the anchor's flip.
+    // This phase pins that by (a) capturing every bus patch on formation and
+    // asserting the anchor SEED CARRIES `diffKernel`, and (b) asserting the three
+    // kernels all become the anchor's; an explicit pick then mirrors likewise.
     interface LResult {
       seeds: string[]; // [flip, ssim, absolute]
-      afterSelect: string[]; // must stay [flip, ssim, absolute] (NO collapse)
-      seedPatchHadKernel: boolean; // the anchor seed on formation must OMIT diffKernel
+      afterSelect: string[]; // all adopt the anchor's flip → [flip, flip, flip]
+      seedPatchHadKernel: boolean; // the anchor seed on formation now CARRIES diffKernel
       formationPatchCount: number; // how many patches rode the bus on formation
       pickPatchHadKernel: boolean; // an explicit pick DOES publish {diffKernel}
       mirrored: string[]; // both peers after anchor picks "squared" → [squared, squared]
@@ -1327,7 +1322,7 @@ async function main(): Promise<void> {
       d()[0]!.changeDiffKernel("squared");
       await waitFor(() => d()[1]?.diffKernel === "squared" && d()[2]?.diffKernel === "squared", 4000).catch(() => {});
       EventTarget.prototype.dispatchEvent = origDispatch2;
-      const pickPatchHadKernel = pickCaptured.some((p) => p.diffKernel === "squared" && p.encoding === undefined);
+      const pickPatchHadKernel = pickCaptured.some((p) => p.diffKernel === "squared");
       const mirrored = [d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
       root.unmount();
       host.remove();
@@ -1344,25 +1339,25 @@ async function main(): Promise<void> {
       `PHASE L setup: three DIFF viewports with DISTINCT kernels (${l.seeds.join("/")})`,
     );
     report(
-      l.formationPatchCount > 0 && !l.seedPatchHadKernel,
-      `PHASE L (M2 residual): the anchor SEED broadcast on 3-diff formation OMITS diffKernel (9-key snapshot; ${l.formationPatchCount} patches, none carried the kernel)`,
+      l.formationPatchCount > 0 && l.seedPatchHadKernel,
+      `PHASE L (ruling 3): the anchor SEED broadcast on 3-diff formation CARRIES diffKernel (${l.formationPatchCount} patches, one carried the kernel)`,
     );
     report(
-      l.afterSelect[0] === "flip" && l.afterSelect[1] === "ssim" && l.afterSelect[2] === "absolute",
-      `PHASE L (M2 residual): multi-selecting THREE distinct-kernel diffs does NOT collapse them onto the anchor (${l.afterSelect.join("/")})`,
+      l.afterSelect[0] === "flip" && l.afterSelect[1] === "flip" && l.afterSelect[2] === "flip",
+      `PHASE L (ruling 3): multi-selecting THREE distinct-kernel diffs mirrors the first's kernel to all (${l.afterSelect.join("/")})`,
     );
     report(
       l.pickPatchHadKernel && l.mirrored[0] === "squared" && l.mirrored[1] === "squared",
-      `PHASE L (M2): an EXPLICIT kernel pick publishes {diffKernel} and MIRRORS to BOTH selected peers (${l.mirrored.join("/")})`,
+      `PHASE L (ruling 4): an EXPLICIT kernel pick publishes {diffKernel} and MIRRORS to BOTH selected peers (${l.mirrored.join("/")})`,
     );
     if (
       l.seeds[0] !== "flip" || l.seeds[1] !== "ssim" || l.seeds[2] !== "absolute" ||
-      l.seedPatchHadKernel || l.formationPatchCount === 0 ||
-      l.afterSelect[0] !== "flip" || l.afterSelect[1] !== "ssim" || l.afterSelect[2] !== "absolute" ||
+      !l.seedPatchHadKernel || l.formationPatchCount === 0 ||
+      l.afterSelect[0] !== "flip" || l.afterSelect[1] !== "flip" || l.afterSelect[2] !== "flip" ||
       !l.pickPatchHadKernel || l.mirrored[0] !== "squared" || l.mirrored[1] !== "squared"
     ) allOk = false;
 
-    report(allOk, `real-stack GPU: sync-adoption fixed + precisely scoped + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings + HOME-local-while-selected + shares settings beyond encoding (peak/kernel) + diff colormap IS the viewport encoding (scenario 1 diff-grid HOME→kernel default, scenario 2 image adopts diff colormap) + M2 multi-select kernels don't collapse on formation but mirror on pick (2-diff PHASE K + 3-diff PHASE L: seed omits kernel, no collapse, pick mirrors to both peers)`);
+    report(allOk, `real-stack GPU: by-value adoption (no scoping) + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings + HOME-local-while-selected + shares settings beyond encoding (peak/kernel) + diff colormap IS the viewport encoding (scenario 1 diff-grid HOME→kernel default, scenario 2 image adopts diff colormap) + multi-select mirrors the FIRST viewport's kernel on formation (2-diff PHASE K + 3-diff PHASE L: seed carries kernel, all adopt anchor, pick mirrors to both peers)`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

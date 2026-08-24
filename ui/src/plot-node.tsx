@@ -111,8 +111,10 @@ import {
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
 import {
+  getLastImageSettings,
   publishImageSettings,
   subscribeImageSettings,
+  type ImageSyncSettings,
 } from "./lib/cairn-plot/viewport/image-settings-sync";
 import { makeImageViewportSyncSourceId } from "./lib/cairn-plot/viewport/image-viewport-sync";
 
@@ -1397,7 +1399,11 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
  * subscription is inert and the ONE reused instance shares settings by
  * construction.
  */
-function useCompareControl(node: PlotNode, settingsSyncGroupId: string | undefined): CompareControl {
+function useCompareControl(
+  node: PlotNode,
+  settingsSyncGroupId: string | undefined,
+  isAnchor: boolean,
+): CompareControl {
   const cmp = node.kind === "compare" ? node : null;
   const props = (cmp?.props ?? {}) as Record<string, unknown>;
   const descriptorMode: CompareViewMode = cmp
@@ -1420,22 +1426,25 @@ function useCompareControl(node: PlotNode, settingsSyncGroupId: string | undefin
   if (!idRef.current) idRef.current = makeImageViewportSyncSourceId();
   useEffect(() => {
     if (!settingsSyncGroupId) return;
-    return subscribeImageSettings(settingsSyncGroupId, idRef.current!, (patch) => {
+    // The apply is the ONE interface: it adopts every compare-owned key by value
+    // (ruling 4). The diff KERNEL / compare mode / split / blend all mirror,
+    // including on selection FORMATION where the anchor seeds its CURRENT values
+    // (ruling 3).
+    const apply = (patch: ImageSyncSettings) => {
       if (patch.compareMode !== undefined) setViewMode(patch.compareMode as CompareViewMode);
-      // The diff KERNEL is a per-VIEWPORT content-op choice (M2): distinct diffs in
-      // one selection legitimately hold distinct kernels. It mirrors on an EXPLICIT
-      // pick (`changeDiffKernel` publishes a DEDICATED `{diffKernel}` patch — no
-      // `encoding`), but must NOT be adopted from the group's shared DISPLAY snapshot
-      // the anchor seeds on selection FORMATION (which carries `encoding` + the whole
-      // display look) — that would collapse every peer onto the anchor's metric. So
-      // adopt the kernel only from a dedicated pick, never from a display snapshot.
-      if (patch.diffKernel !== undefined && patch.encoding === undefined) {
-        setDiffKernel(patch.diffKernel);
-      }
+      if (patch.diffKernel !== undefined) setDiffKernel(patch.diffKernel);
       if (patch.splitPosition !== undefined) setSplitPos(patch.splitPosition);
       if (patch.blendAlpha !== undefined) setBlendAlpha(patch.blendAlpha);
-    });
-  }, [settingsSyncGroupId]);
+    };
+    // A NON-anchor catches up to the group's current settings on JOIN (the anchor
+    // OWNS the group state, so it never adopts — mirrors `useSyncedImageSettings`).
+    // Without this, a late-subscribing owner can miss the anchor's formation seed.
+    if (!isAnchor) {
+      const last = getLastImageSettings(settingsSyncGroupId);
+      if (last) apply(last);
+    }
+    return subscribeImageSettings(settingsSyncGroupId, idRef.current!, apply);
+  }, [settingsSyncGroupId, isAnchor]);
 
   // HOME / double-click: drop every override so the control follows the DESCRIPTOR
   // again. This is the compare half of the pane's HOME the old `GpuComparePane` did
@@ -1487,7 +1496,7 @@ function NodeDispatch({ node }: { node: PlotNode }) {
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
   // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
-  const control = useCompareControl(node, paneSync?.settingsSyncGroupId);
+  const control = useCompareControl(node, paneSync?.settingsSyncGroupId, !!paneSync?.syncIsAnchor);
   // Static synth-leaf derivation (memoized on the node object) — only meaningful
   // for a compare node; computed unconditionally to keep hook order stable.
   const synth = node.kind === "compare" ? synthDiffLeafOf(node) : null;

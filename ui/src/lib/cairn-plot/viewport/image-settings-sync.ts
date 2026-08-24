@@ -1,51 +1,49 @@
 /**
  * Framework-free live DISPLAY-SETTINGS sync bus for image panes — the settings
  * mirror of `image-viewport-sync.ts`'s zoom/pan bus. One `EventTarget` per
- * `groupId`. A pane publishes a PARTIAL settings patch whenever the user changes
- * one of its display controls (colormap, tonemap operator, tonemap gamma, HDR
- * peak, exposure EV, offset); every other pane in the same group
- * applies the incoming fields to its own view-local override state.
+ * `groupId`.
  *
- * Unlike the viewport bus (whose payload is the FULL `{zoom,pan}` each time),
- * settings arrive as sparse patches (one control at a time) but a pane that
- * JOINS a group late needs the group's FULL current settings to align — so the
- * bus ACCUMULATES a merged snapshot per group in `lastStates`, and
- * `getLastImageSettings` returns that merge. The group anchor publishes its full
- * snapshot when a multi-selection forms (see `GpuImagePane`/`CpuImagePane`'s
- * anchor-publish effect), seeding the merge so joiners adopt a complete state.
+ * The model is deliberately flat (the settings-model simplification): each
+ * viewport owns ONE concrete settings set and applies incoming values BY VALUE.
+ * A pane publishes a settings patch whenever the user changes one of its display
+ * controls (colormap / tonemap / gamma / peak / exposure / offset / bounds /
+ * reduce / diff kernel / compare mode / split / blend / channel select); every
+ * other pane in the group applies the incoming fields to its own settings
+ * (MIRRORING, ruling 4). Applicability is decided at RENDER, not here (ruling 5):
+ * a value that doesn't apply to a pane's current content (e.g. a colormap LUT on
+ * a light RGB face) is stored and simply doesn't alter that render — there is no
+ * face tag, no scoping, no per-key gating at the bus.
+ *
+ * A publish carries only the control(s) that changed; the bus merges them into
+ * the group's accumulated snapshot (`lastStates`) with a plain flat spread, so a
+ * pane JOINING a group late (`getLastImageSettings`) or the anchor SEEDING the
+ * group on FORMATION (an explicit publish of its CURRENT values — ruling 3) both
+ * align to the group's current settings. No key is ephemeral; no key is
+ * reconciled specially.
  *
  * A single echo guard suffices (same reasoning as the viewport bus): each
  * publish carries the publisher's `sourceId`; a subscriber ignores events whose
  * `sourceId` matches its own. Callers publish only from genuine local control
  * changes (a menu pick / slider drag), never from an effect watching the
- * override state itself, so a remote-applied patch is never re-published.
+ * override state itself, so a mirrored patch is never re-published.
  *
- * Reuses `makeImageViewportSyncSourceId` for the per-pane echo token (no need
- * for a second id generator). Intentionally React-free and dependency-free so
- * it stays in the CORE bundle (image panes are core) without tripping the
- * bundle guard, and is unit-testable without a DOM/React harness.
+ * Reuses `makeImageViewportSyncSourceId` for the per-pane echo token. React-free
+ * and dependency-free so it stays in the CORE bundle (image panes are core) and
+ * is unit-testable without a DOM/React harness.
  */
 
-/** The subset of display settings that sync across a selected group. All fields
- *  optional — a publish carries only the control(s) that changed; the bus merges
- *  them into the group's accumulated snapshot.
- *
- *  The payload is a SUPERSET spanning BOTH pane types that share the one bus:
- *  the IMAGE fields (colormap/tonemap/…/offset) are consumed by image panes AND
- *  compare panes (shared display look), while the COMPARE-ONLY fields
- *  (`compareMode`/`diffKernel`/`splitPosition`/`blendAlpha`) are consumed ONLY by
- *  compare panes. This is PARTIAL-APPLY by construction: a subscriber applies
- *  only the keys it owns (an image pane's apply reads no `compareMode`, so a
- *  compare-mode patch is a no-op for it; a compare pane reads both sets), so
- *  cross-type selections sync the shared look while compare-only keys stay
- *  effective only where they mean something. */
+/** The settings that sync across a selected group — the viewport's full display
+ *  vocabulary. All fields optional: a publish carries only the control(s) that
+ *  changed and the bus flat-merges them into the group snapshot. A subscriber
+ *  applies only the keys its content owns (an image pane ignores compare-only
+ *  keys; a value that doesn't apply to its current content is stored and simply
+ *  doesn't alter its render — applicability is a RENDER decision, not a sync one). */
 export interface ImageSyncSettings {
-  // Shared display fields — applied by image AND compare panes.
   /** The unified DISPLAY-ENCODING id (a curve/remap operator id or a colormap
-   *  LUT id) — the ONE key the display-encoding registry (Phase 3) syncs. Image
-   *  panes publish + apply this; they ALSO publish the derived `colormap`/
-   *  `tonemap` below so a pre-registry peer (a compare pane) still follows the
-   *  shared look, and apply `colormap`/`tonemap` for the reverse direction. */
+   *  LUT id) — the ONE key the display-encoding registry syncs. Image panes
+   *  publish + apply this; they ALSO publish the derived `colormap`/`tonemap`
+   *  below so a pre-registry peer (a compare pane) still follows the shared look,
+   *  and apply `colormap`/`tonemap` for the reverse direction. */
   encoding?: string;
   colormap?: string;
   tonemap?: string;
@@ -53,24 +51,22 @@ export interface ImageSyncSettings {
   peak?: number;
   exposureEV?: number;
   offset?: number;
-  /** DATA-encoding norm (Phase 4) — the nonlinear reshape of a colormap LUT's
-   *  index (`linear`/`log`/`power`). Only meaningful while a lut encoding is
-   *  active; ignored otherwise. */
+  /** DATA-encoding norm — kept for back-compat (the norm picker is gone; the
+   *  effective norm is linear). Accepted but ignored on apply. */
   norm?: string;
-  /** DATA-encoding multi-channel REDUCE (the multi-channel-colormap follow-up) —
-   *  how a k>1 colormap source collapses to a scalar (`luminance`/`mean`). Only
-   *  meaningful while a lut encoding is active on a k>1 source; ignored otherwise. */
+  /** DATA-encoding multi-channel REDUCE — how a k>1 colormap source collapses to
+   *  a scalar (`luminance`/`mean`). Applies only while a lut encoding is active
+   *  on a k>1 source; stored otherwise. */
   reduce?: string;
-  /** DATA-encoding BOUNDS (Phase 4) — the min/max colorRange skin, synced so a
-   *  selection group shares one data window. Both set = the bounds affine is
-   *  engaged (else the exposure/offset skin). */
+  /** DATA-encoding BOUNDS — the min/max colorRange skin. Both set = the bounds
+   *  affine is engaged (else the exposure/offset skin). */
   colorMin?: number;
   colorMax?: number;
-  // Compare-only fields — applied ONLY by compare panes (image panes ignore
-  // them; their apply function reads none of these keys).
-  /** Composited compare mode: "split" | "blend" | "diff". */
+  /** Composited compare mode: "split" | "blend" | "diff". The real mode the
+   *  compare owner (`useCompareControl`) mirrors; applied only by compare panes. */
   compareMode?: string;
-  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). */
+  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). A normal
+   *  synced value — a selected group mirrors the first viewport's kernel. */
   diffKernel?: string;
   /** Split-divider position in [0,1]. */
   splitPosition?: number;
@@ -92,34 +88,6 @@ const EVENT_TYPE = "image-settings-state";
 const buses = new Map<string, EventTarget>();
 const lastStates = new Map<string, ImageSyncSettings>();
 
-/** EPHEMERAL keys — broadcast LIVE to already-selected peers but NOT accumulated
- *  into the replayable group snapshot (`lastStates`).
- *
- *  The diff KERNEL (which error metric) is a per-VIEWPORT content-op choice, like
- *  the compare mode: distinct diffs in one selection legitimately hold DISTINCT
- *  kernels (a FLIP/SSIM/absolute grid — magma/magma/turbo per kernel). An explicit
- *  kernel PICK still MIRRORS to selected peers (it rides the live event below like
- *  any change), but it must NOT persist into the snapshot — otherwise a pane
- *  JOINING or a selection RE-FORMING reads a stale `diffKernel` off `getLast` and
- *  COLLAPSES every peer onto the anchor's metric. Selection FORMATION publishes the
- *  anchor's snapshot, which already omits `diffKernel`; keeping it out of the
- *  accumulated merge closes the join/re-form path too. (This is the bus half of the
- *  M2 "one authoritative kernel store" fix — the owner is `useCompareControl`.) */
-const EPHEMERAL_KEYS: ReadonlyArray<keyof ImageSyncSettings> = ["diffKernel"];
-
-/** The SCOPED display-encoding keys — the ones a receiver's `adoptDisplayEncoding`
- *  gate accepts/refuses by the `compareMode` FACE tag (`GpuImagePane`/`CpuImagePane`
- *  `applyRemoteSettings`). `compareMode` qualifies EXACTLY these keys: a diff's
- *  scalar-error colormap is tagged `"diff"` so a light pane scopes it out; an image's
- *  colormap carries no tag so every peer adopts it. (The unconditional display keys —
- *  exposureEV/offset/peak/gamma/reduce/bounds — are applied regardless of face, so
- *  they do NOT participate in the tag.) */
-const SCOPED_DISPLAY_KEYS: ReadonlyArray<keyof ImageSyncSettings> = [
-  "encoding",
-  "colormap",
-  "tonemap",
-];
-
 function busFor(groupId: string): EventTarget {
   let bus = buses.get(groupId);
   if (!bus) {
@@ -130,50 +98,15 @@ function busFor(groupId: string): EventTarget {
 }
 
 /** Broadcasts a settings `patch` to every other subscriber of `groupId`, and
- *  merges it into the group's accumulated snapshot (for late joiners). The full
- *  `patch` is delivered LIVE (peers mirror every key); only the accumulated
- *  snapshot drops the {@link EPHEMERAL_KEYS} so a late joiner never inherits them. */
+ *  flat-merges it into the group's accumulated snapshot (for late joiners /
+ *  formation seed). By value: no key is scoped, tagged, or dropped. */
 export function publishImageSettings(
   groupId: string,
   sourceId: string,
   patch: ImageSyncSettings,
 ): void {
   const prev = lastStates.get(groupId) ?? {};
-  // Merge every key EXCEPT `compareMode` by spread; `compareMode` is the FACE TAG
-  // for the SCOPED display keys and is reconciled specially below.
-  const merged: ImageSyncSettings = { ...prev, ...patch };
-
-  // MODE-AWARE TAG RECONCILE (M3). A flat spread let a stale `compareMode:"diff"`
-  // ride over a LATER image colormap: a diff seeds `{colormap:magma, compareMode:
-  // "diff"}`, then an image publishes `{colormap:turbo}` (no tag) → the flat merge
-  // yields `{colormap:turbo, compareMode:"diff"}`, so a LATE-joining light pane reads
-  // a poisoned snapshot and either refuses the group's real image colormap or adopts
-  // the diff's magma onto light content (the orange-frame class) — a replay a LIVE
-  // listener never saw (live, the untagged image patch adopts fine). The `compareMode`
-  // tag now travels WITH the scoped display keys it qualifies:
-  //   • a patch that WRITES a scoped key re-tags the snapshot to THAT patch's face
-  //     (its `compareMode`, or CLEARED when the patch carries none — an image write
-  //     erases a prior diff's tag), so replay == what a live listener applied.
-  //   • a BARE `compareMode` patch (a mode switch with no display key) is broadcast
-  //     LIVE (peers' `useCompareControl` adopt the mode) but must NOT re-tag the
-  //     stale display keys already in the snapshot — so it leaves the tag untouched.
-  const writesScopedDisplay = SCOPED_DISPLAY_KEYS.some((k) => patch[k] !== undefined);
-  if (writesScopedDisplay) {
-    if (patch.compareMode === undefined) delete merged.compareMode;
-    else merged.compareMode = patch.compareMode;
-  } else if (!("compareMode" in patch)) {
-    // no scoped write AND the patch didn't mention compareMode → keep the prior tag
-    merged.compareMode = prev.compareMode;
-    if (merged.compareMode === undefined) delete merged.compareMode;
-  } else {
-    // BARE compareMode patch (mode switch): keep the snapshot's EXISTING display tag,
-    // not this mode value — the tag qualifies display keys, which this patch doesn't touch.
-    if (prev.compareMode === undefined) delete merged.compareMode;
-    else merged.compareMode = prev.compareMode;
-  }
-
-  for (const k of EPHEMERAL_KEYS) delete merged[k];
-  lastStates.set(groupId, merged);
+  lastStates.set(groupId, { ...prev, ...patch });
   busFor(groupId).dispatchEvent(
     new CustomEvent<SettingsStateDetail>(EVENT_TYPE, { detail: { patch, sourceId } }),
   );
