@@ -58,7 +58,11 @@
 import { getSharedDevice } from "./lib/cairn-plot/engine/device";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
 import { listDiffMenuModes } from "./lib/cairn-plot/engine/kernels";
-import { reportCapabilityLimit, noWebgpuKind } from "./lib/cairn-plot/primitives/capability-notice";
+import {
+  reportCapabilityLimit,
+  noWebgpuKind,
+  warnGpuUnavailable,
+} from "./lib/cairn-plot/primitives/capability-notice";
 
 /**
  * Dispatched on `window` once registration succeeds. Name duplicated (not
@@ -136,13 +140,17 @@ async function tryRegister(): Promise<void> {
     // on a non-localhost address (a LAN / tailnet IP) drops it entirely. The
     // latter is a fixable misconfiguration (open via localhost / serve https),
     // not a browser limitation — surface the right remedy.
-    reportCapabilityLimit(
-      noWebgpuKind({
-        hasGpu: "gpu" in navigator,
-        // Unknown (older engines) ⇒ treat as secure so we never mislabel.
-        isSecureContext: window.isSecureContext !== false,
-      }),
-    );
+    const gpuEnv = {
+      hasGpu: "gpu" in navigator,
+      // Unknown (older engines) ⇒ treat as secure so we never mislabel.
+      isSecureContext: window.isSecureContext !== false,
+    };
+    reportCapabilityLimit(noWebgpuKind(gpuEnv));
+    // Bootstrap-level console.warn (once per page) — this is THE device-
+    // acquisition seam (`getSharedDevice()` just rejected) reached in every
+    // entry path that carries GPU content, so the degraded state is legible in
+    // the console even where the DOM banner can't mount.
+    warnGpuUnavailable(gpuEnv);
   }
 }
 

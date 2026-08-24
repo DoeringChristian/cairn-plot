@@ -61,7 +61,11 @@ from the compare menu, and a compare pane can read as *"broken — it only shows
 the reference."* Nothing is actually broken; WebGPU was never exposed to the
 page. cairn-plot's in-page [capability notice](#in-page-capability-notice)
 diagnoses exactly this case (an insecure-origin sub-message with the localhost
-remedy) so the degraded state is legible.
+remedy) so the degraded state is legible, and it **also logs a
+`console.warn`** at the device-acquisition seam (once per page, in every entry
+path — report / `_repr_html_` / JS API) naming the insecure-origin cause and the
+localhost/https remedy, so the reason is visible in devtools even where the
+banner can't mount.
 
 ### Remedies (ranked)
 
