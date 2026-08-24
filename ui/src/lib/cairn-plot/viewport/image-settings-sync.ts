@@ -85,8 +85,32 @@ interface SettingsStateDetail {
 
 const EVENT_TYPE = "image-settings-state";
 
-const buses = new Map<string, EventTarget>();
-const lastStates = new Map<string, ImageSyncSettings>();
+// CROSS-BUNDLE SINGLETON. This module is bundled into BOTH the core chunk
+// (`core.iife.js`, where `useCompareControl` in `plot-node.tsx` SUBSCRIBES the
+// diff kernel / compare mode / split / blend) and the gpu-image addon chunk
+// (`gpu-image.iife.js`, where `GpuImagePane` PUBLISHES those keys) — the addon
+// externalizes only React, so it carries its own copy of this file. Two
+// module-local `Map`s would therefore be TWO disjoint registries: the addon's
+// publish would never reach core's subscriber, and every compare-owned key
+// (kernel/mode/split/blend) would silently fail to mirror across a selection —
+// the reported bug (a diff-mode change on one selected viewport not mirroring;
+// in the enlarge stage the kernel drives the DERIVED default colormap, so it
+// read as the colormap not mirroring either). The zoom/pan bus doesn't hit this
+// because it lives core-only. Anchor the registry on `globalThis` so BOTH
+// bundle copies of this module share ONE set of buses + snapshots (the same
+// same-window sharing React itself uses via `window.__cairnPlotReact`).
+interface SettingsBusRegistry {
+  buses: Map<string, EventTarget>;
+  lastStates: Map<string, ImageSyncSettings>;
+}
+const REGISTRY_KEY = "__cairnPlotImageSettingsBus__";
+const registry: SettingsBusRegistry =
+  ((globalThis as unknown as Record<string, SettingsBusRegistry | undefined>)[REGISTRY_KEY] ??= {
+    buses: new Map<string, EventTarget>(),
+    lastStates: new Map<string, ImageSyncSettings>(),
+  });
+const buses = registry.buses;
+const lastStates = registry.lastStates;
 
 function busFor(groupId: string): EventTarget {
   let bus = buses.get(groupId);
