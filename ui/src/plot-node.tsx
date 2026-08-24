@@ -94,8 +94,11 @@ import {
 import {
   sourceKey,
   peekResolved,
+  peekResolveError,
   resolveCached,
   prefetchResolved,
+  subscribeResolveCache,
+  resolveCacheVersion,
 } from "./lib/cairn-plot/resolve-cache";
 import {
   channelToolbarButton,
@@ -181,20 +184,20 @@ function Message({ text, error }: { text: string; error?: boolean }) {
   );
 }
 
-// TEST-ONLY resolve-transition instrumentation (Finding 2). During a STACKED flip
-// the SAME `LeafView` instance is reused, so its resolved `state` still holds the
-// PREVIOUS slot's dataProps for the render right after the node swaps — until the
-// resolve effect (which peeks the cache SYNCHRONOUSLY on a hit) updates it. Two
-// artefacts could flash in that window: a `"Loading…"` PLACEHOLDER (only if state
-// ever reset to "loading" — it must not) and a STALE-DIFF render (diffSpec set but
-// `state.dataProps` has no `__diffB` yet — a half-built `compareSource` whose `b`
-// is undefined). This counter lets a harness prove BOTH are 0 across a flip storm.
-// No production code reads it; the increments are a couple of integers.
+// TEST-ONLY no-flash instrumentation. `LeafView` reads its resolved value straight
+// from the subscribable resolve-cache (a pure function of `resolveKey`), so there is
+// no component-held `state` cell that can hold a PREVIOUS slot's resolution across a
+// flip: a WARM/prefetched slot resolves synchronously (instant, no placeholder); a
+// COLD slot renders a brief `"Loading…"` (accepted). `placeholderMounts` lets a
+// harness prove a WARM flip storm never drops to a placeholder. (The former
+// `staleDiffHolds` counter is retired — the stale-operand / reference-leak window it
+// witnessed is now UNREPRESENTABLE: the leaf never emits a `compareSource` with an
+// undefined `b`, because it only builds one from a RESOLVED diff-pair.) No production
+// code reads this; the increment is a single integer.
 interface LeafResolveStats {
   placeholderMounts: number;
-  staleDiffHolds: number;
 }
-const leafResolveStats: LeafResolveStats = { placeholderMounts: 0, staleDiffHolds: 0 };
+const leafResolveStats: LeafResolveStats = { placeholderMounts: 0 };
 if (typeof window !== "undefined") {
   (window as unknown as { __cairnLeafResolveStats?: LeafResolveStats }).__cairnLeafResolveStats = leafResolveStats;
 }
@@ -243,81 +246,66 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // when in diff mode; the single-image (+ channel override) key otherwise.
   const resolveKey = isDiff ? sourceKey(node) + "|diffpair" : sourceKey(node) + selKey;
 
-  // Only the async-resolved DATA props live in state; the shared-block +
-  // selection-sync props are merged at RENDER time (below) so a selection change
-  // (which flips the sync group ids) re-renders WITHOUT re-fetching the data.
-  // Data resolution is memoized by node identity (`resolve-cache`) so a STACKED
-  // viewport flips to an already-seen / prefetched source SYNCHRONOUSLY — no
-  // "Loading…" flash. Seed from the cache at mount; on a source SWAP keep the old
-  // frame until the new one resolves (never reset to "loading" → never a blank).
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "error"; message: string }
-    | { status: "ready"; dataProps: Record<string, unknown> }
-  >(() => {
-    const cached = peekResolved<Record<string, unknown>>(resolveKey);
-    return cached ? { status: "ready", dataProps: cached } : { status: "loading" };
-  });
+  // SUBSCRIBABLE RESOLVE (the flip-commit model). The async-resolved DATA props are
+  // NOT held in a component `state` cell — they are read PURELY from the resolve-cache
+  // (a `useSyncExternalStore` over the cache) keyed by THIS render's `resolveKey`. So
+  // the resolved value is a pure function of `resolveKey`: a WARM/prefetched flip
+  // resolves the new slot SYNCHRONOUSLY in the flip commit itself (instant, no
+  // placeholder), and a COLD swap (cache miss) renders a brief `"Loading…"` — the
+  // accepted loading state (user ruling: brief loading OK), never a HOLD of the
+  // previous slot's frame. There is therefore no lag cell to leak a stale operand:
+  // the stale-diff / reference-flash windows are structurally unrepresentable, not
+  // guarded. The shared-block + selection-sync props are merged at RENDER time (below)
+  // so a selection change re-renders WITHOUT re-fetching the data.
+  useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
+  // Local error surface for a renderer-registration TIMEOUT only; a decode/resolve
+  // error lives in the cache (read via `peekResolveError`).
+  const [rendererError, setRendererError] = useState<string | null>(null);
   const [, bumpRegistry] = useState(0);
 
   const diffFgData = diffSpec?.fgData;
   useEffect(() => {
     const key = resolveKey;
-    const cached = peekResolved<Record<string, unknown>>(key);
-    if (cached) {
-      setState({ status: "ready", dataProps: cached });
-      return;
-    }
+    // Already resolved (warm/prefetched) or errored → nothing to kick off; the pure
+    // read below shows it. On resolution the cache NOTIFIES and this leaf re-renders.
+    if (peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
     let cancelled = false;
-    // DIFF path: resolve BOTH operands through the compare resolver and stash the
-    // decoded foreground (`__diffB`) + content keys alongside the reference
-    // `source`; the LIVE diff settings are merged at render (they change without
-    // a re-fetch). The reference/foreground SIGN convention: `source` = reference,
-    // `compareSource.b` = foreground (`diff = source − b`, byte-parity with the
-    // compare pane's `texA − texB`).
+    // DIFF path: resolve BOTH operands through the compare resolver; the cached payload
+    // carries the decoded foreground (`__diffB`) + content keys alongside the reference
+    // `source`. SIGN convention: `source` = reference, `compareSource.b` = foreground
+    // (`diff = source − b`, byte-parity with the compare pane's `texA − texB`).
     if (diffSpec && diffFgData) {
-      resolveCached(key, () => resolveDiffPair(node.data, diffFgData, source)).then(
-        (dataProps) => {
-          if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
-        },
-        (err) => {
-          if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
-        },
-      );
+      void resolveCached(key, () => resolveDiffPair(node.data, diffFgData, source)).catch(() => {
+        /* error is cached (peekResolveError) — the pure read surfaces it */
+      });
       return () => {
         cancelled = true;
       };
     }
-    resolveCached(key, async () => {
+    void resolveCached(key, async () => {
       const dp = await resolveDataProps(effectiveData, source);
-      // FORMAT-AGNOSTIC channel selection: EXR selects at decode (dp.exrTree
-      // present — the selector already rode `effectiveData`); everything else
-      // is an N-channel array and the selection is a pure post-decode SLICE.
+      // FORMAT-AGNOSTIC channel selection: EXR selects at decode (dp.exrTree present —
+      // the selector already rode `effectiveData`); everything else is an N-channel
+      // array and the selection is a pure post-decode SLICE.
       const describedSelectable =
         !!dp.exrTree && treeHasSelectableChannels(dp.exrTree as ChannelMenuTree);
       if (chSelRef.current?.layer != null && !describedSelectable) {
         return applyChannelSlice(dp, chSelRef.current.layer);
       }
       return dp;
-    }).then(
-      (dataProps) => {
-        if (!cancelled) setState({ status: "ready", dataProps: dataProps as Record<string, unknown> });
-      },
-      (err) => {
-        if (cancelled) return;
-        // A CHANNEL-OVERRIDE decode that fails must never strand the pane in an
-        // error state with no way back (the toolbar — and with it the CHANNELS
-        // menu — only renders on the ready pane): revert the override, keep the
-        // last good frame, and log the reason.
-        if (chSelRef.current) {
-          // eslint-disable-next-line no-console
-          console.warn("cairn-plot: channel selection failed, reverting:", err);
-          setChSel(null);
-          return;
-        }
-        setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
-      },
-    );
+    }).catch((err) => {
+      if (cancelled) return;
+      // A CHANNEL-OVERRIDE decode that fails must never strand the pane in an error
+      // state with no way back (the CHANNELS menu only renders on the ready pane):
+      // revert the override (a different resolveKey re-resolves the base source) and
+      // keep the last good frame. A non-channel error stays in the cache and the pure
+      // read surfaces it as the error state.
+      if (chSelRef.current) {
+        // eslint-disable-next-line no-console
+        console.warn("cairn-plot: channel selection failed, reverting:", err);
+        setChSel(null);
+      }
+    });
     return () => {
       cancelled = true;
     };
@@ -349,48 +337,22 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     [settingsGroupId],
   );
 
-  // SYNCHRONOUS RESOLVE (cache hit) — the FLIP-COMMIT fix. On a stacked flip the
-  // node/diffSpec swap in ONE React commit, but `state` still holds the PREVIOUS
-  // slot's dataProps until the resolve EFFECT's `setState` lands a commit LATER
-  // (the effect peeks the cache synchronously, but the setState round-trip is a
-  // second commit). That intervening window paints the OLD slot inside the NEW
-  // tab — the reported image-inside-the-diff-tab flash — because the pane's
-  // pre-paint render (874800e) only makes the RESOLVE commit atomic, not the flip
-  // commit. FIX: read the CURRENT resolveKey from the cache DURING RENDER, so a
-  // warmed flip (prefetched on stack entry, or previously visited) carries the new
-  // slot's dataProps in the flip commit ITSELF — the pane's pre-paint render then
-  // paints the new slot on the first frame. A genuine MISS returns undefined and
-  // falls back to `state` (loading on a cold mount, or the previous frame held —
-  // the c459c34 hold, still correct for async first loads). This is a pure
-  // derive-from-cache-during-render (no setState-in-render): `peekResolved` returns
-  // the SAME cached object across renders, so `dataProps` stays reference-stable.
-  // TEST-ONLY toggle (`window.__cairnDisableSyncResolve`) — reverts to the pre-fix
-  // ASYNC-ONLY resolve (no synchronous cache read, no stale-diff rejection) so ONE
-  // harness can measure the pre-fix stale-painted-frame / reference-leak rate and
-  // the post-fix rate against the identical driver. Zero production cost (one
-  // window read; the flag is never set outside a harness).
-  const syncResolveDisabled =
-    typeof window !== "undefined" &&
-    (window as unknown as { __cairnDisableSyncResolve?: boolean }).__cairnDisableSyncResolve === true;
-  const resolvedNow = syncResolveDisabled ? undefined : peekResolved<Record<string, unknown>>(resolveKey);
-  const stateReady = state.status === "ready" ? state.dataProps : undefined;
-  // REFERENCE-LEAK GUARD (the confirmed artefact): on a diff→image flip the reused
-  // LeafView's `state` still holds the DIFF resolution — whose `source` IS the diff
-  // REFERENCE operand — for the commit right after the node swaps. On the
-  // single-image path (`!diffSpec`) a `state` fallback that carries `__diffB` would
-  // therefore spread `source: <reference>` and the pane, seeing NO `compareSource`,
-  // would present a PLAIN IDENTITY render of the reference — the reported
-  // reference-image flash inside the (freshly-flipped) tab. Reject that stale-diff
-  // fallback: use the SYNCHRONOUS cache read for THIS node's own resolveKey
-  // (prefetched image slot ⇒ a hit ⇒ correct image in the flip commit itself), and
-  // if it misses, HOLD as not-ready rather than emit the reference. Prefetch (both
-  // slots warmed on stack entry) makes the miss path essentially unreachable after
-  // mount, so the hold is a rare first-interaction transient, never the reference.
-  const staleDiffFallback = !syncResolveDisabled && !diffSpec && stateReady?.__diffB !== undefined;
-  const dataProps: Record<string, unknown> | undefined =
-    resolvedNow ?? (staleDiffFallback ? undefined : stateReady);
+  // PURE READ of THIS render's resolveKey (the flip-commit guarantee). `peekResolved`
+  // returns the SAME cached object across renders, so `dataProps` is reference-stable;
+  // a flip swaps `resolveKey` and the value it reads in the SAME commit — a warm slot
+  // is instant, a cold slot misses (→ `undefined` → the brief loading state). There is
+  // no `state` fallback, so a previous slot's resolution can never leak: the stale-diff
+  // reference-flash is structurally impossible, not guarded.
+  const dataProps: Record<string, unknown> | undefined = peekResolved<Record<string, unknown>>(resolveKey);
+  const cacheError = peekResolveError(resolveKey);
+  // A `kind:"diff"` payload STRUCTURALLY carries its foreground (`__diffB`) — the leaf
+  // only builds a `compareSource` from a RESOLVED diff pair, so `b` is never undefined.
+  // This guard is defensive (should be unreachable): if a diff payload ever lacked its
+  // operand, render loading rather than a half-built `compareSource`.
+  const diffOperandMissing = !!diffSpec && dataProps !== undefined && dataProps.__diffB === undefined;
+  const errorMsg = rendererError ?? cacheError;
   const status: "loading" | "error" | "ready" =
-    dataProps !== undefined ? "ready" : state.status === "error" ? "error" : "loading";
+    dataProps !== undefined && !diffOperandMissing ? "ready" : errorMsg !== undefined ? "error" : "loading";
 
   // Merge the shared block + the live sync group ids over the resolved data
   // props at render (leaf `node.props` win over `shared`, data props win over
@@ -407,21 +369,11 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // (interpolation/showAxes/toolbar/pixelValueNotation).
     if (diffSpec) {
       const dp = dataProps;
-      // SYNCHRONOUS HOLD (Finding 2): a reused LeafView just flipped INTO diff but
-      // `state` still holds the PREVIOUS slot's single-image dataProps (no
-      // `__diffB`). Emitting a `compareSource` with `b: undefined` would drive the
-      // pane with no foreground operand for a frame. Instead render the PREVIOUS
-      // content — the plain image already on screen (`dp.source`) — and let the
-      // resolve effect (a synchronous cache-hit on a warmed/prefetched stack)
-      // swap in the real diff dataProps on the very next commit. No placeholder,
-      // no half-built compareSource: the pane simply keeps its last frame.
-      if (dp.__diffB === undefined) {
-        leafResolveStats.staleDiffHolds++;
-        // Hold the previous single-image frame for this one commit (pixel
-        // correctness — never a `compareSource` with an undefined `b`); the resolve
-        // effect swaps in the real diff dataProps on the next commit.
-        return { ...(node.props ?? {}), source: dp.source, inStackedGrid };
-      }
+      // `dp` is a RESOLVED diff pair, so `__diffB` (the foreground operand) is always
+      // present — `status` already forced loading otherwise (`diffOperandMissing`), so
+      // this memo never builds a `compareSource` with an undefined `b`. Defensive:
+      // if it were somehow missing, return benign props (not rendered — status loading).
+      if (dp.__diffB === undefined) return {};
       const dsync: Record<string, unknown> = {};
       const vpg = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
       if (vpg) dsync.viewportSyncGroupId = vpg;
@@ -506,13 +458,14 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     const unsub = onRegister(() => {
       if (!settled && getRenderer(name)) {
         settled = true;
+        setRendererError(null); // renderer arrived → clear any prior timeout error
         bumpRegistry((n) => n + 1);
       }
     });
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
-        setState({ status: "error", message: `unknown renderer "${name}"` });
+        setRendererError(`unknown renderer "${name}"`);
       }
     }, RENDERER_WAIT_MS);
     return () => {
@@ -527,7 +480,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     return <Message text="Loading…" />;
   }
   if (status === "error") {
-    return <Message text={`Plot error: ${state.status === "error" ? state.message : "unknown"}`} error />;
+    return <Message text={`Plot error: ${errorMsg ?? "unknown"}`} error />;
   }
   const Renderer = getRenderer(node.renderer);
   return Renderer ? (

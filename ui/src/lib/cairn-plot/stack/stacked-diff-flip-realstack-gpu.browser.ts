@@ -658,18 +658,15 @@ async function main(): Promise<void> {
     // new slot's first SUBMIT, `performance.now()`-stamped; a free-running rAF loop
     // records every browser PAINT boundary. For an image→DIFF flip (target kind
     // "diff", unambiguous) a paint strictly between the flip keydown and the first
-    // "diff" submit = a stale painted frame. We measure PRE-FIX (sync-resolve toggled
-    // OFF → the async two-commit resolve, the coordinator's mechanism) and POST-FIX
-    // (sync-resolve during-render + diff-pair prefetch) with the SAME driver, plus
-    // `staleDiffHolds` (LeafView's stale-window counter) and the render-log
-    // pipeline-mismatch oracle. Acceptance of the USER's symptom remains the user's
-    // own re-test — this proves the mechanism the pivot named is closed on the real
-    // path, not that the pixel the user sees is fixed.
+    // "diff" submit = a stale painted frame. `LeafView` now reads the resolve-cache
+    // PURELY (`useSyncExternalStore`), so a warm/prefetched flip resolves the new slot
+    // in the flip commit itself — there is ONE path (no `__cairnDisableSyncResolve`
+    // pre/post toggle, no `staleDiffHolds` witness — the stale-operand frame is
+    // structurally unrepresentable). The invariant is the "no stale-operand frame":
+    // ZERO stale painted frames + ZERO pipeline-mismatch presents on resident flips.
     const measureRealPath = async (
       hostId: string,
-      disabled: boolean,
-    ): Promise<{ measured: number; stale: number; preStale: number; holds: number; mismatch: number; presents: number }> => {
-      (window as unknown as { __cairnDisableSyncResolve?: boolean }).__cairnDisableSyncResolve = disabled;
+    ): Promise<{ measured: number; stale: number; mismatch: number; presents: number }> => {
       const host = document.createElement("div");
       host.id = hostId;
       host.style.cssText = "width:520px;height:280px;background:#222;position:relative";
@@ -688,12 +685,9 @@ async function main(): Promise<void> {
       await waitFor(() => activeIdx(hostId) === 0, 4000);
       await sleep(250);
 
-      const stats = (window as unknown as { __cairnLeafResolveStats?: { staleDiffHolds: number; placeholderMounts: number } })
+      const stats = (window as unknown as { __cairnLeafResolveStats?: { placeholderMounts: number } })
         .__cairnLeafResolveStats;
-      if (stats) {
-        stats.staleDiffHolds = 0;
-        stats.placeholderMounts = 0;
-      }
+      if (stats) stats.placeholderMounts = 0;
 
       let collecting = true;
       const paints: number[] = [];
@@ -720,7 +714,6 @@ async function main(): Promise<void> {
       stopPaintPhaseLog();
       stopPaneRenderLog();
       root.unmount();
-      (window as unknown as { __cairnDisableSyncResolve?: boolean }).__cairnDisableSyncResolve = false;
 
       // First submit per content epoch, time-ordered; then the diff-kind ones.
       const firstSubmit = new Map<number, PaintPhaseRecord>();
@@ -744,35 +737,27 @@ async function main(): Promise<void> {
         if (paints.some((p) => p > f.t + 0.01 && p < ready - 0.01)) stale++;
       }
       const mismatch = renderLog.filter(isPipelineMismatch).length;
-      const holds = stats ? stats.staleDiffHolds : -1;
       note(
-        `PHASE D real-path (${hostId}, sync-resolve ${disabled ? "DISABLED=pre-fix" : "ENABLED=post-fix"}): ` +
-          `measured ${measured} img→diff flips, STALE painted frames=${stale}, staleDiffHolds=${holds}, ` +
+        `PHASE D real-path (${hostId}): measured ${measured} img→diff flips, STALE painted frames=${stale}, ` +
           `pipeline-mismatch presents=${mismatch}, total presents=${renderLog.length}`,
       );
-      return { measured, stale, preStale: 0, holds, mismatch, presents: renderLog.length };
+      return { measured, stale, mismatch, presents: renderLog.length };
     };
 
-    const preFix = await measureRealPath("rpD-pre", true);
-    const postFix = await measureRealPath("rpD-post", false);
-
-    // PRE-FIX must exercise the stale window (the harness detects the bug it guards):
-    // the async two-commit resolve holds the previous slot at least once per
-    // image→diff flip (`staleDiffHolds > 0`) and paints at least one stale frame.
+    // ONE path (subscribable resolve-cache). Acceptance: the storm exercises real
+    // resident img→diff flips and paints NO stale-operand frame and NO pipeline
+    // mismatch — the invariant that replaces the retired `staleDiffHolds` witness.
+    const realPath = await measureRealPath("rpD");
+    report(realPath.measured >= 20, `storm exercised real resident img→diff flips (${realPath.measured})`);
     report(
-      preFix.holds > 0,
-      `PRE-FIX (sync-resolve OFF) exercises the stale-diff window: staleDiffHolds=${preFix.holds} (>0), stale painted frames=${preFix.stale}`,
+      realPath.stale === 0,
+      `ZERO stale painted frames on real-path img→diff flips (${realPath.stale} of ${realPath.measured})`,
     );
-    // POST-FIX acceptance: zero stale painted frames, zero stale-diff holds on
-    // resident flips, zero pipeline-mismatch presents.
-    report(postFix.measured >= 20, `POST-FIX storm exercised real resident img→diff flips (${postFix.measured})`);
     report(
-      postFix.stale === 0,
-      `POST-FIX: ZERO stale painted frames on real-path img→diff flips (${postFix.stale} of ${postFix.measured}; pre-fix ${preFix.stale})`,
+      realPath.mismatch === 0,
+      `ZERO pipeline-mismatch presents (identity blit while a compare is intended) (${realPath.mismatch})`,
     );
-    report(postFix.holds === 0, `POST-FIX: ZERO stale-diff holds on resident flips (${postFix.holds}; pre-fix ${preFix.holds})`);
-    report(postFix.mismatch === 0, `POST-FIX: ZERO pipeline-mismatch presents (identity blit while a compare is intended) (${postFix.mismatch})`);
-    if (postFix.stale !== 0 || postFix.holds !== 0 || postFix.mismatch !== 0 || postFix.measured < 20) allOk = false;
+    if (realPath.stale !== 0 || realPath.mismatch !== 0 || realPath.measured < 20) allOk = false;
 
     // ============ PHASE E — AUTHORED-COLORMAP ENCODING GENERATION ============
     // A stacked [magma-scalar image, plain image] grid: flipping to the authored-
