@@ -178,9 +178,9 @@ interface PaneSyncCtx {
    *  these top-down — no consumer subscribes to the bus itself. */
   syncedSettings?: ImageSyncSettings | null;
   /** The ONE write path into the viewport's settings store: merges a patch into
-   *  the LOCAL store (gestures stick) and the GROUP store while selected (peers
-   *  follow). Threaded to the panes as a prop (the bundle split rules out
-   *  context on the addon side). */
+   *  the GROUP store while selected (transient — gone on unselect), else the
+   *  LOCAL store (sticks). Threaded to the panes as a prop (the bundle split
+   *  rules out context on the addon side). */
   setSyncedSettings?: (patch: ImageSyncSettings) => void;
 }
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
@@ -248,13 +248,19 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       : localChSel;
   const chSelRef = useRef<ChannelSelection | null>(null);
   chSelRef.current = chSel;
+  // The last UNSLICED resolve's channel tree (see the menu block below).
+  const baseChannelTreeRef = useRef<ChannelMenuTree | undefined>(undefined);
   // The ONE write path for a channel pick (store when present, local else) —
   // shared by the strip handler and the failed-decode revert.
   const setSyncedRef = useRef(paneSync?.setSyncedSettings);
   setSyncedRef.current = paneSync?.setSyncedSettings;
   const applyChannelSelect = useCallback((next: ChannelSelection | null) => {
-    setChSel(next);
-    setSyncedRef.current?.({ channelSelect: next });
+    // TOP-OF-STACK write (transient-group ruling): the store when present
+    // (group while selected — transient; local otherwise — sticks); the local
+    // cell only serves a storeless viewport. Writing both would let a
+    // group-session pick survive unselect through the local cell.
+    if (setSyncedRef.current) setSyncedRef.current({ channelSelect: next });
+    else setChSel(next);
   }, []);
   // The EFFECTIVE data spec: the strip override merged over the node's data
   // (image specs only — the strip never renders for other kinds).
@@ -438,10 +444,16 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     const described = dataProps.exrTree as ChannelMenuTree | undefined;
     // A deep-only described tree offers nothing to select — fall back to the
     // synthetic RGBA tree over the FLATTENED pixels (format-agnostic slice).
-    const exrTree =
+    const resolvedTree =
       (described && treeHasSelectableChannels(described) ? described : undefined) ??
       (syntheticChannelTree(dataProps.source as never) as ChannelMenuTree | null) ??
       undefined;
+    // A SLICED resolve (a single channel picked) can carry NO selectable tree
+    // (the sliced source is k=1), which would drop the CHANNELS menu and make
+    // the pick irreversible. Remember the last UNSLICED tree and offer it while
+    // a selection is active, so the channel choice stays changeable.
+    if (chSel == null && resolvedTree) baseChannelTreeRef.current = resolvedTree;
+    const exrTree = resolvedTree ?? (chSel != null ? baseChannelTreeRef.current : undefined);
     if (exrTree && (node.data.kind === "image" || node.data.kind === "imghdr" || node.data.kind === "inline" || node.data.kind === "url")) {
       const effSel: ChannelSelection =
         chSel ??
@@ -1459,12 +1471,34 @@ function useCompareControl(
     (props.diffSubmode as string | undefined) ?? (cmp?.diffSubmode as string | undefined) ?? "absolute";
   const descriptorSplit = (props.splitPosition as number | undefined) ?? 0.5;
 
-  // Overrides (null ⇒ follow the descriptor). A live change (menu callback or a
-  // synced value) sets the override; it survives flips because this hook's owner is
-  // reused, and re-seeds from the descriptor for a fresh compare while null.
-  const [viewModeOverride, setViewMode] = useState<CompareViewMode | null>(null);
-  const [kernelOverride, setDiffKernel] = useState<string | null>(null);
-  const [splitOverride, setSplitPos] = useState<number | null>(null);
+  // Overrides (null ⇒ follow the descriptor) — the STORELESS fallback only.
+  const [viewModeOverride, setViewModeOverride] = useState<CompareViewMode | null>(null);
+  const [kernelOverride, setKernelOverride] = useState<string | null>(null);
+  const [splitOverride, setSplitOverride] = useState<number | null>(null);
+  // TOP-OF-STACK writes (transient-group ruling): with a settings store the
+  // panes PUBLISH every mode/kernel/split change and the store derives back
+  // down, so the local overrides must NOT also be written — a group-session
+  // change would survive unselect through them. They serve only a storeless
+  // control (no `setSettings` threaded).
+  const hasStore = !!setSettings;
+  const setViewMode = useCallback(
+    (m: CompareViewMode) => {
+      if (!hasStore) setViewModeOverride(m);
+    },
+    [hasStore],
+  );
+  const setDiffKernel = useCallback(
+    (k: string) => {
+      if (!hasStore) setKernelOverride(k);
+    },
+    [hasStore],
+  );
+  const setSplitPos = useCallback(
+    (p: number) => {
+      if (!hasStore) setSplitOverride(p);
+    },
+    [hasStore],
+  );
 
   // ONE precedence, derived every render (no adoption effects): settings store >
   // local override > descriptor. Every change publishes to the store (the panes
@@ -1486,9 +1520,9 @@ function useCompareControl(
   // the pane moved it out of the pane HOME's reach, so the pane routes HOME back
   // here via `compareSource.onCompareReset`.
   const reset = useCallback(() => {
-    setViewMode(null);
-    setDiffKernel(null);
-    setSplitPos(null);
+    setViewModeOverride(null);
+    setKernelOverride(null);
+    setSplitOverride(null);
     // HOME is a STORE write (a lone viewport is a group of one): set the
     // DESCRIPTOR defaults by value — local store + group store — so every synced
     // member resets with the clicked viewport and the reset values persist.

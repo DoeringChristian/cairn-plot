@@ -33,8 +33,6 @@
  * resident?" — the present gate, the pre-paint effect, the flip detector, and
  * the paint-phase log all read this struct.
  */
-import { getDiffKernel } from "../engine/kernels";
-
 export interface RenderSnapshot {
   /** Content stage: which pipeline this frame drives. */
   mode: "image" | "diff" | "compositor";
@@ -44,8 +42,6 @@ export interface RenderSnapshot {
   bId: string | null;
   /** Resolved diff kernel id (diff mode), else "". */
   kernelId: string;
-  /** A cached (multi-pass FLIP/HDR-FLIP/SSIM) diff — its result lives in the cache. */
-  isCachedDiff: boolean;
   /** Compositor param (split position); 0 otherwise. */
   contentParam: number;
   /** Flip detector — sources ⊗ op ⊗ mode, excluding viewport/exposure. */
@@ -79,9 +75,11 @@ export interface RenderSnapshotInput {
   appliedBId: string | null | undefined;
   naturalDims: { w: number; h: number } | null;
   refDims: { w: number; h: number } | null;
-  /** For a cached diff, whether the multi-pass RESULT is already in the per-device
-   *  cache (a non-mutating pool peek). Only consulted when the kernel is cached. */
-  isCachedResultResident: () => boolean;
+  /** Whether this frame's DIFF content can paint without a compute stall — the
+   *  kernel-agnostic pool peek (`PaneHandle.isDiffContentResident`): a pointwise
+   *  kernel streams (resident iff its op resolves); a multipass kernel is
+   *  resident iff its cached result is. Consulted only in diff mode. */
+  isDiffContentResident: () => boolean;
 }
 
 /** Assemble the render snapshot from one commit's props + the pool's applied stamps. */
@@ -104,7 +102,7 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
     appliedBId,
     naturalDims,
     refDims,
-    isCachedResultResident,
+    isDiffContentResident,
   } = inp;
 
   const mode: RenderSnapshot["mode"] = diffMode ? "diff" : compositorMode ? "compositor" : "image";
@@ -119,7 +117,6 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
         : "hdr"
       : `img:${imageUrl}`;
   const bId: string | null = hasCompare && hasBOperand ? `B:${contentKeyB}` : null;
-  const isCachedDiff = (diffMode ? getDiffKernel(resolvedKernelId) : undefined)?.kind === "multipass";
   const sourcesApplied = paneReady && appliedPrimaryId === primaryId && appliedBId === bId;
 
   return {
@@ -127,7 +124,6 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
     primaryId,
     bId,
     kernelId: diffMode ? resolvedKernelId : "",
-    isCachedDiff,
     contentParam: compositorMode ? splitPosition : 0,
     contentKey: `${primaryId}|${bId}|${diffMode ? resolvedKernelId : ""}|${compositorMode ? compareOpMode : ""}`,
     sourcesApplied,
@@ -135,6 +131,6 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
       sourcesApplied &&
       !!naturalDims &&
       ((diffMode || compositorMode) ? !!refDims : true) &&
-      (isCachedDiff ? isCachedResultResident() : true),
+      (diffMode ? isDiffContentResident() : true),
   };
 }

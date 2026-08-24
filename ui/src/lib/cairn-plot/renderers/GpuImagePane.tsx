@@ -112,6 +112,7 @@ import { useSeedGroupOnFormation, useViewportSettings } from "./use-synced-image
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
   displayToolbarButton,
+  scalarFaceColormap,
   reduceSegment,
   usePaneEncoding,
   compareDisplayToolbarButton,
@@ -545,16 +546,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     ? (props as HdrImageProps).tonemap
     : (props as SdrImageProps).tonemap;
 
-  // SINGLE-RECEIVER settings sync. The group's COMPLETE accumulated display
-  // settings, driven DOWN from the ONE node-level `useReceiveImageSettings`
-  // subscriber (`plot-node.tsx` / enlarge stage / compositor). Present ⇒ this pane
-  // is a CONTROLLED SURFACE that FOLLOWS these display keys (colormap/tonemap/peak/
-  // gamma/EV/offset/reduce/bounds) via the SAME controlled reseed the
-  // `toolbar={false}` host seam uses — while its own menus still PUBLISH edits up
-  // (below). The pane is NEVER itself a bus subscriber; there is exactly ONE
-  // receiver per viewport, at the node. `synced.*` overrides the descriptor prop
-  // for the reseed inputs (never the mount-time descriptor semantics — the HDR-out
-  // gate + `authoredColormapIsLut` keep reading the raw props).
   // The viewport's settings STORE: threaded down from its owner (node frame /
   // stage cell / compositor) when present; a BARE mount (card / cross-type
   // host) owns its own group-of-one store, so settings live ONLY in stores —
@@ -565,8 +556,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const threadedSet = backendProps.setSyncedSettings;
   const synced = threadedSet ? backendProps.syncedSettings : ownStore.settings;
   const setSynced = threadedSet ?? ownStore.set;
-  const syncedColormap = synced?.colormap;
-  const syncedTonemap = synced?.tonemap;
 
   // -----------------------------------------------------------------------
   // DIFF kernel + DEFAULT colormap (state-unification). The diff/compare face no
@@ -617,12 +606,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const setDiffKernel = useCallback(
     (id: string) => {
       // ONE write path: route to the owner when present (it re-derives `opId` back
-      // into this pane), else the local fallback store.
+      // into this pane). No owner ⇒ ONE settings-store write (the render lookup
+      // reads `synced.diffKernel` first; a local-only write would stay shadowed
+      // by a store value — the HOME-can't-reset-the-kernel bug). Every pane has
+      // a store (own fallback on bare mounts), so no local cell is written.
       if (compareSource?.onDiffKernelChange) compareSource.onDiffKernelChange(id);
-      else setLocalKernel(id);
+      else setSynced({ diffKernel: id });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compareSource?.onDiffKernelChange, setLocalKernel],
+    [compareSource?.onDiffKernelChange, setSynced],
   );
   // Cheap pure derivations: the concrete kernel id (float sources auto-dispatch
   // flip→hdr-flip) and the diff's DEFAULT colormap (authored override else the
@@ -684,41 +676,33 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,
     curveSet: SDR_TONEMAP_OPERATORS,
-    // ONE store for image AND diff. `enc` is the viewport's single display-encoding
-    // state, seeded from the image props and PERSISTED across content changes (an
-    // interactive viewport owns its setting). The diff colormap is NOT a second store:
-    // it is DERIVED below as `enc.overridden ? enc.colormap : diffDefaultColormap` — the
-    // user's viewport-wide pick when overridden, else the diff's kernel default. So a
-    // colormap picked on the diff shows on the scalar image and vice-versa (one setting),
-    // an un-picked diff shows its kernel default (no flip reseed → no flicker), and HOME
-    // clears the override so the diff falls back to its default.
-    // Controlled surfaces follow live props (host contract); interactive viewports
-    // seed once from the initially-visible face (one-concrete-value model).
-    propColormap: controlledSurface
-      ? (syncedColormap ?? propColormap)
-      : (initialEncSeedRef.current ?? propColormap),
-    propTonemap: syncedTonemap ?? propTonemap,
+    // ONE encoding for image AND diff faces (the viewport's single display-
+    // encoding value). The store's `encoding` id rules when present (see
+    // usePaneEncoding); these props are only the SEED term of the lookup.
+    propColormap: controlledSurface ? propColormap : (initialEncSeedRef.current ?? propColormap),
+    propTonemap,
     resolveDefaultCurve,
     controlledSurface,
     // The settings store rules when present; picks publish and flow back down.
     settings: synced,
   });
-  // HOME / double-click: assign the viewport's encoding CONCRETELY from the
-  // CURRENTLY-VISIBLE face's defaults (diff → authored/kernel default; image →
-  // authored colormap else the default curve). Identical for the home button and
-  // double-click; flipping never changes the value.
+  // HOME / double-click: set the viewport's encoding to the CURRENTLY-VISIBLE
+  // face's defaults (diff → authored/kernel default; image → authored colormap
+  // else the default curve). ONE STORE WRITE — the store-backed lookup is what
+  // renders, so HOME must publish (the local `enc` write only serves the
+  // storeless fallback). Identical for the home button, double-click and the
+  // probe seam; flipping never changes the value.
   const assignVisibleFaceDefaultEncoding = () => {
-    // HOME resets EVERYTHING for a diff — kernel back to the descriptor default
-    // (via onCompareReset / the local fallback) AND the colormap to THAT (post-
-    // reset) kernel's default — so the colormap target derives from the
-    // descriptor kernel, not the momentarily-still-current one.
-    enc.setEncoding(
-      diffMode
-        ? ((diffSeedColormap ?? kernelDefaultColormap(localKernelMeta.default)) as Colormap)
-        : propColormap !== "none"
-          ? propColormap
-          : resolveDefaultCurve(propTonemap),
-    );
+    // For a diff, HOME resets the kernel too (via onCompareReset / the local
+    // fallback), so the colormap target derives from the DESCRIPTOR kernel, not
+    // the momentarily-still-current one.
+    const target = diffMode
+      ? ((diffSeedColormap ?? kernelDefaultColormap(localKernelMeta.default)) as Colormap)
+      : propColormap !== "none"
+        ? propColormap
+        : resolveDefaultCurve(propTonemap);
+    enc.setEncoding(target); // storeless fallback
+    publishSettings({ encoding: target });
   };
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
@@ -726,10 +710,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const sdrColormap: Colormap = hdrMode ? "none" : (enc.colormap as Colormap);
   const hdrColormap: Colormap = hdrMode ? (enc.colormap as Colormap) : "none";
   const effectiveTonemap: TonemapOperator = enc.curveId as TonemapOperator;
-  // PEAK (HDR ceiling) applies to the CURVE family only — hidden for the `normal`
-  // remap and for a colormap LUT (neither has a peak). γ / EV / OFF gate off the
-  // ACTIVE encoding's param manifest (see the slider block below).
-  const activeIsCurve = getEncoding(enc.encodingId)?.kind === "curve";
+  // PEAK (HDR ceiling) gates off the ACTIVE encoding's param MANIFEST — like
+  // γ / EV / OFF. Every curve declares `peak` (each respects P as its ceiling on
+  // an HDR surface); the `normal` remap and colormap LUTs don't. The pane never
+  // inspects encoding kinds.
+  const activeRespectsPeak = enc.hasParam("peak");
   // TEST-ONLY tripwire tag: did the DESCRIPTOR author a colormap LUT for this pane?
   // A plain identity present with NO colormap bound while this is true is the
   // encoding-generation lag (`isEncodingGenerationMismatch`). Static, from the
@@ -857,22 +842,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
-  // -----------------------------------------------------------------------
-  // DIFF display colormap — DERIVED from the viewport's ONE encoding store
-  // (state-unification). There is NO separate `diffColormapOverride`: the OVERRIDE is
-  // `enc` itself (`enc.overridden` = the user picked; `enc.colormap` = the pick), and
-  // the DEFAULT is `diffDefaultColormap` (authored diff colormap else the kernel
-  // default, computed above). So `enc.overridden ? enc.colormap : diffDefaultColormap`
-  // is exactly the old `resolveDiffColormap(kernel, override)` — but the override now
-  // lives in the SAME store the image face reads/writes: a diff-colormap pick writes
-  // `enc` (→ the scalar image shows it too), HOME clears `enc.overridden` (→ the diff
-  // falls back to its kernel default), and switching kernels re-derives the default
-  // while un-picked (the derivation re-resolves every render — ordering-independent).
-  // -----------------------------------------------------------------------
-  // ONE-CONCRETE-VALUE model: the viewport's encoding ALWAYS applies — to every
-  // face, on every flip. `diffDefaultColormap` is only the SOURCE copied in at
-  // init/HOME (see `assignVisibleFaceDefaultEncoding`), never a live fallback.
-  const effectiveDiffColormap = enc.colormap as Colormap;
+  // DIFF display colormap — the viewport's ONE encoding value, resolved for the
+  // scalar face by the encoding layer (applicability at render, ruling 5): a
+  // LUT applies; a curve doesn't, so the kernel default stands.
+  const effectiveDiffColormap = scalarFaceColormap(enc, diffDefaultColormap) as Colormap;
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
@@ -910,8 +883,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             // stores the scalar colormap and simply doesn't false-color (ruling 5:
             // arity gating at render).
             encoding: deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap),
-            colormap: effectiveDiffColormap,
-            tonemap: effectiveTonemap,
             tonemapGamma,
             peak,
             exposureEV: displayEV,
@@ -921,11 +892,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             diffKernel,
           }
         : {
-            // The ONE `encoding` id, plus the derived colormap/tonemap so a pre-registry
-            // (compare) peer still follows the shared look.
+            // The ONE `encoding` id — the registry derives colormap/curve from it.
             encoding: enc.encodingId,
-            colormap: enc.colormap,
-            tonemap: effectiveTonemap,
             tonemapGamma,
             peak,
             exposureEV: displayEV,
@@ -943,8 +911,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition],
   );
   // The ONE write path into the viewport's settings store (see the binding of
-  // `setSynced` above): local store always (gestures stick), group store too
-  // while selected (peers follow).
+  // `setSynced` above): the GROUP store while selected (transient — gone on
+  // unselect), else the viewport's local store (sticks).
   const publishSettings = setSynced;
   // Anchor formation seed: a forming group converges to this viewport's values.
   useSeedGroupOnFormation(
@@ -956,14 +924,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);
-      const isLut = getEncoding(id)?.kind === "lut";
-      publishSettings({
-        encoding: id,
-        colormap: isLut ? id : "none",
-        tonemap: isLut ? effectiveTonemap : id,
-      });
+      publishSettings({ encoding: id });
     },
-    [enc, publishSettings, effectiveTonemap],
+    [enc, publishSettings],
   );
   // Every display gesture is ONE store write; the value flows back down through
   // the render lookup — no pane state to keep consistent.
@@ -988,14 +951,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (next: [number, number]) => publishSettings({ colorMin: next[0], colorMax: next[1] }),
     [publishSettings],
   );
-  // DIFF publish sites (Phase 2c): the ONE place a diff MODE / colormap pick both
-  // sets local state AND broadcasts to the shared settings bus (peers follow).
+  // DIFF gesture sites: a kernel / colormap pick is one store write (+ the
+  // kernel routes through its owner); peers follow via the store.
   const changeDiffKernel = useCallback(
     (id: string) => {
-      // No colormap bookkeeping needed: `effectiveDiffColormap` is DERIVED, so while
-      // un-picked it re-resolves to the NEW kernel's default automatically, and a user
-      // pick (`enc.overridden`) sticks across the switch — the old `resolveDiffColormap`
-      // default-vs-override behaviour, for free.
       setDiffKernel(id);
       // USER RULING: switching to another error SELECTS THAT ERROR'S DEFAULT
       // colormap (a kernel switch re-copies its default into the viewport's one
@@ -1003,14 +962,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // VALUE so mirrored peers converge on the same colormap.
       const kernelDefault = kernelDefaultColormap(id) as Colormap;
       enc.setEncoding(kernelDefault);
-      // ONE patch by value: the kernel + the display keys carrying its new default,
+      // ONE patch by value: the kernel + the encoding carrying its new default,
       // mirrored to peers (ruling 3/4).
       publishSettings({
         compareMode: "diff",
         diffKernel: id,
         encoding: deriveCompareEncodingId("scalar", effectiveTonemap, kernelDefault),
-        colormap: kernelDefault,
-        tonemap: effectiveTonemap,
       });
     },
     [setDiffKernel, publishSettings, enc, effectiveTonemap],
@@ -1023,11 +980,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // sticks across kernel switches AND — in a stack — across image↔diff flips (one
       // viewport, one setting). HOME re-seeds `enc` to the kernel default.
       enc.setEncoding(id === "none" ? enc.curveId : id);
-      publishSettings({
-        encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id),
-        colormap: id,
-        tonemap: effectiveTonemap,
-      });
+      publishSettings({ encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id) });
     },
     [enc, publishSettings, effectiveTonemap],
   );
@@ -1555,18 +1508,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // A cached diff's result is resident iff the per-device cache HITs — a
     // non-mutating pool peek (a cold cache stays on the post-paint path rather
     // than recomputing multi-pass on the paint critical path).
-    isCachedResultResident: () =>
-      !!paneHandleRef.current?.isDiffResultCached(
+    isDiffContentResident: () =>
+      !!paneHandleRef.current?.isDiffContentResident(
         resolvedKernelId,
         { a: contentKeyA, b: contentKeyB },
-        resolvedKernelId === "hdr-flip" && hdrExposures
-          ? {
-              ppd: 67,
-              startExposure: hdrExposures.startExposure,
-              stopExposure: hdrExposures.stopExposure,
-              numExposures: hdrExposures.numExposures,
-            }
-          : undefined,
+        { hdrExposures },
         diffMapping ?? undefined,
       ),
   });
@@ -1694,7 +1640,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // 1×1 placeholder). The render effect re-fires on `refUploadVersion`.
       if (!refDims) return false;
       const kernelId = getDiffKernel(resolvedKernelId) ? resolvedKernelId : "absolute";
-      const kernel = getDiffKernel(kernelId);
       const cmap = effectiveDiffColormap; // an encoding/colormap id, or "none"
       const encEntry = cmap !== "none" ? getEncoding(cmap) : undefined;
       const isAnalytic = !!encEntry?.analytic;
@@ -1724,46 +1669,26 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ...(lut ? { colormap: lut } : {}),
       };
       try {
-        if (kernel?.kind === "multipass") {
-          // CACHED metric: the pool owns the content-keyed compute+cache; the RESULT
-          // (a scalar error) is displayed via IDENTITY content + isScalar colormap.
-          const computeParams =
-            kernelId === "hdr-flip" && hdrExposures
-              ? {
-                  ppd: 67,
-                  startExposure: hdrExposures.startExposure,
-                  stopExposure: hdrExposures.stopExposure,
-                  numExposures: hdrExposures.numExposures,
-                }
-              : undefined;
-          const cachedDisplay: ImageParams = {
-            ...diffDisplay,
-            channelCount: 1,
-            isScalar: true,
-            norm: "linear",
-          };
-          const entry = handle.renderDiffCached(
-            kernelId,
-            { a: contentKeyA, b: contentKeyB },
-            computeParams,
-            cachedDisplay,
-            diffMapping ?? undefined,
-          );
-          if (entry) diffEntryRef.current = entry;
-          else setEngineFailed(true);
-        } else {
-          // DIRECT pointwise op: the pool injects `srcB`; `cairnContent(a,b,opId)`.
+        // ONE kernel-agnostic call: the POOL picks the execution strategy from
+        // the kernel's own declaration (pointwise → per-frame content op;
+        // multipass → content-keyed cached compute) and the KERNEL derives its
+        // compute params from the generic source facts. The pane never sees
+        // kernel kinds, param derivations, or cache keys.
+        const result = handle.renderDiff(
+          kernelId,
+          { a: contentKeyA, b: contentKeyB },
+          { hdrExposures },
+          diffDisplay,
+          diffMapping ?? undefined,
+        );
+        // Identity-op floor: a diff present must come from the diff pipeline —
+        // HOLD this present until a valid op resolves (see PaneHandle.renderDiff).
+        if (result === "hold") return false;
+        if (result === "failed") {
           diffEntryRef.current = null;
-          const opId = contentOpId(kernelId);
-          // IDENTITY-OP FLOOR (snapshot invariant). `contentOpId` returns 0 =
-          // IDENTITY for any id not registered as a direct content op (a
-          // transiently mis-resolved kernel). Blitting opId 0 in diff mode would
-          // present the PRIMARY — which here IS the reference operand — as a plain
-          // image (the reference-flash). A diff present must always come from the
-          // diff pipeline for the current op, so HOLD until a valid op resolves.
-          if (opId === 0) return false;
-          const ok = handle.render({ ...diffDisplay, contentOpId: opId });
-          if (!ok) setEngineFailed(true);
+          setEngineFailed(true);
+        } else {
+          diffEntryRef.current = result.entry;
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -2631,7 +2556,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         // PEAK is the CURVE family's HDR ceiling — hidden for the gray-none DATA
         // path (a scalar as data has no tone-map ceiling; its raw value rides the
         // output-encode unclamped), the `normal` remap, and colormap LUTs.
-        ...((hdrMode || sdrPlain) && hdrEngaged && activeIsCurve && !scalarNoneData
+        ...((hdrMode || sdrPlain) && hdrEngaged && activeRespectsPeak && !scalarNoneData
           ? [
               {
                 id: "peak",
@@ -2726,8 +2651,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               : resolveDefaultCurve(propTonemap);
           publishSettings({
             encoding: homeEncoding,
-            colormap: homeColormap,
-            tonemap: diffMode ? effectiveTonemap : propTonemap,
             peak: peakSeed,
             tonemapGamma: gammaSeed,
             exposureEV: 0,
@@ -2760,9 +2683,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             setDiffKernel(localKernelMeta.default);
           }
         }
-        // The diff colormap is DERIVED from `enc`. `enc.resetEncoding()` at the top of
-        // this reset cleared `enc.overridden`, so the diff colormap falls back to its
-        // kernel default automatically (re-resolved each render) — no explicit diff reset.
+        // The diff colormap is DERIVED from `enc`, and the HOME publish above wrote
+        // the kernel-default encoding into the store — no explicit diff reset.
       }}
       extraModified={
         // `enc.encodingModified` covers BOTH the image encoding AND (in diff mode) the

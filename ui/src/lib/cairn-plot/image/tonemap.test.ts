@@ -48,12 +48,15 @@ import {
   extendedAcesScalar as extendedAcesCurve,
 } from "./encodings/index.ts";
 
-/** The non-peak, non-lut curve operators as `(rgb)=>rgb` — the CPU triple path's
- *  operator table, resolved from the registry (was `image/tonemap.ts`'s
- *  `TONEMAP_OPERATORS`). */
+/** The plain SDR (non-HDR-surface), non-lut curve operators as `(rgb)=>rgb` —
+ *  the CPU triple path's operator table, resolved from the registry (was
+ *  `image/tonemap.ts`'s `TONEMAP_OPERATORS`). Keyed on `needsHdrSurface`, NOT
+ *  on "declares peak": every curve now declares `peak` in its manifest (each
+ *  respects the ceiling on an HDR surface — the slider gates off the manifest),
+ *  while only the extended-* entries require an HDR surface. */
 const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
   listEncodings()
-    .filter((e) => e.kind !== "lut" && !e.params.includes("peak"))
+    .filter((e) => e.kind !== "lut" && !e.needsHdrSurface)
     .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => e.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS)]),
 );
 /** Resolve an operator name to its non-peak CPU curve fn, srgb fallback. */
@@ -184,8 +187,12 @@ test("resolveEffectiveTonemap: UNIFIED — canonical operator passes through; su
 test("extended·Linear is a pure pass-through; SDR operators clamp HDR into [0,1]", () => {
   // The "SDR preview on an HDR display" semantics: switching from extended to an
   // SDR operator (e.g. aces) on an HDR-engaged pane clamps values into range.
+  // (`extended` is an HDR-surface entry, so it lives outside the SDR table —
+  // resolve it straight from the registry.)
   const hi: RgbTriple = [8, 8, 8];
-  assert.deepEqual(TONEMAP_OPERATORS.extended!(hi), [8, 8, 8]); // unclamped, past 1.0
+  const extendedOp = (rgb: RgbTriple): RgbTriple =>
+    getEncoding("extended")!.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
+  assert.deepEqual(extendedOp(hi), [8, 8, 8]); // unclamped, past 1.0
   const [ar, ag, ab] = TONEMAP_OPERATORS.aces!(hi);
   assert.ok(ar <= 1 && ag <= 1 && ab <= 1, "aces clamps to SDR range");
   const [lr] = TONEMAP_OPERATORS.linear!(hi);

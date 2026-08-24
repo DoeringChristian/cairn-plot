@@ -106,7 +106,7 @@ const linear: DisplayEncoding = {
   label: "Linear",
   kind: "curve",
   arities: CURVE_ARITIES,
-  params: ["exposure", "offset"],
+  params: ["exposure", "offset", "peak"],
   operatorId: 0,
   // RANGE-MAP clamp; the display transfer (identity, γ=1) lives in output-encode.
   wgsl: DEFAULT_CLAMP_WGSL,
@@ -118,7 +118,7 @@ const srgb: DisplayEncoding = {
   label: "sRGB",
   kind: "curve",
   arities: CURVE_ARITIES,
-  params: ["exposure", "offset"],
+  params: ["exposure", "offset", "peak"],
   operatorId: 1,
   // Identity tone-map: the HDR→[0,1] step is a clamp; the sRGB OETF is applied by
   // the output-encode stage (`tonemap === "srgb"`).
@@ -133,7 +133,7 @@ const gamma: DisplayEncoding = {
   arities: CURVE_ARITIES,
   // Reads γ — the power curve `pow(x,1/γ)` is applied at the output-encode stage
   // (resolveEncodeGamma), the RANGE-MAP here is the same clamp as linear/srgb.
-  params: ["exposure", "offset", "gamma"],
+  params: ["exposure", "offset", "gamma", "peak"],
   operatorId: 8,
   wgsl: DEFAULT_CLAMP_WGSL,
   cpu: (v) => [clamp01(v[0] ?? 0), clamp01(v[1] ?? 0), clamp01(v[2] ?? 0)],
@@ -144,7 +144,7 @@ const reinhard: DisplayEncoding = {
   label: "Reinhard",
   kind: "curve",
   arities: CURVE_ARITIES,
-  params: ["exposure", "offset"],
+  params: ["exposure", "offset", "peak"],
   operatorId: 2,
   wgsl: "vec3<f32>(reinhardCurve(rgb.x), reinhardCurve(rgb.y), reinhardCurve(rgb.z))",
   cpu: perChannel(reinhardScalar),
@@ -155,7 +155,7 @@ const aces: DisplayEncoding = {
   label: "ACES",
   kind: "curve",
   arities: CURVE_ARITIES,
-  params: ["exposure", "offset"],
+  params: ["exposure", "offset", "peak"],
   operatorId: 3,
   wgsl: "vec3<f32>(acesCurve(rgb.x), acesCurve(rgb.y), acesCurve(rgb.z))",
   cpu: perChannel(acesScalar),
@@ -179,6 +179,8 @@ const extended: DisplayEncoding = {
   kind: "curve",
   arities: CURVE_ARITIES,
   needsHdrSurface: true,
+  // RAW pass-through: deliberately NO `peak` — nothing clips (the registry test
+  // pins this; the managed variant `extended-clamp` is the peak-clipped twin).
   params: ["exposure", "offset"],
   operatorId: 4,
   // Pure identity — no compression, no clamp — values above 1 survive for a real

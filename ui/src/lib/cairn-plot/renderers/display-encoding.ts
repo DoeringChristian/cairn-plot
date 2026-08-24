@@ -231,6 +231,20 @@ export function deriveCompareEncodingId(
   return curveId;
 }
 
+/**
+ * The colormap a SCALAR face (a diff) renders with, resolved from the
+ * viewport's ONE encoding by APPLICABILITY (ruling 5): a LUT encoding IS the
+ * colormap; a CURVE encoding doesn't apply to a scalar face, so the face's own
+ * default (the diff kernel's) stands. Pure — panes consume this instead of
+ * inspecting encoding kinds themselves.
+ */
+export function scalarFaceColormap(
+  enc: Pick<PaneEncoding, "isLut" | "colormap">,
+  faceDefault: string,
+): string {
+  return enc.isLut ? enc.colormap : faceDefault;
+}
+
 /** Config for {@link usePaneEncoding}. */
 export interface PaneEncodingConfig {
   /** Surface mode (see `resolveDisplayEncodingIds`). */
@@ -288,10 +302,6 @@ export interface PaneEncoding {
   resetEncoding: () => void;
   /** `true` when the encoding differs from the authored seed at this arity. */
   encodingModified: boolean;
-  /** `true` when the user has EXPLICITLY picked an encoding since mount/HOME (the
-   *  default-vs-override signal a diff face reads: overridden ⇒ the pick applies to the
-   *  diff too; else the diff follows its kernel default). */
-  overridden: boolean;
   /** Whether the ACTIVE encoding declares a given param (drives slider gating). */
   hasParam: (name: string) => boolean;
 }
@@ -341,13 +351,6 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
   const prevArityRef = useRef<number>(arity);
   const controlledSurface = !!config.controlledSurface;
-  // OVERRIDDEN — has the user EXPLICITLY picked an encoding (a `setEncoding` since the
-  // last mount / HOME / controlled reseed)? This is the default-vs-override signal a
-  // DIFF face reads (state-unification): a diff shows its kernel default UNLESS the
-  // viewport is overridden, in which case the pick applies across faces (one setting).
-  // Distinct from `encodingModified` (value ≠ seed), which a PERSISTED cross-slot value
-  // can trip without a user pick.
-  const [overridden, setOverridden] = useState(false);
 
   // A prop change is RECORDED here so the ARITY effect below can tell a prop-reseed
   // from a pure arity flip (it must not re-fire when a concurrent prop change already
@@ -401,13 +404,15 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
       // Back-compat: a sync peer may still publish `viridis` → alias to `turbo`.
       const id = rawId === "viridis" ? "turbo" : rawId;
       memoryRef.current.set(arity, id);
-      // Interactive path: this IS the store. Controlled path: the pane's wrapper
-      // publishes to the settings store, which derives back down — this local
-      // write is inert there (kept so a surface leaving a group keeps the value).
-      setLocalEncodingId(id);
-      setOverridden(true); // an explicit user pick — the diff face now follows it too
+      // TOP-OF-STACK write (transient-group ruling): on a CONTROLLED surface the
+      // pane's wrapper publishes to the settings store (group while selected —
+      // transient; local otherwise — sticks) and the value derives back down, so
+      // the local cell must NOT also be written (a group-session pick would
+      // survive unselect through it). The local cell serves only the
+      // interactive storeless path.
+      if (!controlledSurface) setLocalEncodingId(id);
     },
-    [arity],
+    [arity, controlledSurface],
   );
 
   const resetEncoding = useCallback(() => {
@@ -417,7 +422,6 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     // this local reset only serves the interactive path / a later group exit.
     memoryRef.current.clear();
     setLocalEncodingId(seedFor(arity));
-    setOverridden(false);
   }, [seedFor, arity]);
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
@@ -440,7 +444,6 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     setEncoding,
     resetEncoding,
     encodingModified,
-    overridden,
     hasParam,
   };
 }

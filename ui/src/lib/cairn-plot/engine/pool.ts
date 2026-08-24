@@ -56,6 +56,8 @@ import {
   type DiffCacheEntry,
 } from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
+import { getDiffKernel, type KernelComputeCtx } from "./kernels/kernel-registry";
+import { contentOpId } from "../image/content-ops/index";
 import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
 import {
   forceEngineFailRequested,
@@ -281,6 +283,43 @@ export interface PaneHandle {
     kernelId: string,
     contentKeys: { a: string; b: string },
     computeParams: Record<string, number> | undefined,
+    mapping?: CompareMapping,
+  ): boolean;
+  /**
+   * Render THIS FRAME's diff for `kernelId` — the ONE kernel-agnostic entry
+   * point. The POOL picks the execution strategy from the kernel's own
+   * declaration: POINTWISE → the per-frame content op evaluated inside the
+   * normal render pass (the pool injects `srcB`); MULTIPASS → the content-keyed
+   * cached compute ({@link renderDiffCached}), with the KERNEL deriving its
+   * compute params from the generic source facts in `ctx`, displayed as
+   * identity content + isScalar colormap. Callers never see kernel kinds, param
+   * derivations, or cache keys. Returns:
+   *   - `{ entry }` — rendered; `entry` is the cache entry (the metrics
+   *     readback seam) or `null` for a streamed pointwise kernel;
+   *   - `"hold"` — no valid op resolved yet (the identity-op floor: a diff
+   *     present must come from the diff pipeline — presenting identity would
+   *     flash the reference operand). Skip this present and retry;
+   *   - `"failed"` — hard GPU failure (fall back to the legacy pane).
+   */
+  renderDiff(
+    kernelId: string,
+    contentKeys: { a: string; b: string },
+    ctx: KernelComputeCtx,
+    display: ImageParams,
+    mapping?: CompareMapping,
+  ): { entry: DiffCacheEntry | null } | "hold" | "failed";
+  /**
+   * NON-mutating residency peek for {@link renderDiff}: can this frame paint
+   * WITHOUT a compute stall? A pointwise kernel streams inside the render pass
+   * (resident iff its op id resolves); a multipass kernel is resident iff its
+   * cached result is (the kernel derives the cache-key params from `ctx`
+   * exactly as {@link renderDiff} does). Never uploads, computes, or perturbs
+   * the cache LRU.
+   */
+  isDiffContentResident(
+    kernelId: string,
+    contentKeys: { a: string; b: string },
+    ctx: KernelComputeCtx,
     mapping?: CompareMapping,
   ): boolean;
   /**
@@ -924,6 +963,54 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         { w: entry.sourceB.width, h: entry.sourceB.height },
         kernelId,
         computeParams,
+        contentKeys.a,
+        contentKeys.b,
+        mapping,
+      );
+    },
+    renderDiff(
+      kernelId: string,
+      contentKeys: { a: string; b: string },
+      ctx: KernelComputeCtx,
+      display: ImageParams,
+      mapping?: CompareMapping,
+    ): { entry: DiffCacheEntry | null } | "hold" | "failed" {
+      const kernel = getDiffKernel(kernelId);
+      if (kernel?.kind === "multipass") {
+        // CACHED metric: computed once, content-keyed; the RESULT (a scalar
+        // error) is displayed via IDENTITY content + the isScalar colormap.
+        const cached = attemptRenderDiffCached(
+          entry,
+          kernelId,
+          contentKeys,
+          kernel.computeParams?.(ctx),
+          { ...display, channelCount: 1, isScalar: true, norm: "linear" },
+          mapping,
+        );
+        return cached ? { entry: cached } : "failed";
+      }
+      // DIRECT pointwise op, evaluated per frame: the pool injects `srcB`;
+      // `cairnContent(a,b,opId)`. Op id 0 = IDENTITY (an unregistered or
+      // transiently mis-resolved kernel) — the identity-op floor holds.
+      const opId = contentOpId(kernelId);
+      if (opId === 0) return "hold";
+      return attemptRender(entry, { ...display, contentOpId: opId }) ? { entry: null } : "failed";
+    },
+    isDiffContentResident(
+      kernelId: string,
+      contentKeys: { a: string; b: string },
+      ctx: KernelComputeCtx,
+      mapping?: CompareMapping,
+    ): boolean {
+      const kernel = getDiffKernel(kernelId);
+      if (kernel?.kind !== "multipass") return contentOpId(kernelId) !== 0;
+      if (entry.disposed || !entry.source || !entry.sourceB) return false;
+      return hasDiff(
+        entry.device,
+        { w: entry.source.width, h: entry.source.height },
+        { w: entry.sourceB.width, h: entry.sourceB.height },
+        kernelId,
+        kernel.computeParams?.(ctx),
         contentKeys.a,
         contentKeys.b,
         mapping,

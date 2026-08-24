@@ -40,12 +40,14 @@
  *  doesn't alter its render — applicability is a RENDER decision, not a sync one). */
 export interface ImageSyncSettings {
   /** The unified DISPLAY-ENCODING id (a curve/remap operator id or a colormap
-   *  LUT id) — the ONE key the display-encoding registry syncs. Image panes
-   *  publish + apply this; they ALSO publish the derived `colormap`/`tonemap`
-   *  below so a pre-registry peer (a compare pane) still follows the shared look,
-   *  and apply `colormap`/`tonemap` for the reverse direction. */
+   *  LUT id) — the ONE display-look key. Every pane publishes and applies THIS;
+   *  the registry derives colormap/curve from it. */
   encoding?: string;
+  /** @deprecated pre-registry wire format (the split colormap+tonemap pair).
+   *  No longer published or read by cairn-plot panes — accepted inert so an
+   *  external publisher's patch still merges (applicability at render). */
   colormap?: string;
+  /** @deprecated see {@link ImageSyncSettings.colormap}. */
   tonemap?: string;
   tonemapGamma?: number;
   peak?: number;
@@ -149,6 +151,16 @@ export function getLastImageSettings(groupId: string): ImageSyncSettings | undef
  *  (an old exposure, a dead compare mode) shadows every member of the next one. */
 export function clearImageSettings(groupId: string): void {
   lastStates.delete(groupId);
+}
+
+/** TESTS ONLY: drop EVERY accumulated store. The page-reset helper
+ *  (`__resetGlobalSelectionStoreForTest`) re-mints pane ids from 0, so the
+ *  per-viewport local stores (`vp-st-<paneId>`) would collide across test
+ *  cases and leak one case's settings into the next — a reset page must have
+ *  empty stores, exactly like a fresh page. Live bus subscriptions are kept
+ *  (mirrors the in-place selection-store reset). */
+export function __resetImageSettingsStoresForTest(): void {
+  lastStates.clear();
 }
 
 /** Subscribes to settings broadcasts on `groupId`, ignoring the caller's own

@@ -27,6 +27,8 @@
  * (a context + `useSyncExternalStore`) lives in `plot-node.tsx`.
  */
 
+import { __resetImageSettingsStoresForTest } from "./image-settings-sync.ts";
+
 export type SelectionListener = () => void;
 
 /**
@@ -323,6 +325,9 @@ export function getGlobalSelectionStore(): SelectionStore {
 export function __resetGlobalSelectionStoreForTest(): void {
   globalStore?.__resetForTest();
   paneSeq = 0;
+  // Pane ids restart from 0 → the per-viewport settings stores (`vp-st-<paneId>`)
+  // would collide across test cases; a reset page starts with EMPTY stores.
+  __resetImageSettingsStoresForTest();
 }
 
 // Monotonic pane-id source. React's `useId()` RESTARTS its counter per root

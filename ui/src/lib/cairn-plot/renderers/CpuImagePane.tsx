@@ -216,13 +216,14 @@ export function tonemapToImageData(
   const src =
     hdr.precision === "f16-bits" ? f16BitsToFloat32(hdr.data as Uint16Array) : hdr.data;
   // Resolve the operator CURVE straight from the registry (the single source of
-  // truth). The CPU triple path applies only the PLAIN (non-peak) SDR curves —
-  // exposure is folded in below and peak is an HDR-surface concern — so a peak or
-  // LUT id (never reached here in practice) falls back to the srgb clamp, exactly
-  // as the former `getTonemapOperator` lookup did.
+  // truth). The CPU triple path applies only the PLAIN SDR curves — exposure is
+  // folded in below and the HDR-surface entries (extended-*) never reach this
+  // fallback — so an HDR-surface or LUT id falls back to the srgb clamp, exactly
+  // as the former `getTonemapOperator` lookup did. (Keyed on `needsHdrSurface`,
+  // not "declares peak" — every curve's manifest now declares peak.)
   const curveEnc = getEncoding(tonemap);
   const opEnc =
-    curveEnc && curveEnc.kind !== "lut" && !curveEnc.params.includes("peak")
+    curveEnc && curveEnc.kind !== "lut" && !curveEnc.needsHdrSurface
       ? curveEnc
       : getEncoding(DEFAULT_TONEMAP)!;
   const op = (rgb: RgbTriple): RgbTriple => opEnc.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
@@ -458,8 +459,8 @@ function CpuSdrImagePane(
     mode: "sdr",
     arity: 1,
     curveSet: SDR_DISPLAY_TRANSFER_OPERATORS,
-    propColormap: synced?.colormap ?? colormapProp,
-    propTonemap: synced?.tonemap ?? tonemapProp,
+    propColormap: colormapProp,
+    propTonemap: tonemapProp,
     resolveDefaultCurve: (t) => {
       const s = toSdrTonemap(t);
       return s === "gamma" || s === "linear" ? s : "srgb";
@@ -481,11 +482,9 @@ function CpuSdrImagePane(
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
       encoding: enc.encodingId,
-      colormap: enc.colormap,
-      tonemap: sdrTransfer,
       tonemapGamma,
     }),
-    [enc.encodingId, enc.colormap, sdrTransfer, tonemapGamma],
+    [enc.encodingId, tonemapGamma],
   );
   const publishSettings = setSynced;
   useSeedGroupOnFormation(
@@ -497,14 +496,9 @@ function CpuSdrImagePane(
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);
-      const isLut = enc.ids.lutIds.includes(id);
-      publishSettings({
-        encoding: id,
-        colormap: isLut ? id : "none",
-        tonemap: isLut ? sdrTransfer : id,
-      });
+      publishSettings({ encoding: id });
     },
-    [enc, publishSettings, sdrTransfer],
+    [enc, publishSettings],
   );
   const changeGamma = useCallback(
     (v: number) => publishSettings({ tonemapGamma: v }),
@@ -1031,8 +1025,6 @@ function CpuSdrImagePane(
           const homeCurve = s === "gamma" || s === "linear" ? s : "srgb";
           publishSettings({
             encoding: colormapProp !== "none" ? colormapProp : homeCurve,
-            colormap: colormapProp,
-            tonemap: homeCurve,
             tonemapGamma: gammaSeed,
           });
         }
@@ -1143,8 +1135,8 @@ function CpuHdrImagePane(
     mode: "arity",
     arity: sourceArity,
     curveSet: SDR_TONEMAP_OPERATORS,
-    propColormap: synced?.colormap ?? propColormap,
-    propTonemap: synced?.tonemap ?? tonemap,
+    propColormap,
+    propTonemap: tonemap,
     resolveDefaultCurve,
     controlledSurface,
     // The settings store rules when present; picks publish and flow back down.
@@ -1213,22 +1205,18 @@ function CpuHdrImagePane(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
-  // Multi-viewport SELECTION: settings sync (SINGLE-RECEIVER model). This pane
-  // PUBLISHES its encoding / γ / exposure / offset / reduce / bounds edits and (as
-  // anchor) seeds the group; it is NOT a bus subscriber — incoming settings arrive
-  // TOP-DOWN via `synced` (the controlled reseeds above). See use-synced-image-settings.
+  // Settings-store wiring (see use-synced-image-settings.ts): gestures write the
+  // store; the anchor seeds a forming group with its effective values.
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
       encoding: enc.encodingId,
-      colormap: enc.colormap,
-      tonemap: tonemapOp,
       tonemapGamma,
       exposureEV: displayEV,
       offset: displayOffset,
       reduce: effectiveReduce,
       ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
     }),
-    [enc.encodingId, enc.colormap, tonemapOp, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds],
+    [enc.encodingId, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds],
   );
   const publishSettings = setSynced;
   useSeedGroupOnFormation(
@@ -1521,8 +1509,6 @@ function CpuHdrImagePane(
           const homeCurve = toSdrTonemap(tonemap);
           publishSettings({
             encoding: propColormap !== "none" ? propColormap : homeCurve,
-            colormap: propColormap,
-            tonemap: homeCurve,
             tonemapGamma: gammaSeed,
             exposureEV: 0,
             offset: 0,
@@ -1630,6 +1616,7 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
     settingsSyncGroupId: backendProps.settingsSyncGroupId,
     syncIsAnchor: backendProps.syncIsAnchor,
     syncedSettings: backendProps.syncedSettings,
+    setSyncedSettings: backendProps.setSyncedSettings,
     channelMenu: backendProps.channelMenu,
     channelModified: backendProps.channelModified,
     onChannelReset: backendProps.onChannelReset,

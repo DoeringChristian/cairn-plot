@@ -62,6 +62,19 @@ interface KernelMetaBase {
   defaultColormap: ColormapName;
   /** Typed default parameters (e.g. FLIP `ppd`). */
   params?: Readonly<Record<string, number>>;
+  /** Derive the CONCRETE per-run compute params (they enter the diff cache key)
+   *  from generic SOURCE facts the pane provides ({@link KernelComputeCtx}).
+   *  The KERNEL owns which facts it reads — panes never special-case kernel
+   *  ids. Absent (or a `undefined` return) ⇒ the kernel's static defaults. */
+  computeParams?: (ctx: KernelComputeCtx) => Readonly<Record<string, number>> | undefined;
+}
+
+/** Generic, kernel-agnostic facts about the current sources that a pane can
+ *  offer a kernel's {@link KernelMetaBase.computeParams} derivation. */
+export interface KernelComputeCtx {
+  /** HDR exposure sweep derived from the reference's luminance (float sources
+   *  only; see `computeHdrFlipExposures`). */
+  hdrExposures?: { startExposure: number; stopExposure: number; numExposures: number } | null;
 }
 
 export interface PointwiseKernel extends KernelMetaBase {

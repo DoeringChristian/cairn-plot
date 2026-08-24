@@ -598,7 +598,9 @@ async function main(): Promise<void> {
     storeC.select(idsC[0], "replace");
     storeC.select(idsC[1], "toggle");
     await sleep(400);
-    const grp = `${GLOBAL_SELECTION_BASE}-st`;
+    // PER-EPISODE group id (the settings-store model): the live selection's
+    // settings group is `${base}-st-${episode}`, fresh per formation.
+    const grp = `${GLOBAL_SELECTION_BASE}-st-${getGlobalSelectionStore().selectionEpisode()}`;
 
     const observeAfter = async (
       publish: () => void,
@@ -958,13 +960,11 @@ async function main(): Promise<void> {
       return { picked, imageShowsPick, afterFlip };
     };
 
-    const g1Pre = await runG1("g1Pre", true);
-    report(g1Pre.seed0 === "magma", `PHASE G1 setup: slot0's authored magma seeds the stack (${g1Pre.seed0})`);
-    report(
-      g1Pre.slot0AfterPick !== "turbo",
-      `PHASE G1 PRE-FIX: a pick does NOT apply stack-wide — slot0 reseeds to its own authored (bug reproduced: ${g1Pre.slot0AfterPick})`,
-    );
+    // (The PRE-FIX reproduction runs are gone: `__cairnDisableStackShared` forced
+    // the old controlled-reseed machinery, which the settings-store model deleted
+    // — the bug can no longer be expressed, so only the contract is asserted.)
     const g1 = await runG1("g1Post", false);
+    report(g1.seed0 === "magma", `PHASE G1 setup: slot0's authored magma seeds the stack (${g1.seed0})`);
     report(g1.slot1Shared === "magma", `PHASE G1: every slot renders under the SHARED setting (slot1 shows slot0's magma seed: ${g1.slot1Shared})`);
     report(g1.slot0AfterPick === "turbo", `PHASE G1: a pick on slot1 applies to ALL slots (slot0 now turbo: ${g1.slot0AfterPick})`);
     report(g1.slot1Back === "turbo", `PHASE G1: the pick SURVIVES flips (slot1 still turbo: ${g1.slot1Back})`);
@@ -977,12 +977,6 @@ async function main(): Promise<void> {
       g1.slot0Home !== "magma" || g1.slot1AfterHome !== "magma" || g1.exit0 !== "magma" || g1.exit1 === "magma"
     ) allOk = false;
 
-    const g2Pre = await runG2("g2Pre", true);
-    report(g2Pre.afterFlip !== "turbo", `PHASE G2 PRE-FIX: the diff colormap pick is WIPED by an image↔diff flip (bug reproduced: ${g2Pre.afterFlip})`);
-    report(
-      g2Pre.imageShowsPick !== "turbo",
-      `PHASE G2 PRE-FIX (scenario 2): the two faces keep SEPARATE colormaps — the image slot does NOT show the diff's pick (bug reproduced: ${g2Pre.imageShowsPick})`,
-    );
     const g2 = await runG2("g2Post", false);
     report(g2.afterFlip === "turbo", `PHASE G2 POST-FIX: the diff colormap pick SURVIVES an image↔diff flip (${g2.afterFlip})`);
     report(
@@ -991,21 +985,21 @@ async function main(): Promise<void> {
     );
     if (g2.afterFlip !== "turbo" || g2.imageShowsPick !== "turbo") allOk = false;
 
-    // ============ PHASE H — HOME IS LOCAL WHILE MULTI-SELECTED (reg a) ===========
-    // Two SEPARATE viewports (a normal side-by-side grid: slot0 authored magma,
-    // slot1 a plain scalar with a curve default). Multi-select forms ONE settings-
-    // sync group (slot0 = anchor). A pick on one MIRRORS to the peer (sync-over) —
-    // that stays. But HOME on a viewport is LOCAL: it re-seeds ONLY that viewport to
-    // ITS OWN authored default; the sync must NOT absorb or veto it, and the peer
-    // (neighbor) is untouched. Storage is always per-viewport.
+    // ============ PHASE H — HOME IS A GROUP ACTION WHILE MULTI-SELECTED ==========
+    // (User ruling — supersedes the old "HOME stays local" reg: HOME/double-click
+    // sets the WHOLE GROUP to the clicked viewport's defaults.) Two SEPARATE
+    // viewports (side-by-side grid: slot0 authored magma, slot1 a curve default).
+    // Multi-select forms ONE settings-sync group (slot0 = anchor). A pick on one
+    // MIRRORS to the peer. HOME on ANY member publishes THAT member's defaults to
+    // the group, so EVERY member adopts them — anchor or not.
     interface HResult {
       seed0: string; // slot0 authored default (magma)
       seed1: string; // slot1 authored default (a curve, NOT magma)
       syncedPeer: string; // after slot0 picks turbo → peer (slot1) follows to turbo
-      homePeer1: string; // HOME slot1 (non-anchor) → slot1's OWN default, not turbo/magma
-      homePeerKept0: string; // slot0 (anchor) still turbo — its setting untouched
-      homeAnchor0: string; // re-sync turbo, HOME slot0 (anchor) → slot0's default magma
-      homeAnchorKept1: string; // slot1 kept its value — HOME on the anchor is local too
+      homePeer1: string; // HOME slot1 → slot1's OWN default (the clicked pane's)
+      homePeerKept0: string; // slot0 ADOPTS slot1's default too (group action)
+      homeAnchor0: string; // re-sync turbo, HOME slot0 (anchor) → slot0's magma
+      homeAnchorKept1: string; // slot1 ADOPTS slot0's magma too (group action)
     }
     const runH = async (hostId: string): Promise<HResult> => {
       __resetGlobalSelectionStoreForTest();
@@ -1055,14 +1049,14 @@ async function main(): Promise<void> {
     const h = await runH("hSel");
     report(h.seed0 === "magma" && h.seed1 !== "magma", `PHASE H setup: two viewports with DISTINCT authored defaults (slot0=${h.seed0}, slot1=${h.seed1})`);
     report(h.syncedPeer === "turbo", `PHASE H: multi-select mirrors a pick between viewports (peer→turbo: ${h.syncedPeer})`);
-    report(h.homePeer1 === h.seed1, `PHASE H: HOME on a selected NON-ANCHOR resets ONLY it, to its OWN default — sync does not veto it (${h.homePeer1})`);
-    report(h.homePeerKept0 === "turbo", `PHASE H: the neighbour (anchor) is UNTOUCHED by a peer's HOME (still turbo: ${h.homePeerKept0})`);
-    report(h.homeAnchor0 === "magma", `PHASE H: HOME on a selected ANCHOR is local too, to its own default (${h.homeAnchor0})`);
-    report(h.homeAnchorKept1 === "turbo", `PHASE H: the neighbour keeps its setting after the anchor's HOME (${h.homeAnchorKept1})`);
+    report(h.homePeer1 === h.seed1, `PHASE H: HOME on a selected member resets it to the CLICKED pane's default (${h.homePeer1})`);
+    report(h.homePeerKept0 === h.seed1, `PHASE H: HOME is a GROUP action — the neighbour ADOPTS the clicked pane's default too (${h.homePeerKept0})`);
+    report(h.homeAnchor0 === "magma", `PHASE H: HOME on the anchor → the anchor's own default (${h.homeAnchor0})`);
+    report(h.homeAnchorKept1 === "magma", `PHASE H: the neighbour adopts the anchor's default after the anchor's HOME (${h.homeAnchorKept1})`);
     if (
       h.seed0 !== "magma" || h.seed1 === "magma" || h.syncedPeer !== "turbo" ||
-      h.homePeer1 !== h.seed1 || h.homePeerKept0 !== "turbo" ||
-      h.homeAnchor0 !== "magma" || h.homeAnchorKept1 !== "turbo"
+      h.homePeer1 !== h.seed1 || h.homePeerKept0 !== h.seed1 ||
+      h.homeAnchor0 !== "magma" || h.homeAnchorKept1 !== "magma"
     ) allOk = false;
 
     // ============ PHASE I — A STACK SHARES SETTINGS BEYOND ENCODING (reg b) ======
@@ -1096,11 +1090,9 @@ async function main(): Promise<void> {
       note(`PHASE I peak (${disable ? "pre-fix" : "post-fix"}): seed0=${seed0} afterPick=${afterPick} afterFlip=${afterFlip}`);
       return { seed0, afterPick, afterFlip };
     };
-    const iPre = await runIPeak("iPeakPre", true);
-    report(iPre.seed0 === "8" && iPre.afterPick === "5", `PHASE I setup: slot0 authored peak 8, pick 5 (${iPre.seed0}/${iPre.afterPick})`);
-    report(iPre.afterFlip === "3", `PHASE I PRE-FIX: peak is RESET by a flip to slot1's authored peak (bug reproduced: ${iPre.afterFlip})`);
     const iPost = await runIPeak("iPeakPost", false);
-    report(iPost.afterFlip === "5", `PHASE I POST-FIX: peak (a setting BEYOND encoding) is SHARED — the pick survives the flip (${iPost.afterFlip})`);
+    report(iPost.seed0 === "8" && iPost.afterPick === "5", `PHASE I setup: slot0 authored peak 8, pick 5 (${iPost.seed0}/${iPost.afterPick})`);
+    report(iPost.afterFlip === "5", `PHASE I: peak (a setting BEYOND encoding) is SHARED — the pick survives the flip (${iPost.afterFlip})`);
     if (iPost.afterFlip !== "5") allOk = false;
 
     // KERNEL: a diff-kernel pick survives an image↔diff flip (shared viewport setting).
@@ -1182,9 +1174,10 @@ async function main(): Promise<void> {
       d()[0]!.home();
       await sleep(250);
       const home0Solo = d()[0]?.colormap ?? "?"; // → magma (FLIP default)
-      // -- PART B: multi-select MIRROR + LOCAL HOME neighbour-keeps. Select both
-      // (slot0 anchor); a colormap pick mirrors to the peer; HOME on slot0 resets ONLY
-      // slot0 (to its visible-diff default) while the neighbour KEEPS the mirrored pick.
+      // -- PART B: multi-select MIRROR + GROUP HOME (user ruling — supersedes the
+      // old local-HOME reg). Select both (slot0 anchor); a colormap pick mirrors
+      // to the peer; HOME on slot0 publishes slot0's visible-diff DEFAULT to the
+      // GROUP, so BOTH viewports adopt it.
       const ids = framePaneIds(hostId);
       const store = getGlobalSelectionStore();
       store.select(ids[0], "replace");
@@ -1196,7 +1189,7 @@ async function main(): Promise<void> {
       d()[0]!.home();
       await sleep(300);
       const home0 = d()[0]?.colormap ?? "?"; // reset to slot0's visible-diff default
-      const kept1 = d()[1]?.colormap ?? "?"; // neighbour keeps the pick (local HOME)
+      const kept1 = d()[1]?.colormap ?? "?"; // neighbour ADOPTS it too (group HOME)
       root.unmount();
       host.remove();
       __resetGlobalSelectionStoreForTest();
@@ -1208,9 +1201,9 @@ async function main(): Promise<void> {
     report(j.home1Solo === "turbo", `PHASE J (scenario 1): HOME on the absolute diff resets its colormap to the kernel default turbo — was "no reset" pre-unification (${j.home1Solo})`);
     report(j.home0Solo === "magma", `PHASE J (scenario 1): HOME on the FLIP diff resets its colormap to the kernel default magma — magma/turbo per kernel (${j.home0Solo})`);
     report(j.mirrored1 === "red-blue", `PHASE J (scenario 1): multi-select mirrors a diff colormap pick between viewports (peer→red-blue: ${j.mirrored1})`);
-    report(j.home0 !== "red-blue", `PHASE J (scenario 1): HOME on a multi-selected diff RESETS its colormap off the mirrored pick (${j.home0})`);
-    report(j.kept1 === "red-blue", `PHASE J (scenario 1): the multi-select neighbour KEEPS the picked colormap through the other's HOME — local HOME (${j.kept1})`);
-    if (j.seed0 !== "magma" || j.seed1 !== "turbo" || j.home1Solo !== "turbo" || j.home0Solo !== "magma" || j.mirrored1 !== "red-blue" || j.home0 === "red-blue" || j.kept1 !== "red-blue") allOk = false;
+    report(j.home0 === "magma", `PHASE J (scenario 1): HOME on a multi-selected diff resets its colormap to ITS kernel default (${j.home0})`);
+    report(j.kept1 === "magma", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts the clicked diff's default too (${j.kept1})`);
+    if (j.seed0 !== "magma" || j.seed1 !== "turbo" || j.home1Solo !== "turbo" || j.home0Solo !== "magma" || j.mirrored1 !== "red-blue" || j.home0 !== "magma" || j.kept1 !== "magma") allOk = false;
 
     // ============ PHASE K — MULTI-SELECT KERNEL: FORMATION MIRRORS THE FIRST ===
     // Two side-by-side DIFF viewports with DISTINCT kernels (slot0 FLIP, slot1

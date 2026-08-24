@@ -92,38 +92,47 @@ test("GpuImagePane: encoding + peak re-seed from their props (controlled while t
   // `usePaneEncoding` (`display-encoding.ts`), which the pane feeds the live
   // descriptor `propColormap` + `propTonemap`; peak keeps its own re-seed effect.
   assert.match(gpu, /usePaneEncoding\(\{/, "the pane must own its encoding via usePaneEncoding");
-  // One-concrete-value model: a CONTROLLED surface (toolbar={false} OR a sync group)
-  // feeds the LIVE controlled colormap — the synced value when a group drives it,
-  // else the descriptor prop; an interactive viewport seeds once from the initially-
-  // visible face and persists. Single-receiver refactor: the node-level receiver is
-  // the host, handing `syncedSettings` down so the controlled feed prefers it.
+  // SETTINGS-STORE model: the store's unified `encoding` rules when present; the
+  // props are the pure SEED term (host surfaces follow them live, interactive
+  // viewports seed once from the initially-visible face). The legacy split
+  // colormap/tonemap bus keys are no longer read.
   assert.match(
     gpu,
-    /propColormap:\s*controlledSurface[\s\S]*?\?\s*\(syncedColormap\s*\?\?\s*propColormap\)/,
-    "usePaneEncoding must feed the live controlled colormap (syncedColormap ?? propColormap) when controlled",
+    /propColormap:\s*controlledSurface\s*\?\s*propColormap/,
+    "usePaneEncoding must feed the live descriptor colormap seed when controlled",
   );
   assert.match(
     gpu,
-    /propTonemap:\s*syncedTonemap\s*\?\?\s*propTonemap,/,
-    "usePaneEncoding must be fed the live controlled tonemap (syncedTonemap ?? propTonemap)",
+    /settings:\s*synced,/,
+    "usePaneEncoding must be handed the settings store (its `encoding` rules)",
   );
-  // Peak re-seeds from the controlled value: the synced peak when a group drives
-  // it, else the descriptor seed (`seedPeak()`). `seedPeak`/`peakSeed` stay
-  // descriptor-based so a LOCAL HOME still targets the visible slot's default.
+  // SETTINGS-STORE model: peak resolves at RENDER through the one lookup —
+  // store value > descriptor seed — so a host-driven pane (empty store) follows
+  // the live `peak` prop and a store-driven pane follows the store. No adoption
+  // effect, no pane-local copy.
   assert.match(
     gpu,
-    /setPeak\(\s*synced\?\.peak[\s\S]*?:\s*seedPeak\(\)\s*\)/,
-    "peak must re-seed from the controlled value (synced peak else seedPeak())",
+    /const peak = synced\?\.peak[\s\S]*?:\s*peakSeed/,
+    "peak must derive at render: store value (synced.peak) else the descriptor seed",
   );
 });
 
-test("display-encoding: usePaneEncoding re-seeds when the descriptor props change", () => {
-  // The controlled-surface guarantee now lives in the shared hook: an effect
-  // keyed on the descriptor seed reseeds the single encoding id + clears the
-  // per-arity override memory when the host changes colormap/tonemap.
+test("display-encoding: usePaneEncoding derives the encoding at render (store > seed)", () => {
+  // SETTINGS-STORE model: the controlled-surface guarantee is the ONE render
+  // lookup — the store's unified `encoding` id when present (adopted BY VALUE),
+  // else the live descriptor seed (`seedFor(arity)` reads the current props each
+  // render, so a host prop change takes effect immediately). No adoption effect.
   const de = read("renderers/display-encoding.ts");
-  assert.match(de, /setEncodingId\(seedFor\(arity\)\)/, "the hook must reseed from the props");
-  assert.match(de, /memoryRef\.current\.clear\(\)/, "a prop reseed must forget per-arity overrides");
+  assert.match(
+    de,
+    /const storeId = config\.settings\?\.encoding/,
+    "the hook must read the settings store's unified encoding id",
+  );
+  assert.match(
+    de,
+    /controlledSurface\s*\?\s*seedFor\(arity\)/,
+    "a controlled surface without a store value must derive from the live prop seed",
+  );
 });
 
 test("GpuImagePane: base exposure/offset feed the render (additive with sliders)", () => {

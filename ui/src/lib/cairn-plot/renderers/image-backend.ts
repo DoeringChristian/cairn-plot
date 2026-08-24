@@ -383,9 +383,10 @@ export interface ImageBackendProps {
    *  itself is NEVER a bus subscriber. Absent = no store (a bare host mount);
    *  the pane falls back to its own local state / prop seeds. */
   syncedSettings?: ImageSyncSettings;
-  /** The ONE write path into the viewport's settings store (local store always;
-   *  group store too while selected — gestures stick, borrowed values don't).
-   *  Every user gesture on a display control calls this; absent = no store. */
+  /** The ONE write path into the viewport's settings store (the GROUP store
+   *  while selected — transient, gone on unselect; else the local store, which
+   *  sticks). Every user gesture on a display control calls this; absent = no
+   *  store. */
   setSyncedSettings?: (patch: ImageSyncSettings) => void;
   // — display controls (full set) —
   colormap?: Colormap;

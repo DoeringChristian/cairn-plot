@@ -169,6 +169,17 @@ export const hdrFlipKernel: MultipassKernel = {
   // so they enter the cache key. A direct `computeDiff` with only `ppd` falls back
   // to a minimal 2-exposure [0,4] sweep (deterministic).
   params: { ppd: 67, startExposure: 0, stopExposure: 4, numExposures: 2 },
+  // The REAL exposure range comes from the reference luminance (a SOURCE fact
+  // the pane provides) — the kernel, not the pane, knows it reads it.
+  computeParams(ctx) {
+    if (!ctx.hdrExposures) return undefined;
+    return {
+      ppd: 67,
+      startExposure: ctx.hdrExposures.startExposure,
+      stopExposure: ctx.hdrExposures.stopExposure,
+      numExposures: ctx.hdrExposures.numExposures,
+    };
+  },
   buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;
     const startExposure = ctx.params.startExposure ?? 0;
