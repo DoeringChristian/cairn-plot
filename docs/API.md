@@ -363,7 +363,11 @@ exception to the unified model. Its capability notice never mislabels this: the
 `no-hdr-*` notices are reported only from the WebGPU pane (a resolved
 `getSharedDevice()`), and a WebGPU-less page renders the CPU pane, which reports
 nothing. A `peak > 1` requested on a CPU-rendered SDR source degrades to the
-clamped SDR look there while the WebGPU backend extends it.
+clamped SDR look there while the WebGPU backend extends it. When WebGPU is
+missing the notice further distinguishes an **insecure origin** (plain HTTP on a
+non-localhost address hides `navigator.gpu` via `[SecureContext]`) from an
+unsupported browser, pointing at the localhost/https fix — see
+[`docs/browser-support.md`](browser-support.md#secure-context-required-for-webgpu).
 
 **`cp.Compare` panes — unified tone-map (§A).** The engine-backed compare pane's
 **slide / split / blend** modes now expose the SAME unified TONEMAP menu + PEAK/γ

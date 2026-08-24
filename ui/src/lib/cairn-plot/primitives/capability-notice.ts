@@ -5,13 +5,24 @@
  * the matching message. Three kinds:
  *
  *   - `"no-webgpu"` — the page contains GPU-preferring content (the gpu-image
- *     addon tried to register) but WebGPU is unavailable entirely. Reported
- *     from the addon's `tryRegister()` failure path (`plot-gpu-image-addon.tsx`),
- *     so a chart-only page (which never loads the addon) NEVER warns. This
- *     message implicitly covers HDR too (no WebGPU ⇒ no HDR canvas), and the
- *     `"no-hdr-*"` kinds can NEVER co-occur with it: they are only reported
- *     from inside a resolved `getSharedDevice()` (WebGPU present), whereas a
- *     WebGPU-less page renders the legacy CPU pane, which reports nothing.
+ *     addon tried to register) but WebGPU is unavailable entirely because THIS
+ *     BROWSER does not support / has not enabled it. Reported from the addon's
+ *     `tryRegister()` failure path (`plot-gpu-image-addon.tsx`), so a chart-only
+ *     page (which never loads the addon) NEVER warns. This message implicitly
+ *     covers HDR too (no WebGPU ⇒ no HDR canvas), and the `"no-hdr-*"` kinds can
+ *     NEVER co-occur with it: they are only reported from inside a resolved
+ *     `getSharedDevice()` (WebGPU present), whereas a WebGPU-less page renders
+ *     the legacy CPU pane, which reports nothing.
+ *   - `"no-webgpu-insecure"` — the SAME degraded CPU-fallback state, but the
+ *     cause is an **insecure origin**, not the browser. `navigator.gpu` is
+ *     `[SecureContext]`-gated, so on plain HTTP served from a non-localhost
+ *     address (a LAN / tailnet IP, e.g. `http://100.x.x.x:8321`) the browser
+ *     HIDES `navigator.gpu` entirely regardless of GPU/browser support. The
+ *     addon distinguishes this from a genuine no-support case via
+ *     `noWebgpuKind()` (`!('gpu' in navigator) && !isSecureContext`) and shows a
+ *     remedy (open via `http://localhost` — SSH port-forward for a remote host —
+ *     or serve https) instead of browser-enable steps. Only `https://`,
+ *     `http://localhost` and `http://127.0.0.1` are secure origins.
  *   - `"no-hdr-browser"` — WebGPU works, but THIS BROWSER cannot configure a
  *     canvas with `toneMapping:{mode:"extended"}` (the true-HDR path) while the
  *     page shows true-float HDR content. A FUNDAMENTAL browser limitation
@@ -31,7 +42,8 @@
  *
  * IDEMPOTENT / at-most-one: each kind reports at most once; at most ONE banner
  * is mounted per page. When a second kind reports, the higher-priority one
- * wins (`no-webgpu` > `no-hdr-browser` > `no-hdr-display`).
+ * wins (`no-webgpu` / `no-webgpu-insecure` > `no-hdr-browser` > `no-hdr-display`).
+ * The two `no-webgpu*` kinds are mutually exclusive (one catch, one classify).
  *
  * DISMISSAL persists per page under a `localStorage` key namespaced by
  * `location.pathname`, falling back to `sessionStorage` then in-memory when
@@ -39,14 +51,44 @@
  * session.
  */
 
-export type CapabilityLimit = "no-webgpu" | "no-hdr-browser" | "no-hdr-display";
+export type CapabilityLimit =
+  | "no-webgpu"
+  | "no-webgpu-insecure"
+  | "no-hdr-browser"
+  | "no-hdr-display";
 
-/** One-banner priority: lower number wins when two kinds are reported. */
+/** One-banner priority: lower number wins when two kinds are reported. The two
+ *  `no-webgpu*` kinds share tier 0 (they are mutually exclusive, so ordering
+ *  between them never arises). */
 const KIND_PRIORITY: Record<CapabilityLimit, number> = {
   "no-webgpu": 0,
+  "no-webgpu-insecure": 0,
   "no-hdr-browser": 1,
   "no-hdr-display": 2,
 };
+
+/** Environment inputs for the (pure) no-WebGPU sub-case classifier. */
+export interface NoWebgpuEnv {
+  /** `"gpu" in navigator` at the call site. */
+  hasGpu: boolean;
+  /** `window.isSecureContext` at the call site (a secure origin ⇒ `true`). */
+  isSecureContext: boolean;
+}
+
+/**
+ * Pick the correct no-WebGPU kind when the gpu-image addon fails to init.
+ * `navigator.gpu` is `[SecureContext]`-gated: on an insecure origin (plain HTTP
+ * from a non-localhost address) the property is HIDDEN entirely. So `gpu`
+ * ABSENT **and** the context INSECURE means WebGPU was disabled BY the origin,
+ * not unsupported by the browser → `"no-webgpu-insecure"` (a fixable
+ * misconfiguration). Every other failure (gpu present but `requestAdapter`
+ * failed, or gpu absent on a secure origin) is a genuine `"no-webgpu"`. When
+ * secure-context is unknown we default to secure, so we never cry "insecure"
+ * without evidence. Pure / DOM-free — unit-testable. */
+export function noWebgpuKind(env: NoWebgpuEnv): "no-webgpu" | "no-webgpu-insecure" {
+  if (!env.hasGpu && !env.isSecureContext) return "no-webgpu-insecure";
+  return "no-webgpu";
+}
 
 /** Full browser-support guide the "Learn more" link points at. */
 export const BROWSER_SUPPORT_GUIDE_URL =
@@ -91,7 +133,10 @@ export function detectOS(userAgent: string): OS {
  *   - `no-hdr-display` (browser is fine, OS/display isn't in HDR) → an OS hint.
  *   - `no-hdr-browser` (browser lacks extended tone mapping) → a browser hint
  *     stating it's a browser limitation.
- *   - `no-webgpu` (WebGPU missing) → a browser hint on enabling WebGPU.
+ *   - `no-webgpu-insecure` (WebGPU hidden by an insecure origin) → an
+ *     origin-fix hint (open via localhost / serve https), NOT browser-specific.
+ *   - `no-webgpu` (WebGPU missing / unsupported) → a browser hint on enabling
+ *     WebGPU.
  */
 export function pickEnableHint(kind: CapabilityLimit, env: HintEnv): string {
   if (kind === "no-hdr-display") {
@@ -103,6 +148,12 @@ export function pickEnableHint(kind: CapabilityLimit, env: HintEnv): string {
       default:
         return "Enable HDR in your display and OS settings.";
     }
+  }
+
+  if (kind === "no-webgpu-insecure") {
+    // Not browser-specific: the origin is the problem, so the remedy is the
+    // same everywhere. Rank remedies: localhost first (cheapest), then https.
+    return "Open the page via http://localhost (SSH-forward a remote host: ssh -L 8321:localhost:8321 host), or serve it over https.";
   }
 
   const browser = detectBrowser(env.userAgent, env.isBrave);
@@ -138,6 +189,8 @@ export function limitMessage(kind: CapabilityLimit): string {
   switch (kind) {
     case "no-webgpu":
       return "GPU renderer unavailable → CPU fallback active; FLIP kernels + HDR compare disabled.";
+    case "no-webgpu-insecure":
+      return "WebGPU is disabled because this page is served over an insecure origin (plain HTTP on a non-localhost address) → CPU fallback active; FLIP kernels + HDR compare disabled.";
     case "no-hdr-browser":
       return "True HDR output is unsupported by this browser — a fundamental browser limitation, not a cairn-plot bug → HDR images tone-mapped to SDR.";
     case "no-hdr-display":

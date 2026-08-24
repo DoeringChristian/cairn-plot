@@ -30,6 +30,69 @@ Quick check from any page's devtools console:
 Status below is as of early 2026 — browsers move fast here; when in doubt,
 run the check above.
 
+## Secure context required for WebGPU
+
+**This is the most common "WebGPU is missing on a machine that clearly
+supports it" cause, and it has nothing to do with the browser or GPU.**
+
+`navigator.gpu` — the entry point to the entire WebGPU API — is defined with
+the WebIDL `[SecureContext]` attribute. The browser therefore **hides it
+entirely on an insecure origin**: `"gpu" in navigator` is `false` and
+`navigator.gpu` is `undefined` no matter how new the browser or how capable
+the GPU. This is a hard platform rule, not a setting.
+
+**What counts as a secure origin** (the only origins where WebGPU is exposed):
+
+- `https://` — any host.
+- `http://localhost` (and `*.localhost`).
+- `http://127.0.0.1` (loopback literal). Note **`http://[::1]` is loopback
+  too**, but plain `http://` on **any other IP or hostname is insecure** —
+  including LAN / VPN / tailnet addresses like `http://192.168.1.20:8321` or
+  `http://100.115.92.7:8321`, and bare machine hostnames like
+  `http://my-workstation:8321`.
+
+### Symptom in cairn-plot (looks like a bug, isn't)
+
+On an insecure origin cairn-plot's GPU engine can't initialize, so panes
+**silently fall back to the CPU backend** (`render mode: auto`). Because the
+diff/compare kernels are **all WGSL — there is no CPU diff path** — the
+GPU-only menu entries just **vanish**: the FLIP / HDR-FLIP kernels disappear
+from the compare menu, and a compare pane can read as *"broken — it only shows
+the reference."* Nothing is actually broken; WebGPU was never exposed to the
+page. cairn-plot's in-page [capability notice](#in-page-capability-notice)
+diagnoses exactly this case (an insecure-origin sub-message with the localhost
+remedy) so the degraded state is legible.
+
+### Remedies (ranked)
+
+1. **Open it via `http://localhost`.** If the report is served on the machine
+   in front of you, use the loopback URL directly. For a report served on a
+   **remote** machine, SSH **local port-forward** so the browser still sees
+   `localhost`:
+
+   ```sh
+   ssh -L 8321:localhost:8321 host      # then open http://localhost:8321
+   ```
+
+   Forward whatever port the server listens on; `localhost` on your side is a
+   secure origin even though the bytes come from `host`.
+
+2. **Serve the page over HTTPS.** A TLS origin is secure from any address.
+   Terminate TLS at the server or in front of it (a reverse proxy, or a tunnel
+   such as `cloudflared` / a tailnet HTTPS cert) and open the `https://` URL.
+
+3. **Last resort — a per-origin browser override.** Chromium can be told to
+   treat one specific insecure origin as secure: open
+   `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, enable it, and
+   **list the exact origin** (scheme + host + port, e.g.
+   `http://100.115.92.7:8321`) in its text box, then relaunch. This weakens a
+   security boundary — scope it to the one origin, and prefer options 1–2.
+
+The rule is browser-generic — Chrome, Edge, Firefox, Brave and Safari all gate
+WebGPU behind a secure context identically. (Firefox's about:config toggles and
+Brave's Shields, below, are additional gates on top of — not instead of — the
+secure-context requirement.)
+
 ## Chrome / Edge (Chromium)
 
 - **WebGPU**: enabled by default since Chrome/Edge 113 on Windows, macOS and
@@ -159,7 +222,7 @@ report authored on a WebGPU machine still renders everywhere.
 When a rendered page hits one of the limits above, cairn-plot shows a single
 small, dismissible banner in the bottom-right corner so the reader knows the
 degraded output is a **browser/OS limitation, not a cairn-plot bug**. The notice
-**diagnoses which layer is missing** and shows one of three messages:
+**diagnoses which layer is missing** and shows one of these messages:
 
 1. **GPU renderer unavailable** (`no-webgpu`) — the page contains GPU-preferring
    content (GPU image / compare panes) but WebGPU is missing entirely, so the
@@ -168,6 +231,14 @@ degraded output is a **browser/OS limitation, not a cairn-plot bug**. The notice
    This message covers HDR implicitly — with no WebGPU there is no HDR canvas —
    and the two HDR messages below can never co-occur with it (they are only
    raised once WebGPU has resolved).
+1a. **WebGPU disabled by an insecure origin** (`no-webgpu-insecure`) — the same
+   CPU-fallback state, but the notice distinguishes the case where the cause is
+   the **origin**, not the browser: `navigator.gpu` is absent
+   (`!('gpu' in navigator)`) **and** `window.isSecureContext === false`, i.e.
+   plain HTTP on a non-localhost address (see [Secure context required for
+   WebGPU](#secure-context-required-for-webgpu) above). Here the hint is the
+   origin fix — open via `http://localhost` (SSH-forward a remote host) or serve
+   https — rather than browser-enable steps, because the browser is fine.
 2. **True HDR output unsupported by this browser** (`no-hdr-browser`) — WebGPU
    works, but the browser cannot configure a canvas with
    `toneMapping:{mode:"extended"}`, so true-float HDR images are tone-mapped to

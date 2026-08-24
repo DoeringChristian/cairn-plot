@@ -58,7 +58,7 @@
 import { getSharedDevice } from "./lib/cairn-plot/engine/device";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
 import { listDiffMenuModes } from "./lib/cairn-plot/engine/kernels";
-import { reportCapabilityLimit } from "./lib/cairn-plot/primitives/capability-notice";
+import { reportCapabilityLimit, noWebgpuKind } from "./lib/cairn-plot/primitives/capability-notice";
 
 /**
  * Dispatched on `window` once registration succeeds. Name duplicated (not
@@ -131,7 +131,18 @@ async function tryRegister(): Promise<void> {
     // is exactly the right place to surface the FUNDAMENTAL browser limitation
     // to the reader: a chart-only page never runs this and never warns.
     console.warn("cairn-plot gpu-image addon: engine init failed, staying on legacy panes", err);
-    reportCapabilityLimit("no-webgpu");
+    // Distinguish a genuinely unsupported browser from WebGPU being HIDDEN by an
+    // insecure origin: `navigator.gpu` is `[SecureContext]`-gated, so plain HTTP
+    // on a non-localhost address (a LAN / tailnet IP) drops it entirely. The
+    // latter is a fixable misconfiguration (open via localhost / serve https),
+    // not a browser limitation — surface the right remedy.
+    reportCapabilityLimit(
+      noWebgpuKind({
+        hasGpu: "gpu" in navigator,
+        // Unknown (older engines) ⇒ treat as secure so we never mislabel.
+        isSecureContext: window.isSecureContext !== false,
+      }),
+    );
   }
 }
 
