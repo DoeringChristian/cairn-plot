@@ -29,12 +29,15 @@ import type { DeepGpuCsrData } from "../image/decoders.ts";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { formatChannelValue, type PixelValueScale } from "./PixelValueOverlay";
 import {
+  computeDepthHistogramCpu,
   computeTevHistograms,
   deepPixelSamples,
   luminance,
   resolveHistogramSeries,
+  type DepthHistogramResult,
   type HistogramChannel,
   type HistogramGroupMode,
+  type HistogramSeriesSpec,
   type TevHistogramsResult,
 } from "../renderers/image-histogram.ts";
 import { tevBinOfValue, TEV_HISTOGRAM_BINS } from "../image/histogram-binning.ts";
@@ -58,6 +61,20 @@ export interface HistogramSource {
   /** DEEP-Z only: fetch the deep sample CSR (cached here) for the per-pixel
    *  depth read-out. Omitted for non-deep sources. */
   getDeepCsr?: () => Promise<DeepGpuCsrData | null>;
+  /**
+   * GPU value-histogram compute (M2, full pixel coverage) — GPU panes wire
+   * this to `PaneHandle.computeHistogram` + `tevResultFromRawHistogram`.
+   * Resolving `null` (no kernel / >4 channels / GPU failure) falls the panel
+   * back to the CPU reader loop above. Omitted = CPU-only (subsampled).
+   */
+  computeTev?: (series: HistogramSeriesSpec[]) => Promise<TevHistogramsResult | null>;
+  /**
+   * GPU depth-histogram compute (DEEP-Z only) — `PaneHandle.
+   * computeDepthHistogram` de-quantized + normalized. Resolving `null` falls
+   * back to the CPU twin over `getDeepCsr`'s CSR (which is also the whole
+   * path when this is omitted — CPU panes).
+   */
+  computeDepthHistogram?: () => Promise<DepthHistogramResult | null>;
 }
 
 export interface ImageInfoPanelProps {
@@ -72,6 +89,8 @@ export interface ImageInfoPanelProps {
  *  shows the panel by default iff `INFO_PANEL_W ≤ 25% of the pane width`. */
 export const INFO_PANEL_W = 224;
 const CANVAS_H = 84;
+const DEPTH_CANVAS_H = 48;
+const DEPTH_SERIES_COLOR = "#8ab4ff";
 const GAP_BELOW_TOOLBAR = 6;
 
 /** Measure the pane's toolbar and return this panel's `top` (px, in the pane
@@ -147,8 +166,12 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
   );
 
   // The tev-parity histogram + per-channel stats. Recomputes on data version /
-  // selection / grouping.
-  const result = useMemo<TevHistogramsResult>(
+  // selection / grouping. `computeCpu` is the CPU reader loop (subsampled —
+  // the instant paint AND the fallback); when the pane supplies a GPU compute
+  // (`source.computeTev`, full pixel coverage) its result replaces the CPU one
+  // asynchronously — the previous result stays on screen meanwhile (no blank
+  // flash on data changes).
+  const computeCpu = useCallback(
     () =>
       computeTevHistograms({
         readChannel: source.readChannel,
@@ -162,6 +185,28 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [series, source.version, source.width, source.height, channelCount],
   );
+  const [result, setResult] = useState<TevHistogramsResult>(computeCpu);
+  useEffect(() => {
+    let cancelled = false;
+    const gpu = source.computeTev;
+    if (!gpu) {
+      setResult(computeCpu());
+      return;
+    }
+    setResult(computeCpu());
+    gpu(series)
+      .then((r) => {
+        if (!cancelled && r) setResult(r);
+      })
+      .catch(() => {
+        /* CPU result already shown */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `computeCpu`'s identity already tracks series/version/dims.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [computeCpu, source.computeTev]);
 
   // The cursor pixel's per-channel raw values (numeric) — the per-pixel readout.
   const cursorValues = useMemo<number[] | null>(() => {
@@ -197,6 +242,71 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
     () => (deepCsr && cursor ? deepPixelSamples(deepCsr, cursor.px, cursor.py) : []),
     [deepCsr, cursor?.px, cursor?.py],
   );
+
+  // DEEP-Z: the alpha-weighted DEPTH histogram (M2). GPU kernel when the pane
+  // provides it (`computeDepthHistogram`), else — and on a GPU `null` — the
+  // CPU twin over the exported CSR. Z-window independent (full sample set).
+  const isDeep = !!source.getDeepCsr;
+  const [depth, setDepth] = useState<DepthHistogramResult | null>(null);
+  useEffect(() => {
+    if (!isDeep) {
+      setDepth(null);
+      return;
+    }
+    let cancelled = false;
+    const viaCpu = async (): Promise<DepthHistogramResult | null> => {
+      const csr = await source.getDeepCsr!();
+      return csr ? computeDepthHistogramCpu(csr) : null;
+    };
+    const gpu = source.computeDepthHistogram;
+    (gpu ? gpu().then((r) => r ?? viaCpu()) : viaCpu())
+      .then((r) => {
+        if (!cancelled) setDepth(r);
+      })
+      .catch(() => {
+        if (!cancelled) setDepth(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDeep, source.computeDepthHistogram, source.getDeepCsr, source.version]);
+
+  // Draw the depth histogram (one series; same clamp-at-1 as the value plot).
+  const depthCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = depthCanvasRef.current;
+    if (!canvas || !depth) return;
+    const cssW = canvas.clientWidth || INFO_PANEL_W - 16;
+    const cssH = DEPTH_CANVAS_H;
+    const px = Math.round(cssW * dpr);
+    const py = Math.round(cssH * dpr);
+    if (canvas.width !== px) canvas.width = px;
+    if (canvas.height !== py) canvas.height = py;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const bins = depth.mapping.bins;
+    const bw = cssW / bins;
+    ctx.beginPath();
+    ctx.moveTo(0, cssH);
+    for (let i = 0; i < bins; i++) {
+      const h = Math.min(depth.values[i]!, 1) * (cssH - 2);
+      const x = i * bw;
+      ctx.lineTo(x, cssH - h);
+      ctx.lineTo(x + bw, cssH - h);
+    }
+    ctx.lineTo(cssW, cssH);
+    ctx.closePath();
+    ctx.fillStyle = DEPTH_SERIES_COLOR;
+    ctx.globalAlpha = 0.22;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = DEPTH_SERIES_COLOR;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }, [depth, dpr]);
 
   // Draw the overlaid per-series histograms + a cursor-bin marker. Series
   // values are tev display-normalized densities (≈[0,1]; hot bins may exceed 1
@@ -263,10 +373,10 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
   }, []);
 
   const totalSamples = result.series.reduce((a, s) => a + s.total, 0);
-  const isDeep = !!source.getDeepCsr;
-  // Stats rows for the SELECTED channels (the ones the histogram shows).
+  // Stats rows for the SELECTED channels (the ones the histogram shows). The
+  // async result can briefly lag a channel-count change — index defensively.
   const statRows = selected
-    .filter((c) => c < channelCount && result.channelStats[c]!.count > 0)
+    .filter((c) => c < channelCount && (result.channelStats[c]?.count ?? 0) > 0)
     .map((c) => ({ channel: source.channels[c]!, stats: result.channelStats[c]! }));
 
   return (
@@ -280,6 +390,8 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
       data-hist-channels={channelCount}
       data-hist-deep={isDeep ? "true" : "false"}
       data-hist-deep-count={deepSamples.length}
+      data-hist-depth-bins={depth ? depth.mapping.bins : 0}
+      data-hist-depth-weight={depth ? depth.totalWeight.toFixed(3) : ""}
       data-hist-cursor={cursor ? `${cursor.px},${cursor.py}` : ""}
       data-hist-cursor-values={cursorValues ? cursorValues.map((v) => v.toFixed(4)).join(",") : ""}
       className="absolute rounded border border-border bg-bg-elevated/95 shadow-md backdrop-blur-sm text-fg"
@@ -406,6 +518,33 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
           <span className="text-fg-muted">hover a pixel…</span>
         )}
       </div>
+
+      {/* DEEP-Z: the alpha-weighted depth histogram over ALL samples (symlog
+          Z axis, tev normalization — GPU kernel on WebGPU panes, CPU twin
+          otherwise). */}
+      {isDeep && (
+        <div className="px-2 pb-1 border-t border-border/60 pt-1" data-hist-depth-section="">
+          <div className="text-[9px] uppercase tracking-wide text-fg-muted mb-0.5">
+            depth (α-weighted)
+          </div>
+          {depth ? (
+            <>
+              <canvas
+                ref={depthCanvasRef}
+                className="block w-full"
+                style={{ height: DEPTH_CANVAS_H }}
+                aria-hidden
+              />
+              <div className="flex justify-between text-[9px] font-mono text-fg-muted pt-0.5">
+                <span>{fmtZ(depth.mapping.min)}</span>
+                <span>{fmtZ(depth.mapping.max)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="text-[10px] text-fg-muted">computing…</div>
+          )}
+        </div>
+      )}
 
       {/* DEEP-Z: the cursor pixel's samples (value + depth Z), front → back. */}
       {isDeep && (

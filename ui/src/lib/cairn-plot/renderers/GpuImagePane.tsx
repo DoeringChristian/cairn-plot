@@ -109,6 +109,14 @@ import type { ImageParams } from "../engine/image-engine";
 import CpuImagePane from "./CpuImagePane";
 import ImagePaneShell from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
+import {
+  depthHistogramFromWeights,
+  seriesWeightsFor,
+  tevResultFromRawHistogram,
+  type HistogramSeriesSpec,
+  type TevHistogramsResult,
+} from "./image-histogram";
+import { TEV_HISTOGRAM_BINS } from "../image/histogram-binning";
 import { useSeedGroupOnFormation, useViewportSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 import {
@@ -2237,14 +2245,53 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // In-pane HISTOGRAM source — bins the RAW retained buffer (float scene values
   // in HDR mode, RGBA source bytes in SDR mode), NOT the display pixels. For a
   // DEEP EXR, `getDeepCsr` exports the samples for the per-pixel depth read-out.
+  //
+  // M2: the GPU computes at FULL pixel coverage through the pool
+  // (`PaneHandle.computeHistogram` — value histogram over the pane's own source
+  // texture; `computeDepthHistogram` — the alpha-weighted depth histogram over
+  // the deep CSR). A `null` anywhere (no handle yet, >4 channels, kernel-less
+  // device, GPU failure) resolves `null` and the panel stays on its CPU loop.
+  // DEEP panes keep the CPU VALUE histogram (their pool texture is the z-window
+  // composite, rewritten in place per window — see the pool's doc) and use the
+  // GPU only for the depth histogram.
   const histogramSource = useMemo(() => {
+    const gpuTev =
+      (channelCount: number, u8Scale: boolean) =>
+      async (series: HistogramSeriesSpec[]): Promise<TevHistogramsResult | null> => {
+        const handle = paneHandleRef.current;
+        const seriesWeights = seriesWeightsFor(series);
+        if (!handle || !seriesWeights || channelCount > 4) return null;
+        const pending = handle.computeHistogram({
+          channelCount,
+          seriesCount: series.length,
+          seriesWeights,
+          bins: TEV_HISTOGRAM_BINS,
+          u8Scale,
+        });
+        if (!pending) return null;
+        const raw = await pending.catch(() => null);
+        return raw ? tevResultFromRawHistogram(raw, series, TEV_HISTOGRAM_BINS) : null;
+      };
     if (hdrMode) {
       const hdr = hdrDataRef.current;
       if (!hdr) return undefined;
       const deep = (props as HdrImageProps).hdr?.deep;
-      return floatHistogramSource(hdr, pixelDataVersion, deep ? () => deep.getGpuCsr() : undefined);
+      const base = floatHistogramSource(hdr, pixelDataVersion, deep ? () => deep.getGpuCsr() : undefined);
+      if (deep) {
+        return {
+          ...base,
+          computeDepthHistogram: async () => {
+            const pending = paneHandleRef.current?.computeDepthHistogram(TEV_HISTOGRAM_BINS);
+            if (!pending) return null;
+            const raw = await pending.catch(() => null);
+            return raw ? depthHistogramFromWeights(raw.zMin, raw.zMax, raw.weights, TEV_HISTOGRAM_BINS) : null;
+          },
+        };
+      }
+      return { ...base, computeTev: gpuTev(shapeDims(hdr.shape).c, false) };
     }
-    return u8HistogramSource(sdrImageDataRef.current, pixelDataVersion);
+    const base = u8HistogramSource(sdrImageDataRef.current, pixelDataVersion);
+    return { ...base, computeTev: gpuTev(4, true) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hdrMode, pixelDataVersion]);
 

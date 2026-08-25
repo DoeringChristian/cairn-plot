@@ -28,6 +28,7 @@
  * per-pixel-under-cursor deep readout.
  */
 import type { DeepGpuCsrData } from "../image/decoders.ts";
+import { cpuDeepDepthWeights } from "../engine/histogram/compute.ts";
 import {
   emptyChannelStats,
   foldChannelStat,
@@ -371,6 +372,146 @@ export function computeTevHistograms(
     })),
     channelStats,
   };
+}
+
+// ---------------------------------------------------------------------------
+// GPU-path glue (info panel M2). The GPU computes RAW folds (stats + range +
+// bin counts — `engine/histogram/compute.ts` via the pool's
+// `PaneHandle.computeHistogram`); the pure functions here translate between
+// the panel's series specs and the GPU's weight vectors, and assemble the
+// SAME `TevHistogramsResult` shape the CPU path produces — mapping derivation
+// and tev display normalization stay single-sourced on the host.
+// ---------------------------------------------------------------------------
+
+/** Max texel components the GPU path bins (an RGBA texel). */
+const GPU_MAX_CHANNELS = 4;
+
+/**
+ * Translate series specs into the GPU's `seriesCount×4` per-component weight
+ * rows (one-hot for `"single"`; Rec.709 coeffs for a 3-channel `"luminance"`,
+ * mean weights otherwise — exactly {@link seriesValueAt}'s semantics). Returns
+ * `null` when any series touches a channel beyond the texel's 4 components
+ * (aux-channel EXRs) — the caller then stays on the CPU reader loop.
+ */
+export function seriesWeightsFor(series: readonly HistogramSeriesSpec[]): Float32Array | null {
+  if (series.length === 0 || series.length > GPU_MAX_CHANNELS) return null;
+  const weights = new Float32Array(series.length * 4);
+  for (let s = 0; s < series.length; s++) {
+    const spec = series[s]!;
+    if (spec.channels.some((c) => c < 0 || c >= GPU_MAX_CHANNELS)) return null;
+    if (spec.combine === "single") {
+      weights[s * 4 + spec.channels[0]!] = 1;
+    } else if (spec.combine === "luminance" && spec.channels.length === 3) {
+      const coeffs = [0.2126, 0.7152, 0.0722];
+      spec.channels.forEach((c, i) => {
+        weights[s * 4 + c] = coeffs[i]!;
+      });
+    } else {
+      const w = spec.channels.length > 0 ? 1 / spec.channels.length : 0;
+      for (const c of spec.channels) weights[s * 4 + c] = w;
+    }
+  }
+  return weights;
+}
+
+/** The GPU value-histogram RAW folds (mirrors `engine/types.ts`'s
+ *  `TexHistogramResult` without importing the engine graph). */
+export interface RawTexHistogram {
+  channelStats: ChannelStats[];
+  range: { min: number; max: number } | null;
+  /** `series.length×bins` series-major raw counts. */
+  counts: Uint32Array;
+}
+
+/**
+ * Assemble the GPU's raw folds into the SAME {@link TevHistogramsResult} the
+ * CPU `computeTevHistograms` returns: mapping from the folded range (f64
+ * `tevBinMapping`), tev display normalization over the raw counts, per-series
+ * totals as the count sums. Pure.
+ */
+export function tevResultFromRawHistogram(
+  raw: RawTexHistogram,
+  series: readonly HistogramSeriesSpec[],
+  bins: number = TEV_HISTOGRAM_BINS,
+): TevHistogramsResult {
+  const mapping = raw.range
+    ? tevBinMapping(raw.range.min, raw.range.max, bins)
+    : tevBinMapping(0, 1, bins);
+  const slices = series.map((_, s) => raw.counts.subarray(s * bins, (s + 1) * bins));
+  const values = tevNormalizeCounts(slices, mapping);
+  return {
+    mapping,
+    series: series.map((spec, s) => {
+      let total = 0;
+      const slice = slices[s]!;
+      for (let i = 0; i < slice.length; i++) total += slice[i]!;
+      return {
+        id: spec.id,
+        label: spec.label,
+        color: spec.color,
+        values: values[s] ?? new Float32Array(bins),
+        total,
+      };
+    }),
+    channelStats: raw.channelStats,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DEEP-Z depth histogram (info panel M2): alpha-weighted sample-Z histogram
+// over the deep CSR, symmetric-log₂ Z axis, tev display normalization. GPU
+// panes compute the weights with the fixed-point-atomic kernel
+// (`PaneHandle.computeDepthHistogram`); this CPU twin is the parity reference
+// AND the production path for CPU panes (un-quantized — exact).
+// ---------------------------------------------------------------------------
+
+/** The depth-histogram section's data: ONE normalized series over a symlog Z
+ *  axis (`mapping.min`/`max` = the finite-Z range). */
+export interface DepthHistogramResult {
+  mapping: TevBinMapping;
+  /** tev display-normalized densities (≈[0,1]; the renderer clamps at 1). */
+  values: Float32Array;
+  /** Summed alpha weight across all binned samples. */
+  totalWeight: number;
+}
+
+/** Normalize raw per-bin alpha weights over `[zMin, zMax]` into the panel's
+ *  {@link DepthHistogramResult} — shared by the GPU and CPU paths. */
+export function depthHistogramFromWeights(
+  zMin: number,
+  zMax: number,
+  weights: ArrayLike<number>,
+  bins: number = TEV_HISTOGRAM_BINS,
+): DepthHistogramResult {
+  const mapping = tevBinMapping(zMin, zMax, bins);
+  const values = tevNormalizeCounts([weights], mapping)[0] ?? new Float32Array(bins);
+  let totalWeight = 0;
+  for (let i = 0; i < bins && i < weights.length; i++) totalWeight += weights[i]!;
+  return { mapping, values, totalWeight };
+}
+
+/**
+ * CPU depth histogram over a deep CSR: finite-Z range, then per-sample
+ * alpha-weighted binning ({@link cpuDeepDepthWeights} — the GPU kernel's pure
+ * twin, un-quantized here). Returns `null` when the CSR holds no finite-Z
+ * sample.
+ */
+export function computeDepthHistogramCpu(
+  csr: DeepGpuCsrData,
+  bins: number = TEV_HISTOGRAM_BINS,
+): DepthHistogramResult | null {
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  for (let i = 0; i < csr.zs.length; i++) {
+    const z = csr.zs[i]!;
+    if (!Number.isFinite(z)) continue;
+    if (z < zMin) zMin = z;
+    if (z > zMax) zMax = z;
+  }
+  if (!(zMin <= zMax)) return null;
+  const mapping = tevBinMapping(zMin, zMax, bins);
+  const weights = cpuDeepDepthWeights(csr.zs, csr.colors, mapping, tevBinOfValue);
+  return depthHistogramFromWeights(zMin, zMax, weights, bins);
 }
 
 /** One deep sample of a pixel: its Z (depth) and premultiplied RGBA color. */

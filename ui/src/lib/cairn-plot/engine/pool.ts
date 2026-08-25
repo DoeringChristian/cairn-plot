@@ -58,7 +58,17 @@ import {
 import type { CompareMapping } from "./compare-align";
 import { getDiffKernel, type KernelComputeCtx } from "./kernels/kernel-registry";
 import { contentOpId } from "../image/content-ops/index";
-import type { Device, Surface, Texture, TextureFormat, DeepSampleBuffers, DeepGpuCsrSpec } from "./types";
+import type {
+  Device,
+  Surface,
+  Texture,
+  TextureFormat,
+  DeepSampleBuffers,
+  DeepGpuCsrSpec,
+  TexHistogramSpec,
+  TexHistogramResult,
+  DeepDepthHistogramResult,
+} from "./types";
 import {
   forceEngineFailRequested,
   recordPaneRender,
@@ -322,6 +332,30 @@ export interface PaneHandle {
     ctx: KernelComputeCtx,
     mapping?: CompareMapping,
   ): boolean;
+  /**
+   * GPU tev-parity VALUE HISTOGRAM over this pane's live PRIMARY source
+   * texture at FULL pixel coverage (info panel M2). The pool routes to the
+   * device kernels (`Device.computeTevTextureHistogram`) and memoizes the
+   * result against the live texture OBJECT — content-scoped for free, since
+   * the pool's textures are content-retained: a stacked flip back to a
+   * retained slot re-uses the resolved promise, a re-upload naturally misses.
+   * Returns `null` (not a rejection) when the pane is unset/disposed, the
+   * device lacks the kernel, or a hard GPU failure occurs (the caller falls
+   * back to the CPU reader loop) — and for DEEP composite sources, whose
+   * source texture is rewritten in place on every z-window change (the value
+   * histogram stays on the CPU flattened buffer there; the DEPTH histogram
+   * below is the deep GPU path).
+   */
+  computeHistogram(spec: TexHistogramSpec): Promise<TexHistogramResult> | null;
+  /**
+   * GPU alpha-weighted DEPTH HISTOGRAM over this pane's retained deep CSR
+   * (`Device.computeDeepDepthHistogram` — fixed-point atomics over the
+   * GPU-resident z/alpha sample buffers), memoized per CSR spec + bins.
+   * Z-window independent (it bins the FULL sample set). Returns `null` when
+   * no deep source is set / the device lacks the kernel / a hard GPU failure
+   * occurs — callers fall back to the CPU twin over the exported CSR.
+   */
+  computeDepthHistogram(bins: number): Promise<DeepDepthHistogramResult | null> | null;
   /**
    * MSE / PSNR / MAE over the two live source slots (`a` = {@link setSource},
    * `b` = {@link setSourceB}), honoring the align/fit `mapping` — the diff pane's
@@ -816,6 +850,89 @@ function attemptComputeMetrics(entry: PaneEntry, mapping?: CompareMapping): Prom
   }
 }
 
+// HISTOGRAM CACHES (info panel M2) — keyed by the LIVE GPU resource object the
+// compute ran over. The pool's source textures are content-retained (`retained`
+// LRU) and the deep CSR spec is the retained content itself, so object identity
+// IS content identity here: a flip back to a retained slot re-uses the resolved
+// promise; a re-upload (new texture) or new CSR naturally misses; GC of the
+// resource drops its cache row.
+const texHistogramCache = new WeakMap<Texture, Map<string, Promise<TexHistogramResult>>>();
+const deepHistogramCache = new WeakMap<DeepGpuCsrSpec, Map<number, Promise<DeepDepthHistogramResult | null>>>();
+
+/**
+ * GPU value histogram over `entry`'s primary source texture (see
+ * `PaneHandle.computeHistogram`). Activation is inside the try so a hard GPU
+ * failure parks the entry and returns `null` — the same never-throws contract
+ * as `attemptRender`. Deep composite sources return `null` (their source
+ * texture is rewritten in place per z-window; the CPU flattened-buffer path
+ * stays authoritative for the value histogram there).
+ */
+function attemptComputeHistogram(
+  entry: PaneEntry,
+  spec: TexHistogramSpec,
+): Promise<TexHistogramResult> | null {
+  if (entry.disposed || !entry.source || entry.deep) return null;
+  try {
+    activateEntry(entry);
+    const tex = entry.srcTexture;
+    const compute = entry.device.computeTevTextureHistogram?.bind(entry.device);
+    if (!tex || !compute) return null;
+    const key = `${spec.channelCount}|${spec.seriesCount}|${spec.bins}|${spec.u8Scale ? 1 : 0}|${Array.from(spec.seriesWeights).join(",")}`;
+    let byKey = texHistogramCache.get(tex);
+    if (!byKey) {
+      byKey = new Map();
+      texHistogramCache.set(tex, byKey);
+    }
+    let pending = byKey.get(key);
+    if (!pending) {
+      pending = compute(tex, tex.width, tex.height, spec);
+      byKey.set(key, pending);
+      // A rejected compute (device loss mid-map) must not stick as a cache hit.
+      pending.catch(() => byKey!.delete(key));
+    }
+    return pending;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("cairn-plot engine: pane histogram compute failed", err);
+    entry.parked = false;
+    parkEntry(entry);
+    return null;
+  }
+}
+
+/** GPU depth histogram over `entry`'s retained deep CSR (see
+ *  `PaneHandle.computeDepthHistogram`). Never throws — mirrors the above. */
+function attemptComputeDepthHistogram(
+  entry: PaneEntry,
+  bins: number,
+): Promise<DeepDepthHistogramResult | null> | null {
+  if (entry.disposed || !entry.deep) return null;
+  try {
+    activateEntry(entry);
+    const compute = entry.device.computeDeepDepthHistogram?.bind(entry.device);
+    if (!entry.deepBuffers || !compute) return null;
+    const csr = entry.deep;
+    let byBins = deepHistogramCache.get(csr);
+    if (!byBins) {
+      byBins = new Map();
+      deepHistogramCache.set(csr, byBins);
+    }
+    let pending = byBins.get(bins);
+    if (!pending) {
+      pending = compute(entry.deepBuffers, bins);
+      byBins.set(bins, pending);
+      pending.catch(() => byBins!.delete(bins));
+    }
+    return pending;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("cairn-plot engine: pane depth-histogram compute failed", err);
+    entry.parked = false;
+    parkEntry(entry);
+    return null;
+  }
+}
+
 /** Mean-SSIM scalar over `entry`'s two live source slots (see `PaneHandle.computeSsim`). */
 function attemptComputeSsim(
   entry: PaneEntry,
@@ -1015,6 +1132,12 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         contentKeys.b,
         mapping,
       );
+    },
+    computeHistogram(spec: TexHistogramSpec): Promise<TexHistogramResult> | null {
+      return attemptComputeHistogram(entry, spec);
+    },
+    computeDepthHistogram(bins: number): Promise<DeepDepthHistogramResult | null> | null {
+      return attemptComputeDepthHistogram(entry, bins);
     },
     computeMetrics(mapping?: CompareMapping): Promise<DiffMetrics> | null {
       return attemptComputeMetrics(entry, mapping);

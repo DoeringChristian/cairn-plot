@@ -129,6 +129,26 @@ import {
   type ReduceProgram,
 } from "../reduce/registry";
 import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl";
+import {
+  HIST_BIN_WORKGROUP_SIZE,
+  HIST_MAX_CHANNELS,
+  HIST_MAX_SERIES,
+  HIST_PARAMS_BYTES,
+  HIST_STATS_LANES,
+  HIST_STATS_WORKGROUP_SIZE,
+  DEEP_PARAMS_BYTES,
+  DEPTH_WEIGHT_FIXED_SCALE,
+  assembleDeepDepthBinWGSL,
+  assembleDeepDepthStatsWGSL,
+  assembleHistogramBinWGSL,
+  assembleHistogramStatsWGSL,
+  deepParamsData,
+  foldDeepDepthStatsPartials,
+  foldHistogramStatsPartials,
+  histParamsData,
+} from "../histogram/compute";
+import { tevBinMapping } from "../../image/histogram-binning";
+import type { TexHistogramSpec, TexHistogramResult, DeepDepthHistogramResult } from "../types";
 
 /**
  * Thrown by `readback()`/`reduceDiffSumSquaredAbs()` when the GPU device (or
@@ -488,6 +508,13 @@ class WGPUDeepSampleBuffers implements DeepSampleBuffers {
   readonly height: number;
   readonly paramsBuffer: GPUBuffer;
   readonly bindGroup: GPUBindGroup;
+  /** Flat premultiplied RGBA colors (`4·sampleCount` f32) — the depth-histogram
+   *  compute reads per-sample alpha at `4i+3`. `buffers[1]`. */
+  readonly colorsBuffer: GPUBuffer;
+  /** Per-sample Z (`sampleCount` f32). `buffers[2]`. */
+  readonly zsBuffer: GPUBuffer;
+  /** Total deep sample count (the zs length). */
+  readonly sampleCount: number;
   private readonly buffers: GPUBuffer[];
   private destroyed = false;
 
@@ -497,10 +524,14 @@ class WGPUDeepSampleBuffers implements DeepSampleBuffers {
     buffers: GPUBuffer[],
     paramsBuffer: GPUBuffer,
     bindGroup: GPUBindGroup,
+    sampleCount: number,
   ) {
     this.width = width;
     this.height = height;
     this.buffers = buffers;
+    this.colorsBuffer = buffers[1]!;
+    this.zsBuffer = buffers[2]!;
+    this.sampleCount = sampleCount;
     this.paramsBuffer = paramsBuffer;
     this.bindGroup = bindGroup;
   }
@@ -854,6 +885,73 @@ export async function createWebGPUDevice(): Promise<Device> {
     return { pipeline: deepPipeline, layout: deepBindGroupLayout };
   }
 
+  // GPU HISTOGRAM COMPUTE (info panel M2 — `engine/histogram/compute.ts`).
+  // Compute pipelines + explicit bind-group layouts memoized per variant, the
+  // same "shared harness, no per-use pipelines" discipline as `reducePipelines`
+  // above. Dedicated layouts (not parseWGSLBindings) because these passes bind
+  // STORAGE buffers, which the generic RHI bind-group path doesn't know.
+  const histPipelines = new Map<string, { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout }>();
+  type HistBinding = "texture" | "storage" | "read-only-storage" | "uniform";
+  function getHistPipeline(
+    key: string,
+    wgsl: () => string,
+    bindings: HistBinding[],
+  ): { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout } {
+    let cached = histPipelines.get(key);
+    if (!cached) {
+      const module = gpuDevice.createShaderModule({ code: wgsl() });
+      const entries: GPUBindGroupLayoutEntry[] = bindings.map((kind, i) =>
+        kind === "texture"
+          ? { binding: i, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } }
+          : { binding: i, visibility: GPUShaderStage.COMPUTE, buffer: { type: kind } },
+      );
+      const layout = gpuDevice.createBindGroupLayout({ entries });
+      const pipeline = gpuDevice.createComputePipeline({
+        layout: gpuDevice.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: { module, entryPoint: "cs_main" },
+      });
+      cached = { pipeline, layout };
+      histPipelines.set(key, cached);
+    }
+    return cached;
+  }
+
+  /** Dispatch one compute pass and read a result buffer back (guarded map). */
+  async function runHistPass(
+    pipeline: GPUComputePipeline,
+    bindGroup: GPUBindGroup,
+    numWorkgroups: number,
+    resultBuffer: GPUBuffer,
+    resultBytes: number,
+  ): Promise<ArrayBuffer> {
+    const readBuffer = gpuDevice.createBuffer({
+      size: resultBytes,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const encoder = gpuDevice.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(numWorkgroups);
+    pass.end();
+    encoder.copyBufferToBuffer(resultBuffer, 0, readBuffer, 0, resultBytes);
+    gpuDevice.queue.submit([encoder.finish()]);
+    try {
+      await mapReadBufferGuarded(readBuffer, lostRef);
+    } catch (err) {
+      try {
+        readBuffer.destroy();
+      } catch {
+        /* already invalid after device loss — best effort */
+      }
+      throw err;
+    }
+    const out = readBuffer.getMappedRange().slice(0);
+    readBuffer.unmap();
+    readBuffer.destroy();
+    return out;
+  }
+
   const device: Device = {
     backend: "webgpu",
     capabilities,
@@ -1056,6 +1154,7 @@ export async function createWebGPUDevice(): Promise<Device> {
         [offsetsBuf, colorsBuf, zsBuf],
         paramsBuffer,
         bindGroup,
+        spec.zs.length,
       );
     },
 
@@ -1199,6 +1298,187 @@ export async function createWebGPUDevice(): Promise<Device> {
       const op = getReduceOp("mean")!;
       const [mean] = await runReduce(program, op, [tex as WGPUTexture], width, height, channel);
       return mean!;
+    },
+
+    async computeTevTextureHistogram(
+      tex: Texture,
+      width: number,
+      height: number,
+      spec: TexHistogramSpec,
+    ): Promise<TexHistogramResult> {
+      const t = tex as WGPUTexture;
+      const count = Math.max(0, Math.floor(width) * Math.floor(height));
+      const bins = Math.max(1, Math.floor(spec.bins));
+      const seriesCount = Math.min(HIST_MAX_SERIES, Math.max(0, spec.seriesCount));
+      const channelCount = Math.min(HIST_MAX_CHANNELS, Math.max(0, spec.channelCount));
+      const counts = new Uint32Array(seriesCount * bins);
+      if (count <= 0) {
+        return { channelStats: foldHistogramStatsPartials([], 0).channelStats.slice(0, channelCount), range: null, counts };
+      }
+
+      const uniformBuffer = gpuDevice.createBuffer({
+        size: HIST_PARAMS_BYTES,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const paramsBase = {
+        width: Math.floor(width),
+        height: Math.floor(height),
+        channelCount,
+        seriesCount,
+        u8Scale: spec.u8Scale,
+        bins,
+        seriesWeights: spec.seriesWeights,
+      };
+      gpuDevice.queue.writeBuffer(uniformBuffer, 0, histParamsData(paramsBase));
+
+      // Pass 1 — stats tree-reduce (per-channel min/max/mean + series range).
+      const statsWorkgroups = Math.max(1, Math.ceil(count / HIST_STATS_WORKGROUP_SIZE));
+      const partialBytes = statsWorkgroups * HIST_STATS_LANES * 4;
+      const partialBuffer = gpuDevice.createBuffer({
+        size: partialBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const countsBuffer = gpuDevice.createBuffer({
+        size: Math.max(4, counts.byteLength), // zero-initialized by WebGPU
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      try {
+        const stats = getHistPipeline("hist:stats", assembleHistogramStatsWGSL, ["texture", "storage", "uniform"]);
+        const statsBg = gpuDevice.createBindGroup({
+          layout: stats.layout,
+          entries: [
+            { binding: 0, resource: t.gpuTexture.createView() },
+            { binding: 1, resource: { buffer: partialBuffer } },
+            { binding: 2, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        const partial = new Float32Array(
+          await runHistPass(stats.pipeline, statsBg, statsWorkgroups, partialBuffer, partialBytes),
+        );
+        const fold = foldHistogramStatsPartials(partial, statsWorkgroups);
+
+        // Pass 2 — atomic binning through the host-derived symlog mapping
+        // (f64 `tevBinMapping`, exactly what the CPU reference builds).
+        if (fold.range && seriesCount > 0) {
+          const mapping = tevBinMapping(fold.range.min, fold.range.max, bins);
+          // Degenerate range (constant data): the CPU's 1e-12 diffLog floor
+          // divides an EXACT f64 zero, but the GPU's f32 symlog can differ from
+          // the rounded minLog by an ULP — amplified by /1e-12 into a wrong
+          // clamp-to-top bin. A unit divisor keeps that noise ≪ 1 bin, so every
+          // sample lands in bin 0 exactly like the CPU.
+          const diffLog = mapping.diffLog < 1e-6 ? 1 : mapping.diffLog;
+          gpuDevice.queue.writeBuffer(
+            uniformBuffer,
+            0,
+            histParamsData({ ...paramsBase, minLog: mapping.minLog, diffLog }),
+          );
+          const bin = getHistPipeline("hist:bin", assembleHistogramBinWGSL, ["texture", "storage", "uniform"]);
+          const binBg = gpuDevice.createBindGroup({
+            layout: bin.layout,
+            entries: [
+              { binding: 0, resource: t.gpuTexture.createView() },
+              { binding: 1, resource: { buffer: countsBuffer } },
+              { binding: 2, resource: { buffer: uniformBuffer } },
+            ],
+          });
+          const binWorkgroups = Math.max(1, Math.ceil(count / HIST_BIN_WORKGROUP_SIZE));
+          counts.set(new Uint32Array(await runHistPass(bin.pipeline, binBg, binWorkgroups, countsBuffer, counts.byteLength)));
+        }
+        return { channelStats: fold.channelStats.slice(0, channelCount), range: fold.range, counts };
+      } finally {
+        for (const b of [partialBuffer, countsBuffer, uniformBuffer]) {
+          try {
+            b.destroy();
+          } catch {
+            /* already invalid after device loss — best effort */
+          }
+        }
+      }
+    },
+
+    async computeDeepDepthHistogram(buffers, bins): Promise<DeepDepthHistogramResult | null> {
+      const b = buffers as WGPUDeepSampleBuffers;
+      const count = b.sampleCount;
+      const nBins = Math.max(1, Math.floor(bins));
+      if (count <= 0) return null;
+
+      const uniformBuffer = gpuDevice.createBuffer({
+        size: DEEP_PARAMS_BYTES,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      gpuDevice.queue.writeBuffer(uniformBuffer, 0, deepParamsData({ count, bins: nBins }));
+      const statsWorkgroups = Math.max(1, Math.ceil(count / HIST_BIN_WORKGROUP_SIZE));
+      const partialBytes = statsWorkgroups * 2 * 4;
+      const partialBuffer = gpuDevice.createBuffer({
+        size: partialBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const countsBuffer = gpuDevice.createBuffer({
+        size: nBins * 4, // zero-initialized by WebGPU
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      try {
+        const stats = getHistPipeline("hist:deep-stats", assembleDeepDepthStatsWGSL, [
+          "read-only-storage",
+          "storage",
+          "uniform",
+        ]);
+        const statsBg = gpuDevice.createBindGroup({
+          layout: stats.layout,
+          entries: [
+            { binding: 0, resource: { buffer: b.zsBuffer } },
+            { binding: 1, resource: { buffer: partialBuffer } },
+            { binding: 2, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        const partial = new Float32Array(
+          await runHistPass(stats.pipeline, statsBg, statsWorkgroups, partialBuffer, partialBytes),
+        );
+        const zRange = foldDeepDepthStatsPartials(partial, statsWorkgroups);
+        if (!zRange) return null;
+
+        const mapping = tevBinMapping(zRange.zMin, zRange.zMax, nBins);
+        // Same degenerate-range guard as the value pass above (constant Z).
+        const diffLog = mapping.diffLog < 1e-6 ? 1 : mapping.diffLog;
+        gpuDevice.queue.writeBuffer(
+          uniformBuffer,
+          0,
+          deepParamsData({ count, bins: nBins, minLog: mapping.minLog, diffLog }),
+        );
+        const bin = getHistPipeline("hist:deep-bin", assembleDeepDepthBinWGSL, [
+          "read-only-storage",
+          "read-only-storage",
+          "storage",
+          "uniform",
+        ]);
+        const binBg = gpuDevice.createBindGroup({
+          layout: bin.layout,
+          entries: [
+            { binding: 0, resource: { buffer: b.zsBuffer } },
+            { binding: 1, resource: { buffer: b.colorsBuffer } },
+            { binding: 2, resource: { buffer: countsBuffer } },
+            { binding: 3, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        const fixed = new Uint32Array(
+          await runHistPass(bin.pipeline, binBg, statsWorkgroups, countsBuffer, nBins * 4),
+        );
+        const weights = new Float64Array(nBins);
+        let totalWeight = 0;
+        for (let i = 0; i < nBins; i++) {
+          weights[i] = fixed[i]! / DEPTH_WEIGHT_FIXED_SCALE;
+          totalWeight += weights[i]!;
+        }
+        return { zMin: zRange.zMin, zMax: zRange.zMax, weights, totalWeight };
+      } finally {
+        for (const buf of [partialBuffer, countsBuffer, uniformBuffer]) {
+          try {
+            buf.destroy();
+          } catch {
+            /* already invalid after device loss — best effort */
+          }
+        }
+      }
     },
 
     destroy() {

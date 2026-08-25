@@ -235,3 +235,102 @@ test("deepPixelSamples slices one pixel's samples (Z + rgba) from the CSR", () =
   // Out-of-range pixel → empty.
   assert.deepEqual(deepPixelSamples(csr, 5, 5), []);
 });
+
+// ---------------------------------------------------------------------------
+// M2 GPU-path glue: series→weights translation, the raw-fold→TevHistogramsResult
+// assembly (must be BIN-FOR-BIN what computeTevHistograms produces when fed the
+// same folds), and the deep depth-histogram CPU twin.
+// ---------------------------------------------------------------------------
+
+test("seriesWeightsFor translates single/luma/mean specs into component weights", async () => {
+  const { seriesWeightsFor } = await import("../image-histogram.ts");
+  const single = resolveHistogramSeries(RGB, [0, 1, 2], "separate");
+  const w = seriesWeightsFor(single)!;
+  assert.deepEqual([...w], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]);
+  const luma = seriesWeightsFor(resolveHistogramSeries(RGB, [0, 1, 2], "luminance"))!;
+  assert.ok(Math.abs(luma[0]! - 0.2126) < 1e-6 && Math.abs(luma[1]! - 0.7152) < 1e-6);
+  // Luma over ≠3 channels falls back to the mean (matching seriesValueAt).
+  const luma2 = seriesWeightsFor(resolveHistogramSeries(RGB, [0, 2], "luminance"))!;
+  assert.deepEqual([...luma2], [0.5, 0, 0.5, 0]);
+  const mean4 = seriesWeightsFor(resolveHistogramSeries(RGBA, [0, 1, 2, 3], "mean"))!;
+  assert.deepEqual([...mean4], [0.25, 0.25, 0.25, 0.25]);
+  // A channel beyond the 4-component texel → null (CPU fallback).
+  const aux = resolveHistogramSeries([...RGBA, { name: "C4" }], [4], "separate");
+  assert.equal(seriesWeightsFor(aux), null);
+});
+
+test("tevResultFromRawHistogram assembles GPU folds bin-for-bin like computeTevHistograms", async () => {
+  const { computeTevHistograms: computeTev, seriesValueAt: sVal, tevResultFromRawHistogram } =
+    await import("../image-histogram.ts");
+  const { tevBinMapping, tevBinOfValue, foldChannelStat, emptyChannelStats } =
+    await import("../../image/histogram-binning.ts");
+  // A deterministic 3-channel image (values well inside bins, incl. negatives).
+  const w = 37;
+  const h = 11;
+  const channels = 3;
+  const data: number[] = [];
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < w * h * channels; i++) data.push(Math.round(rnd() * 512 - 128) / 64);
+  const readChannel = arrayReader(data, channels);
+  const series = resolveHistogramSeries(RGB, [0, 1, 2], "separate");
+  const bins = 400;
+
+  // CPU reference (full coverage — no stride).
+  const cpu = computeTev({ readChannel, pixelCount: w * h, series, bins, channelCount: channels });
+
+  // Simulate the GPU's RAW folds in f64: per-channel stats, series range, counts.
+  const channelStats = Array.from({ length: channels }, emptyChannelStats);
+  let min = Infinity;
+  let max = -Infinity;
+  for (let p = 0; p < w * h; p++) {
+    for (let c = 0; c < channels; c++) foldChannelStat(channelStats[c]!, readChannel(p, c));
+    for (const spec of series) {
+      const v = sVal(readChannel, p, spec);
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  const mapping = tevBinMapping(min, max, bins);
+  const counts = new Uint32Array(series.length * bins);
+  for (let p = 0; p < w * h; p++) {
+    for (let s = 0; s < series.length; s++) {
+      const bi = tevBinOfValue(mapping, sVal(readChannel, p, series[s]!));
+      if (bi >= 0) counts[s * bins + bi]!++;
+    }
+  }
+  const gpu = tevResultFromRawHistogram({ channelStats, range: { min, max }, counts }, series, bins);
+
+  assert.equal(gpu.mapping.min, cpu.mapping.min);
+  assert.equal(gpu.mapping.max, cpu.mapping.max);
+  for (let s = 0; s < series.length; s++) {
+    assert.equal(gpu.series[s]!.total, cpu.series[s]!.total);
+    assert.deepEqual([...gpu.series[s]!.values], [...cpu.series[s]!.values]);
+  }
+  for (let c = 0; c < channels; c++) {
+    assert.equal(gpu.channelStats[c]!.min, cpu.channelStats[c]!.min);
+    assert.equal(gpu.channelStats[c]!.max, cpu.channelStats[c]!.max);
+    assert.ok(Math.abs(gpu.channelStats[c]!.mean - cpu.channelStats[c]!.mean) < 1e-9);
+  }
+});
+
+test("computeDepthHistogramCpu bins alpha over the finite-z symlog range", async () => {
+  const { computeDepthHistogramCpu } = await import("../image-histogram.ts");
+  // 2 pixels: pixel 0 has samples at z=1 (a=1) and z=100 (a=0.5); pixel 1 empty.
+  const csr: DeepGpuCsrData = {
+    width: 2,
+    height: 1,
+    offsets: new Uint32Array([0, 2, 2]),
+    colors: new Float32Array([0, 0, 0, 1, 0, 0, 0, 0.5]),
+    zs: new Float32Array([1, 100]),
+  };
+  const depth = computeDepthHistogramCpu(csr, 400)!;
+  assert.equal(depth.mapping.min, 1);
+  assert.equal(depth.mapping.max, 100);
+  assert.ok(Math.abs(depth.totalWeight - 1.5) < 1e-12);
+  // An empty CSR (no finite z) → null.
+  assert.equal(
+    computeDepthHistogramCpu({ ...csr, zs: new Float32Array([NaN, Infinity]) }),
+    null,
+  );
+});

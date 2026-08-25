@@ -42,6 +42,48 @@ export interface DeepGpuCsrSpec {
   zs: Float32Array;
 }
 export interface Surface { readonly canvas: HTMLCanvasElement; readonly hdr: boolean; configure(width: number, height: number): void; getCurrentTextureView(): unknown; }
+/**
+ * Input to {@link Device.computeTevTextureHistogram}: which texel components
+ * are real channels, and the series to bin — each series a vec4 of
+ * per-component weights (one-hot for a single channel; luma/mean coefficients
+ * for a combined series; zero components are never read, so a NaN in a
+ * non-contributing channel cannot poison the series value). Built by
+ * `renderers/image-histogram.ts`'s `seriesWeightsFor`.
+ */
+export interface TexHistogramSpec {
+  /** Real channels in the texel (components `0..channelCount-1`), ≤ 4. */
+  channelCount: number;
+  /** Number of series (≤ 4). */
+  seriesCount: number;
+  /** `seriesCount×4` row-major component weights. */
+  seriesWeights: Float32Array;
+  /** Histogram resolution (tev parity: 400). */
+  bins: number;
+  /** `rgba8unorm` sources: samples are `round(texel·255)` raw code values
+   *  (matching the CPU `ImageData` reader); float sources pass `false`. */
+  u8Scale: boolean;
+}
+/** Output of {@link Device.computeTevTextureHistogram} — the RAW folds; the
+ *  caller derives the symlog mapping + tev display normalization on the host
+ *  (`tevBinMapping` / `tevNormalizeCounts`, shared with the CPU path). */
+export interface TexHistogramResult {
+  /** Per texel channel over FINITE samples, length = `channelCount`. */
+  channelStats: { min: number; max: number; mean: number; count: number }[];
+  /** min/max over all series values, or `null` when none is finite. */
+  range: { min: number; max: number } | null;
+  /** `seriesCount×bins` series-major raw bin counts. */
+  counts: Uint32Array;
+}
+/** Output of {@link Device.computeDeepDepthHistogram} — alpha-weighted Z bin
+ *  weights (de-quantized from the fixed-point accumulation) over the finite-Z
+ *  `[zMin, zMax]` symlog mapping. */
+export interface DeepDepthHistogramResult {
+  zMin: number;
+  zMax: number;
+  /** Per-bin summed alpha weight. */
+  weights: Float64Array;
+  totalWeight: number;
+}
 export interface Device {
   readonly backend: Backend;
   readonly capabilities: Capabilities;
@@ -107,6 +149,33 @@ export interface Device {
    * empty region.
    */
   reduceTextureChannelMean?(tex: Texture, channel: number, width: number, height: number): Promise<number>;
+  /**
+   * GPU tev-parity VALUE HISTOGRAM over the `[0,width)x[0,height)` region of
+   * `tex` at FULL pixel coverage (the info panel's M2 compute — see
+   * `engine/histogram/compute.ts`): a stats pass (per-channel min/max/mean +
+   * the shared series range, KB partial readback) then an atomic 400×k
+   * binning pass through the symmetric-log₂ mapping derived from that range.
+   * Binning math is f32 (the CPU reference is f64) — equal away from bin
+   * edges. Always present on the engine's WebGPU backend; optional as the
+   * defensive contract — callers (the pool) fall back to the CPU reader loop.
+   */
+  computeTevTextureHistogram?(
+    tex: Texture,
+    width: number,
+    height: number,
+    spec: TexHistogramSpec,
+  ): Promise<TexHistogramResult>;
+  /**
+   * GPU alpha-weighted DEPTH HISTOGRAM over a deep CSR's GPU-resident sample
+   * buffers (the deep info-panel section): finite-Z min/max reduction, then
+   * fixed-point-atomic binning of each sample's alpha through the symlog Z
+   * mapping. Pairs with {@link createDeepSampleBuffers}. Returns `null` when
+   * the CSR holds no finite-Z sample.
+   */
+  computeDeepDepthHistogram?(
+    buffers: DeepSampleBuffers,
+    bins: number,
+  ): Promise<DeepDepthHistogramResult | null>;
   destroy(): void;
   /**
    * True while this device's underlying GPU context is LOST and awaiting
