@@ -130,34 +130,54 @@ async function run(): Promise<boolean> {
   ).find((el) => /(^|\s|·)R$/.test((el.textContent ?? "").trim()));
   report(!!rOption, `a single-channel R option exists (${rOption?.textContent?.trim() ?? "none"})`);
   ok = ok && !!rOption;
-  // Diagnostics: did the pick actually trigger a COLD re-resolve (a "Loading…"
-  // placeholder commit — the subtree unmount that used to reset `enlarged`),
-  // and did the pane element remount?
+  // CHANNEL-PICK HOLD contract (user ruling: a pick must NEVER create a new
+  // pane): the pending re-resolve holds the previous payload on the SAME pane
+  // instance — no "Loading…" placeholder commit, no pane remount, and the
+  // fullscreen overlay stays up CONTINUOUSLY through the swap-in-place.
   const stats = (window as unknown as { __cairnLeafResolveStats?: { placeholderMounts: number } })
     .__cairnLeafResolveStats;
   const placeholdersBefore = stats?.placeholderMounts ?? -1;
   const paneBefore = document.querySelector("[data-gpu-image-pane], [data-cpu-image-pane]");
   rOption?.click();
 
-  // The re-resolve may pass through a loading state; once the pane is READY
-  // again (channels menu back), fullscreen must still be showing.
-  const readyAgain = await waitFor(() => !!channelsBtn(), 8000);
-  report(readyAgain, "the pane re-resolves after the channel pick (CHANNELS menu returns)");
-  ok = ok && readyAgain;
-  // PREMISE GUARD: the pick must have gone through a COLD re-resolve (a
-  // "Loading…" placeholder commit — the subtree unmount that used to reset the
-  // enlarged flag). Without this the fullscreen assertion below can pass
-  // vacuously (e.g. a click that never applied — the first version of this
-  // harness did exactly that).
+  // Watch continuity for a settle window: the overlay and the SAME pane element
+  // must be present on every tick (a placeholder swap would break both).
+  let overlayDropped = false;
+  let paneSwapped = false;
+  const settleUntil = Date.now() + 1200;
+  while (Date.now() < settleUntil) {
+    if (!overlay()) overlayDropped = true;
+    const paneNow = document.querySelector("[data-gpu-image-pane], [data-cpu-image-pane]");
+    if (paneNow !== paneBefore) paneSwapped = true;
+    await sleep(30);
+  }
   const placeholdersAfter = stats?.placeholderMounts ?? -1;
-  const paneAfter = document.querySelector("[data-gpu-image-pane], [data-cpu-image-pane]");
   report(
-    placeholdersAfter > placeholdersBefore,
-    `the pick triggered a COLD re-resolve (placeholderMounts ${placeholdersBefore} → ${placeholdersAfter}; pane ${paneBefore === paneAfter ? "same" : "remounted"})`,
+    placeholdersAfter === placeholdersBefore,
+    `NO placeholder commit during the pick (placeholderMounts ${placeholdersBefore} → ${placeholdersAfter})`,
   );
-  ok = ok && placeholdersAfter > placeholdersBefore;
-  // Let a couple frames settle so a late enlarged-reset would be visible.
-  await sleep(200);
+  report(!paneSwapped, "the pane element is the SAME instance throughout (never recreated)");
+  report(!overlayDropped, "the fullscreen overlay stays up CONTINUOUSLY (no flicker window)");
+  ok = ok && placeholdersAfter === placeholdersBefore && !paneSwapped && !overlayDropped;
+
+  // PREMISE GUARD: the pick must actually have APPLIED (the first draft of
+  // this harness clicked the option <li> instead of its inner <button> and
+  // asserted vacuously). Reopen the menu: the "· R" option must be selected.
+  channelsBtn()!.click();
+  await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000);
+  const selectedOpt = Array.from(
+    document.querySelectorAll<HTMLElement>('ul[role="listbox"] [role="option"][aria-selected="true"]'),
+  );
+  const rApplied = selectedOpt.some((el) => /(^|\s|·)R$/.test((el.textContent ?? "").trim()));
+  report(
+    rApplied,
+    `the R pick APPLIED (selected option: ${selectedOpt.map((e) => e.textContent?.trim()).join(", ") || "none"})`,
+  );
+  ok = ok && rApplied;
+  // Close the menu by toggling its button (NOT Escape — the fullscreen shell
+  // listens for Escape at capture and would close the overlay under us).
+  channelsBtn()!.click();
+  await sleep(50);
   const stillFullscreen = !!overlay();
   report(stillFullscreen, "the pane is STILL FULLSCREEN after the channel change (the reported bug)");
   ok = ok && stillFullscreen;

@@ -375,8 +375,29 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // is instant, a cold slot misses (→ `undefined` → the brief loading state). There is
   // no `state` fallback, so a previous slot's resolution can never leak: the stale-diff
   // reference-flash is structurally impossible, not guarded.
-  const dataProps: Record<string, unknown> | undefined = peekResolved<Record<string, unknown>>(resolveKey);
+  const resolvedNow: Record<string, unknown> | undefined = peekResolved<Record<string, unknown>>(resolveKey);
   const cacheError = peekResolveError(resolveKey);
+  // CHANNEL-PICK HOLD (user ruling: a channel pick must NEVER create a new
+  // pane). The pick rides the settings store like any other display setting,
+  // so its pending re-resolve must not swap the viewport for a placeholder —
+  // the SAME pane instance keeps showing the previous channel's payload and
+  // the new decode swaps IN PLACE as a prop change when it lands (exactly how
+  // a colormap change propagates; the pane re-uploads, nothing remounts).
+  // Gated to the SAME BASE SOURCE (`sourceKey(node)` unchanged — only the
+  // channel-selection suffix differs): a STACKED-slot flip changes the base
+  // key, so the flip-commit ruling ("a cold flip renders loading, never a
+  // hold of the previous slot's frame" — the stale-diff guarantee) is
+  // untouched, as is the first mount (no previous payload to hold).
+  const baseKey = isDiff ? sourceKey(node) + "|diffpair" : sourceKey(node);
+  const lastReadyRef = useRef<{ base: string; dataProps: Record<string, unknown> } | null>(null);
+  const held =
+    resolvedNow === undefined && cacheError === undefined && lastReadyRef.current?.base === baseKey
+      ? lastReadyRef.current.dataProps
+      : undefined;
+  const dataProps = resolvedNow ?? held;
+  if (resolvedNow !== undefined) {
+    lastReadyRef.current = { base: baseKey, dataProps: resolvedNow };
+  }
   // A `kind:"diff"` payload STRUCTURALLY carries its foreground (`__diffB`) — the leaf
   // only builds a `compareSource` from a RESOLVED diff pair, so `b` is never undefined.
   // This guard is defensive (should be unreachable): if a diff payload ever lacked its

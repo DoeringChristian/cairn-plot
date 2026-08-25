@@ -17,12 +17,17 @@
  *    the leaf's cached resolve, so every selection caches like any decode.
  */
 import type { ChannelGroup } from "./channel-groups";
+import { floatValues, halfBits, type FloatPixels } from "./pixel-buffer.ts";
 
 const RGBA = ["R", "G", "B", "A"] as const;
 
 interface FloatSourceLike {
   dtype: "float";
-  data: Float32Array | Uint16Array;
+  /** The self-describing buffer (every resolved source since the FloatPixels
+   *  migration). Sliced REPRESENTATION-PRESERVING: half bits slice as bits. */
+  pixels?: FloatPixels;
+  /** Legacy wire shape (hand-built descriptors) — kept as the fallback. */
+  data?: Float32Array | Uint16Array;
   shape: number[];
   [k: string]: unknown;
 }
@@ -75,15 +80,29 @@ function sliceFloat(source: FloatSourceLike, indices: number[]): FloatSourceLike
   const [h, w] = [source.shape[0]!, source.shape[1]!];
   const c = channelCountOf(source);
   const k = indices.length;
+  // The interleaved payload to slice + how to re-wrap the sliced copy. The
+  // self-describing `pixels` buffer is the canonical shape (representation
+  // preserved: half BITS slice as bits, values as values — same constructor);
+  // the legacy `data` field is the hand-built-descriptor fallback.
+  const px0 = source.pixels;
+  const data: ArrayLike<number> | undefined =
+    px0?.kind === "f16-bits" ? px0.bits : px0?.kind === "values" ? px0.values : source.data;
+  if (!data) throw new Error("cairn-plot: channel slice found no float payload on the source");
   const out =
-    source.data instanceof Uint16Array
+    px0?.kind === "f16-bits" || (!px0 && source.data instanceof Uint16Array)
       ? new Uint16Array(w * h * k)
-      : new Float32Array(w * h * k);
-  const data = source.data;
+      : px0?.kind === "values" && px0.values instanceof Float64Array
+        ? new Float64Array(w * h * k)
+        : new Float32Array(w * h * k);
   for (let px = 0; px < w * h; px++) {
     for (let j = 0; j < k; j++) out[px * k + j] = data[px * c + indices[j]!]!;
   }
-  const next = { ...source, data: out, shape: [h, w, k] };
+  const repack = px0
+    ? {
+        pixels: out instanceof Uint16Array ? halfBits(out) : floatValues(out),
+      }
+    : { data: out as Float32Array | Uint16Array };
+  const next = { ...source, ...repack, shape: [h, w, k] };
   // A sliced frame is a STATIC copy: drop the live deep-flatten controller so
   // the Z-window slider (which would recomposite the full RGBA and silently
   // discard the slice) hides while a channel isolation is active. HOME clears
