@@ -668,11 +668,16 @@ function normalizeCompareViewMode(mode: string | undefined | null): CompareViewM
  *  decode is byte-identical to `GpuComparePane`'s. */
 function frameToSource(f: ResolvedCompareFrame): DecodedSource | null {
   if (f.float) {
-    const { data, width, height, channels } = f.float;
+    const { data, width, height, channels, precision } = f.float;
     return {
       dtype: "float",
       data,
       shape: channels > 1 ? [height, width, channels] : [height, width],
+      // The F16-pipeline tag MUST travel with the bits: an `"f16-bits"` payload
+      // is a Uint16Array of raw binary16 BIT PATTERNS. Dropping the tag made
+      // the compare's operand upload read the bits as VALUES (1.0 → 15360,
+      // ≈2^14) — the "compare exposure blows up for URL-loaded half EXRs" bug.
+      ...(precision ? { precision } : {}),
     };
   }
   if (f.url != null) return { dtype: "uint8", url: f.url };
