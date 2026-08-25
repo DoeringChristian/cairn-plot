@@ -86,9 +86,10 @@ import {
   type SourceWindow,
   type TexelRect,
 } from "./region-select";
-import ImageHistogramOverlay, {
+import ImageInfoPanel, {
+  INFO_PANEL_W,
   type HistogramSource,
-} from "../primitives/ImageHistogramOverlay";
+} from "../primitives/ImageInfoPanel";
 import { applyRectEdit, RESIZE_HANDLES, type RegionHandle } from "./region-edit";
 import PixelAxes from "../primitives/PixelAxes";
 import LabelChip from "../primitives/LabelChip";
@@ -270,14 +271,23 @@ export interface ImagePaneShellProps {
    *  the descriptor) — folded into the HOME button's enabled state. */
   extraModified?: boolean;
 
-  // --- in-pane histogram ---------------------------------------------------
-  /** When supplied, a HISTOGRAM toggle button is added to the toolbar and, once
-   *  enabled, a small multi-channel histogram panel is pinned to the pane's
-   *  top-right (below the toolbar). The pane closes `readChannel` over its own
-   *  decoded buffer (no server); see `primitives/ImageHistogramOverlay.tsx`.
-   *  Only wired for the `single` overlay variant (the cursor read-out reuses its
-   *  displayElRef/sourceWindow screen→texel mapping). Absent = no histogram. */
+  // --- in-pane INFO PANEL --------------------------------------------------
+  /** When supplied, an INFO-PANEL toggle button is added to the toolbar and the
+   *  sectioned info panel (stats + tev-parity histogram + read-outs) is pinned
+   *  to the pane's top-right (below the toolbar). The pane closes `readChannel`
+   *  over its own decoded buffer (no server); see
+   *  `primitives/ImageInfoPanel.tsx`. Only wired for the `single` overlay
+   *  variant (the cursor read-out reuses its displayElRef/sourceWindow
+   *  screen→texel mapping). Absent = no panel. */
   histogram?: HistogramSource;
+  /** The viewport's `infoPanel` SETTING (from the settings stack): `true`/
+   *  `false` = an explicit user choice (synced, transient per layer);
+   *  `undefined` = AUTO — the panel shows iff its footprint stays within 25%
+   *  of the pane's width, re-evaluated live on resize. */
+  infoPanelSetting?: boolean;
+  /** Write the setting on a toggle (the pane routes this into its settings
+   *  stack). Absent (a storeless host mount) → a local override is kept. */
+  onInfoPanelChange?: (open: boolean) => void;
 
   // --- chips ---------------------------------------------------------------
   label: string;
@@ -319,6 +329,8 @@ export default function ImagePaneShell({
   onReset,
   extraModified,
   histogram,
+  infoPanelSetting,
+  onInfoPanelChange,
   label,
   showLabelChip,
   isDraggable = false,
@@ -346,7 +358,28 @@ export default function ImagePaneShell({
   // the toolbar. Available only for the `single` overlay variant (its
   // displayElRef/sourceWindow give the cursor read-out's screen→texel mapping).
   const histogramAvailable = !!histogram && !!singleOverlay;
-  const [histogramOpen, setHistogramOpen] = useState(false);
+  // INFO-PANEL visibility (spec §2): explicit SETTING (store) > local override
+  // (storeless host fallback) > AUTO (footprint ≤ 25% of the live pane width).
+  const [paneW, setPaneW] = useState(0);
+  useEffect(() => {
+    const el = paneRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setPaneW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [paneRef]);
+  const [localInfoOverride, setLocalInfoOverride] = useState<boolean | null>(null);
+  const autoInfoOpen = paneW > 0 && INFO_PANEL_W <= paneW * 0.25;
+  const infoOpen = histogramAvailable && (infoPanelSetting ?? localInfoOverride ?? autoInfoOpen);
+  const setInfoOpen = useCallback(
+    (open: boolean) => {
+      if (onInfoPanelChange) onInfoPanelChange(open);
+      else setLocalInfoOverride(open);
+    },
+    [onInfoPanelChange],
+  );
   const [histCursor, setHistCursor] = useState<{ px: number; py: number } | null>(null);
 
   // Track the texel under the cursor for the histogram's per-pixel read-out,
@@ -355,7 +388,7 @@ export default function ImagePaneShell({
   // panel is open, so it costs nothing otherwise.
   const trackHistCursor = useCallback(
     (e: React.PointerEvent) => {
-      if (!histogramOpen || !histogramAvailable || !singleOverlay || !naturalDims) return;
+      if (!infoOpen || !histogramAvailable || !singleOverlay || !naturalDims) return;
       const el = singleOverlay.displayElRef.current;
       if (!el) return;
       const box = el.getBoundingClientRect();
@@ -374,7 +407,7 @@ export default function ImagePaneShell({
       }
       setHistCursor((prev) => (prev && prev.px === px && prev.py === py ? prev : { px, py }));
     },
-    [histogramOpen, histogramAvailable, singleOverlay, naturalDims],
+    [infoOpen, histogramAvailable, singleOverlay, naturalDims],
   );
 
   // ENLARGE (fullscreen overlay). The shell keeps the pane's ENTIRE subtree in
@@ -571,21 +604,23 @@ export default function ImagePaneShell({
     [regionAvailable, regionActive],
   );
 
-  // HISTOGRAM toggle — a LEADING toolbar button (like enlarge) shown whenever a
-  // histogram source is available. Portaled menus stay above; the panel it opens
-  // sits below the toolbar seam (see ImageHistogramOverlay).
+  // INFO-PANEL toggle — a LEADING toolbar button (like enlarge) shown whenever
+  // a histogram source is available. Portaled menus stay above; the panel it
+  // opens sits below the toolbar seam (see ImageInfoPanel). A click is an
+  // EXPLICIT choice: it writes the viewport setting (outranking the auto rule
+  // permanently, per spec §2).
   const histogramButton = useMemo<ToolbarButtonSpec | null>(
     () =>
       histogramAvailable
         ? {
             id: "histogram",
             icon: "chart",
-            title: histogramOpen ? "Hide histogram" : "Show channel histogram",
-            active: histogramOpen,
-            onClick: () => setHistogramOpen((v) => !v),
+            title: infoOpen ? "Hide info panel" : "Show info panel",
+            active: infoOpen,
+            onClick: () => setInfoOpen(!infoOpen),
           }
         : null,
-    [histogramAvailable, histogramOpen],
+    [histogramAvailable, infoOpen, setInfoOpen],
   );
 
   const toolbarConfig = useMemo(
@@ -706,13 +741,14 @@ export default function ImagePaneShell({
             onRemove={regionSelect.remove}
           />
         )}
-        {/* In-pane HISTOGRAM panel — pinned top-right below the toolbar seam;
-            pointer-events scoped to the panel (see ImageHistogramOverlay). */}
-        {histogramOpen && histogram && singleOverlay && naturalDims && (
-          <ImageHistogramOverlay
+        {/* In-pane INFO panel — pinned top-right below the toolbar seam;
+            pointer-events scoped to the panel (see ImageInfoPanel). Closing is
+            an EXPLICIT choice → writes the viewport setting. */}
+        {infoOpen && histogram && singleOverlay && naturalDims && (
+          <ImageInfoPanel
             source={histogram}
             cursor={histCursor}
-            onClose={() => setHistogramOpen(false)}
+            onClose={() => setInfoOpen(false)}
           />
         )}
       </div>

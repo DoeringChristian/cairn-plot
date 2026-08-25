@@ -1,6 +1,6 @@
 /**
  * `renderers/image-histogram.ts` — the PURE binning / grouping math behind the
- * in-pane HISTOGRAM overlay (`primitives/ImageHistogramOverlay.tsx`).
+ * in-pane INFO PANEL (`primitives/ImageInfoPanel.tsx`).
  *
  * The overlay is self-contained: it bins the DECODED source the pane already
  * holds (no server). This module is the DOM-free, unit-tested core it delegates
@@ -28,6 +28,16 @@
  * per-pixel-under-cursor deep readout.
  */
 import type { DeepGpuCsrData } from "../image/decoders.ts";
+import {
+  emptyChannelStats,
+  foldChannelStat,
+  tevBinMapping,
+  tevBinOfValue,
+  tevNormalizeCounts,
+  TEV_HISTOGRAM_BINS,
+  type ChannelStats,
+  type TevBinMapping,
+} from "../image/histogram-binning.ts";
 
 // The per-channel R/G/B tints + neutral fill. Kept in sync WITH (but not
 // imported FROM) `primitives/PixelValueOverlay`'s `CHANNEL_COLORS` /
@@ -265,6 +275,102 @@ export function computeHistograms(input: HistogramComputeInput): HistogramResult
   }
 
   return { bins, min, max, series: results };
+}
+
+// ---------------------------------------------------------------------------
+// tev-parity histograms (the info-panel compute; see image/histogram-binning.ts
+// for the ported math and docs/superpowers/specs/2026-08-25-image-info-panel-
+// design.md for the design). Same reader/series inputs as computeHistograms,
+// but bins through the symmetric-log₂ mapping at 400 bins, returns tev display
+// NORMALIZED values (density + percentile cap), and folds per-CHANNEL
+// min/mean/max stats in the same strided pass.
+// ---------------------------------------------------------------------------
+
+/** One tev-binned series: normalized display values (renderer clamps at 1). */
+export interface TevHistogramSeriesResult {
+  id: string;
+  label: string;
+  color: string;
+  values: Float32Array;
+  /** Finite samples binned into this series. */
+  total: number;
+}
+
+/** The tev-parity histogram + per-channel stats result. */
+export interface TevHistogramsResult {
+  mapping: TevBinMapping;
+  series: TevHistogramSeriesResult[];
+  /** Per SOURCE channel, index-aligned (over the same strided samples). */
+  channelStats: ChannelStats[];
+}
+
+/**
+ * Bin the requested series with tev semantics (symmetric-log₂ axis over the
+ * data's min→max, 400 bins, density + percentile-cap normalization) and fold
+ * per-channel min/mean/max stats. Pure + DOM-free; the GPU path (M2) must
+ * reproduce these numbers.
+ */
+export function computeTevHistograms(
+  input: HistogramComputeInput & { channelCount: number },
+): TevHistogramsResult {
+  const bins = Math.max(1, Math.floor(input.bins ?? TEV_HISTOGRAM_BINS));
+  const maxSamples = input.maxSamples ?? DEFAULT_HISTOGRAM_MAX_SAMPLES;
+  const { readChannel, pixelCount, series, channelCount } = input;
+  const stride = sampleStride(pixelCount, maxSamples);
+  const channelStats = Array.from({ length: channelCount }, emptyChannelStats);
+
+  if (pixelCount <= 0) {
+    return { mapping: tevBinMapping(0, 1, bins), series: [], channelStats };
+  }
+
+  // Pass 1 — the shared range (across series values) + per-channel stats.
+  let min = Infinity;
+  let max = -Infinity;
+  for (let p = 0; p < pixelCount; p += stride) {
+    for (let c = 0; c < channelCount; c++) {
+      const v = readChannel(p, c);
+      if (Number.isFinite(v)) foldChannelStat(channelStats[c]!, v);
+    }
+    for (const spec of series) {
+      const v = seriesValueAt(readChannel, p, spec);
+      if (!Number.isFinite(v)) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    min = 0;
+    max = 1;
+  }
+  const mapping = input.range
+    ? tevBinMapping(input.range.min, input.range.max, bins)
+    : tevBinMapping(min, max, bins);
+
+  // Pass 2 — accumulate per-series counts through the symlog mapping.
+  const counts = series.map(() => new Uint32Array(bins));
+  const totals = series.map(() => 0);
+  for (let p = 0; p < pixelCount; p += stride) {
+    for (let s = 0; s < series.length; s++) {
+      const v = seriesValueAt(readChannel, p, series[s]!);
+      const bi = tevBinOfValue(mapping, v);
+      if (bi < 0) continue;
+      counts[s]![bi]!++;
+      totals[s]!++;
+    }
+  }
+
+  const values = tevNormalizeCounts(counts, mapping);
+  return {
+    mapping,
+    series: series.map((spec, s) => ({
+      id: spec.id,
+      label: spec.label,
+      color: spec.color,
+      values: values[s]!,
+      total: totals[s]!,
+    })),
+    channelStats,
+  };
 }
 
 /** One deep sample of a pixel: its Z (depth) and premultiplied RGBA color. */

@@ -8,7 +8,7 @@
  * Pure w.r.t. its inputs (it only closes over the passed buffer) — the panes
  * memoize the result on their pixel-data version.
  */
-import type { HistogramSource } from "../primitives/ImageHistogramOverlay";
+import type { HistogramSource } from "../primitives/ImageInfoPanel";
 import type { HistogramChannel } from "./image-histogram.ts";
 import { defaultChannelColor } from "./image-histogram.ts";
 import type { HdrData } from "./image-backend";

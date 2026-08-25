@@ -1,48 +1,48 @@
 /**
- * ImageHistogramOverlay — a small, self-contained histogram panel pinned to the
- * TOP-RIGHT of an image pane, BELOW the toolbar seam.
+ * ImageInfoPanel — the pane's INFO PANEL: a small, self-contained sectioned
+ * overlay pinned to the TOP-RIGHT of an image pane, BELOW the toolbar seam
+ * (formerly `ImageHistogramOverlay`; see
+ * `docs/superpowers/specs/2026-08-25-image-info-panel-design.md`).
  *
- * It bins the DECODED source the pane already holds (no server) via the pure
- * `renderers/image-histogram.ts` core, and draws the per-series bin counts on a
- * small canvas. A compact control lets the user pick which CHANNELS to show and
- * how to GROUP them (each channel separately, or combined into one Rec.709-luma
- * / mean series). For DEEP-Z sources it additionally lists the samples (value +
- * DEPTH/Z) of the pixel currently under the cursor.
+ * Sections (top → bottom):
+ *   - per-channel STATS row (min / mean / max — tev's footer numbers);
+ *   - the VALUE HISTOGRAM: tev-parity binning (400 bins, symmetric-log₂ axis
+ *     over the data's min→max, density + percentile-cap normalization) via the
+ *     pure `renderers/image-histogram.ts` → `image/histogram-binning.ts` core;
+ *   - the per-pixel-under-cursor read-out;
+ *   - DEEP-Z: the cursor pixel's samples (value + depth Z), front → back.
+ *   (M2 adds the alpha-weighted DEPTH histogram section for deep sources.)
+ *
+ * It bins the DECODED source the pane already holds (no server). Visibility is
+ * OWNED BY THE PANE (a viewport setting with an auto-show rule — see
+ * `ImagePaneShell`); this component only renders the open panel.
  *
  * Placement + stacking (design req 3):
- *  - It is a single `position:absolute` panel anchored to the pane's top-right,
- *    with its `top` measured to sit just BELOW the pane's `PlotToolbar` (so it
- *    never overlaps the button/slider rows). The toolbar's own overflow/settings
- *    dropdowns PORTAL to `document.body` at a HIGHER z-index, so an opened menu
- *    always draws OVER this panel — they never fight for the same pixels.
- *  - `pointer-events` are scoped to the panel box alone (the rest of the pane is
- *    untouched), and the panel STOPS pointer/wheel propagation so interacting
- *    with it never starts a viewport pan/zoom. Wheel/drag over the image proper
- *    still reach the viewport.
- *
- * Self-contained (per the library convention): it owns its channel-selection +
- * grouping state, measures its own placement, and tracks dpr for a crisp canvas.
+ *  - a single `position:absolute` panel anchored top-right, `top` measured to
+ *    sit just BELOW the pane's `PlotToolbar`; toolbar dropdowns portal to
+ *    `document.body` at a higher z-index and always draw over it.
+ *  - `pointer-events` are scoped to the panel box; it stops pointer/wheel
+ *    propagation so interacting with it never starts a viewport pan/zoom.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeepGpuCsrData } from "../image/decoders.ts";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
 import { formatChannelValue, type PixelValueScale } from "./PixelValueOverlay";
 import {
-  binIndexOf,
-  computeHistograms,
+  computeTevHistograms,
   deepPixelSamples,
-  DEFAULT_HISTOGRAM_BINS,
   luminance,
   resolveHistogramSeries,
   type HistogramChannel,
   type HistogramGroupMode,
-  type HistogramResult,
+  type TevHistogramsResult,
 } from "../renderers/image-histogram.ts";
+import { tevBinOfValue, TEV_HISTOGRAM_BINS } from "../image/histogram-binning.ts";
 
 /**
- * The pane-supplied data the histogram bins. The pane closes `readChannel` over
+ * The pane-supplied data the panel bins. The pane closes `readChannel` over
  * its OWN decoded buffer (`ImageData` / `Float32Array` / widened f16), so the
- * overlay never re-decodes and stays backend-agnostic.
+ * panel never re-decodes and stays backend-agnostic.
  */
 export interface HistogramSource {
   /** Channels in `readChannel`'s index order (R/G/B[/A] + any aux). */
@@ -60,7 +60,7 @@ export interface HistogramSource {
   getDeepCsr?: () => Promise<DeepGpuCsrData | null>;
 }
 
-export interface ImageHistogramOverlayProps {
+export interface ImageInfoPanelProps {
   source: HistogramSource;
   /** The integer texel under the cursor (or null when off-image). */
   cursor: { px: number; py: number } | null;
@@ -68,7 +68,9 @@ export interface ImageHistogramOverlayProps {
   onClose: () => void;
 }
 
-const PANEL_W = 224;
+/** The panel's fixed width — ALSO the auto-show rule's footprint: the shell
+ *  shows the panel by default iff `INFO_PANEL_W ≤ 25% of the pane width`. */
+export const INFO_PANEL_W = 224;
 const CANVAS_H = 84;
 const GAP_BELOW_TOOLBAR = 6;
 
@@ -119,11 +121,7 @@ function defaultSelection(channelCount: number): number[] {
   return Array.from({ length: Math.min(channelCount, 3) }, (_, i) => i);
 }
 
-export default function ImageHistogramOverlay({
-  source,
-  cursor,
-  onClose,
-}: ImageHistogramOverlayProps) {
+export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPanelProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const top = useTopBelowToolbar(panelRef);
@@ -148,19 +146,21 @@ export default function ImageHistogramOverlay({
     [source.channels, selected, mode],
   );
 
-  // The binned histogram. Recomputes on data version / selection / grouping.
-  const result = useMemo<HistogramResult>(
+  // The tev-parity histogram + per-channel stats. Recomputes on data version /
+  // selection / grouping.
+  const result = useMemo<TevHistogramsResult>(
     () =>
-      computeHistograms({
+      computeTevHistograms({
         readChannel: source.readChannel,
         pixelCount: source.width * source.height,
         series,
-        bins: DEFAULT_HISTOGRAM_BINS,
+        bins: TEV_HISTOGRAM_BINS,
+        channelCount,
       }),
     // `source.readChannel` closes over the live buffer; `source.version` is the
     // freshness key (the closure identity may be stable across data swaps).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [series, source.version, source.width, source.height],
+    [series, source.version, source.width, source.height, channelCount],
   );
 
   // The cursor pixel's per-channel raw values (numeric) — the per-pixel readout.
@@ -198,11 +198,13 @@ export default function ImageHistogramOverlay({
     [deepCsr, cursor?.px, cursor?.py],
   );
 
-  // Draw the overlaid per-series histograms + a cursor-bin marker.
+  // Draw the overlaid per-series histograms + a cursor-bin marker. Series
+  // values are tev display-normalized densities (≈[0,1]; hot bins may exceed 1
+  // — clamped here, exactly as tev's plot clips them).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const cssW = canvas.clientWidth || PANEL_W - 16;
+    const cssW = canvas.clientWidth || INFO_PANEL_W - 16;
     const cssH = CANVAS_H;
     const px = Math.round(cssW * dpr);
     const py = Math.round(cssH * dpr);
@@ -213,15 +215,13 @@ export default function ImageHistogramOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
 
-    const peak = Math.max(1, ...result.series.map((s) => s.peak));
-    const bins = result.bins;
+    const bins = result.mapping.bins;
     const bw = cssW / bins;
     for (const s of result.series) {
-      // Filled area (faint) + top polyline in the series tint.
       ctx.beginPath();
       ctx.moveTo(0, cssH);
       for (let i = 0; i < bins; i++) {
-        const h = (s.counts[i]! / peak) * (cssH - 2);
+        const h = Math.min(s.values[i]!, 1) * (cssH - 2);
         const x = i * bw;
         ctx.lineTo(x, cssH - h);
         ctx.lineTo(x + bw, cssH - h);
@@ -240,7 +240,7 @@ export default function ImageHistogramOverlay({
     // Cursor-bin marker: a vertical line at the bin the cursor's luma falls in.
     if (cursorValues && cursorValues.length > 0) {
       const cv = cursorValues.length >= 3 ? luminance(cursorValues.slice(0, 3)) : cursorValues[0]!;
-      const bi = binIndexOf(cv, result.min, result.max, bins);
+      const bi = tevBinOfValue(result.mapping, cv);
       if (bi >= 0) {
         const x = (bi + 0.5) * bw;
         ctx.strokeStyle = "rgba(255,255,255,0.85)";
@@ -264,13 +264,18 @@ export default function ImageHistogramOverlay({
 
   const totalSamples = result.series.reduce((a, s) => a + s.total, 0);
   const isDeep = !!source.getDeepCsr;
+  // Stats rows for the SELECTED channels (the ones the histogram shows).
+  const statRows = selected
+    .filter((c) => c < channelCount && result.channelStats[c]!.count > 0)
+    .map((c) => ({ channel: source.channels[c]!, stats: result.channelStats[c]! }));
 
   return (
     <div
       ref={panelRef}
+      data-cairn-info-panel=""
       data-cairn-histogram=""
       data-hist-series={result.series.length}
-      data-hist-bins={result.bins}
+      data-hist-bins={result.mapping.bins}
       data-hist-total={totalSamples}
       data-hist-channels={channelCount}
       data-hist-deep={isDeep ? "true" : "false"}
@@ -281,7 +286,7 @@ export default function ImageHistogramOverlay({
       // z-index inline (not a Tailwind class) so it always resolves: BELOW the
       // toolbar (z-30) and its body-portaled menus, ABOVE the pixel overlay
       // (z-10) — the toolbar + any opened menu always win the stacking.
-      style={{ top, right: GAP_BELOW_TOOLBAR, width: PANEL_W, zIndex: 15, pointerEvents: "auto" }}
+      style={{ top, right: GAP_BELOW_TOOLBAR, width: INFO_PANEL_W, zIndex: 15, pointerEvents: "auto" }}
       // Scope interactions: never let a panel click/scroll start a viewport
       // pan/zoom (the viewport's pointer handlers live on an ancestor).
       onPointerDown={(e) => e.stopPropagation()}
@@ -290,7 +295,7 @@ export default function ImageHistogramOverlay({
       onDoubleClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between px-2 py-1 border-b border-border/60">
-        <span className="text-[10px] font-mono uppercase tracking-wide text-fg-muted">Histogram</span>
+        <span className="text-[10px] font-mono uppercase tracking-wide text-fg-muted">Info</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -305,8 +310,8 @@ export default function ImageHistogramOverlay({
           <button
             type="button"
             data-hist-close=""
-            title="Hide histogram"
-            aria-label="Hide histogram"
+            title="Hide info panel"
+            aria-label="Hide info panel"
             onClick={onClose}
             className="rounded px-1 text-[11px] leading-none text-fg-muted hover:text-fg"
           >
@@ -364,11 +369,26 @@ export default function ImageHistogramOverlay({
         </div>
       )}
 
+      {/* Per-channel STATS (min / mean / max — tev's footer numbers). */}
+      {statRows.length > 0 && (
+        <div className="px-2 pt-1 text-[9px] font-mono" data-info-stats="">
+          <div className="grid grid-cols-[auto_1fr_1fr_1fr] gap-x-2 text-fg-muted">
+            <span />
+            <span className="text-right">min</span>
+            <span className="text-right">mean</span>
+            <span className="text-right">max</span>
+            {statRows.map(({ channel, stats }, i) => (
+              <StatRow key={i} name={channel.name} color={channel.color} stats={stats} fmt={fmt} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="px-2 pt-1.5">
         <canvas ref={canvasRef} className="block w-full" style={{ height: CANVAS_H }} aria-hidden />
         <div className="flex justify-between text-[9px] font-mono text-fg-muted pt-0.5">
-          <span>{fmt(result.min)}</span>
-          <span>{fmt(result.max)}</span>
+          <span>{fmt(result.mapping.min)}</span>
+          <span>{fmt(result.mapping.max)}</span>
         </div>
       </div>
 
@@ -411,6 +431,27 @@ export default function ImageHistogramOverlay({
         </div>
       )}
     </div>
+  );
+}
+
+function StatRow({
+  name,
+  color,
+  stats,
+  fmt,
+}: {
+  name: string;
+  color?: string;
+  stats: { min: number; mean: number; max: number };
+  fmt: (v: number) => string;
+}) {
+  return (
+    <>
+      <span style={{ color: color ?? "#ccc" }}>{name}</span>
+      <span className="text-right text-fg">{fmt(stats.min)}</span>
+      <span className="text-right text-fg">{fmt(stats.mean)}</span>
+      <span className="text-right text-fg">{fmt(stats.max)}</span>
+    </>
   );
 }
 

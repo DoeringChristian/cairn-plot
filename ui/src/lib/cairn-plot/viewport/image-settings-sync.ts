@@ -77,6 +77,10 @@ export interface ImageSyncSettings {
    *  applied by image LEAVES (LeafView), ignored by compare panes. Synced BY
    *  NAME so a group flips every pane to the same part/layer. */
   channelSelect?: { part?: number | string; layer?: string | string[] } | null;
+  /** INFO-PANEL visibility: `true`/`false` = an explicit user choice; ABSENT =
+   *  auto (the panel shows iff its footprint stays within 25% of the pane
+   *  width). HOME clears it back to auto (explicit `undefined`). */
+  infoPanel?: boolean;
 }
 
 interface SettingsStateDetail {

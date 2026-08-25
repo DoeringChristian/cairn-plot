@@ -90,8 +90,8 @@ function toolbarEl(): HTMLElement | null {
 function histToggle(): HTMLElement | null {
   // The leading toolbar button whose title toggles the histogram.
   return (
-    document.querySelector<HTMLElement>('button[title="Show channel histogram"]') ??
-    document.querySelector<HTMLElement>('button[title="Hide histogram"]')
+    document.querySelector<HTMLElement>('button[title="Show info panel"]') ??
+    document.querySelector<HTMLElement>('button[title="Hide info panel"]')
   );
 }
 function num(el: HTMLElement | null, attr: string): number {

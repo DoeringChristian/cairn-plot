@@ -504,6 +504,10 @@ function CpuSdrImagePane(
     (v: number) => publishSettings({ tonemapGamma: v }),
     [publishSettings],
   );
+  const changeInfoPanel = useCallback(
+    (open: boolean) => publishSettings({ infoPanel: open }),
+    [publishSettings],
+  );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const falseColorRef = useRef<HTMLCanvasElement | null>(null);
@@ -1026,6 +1030,7 @@ function CpuSdrImagePane(
           publishSettings({
             encoding: colormapProp !== "none" ? colormapProp : homeCurve,
             tonemapGamma: gammaSeed,
+            infoPanel: undefined, // HOME → back to AUTO visibility
           });
         }
         props.onChannelReset?.(); // channel override folds into HOME
@@ -1036,6 +1041,8 @@ function CpuSdrImagePane(
         !!props.channelModified
       }
       histogram={histogramSource}
+      infoPanelSetting={synced?.infoPanel}
+      onInfoPanelChange={changeInfoPanel}
       // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
       // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
       // (or a colormap/diff `<canvas>`), with no scene-linear pixel-recompute
@@ -1257,6 +1264,10 @@ function CpuHdrImagePane(
   );
   const changeBounds = useCallback(
     (next: [number, number]) => publishSettings({ colorMin: next[0], colorMax: next[1] }),
+    [publishSettings],
+  );
+  const changeInfoPanel = useCallback(
+    (open: boolean) => publishSettings({ infoPanel: open }),
     [publishSettings],
   );
 
@@ -1516,6 +1527,7 @@ function CpuHdrImagePane(
             ...(boundsSeedVal
               ? { colorMin: boundsSeedVal[0], colorMax: boundsSeedVal[1] }
               : { colorMin: undefined, colorMax: undefined }),
+            infoPanel: undefined, // HOME → back to AUTO visibility
           });
         }
         props.onChannelReset?.(); // channel override folds into HOME
@@ -1529,6 +1541,8 @@ function CpuHdrImagePane(
         !!props.channelModified
       }
       histogram={histogramSource}
+      infoPanelSetting={synced?.infoPanel}
+      onInfoPanelChange={changeInfoPanel}
       label={props.isCompareMode ? "" : label}
       showLabelChip={!props.isCompareMode && !!label}
       extraChips={props.compareChrome}

@@ -951,6 +951,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (next: [number, number]) => publishSettings({ colorMin: next[0], colorMax: next[1] }),
     [publishSettings],
   );
+  const changeInfoPanel = useCallback(
+    (open: boolean) => publishSettings({ infoPanel: open }),
+    [publishSettings],
+  );
   // DIFF gesture sites: a kernel / colormap pick is one store write (+ the
   // kernel routes through its owner); peers follow via the store.
   const changeDiffKernel = useCallback(
@@ -2497,6 +2501,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Histogram button: suppressed for a compare (a scalar error has no channel
       // histogram). Plain images — including an image slot in a mixed stack — keep it.
       histogram={hasCompare ? undefined : histogramSource}
+      infoPanelSetting={synced?.infoPanel}
+      onInfoPanelChange={changeInfoPanel}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
       // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
       // menus. Selecting a LUT deactivates the curve and vice-versa structurally
@@ -2661,6 +2667,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               : // Explicit `undefined` CLEARS the pair in the store (flat merge),
                 // so HOME turns the bounds skin off, not "keeps the old pair".
                 { colorMin: undefined, colorMax: undefined }),
+            // HOME clears the explicit info-panel choice → back to AUTO.
+            infoPanel: undefined,
           });
         }
         deepFlatten.reset();
