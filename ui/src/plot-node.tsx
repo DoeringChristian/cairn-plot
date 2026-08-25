@@ -33,7 +33,7 @@ import {
   type DataSource,
   type ImageOverlayData,
 } from "./lib/cairn-plot";
-import { f16BitsToFloat32 } from "./lib/cairn-plot/image/half";
+import { floatPixelsFrom, floatValues } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import type {
   CompareSource,
   DecodedSource,
@@ -600,15 +600,22 @@ async function resolveFrame(
       const width = rt.shape[1] ?? 0;
       const channels = rt.shape.length >= 3 ? (rt.shape[2] ?? 1) : 1;
       if (!width || !height) return { url: null };
-      const data32 =
-        rt.precision === "f16-bits"
-          ? f16BitsToFloat32(rt.data as Uint16Array)
-          : rt.data instanceof Float32Array
-            ? rt.data
-            : Float32Array.from(rt.data);
       return {
         url: null,
-        float: { data: data32, width, height, channels, contentKey: data.hash },
+        // The SELF-DESCRIBING buffer keeps the runtime payload's representation
+        // intact (f16 bits stay half through to the rgba16float upload).
+        float: {
+          pixels: floatPixelsFrom(
+            rt.data instanceof Float32Array || rt.data instanceof Uint16Array
+              ? rt.data
+              : Float32Array.from(rt.data),
+            rt.precision,
+          ),
+          width,
+          height,
+          channels,
+          contentKey: data.hash,
+        },
       };
     }
     const npy = parseNpy(await source.bytes(data.hash));
@@ -619,7 +626,7 @@ async function resolveFrame(
     return {
       url: null,
       float: {
-        data: Float32Array.from(npy.data),
+        pixels: floatValues(Float32Array.from(npy.data)),
         width,
         height,
         channels,
@@ -668,16 +675,14 @@ function normalizeCompareViewMode(mode: string | undefined | null): CompareViewM
  *  decode is byte-identical to `GpuComparePane`'s. */
 function frameToSource(f: ResolvedCompareFrame): DecodedSource | null {
   if (f.float) {
-    const { data, width, height, channels, precision } = f.float;
+    const { pixels, width, height, channels } = f.float;
+    // The SELF-DESCRIBING buffer travels whole — the representation can no
+    // longer be dropped in transit (the 2^14 "compare exposure" bug class;
+    // see image/pixel-buffer.ts).
     return {
       dtype: "float",
-      data,
+      pixels,
       shape: channels > 1 ? [height, width, channels] : [height, width],
-      // The F16-pipeline tag MUST travel with the bits: an `"f16-bits"` payload
-      // is a Uint16Array of raw binary16 BIT PATTERNS. Dropping the tag made
-      // the compare's operand upload read the bits as VALUES (1.0 → 15360,
-      // ≈2^14) — the "compare exposure blows up for URL-loaded half EXRs" bug.
-      ...(precision ? { precision } : {}),
     };
   }
   if (f.url != null) return { dtype: "uint8", url: f.url };

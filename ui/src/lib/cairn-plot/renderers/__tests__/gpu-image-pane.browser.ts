@@ -69,6 +69,7 @@
  * regenerate with the commands above whenever this harness, its sibling
  * Case-6 script, or their imports change.
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
@@ -139,7 +140,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20):
 // ---------------------------------------------------------------------------
 function buildHdr(): HdrData {
   const values = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
-  return { data: new Float32Array(values), shape: [4, 4], dtype: "<f4" };
+  return { pixels: floatValues(new Float32Array(values)), shape: [4, 4], dtype: "<f4" };
 }
 
 /** Read back a canvas's CURRENT bitmap via createImageBitmap (works
@@ -302,7 +303,7 @@ async function runPoolCapCase(): Promise<boolean> {
     paneEl.style.width = "64px";
     paneEl.style.height = "64px";
     container.appendChild(paneEl);
-    const hdr: HdrData = { data: new Float32Array([0.1 * i, 0.2, 0.3, 0.4]), shape: [2, 2], dtype: "<f4" };
+    const hdr: HdrData = { pixels: floatValues(new Float32Array([0.1 * i, 0.2, 0.3, 0.4])), shape: [2, 2], dtype: "<f4" };
     const root = createRoot(paneEl);
     root.render(h(GpuImagePane, { source: hdrSource(hdr), tonemap: "srgb", exposure: 0, label: `pane-${i}` }));
     roots.push(root);
@@ -358,7 +359,7 @@ async function runParkAwareRenderCase(): Promise<boolean> {
   document.body.appendChild(container);
 
   const hdrValues = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
-  const buildHdrN = (): HdrData => ({ data: new Float32Array(hdrValues), shape: [4, 4], dtype: "<f4" });
+  const buildHdrN = (): HdrData => ({ pixels: floatValues(new Float32Array(hdrValues)), shape: [4, 4], dtype: "<f4" });
   const operator = "srgb";
   const initialExposure = 0.2;
   const newExposure = 1.7;

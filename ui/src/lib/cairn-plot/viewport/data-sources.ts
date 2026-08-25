@@ -58,6 +58,7 @@ import {
   type DecodedImage,
 } from "../image/decoders.ts";
 import type { CompareFloatSource } from "../media-compare/compositor";
+import { floatPixelsFrom } from "../image/pixel-buffer.ts";
 
 /**
  * Resolves a content-addressed artifact hash to fetchable data. Two shapes
@@ -165,11 +166,10 @@ export function decodedFloatToCompareSource(
   contentKey: string,
 ): CompareFloatSource {
   return {
-    data: decoded.data,
+    pixels: floatPixelsFrom(decoded.data, decoded.precision),
     width: decoded.width,
     height: decoded.height,
     channels: decoded.channels,
-    precision: decoded.precision,
     contentKey,
   };
 }

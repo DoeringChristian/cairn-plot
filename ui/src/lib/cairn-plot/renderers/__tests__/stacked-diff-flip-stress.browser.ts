@@ -31,6 +31,7 @@
  * (image↔image) is run first and must stay 0 (matching the field report that
  * same-kind flips never flicker).
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
@@ -183,7 +184,7 @@ function floatHdr(fill: (x: number, y: number) => number): HdrData {
       const i = (y * W + x) * 3;
       data[i] = v; data[i + 1] = v; data[i + 2] = v;
     }
-  return { data, shape: [H, W, 3], dtype: "<f4" };
+  return { pixels: floatValues(data), shape: [H, W, 3], dtype: "<f4" };
 }
 const FLOAT_IMG = floatHdr((x) => 0.85 + 0.1 * (x / 31)); // light
 const FLOAT_REF = floatHdr((_x, y) => 0.8 + 0.15 * (y / 31));

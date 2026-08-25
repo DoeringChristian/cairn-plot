@@ -35,6 +35,7 @@
  * runner regenerates it via esbuild (`--jsx=automatic`, same gotcha as the
  * sibling harnesses).
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 // The enlarge feature lives entirely in the SHARED `ImagePaneShell` (every image
@@ -97,7 +98,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20):
 // A small 4x4 grayscale HDR gradient (scene-linear), includes values >1.0.
 function buildHdr(): HdrData {
   const values = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
-  return { data: new Float32Array(values), shape: [4, 4], dtype: "<f4" };
+  return { pixels: floatValues(new Float32Array(values)), shape: [4, 4], dtype: "<f4" };
 }
 
 /** Read back a canvas's CURRENT bitmap via createImageBitmap (works for a

@@ -33,6 +33,7 @@ import {
   type DataSource,
 } from "./lib/cairn-plot";
 import { fetchImageBytes } from "./lib/cairn-plot/fetch-image";
+import { floatPixelsFrom, floatValues } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import { describeExr } from "./lib/cairn-plot/image/decoders/exr-describe";
 import { groupChannels, type ChannelGroup } from "./lib/cairn-plot/image/channel-groups";
 
@@ -430,10 +431,11 @@ export async function resolveDataProps(
         return {
           source: {
             dtype: "float",
-            data: rt.data,
+            // SELF-DESCRIBING buffer (image/pixel-buffer.ts): the runtime
+            // payload's representation travels with the bytes.
+            pixels: floatPixelsFrom(rt.data, rt.precision),
             shape: rt.shape,
             numpyDtype: rt.dtype,
-            precision: rt.precision,
           },
           meta: data.meta,
         };
@@ -441,7 +443,7 @@ export async function resolveDataProps(
       const buf = await source.bytes(data.hash);
       const npy = parseNpy(buf);
       return {
-        source: { dtype: "float", data: npy.data, shape: npy.shape, numpyDtype: npy.dtype },
+        source: { dtype: "float", pixels: floatValues(npy.data), shape: npy.shape, numpyDtype: npy.dtype },
         meta: data.meta,
       };
     }
@@ -463,10 +465,9 @@ function decodedToSource(decoded: import("./lib/cairn-plot").DecodedImage) {
         : [decoded.height, decoded.width, decoded.channels];
     return {
       dtype: "float",
-      data: decoded.data,
+      pixels: floatPixelsFrom(decoded.data, decoded.precision),
       shape,
       numpyDtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
-      precision: decoded.precision,
       deep: decoded.deep,
     };
   }

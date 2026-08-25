@@ -15,6 +15,7 @@
  * Mounts `CompositeMediaPane` directly (bypassing the descriptor pipeline) in
  * forced CPU mode. No WebGPU needed — that's the whole point.
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { CompositeMediaPane, type CompareFloatSource } from "../compositor";
@@ -66,7 +67,7 @@ function floatSource(key: string): CompareFloatSource {
       data[b + 2] = 1 - v;
     }
   }
-  return { data, width: w, height: h, channels: 3, contentKey: key, precision: "f32" };
+  return { pixels: floatValues(data), width: w, height: h, channels: 3, contentKey: key };
 }
 /** A uint8 data-URL side (a solid color PNG). */
 function urlSide(color: string): string {

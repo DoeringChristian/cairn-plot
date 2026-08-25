@@ -113,9 +113,8 @@ function useGpuCompareReadyTick(): void {
 function compareFloatToDecoded(src: CompareFloatSource): FloatSource {
   return {
     dtype: "float",
-    data: src.data,
+    pixels: src.pixels,
     shape: [src.height, src.width, src.channels],
-    precision: src.precision,
   };
 }
 
@@ -508,20 +507,14 @@ export function MediaComparePane({
  * same URL is a cache hit.
  */
 export interface CompareFloatSource {
-  /**
-   * Row-major samples. Read per {@link CompareFloatSource.precision}: a
-   * `Float32Array` of float VALUES (`"f32"`, the default), or a `Uint16Array`
-   * of raw IEEE-754 binary16 BIT PATTERNS (`"f16-bits"` — the F16 pipeline,
-   * uploaded as `rgba16float`; see `../image/half.ts`).
-   */
-  data: Float32Array | Uint16Array;
+  /** Row-major samples — SELF-DESCRIBING (`image/pixel-buffer.ts`): the
+   *  representation (`"values"` vs `"f16-bits"` bit patterns) travels WITH the
+   *  bytes, so an operand can never be misread by a dropped tag. */
+  pixels: import("../image/pixel-buffer.ts").FloatPixels;
   width: number;
   height: number;
   channels: number;
   contentKey: string;
-  /** How to read `data` — `"f32"` (float values, default when absent) or
-   *  `"f16-bits"` (raw binary16 bits). See `../image/half.ts`. */
-  precision?: import("../image/half.ts").Precision;
 }
 
 /**
@@ -569,7 +562,7 @@ export function isEngineOnlyDiff(kernel: string): boolean {
 function floatSourceToDataUrl(src: CompareFloatSource, tonemap: string, gamma?: number): string | null {
   try {
     const imageData = tonemapToImageData(
-      { data: src.data, shape: [src.height, src.width, src.channels], dtype: "<f4", precision: src.precision },
+      { pixels: src.pixels, shape: [src.height, src.width, src.channels], dtype: "<f4" },
       tonemap,
       0, // exposure
       gamma,

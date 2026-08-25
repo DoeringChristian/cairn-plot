@@ -12,6 +12,7 @@
  * built in-process by `makeF32Npy`.
  */
 import { test } from "node:test";
+import { floatPixelsLength } from "../image/pixel-buffer.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
@@ -81,9 +82,9 @@ test("decodedFloatToCompareSource carries dims/channels/precision + content key"
   assert.equal(src.width, 2);
   assert.equal(src.height, 2);
   assert.equal(src.channels, 1);
-  assert.equal(src.precision, "f32");
+  assert.equal(src.pixels.kind, "values"); // self-describing buffer (pixel-buffer.ts)
   assert.equal(src.contentKey, "content-key-1");
-  assert.equal(src.data.length, 4);
+  assert.equal(floatPixelsLength(src.pixels), 4);
 });
 
 // ---------------------------------------------------------------------------
@@ -97,7 +98,7 @@ test("decodeImageSource: a float .npy decodes to a CompareFloatSource (url null)
   assert.equal(r.float!.width, 3);
   assert.equal(r.float!.height, 2);
   assert.equal(r.float!.channels, 1);
-  assert.equal(r.float!.precision, "f32");
+  assert.equal(r.float!.pixels.kind, "values");
   // Content key is the source url when bytes are supplied (no redirect).
   assert.equal(r.float!.contentKey, "grad.npy");
 });
@@ -113,8 +114,9 @@ test("decodeImageSource: a committed EXR fixture decodes to a float source", asy
   assert.equal(r.float!.width, 64);
   assert.equal(r.float!.height, 48);
   assert.equal(r.float!.channels, 3);
-  // A half EXR keeps half precision through to the rgba16float upload.
-  assert.equal(r.float!.precision, "f16-bits");
+  // A half EXR keeps half precision through to the rgba16float upload — the
+  // SELF-DESCRIBING buffer carries the representation with the bytes.
+  assert.equal(r.float!.pixels.kind, "f16-bits");
 });
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@
  * `data-cairn-harness="self-driving"` in the HTML) so `npm run test:harness`
  * runs it in the DEFAULT set.
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import GpuImagePane from "../GpuImagePane";
@@ -78,7 +79,7 @@ function makeMultiChannelHdr(w: number, h: number): HdrData {
       data[i + 2] = 0.5; // B: constant
     }
   }
-  return { data, shape: [h, w, 3], dtype: "<f4", precision: "f32" };
+  return { pixels: floatValues(data), shape: [h, w, 3], dtype: "<f4" };
 }
 
 function panelEl(): HTMLElement | null {

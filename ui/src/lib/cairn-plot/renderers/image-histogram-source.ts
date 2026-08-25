@@ -13,7 +13,7 @@ import type { HistogramChannel } from "./image-histogram.ts";
 import { defaultChannelColor } from "./image-histogram.ts";
 import type { HdrData } from "./image-backend";
 import { shapeDims } from "./image-backend";
-import { halfToFloat } from "../image/half";
+import { floatPixelReader } from "../image/pixel-buffer.ts";
 import type { DeepGpuCsrData } from "../image/decoders.ts";
 
 /** Channel names for a `C`-channel float source (1→Y, 3→RGB, 4→RGBA, else Ch0…). */
@@ -64,19 +64,15 @@ export function floatHistogramSource(
   getDeepCsr?: () => Promise<DeepGpuCsrData | null>,
 ): HistogramSource {
   const { h, w, c } = shapeDims(hdr.shape);
-  const data = hdr.data;
-  const isF16 = hdr.precision === "f16-bits";
+  // The self-describing buffer's hoisted reader widens half on the fly.
+  const read = floatPixelReader(hdr.pixels);
   return {
     channels: channelMeta(floatChannelNames(c)),
     width: w,
     height: h,
     scale: "unit",
     version,
-    readChannel: (pixelIndex, channel) => {
-      const k = pixelIndex * c + channel;
-      const raw = data[k] ?? 0;
-      return isF16 ? halfToFloat(raw) : raw;
-    },
+    readChannel: (pixelIndex, channel) => read(pixelIndex * c + channel),
     getDeepCsr,
   };
 }

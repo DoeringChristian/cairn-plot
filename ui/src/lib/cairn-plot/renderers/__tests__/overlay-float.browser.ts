@@ -35,6 +35,7 @@
  *   Open:    http://localhost:8937/src/lib/cairn-plot/renderers/__tests__/overlay-float.browser.html
  *   The `.bundle.js` is gitignored — `npm run test:harness` regenerates it.
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
@@ -92,7 +93,7 @@ async function waitFor(pred: () => boolean, timeoutMs = 8000, stepMs = 40): Prom
 function buildHdr(): HdrData {
   const data = new Float32Array(8 * 8);
   for (let i = 0; i < data.length; i++) data[i] = (i / (data.length - 1)) * 3.0;
-  return { data, shape: [8, 8], dtype: "<f4" };
+  return { pixels: floatValues(data), shape: [8, 8], dtype: "<f4" };
 }
 
 // One normalized box covering the image middle (+ a label so a chip also draws).

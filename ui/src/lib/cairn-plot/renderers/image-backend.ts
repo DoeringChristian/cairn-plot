@@ -25,7 +25,7 @@ import type {
 } from "../types";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
-import type { Precision } from "../image/half.ts";
+import { floatPixelsFrom, type FloatPixels } from "../image/pixel-buffer.ts";
 import type { DeepFlattenController } from "../image/decoders.ts";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 
@@ -35,27 +35,22 @@ import type { ImageSyncSettings } from "../viewport/image-settings-sync";
 // ---------------------------------------------------------------------------
 export interface HdrData {
   /**
-   * Flattened samples in row-major order. Read per {@link HdrData.precision}:
-   * a `Float64Array`/`Float32Array` of float VALUES (`"f32"`, the default), or
-   * a `Uint16Array` of raw IEEE-754 binary16 BIT PATTERNS (`"f16-bits"` — the
-   * F16 pipeline, kept half-precision through to an `rgba16float` upload; see
-   * `../image/half.ts`).
+   * Flattened samples in row-major order — a SELF-DESCRIBING buffer whose
+   * representation travels WITH the bytes (`image/pixel-buffer.ts`, user
+   * ruling 2026-08-25): `"values"` (f32/f64, read directly) or `"f16-bits"`
+   * (raw binary16 bit patterns, the F16 pipeline — kept half through to an
+   * `rgba16float` upload). Read via the pixel-buffer accessors; the
+   * bits-as-values misread is now unrepresentable.
    */
-  data: Float64Array | Float32Array | Uint16Array;
+  pixels: FloatPixels;
   /** `[H,W]` | `[H,W,C]` with `C∈{1,3,4}`. */
   shape: number[];
   /** Raw numpy dtype string (e.g. `<f4`) — informational. */
   dtype: string;
   /**
-   * How to interpret `data`: `"f32"` (float values, the default when absent —
-   * every pre-F16 caller) or `"f16-bits"` (raw binary16 bits in a
-   * `Uint16Array`). See `../image/half.ts`.
-   */
-  precision?: import("../image/half.ts").Precision;
-  /**
    * Present ONLY for a DEEP EXR opened with live-flatten (the depth slider).
-   * `data` above is the FULL composite; the controller re-flattens live at a Z
-   * cutoff. The consuming pane MUST `dispose()` it on unmount. See
+   * `pixels` above is the FULL composite; the controller re-flattens live at a
+   * Z cutoff. The consuming pane MUST `dispose()` it on unmount. See
    * `../image/decoders.ts` and `./use-deep-flatten.ts`.
    */
   deep?: import("../image/decoders.ts").DeepFlattenController;
@@ -236,12 +231,10 @@ export function isHdrProps(p: LegacyImageProps): p is HdrImageProps {
 /** A decoded FLOAT source (EXR / float `.npy` / PFM / float-by-reference). */
 export interface FloatSource {
   dtype: "float";
-  /** Row-major samples; read per {@link precision} (see `../image/half.ts`). */
-  data: Float64Array | Float32Array | Uint16Array;
+  /** Row-major samples — SELF-DESCRIBING (see {@link HdrData.pixels}). */
+  pixels: FloatPixels;
   /** `[H,W]` | `[H,W,C]` with `C∈{1,3,4}`. */
   shape: number[];
-  /** How to interpret `data`: `"f32"` (values) or `"f16-bits"` (binary16 bits). */
-  precision?: Precision;
   /** Informational numpy dtype string (e.g. `"<f4"`). */
   numpyDtype?: string;
   /** Present only for a DEEP EXR opened with live-flatten (the depth slider). */
@@ -463,10 +456,9 @@ export function isFloatSource(p: ImageBackendProps): boolean {
 export function hdrSource(hdr: HdrData): FloatSource {
   return {
     dtype: "float",
-    data: hdr.data,
+    pixels: hdr.pixels,
     shape: hdr.shape,
     numpyDtype: hdr.dtype,
-    precision: hdr.precision,
     deep: hdr.deep,
   };
 }
@@ -487,27 +479,35 @@ export function urlSource(url: string | null): Uint8Source {
  */
 export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
   const src = p.source;
-  // Memoize on the UNDERLYING stable fields (data/shape/precision/deep), NOT the
+  // Memoize on the UNDERLYING stable fields (pixels/shape/deep), NOT the
   // `source` wrapper identity — call sites (the compare side panes) may build a
-  // fresh wrapper each render around a stable `data`/`deep`, and the decode/
+  // fresh wrapper each render around a stable `pixels`/`deep`, and the decode/
   // upload/deep-flatten effects that key on `hdr` must not thrash.
-  const floatData = src.dtype === "float" ? src.data : null;
+  const floatPixels =
+    src.dtype === "float"
+      ? (src.pixels ??
+        // Legacy WIRE bridge: a hand-built descriptor source may still author
+        // {data, precision}. Interpreted exactly ONCE here — `floatPixelsFrom`
+        // REFUSES an untagged Uint16Array (no silent bits-as-values misread).
+        floatPixelsFrom(
+          (src as unknown as { data: Float32Array | Float64Array | Uint16Array }).data,
+          (src as unknown as { precision?: "f32" | "f16-bits" }).precision,
+        ))
+      : null;
   const floatShape = src.dtype === "float" ? src.shape : null;
-  const floatPrecision = src.dtype === "float" ? src.precision : undefined;
   const floatNumpyDtype = src.dtype === "float" ? src.numpyDtype : undefined;
   const floatDeep = src.dtype === "float" ? src.deep : undefined;
   const hdr = useMemo<HdrData | null>(
     () =>
-      floatData
+      floatPixels
         ? {
-            data: floatData,
+            pixels: floatPixels,
             shape: floatShape ?? [],
             dtype: floatNumpyDtype ?? "<f4",
-            precision: floatPrecision,
             deep: floatDeep,
           }
         : null,
-    [floatData, floatShape, floatPrecision, floatNumpyDtype, floatDeep],
+    [floatPixels, floatShape, floatNumpyDtype, floatDeep],
   );
   if (hdr) {
     return {

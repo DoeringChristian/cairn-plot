@@ -22,7 +22,7 @@
  * pool access, so it is trivially reusable and testable in isolation.
  */
 import { useCallback } from "react";
-import { halfToFloat } from "../image/half";
+import { floatPixelReader } from "../image/pixel-buffer.ts";
 import { getContentOp, isDirectContentOp } from "../image/content-ops/index";
 import { getDiffKernel } from "../engine/kernels";
 import {
@@ -68,10 +68,9 @@ export interface PixelSamplers {
   sampleForeground: (px: number, py: number, notation: PixelValueNotation) => PixelSample | null;
 }
 
-/** Widen one float/half channel value at index `k`. */
-function reader(data: ArrayLike<number>, half: boolean): (k: number) => number {
-  return half ? (k) => halfToFloat(data[k] ?? 0) : (k) => data[k] ?? 0;
-}
+// Per-sample reads go through the SELF-DESCRIBING buffer's hoisted reader
+// (`floatPixelReader`) — the representation travels with the bytes, so these
+// samplers can never misread bit patterns (image/pixel-buffer.ts).
 
 export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
   const {
@@ -95,7 +94,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
         if (!hdr || !dims || px < 0 || py < 0 || px >= dims.w || py >= dims.h) return null;
         const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
         const base = (py * dims.w + px) * c;
-        const readV = reader(hdr.data, hdr.precision === "f16-bits");
+        const readV = floatPixelReader(hdr.pixels);
         const values = c === 1 ? [readV(base)] : [readV(base), readV(base + 1), readV(base + 2)];
         return buildChannelSample(values, "unit", notation);
       }
@@ -140,7 +139,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
           if (!hdr || !dims || px < 0 || py < 0 || px >= dims.w || py >= dims.h) return null;
           const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
           const b0 = (py * dims.w + px) * c;
-          const rd = reader(hdr.data, hdr.precision === "f16-bits");
+          const rd = floatPixelReader(hdr.pixels);
           return c === 1 ? [rd(b0), rd(b0), rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
         }
         const vd = sdrImageDataRef.current;
@@ -155,7 +154,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
           const { h, w, c } = shapeDims(fl.shape);
           if (px < 0 || py < 0 || px >= w || py >= h) return null;
           const b0 = (py * w + px) * c;
-          const rd = reader(fl.data, fl.precision === "f16-bits");
+          const rd = floatPixelReader(fl.pixels);
           return c === 1 ? [rd(b0), rd(b0), rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
         }
         const u8 = refU8Ref.current;
@@ -178,7 +177,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
         const { h, w, c } = shapeDims(fl.shape);
         if (px < 0 || py < 0 || px >= w || py >= h) return null;
         const b0 = (py * w + px) * c;
-        const rd = reader(fl.data, fl.precision === "f16-bits");
+        const rd = floatPixelReader(fl.pixels);
         const values = c === 1 ? [rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
         return buildChannelSample(values, "unit", notation);
       }

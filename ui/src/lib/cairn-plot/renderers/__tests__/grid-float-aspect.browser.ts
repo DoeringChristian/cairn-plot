@@ -25,6 +25,7 @@
  *      selection ring matches the viewport ("ring larger than viewport" fix).
  * CPU backend forced — `CpuImagePane` tone-maps float on the CPU, no WebGPU.
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
@@ -73,9 +74,8 @@ function near(a: number, b: number, tol: number): boolean {
 function floatSource(w: number, h: number): Record<string, unknown> {
   return {
     dtype: "float",
-    data: new Float32Array(h * w * 3),
+    pixels: floatValues(new Float32Array(h * w * 3)),
     shape: [h, w, 3],
-    precision: "f32",
     numpyDtype: "<f4",
   };
 }

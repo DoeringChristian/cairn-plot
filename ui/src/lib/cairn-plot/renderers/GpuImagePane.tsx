@@ -55,7 +55,8 @@ import type { Colormap } from "../types";
 import { applyColormap, colormapFloatLUT } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../image";
-import { HALF_ONE, f16BitsToFloat32 } from "../image/half";
+import { HALF_ONE } from "../image/half";
+import { floatValues, widenFloatPixels } from "../image/pixel-buffer.ts";
 // DIFF capability: the pane samples a second source slot (`compareSource.b` via
 // the pool's `setSourceB`) and renders a diff CONTENT op — a DIRECT pointwise op
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
@@ -154,7 +155,7 @@ import {
 
 // A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
-const NULL_HDR: HdrData = { data: new Float32Array(0), shape: [0, 0], dtype: "<f4" };
+const NULL_HDR: HdrData = { pixels: floatValues(new Float32Array(0)), shape: [0, 0], dtype: "<f4" };
 
 /** The IDENTITY-TRANSFER curves — the ones whose tone-map "operator" is a pure
  *  clamp, the display transfer living entirely in the output-encode stage. A
@@ -179,8 +180,8 @@ import { reportCapabilityLimit } from "../primitives/capability-notice";
  *  same way they would after a float upload. The `"f32"` path is unchanged. */
 function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
   const { h, w, c } = shapeDims(hdr.shape);
-  if (hdr.precision === "f16-bits") {
-    const src = hdr.data as Uint16Array;
+  if (hdr.pixels.kind === "f16-bits") {
+    const src = hdr.pixels.bits;
     const out = new Uint16Array(w * h * 4);
     for (let i = 0; i < w * h; i++) {
       const base = i * c;
@@ -200,7 +201,7 @@ function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
     }
     return { data: out, width: w, height: h, format: "rgba16float" };
   }
-  const src = hdr.data;
+  const src = hdr.pixels.values;
   const out = new Float32Array(w * h * 4);
   for (let i = 0; i < w * h; i++) {
     const base = i * c;
@@ -237,10 +238,9 @@ function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
 async function decodedSourceToUpload(src: DecodedSource): Promise<SourceUpload | null> {
   if (src.dtype === "float") {
     return hdrToRGBAFloat32({
-      data: src.data,
+      pixels: src.pixels,
       shape: src.shape,
       dtype: src.numpyDtype ?? "<f4",
-      precision: src.precision,
       deep: src.deep,
     });
   }
@@ -1440,7 +1440,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const ref = backendProps.source.dtype === "float" ? backendProps.source : null;
     if (!ref) return null;
     const { h, w, c } = shapeDims(ref.shape);
-    const refData = ref.precision === "f16-bits" ? f16BitsToFloat32(ref.data as Uint16Array) : ref.data;
+    const refData = widenFloatPixels(ref.pixels);
     return computeHdrFlipExposures(refData, w, h, c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diffMode, sourcesAreFloat, backendProps.source]);

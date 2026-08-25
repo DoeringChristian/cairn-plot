@@ -24,6 +24,7 @@
  * DATA props arrive already-resolved from the descriptor (`resolveDataProps`)
  * merged over the descriptor's config `props`; adapters spread that as `p`.
  */
+import { floatPixelsFrom } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import {
   useContext,
   useEffect,
@@ -334,10 +335,11 @@ function ImageStandalone(p: P) {
     (p.hdr
       ? {
           dtype: "float" as const,
-          data: p.hdr.data,
+          // Legacy WIRE bridge (hand-built descriptors author {data, precision}):
+          // interpreted exactly ONCE, into the self-describing buffer.
+          pixels: floatPixelsFrom(p.hdr.data, p.hdr.precision),
           shape: p.hdr.shape,
           numpyDtype: p.hdr.dtype,
-          precision: p.hdr.precision,
           deep: p.hdr.deep,
         }
       : { dtype: "uint8" as const, url: p.imageUrl ?? null });

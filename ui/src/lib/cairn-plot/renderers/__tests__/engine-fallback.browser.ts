@@ -61,6 +61,7 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
@@ -202,7 +203,7 @@ async function runHdrImageCase(): Promise<boolean> {
   container.style.height = "160px";
   document.body.appendChild(container);
 
-  const hdr: HdrData = { data: new Float32Array([0.1, 0.4, 0.7, 1.0]), shape: [2, 2], dtype: "<f4" };
+  const hdr: HdrData = { pixels: floatValues(new Float32Array([0.1, 0.4, 0.7, 1.0])), shape: [2, 2], dtype: "<f4" };
   const root = createRoot(container);
   root.render(h(GpuImagePane, { source: hdrSource(hdr), tonemap: "srgb", exposure: 0, label: "hdr-fallback-test" }));
 

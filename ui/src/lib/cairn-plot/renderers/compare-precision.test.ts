@@ -25,17 +25,20 @@ import { dirname, join } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const plotNode = readFileSync(join(HERE, "..", "..", "..", "plot-node.tsx"), "utf8");
 
-test("frameToSource forwards the float payload's `precision` tag", () => {
+test("frameToSource forwards the SELF-DESCRIBING pixels buffer", () => {
   const fn = plotNode.slice(
     plotNode.indexOf("function frameToSource"),
     plotNode.indexOf("function frameContentKey"),
   );
   assert.ok(fn.length > 0, "frameToSource must exist in plot-node.tsx");
+  // The original bug (an optional side-channel `precision` tag dropped in
+  // transit) is now STRUCTURALLY impossible: the representation travels
+  // inside the `pixels` buffer object (image/pixel-buffer.ts). This pin
+  // guards that the operand packer forwards that buffer whole.
   assert.match(
     fn,
-    /precision/,
-    "frameToSource must carry `precision` from the resolved compare frame into " +
-      "the DecodedSource — without it a `f16-bits` (Uint16Array bit-pattern) " +
-      "operand uploads its bits as float VALUES (the 2^14 compare-exposure bug)",
+    /pixels/,
+    "frameToSource must forward the self-describing `pixels` buffer — the " +
+      "representation must travel WITH the bytes (the 2^14 compare-exposure bug class)",
   );
 });

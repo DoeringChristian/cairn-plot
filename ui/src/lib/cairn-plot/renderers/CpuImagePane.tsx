@@ -71,7 +71,7 @@ import { clamp01 } from "../util/clamp";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
-import { f16BitsToFloat32, halfToFloat } from "../image/half";
+import { floatPixelReader, widenFloatPixels } from "../image/pixel-buffer.ts";
 import {
   toSdrTonemap,
   DEFAULT_TONEMAP,
@@ -210,11 +210,10 @@ export function tonemapToImageData(
     ...(cmapBoundsOn ? { min: colorMin, max: colorMax } : {}),
   };
   // F16 pipeline: this is the CPU tone-map FALLBACK path (used when the GPU
-  // backend is unavailable), so a `precision:"f16-bits"` source is widened to
-  // f32 ONCE for the whole frame here (see `../image/half.ts`) rather than
-  // kept half — the GPU path keeps the bits; only this fallback pays the copy.
-  const src =
-    hdr.precision === "f16-bits" ? f16BitsToFloat32(hdr.data as Uint16Array) : hdr.data;
+  // backend is unavailable), so a `"f16-bits"` buffer is widened to f32 ONCE
+  // for the whole frame here (via the self-describing pixel buffer) rather
+  // than kept half — the GPU path keeps the bits; only this fallback pays.
+  const src = widenFloatPixels(hdr.pixels);
   // Resolve the operator CURVE straight from the registry (the single source of
   // truth). The CPU triple path applies only the PLAIN SDR curves — exposure is
   // folded in below and the HDR-surface entries (extended-*) never reach this
@@ -1330,12 +1329,9 @@ function CpuHdrImagePane(
       if (!d || px < 0 || py < 0 || px >= d.w || py >= d.h) return null;
       const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
       const base = (py * d.w + px) * c;
-      const src = hdr.data;
-      // F16 pipeline: widen the touched samples lazily (single pixel).
-      const readV =
-        hdr.precision === "f16-bits"
-          ? (k: number) => halfToFloat(src[k] ?? 0)
-          : (k: number) => src[k] ?? 0;
+      // F16 pipeline: widen the touched samples lazily (single pixel) — the
+      // self-describing buffer's reader hoists the representation branch.
+      const readV = floatPixelReader(hdr.pixels);
       // A colormapped scalar prints ONE value (its false-color display is a
       // single scalar), like the SDR colormap pane.
       const values =

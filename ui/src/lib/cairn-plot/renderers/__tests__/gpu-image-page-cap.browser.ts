@@ -8,6 +8,7 @@
  * mode, then mounts a standalone float image via `PlotApp` so it goes through
  * `ImageStandalone` → `ContentAspectFrame` (the capped frame). Needs WebGPU.
  */
+import { floatValues } from "../../image/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
@@ -64,7 +65,7 @@ function tallFloatDescriptor(w: number, h: number): PlotDescriptor {
     root: {
       kind: "plot",
       renderer: "image",
-      data: { kind: "inline", props: { source: { dtype: "float", data, shape: [h, w, 3], precision: "f32" } } },
+      data: { kind: "inline", props: { source: { dtype: "float", pixels: floatValues(data), shape: [h, w, 3] } } },
       props: { toolbar: true },
     },
   } as unknown as PlotDescriptor;

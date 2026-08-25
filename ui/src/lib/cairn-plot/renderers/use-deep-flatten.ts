@@ -26,6 +26,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HdrData } from "./image-backend";
+import { floatPixelsFrom } from "../image/pixel-buffer.ts";
 import type { ToolbarSliderSpec } from "../controls/ToolbarConfig";
 import { useResettableState } from "../hooks/use-resettable-state";
 import { IDLE_COALESCE, requestCoalesce, resolveCoalesce, type CoalesceState } from "./coalesce";
@@ -83,7 +84,7 @@ export function useDeepFlatten(
   const [zNear, setZNear, nearMeta] = useResettableState<number>(zMin);
   const [zFar, setZFar, farMeta] = useResettableState<number>(zMax);
   // Windowed buffer for the current cutoff (null ⇒ show the full composite).
-  const [flatData, setFlatData] = useState<HdrData["data"] | null>(null);
+  const [flatData, setFlatData] = useState<Float32Array | Uint16Array | null>(null);
   // The persisted region rectangle (image texels) — view-local, per-pane.
   const [region, setRegion] = useState<TexelRect | null>(null);
 
@@ -174,7 +175,13 @@ export function useDeepFlatten(
   }, [deep, zNear, zFar, zMin, zMax, request, gpuMode, onWindow]);
 
   const effectiveHdr = useMemo<HdrData>(
-    () => (deep && !gpuMode && flatData != null ? { ...hdr, data: flatData } : hdr),
+    () =>
+      deep && !gpuMode && flatData != null
+        ? // The windowed buffer keeps the SOURCE's representation (the deep
+          // controller re-flattens in kind); wrap it self-describingly —
+          // `floatPixelsFrom` validates the array type against the kind.
+          { ...hdr, pixels: floatPixelsFrom(flatData, hdr.pixels.kind === "f16-bits" ? "f16-bits" : "f32") }
+        : hdr,
     [hdr, deep, gpuMode, flatData],
   );
 
