@@ -81,7 +81,7 @@ import {
   stackLabelFor,
 } from "./lib/cairn-plot/stack/StackedView";
 import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
-import { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
+import FullscreenOverlayShell, { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import {
   ChartFillContext,
   DEFAULT_CHART_HEIGHT,
@@ -265,6 +265,21 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     if (setSyncedRef.current) setSyncedRef.current({ channelSelect: next });
     else setChSel(next);
   }, []);
+  // SINGLE-PANE FULLSCREEN (enlarge) — the flag lives HERE, above the async-
+  // resolve swap: a channel pick's cold re-resolve renders the "Loading…"
+  // placeholder, unmounting the whole renderer subtree — component-local
+  // enlarge state there was reset, throwing the user out of fullscreen (the
+  // reported bug). LeafView survives that swap, so the pane consumes this as
+  // a CONTROLLED `enlargeControl` and fullscreen persists across re-resolves.
+  const [paneEnlarged, setPaneEnlarged] = useState(false);
+  const enlargeControl = useMemo(
+    () => ({ enlarged: paneEnlarged, setEnlarged: setPaneEnlarged }),
+    [paneEnlarged],
+  );
+  // Theme origin for the enlarged-placeholder overlay (null → default theme;
+  // the ready pane's own overlay re-themes from its real in-tree element).
+  const placeholderOriginRef = useRef<HTMLElement | null>(null);
+
   // The EFFECTIVE data spec: the strip override merged over the node's data
   // (image specs only — the strip never renders for other kinds).
   const effectiveData = useMemo(() => {
@@ -422,6 +437,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         ...(node.props ?? {}),
         source: dp.source,
         compareSource,
+        enlargeControl,
         ...(dp.__diffOverlay ? { overlay: dp.__diffOverlay } : {}),
         ...dsync,
       };
@@ -470,8 +486,9 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         sharedProps.onChannelReset = () => selectChannels({});
       }
     }
+    sharedProps.enlargeControl = enlargeControl;
     return { ...sharedProps, ...(node.props ?? {}), ...dataProps, inStackedGrid };
-  }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, inStackedGrid]);
+  }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, inStackedGrid, enlargeControl]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -500,12 +517,29 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     };
   }, [status, rendererMissing, node.renderer]);
 
+  // While ENLARGED, the loading/error placeholder renders INSIDE the fullscreen
+  // overlay chrome (same backdrop/✕/Escape seam), so a slow re-resolve (an EXR
+  // channel pick's decode) never visually drops the user back to the grid —
+  // the pane re-enters the shell-owned overlay when ready (`enlargeControl`).
+  const placeholderInShell = (child: JSX.Element) =>
+    paneEnlarged ? (
+      <FullscreenOverlayShell
+        open
+        onClose={() => setPaneEnlarged(false)}
+        originRef={placeholderOriginRef}
+        ariaLabel="Enlarged plot"
+      >
+        {child}
+      </FullscreenOverlayShell>
+    ) : (
+      child
+    );
   if (status === "loading") {
     leafResolveStats.placeholderMounts++;
-    return <Message text="Loading…" />;
+    return placeholderInShell(<Message text="Loading…" />);
   }
   if (status === "error") {
-    return <Message text={`Plot error: ${errorMsg ?? "unknown"}`} error />;
+    return placeholderInShell(<Message text={`Plot error: ${errorMsg ?? "unknown"}`} error />);
   }
   const Renderer = getRenderer(node.renderer);
   return Renderer ? (

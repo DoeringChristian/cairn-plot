@@ -381,6 +381,11 @@ export interface ImageBackendProps {
    *  sticks). Every user gesture on a display control calls this; absent = no
    *  store. */
   setSyncedSettings?: (patch: ImageSyncSettings) => void;
+  /** CONTROLLED single-pane fullscreen state, owned by the plot leaf ABOVE the
+   *  async-resolve swap (`LeafView`) so a cold re-resolve (a channel pick's
+   *  "Loading…" placeholder unmounting this pane) cannot reset it. Threaded to
+   *  `ImagePaneShell.enlargeControl`; absent = shell-local state. */
+  enlargeControl?: { enlarged: boolean; setEnlarged: (v: boolean) => void };
   // — display controls (full set) —
   colormap?: Colormap;
   tonemap?: string;

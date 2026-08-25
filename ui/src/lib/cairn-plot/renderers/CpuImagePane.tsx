@@ -93,7 +93,7 @@ import {
   type PixelSample,
   type PixelValueNotation,
 } from "../primitives/PixelValueOverlay";
-import ImagePaneShell from "./ImagePaneShell";
+import ImagePaneShell, { type EnlargeControl } from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
 import { useSeedGroupOnFormation, useViewportSettings } from "./use-synced-image-settings";
 import type { ImageSyncSettings } from "../viewport/image-settings-sync";
@@ -390,6 +390,8 @@ function CpuSdrImagePane(
     syncedSettings?: ImageSyncSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
     setSyncedSettings?: (patch: ImageSyncSettings) => void;
+    /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
+    enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) when this pane renders a
      *  compare's reference (degraded CPU fallback); suppresses the label chip. */
     compareChrome?: ReactNode;
@@ -1039,6 +1041,7 @@ function CpuSdrImagePane(
         gammaModified ||
         !!props.channelModified
       }
+      enlargeControl={props.enlargeControl}
       histogram={histogramSource}
       infoPanelSetting={synced?.infoPanel}
       onInfoPanelChange={changeInfoPanel}
@@ -1080,6 +1083,8 @@ function CpuHdrImagePane(
     syncedSettings?: ImageSyncSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
     setSyncedSettings?: (patch: ImageSyncSettings) => void;
+    /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
+    enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
      *  fallback; suppresses the label chip. See {@link cpuCompareChrome}. */
     compareChrome?: ReactNode;
@@ -1536,6 +1541,7 @@ function CpuHdrImagePane(
         boundsModified ||
         !!props.channelModified
       }
+      enlargeControl={props.enlargeControl}
       histogram={histogramSource}
       depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
       infoPanelSetting={synced?.infoPanel}
@@ -1628,6 +1634,7 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
     syncIsAnchor: backendProps.syncIsAnchor,
     syncedSettings: backendProps.syncedSettings,
     setSyncedSettings: backendProps.setSyncedSettings,
+    enlargeControl: backendProps.enlargeControl,
     channelMenu: backendProps.channelMenu,
     channelModified: backendProps.channelModified,
     onChannelReset: backendProps.onChannelReset,

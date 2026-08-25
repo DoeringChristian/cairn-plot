@@ -2547,6 +2547,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       requestRender={renderPass}
       // Histogram button: suppressed for a compare (a scalar error has no channel
       // histogram). Plain images — including an image slot in a mixed stack — keep it.
+      enlargeControl={backendProps.enlargeControl}
       histogram={hasCompare ? undefined : histogramSource}
       depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
       infoPanelSetting={synced?.infoPanel}

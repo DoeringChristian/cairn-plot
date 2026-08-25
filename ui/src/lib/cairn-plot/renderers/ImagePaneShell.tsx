@@ -111,6 +111,12 @@ import {
   notationToolbarButton,
 } from "./use-image-controller";
 import FullscreenOverlayShell from "../primitives/FullscreenOverlayShell";
+
+/** Controlled fullscreen state — see `ImagePaneShellProps.enlargeControl`. */
+export interface EnlargeControl {
+  enlarged: boolean;
+  setEnlarged: (v: boolean) => void;
+}
 import { EnlargeInterceptContext } from "./enlarge-intercept";
 import { usePublishNaturalSize } from "./natural-size-report";
 
@@ -271,6 +277,15 @@ export interface ImagePaneShellProps {
    *  the descriptor) — folded into the HOME button's enabled state. */
   extraModified?: boolean;
 
+  /**
+   * CONTROLLED single-pane fullscreen state. The plot leaf (`LeafView`) owns
+   * the flag ABOVE the async-resolve swap boundary, so a cold re-resolve
+   * (channel pick → "Loading…" placeholder → this subtree unmounts) cannot
+   * reset it — the pane re-enters fullscreen when it remounts. Absent (a
+   * storeless host mount) → shell-local state, unchanged behavior.
+   */
+  enlargeControl?: EnlargeControl;
+
   // --- in-pane INFO PANEL --------------------------------------------------
   /** When supplied, an INFO-PANEL toggle button is added to the toolbar and the
    *  sectioned info panel (stats + tev-parity histogram + read-outs) is pinned
@@ -332,6 +347,7 @@ export default function ImagePaneShell({
   regionSelect,
   onReset,
   extraModified,
+  enlargeControl,
   histogram,
   depthWindow,
   infoPanelSetting,
@@ -428,7 +444,14 @@ export default function ImagePaneShell({
   // size) fixed — an untouched HOME view re-fits to fill the new box, a
   // zoomed/panned view keeps its center rather than jumping — so enter/exit is
   // lossless (sliders are untouched).
-  const [enlarged, setEnlarged] = useState(false);
+  // The single-pane fullscreen flag. CONTROLLED when the host supplies
+  // `enlargeControl` (the plot leaf owns the state ABOVE the async-resolve
+  // swap, so a channel pick's cold re-resolve — which unmounts this whole
+  // subtree behind a "Loading…" placeholder — cannot reset it); LOCAL for
+  // storeless host mounts (unchanged behavior).
+  const [localEnlarged, setLocalEnlarged] = useState(false);
+  const enlarged = enlargeControl ? enlargeControl.enlarged : localEnlarged;
+  const setEnlarged = enlargeControl ? enlargeControl.setEnlarged : setLocalEnlarged;
   // The stable wrapper that HOLDS the pane subtree; created once and reparented.
   // `display: contents` so it never adds a box of its own — the pane root's
   // `h-full` resolves against whichever host it currently lives in.
@@ -475,7 +498,7 @@ export default function ImagePaneShell({
         // Opening (not closing): let a ≥2-selection intercept take over with the
         // multi-pane stage; only fall through to the local overlay if unhandled.
         if (!enlarged && enlargeIntercept?.onEnlarge()) return;
-        setEnlarged((v) => !v);
+        setEnlarged(!enlarged);
       },
     }),
     [enlarged, enlargeIntercept],
