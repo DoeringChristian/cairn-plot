@@ -552,7 +552,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // never in pane state. An empty store lets the descriptor seeds shine
   // through (the one lookup: store value > prop seed).
   const ownStoreId = useId();
-  const ownStore = useViewportSettings(`vp-st-pane-${ownStoreId}`, undefined, false);
+  const ownStore = useViewportSettings([`vp-st-pane-${ownStoreId}`]);
   const threadedSet = backendProps.setSyncedSettings;
   const synced = threadedSet ? backendProps.syncedSettings : ownStore.settings;
   const setSynced = threadedSet ?? ownStore.set;

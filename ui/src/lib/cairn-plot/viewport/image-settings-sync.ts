@@ -132,9 +132,91 @@ export function publishImageSettings(
 ): void {
   const prev = lastStates.get(groupId) ?? {};
   lastStates.set(groupId, { ...prev, ...patch });
+  bumpLayerVersion(groupId);
   busFor(groupId).dispatchEvent(
     new CustomEvent<SettingsStateDetail>(EVENT_TYPE, { detail: { patch, sourceId } }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// THE SETTINGS STACK (user ruling, 2026-08-25). A viewport resolves its
+// settings through an EXPLICIT stack of layer ids, bottom → top:
+//
+//     [viewport-local, selection-group?, stage-layer?, …]
+//
+// - `pushSettingsLayer` / `popSettingsLayer` are PURE operations on stack
+//   VALUES — a scope that wants a layer (a selection episode, a stage open)
+//   pushes onto its parent's stack and hands the new value down; when the
+//   scope ends, its stack value stops existing, which IS the pop. There is
+//   deliberately NO mutable global stack: layer lifetime stays tied to the UI
+//   scope that pushed it, so pops can never be unbalanced or forgotten.
+// - Reads merge the whole stack (top shadows bottom) via `resolveSettingsStack`
+//   — CACHED per stack, stamped by per-layer write versions, so an unchanged
+//   stack returns the IDENTICAL object (cheap, and memo-friendly across every
+//   viewport sharing the stack).
+// - Writes go to the TOP layer only (`publishToSettingsStack`): edits are
+//   transient per layer — dropping a layer reverts everything below it.
+// ---------------------------------------------------------------------------
+
+/** A viewport's settings lookup stack — layer store ids, bottom → top. */
+export type SettingsLayerStack = readonly string[];
+
+/** Push `layerId` on TOP of `stack` (pure — returns a new stack value).
+ *  Null/undefined/empty ids are no-ops so callers can push optional layers. */
+export function pushSettingsLayer(
+  stack: SettingsLayerStack,
+  layerId: string | null | undefined,
+): SettingsLayerStack {
+  return layerId ? [...stack, layerId] : stack;
+}
+
+/** Drop the TOP layer of `stack` (pure — returns a new stack value). */
+export function popSettingsLayer(stack: SettingsLayerStack): SettingsLayerStack {
+  return stack.slice(0, -1);
+}
+
+/** Merge a `patch` into the stack's TOP layer (the one write path). */
+export function publishToSettingsStack(
+  stack: SettingsLayerStack,
+  sourceId: string,
+  patch: ImageSyncSettings,
+): void {
+  const top = stack[stack.length - 1];
+  if (top) publishImageSettings(top, sourceId, patch);
+}
+
+// Per-layer write versions stamp the merge cache. On `globalThis` beside the
+// stores (both IIFE bundles must observe each other's writes); the `??=` keeps
+// an older registry object working if bundles of mixed vintage share a page.
+function layerVersions(): Map<string, number> {
+  const reg = registry as SettingsBusRegistry & { versions?: Map<string, number> };
+  return (reg.versions ??= new Map<string, number>());
+}
+let writeSeq = 0;
+function bumpLayerVersion(id: string): void {
+  layerVersions().set(id, ++writeSeq);
+}
+
+// The merge cache: stackKey → { stamp, value }. Module-local (per bundle) —
+// correctness rides the SHARED version stamps, so each bundle's cache is
+// independently coherent. Bounded by the number of distinct live stacks.
+const mergeCache = new Map<string, { stamp: string; value: ImageSyncSettings | null }>();
+
+/** The stack's EFFECTIVE settings: every layer flat-merged bottom → top (top
+ *  shadows), or `null` while all layers are empty. Cached — an unchanged stack
+ *  returns the identical object until one of its layers is written. */
+export function resolveSettingsStack(stack: SettingsLayerStack): ImageSyncSettings | null {
+  const key = stack.join(" ");
+  const versions = layerVersions();
+  const stamp = stack.map((id) => versions.get(id) ?? 0).join(".");
+  const hit = mergeCache.get(key);
+  if (hit && hit.stamp === stamp) return hit.value;
+  const layers = stack.map((id) => lastStates.get(id));
+  const value = layers.some(Boolean)
+    ? (Object.assign({}, ...layers) as ImageSyncSettings)
+    : null;
+  mergeCache.set(key, { stamp, value });
+  return value;
 }
 
 /** The accumulated merged settings published on `groupId`, or `undefined` if
@@ -151,6 +233,7 @@ export function getLastImageSettings(groupId: string): ImageSyncSettings | undef
  *  (an old exposure, a dead compare mode) shadows every member of the next one. */
 export function clearImageSettings(groupId: string): void {
   lastStates.delete(groupId);
+  bumpLayerVersion(groupId);
 }
 
 /** TESTS ONLY: drop EVERY accumulated store. The page-reset helper
@@ -161,6 +244,9 @@ export function clearImageSettings(groupId: string): void {
  *  (mirrors the in-place selection-store reset). */
 export function __resetImageSettingsStoresForTest(): void {
   lastStates.clear();
+  layerVersions().clear();
+  mergeCache.clear();
+  writeSeq = 0;
 }
 
 /** Subscribes to settings broadcasts on `groupId`, ignoring the caller's own

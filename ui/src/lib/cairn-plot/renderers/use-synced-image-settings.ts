@@ -2,19 +2,28 @@
  * THE viewport settings store hook — the single access point to display
  * settings (`image-settings-sync.ts` is the underlying registry + transport).
  *
- * THE CONTRACT (user ruling, 2026-08-24). Every viewport resolves each display
- * setting at RENDER time through one lookup:
+ * THE CONTRACT (user rulings, 2026-08-24/25). Every viewport owns an EXPLICIT
+ * SETTINGS STACK — an ordered list of layer ids into the shared registry,
+ * bottom → top (see `image-settings-sync.ts`'s stack primitives):
  *
- *     group store  >  local store  >  descriptor default
+ *     [viewport-local, selection-group?, stage-layer?, …]
  *
- * - Every viewport owns a LOCAL store (a group of one, keyed by a stable
- *   per-viewport id). A gesture writes the TOP of the stack: the GROUP store
- *   while selected, the local store otherwise.
- * - Selection adds the GROUP store in front: group values SHADOW local values,
- *   they never overwrite them. GROUP CHANGES ARE TRANSIENT (user ruling):
- *   leaving a selection unmasks each member's own pre-selection settings —
- *   every value changed while grouped (on any member) evaporates. Only
- *   changes made while UNSELECTED stick to a viewport.
+ * and resolves each display setting at RENDER time through one lookup:
+ *
+ *     top layer  >  …  >  viewport-local  >  descriptor default
+ *
+ * - The STACK is per-viewport; the LAYERS it references are shared. Sync is
+ *   nothing but two stacks containing the same layer id (the selection group);
+ *   adoption is nothing but reading through a shared layer (the stage).
+ * - A gesture writes the TOP layer only. EDITS ARE TRANSIENT PER LAYER (user
+ *   ruling): dropping a layer (unselect, stage close) reverts every viewport
+ *   below it — values changed while the layer was on top evaporate with it.
+ *   Only changes made with no scope layer write the viewport-local layer and
+ *   stick.
+ * - Scopes push: selection formation pushes the per-episode group layer onto
+ *   members' stacks; the stage pushes its per-open layer onto its cells'.
+ *   Pushes are PURE (new stack values, `pushSettingsLayer`) — layer lifetime
+ *   is the pushing scope's lifetime, so pops can never be unbalanced.
  * - Application is pure downward propagation: no consumer adopts values into
  *   its own state (no adoption effects); applicability (does a LUT apply at
  *   this arity?) is decided at render, never at sync (ruling 5).
@@ -27,77 +36,71 @@
  * group with its full current settings (the pane-side formation effect — the
  * pane owns the snapshot of its effective values).
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
   clearImageSettings,
-  getLastImageSettings,
-  publishImageSettings,
+  publishToSettingsStack,
+  resolveSettingsStack,
   subscribeImageSettings,
   type ImageSyncSettings,
+  type SettingsLayerStack,
 } from "../viewport/image-settings-sync";
 import { makeImageViewportSyncSourceId } from "../viewport/image-viewport-sync";
 
-/** What a viewport gets from its settings store. */
+/** What a viewport gets from its settings stack. */
 export interface ViewportSettings {
-  /** The merged effective settings (`{...local, ...group}`), or `null` while
-   *  both stores are empty. Group keys shadow local keys. */
+  /** The stack's effective settings — every layer merged bottom → top (top
+   *  shadows), or `null` while all layers are empty. Identity-stable: the same
+   *  object is returned until one of the stack's layers is written (the
+   *  registry's cached merge), so memoized consumers across viewports sharing
+   *  a stack see one value. */
   settings: ImageSyncSettings | null;
-  /** Merge a patch into the TOP of the lookup stack: the GROUP store while
-   *  selected (transient — gone on unselect), else the LOCAL store (sticks).
-   *  The one write path. */
+  /** Merge a patch into the stack's TOP layer — the one write path. Transient
+   *  per layer: dropping the top layer reverts everything it shadowed. */
   set: (patch: ImageSyncSettings) => void;
 }
 
 /**
- * The viewport's settings store. `viewportId` is the viewport's own stable
- * store id (its "group of one"); `groupId` is the selection group while one
- * exists. Both stores live in the shared registry (`lastStates`), so local
- * settings survive re-lowers/remounts of the React tree.
+ * Subscribe a viewport to its SETTINGS STACK (see the module doc + the stack
+ * primitives in `image-settings-sync.ts`). `stack` is the full ordered list of
+ * layer ids, bottom → top — `[viewportLocalId]` for a lone viewport, with
+ * scope layers pushed on top by the callers that own them (the selection
+ * group, the stage layer) via `pushSettingsLayer`. Reads resolve through the
+ * registry's cached merge; writes go to the top layer; the hook re-renders
+ * when any layer in the stack is written.
  */
-export function useViewportSettings(
-  viewportId: string,
-  groupId: string | null | undefined,
-  isAnchor: boolean,
-): ViewportSettings {
+export function useViewportSettings(stack: SettingsLayerStack): ViewportSettings {
   const sourceIdRef = useRef<string>();
   if (!sourceIdRef.current) sourceIdRef.current = makeImageViewportSyncSourceId();
   // The registry is the state; React just needs a re-render signal on writes.
-  const [version, bump] = useReducer((c: number) => c + 1, 0);
+  const [, bump] = useReducer((c: number) => c + 1, 0);
+  // Content-keyed dep: re-subscribe only when the actual id stack changes, not
+  // on every render's fresh array value.
+  const stackKey = stack.join(" ");
+  const stackRef = useRef(stack);
+  stackRef.current = stack;
 
   useEffect(() => {
     const sid = sourceIdRef.current!;
-    const unLocal = subscribeImageSettings(viewportId, sid, () => bump());
-    const unGroup = groupId ? subscribeImageSettings(groupId, sid, () => bump()) : undefined;
-    // Joining / leaving a group changes the lookup — re-render to apply it.
+    const unsubs = stackRef.current.map((id) => subscribeImageSettings(id, sid, () => bump()));
+    // A layer joining / leaving changes the lookup — re-render to apply it.
     bump();
-    return () => {
-      unLocal();
-      unGroup?.();
-    };
-  }, [viewportId, groupId, isAnchor]);
+    return () => unsubs.forEach((u) => u());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stackKey]);
 
   const set = useCallback(
     (patch: ImageSyncSettings) => {
-      const sid = sourceIdRef.current!;
-      // TOP-OF-STACK write (user ruling): while selected, a change lives ONLY
-      // in the group — on unselect EVERY member (including the touched pane)
-      // reverts to its pre-selection settings. Only changes made while
-      // UNSELECTED write the viewport's own store and stick to it.
-      publishImageSettings(groupId ?? viewportId, sid, patch);
+      publishToSettingsStack(stackRef.current, sourceIdRef.current!, patch);
       bump(); // own writes are echo-filtered by the bus — re-render explicitly
     },
-    [viewportId, groupId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stackKey],
   );
 
-  // Stable identity per write (children memo on it): re-merged only on a store
-  // write (`version`) or a lookup change (join/leave).
-  const settings = useMemo(() => {
-    const local = getLastImageSettings(viewportId);
-    const group = groupId ? getLastImageSettings(groupId) : undefined;
-    return local || group ? { ...local, ...group } : null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewportId, groupId, version]);
-  return { settings, set };
+  // The registry's cached merge: identity-stable until a member layer is
+  // written (no per-hook memo needed — the shared cache IS the memo).
+  return { settings: resolveSettingsStack(stack), set };
 }
 
 /** Anchor formation seed, run by the PANE (it owns the snapshot of its

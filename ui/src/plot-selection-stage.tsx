@@ -47,11 +47,16 @@ import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./plot-descri
 import type { DataSource } from "./lib/cairn-plot";
 import {
   getGlobalSelectionStore,
+  GLOBAL_SELECTION_BASE,
   REFERENCE_COLOR,
   REFERENCE_COLOR_RGB,
   type SelectionSnapshot,
   type StageMode,
 } from "./lib/cairn-plot/viewport/selection-store";
+import {
+  pushSettingsLayer,
+  type SettingsLayerStack,
+} from "./lib/cairn-plot/viewport/image-settings-sync";
 import {
   imageCompatibleCount,
   planCompareGrid,
@@ -249,6 +254,12 @@ function buildCompareCells(
 
 const REPICK_SLOP_PX = 5;
 
+// Per-OPEN counter for the stage's settings layer id. NOT `useId`: React can
+// mint the same id for a remount at the same tree position, which would let a
+// closed stage's (transient) edits haunt the next open. A monotonic counter
+// guarantees every open gets a never-written layer.
+let stageOpenSeq = 0;
+
 function StageCell({
   spec,
   rect,
@@ -256,8 +267,7 @@ function StageCell({
   clickPicksRef,
   onPickReference,
   viewportSyncGroupId,
-  settingsSyncGroupId,
-  isAnchor,
+  settingsGroupIds,
 }: {
   spec: StageCellSpec;
   /** The packed rect for this cell (content-aspect, centrally clustered). While
@@ -282,17 +292,16 @@ function StageCell({
    *  the stage rebuilt the sync context but dropped the viewport group, so only
    *  display settings synced, not zoom/pan. */
   viewportSyncGroupId: string;
-  /** Shared settings-sync group so a colormap/tonemap/diff-mode change on ONE
-   *  cell broadcasts to every cell in the stage (Bug 3). */
-  settingsSyncGroupId: string;
-  /** Whether this cell ANCHOR-seeds the sync groups. The stage always passes
-   *  FALSE: its cells are created identical (no divergence for an anchor to
-   *  reconcile), and a NON-anchor adopts the group's ACCUMULATED snapshot on
-   *  join — which is what keeps diff mode / settings / zoom alive when cells
-   *  REMOUNT on a normal⇄stacked toggle. An anchor would re-seed the group
-   *  with its freshly-reset defaults instead (the reported "toggling to
-   *  stacked resets my diff mode"). */
-  isAnchor: boolean;
+  /** Settings LAYERS this cell reads through, bottom → top:
+   *  `[selection episode group, stage per-open group]`. The cell ADOPTS the
+   *  live selection's current settings (the point of enlarging a synced
+   *  selection) but its EDITS land in the topmost (stage) layer only — synced
+   *  across the stage cells, discarded when the stage closes, and NEVER
+   *  written into the selection group (user ruling: stage edits are
+   *  transient). No cell is ever an anchor: nothing in the stage seeds or
+   *  clears any group, so a normal⇄stacked toggle or cell remount simply
+   *  re-reads the accumulated layers. */
+  settingsGroupIds: readonly string[];
 }) {
   // Re-pick gesture (stationary press, never a control press, never a drag).
   // ENLARGE: anywhere on the cell. COMPARE: only when the press started on the
@@ -361,21 +370,25 @@ function StageCell({
   // `GridCellReporter` inside `ImageStandalone`, since the stage provides that
   // context) — the SAME path `cp.Grid` uses.
   // The ONE settings store for THIS stage cell's viewport (same hook + contract
-  // as the page-wide selection — NO stage-special apply path): a cell-local
-  // store plus the stage's group store (group > local > default, see
-  // use-synced-image-settings.ts). Handed DOWN via `PaneSyncContext`; nothing
-  // below subscribes to the bus.
+  // as the page-wide selection — NO stage-special apply path): the cell-local
+  // store under the LAYERED groups (selection underlay + stage top — see the
+  // `settingsGroupIds` doc). Handed DOWN via `PaneSyncContext`; nothing below
+  // subscribes to the bus. `syncIsAnchor` is never set: the stage seeds nothing.
   const cellViewportId = useId();
-  const vst = useViewportSettings(`vp-st-stage-${cellViewportId}`, settingsSyncGroupId, isAnchor);
+  const vst = useViewportSettings(
+    settingsGroupIds.reduce(pushSettingsLayer, [
+      `vp-st-stage-${cellViewportId}`,
+    ] as SettingsLayerStack),
+  );
+  const stageGroupId = settingsGroupIds[settingsGroupIds.length - 1];
   const paneSync = useMemo(
     () => ({
       viewportSyncGroupId,
-      settingsSyncGroupId,
-      syncIsAnchor: isAnchor,
+      settingsSyncGroupId: stageGroupId,
       syncedSettings: vst.settings,
       setSyncedSettings: vst.set,
     }),
-    [viewportSyncGroupId, settingsSyncGroupId, isAnchor, vst.settings, vst.set],
+    [viewportSyncGroupId, stageGroupId, vst.settings, vst.set],
   );
 
   // GENERAL per-cell aspect bridge: forward whatever this cell's pane publishes on
@@ -487,13 +500,25 @@ function SelectionStage({
 
   const cells = built.cells;
 
-  // TWO stage-wide sync groups — stable across ref re-picks / cell rebuilds
-  // within a single open stage — so any zoom/pan (viewport) or display-setting
-  // (colormap / tonemap / exposure / peak / diff mode) change on one cell
-  // broadcasts to every other cell. Same mechanism the page-wide selection uses;
-  // distinct ids because the stage renders FRESH leaves off its own buses.
+  // STAGE SYNC LAYERS. Viewport (zoom/pan): a stage-own group — stable across
+  // ref re-picks / cell rebuilds within one open stage — so a zoom on one cell
+  // broadcasts to every other cell without touching the grid panes underneath.
+  // Settings: the cells read THROUGH the live selection's per-episode group
+  // (they open showing exactly the settings the user synced on the selection)
+  // while their edits land in a FRESH per-open stage layer stacked on top —
+  // synced stage-wide, discarded on close, never written into the selection
+  // group (user ruling: stage edits are transient). The per-open counter — not
+  // `useId`, which can repeat across remounts at the same tree position —
+  // guarantees a closed stage's edits can never haunt the next open.
   const viewportSyncGroupId = useId();
-  const settingsSyncGroupId = useId();
+  const [stageSettingsGroupId] = useState(() => `cp-stage-st-${++stageOpenSeq}`);
+  const settingsGroupIds = useMemo<readonly string[]>(
+    () => [
+      `${GLOBAL_SELECTION_BASE}-st-${store.selectionEpisode()}`,
+      stageSettingsGroupId,
+    ],
+    [store, stageSettingsGroupId],
+  );
 
   // --- UNIFORM CONTENT-ASPECT PACKING ----------------------------------------
   // The stage is a UNIFORM grid, driven by the SAME size-computation mechanism as
@@ -628,8 +653,7 @@ function SelectionStage({
                       clickPicksRef={mode === "enlarge"}
                       onPickReference={() => store.setReference(cells[stackActiveClamped]!.reprPaneId)}
                       viewportSyncGroupId={viewportSyncGroupId}
-                      settingsSyncGroupId={settingsSyncGroupId}
-                      isAnchor={true}
+                      settingsGroupIds={settingsGroupIds}
                     />
                   </div>
                 </InStackedGridContext.Provider>
@@ -642,8 +666,7 @@ function SelectionStage({
                     clickPicksRef={mode === "enlarge"}
                     onPickReference={() => store.setReference(spec.reprPaneId)}
                     viewportSyncGroupId={viewportSyncGroupId}
-                    settingsSyncGroupId={settingsSyncGroupId}
-                    isAnchor={i === 0}
+                    settingsGroupIds={settingsGroupIds}
                   />
                 ))
               )}

@@ -110,7 +110,10 @@ import {
   applyChannelSlice,
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
-import { type ImageSyncSettings } from "./lib/cairn-plot/viewport/image-settings-sync";
+import {
+  pushSettingsLayer,
+  type ImageSyncSettings,
+} from "./lib/cairn-plot/viewport/image-settings-sync";
 import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
 
 /**
@@ -964,10 +967,10 @@ function PaneSelectionFrame({
   // values SHADOW local ones; leaving a selection unmasks the pane's own).
   // `settings`/`set` are handed DOWN via context/props; nothing below
   // subscribes to the bus.
+  // The stack: viewport-local at the bottom; the selection SCOPE pushes its
+  // per-episode group layer on top while this pane is one of ≥2 selected.
   const vst = useViewportSettings(
-    `vp-st-${paneId}`,
-    groups?.settingsGroupId,
-    groups?.isAnchor ?? false,
+    pushSettingsLayer([`vp-st-${paneId}`], groups?.settingsGroupId),
   );
 
   const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);

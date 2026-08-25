@@ -430,7 +430,7 @@ function CpuSdrImagePane(
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
   const sdrOwnStoreId = useId();
-  const sdrOwnStore = useViewportSettings(`vp-st-pane-${sdrOwnStoreId}`, undefined, false);
+  const sdrOwnStore = useViewportSettings([`vp-st-pane-${sdrOwnStoreId}`]);
   const sdrThreadedSet = props.setSyncedSettings;
   const synced = sdrThreadedSet ? props.syncedSettings : sdrOwnStore.settings;
   const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
@@ -1101,7 +1101,7 @@ function CpuHdrImagePane(
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
   const hdrOwnStoreId = useId();
-  const hdrOwnStore = useViewportSettings(`vp-st-pane-${hdrOwnStoreId}`, undefined, false);
+  const hdrOwnStore = useViewportSettings([`vp-st-pane-${hdrOwnStoreId}`]);
   const hdrThreadedSet = props.setSyncedSettings;
   const synced = hdrThreadedSet ? props.syncedSettings : hdrOwnStore.settings;
   const setSynced = hdrThreadedSet ?? hdrOwnStore.set;

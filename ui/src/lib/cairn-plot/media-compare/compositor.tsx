@@ -35,6 +35,7 @@ import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../renderers/image-backend";
 import { useViewportSettings } from "../renderers/use-synced-image-settings";
+import { pushSettingsLayer } from "../viewport/image-settings-sync";
 import type {
   CompareSource,
   DecodedSource,
@@ -854,9 +855,7 @@ export function CompositeMediaPane({
   // see use-synced-image-settings.ts) and drives the composited pane top-down.
   const compositorViewportId = useId();
   const vst = useViewportSettings(
-    `vp-st-compositor-${compositorViewportId}`,
-    settingsSyncGroupId,
-    !!syncIsAnchor,
+    pushSettingsLayer([`vp-st-compositor-${compositorViewportId}`], settingsSyncGroupId),
   );
   const syncedSettings = vst.settings;
 
