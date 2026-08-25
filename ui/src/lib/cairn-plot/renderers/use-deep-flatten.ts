@@ -69,6 +69,9 @@ export interface DeepFlattenState {
   reset(): void;
   /** True while the window differs from `[zMin, zMax]` (enables shell HOME). */
   isModified: boolean;
+  /** The LIVE depth window `[zNear, zFar]` — the info panel's depth-histogram
+   *  limit marks read this. Meaningless (0,0) for non-deep sources. */
+  window: { zNear: number; zFar: number };
 }
 
 export function useDeepFlatten(
@@ -319,6 +322,9 @@ export function useDeepFlatten(
     setFlatData(null);
   }, [nearMeta, farMeta]);
 
+  // Identity-stable live window object (the info panel's limit marks).
+  const liveWindow = useMemo(() => ({ zNear, zFar }), [zNear, zFar]);
+
   return {
     hdr: effectiveHdr,
     sliders,
@@ -329,5 +335,6 @@ export function useDeepFlatten(
     removeRegion,
     reset,
     isModified: nearMeta.isModified || farMeta.isModified,
+    window: liveWindow,
   };
 }

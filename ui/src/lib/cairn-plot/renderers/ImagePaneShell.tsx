@@ -280,6 +280,10 @@ export interface ImagePaneShellProps {
    *  variant (the cursor read-out reuses its displayElRef/sourceWindow
    *  screen→texel mapping). Absent = no panel. */
   histogram?: HistogramSource;
+  /** DEEP-Z only: the LIVE depth window `[zNear, zFar]` (the toolbar sliders /
+   *  region select) — drawn as limit marks on the info panel's depth
+   *  histogram. Absent = no marks. */
+  depthWindow?: { zNear: number; zFar: number };
   /** The viewport's `infoPanel` SETTING (from the settings stack): `true`/
    *  `false` = an explicit user choice (synced, transient per layer);
    *  `undefined` = AUTO — the panel shows iff its footprint stays within 25%
@@ -329,6 +333,7 @@ export default function ImagePaneShell({
   onReset,
   extraModified,
   histogram,
+  depthWindow,
   infoPanelSetting,
   onInfoPanelChange,
   label,
@@ -748,6 +753,7 @@ export default function ImagePaneShell({
           <ImageInfoPanel
             source={histogram}
             cursor={histCursor}
+            depthWindow={depthWindow}
             onClose={() => setInfoOpen(false)}
           />
         )}

@@ -2548,6 +2548,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Histogram button: suppressed for a compare (a scalar error has no channel
       // histogram). Plain images — including an image slot in a mixed stack — keep it.
       histogram={hasCompare ? undefined : histogramSource}
+      depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
       infoPanelSetting={synced?.infoPanel}
       onInfoPanelChange={changeInfoPanel}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /

@@ -1537,6 +1537,7 @@ function CpuHdrImagePane(
         !!props.channelModified
       }
       histogram={histogramSource}
+      depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
       infoPanelSetting={synced?.infoPanel}
       onInfoPanelChange={changeInfoPanel}
       label={props.isCompareMode ? "" : label}

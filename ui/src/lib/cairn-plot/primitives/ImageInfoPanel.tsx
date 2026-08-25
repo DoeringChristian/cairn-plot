@@ -40,7 +40,7 @@ import {
   type HistogramSeriesSpec,
   type TevHistogramsResult,
 } from "../renderers/image-histogram.ts";
-import { tevBinOfValue, TEV_HISTOGRAM_BINS } from "../image/histogram-binning.ts";
+import { symmetricLog2, tevBinOfValue, TEV_HISTOGRAM_BINS } from "../image/histogram-binning.ts";
 
 /**
  * The pane-supplied data the panel bins. The pane closes `readChannel` over
@@ -81,6 +81,9 @@ export interface ImageInfoPanelProps {
   source: HistogramSource;
   /** The integer texel under the cursor (or null when off-image). */
   cursor: { px: number; py: number } | null;
+  /** DEEP-Z only: the LIVE depth window `[zNear, zFar]` (toolbar sliders /
+   *  region select) — drawn as limit marks on the depth histogram. */
+  depthWindow?: { zNear: number; zFar: number };
   /** Close the panel (the toolbar toggle mirrors this). */
   onClose: () => void;
 }
@@ -91,6 +94,8 @@ export const INFO_PANEL_W = 224;
 const CANVAS_H = 84;
 const DEPTH_CANVAS_H = 48;
 const DEPTH_SERIES_COLOR = "#8ab4ff";
+/** The depth-window LIMIT marks (matches the aux-channel amber tint family). */
+const DEPTH_LIMIT_COLOR = "#f0a83a";
 const GAP_BELOW_TOOLBAR = 6;
 
 /** Measure the pane's toolbar and return this panel's `top` (px, in the pane
@@ -140,7 +145,7 @@ function defaultSelection(channelCount: number): number[] {
   return Array.from({ length: Math.min(channelCount, 3) }, (_, i) => i);
 }
 
-export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPanelProps) {
+export default function ImageInfoPanel({ source, cursor, depthWindow, onClose }: ImageInfoPanelProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const top = useTopBelowToolbar(panelRef);
@@ -272,7 +277,10 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDeep, source.computeDepthHistogram, source.getDeepCsr, source.version]);
 
-  // Draw the depth histogram (one series; same clamp-at-1 as the value plot).
+  // Draw the depth histogram (one series; same clamp-at-1 as the value plot),
+  // plus the LIVE depth-window LIMITS (dim the excluded outside regions, mark
+  // both edges) and — like the value plot's cursor marker — a line per deep
+  // sample of the hovered pixel at its Z bin.
   const depthCanvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const canvas = depthCanvasRef.current;
@@ -306,7 +314,45 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
     ctx.strokeStyle = DEPTH_SERIES_COLOR;
     ctx.lineWidth = 1;
     ctx.stroke();
-  }, [depth, dpr]);
+
+    // Depth-window LIMITS: continuous symlog x positions (limits are values,
+    // not bins), the outside regions dimmed, both edges marked.
+    if (depthWindow) {
+      const xOf = (z: number) => {
+        const t = (symmetricLog2(z) - depth.mapping.minLog) / depth.mapping.diffLog;
+        return Math.max(0, Math.min(1, t)) * cssW;
+      };
+      const xNear = Number.isFinite(depthWindow.zNear) ? xOf(depthWindow.zNear) : 0;
+      const xFar = Number.isFinite(depthWindow.zFar) ? xOf(depthWindow.zFar) : cssW;
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
+      if (xNear > 0) ctx.fillRect(0, 0, xNear, cssH);
+      if (xFar < cssW) ctx.fillRect(xFar, 0, cssW - xFar, cssH);
+      ctx.strokeStyle = DEPTH_LIMIT_COLOR;
+      ctx.lineWidth = 1;
+      for (const x of [xNear, xFar]) {
+        const cx = Math.max(0.5, Math.min(cssW - 0.5, x));
+        ctx.beginPath();
+        ctx.moveTo(cx, 0);
+        ctx.lineTo(cx, cssH);
+        ctx.stroke();
+      }
+    }
+
+    // Cursor markers: one line per deep sample of the hovered pixel, at the
+    // bin its Z falls in (the value plot's marker, generalized to a sample
+    // list — a deep pixel has one depth per sample).
+    for (const s of deepSamples) {
+      const bi = tevBinOfValue(depth.mapping, s.z);
+      if (bi < 0) continue;
+      const x = (bi + 0.5) * bw;
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, cssH);
+      ctx.stroke();
+    }
+  }, [depth, depthWindow, deepSamples, dpr]);
 
   // Draw the overlaid per-series histograms + a cursor-bin marker. Series
   // values are tev display-normalized densities (≈[0,1]; hot bins may exceed 1
@@ -392,6 +438,7 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
       data-hist-deep-count={deepSamples.length}
       data-hist-depth-bins={depth ? depth.mapping.bins : 0}
       data-hist-depth-weight={depth ? depth.totalWeight.toFixed(3) : ""}
+      data-hist-depth-window={depthWindow ? `${depthWindow.zNear},${depthWindow.zFar}` : ""}
       data-hist-cursor={cursor ? `${cursor.px},${cursor.py}` : ""}
       data-hist-cursor-values={cursorValues ? cursorValues.map((v) => v.toFixed(4)).join(",") : ""}
       className="absolute rounded border border-border bg-bg-elevated/95 shadow-md backdrop-blur-sm text-fg"
@@ -524,8 +571,18 @@ export default function ImageInfoPanel({ source, cursor, onClose }: ImageInfoPan
           otherwise). */}
       {isDeep && (
         <div className="px-2 pb-1 border-t border-border/60 pt-1" data-hist-depth-section="">
-          <div className="text-[9px] uppercase tracking-wide text-fg-muted mb-0.5">
-            depth (α-weighted)
+          <div className="flex items-center justify-between text-[9px] font-mono mb-0.5">
+            <span className="uppercase tracking-wide text-fg-muted">depth (α-weighted)</span>
+            {/* The LIVE window limits, numeric — shown once the window is
+                narrower than the full z range (the axis row already prints the
+                full-range endpoints). */}
+            {depthWindow &&
+              depth &&
+              (depthWindow.zNear > depth.mapping.min || depthWindow.zFar < depth.mapping.max) && (
+                <span style={{ color: DEPTH_LIMIT_COLOR }} data-hist-depth-limits="">
+                  {fmtZ(depthWindow.zNear)}–{fmtZ(depthWindow.zFar)}
+                </span>
+              )}
           </div>
           {depth ? (
             <>
