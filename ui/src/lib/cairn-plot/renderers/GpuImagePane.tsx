@@ -671,15 +671,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const disableStackShared =
     typeof window !== "undefined" &&
     !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared;
-  // A pane in a SYNC GROUP is a controlled surface too: the node-level receiver
-  // drives its display keys via `synced` (its toolbar stays VISIBLE — the user
-  // still edits + publishes; the node just also DRIVES it top-down). This is the
-  // decoupling the single-receiver refactor makes: "controlled" no longer implies
-  // "toolbar hidden".
   // HOST-driven surface (`toolbar={false}` card seam / test flag): display values
-  // follow the descriptor props live. Distinct from having a settings store.
+  // follow the descriptor props live. NOSTACK fix: `!!synced` is NO LONGER a
+  // controlled-surface trigger — with `view` folded into the settings entry, a
+  // mere zoom creates the entry, and the live-props seed branch then made a
+  // STACKED viewport's look follow each slot's authored props (the reported
+  // settings-change-per-tab regression). Store precedence needs no flag: when
+  // `settings.encoding` is set it rules the lookup regardless; when unset, an
+  // interactive viewport keeps its FROZEN initial seed across slot flips.
   const hostDriven = toolbar === false || disableStackShared;
-  const controlledSurface = hostDriven || !!synced;
+  const controlledSurface = hostDriven;
   const enc = usePaneEncoding({
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,

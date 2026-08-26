@@ -435,9 +435,10 @@ function CpuSdrImagePane(
   const sdrThreadedSet = props.setSyncedSettings;
   const synced = sdrThreadedSet ? props.syncedSettings : sdrOwnStore.settings;
   const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
+  // NOSTACK fix (see GpuImagePane): store EXISTENCE no longer flips the seed
+  // to live props — `settings.view` alone creates the entry now.
   const controlledSurface =
     toolbar === false ||
-    !!synced ||
     (typeof window !== "undefined" &&
       !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
 
@@ -1118,9 +1119,10 @@ function CpuHdrImagePane(
   const hdrThreadedSet = props.setSyncedSettings;
   const synced = hdrThreadedSet ? props.syncedSettings : hdrOwnStore.settings;
   const setSynced = hdrThreadedSet ?? hdrOwnStore.set;
+  // NOSTACK fix (see GpuImagePane): store EXISTENCE no longer flips the seed
+  // to live props — `settings.view` alone creates the entry now.
   const controlledSurface =
     toolbar === false ||
-    !!synced ||
     (typeof window !== "undefined" &&
       !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
 

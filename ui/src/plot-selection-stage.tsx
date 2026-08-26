@@ -54,6 +54,8 @@ import {
 } from "./lib/cairn-plot/viewport/selection-store";
 import {
   copyViewportSettings,
+  getViewportSettings,
+  joinSettingsGroup,
 } from "./lib/cairn-plot/viewport/image-settings-sync";
 import {
   imageCompatibleCount,
@@ -124,9 +126,28 @@ function paneUserLabel(pane: RegisteredPane): string | undefined {
 /** Mark a node non-selectable so the FRESH stage leaf never mutates the page
  *  selection (the stage owns its own REF re-pick gesture). Grids aren't
  *  selectable/registered, so they pass through unchanged. */
+// IDENTITY-STABLE wrapper cache: `built` re-runs on every reference re-pick,
+// and the resolve cache keys on node OBJECT identity — fresh wrapper objects
+// per rebuild forced a COLD re-resolve of every cell (a "Loading…" placeholder
+// remount = the reported re-pick flicker). One wrapped node per source node
+// keeps re-picked rebuilds warm.
+const nonSelectableCache = new WeakMap<PlotNode, PlotNode>();
+// Compare nodes per (foreground, reference) pairing — bounded by the panes on
+// a page × references tried; entries die with the page (ids are page-scoped).
+const compareNodeCache = new Map<string, CompareNode>();
+
+/** The settings-entry id of a stage cell: per (stage open x source pane). */
+function stageCellEntryId(stageGroupId: string, reprPaneId: string): string {
+  return `vp-st-stage-${stageGroupId}-${reprPaneId}`;
+}
 function nonSelectable(node: PlotNode): PlotNode {
   if (node.kind === "grid") return node;
-  return { ...node, props: { ...(node.props ?? {}), selectable: false } };
+  let wrapped = nonSelectableCache.get(node);
+  if (!wrapped) {
+    wrapped = { ...node, props: { ...(node.props ?? {}), selectable: false } };
+    nonSelectableCache.set(node, wrapped);
+  }
+  return wrapped;
 }
 
 /** The image DataSpec a pane contributes as a compare OPERAND: a leaf gives its
@@ -213,6 +234,12 @@ function buildCompareCells(
     const fgSpec = fg ? operandDataSpec(fg.node) : null;
     if (!fg || !fgSpec) continue;
     pairIndex += 1;
+    // IDENTITY-STABLE compare node per (foreground, reference) pair: `built`
+    // re-runs per re-pick and the resolve cache keys on node identity — a
+    // cached node keeps a previously-seen pairing WARM (no placeholder
+    // remount when toggling the reference back and forth).
+    const pairKey = `${pair.foregroundId}__vs__${plan.referenceId}`;
+    const cached = compareNodeCache.get(pairKey);
     // cp.Compare(nonRef, ref): a = foreground, b = reference (baseline). Thread
     // each pane's REAL caption to the matching slot (`labelA`=a=foreground,
     // `labelB`=b=reference) — the pane shows reference bottom-left, foreground
@@ -221,7 +248,7 @@ function buildCompareCells(
     // its bottom-right chip is the stage's click-to-set-reference affordance, so
     // it must exist even for caption-less panes. The reference falls back to
     // "reference" so the left side stays identifiable.
-    const node: CompareNode = {
+    const node: CompareNode = cached ?? {
       kind: "compare",
       mode: "split",
       a: fgSpec,
@@ -234,8 +261,9 @@ function buildCompareCells(
         labelB: paneUserLabel(ref) ?? "reference",
       },
     };
+    if (!cached) compareNodeCache.set(pairKey, node);
     cells.push({
-      key: `${pair.foregroundId}__vs__${plan.referenceId}`,
+      key: pairKey,
       node,
       source: mergeSources([fg.source, ref.source]),
       shared: fg.shared,
@@ -367,18 +395,16 @@ function StageCell({
   // context) — the SAME path `cp.Grid` uses.
   // The ONE settings entry for THIS stage cell's viewport (same hook +
   // contract as the page-wide selection — NO stage-special apply path).
-  // COPY-ON-CREATE: the entry is seeded ONCE, before first render, from the
-  // SOURCE pane's entry — the cell opens showing exactly what its source
-  // shows, then diverges independently (stage-independence ruling). The
-  // useState initializer runs exactly once per cell instance, before the
-  // group join below (an effect), so converge-on-join sees the seeded entry.
-  const cellViewportId = useId();
-  const cellEntryId = `vp-st-stage-${cellViewportId}`;
-  useState(() => {
-    copyViewportSettings(`vp-st-${spec.reprPaneId}`, cellEntryId);
-    return null;
-  });
-  const vst = useViewportSettings(cellEntryId, [{ id: stageSettingsGroupId }]);
+  // IDENTITY: keyed by (stage open × SOURCE pane), NOT by component instance
+  // — stage cells legitimately remount (stacked tab flips, reference
+  // re-picks), and an instance-keyed entry re-minted a fresh viewport on
+  // every remount (re-copying from the ORIGINAL pane = the settings-change-
+  // per-tab bug). Seeding (copy-on-create) and group MEMBERSHIP are owned by
+  // `SelectionStage` for the whole open — so an edit fans into every cell's
+  // entry even while a stacked sibling is unmounted, and a remount simply
+  // re-attaches to its persistent entry.
+  const cellEntryId = stageCellEntryId(stageSettingsGroupId, spec.reprPaneId);
+  const vst = useViewportSettings(cellEntryId);
   const stageGroupId = stageSettingsGroupId;
   const paneSync = useMemo(
     () => ({
@@ -511,6 +537,34 @@ function SelectionStage({
   // guarantees a closed stage's edits can never haunt the next open.
   const viewportSyncGroupId = useId();
   const [stageSettingsGroupId] = useState(() => `cp-stage-st-${++stageOpenSeq}`);
+
+  // COPY-ON-CREATE for every cell entry, at RENDER time (before the cells
+  // mount) so the first paint already shows the source's settings. Guarded
+  // per entry id — idempotent, runs once per (open x pane), including cells
+  // added by later re-picks. Registry mutation in render is deliberate here:
+  // it is write-once-per-id and the subscribers (the cells) mount after.
+  const seededEntriesRef = useRef(new Set<string>());
+  for (const cell of cells) {
+    const id = stageCellEntryId(stageSettingsGroupId, cell.reprPaneId);
+    if (!seededEntriesRef.current.has(id)) {
+      seededEntriesRef.current.add(id);
+      if (getViewportSettings(id) == null) {
+        copyViewportSettings(`vp-st-${cell.reprPaneId}`, id);
+      }
+    }
+  }
+  // The stage OWNS the group memberships for the whole open: every cell's
+  // entry stays a member while the stage lives — mounted or not — so a
+  // stacked stage's edit fans into the unmounted siblings' entries too and
+  // flipping tabs shows consistent settings.
+  const cellEntryKey = cells
+    .map((c) => stageCellEntryId(stageSettingsGroupId, c.reprPaneId))
+    .join(" ");
+  useEffect(() => {
+    const ids = cellEntryKey.split(" ").filter(Boolean);
+    const leaves = ids.map((id) => joinSettingsGroup(stageSettingsGroupId, id));
+    return () => leaves.forEach((l) => l());
+  }, [stageSettingsGroupId, cellEntryKey]);
 
   // --- UNIFORM CONTENT-ASPECT PACKING ----------------------------------------
   // The stage is a UNIFORM grid, driven by the SAME size-computation mechanism as
