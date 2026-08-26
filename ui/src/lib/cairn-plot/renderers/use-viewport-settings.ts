@@ -35,6 +35,7 @@ import {
   type ViewportSettings,
   type SettingsKey,
 } from "../viewport/viewport-settings";
+import { registerSettingsPeer } from "../viewport/settings-peers.ts";
 
 /** A group this viewport belongs to. `keys` scopes what this MEMBER applies
  *  from the channel (authored grid view sync = `["view"]`). */
@@ -67,6 +68,7 @@ export function useViewportSettings(
   // same object; the writer's own (unscoped) subscription then skips it.
   const lastAppliedRef = useRef<ViewportSettings | null>(null);
 
+  const getBox = useCallback(() => box.current, []);
   const applyPatch = useCallback((patch: ViewportSettings) => {
     if (lastAppliedRef.current === patch) return;
     lastAppliedRef.current = patch;
@@ -81,12 +83,16 @@ export function useViewportSettings(
   const membershipsRef = useRef(memberships);
   membershipsRef.current = memberships;
   useEffect(() => {
-    const unsubs = (membershipsRef.current ?? []).map((m) =>
+    const unsubs = (membershipsRef.current ?? []).flatMap((m) => [
       subscribeSettingsPatches(m.id, (patch) => {
         const scoped = scopeSettingsPatch(patch, m.keys);
         if (scoped) applyPatch(scoped);
       }),
-    );
+      // Membership also REGISTERS this viewport as a peer, so late joiners of
+      // any kind converge by deref (`peekGroupSettings`) — the one converge
+      // seam (frames and frameless viewports alike).
+      registerSettingsPeer(m.id, getBox),
+    ]);
     return () => unsubs.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [membershipsKey, applyPatch]);
@@ -99,7 +105,7 @@ export function useViewportSettings(
     [applyPatch],
   );
   const setLocal = applyPatch;
-  const get = useCallback(() => box.current, []);
+  const get = getBox;
 
   return { settings: box.current, set, setLocal, get, apply: applyPatch };
 }

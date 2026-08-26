@@ -70,7 +70,8 @@ export function createCameraSettingsPeer(
     const pose = patch["scene3d.camera"];
     if (pose) applyPose(pose);
   });
-  const unregister = registerSettingsPeer(groupId, () => box);
+  const getBox = () => box;
+  const unregister = registerSettingsPeer(groupId, getBox);
 
   return {
     set(pose) {
@@ -79,7 +80,7 @@ export function createCameraSettingsPeer(
       publishSettingsPatch(groupId, patch);
     },
     seed() {
-      const pose = peekGroupSettings(groupId)?.["scene3d.camera"];
+      const pose = peekGroupSettings(groupId, getBox)?.["scene3d.camera"];
       if (pose) applyPose(pose);
     },
     dispose() {

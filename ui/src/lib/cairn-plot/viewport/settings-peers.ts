@@ -42,9 +42,16 @@ export function registerSettingsPeer(groupId: string, get: PeerAccessor): () => 
 }
 
 /** A live peer's current settings object (the first member with a non-null
- *  box), or null when the group has no touched member — the late-join read. */
-export function peekGroupSettings(groupId: string): ViewportSettings | null {
+ *  box), or null when the group has no touched member — the late-join read.
+ *  Pass the caller's OWN accessor as `exclude`: a joiner's own box is
+ *  usually non-null already (content initialization), and converging to
+ *  yourself is a silent no-op that skips the actual peers. */
+export function peekGroupSettings(
+  groupId: string,
+  exclude?: PeerAccessor,
+): ViewportSettings | null {
   for (const get of peers.get(groupId) ?? []) {
+    if (get === exclude) continue;
     const s = get();
     if (s) return s;
   }

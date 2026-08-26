@@ -67,7 +67,7 @@ import {
   isImageCompatibleNode,
   registerSelectionPane,
   unregisterSelectionPane,
- getRegisteredPane,} from "./plot-selection-pane-registry";
+} from "./plot-selection-pane-registry";
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
@@ -112,6 +112,7 @@ import {
 } from "./lib/cairn-plot/image/channel-slice";
 import { type ViewportSettings } from "./lib/cairn-plot/viewport/viewport-settings";
 import { useViewportSettings } from "./lib/cairn-plot/renderers/use-viewport-settings";
+import { peekGroupSettings } from "./lib/cairn-plot/viewport/settings-peers.ts";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -1058,14 +1059,8 @@ function PaneSelectionFrame({
   const isJoinAnchor = !!groups?.isAnchor;
   useEffect(() => {
     if (!settingsGroupId || isJoinAnchor) return;
-    for (const peerId of store.getSelected()) {
-      if (peerId === paneId) continue;
-      const peer = getRegisteredPane(peerId)?.settings?.get();
-      if (peer) {
-        vst.apply({ ...peer });
-        return;
-      }
-    }
+    const peer = peekGroupSettings(settingsGroupId, vst.get);
+    if (peer) vst.apply({ ...peer });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsGroupId, isJoinAnchor]);
 
