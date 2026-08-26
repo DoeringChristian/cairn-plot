@@ -1,6 +1,6 @@
 /**
  * THE viewport settings hook — the frame-side OWNER of a viewport's settings
- * object (final NOSTACK model; `viewport/image-settings-sync.ts` carries the
+ * object (final NOSTACK model; `viewport/viewport-settings.ts` carries the
  * types + the stateless group channels).
  *
  * THE CONTRACT (user rulings 2026-08-26): a viewport OWNS a plain
@@ -34,7 +34,7 @@ import {
   subscribeSettingsPatches,
   type ViewportSettings,
   type SettingsKey,
-} from "../viewport/image-settings-sync";
+} from "../viewport/viewport-settings";
 
 /** A group this viewport belongs to. `keys` scopes what this MEMBER applies
  *  from the channel (authored grid view sync = `["view"]`). */

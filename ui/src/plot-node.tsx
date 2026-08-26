@@ -110,8 +110,8 @@ import {
   applyChannelSlice,
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
-import { type ImageSyncSettings } from "./lib/cairn-plot/viewport/image-settings-sync";
-import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
+import { type ViewportSettings } from "./lib/cairn-plot/viewport/viewport-settings";
+import { useViewportSettings } from "./lib/cairn-plot/renderers/use-viewport-settings";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -123,7 +123,7 @@ import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image
 const RENDERER_WAIT_MS = 4000;
 
 /** The authored grid `sync.viewport` group fans ONLY the view transform. */
-const VIEW_ONLY_KEYS = [
+const VIEW_TRANSFORM_KEYS = [
   "image.view",
   "chart.domainX",
   "chart.domainY",
@@ -134,8 +134,8 @@ const VIEW_ONLY_KEYS = [
  *  the nearest grid's `shared` block (colormap/colorRange/reference/…), and
  *  (when that grid opted in via `shared.sync.viewport`) the live viewport-sync
  *  group id for that grid — see `GridView`'s derivation. The id is ONE
- *  settings CHANNEL (`image-settings-sync.ts`): every frame joins it scoped
- *  to the cross-kind view keys (`VIEW_ONLY_KEYS` — image view, chart domain,
+ *  settings CHANNEL (`viewport-settings.ts`): every frame joins it scoped
+ *  to the cross-kind view keys (`VIEW_TRANSFORM_KEYS` — image view, chart domain,
  *  3D camera), so one flag links a grid's images AND charts through the same
  *  frame-owned settings objects. Mirrors the 3D `cameraSyncGroupId`
  *  mechanism (`lib/camera-sync.ts`'s `useCameraSync`), scoped per grid
@@ -184,16 +184,16 @@ interface PaneSyncCtx {
    *  subscriber per viewport; every consumer (the pane's display props,
    *  `useCompareControl`'s mode/kernel/split, `LeafView`'s channel select) reads
    *  these top-down — no consumer subscribes to the bus itself. */
-  syncedSettings?: ImageSyncSettings | null;
+  syncedSettings?: ViewportSettings | null;
   /** The ONE write path into the viewport's settings store: merges a patch into
    *  the GROUP store while selected (transient — gone on unselect), else the
    *  LOCAL store (sticks). Threaded to the panes as a prop (the bundle split
    *  rules out context on the addon side). */
-  setSyncedSettings?: (patch: ImageSyncSettings) => void;
+  setSyncedSettings?: (patch: ViewportSettings) => void;
   /** LOCAL apply (no fan-out) — the INITIALIZATION write path (single source
    *  of truth rule): a viewport's settings are seeded from the first content
    *  it shows; init must never fan to group peers. */
-  applySyncedSettings?: (patch: ImageSyncSettings) => void;
+  applySyncedSettings?: (patch: ViewportSettings) => void;
 }
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
 
@@ -1041,14 +1041,14 @@ function PaneSelectionFrame({
     selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
 
   // THE viewport's OWN settings object (final NOSTACK model — see
-  // use-synced-image-settings.ts): this frame owns the box; memberships are
+  // use-viewport-settings.ts): this frame owns the box; memberships are
   // channel subscriptions. While one of >=2 selected: the per-episode
   // selection channel (all keys). Always: the authored grid `sync.viewport`
   // channel, scoped to `view` (transforms-only grid sync, as authored).
   // Edits fan into every member's own object, PERSISTENTLY.
   const vst = useViewportSettings([
     ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
-    ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_ONLY_KEYS }] : []),
+    ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_TRANSFORM_KEYS }] : []),
   ]);
   // LATE-JOIN CONVERGENCE (ruling: adding a member syncs the group's settings
   // over): a NON-anchor member entering a live selection adopts a peer's
@@ -1564,9 +1564,9 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
  */
 function useCompareControl(
   node: PlotNode,
-  syncedSettings: ImageSyncSettings | null | undefined,
-  setSettings?: (patch: ImageSyncSettings) => void,
-  applySettings?: (patch: ImageSyncSettings) => void,
+  syncedSettings: ViewportSettings | null | undefined,
+  setSettings?: (patch: ViewportSettings) => void,
+  applySettings?: (patch: ViewportSettings) => void,
 ): CompareControl {
   const cmp = node.kind === "compare" ? node : null;
   const props = (cmp?.props ?? {}) as Record<string, unknown>;
@@ -1650,7 +1650,7 @@ function useCompareControl(
   useEffect(() => {
     if (!cmp || !applyRef.current) return;
     const cur = (syncedRefInit.current ?? {}) as Record<string, unknown>;
-    const missing: ImageSyncSettings = {};
+    const missing: ViewportSettings = {};
     if (!("compare.mode" in cur)) missing["compare.mode"] = seedMode;
     if (!("compare.kernel" in cur)) missing["compare.kernel"] = seedKernel;
     if (!("compare.split" in cur)) missing["compare.split"] = seedSplit;

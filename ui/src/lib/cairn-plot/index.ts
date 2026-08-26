@@ -104,7 +104,7 @@ export type {
 export { formatNum } from "./format";
 
 // Hooks
-export { useContainerSize } from "./hooks";
+export { useContainerSize } from "./hooks/use-container-size";
 
 // Primitives
 export { Colorbar } from "./primitives";

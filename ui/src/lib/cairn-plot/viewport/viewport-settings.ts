@@ -8,7 +8,7 @@
  * group bus." Concretely:
  * - Each VIEWPORT OWNS a plain {@link ViewportSettings} object, held in a
  *   box (`useRef`) by the frame that renders it (`useViewportSettings` in
- *   renderers/use-synced-image-settings.ts). Patches REPLACE the object
+ *   renderers/use-viewport-settings.ts). Patches REPLACE the object
  *   (`{...prev, ...patch}`) so identity checks stay valid. Nothing global
  *   stores settings — no registry, no ids, no leaked rows: the object dies
  *   with its viewport.
@@ -106,9 +106,6 @@ export interface ViewportSettings {
   };
 }
 
-/** @deprecated renamed. Use {@link ViewportSettings}. */
-export type ImageSyncSettings = ViewportSettings;
-
 /** Keys a channel SUBSCRIPTION may be scoped to. */
 export type SettingsKey = keyof ViewportSettings;
 
@@ -163,6 +160,6 @@ export function subscribeSettingsPatches(groupId: string, cb: PatchListener): ()
 }
 
 /** TESTS ONLY: drop every channel (a reset page has no subscribers). */
-export function __resetImageSettingsStoresForTest(): void {
+export function __resetSettingsChannelsForTest(): void {
   channels.clear();
 }

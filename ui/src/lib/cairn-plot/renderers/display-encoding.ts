@@ -277,10 +277,10 @@ export interface PaneEncodingConfig {
    *  stack (one viewport, one shared setting) AND a grid cell (its own viewport). */
   controlledSurface?: boolean;
   /** The viewport's settings store (the node-level accumulated
-   *  `ImageSyncSettings`). When it holds an `encoding`, that id IS the pane's
+   *  `ViewportSettings`). When it holds an `encoding`, that id IS the pane's
    *  encoding — derived by value every render, no local copy, no adoption
    *  effect. Applicability stays a render decision. */
-  settings?: import("../viewport/image-settings-sync").ViewportSettings | null;
+  settings?: import("../viewport/viewport-settings").ViewportSettings | null;
 }
 
 /** What a pane needs from the unified encoding state. */

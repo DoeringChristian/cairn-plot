@@ -6,8 +6,8 @@
  * compare mode, diff kernel, colormap, tone-map, split position — did NOT sync,
  * because `GpuComparePane` never subscribed to the shared SETTINGS bus at all.
  * The fix wires `GpuComparePane` onto the SAME settings-sync path the image
- * panes use (`useSyncedImageSettings` + `image-settings-sync` bus + the
- * broadened `ImageSyncSettings` payload). This harness proves it end-to-end.
+ * panes use (`useViewportSettings` + `viewport-settings` bus + the
+ * broadened `ViewportSettings` payload). This harness proves it end-to-end.
  *
  * It mounts TWO independent `PlotApp` roots (the gallery shape — two separate
  * mounts, NOT one `cp.Grid`), each a single engine-backed compare pane, selects

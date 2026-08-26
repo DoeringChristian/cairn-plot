@@ -5,7 +5,7 @@ import type {
   OverlayBox,
 } from "../types";
 import { overlayClassColor } from "../types";
-import { useContainerSize } from "../hooks";
+import { useContainerSize } from "../hooks/use-container-size";
 import { computeFit } from "./region-select";
 
 export interface ImageOverlayProps {

@@ -57,7 +57,7 @@ import {
   publishSettingsPatch,
   subscribeSettingsPatches,
   type ViewportSettings,
-} from "./lib/cairn-plot/viewport/image-settings-sync";
+} from "./lib/cairn-plot/viewport/viewport-settings";
 import {
   imageCompatibleCount,
   planCompareGrid,

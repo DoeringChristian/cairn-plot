@@ -3,7 +3,7 @@
  * multi-pane grid). Framework-free and descriptor-free (they work on tiny
  * structural {@link SelEntry} records, not `PlotNode`s) so they are
  * unit-testable under Node's test runner with zero DOM/React — the App layer
- * (`src/selection-stage.tsx`) maps the planned ids back to concrete
+ * (`src/plot-selection-stage.tsx`) maps the planned ids back to concrete
  * `GridNode`/`CompareNode` descriptors it feeds to `PlotNodeView`.
  *
  * Two decisions live here:

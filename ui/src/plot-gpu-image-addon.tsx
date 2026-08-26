@@ -28,7 +28,7 @@
  * so a swap arriving after mount was invisible to an already-rendered leaf.
  *
  * Task 8 fixes both problems the same way `GpuComparePane` already does it
- * (`media-compare/compositor.tsx`'s `__cairnPlotGpuComparePane`): expose the
+ * (`media-compare/compositor.tsx`; the old `__cairnPlotGpuComparePane` seam is deleted): expose the
  * PANE COMPONENT on a window seam (`__cairnPlotGpuImagePane`) instead of
  * mutating the registry, and let `plot-renderers.tsx`'s `ImageStandalone`/
  * `ImageHdrStandalone` (which keep owning the local viewport state) pick it

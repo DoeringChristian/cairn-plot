@@ -34,7 +34,7 @@ import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../renderers/image-backend";
-import { useViewportSettings } from "../renderers/use-synced-image-settings";
+import { useViewportSettings } from "../renderers/use-viewport-settings";
 
 import type {
   CompareSource,
@@ -845,7 +845,7 @@ export function CompositeMediaPane({
   // The settings STORE for the LIVE-compare (card / 3D-snapshot) viewport: this
   // pane is NOT under a plot-node `PaneSelectionFrame`, so IT owns the one store
   // per viewport (local store + group while synced; group > local > default —
-  // see use-synced-image-settings.ts) and drives the composited pane top-down.
+  // see use-viewport-settings.ts) and drives the composited pane top-down.
   const vst = useViewportSettings(
     settingsSyncGroupId ? [{ id: settingsSyncGroupId }] : undefined,
   );

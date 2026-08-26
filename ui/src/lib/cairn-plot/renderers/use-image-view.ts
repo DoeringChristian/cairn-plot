@@ -1,7 +1,7 @@
 /**
- * `useSyncedImageViewport` — the controlled image viewport (`{zoom,pan}`) as a
+ * `useImageView` — the controlled image viewport (`{zoom,pan}`) as a
  * PURE PROJECTION of the viewport's settings entry (NOSTACK model: view
- * transforms are settings — `ImageSyncSettings.view` — and ride the same
+ * transforms are settings — `ViewportSettings.view` — and ride the same
  * registry + group fan-out as every display key).
  *
  * There is deliberately NO component-local mirror, no bus, no echo guard, no
@@ -18,11 +18,11 @@
  */
 import { useCallback, useState } from "react";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
-import type { ImageSyncSettings } from "../viewport/image-settings-sync";
+import type { ViewportSettings } from "../viewport/viewport-settings";
 
-export function useSyncedImageViewport(
-  settings: ImageSyncSettings | null | undefined,
-  set: ((patch: ImageSyncSettings) => void) | undefined,
+export function useImageView(
+  settings: ViewportSettings | null | undefined,
+  set: ((patch: ViewportSettings) => void) | undefined,
   seed: ImageViewport,
 ): [ImageViewport, (v: ImageViewport) => void] {
   // Storeless fallback only — inert (and unread) while a store is present.

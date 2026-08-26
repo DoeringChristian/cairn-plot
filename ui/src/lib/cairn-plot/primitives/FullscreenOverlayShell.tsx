@@ -6,7 +6,7 @@
  *
  *   - the per-pane ENLARGE (`renderers/ImagePaneShell.tsx`) — one pane promoted
  *     to fullscreen (its `<canvas>` reparented into the frame);
- *   - the page-level SELECTION STAGE (`src/selection-stage.tsx`) — a GRID of the
+ *   - the page-level SELECTION STAGE (`src/plot-selection-stage.tsx`) — a GRID of the
  *     selected panes (enlarge) or of comparison panes (compare).
  *
  * ## What it owns

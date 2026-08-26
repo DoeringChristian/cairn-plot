@@ -34,7 +34,7 @@ import {
   type PlotStore,
   type RuntimeStoreEntry,
 } from "./lib/cairn-plot";
-import { useEmitAutoHeight } from "./lib/cairn-plot/hooks";
+import { useEmitAutoHeight } from "./lib/cairn-plot/hooks/use-emit-auto-height";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { registerRenderer, getRenderer } from "./plot-registry";
 import { PlotNodeView, SharedPlotContext } from "./plot-node";

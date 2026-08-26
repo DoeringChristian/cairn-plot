@@ -95,8 +95,8 @@ import {
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell, { type EnlargeControl } from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
-import { useSeedGroupOnFormation, useViewportSettings } from "./use-synced-image-settings";
-import type { ImageSyncSettings } from "../viewport/image-settings-sync";
+import { useSeedGroupOnFormation, useViewportSettings } from "./use-viewport-settings";
+import type { ViewportSettings } from "../viewport/viewport-settings";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
   computeDataIndex,
@@ -387,11 +387,11 @@ function CpuSdrImagePane(
     syncIsAnchor?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
-    syncedSettings?: ImageSyncSettings;
+    syncedSettings?: ViewportSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
-    setSyncedSettings?: (patch: ImageSyncSettings) => void;
+    setSyncedSettings?: (patch: ViewportSettings) => void;
     /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
-    applySyncedSettings?: (patch: ImageSyncSettings) => void;
+    applySyncedSettings?: (patch: ViewportSettings) => void;
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) when this pane renders a
@@ -429,7 +429,7 @@ function CpuSdrImagePane(
   // display settings (see GpuImagePane). A viewport OWNS its settings (persist across
   // flips, HOME re-seeds to the visible slot); a controlled surface follows the host
   // props. `__cairnDisableStackShared` (test-only) forces the reseed for pre/post.
-  // The viewport's settings STORE (see use-synced-image-settings.ts): threaded
+  // The viewport's settings STORE (see use-viewport-settings.ts): threaded
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
   const sdrOwnStore = useViewportSettings();
@@ -483,7 +483,7 @@ function CpuSdrImagePane(
   // Every gesture is ONE store write (`set`); values flow back down through the
   // render lookup. The anchor seeds a forming group with its effective values.
   const settingsSnapshot = useCallback(
-    (): ImageSyncSettings => ({
+    (): ViewportSettings => ({
       "image.encoding": enc.encodingId,
       "image.tonemapGamma": tonemapGamma,
       // Formation converges the VIEW too (view transforms are settings).
@@ -514,7 +514,7 @@ function CpuSdrImagePane(
     for (const [k, v] of Object.entries(snap)) {
       if (!(k in cur) && v !== undefined) missing[k] = v;
     }
-    if (Object.keys(missing).length > 0) applySynced(missing as ImageSyncSettings);
+    if (Object.keys(missing).length > 0) applySynced(missing as ViewportSettings);
   });
   const changeEncoding = useCallback(
     (id: string) => {
@@ -1102,11 +1102,11 @@ function CpuHdrImagePane(
     syncIsAnchor?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
-    syncedSettings?: ImageSyncSettings;
+    syncedSettings?: ViewportSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
-    setSyncedSettings?: (patch: ImageSyncSettings) => void;
+    setSyncedSettings?: (patch: ViewportSettings) => void;
     /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
-    applySyncedSettings?: (patch: ImageSyncSettings) => void;
+    applySyncedSettings?: (patch: ViewportSettings) => void;
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
@@ -1132,7 +1132,7 @@ function CpuHdrImagePane(
     toolbar = true,
   } = props;
 
-  // The viewport's settings STORE (see use-synced-image-settings.ts): threaded
+  // The viewport's settings STORE (see use-viewport-settings.ts): threaded
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
   const hdrOwnStore = useViewportSettings();
@@ -1242,10 +1242,10 @@ function CpuHdrImagePane(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
-  // Settings-store wiring (see use-synced-image-settings.ts): gestures write the
+  // Settings-store wiring (see use-viewport-settings.ts): gestures write the
   // store; the anchor seeds a forming group with its effective values.
   const settingsSnapshot = useCallback(
-    (): ImageSyncSettings => ({
+    (): ViewportSettings => ({
       "image.encoding": enc.encodingId,
       "image.tonemapGamma": tonemapGamma,
       "image.exposureEV": displayEV,
@@ -1282,7 +1282,7 @@ function CpuHdrImagePane(
     for (const [k, v] of Object.entries(snap)) {
       if (!(k in cur) && v !== undefined) missing[k] = v;
     }
-    if (Object.keys(missing).length > 0) applySynced(missing as ImageSyncSettings);
+    if (Object.keys(missing).length > 0) applySynced(missing as ViewportSettings);
   });
   // Every display gesture is ONE store write; the value flows back down through
   // the render lookup — no pane state to keep consistent.

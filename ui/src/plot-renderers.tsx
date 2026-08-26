@@ -51,12 +51,12 @@ import {
 import { warnGpuUnavailable } from "./lib/cairn-plot/primitives/capability-notice";
 import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
-import { useSyncedImageViewport } from "./lib/cairn-plot/renderers/use-synced-image-viewport";
+import { useImageView } from "./lib/cairn-plot/renderers/use-image-view";
 import {
   ChartViewportSyncProvider,
   type ChartViewportSyncTarget,
 } from "./lib/cairn-plot/viewport/use-chart-viewport";
-import type { ViewportSettings } from "./lib/cairn-plot/viewport/image-settings-sync.ts";
+import type { ViewportSettings } from "./lib/cairn-plot/viewport/viewport-settings.ts";
 import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
 import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import {
@@ -284,8 +284,8 @@ function HeatmapStandalone(p: P) {
   );
 }
 
-// `useSyncedImageViewport` (the pane viewport ↔ selection-group sync hook) now
-// lives in `renderers/use-synced-image-viewport.ts` so both this module's
+// `useImageView` (the pane viewport ↔ selection-group sync hook) now
+// lives in `renderers/use-image-view.ts` so both this module's
 // `ImageStandalone` and `plot-node.tsx`'s `CompareView` drive it from ONE
 // definition (imported above).
 
@@ -312,7 +312,7 @@ function ImageStandalone(p: P) {
   // (`settings.view`), written through the ONE settings write path — group
   // fan-out (selection / authored grid sync) rides the settings bus. A bare
   // host mount (no store) falls back to hook-local state.
-  const [viewport, onViewportChange] = useSyncedImageViewport(
+  const [viewport, onViewportChange] = useImageView(
     p.syncedSettings,
     p.setSyncedSettings,
     { zoom: p.zoom ?? 1, pan: p.pan ?? { x: 0, y: 0 } },

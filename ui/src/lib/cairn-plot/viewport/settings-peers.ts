@@ -13,10 +13,10 @@
  * keeps the stateless-channel invariant — nothing here outlives a viewport.
  *
  * Anchored on `globalThis` for the same cross-bundle reason as the channels
- * (`image-settings-sync.ts`): the three-addon and core IIFE chunks must share
+ * (`viewport-settings.ts`): the three-addon and core IIFE chunks must share
  * one membership map.
  */
-import type { ViewportSettings } from "./image-settings-sync.ts";
+import type { ViewportSettings } from "./viewport-settings.ts";
 
 type PeerAccessor = () => ViewportSettings | null;
 

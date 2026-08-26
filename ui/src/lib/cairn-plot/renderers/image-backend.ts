@@ -27,7 +27,7 @@ import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
 import { floatPixelsFrom, type FloatPixels } from "../image/pixel-buffer.ts";
 import type { DeepFlattenController } from "../image/decoders.ts";
-import type { ImageSyncSettings } from "../viewport/image-settings-sync";
+import type { ViewportSettings } from "../viewport/viewport-settings";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`
@@ -375,16 +375,16 @@ export interface ImageBackendProps {
    *  local copy) and writes changes back via {@link setSyncedSettings}. The pane
    *  itself is NEVER a bus subscriber. Absent = no store (a bare host mount);
    *  the pane falls back to its own local state / prop seeds. */
-  syncedSettings?: ImageSyncSettings;
+  syncedSettings?: ViewportSettings;
   /** The ONE write path into the viewport's settings store (the GROUP store
    *  while selected — transient, gone on unselect; else the local store, which
    *  sticks). Every user gesture on a display control calls this; absent = no
    *  store. */
-  setSyncedSettings?: (patch: ImageSyncSettings) => void;
+  setSyncedSettings?: (patch: ViewportSettings) => void;
   /** LOCAL apply (no fan-out) — the INITIALIZATION write path: the pane seeds
    *  MISSING settings keys from the first content it shows (single source of
    *  truth rule); init must never fan to group peers. */
-  applySyncedSettings?: (patch: ImageSyncSettings) => void;
+  applySyncedSettings?: (patch: ViewportSettings) => void;
   /** CONTROLLED single-pane fullscreen state, owned by the plot leaf ABOVE the
    *  async-resolve swap (`LeafView`) so a cold re-resolve (a channel pick's
    *  "Loading…" placeholder unmounting this pane) cannot reset it. Threaded to
@@ -418,7 +418,7 @@ export interface ImageBackendProps {
   pixelValueNotation?: PixelValueNotation;
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`). */
   toolbar?: boolean;
-  // — multi-viewport SELECTION settings sync (viewport/image-settings-sync.ts) —
+  // — multi-viewport SELECTION settings sync (viewport/viewport-settings.ts) —
   /** When set (this pane is part of a ≥2 selection), the pane links its
    *  view-local display-setting overrides (colormap/tonemap/gamma/peak/exposure/
    *  offset) to this group: a local control change broadcasts to the group, and

@@ -55,7 +55,7 @@ import {
   type PixelPoint,
   type PixelRect,
 } from "./chart-viewport-math";
-import type { ViewportSettings } from "./image-settings-sync.ts";
+import type { ViewportSettings } from "./viewport-settings.ts";
 import { useModifierKey } from "../hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";
@@ -69,7 +69,7 @@ export { resolveChartDomain } from "./chart-viewport-math";
  * image colormap pick). Passed to {@link useChartViewport} either as the
  * `sync` arg (direct/testable) or — since the pure chart renderers don't
  * forward sync props — through {@link ChartViewportSyncProvider} (mirrors how
- * the image path threads `syncedSettings` into `useSyncedImageViewport`).
+ * the image path threads `syncedSettings` into `useImageView`).
  * There is NO subscription, echo guard, or late-join cache here: the frame's
  * settings object absorbs peer patches and this hook is a pure projection.
  */

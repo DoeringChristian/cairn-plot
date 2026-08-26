@@ -19,7 +19,7 @@
  * turning its container-local `plotRectRef` into client space before calling.
  */
 
-import type { ViewportSettings } from "./image-settings-sync.ts";
+import type { ViewportSettings } from "./viewport-settings.ts";
 
 /** Wheel zoom factor per notch — identical to use-plot-gestures.ts:116. */
 export const WHEEL_FACTOR = 1.1;

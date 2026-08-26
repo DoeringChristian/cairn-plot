@@ -9,8 +9,8 @@
  * React context could never do — a module singleton can. Selection is the
  * switch that decides WHICH panes are in a live sync group: while ≥2 panes are
  * selected, the React layer threads a shared viewport-sync group id
- * (`image-viewport-sync.ts`) and settings-sync group id
- * (`image-settings-sync.ts`) into every selected pane, so zoom/pan and
+ * (`viewport-settings.ts`) and settings-sync group id
+ * (`viewport-settings.ts`) into every selected pane, so zoom/pan and
  * display-setting changes broadcast across the whole selected group.
  *
  * Selection semantics (locked design):
@@ -23,11 +23,11 @@
  *
  * Intentionally React-free (a plain object + listener set) so it is
  * unit-testable without a DOM/React harness and reusable by any viewport type,
- * mirroring `image-viewport-sync.ts`'s framework-free bus. The React binding
+ * mirroring `viewport-settings.ts`'s framework-free bus. The React binding
  * (a context + `useSyncExternalStore`) lives in `plot-node.tsx`.
  */
 
-import { __resetImageSettingsStoresForTest } from "./image-settings-sync.ts";
+import { __resetSettingsChannelsForTest } from "./viewport-settings.ts";
 
 export type SelectionListener = () => void;
 
@@ -327,7 +327,7 @@ export function __resetGlobalSelectionStoreForTest(): void {
   paneSeq = 0;
   // Pane ids restart from 0 → the per-viewport settings stores (`vp-st-<paneId>`)
   // would collide across test cases; a reset page starts with EMPTY stores.
-  __resetImageSettingsStoresForTest();
+  __resetSettingsChannelsForTest();
 }
 
 // Monotonic pane-id source. React's `useId()` RESTARTS its counter per root

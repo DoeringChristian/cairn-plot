@@ -24,7 +24,7 @@ import {
   publishSettingsPatch,
   subscribeSettingsPatches,
   type ViewportSettings,
-} from "../viewport/image-settings-sync.ts";
+} from "../viewport/viewport-settings.ts";
 import { peekGroupSettings, registerSettingsPeer } from "../viewport/settings-peers.ts";
 
 /** A 3D camera pose — the `"scene3d.camera"` settings value (ATOMIC:

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the OBJECT-MODEL settings core (`image-settings-sync.ts`):
+ * Unit tests for the OBJECT-MODEL settings core (`viewport-settings.ts`):
  * stateless group channels + the frame applier discipline. A "viewport" here
  * is modelled exactly as the React frame holds it — a plain object box + an
  * applier with patch-identity dedupe — proving fan-out into members' OWN
@@ -9,16 +9,16 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  __resetImageSettingsStoresForTest,
+  __resetSettingsChannelsForTest,
   publishSettingsPatch,
   scopeSettingsPatch,
   subscribeSettingsPatches,
   type SettingsKey,
   type ViewportSettings,
-} from "./image-settings-sync.ts";
+} from "./viewport-settings.ts";
 
 beforeEach(() => {
-  __resetImageSettingsStoresForTest();
+  __resetSettingsChannelsForTest();
 });
 
 /** The frame's applier, verbatim in miniature: own object + identity dedupe. */

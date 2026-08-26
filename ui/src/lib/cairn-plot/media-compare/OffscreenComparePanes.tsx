@@ -91,7 +91,7 @@ export interface OffscreenComparePanesProps {
  * `OrbitControls` "change" publishes `{position,target,zoom}` to the group,
  * which BOTH offscreen mirror viewers apply (re-render + re-snapshot →
  * recomposite). It also subscribes to the group so it adopts the mirrors'
- * fitted camera (via `getLastCameraState` on mount + live updates), so the
+ * fitted camera (via a peer deref (`seed()`) on mount + live updates), so the
  * first drag continues smoothly instead of jumping from a default pose.
  *
  * On-demand only: `OrbitControls` fires "change" solely on genuine pointer/

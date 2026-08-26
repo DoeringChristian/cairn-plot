@@ -117,8 +117,8 @@ import {
   type TevHistogramsResult,
 } from "./image-histogram";
 import { TEV_HISTOGRAM_BINS } from "../image/histogram-binning";
-import { useSeedGroupOnFormation, useViewportSettings } from "./use-synced-image-settings";
-import type { ImageSyncSettings } from "../viewport/image-settings-sync";
+import { useSeedGroupOnFormation, useViewportSettings } from "./use-viewport-settings";
+import type { ViewportSettings } from "../viewport/viewport-settings";
 import {
   displayToolbarButton,
   scalarFaceColormap,
@@ -879,7 +879,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // full current settings on formation (`settingsSnapshot`). It does NOT subscribe:
   // incoming settings arrive TOP-DOWN via `synced` (the node-level receiver drives
   // the controlled reseed above) — there is exactly ONE bus receiver per viewport,
-  // at the node. See `use-synced-image-settings.ts`.
+  // at the node. See `use-viewport-settings.ts`.
   //
   // NO-OWNER cross-type kernel (the live-3D snapshot compare `OffscreenComparePanes`
   // threads no `onDiffKernelChange`, so its kernel has no node-level owner): mirror
@@ -887,7 +887,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // (the descriptor / stage path) the kernel mirrors through `useCompareControl` at
   // the node, so the pane must NOT also drive it (that owner re-derives `opId`).
   const settingsSnapshot = useCallback(
-    (): ImageSyncSettings =>
+    (): ViewportSettings =>
       diffMode
         ? {
             // DIFF face: the scalar-error encoding + the effective diff colormap
@@ -962,7 +962,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (k === "compare.mode" || k === "compare.kernel" || k === "compare.split") continue;
       if (!(k in cur) && v !== undefined) missing[k] = v;
     }
-    if (Object.keys(missing).length > 0) applySynced(missing as ImageSyncSettings);
+    if (Object.keys(missing).length > 0) applySynced(missing as ViewportSettings);
   });
   const changeEncoding = useCallback(
     (id: string) => {

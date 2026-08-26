@@ -14,17 +14,17 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { SelectionStore, paneSyncGroups } from "./selection-store.ts";
 import {
-  __resetImageSettingsStoresForTest,
+  __resetSettingsChannelsForTest,
   publishSettingsPatch,
   subscribeSettingsPatches,
   type ViewportSettings,
-} from "./image-settings-sync.ts";
+} from "./viewport-settings.ts";
 
 let n = 0;
 const freshBase = () => `sel-int-${n++}`;
 
 beforeEach(() => {
-  __resetImageSettingsStoresForTest();
+  __resetSettingsChannelsForTest();
 });
 
 /** A pane modelled as the frame holds it: own object + membership from
