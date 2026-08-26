@@ -1,25 +1,34 @@
 /**
- * Framework-free live camera-sync bus for 3D viewers.
+ * 3D-camera adapter over the ONE unified settings bus (unified-viewport
+ * ruling, 2026-08-26: every viewport kind shares one `ViewportSettings`
+ * dictionary and one channel class — see `viewport/image-settings-sync.ts`).
  *
- * One `EventTarget` per `groupId`. A viewer publishes `{position, target,
- * zoom}` whenever its OrbitControls fires "change"; every other viewer
- * subscribed to the same group applies the incoming state to its own
- * camera/controls. There is no persistent rAF loop — state is only pushed on
- * a genuine "change" event and applied synchronously by subscribers.
+ * A viewer publishes its pose as a settings patch `{"scene3d.camera":
+ * {position, target, zoom}}` whenever its OrbitControls fires "change"; every
+ * other viewer subscribed to the same group applies the incoming pose to its
+ * own camera/controls. There is no persistent rAF loop — a patch is pushed
+ * only on a genuine "change" event and applied synchronously by subscribers.
  *
  * Two echo guards prevent feedback loops:
- * 1. Each publish carries the publishing viewer's `sourceId`; a subscriber
- *    ignores events whose `sourceId` matches its own, so a viewer never
- *    reacts to its own broadcast.
+ * 1. `publish` remembers the exact patch object it sent per `sourceId`
+ *    (patch-identity dedupe, the same pattern as the frame appliers in
+ *    `useViewportSettings`), so a viewer never reacts to its own broadcast.
  * 2. `use-scene3d.ts` additionally suppresses re-publishing while it is
- *    applying an incoming remote state, so the "change" event fired by that
+ *    applying an incoming remote pose, so the "change" event fired by that
  *    programmatic update (setting camera.position / controls.update()) can't
- *    ping back onto the bus.
+ *    ping back onto the bus. The imperative-apply guard belongs to the
+ *    ADAPTER SIDE — the settings machinery itself has no echo protocol.
  *
- * This module is intentionally React-free so it can be reused by any future
- * renderer (mesh/boxes/volume) without pulling React into the dependency
- * graph, and is unit-testable without a DOM/React harness.
+ * `lastStates` is an adapter-local LAST-VALUE cache for late joiners only
+ * (e.g. the compare-mode interaction controller mounting as a third peer
+ * beside two already-fitted offscreen mirrors) — NOT authoritative group
+ * state; each viewer's own camera remains the single source of truth.
  */
+import {
+  publishSettingsPatch,
+  subscribeSettingsPatches,
+  type ViewportSettings,
+} from "../viewport/image-settings-sync.ts";
 
 export interface CameraState {
   position: [number, number, number];
@@ -27,62 +36,45 @@ export interface CameraState {
   zoom: number;
 }
 
-interface CameraStateDetail {
-  state: CameraState;
-  sourceId: string;
-}
-
-const EVENT_TYPE = "camera-state";
-
-const buses = new Map<string, EventTarget>();
+// Patch-identity echo guard (same pattern as `useViewportSettings`).
+const lastPublishedBySource = new Map<string, ViewportSettings>();
+// Late-join memory (adapter-local convenience, not group state).
 const lastStates = new Map<string, CameraState>();
-
-function busFor(groupId: string): EventTarget {
-  let bus = buses.get(groupId);
-  if (!bus) {
-    bus = new EventTarget();
-    buses.set(groupId, bus);
-  }
-  return bus;
-}
 
 /** Broadcasts `state` to every other subscriber of `groupId`. */
 export function publishCameraState(groupId: string, sourceId: string, state: CameraState): void {
   lastStates.set(groupId, state);
-  busFor(groupId).dispatchEvent(
-    new CustomEvent<CameraStateDetail>(EVENT_TYPE, { detail: { state, sourceId } }),
-  );
+  const patch: ViewportSettings = { "scene3d.camera": state };
+  lastPublishedBySource.set(sourceId, patch);
+  publishSettingsPatch(groupId, patch);
 }
 
 /**
  * The most recent camera state published on `groupId`, or `undefined` if none
  * has been published yet. Lets a viewer/controller that JOINS a group late
  * (after peers have already framed the scene) adopt the current camera on
- * mount instead of starting at a default pose — e.g. WS-VC2's compare-mode
- * interaction controller, which mounts as a third peer alongside two already-
- * fitted offscreen mirror viewers and must not jump on the first drag.
+ * mount instead of starting at a default pose.
  */
 export function getLastCameraState(groupId: string): CameraState | undefined {
   return lastStates.get(groupId);
 }
 
 /**
- * Subscribes to camera-state broadcasts on `groupId`, ignoring the caller's
- * own publishes (matched by `sourceId`). Returns an unsubscribe function.
+ * Subscribes to `scene3d.camera` patches on `groupId`, ignoring the caller's
+ * own publishes (patch-identity match via `sourceId`). Returns unsubscribe.
  */
 export function subscribeCameraState(
   groupId: string,
   sourceId: string,
   onState: (state: CameraState) => void,
 ): () => void {
-  const bus = busFor(groupId);
-  const handler = (e: Event) => {
-    const detail = (e as CustomEvent<CameraStateDetail>).detail;
-    if (detail.sourceId === sourceId) return;
-    onState(detail.state);
-  };
-  bus.addEventListener(EVENT_TYPE, handler);
-  return () => bus.removeEventListener(EVENT_TYPE, handler);
+  return subscribeSettingsPatches(groupId, (patch) => {
+    const state = patch["scene3d.camera"];
+    if (!state) return;
+    if (lastPublishedBySource.get(sourceId) === patch) return;
+    lastStates.set(groupId, state);
+    onState(state);
+  });
 }
 
 /** Generates a per-viewer-instance id for the echo guard (§1 above). */

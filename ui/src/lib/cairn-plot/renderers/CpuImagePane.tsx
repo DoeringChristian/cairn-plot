@@ -477,17 +477,17 @@ function CpuSdrImagePane(
   const gammaSeed = gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT;
   // γ resolves at RENDER: store value > descriptor seed (the one lookup).
   const tonemapGamma =
-    synced?.tonemapGamma != null && synced.tonemapGamma > 0 ? synced.tonemapGamma : gammaSeed;
+    synced?.["image.tonemapGamma"] != null && synced["image.tonemapGamma"] > 0 ? synced["image.tonemapGamma"] : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
   // Every gesture is ONE store write (`set`); values flow back down through the
   // render lookup. The anchor seeds a forming group with its effective values.
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
-      encoding: enc.encodingId,
-      tonemapGamma,
+      "image.encoding": enc.encodingId,
+      "image.tonemapGamma": tonemapGamma,
       // Formation converges the VIEW too (view transforms are settings).
-      view: { zoom: zoomProp, pan: panProp },
+      "image.view": { zoom: zoomProp, pan: panProp },
     }),
     [enc.encodingId, tonemapGamma, zoomProp, panProp],
   );
@@ -519,16 +519,16 @@ function CpuSdrImagePane(
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);
-      publishSettings({ encoding: id });
+      publishSettings({ "image.encoding": id });
     },
     [enc, publishSettings],
   );
   const changeGamma = useCallback(
-    (v: number) => publishSettings({ tonemapGamma: v }),
+    (v: number) => publishSettings({ "image.tonemapGamma": v }),
     [publishSettings],
   );
   const changeInfoPanel = useCallback(
-    (open: boolean) => publishSettings({ infoPanel: open }),
+    (open: boolean) => publishSettings({ "panel.info": open }),
     [publishSettings],
   );
 
@@ -1051,9 +1051,9 @@ function CpuSdrImagePane(
           const s = toSdrTonemap(tonemapProp);
           const homeCurve = s === "gamma" || s === "linear" ? s : "srgb";
           publishSettings({
-            encoding: colormapProp !== "none" ? colormapProp : homeCurve,
-            tonemapGamma: gammaSeed,
-            infoPanel: undefined, // HOME → back to AUTO visibility
+            "image.encoding": colormapProp !== "none" ? colormapProp : homeCurve,
+            "image.tonemapGamma": gammaSeed,
+            "panel.info": undefined, // HOME → back to AUTO visibility
           });
         }
         props.onChannelReset?.(); // channel override folds into HOME
@@ -1065,7 +1065,7 @@ function CpuSdrImagePane(
       }
       enlargeControl={props.enlargeControl}
       histogram={histogramSource}
-      infoPanelSetting={synced?.infoPanel}
+      infoPanelSetting={synced?.["panel.info"]}
       onInfoPanelChange={changeInfoPanel}
       // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
       // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
@@ -1187,7 +1187,7 @@ function CpuHdrImagePane(
   const gammaSeed = gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT;
   // γ resolves at RENDER: store value > descriptor seed (the one lookup).
   const tonemapGamma =
-    synced?.tonemapGamma != null && synced.tonemapGamma > 0 ? synced.tonemapGamma : gammaSeed;
+    synced?.["image.tonemapGamma"] != null && synced["image.tonemapGamma"] > 0 ? synced["image.tonemapGamma"] : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1200,8 +1200,8 @@ function CpuHdrImagePane(
   // display-only — recomputes the CPU tone-map pass (like a tonemap/exposure
   // change already does), never a diff. The display EV ADDS to the prop exposure.
   // EV/OFFSET resolve at RENDER: store value > 0 (no descriptor prop).
-  const displayEV = synced?.exposureEV ?? 0;
-  const displayOffset = synced?.offset ?? 0;
+  const displayEV = synced?.["image.exposureEV"] ?? 0;
+  const displayOffset = synced?.["image.offset"] ?? 0;
 
   // DATA-ENCODING BOUNDS (Phase 4) — mirrors GpuImagePane. `colorRange` (grid-
   // shared descriptor) SEEDS the min/max BOUNDS skin — the ALTERNATIVE to EV/OFF
@@ -1215,15 +1215,17 @@ function CpuHdrImagePane(
   // sourceArity>1.
   // REDUCE resolves at RENDER: store value > the k-based default.
   const reduceDefault = defaultReduceMode(sourceArity);
-  const effectiveReduce = (synced?.reduce as ReduceMode | undefined) ?? reduceDefault;
+  const effectiveReduce = (synced?.["image.reduce"] as ReduceMode | undefined) ?? reduceDefault;
   // BOUNDS resolve at RENDER: store pair > descriptor colorRange.
   const colorBounds = useMemo<[number, number] | null>(
     () =>
-      synced?.colorMin != null && synced?.colorMax != null
-        ? [synced.colorMin, synced.colorMax]
+      synced?.["image.colorRange"] !== undefined
+        ? synced["image.colorRange"] === null
+          ? null
+          : [synced["image.colorRange"]!.min, synced["image.colorRange"]!.max]
         : (propColorRange ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [synced?.colorMin, synced?.colorMax, propColorRange?.[0], propColorRange?.[1]],
+    [synced?.["image.colorRange"], propColorRange?.[0], propColorRange?.[1]],
   );
   const boundsSeedVal: [number, number] | null = propColorRange ?? null;
   const boundsModified =
@@ -1244,14 +1246,16 @@ function CpuHdrImagePane(
   // store; the anchor seeds a forming group with its effective values.
   const settingsSnapshot = useCallback(
     (): ImageSyncSettings => ({
-      encoding: enc.encodingId,
-      tonemapGamma,
-      exposureEV: displayEV,
-      offset: displayOffset,
-      reduce: effectiveReduce,
-      ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
+      "image.encoding": enc.encodingId,
+      "image.tonemapGamma": tonemapGamma,
+      "image.exposureEV": displayEV,
+      "image.offset": displayOffset,
+      "image.reduce": effectiveReduce,
+      ...(colorBounds
+        ? { "image.colorRange": { min: colorBounds[0], max: colorBounds[1] } }
+        : {}),
       // Formation converges the VIEW too (view transforms are settings).
-      view: { zoom, pan },
+      "image.view": { zoom, pan },
     }),
     [enc.encodingId, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds, zoom, pan],
   );
@@ -1285,37 +1289,35 @@ function CpuHdrImagePane(
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);
-      const isLut = enc.ids.lutIds.includes(id);
-      publishSettings({
-        encoding: id,
-        colormap: isLut ? id : "none",
-        tonemap: isLut ? tonemapOp : id,
-      });
+      // Legacy colormap/tonemap wire keys are RETIRED (registry ruling): the
+      // one `image.encoding` id carries the whole display look.
+      publishSettings({ "image.encoding": id });
     },
     [enc, publishSettings, tonemapOp],
   );
   const changeGamma = useCallback(
-    (v: number) => publishSettings({ tonemapGamma: v }),
+    (v: number) => publishSettings({ "image.tonemapGamma": v }),
     [publishSettings],
   );
   const changeExposure = useCallback(
-    (ev: number) => publishSettings({ exposureEV: ev }),
+    (ev: number) => publishSettings({ "image.exposureEV": ev }),
     [publishSettings],
   );
   const changeOffset = useCallback(
-    (off: number) => publishSettings({ offset: off }),
+    (off: number) => publishSettings({ "image.offset": off }),
     [publishSettings],
   );
   const changeReduce = useCallback(
-    (mode: ReduceMode) => publishSettings({ reduce: mode }),
+    (mode: ReduceMode) => publishSettings({ "image.reduce": mode }),
     [publishSettings],
   );
   const changeBounds = useCallback(
-    (next: [number, number]) => publishSettings({ colorMin: next[0], colorMax: next[1] }),
+    (next: [number, number]) =>
+      publishSettings({ "image.colorRange": { min: next[0], max: next[1] } }),
     [publishSettings],
   );
   const changeInfoPanel = useCallback(
-    (open: boolean) => publishSettings({ infoPanel: open }),
+    (open: boolean) => publishSettings({ "panel.info": open }),
     [publishSettings],
   );
 
@@ -1564,15 +1566,16 @@ function CpuHdrImagePane(
         {
           const homeCurve = toSdrTonemap(tonemap);
           publishSettings({
-            encoding: propColormap !== "none" ? propColormap : homeCurve,
-            tonemapGamma: gammaSeed,
-            exposureEV: 0,
-            offset: 0,
-            reduce: reduceDefault,
-            ...(boundsSeedVal
-              ? { colorMin: boundsSeedVal[0], colorMax: boundsSeedVal[1] }
-              : { colorMin: undefined, colorMax: undefined }),
-            infoPanel: undefined, // HOME → back to AUTO visibility
+            "image.encoding": propColormap !== "none" ? propColormap : homeCurve,
+            "image.tonemapGamma": gammaSeed,
+            "image.exposureEV": 0,
+            "image.offset": 0,
+            "image.reduce": reduceDefault,
+            // `null` = the JSON-safe MASK: bounds skin off / back to AUTO.
+            "image.colorRange": boundsSeedVal
+              ? { min: boundsSeedVal[0], max: boundsSeedVal[1] }
+              : null,
+            "panel.info": null,
           });
         }
         props.onChannelReset?.(); // channel override folds into HOME
@@ -1588,7 +1591,7 @@ function CpuHdrImagePane(
       enlargeControl={props.enlargeControl}
       histogram={histogramSource}
       depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
-      infoPanelSetting={synced?.infoPanel}
+      infoPanelSetting={synced?.["panel.info"]}
       onInfoPanelChange={changeInfoPanel}
       label={props.isCompareMode ? "" : label}
       showLabelChip={!props.isCompareMode && !!label}

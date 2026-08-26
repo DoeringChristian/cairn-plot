@@ -112,7 +112,7 @@ test("GpuImagePane: encoding + peak re-seed from their props (controlled while t
   // effect, no pane-local copy.
   assert.match(
     gpu,
-    /const peak = synced\?\.peak[\s\S]*?:\s*peakSeed/,
+    /const peak = synced\?\.\["image\.peak"\][\s\S]*?:\s*peakSeed/,
     "peak must derive at render: store value (synced.peak) else the descriptor seed",
   );
 });
@@ -125,7 +125,7 @@ test("display-encoding: usePaneEncoding derives the encoding at render (store > 
   const de = read("renderers/display-encoding.ts");
   assert.match(
     de,
-    /const storeId = config\.settings\?\.encoding/,
+    /const storeId = config\.settings\?\.\["image\.encoding"\]/,
     "the hook must read the settings store's unified encoding id",
   );
   assert.match(

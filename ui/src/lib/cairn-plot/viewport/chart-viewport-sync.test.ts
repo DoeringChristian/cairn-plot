@@ -81,3 +81,32 @@ test("a per-axis-null domain is delivered verbatim (peer keeps its own axis)", (
 test("source ids are unique per call", () => {
   assert.notEqual(makeChartViewportSyncSourceId(), makeChartViewportSyncSourceId());
 });
+
+// ---------------------------------------------------------------------------
+// UNIFIED-BUS pins (unified-viewport ruling, 2026-08-26): the adapter rides
+// the ONE settings channel — a chart publish IS a `ViewportSettings` patch.
+// ---------------------------------------------------------------------------
+import { subscribeSettingsPatches, publishSettingsPatch } from "./image-settings-sync.ts";
+
+test("a chart publish is a {'chart.domain'} patch on the unified channel; 'home' is the null mask", () => {
+  const group = freshGroup();
+  const raw: unknown[] = [];
+  const unsub = subscribeSettingsPatches(group, (patch) => raw.push(patch));
+  publishChartViewport(group, makeChartViewportSyncSourceId(), { x: [0, 1], y: null });
+  publishChartViewport(group, makeChartViewportSyncSourceId(), "home");
+  unsub();
+  assert.deepEqual(raw, [
+    { "chart.domain": { x: [0, 1], y: null } },
+    { "chart.domain": null },
+  ]);
+});
+
+test("the adapter ignores unified-channel patches without its key (mixed image+chart groups)", () => {
+  const group = freshGroup();
+  const seen: ChartSyncPayload[] = [];
+  const unsub = subscribeChartViewport(group, makeChartViewportSyncSourceId(), (p) => seen.push(p));
+  publishSettingsPatch(group, { "image.view": { zoom: 2, pan: { x: 0, y: 0 } } });
+  publishSettingsPatch(group, { "chart.domain": { x: null, y: [3, 4] } });
+  unsub();
+  assert.deepEqual(seen, [{ x: null, y: [3, 4] }]);
+});

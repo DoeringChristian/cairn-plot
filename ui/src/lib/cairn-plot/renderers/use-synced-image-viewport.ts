@@ -29,12 +29,12 @@ export function useSyncedImageViewport(
   const [localViewport, setLocalViewport] = useState<ImageViewport>(seed);
 
   const viewport: ImageViewport = set
-    ? (settings?.view ?? seed)
+    ? (settings?.["image.view"] ?? seed)
     : localViewport;
 
   const onViewportChange = useCallback(
     (v: ImageViewport) => {
-      if (set) set({ view: v });
+      if (set) set({ "image.view": v });
       else setLocalViewport(v);
     },
     [set],

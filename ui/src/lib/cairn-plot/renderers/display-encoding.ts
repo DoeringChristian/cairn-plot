@@ -280,7 +280,7 @@ export interface PaneEncodingConfig {
    *  `ImageSyncSettings`). When it holds an `encoding`, that id IS the pane's
    *  encoding — derived by value every render, no local copy, no adoption
    *  effect. Applicability stays a render decision. */
-  settings?: { encoding?: string } | null;
+  settings?: import("../viewport/image-settings-sync").ViewportSettings | null;
 }
 
 /** What a pane needs from the unified encoding state. */
@@ -369,7 +369,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   //   settings store > prop seed (host-driven surface) > local pick (standalone).
   // A pick on a store-backed pane publishes to the store and flows back down, so
   // publish path == apply path by construction.
-  const storeId = config.settings?.encoding;
+  const storeId = config.settings?.["image.encoding"];
   const encodingId =
     storeId != null
       ? storeId === "viridis"

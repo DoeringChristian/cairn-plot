@@ -624,7 +624,7 @@ async function main(): Promise<void> {
 
     // (1) SAME-KIND image colormap pick (no compareMode) → MUST adopt → orange.
     const sameKind = await observeAfter(() =>
-      selectedPaneSet({ encoding: "magma", colormap: "magma" }),
+      selectedPaneSet({ "image.encoding": "magma" }),
     );
     note(`PHASE C same-kind image colormap patch: image presents=${sameKind.total}, ORANGE=${sameKind.orange}`);
     report(
@@ -635,16 +635,15 @@ async function main(): Promise<void> {
 
     // (2) Reset to a light curve (same-kind) → image goes plain again.
     await observeAfter(() =>
-      selectedPaneSet({ encoding: "srgb", colormap: "none" }),
+      selectedPaneSet({ "image.encoding": "srgb" }),
     );
     // (3) DIFF patch (compareMode "diff") → adopted BY VALUE, same as any other
     // colormap (ruling 5: no scoping). The image false-colors → orange.
     const diffPatch = await observeAfter(() =>
       selectedPaneSet({
-        encoding: "magma",
-        colormap: "magma",
-        compareMode: "diff",
-        diffKernel: "flip",
+        "image.encoding": "magma",
+        "compare.mode": "diff",
+        "compare.kernel": "flip",
       }),
     );
     note(`PHASE C diff-patch (compareMode:diff): image presents=${diffPatch.total}, ORANGE=${diffPatch.orange}`);
@@ -1302,7 +1301,7 @@ async function main(): Promise<void> {
       store.select(ids[2], "toggle"); // + slot2 (absolute) → ONE 3-pane group
       await sleep(500); // let the anchor seed + every joiner adopt run
       const entryKernel = (paneId: string | undefined) =>
-        paneId ? getRegisteredPane(paneId)?.settings?.get()?.diffKernel : undefined;
+        paneId ? getRegisteredPane(paneId)?.settings?.get()?.["compare.kernel"] : undefined;
       const seedPatchHadKernel = entryKernel(ids[1]) === seeds[0] && entryKernel(ids[2]) === seeds[0];
       const formationPatchCount = [ids[1], ids[2]].filter((id) => entryKernel(id) !== undefined).length;
       const afterSelect = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];

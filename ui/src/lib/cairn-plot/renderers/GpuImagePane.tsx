@@ -613,7 +613,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // path derives from `opId`, which the node's control already resolves).
   const diffKernel = hasKernelOwner
     ? (compareSource!.opId ?? "absolute")
-    : (synced?.diffKernel ?? localKernel);
+    : (synced?.["compare.kernel"] ?? localKernel);
   const setDiffKernel = useCallback(
     (id: string) => {
       // ONE write path: route to the owner when present (it re-derives `opId` back
@@ -622,7 +622,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // by a store value — the HOME-can't-reset-the-kernel bug). Every pane has
       // a store (own fallback on bare mounts), so no local cell is written.
       if (compareSource?.onDiffKernelChange) compareSource.onDiffKernelChange(id);
-      else setSynced({ diffKernel: id });
+      else setSynced({ "compare.kernel": id });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onDiffKernelChange, setSynced],
@@ -714,7 +714,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ? propColormap
         : resolveDefaultCurve(propTonemap);
     enc.setEncoding(target); // storeless fallback
-    publishSettings({ encoding: target });
+    publishSettings({ "image.encoding": target });
   };
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
@@ -764,7 +764,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // PEAK resolves at RENDER through the one lookup (the settings contract):
   // store value > descriptor seed. No pane state, no adoption effect.
   const peakSeed = seedPeak();
-  const peak = synced?.peak != null && synced.peak > 0 ? synced.peak : peakSeed;
+  const peak = synced?.["image.peak"] != null && synced["image.peak"] > 0 ? synced["image.peak"] : peakSeed;
   // HOME target + modified dot track the CURRENTLY-VISIBLE slot's descriptor:
   // HOME adopts the visible image's default; the dot lights when the effective
   // value differs from it.
@@ -781,7 +781,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const gammaSeed = propGamma && propGamma > 0 ? propGamma : TONEMAP_GAMMA_DEFAULT;
   // γ resolves at RENDER: store value > descriptor seed.
   const tonemapGamma =
-    synced?.tonemapGamma != null && synced.tonemapGamma > 0 ? synced.tonemapGamma : gammaSeed;
+    synced?.["image.tonemapGamma"] != null && synced["image.tonemapGamma"] > 0 ? synced["image.tonemapGamma"] : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
   // (SDR display-transfer state removed — §B: the plain-SDR pane now shares the
@@ -796,8 +796,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // path this display EV ADDS to the prop `exposure`; for SDR the prop exposure
   // is 0 so it's the only exposure. Never triggers a source re-upload.
   // EV/OFFSET resolve at RENDER: store value > 0 (no descriptor prop).
-  const displayEV = synced?.exposureEV ?? 0;
-  const displayOffset = synced?.offset ?? 0;
+  const displayEV = synced?.["image.exposureEV"] ?? 0;
+  const displayOffset = synced?.["image.offset"] ?? 0;
 
   // DATA-ENCODING BOUNDS (Phase 4). (The norm Lin·Log·Pow PICKER was removed —
   // the engine norm machinery `cairnDataIndex`/`computeDataIndex`/`u_bind9` stays,
@@ -819,16 +819,18 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // default (no descriptor prop).
   const activeIsTurbo = !!getEncoding(enc.encodingId)?.turbo;
   const reduceDefault: ReduceMode = activeIsTurbo ? "mean" : defaultReduceMode(sourceArity);
-  const effectiveReduce = (synced?.reduce as ReduceMode | undefined) ?? reduceDefault;
+  const effectiveReduce = (synced?.["image.reduce"] as ReduceMode | undefined) ?? reduceDefault;
   // BOUNDS resolve at RENDER: store pair > descriptor colorRange. Memoized so
   // the derived array is identity-stable per input change.
   const colorBounds = useMemo<[number, number] | null>(
     () =>
-      synced?.colorMin != null && synced?.colorMax != null
-        ? [synced.colorMin, synced.colorMax]
+      synced?.["image.colorRange"] !== undefined
+        ? synced["image.colorRange"] === null
+          ? null
+          : [synced["image.colorRange"]!.min, synced["image.colorRange"]!.max]
         : (propColorRange ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [synced?.colorMin, synced?.colorMax, propColorRange?.[0], propColorRange?.[1]],
+    [synced?.["image.colorRange"], propColorRange?.[0], propColorRange?.[1]],
   );
   const boundsSeedVal: [number, number] | null = propColorRange ?? null;
   const boundsModified =
@@ -894,35 +896,37 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             // mirrors the first diff's settings to the group (ruling 3). A light peer
             // stores the scalar colormap and simply doesn't false-color (ruling 5:
             // arity gating at render).
-            encoding: deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap),
-            tonemapGamma,
-            peak,
-            exposureEV: displayEV,
-            offset: displayOffset,
-            reduce: effectiveReduce,
-            compareMode: "diff",
-            diffKernel,
+            "image.encoding": deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap),
+            "image.tonemapGamma": tonemapGamma,
+            "image.peak": peak,
+            "image.exposureEV": displayEV,
+            "image.offset": displayOffset,
+            "image.reduce": effectiveReduce,
+            "compare.mode": "diff",
+            "compare.kernel": diffKernel,
             // Formation converges the VIEW too (view transforms are settings).
-            view: { zoom, pan },
+            "image.view": { zoom, pan },
           }
         : {
             // The ONE `encoding` id — the registry derives colormap/curve from it.
-            encoding: enc.encodingId,
-            tonemapGamma,
-            peak,
-            exposureEV: displayEV,
-            offset: displayOffset,
-            reduce: effectiveReduce,
-            ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
+            "image.encoding": enc.encodingId,
+            "image.tonemapGamma": tonemapGamma,
+            "image.peak": peak,
+            "image.exposureEV": displayEV,
+            "image.offset": displayOffset,
+            "image.reduce": effectiveReduce,
+            ...(colorBounds
+              ? { "image.colorRange": { min: colorBounds[0], max: colorBounds[1] } }
+              : {}),
             // COMPOSITOR (split): the LIGHT display look above (a compare peer
             // follows it) PLUS the compare-only keys so a selected peer's control
             // follows the mode + divider (`useCompareControl` reads them). Omitted
             // in the plain single-image case.
             ...(compositorMode
-              ? { compareMode: compareOpMode as string, splitPosition }
+              ? { "compare.mode": compareOpMode as string, "compare.split": splitPosition }
               : {}),
             // Formation converges the VIEW too (view transforms are settings).
-            view: { zoom, pan },
+            "image.view": { zoom, pan },
           },
     [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, zoom, pan],
   );
@@ -955,7 +959,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // useCompareControl / a prop driver) — a pane-level init would capture
       // a transient local default and permanently shadow the driven kernel
       // (the flip-storm cached-diff starvation caught by the stress harness).
-      if (k === "compareMode" || k === "diffKernel" || k === "splitPosition") continue;
+      if (k === "compare.mode" || k === "compare.kernel" || k === "compare.split") continue;
       if (!(k in cur) && v !== undefined) missing[k] = v;
     }
     if (Object.keys(missing).length > 0) applySynced(missing as ImageSyncSettings);
@@ -963,35 +967,36 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);
-      publishSettings({ encoding: id });
+      publishSettings({ "image.encoding": id });
     },
     [enc, publishSettings],
   );
   // Every display gesture is ONE store write; the value flows back down through
   // the render lookup — no pane state to keep consistent.
   const changeExposure = useCallback(
-    (ev: number) => publishSettings({ exposureEV: ev }),
+    (ev: number) => publishSettings({ "image.exposureEV": ev }),
     [publishSettings],
   );
   const changeOffset = useCallback(
-    (off: number) => publishSettings({ offset: off }),
+    (off: number) => publishSettings({ "image.offset": off }),
     [publishSettings],
   );
-  const changePeak = useCallback((v: number) => publishSettings({ peak: v }), [publishSettings]);
+  const changePeak = useCallback((v: number) => publishSettings({ "image.peak": v }), [publishSettings]);
   const changeGamma = useCallback(
-    (v: number) => publishSettings({ tonemapGamma: v }),
+    (v: number) => publishSettings({ "image.tonemapGamma": v }),
     [publishSettings],
   );
   const changeReduce = useCallback(
-    (mode: ReduceMode) => publishSettings({ reduce: mode }),
+    (mode: ReduceMode) => publishSettings({ "image.reduce": mode }),
     [publishSettings],
   );
   const changeBounds = useCallback(
-    (next: [number, number]) => publishSettings({ colorMin: next[0], colorMax: next[1] }),
+    (next: [number, number]) =>
+      publishSettings({ "image.colorRange": { min: next[0], max: next[1] } }),
     [publishSettings],
   );
   const changeInfoPanel = useCallback(
-    (open: boolean) => publishSettings({ infoPanel: open }),
+    (open: boolean) => publishSettings({ "panel.info": open }),
     [publishSettings],
   );
   // DIFF gesture sites: a kernel / colormap pick is one store write (+ the
@@ -1008,9 +1013,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // ONE patch by value: the kernel + the encoding carrying its new default,
       // mirrored to peers (ruling 3/4).
       publishSettings({
-        compareMode: "diff",
-        diffKernel: id,
-        encoding: deriveCompareEncodingId("scalar", effectiveTonemap, kernelDefault),
+        "compare.mode": "diff",
+        "compare.kernel": id,
+        "image.encoding": deriveCompareEncodingId("scalar", effectiveTonemap, kernelDefault),
       });
     },
     [setDiffKernel, publishSettings, enc, effectiveTonemap],
@@ -1023,7 +1028,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // sticks across kernel switches AND — in a stack — across image↔diff flips (one
       // viewport, one setting). HOME re-seeds `enc` to the kernel default.
       enc.setEncoding(id === "none" ? enc.curveId : id);
-      publishSettings({ encoding: deriveCompareEncodingId("scalar", effectiveTonemap, id) });
+      publishSettings({ "image.encoding": deriveCompareEncodingId("scalar", effectiveTonemap, id) });
     },
     [enc, publishSettings, effectiveTonemap],
   );
@@ -1035,7 +1040,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeCompareMode = useCallback(
     (mode: "split" | "diff") => {
       compareSource?.onCompareModeChange?.(mode);
-      publishSettings({ compareMode: mode });
+      publishSettings({ "compare.mode": mode });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onCompareModeChange, publishSettings],
@@ -1048,7 +1053,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeSplit = useCallback(
     (p: number) => {
       compareSource?.onSplitPositionChange?.(p);
-      publishSettings({ splitPosition: p });
+      publishSettings({ "compare.split": p });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onSplitPositionChange, publishSettings],
@@ -2581,7 +2586,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       enlargeControl={backendProps.enlargeControl}
       histogram={hasCompare ? undefined : histogramSource}
       depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
-      infoPanelSetting={synced?.infoPanel}
+      infoPanelSetting={synced?.["panel.info"]}
       onInfoPanelChange={changeInfoPanel}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
       // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
@@ -2736,19 +2741,19 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
               ? homeColormap
               : resolveDefaultCurve(propTonemap);
           publishSettings({
-            encoding: homeEncoding,
-            peak: peakSeed,
-            tonemapGamma: gammaSeed,
-            exposureEV: 0,
-            offset: 0,
-            reduce: activeIsTurbo ? "mean" : defaultReduceMode(sourceArity),
-            ...(boundsSeedVal
-              ? { colorMin: boundsSeedVal[0], colorMax: boundsSeedVal[1] }
-              : // Explicit `undefined` CLEARS the pair in the store (flat merge),
-                // so HOME turns the bounds skin off, not "keeps the old pair".
-                { colorMin: undefined, colorMax: undefined }),
-            // HOME clears the explicit info-panel choice → back to AUTO.
-            infoPanel: undefined,
+            "image.encoding": homeEncoding,
+            "image.peak": peakSeed,
+            "image.tonemapGamma": gammaSeed,
+            "image.exposureEV": 0,
+            "image.offset": 0,
+            "image.reduce": activeIsTurbo ? "mean" : defaultReduceMode(sourceArity),
+            // `null` = the JSON-safe MASK (registry ruling): HOME turns the
+            // bounds skin off (or restores the authored range) and clears the
+            // explicit info-panel choice back to AUTO.
+            "image.colorRange": boundsSeedVal
+              ? { min: boundsSeedVal[0], max: boundsSeedVal[1] }
+              : null,
+            "panel.info": null,
           });
         }
         deepFlatten.reset();

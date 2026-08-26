@@ -123,7 +123,7 @@ import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image
 const RENDERER_WAIT_MS = 4000;
 
 /** The authored grid `sync.viewport` group fans ONLY the view transform. */
-const VIEW_ONLY_KEYS = ["view"] as const;
+const VIEW_ONLY_KEYS = ["image.view"] as const;
 
 /** Root-provided context shared by the whole tree: the single `DataSource`,
  *  the nearest grid's `shared` block (colormap/colorRange/reference/…), and
@@ -248,7 +248,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // viewport the same LeafView instance flips between slots, and the picked
   // layer must carry across (shared-settings semantics).
   const [localChSel, setChSel] = useState<ChannelSelection | null>(null);
-  const syncedChannelSelect = paneSync?.syncedSettings?.channelSelect;
+  const syncedChannelSelect = paneSync?.syncedSettings?.["image.channelSelect"];
   const chSel =
     syncedChannelSelect !== undefined
       ? (syncedChannelSelect as ChannelSelection | null)
@@ -266,7 +266,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // (group while selected — transient; local otherwise — sticks); the local
     // cell only serves a storeless viewport. Writing both would let a
     // group-session pick survive unselect through the local cell.
-    if (setSyncedRef.current) setSyncedRef.current({ channelSelect: next });
+    if (setSyncedRef.current) setSyncedRef.current({ "image.channelSelect": next });
     else setChSel(next);
   }, []);
   // SINGLE-PANE FULLSCREEN (enlarge) — the flag lives HERE, above the async-
@@ -1622,9 +1622,9 @@ function useCompareControl(
   // local override > FROZEN seed. Every change publishes to the store (the panes
   // publish mode/kernel/split; HOME publishes the focused slot's descriptor
   // defaults), so the store is the single source of truth and propagates down.
-  const syncMode = syncedSettings?.compareMode;
-  const syncKernel = syncedSettings?.diffKernel;
-  const syncSplit = syncedSettings?.splitPosition;
+  const syncMode = syncedSettings?.["compare.mode"];
+  const syncKernel = syncedSettings?.["compare.kernel"];
+  const syncSplit = syncedSettings?.["compare.split"];
   const viewMode =
     syncMode !== undefined
       ? normalizeCompareViewMode(syncMode)
@@ -1646,9 +1646,9 @@ function useCompareControl(
     if (!cmp || !applyRef.current) return;
     const cur = (syncedRefInit.current ?? {}) as Record<string, unknown>;
     const missing: ImageSyncSettings = {};
-    if (!("compareMode" in cur)) missing.compareMode = seedMode;
-    if (!("diffKernel" in cur)) missing.diffKernel = seedKernel;
-    if (!("splitPosition" in cur)) missing.splitPosition = seedSplit;
+    if (!("compare.mode" in cur)) missing["compare.mode"] = seedMode;
+    if (!("compare.kernel" in cur)) missing["compare.kernel"] = seedKernel;
+    if (!("compare.split" in cur)) missing["compare.split"] = seedSplit;
     if (Object.keys(missing).length > 0) applyRef.current(missing);
   });
 
@@ -1665,9 +1665,9 @@ function useCompareControl(
     // DESCRIPTOR defaults by value — local store + group store — so every synced
     // member resets with the clicked viewport and the reset values persist.
     setSettings?.({
-      compareMode: descriptorMode,
-      diffKernel: descriptorKernel,
-      splitPosition: descriptorSplit,
+      "compare.mode": descriptorMode,
+      "compare.kernel": descriptorKernel,
+      "compare.split": descriptorSplit,
     });
   }, [setSettings, descriptorMode, descriptorKernel, descriptorSplit]);
   const modified =

@@ -303,7 +303,7 @@ export interface ImagePaneShellProps {
    *  `false` = an explicit user choice (synced, transient per layer);
    *  `undefined` = AUTO — the panel shows iff its footprint stays within 25%
    *  of the pane's width, re-evaluated live on resize. */
-  infoPanelSetting?: boolean;
+  infoPanelSetting?: boolean | null;
   /** Write the setting on a toggle (the pane routes this into its settings
    *  stack). Absent (a storeless host mount) → a local override is kept. */
   onInfoPanelChange?: (open: boolean) => void;

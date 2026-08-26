@@ -30,59 +30,76 @@
  * carries none of the mixed-vintage-registry hazards the stored registry had.
  */
 
-/** An image viewport's VIEW transform — zoom/pan, folded into the settings
- *  vocabulary (transforms are settings; they sync like every other key). */
+/** An image viewport's VIEW transform — zoom/pan, a settings value like any
+ *  other (an ATOMIC object: zoom and pan move together in one gesture). */
 export interface ViewportView {
   zoom: number;
   pan: { x: number; y: number };
 }
 
-/** The settings vocabulary — every key a viewport can explicitly own. All
- *  fields optional: a viewport's object holds only what was explicitly set
- *  (defaults are DERIVED at render, never stored); a patch carries only what
- *  changed. Applicability is a RENDER decision (ruling 5): a key that doesn't
- *  apply to a viewport's current content is stored and simply doesn't alter
- *  that render. */
+/**
+ * THE SETTINGS TYPE (unified-viewport ruling, 2026-08-26): one flat,
+ * NAMESPACED key space shared by EVERY viewport kind (image, chart, 3D — one
+ * class of settings object, OWNED by each viewport); merging is a shallow spread (flat
+ * keys make per-key merge across namespaces trivial); groups may mix kinds
+ * freely — each viewport APPLIES the namespaces its content understands and
+ * carries the rest inert (applicability is a RENDER decision, ruling 5).
+ *
+ * Namespaces track APPLICABILITY DOMAINS, not renderer names:
+ *   - `image.*`   — the image display look + transform + channel selection.
+ *   - `compare.*` — compare/diff keys (any comparable kind; 3D native diff
+ *                   joins this namespace when 3D enters the vocabulary).
+ *   - `panel.*`   — pane chrome (info panel).
+ *   - `chart.*`   — 2D chart data-space window (matched-axes sync).
+ *   - `scene3d.*` — 3D camera pose. Chart + 3D ride these SAME channels via
+ *     thin adapters (`chart-viewport-sync.ts`, `three/camera-sync.ts`).
+ *
+ * MASKS are `null`, never `undefined` (JSON-round-trippable by construction):
+ * `"panel.info": null` = back-to-auto; `"image.colorRange": null` = bounds
+ * skin off. Values that must move together are OBJECTS (view, colorRange).
+ */
 export interface ViewportSettings {
   /** The unified DISPLAY-ENCODING id (a curve/remap operator id or a colormap
    *  LUT id) — the ONE display-look key. */
-  encoding?: string;
-  /** @deprecated pre-registry wire format (split colormap+tonemap). Accepted
-   *  inert so an external publisher's patch still merges. */
-  colormap?: string;
-  /** @deprecated see {@link ViewportSettings.colormap}. */
-  tonemap?: string;
-  tonemapGamma?: number;
-  peak?: number;
-  exposureEV?: number;
-  offset?: number;
-  /** DATA-encoding norm — back-compat; accepted but ignored on apply. */
-  norm?: string;
+  "image.encoding"?: string;
+  "image.tonemapGamma"?: number;
+  "image.peak"?: number;
+  "image.exposureEV"?: number;
+  "image.offset"?: number;
   /** Multi-channel REDUCE for k>1 colormap sources (`luminance`/`mean`). */
-  reduce?: string;
-  /** DATA-encoding BOUNDS — both set = the bounds affine is engaged. */
-  colorMin?: number;
-  colorMax?: number;
-  /** Composited compare mode: "split" | "diff" (legacy "blend" aliases to
-   *  "split" on read). */
-  compareMode?: string;
-  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). */
-  diffKernel?: string;
-  /** Split-divider position in [0,1]. */
-  splitPosition?: number;
+  "image.reduce"?: string;
+  /** DATA-encoding BOUNDS (the min/max colorRange skin) — ATOMIC pair;
+   *  `null` = the bounds affine disengaged (exposure/offset skin). */
+  "image.colorRange"?: { min: number; max: number } | null;
+  /** The viewport's zoom/pan. Absent = the pane's own HOME/fit view. */
+  "image.view"?: ViewportView;
   /** EXR channel-strip selection ({part, layer} or null = the node default).
    *  Synced BY NAME so a group flips every pane to the same part/layer. */
-  channelSelect?: { part?: number | string; layer?: string | string[] } | null;
-  /** INFO-PANEL visibility: true/false = explicit choice; ABSENT = auto.
-   *  HOME clears it back to auto (explicit `undefined` masks — flat merge). */
-  infoPanel?: boolean;
-  /** The viewport's zoom/pan (see {@link ViewportView}). Absent = the pane's
-   *  own HOME/fit view. */
-  view?: ViewportView;
+  "image.channelSelect"?: { part?: number | string; layer?: string | string[] } | null;
+  /** Composited compare mode: "split" | "diff" (legacy "blend" aliases to
+   *  "split" on read). */
+  "compare.mode"?: string;
+  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). */
+  "compare.kernel"?: string;
+  /** Split-divider position in [0,1]. */
+  "compare.split"?: number;
+  /** INFO-PANEL visibility: true/false = explicit choice; ABSENT = auto;
+   *  `null` = explicit back-to-auto (HOME). */
+  "panel.info"?: boolean | null;
+  /** A 2D chart's data-space window (Plotly matched-axes semantics: peers
+   *  adopt the RANGES, not a pixel transform; each axis nullable so a 1D
+   *  chart syncs only the axis it owns). `null` = home/autoscale. */
+  "chart.domain"?: { x: [number, number] | null; y: [number, number] | null } | null;
+  /** A 3D viewer's camera pose — ATOMIC (position/target/zoom move together
+   *  in one orbit gesture). */
+  "scene3d.camera"?: {
+    position: [number, number, number];
+    target: [number, number, number];
+    zoom: number;
+  };
 }
 
-/** @deprecated renamed — the type was never image-specific nor a wire format.
- *  Use {@link ViewportSettings}. */
+/** @deprecated renamed. Use {@link ViewportSettings}. */
 export type ImageSyncSettings = ViewportSettings;
 
 /** Keys a channel SUBSCRIPTION may be scoped to. */

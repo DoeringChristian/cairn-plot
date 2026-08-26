@@ -107,12 +107,12 @@ test("scopeSettingsPatch returns null when nothing survives (skip empty applies)
   assert.deepEqual(scopeSettingsPatch({ encoding: "x" }, undefined), { encoding: "x" });
 });
 
-test("explicit undefined survives the merge as a mask (infoPanel back-to-auto)", () => {
+test("a null mask survives the merge (panel.info back-to-auto; masks are null, never undefined)", () => {
   const a = makeViewport([{ id: "g" }]);
-  a.set({ infoPanel: true });
-  a.set({ infoPanel: undefined });
-  assert.ok("infoPanel" in a.settings!);
-  assert.equal(a.settings!.infoPanel, undefined);
+  a.set({ "panel.info": true });
+  a.set({ "panel.info": null });
+  assert.ok("panel.info" in a.settings!);
+  assert.equal(a.settings!["panel.info"], null);
 });
 
 test("unsubscribing the last member drops the channel (no leaks)", () => {
