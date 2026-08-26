@@ -185,6 +185,10 @@ interface PaneSyncCtx {
    *  LOCAL store (sticks). Threaded to the panes as a prop (the bundle split
    *  rules out context on the addon side). */
   setSyncedSettings?: (patch: ImageSyncSettings) => void;
+  /** LOCAL apply (no fan-out) — the INITIALIZATION write path (single source
+   *  of truth rule): a viewport's settings are seeded from the first content
+   *  it shows; init must never fan to group peers. */
+  applySyncedSettings?: (patch: ImageSyncSettings) => void;
 }
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
 
@@ -434,6 +438,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       if (paneSync?.syncIsAnchor) dsync.syncIsAnchor = true;
       if (paneSync?.syncedSettings) dsync.syncedSettings = paneSync.syncedSettings;
       if (paneSync?.setSyncedSettings) dsync.setSyncedSettings = paneSync.setSyncedSettings;
+      if (paneSync?.applySyncedSettings) dsync.applySyncedSettings = paneSync.applySyncedSettings;
       const compareSource: CompareSource = {
         b: dp.__diffB as DecodedSource,
         opId: diffSpec.diffKernel,
@@ -474,6 +479,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     if (paneSync?.syncIsAnchor) sharedProps.syncIsAnchor = true;
     if (paneSync?.syncedSettings) sharedProps.syncedSettings = paneSync.syncedSettings;
     if (paneSync?.setSyncedSettings) sharedProps.setSyncedSettings = paneSync.setSyncedSettings;
+    if (paneSync?.applySyncedSettings) sharedProps.applySyncedSettings = paneSync.applySyncedSettings;
     // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
     // selection state) and handed to the pane as a standard ToolbarButtonSpec —
     // the pane renders it with its other leading menus and folds the override
@@ -1139,16 +1145,21 @@ function PaneSelectionFrame({
             syncIsAnchor: groups.isAnchor,
             syncedSettings: vst.settings,
             setSyncedSettings: vst.set,
+            applySyncedSettings: vst.setLocal,
           }
         : null,
-    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set],
+    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.setLocal],
   );
   const localSync = useMemo<PaneSyncCtx | null>(
     () =>
       selectable
-        ? { syncedSettings: vst.settings, setSyncedSettings: vst.set }
+        ? {
+            syncedSettings: vst.settings,
+            setSyncedSettings: vst.set,
+            applySyncedSettings: vst.setLocal,
+          }
         : null,
-    [selectable, vst.settings, vst.set],
+    [selectable, vst.settings, vst.set, vst.setLocal],
   );
 
   return (
@@ -1550,6 +1561,7 @@ function useCompareControl(
   node: PlotNode,
   syncedSettings: ImageSyncSettings | null | undefined,
   setSettings?: (patch: ImageSyncSettings) => void,
+  applySettings?: (patch: ImageSyncSettings) => void,
 ): CompareControl {
   const cmp = node.kind === "compare" ? node : null;
   const props = (cmp?.props ?? {}) as Record<string, unknown>;
@@ -1620,6 +1632,26 @@ function useCompareControl(
   const diffKernel = syncKernel !== undefined ? syncKernel : (kernelOverride ?? seedKernel);
   const splitPos = syncSplit !== undefined ? syncSplit : (splitOverride ?? seedSplit);
 
+  // INITIALIZATION (single-source-of-truth ruling): the compare keys are
+  // OWNED here, so THIS is where they are written into the viewport's
+  // settings — once, from the frozen first-compare seed, LOCAL (no fan-out).
+  // After this, every read above resolves from the settings object; the
+  // seed fallbacks only cover the pre-init frames (and equal what init
+  // writes). Idempotent: only missing keys are written.
+  const applyRef = useRef(applySettings);
+  applyRef.current = applySettings;
+  const syncedRefInit = useRef(syncedSettings);
+  syncedRefInit.current = syncedSettings;
+  useEffect(() => {
+    if (!cmp || !applyRef.current) return;
+    const cur = (syncedRefInit.current ?? {}) as Record<string, unknown>;
+    const missing: ImageSyncSettings = {};
+    if (!("compareMode" in cur)) missing.compareMode = seedMode;
+    if (!("diffKernel" in cur)) missing.diffKernel = seedKernel;
+    if (!("splitPosition" in cur)) missing.splitPosition = seedSplit;
+    if (Object.keys(missing).length > 0) applyRef.current(missing);
+  });
+
   // HOME / double-click: drop every override so the control follows the DESCRIPTOR
   // again. This is the compare half of the pane's HOME the old `GpuComparePane` did
   // in-pane (`setCompareMode(compareModeMeta.default)` …); hoisting the mode out of
@@ -1672,7 +1704,12 @@ function NodeDispatch({ node }: { node: PlotNode }) {
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
   // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
-  const control = useCompareControl(node, paneSync?.syncedSettings, paneSync?.setSyncedSettings);
+  const control = useCompareControl(
+    node,
+    paneSync?.syncedSettings,
+    paneSync?.setSyncedSettings,
+    paneSync?.applySyncedSettings,
+  );
   // Static synth-leaf derivation (memoized on the node object) — only meaningful
   // for a compare node; computed unconditionally to keep hook order stable.
   const synth = node.kind === "compare" ? synthDiffLeafOf(node) : null;

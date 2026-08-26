@@ -390,6 +390,8 @@ function CpuSdrImagePane(
     syncedSettings?: ImageSyncSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
     setSyncedSettings?: (patch: ImageSyncSettings) => void;
+    /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
+    applySyncedSettings?: (patch: ImageSyncSettings) => void;
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) when this pane renders a
@@ -496,6 +498,24 @@ function CpuSdrImagePane(
     setSynced,
     settingsSnapshot,
   );
+  // INITIALIZATION (single-source-of-truth ruling — see GpuImagePane's twin):
+  // fill MISSING keys once from the first-shown content; idempotent,
+  // LOCAL-only; controlled (host-driven) surfaces never initialize.
+  const applySynced = sdrThreadedSet
+    ? (props.applySyncedSettings ?? sdrThreadedSet)
+    : sdrOwnStore.setLocal;
+  const syncedInitRef = useRef(synced);
+  syncedInitRef.current = synced;
+  useEffect(() => {
+    if (controlledSurface) return;
+    const snap = settingsSnapshot();
+    const cur = (syncedInitRef.current ?? {}) as Record<string, unknown>;
+    const missing: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(snap)) {
+      if (!(k in cur) && v !== undefined) missing[k] = v;
+    }
+    if (Object.keys(missing).length > 0) applySynced(missing as ImageSyncSettings);
+  });
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);
@@ -1085,6 +1105,8 @@ function CpuHdrImagePane(
     syncedSettings?: ImageSyncSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
     setSyncedSettings?: (patch: ImageSyncSettings) => void;
+    /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
+    applySyncedSettings?: (patch: ImageSyncSettings) => void;
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
@@ -1240,6 +1262,24 @@ function CpuHdrImagePane(
     setSynced,
     settingsSnapshot,
   );
+  // INITIALIZATION (single-source-of-truth ruling — see GpuImagePane's twin):
+  // fill MISSING keys once from the first-shown content; idempotent,
+  // LOCAL-only; controlled (host-driven) surfaces never initialize.
+  const applySynced = hdrThreadedSet
+    ? (props.applySyncedSettings ?? hdrThreadedSet)
+    : hdrOwnStore.setLocal;
+  const syncedInitRef = useRef(synced);
+  syncedInitRef.current = synced;
+  useEffect(() => {
+    if (controlledSurface) return;
+    const snap = settingsSnapshot();
+    const cur = (syncedInitRef.current ?? {}) as Record<string, unknown>;
+    const missing: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(snap)) {
+      if (!(k in cur) && v !== undefined) missing[k] = v;
+    }
+    if (Object.keys(missing).length > 0) applySynced(missing as ImageSyncSettings);
+  });
   // Every display gesture is ONE store write; the value flows back down through
   // the render lookup — no pane state to keep consistent.
   const changeEncoding = useCallback(
@@ -1638,6 +1678,7 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
     syncIsAnchor: backendProps.syncIsAnchor,
     syncedSettings: backendProps.syncedSettings,
     setSyncedSettings: backendProps.setSyncedSettings,
+    applySyncedSettings: backendProps.applySyncedSettings,
     enlargeControl: backendProps.enlargeControl,
     channelMenu: backendProps.channelMenu,
     channelModified: backendProps.channelModified,

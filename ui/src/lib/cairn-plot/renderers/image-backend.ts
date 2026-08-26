@@ -381,6 +381,10 @@ export interface ImageBackendProps {
    *  sticks). Every user gesture on a display control calls this; absent = no
    *  store. */
   setSyncedSettings?: (patch: ImageSyncSettings) => void;
+  /** LOCAL apply (no fan-out) — the INITIALIZATION write path: the pane seeds
+   *  MISSING settings keys from the first content it shows (single source of
+   *  truth rule); init must never fan to group peers. */
+  applySyncedSettings?: (patch: ImageSyncSettings) => void;
   /** CONTROLLED single-pane fullscreen state, owned by the plot leaf ABOVE the
    *  async-resolve swap (`LeafView`) so a cold re-resolve (a channel pick's
    *  "Loading…" placeholder unmounting this pane) cannot reset it. Threaded to

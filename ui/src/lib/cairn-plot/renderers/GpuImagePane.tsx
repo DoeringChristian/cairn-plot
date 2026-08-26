@@ -563,6 +563,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const threadedSet = backendProps.setSyncedSettings;
   const synced = threadedSet ? backendProps.syncedSettings : ownStore.settings;
   const setSynced = threadedSet ?? ownStore.set;
+  // LOCAL apply (no fan-out) — the initialization write path.
+  const applySynced = threadedSet
+    ? (backendProps.applySyncedSettings ?? backendProps.setSyncedSettings!)
+    : ownStore.setLocal;
 
   // -----------------------------------------------------------------------
   // DIFF kernel + DEFAULT colormap (state-unification). The diff/compare face no
@@ -933,6 +937,29 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     setSynced,
     settingsSnapshot,
   );
+  // INITIALIZATION (single-source-of-truth ruling): a viewport's settings are
+  // seeded from the FIRST content that makes each key applicable — one LOCAL
+  // write per missing key — and from then on every read is the settings
+  // object, period. Idempotent + self-quiescing (only MISSING keys are ever
+  // written, so slot flips on a stacked viewport change NOTHING); host-driven
+  // surfaces (`toolbar={false}`) stay prop-controlled and never initialize.
+  const syncedRef2 = useRef(synced);
+  syncedRef2.current = synced;
+  useEffect(() => {
+    if (hostDriven) return;
+    const snap = settingsSnapshot();
+    const cur = (syncedRef2.current ?? {}) as Record<string, unknown>;
+    const missing: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(snap)) {
+      // COMPARE keys are initialized by their OWNER (the node-level
+      // useCompareControl / a prop driver) — a pane-level init would capture
+      // a transient local default and permanently shadow the driven kernel
+      // (the flip-storm cached-diff starvation caught by the stress harness).
+      if (k === "compareMode" || k === "diffKernel" || k === "splitPosition") continue;
+      if (!(k in cur) && v !== undefined) missing[k] = v;
+    }
+    if (Object.keys(missing).length > 0) applySynced(missing as ImageSyncSettings);
+  });
   const changeEncoding = useCallback(
     (id: string) => {
       enc.setEncoding(id);

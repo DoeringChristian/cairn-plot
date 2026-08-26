@@ -292,6 +292,7 @@ function StageCell({
   stageSettingsGroupId,
   cellSettings,
   onCellSettings,
+  onCellSettingsLocal,
 }: {
   spec: StageCellSpec;
   /** The packed rect for this cell (content-aspect, centrally clustered). While
@@ -327,6 +328,7 @@ function StageCell({
   /** The cell's live settings object (stage-owned) + the stage publisher. */
   cellSettings: ViewportSettings | null;
   onCellSettings: (patch: ViewportSettings) => void;
+  onCellSettingsLocal: (patch: ViewportSettings) => void;
 }) {
   // Re-pick gesture (stationary press, never a control press, never a drag).
   // ENLARGE: anywhere on the cell. COMPARE: only when the press started on the
@@ -404,8 +406,9 @@ function StageCell({
       settingsSyncGroupId: stageSettingsGroupId,
       syncedSettings: cellSettings,
       setSyncedSettings: onCellSettings,
+      applySyncedSettings: onCellSettingsLocal,
     }),
-    [viewportSyncGroupId, stageSettingsGroupId, cellSettings, onCellSettings],
+    [viewportSyncGroupId, stageSettingsGroupId, cellSettings, onCellSettings, onCellSettingsLocal],
   );
 
   // GENERAL per-cell aspect bridge: forward whatever this cell's pane publishes on
@@ -560,6 +563,12 @@ function SelectionStage({
     (patch: ViewportSettings) => publishSettingsPatch(stageSettingsGroupId, patch),
     [stageSettingsGroupId],
   );
+  // LOCAL apply for ONE cell (initialization writes — never fanned).
+  const applyCellSettings = useCallback((cellKey: string, patch: ViewportSettings) => {
+    const prev = cellSettingsRef.current.get(cellKey) ?? null;
+    cellSettingsRef.current.set(cellKey, { ...(prev ?? {}), ...patch });
+    bumpCellSettings();
+  }, []);
 
   // --- UNIFORM CONTENT-ASPECT PACKING ----------------------------------------
   // The stage is a UNIFORM grid, driven by the SAME size-computation mechanism as
@@ -697,6 +706,7 @@ function SelectionStage({
                       stageSettingsGroupId={stageSettingsGroupId}
                       cellSettings={cellSettingsRef.current.get(cells[stackActiveClamped]!.key) ?? null}
                       onCellSettings={publishCellSettings}
+                      onCellSettingsLocal={(patch) => applyCellSettings(cells[stackActiveClamped]!.key, patch)}
                     />
                   </div>
                 </InStackedGridContext.Provider>
@@ -712,6 +722,7 @@ function SelectionStage({
                     stageSettingsGroupId={stageSettingsGroupId}
                     cellSettings={cellSettingsRef.current.get(spec.key) ?? null}
                     onCellSettings={publishCellSettings}
+                    onCellSettingsLocal={(patch) => applyCellSettings(spec.key, patch)}
                   />
                 ))
               )}
