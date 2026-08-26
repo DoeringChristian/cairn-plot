@@ -209,3 +209,54 @@ def link_asset_urls(server: str) -> tuple[str, str]:
     base = server.rstrip("/")
     js_path, css_path = _link_asset_paths()
     return f"{base}{js_path}", (f"{base}{css_path}" if css_path else "")
+
+
+# ---------------------------------------------------------------------------
+# Shared HTML-fragment builders — the ONE copy of the include-once script
+# wrappers both emitters use (``elements.PlotElement`` per-cell and
+# ``report.Report`` per-page). Guard flags and script shapes live here so the
+# two paths can never drift apart again.
+# ---------------------------------------------------------------------------
+
+
+def core_bundle_script() -> str:
+    """The guarded CORE script: inject the design-token CSS as a ``<style>``,
+    then run the core IIFE (which sets ``__cairnPlotBundleLoaded``)."""
+    css_js = json_script_safe(inline_core_css())
+    return (
+        "<script>if(!window.__cairnPlotBundleLoaded){"
+        "(function(){var s=document.createElement('style');"
+        f"s.textContent={css_js};document.head.appendChild(s);}})();\n"
+        f"{inline_core_js()}\n}}</script>"
+    )
+
+
+def figure_addon_script() -> str:
+    """The guarded Plotly ``figure`` addon script (include-once via
+    ``__cairnPlotFigureLoaded``); must come after the core script."""
+    return f"<script>if(!window.__cairnPlotFigureLoaded){{\n{inline_figure_addon_js()}\n}}</script>"
+
+
+def three_addon_script() -> str:
+    """The guarded three.js 3D addon script (include-once via
+    ``__cairnPlotThreeLoaded``); must come after the core script."""
+    return f"<script>if(!window.__cairnPlotThreeLoaded){{\n{inline_three_addon_js()}\n}}</script>"
+
+
+def store_script(store: dict, store_id: str) -> str:
+    """The content-addressed blob-store injection pair: the JSON payload
+    ``<script type="application/cairn-plot-store+json">`` plus the additive
+    ``Object.assign(window.__cairnPlotStore, …)`` merge (idempotent across
+    N cells/blocks sharing one page)."""
+    import html as _html
+    import json as _json
+
+    blob = json_script_safe(store)
+    eid = _json.dumps(store_id)
+    return (
+        f'<script type="application/cairn-plot-store+json" id="{_html.escape(store_id)}">'
+        f"{blob}</script>"
+        "<script>window.__cairnPlotStore=window.__cairnPlotStore||{};"
+        f"Object.assign(window.__cairnPlotStore,JSON.parse(document.getElementById({eid}).textContent));"
+        "</script>"
+    )

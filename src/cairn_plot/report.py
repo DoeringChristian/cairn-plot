@@ -628,24 +628,11 @@ class PlotReport:
         els = self._elements()
         if not els:
             return ""
-        css_js = pb.json_script_safe(pb.inline_core_css())
-        core = pb.inline_core_js()
-        parts = [
-            "<script>if(!window.__cairnPlotBundleLoaded){"
-            "(function(){var s=document.createElement('style');"
-            f"s.textContent={css_js};document.head.appendChild(s);}})();\n"
-            f"{core}\n}}</script>"
-        ]
+        parts = [pb.core_bundle_script()]
         if any(el._descriptor_has_figure() for el in els):
-            parts.append(
-                "<script>if(!window.__cairnPlotFigureLoaded){\n"
-                f"{pb.inline_figure_addon_js()}\n}}</script>"
-            )
+            parts.append(pb.figure_addon_script())
         if any(el._descriptor_has_three() for el in els):
-            parts.append(
-                "<script>if(!window.__cairnPlotThreeLoaded){\n"
-                f"{pb.inline_three_addon_js()}\n}}</script>"
-            )
+            parts.append(pb.three_addon_script())
         return "".join(parts)
 
     def _store_html(self) -> str:
@@ -657,15 +644,7 @@ class PlotReport:
         if not store:
             return ""
         store_id = "__cairn_report_store__" + _uuid.uuid4().hex[:12]
-        blob = pb.json_script_safe(store)
-        eid = _json.dumps(store_id)
-        return (
-            f'<script type="application/cairn-plot-store+json" id="{_html.escape(store_id)}">'
-            f"{blob}</script>"
-            "<script>window.__cairnPlotStore=window.__cairnPlotStore||{};"
-            f"Object.assign(window.__cairnPlotStore,JSON.parse(document.getElementById({eid}).textContent));"
-            "</script>"
-        )
+        return pb.store_script(store, store_id)
 
     def _block_contexts(self) -> list[dict[str, Any]]:
         """The ordered blocks as template context: each ``{kind, html, index}``

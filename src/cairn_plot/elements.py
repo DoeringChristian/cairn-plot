@@ -210,18 +210,10 @@ class PlotElement(Element):
                 f'<script type="module" src="{_html.escape(js_url)}" crossorigin></script>'
             )
 
-        # inline (default): one guarded classic <script> injects the CSS as a
-        # <style> then runs the CORE IIFE (which sets __cairnPlotBundleLoaded).
-        # O2: this is the CORE bundle only — NO Plotly. The figure addon is
-        # emitted separately (see `_figure_addon_html`) and only for `figure`.
-        css_js = pb.json_script_safe(pb.inline_core_css())
-        js = pb.inline_core_js()
-        return (
-            "<script>if(!window.__cairnPlotBundleLoaded){"
-            "(function(){var s=document.createElement('style');"
-            f"s.textContent={css_js};document.head.appendChild(s);}})();\n"
-            f"{js}\n}}</script>"
-        )
+        # inline (default): the ONE shared guarded core script (bundle.py's
+        # `core_bundle_script` — same fragment the Report emitter uses). O2:
+        # CORE only, no Plotly; the figure addon is emitted separately.
+        return pb.core_bundle_script()
 
     def _figure_addon_html(self) -> str:
         """The Plotly `figure` addon IIFE, guarded include-once by
@@ -233,8 +225,7 @@ class PlotElement(Element):
             return ""
         from . import bundle as pb
 
-        js = pb.inline_figure_addon_js()
-        return f"<script>if(!window.__cairnPlotFigureLoaded){{\n{js}\n}}</script>"
+        return pb.figure_addon_script()
 
     def _three_addon_html(self) -> str:
         """The three.js 3D addon IIFE, guarded include-once by
@@ -246,23 +237,14 @@ class PlotElement(Element):
             return ""
         from . import bundle as pb
 
-        js = pb.inline_three_addon_js()
-        return f"<script>if(!window.__cairnPlotThreeLoaded){{\n{js}\n}}</script>"
+        return pb.three_addon_script()
 
     def _store_html(self, store_id: str) -> str:
         from . import bundle as pb
 
         if self._bundle != "inline" or not self._store:
             return ""
-        blob = pb.json_script_safe(self._store)
-        eid = json.dumps(store_id)
-        return (
-            f'<script type="application/cairn-plot-store+json" id="{_html.escape(store_id)}">'
-            f"{blob}</script>"
-            "<script>window.__cairnPlotStore=window.__cairnPlotStore||{};"
-            f"Object.assign(window.__cairnPlotStore,JSON.parse(document.getElementById({eid}).textContent));"
-            "</script>"
-        )
+        return pb.store_script(self._store, store_id)
 
     def _mount_html(self, div_id: str, desc_id: str) -> str:
         from . import bundle as pb
