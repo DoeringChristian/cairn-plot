@@ -20,39 +20,10 @@ import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "CONTENT-ASPECT PASS" : "CONTENT-ASPECT FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "CONTENT-ASPECT" });
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 function near(a: number, b: number, tol: number): boolean {
   return Math.abs(a - b) <= tol;
 }
@@ -108,8 +79,7 @@ async function run(): Promise<boolean> {
   mount("mount-wide", imageDescriptor(128, 64, "#2980b9")); // aspect 2
 
   const imagesReady = await waitFor(
-    () => document.querySelectorAll("img[src^='data:image/png']").length >= 2,
-  );
+    () => document.querySelectorAll("img[src^='data:image/png']").length >= 2, 6000, 20);
   report(imagesReady, "both standalone image panes mount");
   ok = ok && imagesReady;
 
@@ -122,7 +92,7 @@ async function run(): Promise<boolean> {
     const settled = await waitFor(() => {
       const b = innerBox(id)?.getBoundingClientRect();
       return !!b && b.width > 0 && b.height > 0 && near(b.width / b.height, aspect, tol);
-    });
+    }, 6000, 20);
     const frame = innerBox(id)!.getBoundingClientRect();
     const hostBox = document.getElementById(id)!.getBoundingClientRect();
     const a = frame.width / frame.height;
@@ -170,7 +140,7 @@ async function run(): Promise<boolean> {
   const tallSettled = await waitFor(() => {
     const b = innerBox("mount-square")?.getBoundingClientRect();
     return !!b && b.height > 4 && b.width > 1 && near(b.width / b.height, TALL_ASPECT, 0.02);
-  });
+  }, 6000, 20);
   const tf = innerBox("mount-square")!.getBoundingClientRect();
   const keptAspect = near(tf.width / tf.height, TALL_ASPECT, 0.02);
   const capped = tf.height <= cap + 4;
@@ -209,7 +179,7 @@ async function run(): Promise<boolean> {
     const settled = await waitFor(() => {
       const b = innerBox(id)?.getBoundingClientRect();
       return !!b && b.width > 4 && b.height > 4 && near(b.width / b.height, aspect, 0.08);
-    });
+    }, 6000, 20);
     const f = innerBox(id)!.getBoundingClientRect();
     const contentAspect = near(f.width / f.height, aspect, 0.08);
     const fits = f.width <= hostW + 2 && f.height <= hostH + 2; // NO overflow

@@ -36,20 +36,12 @@ import {
   reconstructHdrFromGainMap,
   type RgbaImage,
 } from "../gain-map.ts";
+import { createHarness } from "../../../testing/harness";
 
 const FIXTURE_URL = new URL("../fixtures/gainmap-benz-1000x667.jpg", import.meta.url).href;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "GAINMAP DECODE" });
+
 function info(message: string): void {
   console.log(message);
   const el = document.getElementById("result");
@@ -59,14 +51,6 @@ function info(message: string): void {
     p.style.color = "#0366d6";
     el.appendChild(p);
   }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "GAINMAP DECODE PASS" : "GAINMAP DECODE FAIL";
 }
 
 function srgbToLinear(c: number): number {

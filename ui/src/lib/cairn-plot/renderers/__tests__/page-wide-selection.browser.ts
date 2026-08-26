@@ -36,28 +36,9 @@ import {
   GLOBAL_SELECTION_BASE,
   __resetGlobalSelectionStoreForTest,
 } from "../../selection/selection-store";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "PAGE-WIDE SELECTION PASS" : "PAGE-WIDE SELECTION FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "PAGE-WIDE SELECTION" });
 
 const consoleErrors: string[] = [];
 const origConsoleError = console.error.bind(console);
@@ -65,18 +46,6 @@ console.error = (...args: unknown[]) => {
   consoleErrors.push(args.map(String).join(" "));
   origConsoleError(...args);
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 
 /** A tiny non-blank PNG data URL (drawn on a canvas), so each pane is a REAL
  *  image pane without embedding base64 or needing WebGPU. */
@@ -164,7 +133,7 @@ async function run(): Promise<boolean> {
   mount("mount-c", imageDescriptor("C", "#2980b9"));
 
   // Each mount renders exactly one selectable pane frame.
-  const framesReady = await waitFor(() => frames().length === 3);
+  const framesReady = await waitFor(() => frames().length === 3, 6000, 20);
   report(framesReady, `three selectable pane frames mount (got ${frames().length})`);
   ok = ok && framesReady;
   if (!framesReady) {
@@ -173,7 +142,7 @@ async function run(): Promise<boolean> {
   }
 
   // Each pane is a REAL image pane (its <img> renders the data-URL source).
-  const imagesReady = await waitFor(() => document.querySelectorAll("img[src^='data:image/png']").length >= 3);
+  const imagesReady = await waitFor(() => document.querySelectorAll("img[src^='data:image/png']").length >= 3, 6000, 20);
   report(imagesReady, "each mount renders a real image pane (<img> source)");
   ok = ok && imagesReady;
 
@@ -189,7 +158,7 @@ async function run(): Promise<boolean> {
 
   // --- 1. plain click A → only A ringed ------------------------------------
   clickPane(fa);
-  const aOnly = await waitFor(() => isRinged(fa) && !isRinged(fb) && !isRinged(fc));
+  const aOnly = await waitFor(() => isRinged(fa) && !isRinged(fb) && !isRinged(fc), 6000, 20);
   report(aOnly, "plain click on A rings A only (B/C not selected)");
   ok = ok && aOnly;
 
@@ -216,7 +185,7 @@ async function run(): Promise<boolean> {
 
   // --- 2. shift-click B → A and B both selected (cross-mount) ---------------
   clickPane(fb, true);
-  const bothSel = await waitFor(() => isRinged(fa) && isRinged(fb) && !isRinged(fc));
+  const bothSel = await waitFor(() => isRinged(fa) && isRinged(fb) && !isRinged(fc), 6000, 20);
   report(bothSel, "shift-click B selects BOTH A and B across separate mounts");
   ok = ok && bothSel;
 
@@ -234,7 +203,7 @@ async function run(): Promise<boolean> {
 
   // --- 4. plain click C → single-select resets to just C --------------------
   clickPane(fc);
-  const cOnly = await waitFor(() => isRinged(fc) && !isRinged(fa) && !isRinged(fb));
+  const cOnly = await waitFor(() => isRinged(fc) && !isRinged(fa) && !isRinged(fb), 6000, 20);
   report(cOnly, "plain click on C resets to a single selection (A/B cleared)");
   ok = ok && cOnly;
   const cGroupGone =
@@ -267,7 +236,7 @@ async function run(): Promise<boolean> {
   const gridRoot = createRoot(document.getElementById("mount-c")!);
   gridRoot.render(createElement(PlotApp, { descriptor: gridDesc }));
 
-  const gridReady = await waitFor(() => frames().length === 4);
+  const gridReady = await waitFor(() => frames().length === 4, 6000, 20);
   report(gridReady, `a 2×2 grid mounts four selectable cells (got ${frames().length})`);
   ok = ok && gridReady;
 
@@ -276,7 +245,7 @@ async function run(): Promise<boolean> {
     // Two horizontally-adjacent cells (top row).
     clickPane(cells[0]);
     clickPane(cells[1], true);
-    const bothRinged = await waitFor(() => isRinged(cells[0]) && isRinged(cells[1]));
+    const bothRinged = await waitFor(() => isRinged(cells[0]) && isRinged(cells[1]), 6000, 20);
     report(bothRinged, "two adjacent grid cells are both selected");
     ok = ok && bothRinged;
 

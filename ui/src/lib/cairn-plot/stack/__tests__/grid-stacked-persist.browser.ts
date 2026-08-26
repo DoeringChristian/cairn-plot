@@ -14,9 +14,10 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor } from "../../../plot-descriptor";
+import { PlotApp } from "../../../../plot-bootstrap";
+import { registerCoreRenderers } from "../../../../plot-renderers";
+import type { PlotDescriptor } from "../../../../plot-descriptor";
+import { createHarness, waitFor } from "../../testing/harness";
 
 interface CompareProbe {
   compareMode: string;
@@ -25,36 +26,7 @@ interface CompareProbe {
   changeDiffKernel: (id: string) => void;
 }
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "#6f6" : "#f66";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "#6f6" : "#f66";
-  }
-  document.title = pass ? "GRID-STACKED-PERSIST PASS" : "GRID-STACKED-PERSIST FAIL";
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred: () => boolean, timeoutMs = 8000, step = 25): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(step);
-  }
-  return pred();
-}
+const { report, setOverallStatus } = createHarness({ title: "GRID-STACKED-PERSIST", colors: { pass: "#6f6", fail: "#f66" } });
 
 function imgUrl(color: string): string {
   const c = document.createElement("canvas");
@@ -140,7 +112,7 @@ async function run(): Promise<boolean> {
   );
   roots.push(root);
 
-  const up = await waitFor(() => tabs().length === 3 && !!probe(), 15000);
+  const up = await waitFor(() => tabs().length === 3 && !!probe(), 15000, 25);
   report(up, `stacked grid mounts with 3 tabs; the ONE reused compare pane mounts (probe ${!!probe()})`);
   ok = ok && up;
   if (!up) {
@@ -156,7 +128,7 @@ async function run(): Promise<boolean> {
   // Set diff + squared while on tab 0.
   probe()!.changeCompareMode("diff");
   probe()!.changeDiffKernel("squared");
-  const t0diff = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared");
+  const t0diff = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared", 8000, 25);
   report(t0diff, `set diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.diffKernel})`);
   ok = ok && t0diff;
 
@@ -171,9 +143,9 @@ async function run(): Promise<boolean> {
   // Flip to tab 1 → the source swaps on the SAME instance; settings are shared BY
   // CONSTRUCTION (one instance), so diff/squared persist with nothing to re-sync.
   tabs()[1].click();
-  const flipped = await waitFor(() => activeIdx() === 1);
+  const flipped = await waitFor(() => activeIdx() === 1, 8000, 25);
   report(flipped, `flip → active tab is 1 (got ${activeIdx()})`);
-  const stillDiff1 = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared");
+  const stillDiff1 = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared", 8000, 25);
   report(stillDiff1, `after flip, STILL diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.diffKernel})`);
 
   // The renderer INSTANCE was reused — every previously-tagged canvas still in the
@@ -185,11 +157,11 @@ async function run(): Promise<boolean> {
 
   // Flip to tab 2 and back to 0 → still diff throughout.
   tabs()[2].click();
-  await waitFor(() => activeIdx() === 2);
+  await waitFor(() => activeIdx() === 2, 8000, 25);
   const stillDiff2 = probe()?.compareMode === "diff";
   report(stillDiff2, `tab 2 still diff (mode=${probe()?.compareMode})`);
   tabs()[0].click();
-  await waitFor(() => activeIdx() === 0);
+  await waitFor(() => activeIdx() === 0, 8000, 25);
   const stillDiff0 = probe()?.compareMode === "diff";
   report(stillDiff0, `back to tab 0, still diff (mode=${probe()?.compareMode})`);
   ok = ok && stillDiff2 && stillDiff0;

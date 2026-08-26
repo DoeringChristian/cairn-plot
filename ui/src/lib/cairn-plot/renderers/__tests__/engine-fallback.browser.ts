@@ -66,6 +66,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
 import { hdrSource, urlSource, type HdrData } from "../image-backend";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const h = React.createElement;
 
@@ -80,41 +81,7 @@ declare global {
 const RED_PNG_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  window.__engineFallbackTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "ENGINE FALLBACK PASS" : "ENGINE FALLBACK FAIL";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
+const { report, setOverallStatus } = createHarness({ title: "ENGINE FALLBACK", resultFlag: "__engineFallbackTestResult" });
 
 async function readbackCanvas(canvas: HTMLCanvasElement): Promise<ImageData> {
   const bitmap = await createImageBitmap(canvas);
@@ -176,7 +143,7 @@ async function runSdrImageCase(): Promise<boolean> {
   report(!gpuCanvasFound, "[SDR] engine bailed BEFORE mounting its own canvas (no [data-gpu-image-canvas])");
   ok = ok && !gpuCanvasFound;
 
-  const legacyImgFound = await waitFor(() => !!container.querySelector("img"));
+  const legacyImgFound = await waitFor(() => !!container.querySelector("img"), 6000, 20);
   report(legacyImgFound, "[SDR] legacy ImagePane's <img> mounted (NOT a blank card)");
   ok = ok && legacyImgFound;
 
@@ -213,7 +180,7 @@ async function runHdrImageCase(): Promise<boolean> {
   report(!gpuCanvasFound, "[HDR] engine bailed BEFORE mounting its own canvas (no [data-gpu-image-canvas])");
   ok = ok && !gpuCanvasFound;
 
-  const legacyCanvasFound = await waitFor(() => container.querySelectorAll("canvas").length > 0);
+  const legacyCanvasFound = await waitFor(() => container.querySelectorAll("canvas").length > 0, 6000, 20);
   report(legacyCanvasFound, "[HDR] legacy HdrImagePane's <canvas> mounted (NOT a blank card)");
   ok = ok && legacyCanvasFound;
 
@@ -270,7 +237,7 @@ async function runCompareSplitCase(): Promise<boolean> {
   report(!gpuCanvasFound, "[compare/split] engine bailed BEFORE mounting its own canvas (no [data-gpu-image-canvas])");
   ok = ok && !gpuCanvasFound;
 
-  const legacyImgFound = await waitFor(() => container.querySelectorAll("img").length > 0);
+  const legacyImgFound = await waitFor(() => container.querySelectorAll("img").length > 0, 6000, 20);
   report(legacyImgFound, "[compare/split] legacy CpuImagePane compare fallback <img> mounted (NOT a blank card)");
   ok = ok && legacyImgFound;
 
@@ -317,8 +284,7 @@ async function runCompareDiffCase(): Promise<boolean> {
   // proof the legacy pane mounted; only a totally empty container is a
   // failure.
   const legacyContentFound = await waitFor(
-    () => container.querySelectorAll("canvas, img").length > 0,
-  );
+    () => container.querySelectorAll("canvas, img").length > 0, 6000, 20);
   report(legacyContentFound, "[compare/diff] legacy CpuImagePane content (<canvas>/<img>) mounted (NOT a blank card)");
   ok = ok && legacyContentFound;
 

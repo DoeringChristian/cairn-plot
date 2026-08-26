@@ -37,21 +37,13 @@
 import { getSharedDevice } from "../device";
 import { loadExrDecoder } from "../../image/decoders/wasm-inline/wasm-exr-inline";
 import type { Device, Texture } from "../types";
+import { createHarness } from "../../testing/harness";
 
 const TRUNKS_URL = "https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr-images/main/v2/Stereo/Trunks.exr";
 const FIXTURE_URL = new URL("../../image/decoders/fixtures/deep-rgba-32x32.exr", import.meta.url).href;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "DEEP COMPOSITE", resultFlag: "__deepCompositeTestResult" });
+
 function info(message: string): void {
   console.log(message);
   const el = document.getElementById("result");
@@ -61,17 +53,6 @@ function info(message: string): void {
     p.style.color = "#0366d6";
     el.appendChild(p);
   }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  (window as unknown as { __deepCompositeTestResult?: "pass" | "fail" }).__deepCompositeTestResult = pass
-    ? "pass"
-    : "fail";
-  document.title = pass ? "DEEP COMPOSITE PASS" : "DEEP COMPOSITE FAIL";
 }
 
 /** IEEE-754 binary16 bit pattern → number (widen wasm halfBits for comparison). */

@@ -55,29 +55,9 @@ import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams } from "../image-engine";
 import { extendedSrgbOetf, srgbEotf } from "../../image/tonemap";
 import type { Device, Texture } from "../types";
+import { createHarness } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  (window as unknown as { __hdrOutputTestResult?: "pass" | "fail" }).__hdrOutputTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "HDR OUTPUT PASS" : "HDR OUTPUT FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "HDR OUTPUT", resultFlag: "__hdrOutputTestResult" });
 
 /** A 1x1 rgba32float source texture holding one pixel: (4, 4, 4, 1) — well past the SDR [0,1] range. */
 function buildBrightSrcTexture(device: Device): Texture {

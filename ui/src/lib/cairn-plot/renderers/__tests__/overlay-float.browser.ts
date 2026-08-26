@@ -45,30 +45,11 @@ import {
   type ImageOverlayData,
   type ImageOverlaySettings,
 } from "../../types";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const h = React.createElement;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "OVERLAY FLOAT PASS" : "OVERLAY FLOAT FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "OVERLAY FLOAT" });
 
 const consoleErrors: string[] = [];
 const origConsoleError = console.error.bind(console);
@@ -76,18 +57,6 @@ console.error = (...args: unknown[]) => {
   consoleErrors.push(args.map(String).join(" "));
   origConsoleError(...args);
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-async function waitFor(pred: () => boolean, timeoutMs = 8000, stepMs = 40): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(stepMs);
-  }
-  return pred();
-}
 
 // A small 8×8 grayscale HDR gradient (scene-linear, includes values >1.0).
 function buildHdr(): HdrData {
@@ -180,12 +149,11 @@ async function main(): Promise<void> {
       ...DEFAULT_OVERLAY_SETTINGS,
     });
     const canvasUp = await waitFor(
-      () => !!withOverlay.container.querySelector("canvas"),
-    );
+      () => !!withOverlay.container.querySelector("canvas"), 8000, 40);
     report(canvasUp, "float pane mounts a canvas (image surface up)");
     ok = ok && canvasUp;
 
-    const boxDrew = await waitFor(() => overlayBoxCount(withOverlay.container) > 0);
+    const boxDrew = await waitFor(() => overlayBoxCount(withOverlay.container) > 0, 8000, 40);
     report(
       boxDrew,
       `overlay box renders on the FLOAT surface (found ${overlayBoxCount(withOverlay.container)} <rect>` +
@@ -196,7 +164,7 @@ async function main(): Promise<void> {
     // Case 2 — CONTROL: same float pane, NO overlay → no box (proves case 1 is
     // caused by the prop, not an always-present artifact).
     const noOverlay = mountFloatPane("float-no-overlay", undefined, undefined);
-    await waitFor(() => !!noOverlay.container.querySelector("canvas"));
+    await waitFor(() => !!noOverlay.container.querySelector("canvas"), 8000, 40);
     await sleep(400);
     const noBox = overlayBoxCount(noOverlay.container) === 0;
     report(noBox, `float pane WITHOUT overlay draws no box (found ${overlayBoxCount(noOverlay.container)})`);
@@ -207,7 +175,7 @@ async function main(): Promise<void> {
       ...DEFAULT_OVERLAY_SETTINGS,
       enabled: false,
     });
-    await waitFor(() => !!disabled.container.querySelector("canvas"));
+    await waitFor(() => !!disabled.container.querySelector("canvas"), 8000, 40);
     await sleep(400);
     const suppressed = overlayBoxCount(disabled.container) === 0;
     report(

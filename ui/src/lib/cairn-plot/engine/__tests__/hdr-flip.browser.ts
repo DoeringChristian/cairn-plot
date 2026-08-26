@@ -24,29 +24,9 @@ import { getSharedDevice } from "../device";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { flipHDR, computeHdrFlipExposures } from "../kernels/hdr-flip-reference";
 import type { Device, Texture } from "../types";
+import { createHarness } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  (window as unknown as { __hdrFlipTestResult?: "pass" | "fail" }).__hdrFlipTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "HDR-FLIP PASS" : "HDR-FLIP FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "HDR-FLIP", resultFlag: "__hdrFlipTestResult" });
 
 // Deterministic small LINEAR-float HDR fixture pairs (W*H*3): dim background +
 // a bright gaussian core, with a highlight-localized test error.

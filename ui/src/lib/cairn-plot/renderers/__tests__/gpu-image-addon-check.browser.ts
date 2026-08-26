@@ -21,6 +21,7 @@ import {
   subscribeGpuImageGate,
   __resetGpuImageGateForTest,
 } from "../gpu-image-gate";
+import { createHarness, waitFor } from "../../testing/harness";
 
 declare global {
   interface Window {
@@ -29,41 +30,7 @@ declare global {
   }
 }
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  window.__gpuImagePaneTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "GPU IMAGE PANE PASS" : "GPU IMAGE PANE FAIL";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 8000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
+const { report, setOverallStatus } = createHarness({ title: "GPU IMAGE PANE", resultFlag: "__gpuImagePaneTestResult" });
 
 async function main(): Promise<void> {
   try {

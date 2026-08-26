@@ -48,21 +48,12 @@ import {
   getPaintPhaseLog,
   type PaintPhaseRecord,
 } from "../../engine/test-hooks";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const h = React.createElement;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "STACKED DIFF FLIP PAINT" });
+
 function note(message: string): void {
   // eslint-disable-next-line no-console
   console.log("NOTE:", message);
@@ -73,25 +64,6 @@ function note(message: string): void {
     p.style.color = "#88f";
     el.appendChild(p);
   }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "STACKED DIFF FLIP PAINT PASS" : "STACKED DIFF FLIP PAINT FAIL";
-}
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-async function waitFor(pred: () => boolean, timeoutMs = 8000, stepMs = 40): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(stepMs);
-  }
-  return pred();
 }
 
 function makeImageUrl(fill: (x: number, y: number) => [number, number, number]): string {
@@ -160,8 +132,7 @@ async function settledPresentsKind(
       want === "diff"
         ? r.mode === "cached-diff" || !!r.contentOpId
         : r.mode === "image" && r.sourceKey === undefined && !r.contentOpId,
-    ),
-  );
+    ), 8000, 40);
   stopPaneRenderLog();
   return ok;
 }
@@ -180,7 +151,7 @@ async function main(): Promise<void> {
     const renderProps = (p: Record<string, unknown>): void => root.render(h(GpuImagePane, p as never));
 
     renderProps(imageProps());
-    await waitFor(() => !!getCanvas(container), 8000);
+    await waitFor(() => !!getCanvas(container), 8000, 40);
     await sleep(300);
 
     // PRIME residency: visit image + diff (+ the control's PLAIN2) so the pool

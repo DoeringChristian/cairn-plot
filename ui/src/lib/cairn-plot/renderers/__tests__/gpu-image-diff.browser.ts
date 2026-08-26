@@ -38,6 +38,7 @@ import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
 import { urlSource } from "../image-backend";
 import { getSharedDevice } from "../../engine/device";
+import { createHarness, waitFor } from "../../testing/harness";
 
 const h = React.createElement;
 
@@ -58,18 +59,7 @@ interface DiffProbe {
   readbackSurface: () => Promise<{ data: Uint8Array; width: number; height: number } | null>;
 }
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "GPU IMAGE DIFF" });
 
 function note(message: string): void {
   // eslint-disable-next-line no-console
@@ -81,31 +71,6 @@ function note(message: string): void {
     p.style.color = "#88f";
     el.appendChild(p);
   }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "GPU IMAGE DIFF PASS" : "GPU IMAGE DIFF FAIL";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-async function waitFor(
-  pred: () => boolean | Promise<boolean>,
-  timeoutMs = 8000,
-  stepMs = 40,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await pred()) return true;
-    await sleep(stepMs);
-  }
-  return await pred();
 }
 
 /** A 64×64 uint8 PNG data URL from a per-pixel fill. */
@@ -227,7 +192,7 @@ function mountUnifiedDiff(container: HTMLElement, opId: string): Promise<ProbeRe
   // The probe rides `paneRef.current` = the VIEWPORT box (`data-gpu-image-viewport`).
   const paneEl = () =>
     container.querySelector("[data-gpu-image-viewport]") as (HTMLElement & { __cairnImageDiffProbe?: DiffProbe }) | null;
-  return waitFor(() => !!paneEl()?.__cairnImageDiffProbe?.canvas).then(() => {
+  return waitFor(() => !!paneEl()?.__cairnImageDiffProbe?.canvas, 8000, 40).then(() => {
     if (!paneEl()?.__cairnImageDiffProbe) {
       const cpu = !!container.querySelector("[data-cpu-image-pane]");
       throw new Error(`unified diff pane never exposed its probe (cpu-fallback=${cpu})`);
@@ -315,14 +280,14 @@ async function main(): Promise<void> {
     }
 
     // ---- Case 3a: metrics chip present -----------------------------------
-    const chipPresent = await waitFor(() => !!cUnified.querySelector("[data-gpu-compare-metrics]"), 4000);
+    const chipPresent = await waitFor(() => !!cUnified.querySelector("[data-gpu-compare-metrics]"), 4000, 40);
     if (!chipPresent) allOk = false;
     report(chipPresent, `[case3a] metrics chip (data-gpu-compare-metrics) present + SSIM=${probe().ssimText}`);
 
     // ---- Case 3b: MODE menu switches kernels (no re-decode) --------------
     const before = await readSurfaceBytes(probe);
     probe().changeDiffKernel("absolute");
-    await waitFor(() => probe().resolvedKernelId === "absolute", 3000);
+    await waitFor(() => probe().resolvedKernelId === "absolute", 3000, 40);
     // Poll for the switched frame to render rather than sleeping a fixed
     // amount — the absolute-kernel frame lands later on slow software adapters.
     const after = before ? await paintedUntilChanged(probe, before) : await readSurfaceBytes(probe);
@@ -333,7 +298,7 @@ async function main(): Promise<void> {
 
     // ---- Case 4: HOME resets the kernel back to the default --------------
     probe().home();
-    const homeOk = await waitFor(() => probe().diffKernel === "signed", 3000);
+    const homeOk = await waitFor(() => probe().diffKernel === "signed", 3000, 40);
     if (!homeOk) allOk = false;
     report(homeOk, `[case4] HOME reset kernel back to "${probe().diffKernel}"`);
 
@@ -346,7 +311,7 @@ async function main(): Promise<void> {
     // colormap to resolve, THEN poll for a non-degenerate composited frame. On
     // slow software adapters the cached compute + blit lands well after mount, so
     // a single early read would sample a degenerate (all-zero) frame.
-    await waitFor(() => flipProbe().colormap === "magma", 4000);
+    await waitFor(() => flipProbe().colormap === "magma", 4000, 40);
     const flipBytes = await paintedBytes(flipProbe);
     const flipOk = flipProbe().colormap === "magma" && !!flipBytes && nonZero(flipBytes);
     if (!flipOk) allOk = false;

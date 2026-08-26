@@ -36,31 +36,9 @@
  * the command above whenever this harness or its imports change.
  */
 import { getSharedDevice, resetSharedDevice } from "../device";
+import { createHarness } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  (window as unknown as { __deviceSingletonTestResult?: "pass" | "fail" }).__deviceSingletonTestResult = pass
-    ? "pass"
-    : "fail";
-  document.title = pass ? "DEVICE SINGLETON PASS" : "DEVICE SINGLETON FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "DEVICE SINGLETON", resultFlag: "__deviceSingletonTestResult" });
 
 async function runNoWebGPUCheck(): Promise<boolean> {
   resetSharedDevice();

@@ -59,6 +59,7 @@ import { createWebGPUDevice, isDeviceLostError } from "../webgpu/device";
 import { passthroughWGSL } from "../shaders/passthrough.wgsl";
 import { scaleBiasWGSL } from "../shaders/scalebias.wgsl";
 import type { Device } from "../types";
+import { createHarness } from "../../testing/harness";
 
 const WIDTH = 2;
 const HEIGHT = 2;
@@ -86,30 +87,7 @@ function expectedByteFor(channelValue: number): number {
   return Math.round(Math.max(0, Math.min(1, channelValue)) * 255);
 }
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  // A single well-known global + a document.title flag, for a script-based
-  // (non-visual) check to poll if needed.
-  (window as unknown as { __readbackTestResult?: "pass" | "fail" }).__readbackTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "READBACK PASS" : "READBACK FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "READBACK", resultFlag: "__readbackTestResult" });
 
 interface TestResult {
   ok: boolean;

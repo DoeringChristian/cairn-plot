@@ -34,6 +34,7 @@ import { createRoot } from "react-dom/client";
 import PlotLegend, { type LegendItem } from "../PlotLegend";
 import { CustomLegend } from "../../renderers/scalar/scalar-legend";
 import { useSeriesVisibility } from "../../hooks/use-series-visibility";
+import { createHarness } from "../../testing/harness";
 
 const h = React.createElement;
 
@@ -43,27 +44,7 @@ const ITEMS: LegendItem[] = [
   { key: "c", label: "Gamma", color: "#00e" },
 ];
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "LEGEND PASS" : "LEGEND FAIL";
-  (window as unknown as { __legendResult?: string }).__legendResult = pass ? "pass" : "fail";
-}
+const { report, setOverallStatus } = createHarness({ title: "LEGEND", resultFlag: "__legendResult" });
 
 /** A base PlotLegend wired to the REAL visibility hook. */
 function PlainHarness() {

@@ -76,6 +76,7 @@ import GpuImagePane from "../GpuImagePane";
 import { hdrSource, type HdrData } from "../image-backend";
 import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../engine/pool";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 declare global {
   interface Window {
@@ -89,30 +90,7 @@ declare global {
 
 const h = React.createElement;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  (window as unknown as { __gpuImagePaneTestResult?: "pass" | "fail" }).__gpuImagePaneTestResult = pass
-    ? "pass"
-    : "fail";
-  document.title = pass ? "GPU IMAGE PANE PASS" : "GPU IMAGE PANE FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "GPU IMAGE PANE", resultFlag: "__gpuImagePaneTestResult" });
 
 // Track console.error calls for the whole run.
 const consoleErrors: string[] = [];
@@ -121,19 +99,6 @@ console.error = (...args: unknown[]) => {
   consoleErrors.push(args.map(String).join(" "));
   origConsoleError(...args);
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 
 // ---------------------------------------------------------------------------
 // A small 4x4 grayscale HDR gradient (scene-linear), includes a value >1.0.
@@ -203,7 +168,7 @@ async function runSingleCase(): Promise<boolean> {
   }
   root.render(h(Harness));
 
-  const gpuCanvasFound = await waitFor(() => !!container.querySelector("canvas[data-gpu-image-canvas]"));
+  const gpuCanvasFound = await waitFor(() => !!container.querySelector("canvas[data-gpu-image-canvas]"), 6000, 20);
   report(gpuCanvasFound, "GPU canvas mounts");
   ok = ok && gpuCanvasFound;
   if (!gpuCanvasFound) {
@@ -214,8 +179,7 @@ async function runSingleCase(): Promise<boolean> {
   const gpuCanvas = container.querySelector("canvas[data-gpu-image-canvas]") as HTMLCanvasElement;
 
   const readyAttr = await waitFor(
-    () => container.querySelector('[data-gpu-backend-ready="true"]') !== null,
-  );
+    () => container.querySelector('[data-gpu-backend-ready="true"]') !== null, 6000, 20);
   report(readyAttr, "pane's pool handle acquired (data-gpu-backend-ready)");
   ok = ok && readyAttr;
 
@@ -256,7 +220,7 @@ async function runSingleCase(): Promise<boolean> {
   viewportEl.dispatchEvent(
     new WheelEvent("wheel", { deltaY: -100, altKey: true, clientX: cx, clientY: cy, bubbles: true, cancelable: true }),
   );
-  await waitFor(() => latestViewport.zoom !== zoomBefore);
+  await waitFor(() => latestViewport.zoom !== zoomBefore, 6000, 20);
   window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt", bubbles: true }));
   await sleep(20);
   const altWheelZoomed = latestViewport.zoom !== zoomBefore;
@@ -274,7 +238,7 @@ async function runSingleCase(): Promise<boolean> {
 
   // --- double-click resets to home ---
   viewportEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
-  const reset = await waitFor(() => latestViewport.zoom === 1 && latestViewport.pan.x === 0 && latestViewport.pan.y === 0);
+  const reset = await waitFor(() => latestViewport.zoom === 1 && latestViewport.pan.x === 0 && latestViewport.pan.y === 0, 6000, 20);
   report(
     reset,
     `double-click resets viewport to home (zoom=${latestViewport.zoom}, pan=${JSON.stringify(latestViewport.pan)})`,
@@ -309,7 +273,7 @@ async function runPoolCapCase(): Promise<boolean> {
     roots.push(root);
   }
 
-  await waitFor(() => container.querySelectorAll("canvas[data-gpu-image-canvas]").length === N);
+  await waitFor(() => container.querySelectorAll("canvas[data-gpu-image-canvas]").length === N, 6000, 20);
   // Give render effects a beat to settle (async acquirePane + upload + render chain).
   await sleep(1500);
 
@@ -393,7 +357,7 @@ async function runParkAwareRenderCase(): Promise<boolean> {
     container.remove();
   };
 
-  const mounted = await waitFor(() => container.querySelectorAll("canvas[data-gpu-image-canvas]").length === N);
+  const mounted = await waitFor(() => container.querySelectorAll("canvas[data-gpu-image-canvas]").length === N, 6000, 20);
   report(mounted, `[park-aware] mounted ${N} visible panes (cap=${MAX_LIVE_SWAPCHAINS})`);
   if (!mounted) {
     cleanup();

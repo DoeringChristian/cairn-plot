@@ -46,21 +46,12 @@ import {
   getDeepColorStats,
   type PaneRenderRecord,
 } from "../../engine/test-hooks";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const h = React.createElement;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "STACKED DIFF FLIP STRESS" });
+
 function note(message: string): void {
   // eslint-disable-next-line no-console
   console.log("NOTE:", message);
@@ -72,27 +63,9 @@ function note(message: string): void {
     el.appendChild(p);
   }
 }
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "STACKED DIFF FLIP STRESS PASS" : "STACKED DIFF FLIP STRESS FAIL";
-}
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+
 function raf(): Promise<void> {
   return new Promise((r) => requestAnimationFrame(() => r()));
-}
-async function waitFor(pred: () => boolean | Promise<boolean>, timeoutMs = 8000, stepMs = 40): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await pred()) return true;
-    await sleep(stepMs);
-  }
-  return await pred();
 }
 
 function makeImageUrl(fill: (x: number, y: number) => [number, number, number]): string {
@@ -306,7 +279,7 @@ async function main(): Promise<void> {
     // the settled state. Any storm present whose fingerprint is not a captured
     // settled sig is a TORN frame; a scalar-LUT-over-light one is an ORANGE frame.
     renderProps(imageProps());
-    await waitFor(() => !!probeEl(container), 8000);
+    await waitFor(() => !!probeEl(container), 8000, 40);
     const captureSettledSig = async (
       p: Record<string, unknown>,
       wantDiff: boolean,

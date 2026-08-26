@@ -75,29 +75,9 @@ import {
 import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings";
 import { buildLUT, COLORMAP_STOPS } from "../../colormaps/lut";
 import type { Device, Texture } from "../types";
+import { createHarness } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  (window as unknown as { __imagePassTestResult?: "pass" | "fail" }).__imagePassTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "IMAGE PASS PASS" : "IMAGE PASS FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "IMAGE PASS", resultFlag: "__imagePassTestResult" });
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 const byteOf = (x: number): number => Math.round(clamp01(x) * 255);

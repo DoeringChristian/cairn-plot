@@ -44,11 +44,11 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor } from "../../../plot-descriptor";
-import { getSharedDevice } from "../engine/device";
-import { registerRuntimeEntries } from "../store/runtime-store";
+import { PlotApp } from "../../../../plot-bootstrap";
+import { registerCoreRenderers } from "../../../../plot-renderers";
+import type { PlotDescriptor } from "../../../../plot-descriptor";
+import { getSharedDevice } from "../../engine/device";
+import { registerRuntimeEntries } from "../../store/runtime-store";
 import {
   startPaneRenderLog,
   stopPaneRenderLog,
@@ -60,25 +60,16 @@ import {
   isEncodingGenerationMismatch,
   type PaneRenderRecord,
   type PaintPhaseRecord,
-} from "../engine/test-hooks";
+} from "../../engine/test-hooks";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
-} from "../selection/selection-store";
-import { getRegisteredPane } from "../../../plot-selection-pane-registry";
+} from "../../selection/selection-store";
+import { getRegisteredPane } from "../../../../plot-selection-pane-registry";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "REALSTACK GPU" });
+
 function note(message: string): void {
   // eslint-disable-next-line no-console
   console.log("NOTE:", message);
@@ -90,24 +81,8 @@ function note(message: string): void {
     el.appendChild(p);
   }
 }
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "REALSTACK GPU PASS" : "REALSTACK GPU FAIL";
-}
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 const raf = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
-async function waitFor(pred: () => boolean, timeoutMs = 8000, step = 30): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(step);
-  }
-  return pred();
-}
 
 // ---- FLOAT data (LIGHT / near-white so a scalar-magma false-color lands on the
 // magma UPPER ramp = orange). RGB (k=3) so a plain image is isScalar:false until
@@ -452,7 +427,7 @@ async function main(): Promise<void> {
         const img = log.some((r) => r.mode === "image" && !r.contentOpId && !r.hasSrcB);
         const diff = log.some((r) => r.mode === "cached-diff" || !!r.contentOpId);
         return img && diff;
-      }, 12000);
+      }, 12000, 30);
       const bootPresents = getPaneRenderLog().length;
       stopPaneRenderLog();
 
@@ -515,7 +490,7 @@ async function main(): Promise<void> {
     hostB.style.cssText = "width:520px;height:280px;background:#222";
     const rootB: Root = createRoot(hostB);
     rootB.render(createElement(PlotApp, { descriptor: stackedGrid() }));
-    const upB = await waitFor(() => document.querySelectorAll("#m1 [role='tab']").length >= 2, 12000);
+    const upB = await waitFor(() => document.querySelectorAll("#m1 [role='tab']").length >= 2, 12000, 30);
     report(upB, `stacked [image, FLIP] grid renders a 2-tab strip`);
     // Hover so the stack keyboard is in scope.
     document
@@ -523,10 +498,10 @@ async function main(): Promise<void> {
       ?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
     // Warm both slots (resolve cache) so flips are synchronous hits.
     key("2");
-    await waitFor(() => activeIdx("m1") === 1, 4000);
+    await waitFor(() => activeIdx("m1") === 1, 4000, 30);
     await sleep(200);
     key("1");
-    await waitFor(() => activeIdx("m1") === 0, 4000);
+    await waitFor(() => activeIdx("m1") === 0, 4000, 30);
     await sleep(200);
 
     let seed = 0x9e3779b9 >>> 0;
@@ -583,7 +558,7 @@ async function main(): Promise<void> {
         } as unknown as PlotDescriptor,
       }),
     );
-    await waitFor(() => framePaneIds("m2").length >= 2, 12000);
+    await waitFor(() => framePaneIds("m2").length >= 2, 12000, 30);
     const idsC = framePaneIds("m2");
     const storeC = getGlobalSelectionStore();
     // Select BOTH images (image[0] anchor). The non-anchor image[1] subscribes to
@@ -676,16 +651,16 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
-      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host
         .querySelector<HTMLElement>("[data-cairn-grid-root]")
         ?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       // Warm BOTH slots (resident flips; also lets the diff-pair prefetch settle).
       key("2");
-      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(250);
       key("1");
-      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(250);
 
       const stats = (window as unknown as { __cairnLeafResolveStats?: { placeholderMounts: number } })
@@ -775,15 +750,15 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: stackedScalarMagmaGrid() }));
-      await waitFor(() => document.querySelectorAll("#rpE [role='tab']").length >= 2, 12000);
+      await waitFor(() => document.querySelectorAll("#rpE [role='tab']").length >= 2, 12000, 30);
       host
         .querySelector<HTMLElement>("[data-cairn-grid-root]")
         ?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       key("2");
-      await waitFor(() => activeIdx("rpE") === 1, 4000);
+      await waitFor(() => activeIdx("rpE") === 1, 4000, 30);
       await sleep(250);
       key("1");
-      await waitFor(() => activeIdx("rpE") === 0, 4000);
+      await waitFor(() => activeIdx("rpE") === 0, 4000, 30);
       await sleep(250);
       startPaneRenderLog();
       for (let i = 0; i < 100; i++) {
@@ -821,10 +796,10 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: singleCompareGrid(authored) }));
-      await waitFor(() => !!diffProbe(hostId), 12000);
+      await waitFor(() => !!diffProbe(hostId), 12000, 30);
       await sleep(200);
       diffProbe(hostId)!.changeCompareMode(switchTo);
-      await waitFor(() => diffProbe(hostId)?.compareMode === switchTo, 4000);
+      await waitFor(() => diffProbe(hostId)?.compareMode === switchTo, 4000, 30);
       const afterSwitch = diffProbe(hostId)?.compareMode ?? "?";
       diffProbe(hostId)!.home();
       await sleep(400);
@@ -875,39 +850,39 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: stackedTwoScalarGrid() }));
-      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
-      await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000);
+      await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000, 30);
       await sleep(150);
       const seed0 = imgProbe(hostId)?.encodingId ?? "?";
       key("2");
-      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(200);
       const slot1Shared = imgProbe(hostId)?.encodingId ?? "?";
       imgProbe(hostId)!.changeEncoding("turbo"); // a pick on slot1
-      await waitFor(() => imgProbe(hostId)?.encodingId === "turbo", 4000);
+      await waitFor(() => imgProbe(hostId)?.encodingId === "turbo", 4000, 30);
       key("1");
-      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(200);
       const slot0AfterPick = imgProbe(hostId)?.encodingId ?? "?";
       key("2");
-      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(150);
       const slot1Back = imgProbe(hostId)?.encodingId ?? "?";
       // HOME on slot0 → the stack adopts slot0's authored defaults (magma).
       key("1");
-      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(150);
       imgProbe(hostId)!.home();
       await sleep(250);
       const slot0Home = imgProbe(hostId)?.encodingId ?? "?";
       key("2");
-      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(150);
       const slot1AfterHome = imgProbe(hostId)?.encodingId ?? "?";
       // EXIT stacked → grid layout: each pane reverts to its OWN authored defaults.
       clickGridMode(hostId, "normal");
-      await waitFor(() => allImgProbes(hostId).length >= 2, 8000);
+      await waitFor(() => allImgProbes(hostId).length >= 2, 8000, 30);
       await sleep(250);
       const probes = allImgProbes(hostId);
       const exit0 = probes[0]?.encodingId ?? "?";
@@ -933,23 +908,23 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
-      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       key("2");
-      await waitFor(() => activeIdx(hostId) === 1 && !!diffProbe(hostId), 4000);
+      await waitFor(() => activeIdx(hostId) === 1 && !!diffProbe(hostId), 4000, 30);
       await sleep(150);
       diffProbe(hostId)!.changeColormap("turbo");
-      await waitFor(() => diffProbe(hostId)?.colormap === "turbo", 4000);
+      await waitFor(() => diffProbe(hostId)?.colormap === "turbo", 4000, 30);
       const picked = diffProbe(hostId)?.colormap ?? "?";
       key("1");
-      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(150);
       // SCENARIO 2 (state-unification): while the SCALAR IMAGE slot is visible it must
       // show the SAME colormap the user picked on the diff — one viewport, one setting.
       // Pre-fix (two stores) the image slot keeps its own encoding; post-fix it adopts turbo.
       const imageShowsPick = imgProbe(hostId)?.colormap ?? "?";
       key("2");
-      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(200);
       const afterFlip = diffProbe(hostId)?.colormap ?? "?";
       root.unmount();
@@ -1008,7 +983,7 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: sideBySideTwoScalarGrid() }));
-      await waitFor(() => allImgProbes(hostId).length >= 2, 12000);
+      await waitFor(() => allImgProbes(hostId).length >= 2, 12000, 30);
       await sleep(200);
       const p = () => allImgProbes(hostId);
       const seed0 = p()[0]?.encodingId ?? "?";
@@ -1022,7 +997,7 @@ async function main(): Promise<void> {
       await sleep(300);
       // A pick on the anchor mirrors to the peer.
       p()[0]!.changeEncoding("turbo");
-      await waitFor(() => p()[1]?.encodingId === "turbo", 4000);
+      await waitFor(() => p()[1]?.encodingId === "turbo", 4000, 30);
       const syncedPeer = p()[1]?.encodingId ?? "?";
       // HOME the NON-ANCHOR peer (slot1): local — back to slot1's OWN authored default.
       p()[1]!.home();
@@ -1031,7 +1006,7 @@ async function main(): Promise<void> {
       const homePeerKept0 = p()[0]?.encodingId ?? "?";
       // Re-sync, then HOME the ANCHOR (slot0): also local — back to slot0's magma.
       p()[0]!.changeEncoding("turbo");
-      await waitFor(() => p()[1]?.encodingId === "turbo", 4000);
+      await waitFor(() => p()[1]?.encodingId === "turbo", 4000, 30);
       p()[0]!.home();
       await sleep(250);
       const homeAnchor0 = p()[0]?.encodingId ?? "?";
@@ -1071,16 +1046,16 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: stackedTwoPeakGrid() }));
-      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
-      await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000);
+      await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000, 30);
       await sleep(150);
       const seed0 = String(imgProbe(hostId)?.peak ?? "?"); // slot0 authored peak (8)
       imgProbe(hostId)!.changePeak(5); // a pick on slot0
-      await waitFor(() => imgProbe(hostId)?.peak === 5, 4000);
+      await waitFor(() => imgProbe(hostId)?.peak === 5, 4000, 30);
       const afterPick = String(imgProbe(hostId)?.peak ?? "?");
       key("2"); // flip to slot1 (authored peak 3)
-      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(200);
       const afterFlip = String(imgProbe(hostId)?.peak ?? "?"); // post: 5 (shared); pre: 3
       root.unmount();
@@ -1102,19 +1077,19 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
-      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000);
+      await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       key("2");
-      await waitFor(() => activeIdx(hostId) === 1 && !!diffProbe(hostId), 4000);
+      await waitFor(() => activeIdx(hostId) === 1 && !!diffProbe(hostId), 4000, 30);
       await sleep(150);
       diffProbe(hostId)!.changeDiffKernel("squared");
-      await waitFor(() => diffProbe(hostId)?.diffKernel === "squared", 4000);
+      await waitFor(() => diffProbe(hostId)?.diffKernel === "squared", 4000, 30);
       const picked = diffProbe(hostId)?.diffKernel ?? "?";
       key("1"); // flip to the image slot
-      await waitFor(() => activeIdx(hostId) === 0, 4000);
+      await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(150);
       key("2"); // back to the diff
-      await waitFor(() => activeIdx(hostId) === 1, 4000);
+      await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(200);
       const afterFlip = diffProbe(hostId)?.diffKernel ?? "?";
       root.unmount();
@@ -1153,7 +1128,7 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: sideBySideTwoDiffGrid() }));
-      await waitFor(() => allDiffProbes(hostId).length >= 2, 12000);
+      await waitFor(() => allDiffProbes(hostId).length >= 2, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);
       const seed0 = d()[0]?.colormap ?? "?";
@@ -1164,12 +1139,12 @@ async function main(): Promise<void> {
       // default. Pre-unification the diff colormap lived in a separate store HOME did
       // not reset ("no reset"); now HOME clears the override → the kernel default.
       d()[1]!.changeColormap("red-blue"); // slot1 = absolute
-      await waitFor(() => d()[1]?.colormap === "red-blue", 4000);
+      await waitFor(() => d()[1]?.colormap === "red-blue", 4000, 30);
       d()[1]!.home();
       await sleep(250);
       const home1Solo = d()[1]?.colormap ?? "?"; // → turbo (absolute default)
       d()[0]!.changeColormap("red-blue"); // slot0 = FLIP
-      await waitFor(() => d()[0]?.colormap === "red-blue", 4000);
+      await waitFor(() => d()[0]?.colormap === "red-blue", 4000, 30);
       d()[0]!.home();
       await sleep(250);
       const home0Solo = d()[0]?.colormap ?? "?"; // → magma (FLIP default)
@@ -1183,7 +1158,7 @@ async function main(): Promise<void> {
       store.select(ids[1], "toggle");
       await sleep(300);
       d()[0]!.changeColormap("red-blue");
-      await waitFor(() => d()[1]?.colormap === "red-blue", 4000);
+      await waitFor(() => d()[1]?.colormap === "red-blue", 4000, 30);
       const mirrored1 = d()[1]?.colormap ?? "?";
       d()[0]!.home();
       await sleep(300);
@@ -1225,7 +1200,7 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: sideBySideTwoDiffGrid() }));
-      await waitFor(() => allDiffProbes(hostId).length >= 2, 12000);
+      await waitFor(() => allDiffProbes(hostId).length >= 2, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);
       const seed0 = d()[0]?.diffKernel ?? "?";
@@ -1238,7 +1213,7 @@ async function main(): Promise<void> {
       const afterSelect0 = d()[0]?.diffKernel ?? "?"; // anchor stays flip
       const afterSelect1 = d()[1]?.diffKernel ?? "?"; // adopts the anchor's flip (ruling 3)
       d()[0]!.changeDiffKernel("squared"); // explicit pick on the anchor
-      await waitFor(() => d()[1]?.diffKernel === "squared", 4000).catch(() => {});
+      await waitFor(() => d()[1]?.diffKernel === "squared", 4000, 30).catch(() => {});
       const mirrored1 = d()[1]?.diffKernel ?? "?";
       root.unmount();
       host.remove();
@@ -1279,7 +1254,7 @@ async function main(): Promise<void> {
       document.body.appendChild(host);
       const root: Root = createRoot(host);
       root.render(createElement(PlotApp, { descriptor: sideBySideThreeDiffGrid() }));
-      await waitFor(() => allDiffProbes(hostId).length >= 3, 12000);
+      await waitFor(() => allDiffProbes(hostId).length >= 3, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);
       const seeds = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
@@ -1302,7 +1277,7 @@ async function main(): Promise<void> {
       // Now a DEDICATED pick on the anchor: it MUST land {diffKernel} in both
       // peers' OWN entries and MIRROR to their probes (live fan-out).
       d()[0]!.changeDiffKernel("squared");
-      await waitFor(() => d()[1]?.diffKernel === "squared" && d()[2]?.diffKernel === "squared", 4000).catch(() => {});
+      await waitFor(() => d()[1]?.diffKernel === "squared" && d()[2]?.diffKernel === "squared", 4000, 30).catch(() => {});
       const pickPatchHadKernel = entryKernel(ids[1]) === "squared" && entryKernel(ids[2]) === "squared";
       const mirrored = [d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
       root.unmount();

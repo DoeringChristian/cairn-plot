@@ -14,38 +14,9 @@ import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "GPU-PAGE-CAP PASS" : "GPU-PAGE-CAP FAIL";
-}
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 8000, stepMs = 25): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
+const { report, setOverallStatus } = createHarness({ title: "GPU-PAGE-CAP" });
 
 /** A TALL float source [H, W, 3] (H >> W), diagonal gradient. */
 function tallFloatDescriptor(w: number, h: number): PlotDescriptor {
@@ -86,7 +57,7 @@ async function run(): Promise<boolean> {
   root.render(createElement(PlotApp, { descriptor: tallFloatDescriptor(64, 512) })); // aspect 0.125
   const roots: Root[] = [root];
 
-  const gpuUp = await waitFor(() => !!el.querySelector("canvas[data-gpu-image-canvas]"));
+  const gpuUp = await waitFor(() => !!el.querySelector("canvas[data-gpu-image-canvas]"), 8000, 25);
   report(gpuUp, "real GPU image pane mounts (data-gpu-image-canvas)");
   ok = ok && gpuUp;
 

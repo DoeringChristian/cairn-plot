@@ -38,28 +38,9 @@ import {
   type TevBinMapping,
 } from "../../image/histogram-binning";
 import { cpuDeepDepthWeights, DEPTH_WEIGHT_FIXED_SCALE } from "../histogram/compute";
+import { createHarness } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "HISTOGRAM-GPU PASS" : "HISTOGRAM-GPU FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "HISTOGRAM-GPU" });
 
 const RGB = [{ name: "R" }, { name: "G" }, { name: "B" }];
 const RGBA = [...RGB, { name: "A" }];

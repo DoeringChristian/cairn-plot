@@ -25,40 +25,11 @@ import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 import { registerRuntimeEntries } from "../../store/runtime-store";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 registerCoreRenderers();
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "ENLARGE-CHANNEL PASS" : "ENLARGE-CHANNEL FAIL";
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred: () => boolean, timeoutMs = 8000, step = 30): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(step);
-  }
-  return pred();
-}
+const { report, setOverallStatus } = createHarness({ title: "ENLARGE-CHANNEL" });
 
 // An RGB float source whose channels differ (R = x ramp, G = y ramp, B = 0.5)
 // so a single-channel slice genuinely changes the payload.
@@ -104,7 +75,7 @@ async function run(): Promise<boolean> {
   root.render(createElement(PlotApp, { descriptor: descriptor() }));
 
   // --- 1. pane ready: enlarge button + CHANNELS menu -----------------------
-  const ready = await waitFor(() => !!enlargeBtn() && !!channelsBtn());
+  const ready = await waitFor(() => !!enlargeBtn() && !!channelsBtn(), 8000, 30);
   report(ready, "the pane mounts with an enlarge button and a CHANNELS menu");
   if (!ready) {
     root.unmount();
@@ -113,7 +84,7 @@ async function run(): Promise<boolean> {
 
   // --- 2. enlarge → fullscreen overlay -------------------------------------
   enlargeBtn()!.click();
-  const opened = await waitFor(() => !!overlay());
+  const opened = await waitFor(() => !!overlay(), 8000, 30);
   report(opened, "clicking enlarge opens the fullscreen overlay");
   ok = ok && opened;
 
@@ -121,7 +92,7 @@ async function run(): Promise<boolean> {
   // Open the CHANNELS menu (the enlarged pane's toolbar) and click the
   // single-channel "R" option (portaled listbox).
   channelsBtn()!.click();
-  const listbox = await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000);
+  const listbox = await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000, 30);
   report(listbox, "the CHANNELS menu opens a listbox");
   ok = ok && listbox;
   // The clickable element is the BUTTON inside each option li.
@@ -164,7 +135,7 @@ async function run(): Promise<boolean> {
   // this harness clicked the option <li> instead of its inner <button> and
   // asserted vacuously). Reopen the menu: the "· R" option must be selected.
   channelsBtn()!.click();
-  await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000);
+  await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000, 30);
   const selectedOpt = Array.from(
     document.querySelectorAll<HTMLElement>('ul[role="listbox"] [role="option"][aria-selected="true"]'),
   );
@@ -184,7 +155,7 @@ async function run(): Promise<boolean> {
 
   // --- 4. Escape exits fullscreen (hoisted state still closes) -------------
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  const closed = await waitFor(() => !overlay(), 3000);
+  const closed = await waitFor(() => !overlay(), 3000, 30);
   report(closed, "Escape exits fullscreen after the channel change");
   ok = ok && closed;
 

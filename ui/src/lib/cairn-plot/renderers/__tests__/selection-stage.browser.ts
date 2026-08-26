@@ -33,28 +33,9 @@ import {
 } from "../../selection/selection-store";
 import { __resetSelectionOverlayHostForTest } from "../../../../plot-selection-stage";
 import { __resetSelectionRegistryForTest } from "../../../../plot-selection-pane-registry";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "SELECTION STAGE PASS" : "SELECTION STAGE FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "SELECTION STAGE" });
 
 const consoleErrors: string[] = [];
 const origConsoleError = console.error.bind(console);
@@ -62,18 +43,6 @@ console.error = (...args: unknown[]) => {
   consoleErrors.push(args.map(String).join(" "));
   origConsoleError(...args);
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 
 function makeImageUrl(color: string): string {
   const c = document.createElement("canvas");
@@ -320,7 +289,7 @@ async function run(): Promise<boolean> {
   mount("mount-b", imageDescriptor("B", "#27ae60"));
   mount("mount-c", imageDescriptor("C", "#2980b9"));
 
-  const framesReady = await waitFor(() => frames().length === 3);
+  const framesReady = await waitFor(() => frames().length === 3, 6000, 20);
   report(framesReady, `three selectable pane frames mount (got ${frames().length})`);
   ok = ok && framesReady;
   if (!framesReady) {
@@ -328,8 +297,7 @@ async function run(): Promise<boolean> {
     return false;
   }
   const imagesReady = await waitFor(
-    () => document.querySelectorAll("img[src^='data:image/png']").length >= 3,
-  );
+    () => document.querySelectorAll("img[src^='data:image/png']").length >= 3, 6000, 20);
   report(imagesReady, "each mount renders a real image pane");
   ok = ok && imagesReady;
 
@@ -341,7 +309,7 @@ async function run(): Promise<boolean> {
   clickPane(fa);
   clickPane(fb, true);
   clickPane(fc, true);
-  const allThree = await waitFor(() => store.count() === 3);
+  const allThree = await waitFor(() => store.count() === 3, 6000, 20);
   report(allThree, `all three panes selected (count ${store.count()})`);
   ok = ok && allThree;
   const refIsLast = store.reference() === idC;
@@ -352,7 +320,7 @@ async function run(): Promise<boolean> {
   //     rings in the (non-orange) blue accent. Assert COMPUTED outline colour, not
   //     mere presence, and the `data-reference` marker on exactly the ref pane. ---
   await sleep(30);
-  const refFrameMarked = await waitFor(() => fc.getAttribute("data-reference") === "true");
+  const refFrameMarked = await waitFor(() => fc.getAttribute("data-reference") === "true", 6000, 20);
   const nonRefUnmarked = fa.getAttribute("data-reference") == null;
   report(refFrameMarked, "the reference pane (C) carries data-reference=true");
   report(nonRefUnmarked, "a non-reference selected pane (A) is NOT marked reference");
@@ -365,7 +333,7 @@ async function run(): Promise<boolean> {
   ok = ok && refFrameMarked && nonRefUnmarked && refIsOrange && selIsNotOrange;
 
   // --- 1. the action bar appears with count 3 + Enlarge + Compare ------------
-  const barReady = await waitFor(() => !!actionBar());
+  const barReady = await waitFor(() => !!actionBar(), 6000, 20);
   report(barReady, "the floating action bar appears for a ≥2 selection");
   ok = ok && barReady;
   const bar = actionBar()!;
@@ -388,7 +356,7 @@ async function run(): Promise<boolean> {
 
   // --- 2. ENLARGE → fullscreen grid of all 3 panes ---------------------------
   enlargeBtn.click();
-  const stageUp = await waitFor(() => !!stageBackdrop());
+  const stageUp = await waitFor(() => !!stageBackdrop(), 6000, 20);
   report(stageUp, "clicking Enlarge opens the fullscreen stage");
   ok = ok && stageUp;
   if (!stageUp) {
@@ -418,7 +386,7 @@ async function run(): Promise<boolean> {
   ok = ok && scopeClass && frameDark;
 
   // 3 cells, laid out in a ~√3 = 2-column grid.
-  const threeCells = await waitFor(() => stageCells().length === 3);
+  const threeCells = await waitFor(() => stageCells().length === 3, 6000, 20);
   report(threeCells, `the enlarge grid has 3 pane cells (got ${stageCells().length})`);
   const grid = bd.querySelector("[data-cairn-stage-grid]") as HTMLElement;
   const packedCols = Number(grid.getAttribute("data-cairn-stage-cols"));
@@ -617,15 +585,15 @@ async function run(): Promise<boolean> {
 
   // Close the enlarge stage (✕), bar comes back.
   (bd.querySelector("[data-cairn-plot-stage-close]") as HTMLButtonElement).click();
-  const stageGone = await waitFor(() => !stageBackdrop());
+  const stageGone = await waitFor(() => !stageBackdrop(), 6000, 20);
   report(stageGone, "the ✕ closes the enlarge stage");
-  const barBack = await waitFor(() => !!actionBar());
+  const barBack = await waitFor(() => !!actionBar(), 6000, 20);
   report(barBack, "the action bar returns after closing the stage");
   ok = ok && stageGone && barBack;
 
   // --- 3. COMPARE → grid of 2 comparison panes -------------------------------
   (actionBar()!.querySelector('[data-cairn-action="compare"]') as HTMLButtonElement).click();
-  const compareUp = await waitFor(() => !!stageBackdrop());
+  const compareUp = await waitFor(() => !!stageBackdrop(), 6000, 20);
   report(compareUp, "clicking Compare opens the fullscreen compare stage");
   ok = ok && compareUp;
   if (!compareUp) {
@@ -633,7 +601,7 @@ async function run(): Promise<boolean> {
     return false;
   }
   const cbd = stageBackdrop()!;
-  const twoComparisons = await waitFor(() => stageCells().length === 2);
+  const twoComparisons = await waitFor(() => stageCells().length === 2, 6000, 20);
   report(twoComparisons, `3 selected → 2 comparison panes (got ${stageCells().length})`);
   const modeIsCompare = cbd.querySelector('[data-cairn-stage-grid][data-cairn-stage-mode="compare"]');
   report(!!modeIsCompare, "the stage is in compare mode");
@@ -648,8 +616,7 @@ async function run(): Promise<boolean> {
   report(noStageChip, "comparison cells carry NO overlapping stage 'vs REF' chip (compare pane labels its own ref)");
   // The comparison panes actually rendered (CPU split → <img>s).
   const compHasSurface = await waitFor(
-    () => stageCells().length === 2 && stageCells().every((c) => !!c.querySelector("img,canvas")),
-  );
+    () => stageCells().length === 2 && stageCells().every((c) => !!c.querySelector("img,canvas")), 6000, 20);
   report(compHasSurface, "each comparison cell rendered its compare pane");
   ok = ok && twoComparisons && !!modeIsCompare && noRefInCells && noStageChip && compHasSurface;
 
@@ -671,13 +638,13 @@ async function run(): Promise<boolean> {
   const newRefId = stageCells()[0].getAttribute("data-stage-repr-pane")!;
   const pickedCompare = repickViaForegroundChip(stageCells()[0]);
   report(pickedCompare, "the first comparison cell has a clickable FOREGROUND caption chip");
-  const refChanged = await waitFor(() => store.reference() === newRefId);
+  const refChanged = await waitFor(() => store.reference() === newRefId, 6000, 20);
   report(refChanged, `clicking the foreground chip re-designates the reference (now ${store.reference()})`);
   const rebuilt = await waitFor(() => {
     const now = stageCells().map((c) => c.getAttribute("data-stage-repr-pane"));
     // The new reference is no longer a comparison cell; the old reference now is.
     return now.length === 2 && !now.includes(newRefId) && now.includes(idC);
-  });
+  }, 6000, 20);
   report(rebuilt, "the comparisons rebuilt against the new reference (old ref now compared)");
   const reprAfter = new Set(stageCells().map((c) => c.getAttribute("data-stage-repr-pane")));
   const setChanged = reprAfter.size === 2 && [...reprAfter].some((id) => !reprBefore.has(id));
@@ -710,7 +677,7 @@ async function run(): Promise<boolean> {
   }
 
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  const closedByEsc = await waitFor(() => !stageBackdrop());
+  const closedByEsc = await waitFor(() => !stageBackdrop(), 6000, 20);
   report(closedByEsc, "Escape closes the compare stage");
   const scrollRestored =
     ((document.scrollingElement as HTMLElement | null) ?? document.body).style.overflow !== "hidden";
@@ -721,12 +688,12 @@ async function run(): Promise<boolean> {
   //     rect height ≈ the grid content height; the pane fills its cell. ===========
   // Drop to a 2-selection (toggle C off — it is not the current reference).
   clickPane(fc, true);
-  const twoSel = await waitFor(() => store.count() === 2);
+  const twoSel = await waitFor(() => store.count() === 2, 6000, 20);
   report(twoSel, `dropped to a 2-pane selection (count ${store.count()})`);
-  const bar2 = await waitFor(() => !!actionBar());
+  const bar2 = await waitFor(() => !!actionBar(), 6000, 20);
   report(bar2, "the action bar is back for the 2-selection");
   (actionBar()!.querySelector('[data-cairn-action="enlarge"]') as HTMLButtonElement).click();
-  const enl2Up = await waitFor(() => !!stageBackdrop() && stageCells().length === 2);
+  const enl2Up = await waitFor(() => !!stageBackdrop() && stageCells().length === 2, 6000, 20);
   report(enl2Up, `Enlarge with 2 images → a 2-cell grid (got ${stageCells().length})`);
   if (enl2Up) {
     const g = stageGrid()!;
@@ -778,17 +745,17 @@ async function run(): Promise<boolean> {
     ok = ok && badgeMoved && newRefOrange;
 
     (stageBackdrop()!.querySelector("[data-cairn-plot-stage-close]") as HTMLButtonElement).click();
-    await waitFor(() => !stageBackdrop());
+    await waitFor(() => !stageBackdrop(), 6000, 20);
   } else {
     ok = false;
   }
 
   // === Bug 8 (2 images, compare) — Compare → ONE comparison pane that fills the
   //     WHOLE overlay content area. ===============================================
-  const bar3 = await waitFor(() => !!actionBar());
+  const bar3 = await waitFor(() => !!actionBar(), 6000, 20);
   report(bar3, "the action bar returns before Compare (2 images)");
   (actionBar()!.querySelector('[data-cairn-action="compare"]') as HTMLButtonElement).click();
-  const cmp1Up = await waitFor(() => !!stageBackdrop() && stageCells().length === 1);
+  const cmp1Up = await waitFor(() => !!stageBackdrop() && stageCells().length === 1, 6000, 20);
   report(cmp1Up, `Compare with 2 images → a single comparison pane (got ${stageCells().length})`);
   if (cmp1Up) {
     const g = stageGrid()!;
@@ -813,7 +780,7 @@ async function run(): Promise<boolean> {
     report(paneFills, "the compare pane frame fills its content-aspect cell");
     ok = ok && isContentAspect && fillsHeight && notStretchedWide && paneFills;
     (stageBackdrop()!.querySelector("[data-cairn-plot-stage-close]") as HTMLButtonElement).click();
-    await waitFor(() => !stageBackdrop());
+    await waitFor(() => !stageBackdrop(), 6000, 20);
   } else {
     ok = false;
   }

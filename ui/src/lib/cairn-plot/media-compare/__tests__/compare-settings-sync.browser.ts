@@ -48,6 +48,7 @@ import {
   GLOBAL_SELECTION_BASE,
   __resetGlobalSelectionStoreForTest,
 } from "../../selection/selection-store";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 /** The subset of `GpuComparePane`'s `__cairnCompareProbe` this harness drives. */
 interface CompareSyncProbe {
@@ -69,27 +70,7 @@ interface CompareSyncProbe {
   home: () => void;
 }
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "#6f6" : "#f66";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "#6f6" : "#f66";
-  }
-  document.title = pass ? "COMPARE SETTINGS SYNC PASS" : "COMPARE SETTINGS SYNC FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "COMPARE SETTINGS SYNC", colors: { pass: "#6f6", fail: "#f66" } });
 
 const consoleErrors: string[] = [];
 const origConsoleError = console.error.bind(console);
@@ -97,18 +78,6 @@ console.error = (...args: unknown[]) => {
   consoleErrors.push(args.map(String).join(" "));
   origConsoleError(...args);
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 8000, stepMs = 25): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 
 /** A tiny non-blank PNG data URL, so each compare side is a real URL image
  *  (no WebGPU-float upload needed for the sources). */
@@ -217,8 +186,7 @@ async function run(): Promise<boolean> {
   // surface — if this never settles the runner reports TIMEOUT, not a false pass).
   const panesReady = await waitFor(
     () => frames().length === 2 && frames().every((f) => !!probeOf(f)),
-    15000,
-  );
+    15000, 25);
   report(panesReady, `two engine compare panes mount and expose a probe (got ${frames().length})`);
   ok = ok && panesReady;
   if (!panesReady) {
@@ -242,8 +210,7 @@ async function run(): Promise<boolean> {
   clickPane(fb, true);
   const store = getGlobalSelectionStore();
   const bothSelected = await waitFor(
-    () => fa.getAttribute("data-selected") === "true" && fb.getAttribute("data-selected") === "true",
-  );
+    () => fa.getAttribute("data-selected") === "true" && fb.getAttribute("data-selected") === "true", 8000, 25);
   report(bothSelected, "both compare panes are selected together");
   ok = ok && bothSelected;
 
@@ -262,24 +229,24 @@ async function run(): Promise<boolean> {
 
   // --- 1. compare MODE: → diff (the blend view mode was removed) -----------
   A().changeCompareMode("diff");
-  const modeDiff = await waitFor(() => B().compareMode === "diff");
+  const modeDiff = await waitFor(() => B().compareMode === "diff", 8000, 25);
   report(modeDiff, `MODE sync: A→diff, B follows (B.compareMode=${B().compareMode})`);
   ok = ok && modeDiff;
 
   // --- 3. diff KERNEL: absolute → squared ----------------------------------
   A().changeDiffKernel("squared");
-  const kernelOk = await waitFor(() => B().diffKernel === "squared");
+  const kernelOk = await waitFor(() => B().diffKernel === "squared", 8000, 25);
   report(kernelOk, `KERNEL sync: A→squared, B follows (B.diffKernel=${B().diffKernel})`);
   ok = ok && kernelOk;
 
   // --- 4. COLORMAP: none → magma (colormap menu is live in diff mode) -----
   A().changeColormap("magma");
-  const cmapOk = await waitFor(() => B().colormap === "magma");
+  const cmapOk = await waitFor(() => B().colormap === "magma", 8000, 25);
   report(cmapOk, `COLORMAP sync: A→magma, B follows (B.colormap=${B().colormap})`);
   ok = ok && cmapOk;
   // The unified `encoding` key follows too (in diff+colormap the active encoding
   // IS the lut) — the compare-pane-on-DISPLAY follow-up carries ONE encoding id.
-  const encOk = await waitFor(() => B().encodingId === "magma");
+  const encOk = await waitFor(() => B().encodingId === "magma", 8000, 25);
   report(encOk, `ENCODING sync: B's derived encoding follows to magma (B.encodingId=${B().encodingId})`);
   ok = ok && encOk;
 
@@ -289,18 +256,18 @@ async function run(): Promise<boolean> {
 
   // --- 5. back to split, then TONEMAP: srgb → aces (tonemap is split/blend) --
   A().changeCompareMode("split");
-  const backSplit = await waitFor(() => B().compareMode === "split");
+  const backSplit = await waitFor(() => B().compareMode === "split", 8000, 25);
   report(backSplit, `MODE sync: A→split, B follows (B.compareMode=${B().compareMode})`);
   ok = ok && backSplit;
 
   A().changeTonemap("aces");
-  const tmOk = await waitFor(() => B().effectiveTonemap === "aces");
+  const tmOk = await waitFor(() => B().effectiveTonemap === "aces", 8000, 25);
   report(tmOk, `TONEMAP sync: A→aces, B follows (B.effectiveTonemap=${B().effectiveTonemap})`);
   ok = ok && tmOk;
 
   // --- 6. SPLIT position: 0.5 → 0.3 ----------------------------------------
   A().changeSplit(0.3);
-  const splitOk = await waitFor(() => Math.abs(B().splitPosition - 0.3) < 1e-6);
+  const splitOk = await waitFor(() => Math.abs(B().splitPosition - 0.3) < 1e-6, 8000, 25);
   report(splitOk, `SPLIT sync: A→0.3, B follows (B.splitPosition=${B().splitPosition})`);
   ok = ok && splitOk;
 
@@ -325,10 +292,10 @@ async function run(): Promise<boolean> {
   report(notFocused, "arrow-flip HOVER path: pane is NOT focused before the gesture");
   paneAViewport.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
   arrow("ArrowLeft");
-  const hoverFlipLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6);
+  const hoverFlipLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6, 8000, 25);
   report(hoverFlipLeft, `HOVER ArrowLeft snaps split→0 without focus (A.splitPosition=${A().splitPosition})`);
   arrow("ArrowRight");
-  const hoverFlipRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
+  const hoverFlipRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6, 8000, 25);
   report(hoverFlipRight, `HOVER ArrowRight snaps split→1 without focus (A.splitPosition=${A().splitPosition})`);
   ok = ok && notFocused && hoverFlipLeft && hoverFlipRight;
 
@@ -340,26 +307,26 @@ async function run(): Promise<boolean> {
   const bracket = (key: "[" | "]") =>
     window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
   bracket("[");
-  const braceLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6);
+  const braceLeft = await waitFor(() => Math.abs(A().splitPosition - 0) < 1e-6, 8000, 25);
   report(braceLeft, `HOVER "[" snaps split→0 (A.splitPosition=${A().splitPosition})`);
   bracket("]");
-  const braceRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
+  const braceRight = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6, 8000, 25);
   report(braceRight, `HOVER "]" snaps split→1 (A.splitPosition=${A().splitPosition})`);
   ok = ok && braceLeft && braceRight;
 
   // Leaving the pane stops it reacting; and the FOCUS path still works too.
   paneAViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
   A().changeSplit(0.4);
-  await waitFor(() => Math.abs(A().splitPosition - 0.4) < 1e-6);
+  await waitFor(() => Math.abs(A().splitPosition - 0.4) < 1e-6, 8000, 25);
   arrow("ArrowLeft"); // not hovered, not focused → ignored
   await sleep(60);
   const ignoredWhenAway = Math.abs(A().splitPosition - 0.4) < 1e-6;
   report(ignoredWhenAway, `arrows are IGNORED when the pointer left the pane (A.splitPosition=${A().splitPosition})`);
   paneAViewport.focus();
   arrow("ArrowRight");
-  const focusFlip = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6);
+  const focusFlip = await waitFor(() => Math.abs(A().splitPosition - 1) < 1e-6, 8000, 25);
   report(focusFlip, `FOCUS path still flips (A.splitPosition=${A().splitPosition})`);
-  const peerTrackedFlip = await waitFor(() => Math.abs(B().splitPosition - 1) < 1e-6);
+  const peerTrackedFlip = await waitFor(() => Math.abs(B().splitPosition - 1) < 1e-6, 8000, 25);
   report(peerTrackedFlip, `the flip syncs to the peer pane (B.splitPosition=${B().splitPosition})`);
   ok = ok && ignoredWhenAway && focusFlip && peerTrackedFlip;
 
@@ -377,7 +344,7 @@ async function run(): Promise<boolean> {
     ),
   );
   roots.push(rootC);
-  const overlayReady = await waitFor(() => frames().length === 3 && !!probeOf(frames()[2]), 15000);
+  const overlayReady = await waitFor(() => frames().length === 3 && !!probeOf(frames()[2]), 15000, 25);
   report(overlayReady, "overlay compare pane mounts inside InFullscreenOverlayContext");
   const C = () => probeOf(frames()[2])!;
   const paneCViewport = frames()[2]!.querySelector<HTMLElement>(
@@ -386,9 +353,9 @@ async function run(): Promise<boolean> {
   paneCViewport.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   C().changeSplit(0.4);
-  await waitFor(() => Math.abs(C().splitPosition - 0.4) < 1e-6);
+  await waitFor(() => Math.abs(C().splitPosition - 0.4) < 1e-6, 8000, 25);
   arrow("ArrowLeft"); // away + not focused, but inside the overlay → acts
-  const overlayFlip = await waitFor(() => Math.abs(C().splitPosition - 0) < 1e-6, 2000);
+  const overlayFlip = await waitFor(() => Math.abs(C().splitPosition - 0) < 1e-6, 2000, 25);
   report(overlayFlip, `OVERLAY ArrowLeft flips with pointer AWAY + not focused (C.splitPosition=${C().splitPosition})`);
   ok = ok && overlayReady && overlayFlip;
 
@@ -407,8 +374,8 @@ async function run(): Promise<boolean> {
     return r.left + r.width / 2 < rr.left + rr.width / 2;
   };
   A().changeCompareMode("split");
-  await waitFor(() => A().compareMode === "split");
-  await waitFor(() => !!chipByText(paneARoot, "REF_CAP") && !!chipByText(paneARoot, "FG_CAP"), 3000);
+  await waitFor(() => A().compareMode === "split", 8000, 25);
+  await waitFor(() => !!chipByText(paneARoot, "REF_CAP") && !!chipByText(paneARoot, "FG_CAP"), 3000, 25);
   const refChip = chipByText(paneARoot, "REF_CAP");
   const fgChip = chipByText(paneARoot, "FG_CAP");
   const bothPresent = !!refChip && !!fgChip;
@@ -425,13 +392,12 @@ async function run(): Promise<boolean> {
 
   // Diff mode: one caption "<metric> · FG_CAP compared to REF_CAP" (bottom-left).
   A().changeCompareMode("diff");
-  await waitFor(() => A().compareMode === "diff");
+  await waitFor(() => A().compareMode === "diff", 8000, 25);
   const diffChip = await waitFor(
     () => Array.from(paneARoot.querySelectorAll<HTMLElement>("span")).some((s) =>
       /FG_CAP compared to REF_CAP/.test(s.textContent ?? ""),
     ),
-    3000,
-  );
+    3000, 25);
   report(diffChip, "diff: a single '<metric> · FG_CAP compared to REF_CAP' caption is shown");
   const diffCaptionEl = Array.from(paneARoot.querySelectorAll<HTMLElement>("span")).find((s) =>
     /FG_CAP compared to REF_CAP/.test(s.textContent ?? ""),
@@ -455,36 +421,35 @@ async function run(): Promise<boolean> {
   // AWAITED to settle (home resets kernel+mode through echo setters that round-trip
   // through the owner, so a bare synchronous follow-up can race the echo).
   A().home(); // clear the override left by the earlier COLORMAP sync step
-  await waitFor(() => A().colormap === kernelDefaultColormap(A().diffKernel));
+  await waitFor(() => A().colormap === kernelDefaultColormap(A().diffKernel), 8000, 25);
   A().changeCompareMode("diff");
-  await waitFor(() => A().compareMode === "diff");
+  await waitFor(() => A().compareMode === "diff", 8000, 25);
   // (a) DEFAULT FOLLOWS the kernel: signed (ℝ signed error) → red-green (diverging).
   A().changeDiffKernel("signed");
-  const defSigned = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green");
+  const defSigned = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green", 8000, 25);
   report(defSigned, `DEFAULT: signed kernel → red-green colormap (A.colormap=${A().colormap})`);
   ok = ok && defSigned;
   // (b) switch to absolute (ℝ⁺) → the default FOLLOWS to turbo (sequential).
   A().changeDiffKernel("absolute");
-  const defAbs = await waitFor(() => A().diffKernel === "absolute" && A().colormap === "turbo");
+  const defAbs = await waitFor(() => A().diffKernel === "absolute" && A().colormap === "turbo", 8000, 25);
   report(defAbs, `DEFAULT: absolute kernel → turbo colormap (A.colormap=${A().colormap})`);
   ok = ok && defAbs;
   // (c) the user PICKS magma explicitly → an override.
   A().changeColormap("magma");
-  const picked = await waitFor(() => A().colormap === "magma");
+  const picked = await waitFor(() => A().colormap === "magma", 8000, 25);
   report(picked, `OVERRIDE: user picks magma (A.colormap=${A().colormap})`);
   ok = ok && picked;
   // (d) switch kernel again → the NEW kernel's default is SELECTED (user ruling:
   // "if I switch to another error, it should select that error's default colormap"
   // — a kernel switch re-copies its default, superseding the old pick-sticks rule).
   A().changeDiffKernel("signed");
-  const followed = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green");
+  const followed = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green", 8000, 25);
   report(followed, `SWITCH: kernel→signed selects red-green default (A.colormap=${A().colormap})`);
   ok = ok && followed;
   // (e) HOME clears the override → back to the (reset) kernel's DEFAULT colormap.
   A().home();
   const homeReset = await waitFor(
-    () => A().colormap === kernelDefaultColormap(A().diffKernel) && A().colormap !== "magma",
-  );
+    () => A().colormap === kernelDefaultColormap(A().diffKernel) && A().colormap !== "magma", 8000, 25);
   report(
     homeReset,
     `HOME: override cleared → follows the kernel default (A.colormap=${A().colormap}, kernel=${A().diffKernel})`,

@@ -26,29 +26,9 @@ import { ssim } from "../kernels/ssim-reference";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
 import { computeCompareMapping, type CompareAlign, type CompareFit } from "../compare-align";
 import type { Device, Texture } from "../types";
+import { createHarness } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  (window as unknown as { __ssimTestResult?: "pass" | "fail" }).__ssimTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "SSIM PASS" : "SSIM FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "SSIM", resultFlag: "__ssimTestResult" });
 
 // Deterministic small sRGB fixture pairs (W*H*3, [0,1]).
 function makePair(w: number, h: number, seed: number): { ref: Float32Array; test: Float32Array } {

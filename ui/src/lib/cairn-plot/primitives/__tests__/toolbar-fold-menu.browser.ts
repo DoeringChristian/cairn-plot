@@ -44,6 +44,7 @@ import { createRoot } from "react-dom/client";
 import PlotToolbar from "../PlotToolbar";
 import type { PlotController, ControllerCapabilities } from "../../controls/types";
 import type { ToolbarConfig } from "../../controls/ToolbarConfig";
+import { createHarness } from "../../testing/harness";
 
 declare global {
   interface Window {
@@ -71,27 +72,7 @@ interface ToolbarHarnessApi {
 const h = React.createElement;
 const container = document.getElementById("pane") as HTMLElement;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  window.__toolbarTestResult = pass ? "pass" : "fail";
-  document.title = pass ? "TOOLBAR FOLD PASS" : "TOOLBAR FOLD FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "TOOLBAR FOLD", resultFlag: "__toolbarTestResult" });
 
 const allCaps: ControllerCapabilities = {
   zoom: true, pan: true, boxZoom: true, select: true, lasso: true,

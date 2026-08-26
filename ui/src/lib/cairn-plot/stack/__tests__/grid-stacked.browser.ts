@@ -8,39 +8,12 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor } from "../../../plot-descriptor";
+import { PlotApp } from "../../../../plot-bootstrap";
+import { registerCoreRenderers } from "../../../../plot-renderers";
+import type { PlotDescriptor } from "../../../../plot-descriptor";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "GRID-STACKED PASS" : "GRID-STACKED FAIL";
-}
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred: () => boolean, timeoutMs = 5000, step = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(step);
-  }
-  return pred();
-}
+const { report, setOverallStatus } = createHarness({ title: "GRID-STACKED" });
 
 function floatLeaf(w: number, h: number, label: string): unknown {
   const data = new Float32Array(h * w * 3);
@@ -181,7 +154,7 @@ async function run(): Promise<boolean> {
   rootA.render(createElement(PlotApp, { descriptor: stackedGrid(["Alpha", "Bravo", "Charlie"], "stacked") }));
   roots.push(rootA);
 
-  const up = await waitFor(() => qa("m1", "[data-cairn-stack-tab]").length >= 1 || qa("m1", "[role='tab']").length >= 3);
+  const up = await waitFor(() => qa("m1", "[data-cairn-stack-tab]").length >= 1 || qa("m1", "[role='tab']").length >= 3, 5000, 20);
   const tabs = qa("m1", "[role='tab']");
   report(tabs.length === 3, `stacked grid renders a tab strip with 3 tabs (got ${tabs.length})`);
   report(!!q("m1", "[data-cairn-grid-header]"), "grid header (holds tabs + toggle, above the viewports) present");
@@ -199,17 +172,17 @@ async function run(): Promise<boolean> {
   q("m1", "[data-cairn-grid-root]")!.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
 
   key("ArrowRight");
-  report(await waitFor(() => activePaneIndex("m1") === 1), `→ moves to tab 1 (got ${activePaneIndex("m1")})`);
+  report(await waitFor(() => activePaneIndex("m1") === 1, 5000, 20), `→ moves to tab 1 (got ${activePaneIndex("m1")})`);
   key("l"); // vim next
-  report(await waitFor(() => activePaneIndex("m1") === 2), `l (vim) → tab 2 (got ${activePaneIndex("m1")})`);
+  report(await waitFor(() => activePaneIndex("m1") === 2, 5000, 20), `l (vim) → tab 2 (got ${activePaneIndex("m1")})`);
   key("l"); // wrap
-  report(await waitFor(() => activePaneIndex("m1") === 0), `l wraps 2→0 (got ${activePaneIndex("m1")})`);
+  report(await waitFor(() => activePaneIndex("m1") === 0, 5000, 20), `l wraps 2→0 (got ${activePaneIndex("m1")})`);
   key("h"); // vim prev wraps
-  report(await waitFor(() => activePaneIndex("m1") === 2), `h (vim) wraps 0→2 (got ${activePaneIndex("m1")})`);
+  report(await waitFor(() => activePaneIndex("m1") === 2, 5000, 20), `h (vim) wraps 0→2 (got ${activePaneIndex("m1")})`);
   key("1"); // number jump
-  report(await waitFor(() => activePaneIndex("m1") === 0), `number 1 → tab 0 (got ${activePaneIndex("m1")})`);
+  report(await waitFor(() => activePaneIndex("m1") === 0, 5000, 20), `number 1 → tab 0 (got ${activePaneIndex("m1")})`);
   key("c"); // letter jump
-  report(await waitFor(() => activePaneIndex("m1") === 2), `letter c → tab 2 (got ${activePaneIndex("m1")})`);
+  report(await waitFor(() => activePaneIndex("m1") === 2, 5000, 20), `letter c → tab 2 (got ${activePaneIndex("m1")})`);
   ok =
     ok &&
     activePaneIndex("m1") === 2;
@@ -224,15 +197,15 @@ async function run(): Promise<boolean> {
     return `${Math.round(v.width)}x${Math.round(v.height)}`;
   };
   key("1");
-  await waitFor(() => activePaneIndex("m1") === 0);
+  await waitFor(() => activePaneIndex("m1") === 0, 5000, 20);
   await sleep(100);
   const box0 = viewBox();
   key("2");
-  await waitFor(() => activePaneIndex("m1") === 1);
+  await waitFor(() => activePaneIndex("m1") === 1, 5000, 20);
   await sleep(100);
   const box1 = viewBox();
   key("3");
-  await waitFor(() => activePaneIndex("m1") === 2);
+  await waitFor(() => activePaneIndex("m1") === 2, 5000, 20);
   await sleep(100);
   const box2 = viewBox();
   const boxStable = box0 === box1 && box1 === box2;
@@ -269,7 +242,7 @@ async function run(): Promise<boolean> {
     const zoomApplied = zoomed.length > 0 && zoomed.some((t) => !/scale\(1\)/.test(t));
     report(zoomApplied, `wheel-zoom applied on the stacked pane (transforms: ${JSON.stringify(zoomed)})`);
     key("1"); // flip to tab 0
-    await waitFor(() => activePaneIndex("m1") === 0);
+    await waitFor(() => activePaneIndex("m1") === 0, 5000, 20);
     await sleep(150);
     const afterFlip = zoomTransforms();
     const zoomPersisted = JSON.stringify(afterFlip) === JSON.stringify(zoomed);
@@ -284,14 +257,14 @@ async function run(): Promise<boolean> {
   const rootB = createRoot(host("m2"));
   rootB.render(createElement(PlotApp, { descriptor: stackedGrid(["one", "two", "three"], "normal") }));
   roots.push(rootB);
-  const toggleUp = await waitFor(() => !!q("m2", "[data-cairn-grid-mode-toggle]"));
+  const toggleUp = await waitFor(() => !!q("m2", "[data-cairn-grid-mode-toggle]"), 5000, 20);
   report(toggleUp, "NORMAL grid shows the normal|stacked toggle button (the missing button)");
-  const startsNormal = await waitFor(() => qa("m2", "[role='tab']").length === 0);
+  const startsNormal = await waitFor(() => qa("m2", "[role='tab']").length === 0, 5000, 20);
   report(startsNormal, "normal grid shows NO tab strip");
   const stackedBtn = q("m2", '[data-cairn-grid-mode="stacked"]');
   report(!!stackedBtn, "toggle has a 'stacked' button");
   stackedBtn?.click();
-  const flipped = await waitFor(() => qa("m2", "[role='tab']").length === 3);
+  const flipped = await waitFor(() => qa("m2", "[role='tab']").length === 3, 5000, 20);
   report(flipped, "clicking the toggle switches the grid to stacked (tab strip appears)");
   ok = ok && toggleUp && startsNormal && !!stackedBtn && flipped;
 
@@ -314,16 +287,15 @@ async function run(): Promise<boolean> {
   const rootD = createRoot(host("m4"));
   rootD.render(createElement(PlotApp, { descriptor: mixedGrid("normal") }));
   roots.push(rootD);
-  const mixToggle = await waitFor(() => !!q("m4", "[data-cairn-grid-mode-toggle]"));
+  const mixToggle = await waitFor(() => !!q("m4", "[data-cairn-grid-mode-toggle]"), 5000, 20);
   report(mixToggle, "image+compare grid shows the normal|stacked toggle");
   q("m4", '[data-cairn-grid-mode="stacked"]')?.click();
-  const mixStacked = await waitFor(() => qa("m4", "[role='tab']").length === 2);
+  const mixStacked = await waitFor(() => qa("m4", "[role='tab']").length === 2, 5000, 20);
   report(mixStacked, `image+compare grid switches to stacked: 2 tabs (got ${qa("m4", "[role='tab']").length})`);
   const oneMixPane = qa("m4", '[data-cairn-stacked-pane="active"]').length === 1;
   report(oneMixPane, "exactly ONE pane rendered in the stack (single reused slot)");
   const imgOnTab0 = await waitFor(
-    () => !!(q("m4", "[data-cairn-stacked-pane] canvas") ?? q("m4", "[data-cairn-stacked-pane] img")),
-  );
+    () => !!(q("m4", "[data-cairn-stacked-pane] canvas") ?? q("m4", "[data-cairn-stacked-pane] img")), 5000, 20);
   report(imgOnTab0, "tab 0 mounts the IMAGE leaf");
   ok = ok && mixToggle && mixStacked && oneMixPane && imgOnTab0;
 
@@ -352,7 +324,7 @@ async function run(): Promise<boolean> {
     report(mixZoomApplied, `wheel-zoom applied on the stack's image (${JSON.stringify(mixImgZoom)})`);
 
     key("2"); // → slide-compare tab (source-swap on the reused instance)
-    await waitFor(() => activePaneIndex("m4") === 1);
+    await waitFor(() => activePaneIndex("m4") === 1, 5000, 20);
     await sleep(150);
     // A source-swap keeps the marked node; a remount would replace it.
     const mixMarkerSurvived =
@@ -382,13 +354,12 @@ async function run(): Promise<boolean> {
   const rootE = createRoot(host("m5"));
   rootE.render(createElement(PlotApp, { descriptor: imageDiffGrid("stacked") }));
   roots.push(rootE);
-  const diffUp = await waitFor(() => qa("m5", "[role='tab']").length === 2);
+  const diffUp = await waitFor(() => qa("m5", "[role='tab']").length === 2, 5000, 20);
   report(diffUp, `[image, diff] stack renders 2 tabs (got ${qa("m5", "[role='tab']").length})`);
   const oneDiffPane = qa("m5", '[data-cairn-stacked-pane="active"]').length === 1;
   report(oneDiffPane, "exactly ONE stacked-pane (single reused instance, no hidden sibling)");
   const diffSurface0 = await waitFor(
-    () => !!(q("m5", "[data-cairn-stacked-pane] canvas") ?? q("m5", "[data-cairn-stacked-pane] img")),
-  );
+    () => !!(q("m5", "[data-cairn-stacked-pane] canvas") ?? q("m5", "[data-cairn-stacked-pane] img")), 5000, 20);
   report(diffSurface0, "tab 0 (image leaf) mounts a pane surface");
   const surfaceBefore = q("m5", "[data-cairn-stacked-pane] canvas") ?? q("m5", "[data-cairn-stacked-pane] img");
   // Tag the live surface node so we can assert THIS exact DOM node survives.
@@ -410,7 +381,7 @@ async function run(): Promise<boolean> {
 
   // Flip to the DIFF tab. A source-swap keeps the marked node; a remount drops it.
   key("2");
-  await waitFor(() => activePaneIndex("m5") === 1);
+  await waitFor(() => activePaneIndex("m5") === 1, 5000, 20);
   await sleep(150);
   const markerSurvived = !!q("m5", '[data-cairn-stacked-pane] [data-cairn-noremount-marker="1"], [data-cairn-stacked-pane][data-cairn-noremount-marker="1"]')
     || (q("m5", "[data-cairn-stacked-pane] canvas")?.getAttribute("data-cairn-noremount-marker") === "1")

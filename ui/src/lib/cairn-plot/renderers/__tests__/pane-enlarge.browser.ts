@@ -50,30 +50,11 @@ import CpuImagePane from "../CpuImagePane";
 import { hdrSource, type HdrData } from "../image-backend";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 import { reframeViewportForResize } from "../../image/reframe";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const h = React.createElement;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "PANE ENLARGE PASS" : "PANE ENLARGE FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "PANE ENLARGE" });
 
 const consoleErrors: string[] = [];
 const origConsoleError = console.error.bind(console);
@@ -81,19 +62,6 @@ console.error = (...args: unknown[]) => {
   consoleErrors.push(args.map(String).join(" "));
   origConsoleError(...args);
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 
 // A small 4x4 grayscale HDR gradient (scene-linear), includes values >1.0.
 function buildHdr(): HdrData {
@@ -204,8 +172,7 @@ async function run(): Promise<boolean> {
 
   // --- Case 1: enlarge button + a non-blank inline canvas ------------------
   const btnFound = await waitFor(
-    () => !!container.querySelector('button[aria-label="Enlarge (fullscreen)"]'),
-  );
+    () => !!container.querySelector('button[aria-label="Enlarge (fullscreen)"]'), 6000, 20);
   report(btnFound, "enlarge toolbar button mounts");
   ok = ok && btnFound;
   if (!btnFound) {
@@ -214,7 +181,7 @@ async function run(): Promise<boolean> {
     return false;
   }
 
-  const canvasFound = await waitFor(() => !!paneCanvas(container));
+  const canvasFound = await waitFor(() => !!paneCanvas(container), 6000, 20);
   report(canvasFound, "pane canvas mounts inline");
   ok = ok && canvasFound;
   const inlineCanvas = paneCanvas(container)!;
@@ -304,8 +271,7 @@ async function run(): Promise<boolean> {
   enlargeBtn.click();
 
   const overlayAppeared = await waitFor(
-    () => !!document.querySelector("[data-cairn-plot-enlarge-backdrop]"),
-  );
+    () => !!document.querySelector("[data-cairn-plot-enlarge-backdrop]"), 6000, 20);
   report(overlayAppeared, "clicking enlarge creates the overlay");
   ok = ok && overlayAppeared;
   if (!overlayAppeared) {
@@ -441,11 +407,11 @@ async function run(): Promise<boolean> {
 
   // --- Case 3a: Escape closes; inline pane resumes -------------------------
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  const overlayGone = await waitFor(() => !document.querySelector("[data-cairn-plot-enlarge-backdrop]"));
+  const overlayGone = await waitFor(() => !document.querySelector("[data-cairn-plot-enlarge-backdrop]"), 6000, 20);
   report(overlayGone, "Escape removes the overlay");
   ok = ok && overlayGone;
 
-  const backInline = await waitFor(() => !!paneCanvas(container) && container.contains(inlineCanvas));
+  const backInline = await waitFor(() => !!paneCanvas(container) && container.contains(inlineCanvas), 6000, 20);
   report(backInline, "the pane resumes inline (same canvas) after Escape");
   ok = ok && backInline;
 
@@ -460,7 +426,7 @@ async function run(): Promise<boolean> {
 
   // --- Case 3b: backdrop click also closes ---------------------------------
   enlargeBtn.click();
-  const reopened = await waitFor(() => !!document.querySelector("[data-cairn-plot-enlarge-backdrop]"));
+  const reopened = await waitFor(() => !!document.querySelector("[data-cairn-plot-enlarge-backdrop]"), 6000, 20);
   report(reopened, "re-open via enlarge button");
   ok = ok && reopened;
   if (reopened) {
@@ -470,8 +436,7 @@ async function run(): Promise<boolean> {
       new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 1, clientY: 1 }),
     );
     const closedByBackdrop = await waitFor(
-      () => !document.querySelector("[data-cairn-plot-enlarge-backdrop]"),
-    );
+      () => !document.querySelector("[data-cairn-plot-enlarge-backdrop]"), 6000, 20);
     report(closedByBackdrop, "clicking the backdrop closes the overlay");
     ok = ok && closedByBackdrop;
   }

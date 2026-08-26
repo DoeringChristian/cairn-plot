@@ -22,22 +22,13 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor } from "../../../plot-descriptor";
+import { PlotApp } from "../../../../plot-bootstrap";
+import { registerCoreRenderers } from "../../../../plot-renderers";
+import type { PlotDescriptor } from "../../../../plot-descriptor";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "STACKED DIFF FLIP RESOLVE" });
+
 function note(message: string): void {
   // eslint-disable-next-line no-console
   console.log("NOTE:", message);
@@ -48,23 +39,6 @@ function note(message: string): void {
     p.style.color = "#88f";
     el.appendChild(p);
   }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "STACKED DIFF FLIP RESOLVE PASS" : "STACKED DIFF FLIP RESOLVE FAIL";
-}
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred: () => boolean, timeoutMs = 6000, step = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(step);
-  }
-  return pred();
 }
 
 function imgUrl(color: string): string {
@@ -129,7 +103,7 @@ async function main(): Promise<void> {
     const root: Root = createRoot(hostEl);
     root.render(createElement(PlotApp, { descriptor: imageDiffGrid() }));
 
-    const up = await waitFor(() => qa("m1", "[role='tab']").length >= 2);
+    const up = await waitFor(() => qa("m1", "[role='tab']").length >= 2, 6000, 20);
     report(up, `stacked [image, diff] grid renders a 2-tab strip`);
     report(activePaneIndex("m1") === 0, `tab 0 (image) active initially (got ${activePaneIndex("m1")})`);
 
@@ -140,16 +114,16 @@ async function main(): Promise<void> {
     // storm's flips are cache HITS (the case Finding 2 is about — a synchronous
     // hit that still crosses the reused-instance stale window). ------------------
     key("2");
-    await waitFor(() => activePaneIndex("m1") === 1);
+    await waitFor(() => activePaneIndex("m1") === 1, 6000, 20);
     await sleep(250);
     key("1");
-    await waitFor(() => activePaneIndex("m1") === 0);
+    await waitFor(() => activePaneIndex("m1") === 0, 6000, 20);
     await sleep(250);
     key("2");
-    await waitFor(() => activePaneIndex("m1") === 1);
+    await waitFor(() => activePaneIndex("m1") === 1, 6000, 20);
     await sleep(250);
     key("1");
-    await waitFor(() => activePaneIndex("m1") === 0);
+    await waitFor(() => activePaneIndex("m1") === 0, 6000, 20);
     await sleep(250);
     note("warm-up done (both slots resolved + cached)");
 
@@ -176,8 +150,7 @@ async function main(): Promise<void> {
 
     // No error/placeholder is currently on screen (settled coherently after the storm).
     const settled = await waitFor(
-      () => !q("m1", "[data-cairn-stacked-pane]")?.textContent?.includes("Loading") && activePaneIndex("m1") >= 0,
-    );
+      () => !q("m1", "[data-cairn-stacked-pane]")?.textContent?.includes("Loading") && activePaneIndex("m1") >= 0, 6000, 20);
     report(settled, `pane settled coherently after the storm (no lingering placeholder)`);
 
     const allOk = up && s.placeholderMounts === 0 && settled;

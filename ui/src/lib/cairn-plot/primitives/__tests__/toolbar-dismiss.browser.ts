@@ -27,30 +27,11 @@ import { createRoot } from "react-dom/client";
 import PlotToolbar from "../PlotToolbar";
 import type { PlotController, ControllerCapabilities } from "../../controls/types";
 import type { ToolbarConfig } from "../../controls/ToolbarConfig";
+import { createHarness } from "../../testing/harness";
 
 const h = React.createElement;
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "DISMISS PASS" : "DISMISS FAIL";
-  (window as unknown as { __dismissResult?: string }).__dismissResult = pass ? "pass" : "fail";
-}
+const { report, setOverallStatus } = createHarness({ title: "DISMISS", resultFlag: "__dismissResult" });
 
 const allCaps: ControllerCapabilities = {
   zoom: true, pan: true, boxZoom: true, select: true, lasso: true,

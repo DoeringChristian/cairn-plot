@@ -54,6 +54,7 @@ import GpuImagePane from "../../renderers/GpuImagePane";
 import { urlSource, type CompareSource } from "../../renderers/image-backend";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 import { isDeviceLostError } from "../../engine/webgpu/device";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const h = React.createElement;
 
@@ -66,39 +67,7 @@ interface SplitNumbersProbe {
   readbackSurface: () => Promise<{ data: Uint8Array | Float32Array; width: number; height: number } | null>;
 }
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "#6f6" : "#f66";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "#6f6" : "#f66";
-  }
-  document.title = pass ? "SPLIT NUMBERS PASS" : "SPLIT NUMBERS FAIL";
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 8000, stepMs = 25): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
+const { report, setOverallStatus } = createHarness({ title: "SPLIT NUMBERS", colors: { pass: "#6f6", fail: "#f66" } });
 
 /** A gray WxH image with a single unique SENTINEL texel — a data URL. */
 function patternUrl(
@@ -302,7 +271,7 @@ async function runMismatchCase(): Promise<boolean> {
   const paneH = 500;
   const H = mount("mismatch-harness", paneW, paneH, fgUrl, refUrl);
 
-  const canvasFound = await waitFor(() => !!H.canvas());
+  const canvasFound = await waitFor(() => !!H.canvas(), 8000, 25);
   report(canvasFound, "[mismatch] GPU compare canvas mounts");
   if (!canvasFound) {
     H.unmount();
@@ -315,7 +284,7 @@ async function runMismatchCase(): Promise<boolean> {
   const dimsReady = await waitFor(() => {
     const p = H.probe();
     return !!p && !!p.srcDims && p.srcDims.a.w === 64 && p.srcDims.b.w === 100;
-  });
+  }, 8000, 25);
   report(dimsReady, "[mismatch] both source dims loaded (ref 64×48, fg 100×70)");
   const contentA = await waitForContent(H.probe);
   report(contentA, "[mismatch] surface renders non-blank content (readback)");
@@ -408,7 +377,7 @@ async function runLargeCase(): Promise<boolean> {
   const paneH = 500;
   const H = mount("large-harness", paneW, paneH, fgUrl, refUrl);
 
-  const canvasFound = await waitFor(() => !!H.canvas());
+  const canvasFound = await waitFor(() => !!H.canvas(), 8000, 25);
   report(canvasFound, "[large] GPU compare canvas mounts");
   if (!canvasFound) {
     H.unmount();
@@ -420,7 +389,7 @@ async function runLargeCase(): Promise<boolean> {
   const ready = await waitFor(() => {
     const p = H.probe();
     return !!p && !!p.srcDims && p.srcDims.a.w === 1100 && p.srcDims.b.w === 1200;
-  });
+  }, 8000, 25);
   report(ready, "[large] both source dims loaded (ref 1100×760, fg 1200×800)");
   await waitForContent(H.probe);
   await sleep(200);

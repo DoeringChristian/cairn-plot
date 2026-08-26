@@ -25,28 +25,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import GpuImagePane from "../GpuImagePane";
 import { hdrSource, type HdrData } from "../image-backend";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "HISTOGRAM PASS" : "HISTOGRAM FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "HISTOGRAM" });
 
 const consoleErrors: string[] = [];
 const origConsoleError = console.error.bind(console);
@@ -54,18 +35,6 @@ console.error = (...args: unknown[]) => {
   consoleErrors.push(args.map(String).join(" "));
   origConsoleError(...args);
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 15000, stepMs = 50): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 
 /** A small MULTI-CHANNEL float image: R ramps across x, G ramps across y, B is a
  *  constant mid-grey — three genuinely distinct channel distributions. */
@@ -129,7 +98,7 @@ async function run(): Promise<boolean> {
   );
 
   // The pane + its toolbar mount (GPU backend, or CPU fallback if no adapter).
-  const toolbarReady = await waitFor(() => !!toolbarEl() && !!histToggle());
+  const toolbarReady = await waitFor(() => !!toolbarEl() && !!histToggle(), 15000, 50);
   report(toolbarReady, "the pane toolbar mounts with a histogram toggle button");
   ok = ok && toolbarReady;
   if (!toolbarReady) {
@@ -145,7 +114,7 @@ async function run(): Promise<boolean> {
   const panelUp = await waitFor(() => {
     const p = panelEl();
     return !!p && num(p, "data-hist-total") > 0 && num(p, "data-hist-series") === 3;
-  });
+  }, 15000, 50);
   report(panelUp, "toggling on mounts the panel with 3 channel series + a non-zero sample total");
   ok = ok && panelUp;
   if (!panelUp) {
@@ -199,12 +168,12 @@ async function run(): Promise<boolean> {
   const lumaBtn = panel.querySelector<HTMLElement>('[data-hist-mode="luminance"]');
   report(!!lumaBtn, "a combined-luminance grouping option is offered");
   lumaBtn?.click();
-  const collapsed = await waitFor(() => num(panelEl(), "data-hist-series") === 1);
+  const collapsed = await waitFor(() => num(panelEl(), "data-hist-series") === 1, 15000, 50);
   report(collapsed, "combined Luma grouping collapses to ONE series");
   ok = ok && collapsed;
   // Switch back to per-channel (Split) for the cursor check.
   panelEl()?.querySelector<HTMLElement>('[data-hist-mode="separate"]')?.click();
-  await waitFor(() => num(panelEl(), "data-hist-series") === 3);
+  await waitFor(() => num(panelEl(), "data-hist-series") === 3, 15000, 50);
 
   // --- 5. REACTS to a cursor sample ----------------------------------------
   const viewport = document.querySelector<HTMLElement>(
@@ -217,7 +186,7 @@ async function run(): Promise<boolean> {
   const gotCursor = await waitFor(() => {
     const p = panelEl();
     return !!p && p.getAttribute("data-hist-cursor") !== "" && p.getAttribute("data-hist-cursor-values") !== "";
-  });
+  }, 15000, 50);
   report(gotCursor, "a cursor move populates the per-pixel read-out");
   const firstVals = panelEl()?.getAttribute("data-hist-cursor-values") ?? "";
 
@@ -225,13 +194,13 @@ async function run(): Promise<boolean> {
   const changed = await waitFor(() => {
     const v = panelEl()?.getAttribute("data-hist-cursor-values") ?? "";
     return v !== "" && v !== firstVals;
-  });
+  }, 15000, 50);
   report(changed, "moving the cursor to a different pixel updates the read-out values");
   ok = ok && gotCursor && changed;
 
   // --- 6. toggle off → the panel unmounts ----------------------------------
   histToggle()!.click();
-  const gone = await waitFor(() => panelEl() === null);
+  const gone = await waitFor(() => panelEl() === null, 15000, 50);
   report(gone, "toggling off unmounts the panel");
   ok = ok && gone;
 

@@ -19,19 +19,9 @@ import {
 } from "../reduce/registry";
 import { meanSsimFromErrorMap } from "../ssim-metric";
 import type { Device, Texture } from "../types";
+import { createHarness } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
+const { report, setOverallStatus } = createHarness({ title: "REDUCE" });
 
 function info(message: string): void {
   // eslint-disable-next-line no-console
@@ -43,15 +33,6 @@ function info(message: string): void {
     p.style.color = "#8cf";
     el.appendChild(p);
   }
-}
-
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "REDUCE PASS" : "REDUCE FAIL";
 }
 
 const CHANNEL = getReduceProgram("channel")!;

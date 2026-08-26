@@ -32,39 +32,10 @@ import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 import { ContentAspectFrame } from "../ContentAspectFrame";
+import { createHarness, sleep, waitFor } from "../../testing/harness";
 
-function report(pass: boolean, message: string): void {
-  const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
-  // eslint-disable-next-line no-console
-  console[pass ? "log" : "error"](line);
-  const el = document.getElementById("result");
-  if (el) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    p.style.color = pass ? "green" : "red";
-    el.appendChild(p);
-  }
-}
-function setOverallStatus(pass: boolean): void {
-  const el = document.getElementById("status");
-  if (el) {
-    el.textContent = pass ? "PASS" : "FAIL";
-    el.style.color = pass ? "green" : "red";
-  }
-  document.title = pass ? "GRID-FLOAT-ASPECT PASS" : "GRID-FLOAT-ASPECT FAIL";
-}
+const { report, setOverallStatus } = createHarness({ title: "GRID-FLOAT-ASPECT" });
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-async function waitFor(predicate: () => boolean, timeoutMs = 6000, stepMs = 20): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await sleep(stepMs);
-  }
-  return predicate();
-}
 function near(a: number, b: number, tol: number): boolean {
   return Math.abs(a - b) <= tol;
 }
@@ -151,7 +122,7 @@ async function run(): Promise<boolean> {
   const seedSettled = await waitFor(() => {
     const f = frames("seed-host")[0]?.getBoundingClientRect();
     return !!f && f.width > 0 && f.height > 0 && near(f.width / f.height, ASPECT, 0.06);
-  });
+  }, 6000, 20);
   const seedFrame = frames("seed-host")[0]?.getBoundingClientRect();
   const seedAspect = seedFrame ? seedFrame.width / seedFrame.height : 0;
   const seedWide = !!seedFrame && seedFrame.width > seedFrame.height;
@@ -182,7 +153,7 @@ async function run(): Promise<boolean> {
       const r = c.getBoundingClientRect();
       return r.width > 0 && r.height > 0 && near(r.width / r.height, 2, 0.15);
     });
-  });
+  }, 6000, 20);
   const bCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
   report(bCells.length >= 3, `SAME-ASPECT: three viewports present (${bCells.length})`);
   const bWide = bCells.length >= 3 && bCells.every((r) => near(r.width / r.height, 2, 0.15) && r.width > r.height);
@@ -215,7 +186,7 @@ async function run(): Promise<boolean> {
     rootC.render(createElement(PlotApp, { descriptor: gridDescriptor([[128, 64], [96, 96], [64, 128]]) }));
     roots.push(rootC);
   }
-  await waitFor(() => gridCells("grid-host").length >= 3 && cellBodies("grid-host").length >= 3);
+  await waitFor(() => gridCells("grid-host").length >= 3 && cellBodies("grid-host").length >= 3, 6000, 20);
   await sleep(120); // let the representative aspect settle across all three reports
   const cCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
   const cBodies = cellBodies("grid-host").map((c) => c.getBoundingClientRect());
@@ -255,7 +226,7 @@ async function run(): Promise<boolean> {
   await waitFor(() => {
     const cs = gridCells("grid-host");
     return cs.length >= 3 && cs.every((c) => c.getBoundingClientRect().height > 0 && c.getBoundingClientRect().height <= CAP + 4);
-  });
+  }, 6000, 20);
   await sleep(80);
   const dCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
   const dCapped = dCells.length >= 3 && dCells.every((r) => r.height <= CAP + 4);
