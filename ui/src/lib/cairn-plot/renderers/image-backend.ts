@@ -27,7 +27,7 @@ import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import type { PixelValueNotation } from "../primitives/PixelValueOverlay";
 import { floatPixelsFrom, type FloatPixels } from "../image/pixel-buffer.ts";
 import type { DeepFlattenController } from "../image/decoders.ts";
-import type { ViewportSettings } from "../viewport/viewport-settings";
+import type { ViewportSettings } from "../settings/viewport-settings";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`

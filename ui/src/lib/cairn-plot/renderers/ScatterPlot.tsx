@@ -24,8 +24,8 @@ import {
   useChartViewport,
   type PlotRect,
   type SelectionGeometry,
-} from "../viewport/use-chart-viewport";
-import { pointInPolygon, pointInRect } from "../viewport/chart-viewport-math";
+} from "../chart/use-chart-viewport";
+import { pointInPolygon, pointInRect } from "../chart/chart-viewport-math";
 import { useChartController } from "./use-chart-controller";
 import PlotToolbar from "../primitives/PlotToolbar";
 

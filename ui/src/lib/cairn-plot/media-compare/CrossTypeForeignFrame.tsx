@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo } from "react";
-import type { FrameSource } from "../viewport/types";
+import type { FrameSource } from "../host/types";
 import type { ForeignFrameLoaders } from "./cross-type-frame";
 
 /**

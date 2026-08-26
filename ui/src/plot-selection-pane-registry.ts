@@ -46,8 +46,8 @@ export interface RegisteredPane {
    *  frame's live box, for peer reads (formation converge, stage
    *  copy-on-create, harness/Host-API seams) and external writes. */
   readonly settings?: {
-    get: () => import("./lib/cairn-plot/viewport/viewport-settings").ViewportSettings | null;
-    set: (patch: import("./lib/cairn-plot/viewport/viewport-settings").ViewportSettings) => void;
+    get: () => import("./lib/cairn-plot/settings/viewport-settings").ViewportSettings | null;
+    set: (patch: import("./lib/cairn-plot/settings/viewport-settings").ViewportSettings) => void;
   };
 }
 

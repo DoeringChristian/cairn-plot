@@ -5,7 +5,7 @@ import type { Scene3DSyncOptions } from "../three/use-scene3d";
 import { createCameraSettingsPeer, type CameraState } from "../three/camera-settings";
 import { CrossTypeCompositeMediaPane } from "./compositor";
 import type { MediaCompareModeKind } from "./mode";
-import type { FrameSource } from "../viewport/types";
+import type { FrameSource } from "../host/types";
 import type { Colormap, DiffMode } from "../types";
 import { useOffscreenSnapshot } from "./use-offscreen-snapshot";
 

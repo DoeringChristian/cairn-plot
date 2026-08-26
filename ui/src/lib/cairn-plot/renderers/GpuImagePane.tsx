@@ -117,8 +117,8 @@ import {
   type TevHistogramsResult,
 } from "./image-histogram";
 import { TEV_HISTOGRAM_BINS } from "../image/histogram-binning";
-import { useSeedGroupOnFormation, useViewportSettings } from "./use-viewport-settings";
-import type { ViewportSettings } from "../viewport/viewport-settings";
+import { useSeedGroupOnFormation, useViewportSettings } from "../settings/use-viewport-settings";
+import type { ViewportSettings } from "../settings/viewport-settings";
 import {
   displayToolbarButton,
   scalarFaceColormap,

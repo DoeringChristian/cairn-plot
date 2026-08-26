@@ -19,10 +19,10 @@
  * (resolved through each viewport's `resolve*ViewConfig`), with any field
  * overridable via the descriptor's `props`.
  */
-import { PointCloudSingleView } from "./lib/cairn-plot/viewport/pointcloud-viewport";
-import { MeshSingleView } from "./lib/cairn-plot/viewport/mesh-viewport";
-import { VolumeSingleView } from "./lib/cairn-plot/viewport/volume-viewport";
-import { BoxesSingleView } from "./lib/cairn-plot/viewport/boxes-viewport";
+import { PointCloudSingleView } from "./lib/cairn-plot/host/pointcloud-viewport";
+import { MeshSingleView } from "./lib/cairn-plot/host/mesh-viewport";
+import { VolumeSingleView } from "./lib/cairn-plot/host/volume-viewport";
+import { BoxesSingleView } from "./lib/cairn-plot/host/boxes-viewport";
 import { ChartBox } from "./plot-standalone-helpers";
 
 type P = Record<string, any>;

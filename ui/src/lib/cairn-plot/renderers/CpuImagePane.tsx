@@ -95,8 +95,8 @@ import {
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell, { type EnlargeControl } from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
-import { useSeedGroupOnFormation, useViewportSettings } from "./use-viewport-settings";
-import type { ViewportSettings } from "../viewport/viewport-settings";
+import { useSeedGroupOnFormation, useViewportSettings } from "../settings/use-viewport-settings";
+import type { ViewportSettings } from "../settings/viewport-settings";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
   computeDataIndex,

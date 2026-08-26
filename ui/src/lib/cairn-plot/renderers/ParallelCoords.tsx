@@ -10,7 +10,7 @@ import { AXIS } from "../theme";
 import Tooltip from "../primitives/Tooltip";
 import { TickText, AxisTitle } from "../primitives/Axis";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
-import type { ChartCapabilities } from "../viewport/use-chart-viewport";
+import type { ChartCapabilities } from "../chart/use-chart-viewport";
 import PlotToolbar from "../primitives/PlotToolbar";
 import type { PlotController, ToPNGOptions } from "../controls/types";
 import { plotToPng, type PlotToPngOptions } from "../primitives/plot-to-png";

@@ -29,10 +29,10 @@ const LIB = join(HERE, ".."); // src/lib/cairn-plot
 const read = (rel: string) => readFileSync(join(LIB, rel), "utf8");
 
 const VIEWPORTS = [
-  "viewport/mesh-viewport.tsx",
-  "viewport/pointcloud-viewport.tsx",
-  "viewport/boxes-viewport.tsx",
-  "viewport/volume-viewport.tsx",
+  "host/mesh-viewport.tsx",
+  "host/pointcloud-viewport.tsx",
+  "host/boxes-viewport.tsx",
+  "host/volume-viewport.tsx",
 ];
 
 test("ViewportCaption: single-owner caption class contract", () => {
@@ -51,7 +51,7 @@ test("ViewportCaption: single-owner caption class contract", () => {
 });
 
 test("ViewportPlaceholder: single-owner placeholder classes, w-full always", () => {
-  const src = read("viewport/ViewportPlaceholder.tsx");
+  const src = read("host/ViewportPlaceholder.tsx");
   // Every variant must be full-width — the centering-inconsistency fix (the
   // old reference-side "empty" dropped w-full).
   const classLits = src.match(/`\$\{BASE\}[^`]*`/g) ?? [];

@@ -48,7 +48,7 @@ import { PlotApp } from "../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../plot-renderers";
 import type { PlotDescriptor } from "../../../plot-descriptor";
 import { getSharedDevice } from "../engine/device";
-import { registerRuntimeEntries } from "../viewport/runtime-store";
+import { registerRuntimeEntries } from "../store/runtime-store";
 import {
   startPaneRenderLog,
   stopPaneRenderLog,
@@ -64,7 +64,7 @@ import {
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
-} from "../viewport/selection-store";
+} from "../selection/selection-store";
 import { getRegisteredPane } from "../../../plot-selection-pane-registry";
 
 function report(pass: boolean, message: string): void {

@@ -1,4 +1,4 @@
-import type { FrameSource } from "../viewport/types";
+import type { FrameSource } from "../host/types";
 
 // ---------------------------------------------------------------------------
 // Cross-type raster alignment (WS-VC6, prototype-first per the design doc's

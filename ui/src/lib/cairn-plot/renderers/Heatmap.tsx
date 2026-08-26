@@ -9,7 +9,7 @@ import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import PlotColorbar from "../primitives/PlotColorbar";
 import { colorbarReservedRight } from "../primitives/colorbar-layout";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
-import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import { useChartViewport, type PlotRect } from "../chart/use-chart-viewport";
 import { useChartController } from "./use-chart-controller";
 import PlotToolbar from "../primitives/PlotToolbar";
 

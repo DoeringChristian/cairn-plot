@@ -34,8 +34,8 @@ import {
   subscribeSettingsPatches,
   type ViewportSettings,
   type SettingsKey,
-} from "../viewport/viewport-settings";
-import { registerSettingsPeer } from "../viewport/settings-peers.ts";
+} from "./viewport-settings";
+import { registerSettingsPeer } from "./settings-peers.ts";
 
 /** A group this viewport belongs to. `keys` scopes what this MEMBER applies
  *  from the channel (authored grid view sync = `["view"]`). */

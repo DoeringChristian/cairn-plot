@@ -31,8 +31,8 @@
  */
 
 import type { ImageOverlayData } from "../types";
-import type { ImageViewportItem } from "./image-viewport";
-import type { ViewportDataArgs, ViewportDataResult } from "./types";
+import type { ImageViewportItem } from "../host/image-viewport";
+import type { ViewportDataArgs, ViewportDataResult } from "../host/types";
 import type { RuntimeStoreEntry } from "./runtime-store";
 // Explicit `.ts` module path (not the `../transforms` barrel) so this module —
 // and its float-decode helpers — load under Node's type-stripping test runner

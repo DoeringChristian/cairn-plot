@@ -24,7 +24,7 @@ import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
-import { registerRuntimeEntries } from "../../viewport/runtime-store";
+import { registerRuntimeEntries } from "../../store/runtime-store";
 
 registerCoreRenderers();
 

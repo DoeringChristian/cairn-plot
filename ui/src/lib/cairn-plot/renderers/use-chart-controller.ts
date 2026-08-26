@@ -18,7 +18,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { RefObject } from "react";
 import { plotToPng } from "../primitives/plot-to-png";
-import type { ChartDragMode, ChartViewportResult } from "../viewport/use-chart-viewport";
+import type { ChartDragMode, ChartViewportResult } from "../chart/use-chart-viewport";
 import type {
   ControllerCapabilities,
   DragMode,

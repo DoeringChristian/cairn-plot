@@ -35,7 +35,7 @@ import {
   paneSyncGroups,
   GLOBAL_SELECTION_BASE,
   __resetGlobalSelectionStoreForTest,
-} from "../../viewport/selection-store";
+} from "../../selection/selection-store";
 
 function report(pass: boolean, message: string): void {
   const line = `${pass ? "PASS" : "FAIL"}: ${message}`;

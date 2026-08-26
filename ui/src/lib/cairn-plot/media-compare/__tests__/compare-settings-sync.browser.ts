@@ -47,7 +47,7 @@ import {
   paneSyncGroups,
   GLOBAL_SELECTION_BASE,
   __resetGlobalSelectionStoreForTest,
-} from "../../viewport/selection-store";
+} from "../../selection/selection-store";
 
 /** The subset of `GpuComparePane`'s `__cairnCompareProbe` this harness drives. */
 interface CompareSyncProbe {

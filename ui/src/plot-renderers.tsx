@@ -58,12 +58,12 @@ import {
 import { warnGpuUnavailable } from "./lib/cairn-plot/primitives/capability-notice";
 import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
-import { useImageView } from "./lib/cairn-plot/renderers/use-image-view";
+import { useImageView } from "./lib/cairn-plot/settings/use-image-view";
 import {
   ChartViewportSyncProvider,
   type ChartViewportSyncTarget,
-} from "./lib/cairn-plot/viewport/use-chart-viewport";
-import type { ViewportSettings } from "./lib/cairn-plot/viewport/viewport-settings.ts";
+} from "./lib/cairn-plot/chart/use-chart-viewport";
+import type { ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings.ts";
 import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
 import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import {

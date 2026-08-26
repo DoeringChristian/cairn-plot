@@ -7,7 +7,7 @@ import { barChartPads } from "./bar-layout";
 import { useContainerSize } from "../hooks/use-container-size";
 import Tooltip from "../primitives/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../primitives/tooltip-position";
-import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import { useChartViewport, type PlotRect } from "../chart/use-chart-viewport";
 import { useChartController } from "./use-chart-controller";
 import { useSeriesVisibility } from "../hooks/use-series-visibility";
 import PlotToolbar from "../primitives/PlotToolbar";

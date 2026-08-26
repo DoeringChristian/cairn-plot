@@ -52,12 +52,12 @@ import {
   REFERENCE_COLOR_RGB,
   type SelectionSnapshot,
   type StageMode,
-} from "./lib/cairn-plot/viewport/selection-store";
+} from "./lib/cairn-plot/selection/selection-store";
 import {
   publishSettingsPatch,
   subscribeSettingsPatches,
   type ViewportSettings,
-} from "./lib/cairn-plot/viewport/viewport-settings";
+} from "./lib/cairn-plot/settings/viewport-settings";
 import {
   imageCompatibleCount,
   planCompareGrid,

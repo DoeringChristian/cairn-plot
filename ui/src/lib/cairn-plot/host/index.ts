@@ -32,7 +32,7 @@ export {
   type ChartViewportResult,
   type PlotRect,
   type UseChartViewportArgs,
-} from "./use-chart-viewport";
+} from "../chart/use-chart-viewport";
 export {
   applyConstraints,
   boxToDomain,
@@ -44,7 +44,7 @@ export {
   type ConstrainAxis,
   type DomainClamp,
   type MinSpan,
-} from "./chart-viewport-math";
+} from "../chart/chart-viewport-math";
 
 // The DataSource seam (hash -> TData mapping cores) — no heavy dependencies
 // (parseNpy/parseNpz/PropertyMap are already eager-safe, see their own
@@ -65,7 +65,7 @@ export {
   type PointCloudArrays,
   type MeshArrays,
   type BoxesArrays,
-} from "./data-sources";
+} from "../store/data-sources";
 
 // Overlay-metadata parser (shared by the app's viewport-registry and the
 // standalone plot bundle's LOCAL image provider). Pure, no `api` dependency.
@@ -81,7 +81,7 @@ export {
   PLOT_STORE_SCRIPT_ID,
   type PlotStore,
   type PlotStoreEntry,
-} from "./local-store";
+} from "../store/local-store";
 
 // JS-side RUNTIME blob registry — the zero-base64 companion to the LOCAL store,
 // consulted first by `createLocalDataSource`. Eager-safe (a plain Map + globals).
@@ -95,14 +95,14 @@ export {
   type RuntimeStoreEntry,
   type RuntimeBytesEntry,
   type RuntimeFloatEntry,
-} from "./runtime-store";
+} from "../store/runtime-store";
 
 // NOTE: pointcloud-viewport.tsx (WS-VC4) is DELIBERATELY not re-exported
 // from this barrel (or cairn-plot/index.ts's, both of which are imported
 // eagerly by non-lazy call sites such as VisualContentCard.tsx). It pulls
 // in `three`/`PointCloudViewer`, and this repo's existing lazy-loading
 // boundary keeps that dependency out of the main bundle (see
-// CardRenderer.tsx's `lazy(() => import("./PointCloudVisualCard"))`).
+// CardRenderer.tsx's `lazy(() => import("../viewport/PointCloudVisualCard"))`).
 // Import it directly: `lib/cairn-plot/viewport/pointcloud-viewport`. Rollup
 // tree-shaking would likely elide an unused barrel re-export too, but this
 // avoids depending on that guarantee for a dependency this heavy.

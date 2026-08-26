@@ -30,7 +30,7 @@ import type { PlotDescriptor } from "../../../../plot-descriptor";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
-} from "../../viewport/selection-store";
+} from "../../selection/selection-store";
 import { __resetSelectionOverlayHostForTest } from "../../../../plot-selection-stage";
 import { __resetSelectionRegistryForTest } from "../../../../plot-selection-pane-registry";
 

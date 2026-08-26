@@ -15,7 +15,7 @@
  *  - `{ url }` (or a URL string) → a `url` DataSpec verbatim (browser-native) or
  *    the fetch+decode `image.url` seam (`.exr`/`.npy` HDR), by reference.
  */
-import { mintRuntimeHash, type RuntimeStoreEntry } from "../viewport/runtime-store.ts";
+import { mintRuntimeHash, type RuntimeStoreEntry } from "../store/runtime-store.ts";
 import { isBrowserNativeFormat, sniffFormat } from "../image/decoders.ts";
 import type { DataSpec } from "../../../plot-descriptor.ts";
 

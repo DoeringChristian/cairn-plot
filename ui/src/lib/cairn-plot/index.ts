@@ -269,13 +269,13 @@ export {
   getRuntimeEntry,
   getRuntimeStore,
   mintRuntimeHash,
-} from "./viewport";
+} from "./host";
 export type {
   RuntimeStore,
   RuntimeStoreEntry,
   RuntimeBytesEntry,
   RuntimeFloatEntry,
-} from "./viewport";
+} from "./host";
 export type {
   PlotStore,
   PlotStoreEntry,
@@ -296,4 +296,4 @@ export type {
   PointCloudArrays,
   MeshArrays,
   BoxesArrays,
-} from "./viewport";
+} from "./host";

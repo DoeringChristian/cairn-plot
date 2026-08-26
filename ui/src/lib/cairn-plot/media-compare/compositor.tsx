@@ -40,7 +40,7 @@ import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../renderers/image-backend";
-import { useViewportSettings } from "../renderers/use-viewport-settings";
+import { useViewportSettings } from "../settings/use-viewport-settings";
 
 import type {
   CompareSource,

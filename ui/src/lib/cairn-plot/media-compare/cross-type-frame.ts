@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { FrameSource } from "../viewport/types";
+import type { FrameSource } from "../host/types";
 
 // ---------------------------------------------------------------------------
 // WS-VC6 cross-type bridge — the pure (JSX-free) half of the "foreign 3D type"

@@ -18,7 +18,7 @@
  */
 import { useCallback, useState } from "react";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
-import type { ViewportSettings } from "../viewport/viewport-settings";
+import type { ViewportSettings } from "./viewport-settings";
 
 export function useImageView(
   settings: ViewportSettings | null | undefined,

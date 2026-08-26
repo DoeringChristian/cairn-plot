@@ -55,7 +55,7 @@ import {
   type PixelPoint,
   type PixelRect,
 } from "./chart-viewport-math";
-import type { ViewportSettings } from "./viewport-settings.ts";
+import type { ViewportSettings } from "../settings/viewport-settings.ts";
 import { useModifierKey } from "../hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";

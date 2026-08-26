@@ -37,7 +37,7 @@ import {
   pointerMidpoint,
   wheelZoomFactor,
   type ClientRect,
-} from "../../viewport/chart-viewport-math";
+} from "../../chart/chart-viewport-math";
 
 export interface PlotOffset {
   top: number;

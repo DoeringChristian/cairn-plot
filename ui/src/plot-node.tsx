@@ -58,7 +58,7 @@ import {
   REFERENCE_COLOR,
   REFERENCE_COLOR_RGB,
   type SelectionMode,
-} from "./lib/cairn-plot/viewport/selection-store";
+} from "./lib/cairn-plot/selection/selection-store";
 import {
   EnlargeInterceptContext,
   type EnlargeIntercept,
@@ -110,9 +110,9 @@ import {
   applyChannelSlice,
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
-import { type ViewportSettings } from "./lib/cairn-plot/viewport/viewport-settings";
-import { useViewportSettings } from "./lib/cairn-plot/renderers/use-viewport-settings";
-import { peekGroupSettings } from "./lib/cairn-plot/viewport/settings-peers.ts";
+import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
+import { useViewportSettings } from "./lib/cairn-plot/settings/use-viewport-settings";
+import { peekGroupSettings } from "./lib/cairn-plot/settings/settings-peers.ts";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon

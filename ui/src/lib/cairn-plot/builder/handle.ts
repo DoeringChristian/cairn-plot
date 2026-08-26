@@ -9,8 +9,8 @@
  * not present, `.mount()`/`.toElement()` throw a clear, actionable error.
  */
 import type { PlotDescriptor, PlotNode } from "../../../plot-descriptor.ts";
-import type { PlotStore } from "../viewport/local-store.ts";
-import type { RuntimeStoreEntry } from "../viewport/runtime-store.ts";
+import type { PlotStore } from "../store/local-store.ts";
+import type { RuntimeStoreEntry } from "../store/runtime-store.ts";
 
 /** The renderer seam the CORE bundle satisfies: render a descriptor OBJECT
  *  (not a DOM `<script>` blob) into `el`, first registering its base64 store +

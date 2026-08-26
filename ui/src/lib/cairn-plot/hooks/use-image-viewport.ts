@@ -5,8 +5,8 @@ import {
   pinchZoomScale,
   pointerDistance,
   pointerMidpoint,
-} from "../viewport/chart-viewport-math";
-import { reframeViewportForResize } from "../viewport/reframe";
+} from "../chart/chart-viewport-math";
+import { reframeViewportForResize } from "../image/reframe";
 
 export { reframeViewportForResize };
 

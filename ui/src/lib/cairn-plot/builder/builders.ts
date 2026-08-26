@@ -7,7 +7,7 @@
  * `./data`) — so a JS-authored plot is identical to its Python twin.
  */
 import type { DataSpec, PlotNode } from "../../../plot-descriptor.ts";
-import type { RuntimeStoreEntry } from "../viewport/runtime-store.ts";
+import type { RuntimeStoreEntry } from "../store/runtime-store.ts";
 import { makeHandle, type Mounter, type PlotHandle } from "./handle.ts";
 import { shapeImageData, type ShapedImage } from "./data.ts";
 import {
@@ -413,7 +413,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
 
     registerRuntime(entries) {
       // Lazy import to avoid pulling the viewport barrel into every builder call.
-      void import("../viewport/runtime-store.ts").then((m) => m.registerRuntimeEntries(entries));
+      void import("../store/runtime-store.ts").then((m) => m.registerRuntimeEntries(entries));
     },
   };
 }

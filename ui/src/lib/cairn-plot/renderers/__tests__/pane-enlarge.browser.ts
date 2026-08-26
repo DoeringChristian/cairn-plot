@@ -49,7 +49,7 @@ import { createRoot } from "react-dom/client";
 import CpuImagePane from "../CpuImagePane";
 import { hdrSource, type HdrData } from "../image-backend";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
-import { reframeViewportForResize } from "../../viewport/reframe";
+import { reframeViewportForResize } from "../../image/reframe";
 
 const h = React.createElement;
 

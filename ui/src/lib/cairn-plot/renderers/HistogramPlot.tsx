@@ -7,7 +7,7 @@ import { rebinHistograms, type HistogramData } from "../transforms/histogram";
 import Tooltip from "../primitives/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../primitives/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../primitives/tooltip-position";
-import { useChartViewport, type PlotRect } from "../viewport/use-chart-viewport";
+import { useChartViewport, type PlotRect } from "../chart/use-chart-viewport";
 import { useChartController } from "./use-chart-controller";
 import PlotToolbar from "../primitives/PlotToolbar";
 import Heatmap from "./Heatmap";
