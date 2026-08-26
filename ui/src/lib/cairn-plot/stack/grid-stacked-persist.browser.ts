@@ -17,8 +17,6 @@ import { createElement } from "react";
 import { PlotApp } from "../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../plot-renderers";
 import type { PlotDescriptor } from "../../../plot-descriptor";
-import GpuImagePane from "../renderers/GpuImagePane";
-import { listDiffMenuModes } from "../engine/kernels";
 
 interface CompareProbe {
   compareMode: string;
@@ -116,12 +114,9 @@ async function run(): Promise<boolean> {
   registerCoreRenderers();
   const w = window as unknown as Record<string, unknown>;
   w.__cairnPlotRenderMode = "gpu";
-  w.__cairnPlotUseGpuImage = true;
   // EVERY compare mode lowers to the unified image pane (`GpuImagePane` +
   // `compareSource`) — `GpuComparePane` is deleted (Phase 4). Wire it so
   // `resolveImageRenderer("gpu")` finds it when the active slot flips.
-  w.__cairnPlotGpuImagePane = GpuImagePane;
-  w.__cairnPlotDiffMenuModes = listDiffMenuModes();
 
   const roots: Root[] = [];
   const root = createRoot(mountEl());

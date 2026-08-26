@@ -32,6 +32,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from "react";
@@ -42,6 +43,12 @@ import BarChart from "./lib/cairn-plot/renderers/BarChart";
 import HistogramPlot from "./lib/cairn-plot/renderers/HistogramPlot";
 import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
 import CpuImagePane from "./lib/cairn-plot/renderers/CpuImagePane";
+import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
+import {
+  ensureGpuImageProbe,
+  gpuImageGateState,
+  subscribeGpuImageGate,
+} from "./lib/cairn-plot/renderers/gpu-image-gate";
 import {
   resolveRenderMode,
   shapeDims,
@@ -86,27 +93,9 @@ type P = Record<string, any>;
 // the same CPU backend, so a page never blanks whether WebGPU is simply
 // unavailable (this seam) or available-but-fails-at-runtime (C1).
 //
-// `core` (this file) must never statically import the engine or
-// `GpuImagePane` — that would pull the WebGPU RHI into `core.iife.js`, which
-// the bundle guard forbids. Instead, the lazy `gpu-image` addon
-// (`plot-gpu-image-addon.tsx`, emitted only on pages with an image/HDR-image/
-// compare node) sets `window.__cairnPlotGpuImagePane` once its capability
-// check (`getSharedDevice()`) resolves, and dispatches
-// `GPU_IMAGE_READY_EVENT` so an already-mounted adapter re-renders onto it —
-// see that file's module doc for why a `registerRenderer("image", …)`
-// registry overwrite (the Task 6 approach) doesn't work here: `GpuImagePane`
-// needs a CALLER-OWNED `zoom`/`pan`/`onViewportChange` (it has no internal
-// viewport state), which only `ImageStandalone`/`ImageHdrStandalone` (below)
-// can supply, not a bare registry swap.
-const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready"; // must match plot-gpu-image-addon.tsx's dispatch
-
-declare global {
-  interface Window {
-    __cairnPlotGpuImagePane?: ComponentType<any>;
-    __cairnPlotUseGpuImage?: boolean;
-  }
-}
-
+// `GpuImagePane` ships IN core (addon-fold ruling 2026-08-26) — the async
+// part that remains is DEVICE acquisition, owned by `gpu-image-gate.ts`:
+// image surfaces render the CPU backend until the probe settles, then flip.
 // Warn once (not per render) when `"gpu"` is forced but the engine backend
 // is genuinely unavailable and the CPU backend is substituted.
 let warnedForcedGpuUnavailable = false;
@@ -135,36 +124,36 @@ let warnedForcedGpuUnavailable = false;
  * resolves between accept the same `ImageBackendProps` shape.
  */
 function resolveImageRenderer(mode: RenderMode): ImageBackend {
-  const [, bump] = useState(0);
+  const gate = useSyncExternalStore(subscribeGpuImageGate, gpuImageGateState, gpuImageGateState);
+  // Kick the LAZY device probe from the first image surface (an effect, so
+  // render stays pure; idempotent afterwards).
   useEffect(() => {
-    if (typeof window === "undefined" || window.__cairnPlotGpuImagePane) return;
-    const onReady = () => bump((n) => n + 1);
-    window.addEventListener(GPU_IMAGE_READY_EVENT, onReady);
-    return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
-  }, []);
+    if (mode !== "cpu") ensureGpuImageProbe();
+  }, [mode]);
   if (typeof window === "undefined" || mode === "cpu") return CpuImagePane;
-  const gpuPane = window.__cairnPlotGpuImagePane as ImageBackend | undefined;
   if (mode === "gpu") {
-    if (gpuPane) return gpuPane;
+    if (gate === "ready") return GpuImagePane;
     // WebGPU GENUINELY absent (`navigator.gpu` hidden — unsupported browser OR
     // an insecure origin, which `[SecureContext]`-gates it away) → the shared
-    // bootstrap-level, two-case, once-per-page warn (device-acquisition/
-    // fallback seam). If `navigator.gpu` IS present the pane just isn't
-    // registered YET (addon still loading) — that's the forced-race note.
-    if (!("gpu" in navigator)) {
-      warnGpuUnavailable();
-    } else if (!warnedForcedGpuUnavailable) {
-      warnedForcedGpuUnavailable = true;
-      // eslint-disable-next-line no-console
-      console.warn(
-        'cairn-plot: render mode "gpu" was forced but the WebGPU image backend is unavailable ' +
-          "(gpu-image addon not loaded yet, or WebGPU init failed) — falling back to the CPU backend",
-      );
+    // bootstrap-level, two-case, once-per-page warn. `unknown` = the probe
+    // hasn't settled yet — the flip to the engine pane follows automatically.
+    if (gate === "unavailable") {
+      if (!("gpu" in navigator)) {
+        warnGpuUnavailable();
+      } else if (!warnedForcedGpuUnavailable) {
+        warnedForcedGpuUnavailable = true;
+        // eslint-disable-next-line no-console
+        console.warn(
+          'cairn-plot: render mode "gpu" was forced but the WebGPU image backend is unavailable — ' +
+            "falling back to the CPU backend",
+        );
+      }
     }
     return CpuImagePane;
   }
-  // "auto"
-  return window.__cairnPlotUseGpuImage === true && gpuPane ? gpuPane : CpuImagePane;
+  // "auto": engine once the probe confirms it (the host opt-out short-circuits
+  // the probe to "unavailable" inside the gate).
+  return gate === "ready" ? GpuImagePane : CpuImagePane;
 }
 
 // --- ScalarPlot: owns viewport + promotedSeries interactive state ----------

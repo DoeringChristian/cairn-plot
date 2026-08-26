@@ -1,51 +1,33 @@
 /**
- * `plot-gpu-image-addon.tsx`'s capability-gated activation — Case 6 of the
- * `GpuImagePane` harness (Task 6/8 of the WebGPU engine, Sub-project 1), split
- * into its OWN bundle/`<script type="module">` (see
- * `gpu-image-pane.browser.ts`'s doc comment for why: the addon's top-level
- * `void tryRegister()` side effect must observe the page's real, unpatched
- * globals — only a genuinely separate `<script>` tag, its own module graph,
- * guarantees that; a dynamic `import()` inside the SAME single-file esbuild
- * bundle as the rest of the harness does not).
+ * `gpu-image-gate.ts`'s capability contract — Case 6 of the `GpuImagePane`
+ * harness, the successor of the old ADDON-protocol check (the gpu-image addon
+ * was folded into core, ruling 2026-08-26: no window component seam, no ready
+ * event, no include-once flag — one static import plus the lazy device gate).
  *
  * `gpu-image-pane.browser.html` loads, in document order:
  *   1. `gpu-image-pane.browser.bundle.js` (cases 1-5, `type="module"`,
  *      deferred);
- *   2. THIS file's bundle (`type="module"`, deferred, runs after (1) starts
- *      — see below for how it still waits for (1) to actually FINISH before
- *      writing the page's final #status).
+ *   2. THIS file's bundle (`type="module"`, deferred — it still waits for (1)
+ *      to actually FINISH before writing the page's final #status).
  *
- * Task 8 changed the addon's activation contract from a registry overwrite
- * (`window.__cairnPlotRegisterRenderer("image", …)`) to a window SEAM
- * (`window.__cairnPlotGpuImagePane`) + a default-on capability flag
- * (`window.__cairnPlotUseGpuImage`) + a `GPU_IMAGE_READY_EVENT` wake-up — see
- * `plot-gpu-image-addon.tsx`'s module doc for why (a raw `GpuImagePane` has no
- * owned viewport state, and the old registry-overwrite raced the mount).
- * Asserts the addon, once `getSharedDevice()` resolves: (a) sets
- * `window.__cairnPlotGpuImagePane` to a function (the pane component), (b)
- * sets `window.__cairnPlotGpuComparePane` likewise, (c) defaults
- * `window.__cairnPlotUseGpuImage` to `true`, (d) sets
- * `window.__cairnPlotGpuImageLoaded = true`, and (e) dispatches the
- * ready event.
+ * Asserts the gate: (a) `ensureGpuImageProbe()` settles to `"ready"` on a
+ * WebGPU-capable page and notifies subscribers, (b) the HOST opt-out
+ * (`window.__cairnPlotUseGpuImage = false`) short-circuits a fresh gate to
+ * `"unavailable"` without probing, (c) the reset seam restores `"unknown"`.
  */
-import "../../../../plot-gpu-image-addon";
+import {
+  ensureGpuImageProbe,
+  gpuImageGateState,
+  subscribeGpuImageGate,
+  __resetGpuImageGateForTest,
+} from "../gpu-image-gate";
 
 declare global {
   interface Window {
-    // NOTE: `__cairnPlotGpuImageLoaded` / `__cairnPlotGpuImagePane` /
-    // `__cairnPlotGpuComparePane` / `__cairnPlotUseGpuImage` are already
-    // globally declared by the addon module (transitively imported above) —
-    // do NOT re-declare them here or the types conflict (TS2717). Only the
-    // harness-local globals below.
     __gpuImagePaneTestResult?: "pass" | "fail";
     __gpuImagePaneMainDone?: boolean;
-    __gpuReadyEventSeen?: boolean;
   }
 }
-
-window.addEventListener("cairn-plot:gpu-image-ready", () => {
-  window.__gpuReadyEventSeen = true;
-});
 
 function report(pass: boolean, message: string): void {
   const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
@@ -85,22 +67,35 @@ async function waitFor(predicate: () => boolean, timeoutMs = 8000, stepMs = 20):
 
 async function main(): Promise<void> {
   try {
-    const gotFlag = await waitFor(() => window.__cairnPlotGpuImageLoaded === true);
-    report(gotFlag, "gpu-image addon sets __cairnPlotGpuImageLoaded after getSharedDevice() resolves");
+    // (a) probe on a WebGPU-capable page → "ready", with a subscriber tick.
+    let ticks = 0;
+    const unsub = subscribeGpuImageGate(() => {
+      ticks += 1;
+    });
+    ensureGpuImageProbe();
+    const becameReady = await waitFor(() => gpuImageGateState() === "ready");
+    report(becameReady, "gate settles to 'ready' once getSharedDevice() resolves");
+    report(ticks >= 1, "gate notifies subscribers on the flip");
+    unsub();
 
-    const gotPane = typeof window.__cairnPlotGpuImagePane === "function";
-    report(gotPane, "gpu-image addon sets window.__cairnPlotGpuImagePane to the pane component");
+    // (c) reset restores a fresh page.
+    __resetGpuImageGateForTest();
+    const resetOk = gpuImageGateState() === "unknown";
+    report(resetOk, "test reset restores 'unknown'");
 
-    // NOTE: `__cairnPlotGpuComparePane` is gone (content-op unification, Phase 4):
-    // every image-compare now renders on the UNIFIED `GpuImagePane`, so the addon
-    // no longer injects a separate compare pane.
-    const gotUseFlag = window.__cairnPlotUseGpuImage === true;
-    report(gotUseFlag, "gpu-image addon defaults window.__cairnPlotUseGpuImage to true on success");
+    // (b) HOST opt-out short-circuits a fresh gate without probing.
+    window.__cairnPlotUseGpuImage = false;
+    ensureGpuImageProbe();
+    const optedOut = gpuImageGateState() === "unavailable";
+    report(optedOut, "host opt-out (__cairnPlotUseGpuImage=false) short-circuits to 'unavailable'");
+    delete window.__cairnPlotUseGpuImage;
 
-    const gotReadyEvent = await waitFor(() => window.__gpuReadyEventSeen === true);
-    report(gotReadyEvent, "gpu-image addon dispatches the gpu-image-ready event on success");
+    // Restore "ready" for any later reader on this page (idempotent probe).
+    __resetGpuImageGateForTest();
+    ensureGpuImageProbe();
+    await waitFor(() => gpuImageGateState() === "ready");
 
-    const addonOk = gotFlag && gotPane && gotUseFlag && gotReadyEvent;
+    const gateOk = becameReady && ticks >= 1 && resetOk && optedOut;
 
     // Wait for the sibling bundle (cases 1-5) to finish, then combine into
     // the page's FINAL authoritative status (this script runs last).
@@ -109,7 +104,7 @@ async function main(): Promise<void> {
     const mainOk = window.__gpuImagePaneTestResult === "pass";
     report(mainOk, "sibling gpu-image-pane.browser.bundle.js (cases 1-5) result was PASS");
 
-    setOverallStatus(addonOk && mainDone && mainOk);
+    setOverallStatus(gateOk && mainDone && mainOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
     setOverallStatus(false);

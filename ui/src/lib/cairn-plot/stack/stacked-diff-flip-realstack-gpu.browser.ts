@@ -10,11 +10,8 @@
  * the LeafView async-resolve + `diffSpec` cross-commit timing. A scratch harness
  * that tried this fell back to CPU headlessly (0 pool presents): `ImageStandalone`
  * resolves its backend through `resolveImageRenderer("gpu")`, which returns the
- * CPU pane unless `window.__cairnPlotGpuImagePane` is set — and that seam is set
  * ONLY by the lazy `plot-gpu-image-addon` bundle, which a source harness never
  * loads. THE FIX (below): register the seam ourselves, exactly as the addon does
- * (`getSharedDevice()` → assign `__cairnPlotGpuImagePane` = `GpuImagePane` +
- * `__cairnPlotUseGpuImage = true`), then force `render=gpu`. That makes the real
  * stack run on the GPU headlessly, so the pool per-present render-log oracle sees
  * real presents.
  *
@@ -51,7 +48,6 @@ import { PlotApp } from "../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../plot-renderers";
 import type { PlotDescriptor } from "../../../plot-descriptor";
 import { getSharedDevice } from "../engine/device";
-import GpuImagePane from "../renderers/GpuImagePane";
 import { registerRuntimeEntries } from "../viewport/runtime-store";
 import {
   startPaneRenderLog,
@@ -431,8 +427,6 @@ async function main(): Promise<void> {
     // the engine pane instead of the CPU fallback. (A source harness never loads
     // the lazy addon bundle that normally sets this.)
     await getSharedDevice();
-    (window as unknown as { __cairnPlotGpuImagePane?: unknown }).__cairnPlotGpuImagePane = GpuImagePane;
-    (window as unknown as { __cairnPlotUseGpuImage?: boolean }).__cairnPlotUseGpuImage = true;
     (window as unknown as { __cairnPlotRenderMode?: string }).__cairnPlotRenderMode = "gpu";
     (window as unknown as { __cairnPlotEagerMount?: boolean }).__cairnPlotEagerMount = true;
 

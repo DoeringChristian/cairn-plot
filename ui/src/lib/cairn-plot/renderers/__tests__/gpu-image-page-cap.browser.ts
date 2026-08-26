@@ -13,7 +13,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
-import GpuImagePane from "../GpuImagePane";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 
 function report(pass: boolean, message: string): void {
@@ -74,9 +73,9 @@ function tallFloatDescriptor(w: number, h: number): PlotDescriptor {
 async function run(): Promise<boolean> {
   let ok = true;
   registerCoreRenderers();
-  // Resolve the REAL WebGPU image pane (not the CPU fallback) + eager mount.
-  (window as unknown as { __cairnPlotGpuImagePane?: unknown }).__cairnPlotGpuImagePane = GpuImagePane;
-  (window as unknown as { __cairnPlotUseGpuImage?: boolean }).__cairnPlotUseGpuImage = true;
+  // Force the REAL WebGPU image pane (not the CPU fallback) + eager mount —
+  // GpuImagePane is in core now (addon fold); the lazy device gate settles
+  // async, so the assertions below waitFor the gpu canvas.
   (window as unknown as { __cairnPlotRenderMode?: string }).__cairnPlotRenderMode = "gpu";
   (window as unknown as { __cairnPlotEagerMount?: boolean }).__cairnPlotEagerMount = true;
 

@@ -521,7 +521,7 @@ class PlotReport:
     renders through a **Jinja2 template** (``template=`` — default ``"cairn"``,
     the branded theme; ``"minimal"`` for a bare, embedding-friendly emit; or a
     template dir / ``jinja2.Environment``/``Template`` for full control). The
-    renderer bundle (core + only the figure/three/gpu-image addons any component
+    renderer bundle (core + only the figure/three addons any component
     actually needs) is inlined ONCE, guarded include-once; every component's
     baked blob is merged into ONE content-addressed store (deduped by content
     hash); markdown / raw-HTML / per-component mounts are handed to the template
@@ -621,7 +621,7 @@ class PlotReport:
     def _bundle_html(self) -> str:
         """The inlined renderer bundle: the core IIFE + design-token CSS
         (always, once), plus ONLY the addons some component needs — figure
-        (Plotly), three (3D), gpu-image (image/compare) — each guarded
+        (Plotly), three (3D) — each guarded
         include-once. Nothing is emitted for a report with no components."""
         from . import bundle as pb
 
@@ -645,11 +645,6 @@ class PlotReport:
             parts.append(
                 "<script>if(!window.__cairnPlotThreeLoaded){\n"
                 f"{pb.inline_three_addon_js()}\n}}</script>"
-            )
-        if any(el._descriptor_has_image() for el in els):
-            parts.append(
-                "<script>if(!window.__cairnPlotGpuImageLoaded){\n"
-                f"{pb.inline_gpu_image_addon_js()}\n}}</script>"
             )
         return "".join(parts)
 

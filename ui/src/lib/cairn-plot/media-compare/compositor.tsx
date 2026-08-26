@@ -1,4 +1,10 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import GpuImagePane from "../renderers/GpuImagePane";
+import {
+  ensureGpuImageProbe,
+  gpuImageGateState,
+  subscribeGpuImageGate,
+} from "../renderers/gpu-image-gate";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
 import { InStackedGridContext } from "../stack/stack-context";
 import { usePublishNaturalSize } from "../renderers/natural-size-report";
@@ -43,68 +49,31 @@ import type {
   ImageBackend,
 } from "../renderers/image-backend";
 
-declare global {
-  interface Window {
-    /** Opt-in flag (same one `plot-gpu-image-addon.tsx` gates `GpuImagePane`
-     *  on): `true` routes split/diff through the engine. */
-    __cairnPlotUseGpuImage?: boolean;
-  }
-}
-
 /**
- * Dispatched by `plot-gpu-image-addon.tsx` once its capability check
- * resolves and it has set `__cairnPlotGpuImagePane`/`__cairnPlotUseGpuImage`
- * (Task 8). Name duplicated (not imported) — `compositor.tsx` is a CORE file
- * an addon may depend on, never the reverse.
- */
-const GPU_IMAGE_READY_EVENT = "cairn-plot:gpu-image-ready";
-
-/**
- * Resolve the runtime-injected UNIFIED engine image pane (`GpuImagePane`),
- * but only when the opt-in flag is set AND the gpu-image addon has registered
- * it. Unset/false (or addon absent) keeps the legacy CPU `MediaComparePane` /
- * `ImagePane` diff path — the required fallback (either the addon never
- * loaded, the host opted out, or `getSharedDevice()` found WebGPU
- * unavailable). Same seam + capability gate `plot-renderers.tsx`'s
- * `resolveImageRenderer` uses; here it is read from the CORE compositor so the
- * cross-type compare consumers (`ImageViewportPane` / `OffscreenComparePanes`)
- * render the SAME unified pane a descriptor image-compare leaf does — the
- * `GpuComparePane` it replaced is deleted (content-op unification, Phase 4).
+ * Resolve the UNIFIED engine image pane (`GpuImagePane`, statically in core
+ * since the addon fold) — only once the device gate confirms it. `null` keeps
+ * the CPU `MediaComparePane`/`ImagePane` diff path — the required fallback
+ * (probe pending, host opted out, or WebGPU unavailable). Same gate
+ * `plot-renderers.tsx`'s `resolveImageRenderer` uses, so cross-type compare
+ * consumers (`ImageViewportPane` / `OffscreenComparePanes`) render the SAME
+ * unified pane a descriptor image-compare leaf does.
  */
 function resolveGpuImagePane(): ImageBackend | null {
   if (typeof window === "undefined") return null;
-  const seam = (window as unknown as { __cairnPlotGpuImagePane?: ImageBackend })
-    .__cairnPlotGpuImagePane;
-  // Honor the user-settable render mode (cpu | gpu | auto — same seam as
-  // `resolveImageRenderer`): "cpu" forces the legacy CPU compare path; "gpu"
-  // forces the engine pane when registered (outranking the opt-in flag, like
-  // the image seam — unavailable falls through to CPU); "auto" keeps the
-  // flag-gated default.
   const mode = resolveRenderMode();
   if (mode === "cpu") return null;
-  if (mode === "gpu") return seam ?? null;
-  if (window.__cairnPlotUseGpuImage !== true) return null;
-  return seam ?? null;
+  return gpuImageGateState() === "ready" ? (GpuImagePane as ImageBackend) : null;
 }
 
 /**
- * The addon's `getSharedDevice()` capability check is async and can resolve
- * AFTER `CompositeMediaPane`'s first paint, so a pane that mounted before
- * then would otherwise render on the legacy path forever (nothing else
- * re-renders it). This hook forces one re-render the instant the addon
- * finishes, so the engine pane picks up as soon as it's available.
+ * The device probe is async and can settle AFTER `CompositeMediaPane`'s
+ * first paint; this hook kicks the lazy probe and re-renders the caller when
+ * the gate flips, so the engine pane picks up the instant it's available.
  */
 function useGpuCompareReadyTick(): void {
-  const [, bump] = useState(0);
+  useSyncExternalStore(subscribeGpuImageGate, gpuImageGateState, gpuImageGateState);
   useEffect(() => {
-    if (
-      typeof window === "undefined" ||
-      (window as unknown as { __cairnPlotGpuImagePane?: ImageBackend }).__cairnPlotGpuImagePane
-    )
-      return;
-    const onReady = () => bump((n) => n + 1);
-    window.addEventListener(GPU_IMAGE_READY_EVENT, onReady);
-    return () => window.removeEventListener(GPU_IMAGE_READY_EVENT, onReady);
+    ensureGpuImageProbe();
   }, []);
 }
 

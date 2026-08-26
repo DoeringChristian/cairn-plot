@@ -108,33 +108,6 @@ def _node_has_three(node: Any) -> bool:
     return False
 
 
-# The 2D image renderer name (the type the `gpu-image` engine addon can
-# accelerate — Task 8 of the WebGPU engine, Sub-project 1). Unified: there is
-# ONE image renderer now ("image") — float-vs-uint8 is an internal, decoded-
-# source-dtype detail of that one renderer, no longer a separate "imagehdr" id.
-_IMAGE_RENDERERS = frozenset({"image"})
-
-
-def _node_has_image(node: Any) -> bool:
-    """Recursively: does this ``PlotNode`` dict need the WebGPU/WebGL2 image
-    engine addon? True for a ``plot`` leaf whose renderer is
-    ``image``/``imagehdr``, for ANY ``compare`` node (split/diff compare
-    always renders two images — every mode now lowers to the unified
-    ``GpuImagePane`` via ``compareSource``, the same addon carries it, once it's
-    loaded), and recursively through ``grid`` children. Mirrors
-    ``_node_has_figure``/``_node_has_three``'s shape."""
-    if not isinstance(node, dict):
-        return False
-    kind = node.get("kind")
-    if kind == "plot":
-        return node.get("renderer") in _IMAGE_RENDERERS
-    if kind == "grid":
-        return any(_node_has_image(c) for c in node.get("children", []))
-    if kind == "compare":
-        return True
-    return False
-
-
 class PlotElement(Element):
     """A plots-only display object that mounts a PURE ``cairn-plot`` renderer
     (WS-PLOT / design spec §6) — the default return of the ``cairn.plot.*``
@@ -217,21 +190,6 @@ class PlotElement(Element):
         root = desc.get("root")
         return _node_has_three(root) if isinstance(root, dict) else False
 
-    def _descriptor_has_image(self) -> bool:
-        """Whether the descriptor needs the ``gpu-image`` engine addon
-        (Task 8): a flat ``image``/``imagehdr`` leaf, OR an ``image``/
-        ``imagehdr``/``compare`` node nested ANYWHERE in the recursive
-        ``root`` tree. Gates the WebGPU/WebGL2 addon so a scalar/table/
-        figure/3D-only tree never carries it."""
-        try:
-            desc = self._descriptor_dict()
-        except Exception:  # noqa: BLE001 - never break the display path
-            return False
-        if desc.get("renderer") in _IMAGE_RENDERERS:
-            return True
-        root = desc.get("root")
-        return _node_has_image(root) if isinstance(root, dict) else False
-
     # ---- rendering ----
 
     def _bundle_html(self) -> str:
@@ -291,30 +249,6 @@ class PlotElement(Element):
         js = pb.inline_three_addon_js()
         return f"<script>if(!window.__cairnPlotThreeLoaded){{\n{js}\n}}</script>"
 
-    def _gpu_image_addon_html(self) -> str:
-        """The engine-backed image/compare addon IIFE (WebGPU/WebGL2 RHI +
-        the unified ``GpuImagePane`` — image AND every compare mode, Task 8 of
-        the WebGPU engine Sub-project), guarded include-once by
-        ``window.__cairnPlotGpuImageLoaded``. Emitted ONLY when the
-        descriptor contains an ``image``/``imagehdr`` leaf or a ``compare``
-        node ANYWHERE — so a scalar/table/figure/3D-only tree never carries
-        it. Like the figure/three addons, it reuses core's React, so it MUST
-        come after `_bundle_html` (the core script).
-
-        The addon is CAPABILITY-GATED at runtime (see
-        ``plot-gpu-image-addon.tsx``): if ``getSharedDevice()`` finds neither
-        WebGPU nor WebGL2 (or the page opts out via
-        ``window.__cairnPlotUseGpuImage = false``), the legacy CPU
-        ``ImagePane``/``HdrImagePane``/compositor path core already
-        registered stays in place — this script never throws, it just
-        no-ops."""
-        if self._bundle != "inline" or not self._descriptor_has_image():
-            return ""
-        from . import bundle as pb
-
-        js = pb.inline_gpu_image_addon_js()
-        return f"<script>if(!window.__cairnPlotGpuImageLoaded){{\n{js}\n}}</script>"
-
     def _store_html(self, store_id: str) -> str:
         from . import bundle as pb
 
@@ -356,7 +290,6 @@ class PlotElement(Element):
                 self._bundle_html()
                 + self._figure_addon_html()
                 + self._three_addon_html()
-                + self._gpu_image_addon_html()
                 + self._store_html(store_id)
                 + self._mount_html(div_id, desc_id)
             )

@@ -31,6 +31,8 @@ jobs:
         run: npm run check:plot-boundary
       - name: build self-contained bundles
         run: npm run build:plot-inline
+      - name: bundle split guard (content + size ceilings)
+        run: npm run check:plot-bundles
       - name: package-data sync guard
         run: npm run check:plot-assets
 
