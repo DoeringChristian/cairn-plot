@@ -14,8 +14,10 @@
  * draw the `dragRect` overlay. All the pointer math lives in
  * `chart-viewport-math.ts`.
  *
- * Self-contained per the project's self-contained-components rule: no app
- * hooks, no external viewport store — the component holds its own view state.
+ * Self-contained per the project's self-contained-components rule: a bare
+ * mount holds its own view state; inside a frame the domain is a PURE
+ * PROJECTION of the viewport's ONE settings object (`chart.domainX`/`Y`),
+ * written through the frame's `set` — the image viewport's pattern exactly.
  */
 import {
   createContext,
@@ -41,6 +43,7 @@ import {
   pinchZoomDomain,
   pointerDistance,
   pointerMidpoint,
+  resolveChartDomain,
   wheelZoom,
   WHEEL_FACTOR,
   zoomAboutAnchor,
@@ -52,30 +55,27 @@ import {
   type PixelPoint,
   type PixelRect,
 } from "./chart-viewport-math";
-import {
-  getLastChartViewport,
-  publishChartViewport,
-  subscribeChartViewport,
-  type ChartSyncPayload,
-} from "./chart-viewport-sync";
+import type { ViewportSettings } from "./image-settings-sync.ts";
 import { useModifierKey } from "../hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";
+export { resolveChartDomain } from "./chart-viewport-math";
 
 /**
- * Identifies the live-sync group a chart belongs to (see
- * `chart-viewport-sync.ts`). `groupId` scopes the pub/sub bus (one per synced
- * grid); `sourceId` is this chart instance's echo-guard token (a peer ignores
- * its own broadcasts). Passed to {@link useChartViewport} either as the `sync`
- * arg (direct/testable) or — since the pure chart renderers don't forward a
- * viewport-sync prop — through {@link ChartViewportSyncProvider}, so a
- * standalone adapter can opt a whole subtree into a group without the renderer
- * component needing to know sync exists (mirrors how the image path threads
- * `viewportSyncGroupId` into `useSyncedImageViewport`).
+ * The viewport's SETTINGS handle (unified-viewport model): the chart's domain
+ * is the `"chart.domainX"`/`"chart.domainY"` entries of the ONE
+ * {@link ViewportSettings} object its frame owns, and gestures write through
+ * the ONE `set` path (which fans out to the viewport's groups exactly like an
+ * image colormap pick). Passed to {@link useChartViewport} either as the
+ * `sync` arg (direct/testable) or — since the pure chart renderers don't
+ * forward sync props — through {@link ChartViewportSyncProvider} (mirrors how
+ * the image path threads `syncedSettings` into `useSyncedImageViewport`).
+ * There is NO subscription, echo guard, or late-join cache here: the frame's
+ * settings object absorbs peer patches and this hook is a pure projection.
  */
 export interface ChartViewportSyncTarget {
-  groupId: string;
-  sourceId: string;
+  settings: ViewportSettings | null | undefined;
+  set: (patch: ViewportSettings) => void;
 }
 
 const ChartViewportSyncContext = createContext<ChartViewportSyncTarget | null>(null);
@@ -330,8 +330,8 @@ export function useChartViewport({
   // without re-identifying when it changes.
   const contextSync = useContext(ChartViewportSyncContext);
   const syncTarget = sync ?? contextSync ?? null;
-  const syncRef = useRef<ChartViewportSyncTarget | null>(syncTarget);
-  syncRef.current = syncTarget;
+  const storeRef = useRef<ChartViewportSyncTarget | null>(syncTarget);
+  storeRef.current = syncTarget;
   // `null` internal ⇒ "follow home" (auto-reframe on new data). A committed
   // gesture sets it; reset clears it back to null.
   const [internal, setInternal] = useState<ChartDomain | null>(null);
@@ -352,7 +352,22 @@ export function useChartViewport({
   >(null);
 
   const controlled = value !== undefined;
-  const domain: ChartDomain = value ?? internal ?? home;
+  // PURE PROJECTION (image pattern): with a settings handle the domain is
+  // resolved from the viewport's settings entries — `null` axis = follow the
+  // LIVE home (autoscale rides data updates), absent = untouched. `internal`
+  // is the STORELESS fallback only (a bare chart outside any frame).
+  const domain: ChartDomain =
+    value ??
+    (syncTarget
+      ? applyConstraints(resolveChartDomain(syncTarget.settings, home), {
+          clamp,
+          minSpan,
+          lockAspect,
+          rect: plotRectRef.current
+            ? { width: plotRectRef.current.width, height: plotRectRef.current.height }
+            : null,
+        })
+      : (internal ?? home));
 
   // Latest values behind refs so the wheel/pointer handlers stay stable and
   // never read stale closures.
@@ -407,72 +422,35 @@ export function useChartViewport({
     [clamp, minSpan, lockAspect],
   );
 
-  // Broadcast the just-committed viewport to the sync group (no-op when this
-  // chart isn't in one). Only ever called from a LOCAL commit/reset — never
-  // from the subscribe handler below — so a remote update is never re-published
-  // (the echo guard, mirroring image-viewport-sync.ts). `"home"` is sent for
-  // autoscale/reset so peers return to following their own home domain.
-  const publishSync = useCallback((d: ChartDomain | "home") => {
-    const s = syncRef.current;
-    if (!s) return;
-    publishChartViewport(
-      s.groupId,
-      s.sourceId,
-      d === "home" ? "home" : { x: d.xDomain, y: d.yDomain },
-    );
-  }, []);
-
+  // THE write path (image pattern): a committed gesture writes the domain
+  // into the viewport's settings through the ONE `set` — which applies to the
+  // own object and fans out to the viewport's groups. Both axes ride ONE
+  // patch (a box-zoom moves them atomically); flat per-key merge lets a
+  // 1D-minded peer adopt only the axes it understands. HOME/autoscale is the
+  // settings MASK: both axes `null` (peers re-follow their OWN live home).
   const commit = useCallback(
     (d: ChartDomain) => {
       const next = constrain(d);
       onChange?.(next);
-      if (!controlled) setInternal(next);
-      publishSync(next);
+      const store = storeRef.current;
+      if (store) {
+        store.set({ "chart.domainX": next.xDomain, "chart.domainY": next.yDomain });
+      } else if (!controlled) {
+        setInternal(next);
+      }
     },
-    [constrain, onChange, controlled, publishSync],
+    [constrain, onChange, controlled],
   );
 
   const reset = useCallback(() => {
     onChange?.(home);
-    if (!controlled) setInternal(null);
-    publishSync("home");
-  }, [home, onChange, controlled, publishSync]);
-
-  // ── Live viewport sync: apply a PEER's broadcast ──
-  // Adopt a peer's domain WITHOUT re-committing (so it never re-publishes — the
-  // echo guard). `"home"` returns to following our own home domain; a concrete
-  // domain is applied directly (Plotly matched-axes: data-space, not pixels),
-  // each axis falling back to our current range when the peer left it null.
-  // Held behind a ref, refreshed each render, so the subscribe effect stays
-  // keyed only on the group id and doesn't churn its subscription per render.
-  const applyRemoteRef = useRef<(payload: ChartSyncPayload) => void>(() => {});
-  applyRemoteRef.current = (payload: ChartSyncPayload) => {
-    if (payload === "home") {
-      onChange?.(home);
-      if (!controlled) setInternal(null);
-      return;
+    const store = storeRef.current;
+    if (store) {
+      store.set({ "chart.domainX": null, "chart.domainY": null });
+    } else if (!controlled) {
+      setInternal(null);
     }
-    const cur = domainRef.current;
-    const next = constrain({
-      xDomain: payload.x ?? cur.xDomain,
-      yDomain: payload.y ?? cur.yDomain,
-    });
-    onChange?.(next);
-    if (!controlled) setInternal(next);
-  };
-
-  useEffect(() => {
-    if (!syncTarget) return;
-    const { groupId, sourceId } = syncTarget;
-    const last = getLastChartViewport(groupId);
-    if (last) applyRemoteRef.current(last);
-    return subscribeChartViewport(groupId, sourceId, (payload) =>
-      applyRemoteRef.current(payload),
-    );
-    // Re-subscribe only when the group identity changes; peer application reads
-    // freshest state through `applyRemoteRef`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncTarget?.groupId, syncTarget?.sourceId]);
+  }, [home, onChange, controlled]);
 
   // ── Wheel zoom (non-passive so preventDefault sticks) ──
   // Gated on either a trackpad PINCH (`e.ctrlKey` — the browser's pinch

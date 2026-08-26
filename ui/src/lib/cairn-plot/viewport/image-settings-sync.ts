@@ -50,9 +50,13 @@ export interface ViewportView {
  *   - `compare.*` — compare/diff keys (any comparable kind; 3D native diff
  *                   joins this namespace when 3D enters the vocabulary).
  *   - `panel.*`   — pane chrome (info panel).
- *   - `chart.*`   — 2D chart data-space window (matched-axes sync).
- *   - `scene3d.*` — 3D camera pose. Chart + 3D ride these SAME channels via
- *     thin adapters (`chart-viewport-sync.ts`, `three/camera-sync.ts`).
+ *   - `chart.*`   — 2D chart data-space window (matched-axes sync), NATIVE:
+ *     `use-chart-viewport.ts` projects the frame-owned settings object, the
+ *     image pattern exactly.
+ *   - `scene3d.*` — 3D camera pose. The HOST-driven 3D viewer kits have no
+ *     frame, so they ride these channels via the `three/camera-sync.ts`
+ *     adapter until hosts hand real settings handles down (Host API v4
+ *     `linkSettings`).
  *
  * MASKS are `null`, never `undefined` (JSON-round-trippable by construction):
  * `"panel.info": null` = back-to-auto; `"image.colorRange": null` = bounds
@@ -86,10 +90,13 @@ export interface ViewportSettings {
   /** INFO-PANEL visibility: true/false = explicit choice; ABSENT = auto;
    *  `null` = explicit back-to-auto (HOME). */
   "panel.info"?: boolean | null;
-  /** A 2D chart's data-space window (Plotly matched-axes semantics: peers
-   *  adopt the RANGES, not a pixel transform; each axis nullable so a 1D
-   *  chart syncs only the axis it owns). `null` = home/autoscale. */
-  "chart.domain"?: { x: [number, number] | null; y: [number, number] | null } | null;
+  /** A 2D chart's data-space window, ONE KEY PER AXIS (Plotly matched-axes
+   *  semantics: peers adopt the RANGES, not a pixel transform; separate keys
+   *  so the flat per-key merge lets an axis move alone). `null` = that axis
+   *  follows its own live home/autoscale (the mask convention); a box-zoom
+   *  writes both keys in one atomic patch. */
+  "chart.domainX"?: [number, number] | null;
+  "chart.domainY"?: [number, number] | null;
   /** A 3D viewer's camera pose — ATOMIC (position/target/zoom move together
    *  in one orbit gesture). */
   "scene3d.camera"?: {

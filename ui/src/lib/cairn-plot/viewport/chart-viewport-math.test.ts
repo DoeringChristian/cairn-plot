@@ -410,3 +410,31 @@ test("pinchZoomDomain: moving the midpoint pans the domain", () => {
   approx(out.yDomain[0], 0);
   approx(out.yDomain[1], 100);
 });
+
+// ── resolveChartDomain: the settings→domain projection (unified-viewport) ──
+import { resolveChartDomain } from "./chart-viewport-math.ts";
+
+const HOME: ChartDomain = { xDomain: [0, 10], yDomain: [0, 1] };
+
+test("resolveChartDomain: no settings → home (untouched viewport follows live autoscale)", () => {
+  assert.deepEqual(resolveChartDomain(null, HOME), HOME);
+  assert.deepEqual(resolveChartDomain({}, HOME), HOME);
+});
+
+test("resolveChartDomain: stored ranges are adopted directly (matched-axes)", () => {
+  assert.deepEqual(
+    resolveChartDomain({ "chart.domainX": [2, 4], "chart.domainY": [0.1, 0.2] }, HOME),
+    { xDomain: [2, 4], yDomain: [0.1, 0.2] },
+  );
+});
+
+test("resolveChartDomain: null axis = home mask; single-axis entries leave the other on home", () => {
+  assert.deepEqual(
+    resolveChartDomain({ "chart.domainX": null, "chart.domainY": null }, HOME),
+    HOME,
+  );
+  assert.deepEqual(
+    resolveChartDomain({ "chart.domainX": [3, 5] }, HOME),
+    { xDomain: [3, 5], yDomain: HOME.yDomain },
+  );
+});

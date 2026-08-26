@@ -19,6 +19,8 @@
  * turning its container-local `plotRectRef` into client space before calling.
  */
 
+import type { ViewportSettings } from "./image-settings-sync.ts";
+
 /** Wheel zoom factor per notch — identical to use-plot-gestures.ts:116. */
 export const WHEEL_FACTOR = 1.1;
 
@@ -542,4 +544,23 @@ export function pointInPolygon(
     if (crosses) inside = !inside;
   }
   return inside;
+}
+
+/**
+ * Resolve a chart's domain from its viewport's settings entries (PURE — the
+ * unit-testable core of the settings projection in `use-chart-viewport.ts`).
+ * Per axis: `undefined` = untouched and `null` = explicit home/autoscale —
+ * both follow the LIVE home axis; a concrete range is adopted directly
+ * (Plotly matched-axes: data-space, not pixels).
+ */
+export function resolveChartDomain(
+  settings: ViewportSettings | null | undefined,
+  home: ChartDomain,
+): ChartDomain {
+  const sx = settings?.["chart.domainX"];
+  const sy = settings?.["chart.domainY"];
+  return {
+    xDomain: sx ?? home.xDomain,
+    yDomain: sy ?? home.yDomain,
+  };
 }

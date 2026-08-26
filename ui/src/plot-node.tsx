@@ -123,16 +123,21 @@ import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image
 const RENDERER_WAIT_MS = 4000;
 
 /** The authored grid `sync.viewport` group fans ONLY the view transform. */
-const VIEW_ONLY_KEYS = ["image.view"] as const;
+const VIEW_ONLY_KEYS = [
+  "image.view",
+  "chart.domainX",
+  "chart.domainY",
+  "scene3d.camera",
+] as const;
 
 /** Root-provided context shared by the whole tree: the single `DataSource`,
  *  the nearest grid's `shared` block (colormap/colorRange/reference/…), and
  *  (when that grid opted in via `shared.sync.viewport`) the live viewport-sync
- *  group id for that grid — see `GridView`'s derivation. The SAME id is
- *  threaded to every leaf and drives BOTH sync buses: image panes via
- *  `image-viewport-sync.ts` (`useSyncedImageViewport`) and 2D charts via
- *  `chart-viewport-sync.ts` (`useChartSyncTarget` → `useChartViewport`), so one
- *  flag links a grid's images AND charts. Mirrors the 3D `cameraSyncGroupId`
+ *  group id for that grid — see `GridView`'s derivation. The id is ONE
+ *  settings CHANNEL (`image-settings-sync.ts`): every frame joins it scoped
+ *  to the cross-kind view keys (`VIEW_ONLY_KEYS` — image view, chart domain,
+ *  3D camera), so one flag links a grid's images AND charts through the same
+ *  frame-owned settings objects. Mirrors the 3D `cameraSyncGroupId`
  *  mechanism (`lib/camera-sync.ts`'s `useCameraSync`), scoped per grid
  *  instead of per card. */
 export interface SharedPlotCtx {

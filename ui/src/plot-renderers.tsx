@@ -26,6 +26,7 @@
  */
 import { floatPixelsFrom } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import {
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -55,7 +56,7 @@ import {
   ChartViewportSyncProvider,
   type ChartViewportSyncTarget,
 } from "./lib/cairn-plot/viewport/use-chart-viewport";
-import { makeChartViewportSyncSourceId } from "./lib/cairn-plot/viewport/chart-viewport-sync";
+import type { ViewportSettings } from "./lib/cairn-plot/viewport/image-settings-sync.ts";
 import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
 import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import {
@@ -195,39 +196,31 @@ function ScalarPlotStandalone(p: P) {
 }
 
 /**
- * Derives the stable {@link ChartViewportSyncTarget} for a chart leaf from the
- * grid's `viewportSyncGroupId` (threaded down by `plot-node.tsx` — the SAME
- * flag that syncs image panes). The CHART mirror of `useSyncedImageViewport`:
- * mints a per-instance `sourceId` once (the echo-guard token) and pairs it with
- * the group id. Returns `null` (not synced) when the leaf isn't in a synced
- * grid. Memoized so peers don't re-subscribe every render.
- */
-function useChartSyncTarget(
-  groupId: string | null | undefined,
-): ChartViewportSyncTarget | null {
-  const sourceIdRef = useRef<string>();
-  if (!sourceIdRef.current) sourceIdRef.current = makeChartViewportSyncSourceId();
-  return useMemo(
-    () => (groupId ? { groupId, sourceId: sourceIdRef.current! } : null),
-    [groupId],
-  );
-}
-
-/**
- * Opts a chart standalone's pure renderer into the grid's viewport-sync group
- * via context, so the shared `useChartViewport` inside the renderer publishes/
- * subscribes without the renderer component needing any sync-specific prop —
- * exactly how `useSyncedImageViewport` gives image panes sync "for free". A
- * `null` group (unsynced grid or a bare page) is a transparent pass-through.
+ * Hands the FRAME's settings handle to every `useChartViewport` in the
+ * subtree (unified-viewport model): the chart's domain lives in the frame's
+ * ONE `ViewportSettings` object (`chart.domainX`/`chart.domainY`), gestures
+ * write through the frame's `set` (fanning to the viewport's groups exactly
+ * like an image pick), and peer patches arrive because the frame absorbs
+ * them — no bus, no echo guard, no per-instance source id. A leaf without a
+ * frame handle (bare standalone mount) is a transparent pass-through: the
+ * hook keeps its own local state.
  */
 function ChartSyncBoundary({
-  groupId,
+  settings,
+  set,
   children,
 }: {
-  groupId: string | null | undefined;
+  settings: ViewportSettings | null | undefined;
+  set: ((patch: ViewportSettings) => void) | undefined;
   children: ReactNode;
 }) {
-  const sync = useChartSyncTarget(groupId);
+  const setRef = useRef(set);
+  setRef.current = set;
+  const stableSet = useCallback((patch: ViewportSettings) => setRef.current?.(patch), []);
+  const sync = useMemo<ChartViewportSyncTarget | null>(
+    () => (set ? { settings, set: stableSet } : null),
+    [settings, set, stableSet],
+  );
   return <ChartViewportSyncProvider value={sync}>{children}</ChartViewportSyncProvider>;
 }
 
@@ -235,7 +228,7 @@ function ScatterPlotStandalone(p: P) {
   const { height, ...rest } = p;
   return (
     <ChartBox height={height}>
-      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
         <ScatterPlot points={p.points ?? []} {...rest} />
       </ChartSyncBoundary>
     </ChartBox>
@@ -260,7 +253,7 @@ function BarChartStandalone(p: P) {
   const { height, ...rest } = p;
   return (
     <ChartBox height={height}>
-      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
         <BarChart bars={p.bars ?? []} {...rest} />
       </ChartSyncBoundary>
     </ChartBox>
@@ -273,7 +266,7 @@ function HistogramStandalone(p: P) {
   const props = (rest.view ? rest : { ...rest, view: "bars" }) as any;
   return (
     <ChartBox height={height}>
-      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
         <HistogramPlot {...props} />
       </ChartSyncBoundary>
     </ChartBox>
@@ -284,7 +277,7 @@ function HeatmapStandalone(p: P) {
   const { height, ...rest } = p;
   return (
     <ChartBox height={height}>
-      <ChartSyncBoundary groupId={p.viewportSyncGroupId}>
+      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
         <Heatmap matrix={p.matrix ?? []} colormap={p.colormap ?? "turbo"} {...rest} />
       </ChartSyncBoundary>
     </ChartBox>
