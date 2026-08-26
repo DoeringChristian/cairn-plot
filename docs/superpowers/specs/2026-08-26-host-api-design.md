@@ -1,9 +1,10 @@
-# cairn-plot Host API — the public interface for embedding hosts (v2)
+# cairn-plot Host API — the public interface for embedding hosts (v3)
 
-Status: v2 (2026-08-26) — post adversarial review round 1 (10 lenses, 79
-findings, ~25 confirmed blockers; see §12 and the review appendix). v1 is the
-previous git revision of this file. NOT yet implemented; M0 defines the
-enabling refactors.
+Status: v3 FINAL DRAFT (2026-08-26) — the result of two adversarial review
+rounds (round 1: 10 lenses, 79 findings; round 2 on the revised design:
+4 lenses, 32 findings; all confirmed blockers incorporated — dispositions
+in §12). v1 and v2 are the previous git revisions of this file. NOT yet
+implemented; §10 M0 defines the enabling refactors. Awaiting owner review.
 
 Owner: cairn-plot. Primary consumer: cairn-track's UI cards (`cairn/ui`).
 
@@ -179,13 +180,40 @@ interface MountedPlot {
 }
 ```
 
-`update()` internals (this is M0 work, not free): resolve keys become
-**content-derived** (dataspec hash / runtime hash / src ref + selection
-suffix) instead of node-object identity, so an updated handle whose leaf
-data is unchanged re-uses the cached resolution and GPU upload; the previous
-generation's now-unreferenced runtime entries and resolve-cache entries are
-released (LD1, HA-R1, PERF-1, F1). The existing stacked-flip warm path keeps
-working because content keys subsume object-identity keys.
+`update()` internals (this is M0 work, not free):
+- **Content-derived resolve keys** replace node-object identity, so an
+  updated handle whose leaf data is unchanged re-uses the cached resolution
+  and GPU upload (LD1, HA-R1, PERF-1, F1). For JS-authored (runtime-store)
+  data this REQUIRES content identity the store deliberately lacks today
+  (V2-4, M0D-RUNTIME-KEYS): the builder re-registering the SAME buffer
+  object returns the SAME runtime hash (WeakMap buffer→hash), and builder
+  opts accept an explicit `contentKey` for hosts that mutate buffers in
+  place. Without either, an update misses the cache (correct, just slower)
+  — never a correctness issue, always documented cost.
+- **Hold across update** is gated on PANE KEY, not resolve-key equality
+  (M0D-HOLD): the pane whose key matches holds its previous frame while the
+  new payload (any resolve key) decodes. The channel-pick hold becomes the
+  special case key-equal + suffix-changed.
+- **Generations**: each update() gets a generation number; overlapping
+  calls coalesce latest-wins (an in-flight superseded generation never
+  becomes visible — R2-UPDATE-7); the returned promise resolves when its
+  generation is live OR superseded (with `{ superseded: true }`).
+- **Release is reference-counted** (M0-DISPOSAL-SHARED): runtime entries,
+  blob URLs (`objectUrlCache` gains revocation — V2-4), and decode-cache
+  entries are shared page-wide; a generation/mount drop releases its
+  references, and an entry frees when its count reaches zero.
+
+**Lazy/offscreen panes** (V2-7): panes below a lazy gate exist as Pane
+objects with `status: "lazy"`; settings READS resolve from the layer stack
+(descriptor defaults included), settings WRITES apply immediately to the
+stores (they are store operations, not component operations), and events
+fire on mount. What "lazy" withholds is pixels and per-content state
+(capabilities may widen after mount — §6.7).
+
+**Mount events**: `m.on("paneAdded" | "paneRemoved", cb)` (fired by
+update() reconciliation) and `m.on("error", cb)` (mount-level failures —
+renderer registration timeouts, device loss; R2-7). `ready()` rejects on a
+fatal mount failure instead of hanging.
 
 ### 6.3 Panes
 
@@ -200,7 +228,7 @@ interface Pane<K extends PaneKind = PaneKind> {
    *  §6.4 write routing; HA-R3). */
   setSettings(patch: Partial<PaneSettings[K]>): void;
 
-  pushLayer(layer: SettingsLayer, opts?: { gestureSink?: boolean }): void;
+  pushLayer(layer: SettingsLayer): void;
   removeLayer(layer: SettingsLayer): void;
 
   on(ev: "settings", cb: (s: PaneSettings[K]) => void): Unsub;
@@ -212,8 +240,45 @@ interface Pane<K extends PaneKind = PaneKind> {
   on(ev: "interaction", cb: (e: PaneInteraction[K]) => void): Unsub;
 
   screenshot(opts?: ScreenshotOpts): Promise<Blob>;
+
+  /** Read-only view of the pane's RESOLVED payload + metadata (shape, dims,
+   *  channel names, table columns, series ids, value ranges) — the channel
+   *  for host-side derived work: table diffs between runs, figure merging,
+   *  composed exports, content-driven menus (R2-READBACK-4, R2-FACET-3).
+   *  Resolves after status "ready"; large buffers are exposed as typed
+   *  arrays without copying where safe. */
+  getData(): Promise<PaneDataView[K]>;
+
+  /** Per-PANE capabilities/options: which settings fields exist for THIS
+   *  pane's resolved content (channel arity, curve set, compare modes gated
+   *  by operand kinds, 3D property names, overlay class lists). Static
+   *  per-kind projections are not enough — the real option sets are
+   *  content-dependent (V2-6, R2-FACET-3). May widen when content resolves;
+   *  `on("capabilities", cb)` fires then. */
+  getCapabilities(): PaneCapabilities[K];
+  on(ev: "capabilities", cb: (c: PaneCapabilities[K]) => void): Unsub;
+
+  /** Selection & reference (public face of the page-wide selection store —
+   *  R2-SEL-1): */
+  readonly selected: boolean;
+  readonly isReference: boolean;
+  select(opts?: { additive?: boolean }): void;
+  setAsReference(): void;
+
+  /** Runtime narrowing helper (V2-8, API-1): returns this pane typed as K
+   *  or throws — `pane.as("image").getSettings()` narrows without casts. */
+  as<K2 extends PaneKind>(kind: K2): Pane<K2>;
 }
 ```
+
+Interaction events include a **drag-source hook** (R2-DRAG-2): the
+`dragStart` interaction fires synchronously inside the pane's native
+dragstart with a `setData(mime, payload)` capability on the event, so hosts
+can implement drag-to-compare across cards without owning the pane DOM.
+`MountedPlot.on("selectionChange")` reports `Pane` references scoped to the
+mount; cross-mount selection state (the store is page-wide by design) is
+addressed via `mount(opts.selectionScope: "page" | "mount")` with "page" the
+default (R2-4).
 
 - **`PaneSettings` is a per-kind typed map** (generic narrowing, not a bare
   union — API-1, VP-8): `PaneSettings["image"]` is the image settings shape
@@ -233,33 +298,51 @@ interface Pane<K extends PaneKind = PaneKind> {
 
 ### 6.4 Settings model
 
-**Three tiers per pane** (SL-1, HA-R2). The internal implementation gains a
-per-pane layer *registry* with explicit tiers; the pure stack VALUE the
-rendering path consumes is composed from it per render:
+**Three tiers per pane** (SL-1, HA-R2; tier ORDER revised by round 2 —
+V2-2). The internal implementation gains a per-pane layer *registry* with
+explicit tiers; the pure stack VALUE the rendering path consumes is composed
+from it per render:
 
 ```
-[ local, ...host layers (push order), ...transients (selection ep, stage) ]
+[ ...host layers (push order), local, ...transients (selection ep, stage) ]
 ```
+
+**Host layers are SEEDS**: persistent host-owned values that shadow the
+descriptor's authored props but sit BELOW the pane's local tier — so the
+existing invariant "a user gesture always wins and is always visible"
+(write-to-top today) is preserved exactly. Round 2 killed the v2 draft's
+host-above-local ordering: a non-sink host layer above local turns every
+control whose key it sets into a dead control (the gesture lands below the
+shadow and the menu snaps back — V2-2). With host-below-local there is
+nothing to route around, and the `gestureSink` concept is DELETED.
 
 - `pushLayer` inserts into the **host tier** regardless of what transients
   are live; the selection/stage scopes push into the **transient tier**
   through the same registry. In-page transient behavior is UNCHANGED
   (episode layers, transient-per-layer revert, per-episode ids — all
   existing rulings stand).
-- **Write routing** (SL-2, HA-R3, F7):
-  - `pane.setSettings(patch)` → the pane's **local** tier. A host write is
-    not a gesture; it must never land in (or be lost with) a transient.
-  - `layer.set(patch)` → that layer, wherever it sits.
-  - **User gestures** → topmost **transient** if one is live (unchanged
-    ruling: transient, reverts on episode end); otherwise the host layer
-    marked `gestureSink: true` if present; otherwise the local tier.
-    `gestureSink` is how a card opts into "user tweaks persist into my
-    layer". At most one gesture sink per pane (last push wins; dev warning).
-  - **Episode end**: the mount emits
-    `pane.on("interaction", { type: "episodeEnd", changed: Partial<Settings> })`
-    with the transient's final values, so a host that wants to offer "keep
-    these changes?" can do so explicitly. The library itself never commits
-    transients (preserves the user ruling that group edits revert; SL-2).
+- **Write routing** (SL-2, HA-R3, F7, V2-2):
+  - **User gestures** → topmost layer, exactly as today: the transient when
+    an episode is live (reverts on episode end — unchanged ruling), the
+    local tier otherwise. Gestures never touch host layers.
+  - `pane.setSettings(patch)` → the pane's **local** tier (gesture-
+    equivalent, always visible when no transient shadows it).
+  - `layer.set(patch)` → that layer. Host layers only ever change through
+    this call, so `layer.get()` is always exactly what the host put there.
+  - **Persistence of user tweaks** is by observation, not by routing: the
+    host listens to `pane.on("settings")` (origin-tagged, §Echo) and copies
+    what it wants into its own layer/store. Explicit beats magical — the
+    v2 `gestureSink` write-redirection is gone.
+- **Transient shadowing is observable** (V2-1): while an episode is live,
+  the transient's formation seed (a full snapshot, per the group ruling)
+  shadows lower tiers — including host writes made DURING the episode. The
+  `settings` event therefore carries `{ resolved, pending }`: `pending` is
+  the value the lower tiers would resolve to if the transient dropped now,
+  so a host write that is currently shadowed is visible to the host, and
+  the post-deselect "jump" is predictable. **Episode end** additionally
+  emits `pane.on("interaction", { type: "episodeEnd", changed })` with the
+  transient's final values (the "keep these changes?" hook). The library
+  never commits transients (ruling stands).
 - **Masking and serialization** (SL-4, WIRE-3): a layer's contents are
   `{ set: {...values}, cleared: [...keys] }`. `layer.set(patch)` writes
   values; `layer.clear(keys)` records an explicit mask ("hide lower tiers'
@@ -268,32 +351,44 @@ rendering path consumes is composed from it per render:
   `layer.toJSON()`/`createSettingsLayer(json)` round-trip exactly. The
   internal `undefined`-as-mask convention maps to `cleared` at the boundary
   and is never exposed.
-- **HOME/double-click** (SL-3): unchanged in-page semantics (group reset to
-  the clicked pane's defaults) — but the write is expressed as
-  `{clear}` operations for keys that equal descriptor defaults, and value
-  writes only for genuinely per-content seeds. Consequence for hosts: a HOME
-  while a shared host layer is the gesture sink writes that layer; the spec
-  documents this and `episodeEnd`/`onChange` make it observable. OPEN
-  RULING (§13): whether HOME should bypass the gesture sink and clear the
-  local tier instead.
+- **HOME/double-click** (SL-3, revised by V2-5): the recorded ruling stands
+  UNCHANGED — HOME sets the whole group to the clicked pane's defaults, as
+  a VALUE snapshot (round 2 showed the v2 draft's clear-based HOME would
+  make group members diverge to their own descriptor defaults, weakening
+  the ruling). With host-below-local ordering the hazard v1/v2 wrestled
+  with disappears: HOME writes the transient (episode live) or the local
+  tier — never a host layer. A host that wants "HOME also resets my seed"
+  does it explicitly via `layer.unset`/`clear` on the episodeEnd or
+  settings event.
 - **Layer lifecycle** (HA-8, API-7): layers are objects with identity;
   `layer.dispose()` detaches them everywhere and frees the store slot.
   Attaching one layer to panes of DIFFERENT kinds is allowed only for the
   shared-key subset (typed as the intersection); a dev warning fires on
   writes of keys a pane's kind does not know.
 - **Echo semantics** (SL-6, HA-R8, HA-7): `pane.on("settings")` fires once
-  per resolved-value change, coalesced per frame, INCLUDING changes caused
-  by the host's own writes (simple mental model), but the event carries
+  per change of `{resolved, pending}`, coalesced per frame, INCLUDING
+  changes caused by the host's own writes (simple mental model), with
   `origin: "host" | "gesture" | "layer" | "sync"` so hosts can break
   persistence loops without value-diffing. `layer.onChange` fires only on
-  writes into that layer, with the same origin tag.
+  writes into that layer (which, with the revised routing, means only the
+  host's own `set`/`clear`/`unset` calls).
+- **Per-entity settings** (R2-SUBKEY-6): keys whose values are maps keyed by
+  entity id (per-series promotion/color, per-class overlay visibility,
+  per-column hiding) are DECLARED as map-valued in the per-kind schema;
+  patches merge one level deep for those keys, and `cleared` may name
+  `key.entityId` sub-paths. Undeclared keys keep whole-value replacement.
 
 ### 6.5 Live data
 
 **Tier 1 — snapshots + `update()`** (M1): the host fetches, authors a new
 handle, `m.update(h2)`. With content-derived resolve keys and generation
 disposal (§6.2) this is bounded-memory and cheap for unchanged leaves.
-Suitable for ~Hz scalar updates.
+Suitable for ~Hz scalar updates. Error recovery ships IN M1 (R2-6): a
+resolve failure is NOT cached permanently — the errored entry is dropped
+when the next `update()` (or `m.refresh()`) references its key, so a flaky
+first fetch heals on the next tick instead of bricking the pane for the
+page lifetime. (M0d adds `invalidateResolved(key)`/error-drop to the
+resolve cache — the current behavior caches rejections forever.)
 
 **Tier 2 — registered data sources** (M2):
 
@@ -312,15 +407,19 @@ interface DataResult {
 }
 ```
 
-- Backed by a NEW **RefStore**, not the existing resolve cache (LD2, LD3,
-  PERF-2): ref-keyed entries carrying `{contentKey, payload, version,
-  lastUsed, bytes}`; `onInvalidate` marks the ref dirty and triggers a
-  re-`get` (coalesced latest-wins per ref, in-flight aborted via the
-  signal); a result with an unchanged `contentKey` is dropped without
-  touching panes. Eviction: LRU under a byte budget; entries referenced by
-  a mounted pane are pinned. The identity-keyed resolve cache remains for
-  descriptor-node resolution and gains release hooks (§6.2); the RefStore
-  sits behind it as the source of ref-payloads.
+- Backed by a NEW **RefStore** that sits IN FRONT of descriptor resolution
+  (LD2, LD3, PERF-2; layering fixed by V2-3): a pane whose leaf carries a
+  `src` ref subscribes to the RefStore's `(ref → version)`; the decode/
+  upload cache below it is keyed by the fetched `contentKey` — a value that
+  exists only after `get()` returns, which is exactly why freshness cannot
+  be modeled as a descriptor-derived resolve key. On `onInvalidate`:
+  re-`get` (coalesced latest-wins per ref, superseded fetches aborted via
+  the signal); unchanged `contentKey` → dropped without touching panes;
+  changed → the pane re-resolves through the hold discipline (same pane,
+  frame swaps when decoded). Eviction: LRU under a byte budget; entries
+  referenced by a mounted pane are pinned. The v2 draft's "RefStore behind
+  the identity-keyed resolve cache" was unimplementable — an append-only
+  cache in front of the freshness source can never deliver an update.
 - **Errors don't brick panes** (LD4): a failed `get` sets pane status
   `error` (first load) or `stale` (had content), keeps the last frame, and
   retries on the NEXT invalidation or an explicit `m.refresh(ref?)`. Retry
@@ -364,20 +463,25 @@ interface DataResult {
 
 ### 6.7 Host chrome support (enumerations & capabilities)
 
-Reversal of v1's over-privatization (HA-2, API-6): hosts DO build chrome
-outside panes (menus in card headers, settings dialogs). Public, read-only:
+Reversal of v1's over-privatization (HA-2, API-6), revised by round 2
+(V2-6, R2-FACET-3, R2-2, R2-3):
 
-```ts
-enumerateOptions(kind, field): OptionDescriptor[]   // colormaps, kernels,
-                                                    // compare modes, tonemaps…
-getPaneCapabilities(kind): PaneCapabilities         // which fields exist,
-                                                    // which compare modes, …
-```
-
-These are projections of the internal registries (encodings, kernels,
-compare modes) — ids + labels + flags only, no React, no internals. The ids
-are the same ids the settings accept (one vocabulary). Value-enum evolution
-is governed by §8's alias rule.
+- **Per-pane, content-aware**: `pane.getCapabilities()` (§6.3) is the
+  primary API — option sets depend on the pane's resolved content (channel
+  arity, operand kinds, property names), not just its kind, and the
+  registries behind them load asynchronously with the render bundles. It is
+  synchronous-after-ready and event-updated, never a static module-level
+  constant.
+- **Kind-global subset**: `enumerateOptions(kind, field)` remains for the
+  genuinely static vocabularies (colormap ids/labels, tonemap curves) and
+  is documented as the subset that cannot depend on content. It reflects
+  the registries of the LOADED bundles; calling it before the relevant
+  bundle loads returns the core set (documented).
+- **One vocabulary** (R2-3): the PUBLIC ids are the builder's short names;
+  where internal registry ids differ, the mapping the builder already owns
+  becomes the single canonical alias table, used by settings ingest,
+  capabilities, and enumerations alike. Value-enum evolution is governed by
+  §8's alias rule.
 
 ### 6.8 View linking (cross-mount)
 
@@ -425,10 +529,22 @@ registerRenderer(name, component: PaneRenderer, meta?: {
 - **Park hysteresis** (PERF-8): the pane IntersectionObserver gains a
   rootMargin so scroll jitter doesn't thrash the retained-texture set.
 - **Disposal invariants** (F3-disposal, LD2): every acquire has a release —
-  mounts own their runtime entries and resolve keys (freed on
-  update/unmount), the RefStore evicts by budget, layers dispose, data
+  mounts own REFERENCES to runtime entries, blob URLs, and decode-cache
+  entries (all page-shared, reference-counted; freed at zero — V2-4,
+  M0-DISPOSAL-SHARED), the RefStore evicts by budget, layers dispose, data
   sources deregister. §9's harness gates include a leak test (mount →
-  update ×100 → unmount → assert stores empty).
+  update ×100 → unmount → assert stores empty AND all blob URLs revoked).
+- **Page-global registration rules** (R2-8): `registerDataSource` — one
+  adapter per scheme; re-registration replaces with a dev warning and
+  returns a disposable. `configureEngine` — page-global by nature (the
+  GPU device is shared); last call wins, logged. `registerRenderer` — first
+  registration wins, duplicates warn. All three are documented as
+  page-scoped, not mount-scoped.
+- **Mixed-vintage registries** (WIRE-REGISTRY-SHAPE): the `globalThis`
+  settings/runtime registries carry a shape version; a newer bundle
+  migrates older-shape entries in place on read, so pages mixing bundle
+  vintages (embedded reports next to the app) keep working during the
+  transition.
 
 ## 8. Wire contract & versioning
 
@@ -461,20 +577,39 @@ registerRenderer(name, component: PaneRenderer, meta?: {
 
 ## 10. Migration plan (re-cut; M0 is real work)
 
-M0 (cairn-plot enabling refactors — the review's blockers):
-  a. Layer REGISTRY with tiers; selection/stage push through it (SL-1).
-  b. Write-routing per §6.4 incl. gesture sink + episodeEnd event (SL-2).
-  c. Layer contents as {set, cleared}; toJSON/fromJSON; clear/unset (SL-4).
-  d. Content-derived resolve keys + generation release; runtime-store
-     unregister (LD1/2, PERF-1).
-  e. Pane keys in builder + descriptor; settings keyed by (mount, key)
-     (API-3, HA-R4).
-  f. Mount options (selection/enlarge scoping, stub mode); ready();
-     Pane objects + status/events plumbing.
-  g. Remove the forced StrictMode wrapper; ESM mounter binding.
-  Gates: typecheck, unit, full harness suite + new leak/reconcile harnesses.
-M1. `<Plot>` adapter; migrate ScalarPlotCard on Tier-1 (proves update(),
-    settings round-trip, events, stub tests).
+M0 (cairn-plot enabling refactors — the reviews' blockers):
+  a. Layer REGISTRY with tiers (host BELOW local — §6.4); selection/stage
+     push through it; the registry is owned by the MOUNT and pane layer
+     ids derive from (mount, pane key) — replacing the three independent
+     component-local minting sites, so the stage's rebuilt pane instance
+     resolves the same identity (SL-1, M0A-LAYER-OWNER, SL-8).
+  b. Write-routing per §6.4; internal programmatic writes (formation seed,
+     HOME, adoption paths) get origin tags so routing/echo can classify
+     them (SL-2, M0B-WRITE-ROUTING-SEED).
+  c. Layer contents as {set, cleared}; toJSON/fromJSON; clear/unset;
+     declared map-valued keys (SL-4, R2-SUBKEY-6).
+  d. Content-derived resolve keys (runtime store gains buffer-identity
+     content addressing + optional authored contentKey) + reference-counted
+     release incl. blob-URL revocation; resolve-cache `invalidateResolved`
+     + error-entry drop; pane-key-gated hold (LD1/2, PERF-1, V2-3/4,
+     M0D-*).
+  e. Pane keys in builder + descriptor schema + Python emitter; settings
+     keyed by (mount, key); grid children reconcile by key (API-3, HA-R4,
+     M0E).
+  f. Mount options (selection/enlarge scoping, selectionScope, stub mode);
+     ready()/error; Pane objects incl. lazy semantics; the EFFECTIVE-
+     SETTINGS MIRROR: panes publish their resolved effective settings +
+     status into a mount-scoped registry so `getSettings()`/`status`/events
+     are answerable outside the React tree (M0F-PANE-READBACK).
+  g. Remove the forced StrictMode wrapper; ESM mounter binding; registry
+     shape-version migration (WIRE-REGISTRY-SHAPE).
+  Gates: typecheck, unit, full harness suite + new leak/reconcile/routing
+  harnesses.
+M1. `<Plot>` adapter; a MINIMAL chart-family settings model (smoothing,
+    outlier filter, axis scales, promoted series — today component-local
+    state in the chart components; R2-KINDS-5); Tier-1 error recovery;
+    migrate ScalarPlotCard (proves update(), settings round-trip, events,
+    stub tests).
 M2. RefStore + registerDataSource + DataPayload union + series deltas;
     re-base ScalarPlotCard; migrate image/compare cards.
 M3. 3D settings-store unification (camera state into the settings model),
@@ -511,15 +646,49 @@ as data.
 Deferred/rejected: cross-window sync (out of scope); commit-transients-
 by-default (contradicts the transient ruling — episodeEnd event instead).
 
+**Round 2** (4 lenses on v2, 32 findings, 8 blockers) — dispositions:
+- Tier order flipped to host-BELOW-local; `gestureSink` deleted;
+  persistence-by-observation: V2-1/2, R2-5, M0B → §6.4.
+- HOME back to the value-snapshot ruling (clear-based HOME rejected as a
+  ruling change): V2-5 → §6.4.
+- RefStore moved IN FRONT of resolution; contentKey-keyed decode cache;
+  error entries dropped; Tier-1 recovery pulled into M1: V2-3, R2-6 →
+  §6.5/6.2.
+- Runtime-store content addressing (buffer identity + authored contentKey);
+  blob-URL revocation; refcounted shared release: V2-4, M0D-RUNTIME-KEYS,
+  M0-DISPOSAL-SHARED → §6.2/7.
+- Hold re-gated on pane key: M0D-HOLD → §6.2.
+- update() generations/coalescing/abort: R2-UPDATE-7 → §6.2.
+- Capabilities made per-pane + content-aware + async-honest; one alias
+  vocabulary: V2-6, R2-FACET-3, R2-2, R2-3 → §6.3/6.7.
+- Selection/reference/drag surfaces added; selectionChange scoped:
+  R2-SEL-1, R2-DRAG-2, R2-4 → §6.3.
+- `pane.getData()` for cross-pane derived work; ScreenshotOpts to be
+  defined with the composed-export note: R2-READBACK-4, R2-SHOT-8 →
+  §6.3 (+§13).
+- Chart-family settings model scheduled in M1: R2-KINDS-5 → §10.
+- Lazy panes' honest semantics: V2-7 → §6.2. Mount error/paneRemoved:
+  R2-7 → §6.2. Registration collision rules + registry shape versioning:
+  R2-8, WIRE-REGISTRY-SHAPE → §7. Typed narrowing via `pane.as()`: V2-8,
+  API-1 → §6.3. Mount-owned layer identity: M0A/M0F → §10.
+
 ## 13. Open questions
 
-1. HOME vs host gesture sink: should HOME bypass the sink and clear the
-   local tier? (Needs a user ruling; §6.4.)
-2. `episodeEnd` payload shape: full transient snapshot vs per-key diff.
-3. RefStore byte budget defaults; interaction with the GPU byte budget.
-4. Should `linkViews` accept mixed kinds (image + mesh) as a no-op subset
+1. `episodeEnd` payload: full transient snapshot vs per-key diff of what
+   the episode actually changed (round 2's diff-seed idea would make the
+   diff exact — but changes formation seeding; needs a ruling).
+2. RefStore byte budget defaults; interaction with the GPU byte budget.
+3. Should `linkViews` accept mixed kinds (image + mesh) as a no-op subset
    or throw?
-5. Descriptor `schemaVersion` adoption sequencing across the three shipped
+4. Descriptor `schemaVersion` adoption sequencing across the three shipped
    copies.
-6. Whether `cairn-plot/extend` ships in M0 or waits for a concrete
+5. Whether `cairn-plot/extend` ships in M0 or waits for a concrete
    cairn-track custom pane.
+6. `ScreenshotOpts` definition (scale, background, HDR handling) and how
+   far the library goes toward composed exports (per-pane labels,
+   colorbars) vs leaving composition to hosts over `pane.screenshot()` +
+   `getData()` (R2-SHOT-8).
+7. Whether `pane.getData()` returns zero-copy views or defensive copies
+   for mutable runtime buffers.
+8. `selectionScope: "mount"` interaction with cross-mount compare flows
+   (a reference in mount A, foreground in mount B).
