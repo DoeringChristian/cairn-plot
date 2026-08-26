@@ -48,8 +48,8 @@ export type FrameSource =
  * Common view-state: a discriminated union, NOT one concrete type (2D affine
  * zoom/pan and a 3D camera pose are structurally different — D5 in the
  * design doc). Only the *pattern* (immutable value + full-replace callback)
- * is shared; `camera-sync.ts`'s echo-guarded bus generalizes independently of
- * this type.
+ * is shared; the camera rides the unified settings bus (`three/
+ * camera-settings.ts`) independently of this type.
  */
 export type ViewState =
   | { kind: "image2d"; zoom: number; pan: { x: number; y: number } }

@@ -18,7 +18,7 @@ export interface UseOffscreenSnapshotResult {
  * This is how 3D cards feed the shared media-compare compositor
  * (`CompositeMediaPane`) for image-space split/pixel-diff modes: two
  * of these (one per series, both viewers sharing a live camera-sync group —
- * see `three/camera-sync.ts`) stand in for the "fetch two image URLs" step an
+ * see `three/camera-settings.ts`) stand in for the "fetch two image URLs" step an
  * image card does, so the SAME compositor renders side/split/diff for
  * a rendered 3D pane, not a second implementation (spec-visual-compare.md
  * WS-VC2 / quality bar #2).

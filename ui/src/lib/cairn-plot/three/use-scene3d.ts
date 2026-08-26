@@ -3,11 +3,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { useContainerSize } from "../hooks/use-container-size";
 import {
-  makeCameraSyncSourceId,
-  publishCameraState,
-  subscribeCameraState,
+  createCameraSettingsPeer,
+  type CameraSettingsPeer,
   type CameraState,
-} from "./camera-sync";
+} from "./camera-settings";
 import { poolAcquire, poolRelease, poolTouch } from "./context-pool";
 import { recordContextLossEvent } from "../engine/test-hooks";
 
@@ -277,13 +276,22 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
 
   const boundsRef = useRef<Scene3DBounds | null>(null);
   const applyingRemoteRef = useRef(false);
-  const syncRef = useRef<Scene3DSyncOptions | null>(sync);
   const showAxesRef = useRef(showAxes);
   const showPlanesRef = useRef(showPlanes);
   const cameraModeRef = useRef(cameraMode);
   const onFrameRef = useRef<((canvas: HTMLCanvasElement) => void) | undefined>(onFrame);
+  // The viewport's camera-settings peer (owns the settings object, joins the
+  // group channel) — created by the peer-lifecycle effect below.
+  const peerRef = useRef<CameraSettingsPeer | null>(null);
+  // Per-viewer instance id — the context POOL's identity for this viewer
+  // (acquire/release/touch + loss telemetry). Purely a pool key; camera sync
+  // needs no id (the settings peer dedupes by patch identity).
   const sourceIdRef = useRef<string>();
-  if (!sourceIdRef.current) sourceIdRef.current = makeCameraSyncSourceId();
+  if (!sourceIdRef.current)
+    sourceIdRef.current =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `viewer-${Math.random().toString(36).slice(2)}`;
 
   // ── WS-3DR2: park/re-acquire bookkeeping ────────────────────────────────
   // `parkedRef` is the source of truth (checked synchronously from
@@ -753,9 +761,8 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
 
     const onChange = () => {
       requestRender();
-      const activeSync = syncRef.current;
-      if (activeSync && !applyingRemoteRef.current) {
-        publishCameraState(activeSync.groupId, sourceIdRef.current!, {
+      if (peerRef.current && !applyingRemoteRef.current) {
+        peerRef.current.set({
           position: camera.position.toArray() as [number, number, number],
           target: controls.target.toArray() as [number, number, number],
           zoom: camera.zoom,
@@ -932,18 +939,16 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Keep the "change" handler's view of `sync` current ──────────────────
-  useEffect(() => {
-    syncRef.current = sync;
-  }, [sync]);
-
-  // ── Camera-sync subscription (independent of the renderer lifecycle) ───
+  // ── Camera-settings peer (independent of the renderer lifecycle) ────────
+  // The viewport joins the group as a settings peer; on join it CONVERGES to
+  // a live member's current pose (`seed` — the adding-a-member-syncs ruling,
+  // replacing the old bus's last-value cache).
   useEffect(() => {
     if (!sync) return;
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
-    return subscribeCameraState(sync.groupId, sourceIdRef.current!, (state: CameraState) => {
+    const peer = createCameraSettingsPeer(sync.groupId, (state: CameraState) => {
       applyingRemoteRef.current = true;
       camera.position.fromArray(state.position);
       controls.target.fromArray(state.target);
@@ -959,6 +964,12 @@ export function useScene3D(options: UseScene3DOptions): Scene3DHandle {
       controls.update();
       applyingRemoteRef.current = false;
     });
+    peerRef.current = peer;
+    peer.seed();
+    return () => {
+      peerRef.current = null;
+      peer.dispose();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync?.groupId]);
 

@@ -2,13 +2,7 @@ import { useEffect, useId, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { Scene3DSyncOptions } from "../three/use-scene3d";
-import {
-  getLastCameraState,
-  makeCameraSyncSourceId,
-  publishCameraState,
-  subscribeCameraState,
-  type CameraState,
-} from "../three/camera-sync";
+import { createCameraSettingsPeer, type CameraState } from "../three/camera-settings";
 import { CrossTypeCompositeMediaPane } from "./compositor";
 import type { MediaCompareModeKind } from "./mode";
 import type { FrameSource } from "../viewport/types";
@@ -117,10 +111,9 @@ function useCompareCameraController(
     const controls = new OrbitControls(camera, el);
     controls.enableDamping = false;
 
-    const sourceId = makeCameraSyncSourceId();
     let applyingRemote = false;
 
-    const applyState = (state: CameraState) => {
+    const peer = createCameraSettingsPeer(groupId, (state: CameraState) => {
       applyingRemote = true;
       camera.position.fromArray(state.position);
       controls.target.fromArray(state.target);
@@ -128,16 +121,15 @@ function useCompareCameraController(
       camera.updateProjectionMatrix();
       controls.update();
       applyingRemote = false;
-    };
-
-    // Adopt the mirrors' already-published (fitted) camera if present, so the
-    // controller starts aligned and the first drag doesn't jump.
-    const initial = getLastCameraState(groupId);
-    if (initial) applyState(initial);
+    });
+    // Late-join converge (peer DEREF, not a cached last value): adopt the
+    // mirrors' fitted camera so the controller starts aligned and the first
+    // drag doesn't jump.
+    peer.seed();
 
     const onChange = () => {
       if (applyingRemote) return;
-      publishCameraState(groupId, sourceId, {
+      peer.set({
         position: camera.position.toArray() as [number, number, number],
         target: controls.target.toArray() as [number, number, number],
         zoom: camera.zoom,
@@ -145,11 +137,9 @@ function useCompareCameraController(
     };
     controls.addEventListener("change", onChange);
 
-    const unsubscribe = subscribeCameraState(groupId, sourceId, applyState);
-
     return () => {
       controls.removeEventListener("change", onChange);
-      unsubscribe();
+      peer.dispose();
       controls.dispose();
     };
   }, [overlayRef, groupId]);

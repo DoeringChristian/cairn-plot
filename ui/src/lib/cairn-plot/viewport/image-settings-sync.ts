@@ -53,10 +53,10 @@ export interface ViewportView {
  *   - `chart.*`   — 2D chart data-space window (matched-axes sync), NATIVE:
  *     `use-chart-viewport.ts` projects the frame-owned settings object, the
  *     image pattern exactly.
- *   - `scene3d.*` — 3D camera pose. The HOST-driven 3D viewer kits have no
- *     frame, so they ride these channels via the `three/camera-sync.ts`
- *     adapter until hosts hand real settings handles down (Host API v4
- *     `linkSettings`).
+ *   - `scene3d.*` — 3D camera pose, NATIVE: each 3D viewer owns a settings
+ *     object and joins its group as a peer (`three/camera-settings.ts`);
+ *     late-join converges by PEER DEREF (`settings-peers.ts`), the frame
+ *     registry's twin for frameless viewports.
  *
  * MASKS are `null`, never `undefined` (JSON-round-trippable by construction):
  * `"panel.info": null` = back-to-auto; `"image.colorRange": null` = bounds

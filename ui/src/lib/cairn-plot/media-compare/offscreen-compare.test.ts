@@ -44,7 +44,7 @@ test("OffscreenComparePanes owns the offscreen compositor orchestration", () => 
   assert.match(offscreen, /const referenceSnap = useOffscreenSnapshot\(\)/);
   // Camera-sync group + interaction controller.
   assert.match(offscreen, /useCompareCameraController/, "owns the orbit/zoom controller");
-  assert.match(offscreen, /publishCameraState|subscribeCameraState/, "drives the camera-sync bus");
+  assert.match(offscreen, /createCameraSettingsPeer/, "joins the unified settings channel as a camera peer");
   // Both source kinds are handled: a live hidden viewer OR a static frame.
   assert.match(offscreen, /kind === "live"/);
   assert.match(offscreen, /frameSourceToUrl\(/, "a frame side feeds its URL straight in");

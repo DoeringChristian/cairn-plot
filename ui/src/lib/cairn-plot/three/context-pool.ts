@@ -34,7 +34,7 @@
  * handler), which calls `poolTouch`, keeping that entry at the MRU end —
  * eviction only reaches into genuinely idle entries first.
  *
- * Framework-free (like `camera-sync.ts`) so it has zero React overhead and
+ * Framework-free (like `camera-settings.ts`) so it has zero React overhead and
  * is trivially unit-testable.
  */
 
