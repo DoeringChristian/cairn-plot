@@ -1591,19 +1591,34 @@ function useCompareControl(
     [hasStore],
   );
 
+  // FROZEN compare seeds (single-viewport rule — the compare twin of
+  // usePaneEncoding's `initialEncSeedRef`): a stacked viewport's slots carry
+  // DIFFERENT authored mode/kernel/split, but the viewport's settings must not
+  // change on a tab flip — so the seed term is captured ONCE, from the FIRST
+  // compare content this instance shows, and held. The live descriptor values
+  // remain what HOME adopts (focused-slot ruling) and what `modified`
+  // compares against.
+  const compareSeedRef = useRef<{ mode: CompareViewMode; kernel: string; split: number } | null>(null);
+  if (cmp && compareSeedRef.current === null) {
+    compareSeedRef.current = { mode: descriptorMode, kernel: descriptorKernel, split: descriptorSplit };
+  }
+  const seedMode = compareSeedRef.current?.mode ?? descriptorMode;
+  const seedKernel = compareSeedRef.current?.kernel ?? descriptorKernel;
+  const seedSplit = compareSeedRef.current?.split ?? descriptorSplit;
+
   // ONE precedence, derived every render (no adoption effects): settings store >
-  // local override > descriptor. Every change publishes to the store (the panes
-  // publish mode/kernel/split; HOME publishes the descriptor defaults), so the
-  // store is the single source of truth and simply propagates down.
+  // local override > FROZEN seed. Every change publishes to the store (the panes
+  // publish mode/kernel/split; HOME publishes the focused slot's descriptor
+  // defaults), so the store is the single source of truth and propagates down.
   const syncMode = syncedSettings?.compareMode;
   const syncKernel = syncedSettings?.diffKernel;
   const syncSplit = syncedSettings?.splitPosition;
   const viewMode =
     syncMode !== undefined
       ? normalizeCompareViewMode(syncMode)
-      : (viewModeOverride ?? descriptorMode);
-  const diffKernel = syncKernel !== undefined ? syncKernel : (kernelOverride ?? descriptorKernel);
-  const splitPos = syncSplit !== undefined ? syncSplit : (splitOverride ?? descriptorSplit);
+      : (viewModeOverride ?? seedMode);
+  const diffKernel = syncKernel !== undefined ? syncKernel : (kernelOverride ?? seedKernel);
+  const splitPos = syncSplit !== undefined ? syncSplit : (splitOverride ?? seedSplit);
 
   // HOME / double-click: drop every override so the control follows the DESCRIPTOR
   // again. This is the compare half of the pane's HOME the old `GpuComparePane` did
