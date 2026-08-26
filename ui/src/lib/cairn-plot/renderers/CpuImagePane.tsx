@@ -44,7 +44,7 @@
  * exposure+offset). Backend-seam mounts (`resolveImageRenderer` /
  * `GpuImagePane`'s C1 fallback) use the default `toolbar={true}`.
  */
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import PaneUnavailable from "../primitives/PaneUnavailable";
 import LabelChip from "../primitives/LabelChip";
@@ -430,8 +430,7 @@ function CpuSdrImagePane(
   // The viewport's settings STORE (see use-synced-image-settings.ts): threaded
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
-  const sdrOwnStoreId = useId();
-  const sdrOwnStore = useViewportSettings(`vp-st-pane-${sdrOwnStoreId}`);
+  const sdrOwnStore = useViewportSettings();
   const sdrThreadedSet = props.setSyncedSettings;
   const synced = sdrThreadedSet ? props.syncedSettings : sdrOwnStore.settings;
   const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
@@ -1114,8 +1113,7 @@ function CpuHdrImagePane(
   // The viewport's settings STORE (see use-synced-image-settings.ts): threaded
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
-  const hdrOwnStoreId = useId();
-  const hdrOwnStore = useViewportSettings(`vp-st-pane-${hdrOwnStoreId}`);
+  const hdrOwnStore = useViewportSettings();
   const hdrThreadedSet = props.setSyncedSettings;
   const synced = hdrThreadedSet ? props.syncedSettings : hdrOwnStore.settings;
   const setSynced = hdrThreadedSet ?? hdrOwnStore.set;

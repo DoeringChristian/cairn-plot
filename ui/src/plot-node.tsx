@@ -67,7 +67,7 @@ import {
   isImageCompatibleNode,
   registerSelectionPane,
   unregisterSelectionPane,
-} from "./plot-selection-pane-registry";
+ getRegisteredPane,} from "./plot-selection-pane-registry";
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
@@ -111,10 +111,7 @@ import {
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
 import { type ImageSyncSettings } from "./lib/cairn-plot/viewport/image-settings-sync";
-import {
-  useJoinSettingsGroup,
-  useViewportSettings,
-} from "./lib/cairn-plot/renderers/use-synced-image-settings";
+import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -188,10 +185,6 @@ interface PaneSyncCtx {
    *  LOCAL store (sticks). Threaded to the panes as a prop (the bundle split
    *  rules out context on the addon side). */
   setSyncedSettings?: (patch: ImageSyncSettings) => void;
-  /** The viewport's stable settings-entry id (`vp-st-<paneId>`) — the id group
-   *  memberships attach to. `LeafView` uses it to join the AUTHORED grid
-   *  `sync.viewport` group (scoped to `view`). */
-  localStoreId?: string;
 }
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
 
@@ -231,12 +224,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const { source, shared, viewportSyncGroupId } = useSharedPlot();
   // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
   const paneSync = useContext(PaneSyncContext);
-  // AUTHORED grid sync (`shared.sync.viewport`): join this viewport's settings
-  // entry to the grid-wide group, SCOPED to the `view` key — an authored grid
-  // sync still links only transforms (today's semantics), while the selection
-  // group (joined by PaneSelectionFrame, unscoped) fans everything. Image
-  // zoom/pan rides the settings entry (`settings.view`) since NOSTACK.
-  useJoinSettingsGroup(paneSync?.localStoreId, viewportSyncGroupId, VIEW_ONLY_KEYS);
   // True inside a STACKED viewport — threaded to the pane so it treats its display
   // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
   // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
@@ -945,7 +932,9 @@ function PaneSelectionFrame({
   const store = getGlobalSelectionStore();
   // The shared source/shared block this pane resolves against — captured into
   // the registry so the stage can render a FRESH leaf under the same context.
-  const { source, shared } = useSharedPlot();
+  // `viewportSyncGroupId` = the AUTHORED grid `sync.viewport` group (null
+  // unless the enclosing grid opted in) — a view-scoped settings membership.
+  const { source, shared, viewportSyncGroupId: gridViewGroupId } = useSharedPlot();
   // A process-unique, render-stable id for this pane instance.
   const [paneId] = useState(nextSelectionPaneId);
   // The frame's own element — the theme ORIGIN the body-portaled stage/action
@@ -995,6 +984,7 @@ function PaneSelectionFrame({
       paneId,
       node,
       source,
+      settings: { get: vst.get, set: vst.set },
       shared,
       imageCompatible: isImageCompatibleNode(node),
       getElement: () => frameRef.current,
@@ -1039,17 +1029,34 @@ function PaneSelectionFrame({
   const groups =
     selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
 
-  // The ONE settings entry per viewport (NOSTACK — see
-  // use-synced-image-settings.ts for the contract): a flat entry keyed by the
-  // pane's stable id. While this pane is one of >=2 selected it JOINS the
-  // per-episode selection group — edits on any member fan out into every
-  // member's own entry, PERSISTENTLY (leaving the selection changes nothing).
-  // `settings`/`set` are handed DOWN via context/props; nothing below
-  // subscribes to the registry.
-  const vst = useViewportSettings(
-    `vp-st-${paneId}`,
-    groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : undefined,
-  );
+  // THE viewport's OWN settings object (final NOSTACK model — see
+  // use-synced-image-settings.ts): this frame owns the box; memberships are
+  // channel subscriptions. While one of >=2 selected: the per-episode
+  // selection channel (all keys). Always: the authored grid `sync.viewport`
+  // channel, scoped to `view` (transforms-only grid sync, as authored).
+  // Edits fan into every member's own object, PERSISTENTLY.
+  const vst = useViewportSettings([
+    ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
+    ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_ONLY_KEYS }] : []),
+  ]);
+  // LATE-JOIN CONVERGENCE (ruling: adding a member syncs the group's settings
+  // over): a NON-anchor member entering a live selection adopts a peer's
+  // current settings by deref (members are identical by invariant). The
+  // anchor's own formation seed covers the fresh-formation case.
+  const settingsGroupId = groups?.settingsGroupId;
+  const isJoinAnchor = !!groups?.isAnchor;
+  useEffect(() => {
+    if (!settingsGroupId || isJoinAnchor) return;
+    for (const peerId of store.getSelected()) {
+      if (peerId === paneId) continue;
+      const peer = getRegisteredPane(peerId)?.settings?.get();
+      if (peer) {
+        vst.apply({ ...peer });
+        return;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsGroupId, isJoinAnchor]);
 
   const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
@@ -1132,21 +1139,16 @@ function PaneSelectionFrame({
             syncIsAnchor: groups.isAnchor,
             syncedSettings: vst.settings,
             setSyncedSettings: vst.set,
-            localStoreId: `vp-st-${paneId}`,
           }
         : null,
-    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, paneId],
+    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set],
   );
   const localSync = useMemo<PaneSyncCtx | null>(
     () =>
       selectable
-        ? {
-            syncedSettings: vst.settings,
-            setSyncedSettings: vst.set,
-            localStoreId: `vp-st-${paneId}`,
-          }
+        ? { syncedSettings: vst.settings, setSyncedSettings: vst.set }
         : null,
-    [selectable, vst.settings, vst.set, paneId],
+    [selectable, vst.settings, vst.set],
   );
 
   return (

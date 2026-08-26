@@ -50,7 +50,7 @@
  * its last frame and `PaneHandle.render()` transparently restores it on the next
  * render, so a zoom/pan/exposure change always paints a live frame.
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap, colormapFloatLUT } from "../colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
@@ -559,8 +559,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // host) owns its own group-of-one store, so settings live ONLY in stores —
   // never in pane state. An empty store lets the descriptor seeds shine
   // through (the one lookup: store value > prop seed).
-  const ownStoreId = useId();
-  const ownStore = useViewportSettings(`vp-st-pane-${ownStoreId}`);
+  const ownStore = useViewportSettings();
   const threadedSet = backendProps.setSyncedSettings;
   const synced = threadedSet ? backendProps.syncedSettings : ownStore.settings;
   const setSynced = threadedSet ?? ownStore.set;

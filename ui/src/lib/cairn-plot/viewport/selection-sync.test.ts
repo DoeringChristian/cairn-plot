@@ -1,115 +1,121 @@
 /**
- * Integration test tying the SELECTION store to the NOSTACK settings registry
- * through the SAME `paneSyncGroups` derivation the React layer
- * (`plot-node.tsx`'s `PaneSelectionFrame`) uses. Node-runnable proof:
- * two SELECTED panes share settings (incl. the folded `view` transform), an
- * UNSELECTED third does not, a newly-added member CONVERGES on join, the
- * anchor's formation seed converges the group, and everything PERSISTS after
- * deselection (the 2026-08-26 ruling reversal).
+ * Integration test tying the SELECTION store to the OBJECT-MODEL settings
+ * (channels + frame-owned objects) through the SAME `paneSyncGroups`
+ * derivation the React layer uses. Node-runnable proof: two SELECTED panes
+ * share settings (incl. the folded `view`), an UNSELECTED third does not,
+ * the anchor's formation seed converges the group, a late joiner converges
+ * by PEER DEREF, and everything PERSISTS after deselection (2026-08-26
+ * ruling reversal).
  *
  *   node --experimental-strip-types --test \
  *     src/lib/cairn-plot/viewport/selection-sync.test.ts
- *
- * Each pane is modelled as: its stable entry id (`vp-st-<paneId>`) + a group
- * membership derived from `paneSyncGroups` — exactly the plumbing a real pane
- * gets via `useViewportSettings`, minus React.
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { SelectionStore, paneSyncGroups } from "./selection-store.ts";
 import {
   __resetImageSettingsStoresForTest,
-  getViewportSettings,
-  joinSettingsGroup,
-  publishViewportSettings,
+  publishSettingsPatch,
+  subscribeSettingsPatches,
+  type ViewportSettings,
 } from "./image-settings-sync.ts";
 
 let n = 0;
 const freshBase = () => `sel-int-${n++}`;
-const entry = (paneId: string) => `vp-st-${paneId}`;
 
 beforeEach(() => {
   __resetImageSettingsStoresForTest();
 });
 
-/** Join a pane into whatever settings group its selection implies (what the
- *  React hook's membership effect does). Returns the groups + leave. */
-function wirePane(store: SelectionStore, paneId: string, base: string) {
+/** A pane modelled as the frame holds it: own object + membership from
+ *  `paneSyncGroups` + a registry-style deref for peers. */
+function wirePane(store: SelectionStore, paneId: string, base: string, registry: Map<string, () => ViewportSettings | null>) {
   const groups = paneSyncGroups(store, paneId, base);
-  const leave = groups ? joinSettingsGroup(groups.settingsGroupId, entry(paneId)) : () => {};
-  return { groups, leave };
+  const vp = {
+    groups,
+    settings: null as ViewportSettings | null,
+    lastApplied: null as ViewportSettings | null,
+    off: () => {},
+    apply(patch: ViewportSettings) {
+      if (vp.lastApplied === patch) return;
+      vp.lastApplied = patch;
+      vp.settings = { ...(vp.settings ?? {}), ...patch };
+    },
+    set(patch: ViewportSettings) {
+      vp.apply(patch);
+      if (groups) publishSettingsPatch(groups.settingsGroupId, patch);
+    },
+  };
+  registry.set(paneId, () => vp.settings);
+  if (groups) vp.off = subscribeSettingsPatches(groups.settingsGroupId, (p) => vp.apply(p));
+  // LATE-JOIN CONVERGENCE (what the frame's effect does): a NON-anchor member
+  // entering a live group adopts a peer's current settings by deref.
+  if (groups && !groups.isAnchor) {
+    for (const peerId of store.getSelected()) {
+      if (peerId === paneId) continue;
+      const peer = registry.get(peerId)?.();
+      if (peer) {
+        vp.apply({ ...peer });
+        break;
+      }
+    }
+  }
+  return vp;
 }
 
-test("two SELECTED panes share settings + view; an unselected third does not; edits PERSIST after deselect", () => {
+test("two SELECTED panes share settings + view; unselected third untouched; PERSISTS after deselect", () => {
   const base = freshBase();
+  const registry = new Map<string, () => ViewportSettings | null>();
   const store = new SelectionStore();
   store.select("A", "replace");
-  store.select("B", "toggle"); // {A, B} — A is anchor
+  store.select("B", "toggle"); // {A, B} — A anchor
 
-  const A = wirePane(store, "A", base);
-  const B = wirePane(store, "B", base);
-  const C = wirePane(store, "C", base);
+  const A = wirePane(store, "A", base, registry);
+  const B = wirePane(store, "B", base, registry);
+  const C = wirePane(store, "C", base, registry);
+  assert.ok(A.groups && B.groups && A.groups!.isAnchor && !B.groups!.isAnchor);
+  assert.equal(C.groups, null);
 
-  assert.ok(A.groups && B.groups, "A and B are active members");
-  assert.equal(A.groups!.settingsGroupId, B.groups!.settingsGroupId);
-  assert.equal(C.groups, null, "the unselected third pane is not in any sync group");
-  assert.equal(A.groups!.isAnchor, true, "A (first-selected) is the anchor");
-  assert.equal(B.groups!.isAnchor, false);
+  A.set({ encoding: "magma", view: { zoom: 3, pan: { x: 5, y: 6 } } });
+  assert.equal(B.settings!.encoding, "magma");
+  assert.deepEqual(B.settings!.view, { zoom: 3, pan: { x: 5, y: 6 } });
+  assert.equal(C.settings, null);
 
-  // An edit on A (colormap AND zoom — view is a setting now) fans into B's
-  // OWN entry; C is untouched.
-  publishViewportSettings(entry("A"), {
-    encoding: "magma",
-    view: { zoom: 3, pan: { x: 5, y: 6 } },
-  });
-  assert.equal(getViewportSettings(entry("B"))!.encoding, "magma");
-  assert.deepEqual(getViewportSettings(entry("B"))!.view, { zoom: 3, pan: { x: 5, y: 6 } });
-  assert.equal(getViewportSettings(entry("C")), null, "unselected pane untouched");
-
-  // DESELECT: members leave — everything they mirrored PERSISTS (reversal),
-  // and further edits no longer fan out.
-  A.leave();
-  B.leave();
-  assert.equal(getViewportSettings(entry("B"))!.encoding, "magma");
-  publishViewportSettings(entry("A"), { encoding: "srgb" });
-  assert.equal(getViewportSettings(entry("B"))!.encoding, "magma");
+  // DESELECT: memberships end — the mirrored values PERSIST; edits stop fanning.
+  A.off();
+  B.off();
+  assert.equal(B.settings!.encoding, "magma");
+  A.set({ encoding: "srgb" });
+  assert.equal(B.settings!.encoding, "magma");
 });
 
-test("formation seed converges the group; a newly-ADDED member converges on join", () => {
+test("anchor formation seed converges; a late-added member converges by peer deref", () => {
   const base = freshBase();
+  const registry = new Map<string, () => ViewportSettings | null>();
   const store = new SelectionStore();
-  // B has its own pre-selection look.
-  publishViewportSettings(entry("B"), { encoding: "own-b", exposureEV: -1 }, { fanOut: false });
   store.select("A", "replace");
-  store.select("B", "toggle"); // {A, B} — A is anchor
+  store.select("B", "toggle");
 
-  const gA = paneSyncGroups(store, "A", base)!;
-  const gB = paneSyncGroups(store, "B", base)!;
-  joinSettingsGroup(gA.settingsGroupId, entry("A"));
-  joinSettingsGroup(gB.settingsGroupId, entry("B"));
+  const A = wirePane(store, "A", base, registry);
+  const B = wirePane(store, "B", base, registry);
+  // The anchor's formation seed (useSeedGroupOnFormation): full effective
+  // snapshot, published like any edit — persistent.
+  A.set({ encoding: "turbo", exposureEV: 1, view: { zoom: 2, pan: { x: 1, y: 2 } } });
+  assert.equal(B.settings!.encoding, "turbo");
 
-  // The ANCHOR's formation seed (what `useSeedGroupOnFormation` publishes):
-  // its full effective snapshot — converges every member (persistent).
-  publishViewportSettings(entry("A"), {
-    encoding: "turbo",
-    exposureEV: 1,
-    view: { zoom: 2, pan: { x: 1, y: 2 } },
-  });
-  assert.equal(getViewportSettings(entry("B"))!.encoding, "turbo");
-  assert.equal(getViewportSettings(entry("B"))!.exposureEV, 1);
-
-  // C is shift-clicked in later → joins the SAME group and CONVERGES on join
-  // (adopts an existing member's entry).
+  // C shift-clicked in later: joins the SAME episode group, converges by deref.
   store.select("C", "toggle");
-  const gC = paneSyncGroups(store, "C", base)!;
-  assert.equal(gC.settingsGroupId, gA.settingsGroupId, "C joins the same episode group");
-  assert.equal(gC.isAnchor, false, "a newly-added member is never the anchor");
-  joinSettingsGroup(gC.settingsGroupId, entry("C"));
-  assert.equal(getViewportSettings(entry("C"))!.encoding, "turbo");
-  assert.deepEqual(getViewportSettings(entry("C"))!.view, { zoom: 2, pan: { x: 1, y: 2 } });
+  const C = wirePane(store, "C", base, registry);
+  assert.equal(C.groups!.settingsGroupId, A.groups!.settingsGroupId);
+  assert.equal(C.groups!.isAnchor, false);
+  assert.equal(C.settings!.encoding, "turbo");
+  assert.deepEqual(C.settings!.view, { zoom: 2, pan: { x: 1, y: 2 } });
+  // And from now on it mirrors live.
+  A.set({ peak: 8 });
+  assert.equal(C.settings!.peak, 8);
 });
 
-test("selectable:false is not modelled as an active member (helper sees no such id)", () => {
+test("selectable:false derives to no groups", () => {
   const base = freshBase();
   const store = new SelectionStore();
   store.select("A", "replace");

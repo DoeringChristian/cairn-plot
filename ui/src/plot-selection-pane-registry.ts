@@ -42,6 +42,13 @@ export interface RegisteredPane {
    *  stays inside the page's theme scope, so a body-portaled overlay can copy
    *  its resolved `--color-*` tokens). */
   readonly getElement: () => HTMLElement | null;
+  /** The viewport's SETTINGS accessors (NOSTACK object model): the owning
+   *  frame's live box, for peer reads (formation converge, stage
+   *  copy-on-create, harness/Host-API seams) and external writes. */
+  readonly settings?: {
+    get: () => import("./lib/cairn-plot/viewport/image-settings-sync").ViewportSettings | null;
+    set: (patch: import("./lib/cairn-plot/viewport/image-settings-sync").ViewportSettings) => void;
+  };
 }
 
 const registry = new Map<string, RegisteredPane>();

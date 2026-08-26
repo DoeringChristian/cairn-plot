@@ -31,6 +31,7 @@
  */
 import {
   useCallback,
+  useReducer,
   useEffect,
   useId,
   useLayoutEffect,
@@ -53,9 +54,9 @@ import {
   type StageMode,
 } from "./lib/cairn-plot/viewport/selection-store";
 import {
-  copyViewportSettings,
-  getViewportSettings,
-  joinSettingsGroup,
+  publishSettingsPatch,
+  subscribeSettingsPatches,
+  type ViewportSettings,
 } from "./lib/cairn-plot/viewport/image-settings-sync";
 import {
   imageCompatibleCount,
@@ -81,7 +82,6 @@ import {
   stackLabelFor,
 } from "./lib/cairn-plot/stack/StackedView";
 import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
-import { useViewportSettings } from "./lib/cairn-plot/renderers/use-synced-image-settings";
 import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import { useOriginTheme } from "./lib/cairn-plot/primitives/themed-portal";
 import {
@@ -136,10 +136,6 @@ const nonSelectableCache = new WeakMap<PlotNode, PlotNode>();
 // a page × references tried; entries die with the page (ids are page-scoped).
 const compareNodeCache = new Map<string, CompareNode>();
 
-/** The settings-entry id of a stage cell: per (stage open x source pane). */
-function stageCellEntryId(stageGroupId: string, reprPaneId: string): string {
-  return `vp-st-stage-${stageGroupId}-${reprPaneId}`;
-}
 function nonSelectable(node: PlotNode): PlotNode {
   if (node.kind === "grid") return node;
   let wrapped = nonSelectableCache.get(node);
@@ -294,6 +290,8 @@ function StageCell({
   onPickReference,
   viewportSyncGroupId,
   stageSettingsGroupId,
+  cellSettings,
+  onCellSettings,
 }: {
   spec: StageCellSpec;
   /** The packed rect for this cell (content-aspect, centrally clustered). While
@@ -326,6 +324,9 @@ function StageCell({
    *  edits never touch the original panes (user ruling: stage viewports are
    *  independent). */
   stageSettingsGroupId: string;
+  /** The cell's live settings object (stage-owned) + the stage publisher. */
+  cellSettings: ViewportSettings | null;
+  onCellSettings: (patch: ViewportSettings) => void;
 }) {
   // Re-pick gesture (stationary press, never a control press, never a drag).
   // ENLARGE: anywhere on the cell. COMPARE: only when the press started on the
@@ -393,27 +394,18 @@ function StageCell({
   // pane's own content aspect flows up via `GridUniformAspectContext` (a
   // `GridCellReporter` inside `ImageStandalone`, since the stage provides that
   // context) — the SAME path `cp.Grid` uses.
-  // The ONE settings entry for THIS stage cell's viewport (same hook +
-  // contract as the page-wide selection — NO stage-special apply path).
-  // IDENTITY: keyed by (stage open × SOURCE pane), NOT by component instance
-  // — stage cells legitimately remount (stacked tab flips, reference
-  // re-picks), and an instance-keyed entry re-minted a fresh viewport on
-  // every remount (re-copying from the ORIGINAL pane = the settings-change-
-  // per-tab bug). Seeding (copy-on-create) and group MEMBERSHIP are owned by
-  // `SelectionStage` for the whole open — so an edit fans into every cell's
-  // entry even while a stacked sibling is unmounted, and a remount simply
-  // re-attaches to its persistent entry.
-  const cellEntryId = stageCellEntryId(stageSettingsGroupId, spec.reprPaneId);
-  const vst = useViewportSettings(cellEntryId);
-  const stageGroupId = stageSettingsGroupId;
+  // THIS cell's settings are OWNED BY THE STAGE (see SelectionStage): the
+  // cell receives its live object + the stage-channel publisher as props —
+  // remounts (stacked tab flips, reference re-picks) re-attach to the same
+  // persistent object, and a publish reaches every cell (hidden ones too).
   const paneSync = useMemo(
     () => ({
       viewportSyncGroupId,
-      settingsSyncGroupId: stageGroupId,
-      syncedSettings: vst.settings,
-      setSyncedSettings: vst.set,
+      settingsSyncGroupId: stageSettingsGroupId,
+      syncedSettings: cellSettings,
+      setSyncedSettings: onCellSettings,
     }),
-    [viewportSyncGroupId, stageGroupId, vst.settings, vst.set],
+    [viewportSyncGroupId, stageSettingsGroupId, cellSettings, onCellSettings],
   );
 
   // GENERAL per-cell aspect bridge: forward whatever this cell's pane publishes on
@@ -538,33 +530,36 @@ function SelectionStage({
   const viewportSyncGroupId = useId();
   const [stageSettingsGroupId] = useState(() => `cp-stage-st-${++stageOpenSeq}`);
 
-  // COPY-ON-CREATE for every cell entry, at RENDER time (before the cells
-  // mount) so the first paint already shows the source's settings. Guarded
-  // per entry id — idempotent, runs once per (open x pane), including cells
-  // added by later re-picks. Registry mutation in render is deliberate here:
-  // it is write-once-per-id and the subscribers (the cells) mount after.
-  const seededEntriesRef = useRef(new Set<string>());
+  // STAGE-OWNED CELL SETTINGS (the object model): the stage — the creator of
+  // its cells' viewports — owns ONE plain settings object per cell for the
+  // whole open, seeded by COPY from the source pane's live settings (deref
+  // via the pane registry) the first time each cell appears. ONE stage-channel
+  // subscription applies every published patch to ALL cell objects — mounted
+  // or not — so a stacked stage's edit reaches hidden siblings and tab flips
+  // re-attach to consistent, persistent state. Cells publish; the stage
+  // applies; originals are never touched (independence ruling).
+  const cellSettingsRef = useRef(new Map<string, ViewportSettings | null>());
+  const [, bumpCellSettings] = useReducer((c: number) => c + 1, 0);
   for (const cell of cells) {
-    const id = stageCellEntryId(stageSettingsGroupId, cell.reprPaneId);
-    if (!seededEntriesRef.current.has(id)) {
-      seededEntriesRef.current.add(id);
-      if (getViewportSettings(id) == null) {
-        copyViewportSettings(`vp-st-${cell.reprPaneId}`, id);
-      }
+    if (!cellSettingsRef.current.has(cell.key)) {
+      const src = getRegisteredPane(cell.reprPaneId)?.settings?.get() ?? null;
+      cellSettingsRef.current.set(cell.key, src ? { ...src } : null);
     }
   }
-  // The stage OWNS the group memberships for the whole open: every cell's
-  // entry stays a member while the stage lives — mounted or not — so a
-  // stacked stage's edit fans into the unmounted siblings' entries too and
-  // flipping tabs shows consistent settings.
-  const cellEntryKey = cells
-    .map((c) => stageCellEntryId(stageSettingsGroupId, c.reprPaneId))
-    .join(" ");
-  useEffect(() => {
-    const ids = cellEntryKey.split(" ").filter(Boolean);
-    const leaves = ids.map((id) => joinSettingsGroup(stageSettingsGroupId, id));
-    return () => leaves.forEach((l) => l());
-  }, [stageSettingsGroupId, cellEntryKey]);
+  useEffect(
+    () =>
+      subscribeSettingsPatches(stageSettingsGroupId, (patch) => {
+        for (const [key, prev] of cellSettingsRef.current) {
+          cellSettingsRef.current.set(key, { ...(prev ?? {}), ...patch });
+        }
+        bumpCellSettings();
+      }),
+    [stageSettingsGroupId],
+  );
+  const publishCellSettings = useCallback(
+    (patch: ViewportSettings) => publishSettingsPatch(stageSettingsGroupId, patch),
+    [stageSettingsGroupId],
+  );
 
   // --- UNIFORM CONTENT-ASPECT PACKING ----------------------------------------
   // The stage is a UNIFORM grid, driven by the SAME size-computation mechanism as
@@ -700,6 +695,8 @@ function SelectionStage({
                       onPickReference={() => store.setReference(cells[stackActiveClamped]!.reprPaneId)}
                       viewportSyncGroupId={viewportSyncGroupId}
                       stageSettingsGroupId={stageSettingsGroupId}
+                      cellSettings={cellSettingsRef.current.get(cells[stackActiveClamped]!.key) ?? null}
+                      onCellSettings={publishCellSettings}
                     />
                   </div>
                 </InStackedGridContext.Provider>
@@ -713,6 +710,8 @@ function SelectionStage({
                     onPickReference={() => store.setReference(spec.reprPaneId)}
                     viewportSyncGroupId={viewportSyncGroupId}
                     stageSettingsGroupId={stageSettingsGroupId}
+                    cellSettings={cellSettingsRef.current.get(spec.key) ?? null}
+                    onCellSettings={publishCellSettings}
                   />
                 ))
               )}

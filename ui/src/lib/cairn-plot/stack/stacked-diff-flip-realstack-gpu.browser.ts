@@ -69,7 +69,7 @@ import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
 } from "../viewport/selection-store";
-import { getViewportSettings, publishViewportSettings } from "../viewport/image-settings-sync";
+import { getRegisteredPane } from "../../../plot-selection-pane-registry";
 
 function report(pass: boolean, message: string): void {
   const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
@@ -597,13 +597,15 @@ async function main(): Promise<void> {
     storeC.select(idsC[0], "replace");
     storeC.select(idsC[1], "toggle");
     await sleep(400);
-    // NOSTACK: an "external peer" is just another member — publish through a
-    // SELECTED pane's own entry; the group fan-out delivers to the rest.
-    const selectedPaneEntry = () => {
+    // OBJECT MODEL: an "external peer" is just another member — write through a
+    // SELECTED pane's registered settings accessor; the group fan-out
+    // delivers to the rest.
+    const selectedPaneSet = (patch: Record<string, unknown>) => {
       const el = document.querySelector('[data-plot-pane-id][data-selected="true"]');
       const id = el?.getAttribute("data-plot-pane-id");
-      if (!id) throw new Error("realstack: no selected pane to publish through");
-      return `vp-st-${id}`;
+      const acc = id ? getRegisteredPane(id)?.settings : undefined;
+      if (!acc) throw new Error("realstack: no selected pane to publish through");
+      acc.set(patch);
     };
 
     const observeAfter = async (
@@ -622,7 +624,7 @@ async function main(): Promise<void> {
 
     // (1) SAME-KIND image colormap pick (no compareMode) → MUST adopt → orange.
     const sameKind = await observeAfter(() =>
-      publishViewportSettings(selectedPaneEntry(), { encoding: "magma", colormap: "magma" }),
+      selectedPaneSet({ encoding: "magma", colormap: "magma" }),
     );
     note(`PHASE C same-kind image colormap patch: image presents=${sameKind.total}, ORANGE=${sameKind.orange}`);
     report(
@@ -633,12 +635,12 @@ async function main(): Promise<void> {
 
     // (2) Reset to a light curve (same-kind) → image goes plain again.
     await observeAfter(() =>
-      publishViewportSettings(selectedPaneEntry(), { encoding: "srgb", colormap: "none" }),
+      selectedPaneSet({ encoding: "srgb", colormap: "none" }),
     );
     // (3) DIFF patch (compareMode "diff") → adopted BY VALUE, same as any other
     // colormap (ruling 5: no scoping). The image false-colors → orange.
     const diffPatch = await observeAfter(() =>
-      publishViewportSettings(selectedPaneEntry(), {
+      selectedPaneSet({
         encoding: "magma",
         colormap: "magma",
         compareMode: "diff",
@@ -1300,7 +1302,7 @@ async function main(): Promise<void> {
       store.select(ids[2], "toggle"); // + slot2 (absolute) → ONE 3-pane group
       await sleep(500); // let the anchor seed + every joiner adopt run
       const entryKernel = (paneId: string | undefined) =>
-        paneId ? getViewportSettings(`vp-st-${paneId}`)?.diffKernel : undefined;
+        paneId ? getRegisteredPane(paneId)?.settings?.get()?.diffKernel : undefined;
       const seedPatchHadKernel = entryKernel(ids[1]) === seeds[0] && entryKernel(ids[2]) === seeds[0];
       const formationPatchCount = [ids[1], ids[2]].filter((id) => entryKernel(id) !== undefined).length;
       const afterSelect = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];

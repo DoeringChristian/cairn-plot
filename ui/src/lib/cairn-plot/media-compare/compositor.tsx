@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
 import { InStackedGridContext } from "../stack/stack-context";
 import { usePublishNaturalSize } from "../renderers/natural-size-report";
@@ -846,9 +846,7 @@ export function CompositeMediaPane({
   // pane is NOT under a plot-node `PaneSelectionFrame`, so IT owns the one store
   // per viewport (local store + group while synced; group > local > default —
   // see use-synced-image-settings.ts) and drives the composited pane top-down.
-  const compositorViewportId = useId();
   const vst = useViewportSettings(
-    `vp-st-compositor-${compositorViewportId}`,
     settingsSyncGroupId ? [{ id: settingsSyncGroupId }] : undefined,
   );
   const syncedSettings = vst.settings;
