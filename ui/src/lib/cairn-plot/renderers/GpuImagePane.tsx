@@ -560,7 +560,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // never in pane state. An empty store lets the descriptor seeds shine
   // through (the one lookup: store value > prop seed).
   const ownStoreId = useId();
-  const ownStore = useViewportSettings([`vp-st-pane-${ownStoreId}`]);
+  const ownStore = useViewportSettings(`vp-st-pane-${ownStoreId}`);
   const threadedSet = backendProps.setSyncedSettings;
   const synced = threadedSet ? backendProps.syncedSettings : ownStore.settings;
   const setSynced = threadedSet ?? ownStore.set;
@@ -898,6 +898,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             reduce: effectiveReduce,
             compareMode: "diff",
             diffKernel,
+            // Formation converges the VIEW too (view transforms are settings).
+            view: { zoom, pan },
           }
         : {
             // The ONE `encoding` id — the registry derives colormap/curve from it.
@@ -915,12 +917,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             ...(compositorMode
               ? { compareMode: compareOpMode as string, splitPosition }
               : {}),
+            // Formation converges the VIEW too (view transforms are settings).
+            view: { zoom, pan },
           },
-    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition],
+    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, zoom, pan],
   );
-  // The ONE write path into the viewport's settings store (see the binding of
-  // `setSynced` above): the GROUP store while selected (transient — gone on
-  // unselect), else the viewport's local store (sticks).
+  // The ONE write path into the viewport's settings entry (NOSTACK): fans out
+  // to the selection group while selected — PERSISTENTLY (leaving changes
+  // nothing) — else writes just this viewport's entry.
   const publishSettings = setSynced;
   // Anchor formation seed: a forming group converges to this viewport's values.
   useSeedGroupOnFormation(

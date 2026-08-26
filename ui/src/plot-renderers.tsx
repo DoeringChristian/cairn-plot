@@ -315,12 +315,14 @@ function ImageStandalone(p: P) {
   // content aspect up so the grid can choose that representative. Absent (a
   // standalone mount) ⇒ null ⇒ the per-content `ContentAspectFrame` framing below.
   const gridUniform = useContext(GridUniformAspectContext);
-  // `p.syncIsAnchor` + the selection-derived sync group ids are threaded down by
-  // `plot-node.tsx`'s `SelectionCell` while ≥2 panes are selected (else absent).
+  // NOSTACK: the viewport is a pure projection of the settings entry
+  // (`settings.view`), written through the ONE settings write path — group
+  // fan-out (selection / authored grid sync) rides the settings bus. A bare
+  // host mount (no store) falls back to hook-local state.
   const [viewport, onViewportChange] = useSyncedImageViewport(
-    p.viewportSyncGroupId,
+    p.syncedSettings,
+    p.setSyncedSettings,
     { zoom: p.zoom ?? 1, pan: p.pan ?? { x: 0, y: 0 } },
-    !!p.syncIsAnchor,
   );
   // resolveImageRenderer: the backend for this mount (GpuImagePane or
   // CpuImagePane — both satisfy the ONE `ImageBackendProps` contract, so the

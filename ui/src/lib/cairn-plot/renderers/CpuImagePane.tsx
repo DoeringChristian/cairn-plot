@@ -431,7 +431,7 @@ function CpuSdrImagePane(
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
   const sdrOwnStoreId = useId();
-  const sdrOwnStore = useViewportSettings([`vp-st-pane-${sdrOwnStoreId}`]);
+  const sdrOwnStore = useViewportSettings(`vp-st-pane-${sdrOwnStoreId}`);
   const sdrThreadedSet = props.setSyncedSettings;
   const synced = sdrThreadedSet ? props.syncedSettings : sdrOwnStore.settings;
   const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
@@ -484,8 +484,10 @@ function CpuSdrImagePane(
     (): ImageSyncSettings => ({
       encoding: enc.encodingId,
       tonemapGamma,
+      // Formation converges the VIEW too (view transforms are settings).
+      view: { zoom: zoomProp, pan: panProp },
     }),
-    [enc.encodingId, tonemapGamma],
+    [enc.encodingId, tonemapGamma, zoomProp, panProp],
   );
   const publishSettings = setSynced;
   useSeedGroupOnFormation(
@@ -1112,7 +1114,7 @@ function CpuHdrImagePane(
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
   const hdrOwnStoreId = useId();
-  const hdrOwnStore = useViewportSettings([`vp-st-pane-${hdrOwnStoreId}`]);
+  const hdrOwnStore = useViewportSettings(`vp-st-pane-${hdrOwnStoreId}`);
   const hdrThreadedSet = props.setSyncedSettings;
   const synced = hdrThreadedSet ? props.syncedSettings : hdrOwnStore.settings;
   const setSynced = hdrThreadedSet ?? hdrOwnStore.set;
@@ -1226,8 +1228,10 @@ function CpuHdrImagePane(
       offset: displayOffset,
       reduce: effectiveReduce,
       ...(colorBounds ? { colorMin: colorBounds[0], colorMax: colorBounds[1] } : {}),
+      // Formation converges the VIEW too (view transforms are settings).
+      view: { zoom, pan },
     }),
-    [enc.encodingId, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds],
+    [enc.encodingId, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds, zoom, pan],
   );
   const publishSettings = setSynced;
   useSeedGroupOnFormation(

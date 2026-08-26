@@ -1,51 +1,61 @@
 /**
- * Framework-free live DISPLAY-SETTINGS sync bus for image panes — the settings
- * mirror of `image-viewport-sync.ts`'s zoom/pan bus. One `EventTarget` per
- * `groupId`.
+ * VIEWPORT SETTINGS — the one flat registry + group fan-out bus (the NOSTACK
+ * model, user rulings 2026-08-26; supersedes the settings STACK of 2026-08-25).
  *
- * The model is deliberately flat (the settings-model simplification): each
- * viewport owns ONE concrete settings set and applies incoming values BY VALUE.
- * A pane publishes a settings patch whenever the user changes one of its display
- * controls (colormap / tonemap / gamma / peak / exposure / offset / bounds /
- * reduce / diff kernel / compare mode / split / blend / channel select); every
- * other pane in the group applies the incoming fields to its own settings
- * (MIRRORING, ruling 4). Applicability is decided at RENDER, not here (ruling 5):
- * a value that doesn't apply to a pane's current content (e.g. a colormap LUT on
- * a light RGB face) is stored and simply doesn't alter that render — there is no
- * face tag, no scoping, no per-key gating at the bus.
+ * ## The model
+ * - Every viewport owns ONE settings entry in a flat registry
+ *   (`viewportId → ImageSyncSettings`). Entries hold ONLY explicitly-set
+ *   values; per-content DEFAULTS are derived at render and never stored.
+ *   Entries outlive the renderer components (a pane remount, a GPU→CPU
+ *   fallback, park/restore — the viewport persists, its entry with it).
+ * - GROUPS are explicit memberships (`groupId → member viewport ids`),
+ *   joined/left by the UI scopes that own them (the selection episode, the
+ *   enlarge stage, an authored grid sync). A group may be KEY-SCOPED: an
+ *   authored `sync.viewport` grid group fans ONLY the `view` key (today's
+ *   semantics preserved); the selection/stage groups fan everything.
+ * - `publishViewportSettings(id, patch)` is THE write path (gesture, HOME,
+ *   formation seed, host API — all of it): the patch merges into the writer's
+ *   entry AND into every member of the TRANSITIVE closure of the writer's
+ *   groups (union ruling; per-group key scopes applied per hop-target).
+ *   Writes are PERSISTENT — leaving a group changes nothing (ruling reversal
+ *   2026-08-26: group edits stay).
+ * - Subscribers are notified per-VIEWPORT ("your entry changed — re-read"),
+ *   NOT handed patches. There is no adoption step and therefore no echo
+ *   guard: the pre-stack mirror/adoption/one-commit-lag bug class has no
+ *   code path to live in. The publisher's own entry is written by the same
+ *   fan-out code as everyone else's (publish path == apply path).
+ * - Formation converges: the anchor publishes its full EFFECTIVE snapshot
+ *   (display keys + `view`) when a group forms (pane-side, it owns the
+ *   snapshot — `useSeedGroupOnFormation`); a LATE JOINER adopts by copying an
+ *   existing member's entry on join. HOME = an ordinary publish of the
+ *   clicked pane's content-derived defaults (fans out like any edit).
  *
- * A publish carries only the control(s) that changed; the bus merges them into
- * the group's accumulated snapshot (`lastStates`) with a plain flat spread, so a
- * pane JOINING a group late (`getLastImageSettings`) or the anchor SEEDING the
- * group on FORMATION (an explicit publish of its CURRENT values — ruling 3) both
- * align to the group's current settings. No key is ephemeral; no key is
- * reconciled specially.
- *
- * A single echo guard suffices (same reasoning as the viewport bus): each
- * publish carries the publisher's `sourceId`; a subscriber ignores events whose
- * `sourceId` matches its own. Callers publish only from genuine local control
- * changes (a menu pick / slider drag), never from an effect watching the
- * override state itself, so a mirrored patch is never re-published.
- *
- * Reuses `makeImageViewportSyncSourceId` for the per-pane echo token. React-free
- * and dependency-free so it stays in the CORE bundle (image panes are core) and
- * is unit-testable without a DOM/React harness.
+ * ## Cross-bundle singleton
+ * Bundled into BOTH the core chunk and the gpu-image addon chunk (the addon
+ * carries its own copy of this file). The registry is anchored on
+ * `globalThis` so both copies share ONE set of entries/groups/listeners —
+ * without this, an addon-side publish would never reach a core-side
+ * subscriber (the historical kernel-not-mirroring bug).
  */
 
-/** The settings that sync across a selected group — the viewport's full display
- *  vocabulary. All fields optional: a publish carries only the control(s) that
- *  changed and the bus flat-merges them into the group snapshot. A subscriber
- *  applies only the keys its content owns (an image pane ignores compare-only
- *  keys; a value that doesn't apply to its current content is stored and simply
- *  doesn't alter its render — applicability is a RENDER decision, not a sync one). */
+/** An image viewport's VIEW transform — zoom/pan, folded into the settings
+ *  vocabulary (transforms are settings; they sync on the same bus). */
+export interface ViewportView {
+  zoom: number;
+  pan: { x: number; y: number };
+}
+
+/** The settings vocabulary — every key a viewport can explicitly own. All
+ *  fields optional: an entry holds only what was explicitly set; a publish
+ *  carries only what changed. Applicability is a RENDER decision (ruling 5):
+ *  a key that doesn't apply to a viewport's current content is stored and
+ *  simply doesn't alter that render. */
 export interface ImageSyncSettings {
   /** The unified DISPLAY-ENCODING id (a curve/remap operator id or a colormap
-   *  LUT id) — the ONE display-look key. Every pane publishes and applies THIS;
-   *  the registry derives colormap/curve from it. */
+   *  LUT id) — the ONE display-look key. */
   encoding?: string;
-  /** @deprecated pre-registry wire format (the split colormap+tonemap pair).
-   *  No longer published or read by cairn-plot panes — accepted inert so an
-   *  external publisher's patch still merges (applicability at render). */
+  /** @deprecated pre-registry wire format (split colormap+tonemap). Accepted
+   *  inert so an external publisher's patch still merges. */
   colormap?: string;
   /** @deprecated see {@link ImageSyncSettings.colormap}. */
   tonemap?: string;
@@ -53,219 +63,236 @@ export interface ImageSyncSettings {
   peak?: number;
   exposureEV?: number;
   offset?: number;
-  /** DATA-encoding norm — kept for back-compat (the norm picker is gone; the
-   *  effective norm is linear). Accepted but ignored on apply. */
+  /** DATA-encoding norm — back-compat; accepted but ignored on apply. */
   norm?: string;
-  /** DATA-encoding multi-channel REDUCE — how a k>1 colormap source collapses to
-   *  a scalar (`luminance`/`mean`). Applies only while a lut encoding is active
-   *  on a k>1 source; stored otherwise. */
+  /** Multi-channel REDUCE for k>1 colormap sources (`luminance`/`mean`). */
   reduce?: string;
-  /** DATA-encoding BOUNDS — the min/max colorRange skin. Both set = the bounds
-   *  affine is engaged (else the exposure/offset skin). */
+  /** DATA-encoding BOUNDS — both set = the bounds affine is engaged. */
   colorMin?: number;
   colorMax?: number;
-  /** Composited compare mode: "split" | "diff". The real mode the compare owner
-   *  (`useCompareControl`) mirrors; applied only by compare panes. A legacy
-   *  "blend" from an old peer is aliased to "split" on read. */
+  /** Composited compare mode: "split" | "diff" (legacy "blend" aliases to
+   *  "split" on read). */
   compareMode?: string;
-  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). A normal
-   *  synced value — a selected group mirrors the first viewport's kernel. */
+  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). */
   diffKernel?: string;
   /** Split-divider position in [0,1]. */
   splitPosition?: number;
-  /** EXR channel-strip selection ({part, layer} or null = the node default) —
-   *  applied by image LEAVES (LeafView), ignored by compare panes. Synced BY
-   *  NAME so a group flips every pane to the same part/layer. */
+  /** EXR channel-strip selection ({part, layer} or null = the node default).
+   *  Synced BY NAME so a group flips every pane to the same part/layer. */
   channelSelect?: { part?: number | string; layer?: string | string[] } | null;
-  /** INFO-PANEL visibility: `true`/`false` = an explicit user choice; ABSENT =
-   *  auto (the panel shows iff its footprint stays within 25% of the pane
-   *  width). HOME clears it back to auto (explicit `undefined`). */
+  /** INFO-PANEL visibility: true/false = explicit choice; ABSENT = auto.
+   *  HOME clears it back to auto (explicit `undefined` masks — see merge). */
   infoPanel?: boolean;
+  /** The viewport's zoom/pan (see {@link ViewportView}). Folded into the
+   *  settings so view transforms ride the SAME registry + fan-out as display
+   *  keys (one bus). Absent = the pane's own HOME/fit view. */
+  view?: ViewportView;
 }
 
-interface SettingsStateDetail {
-  patch: ImageSyncSettings;
-  sourceId: string;
+/** Keys a group may be scoped to (see {@link joinSettingsGroup}). */
+export type SettingsKey = keyof ImageSyncSettings;
+
+interface GroupInfo {
+  members: Set<string>;
+  /** Undefined = all keys fan through this group; else only these keys. */
+  keys?: ReadonlySet<SettingsKey>;
 }
 
-const EVENT_TYPE = "image-settings-state";
-
-// CROSS-BUNDLE SINGLETON. This module is bundled into BOTH the core chunk
-// (`core.iife.js`, where `useCompareControl` in `plot-node.tsx` SUBSCRIBES the
-// diff kernel / compare mode / split / blend) and the gpu-image addon chunk
-// (`gpu-image.iife.js`, where `GpuImagePane` PUBLISHES those keys) — the addon
-// externalizes only React, so it carries its own copy of this file. Two
-// module-local `Map`s would therefore be TWO disjoint registries: the addon's
-// publish would never reach core's subscriber, and every compare-owned key
-// (kernel/mode/split/blend) would silently fail to mirror across a selection —
-// the reported bug (a diff-mode change on one selected viewport not mirroring;
-// in the enlarge stage the kernel drives the DERIVED default colormap, so it
-// read as the colormap not mirroring either). The zoom/pan bus doesn't hit this
-// because it lives core-only. Anchor the registry on `globalThis` so BOTH
-// bundle copies of this module share ONE set of buses + snapshots (the same
-// same-window sharing React itself uses via `window.__cairnPlotReact`).
-interface SettingsBusRegistry {
-  buses: Map<string, EventTarget>;
-  lastStates: Map<string, ImageSyncSettings>;
+// CROSS-BUNDLE SINGLETON (see module doc). The `??=` keeps an older registry
+// object working if bundles of mixed vintage share a page.
+interface SettingsRegistry {
+  entries: Map<string, ImageSyncSettings>;
+  groups: Map<string, GroupInfo>;
+  listeners: Map<string, Set<() => void>>;
 }
-const REGISTRY_KEY = "__cairnPlotImageSettingsBus__";
-const registry: SettingsBusRegistry =
-  ((globalThis as unknown as Record<string, SettingsBusRegistry | undefined>)[REGISTRY_KEY] ??= {
-    buses: new Map<string, EventTarget>(),
-    lastStates: new Map<string, ImageSyncSettings>(),
+const REGISTRY_KEY = "__cairnPlotViewportSettings__";
+const registry: SettingsRegistry =
+  ((globalThis as unknown as Record<string, SettingsRegistry | undefined>)[REGISTRY_KEY] ??= {
+    entries: new Map(),
+    groups: new Map(),
+    listeners: new Map(),
   });
-const buses = registry.buses;
-const lastStates = registry.lastStates;
 
-function busFor(groupId: string): EventTarget {
-  let bus = buses.get(groupId);
-  if (!bus) {
-    bus = new EventTarget();
-    buses.set(groupId, bus);
+function notify(viewportId: string): void {
+  const subs = registry.listeners.get(viewportId);
+  if (subs) for (const cb of [...subs]) cb();
+}
+
+/** The viewport's explicitly-set settings, or `null` if none yet. The returned
+ *  object is IDENTITY-STABLE until the entry is next written (pure read —
+ *  memo-friendly). Callers must not mutate it. */
+export function getViewportSettings(viewportId: string): ImageSyncSettings | null {
+  return registry.entries.get(viewportId) ?? null;
+}
+
+/** Subscribe to "this viewport's entry changed — re-read it". Returns an
+ *  unsubscribe. There are no patch payloads and no echo filtering: consumers
+ *  re-read {@link getViewportSettings} (read is pure; no adoption step). */
+export function subscribeViewportSettings(viewportId: string, cb: () => void): () => void {
+  let subs = registry.listeners.get(viewportId);
+  if (!subs) {
+    subs = new Set();
+    registry.listeners.set(viewportId, subs);
   }
-  return bus;
-}
-
-/** Broadcasts a settings `patch` to every other subscriber of `groupId`, and
- *  flat-merges it into the group's accumulated snapshot (for late joiners /
- *  formation seed). By value: no key is scoped, tagged, or dropped. */
-export function publishImageSettings(
-  groupId: string,
-  sourceId: string,
-  patch: ImageSyncSettings,
-): void {
-  const prev = lastStates.get(groupId) ?? {};
-  lastStates.set(groupId, { ...prev, ...patch });
-  bumpLayerVersion(groupId);
-  busFor(groupId).dispatchEvent(
-    new CustomEvent<SettingsStateDetail>(EVENT_TYPE, { detail: { patch, sourceId } }),
-  );
-}
-
-// ---------------------------------------------------------------------------
-// THE SETTINGS STACK (user ruling, 2026-08-25). A viewport resolves its
-// settings through an EXPLICIT stack of layer ids, bottom → top:
-//
-//     [viewport-local, selection-group?, stage-layer?, …]
-//
-// - `pushSettingsLayer` / `popSettingsLayer` are PURE operations on stack
-//   VALUES — a scope that wants a layer (a selection episode, a stage open)
-//   pushes onto its parent's stack and hands the new value down; when the
-//   scope ends, its stack value stops existing, which IS the pop. There is
-//   deliberately NO mutable global stack: layer lifetime stays tied to the UI
-//   scope that pushed it, so pops can never be unbalanced or forgotten.
-// - Reads merge the whole stack (top shadows bottom) via `resolveSettingsStack`
-//   — CACHED per stack, stamped by per-layer write versions, so an unchanged
-//   stack returns the IDENTICAL object (cheap, and memo-friendly across every
-//   viewport sharing the stack).
-// - Writes go to the TOP layer only (`publishToSettingsStack`): edits are
-//   transient per layer — dropping a layer reverts everything below it.
-// ---------------------------------------------------------------------------
-
-/** A viewport's settings lookup stack — layer store ids, bottom → top. */
-export type SettingsLayerStack = readonly string[];
-
-/** Push `layerId` on TOP of `stack` (pure — returns a new stack value).
- *  Null/undefined/empty ids are no-ops so callers can push optional layers. */
-export function pushSettingsLayer(
-  stack: SettingsLayerStack,
-  layerId: string | null | undefined,
-): SettingsLayerStack {
-  return layerId ? [...stack, layerId] : stack;
-}
-
-/** Drop the TOP layer of `stack` (pure — returns a new stack value). */
-export function popSettingsLayer(stack: SettingsLayerStack): SettingsLayerStack {
-  return stack.slice(0, -1);
-}
-
-/** Merge a `patch` into the stack's TOP layer (the one write path). */
-export function publishToSettingsStack(
-  stack: SettingsLayerStack,
-  sourceId: string,
-  patch: ImageSyncSettings,
-): void {
-  const top = stack[stack.length - 1];
-  if (top) publishImageSettings(top, sourceId, patch);
-}
-
-// Per-layer write versions stamp the merge cache. On `globalThis` beside the
-// stores (both IIFE bundles must observe each other's writes); the `??=` keeps
-// an older registry object working if bundles of mixed vintage share a page.
-function layerVersions(): Map<string, number> {
-  const reg = registry as SettingsBusRegistry & { versions?: Map<string, number> };
-  return (reg.versions ??= new Map<string, number>());
-}
-let writeSeq = 0;
-function bumpLayerVersion(id: string): void {
-  layerVersions().set(id, ++writeSeq);
-}
-
-// The merge cache: stackKey → { stamp, value }. Module-local (per bundle) —
-// correctness rides the SHARED version stamps, so each bundle's cache is
-// independently coherent. Bounded by the number of distinct live stacks.
-const mergeCache = new Map<string, { stamp: string; value: ImageSyncSettings | null }>();
-
-/** The stack's EFFECTIVE settings: every layer flat-merged bottom → top (top
- *  shadows), or `null` while all layers are empty. Cached — an unchanged stack
- *  returns the identical object until one of its layers is written. */
-export function resolveSettingsStack(stack: SettingsLayerStack): ImageSyncSettings | null {
-  const key = stack.join(" ");
-  const versions = layerVersions();
-  const stamp = stack.map((id) => versions.get(id) ?? 0).join(".");
-  const hit = mergeCache.get(key);
-  if (hit && hit.stamp === stamp) return hit.value;
-  const layers = stack.map((id) => lastStates.get(id));
-  const value = layers.some(Boolean)
-    ? (Object.assign({}, ...layers) as ImageSyncSettings)
-    : null;
-  mergeCache.set(key, { stamp, value });
-  return value;
-}
-
-/** The accumulated merged settings published on `groupId`, or `undefined` if
- *  none yet. Lets a pane joining a group late adopt the group's current
- *  settings immediately (mirrors `getLastImageViewportState`). */
-export function getLastImageSettings(groupId: string): ImageSyncSettings | undefined {
-  return lastStates.get(groupId);
-}
-
-/** Drop `groupId`'s accumulated snapshot. A FORMING selection group must start
- *  EMPTY (the anchor clears, then seeds its full snapshot): the page-wide
- *  selection reuses one static group id, so without this the store accumulates
- *  keys across selection episodes and a stale value from a past selection
- *  (an old exposure, a dead compare mode) shadows every member of the next one. */
-export function clearImageSettings(groupId: string): void {
-  lastStates.delete(groupId);
-  bumpLayerVersion(groupId);
-}
-
-/** TESTS ONLY: drop EVERY accumulated store. The page-reset helper
- *  (`__resetGlobalSelectionStoreForTest`) re-mints pane ids from 0, so the
- *  per-viewport local stores (`vp-st-<paneId>`) would collide across test
- *  cases and leak one case's settings into the next — a reset page must have
- *  empty stores, exactly like a fresh page. Live bus subscriptions are kept
- *  (mirrors the in-place selection-store reset). */
-export function __resetImageSettingsStoresForTest(): void {
-  lastStates.clear();
-  layerVersions().clear();
-  mergeCache.clear();
-  writeSeq = 0;
-}
-
-/** Subscribes to settings broadcasts on `groupId`, ignoring the caller's own
- *  publishes (matched by `sourceId`). Returns an unsubscribe function. */
-export function subscribeImageSettings(
-  groupId: string,
-  sourceId: string,
-  onPatch: (patch: ImageSyncSettings) => void,
-): () => void {
-  const bus = busFor(groupId);
-  const handler = (e: Event) => {
-    const detail = (e as CustomEvent<SettingsStateDetail>).detail;
-    if (detail.sourceId === sourceId) return;
-    onPatch(detail.patch);
+  subs.add(cb);
+  return () => {
+    subs!.delete(cb);
   };
-  bus.addEventListener(EVENT_TYPE, handler);
-  return () => bus.removeEventListener(EVENT_TYPE, handler);
+}
+
+/**
+ * Join `viewportId` to `groupId`. Returns LEAVE. `keys` scopes what fans
+ * THROUGH this group (an authored `sync.viewport` grid group passes
+ * `["view"]`; selection/stage groups pass nothing = all keys).
+ *
+ * LATE-JOIN CONVERGENCE (ruling): if the group already has members, the
+ * joiner adopts by COPYING an existing member's entry (members are identical
+ * by the group invariant, so any member serves; scoped groups copy only the
+ * scoped keys). Leaving is membership-only — the joiner keeps everything
+ * (persistence ruling).
+ */
+export function joinSettingsGroup(
+  groupId: string,
+  viewportId: string,
+  keys?: readonly SettingsKey[],
+): () => void {
+  let group = registry.groups.get(groupId);
+  if (!group) {
+    group = { members: new Set(), keys: keys ? new Set(keys) : undefined };
+    registry.groups.set(groupId, group);
+  }
+  if (!group.members.has(viewportId)) {
+    // Converge-on-join: adopt an existing member's entry (scoped to the
+    // group's keys when scoped).
+    const donor = [...group.members].find((m) => registry.entries.get(m));
+    if (donor) {
+      const src = registry.entries.get(donor)!;
+      const adopted = group.keys
+        ? Object.fromEntries(Object.entries(src).filter(([k]) => group!.keys!.has(k as SettingsKey)))
+        : src;
+      if (Object.keys(adopted).length > 0) {
+        mergeEntry(viewportId, adopted as ImageSyncSettings);
+        notify(viewportId);
+      }
+    }
+    group.members.add(viewportId);
+  }
+  return () => {
+    const g = registry.groups.get(groupId);
+    if (!g) return;
+    g.members.delete(viewportId);
+    if (g.members.size === 0) registry.groups.delete(groupId);
+  };
+}
+
+/** Flat-merge `patch` into `viewportId`'s entry (explicit `undefined` values
+ *  are kept as present-and-undefined — the "back to auto" mask, e.g.
+ *  `infoPanel: undefined`). */
+function mergeEntry(viewportId: string, patch: ImageSyncSettings): void {
+  const prev = registry.entries.get(viewportId) ?? {};
+  registry.entries.set(viewportId, { ...prev, ...patch });
+}
+
+/** Restrict `patch` to a group's key scope (undefined scope = whole patch). */
+function scopePatch(
+  patch: ImageSyncSettings,
+  keys: ReadonlySet<SettingsKey> | undefined,
+): ImageSyncSettings {
+  if (!keys) return patch;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) if (keys.has(k as SettingsKey)) out[k] = v;
+  return out as ImageSyncSettings;
+}
+
+/**
+ * THE write path. Merges `patch` into `viewportId`'s entry and fans it out to
+ * the TRANSITIVE closure of its groups (union ruling): for each reachable
+ * member, the patch is filtered through the key scopes of the group path that
+ * reaches it (a `view`-scoped grid group only ever carries `view` across that
+ * hop). Persistent: nothing here is tied to group lifetime. Notifies every
+ * written viewport once.
+ *
+ * `opts.fanOut: false` writes ONLY the local entry — for per-pane geometry
+ * adaptations (e.g. reframe-on-resize) that must not propagate.
+ */
+export function publishViewportSettings(
+  viewportId: string,
+  patch: ImageSyncSettings,
+  opts?: { fanOut?: boolean },
+): void {
+  // Seed: the writer always takes the full patch.
+  const written = new Map<string, ImageSyncSettings>();
+  written.set(viewportId, patch);
+  if (opts?.fanOut !== false) {
+    // BFS over (viewport → groups → members), narrowing the patch by each
+    // group's key scope. A member reached twice keeps the WIDEST patch seen
+    // (key-union), so scope narrowing never masks a wider path.
+    const queue: string[] = [viewportId];
+    while (queue.length) {
+      const from = queue.shift()!;
+      const fromPatch = written.get(from)!;
+      for (const group of registry.groups.values()) {
+        if (!group.members.has(from)) continue;
+        const scoped = scopePatch(fromPatch, group.keys);
+        if (Object.keys(scoped).length === 0) continue;
+        for (const member of group.members) {
+          const prev = written.get(member);
+          if (prev) {
+            const widened = { ...scoped, ...prev };
+            if (Object.keys(widened).length > Object.keys(prev).length) {
+              written.set(member, widened);
+              queue.push(member);
+            }
+          } else {
+            written.set(member, scoped);
+            queue.push(member);
+          }
+        }
+      }
+    }
+  }
+  for (const [id, p] of written) {
+    mergeEntry(id, p);
+    notify(id);
+  }
+}
+
+/** Copy `fromId`'s entry onto `toId` (REPLACE, not merge) — the enlarge
+ *  stage's copy-on-create seam: a stage cell starts as an exact copy of its
+ *  source viewport's settings, then diverges independently. */
+export function copyViewportSettings(fromId: string, toId: string): void {
+  const src = registry.entries.get(fromId);
+  if (src) registry.entries.set(toId, { ...src });
+  else registry.entries.delete(toId);
+  notify(toId);
+}
+
+/** The current members reachable from `viewportId` through its groups
+ *  (transitive closure, unscoped) — introspection/tests. */
+export function settingsGroupPeers(viewportId: string): Set<string> {
+  const seen = new Set<string>([viewportId]);
+  const queue = [viewportId];
+  while (queue.length) {
+    const from = queue.shift()!;
+    for (const group of registry.groups.values()) {
+      if (!group.members.has(from)) continue;
+      for (const m of group.members) {
+        if (!seen.has(m)) {
+          seen.add(m);
+          queue.push(m);
+        }
+      }
+    }
+  }
+  seen.delete(viewportId);
+  return seen;
+}
+
+/** TESTS ONLY: drop every entry, group, and listener — a reset page must have
+ *  empty stores, exactly like a fresh page (pane-id counters restart from 0
+ *  across harness phases and would otherwise collide). */
+export function __resetImageSettingsStoresForTest(): void {
+  registry.entries.clear();
+  registry.groups.clear();
+  registry.listeners.clear();
 }

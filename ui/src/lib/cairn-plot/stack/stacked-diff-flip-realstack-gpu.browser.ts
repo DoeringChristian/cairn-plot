@@ -68,9 +68,8 @@ import {
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
-  GLOBAL_SELECTION_BASE,
 } from "../viewport/selection-store";
-import { publishImageSettings } from "../viewport/image-settings-sync";
+import { getViewportSettings, publishViewportSettings } from "../viewport/image-settings-sync";
 
 function report(pass: boolean, message: string): void {
   const line = `${pass ? "PASS" : "FAIL"}: ${message}`;
@@ -598,9 +597,14 @@ async function main(): Promise<void> {
     storeC.select(idsC[0], "replace");
     storeC.select(idsC[1], "toggle");
     await sleep(400);
-    // PER-EPISODE group id (the settings-store model): the live selection's
-    // settings group is `${base}-st-${episode}`, fresh per formation.
-    const grp = `${GLOBAL_SELECTION_BASE}-st-${getGlobalSelectionStore().selectionEpisode()}`;
+    // NOSTACK: an "external peer" is just another member — publish through a
+    // SELECTED pane's own entry; the group fan-out delivers to the rest.
+    const selectedPaneEntry = () => {
+      const el = document.querySelector('[data-plot-pane-id][data-selected="true"]');
+      const id = el?.getAttribute("data-plot-pane-id");
+      if (!id) throw new Error("realstack: no selected pane to publish through");
+      return `vp-st-${id}`;
+    };
 
     const observeAfter = async (
       publish: () => void,
@@ -618,7 +622,7 @@ async function main(): Promise<void> {
 
     // (1) SAME-KIND image colormap pick (no compareMode) → MUST adopt → orange.
     const sameKind = await observeAfter(() =>
-      publishImageSettings(grp, "ext-image-peer", { encoding: "magma", colormap: "magma" }),
+      publishViewportSettings(selectedPaneEntry(), { encoding: "magma", colormap: "magma" }),
     );
     note(`PHASE C same-kind image colormap patch: image presents=${sameKind.total}, ORANGE=${sameKind.orange}`);
     report(
@@ -629,12 +633,12 @@ async function main(): Promise<void> {
 
     // (2) Reset to a light curve (same-kind) → image goes plain again.
     await observeAfter(() =>
-      publishImageSettings(grp, "ext-image-peer", { encoding: "srgb", colormap: "none" }),
+      publishViewportSettings(selectedPaneEntry(), { encoding: "srgb", colormap: "none" }),
     );
     // (3) DIFF patch (compareMode "diff") → adopted BY VALUE, same as any other
     // colormap (ruling 5: no scoping). The image false-colors → orange.
     const diffPatch = await observeAfter(() =>
-      publishImageSettings(grp, "ext-diff-peer", {
+      publishViewportSettings(selectedPaneEntry(), {
         encoding: "magma",
         colormap: "magma",
         compareMode: "diff",
@@ -1284,38 +1288,27 @@ async function main(): Promise<void> {
       await sleep(250);
       const d = () => allDiffProbes(hostId);
       const seeds = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
-      // Capture every settings-sync patch that rides the bus DURING formation — the
-      // anchor seed is the one that regressed (a 10-key snapshot with diffKernel).
-      const captured: Array<Record<string, unknown>> = [];
-      const origDispatch = EventTarget.prototype.dispatchEvent;
-      EventTarget.prototype.dispatchEvent = function (ev: Event) {
-        const anyEv = ev as unknown as { type?: string; detail?: { patch?: Record<string, unknown> } };
-        if (anyEv?.type === "image-settings-state" && anyEv.detail?.patch) captured.push(anyEv.detail.patch);
-        return origDispatch.call(this, ev);
-      };
+      // NOSTACK: patches no longer ride an EventTarget bus (subscribers re-read
+      // their own registry entry), so the former dispatchEvent capture is
+      // retired. The seed-carries-kernel proof is now the REGISTRY OBSERVABLE:
+      // after formation the NON-ANCHOR viewports' own entries must hold the
+      // anchor's kernel (the fan-out wrote them — that IS the seed patch).
       const ids = framePaneIds(hostId);
       const store = getGlobalSelectionStore();
       store.select(ids[0], "replace"); // slot0 anchor (flip)
       store.select(ids[1], "toggle"); // + slot1 (ssim)
       store.select(ids[2], "toggle"); // + slot2 (absolute) → ONE 3-pane group
       await sleep(500); // let the anchor seed + every joiner adopt run
-      const formationPatchCount = captured.length;
-      const seedPatchHadKernel = captured.some((p) => "diffKernel" in p);
-      EventTarget.prototype.dispatchEvent = origDispatch; // restore before the explicit-pick step
+      const entryKernel = (paneId: string | undefined) =>
+        paneId ? getViewportSettings(`vp-st-${paneId}`)?.diffKernel : undefined;
+      const seedPatchHadKernel = entryKernel(ids[1]) === seeds[0] && entryKernel(ids[2]) === seeds[0];
+      const formationPatchCount = [ids[1], ids[2]].filter((id) => entryKernel(id) !== undefined).length;
       const afterSelect = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
-      // Now a DEDICATED pick on the anchor: it MUST publish a {diffKernel} patch and
-      // MIRROR to both selected peers (live-broadcast), unlike the formation seed.
-      const pickCaptured: Array<Record<string, unknown>> = [];
-      const origDispatch2 = EventTarget.prototype.dispatchEvent;
-      EventTarget.prototype.dispatchEvent = function (ev: Event) {
-        const anyEv = ev as unknown as { type?: string; detail?: { patch?: Record<string, unknown> } };
-        if (anyEv?.type === "image-settings-state" && anyEv.detail?.patch) pickCaptured.push(anyEv.detail.patch);
-        return origDispatch2.call(this, ev);
-      };
+      // Now a DEDICATED pick on the anchor: it MUST land {diffKernel} in both
+      // peers' OWN entries and MIRROR to their probes (live fan-out).
       d()[0]!.changeDiffKernel("squared");
       await waitFor(() => d()[1]?.diffKernel === "squared" && d()[2]?.diffKernel === "squared", 4000).catch(() => {});
-      EventTarget.prototype.dispatchEvent = origDispatch2;
-      const pickPatchHadKernel = pickCaptured.some((p) => p.diffKernel === "squared");
+      const pickPatchHadKernel = entryKernel(ids[1]) === "squared" && entryKernel(ids[2]) === "squared";
       const mirrored = [d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
       root.unmount();
       host.remove();
@@ -1333,7 +1326,7 @@ async function main(): Promise<void> {
     );
     report(
       l.formationPatchCount > 0 && l.seedPatchHadKernel,
-      `PHASE L (ruling 3): the anchor SEED broadcast on 3-diff formation CARRIES diffKernel (${l.formationPatchCount} patches, one carried the kernel)`,
+      `PHASE L (ruling 3): the anchor SEED on 3-diff formation lands diffKernel in both peers' OWN entries (${l.formationPatchCount}/2 entries written)`,
     );
     report(
       l.afterSelect[0] === "flip" && l.afterSelect[1] === "flip" && l.afterSelect[2] === "flip",
