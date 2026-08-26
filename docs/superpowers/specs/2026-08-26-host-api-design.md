@@ -145,6 +145,9 @@ interface MountOptions {
    *  listeners are reference-counted and removed when the last mount using
    *  them unmounts. */
   selection?: boolean;
+  /** Whether this mount's panes join the page-wide selection set or a
+   *  mount-private one (§6.3; R2-4). Default "page". */
+  selectionScope?: "page" | "mount";
   enlarge?: "overlay" | "disabled";
   /** "stub" renders placeholder panes with full settings/pane API but no
    *  GPU/canvas work — the host testing mode (§9, F7). */
@@ -175,7 +178,7 @@ interface MountedPlot {
    *  design (F4). */
   update(next: PlotHandle): Promise<void>;
   screenshot(opts?: ScreenshotOpts): Promise<Blob>;
-  on(ev: "selectionChange", cb: (keys: string[]) => void): Unsub;
+  on(ev: "selectionChange", cb: (panes: Pane[]) => void): Unsub;
   unmount(): void;
 }
 ```
@@ -231,7 +234,11 @@ interface Pane<K extends PaneKind = PaneKind> {
   pushLayer(layer: SettingsLayer): void;
   removeLayer(layer: SettingsLayer): void;
 
-  on(ev: "settings", cb: (s: PaneSettings[K]) => void): Unsub;
+  on(ev: "settings", cb: (e: {
+    resolved: PaneSettings[K];   // full-stack merge (what renders)
+    pending: PaneSettings[K];    // merge WITHOUT transients (§6.4, V2-1)
+    origin: "host" | "gesture" | "layer" | "sync";
+  }) => void): Unsub;
   on(ev: "status", cb: (s: PaneStatus, detail?: { error?: string }) => void): Unsub;
   /** Pane→host interactions that are NOT settings: reference picks, deep
    *  cursor readouts requested by the host, follow-link style activations
@@ -311,10 +318,10 @@ from it per render:
 descriptor's authored props but sit BELOW the pane's local tier — so the
 existing invariant "a user gesture always wins and is always visible"
 (write-to-top today) is preserved exactly. Round 2 killed the v2 draft's
-host-above-local ordering: a non-sink host layer above local turns every
-control whose key it sets into a dead control (the gesture lands below the
-shadow and the menu snaps back — V2-2). With host-below-local there is
-nothing to route around, and the `gestureSink` concept is DELETED.
+host-above-local ordering: a host layer above local turns every control
+whose key it sets into a dead control (the gesture lands below the shadow
+and the menu snaps back — V2-2). With host-below-local there is nothing to
+route around, and the v2 draft's `gestureSink` concept is DELETED.
 
 - `pushLayer` inserts into the **host tier** regardless of what transients
   are live; the selection/stage scopes push into the **transient tier**
@@ -626,9 +633,9 @@ utils, offscreen compare, table-diff internals, three/* viewers, viewport
 kits, hooks) — MINUS the §6.7 enumerations/capabilities, which stay public
 as data.
 
-## 12. Review round 1 — disposition summary
+## 12. Review dispositions
 
-79 findings across 10 lenses; all blockers incorporated:
+**Round 1** (10 lenses on v1, 79 findings); all blockers incorporated:
 - Layer registry + tiers + write routing + serialization: SL-1..8, HA-R2/R3,
   F7, WIRE-3/4 → §6.4, M0a-c.
 - Identity: pane keys + content-derived resolve keys: API-3, F1/F3/F4, LD1,
