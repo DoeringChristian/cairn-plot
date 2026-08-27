@@ -64,6 +64,7 @@ import {
   type EnlargeIntercept,
 } from "./lib/cairn-plot/renderers/enlarge-intercept";
 import {
+  getRegisteredPane,
   isImageCompatibleNode,
   registerSelectionPane,
   unregisterSelectionPane,
@@ -112,7 +113,7 @@ import {
 } from "./lib/cairn-plot/image/channel-slice";
 import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
 import { useViewportSettings } from "./lib/cairn-plot/settings/use-viewport-settings";
-import { peekGroupSettings } from "./lib/cairn-plot/settings/settings-peers.ts";
+import { initialViewportSettings } from "./viewport-initial-settings.ts";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -177,8 +178,6 @@ function useSharedPlot(): SharedPlotCtx {
  *  `CompareView` (compare panes). */
 interface PaneSyncCtx {
   viewportSyncGroupId?: string;
-  settingsSyncGroupId?: string;
-  syncIsAnchor?: boolean;
   /** The viewport's EFFECTIVE settings — the `group > local` merge from the ONE
    *  store hook per viewport (`useViewportSettings`, run by the context PROVIDER —
    *  `PaneSelectionFrame` / the enlarge `StageCell`). The provider is the single
@@ -186,11 +185,16 @@ interface PaneSyncCtx {
    *  `useCompareControl`'s mode/kernel/split, `LeafView`'s channel select) reads
    *  these top-down — no consumer subscribes to the bus itself. */
   syncedSettings?: ViewportSettings | null;
+  /** Settings captured when THIS viewport formed. Stacked slots may change
+   * content descriptors, but they never replace these authored defaults. */
+  viewportDefaults?: ViewportSettings | null;
   /** The ONE write path into the viewport's settings store: merges a patch into
    *  the GROUP store while selected (transient — gone on unselect), else the
    *  LOCAL store (sticks). Threaded to the panes as a prop (the bundle split
    *  rules out context on the addon side). */
   setSyncedSettings?: (patch: ViewportSettings) => void;
+  /** Replace this viewport's settings with the active content defaults (HOME). */
+  resetSyncedSettings?: (settings: ViewportSettings) => void;
   /** LOCAL apply (no fan-out) — the INITIALIZATION write path (single source
    *  of truth rule): a viewport's settings are seeded from the first content
    *  it shows; init must never fan to group peers. */
@@ -246,6 +250,10 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // image renderer. The channel strip / exr tree / shared-colormap merge below
   // are single-image concerns and are inert on this path.
   const isDiff = !!diffSpec;
+  const activeDefaults = diffSpec?.viewportDefaults ?? initialViewportSettings(node, shared) ?? {};
+  const resetViewportSettings = useCallback(() => {
+    (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(activeDefaults);
+  }, [paneSync?.resetSyncedSettings, paneSync?.setSyncedSettings, activeDefaults]);
 
   // CHANNEL-STRIP selection override (EXR part/layer). `null` = follow the
   // node's own `data.part`/`data.layer`. Resolves at RENDER through the one
@@ -440,11 +448,10 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       const dsync: Record<string, unknown> = {};
       const vpg = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
       if (vpg) dsync.viewportSyncGroupId = vpg;
-      if (paneSync?.settingsSyncGroupId) dsync.settingsSyncGroupId = paneSync.settingsSyncGroupId;
-      if (paneSync?.syncIsAnchor) dsync.syncIsAnchor = true;
       if (paneSync?.syncedSettings) dsync.syncedSettings = paneSync.syncedSettings;
       if (paneSync?.setSyncedSettings) dsync.setSyncedSettings = paneSync.setSyncedSettings;
       if (paneSync?.applySyncedSettings) dsync.applySyncedSettings = paneSync.applySyncedSettings;
+      dsync.resetViewportSettings = resetViewportSettings;
       const compareSource: CompareSource = {
         b: dp.__diffB as DecodedSource,
         opId: diffSpec.diffKernel,
@@ -462,7 +469,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         onDiffKernelChange: diffSpec.onDiffKernelChange,
         onCompareModeChange: diffSpec.onCompareModeChange,
         onSplitPositionChange: diffSpec.onSplitPositionChange,
-        onCompareReset: diffSpec.onCompareReset,
         compareModified: diffSpec.compareModified,
       };
       return {
@@ -479,13 +485,10 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
     const vpGroup = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
     if (vpGroup) sharedProps.viewportSyncGroupId = vpGroup;
-    if (paneSync?.settingsSyncGroupId) {
-      sharedProps.settingsSyncGroupId = paneSync.settingsSyncGroupId;
-    }
-    if (paneSync?.syncIsAnchor) sharedProps.syncIsAnchor = true;
     if (paneSync?.syncedSettings) sharedProps.syncedSettings = paneSync.syncedSettings;
     if (paneSync?.setSyncedSettings) sharedProps.setSyncedSettings = paneSync.setSyncedSettings;
     if (paneSync?.applySyncedSettings) sharedProps.applySyncedSettings = paneSync.applySyncedSettings;
+    sharedProps.resetViewportSettings = resetViewportSettings;
     // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
     // selection state) and handed to the pane as a standard ToolbarButtonSpec —
     // the pane renders it with its other leading menus and folds the override
@@ -726,7 +729,6 @@ function normalizeCompareViewMode(mode: string | undefined | null): CompareViewM
   }
   return mode === "diff" ? "diff" : "split";
 }
-
 // ---------------------------------------------------------------------------
 // DIFF ROUTING (content-op unification, Phase 2c Landing 2). A compare node in
 // a DIFF mode lowers to the SAME `LeafView` → `image` renderer → `GpuImagePane`
@@ -809,6 +811,8 @@ interface DiffLeafSpec {
   diffKernel: string;
   /** Authored colormap override (`"none"` follows the kernel default). */
   colormap: CompareSource["colormap"];
+  /** Authored/default settings of the currently visible compare content. */
+  viewportDefaults: ViewportSettings;
   /** Split-divider position (`mode:"split"`) — lifted control state. */
   splitPosition: number;
   align?: CompareAlign;
@@ -825,9 +829,6 @@ interface DiffLeafSpec {
   onDiffKernelChange: (id: string) => void;
   onCompareModeChange: (mode: CompareViewMode) => void;
   onSplitPositionChange: (p: number) => void;
-  /** HOME / double-click on the pane: restore the hoisted compare control (mode +
-   *  kernel + split) to the descriptor. */
-  onCompareReset: () => void;
   /** True when the hoisted compare control differs from the descriptor (HOME dot). */
   compareModified: boolean;
 }
@@ -883,10 +884,6 @@ interface CompareControl {
   setDiffKernel: (id: string) => void;
   splitPos: number;
   setSplitPos: (p: number) => void;
-  /** HOME / double-click: drop every override → the control follows the DESCRIPTOR
-   *  again (mode + kernel + split). The pane's own HOME can't reach this
-   *  hoisted state, so it calls this via `compareSource.onCompareReset`. */
-  reset: () => void;
   /** True when any of mode/kernel/split differs from the descriptor. */
   modified: boolean;
 }
@@ -978,6 +975,20 @@ function PaneSelectionFrame({
   // selection's own groups (`paneSync`) take precedence when present.
   const inheritedPaneSync = useContext(PaneSyncContext);
 
+  // Materialize authored settings at the VIEWPORT boundary, synchronously on
+  // its first render. A stacked tab changes `node`, but this hook's box keeps
+  // the first value: slots supply content after formation, never live settings.
+  const initialSettingsRef = useRef<{
+    captured: boolean;
+    value: ViewportSettings | null;
+  }>({ captured: false, value: null });
+  if (!initialSettingsRef.current.captured && node.kind !== "grid") {
+    initialSettingsRef.current = {
+      captured: true,
+      value: initialViewportSettings(node, shared),
+    };
+  }
+
   const subscribe = useCallback((cb: () => void) => store.subscribe(cb), [store]);
   // Track the COMBINED snapshot ({selected, reference}) — the reference drives
   // the distinct ORANGE ring on the reference pane (Bug 2), and a reference-only
@@ -1050,19 +1061,19 @@ function PaneSelectionFrame({
   const vst = useViewportSettings([
     ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
     ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_TRANSFORM_KEYS }] : []),
-  ]);
-  // LATE-JOIN CONVERGENCE (ruling: adding a member syncs the group's settings
-  // over): a NON-anchor member entering a live selection adopts a peer's
-  // current settings by deref (members are identical by invariant). The
-  // anchor's own formation seed covers the fresh-formation case.
+  ], initialSettingsRef.current.value);
+  // JOIN CONVERGENCE: selected[0] is the explicit authority. Do not ask the
+  // settings channel for an arbitrary peer — registration/effect order differs
+  // across the page's independent React roots and made adoption nondeterministic.
   const settingsGroupId = groups?.settingsGroupId;
   const isJoinAnchor = !!groups?.isAnchor;
+  const anchorPaneId = selected[0];
   useEffect(() => {
-    if (!settingsGroupId || isJoinAnchor) return;
-    const peer = peekGroupSettings(settingsGroupId, vst.get);
-    if (peer) vst.apply({ ...peer });
+    if (!settingsGroupId || isJoinAnchor || !anchorPaneId) return;
+    const anchor = getRegisteredPane(anchorPaneId)?.settings?.get();
+    if (anchor) vst.apply({ ...anchor });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsGroupId, isJoinAnchor]);
+  }, [settingsGroupId, isJoinAnchor, anchorPaneId]);
 
   const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
   const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
@@ -1141,25 +1152,31 @@ function PaneSelectionFrame({
       groups
         ? {
             viewportSyncGroupId: groups.viewportGroupId,
-            settingsSyncGroupId: groups.settingsGroupId,
-            syncIsAnchor: groups.isAnchor,
             syncedSettings: vst.settings,
+            viewportDefaults: initialSettingsRef.current.value,
             setSyncedSettings: vst.set,
+            resetSyncedSettings: vst.replace,
             applySyncedSettings: vst.setLocal,
           }
         : null,
     [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.setLocal],
   );
+  // A settings owner corresponds to a render surface, not to every layout
+  // frame. Grid nodes are containers and must not provide one shared store to
+  // their children. A non-selectable LEAF is still a viewport and does own one.
+  const ownsViewport = node.kind !== "grid";
   const localSync = useMemo<PaneSyncCtx | null>(
     () =>
-      selectable
+      ownsViewport
         ? {
             syncedSettings: vst.settings,
+            viewportDefaults: initialSettingsRef.current.value,
             setSyncedSettings: vst.set,
+            resetSyncedSettings: vst.replace,
             applySyncedSettings: vst.setLocal,
           }
         : null,
-    [selectable, vst.settings, vst.set, vst.setLocal],
+    [ownsViewport, vst.settings, vst.set, vst.setLocal],
   );
 
   return (
@@ -1574,33 +1591,11 @@ function useCompareControl(
     (props.diffSubmode as string | undefined) ?? (cmp?.diffSubmode as string | undefined) ?? "absolute";
   const descriptorSplit = (props.splitPosition as number | undefined) ?? 0.5;
 
-  // Overrides (null ⇒ follow the descriptor) — the STORELESS fallback only.
-  const [viewModeOverride, setViewModeOverride] = useState<CompareViewMode | null>(null);
-  const [kernelOverride, setKernelOverride] = useState<string | null>(null);
-  const [splitOverride, setSplitOverride] = useState<number | null>(null);
-  // TOP-OF-STACK writes (transient-group ruling): with a settings store the
-  // panes PUBLISH every mode/kernel/split change and the store derives back
-  // down, so the local overrides must NOT also be written — a group-session
-  // change would survive unselect through them. They serve only a storeless
-  // control (no `setSettings` threaded).
-  const hasStore = !!setSettings;
-  const setViewMode = useCallback(
-    (m: CompareViewMode) => {
-      if (!hasStore) setViewModeOverride(m);
-    },
-    [hasStore],
-  );
-  const setDiffKernel = useCallback(
-    (k: string) => {
-      if (!hasStore) setKernelOverride(k);
-    },
-    [hasStore],
-  );
+  // Commands write the viewport store. There is no component-local compare
+  // settings fallback, including for non-selectable panes.
   const setSplitPos = useCallback(
-    (p: number) => {
-      if (!hasStore) setSplitOverride(p);
-    },
-    [hasStore],
+    (p: number) => setSettings?.({ "compare.split": p }),
+    [setSettings],
   );
 
   // FROZEN compare seeds (single-viewport rule — the compare twin of
@@ -1619,18 +1614,29 @@ function useCompareControl(
   const seedSplit = compareSeedRef.current?.split ?? descriptorSplit;
 
   // ONE precedence, derived every render (no adoption effects): settings store >
-  // local override > FROZEN seed. Every change publishes to the store (the panes
+  // frozen bootstrap seed. Every change publishes to the store (the panes
   // publish mode/kernel/split; HOME publishes the focused slot's descriptor
   // defaults), so the store is the single source of truth and propagates down.
-  const syncMode = syncedSettings?.["compare.mode"];
-  const syncKernel = syncedSettings?.["compare.kernel"];
+  const syncOperation = syncedSettings?.["compare.operation"];
+  // Compatibility only: old workspaces stored one semantic choice as two keys.
+  const legacyMode = syncedSettings?.["compare.mode"];
+  const legacyKernel = syncedSettings?.["compare.kernel"];
   const syncSplit = syncedSettings?.["compare.split"];
-  const viewMode =
-    syncMode !== undefined
-      ? normalizeCompareViewMode(syncMode)
-      : (viewModeOverride ?? seedMode);
-  const diffKernel = syncKernel !== undefined ? syncKernel : (kernelOverride ?? seedKernel);
-  const splitPos = syncSplit !== undefined ? syncSplit : (splitOverride ?? seedSplit);
+  const operation = syncOperation ??
+    (legacyMode === "diff" ? (legacyKernel ?? seedKernel) : legacyMode) ??
+    (seedMode === "split" ? "split" : seedKernel);
+  const viewMode: CompareViewMode = operation === "split" ? "split" : "diff";
+  const diffKernel = operation === "split" ? seedKernel : operation;
+  const splitPos = syncSplit !== undefined ? syncSplit : seedSplit;
+
+  const setViewMode = useCallback(
+    (m: CompareViewMode) => setSettings?.({ "compare.operation": m === "split" ? "split" : diffKernel }),
+    [setSettings, diffKernel],
+  );
+  const setDiffKernel = useCallback(
+    (k: string) => setSettings?.({ "compare.operation": k }),
+    [setSettings],
+  );
 
   // INITIALIZATION (single-source-of-truth ruling): the compare keys are
   // OWNED here, so THIS is where they are written into the viewport's
@@ -1646,30 +1652,13 @@ function useCompareControl(
     if (!cmp || !applyRef.current) return;
     const cur = (syncedRefInit.current ?? {}) as Record<string, unknown>;
     const missing: ViewportSettings = {};
-    if (!("compare.mode" in cur)) missing["compare.mode"] = seedMode;
-    if (!("compare.kernel" in cur)) missing["compare.kernel"] = seedKernel;
+    if (!("compare.operation" in cur)) {
+      missing["compare.operation"] = seedMode === "split" ? "split" : seedKernel;
+    }
     if (!("compare.split" in cur)) missing["compare.split"] = seedSplit;
     if (Object.keys(missing).length > 0) applyRef.current(missing);
   });
 
-  // HOME / double-click: drop every override so the control follows the DESCRIPTOR
-  // again. This is the compare half of the pane's HOME the old `GpuComparePane` did
-  // in-pane (`setCompareMode(compareModeMeta.default)` …); hoisting the mode out of
-  // the pane moved it out of the pane HOME's reach, so the pane routes HOME back
-  // here via `compareSource.onCompareReset`.
-  const reset = useCallback(() => {
-    setViewModeOverride(null);
-    setKernelOverride(null);
-    setSplitOverride(null);
-    // HOME is a STORE write (a lone viewport is a group of one): set the
-    // DESCRIPTOR defaults by value — local store + group store — so every synced
-    // member resets with the clicked viewport and the reset values persist.
-    setSettings?.({
-      "compare.mode": descriptorMode,
-      "compare.kernel": descriptorKernel,
-      "compare.split": descriptorSplit,
-    });
-  }, [setSettings, descriptorMode, descriptorKernel, descriptorSplit]);
   const modified =
     viewMode !== descriptorMode || diffKernel !== descriptorKernel || splitPos !== descriptorSplit;
 
@@ -1680,7 +1669,6 @@ function useCompareControl(
     setDiffKernel,
     splitPos,
     setSplitPos,
-    reset,
     modified,
   };
 }
@@ -1731,9 +1719,11 @@ function NodeDispatch({ node }: { node: PlotNode }) {
         mode: control.viewMode,
         diffKernel: control.diffKernel,
         colormap:
-          ((node.props?.colormap as CompareSource["colormap"]) ??
-            (shared?.colormap as CompareSource["colormap"]) ??
-            "none") as CompareSource["colormap"],
+          (inStackedGrid
+            ? ((paneSync?.viewportDefaults?.["image.encoding"] as CompareSource["colormap"] | undefined) ?? "none")
+            : ((node.props?.colormap as CompareSource["colormap"]) ??
+              (shared?.colormap as CompareSource["colormap"]) ??
+              "none")) as CompareSource["colormap"],
         splitPosition: control.splitPos,
         align: synth.align,
         fit: synth.fit,
@@ -1744,7 +1734,7 @@ function NodeDispatch({ node }: { node: PlotNode }) {
         onDiffKernelChange: control.setDiffKernel,
         onCompareModeChange: control.setViewMode,
         onSplitPositionChange: control.setSplitPos,
-        onCompareReset: control.reset,
+        viewportDefaults: initialViewportSettings(node, shared) ?? {},
         compareModified: control.modified,
       };
       return (

@@ -9,7 +9,6 @@ export const signedKernel: PointwiseKernel = {
   label: "Signed Error",
   publicName: "signed",
   displayRange: "signed",
-  defaultColormap: "red-green", // ℝ signed error → diverging map (neg=red, pos=green)
   output: "per-channel",
   source: `
 fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {

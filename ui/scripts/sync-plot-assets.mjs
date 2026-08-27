@@ -37,6 +37,8 @@ const REPO_ROOT = resolve(__dirname, "..", "..");
 const SRC_DIR = join(REPO_ROOT, "ui", "dist", "plot-inline");
 const DEST_DIR = join(
   REPO_ROOT,
+  "packages",
+  "python",
   "src",
   "cairn_plot",
   "_assets",

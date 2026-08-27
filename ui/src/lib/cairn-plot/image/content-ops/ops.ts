@@ -12,22 +12,17 @@
  *    not the kernel's `fn kernel(...)`), and their `cpu` twin is the per-channel
  *    raw error (the diff pixel-value readout's single source of truth). Ids MATCH
  *    the `engine/kernels` pointwise kernel ids. `defaultEncoding` generalizes the
- *    kernels' per-kernel `defaultColormap` (signed → red-green, magnitude → turbo).
+ *    single shared diff colormap default.
  *  - SPLIT — arity-2 `direct` COMPOSITOR op (Phase 3). Its `wgsl` composites the
  *    two sampled slots by the fragment SCREEN uv against the compositor param
  *    (`u_bind13.x`): split cuts at the divider. Output is LIGHT (`outputArity 3`,
  *    `defaultEncoding srgb`) — displayed as a plain image. Its `cpu` twin reads
  *    the per-frame uv/param context.
  *  - FLIP / HDR-FLIP / SSIM — arity-2 `cached` ops delegating to the matching
- *    multi-pass kernel; `defaultEncoding` magma (the reference FLIP convention).
+ *    multi-pass kernel; all diff ops use the same display default.
  */
 import { registerContentOp, type ContentOp, type DirectContentOp, type CachedContentOp } from "./registry.ts";
-// D2: the diff subset's `defaultEncoding` is DERIVED from the kernel table's
-// per-kernel `defaultColormap` (the single source for the id→default-color rule) so
-// the two can't drift. Importing the barrel registers every built-in kernel as a
-// load-time side effect BEFORE this module's body runs (ES modules evaluate imports
-// first), so `kernelDefaultColormap` resolves correctly at op-construction time.
-import { kernelDefaultColormap } from "../../engine/kernels/index.ts";
+import { DEFAULT_DIFF_COLORMAP } from "../../engine/kernels/index.ts";
 
 /**
  * IDENTITY — the single-source passthrough. This is "where the source sample
@@ -79,10 +74,7 @@ function pointwise(
     // applied (the per-channel error vec4 is REDUCED to the scalar the LUT indexes).
     outputArity: 1,
     outputRange: range,
-    // DERIVED from the kernel table (D2) — for a pointwise op `id === kernel id`, so
-    // this IS the kernel's `defaultColormap` (signed→red-green, magnitude→turbo). One
-    // source; the drift test pins the equality.
-    defaultEncoding: kernelDefaultColormap(id),
+    defaultEncoding: DEFAULT_DIFF_COLORMAP,
     params: [],
     wgsl,
     cpu: (sources) => {
@@ -212,11 +204,9 @@ function cached(id: string, label: string, kernelId: string): CachedContentOp {
     label,
     sourceArity: 2,
     renderClass: "cached",
-    outputArity: 1, // scalar perceptual error → colormaps offered (magma default)
+    outputArity: 1, // scalar perceptual error → colormaps offered
     outputRange: "R+",
-    // DERIVED from the kernel table (D2) — the cached metric's kernel `defaultColormap`
-    // (FLIP/HDR-FLIP/SSIM → magma). One source; the drift test pins the equality.
-    defaultEncoding: kernelDefaultColormap(kernelId),
+    defaultEncoding: DEFAULT_DIFF_COLORMAP,
     params: [],
     kernelId,
   };

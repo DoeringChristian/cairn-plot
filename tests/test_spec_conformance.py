@@ -1,6 +1,6 @@
 """Python ↔ committed-schema conformance for the plot-descriptor pydantic models.
 
-`src/cairn_plot/spec.py`'s pydantic models MIRROR the authoritative TS
+`packages/python/src/cairn_plot/spec.py`'s pydantic models MIRROR the authoritative TS
 `PlotDescriptor` (from which `schema/cairn-plot-spec.schema.json` is generated).
 This test keeps them honest field-for-field against that committed schema:
 

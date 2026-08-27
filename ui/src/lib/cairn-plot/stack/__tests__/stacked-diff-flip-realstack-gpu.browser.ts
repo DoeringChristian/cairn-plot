@@ -23,12 +23,11 @@
  *   PHASE A — SYNC-ADOPTION (the hypothesis). A side-by-side `[image, FLIP-diff]`
  *   grid, both panes SETTLED, then a page-wide selection is formed with the DIFF
  *   as ANCHOR (select diff first, then add the image). The settled diff's snapshot
- *   carries `encoding:"magma"` (`deriveCompareEncodingId("scalar", …, magma)`); the
+ *   carries its scalar colormap encoding; the
  *   non-anchor plain image adopts the group snapshot via `applyRemoteSettings`,
- *   which calls `enc.setEncoding("magma")` UNCONDITIONALLY. A light float image
- *   through magma (mean-reduced to a high scalar) = the magma UPPER RAMP = ORANGE.
+ *   which applies that LUT encoding unconditionally to the light image.
  *   This is precisely the timing the pane-level FSYNC probe missed: it formed the
- *   group at MOUNT (before the diff resolved its magma default), so the anchor
+ *   group at MOUNT (before the diff resolved its display default), so the anchor
  *   seed carried a curve, not magma. Selecting AFTER settle is what a user does.
  *   The IMAGE-ANCHOR order is the control (the image seeds srgb; the diff, being a
  *   diff, ignores the image's curve on its scalar face).
@@ -253,10 +252,10 @@ function sideBySideTwoScalarGrid(): PlotDescriptor {
   } as unknown as PlotDescriptor;
 }
 // A DIFF compare authored with a specific kernel + NO colormap prop (so its display
-// colormap is the KERNEL DEFAULT). Two side-by-side DIFF viewports with DISTINCT
-// kernels (flip → magma default, absolute → turbo default) drive the state-
+// colormap uses the shared diff default). Two side-by-side DIFF viewports with
+// distinct kernels drive the state-
 // unification scenario 1: the diff colormap is the viewport's ONE display encoding,
-// so HOME (double-click) on one resets it to THAT diff's kernel default while a
+// so HOME (double-click) on one resets it to the shared diff default while a
 // multi-select neighbour keeps the mirrored pick.
 const diffCompareKernel = (label: string, submode: string) => ({
   kind: "compare" as const,
@@ -355,7 +354,6 @@ interface DiffProbe {
 interface ImgProbe {
   encodingId: string;
   colormap: string;
-  controlledSurface: boolean;
   peak: number;
   changeEncoding: (id: string) => void;
   changePeak: (v: number) => void;
@@ -1102,20 +1100,19 @@ async function main(): Promise<void> {
     report(iK.afterFlip === "squared", `PHASE I: the diff KERNEL pick survives an image↔diff flip (shared: ${iK.afterFlip})`);
     if (iK.afterFlip !== "squared") allOk = false;
 
-    // ============ PHASE J — DIFF-GRID HOME → KERNEL DEFAULT (scenario 1) =========
+    // ============ PHASE J — DIFF-GRID HOME → SHARED DEFAULT (scenario 1) =========
     // A NORMAL side-by-side grid of TWO DIFF viewports with DISTINCT kernels (slot0
-    // FLIP → magma default, slot1 absolute → turbo default). Multi-select forms ONE
+    // FLIP and absolute, both with the same display default). Multi-select forms ONE
     // sync group; a colormap pick MIRRORS to the peer. Then HOME (double-click) on ONE
-    // viewport resets its colormap to THAT diff's KERNEL DEFAULT (magma/turbo per
-    // kernel) while the multi-select neighbour KEEPS the mirrored pick. Pre-unification
+    // viewport resets its colormap to the shared diff default. Pre-unification
     // the diff colormap lived in a separate per-kernel override store, so HOME did NOT
     // reset it (the reported "no reset"). With the diff colormap merged into the
-    // viewport's ONE display encoding, `enc.resetEncoding()` → the kernel default.
+    // viewport's ONE display encoding, `enc.resetEncoding()` → the shared default.
     interface JResult {
-      seed0: string; // slot0 FLIP default (magma)
+      seed0: string; // slot0 FLIP default (turbo)
       seed1: string; // slot1 absolute default (turbo)
       home1Solo: string; // PART A: HOME slot1 (absolute, unselected) → turbo
-      home0Solo: string; // PART A: HOME slot0 (FLIP, unselected) → magma
+      home0Solo: string; // PART A: HOME slot0 (FLIP, unselected) → turbo
       mirrored1: string; // PART B: after slot0 picks red-blue → peer (slot1) follows
       home0: string; // PART B: HOME slot0 (selected) → reset off the pick
       kept1: string; // PART B: slot1 UNTOUCHED by slot0's HOME (still red-blue)
@@ -1133,11 +1130,7 @@ async function main(): Promise<void> {
       const d = () => allDiffProbes(hostId);
       const seed0 = d()[0]?.colormap ?? "?";
       const seed1 = d()[1]?.colormap ?? "?";
-      // -- PART A: per-kernel HOME defaults, WITHOUT a multi-selection (so each pane
-      // keeps its OWN kernel — the "magma/turbo per kernel" reset). Pick a colormap
-      // that is NOT either kernel's default (red-blue), then HOME → the pane's kernel
-      // default. Pre-unification the diff colormap lived in a separate store HOME did
-      // not reset ("no reset"); now HOME clears the override → the kernel default.
+      // -- PART A: HOME uses the same diff default regardless of kernel.
       d()[1]!.changeColormap("red-blue"); // slot1 = absolute
       await waitFor(() => d()[1]?.colormap === "red-blue", 4000, 30);
       d()[1]!.home();
@@ -1147,7 +1140,7 @@ async function main(): Promise<void> {
       await waitFor(() => d()[0]?.colormap === "red-blue", 4000, 30);
       d()[0]!.home();
       await sleep(250);
-      const home0Solo = d()[0]?.colormap ?? "?"; // → magma (FLIP default)
+      const home0Solo = d()[0]?.colormap ?? "?"; // → turbo (shared default)
       // -- PART B: multi-select MIRROR + GROUP HOME (user ruling — supersedes the
       // old local-HOME reg). Select both (slot0 anchor); a colormap pick mirrors
       // to the peer; HOME on slot0 publishes slot0's visible-diff DEFAULT to the
@@ -1171,13 +1164,13 @@ async function main(): Promise<void> {
       return { seed0, seed1, home1Solo, home0Solo, mirrored1, home0, kept1 };
     };
     const j = await runJ("jDiffGrid");
-    report(j.seed0 === "magma" && j.seed1 === "turbo", `PHASE J setup: two DIFF viewports at their kernel defaults (FLIP=${j.seed0}, absolute=${j.seed1})`);
-    report(j.home1Solo === "turbo", `PHASE J (scenario 1): HOME on the absolute diff resets its colormap to the kernel default turbo — was "no reset" pre-unification (${j.home1Solo})`);
-    report(j.home0Solo === "magma", `PHASE J (scenario 1): HOME on the FLIP diff resets its colormap to the kernel default magma — magma/turbo per kernel (${j.home0Solo})`);
+    report(j.seed0 === "turbo" && j.seed1 === "turbo", `PHASE J setup: two DIFF viewports share one default (FLIP=${j.seed0}, absolute=${j.seed1})`);
+    report(j.home1Solo === "turbo", `PHASE J (scenario 1): HOME on the absolute diff resets to shared turbo (${j.home1Solo})`);
+    report(j.home0Solo === "turbo", `PHASE J (scenario 1): HOME on the FLIP diff resets to shared turbo (${j.home0Solo})`);
     report(j.mirrored1 === "red-blue", `PHASE J (scenario 1): multi-select mirrors a diff colormap pick between viewports (peer→red-blue: ${j.mirrored1})`);
-    report(j.home0 === "magma", `PHASE J (scenario 1): HOME on a multi-selected diff resets its colormap to ITS kernel default (${j.home0})`);
-    report(j.kept1 === "magma", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts the clicked diff's default too (${j.kept1})`);
-    if (j.seed0 !== "magma" || j.seed1 !== "turbo" || j.home1Solo !== "turbo" || j.home0Solo !== "magma" || j.mirrored1 !== "red-blue" || j.home0 !== "magma" || j.kept1 !== "magma") allOk = false;
+    report(j.home0 === "turbo", `PHASE J (scenario 1): HOME on a multi-selected diff resets to the shared default (${j.home0})`);
+    report(j.kept1 === "turbo", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts the shared default too (${j.kept1})`);
+    if (j.seed0 !== "turbo" || j.seed1 !== "turbo" || j.home1Solo !== "turbo" || j.home0Solo !== "turbo" || j.mirrored1 !== "red-blue" || j.home0 !== "turbo" || j.kept1 !== "turbo") allOk = false;
 
     // ============ PHASE K — MULTI-SELECT KERNEL: FORMATION MIRRORS THE FIRST ===
     // Two side-by-side DIFF viewports with DISTINCT kernels (slot0 FLIP, slot1
@@ -1313,7 +1306,7 @@ async function main(): Promise<void> {
       !l.pickPatchHadKernel || l.mirrored[0] !== "squared" || l.mirrored[1] !== "squared"
     ) allOk = false;
 
-    report(allOk, `real-stack GPU: by-value adoption (no scoping) + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings + HOME-local-while-selected + shares settings beyond encoding (peak/kernel) + diff colormap IS the viewport encoding (scenario 1 diff-grid HOME→kernel default, scenario 2 image adopts diff colormap) + multi-select mirrors the FIRST viewport's kernel on formation (2-diff PHASE K + 3-diff PHASE L: seed carries kernel, all adopt anchor, pick mirrors to both peers)`);
+    report(allOk, `real-stack GPU: by-value adoption (no scoping) + stacked flip orange-free + real-path paint-atomic + authored-colormap stable + HOME restores compare mode + stack-wide shared display settings + HOME-local-while-selected + shares settings beyond encoding (peak/kernel) + diff colormap IS the viewport encoding (scenario 1 diff-grid HOME→shared default, scenario 2 image adopts diff colormap) + multi-select mirrors the FIRST viewport's kernel on formation (2-diff PHASE K + 3-diff PHASE L: seed carries kernel, all adopt anchor, pick mirrors to both peers)`);
     setOverallStatus(allOk);
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

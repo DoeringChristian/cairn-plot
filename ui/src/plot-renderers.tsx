@@ -350,11 +350,10 @@ function ImageStandalone(p: P) {
       zoom={viewport.zoom}
       pan={viewport.pan}
       onViewportChange={onViewportChange}
-      settingsSyncGroupId={p.settingsSyncGroupId}
-      syncIsAnchor={!!p.syncIsAnchor}
       syncedSettings={p.syncedSettings}
       setSyncedSettings={p.setSyncedSettings}
       applySyncedSettings={p.applySyncedSettings}
+      resetViewportSettings={p.resetViewportSettings}
       channelMenu={p.channelMenu}
       channelModified={p.channelModified}
       onChannelReset={p.onChannelReset}

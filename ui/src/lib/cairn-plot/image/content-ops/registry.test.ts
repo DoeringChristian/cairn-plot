@@ -52,22 +52,20 @@ test("identity declares the expected shape (arity-1 direct passthrough)", () => 
   assert.equal((id as { wgsl: string }).wgsl.trim(), "a");
 });
 
-test("pointwise diffs are arity-2 direct ops, scalar-gated, range-matched default encoding", () => {
+test("pointwise diffs are arity-2 direct ops with range metadata", () => {
   for (const opId of POINTWISE) {
     const op = getContentOp(opId);
     assert.ok(op && isDirectContentOp(op), `${opId} must be a registered direct op`);
     assert.equal(op!.sourceArity, 2, `${opId} sourceArity`);
     assert.equal(op!.renderClass, "direct", `${opId} renderClass`);
     assert.equal(op!.outputArity, 1, `${opId} scalar-error DISPLAY gating`);
-    // signed variants → diverging red-green (ℝ); magnitudes → turbo (ℝ⁺).
     const signed = opId === "signed" || opId === "relative_signed";
     assert.equal(op!.outputRange, signed ? "R" : "R+", `${opId} range`);
-    // `defaultEncoding` is asserted against the ONE kernel→default-colormap table in
-    // engine/kernels/kernel-default-colormap.test.ts (no second literal pin here).
+    // The shared display default is asserted separately from kernel metadata.
   }
 });
 
-test("cached metrics are arity-2 cached ops (magma default) delegating to a kernel", () => {
+test("cached metrics are arity-2 cached ops delegating to a kernel", () => {
   for (const opId of CACHED) {
     const op = getContentOp(opId);
     assert.ok(op, `${opId} registered`);
@@ -76,8 +74,7 @@ test("cached metrics are arity-2 cached ops (magma default) delegating to a kern
     assert.equal(op!.sourceArity, 2, `${opId} sourceArity`);
     assert.equal(op!.outputArity, 1, `${opId} scalar-metric DISPLAY gating`);
     assert.equal(op!.outputRange, "R+", `${opId} range`);
-    // `defaultEncoding` (magma) is asserted against the ONE kernel→default-colormap
-    // table in kernel-default-colormap.test.ts (no second literal pin here).
+    // The shared display default is asserted separately from kernel metadata.
     assert.equal((op as { kernelId: string }).kernelId, opId, `${opId} delegates to its kernel id`);
   }
 });

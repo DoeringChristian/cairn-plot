@@ -1,6 +1,6 @@
 /**
  * Pure data-shaping for the JS builder surface — the TS mirror of
- * `src/cairn_plot/shapers.py`. Each function turns raw JS inputs (plain arrays,
+ * `packages/python/src/cairn_plot/shapers.py`. Each function turns raw JS inputs (plain arrays,
  * nested arrays, TypedArrays, plain objects) into the exact inline data-contract
  * the matching renderer consumes (`Series[]`, `ScatterPoint[]`, `BarDatum[]`,
  * histogram `counts`/`edges`, heatmap `matrix`, parallel `columns`/`rows`/

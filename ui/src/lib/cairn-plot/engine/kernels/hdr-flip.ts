@@ -162,7 +162,6 @@ export const hdrFlipKernel: MultipassKernel = {
   // `flip` mode when sources are float (see `kernels/index.ts`).
   publicName: "flip_hdr",
   displayRange: "unit",
-  defaultColormap: "magma", // perceptual FLIP metric → the reference FLIP tooling's magma
   output: "scalar",
   // Exposure params default to placeholders; the pane / harness computes the real
   // range from the reference luminance (`computeHdrFlipExposures`) and passes them,

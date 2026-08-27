@@ -1,6 +1,6 @@
 /**
  * Input validation for the `window.cairnPlot` builder surface — the SAME rules
- * the Python `cairn_plot` builders enforce (`src/cairn_plot/components.py`), so
+ * the Python `cairn_plot` builders enforce (`packages/python/src/cairn_plot/components.py`), so
  * a bad colormap / tonemap / compare mode fails the same way in both faces.
  *
  * The allowed string sets come from the ONE cross-language contract

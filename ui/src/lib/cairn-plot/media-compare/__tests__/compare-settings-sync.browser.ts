@@ -41,7 +41,7 @@ import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 import { InFullscreenOverlayContext } from "../../primitives/FullscreenOverlayShell";
-import { kernelDefaultColormap } from "../../engine/kernels";
+import { DEFAULT_DIFF_COLORMAP } from "../../engine/kernels";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,
@@ -413,46 +413,42 @@ async function run(): Promise<boolean> {
   // construction. That path (single pane, diff persists across a flip, instance
   // reused) is covered by `stack/grid-stacked-persist`.
 
-  // --- 9. PER-KERNEL DEFAULT COLORMAPS (the per-kernel-default-colormaps follow-up) --
-  // On switching diff kernel the diff colormap follows that kernel's REQUESTED
-  // DEFAULT (signed→red-green, ℝ⁺→turbo, FLIP/SSIM→magma) UNLESS the user has
-  // explicitly picked one (a pick sticks across kernel switches; HOME clears it).
+  // --- 9. ONE DIFF COLORMAP DEFAULT ------------------------------------
+  // Kernel selection changes computation only; colormap selection is independent.
   // Single-pane (pane A) — the exact directive steps. Each control change is
   // AWAITED to settle (home resets kernel+mode through echo setters that round-trip
   // through the owner, so a bare synchronous follow-up can race the echo).
   A().home(); // clear the override left by the earlier COLORMAP sync step
-  await waitFor(() => A().colormap === kernelDefaultColormap(A().diffKernel), 8000, 25);
+  await waitFor(() => A().colormap === DEFAULT_DIFF_COLORMAP, 8000, 25);
   A().changeCompareMode("diff");
   await waitFor(() => A().compareMode === "diff", 8000, 25);
-  // (a) DEFAULT FOLLOWS the kernel: signed (ℝ signed error) → red-green (diverging).
+  // (a) Switching to signed keeps the shared default.
   A().changeDiffKernel("signed");
-  const defSigned = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green", 8000, 25);
-  report(defSigned, `DEFAULT: signed kernel → red-green colormap (A.colormap=${A().colormap})`);
+  const defSigned = await waitFor(() => A().diffKernel === "signed" && A().colormap === DEFAULT_DIFF_COLORMAP, 8000, 25);
+  report(defSigned, `DEFAULT: signed kernel keeps shared colormap (A.colormap=${A().colormap})`);
   ok = ok && defSigned;
-  // (b) switch to absolute (ℝ⁺) → the default FOLLOWS to turbo (sequential).
+  // (b) Switching back to absolute keeps the same default.
   A().changeDiffKernel("absolute");
-  const defAbs = await waitFor(() => A().diffKernel === "absolute" && A().colormap === "turbo", 8000, 25);
-  report(defAbs, `DEFAULT: absolute kernel → turbo colormap (A.colormap=${A().colormap})`);
+  const defAbs = await waitFor(() => A().diffKernel === "absolute" && A().colormap === DEFAULT_DIFF_COLORMAP, 8000, 25);
+  report(defAbs, `DEFAULT: absolute kernel keeps shared colormap (A.colormap=${A().colormap})`);
   ok = ok && defAbs;
   // (c) the user PICKS magma explicitly → an override.
   A().changeColormap("magma");
   const picked = await waitFor(() => A().colormap === "magma", 8000, 25);
   report(picked, `OVERRIDE: user picks magma (A.colormap=${A().colormap})`);
   ok = ok && picked;
-  // (d) switch kernel again → the NEW kernel's default is SELECTED (user ruling:
-  // "if I switch to another error, it should select that error's default colormap"
-  // — a kernel switch re-copies its default, superseding the old pick-sticks rule).
+  // (d) An explicit choice survives a kernel switch.
   A().changeDiffKernel("signed");
-  const followed = await waitFor(() => A().diffKernel === "signed" && A().colormap === "red-green", 8000, 25);
-  report(followed, `SWITCH: kernel→signed selects red-green default (A.colormap=${A().colormap})`);
+  const followed = await waitFor(() => A().diffKernel === "signed" && A().colormap === "magma", 8000, 25);
+  report(followed, `SWITCH: kernel→signed preserves magma (A.colormap=${A().colormap})`);
   ok = ok && followed;
-  // (e) HOME clears the override → back to the (reset) kernel's DEFAULT colormap.
+  // (e) HOME clears the override → back to the shared default colormap.
   A().home();
   const homeReset = await waitFor(
-    () => A().colormap === kernelDefaultColormap(A().diffKernel) && A().colormap !== "magma", 8000, 25);
+    () => A().colormap === DEFAULT_DIFF_COLORMAP && A().colormap !== "magma", 8000, 25);
   report(
     homeReset,
-    `HOME: override cleared → follows the kernel default (A.colormap=${A().colormap}, kernel=${A().diffKernel})`,
+    `HOME: override cleared → shared default (A.colormap=${A().colormap}, kernel=${A().diffKernel})`,
   );
   ok = ok && homeReset;
 

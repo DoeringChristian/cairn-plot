@@ -8,7 +8,6 @@ export const relativeSquaredKernel: PointwiseKernel = {
   label: "Relative Squared",
   publicName: "rel_square",
   displayRange: "unit",
-  defaultColormap: "turbo", // ℝ⁺ magnitude → sequential map (tev false-color)
   output: "per-channel",
   source: `
 fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {

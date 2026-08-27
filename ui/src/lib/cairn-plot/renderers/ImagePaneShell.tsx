@@ -120,7 +120,6 @@ export interface EnlargeControl {
 import { EnlargeInterceptContext } from "./enlarge-intercept";
 import { usePublishNaturalSize } from "./natural-size-report";
 
-const HOME_VIEWPORT: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
 
 /** `data-*` markers spread onto the root / viewport box. Boolean values render
  *  as `"true"`/`"false"` (the `…-ready` attrs); `""` marks a bare attribute. */
@@ -528,25 +527,9 @@ export default function ImagePaneShell({
     naturalHeight: naturalDims?.h,
   });
 
-  // HOME / reset also zeroes the EXPOSURE/OFFSET display-adjust sliders (they're
-  // controlled inputs, so resetting the pane's state snaps their positions back
-  // to 0). Shared by the toolbar home button (via the controller's `onReset`)
-  // and the double-click reset below, so both gestures return the pane to a
-  // fully neutral state, not just zoom/pan.
-  const resetDisplayAdjust = useCallback(() => {
-    displayAdjust?.onExposureChange(0);
-    displayAdjust?.onOffsetChange(0);
-    // A host pane's extra reset (compare: colormap / view-mode / kernel back to
-    // their descriptor defaults) rides the same HOME/dblclick chain.
-    onReset?.();
-  }, [displayAdjust, onReset]);
-
-  // Double-click reset (Q17) — same gesture across every image pane + the 2D
-  // charts.
-  const resetViewport = useCallback(() => {
-    onViewportChange?.(HOME_VIEWPORT);
-    resetDisplayAdjust();
-  }, [onViewportChange, resetDisplayAdjust]);
+  // HOME / double-click is one owner command. Zoom, pan, exposure, encoding,
+  // compare operation, and every other viewport setting reset together.
+  const resetViewport = useCallback(() => onReset?.(), [onReset]);
 
   // PlotToolbar controller (zoom/pan/reset/screenshot). Runs unconditionally
   // (rules-of-hooks); only the toolbar's RENDER is gated on `toolbar`.
@@ -559,7 +542,7 @@ export default function ImagePaneShell({
     naturalWidth: naturalDims?.w,
     naturalHeight: naturalDims?.h,
     requestRender,
-    onReset: resetDisplayAdjust,
+    onReset: resetViewport,
     // A dialed EXPOSURE/OFFSET slider counts as "modified": HOME resets the
     // sliders too (onReset above), so the button must read enabled whenever
     // either slider is off 0 — even at home zoom/pan.

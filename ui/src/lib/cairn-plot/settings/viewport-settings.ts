@@ -80,10 +80,12 @@ export interface ViewportSettings {
   /** EXR channel-strip selection ({part, layer} or null = the node default).
    *  Synced BY NAME so a group flips every pane to the same part/layer. */
   "image.channelSelect"?: { part?: number | string; layer?: string | string[] } | null;
-  /** Composited compare mode: "split" | "diff" (legacy "blend" aliases to
-   *  "split" on read). */
+  /** Semantic comparison operation: `split`, `signed`, `absolute`, `flip`, … .
+   *  GPU kernel selection is a renderer implementation detail. */
+  "compare.operation"?: string;
+  /** Read-only migration inputs for old saved workspaces. New code never writes
+   *  these split representations. */
   "compare.mode"?: string;
-  /** Selected diff kernel id (e.g. "absolute"/"hdr-flip"/"ssim"). */
   "compare.kernel"?: string;
   /** Split-divider position in [0,1]. */
   "compare.split"?: number;

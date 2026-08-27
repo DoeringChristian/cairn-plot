@@ -9,7 +9,7 @@
  *   - the cross-face contract `schema/cairn-plot-contracts.json` (`colormaps` +
  *     `tonemapOperators`), which the TS builder (`contracts.test.ts`) and the
  *     Python builder (`tests/test_contracts.py`) both already pin to; and
- *   - the Python validation tuples in `src/cairn_plot/components.py`
+ *   - the Python validation tuples in `packages/python/src/cairn_plot/components.py`
  *     (`_COLORMAPS` + `_TONEMAP_OPERATORS`).
  *
  * This test asserts BOTH echoes equal the REGISTRY's ids, so neither the contract
@@ -38,7 +38,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // ui/src/lib/cairn-plot/image/encodings/ → repo root is six levels up.
 const repoRoot = resolve(here, "../../../../../..");
 const contractPath = resolve(repoRoot, "schema/cairn-plot-contracts.json");
-const componentsPath = resolve(repoRoot, "src/cairn_plot/components.py");
+const componentsPath = resolve(repoRoot, "packages/python/src/cairn_plot/components.py");
 
 const sorted = (xs: readonly string[]): string[] => [...xs].sort();
 

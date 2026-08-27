@@ -1,16 +1,15 @@
 /**
  * `renderers/display-encoding.ts` — the ONE unified DISPLAY-ENCODING menu +
- * per-pane encoding state (Phase 3 of the display-encoding registry;
+ * viewport encoding projection (Phase 3 of the display-encoding registry;
  * `docs/plans/2026-08-18-display-encoding-registry.md`).
  *
  * An image pane's colormap and tone-map menus were TWO controls answering ONE
  * question — "how do the selected channels become RGB". This module collapses
  * them into ONE arity-gated DISPLAY menu (`displayToolbarButton`) driven by the
- * `image/encodings` registry, plus a hook (`usePaneEncoding`) that owns the
- * SINGLE `encoding` id per pane: selecting a colormap LUT deactivates the curve
+ * `image/encodings` registry, plus a hook (`usePaneEncoding`) that projects the
+ * viewport's SINGLE `encoding` id: selecting a colormap LUT deactivates the curve
  * and vice-versa STRUCTURALLY (no more `colormap==="none" ? [...tonemap] : []`
- * per-pane conditionals). It also remembers the last-used encoding PER ARITY, so
- * flipping the channel selector back to a scalar restores its colormap.
+ * per-pane conditionals). Mutable state remains in the viewport store.
  *
  * ## Arity gating (`resolveDisplayEncodingIds`)
  *   - `mode:"arity"` (the FLOAT/HDR path, which KNOWS its channel count from the
@@ -29,7 +28,7 @@
  *
  * Core-safe (registry + React only) — CpuImagePane ships in `core.iife.js`.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../controls/ToolbarConfig";
 import { getEncoding, listEncodingsByKind, type ReduceMode } from "../image/encodings/index.ts";
 
@@ -261,21 +260,6 @@ export interface PaneEncodingConfig {
    *  `resolveEffectiveTonemap`; the CPU-SDR transfer path coerces to
    *  srgb/gamma/linear). Must return a curve id. */
   resolveDefaultCurve: (propTonemap: string | null | undefined) => string;
-  /** True when this pane is a HOST-DRIVEN CONTROLLED SURFACE (`toolbar={false}` —
-   *  a card / host that drives colormap/tonemap as props from its OWN menu, with
-   *  the pane's toolbar hidden so the user cannot pick locally). Then a descriptor
-   *  prop change RESEEDS `encodingId` — the controlled-surface (non-interactive)
-   *  contract: the pane follows the host's props.
-   *
-   *  Absent/false ⇒ an INTERACTIVE VIEWPORT (its own toolbar visible): the viewport
-   *  OWNS its encoding. Per the settings-belong-to-the-viewport model, `encodingId`
-   *  is SEEDED ONCE from the initially-visible image and thereafter PERSISTS across
-   *  every content change — a stacked viewport's slot flips, a re-lower — changing
-   *  ONLY on a user pick (`setEncoding`) or HOME (`resetEncoding`). A slot flip does
-   *  NOT touch it (arity gating keeps it applicable per slot); HOME re-seeds it to
-   *  the CURRENTLY-VISIBLE image's authored default. This is the ONE rule for a
-   *  stack (one viewport, one shared setting) AND a grid cell (its own viewport). */
-  controlledSurface?: boolean;
   /** The viewport's settings store (the node-level accumulated
    *  `ViewportSettings`). When it holds an `encoding`, that id IS the pane's
    *  encoding — derived by value every render, no local copy, no adoption
@@ -296,10 +280,6 @@ export interface PaneEncoding {
   curveId: string;
   /** The section ids offered at the current arity/surface (feeds the menu). */
   ids: DisplayEncodingIds;
-  /** Set the active encoding (remembers it for the current arity). */
-  setEncoding: (id: string) => void;
-  /** HOME: back to the authored seed + clear per-arity memory. */
-  resetEncoding: () => void;
   /** `true` when the encoding differs from the authored seed at this arity. */
   encodingModified: boolean;
   /** Whether the ACTIVE encoding declares a given param (drives slider gating). */
@@ -307,11 +287,9 @@ export interface PaneEncoding {
 }
 
 /**
- * Owns the SINGLE per-pane encoding id: seeding (colormap wins over tonemap for
- * scalar sources), structural exclusivity (one id → curve XOR lut), per-arity
- * memory, and the arity fall-back when the channel selector flips to an arity
- * the active encoding doesn't support. The pane wraps `setEncoding` to also
- * publish to the settings-sync bus.
+ * Projects the viewport store's encoding into renderer-ready values. Descriptor
+ * props are captured once as a bootstrap value while the owner initializes the
+ * store; they are never a second mutable settings source.
  */
 export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const { mode, arity, curveSet, propTonemap, resolveDefaultCurve } = config;
@@ -345,84 +323,14 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     [idsFor, pickDefaultCurve, propColormap],
   );
 
-  const [localEncodingId, setLocalEncodingId] = useState<string>(() => seedFor(arity));
-  const memoryRef = useRef<Map<number, string>>(new Map());
-  // Track the last props/arity so ONE effect can tell prop-reseed from arity-flip.
-  const prevPropsRef = useRef<string>(`${propColormap} ${String(propTonemap)}`);
-  const prevArityRef = useRef<number>(arity);
-  const controlledSurface = !!config.controlledSurface;
+  const initialSeedRef = useRef<string>();
+  if (initialSeedRef.current === undefined) initialSeedRef.current = seedFor(arity);
 
-  // A prop change is RECORDED here so the ARITY effect below can tell a prop-reseed
-  // from a pure arity flip (it must not re-fire when a concurrent prop change already
-  // stamped the arity). For an INTERACTIVE VIEWPORT this is the WHOLE story: props are
-  // SEEDS, the encoding PERSISTS across every content change (a stacked viewport's slot
-  // flips, a re-lower) and is NEVER reseeded by a prop change — the descriptor is
-  // adopted only by HOME (`resetEncoding`). This render-body stamp is a pure record,
-  // no state write, so interactive behavior is unchanged.
-  const propsKey = `${propColormap} ${String(propTonemap)}`;
-  if (propsKey !== prevPropsRef.current) {
-    prevPropsRef.current = propsKey;
-    prevArityRef.current = arity;
-  }
-
-  // ONE precedence, derived every render — no adoption effects anywhere:
-  //   settings store > prop seed (host-driven surface) > local pick (standalone).
-  // A pick on a store-backed pane publishes to the store and flows back down, so
-  // publish path == apply path by construction.
+  // ONE owner: the viewport store. The immutable bootstrap seed exists only for
+  // the first render before the owner's initialization effect fills the store.
   const storeId = config.settings?.["image.encoding"];
-  const encodingId =
-    storeId != null
-      ? storeId === "viridis"
-        ? "turbo"
-        : storeId
-      : controlledSurface
-        ? seedFor(arity)
-        : localEncodingId;
-
-  useEffect(() => {
-    // ARITY-flip reseed — INTERACTIVE path only (a controlled surface derives
-    // above; applicability at the new arity is a render decision there). The
-    // per-arity memory restores the last encoding chosen at each k (a within-
-    // viewport gesture); if none, the encoding is kept where applicable at the
-    // new arity, else falls back to the default curve (arity gating = applicability).
-    if (controlledSurface) return;
-    if (arity !== prevArityRef.current) {
-      prevArityRef.current = arity;
-      const avail = idsFor(arity);
-      const remembered = memoryRef.current.get(arity);
-      let next: string;
-      if (remembered && avail.all.includes(remembered)) next = remembered;
-      else if (avail.all.includes(localEncodingId)) next = localEncodingId;
-      else next = pickDefaultCurve(avail);
-      if (next !== localEncodingId) setLocalEncodingId(next);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arity, controlledSurface]);
-
-  const setEncoding = useCallback(
-    (rawId: string) => {
-      // Back-compat: a sync peer may still publish `viridis` → alias to `turbo`.
-      const id = rawId === "viridis" ? "turbo" : rawId;
-      memoryRef.current.set(arity, id);
-      // TOP-OF-STACK write (transient-group ruling): on a CONTROLLED surface the
-      // pane's wrapper publishes to the settings store (group while selected —
-      // transient; local otherwise — sticks) and the value derives back down, so
-      // the local cell must NOT also be written (a group-session pick would
-      // survive unselect through it). The local cell serves only the
-      // interactive storeless path.
-      if (!controlledSurface) setLocalEncodingId(id);
-    },
-    [arity, controlledSurface],
-  );
-
-  const resetEncoding = useCallback(() => {
-    // HOME: re-seed to the FOCUSED slot's authored defaults + clear the override, so a
-    // diff face falls back to its kernel default (points 2+3 of the model). On a
-    // controlled surface HOME is a STORE write (the pane publishes the defaults);
-    // this local reset only serves the interactive path / a later group exit.
-    memoryRef.current.clear();
-    setLocalEncodingId(seedFor(arity));
-  }, [seedFor, arity]);
+  const rawEncodingId = storeId ?? initialSeedRef.current;
+  const encodingId = rawEncodingId === "viridis" ? "turbo" : rawEncodingId;
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
   const activeEncoding = getEncoding(encodingId);
@@ -441,8 +349,6 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     colormap,
     curveId,
     ids,
-    setEncoding,
-    resetEncoding,
     encodingModified,
     hasParam,
   };

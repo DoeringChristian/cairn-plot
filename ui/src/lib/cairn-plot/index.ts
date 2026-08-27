@@ -1,4 +1,24 @@
 // Engine types (RHI interface — consumed by the WebGPU backend)
+export * from "../../../../packages/spec/src/index.ts";
+export * from "../../../../packages/runtime/src/index.ts";
+export {
+  createSettingsRegistry,
+  defaultSettingsRegistry,
+  resolveSettings,
+} from "../../../../packages/spec/src/settings.ts";
+export type {
+  Invalidation,
+  SettingDefinition,
+  SettingsRegistry,
+} from "../../../../packages/spec/src/settings.ts";
+export {
+  PlotProvider,
+  usePlotChanges,
+  usePlotController,
+  usePlotSession,
+  usePlotSpec,
+} from "../../../../packages/react/src/index.ts";
+
 export type {
   Backend,
   Capabilities,

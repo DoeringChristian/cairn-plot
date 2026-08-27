@@ -2,7 +2,7 @@
  * Contract guard for the `toolbar` HOST SEAM shared by all three image panes.
  *
  * The feature: a host (cairn) hides the pane's `PlotToolbar` (`toolbar={false}`)
- * and drives the view from its OWN menu via controlled props. No DOM/renderer is
+ * while settings continue to flow through the viewport store. No DOM/renderer is
  * configured in this package (JSX can't be imported under
  * `--experimental-strip-types` — see ref-badge.test.ts), so this asserts the
  * contract at the SOURCE level. It also guards the two invariants that make the
@@ -10,9 +10,7 @@
  *   1. the shell gates the toolbar (and only the toolbar, keeping the floating
  *      notation toggle) on the `toolbar` flag, so the hidden-toolbar convention
  *      is identical on every pane;
- *   2. each view-local control the host must drive (colormap / tonemap / peak /
- *      gamma / base exposure+offset / compare mode+kernel) RE-SEEDS from its
- *      prop, so it stays controllable while the toolbar is gone.
+ *   2. toolbar visibility never changes settings ownership.
  *
  *   node --experimental-strip-types --test \
  *     src/lib/cairn-plot/renderers/toolbar-seam.test.ts
@@ -31,6 +29,7 @@ const shell = read("renderers/ImagePaneShell.tsx");
 const backend = read("renderers/image-backend.ts");
 const cpu = read("renderers/CpuImagePane.tsx");
 const gpu = read("renderers/GpuImagePane.tsx");
+const standalone = readFileSync(join(HERE, "../../../plot-renderers.tsx"), "utf8");
 
 // --- the shared contract: the shape carries `toolbar` ---------------------
 
@@ -84,44 +83,24 @@ for (const [name, src] of [
   });
 }
 
-// --- the controlled-props companion guarantee -----------------------------
+// --- settings ownership is independent of toolbar visibility --------------
 
-test("GpuImagePane: encoding + peak re-seed from their props (controlled while toolbar hidden)", () => {
-  // Phase 3: the unified DISPLAY encoding replaces the separate colormap +
-  // tonemap overrides. Its controlled-surface re-seed lives INSIDE
-  // `usePaneEncoding` (`display-encoding.ts`), which the pane feeds the live
-  // descriptor `propColormap` + `propTonemap`; peak keeps its own re-seed effect.
+test("GpuImagePane: encoding is initialized into the viewport settings store", () => {
   assert.match(gpu, /usePaneEncoding\(\{/, "the pane must own its encoding via usePaneEncoding");
-  // SETTINGS-STORE model: the store's unified `encoding` rules when present; the
-  // props are the pure SEED term (host surfaces follow them live, interactive
-  // viewports seed once from the initially-visible face). The legacy split
-  // colormap/tonemap bus keys are no longer read.
   assert.match(
     gpu,
-    /propColormap:\s*controlledSurface\s*\?\s*propColormap/,
-    "usePaneEncoding must feed the live descriptor colormap seed when controlled",
+    /propColormap:\s*initialEncSeedRef\.current/,
+    "descriptor colormap must be captured as an initial seed",
   );
   assert.match(
     gpu,
     /settings:\s*synced,/,
     "usePaneEncoding must be handed the settings store (its `encoding` rules)",
   );
-  // SETTINGS-STORE model: peak resolves at RENDER through the one lookup —
-  // store value > descriptor seed — so a host-driven pane (empty store) follows
-  // the live `peak` prop and a store-driven pane follows the store. No adoption
-  // effect, no pane-local copy.
-  assert.match(
-    gpu,
-    /const peak = synced\?\.\["image\.peak"\][\s\S]*?:\s*peakSeed/,
-    "peak must derive at render: store value (synced.peak) else the descriptor seed",
-  );
+  assert.doesNotMatch(gpu, /toolbar === false \|\| disableStackShared/);
 });
 
-test("display-encoding: usePaneEncoding derives the encoding at render (store > seed)", () => {
-  // SETTINGS-STORE model: the controlled-surface guarantee is the ONE render
-  // lookup — the store's unified `encoding` id when present (adopted BY VALUE),
-  // else the live descriptor seed (`seedFor(arity)` reads the current props each
-  // render, so a host prop change takes effect immediately). No adoption effect.
+test("display-encoding: one immutable bootstrap seed, then the viewport store", () => {
   const de = read("renderers/display-encoding.ts");
   assert.match(
     de,
@@ -130,9 +109,12 @@ test("display-encoding: usePaneEncoding derives the encoding at render (store > 
   );
   assert.match(
     de,
-    /controlledSurface\s*\?\s*seedFor\(arity\)/,
-    "a controlled surface without a store value must derive from the live prop seed",
+    /initialSeedRef\.current = seedFor\(arity\)/,
+    "the descriptor seed must be captured once",
   );
+  assert.match(de, /storeId \?\? initialSeedRef\.current/);
+  assert.doesNotMatch(de, /useState/);
+  assert.doesNotMatch(de, /controlledSurface/);
 });
 
 test("GpuImagePane: base exposure/offset feed the render (additive with sliders)", () => {
@@ -147,4 +129,16 @@ test("GpuImagePane: base exposure/offset feed the render (additive with sliders)
 
 test("CpuImagePane HDR: base offset is additive with the runtime OFF slider", () => {
   assert.match(cpu, /baseOffset \+ displayOffset/, "CPU HDR offset = base + slider adjustment");
+});
+
+test("ImageStandalone forwards the viewport-owned HOME command", () => {
+  assert.match(standalone, /resetViewportSettings=\{p\.resetViewportSettings\}/);
+});
+
+test("image renderers do not own sync membership or anchor adoption", () => {
+  for (const source of [backend, cpu, gpu, standalone]) {
+    assert.doesNotMatch(source, /useSeedGroupOnFormation/);
+    assert.doesNotMatch(source, /settingsSyncGroupId/);
+    assert.doesNotMatch(source, /syncIsAnchor/);
+  }
 });

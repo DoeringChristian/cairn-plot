@@ -40,7 +40,10 @@ import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../renderers/image-backend";
-import { useViewportSettings } from "../settings/use-viewport-settings";
+import {
+  useSeedGroupOnFormation,
+  useViewportSettings,
+} from "../settings/use-viewport-settings";
 
 import type {
   CompareSource,
@@ -819,6 +822,15 @@ export function CompositeMediaPane({
     settingsSyncGroupId ? [{ id: settingsSyncGroupId }] : undefined,
   );
   const syncedSettings = vst.settings;
+  // This frameless compositor is its viewport owner, so formation belongs here
+  // rather than in the image renderer. The deferred seed reads the live box
+  // after child initialization has filled any missing defaults.
+  useSeedGroupOnFormation(
+    settingsSyncGroupId,
+    !!syncIsAnchor,
+    vst.set,
+    () => ({ ...(vst.get() ?? {}) }),
+  );
 
   // The engine pane composites only split/diff (normal is a single image).
   const engineComposited =
@@ -878,8 +890,6 @@ export function CompositeMediaPane({
         source={referenceSource}
         compareSource={compareSource}
         toolbar={toolbar}
-        settingsSyncGroupId={settingsSyncGroupId}
-        syncIsAnchor={syncIsAnchor}
         syncedSettings={syncedSettings ?? undefined}
         setSyncedSettings={vst.set}
         tonemap={tonemap}

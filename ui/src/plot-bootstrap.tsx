@@ -38,6 +38,8 @@ import { useEmitAutoHeight } from "./lib/cairn-plot/hooks/use-emit-auto-height";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { registerRenderer, getRenderer } from "./plot-registry";
 import { PlotNodeView, SharedPlotContext } from "./plot-node";
+import { PlotProvider } from "../../packages/react/src/PlotProvider";
+import { plotSpecFromDescriptor } from "../../apps/standalone/src/descriptor-adapter";
 import { ensureSelectionOverlayHost } from "./plot-selection-stage";
 import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
 
@@ -222,12 +224,15 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
   } else if (state.status === "error") {
     body = <Message text={`Plot error: ${state.message}`} error />;
   } else {
+    const spec = plotSpecFromDescriptor(state.descriptor);
     body = (
-      <SharedPlotContext.Provider
-        value={{ source: state.source, shared: undefined }}
-      >
-        <PlotNodeView node={state.descriptor.root} />
-      </SharedPlotContext.Provider>
+      <PlotProvider spec={spec}>
+        <SharedPlotContext.Provider
+          value={{ source: state.source, shared: undefined }}
+        >
+          <PlotNodeView node={state.descriptor.root} />
+        </SharedPlotContext.Provider>
+      </PlotProvider>
     );
   }
 

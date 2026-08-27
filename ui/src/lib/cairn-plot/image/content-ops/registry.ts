@@ -128,9 +128,8 @@ interface ContentOpBase {
   /** The op output's value range (gates the DISPLAY stage). */
   outputRange: OutputRange;
   /** The DISPLAY encoding applied by default (a display-encoding registry id):
-   *  identity→`srgb`; abs/squared/relative→`turbo`; signed/relative-signed→
-   *  `red-green`; FLIP/HDR-FLIP/SSIM→`magma`. Generalizes the per-kernel default
-   *  colormaps (`engine/kernels`' `defaultColormap`). */
+   *  identity/compositors use their image encoding; scalar diff ops use the
+   *  shared diff colormap default. */
   defaultEncoding: string;
   /** Param MANIFEST — which named params this op reads (toolbar-row gating). */
   params?: ContentParamName[];

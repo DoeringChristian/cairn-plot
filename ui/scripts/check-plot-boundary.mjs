@@ -35,6 +35,8 @@ const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(UI_ROOT, "src");
 const LIB = join(SRC, "lib", "cairn-plot");
 const REPO_ROOT = resolve(UI_ROOT, "..");
+const PACKAGES = join(REPO_ROOT, "packages");
+const APPS = join(REPO_ROOT, "apps");
 
 // --- surface enumeration -------------------------------------------------
 function walk(dir) {
@@ -64,6 +66,8 @@ const plotScripts = [
 
 const surface = [
   ...walk(LIB),
+  ...walk(PACKAGES),
+  ...walk(APPS),
   ...plotEntries,
   ...viteConfigs,
   ...plotScripts,
@@ -73,6 +77,8 @@ const surfaceReal = new Set(surface.map((f) => resolve(f)));
 function isIntraSurface(absPath) {
   const p = resolve(absPath);
   if (p === resolve(LIB) || p.startsWith(resolve(LIB) + "/")) return true;
+  if (p === resolve(PACKAGES) || p.startsWith(resolve(PACKAGES) + "/")) return true;
+  if (p === resolve(APPS) || p.startsWith(resolve(APPS) + "/")) return true;
   return surfaceReal.has(p);
 }
 

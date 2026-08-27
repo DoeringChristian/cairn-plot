@@ -48,7 +48,6 @@ import { SDR_DISPLAY_TRANSFER_OPERATORS } from "../image/tonemap";
  *  never drift from the registry entries (the label lives on the entry). */
 const encodingLabel = (id: string): string => getEncoding(id)?.label ?? id;
 
-const HOME: Viewport = { zoom: 1, pan: { x: 0, y: 0 } };
 /** Per-button click factor for the toolbar's +/- zoom (coarser than the
  *  1.1 wheel step so a single click makes a visible jump). */
 const ZOOM_STEP = 1.3;
@@ -221,9 +220,8 @@ export function useImageController({
   const zoomIn = useCallback(() => applyZoom(ZOOM_STEP), [applyZoom]);
   const zoomOut = useCallback(() => applyZoom(1 / ZOOM_STEP), [applyZoom]);
   const home = useCallback(() => {
-    onViewportChange?.(HOME);
-    onReset?.(); // zero EXPOSURE/OFFSET alongside the viewport reset
-  }, [onViewportChange, onReset]);
+    onReset?.();
+  }, [onReset]);
 
   const toPNG = useCallback(
     (opts?: ToPNGOptions): Promise<Blob> => {

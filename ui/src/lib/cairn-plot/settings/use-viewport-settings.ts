@@ -51,6 +51,9 @@ export interface ViewportSettingsHandle {
   settings: ViewportSettings | null;
   /** THE write path: apply to this viewport + publish to its groups. */
   set: (patch: ViewportSettings) => void;
+  /** HOME: replace this viewport's settings with the active content defaults,
+   *  then publish those values to linked peers. */
+  replace: (settings: ViewportSettings) => void;
   /** Apply locally only (no publish). */
   setLocal: (patch: ViewportSettings) => void;
   /** Live accessors for the pane registry (peer reads / external writes). */
@@ -61,8 +64,12 @@ export interface ViewportSettingsHandle {
 
 export function useViewportSettings(
   memberships?: readonly SettingsMembership[],
+  initialSettings: ViewportSettings | null = null,
 ): ViewportSettingsHandle {
-  const box = useRef<ViewportSettings | null>(null);
+  // The owner materializes authored/default settings BEFORE its renderer mounts.
+  // This is deliberately a useRef initializer: later descriptor/source changes
+  // (notably a stacked tab flip) cannot reseed the viewport.
+  const box = useRef<ViewportSettings | null>(initialSettings);
   const [, bump] = useReducer((c: number) => c + 1, 0);
   // Patch-identity dedupe: `set` applies the patch directly AND publishes the
   // same object; the writer's own (unscoped) subscription then skips it.
@@ -104,10 +111,19 @@ export function useViewportSettings(
     },
     [applyPatch],
   );
+  const replace = useCallback(
+    (settings: ViewportSettings) => {
+      lastAppliedRef.current = settings;
+      box.current = { ...settings };
+      bump();
+      for (const m of membershipsRef.current ?? []) publishSettingsPatch(m.id, settings);
+    },
+    [],
+  );
   const setLocal = applyPatch;
   const get = getBox;
 
-  return { settings: box.current, set, setLocal, get, apply: applyPatch };
+  return { settings: box.current, set, replace, setLocal, get, apply: applyPatch };
 }
 
 /** Anchor formation seed, run by the PANE (it owns the snapshot of its

@@ -6,6 +6,12 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime.d.ts"],
+      "react-dom/client": ["./node_modules/@types/react-dom/client.d.ts"]
+    },
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "moduleDetection": "force",
@@ -18,7 +24,7 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true
   },
-  "include": ["src"],
+  "include": ["src", "../packages", "../apps"],
   "//exclude": "Pure Node test files (run via `node --experimental-strip-types --test`) use node: builtins and .ts import specifiers; they are not part of the shipped bundle and @types/node is not a dependency, so keep them out of the app typecheck.",
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "../packages/**/*.test.ts", "../apps/**/*.test.ts"]
 }

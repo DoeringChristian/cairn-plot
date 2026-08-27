@@ -114,9 +114,6 @@ export interface HdrImageProps {
   toolbar?: boolean;
   /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
    *  Threaded through `useLegacyImageProps` so the pane body reads it here. */
-  settingsSyncGroupId?: string;
-  /** True when this pane is the selection ANCHOR (see {@link ImageBackendProps}). */
-  syncIsAnchor?: boolean;
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
    *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
@@ -130,6 +127,7 @@ export interface HdrImageProps {
   /** True when this pane is the reused renderer of a STACKED viewport (see
    *  {@link ImageBackendProps.inStackedGrid}). */
   inStackedGrid?: boolean;
+  resetViewportSettings?: () => void;
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
@@ -188,9 +186,6 @@ export interface SdrImageProps {
   toolbar?: boolean;
   /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
    *  Threaded through `useLegacyImageProps` so the pane body reads it here. */
-  settingsSyncGroupId?: string;
-  /** True when this pane is the selection ANCHOR (see {@link ImageBackendProps}). */
-  syncIsAnchor?: boolean;
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
    *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
@@ -204,6 +199,7 @@ export interface SdrImageProps {
   /** True when this pane is the reused renderer of a STACKED viewport (see
    *  {@link ImageBackendProps.inStackedGrid}). */
   inStackedGrid?: boolean;
+  resetViewportSettings?: () => void;
 }
 
 /**
@@ -316,10 +312,9 @@ export interface CompareSource {
   inStackedGrid?: boolean;
   /** True when this compare pane is inside a FULLSCREEN overlay (see above). */
   inOverlay?: boolean;
-  /** Colormap OVERRIDE for the diff display (a display-encoding/colormap id, or
-   *  `"none"` for the raw per-channel error). `null`/absent = follow the selected
-   *  kernel's default (`resolveDiffColormap`). An explicit pick STICKS across
-   *  kernel switches; HOME clears it. */
+  /** Colormap for the diff display (a display-encoding/colormap id, or `"none"`
+   *  for raw per-channel error). `null`/absent uses the shared diff default.
+   *  Kernel changes do not alter it. */
   colormap?: Colormap | null;
   /** Alignment anchor for mismatched-size operands (ignored under `fit:"fill"`). */
   align?: CompareAlign;
@@ -340,15 +335,6 @@ export interface CompareSource {
    *  renders on THIS unified pane, so a mode switch is an OP switch on the reused
    *  instance (NO remount) — not the old route-to-`GpuComparePane` remount. */
   onCompareModeChange?: (mode: "split" | "diff") => void;
-  /** HOME / double-click reset for the HOISTED compare control (mode + kernel +
-   *  split). The compare VIEW-MODE / kernel / split state lives in the owner's
-   *  `useCompareControl` (hoisted out of the pane so it survives stacked flips),
-   *  so the pane's own HOME handler cannot reach it — it calls this to restore
-   *  those to the DESCRIPTOR (the old `GpuComparePane` reset every view-local
-   *  selection incl. the mode; the unified pane must too). Diff↔slide transitions
-   *  re-lower via `NodeDispatch`. Colormap/encoding are display-only + pane-local, so
-   *  the pane resets those itself. */
-  onCompareReset?: () => void;
   /** True when the hoisted compare control (mode / kernel / split) differs
    *  from the descriptor — folds into the pane's HOME-enabled ("modified") state. */
   compareModified?: boolean;
@@ -385,6 +371,9 @@ export interface ImageBackendProps {
    *  MISSING settings keys from the first content it shows (single source of
    *  truth rule); init must never fan to group peers. */
   applySyncedSettings?: (patch: ViewportSettings) => void;
+  /** HOME command supplied by the viewport owner. The renderer does not derive
+   *  defaults from its current rendering mode or source. */
+  resetViewportSettings?: () => void;
   /** CONTROLLED single-pane fullscreen state, owned by the plot leaf ABOVE the
    *  async-resolve swap (`LeafView`) so a cold re-resolve (a channel pick's
    *  "Loading…" placeholder unmounting this pane) cannot reset it. Threaded to
@@ -419,16 +408,6 @@ export interface ImageBackendProps {
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`). */
   toolbar?: boolean;
   // — multi-viewport SELECTION settings sync (viewport/viewport-settings.ts) —
-  /** When set (this pane is part of a ≥2 selection), the pane links its
-   *  view-local display-setting overrides (colormap/tonemap/gamma/peak/exposure/
-   *  offset) to this group: a local control change broadcasts to the group, and
-   *  peers' changes apply here. Threaded down by `plot-node.tsx`'s
-   *  `SelectionCell`; absent = no settings sync. */
-  settingsSyncGroupId?: string;
-  /** True when this pane is the selection ANCHOR — it seeds the group with its
-   *  full current settings when the group forms, so members adopt the anchor's
-   *  settings (design req 5). */
-  syncIsAnchor?: boolean;
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
    *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
@@ -545,12 +524,11 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       onViewportChange: p.onViewportChange,
       pixelValueNotation: p.pixelValueNotation,
       toolbar: p.toolbar,
-      settingsSyncGroupId: p.settingsSyncGroupId,
-      syncIsAnchor: p.syncIsAnchor,
       channelMenu: p.channelMenu,
       channelModified: p.channelModified,
       onChannelReset: p.onChannelReset,
       inStackedGrid: p.inStackedGrid,
+      resetViewportSettings: p.resetViewportSettings,
     };
   }
   return {
@@ -579,12 +557,11 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     overlaySettings: p.overlaySettings,
     pixelValueNotation: p.pixelValueNotation,
     toolbar: p.toolbar,
-    settingsSyncGroupId: p.settingsSyncGroupId,
-    syncIsAnchor: p.syncIsAnchor,
     channelMenu: p.channelMenu,
     channelModified: p.channelModified,
     onChannelReset: p.onChannelReset,
     inStackedGrid: p.inStackedGrid,
+    resetViewportSettings: p.resetViewportSettings,
   };
 }
 

@@ -2,7 +2,7 @@
  * Image/float DATA shaping for the JS builder — turns JS image inputs into a
  * `DataSpec` (+ the runtime-store entries the descriptor references by hash),
  * with NO base64. Mirrors the routing of Python's `cp.Image`
- * (`src/cairn_plot/components.py`), JS-idiomatically:
+ * (`packages/python/src/cairn_plot/components.py`), JS-idiomatically:
  *
  *  - a numeric buffer (`Float32Array` / `Float64Array` / `Uint16Array` f16 bits
  *    / nested number arrays) → the float path: a `RuntimeFloatEntry` rides BY

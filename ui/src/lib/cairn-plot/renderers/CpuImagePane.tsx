@@ -95,7 +95,7 @@ import {
 } from "../primitives/PixelValueOverlay";
 import ImagePaneShell, { type EnlargeControl } from "./ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "./image-histogram-source";
-import { useSeedGroupOnFormation, useViewportSettings } from "../settings/use-viewport-settings";
+import { useViewportSettings } from "../settings/use-viewport-settings";
 import type { ViewportSettings } from "../settings/viewport-settings";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "./display-encoding";
 import {
@@ -383,8 +383,6 @@ function useAutoImageRendering(
 function CpuSdrImagePane(
   props: SdrImageProps & {
     toolbar?: boolean;
-    settingsSyncGroupId?: string;
-    syncIsAnchor?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
     syncedSettings?: ViewportSettings;
@@ -424,11 +422,7 @@ function CpuSdrImagePane(
     toolbar = true,
   } = props;
 
-  // CONTROLLED SURFACE (`toolbar={false}` host-menu contract) vs INTERACTIVE
-  // VIEWPORT — the ONE axis governing whether a descriptor prop change reseeds the
-  // display settings (see GpuImagePane). A viewport OWNS its settings (persist across
-  // flips, HOME re-seeds to the visible slot); a controlled surface follows the host
-  // props. `__cairnDisableStackShared` (test-only) forces the reseed for pre/post.
+  // Toolbar visibility is presentation only; the viewport store owns settings.
   // The viewport's settings STORE (see use-viewport-settings.ts): threaded
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
@@ -438,17 +432,8 @@ function CpuSdrImagePane(
   const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
   // NOSTACK fix (see GpuImagePane): store EXISTENCE no longer flips the seed
   // to live props — `settings.view` alone creates the entry now.
-  const controlledSurface =
-    toolbar === false ||
-    (typeof window !== "undefined" &&
-      !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
 
-  // Colormap: the `colormap` prop SEEDS a view-local override so the toolbar
-  // COLORMAP menu can switch it in-pane (diff-kernels toolbar track). Re-seeds
-  // on prop change (the app card's colormap control) — a controlled surface
-  // until the user overrides it locally. (Only surfaces when the toolbar shows,
-  // i.e. `toolbar={true}` backend-seam mounts, not the legacy `toolbar={false}`
-  // card chrome — see report note on the card-control interaction.)
+  // Colormap is an authored bootstrap seed. Live changes go through the store.
   // Descriptor default captured at mount; HOME restores the view-local colormap
   // override (and `isModified` enables it while off-default) — same contract as
   // GpuImagePane / the compare pane, now via the shared `useResettableState`.
@@ -468,7 +453,6 @@ function CpuSdrImagePane(
       const s = toSdrTonemap(t);
       return s === "gamma" || s === "linear" ? s : "srgb";
     },
-    controlledSurface,
     // The settings store rules when present; picks publish and flow back down.
     settings: synced,
   });
@@ -480,9 +464,8 @@ function CpuSdrImagePane(
     synced?.["image.tonemapGamma"] != null && synced["image.tonemapGamma"] > 0 ? synced["image.tonemapGamma"] : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
-  // Every gesture is ONE store write (`set`); values flow back down through the
-  // render lookup. The anchor seeds a forming group with its effective values.
-  const settingsSnapshot = useCallback(
+  // Renderer initialization only; sync formation belongs to the viewport owner.
+  const initialSettingsSnapshot = useCallback(
     (): ViewportSettings => ({
       "image.encoding": enc.encodingId,
       "image.tonemapGamma": tonemapGamma,
@@ -492,23 +475,16 @@ function CpuSdrImagePane(
     [enc.encodingId, tonemapGamma, zoomProp, panProp],
   );
   const publishSettings = setSynced;
-  useSeedGroupOnFormation(
-    props.settingsSyncGroupId,
-    !!props.syncIsAnchor,
-    setSynced,
-    settingsSnapshot,
-  );
   // INITIALIZATION (single-source-of-truth ruling — see GpuImagePane's twin):
   // fill MISSING keys once from the first-shown content; idempotent,
-  // LOCAL-only; controlled (host-driven) surfaces never initialize.
+  // LOCAL-only; fills missing viewport keys once.
   const applySynced = sdrThreadedSet
     ? (props.applySyncedSettings ?? sdrThreadedSet)
     : sdrOwnStore.setLocal;
   const syncedInitRef = useRef(synced);
   syncedInitRef.current = synced;
   useEffect(() => {
-    if (controlledSurface) return;
-    const snap = settingsSnapshot();
+    const snap = initialSettingsSnapshot();
     const cur = (syncedInitRef.current ?? {}) as Record<string, unknown>;
     const missing: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(snap)) {
@@ -518,7 +494,6 @@ function CpuSdrImagePane(
   });
   const changeEncoding = useCallback(
     (id: string) => {
-      enc.setEncoding(id);
       publishSettings({ "image.encoding": id });
     },
     [enc, publishSettings],
@@ -1045,17 +1020,7 @@ function CpuSdrImagePane(
           : undefined
       }
       onReset={() => {
-        enc.resetEncoding();
-        // HOME is ONE store write: the visible slot's DEFAULTS by value.
-        {
-          const s = toSdrTonemap(tonemapProp);
-          const homeCurve = s === "gamma" || s === "linear" ? s : "srgb";
-          publishSettings({
-            "image.encoding": colormapProp !== "none" ? colormapProp : homeCurve,
-            "image.tonemapGamma": gammaSeed,
-            "panel.info": undefined, // HOME → back to AUTO visibility
-          });
-        }
+        props.resetViewportSettings?.();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
@@ -1098,8 +1063,6 @@ function CpuSdrImagePane(
 function CpuHdrImagePane(
   props: HdrImageProps & {
     toolbar?: boolean;
-    settingsSyncGroupId?: string;
-    syncIsAnchor?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
     syncedSettings?: ViewportSettings;
@@ -1141,10 +1104,6 @@ function CpuHdrImagePane(
   const setSynced = hdrThreadedSet ?? hdrOwnStore.set;
   // NOSTACK fix (see GpuImagePane): store EXISTENCE no longer flips the seed
   // to live props — `settings.view` alone creates the entry now.
-  const controlledSurface =
-    toolbar === false ||
-    (typeof window !== "undefined" &&
-      !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared);
 
   // DEEP EXR depth slider: `hdr` is the live-flattened effective source; the
   // depth slider + HOME reset ride the shell (absent for non-deep sources).
@@ -1173,7 +1132,6 @@ function CpuHdrImagePane(
     propColormap,
     propTonemap: tonemap,
     resolveDefaultCurve,
-    controlledSurface,
     // The settings store rules when present; picks publish and flow back down.
     settings: synced,
   });
@@ -1242,9 +1200,8 @@ function CpuHdrImagePane(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
-  // Settings-store wiring (see use-viewport-settings.ts): gestures write the
-  // store; the anchor seeds a forming group with its effective values.
-  const settingsSnapshot = useCallback(
+  // Renderer initialization only; sync formation belongs to the viewport owner.
+  const initialSettingsSnapshot = useCallback(
     (): ViewportSettings => ({
       "image.encoding": enc.encodingId,
       "image.tonemapGamma": tonemapGamma,
@@ -1260,23 +1217,16 @@ function CpuHdrImagePane(
     [enc.encodingId, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds, zoom, pan],
   );
   const publishSettings = setSynced;
-  useSeedGroupOnFormation(
-    props.settingsSyncGroupId,
-    !!props.syncIsAnchor,
-    setSynced,
-    settingsSnapshot,
-  );
   // INITIALIZATION (single-source-of-truth ruling — see GpuImagePane's twin):
   // fill MISSING keys once from the first-shown content; idempotent,
-  // LOCAL-only; controlled (host-driven) surfaces never initialize.
+  // LOCAL-only; fills missing viewport keys once.
   const applySynced = hdrThreadedSet
     ? (props.applySyncedSettings ?? hdrThreadedSet)
     : hdrOwnStore.setLocal;
   const syncedInitRef = useRef(synced);
   syncedInitRef.current = synced;
   useEffect(() => {
-    if (controlledSurface) return;
-    const snap = settingsSnapshot();
+    const snap = initialSettingsSnapshot();
     const cur = (syncedInitRef.current ?? {}) as Record<string, unknown>;
     const missing: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(snap)) {
@@ -1288,7 +1238,6 @@ function CpuHdrImagePane(
   // the render lookup — no pane state to keep consistent.
   const changeEncoding = useCallback(
     (id: string) => {
-      enc.setEncoding(id);
       // Legacy colormap/tonemap wire keys are RETIRED (registry ruling): the
       // one `image.encoding` id carries the whole display look.
       publishSettings({ "image.encoding": id });
@@ -1560,24 +1509,7 @@ function CpuHdrImagePane(
       }
       onReset={() => {
         deepFlatten.reset();
-        enc.resetEncoding();
-        // HOME is ONE store write: the visible slot's DEFAULTS by value
-        // (explicit `undefined` CLEARS the bounds pair in the store).
-        {
-          const homeCurve = toSdrTonemap(tonemap);
-          publishSettings({
-            "image.encoding": propColormap !== "none" ? propColormap : homeCurve,
-            "image.tonemapGamma": gammaSeed,
-            "image.exposureEV": 0,
-            "image.offset": 0,
-            "image.reduce": reduceDefault,
-            // `null` = the JSON-safe MASK: bounds skin off / back to AUTO.
-            "image.colorRange": boundsSeedVal
-              ? { min: boundsSeedVal[0], max: boundsSeedVal[1] }
-              : null,
-            "panel.info": null,
-          });
-        }
+        props.resetViewportSettings?.();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
@@ -1677,8 +1609,6 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
   // `MediaComparePane` / `CpuImagePane`-diff / `CpuFloatComparePane` fallbacks.
   const isCompare = !!backendProps.compareSource;
   const sync = {
-    settingsSyncGroupId: backendProps.settingsSyncGroupId,
-    syncIsAnchor: backendProps.syncIsAnchor,
     syncedSettings: backendProps.syncedSettings,
     setSyncedSettings: backendProps.setSyncedSettings,
     applySyncedSettings: backendProps.applySyncedSettings,

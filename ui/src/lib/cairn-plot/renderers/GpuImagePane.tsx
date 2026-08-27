@@ -66,7 +66,7 @@ import { contentOpId } from "../image/content-ops/index";
 import {
   getDiffKernel,
   resolveDiffKernelId,
-  kernelDefaultColormap,
+  DEFAULT_DIFF_COLORMAP,
   listDiffMenuModes,
 } from "../engine/kernels";
 import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
@@ -88,7 +88,6 @@ import PixelValueOverlay, {
 } from "../primitives/PixelValueOverlay";
 import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useDevicePixelRatio } from "../hooks/use-device-pixel-ratio";
-import { useResettableState } from "../hooks/use-resettable-state";
 import {
   acquirePane,
   releasePane,
@@ -117,7 +116,7 @@ import {
   type TevHistogramsResult,
 } from "./image-histogram";
 import { TEV_HISTOGRAM_BINS } from "../image/histogram-binning";
-import { useSeedGroupOnFormation, useViewportSettings } from "../settings/use-viewport-settings";
+import { useViewportSettings } from "../settings/use-viewport-settings";
 import type { ViewportSettings } from "../settings/viewport-settings";
 import {
   displayToolbarButton,
@@ -571,12 +570,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   // DIFF kernel + DEFAULT colormap (state-unification). The diff/compare face no
   // longer owns a SEPARATE colormap store — its colormap IS the viewport's ONE
-  // display encoding (`enc`, below). The kernel's registry default
-  // (magma/turbo/red-green) — or the authored `compareSource.colormap` when the
+  // display encoding (`enc`, below). The single diff default — or the authored
+  // `compareSource.colormap` when the
   // descriptor specifies one — is the SEED/HOME target the encoding hook uses
   // while a diff is visible. Computed HERE, above `enc`, so the hook can seed from
-  // it. (`resolveDiffColormap` stays the pure default-vs-override statement; the
-  // OVERRIDE now lives in `enc.encodingId`, so a diff-colormap pick, a slot flip
+  // it. The choice lives in `enc.encodingId`, so a diff-colormap pick, a slot flip
   // to the scalar image, and HOME all read/write ONE store — one viewport, one
   // setting.) Declared unconditionally (rules-of-hooks); inert when `!diffMode`.
   // -----------------------------------------------------------------------
@@ -590,30 +588,20 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `compareSource.opId` and mutated via `compareSource.onDiffKernelChange`. When
   // that owner is present the pane DERIVES the kernel straight from `opId` (ONE
   // authoritative store — no parallel pane-local seed/reseed to hand-sync; M2). The
-  // owner also carries the bus subscription (`plot-node.tsx`) AND the HOME reset
-  // (`onCompareReset`), so a remote kernel patch and HOME both flow through it, not
-  // a second copy here. A cross-type consumer with NO owner (the live-3D snapshot
+  // owner also carries the viewport settings subscription, so remote operation
+  // patches flow through it, not a second copy here. A cross-type consumer with NO owner (the live-3D snapshot
   // compare, `OffscreenComparePanes`, which threads no `onDiffKernelChange`) keeps a
   // local fallback store so its own MODE menu still functions.
   const hasKernelOwner = !!compareSource?.onDiffKernelChange;
-  const [localKernel, setLocalKernel, localKernelMeta] = useResettableState<string>(
-    compareSource?.opId ?? "absolute",
-  );
-  useLayoutEffect(() => {
-    // Fallback store follows the descriptor ONLY when there is no owner (the owner
-    // path derives directly, so this reseed would be redundant AND could fight the
-    // derivation). Anti-churn (paint-atomic note): reseed only from a PRESENT compare
-    // descriptor — an image slot in a stacked image↔diff flip keeps the last kernel
-    // DORMANT rather than resetting to "absolute" then re-applying post-paint.
-    if (hasKernelOwner || !compareSource) return;
-    setLocalKernel(compareSource.opId ?? "absolute");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasKernelOwner, compareSource?.opId, !!compareSource]);
-  // No-owner path resolves at RENDER: store value > local fallback (the owner
-  // path derives from `opId`, which the node's control already resolves).
+  const initialKernelSeedRef = useRef<string | null>(null);
+  if (initialKernelSeedRef.current == null && compareSource) {
+    initialKernelSeedRef.current = compareSource.opId ?? "absolute";
+  }
+  // Kernel state has the same ownership rule as encoding: node controller when
+  // present, otherwise the viewport store with an immutable bootstrap seed.
   const diffKernel = hasKernelOwner
     ? (compareSource!.opId ?? "absolute")
-    : (synced?.["compare.kernel"] ?? localKernel);
+    : ((synced?.["compare.operation"] !== "split" ? synced?.["compare.operation"] : undefined) ?? initialKernelSeedRef.current ?? "absolute");
   const setDiffKernel = useCallback(
     (id: string) => {
       // ONE write path: route to the owner when present (it re-derives `opId` back
@@ -622,20 +610,19 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // by a store value — the HOME-can't-reset-the-kernel bug). Every pane has
       // a store (own fallback on bare mounts), so no local cell is written.
       if (compareSource?.onDiffKernelChange) compareSource.onDiffKernelChange(id);
-      else setSynced({ "compare.kernel": id });
+      else setSynced({ "compare.operation": id });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onDiffKernelChange, setSynced],
   );
   // Cheap pure derivations: the concrete kernel id (float sources auto-dispatch
-  // flip→hdr-flip) and the diff's DEFAULT colormap (authored override else the
-  // per-kernel default) — the seed `enc` adopts while a diff is visible.
+  // flip→hdr-flip) and the diff's shared default colormap.
   const sourcesAreFloat =
     backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
   const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
-  const diffDefaultColormap = (diffSeedColormap ?? kernelDefaultColormap(resolvedKernelId)) as Colormap;
+  const diffDefaultColormap = (diffSeedColormap ?? DEFAULT_DIFF_COLORMAP) as Colormap;
   // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
-  // the INITIALLY-VISIBLE face's defaults — diff → authored/kernel default colormap,
+  // the INITIALLY-VISIBLE face's defaults — diff → authored/shared default colormap,
   // image → authored props — and then PERSISTS. Flips and kernel switches never
   // reseed; only a pick or HOME (which copies the currently-visible face's defaults)
   // assigns a new value. Frozen in a ref so later prop churn can't re-derive it.
@@ -657,33 +644,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (t: string | null | undefined) => resolveEffectiveTonemap(t, false),
     [],
   );
-  // CONTROLLED SURFACE vs INTERACTIVE VIEWPORT — the ONE axis that governs whether a
-  // descriptor prop change RESEEDS the pane's display settings. `toolbar === false`
-  // is the host-driven controlled-surface seam (a card/host hides the toolbar and
-  // drives colormap/tonemap/peak/… as props from its OWN menu): there the settings
-  // FOLLOW the props (the non-interactive contract, reseed on change). Otherwise this
-  // is an interactive VIEWPORT — a standalone pane, a grid cell, or the ONE reused
-  // renderer of a STACKED viewport — and it OWNS its settings: seeded once from the
-  // initially-visible image, they PERSIST across slot flips / re-lowers and change
-  // only on a user pick or HOME (which re-seeds to the CURRENTLY-VISIBLE image). A
-  // stacked viewport is exactly this rule with one shared pane, so its slots share
-  // ALL settings by construction — nothing special-cases the stack. `__cairnDisable-
-  // StackShared` (test-only) forces the controlled-surface reseed on a viewport so one
-  // harness run measures pre-fix (flip wipes the shared setting) vs post-fix (shared,
-  // survives) with one driver.
-  const disableStackShared =
-    typeof window !== "undefined" &&
-    !!(window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared;
-  // HOST-driven surface (`toolbar={false}` card seam / test flag): display values
-  // follow the descriptor props live. NOSTACK fix: `!!synced` is NO LONGER a
-  // controlled-surface trigger — with `view` folded into the settings entry, a
-  // mere zoom creates the entry, and the live-props seed branch then made a
-  // STACKED viewport's look follow each slot's authored props (the reported
-  // settings-change-per-tab regression). Store precedence needs no flag: when
-  // `settings.encoding` is set it rules the lookup regardless; when unset, an
-  // interactive viewport keeps its FROZEN initial seed across slot flips.
-  const hostDriven = toolbar === false || disableStackShared;
-  const controlledSurface = hostDriven;
+  // Settings belong to the viewport regardless of toolbar visibility. Hiding
+  // chrome does not turn descriptor props into a second live settings owner.
   const enc = usePaneEncoding({
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,
@@ -691,31 +653,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // ONE encoding for image AND diff faces (the viewport's single display-
     // encoding value). The store's `encoding` id rules when present (see
     // usePaneEncoding); these props are only the SEED term of the lookup.
-    propColormap: controlledSurface ? propColormap : (initialEncSeedRef.current ?? propColormap),
+    propColormap: initialEncSeedRef.current ?? propColormap,
     propTonemap,
     resolveDefaultCurve,
-    controlledSurface,
     // The settings store rules when present; picks publish and flow back down.
     settings: synced,
   });
-  // HOME / double-click: set the viewport's encoding to the CURRENTLY-VISIBLE
-  // face's defaults (diff → authored/kernel default; image → authored colormap
-  // else the default curve). ONE STORE WRITE — the store-backed lookup is what
-  // renders, so HOME must publish (the local `enc` write only serves the
-  // storeless fallback). Identical for the home button, double-click and the
-  // probe seam; flipping never changes the value.
-  const assignVisibleFaceDefaultEncoding = () => {
-    // For a diff, HOME resets the kernel too (via onCompareReset / the local
-    // fallback), so the colormap target derives from the DESCRIPTOR kernel, not
-    // the momentarily-still-current one.
-    const target = diffMode
-      ? ((diffSeedColormap ?? kernelDefaultColormap(localKernelMeta.default)) as Colormap)
-      : propColormap !== "none"
-        ? propColormap
-        : resolveDefaultCurve(propTonemap);
-    enc.setEncoding(target); // storeless fallback
-    publishSettings({ "image.encoding": target });
-  };
+  // HOME is owned by the viewport. The renderer neither derives defaults nor
+  // branches on image/compare/stack state.
+  const resetViewportSettings = () => backendProps.resetViewportSettings?.();
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
   // each path's "no colormap" condition (`sdrPlain`) is exact.
@@ -858,7 +804,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
   // DIFF display colormap — the viewport's ONE encoding value, resolved for the
   // scalar face by the encoding layer (applicability at render, ruling 5): a
-  // LUT applies; a curve doesn't, so the kernel default stands.
+  // LUT applies; a curve doesn't, so the shared diff default stands.
   const effectiveDiffColormap = scalarFaceColormap(enc, diffDefaultColormap) as Colormap;
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
@@ -873,25 +819,20 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const diffResultDimsRef = useRef<{ w: number; h: number } | null>(null);
 
   // -----------------------------------------------------------------------
-  // Multi-viewport SELECTION: display-settings sync (SINGLE-RECEIVER model). The
-  // pane PUBLISHES its local control changes (the `change*` handlers below are the
-  // ONE publish site per control) and, as the anchor, SEEDS the group with its
-  // full current settings on formation (`settingsSnapshot`). It does NOT subscribe:
-  // incoming settings arrive TOP-DOWN via `synced` (the node-level receiver drives
-  // the controlled reseed above) — there is exactly ONE bus receiver per viewport,
-  // at the node. See `use-viewport-settings.ts`.
+  // The renderer only projects settings and emits changes. Membership, anchor
+  // adoption, and fan-out belong to the viewport owner above this component.
   //
   // NO-OWNER cross-type kernel (the live-3D snapshot compare `OffscreenComparePanes`
   // threads no `onDiffKernelChange`, so its kernel has no node-level owner): mirror
   // `synced.diffKernel` into the local fallback store here. When an owner IS present
   // (the descriptor / stage path) the kernel mirrors through `useCompareControl` at
   // the node, so the pane must NOT also drive it (that owner re-derives `opId`).
-  const settingsSnapshot = useCallback(
+  const initialSettingsSnapshot = useCallback(
     (): ViewportSettings =>
       diffMode
         ? {
             // DIFF face: the scalar-error encoding + the effective diff colormap
-            // (per-kernel default when unoverridden), the real `compareMode:"diff"`,
+            // (shared default when unoverridden), the real `compareMode:"diff"`,
             // and the diff KERNEL — all the viewport's CURRENT values, so formation
             // mirrors the first diff's settings to the group (ruling 3). A light peer
             // stores the scalar colormap and simply doesn't false-color (ruling 5:
@@ -902,8 +843,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             "image.exposureEV": displayEV,
             "image.offset": displayOffset,
             "image.reduce": effectiveReduce,
-            "compare.mode": "diff",
-            "compare.kernel": diffKernel,
+            "compare.operation": diffKernel,
             // Formation converges the VIEW too (view transforms are settings).
             "image.view": { zoom, pan },
           }
@@ -923,7 +863,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
             // follows the mode + divider (`useCompareControl` reads them). Omitted
             // in the plain single-image case.
             ...(compositorMode
-              ? { "compare.mode": compareOpMode as string, "compare.split": splitPosition }
+              ? { "compare.operation": compareOpMode as string, "compare.split": splitPosition }
               : {}),
             // Formation converges the VIEW too (view transforms are settings).
             "image.view": { zoom, pan },
@@ -934,24 +874,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // to the selection group while selected — PERSISTENTLY (leaving changes
   // nothing) — else writes just this viewport's entry.
   const publishSettings = setSynced;
-  // Anchor formation seed: a forming group converges to this viewport's values.
-  useSeedGroupOnFormation(
-    props.settingsSyncGroupId,
-    !!props.syncIsAnchor,
-    setSynced,
-    settingsSnapshot,
-  );
   // INITIALIZATION (single-source-of-truth ruling): a viewport's settings are
   // seeded from the FIRST content that makes each key applicable — one LOCAL
   // write per missing key — and from then on every read is the settings
   // object, period. Idempotent + self-quiescing (only MISSING keys are ever
   // written, so slot flips on a stacked viewport change NOTHING); host-driven
-  // surfaces (`toolbar={false}`) stay prop-controlled and never initialize.
+  // Toolbar visibility has no bearing on settings ownership.
   const syncedRef2 = useRef(synced);
   syncedRef2.current = synced;
   useEffect(() => {
-    if (hostDriven) return;
-    const snap = settingsSnapshot();
+    const snap = initialSettingsSnapshot();
     const cur = (syncedRef2.current ?? {}) as Record<string, unknown>;
     const missing: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(snap)) {
@@ -959,14 +891,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // useCompareControl / a prop driver) — a pane-level init would capture
       // a transient local default and permanently shadow the driven kernel
       // (the flip-storm cached-diff starvation caught by the stress harness).
-      if (k === "compare.mode" || k === "compare.kernel" || k === "compare.split") continue;
+      if (k === "compare.operation" || k === "compare.mode" || k === "compare.kernel" || k === "compare.split") continue;
       if (!(k in cur) && v !== undefined) missing[k] = v;
     }
     if (Object.keys(missing).length > 0) applySynced(missing as ViewportSettings);
   });
   const changeEncoding = useCallback(
     (id: string) => {
-      enc.setEncoding(id);
       publishSettings({ "image.encoding": id });
     },
     [enc, publishSettings],
@@ -1004,21 +935,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeDiffKernel = useCallback(
     (id: string) => {
       setDiffKernel(id);
-      // USER RULING: switching to another error SELECTS THAT ERROR'S DEFAULT
-      // colormap (a kernel switch re-copies its default into the viewport's one
-      // concrete value, exactly like HOME would for that kernel). Published by
-      // VALUE so mirrored peers converge on the same colormap.
-      const kernelDefault = kernelDefaultColormap(id) as Colormap;
-      enc.setEncoding(kernelDefault);
-      // ONE patch by value: the kernel + the encoding carrying its new default,
-      // mirrored to peers (ruling 3/4).
+      // A diff-mode change changes computation only. Display encoding is an
+      // independent viewport setting and therefore remains untouched.
       publishSettings({
-        "compare.mode": "diff",
-        "compare.kernel": id,
-        "image.encoding": deriveCompareEncodingId("scalar", effectiveTonemap, kernelDefault),
+        "compare.operation": id,
       });
     },
-    [setDiffKernel, publishSettings, enc, effectiveTonemap],
+    [setDiffKernel, publishSettings],
   );
   const changeDiffColormap = useCallback(
     (id: Colormap) => {
@@ -1026,8 +949,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // "None" = the raw per-channel error → clear the LUT by selecting the current
       // curve id (so `enc.colormap` becomes "none"); otherwise select the LUT. The pick
       // sticks across kernel switches AND — in a stack — across image↔diff flips (one
-      // viewport, one setting). HOME re-seeds `enc` to the kernel default.
-      enc.setEncoding(id === "none" ? enc.curveId : id);
+      // viewport, one setting). HOME re-seeds `enc` to the shared diff default.
       publishSettings({ "image.encoding": deriveCompareEncodingId("scalar", effectiveTonemap, id) });
     },
     [enc, publishSettings, effectiveTonemap],
@@ -1040,7 +962,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const changeCompareMode = useCallback(
     (mode: "split" | "diff") => {
       compareSource?.onCompareModeChange?.(mode);
-      publishSettings({ "compare.mode": mode });
+      publishSettings({ "compare.operation": mode === "diff" ? diffKernel : mode });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onCompareModeChange, publishSettings],
@@ -2205,25 +2127,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       changeColormap: changeDiffColormap,
       // HOME reset (the pane's own `onReset` chain): restore the HOISTED compare
       // control (mode/kernel/split/blend, via the owner) AND re-seed the viewport's ONE
-      // encoding — which, for a diff, IS the diff colormap → back to the kernel default.
-      home: () => {
-        const disableCompareHomeReset =
-          typeof window !== "undefined" &&
-          !!(window as unknown as { __cairnDisableCompareHomeReset?: boolean }).__cairnDisableCompareHomeReset;
-        if (compareSource?.onCompareReset) {
-          if (!disableCompareHomeReset) compareSource.onCompareReset();
-        } else {
-          setDiffKernel(localKernelMeta.default); // direct-pane fallback (no hoisted owner)
-        }
-        // HOME copies the CURRENTLY-VISIBLE face's defaults into the viewport's
-        // one concrete encoding value (identical to double-click).
-        assignVisibleFaceDefaultEncoding();
-      },
+      // encoding — which, for a diff, IS the diff colormap → back to the shared default.
+      home: resetViewportSettings,
     };
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, localKernelMeta, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2241,9 +2151,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       get colormap() {
         return enc.colormap;
       },
-      get controlledSurface() {
-        return controlledSurface;
-      },
       // PEAK is a viewport setting BEYOND the encoding — sampled to prove a stack
       // shares ALL settings across flips (reg b), not only encoding/diff-colormap.
       get peak() {
@@ -2251,12 +2158,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       },
       changePeak, // a user pick → the viewport's peak (a stack shares it across slots)
       changeEncoding, // a user pick → the viewport's encoding (a stack shares it across slots)
-      home: () => assignVisibleFaceDefaultEncoding(), // HOME copies the visible face's defaults
+      home: resetViewportSettings,
     };
     return () => {
       if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
     };
-  }, [enc.encodingId, enc.colormap, controlledSurface, peak, changePeak, changeEncoding, enc]);
+  }, [enc.encodingId, enc.colormap, peak, changePeak, changeEncoding, enc]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
@@ -2724,60 +2631,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           : undefined
       }
       onReset={() => {
-        assignVisibleFaceDefaultEncoding();
-        {
-          // HOME is a GROUP action: publish the clicked viewport's IMAGE/DIFF
-          // DEFAULTS by value so every synced member resets to them, and so a
-          // re-lowered/remounted pane adopts the RESET state (not the group's
-          // stale pre-HOME snapshot — the second-double-click colormap bug).
-          const homeColormap = (
-            diffMode
-              ? ((diffSeedColormap ?? kernelDefaultColormap(localKernelMeta.default)) as Colormap)
-              : propColormap
-          ) as Colormap;
-          const homeEncoding = diffMode
-            ? deriveCompareEncodingId("scalar", effectiveTonemap, homeColormap)
-            : homeColormap !== "none"
-              ? homeColormap
-              : resolveDefaultCurve(propTonemap);
-          publishSettings({
-            "image.encoding": homeEncoding,
-            "image.peak": peakSeed,
-            "image.tonemapGamma": gammaSeed,
-            "image.exposureEV": 0,
-            "image.offset": 0,
-            "image.reduce": activeIsTurbo ? "mean" : defaultReduceMode(sourceArity),
-            // `null` = the JSON-safe MASK (registry ruling): HOME turns the
-            // bounds skin off (or restores the authored range) and clears the
-            // explicit info-panel choice back to AUTO.
-            "image.colorRange": boundsSeedVal
-              ? { min: boundsSeedVal[0], max: boundsSeedVal[1] }
-              : null,
-            "panel.info": null,
-          });
-        }
+        resetViewportSettings();
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
-        // COMPARE HOME: the VIEW MODE / kernel / split / blend live in the owner's
-        // hoisted `useCompareControl` (out of this pane's reach), so route their
-        // reset back through the owner — the old `GpuComparePane` reset the MODE too
-        // (`setCompareMode(compareModeMeta.default)`); hoisting the mode dropped it
-        // from the pane HOME. A diff↔slide transition re-lowers via `NodeDispatch`.
-        if (hasCompare) {
-          const disableCompareHomeReset =
-            typeof window !== "undefined" &&
-            !!(window as unknown as { __cairnDisableCompareHomeReset?: boolean }).__cairnDisableCompareHomeReset;
-          if (compareSource?.onCompareReset) {
-            // Descriptor path: the owner resets mode + kernel + split + blend.
-            if (!disableCompareHomeReset) compareSource.onCompareReset();
-          } else {
-            // Direct-pane fallback (cross-type card / diff harness — no hoisted
-            // owner): the mode is fixed by the caller, so reset only the local kernel.
-            setDiffKernel(localKernelMeta.default);
-          }
-        }
-        // The diff colormap is DERIVED from `enc`, and the HOME publish above wrote
-        // the kernel-default encoding into the store — no explicit diff reset.
       }}
       extraModified={
         // `enc.encodingModified` covers BOTH the image encoding AND (in diff mode) the

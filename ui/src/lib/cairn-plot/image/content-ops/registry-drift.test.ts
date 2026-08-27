@@ -18,7 +18,7 @@ import { buildContentOpWGSL, getContentOp, listDirectContentOps, CONTENT_OP_ID }
 import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
 import { CONTENT_OPS } from "./ops.ts";
 import type { CachedContentOp } from "./registry.ts";
-import { getDiffKernel } from "../../engine/kernels/index.ts";
+import { DEFAULT_DIFF_COLORMAP, getDiffKernel } from "../../engine/kernels/index.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
   const assembled = buildContentOpWGSL();
@@ -64,13 +64,7 @@ test("the assembled dispatch has identity as the fallthrough + a branch per non-
   }
 });
 
-// D2: the diff-id → default-color rule has ONE source (the kernel table's
-// `defaultColormap`); a diff op's `defaultEncoding` is DERIVED from it, not a second
-// literal. This guard reads the kernel default via an INDEPENDENT path
-// (`getDiffKernel(...).defaultColormap`) and pins the equality — so re-hardcoding a
-// content-op literal that drifts from the kernel, OR changing a kernel default without
-// the op following, FAILS here.
-test("D2 drift: every diff op's defaultEncoding equals its kernel's defaultColormap", () => {
+test("D2 drift: every diff op uses the single shared diff default", () => {
   const diffOps = CONTENT_OPS.filter((op) => op.sourceArity === 2 && op.outputArity === 1);
   assert.ok(diffOps.length >= 9, `expected the 6 pointwise + 3 cached diff ops, got ${diffOps.length}`);
   for (const op of diffOps) {
@@ -78,11 +72,7 @@ test("D2 drift: every diff op's defaultEncoding equals its kernel's defaultColor
     const kernelId = op.renderClass === "cached" ? (op as CachedContentOp).kernelId : op.id;
     const kernel = getDiffKernel(kernelId);
     assert.ok(kernel, `diff op "${op.id}" must map to a registered kernel "${kernelId}"`);
-    assert.equal(
-      op.defaultEncoding,
-      kernel!.defaultColormap,
-      `content-op "${op.id}" defaultEncoding (${op.defaultEncoding}) drifted from kernel "${kernelId}" defaultColormap (${kernel!.defaultColormap})`,
-    );
+    assert.equal(op.defaultEncoding, DEFAULT_DIFF_COLORMAP);
   }
 });
 

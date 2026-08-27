@@ -142,7 +142,7 @@ Build them under `ui/` (a TS/React library):
 cd ui
 npm install
 npm run build:plot-inline     # → ui/dist/plot-inline/{core,figure,three,gpu-image}.iife.js + style.css
-npm run sync:plot-assets      # copy them into the Python package data (src/cairn_plot/_assets)
+npm run sync:plot-assets      # copy into packages/python/src/cairn_plot/_assets
 ```
 
 ## Development
