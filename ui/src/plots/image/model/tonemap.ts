@@ -403,8 +403,8 @@ export function resolveEncodeGamma(
 // The USER-FACING surface is ONE 5-operator menu + the PEAK slider `P`. This
 // translator maps a (display operator, P, surface, γ) tuple onto the render
 // pass's ENGINE operator + `hdrOut` + `peak` + encode `gamma`, reusing the
-// engine's existing peak-parameterized operators (image-engine.ts's
-// `ImageOperator` / image.wgsl.ts). It is the SINGLE place the unified model is
+// engine's registered peak-parameterized display operations. It is the single
+// place the unified model is
 // expressed; pure so `tonemap.test.ts` pins the whole operator × peak × surface
 // matrix. Invariant: at `P = 1` (and on any non-HDR surface) it returns the
 // plain SDR operator with `hdrOut:false` — the legacy SDR rendition BYTE-FOR-BYTE.
@@ -418,7 +418,7 @@ export const EXTENDED_TONEMAP_PEAK_UNBOUNDED = Infinity;
 
 /** The engine render parameters a display operator + ceiling resolve to. */
 export interface RenderTonemapParams {
-  /** Engine `ImageOperator` name to hand the render pass. */
+  /** Registered display-operation id to hand the render pass. */
   operator: string;
   /** Whether the EXTENDED (HDR-out) encode + surface path runs. */
   hdrOut: boolean;
