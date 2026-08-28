@@ -95,6 +95,7 @@ export interface RegisteredPlotDefinition {
   readonly kind: string;
   validateData(value: DataSpec): DataSpec;
   defaults(): SettingsRecord;
+  projectSettings(settings: Readonly<SettingsRecord>): SettingsRecord;
   resolve(node: PlotLeafNode, context: ResolveContext): Promise<unknown>;
   present(content: unknown): unknown;
   readonly backends: readonly PlotBackend<unknown, SettingsRecord>[];
@@ -115,6 +116,7 @@ export function definePlot<
     kind: definition.kind,
     validateData: (value) => definition.data.validate(value),
     defaults: () => definition.settings.defaults(),
+    projectSettings: (settings) => definition.settings.project(settings),
     resolve: (node, context) => definition.resolve(definition.data.validate(node.data), context),
     present: (content) => definition.present(content as TContent),
     // Type erasure is deliberately contained here. Runtime values have already

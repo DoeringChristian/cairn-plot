@@ -77,6 +77,7 @@ test("plot registry contains type erasure at one checked adapter", async () => {
   registerPlotType(testDefinition());
   const registered = requirePlotType("test");
   assert.deepEqual(registered.defaults(), { value: 1 });
+  assert.deepEqual(registered.projectSettings({ value: 4, ignored: true }), { value: 4 });
   const content = await registered.resolve(
     { kind: "plot", renderer: "test", data: { kind: "inline", props: { value: 4 } } },
     {

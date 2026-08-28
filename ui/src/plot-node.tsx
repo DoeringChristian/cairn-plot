@@ -504,7 +504,9 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const Renderer = getRenderer(node.renderer);
   const registered = getReactPlotType(node.renderer);
   if (registered) {
-    const settings = (paneSync?.syncedSettings ?? {}) as import("./plots/contracts.ts").SettingsRecord;
+    const settings = registered.definition.projectSettings(
+      (paneSync?.syncedSettings ?? {}) as import("./plots/contracts.ts").SettingsRecord,
+    );
     return (
       <ReactBackendOutlet
         backends={registered.backends}
