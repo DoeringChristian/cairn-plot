@@ -28,11 +28,11 @@ import { isDeviceLostError } from "../webgpu/device";
 import { renderImage, computeMetrics, type ImageParams } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
+import { prepareDisplayOperation } from "../prepare-display-operation.ts";
 import { getImageOperation, isInlineImageOperation, imageOperationId, type ImageOperationCpuContext } from "../../model/operations/index";
 import { getDisplayOperation, DEFAULT_ENCODE_PARAMS } from "../../model/display-operations/index";
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
-import type { ColormapName } from "../../../../settings/colormaps/lut";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../../model/display-operations/index.ts";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
@@ -81,7 +81,6 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
     report(false, `[${opId}/${displayOperationId}] encoding is not registered`);
     return false;
   }
-  const analytic = enc.analytic === true;
   const encParams = { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" as const };
 
   const texA = buildTex(device, PAIRS.map((p) => p.a));
@@ -90,18 +89,13 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
 
   const params: ImageParams = {
     exposureEV: 0,
-    displayOperationId: "linear", // moot: scalar display mapping owns this path
-    isScalar: true,
+    ...prepareDisplayOperation(displayOperationId, { hdrSurface: false }),
     srcB: texB,
     imageOperationId: imageOperationId(opId),
     reduce: "mean",
     channelCount: 3,
-    hdrOut: false,
     uv: uvFull,
     filter: "nearest",
-    ...(analytic
-      ? { analytic: true } // red-green: computed color, no LUT bound
-      : { turbo: true, colormap: colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName) }),
   };
   renderImage(device, target, texA, params);
   const out = await device.readback(target);
@@ -120,7 +114,7 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
     const content = op.implementation.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     // DISPLAY twin: the op's defaultEncoding cpu (reduce → colormap/analytic).
     let exp: RgbTriple;
-    if (analytic) {
+    if (enc.kind === "curve" || enc.kind === "remap" || enc.analytic) {
       // red-green analytic cpu returns SCENE-LINEAR; thread the SAME sRGB
       // output-encode the GPU analytic branch applies.
       const lin = enc.cpu(content, 3, encParams);
@@ -308,7 +302,6 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
     report(false, `[pool:${opId}/${displayOperationId}] encoding is not registered`);
     return false;
   }
-  const analytic = enc.analytic === true;
   const encParams = { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" as const };
 
   const canvas = document.createElement("canvas");
@@ -319,16 +312,13 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
   handle.resize(PAIRS.length, 1);
   const params: ImageParams = {
     exposureEV: 0,
-    displayOperationId: "linear",
-    isScalar: true,
+    ...prepareDisplayOperation(displayOperationId, { hdrSurface: false }),
     // NB: NO `srcB` here — the pool supplies it from `setSourceB`.
     imageOperationId: imageOperationId(opId),
     reduce: "mean",
     channelCount: 3,
-    hdrOut: false,
     uv: uvFull,
     filter: "nearest",
-    ...(analytic ? { analytic: true } : { turbo: true, colormap: colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName) }),
   };
   const ok0 = handle.render(params);
   const surface = getCanvasSurfaceForTest(canvas);
@@ -354,7 +344,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
   for (let i = 0; i < PAIRS.length; i++) {
     const content = op.implementation.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     let exp: RgbTriple;
-    if (analytic) {
+    if (enc.kind === "curve" || enc.kind === "remap" || enc.analytic) {
       const lin = enc.cpu(content, 3, encParams);
       exp = [outputEncode(lin[0], undefined), outputEncode(lin[1], undefined), outputEncode(lin[2], undefined)];
     } else {
