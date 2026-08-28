@@ -37,6 +37,8 @@ export interface GridNode {
 
 export interface CompareNode {
   kind: "compare";
+  /** Plot definition that owns comparison semantics. Omission means `image`. */
+  renderer?: string;
   mode: "split" | "diff";
   a: DataSpec;
   b: DataSpec;

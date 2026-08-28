@@ -189,6 +189,9 @@ class CompareSpec(_Strict):
     """`PlotNode{kind:"compare"}` — two DataSpec frames composited into one pane."""
 
     kind: Literal["compare"]
+    # Plot definition that owns comparison semantics. Omission preserves the
+    # original wire format and means ``"image"``.
+    renderer: Optional[str] = None
     mode: Literal["split", "diff"]
     a: DataSpec
     b: DataSpec
