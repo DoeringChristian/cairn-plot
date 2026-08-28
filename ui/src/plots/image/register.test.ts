@@ -6,6 +6,7 @@ import { claimPlotKind } from "../kind-ownership.ts";
 import { clearPlotTypesForTest, planComparison, requirePlotType } from "../registry.ts";
 import { clearReactPlotTypesForTest, getReactPlotType } from "../react-registry.ts";
 import { ensureImagePlotType } from "./register.ts";
+import { expandImageComparison } from "./comparison-plan.ts";
 
 const View = () => null;
 
@@ -31,6 +32,21 @@ test("image is exclusively owned by the typed plot registry", () => {
       b: { kind: "npz", hash: "mesh", objectType: "mesh", meta: {} },
     }), /does not accept data kind/);
   assert.throws(() => claimPlotKind("image", "legacy-renderer"), /already owned by definition/);
+
+  const expanded = expandImageComparison({
+    kind: "compare",
+    renderer: "image",
+    operands: [
+      { kind: "image", hash: "a" },
+      { kind: "image", hash: "reference" },
+      { kind: "image", hash: "c" },
+    ],
+    strategy: "reference",
+    referenceIndex: 1,
+    presentation: "difference",
+  });
+  assert.equal(expanded?.children.length, 2);
+  assert.ok(expanded?.children.every((child) => child.kind === "compare"));
 
   const legacySource = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");
   const coreMap = legacySource.match(/CORE_RENDERERS[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ?? "";

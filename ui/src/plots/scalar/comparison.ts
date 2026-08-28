@@ -37,7 +37,10 @@ export function planScalarComparison(
     return String.fromCharCode(65 + index);
   });
   return {
-    outputs: [{ operands: request.operands.map(validateScalarData), labels }],
+    outputs: [{
+      operandIndices: request.operands.map((_, index) => index),
+      plan: { operands: request.operands.map(validateScalarData), labels },
+    }],
     layout: "single",
   };
 }

@@ -63,6 +63,10 @@ Status: accepted design; implementation in progress
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry
   boundary; image plans N−1 reference pairs while scalar plans one N-way merge.
+- [x] Attach source operand indexes to every planned output and execute
+  multi-output image plans as an internal grid of pairwise comparison cells.
+  This preserves per-output settings/surfaces and gives selection/stage code a
+  plot-agnostic mapping back to the originating operands.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 

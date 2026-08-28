@@ -15,7 +15,7 @@ test("image comparison planning owns baseline ordering and presentation", () => 
     presentation: "difference",
     props: { labelA: "candidate", labelB: "reference" },
   };
-  const plan = planImageComparison(request).outputs[0]!;
+  const plan = planImageComparison(request).outputs[0]!.plan;
   assert.equal(plan.presentation, "difference");
   assert.equal((plan.reference as { hash: string }).hash, "b");
   assert.equal((plan.foreground as { hash: string }).hash, "a");
@@ -34,6 +34,7 @@ test("image reference comparison plans one output per non-reference operand", ()
     props: {},
   });
   assert.equal(result.layout, "grid");
-  assert.deepEqual(result.outputs.map((plan) => (plan.foreground as { hash: string }).hash), ["a", "c"]);
-  assert.ok(result.outputs.every((plan) => plan.reference === result.outputs[0]!.reference));
+  assert.deepEqual(result.outputs.map(({ plan }) => (plan.foreground as { hash: string }).hash), ["a", "c"]);
+  assert.deepEqual(result.outputs.map(({ operandIndices }) => operandIndices), [[1, 0], [1, 2]]);
+  assert.ok(result.outputs.every(({ plan }) => plan.reference === result.outputs[0]!.plan.reference));
 });

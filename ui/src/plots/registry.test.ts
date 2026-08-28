@@ -55,7 +55,10 @@ function comparableDefinition(accepted = true) {
       accepts: () => accepted
         ? { accepted: true }
         : { accepted: false, reason: "operands do not align" },
-      plan: () => ({ outputs: [{ operation: "overlay" }], layout: "single" as const }),
+      plan: () => ({
+        outputs: [{ plan: { operation: "overlay" }, operandIndices: [0, 1] }],
+        layout: "single" as const,
+      }),
       resolve: async () => 0,
     },
   };
@@ -107,7 +110,10 @@ test("comparison planning is selected by the authored plot kind", () => {
   registerPlotType(comparableDefinition());
   const planned = planComparison(comparisonNode);
   assert.equal(planned.renderer, "test");
-  assert.deepEqual(planned.plan, { outputs: [{ operation: "overlay" }], layout: "single" });
+  assert.deepEqual(planned.plan, {
+    outputs: [{ plan: { operation: "overlay" }, operandIndices: [0, 1] }],
+    layout: "single",
+  });
   assert.equal(planComparison(comparisonNode), planned, "plans stay stable for cache-safe rerenders");
 });
 

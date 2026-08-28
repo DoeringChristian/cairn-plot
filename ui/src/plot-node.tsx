@@ -90,6 +90,7 @@ import type { RenderEnvironment } from "./backends/contracts.ts";
 import {
   planRegisteredImageComparison as synthDiffLeafOf,
   resolveRegisteredImageComparison,
+  expandImageComparison,
 } from "./plots/image/comparison-plan.ts";
 import {
   useImageComparisonControl,
@@ -982,6 +983,16 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
  * without replacing the cell.
  */
 export function PlotNodeView({ node, path = "root" }: { node: PlotNode; path?: string }) {
+  if (node.kind === "compare" && comparisonRenderer(node) === "image") {
+    try {
+      const expanded = expandImageComparison(node);
+      if (expanded) {
+        return <LayoutFrame><NodeDispatch node={expanded} path={`${path}/comparison`} /></LayoutFrame>;
+      }
+    } catch (error) {
+      return <Message text={error instanceof Error ? error.message : String(error)} error />;
+    }
+  }
   if (node.kind === "grid") {
     return <LayoutFrame><NodeDispatch node={node} path={path} /></LayoutFrame>;
   }

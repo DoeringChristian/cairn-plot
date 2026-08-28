@@ -118,7 +118,7 @@ export function resolveComparison(
       `cairn-plot: comparison planned ${planned.plan.outputs.length} outputs; select an output explicitly`,
     );
   }
-  return planned.capability.resolve(planned.plan.outputs[0], context);
+  return planned.capability.resolve(planned.plan.outputs[0]!.plan, context);
 }
 
 /** Subscribe to registrations so lazy addon hosts can retry resolution. */

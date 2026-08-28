@@ -44,8 +44,14 @@ export interface ComparisonRequest {
 }
 
 export interface ComparisonPlan<TOutputPlan> {
-  readonly outputs: readonly TOutputPlan[];
+  readonly outputs: readonly ComparisonOutputPlan<TOutputPlan>[];
   readonly layout: "single" | "grid";
+}
+
+export interface ComparisonOutputPlan<TPlan> {
+  readonly plan: TPlan;
+  /** Source operand indexes represented by this visible output. */
+  readonly operandIndices: readonly number[];
 }
 
 export interface ComparisonAcceptance {

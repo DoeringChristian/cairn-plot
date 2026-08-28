@@ -16,7 +16,7 @@ const request: ComparisonRequest = {
 };
 
 test("scalar comparison overlays uniquely keyed, labelled series", () => {
-  const plan = planScalarComparison(request).outputs[0]!;
+  const plan = planScalarComparison(request).outputs[0]!.plan;
   const result = overlayScalarPresentations(
     plan,
     [

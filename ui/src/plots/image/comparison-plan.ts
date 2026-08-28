@@ -1,6 +1,7 @@
 import type {
   CompareNode,
   DataSpec,
+  GridNode,
   PlotLeafNode,
 } from "../../../../packages/spec/src/spec.ts";
 import type {
@@ -77,15 +78,18 @@ export function planImageComparison(
     if (props.processing !== undefined) leafProps.processing = props.processing;
     if (typeof props.height === "number") leafProps.height = props.height;
     return [{
-      presentation: normalizeImageComparisonPresentation(request.presentation),
-      reference,
-      foreground,
-      fgData: foreground,
-      leaf: { kind: "plot" as const, renderer: "image", data: reference, props: leafProps },
-      align: props.align as CompareAlign | undefined,
-      fit: props.fit as CompareFit | undefined,
-      referenceLabel: labelAt(referenceIndex),
-      foregroundLabel: labelAt(index) ?? legacyLabel,
+      operandIndices: [referenceIndex, index],
+      plan: {
+        presentation: normalizeImageComparisonPresentation(request.presentation),
+        reference,
+        foreground,
+        fgData: foreground,
+        leaf: { kind: "plot" as const, renderer: "image", data: reference, props: leafProps },
+        align: props.align as CompareAlign | undefined,
+        fit: props.fit as CompareFit | undefined,
+        referenceLabel: labelAt(referenceIndex),
+        foregroundLabel: labelAt(index) ?? legacyLabel,
+      },
     }];
   });
   return { outputs, layout: outputs.length === 1 ? "single" : "grid" };
@@ -102,7 +106,7 @@ export function planRegisteredImageComparison(node: CompareNode): ImageCompariso
   if (planned.plan.outputs.length !== 1) {
     throw new Error(`cairn-plot: image comparison host expected one output, got ${planned.plan.outputs.length}`);
   }
-  return planned.plan.outputs[0] as ImageComparisonPlan;
+  return planned.plan.outputs[0]!.plan as ImageComparisonPlan;
 }
 
 /** Resolve through the registered capability; the host never calls image decode directly. */
@@ -120,5 +124,37 @@ export async function resolveRegisteredImageComparison(
   if (planned.plan.outputs.length !== 1) {
     throw new Error(`cairn-plot: image comparison host expected one output, got ${planned.plan.outputs.length}`);
   }
-  return planned.capability.resolve(planned.plan.outputs[0], { source, signal }) as Promise<Record<string, unknown>>;
+  return planned.capability.resolve(planned.plan.outputs[0]!.plan, { source, signal }) as Promise<Record<string, unknown>>;
+}
+
+const expandedNodes = new WeakMap<CompareNode, GridNode | null>();
+
+/** Lower a multi-output image plan into layout-only pair nodes for the host. */
+export function expandImageComparison(node: CompareNode): GridNode | null {
+  const cached = expandedNodes.get(node);
+  if (cached !== undefined) return cached;
+  const planned = planComparison(node);
+  if (planned.renderer !== "image" || planned.plan.outputs.length <= 1) {
+    expandedNodes.set(node, null);
+    return null;
+  }
+  const children = planned.plan.outputs.map((output) => {
+    const plan = output.plan as ImageComparisonPlan;
+    return {
+      kind: "compare" as const,
+      renderer: "image",
+      operands: [plan.reference, plan.foreground],
+      strategy: "reference" as const,
+      referenceIndex: 0,
+      presentation: plan.presentation,
+      props: {
+        ...planned.request.props,
+        ...(plan.referenceLabel ? { labelA: plan.referenceLabel } : {}),
+        ...(plan.foregroundLabel ? { labelB: plan.foregroundLabel } : {}),
+      },
+    };
+  });
+  const grid: GridNode = { kind: "grid", children, switchable: false };
+  expandedNodes.set(node, grid);
+  return grid;
 }
