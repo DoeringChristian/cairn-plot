@@ -6,12 +6,14 @@ import type {
   RenderSize,
   RenderSurface,
   SemanticInvalidation,
+  SettingsCommandPort,
 } from "../backends/contracts.ts";
 
 export interface SurfaceHostOptions<TPresentation, TSettings> {
   readonly element: HTMLElement;
   readonly backends: readonly PlotBackend<TPresentation, TSettings>[];
   readonly environment: RenderEnvironment;
+  readonly commands: SettingsCommandPort<TSettings>;
   readonly initialSize?: RenderSize;
 }
 
@@ -20,6 +22,7 @@ export class SurfaceHost<TPresentation, TSettings> {
   private readonly element: HTMLElement;
   private readonly backends: readonly PlotBackend<TPresentation, TSettings>[];
   private readonly environment: RenderEnvironment;
+  private readonly commands: SettingsCommandPort<TSettings>;
   private size: RenderSize;
   private backend: PlotBackend<TPresentation, TSettings> | undefined;
   private instance: BackendInstance<TPresentation, TSettings> | undefined;
@@ -30,6 +33,7 @@ export class SurfaceHost<TPresentation, TSettings> {
     this.element = options.element;
     this.backends = options.backends;
     this.environment = options.environment;
+    this.commands = options.commands;
     this.size = options.initialSize ?? { width: 0, height: 0 };
   }
 
@@ -50,6 +54,7 @@ export class SurfaceHost<TPresentation, TSettings> {
     const input: BackendInput<TPresentation, TSettings> = {
       presentation,
       settings,
+      commands: this.commands,
       invalidation,
     };
 

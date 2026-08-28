@@ -519,6 +519,10 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         environment={browserRenderEnvironment()}
         presentation={mergedProps}
         settings={settings}
+        commands={{
+          patch: (patch) => paneSync?.setSyncedSettings?.(patch as ViewportSettings),
+          reset: resetViewportSettings,
+        }}
         invalidation="presentation"
       />
     );
@@ -902,6 +906,14 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
       environment={browserRenderEnvironment()}
       presentation={presentation as Record<string, unknown>}
       settings={settings as import("./plots/contracts.ts").SettingsRecord}
+      commands={{
+        patch: (patch) => paneSync?.setSyncedSettings?.(patch as ViewportSettings),
+        reset: () => {
+          (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(
+            planned.value!.definition.defaults() as ViewportSettings,
+          );
+        },
+      }}
       invalidation="presentation"
     />
   );

@@ -10,6 +10,7 @@ import type {
   BackendSupport,
   BackendTechnology,
   RenderEnvironment,
+  SettingsCommandPort,
   SemanticInvalidation,
 } from "../backends/contracts.ts";
 
@@ -80,6 +81,7 @@ export interface ReactBackendOutletProps<TPresentation, TSettings> {
   readonly environment: RenderEnvironment;
   readonly presentation: TPresentation;
   readonly settings: Readonly<TSettings>;
+  readonly commands: SettingsCommandPort<TSettings>;
   readonly invalidation: SemanticInvalidation;
 }
 
@@ -93,6 +95,7 @@ export function ReactBackendOutlet<TPresentation, TSettings>({
   environment,
   presentation,
   settings,
+  commands,
   invalidation,
 }: ReactBackendOutletProps<TPresentation, TSettings>): ReactElement {
   const selected = selectReactBackend(backends, presentation, environment);
@@ -102,6 +105,7 @@ export function ReactBackendOutlet<TPresentation, TSettings>({
   const input: BackendInput<TPresentation, TSettings> = {
     presentation,
     settings,
+    commands,
     invalidation,
   };
   return createElement(selected.component, {

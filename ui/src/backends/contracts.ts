@@ -33,9 +33,16 @@ export type SemanticInvalidation =
   | "layout"
   | "remount";
 
+/** The only way a backend may change its owning cell's settings. */
+export interface SettingsCommandPort<TSettings> {
+  patch(patch: Partial<TSettings>): void;
+  reset(): void;
+}
+
 export interface BackendInput<TPresentation, TSettings> {
   readonly presentation: TPresentation;
   readonly settings: Readonly<TSettings>;
+  readonly commands: SettingsCommandPort<TSettings>;
   readonly invalidation: SemanticInvalidation;
 }
 
@@ -65,4 +72,3 @@ export interface PlotBackend<TPresentation, TSettings> {
     input: BackendInput<TPresentation, TSettings>,
   ): BackendInstance<TPresentation, TSettings>;
 }
-

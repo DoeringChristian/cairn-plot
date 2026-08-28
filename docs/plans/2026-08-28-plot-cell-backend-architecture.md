@@ -51,6 +51,10 @@ Status: accepted design; implementation in progress
   resolves through the capability, consumes the cell settings, selects the
   definition's backend, leases the global cache entry, and supports adjacent
   stack preloading without changes to layout.
+- [x] Give every imperative and React backend a typed cell-settings command
+  port. Backends receive readonly effective settings and may change them only
+  through `patch` or `reset`; renderer-local fallback stores are not part of
+  the authoring interface.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
