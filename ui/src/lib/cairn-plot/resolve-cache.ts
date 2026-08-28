@@ -19,6 +19,11 @@
  * split) resolvers. Unit-testable without a DOM.
  */
 
+import {
+  globalPreparationScheduler,
+  type PreparationPriority,
+} from "../../resources/scheduler.ts";
+
 const idMap = new WeakMap<object, string>();
 let counter = 0;
 
@@ -84,19 +89,30 @@ export function peekResolveError(key: string): string | undefined {
 
 /** Resolve `key` via `run` exactly once and cache the result; concurrent/repeat
  *  callers share the in-flight promise. Resolves to the cached payload. */
-export function resolveCached<T>(key: string, run: () => Promise<T>): Promise<T> {
+export function resolveCached<T>(
+  key: string,
+  run: () => Promise<T>,
+  priority: PreparationPriority = "foreground",
+): Promise<T> {
   const existing = cache.get(key) as Entry<T> | undefined;
   if (existing?.data !== undefined) return Promise.resolve(existing.data);
-  if (existing?.promise) return existing.promise.then(() => cache.get(key)!.data as T);
+  if (existing?.promise) {
+    // This may promote a queued preload. The scheduler returns the same work;
+    // the cache keeps its single completion/notification path below.
+    void globalPreparationScheduler.schedule(key, priority, run).catch(() => {});
+    return existing.promise.then(() => cache.get(key)!.data as T);
+  }
   const entry: Entry<T> = {};
-  entry.promise = run().then(
+  entry.promise = globalPreparationScheduler.schedule(key, priority, run).then(
     (data) => {
       entry.data = data;
       entry.error = undefined;
+      entry.promise = undefined;
       notifyResolveCache(); // wake subscribed leaves — they re-read peekResolved(key)
     },
     (err) => {
       entry.error = err instanceof Error ? err.message : String(err);
+      entry.promise = undefined;
       notifyResolveCache();
       throw err;
     },
@@ -111,7 +127,7 @@ export function resolveCached<T>(key: string, run: () => Promise<T>): Promise<T>
 export function prefetchResolved(entries: Array<{ key: string; run: () => Promise<unknown> }>): void {
   for (const { key, run } of entries) {
     if (cache.get(key)?.data !== undefined) continue;
-    void resolveCached(key, run).catch(() => {});
+    void resolveCached(key, run, "preload").catch(() => {});
   }
 }
 

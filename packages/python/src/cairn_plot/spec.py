@@ -182,6 +182,7 @@ class GridSpec(_Strict):
     # View mode: "normal" (uniform grid) | "stacked" (one child at a time,
     # keyboard tab strip; single reused renderer).
     mode: Optional[Literal["normal", "stacked"]] = None
+    switchable: Optional[bool] = None
 
 
 class CompareSpec(_Strict):

@@ -1856,7 +1856,8 @@ class Grid(Component):
     ``mode`` is the view mode: ``"normal"`` (default) is the uniform grid;
     ``"stacked"`` shows ONE child at a time with a keyboard-driven tab strip
     (flip with arrows / ``hjkl`` / number / letter keys). The viewer can also
-    switch normal⇄stacked live via a toggle on the grid."""
+    switch normal⇄stacked live via a toggle on the grid unless
+    ``switchable=False``."""
 
     _label = "grid"
 
@@ -1870,6 +1871,7 @@ class Grid(Component):
         gap: float | str | None = None,
         shared: Any = None,
         mode: str = "normal",
+        switchable: bool = True,
     ) -> None:
         if mode not in ("normal", "stacked"):
             raise ValueError(f"cp.Grid(mode=...) must be 'normal' or 'stacked'; got {mode!r}")
@@ -1922,6 +1924,7 @@ class Grid(Component):
         self._row_heights = list(row_heights) if row_heights is not None else None
         self._gap = gap
         self._mode = mode
+        self._switchable = bool(switchable)
         self._shared, self._shared_store = _normalize_shared(shared)
 
     def to_node(self) -> dict[str, Any]:
@@ -1939,6 +1942,8 @@ class Grid(Component):
             node["gap"] = self._gap
         if self._mode != "normal":
             node["mode"] = self._mode
+        if not self._switchable:
+            node["switchable"] = False
         if self._shared is not None:
             node["shared"] = self._shared
         return node

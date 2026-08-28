@@ -10,7 +10,7 @@
   "description": "cairn-plot — the pure TS/React renderer library + self-contained standalone IIFE bundles.",
   "scripts": {
     "typecheck": "tsc -b --noEmit",
-    "test": "node --experimental-strip-types --test \"src/lib/cairn-plot/**/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "gen:plot-schema": "node scripts/gen-plot-spec-schema.mjs",
     "check:plot-schema": "node scripts/check-plot-spec-schema.mjs",
     "check:plot-boundary": "node scripts/check-plot-boundary.mjs",

@@ -40,7 +40,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { PlotNodeView, SharedPlotContext, PaneSyncContext } from "./plot-node";
+import { PlotNodeView } from "./plot-node";
+import { PaneSyncContext, SharedPlotContext } from "./host/plot-context.ts";
 import { ChartFillContext } from "./plot-standalone-helpers";
 import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./plot-descriptor";
 import type { DataSource } from "./lib/cairn-plot";

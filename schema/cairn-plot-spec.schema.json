@@ -312,6 +312,10 @@
             "stacked"
           ],
           "description": "`normal` creates one internal viewport per child. `stacked` creates one internal viewport whose children are content slots. Switching slots never replaces that viewport's settings."
+        },
+        "switchable": {
+          "type": "boolean",
+          "description": "Every multi-child grid is switchable by default; false hides the toggle."
         }
       },
       "required": [

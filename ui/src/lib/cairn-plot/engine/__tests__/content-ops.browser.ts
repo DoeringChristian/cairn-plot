@@ -33,6 +33,7 @@ import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../image/encodings/index"
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../image/tonemap";
 import { colormapFloatLUT } from "../../colormaps/lut";
 import type { ColormapName } from "../../colormaps/lut";
+import { DEFAULT_DIFF_COLORMAP } from "../kernels";
 import type { Device, Texture } from "../types";
 import { createHarness } from "../../testing/harness";
 
@@ -69,18 +70,18 @@ function buildTex(device: Device, rows: number[][]): Texture {
  * average) over the 3 diff channels. SDR target, nearest filter, EV 0 → byte-exact
  * within 1/255.
  */
-async function runDiffOpCase(device: Device, opId: string): Promise<boolean> {
+async function runDiffOpCase(device: Device, opId: string, encodingId: string): Promise<boolean> {
   const op = getContentOp(opId);
   if (!op || !isDirectContentOp(op)) {
     report(false, `[${opId}] not a registered direct content op`);
     return false;
   }
-  const signed = op.outputRange === "R";
-  const enc = getEncoding(op.defaultEncoding);
+  const enc = getEncoding(encodingId);
   if (!enc) {
-    report(false, `[${opId}] default encoding "${op.defaultEncoding}" is not registered`);
+    report(false, `[${opId}/${encodingId}] encoding is not registered`);
     return false;
   }
+  const analytic = enc.analytic === true;
   const encParams = { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" as const };
 
   const texA = buildTex(device, PAIRS.map((p) => p.a));
@@ -98,7 +99,7 @@ async function runDiffOpCase(device: Device, opId: string): Promise<boolean> {
     hdrOut: false,
     uv: uvFull,
     filter: "nearest",
-    ...(signed
+    ...(analytic
       ? { analytic: true } // red-green: computed color, no LUT bound
       : { turbo: true, colormap: colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName) }),
   };
@@ -119,7 +120,7 @@ async function runDiffOpCase(device: Device, opId: string): Promise<boolean> {
     const content = op.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     // DISPLAY twin: the op's defaultEncoding cpu (reduce → colormap/analytic).
     let exp: RgbTriple;
-    if (signed) {
+    if (analytic) {
       // red-green analytic cpu returns SCENE-LINEAR; thread the SAME sRGB
       // output-encode the GPU analytic branch applies.
       const lin = enc.cpu(content, 3, encParams);
@@ -140,7 +141,7 @@ async function runDiffOpCase(device: Device, opId: string): Promise<boolean> {
       }
     }
   }
-  report(ok, `[${opId}] (${signed ? "signed→red-green" : "magnitude→turbo"}) GPU cairnContent + display === composed cpu twin`);
+  report(ok, `[${opId}/${encodingId}] GPU cairnContent + display === composed cpu twin`);
   return ok;
 }
 
@@ -296,14 +297,18 @@ function buildUpload(rows: number[][]): SourceUpload {
  * `renderImage(srcB,…)` path. Proves the pool retains + uploads the second slot
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
  */
-async function runPoolDirectOpCase(device: Device, opId: string): Promise<boolean> {
+async function runPoolDirectOpCase(device: Device, opId: string, encodingId: string): Promise<boolean> {
   const op = getContentOp(opId);
   if (!op || !isDirectContentOp(op)) {
     report(false, `[pool:${opId}] not a registered direct content op`);
     return false;
   }
-  const signed = op.outputRange === "R";
-  const enc = getEncoding(op.defaultEncoding)!;
+  const enc = getEncoding(encodingId);
+  if (!enc) {
+    report(false, `[pool:${opId}/${encodingId}] encoding is not registered`);
+    return false;
+  }
+  const analytic = enc.analytic === true;
   const encParams = { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" as const };
 
   const canvas = document.createElement("canvas");
@@ -323,7 +328,7 @@ async function runPoolDirectOpCase(device: Device, opId: string): Promise<boolea
     hdrOut: false,
     uv: uvFull,
     filter: "nearest",
-    ...(signed ? { analytic: true } : { turbo: true, colormap: colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName) }),
+    ...(analytic ? { analytic: true } : { turbo: true, colormap: colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName) }),
   };
   const ok0 = handle.render(params);
   const surface = getCanvasSurfaceForTest(canvas);
@@ -349,7 +354,7 @@ async function runPoolDirectOpCase(device: Device, opId: string): Promise<boolea
   for (let i = 0; i < PAIRS.length; i++) {
     const content = op.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     let exp: RgbTriple;
-    if (signed) {
+    if (analytic) {
       const lin = enc.cpu(content, 3, encParams);
       exp = [outputEncode(lin[0], undefined), outputEncode(lin[1], undefined), outputEncode(lin[2], undefined)];
     } else {
@@ -573,22 +578,30 @@ async function runPoolChromeCase(device: Device): Promise<boolean> {
 
 const DIRECT_DIFF_OPS = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
 
+/** Operation and display encoding are independent axes. Exercise every operation
+ * with the shared default, plus the analytic encoding supported by signed data. */
+const DIRECT_DIFF_CASES = [
+  ...DIRECT_DIFF_OPS.map((opId) => ({ opId, encodingId: DEFAULT_DIFF_COLORMAP })),
+  { opId: "signed", encodingId: "red-green" },
+  { opId: "relative_signed", encodingId: "red-green" },
+];
+
 async function main(): Promise<void> {
   try {
     const device = await getSharedDevice();
     report(true, `device.backend = ${device.backend}`);
     let allOk = true;
     if (!(await runIdentityInertCase(device))) allOk = false;
-    for (const opId of DIRECT_DIFF_OPS) {
-      if (!(await runDiffOpCase(device, opId))) allOk = false;
+    for (const { opId, encodingId } of DIRECT_DIFF_CASES) {
+      if (!(await runDiffOpCase(device, opId, encodingId))) allOk = false;
     }
-    report(allOk, `all ${DIRECT_DIFF_OPS.length} direct diff ops: GPU cairnContent + display === composed cpu twin`);
+    report(allOk, `all ${DIRECT_DIFF_CASES.length} direct diff/encoding cases: GPU cairnContent + display === composed cpu twin`);
     // Phase 3 — COMPOSITOR op (split): light composite === composed cpu twin.
     if (!(await runCompositorOpCase(device, "split", 0.5))) allOk = false;
     report(allOk, `compositor op (split): GPU composite === composed cpu twin (SDR + HDR)`);
     // Phase 2b — POOL wiring: the second source slot + the cached-op render path.
-    for (const opId of DIRECT_DIFF_OPS) {
-      if (!(await runPoolDirectOpCase(device, opId))) allOk = false;
+    for (const { opId, encodingId } of DIRECT_DIFF_CASES) {
+      if (!(await runPoolDirectOpCase(device, opId, encodingId))) allOk = false;
     }
     if (!(await runPoolCachedOpCase(device))) allOk = false;
     if (!(await runPoolChromeCase(device))) allOk = false;

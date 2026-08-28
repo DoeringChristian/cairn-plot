@@ -11,7 +11,6 @@
  */
 import React, {
   Suspense,
-  createContext,
   useCallback,
   useContext,
   useEffect,
@@ -47,40 +46,9 @@ import {
   type GridNode,
   type PlotLeafNode,
   type PlotNode,
-  type SharedProps,
 } from "./plot-descriptor";
 import { getRenderer, onRegister } from "./plot-registry";
-import {
-  getGlobalSelectionStore,
-  nextSelectionPaneId,
-  paneSyncGroups,
-  GLOBAL_SELECTION_BASE,
-  REFERENCE_COLOR,
-  REFERENCE_COLOR_RGB,
-  type SelectionMode,
-} from "./lib/cairn-plot/selection/selection-store";
-import {
-  EnlargeInterceptContext,
-  type EnlargeIntercept,
-} from "./lib/cairn-plot/renderers/enlarge-intercept";
-import {
-  getRegisteredPane,
-  isImageCompatibleNode,
-  registerSelectionPane,
-  unregisterSelectionPane,
-} from "./plot-selection-pane-registry";
-import {
-  GridUniformAspectContext,
-  DEFAULT_GRID_CELL_ASPECT,
-  VIEWPORT_HEIGHT_MARGIN,
-  useUniformGridAspect,
-} from "./lib/cairn-plot/renderers/grid-uniform-aspect";
-import {
-  useStackKeyboard,
-  StackTabStrip,
-  GridModeToggle,
-  stackLabelFor,
-} from "./lib/cairn-plot/stack/StackedView";
+import { stackLabelFor } from "./lib/cairn-plot/stack/StackedView";
 import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
 import FullscreenOverlayShell, { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import {
@@ -112,8 +80,19 @@ import {
   syntheticChannelTree,
 } from "./lib/cairn-plot/image/channel-slice";
 import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
-import { useViewportSettings } from "./lib/cairn-plot/settings/use-viewport-settings";
 import { initialViewportSettings } from "./lib/cairn-plot/settings/viewport-initial-settings.ts";
+import { GridLayout } from "./layout/GridLayout.tsx";
+import {
+  PaneSyncContext,
+  SharedPlotContext,
+  useSharedPlot,
+} from "./host/plot-context.ts";
+import { PlotCell } from "./host/PlotCell.tsx";
+
+// Compatibility exports for existing standalone/stage imports. The host owns
+// these contracts; plot-node only consumes and re-exports them.
+export { PaneSyncContext, SharedPlotContext } from "./host/plot-context.ts";
+export type { PaneSyncCtx, SharedPlotCtx } from "./host/plot-context.ts";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -124,42 +103,11 @@ import { initialViewportSettings } from "./lib/cairn-plot/settings/viewport-init
  */
 const RENDERER_WAIT_MS = 4000;
 
-/** The authored grid `sync.viewport` group fans ONLY the view transform. */
-const VIEW_TRANSFORM_KEYS = [
-  "image.view",
-  "chart.domainX",
-  "chart.domainY",
-  "scene3d.camera",
-] as const;
-
-/** Root-provided context shared by the whole tree: the single `DataSource`,
- *  the nearest grid's `shared` block (colormap/colorRange/reference/…), and
- *  (when that grid opted in via `shared.sync.viewport`) the live viewport-sync
- *  group id for that grid — see `GridView`'s derivation. The id is ONE
- *  settings CHANNEL (`viewport-settings.ts`): every frame joins it scoped
- *  to the cross-kind view keys (`VIEW_TRANSFORM_KEYS` — image view, chart domain,
- *  3D camera), so one flag links a grid's images AND charts through the same
- *  frame-owned settings objects. Mirrors the 3D `cameraSyncGroupId`
- *  mechanism (`lib/camera-sync.ts`'s `useCameraSync`), scoped per grid
- *  instead of per card. */
-export interface SharedPlotCtx {
-  source: DataSource;
-  shared?: SharedProps;
-  viewSettingsGroupId?: string | null;
-}
-export const SharedPlotContext = createContext<SharedPlotCtx | null>(null);
-
-function useSharedPlot(): SharedPlotCtx {
-  const ctx = useContext(SharedPlotContext);
-  if (!ctx) throw new Error("PlotNodeView used outside a SharedPlotContext");
-  return ctx;
-}
-
 // ---------------------------------------------------------------------------
 // Multi-viewport SELECTION (see viewport/selection-store.ts) is PAGE-WIDE. There
 // is ONE document-scoped `SelectionStore` (`getGlobalSelectionStore`) shared by
 // every pane on the page — standalone `PlotApp` mounts AND grid cells alike, via
-// the SAME `PaneSelectionFrame` wrapper (`PlotNodeView` wraps every leaf/compare
+// the SAME `PlotCell` wrapper (`PlotNodeView` wraps every leaf/compare
 // node in one). The frame draws the accent ring on the selected pane, turns a
 // click into a store mutation (plain = replace, shift/ctrl/meta = toggle), and
 // derives the per-pane sync group ids the leaf consumes: while ≥2 panes are
@@ -169,37 +117,6 @@ function useSharedPlot(): SharedPlotCtx {
 // current view + settings a newly-added member adopts. `GridView` keeps ONLY its
 // layout role — it no longer owns a selection store or wraps cells itself.
 // ---------------------------------------------------------------------------
-
-/** Per-pane overrides the enclosing `PaneSelectionFrame` hands its leaf: the
- *  selection-derived settings group + which pane is the group
- *  anchor. `undefined` on a field means "no override" (the leaf falls back to
- *  the grid-wide view-scoped settings membership). Only populated while this pane
- *  is part of a ≥2 selection. Consumed by `LeafView` (image leaves) and
- *  `CompareView` (compare panes). */
-interface PaneSyncCtx {
-  /** The viewport's EFFECTIVE settings — the `group > local` merge from the ONE
-   *  store hook per viewport (`useViewportSettings`, run by the context PROVIDER —
-   *  `PaneSelectionFrame` / the enlarge `StageCell`). The provider is the single
-   *  subscriber per viewport; every consumer (the pane's display props,
-   *  `useCompareControl`'s mode/kernel/split, `LeafView`'s channel select) reads
-   *  these top-down — no consumer subscribes to the bus itself. */
-  syncedSettings?: ViewportSettings | null;
-  /** Settings captured when THIS viewport formed. Stacked slots may change
-   * content descriptors, but they never replace these authored defaults. */
-  viewportDefaults?: ViewportSettings | null;
-  /** The ONE write path into the viewport's settings store: merges a patch into
-   *  the GROUP store while selected (transient — gone on unselect), else the
-   *  LOCAL store (sticks). Threaded to the panes as a prop (the bundle split
-   *  rules out context on the addon side). */
-  setSyncedSettings?: (patch: ViewportSettings) => void;
-  /** Replace this viewport's settings with the active content defaults (HOME). */
-  resetSyncedSettings?: (settings: ViewportSettings) => void;
-  /** LOCAL apply (no fan-out) — the INITIALIZATION write path (single source
-   *  of truth rule): a viewport's settings are seeded from the first content
-   *  it shows; init must never fan to group peers. */
-  applySyncedSettings?: (patch: ViewportSettings) => void;
-}
-export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);
 
 function Message({ text, error }: { text: string; error?: boolean }) {
   return (
@@ -883,531 +800,80 @@ interface CompareControl {
   modified: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Grid — children in a CSS grid. `colWidths`/`rowHeights`: number → `Nfr`,
-// string → verbatim CSS. When `rowHeights` is set, cells fill (`height:100%`)
-// and `ChartFillContext` publishes `true` so chart leaves fill their cell. A
-// single shared `Colorbar` renders beside the grid when `shared.colorbar`.
-// ---------------------------------------------------------------------------
-function trackList(
-  sizes: Array<number | string> | undefined,
-  fallbackCount: number,
-): string {
-  if (!sizes || sizes.length === 0) return `repeat(${fallbackCount}, 1fr)`;
-  return sizes.map((s) => (typeof s === "number" ? `${s}fr` : s)).join(" ");
-}
-
-/** Beyond this pointer travel a press is treated as a DRAG (pan / compare-split),
- *  not a selection click. */
-const SELECTION_CLICK_SLOP_PX = 5;
-
-/**
- * Wraps ONE pane (standalone mount OR grid cell — `PlotNodeView` puts one around
- * every leaf/compare node) with PAGE-WIDE selection behaviour: it draws the
- * accent ring on the selected pane, turns a stationary click into a mutation on
- * the ONE document-scoped `SelectionStore` (plain = replace, shift/ctrl/meta =
- * toggle), and provides the per-pane sync overrides its leaf consumes while ≥2
- * panes are selected. A `selectable={false}` frame (a nested grid) ignores
- * clicks and never rings — it stays only as the layout wrapper (`minWidth:0`).
- *
- * The pane id is process-unique (`nextSelectionPaneId`, NOT `useId` — which
- * collides across the gallery's separate React roots) and memoized so it is
- * stable across re-renders; it is removed from the selection on unmount so an
- * unmounted pane can't linger as a phantom group member.
- *
- * Click detection reads pointer events in the CAPTURE phase (so it still sees
- * them while the inner pane pointer-captures for a pan) but never
- * preventDefault/stopPropagation — so drag-to-pan, wheel/pinch zoom and compare
- * drag-to-split are untouched; only a near-stationary press (< slop) selects.
- * A press that STARTS on a toolbar control drives the control, never selects.
- */
-function PaneSelectionFrame({
-  selectable,
-  node,
-  children,
-}: {
-  selectable: boolean;
-  /** The pane's descriptor node — registered so the page-level selection stage
-   *  can rebuild this pane (as an enlarge grid cell or a compare operand). */
-  node: PlotNode;
-  children: React.ReactNode;
-}) {
-  // ONE page-wide store shared by every frame on the page (across all mounts).
-  const store = getGlobalSelectionStore();
-  // The shared source/shared block this pane resolves against — captured into
-  // the registry so the stage can render a FRESH leaf under the same context.
-  // `viewSettingsGroupId` = the AUTHORED grid `sync.viewport` group (null
-  // unless the enclosing grid opted in) — a view-scoped settings membership.
-  const { source, shared, viewSettingsGroupId: gridViewGroupId } = useSharedPlot();
-  // A process-unique, render-stable id for this pane instance.
-  const [paneId] = useState(nextSelectionPaneId);
-  // The frame's own element — the theme ORIGIN the body-portaled stage/action
-  // bar copies tokens from (it stays in the page's theme scope).
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  // Grid cells fill their track (rowHeights → height:100%); standalone panes
-  // don't. `ChartFillContext` (set by the enclosing `GridView`) tells us which.
-  const fill = useContext(ChartFillContext);
-  // In a `cp.Grid` an image-compatible cell (an image LEAF *or* a `compare`
-  // pane) is sized to the grid's ONE uniform aspect (auto rows) so every viewport
-  // in a row is identical AND the pane fills the cell — making THIS selectable
-  // frame the viewport, so the ring matches it exactly. In fill mode the fixed
-  // row already sizes the cell. Non-image cells (scalars, nested grids) keep
-  // their natural sizing. A `compare` cell fills the SAME aspect box: its
-  // `GpuComparePane` is a single object-contain viewport (`ImagePaneShell`),
-  // whose toolbar + metrics are ABSOLUTE overlays — so the box carries only the
-  // content, exactly like an image pane. `CompareView` fills the box via a
-  // `GridCellReporter` (mirroring `ImageStandalone`), which also reports the
-  // compare's content aspect up so the grid's median covers both cell types.
-  const gridUniform = useContext(GridUniformAspectContext);
-  const uniformImageCell =
-    !!gridUniform && !fill && isImageCompatibleNode(node);
-  // The pane-sync context from an ENCLOSING provider (e.g. the fullscreen stage
-  // or a STACKED grid, which give their cells a shared settings-sync group). A
-  // frame must PASS THIS THROUGH whenever it has no active selection group of its
-  // own — for a `selectable={false}` frame OR a selectable one that isn't part of
-  // a live ≥2 selection — else the enclosing group id never reaches the fresh
-  // leaf/compare it wraps (Bug 3 + stacked-grid settings sync). An active
-  // selection's own groups (`paneSync`) take precedence when present.
-  const inheritedPaneSync = useContext(PaneSyncContext);
-
-  // Materialize authored settings at the VIEWPORT boundary, synchronously on
-  // its first render. A stacked tab changes `node`, but this hook's box keeps
-  // the first value: slots supply content after formation, never live settings.
-  const initialSettingsRef = useRef<{
-    captured: boolean;
-    value: ViewportSettings | null;
-  }>({ captured: false, value: null });
-  if (!initialSettingsRef.current.captured && node.kind !== "grid") {
-    initialSettingsRef.current = {
-      captured: true,
-      value: initialViewportSettings(node, shared),
-    };
-  }
-
-  const subscribe = useCallback((cb: () => void) => store.subscribe(cb), [store]);
-  // Track the COMBINED snapshot ({selected, reference}) — the reference drives
-  // the distinct ORANGE ring on the reference pane (Bug 2), and a reference-only
-  // change keeps `selected` array-stable, so subscribing to `getSelected()` alone
-  // would miss it.
-  const getSnapshot = useCallback(() => store.getSnapshot(), [store]);
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const selected = snapshot.selected;
-
-  // Register this pane's render descriptor for the page-level stage, and keep it
-  // current as the node/source change. Unregister on unmount so the stage never
-  // rebuilds a gone pane.
-  useEffect(() => {
-    if (!selectable) return;
-    registerSelectionPane({
-      paneId,
-      node,
-      source,
-      settings: { get: vst.get, set: vst.set },
-      shared,
-      imageCompatible: isImageCompatibleNode(node),
-      getElement: () => frameRef.current,
-    });
-    return () => unregisterSelectionPane(paneId);
-  }, [paneId, selectable, node, source, shared]);
-
-  // Drop this pane from the selection when it unmounts (lazy-scroll teardown, a
-  // grid remount, …) so a stale id never keeps a phantom member in a sync group.
-  useEffect(() => {
-    if (!selectable) return;
-    return () => store.remove(paneId);
-  }, [store, paneId, selectable]);
-
-  // ENLARGE-INTERCEPT: while this pane is one of ≥2 selected, its enlarge button
-  // opens the page-level ENLARGE stage (a grid of ALL selected panes) instead of
-  // the single-pane overlay. An UNselected pane (or a lone selection) falls
-  // through to today's single-pane enlarge. Decoupled from the stage — this only
-  // pokes the store's stage channel, which the overlay host listens on.
-  const enlargeIntercept = useMemo<EnlargeIntercept>(
-    () => ({
-      onEnlarge() {
-        if (selectable && store.count() >= 2 && store.isSelected(paneId)) {
-          store.requestStage("enlarge");
-          return true;
-        }
-        return false;
-      },
-    }),
-    [store, paneId, selectable],
-  );
-
-  const isSelected = selectable && selected.includes(paneId);
-  // The REFERENCE among a ≥2 selection reads with a DISTINCT orange ring (Bug 2)
-  // — the pane every comparison is taken against. Only meaningful once a pair is
-  // selected; a lone selection is just a highlight, not a reference.
-  const isReference =
-    isSelected && selected.length >= 2 && snapshot.reference === paneId;
-  // Sync groups (null unless this pane is one of ≥2 selected) — the shared
-  // derivation `paneSyncGroups` against the ONE page-wide base is the same one
-  // the integration test asserts on.
-  const groups =
-    selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
-
-  // THE viewport's OWN settings object (final NOSTACK model — see
-  // use-viewport-settings.ts): this frame owns the box; memberships are
-  // channel subscriptions. While one of >=2 selected: the per-episode
-  // selection channel (all keys). Always: the authored grid `sync.viewport`
-  // channel, scoped to `view` (transforms-only grid sync, as authored).
-  // Edits fan into every member's own object, PERSISTENTLY.
-  const vst = useViewportSettings([
-    ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
-    ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_TRANSFORM_KEYS }] : []),
-  ], initialSettingsRef.current.value);
-  // JOIN CONVERGENCE: selected[0] is the explicit authority. Do not ask the
-  // settings channel for an arbitrary peer — registration/effect order differs
-  // across the page's independent React roots and made adoption nondeterministic.
-  const settingsGroupId = groups?.settingsGroupId;
-  const isJoinAnchor = !!groups?.isAnchor;
-  const anchorPaneId = selected[0];
-  useEffect(() => {
-    if (!settingsGroupId || isJoinAnchor || !anchorPaneId) return;
-    const anchor = getRegisteredPane(anchorPaneId)?.settings?.get();
-    if (anchor) vst.apply({ ...anchor });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsGroupId, isJoinAnchor, anchorPaneId]);
-
-  const downRef = useRef<{ x: number; y: number; onControl: boolean } | null>(null);
-  const onPointerDownCapture = useCallback((e: React.PointerEvent) => {
-    // A press that STARTS on an interactive control (toolbar button, slider,
-    // menu item, link) drives that control — never a selection. Recorded at
-    // down so a control click is excluded even if the pointer drifts a little.
-    const onControl = !!(e.target as Element | null)?.closest?.(
-      'button, input, select, textarea, a, [role="menu"], [role="menuitem"], [contenteditable="true"]',
-    );
-    downRef.current = { x: e.clientX, y: e.clientY, onControl };
-  }, []);
-  const onPointerUpCapture = useCallback(
-    (e: React.PointerEvent) => {
-      const d = downRef.current;
-      downRef.current = null;
-      if (!d || d.onControl) return;
-      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > SELECTION_CLICK_SLOP_PX) return;
-      const mode: SelectionMode = e.shiftKey || e.ctrlKey || e.metaKey ? "toggle" : "replace";
-      store.select(paneId, mode);
-    },
-    [store, paneId],
-  );
-
-  const style: React.CSSProperties = {
-    minWidth: 0,
-    position: "relative",
-    ...(fill ? { height: "100%" } : null),
-    // Uniform image cell (auto rows): a definite width-driven box at the grid's
-    // ONE aspect, so all cells in a row are identical and the pane fills it. A
-    // `DEFAULT_GRID_CELL_ASPECT` fallback gives a definite box before any cell has
-    // reported (avoids a 0-height mount). `alignSelf:start` keeps it from being
-    // stretched by a taller non-image sibling in the same row. The cell FILLS its
-    // column (no maxWidth here) so figures sit edge-to-edge with no gaps between
-    // them; the page-HEIGHT cap is applied to the grid CONTAINER width in
-    // `GridView` (which narrows the whole cluster and centres it), so a tall grid
-    // image stays viewable in one screenful without leaving space between figures.
-    ...(uniformImageCell
-      ? {
-          width: "100%",
-          aspectRatio: String(gridUniform!.uniformAspect ?? DEFAULT_GRID_CELL_ASPECT),
-          alignSelf: "start",
-        }
-      : null),
-  };
-  if (isSelected) {
-    // A CLEARLY VISIBLE selection ring: a full-opacity outline plus a soft glow so
-    // it reads over busy image/3D content (a 1px 50%-opacity border — the 3D
-    // canvas's decorative chrome — is far too faint to serve as a selection
-    // indicator; that made selection look absent). Every selected pane (2D and 3D)
-    // uses THIS shared ring, so the look is consistent everywhere. `outline` +
-    // negative offset never shifts layout. Raise the selected cell (`z-index`) so
-    // its ring paints ABOVE later grid siblings (never occluded).
-    //
-    // The REFERENCE pane (the compare baseline) rings in a DISTINCT ORANGE
-    // (`REFERENCE_COLOR`); every other selected pane rings in the blue
-    // `--color-accent`. Two visually separable states so the reference is obvious.
-    if (isReference) {
-      style.outline = `2px solid ${REFERENCE_COLOR}`;
-      style.boxShadow = `0 0 0 1px ${REFERENCE_COLOR}, 0 0 8px 1px rgb(${REFERENCE_COLOR_RGB} / 0.5)`;
-    } else {
-      style.outline = "2px solid var(--color-accent)";
-      style.boxShadow =
-        "0 0 0 1px var(--color-accent), 0 0 8px 1px rgb(var(--color-accent-rgb) / 0.45)";
-    }
-    style.outlineOffset = "-2px";
-    style.borderRadius = "4px";
-    style.zIndex = 1;
-  }
-
-  // Provider precedence: own-selection ctx > inherited ctx (an enclosing stage/
-  // overlay group must keep reaching a fresh unselected leaf — Bug 3) > the
-  // pane's LOCAL-store ctx (a lone viewport still has its group-of-one store, so
-  // its picks persist and survive re-lowers).
-  const paneSync = useMemo<PaneSyncCtx | null>(
-    () =>
-      groups
-        ? {
-            syncedSettings: vst.settings,
-            viewportDefaults: initialSettingsRef.current.value,
-            setSyncedSettings: vst.set,
-            resetSyncedSettings: vst.replace,
-            applySyncedSettings: vst.setLocal,
-          }
-        : null,
-    [groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.replace, vst.setLocal],
-  );
-  // A settings owner corresponds to a render surface, not to every layout
-  // frame. Grid nodes are containers and must not provide one shared store to
-  // their children. A non-selectable LEAF is still a viewport and does own one.
-  const ownsViewport = node.kind !== "grid";
-  const localSync = useMemo<PaneSyncCtx | null>(
-    () =>
-      ownsViewport
-        ? {
-            syncedSettings: vst.settings,
-            viewportDefaults: initialSettingsRef.current.value,
-            setSyncedSettings: vst.set,
-            resetSyncedSettings: vst.replace,
-            applySyncedSettings: vst.setLocal,
-          }
-        : null,
-    [ownsViewport, vst.settings, vst.set, vst.replace, vst.setLocal],
-  );
-
-  return (
-    <div
-      ref={frameRef}
-      style={style}
-      data-plot-pane-id={paneId}
-      data-selectable={selectable ? "true" : "false"}
-      data-selected={isSelected ? "true" : undefined}
-      data-reference={isReference ? "true" : undefined}
-      onPointerDownCapture={selectable ? onPointerDownCapture : undefined}
-      onPointerUpCapture={selectable ? onPointerUpCapture : undefined}
-    >
-      <PaneSyncContext.Provider value={paneSync ?? inheritedPaneSync ?? localSync}>
-        <EnlargeInterceptContext.Provider value={enlargeIntercept}>
-          {children}
-        </EnlargeInterceptContext.Provider>
-      </PaneSyncContext.Provider>
-    </div>
-  );
-}
-
+/** Bind an authored grid to the renderer-agnostic layout shell. */
 function GridView({ node }: { node: GridNode }) {
   const { source, shared: parentShared } = useSharedPlot();
-  // Image viewport sync (`shared.sync.viewport`, SharedProps in
-  // plot-descriptor.ts) — mirrors `lib/camera-sync.ts`'s `useCameraSync`: a
-  // stable id (`useId()`) scoped to THIS grid instance, so a grid's own image
-  // leaves mirror each other's zoom/pan, but two different (sibling or
-  // nested) synced grids never share a group by default. Called
-  // unconditionally (rules-of-hooks) but only consulted when this node
-  // actually declares its own `shared.sync.viewport` below.
   const localId = useId();
   const children = node.children ?? [];
   const cols = node.cols ?? node.colWidths?.length ?? children.length ?? 1;
-  const fill = !!node.rowHeights && node.rowHeights.length > 0;
-
-  // UNIFORM image-cell sizing via the ONE shared mechanism (also used by the
-  // compare/enlarge stage): image cells report their content aspect, the grid
-  // picks the REPRESENTATIVE (median) aspect, and every image cell sizes to it —
-  // so viewports in a row are identical (and the selection ring, drawn on the
-  // cell, matches the pane exactly).
-  const gridAspectApi = useUniformGridAspect();
-
-  // VIEW MODE: `normal` (uniform CSS grid) vs `stacked` (one child at a time +
-  // a keyboard-driven tab strip). Seeded from `node.mode`; a live toggle flips
-  // it. Every grid with at least two children can stack. A heterogeneous slot
-  // may replace renderer machinery, but the enclosing viewport/settings owner
-  // remains the same; renderer identity is not viewport identity.
-  const canStack = children.length >= 2;
-  const [mode, setMode] = useState<"normal" | "stacked">(node.mode === "stacked" ? "stacked" : "normal");
-  const [active, setActive] = useState(0);
-  const effectiveMode = canStack ? mode : "normal";
-  const clampedActive = Math.min(active, Math.max(0, children.length - 1));
-  const stackRootRef = useRef<HTMLDivElement | null>(null);
-
-  const gridStyle: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: trackList(node.colWidths, Math.max(cols, 1)),
-    width: "100%",
-  };
-  if (fill) gridStyle.gridTemplateRows = trackList(node.rowHeights, 1);
-  const gapPx = typeof node.gap === "number" ? node.gap : 0;
-  if (node.gap != null) {
-    gridStyle.gap = typeof node.gap === "number" ? `${node.gap}px` : node.gap;
-  }
-  // PAGE-HEIGHT CAP for a grid of TALL images: cap the grid CONTAINER width so its
-  // `1fr` columns never exceed the per-column width whose aspect-derived height
-  // would exceed the window — then the cells (which FILL their columns) stay ≤ one
-  // page tall. Capping the container (not the cells) keeps figures edge-to-edge
-  // with no gaps between them; the leftover space becomes ONE centred outer margin
-  // (`marginInline:auto`). Wide/short grids: the cap is larger than the container,
-  // so it never binds. `vh` tracks window resizes with no JS. Auto rows only.
-  if (!fill && gridAspectApi.uniformAspect != null && gridAspectApi.uniformAspect > 0) {
-    const c = Math.max(cols, 1);
-    gridStyle.maxWidth = `calc(${c} * (100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${gridAspectApi.uniformAspect} + ${(c - 1) * gapPx}px)`;
-    gridStyle.marginInline = "auto";
-  }
-
-  // A grid re-seeds the shared context for its subtree (its own `shared` wins,
-  // falling back to the parent's for nesting).
   const shared = node.shared ?? parentShared;
+  const viewSettingsGroupId = node.shared?.sync?.viewport
+    ? `plot-grid-view-${localId}`
+    : null;
 
-  // The group id is derived fresh from THIS node's own `shared.sync.viewport`
-  // (never inherited from a parent grid — same "no accidental cross-grid
-  // link" scoping `useCameraSync` documents) and only when this node actually
-  // re-seeds the context below (`node.shared && node.shared !== parentShared`).
-  const viewSettingsGroupId = node.shared?.sync?.viewport ? `plot-grid-view-${localId}` : null;
-
-  // GridView is LAYOUT ONLY — selection lives page-wide in each child's own
-  // `PaneSelectionFrame` (wrapped by `PlotNodeView`), obtained from the ONE
-  // document-scoped store. `ChartFillContext` still tells fill-mode children
-  // (and their frames) to take `height:100%`.
-  //
-  // NORMAL mode: every child rendered side by side.
-  const panes = children.map((child, i) => <PlotNodeView key={i} node={child} />);
-
-  // STACKED mode: render ONLY the active child, through ONE reused renderer
-  // instance (stable tree position → React reuses it; flipping the active child
-  // only SWAPS its source, resolved from the `resolve-cache` → instant, no
-  // remount, no `display:none` park/restore, no blank). Because it's one
-  // instance, display settings + camera are shared BY CONSTRUCTION — no
-  // settings-sync bus, no anchor. `InStackedGridContext` marks the subtree so a
-  // compare child routes its slide-flip to the dedicated `[`/`]` keys (arrows
-  // drive the tabs). Content-aspect capped at one page tall like a 1-cell grid;
-  // `fill` (the stage) takes 100%.
-  //
-  // The viewport BOX is LATCHED for the life of stacked mode: with only the
-  // ACTIVE slot mounted, it is the grid's ONLY aspect reporter, so the live
-  // "representative" aspect would just track whichever image is active — the
-  // canvas would RESIZE on every flip (and the shared zoom would read
-  // differently against each box). One viewport = ONE fixed surface: freeze the
-  // first established aspect and let a differently-shaped slot letterbox WITHIN
-  // it. Normal mode clears the latch (the live median over all cells is correct
-  // there); re-entering stacked re-latches the then-current representative.
-  const stackAspectRef = useRef<number | null>(null);
-  if (effectiveMode === "stacked") {
-    if (stackAspectRef.current == null && gridAspectApi.uniformAspect != null) {
-      stackAspectRef.current = gridAspectApi.uniformAspect;
-    }
-  } else {
-    stackAspectRef.current = null;
-  }
-  const stackAspect = stackAspectRef.current ?? gridAspectApi.uniformAspect;
-  // The frozen context the stacked subtree sizes against: same reporter (the
-  // active slot still reports, establishing the latch on first mount), but a
-  // LATCHED `uniformAspect` so the cell's `aspect-ratio` box never follows a
-  // flip.
-  const stackedAspectApi = useMemo<typeof gridAspectApi>(
-    () => ({ ...gridAspectApi, uniformAspect: stackAspect }),
-    [gridAspectApi, stackAspect],
+  const renderNormal = useCallback(
+    (index: number) => <PlotNodeView node={children[index]!} />,
+    [children],
   );
-  const stackedViewStyle: React.CSSProperties = fill
-    ? { width: "100%", height: "100%" }
-    : stackAspect != null && stackAspect > 0
-      ? {
-          maxWidth: `calc((100vh - ${VIEWPORT_HEIGHT_MARGIN}px) * ${stackAspect})`,
-          marginInline: "auto",
+  const renderStacked = useCallback(
+    (index: number) => {
+      const child = children[index];
+      if (!child) return null;
+      return child.kind === "grid" ? (
+        <LayoutFrame><NodeDispatch node={child} /></LayoutFrame>
+      ) : (
+        <PlotCell selectable={isSelectableNode(child)} node={child}>
+          <NodeDispatch node={child} />
+        </PlotCell>
+      );
+    },
+    [children],
+  );
+  const preload = useCallback(
+    (indices: number[]) => {
+      const entries: Array<{ key: string; run: () => Promise<unknown> }> = [];
+      for (const index of indices) {
+        const child = children[index];
+        if (!child) continue;
+        if (child.kind === "plot") {
+          entries.push({
+            key: resolutionKey(source, child),
+            run: () => resolveDataProps(child.data, source),
+          });
+        } else if (child.kind === "compare") {
+          const synth = synthDiffLeafOf(child);
+          entries.push({
+            key: resolutionKey(source, synth.leaf, "|diffpair"),
+            run: () => resolveDiffPair(synth.leaf.data, synth.fgData, source),
+          });
         }
-      : {};
-  // The enclosing frame is the viewport owner. Homogeneous slots reuse their
-  // renderer; heterogeneous slots may remount renderer machinery, while the
-  // viewport settings object remains stable across the tab change.
-  const activeChild = children[clampedActive];
-  const stackedPane = activeChild ? (
-    <InStackedGridContext.Provider value={true}>
-      <GridUniformAspectContext.Provider value={stackedAspectApi}>
-        <div
-          data-cairn-stacked-view=""
-          data-cairn-stack-active={clampedActive}
-          style={{ minWidth: 0, minHeight: 0, ...(fill ? { height: "100%" } : null), ...stackedViewStyle }}
-        >
-          <div
-            data-cairn-stacked-pane="active"
-            style={{ minWidth: 0, ...(fill ? { height: "100%" } : null) }}
-          >
-            <PlotNodeView node={activeChild} />
-          </div>
-        </div>
-      </GridUniformAspectContext.Provider>
-    </InStackedGridContext.Provider>
-  ) : null;
-  // Keyboard tab-flip attaches to the WHOLE grid area (header + pane) so keys
-  // work while hovering anywhere over the grid (only in stacked mode).
-  useStackKeyboard(stackRootRef, effectiveMode === "stacked", clampedActive, children.length, setActive);
-
-  // PREFETCH: warm every stacked child's data in the background so the FIRST flip
-  // to a tab is already resolved (no wait). Plot leaves only — compare children
-  // resolve on first visit and cache thereafter (still flash-free via the cache).
-  useEffect(() => {
-    if (effectiveMode !== "stacked") return;
-    const entries: Array<{ key: string; run: () => Promise<unknown> }> = [];
-    for (const c of children) {
-      if (c.kind === "plot") {
-        entries.push({
-          key: resolutionKey(source, c),
-          run: () => resolveDataProps(c.data, source),
-        });
-      } else if (c.kind === "compare") {
-        // Warm the DIFF PAIR under the SAME `|diffpair` key `LeafView` resolves it
-        // by (the memoized synth leaf's `sourceKey` — stable across renders/flips),
-        // so a first flip into the diff tab is a synchronous cache hit and the flip
-        // commit is paint-atomic, not a cold async resolve that holds the outgoing
-        // slot for a frame. Previously compare children were skipped, so EVERY first
-        // diff flip hit the async hold path — a prime source of the reported flash.
-        const synth = synthDiffLeafOf(c);
-        entries.push({
-          key: resolutionKey(source, synth.leaf, "|diffpair"),
-          run: () => resolveDiffPair(synth.leaf.data, synth.fgData, source),
-        });
       }
-    }
-    prefetchResolved(entries);
-  }, [effectiveMode, children, source]);
-  const grid = (
-    <ChartFillContext.Provider value={fill}>
-      <GridUniformAspectContext.Provider value={gridAspectApi}>
-        <div
-          ref={stackRootRef}
-          data-cairn-grid-root=""
-          className={canStack ? "group" : undefined}
-          style={{ minWidth: 0, width: "100%" }}
-        >
-          {/* A thin HEADER above the viewports (never overlaps pane controls):
-              the mode toggle, plus the tab strip in stacked mode. */}
-          {canStack && (
-            <div data-cairn-grid-header="" className="mb-1 flex items-center gap-2" style={{ minHeight: 26 }}>
-              {effectiveMode === "stacked" ? (
-                <StackTabStrip
-                  labels={children.map((c, i) => stackLabelFor(c, i))}
-                  active={clampedActive}
-                  onSelect={setActive}
-                />
-              ) : (
-                <div className="flex-1" />
-              )}
-              <GridModeToggle mode={effectiveMode} onChange={setMode} />
-            </div>
-          )}
-          {effectiveMode === "stacked" ? stackedPane : <div style={gridStyle}>{panes}</div>}
-        </div>
-      </GridUniformAspectContext.Provider>
-    </ChartFillContext.Provider>
+      prefetchResolved(entries);
+    },
+    [children, source],
   );
 
-  const body =
-    node.shared && node.shared !== parentShared ? (
-      <SharedPlotContext.Provider value={{ source, shared, viewSettingsGroupId }}>
-        {grid}
-      </SharedPlotContext.Provider>
-    ) : (
-      grid
-    );
+  const grid = (
+    <GridLayout
+      count={children.length}
+      cols={cols}
+      colWidths={node.colWidths}
+      rowHeights={node.rowHeights}
+      gap={node.gap}
+      initialMode={node.mode}
+      switchable={node.switchable !== false}
+      labels={children.map((child, index) => stackLabelFor(child, index))}
+      renderNormal={renderNormal}
+      renderStacked={renderStacked}
+      preload={preload}
+    />
+  );
+  const body = node.shared && node.shared !== parentShared ? (
+    <SharedPlotContext.Provider value={{ source, shared, viewSettingsGroupId }}>
+      {grid}
+    </SharedPlotContext.Provider>
+  ) : grid;
 
-  // F1: gate the colorbar on the node's OWN `shared.colorbar` (owner-only). A
-  // nested grid that merely INHERITS `colorbar:true` (via `shared` above, used
-  // for leaf colormap/colorRange) must NOT draw a second colorbar — only the
-  // grid that actually declares `colorbar` renders one.
   if (!node.shared?.colorbar) return body;
   const cbColormap = (node.shared.colormap as ColormapName | undefined) ?? "turbo";
   const [min, max] = node.shared.colorRange ?? [undefined, undefined];
@@ -1419,6 +885,12 @@ function GridView({ node }: { node: GridNode }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Grid — children in a CSS grid. `colWidths`/`rowHeights`: number → `Nfr`,
+// string → verbatim CSS. When `rowHeights` is set, cells fill (`height:100%`)
+// and `ChartFillContext` publishes `true` so chart leaves fill their cell. A
+// single shared `Colorbar` renders beside the grid when `shared.colorbar`.
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // LazyGate (P2) — viewport-lazy mounting. A leaf/compare pane is expensive to
 // mount: images decode, WebGPU pipelines compile, 3D scenes build, addons eval.
@@ -1533,13 +1005,13 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
 
 /**
  * The lifted compare view-mode state (Phase 2c). Held HERE — inside the pane's
- * `PaneSelectionFrame`, so it can read the pane's own sync identity — and called
+ * `PlotCell`, so it can read the pane's own sync identity — and called
  * UNCONDITIONALLY for every node (inert for non-compare, rules-of-hooks safe),
  * so a stacked `NodeDispatch` reused across an image↔diff flip keeps ONE mode
  * state that survives the flip. The mode/kernel/split are seeded from the
  * descriptor and updated from two sources: the panes' menu callbacks
  * (`setViewMode`/…) AND the group's `syncedSettings` handed down from the ONE
- * node-level bus receiver (`PaneSelectionFrame`/stage) — so mode still syncs
+ * node-level bus receiver (`PlotCell`/stage) — so mode still syncs
  * across a page-wide selection even when the mounted pane is a DIFF `GpuImagePane`
  * (which can't itself apply a `compareMode` patch — that's a routing decision
  * above the pane). Never PUBLISHES (the panes already publish these keys) and
@@ -1647,7 +1119,7 @@ function useCompareControl(
 }
 
 /**
- * Dispatch on `node.kind`, INSIDE the pane's `PaneSelectionFrame` (so it can read
+ * Dispatch on `node.kind`, INSIDE the pane's `PlotCell` (so it can read
  * the pane's sync identity). Phase 3: a compare node in ANY mode (diff AND
  * split/blend) lowers to `LeafView` with a synthesized image leaf + a resolved
  * `compareSource` — the SAME component an image plot leaf renders — so every
@@ -1720,23 +1192,32 @@ function NodeDispatch({ node }: { node: PlotNode }) {
 }
 
 /**
- * Render one node. Every node is wrapped in the SAME `PaneSelectionFrame`
- * (page-wide selection), so a standalone mount, a grid cell, an image, a compare
- * and a chart all get selection from ONE mechanism. A `plot`/`compare` is
- * selectable unless it opts out (`props.selectable:false`); a `grid` is never
- * selectable (layout only) but keeps a non-selectable frame so a nested grid
- * still gets the `minWidth:0` grid-item wrapper it had before. The kind + mode
- * DISPATCH lives in {@link NodeDispatch}, one level INSIDE the frame, so the
- * lifted compare-mode state can read the pane's sync identity and the dispatch
- * collapses (image plot AND diff compare both render `LeafView` at the stacked
- * slot — the no-remount flicker fix).
+ * Grid nodes are layout only. Plot and comparison nodes create one settings and
+ * selection-owning cell. Stacked grids instantiate that same cell explicitly at
+ * their stable active-content position, so tab changes update its content
+ * without replacing the cell.
  */
 export function PlotNodeView({ node }: { node: PlotNode }) {
-  const selectable =
-    node.kind !== "grid" && (node.props?.selectable as boolean | undefined) !== false;
+  if (node.kind === "grid") {
+    return <LayoutFrame><NodeDispatch node={node} /></LayoutFrame>;
+  }
   return (
-    <PaneSelectionFrame selectable={selectable} node={node}>
+    <PlotCell selectable={isSelectableNode(node)} node={node}>
       <NodeDispatch node={node} />
-    </PaneSelectionFrame>
+    </PlotCell>
+  );
+}
+
+function isSelectableNode(node: Exclude<PlotNode, GridNode>): boolean {
+  return (node.props?.selectable as boolean | undefined) !== false;
+}
+
+/** Preserve the old grid-item sizing wrapper without allocating cell state. */
+function LayoutFrame({ children }: { children: React.ReactNode }) {
+  const fill = useContext(ChartFillContext);
+  return (
+    <div data-plot-layout-frame="" style={{ minWidth: 0, position: "relative", ...(fill ? { height: "100%" } : null) }}>
+      {children}
+    </div>
   );
 }

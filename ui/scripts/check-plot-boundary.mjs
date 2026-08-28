@@ -34,12 +34,15 @@ import { dirname, resolve, join, relative, extname } from "node:path";
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(UI_ROOT, "src");
 const LIB = join(SRC, "lib", "cairn-plot");
+const INTERNAL_ROOTS = ["backends", "host", "layout", "plots", "resources", "state", "settings", "engines", "primitives"]
+  .map((name) => join(SRC, name));
 const REPO_ROOT = resolve(UI_ROOT, "..");
 const PACKAGES = join(REPO_ROOT, "packages");
 const APPS = join(REPO_ROOT, "apps");
 
 // --- surface enumeration -------------------------------------------------
 function walk(dir) {
+  if (!existsSync(dir)) return [];
   const out = [];
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, ent.name);
@@ -66,6 +69,7 @@ const plotScripts = [
 
 const surface = [
   ...walk(LIB),
+  ...INTERNAL_ROOTS.flatMap(walk),
   ...walk(PACKAGES),
   ...walk(APPS),
   ...plotEntries,
@@ -77,6 +81,7 @@ const surfaceReal = new Set(surface.map((f) => resolve(f)));
 function isIntraSurface(absPath) {
   const p = resolve(absPath);
   if (p === resolve(LIB) || p.startsWith(resolve(LIB) + "/")) return true;
+  if (INTERNAL_ROOTS.some((root) => p === resolve(root) || p.startsWith(resolve(root) + "/"))) return true;
   if (p === resolve(PACKAGES) || p.startsWith(resolve(PACKAGES) + "/")) return true;
   if (p === resolve(APPS) || p.startsWith(resolve(APPS) + "/")) return true;
   return surfaceReal.has(p);

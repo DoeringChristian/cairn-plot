@@ -139,6 +139,17 @@ test("every builder emits a schema-conformant descriptor", () => {
   }
 });
 
+test("grid switching is enabled by omission and can be explicitly disabled", () => {
+  const child = cp.line([1, 2]);
+  const normal = cp.grid([child, child]).descriptor.root;
+  const fixed = cp.grid([child, child], { switchable: false }).descriptor.root;
+  assert.equal(normal.kind, "grid");
+  assert.equal(fixed.kind, "grid");
+  if (normal.kind !== "grid" || fixed.kind !== "grid") return;
+  assert.equal(normal.switchable, undefined);
+  assert.equal(fixed.switchable, false);
+});
+
 test("builder rejects non-JSON values at the durable descriptor boundary", () => {
   assert.throws(
     () => cp.table([{ value: 1n }]),

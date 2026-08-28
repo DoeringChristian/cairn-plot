@@ -58,6 +58,9 @@ test("a failed resolve records an error and does not cache a payload", async () 
   }));
   assert.equal(peekResolved(k), undefined);
   assert.equal(peekResolveError(k), "boom");
+  assert.equal(await resolveCached(k, async () => "recovered"), "recovered");
+  assert.equal(peekResolved(k), "recovered", "foreground selection retries a failed preload/resolve");
+  assert.equal(peekResolveError(k), undefined);
 });
 
 test("prefetchResolved warms entries so a later peek is synchronous", async () => {

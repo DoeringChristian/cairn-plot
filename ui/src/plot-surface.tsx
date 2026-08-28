@@ -3,7 +3,8 @@ import { useEffect, useRef } from "react";
 import type { PlotDescriptor } from "../../packages/spec/src/spec.ts";
 import type { DataSource } from "./lib/cairn-plot/store/data-sources.ts";
 import { useEmitAutoHeight } from "./lib/cairn-plot/hooks/use-emit-auto-height.ts";
-import { PlotNodeView, SharedPlotContext } from "./plot-node.tsx";
+import { PlotNodeView } from "./plot-node.tsx";
+import { SharedPlotContext } from "./host/plot-context.ts";
 import { acquireSelectionOverlayHost } from "./plot-selection-stage.tsx";
 
 export interface PlotSurfaceProps {

@@ -31,6 +31,8 @@ export interface GridNode {
    * replaces that viewport's settings.
    */
   mode?: "normal" | "stacked";
+  /** Every multi-child grid is switchable by default; false hides the toggle. */
+  switchable?: boolean;
 }
 
 export interface CompareNode {

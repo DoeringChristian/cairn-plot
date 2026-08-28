@@ -165,6 +165,8 @@ async function run(): Promise<boolean> {
     qa("m1", "[data-cairn-stacked-pane]").length === 1 &&
     qa("m1", '[data-cairn-stacked-pane="active"]').length === 1;
   report(oneVisible, "exactly ONE pane rendered (single reused renderer, not N hidden panes)");
+  const initialCellIds = qa("m1", "[data-plot-pane-id]").map((cell) => cell.dataset.plotPaneId);
+  report(initialCellIds.length === 1, `stacked grid owns exactly one plot cell (got ${initialCellIds.length})`);
   report(activePaneIndex("m1") === 0, `tab 0 active initially (got ${activePaneIndex("m1")})`);
   ok = ok && up && tabs.length === 3 && oneVisible && activePaneIndex("m1") === 0;
 
@@ -210,7 +212,10 @@ async function run(): Promise<boolean> {
   const box2 = viewBox();
   const boxStable = box0 === box1 && box1 === box2;
   report(boxStable, `stacked viewport BOX is latched across flips of differently-shaped slots (${box0} | ${box1} | ${box2})`);
-  ok = ok && boxStable;
+  const flippedCellIds = qa("m1", "[data-plot-pane-id]").map((cell) => cell.dataset.plotPaneId);
+  const cellStable = flippedCellIds.length === 1 && flippedCellIds[0] === initialCellIds[0];
+  report(cellStable, `tab flips retain the exact stack cell id (${initialCellIds[0]} → ${flippedCellIds[0]})`);
+  ok = ok && boxStable && cellStable;
 
   // ── ZOOM PERSISTENCE: the shared camera survives a flip ───────────────────
   // Wheel-zoom the (CPU) pane — its zoom renders as an inline `scale(...)`
@@ -261,12 +266,15 @@ async function run(): Promise<boolean> {
   report(toggleUp, "NORMAL grid shows the normal|stacked toggle button (the missing button)");
   const startsNormal = await waitFor(() => qa("m2", "[role='tab']").length === 0, 5000, 20);
   report(startsNormal, "normal grid shows NO tab strip");
+  report(qa("m2", "[data-plot-pane-id]").length === 3, "normal 3-child grid owns three independent plot cells");
   const stackedBtn = q("m2", '[data-cairn-grid-mode="stacked"]');
   report(!!stackedBtn, "toggle has a 'stacked' button");
   stackedBtn?.click();
   const flipped = await waitFor(() => qa("m2", "[role='tab']").length === 3, 5000, 20);
   report(flipped, "clicking the toggle switches the grid to stacked (tab strip appears)");
-  ok = ok && toggleUp && startsNormal && !!stackedBtn && flipped;
+  const collapsedToOneCell = qa("m2", "[data-plot-pane-id]").length === 1;
+  report(collapsedToOneCell, "switching normal→stacked collapses three cells into one stack-owned cell");
+  ok = ok && toggleUp && startsNormal && !!stackedBtn && flipped && collapsedToOneCell;
 
   // ── Single-child grid: no toggle (stacking a lone child is a no-op) ───────
   const rootC = createRoot(host("m3"));
@@ -276,6 +284,18 @@ async function run(): Promise<boolean> {
   const noToggle = !q("m3", "[data-cairn-grid-mode-toggle]");
   report(noToggle, "single-child grid has NO mode toggle");
   ok = ok && noToggle;
+
+  // `switchable:false` disables authoring UI; it must not override the authored
+  // initial presentation.
+  const fixedDescriptor = stackedGrid(["fixed-a", "fixed-b"], "stacked");
+  if (fixedDescriptor.root.kind === "grid") fixedDescriptor.root.switchable = false;
+  const rootFixed = createRoot(host("m6"));
+  rootFixed.render(createElement(PlotApp, { descriptor: fixedDescriptor }));
+  roots.push(rootFixed);
+  const fixedStacked = await waitFor(() => qa("m6", "[role='tab']").length === 0 && !!q("m6", "[data-cairn-stacked-view]"), 5000, 20);
+  const fixedNoToggle = !q("m6", "[data-cairn-grid-mode-toggle]");
+  report(fixedStacked && fixedNoToggle, "switchable:false preserves authored stacked mode while hiding switching controls");
+  ok = ok && fixedStacked && fixedNoToggle;
 
   // ── image + SLIDE-compare stack: HOMOGENEOUS, NO remount on the flip ─────────
   // Phase 3: a compare node in ANY mode (diff AND split/blend) lowers to the SAME
