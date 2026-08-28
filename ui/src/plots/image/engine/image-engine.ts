@@ -111,7 +111,7 @@ export interface ImageParams {
    */
   analytic?: boolean;
   /**
-   * GRAY NONE data encoding (the plain-grayscale "none" HDR-native follow-up) — on
+   * Scalar Linear display operation — on
    * the `isScalar` path, produce the SCENE-LINEAR gray `vec3(idx)` (where `idx` is
    * the SAME `cairnDataIndex` the LUT path computes: linear norm + no bounds = the
    * RAW value passed through UNCLAMPED; log/power/bounds map it to `[0,1]`) and run
@@ -120,8 +120,8 @@ export interface ImageParams {
    * in-range values) while an `hdrOut` surface lets `idx>1` SURVIVE — the directive's
    * "none colormap on a single channel supports HDR natively". No LUT is bound/read.
    * Mutually exclusive with `analytic`. Ignored when `isScalar` is false; the encode
-   * transfer is {@link grayEncodeGamma}. Unset = false. */
-  grayNone?: boolean;
+   * transfer is {@link scalarTransferGamma}. Unset = false. */
+  scalarTransfer?: boolean;
   /**
    * TURBO false-color (the tev-exact follow-up) — on the `isScalar` path, index
    * the bound `colormap` (the turbo table) at tev's FIXED log2 mapping
@@ -130,15 +130,15 @@ export interface ImageParams {
    * are ignored under it (turbo bakes its own index); `reduce` still applies
    * (default `mean`, tev's RGB average) and exposure/offset apply BEFORE the log2.
    * Requires `colormap` to be the turbo table. Mutually exclusive with
-   * `analytic`/`grayNone`. Ignored when `isScalar` is false. Unset = false. */
+   * `analytic`/`scalarTransfer`. Ignored when `isScalar` is false. Unset = false. */
   turbo?: boolean;
-  /** GRAY-NONE output-encode transfer (only read when {@link grayNone}): `0`/unset →
+  /** Scalar-transfer output encoding (only read when {@link scalarTransfer}): `0`/unset →
    *  the sRGB OETF (matching the default `srgb` transfer), `1` → linear identity
    *  encode, `γ` → the `1/γ` power curve (the `gamma` transfer). This is the CURVE's
    *  own encode-gamma (`resolveEncodeGamma`); it is a SEPARATE slot from the power-
-   *  NORM exponent (which still rides `gamma`/`u_bind2.z`), so a gray-none image can
+   *  NORM exponent (which still rides `gamma`/`u_bind2.z`), so a scalar image can
    *  carry both a display transfer and a power norm without collision. */
-  grayEncodeGamma?: number;
+  scalarTransferGamma?: number;
   /** When true, run the EXTENDED output-encode (unclamped, origin-mirrored sRGB
    *  OETF / power curve) and write the transfer-encoded float to `target` — the
    *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
@@ -331,15 +331,15 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const reduceId = REDUCE_ID[params.reduce ?? "mean"] ?? 0;
   const channelCount = typeof params.channelCount === "number" ? params.channelCount : 1;
   // u_bind10.z = SCALAR-MODE enum (scalar/LUT path only): 0 = LUT sample, 1 =
-  // ANALYTIC signed color (tev red-green), 2 = GRAY NONE (plain-grayscale data
+  // ANALYTIC signed color (tev red-green), 2 = scalar Linear transfer
   // encoding), 3 = TURBO false-color (tev-exact: the bound turbo table sampled at
-  // the FIXED log2 index, bypassing the norm path). u_bind10.w = the GRAY-NONE
+  // the FIXED log2 index, bypassing the norm path). u_bind10.w = scalar-transfer
   // encode-gamma (0 = sRGB OETF, >0 = 1/γ power curve) — a separate slot from the
   // power-norm exponent (which rides gamma/u_bind2.z). Both default to 0.
-  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : params.turbo ? 3 : 0;
-  const grayEncodeGamma =
-    typeof params.grayEncodeGamma === "number" && params.grayEncodeGamma > 0 ? params.grayEncodeGamma : 0;
-  const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, grayEncodeGamma]);
+  const scalarMode = params.analytic ? 1 : params.scalarTransfer ? 2 : params.turbo ? 3 : 0;
+  const scalarTransferGamma =
+    typeof params.scalarTransferGamma === "number" && params.scalarTransferGamma > 0 ? params.scalarTransferGamma : 0;
+  const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, scalarTransferGamma]);
 
   // u_bind12 = CONTENT-op dispatch id (0 = identity passthrough, the default).
   const contentOpIdVec = new Float32Array([params.contentOpId ?? 0]);

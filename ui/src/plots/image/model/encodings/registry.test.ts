@@ -352,13 +352,13 @@ test("SINGLE-APPLICATION invariant: bounds skin ignores exposure/offset (never c
 // registry entry (it's the absence of a colormap), so its CPU twin IS
 // computeDataIndex + a gray broadcast — these pin that convention (the shape the
 // `encoding-registry` browser harness's gray-none case + the GpuImagePane
-// `scalarNoneData` routing + the WGSL `scalarMode==2` branch all agree on).
+// scalar-transfer routing + the WGSL `scalarMode==2` branch all agree on).
 // ---------------------------------------------------------------------------
 
 /** The gray-none CPU twin: scalar → data index → SCENE-LINEAR gray triple
  *  (pre-output-encode, exactly what the WGSL `scalarMode==2` branch feeds the
  *  shared output-encode). */
-function grayNoneColor(scalar: number, p: EncodeParams): [number, number, number] {
+function scalarTransferColor(scalar: number, p: EncodeParams): [number, number, number] {
   const idx = computeDataIndex(scalar, p);
   return [idx, idx, idx];
 }
@@ -368,19 +368,19 @@ test("gray-none convention: linear norm + no bounds passes the RAW scalar UNCLAM
   // The over-range value survives as-is (the shared output-encode — extended on an
   // HDR surface — decides the range, NOT this stage). This is the whole point of
   // the follow-up: a scalar > 1 is NOT clamped here.
-  assert.deepEqual(grayNoneColor(1.5, p), [1.5, 1.5, 1.5], "1.5 rides through unclamped as gray");
-  assert.deepEqual(grayNoneColor(0.3, p), [0.3, 0.3, 0.3], "in-range value is plain gray");
-  assert.deepEqual(grayNoneColor(-0.2, p), [-0.2, -0.2, -0.2], "negatives ride through too");
+  assert.deepEqual(scalarTransferColor(1.5, p), [1.5, 1.5, 1.5], "1.5 rides through unclamped as gray");
+  assert.deepEqual(scalarTransferColor(0.3, p), [0.3, 0.3, 0.3], "in-range value is plain gray");
+  assert.deepEqual(scalarTransferColor(-0.2, p), [-0.2, -0.2, -0.2], "negatives ride through too");
 });
 
 test("gray-none convention: bounds / log / power map the index to [0,1] (explicit normalize)", () => {
   // Bounds: the over-range scalar normalizes to the ramp (LUT/clamp semantics).
-  assert.deepEqual(grayNoneColor(6, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [1, 1, 1], "max → 1");
-  assert.deepEqual(grayNoneColor(4, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [0.5, 0.5, 0.5], "midpoint → 0.5");
+  assert.deepEqual(scalarTransferColor(6, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [1, 1, 1], "max → 1");
+  assert.deepEqual(scalarTransferColor(4, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [0.5, 0.5, 0.5], "midpoint → 0.5");
   // Power norm reshapes the index (clamp01(t)^gamma).
-  assert.deepEqual(grayNoneColor(0.5, { ...DEFAULT_ENCODE_PARAMS, norm: "power", gamma: 2 }), [0.25, 0.25, 0.25], "0.5^2");
+  assert.deepEqual(scalarTransferColor(0.5, { ...DEFAULT_ENCODE_PARAMS, norm: "power", gamma: 2 }), [0.25, 0.25, 0.25], "0.5^2");
   // Log floors non-positive to the ramp bottom.
-  assert.deepEqual(grayNoneColor(0, { ...DEFAULT_ENCODE_PARAMS, norm: "log" }), [0, 0, 0], "0 floors to 0");
+  assert.deepEqual(scalarTransferColor(0, { ...DEFAULT_ENCODE_PARAMS, norm: "log" }), [0, 0, 0], "0 floors to 0");
 });
 
 // ---------------------------------------------------------------------------

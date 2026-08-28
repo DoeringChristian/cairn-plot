@@ -97,7 +97,7 @@ function displayFingerprint(params: ImageParams): {
   colormapSig?: number;
   contentParam?: number;
 } {
-  const scalarMode = params.analytic ? 1 : params.grayNone ? 2 : params.turbo ? 3 : 0;
+  const scalarMode = params.analytic ? 1 : params.scalarTransfer ? 2 : params.turbo ? 3 : 0;
   const lut = params.isScalar ? params.colormap : undefined;
   let colormapSig: number | undefined;
   if (lut && lut.length >= 1024) {

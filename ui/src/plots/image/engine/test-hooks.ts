@@ -76,8 +76,8 @@ export interface PaneRenderRecord {
   reduce?: string;
   /** `params.channelCount`. */
   channelCount?: number;
-  /** Scalar-mode enum the shader uses: 1=analytic, 2=grayNone, 3=turbo, 0=LUT.
-   *  Combined from analytic/grayNone/turbo so one field pins the scalar path. */
+  /** Scalar-mode enum the shader uses: 1=analytic, 2=scalar transfer, 3=turbo, 0=LUT.
+   *  Combined from the prepared display operation so one field pins the scalar path. */
   scalarMode?: number;
   /** Whether a colormap LUT was bound (`params.colormap != null` on the scalar
    *  path). A light image binds none; a diff (magma/turbo/…) binds one. */

@@ -467,17 +467,17 @@ async function runAnalyticCase(device: Device, enc: DisplayEncoding): Promise<bo
  *  output-encode (NOT a baked-sRGB LUT). Renders BOTH surfaces per norm variant:
  *  SDR (`rgba8unorm`, byte-exact) where an over-range `idx>1` CLAMPS, and HDR
  *  (`rgba32float`, float eps) where it SURVIVES past 1 — the directive's ">1 on the
- *  HDR path" case. The default `srgb` transfer (grayEncodeGamma 0 → sRGB OETF) is
+ *  HDR path" case. The default `srgb` transfer (`scalarTransferGamma` 0 → sRGB OETF) is
  *  exercised; `linear` norm passes the raw value UNCLAMPED, `log` maps to [0,1]. */
 async function runGrayNoneCase(device: Device, norm: NormMode): Promise<boolean> {
   let ok = true;
   for (const hdrOut of [false, true]) {
     const params: ImageParams = {
       exposureEV: EV,
-      operator: "linear" as ImageOperator, // moot: isScalar+grayNone short-circuits it
+      operator: "linear" as ImageOperator, // moot: scalar transfer owns the mapping
       isScalar: true,
-      grayNone: true,
-      grayEncodeGamma: 0, // sRGB OETF transfer (the default `srgb` curve)
+      scalarTransfer: true,
+      scalarTransferGamma: 0, // sRGB OETF transfer (the default `srgb` curve)
       norm,
       reduce: "mean",
       channelCount: 1,
@@ -522,7 +522,7 @@ async function runGrayNoneCase(device: Device, norm: NormMode): Promise<boolean>
       }
     }
   }
-  report(ok, `[gray-none/${norm}] GPU grayNone === cpu twin (SDR clamps, HDR survives >1)`);
+  report(ok, `[scalar-transfer/${norm}] GPU Linear scalar transfer === cpu twin (SDR clamps, HDR survives >1)`);
   return ok;
 }
 
