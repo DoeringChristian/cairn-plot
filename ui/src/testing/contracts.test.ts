@@ -33,7 +33,6 @@ import { COLORMAP_NAMES } from "../settings/colormaps/lut.ts";
 import {
   SDR_TONEMAP_OPERATORS,
   SDR_DISPLAY_TRANSFER_OPERATORS,
-  DEPRECATED_TONEMAP_ALIASES,
 } from "../plots/image/model/tonemap.ts";
 import {
   listDiffKernelPublicNames,
@@ -53,7 +52,6 @@ const contractPath = resolve(here, "../../../schema/cairn-plot-contracts.json");
 const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
   colormaps: string[];
   tonemapOperators: string[];
-  tonemapOperatorAliases: string[];
   displayTransfers: string[];
   compareKernelPublicNames: string[];
   compareKernelModes: Record<string, string>;
@@ -72,13 +70,6 @@ test("colormaps: COLORMAP_NAMES matches the contract", () => {
 test("tonemapOperators: the canonical 5-operator menu set matches the contract", () => {
   // UNIFIED model: the single operator group IS the contract's canonical set.
   assert.deepEqual(sorted(SDR_TONEMAP_OPERATORS), sorted(contract.tonemapOperators));
-});
-
-test("tonemapOperatorAliases: the deprecated extended* aliases match the contract", () => {
-  assert.deepEqual(
-    sorted(DEPRECATED_TONEMAP_ALIASES),
-    sorted(contract.tonemapOperatorAliases),
-  );
 });
 
 test("displayTransfers: SDR_DISPLAY_TRANSFER_OPERATORS matches the contract", () => {

@@ -1,13 +1,6 @@
 """HDR tone-map operator validation on the Python side (`_image_hdr_props`).
 
-UNIFIED surface: `tonemap=` is one of the canonical 5 (`_TONEMAP_OPERATORS`) OR
-a DEPRECATED `extended*` alias (`_TONEMAP_ALIASES`), and `peak=` (P) is the HDR
-mode. The Python layer only VALIDATES the name and passes it through verbatim
-(+ the optional `peak`); the client canonicalizes aliases and resolves the
-(operator, P, surface) triple to the render params (`image/tonemap.ts`'s
-`resolveEffectiveTonemap` / `resolveRenderTonemap`, unit-tested there). These
-tests pin the accepted set + aliases + the peak plumbing so the two sides can't
-drift.
+`tonemap=` accepts only the canonical operator set; `peak=` (P) is the HDR mode.
 """
 from __future__ import annotations
 
@@ -16,7 +9,6 @@ import pytest
 from cairn_plot.components import (
     _HDR_TONEMAP_OPERATORS,
     _TONEMAP_OPERATORS,
-    _TONEMAP_ALIASES,
     _SDR_DISPLAY_TRANSFERS,
     _image_hdr_props,
     _image_sdr_transfer_props,
@@ -37,19 +29,9 @@ def test_normal_map_operator_accepted() -> None:
     assert node["props"]["tonemap"] == "normal"
 
 
-def test_deprecated_aliases_are_accepted() -> None:
-    # The pre-unification `extended*` names are still ACCEPTED (resolved by the
-    # client to a canonical operator + peak).
-    for alias in _TONEMAP_ALIASES:
-        assert alias in _HDR_TONEMAP_OPERATORS
-        assert _image_hdr_props(tonemap=alias)["tonemap"] == alias
-
-
 @pytest.mark.parametrize("op", list(_HDR_TONEMAP_OPERATORS))
 def test_every_operator_is_accepted_verbatim(op: str) -> None:
-    # Every accepted name (canonical ∪ alias) passes through unchanged — the
-    # Python side never rewrites it (the client owns canonicalization + the
-    # HDR-engaged / SDR resolution).
+    # Every canonical name passes through unchanged.
     assert _image_hdr_props(tonemap=op)["tonemap"] == op
 
 
@@ -65,14 +47,6 @@ def test_default_tonemap_is_unset() -> None:
     props = _image_hdr_props()
     assert "tonemap" not in props
     assert props["exposure"] == 0.0
-
-
-def test_alias_mapping_is_documented() -> None:
-    # The alias → (operator, peak) resolution is documented on the builder.
-    doc = _image_hdr_props.__doc__ or ""
-    assert "extended-clamp" in doc
-    assert "extended-gamma" in doc
-    assert "``linear``" in doc
 
 
 # ---------------------------------------------------------------------------

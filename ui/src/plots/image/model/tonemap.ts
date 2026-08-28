@@ -117,96 +117,20 @@ export const SDR_DISPLAY_TRANSFER_OPERATORS: readonly TonemapOperator[] = [
   "linear",
 ];
 
-// The `extended*` HDR-out operators are no longer a second menu GROUP (the PEAK
-// slider is the HDR mode). They survive only as the DEPRECATED aliases resolved
-// by the render-translation layer below (`EXTENDED_TO_SDR` /
-// `DEPRECATED_TONEMAP_ALIASES` / `resolveRenderTonemap`), plus the registry curve
-// entries the engine dispatches. The former `HDR_TONEMAP_OPERATORS` /
-// `EXTENDED_ROLLOFF_OPERATORS` / `EXTENDED_PEAK_OPERATORS` menu-group arrays and
-// the `isHdrTonemap` / `tonemapHasPeak` classifiers were unused post-unification
-// and were removed in Phase 5.
-
-/**
- * UNIFIED-MODEL alias table (the ONE place the pre-unification operator names
- * resolve to a canonical curve). Under the unified surface there is exactly ONE
- * operator menu — `linear · srgb · gamma · reinhard · aces` — and the PEAK
- * slider `P` is the MODE: every operator respects `P` as its ceiling, so an SDR
- * pane is just `P = 1`. The old HDR-out names (`extended*`) are kept ACCEPTED as
- * DEPRECATED ALIASES that map to a (canonical operator, peak-hint) pair:
- *   - `extended`          → `linear`   + peak ∞ (raw browser-clipped pass-through)
- *   - `extended-clamp`    → `linear`   + peak (managed ceiling = the PEAK slider)
- *   - `extended-reinhard` → `reinhard` + peak
- *   - `extended-aces`     → `aces`     + peak
- *   - `extended-gamma`    → `gamma`    + peak
- * This same table is the DEGRADE rule: on a non-HDR surface (or `P = 1`) the
- * canonical operator IS the SDR rendition by construction. See
- * {@link canonicalizeTonemap} / {@link aliasPeakHint} / {@link resolveRenderTonemap}.
- */
-const EXTENDED_TO_SDR: Record<string, TonemapOperator> = {
-  extended: "linear",
-  // Managed linear resolves to the plain clamp (`linear`): a hard clip to the
-  // ceiling is exactly what "linear" is — the ceiling is P, collapsing to
-  // display white at P=1.
-  "extended-clamp": "linear",
-  "extended-reinhard": "reinhard",
-  "extended-aces": "aces",
-  "extended-gamma": "gamma",
-};
-
-/**
- * The DEPRECATED pre-unification operator names, kept ACCEPTED as aliases (both
- * faces validate against the canonical 5 ∪ these). Pinned to the contract's
- * `tonemapOperatorAliases` by `contracts.test.ts` (TS) + `test_contracts.py`
- * (Python). Each resolves via {@link EXTENDED_TO_SDR} / {@link aliasPeakHint}.
- */
-export const DEPRECATED_TONEMAP_ALIASES: readonly string[] = [
-  "extended",
-  "extended-clamp",
-  "extended-reinhard",
-  "extended-aces",
-  "extended-gamma",
-];
-
 // The name→CPU-curve resolver and the peak-aware triple dispatch were removed in
 // Phase 5: callers apply a curve straight from the registry via
 // `getEncoding(id).cpu(rgb, 3, params)` (the single source of truth the GPU
 // `applyOperator` mirrors), with `getEncoding(DEFAULT_TONEMAP)` as the fallback.
 
 /**
- * Coerce an arbitrary operator name to a valid SDR operator. An SDR operator
- * passes through; an extended operator maps to its SDR counterpart
- * (`extended`→`linear`, `extended-reinhard`→`reinhard`, `extended-aces`→`aces`)
- * — the fallback for a pane that requested HDR but never engaged the surface;
- * anything else falls back to `DEFAULT_TONEMAP` ("srgb"). Returns the validated
- * NAME (not the function). Never returns an `extended*` operator.
+ * Resolve a public display operator. Invalid input falls back to
+ * `DEFAULT_TONEMAP` ("srgb"). Internal HDR execution operators are never
+ * accepted through this public-facing seam.
  */
-export function toSdrTonemap(name: string | undefined | null): TonemapOperator {
-  if (name && EXTENDED_TO_SDR[name]) return EXTENDED_TO_SDR[name]!;
+export function resolveDisplayOperator(name: string | undefined | null): TonemapOperator {
   return name && (SDR_TONEMAP_OPERATORS as readonly string[]).includes(name)
     ? (name as TonemapOperator)
     : DEFAULT_TONEMAP;
-}
-
-/**
- * CANONICALIZE any operator name (canonical, a deprecated `extended*` alias, or
- * garbage) to one of the 5 unified display operators — the SINGLE menu set. A
- * deprecated alias maps to its curve ({@link EXTENDED_TO_SDR}); a canonical name
- * passes through; anything else → `DEFAULT_TONEMAP` ("srgb"). This is exactly
- * {@link toSdrTonemap} (the SDR rendition of an operator is the operator itself
- * under the unified model — the ceiling `P` is what varies, not the curve name),
- * exported under an intent-revealing name shared with the Python side.
- */
-export const canonicalizeTonemap = toSdrTonemap;
-
-/**
- * The PEAK `P` a deprecated alias IMPLIES when it seeds a fresh pane's slider:
- * only raw `extended` (Extended · Linear) implies an UNBOUNDED ceiling (∞ — hand
- * the raw value to the browser); every other alias / canonical operator carries
- * no hint, so the pane's default PEAK ({@link EXTENDED_TONEMAP_PEAK_DEFAULT})
- * applies. Returns `undefined` for "no hint".
- */
-export function aliasPeakHint(name: string | undefined | null): number | undefined {
-  return name === "extended" ? EXTENDED_TONEMAP_PEAK_UNBOUNDED : undefined;
 }
 
 /**
@@ -235,7 +159,7 @@ export function resolveEffectiveTonemap(
 ): TonemapOperator {
   void hdrSurfaceEngaged; // one default for every surface (see doc above)
   if (descriptorTonemap == null) return "srgb";
-  return canonicalizeTonemap(descriptorTonemap);
+  return resolveDisplayOperator(descriptorTonemap);
 }
 
 /** Apply an exposure of `ev` stops in scene-linear space: v * 2**ev. */
@@ -505,7 +429,7 @@ export interface RenderTonemapParams {
 }
 
 /**
- * Translate a UNIFIED display operator (one of the 5, or a deprecated alias) at
+ * Translate a unified display operator at
  * ceiling `P` on a given surface into the engine render params. See the section
  * doc. `peak` is the PEAK slider value (`Infinity`/non-finite = unbounded);
  * `gammaValue` is the shared γ state (used only by the Gamma operator).
@@ -529,7 +453,7 @@ export function resolveRenderTonemap(
   hdrSurfaceEngaged: boolean,
   gammaValue: number,
 ): RenderTonemapParams {
-  const op = canonicalizeTonemap(displayOperator);
+  const op = resolveDisplayOperator(displayOperator);
   const encGamma = resolveEncodeGamma(op, gammaValue);
   if (!hdrSurfaceEngaged || (Number.isFinite(peak) && peak <= 1)) {
     return { operator: op, hdrOut: false, peak: 1, gamma: encGamma };

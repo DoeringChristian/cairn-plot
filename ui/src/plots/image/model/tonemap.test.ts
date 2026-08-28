@@ -10,10 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  toSdrTonemap,
-  canonicalizeTonemap,
-  aliasPeakHint,
-  DEPRECATED_TONEMAP_ALIASES,
+  resolveDisplayOperator,
   resolveEffectiveTonemap,
   resolveRenderTonemap,
   SDR_TONEMAP_OPERATORS,
@@ -129,29 +126,16 @@ test("getTonemapOperator falls back to srgb for unknown key", () => {
   assert.equal(getTonemapOperator("aces"), TONEMAP_OPERATORS.aces);
 });
 
-test("toSdrTonemap: SDR pass-through, extended*→SDR counterpart, else srgb", () => {
-  assert.equal(toSdrTonemap("linear"), "linear");
-  assert.equal(toSdrTonemap("srgb"), "srgb");
-  assert.equal(toSdrTonemap("reinhard"), "reinhard");
-  assert.equal(toSdrTonemap("aces"), "aces");
+test("resolveDisplayOperator: canonical pass-through, else srgb", () => {
+  assert.equal(resolveDisplayOperator("linear"), "linear");
+  assert.equal(resolveDisplayOperator("srgb"), "srgb");
+  assert.equal(resolveDisplayOperator("reinhard"), "reinhard");
+  assert.equal(resolveDisplayOperator("aces"), "aces");
   // Unknown / empty / null → srgb default.
-  assert.equal(toSdrTonemap("nope"), "srgb");
-  assert.equal(toSdrTonemap(undefined), "srgb");
-  assert.equal(toSdrTonemap(null), "srgb");
-  // Extended operators fall back to their SDR counterparts (used when a pane
-  // requested HDR but the surface never engaged).
-  assert.equal(toSdrTonemap("extended"), "linear");
-  // Managed linear degrades to the plain SDR clamp01 ("linear"), its natural
-  // SDR counterpart.
-  assert.equal(toSdrTonemap("extended-clamp"), "linear");
-  assert.equal(toSdrTonemap("extended-reinhard"), "reinhard");
-  assert.equal(toSdrTonemap("extended-aces"), "aces");
-  // extended-gamma (the never-shipped alias) resolves to the Gamma curve.
-  assert.equal(toSdrTonemap("extended-gamma"), "gamma");
-  // SDR menu domain excludes every extended (HDR-out) operator.
-  for (const op of ["extended", "extended-clamp", "extended-reinhard", "extended-aces"]) {
-    assert.ok(!(SDR_TONEMAP_OPERATORS as readonly string[]).includes(op));
-  }
+  assert.equal(resolveDisplayOperator("nope"), "srgb");
+  assert.equal(resolveDisplayOperator(undefined), "srgb");
+  assert.equal(resolveDisplayOperator(null), "srgb");
+  assert.equal(resolveDisplayOperator("extended"), "srgb");
 });
 
 // (The former `isHdrTonemap` / `tonemapHasPeak` classifiers + the
@@ -168,12 +152,6 @@ test("resolveEffectiveTonemap: UNIFIED — canonical operator passes through; su
     assert.equal(resolveEffectiveTonemap("srgb", engaged), "srgb");
     assert.equal(resolveEffectiveTonemap("gamma", engaged), "gamma");
     assert.equal(resolveEffectiveTonemap("garbage", engaged), "srgb");
-    // Deprecated aliases canonicalize to their curve on either surface.
-    assert.equal(resolveEffectiveTonemap("extended", engaged), "linear");
-    assert.equal(resolveEffectiveTonemap("extended-clamp", engaged), "linear");
-    assert.equal(resolveEffectiveTonemap("extended-reinhard", engaged), "reinhard");
-    assert.equal(resolveEffectiveTonemap("extended-aces", engaged), "aces");
-    assert.equal(resolveEffectiveTonemap("extended-gamma", engaged), "gamma");
   }
   // UNSET default is surface-dependent: Linear on an engaged HDR surface (managed
   // determinism, PEAK default 4 — replaces the old raw-extended default), sRGB on
@@ -288,9 +266,9 @@ test("Gamma operator: RANGE-MAP is the clamp; γ lives in the encode (resolveEnc
   assert.equal(resolveEncodeGamma("reinhard", 2.2), undefined);
   assert.equal(resolveEncodeGamma("aces", 2.2), undefined);
   // gamma is in the SDR group (menu order Linear · sRGB · Gamma · Reinhard ·
-  // ACES) and passes through toSdrTonemap unchanged.
+  // ACES) and passes through resolveDisplayOperator unchanged.
   assert.ok(SDR_TONEMAP_OPERATORS.includes("gamma"));
-  assert.equal(toSdrTonemap("gamma"), "gamma");
+  assert.equal(resolveDisplayOperator("gamma"), "gamma");
 });
 
 test("Gamma DISPLAY value goldens (tev): pow(clamp01(x), 1/γ)", () => {
@@ -462,29 +440,14 @@ test("extendedOutputEncode: gamma convention mirrors outputEncode (unclamped)", 
 // the whole operator × peak × surface matrix (resolveRenderTonemap).
 // =====================================================================
 
-test("canonicalizeTonemap / DEPRECATED_TONEMAP_ALIASES / aliasPeakHint", () => {
+test("resolveDisplayOperator accepts only canonical operators", () => {
   // The 5 canonical operators pass through.
   for (const op of ["linear", "srgb", "gamma", "reinhard", "aces"]) {
-    assert.equal(canonicalizeTonemap(op), op);
+    assert.equal(resolveDisplayOperator(op), op);
   }
-  // Deprecated aliases resolve to their curve.
-  assert.deepEqual(
-    [...DEPRECATED_TONEMAP_ALIASES],
-    ["extended", "extended-clamp", "extended-reinhard", "extended-aces", "extended-gamma"],
-  );
-  assert.equal(canonicalizeTonemap("extended"), "linear");
-  assert.equal(canonicalizeTonemap("extended-clamp"), "linear");
-  assert.equal(canonicalizeTonemap("extended-reinhard"), "reinhard");
-  assert.equal(canonicalizeTonemap("extended-aces"), "aces");
-  assert.equal(canonicalizeTonemap("extended-gamma"), "gamma");
   // Garbage / null → the srgb default.
-  assert.equal(canonicalizeTonemap("nope"), "srgb");
-  assert.equal(canonicalizeTonemap(null), "srgb");
-  // Only raw `extended` implies an unbounded ceiling (∞); everything else none.
-  assert.equal(aliasPeakHint("extended"), EXTENDED_TONEMAP_PEAK_UNBOUNDED);
-  assert.equal(aliasPeakHint("extended-clamp"), undefined);
-  assert.equal(aliasPeakHint("linear"), undefined);
-  assert.equal(aliasPeakHint(null), undefined);
+  assert.equal(resolveDisplayOperator("nope"), "srgb");
+  assert.equal(resolveDisplayOperator(null), "srgb");
 });
 
 test("resolveRenderTonemap: NON-HDR surface / P<=1 → the plain SDR operator (the degrade rule)", () => {
@@ -527,18 +490,6 @@ test("resolveRenderTonemap: P=∞ (unbounded) → raw browser-clipped extended (
   // A non-finite peak (NaN) is also treated as unbounded, never leaked to the GPU.
   const nan = resolveRenderTonemap("linear", Number.NaN, true, 2.2);
   assert.ok(Number.isFinite(nan.peak), "peak handed to the GPU is always finite");
-});
-
-test("resolveRenderTonemap: aliases route through canonicalization", () => {
-  // A descriptor alias resolves the same as its canonical operator at a given P.
-  assert.deepEqual(
-    resolveRenderTonemap("extended-reinhard", 4, true, 2.2),
-    resolveRenderTonemap("reinhard", 4, true, 2.2),
-  );
-  assert.deepEqual(
-    resolveRenderTonemap("extended-gamma", 4, true, 2.2),
-    resolveRenderTonemap("gamma", 4, true, 2.2),
-  );
 });
 
 test("UNIFIED INVARIANT: P=1 render == the legacy SDR curve+encode, per operator (byte-for-byte)", () => {
@@ -614,13 +565,5 @@ test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap",
     hdrOut: false,
     peak: 1,
     gamma: undefined,
-  });
-  // The deprecated raw `extended` alias: Linear curve + ∞ ceiling → raw extended.
-  const raw = resolveEffectiveTonemap("extended", true); // "linear"
-  assert.deepEqual(resolveRenderTonemap(raw, aliasPeakHint("extended")!, true, 2.2), {
-    operator: "extended",
-    hdrOut: true,
-    peak: EXTENDED_TONEMAP_PEAK_MAX,
-    gamma: 1,
   });
 });

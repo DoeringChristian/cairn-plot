@@ -10,7 +10,7 @@
  * sets without a contract guard failing.
  */
 import { COLORMAP_NAMES } from "../../settings/colormaps/lut.ts";
-import { SDR_TONEMAP_OPERATORS, DEPRECATED_TONEMAP_ALIASES } from "../../plots/image/model/tonemap.ts";
+import { SDR_TONEMAP_OPERATORS } from "../../plots/image/model/tonemap.ts";
 
 /** Named scalar colormaps a color-by-value chart accepts (mirrors Python
  *  `_COLORMAPS`). */
@@ -23,17 +23,6 @@ export const IMAGE_COLORMAPS: readonly string[] = ["none", ...COLORMAP_NAMES];
 /** The canonical tone-map operator set — the UNIFIED 5-operator menu (mirrors
  *  Python `_TONEMAP_OPERATORS`, ↔ contract `tonemapOperators`). */
 export const TONEMAP_OPERATORS: readonly string[] = SDR_TONEMAP_OPERATORS;
-
-/** The DEPRECATED pre-unification `extended*` names, still ACCEPTED by
- *  `checkTonemap` and resolved client-side to a (operator, peak) pair (mirrors
- *  Python `_TONEMAP_ALIASES`, ↔ contract `tonemapOperatorAliases`). */
-export const TONEMAP_OPERATOR_ALIASES: readonly string[] = DEPRECATED_TONEMAP_ALIASES;
-
-/** Every `tonemap=` name the builder accepts: canonical ∪ deprecated aliases. */
-export const TONEMAP_ACCEPTED: readonly string[] = [
-  ...TONEMAP_OPERATORS,
-  ...TONEMAP_OPERATOR_ALIASES,
-];
 
 /** Public `compare(mode=)` diff-kernel short names → the registry kernel id
  *  carried as the descriptor `diffSubmode` (mirrors Python
@@ -50,9 +39,7 @@ export const COMPARE_KERNEL_MODES: Readonly<Record<string, string>> = {
   ssim: "ssim",
 };
 
-/** View compositions (mirrors Python `_COMPARE_VIEW_MODES`). `slide` (the old
- *  public name for `split`) and the removed legacy `blend` mode are accepted as
- *  deprecated aliases by `builders.ts`. */
+/** View compositions (mirrors Python `_COMPARE_VIEW_MODES`). */
 export const COMPARE_VIEW_MODES: readonly string[] = ["split"];
 
 /** The full public `compare(mode=)` enum (mirrors Python `_COMPARE_PUBLIC_MODES`). */
@@ -87,7 +74,7 @@ function oneOf(name: string, value: string, allowed: readonly string[]): string 
 
 export const checkChartColormap = (v: string): string => oneOf("colormap", v, CHART_COLORMAPS);
 export const checkImageColormap = (v: string): string => oneOf("colormap", v, IMAGE_COLORMAPS);
-export const checkTonemap = (v: string): string => oneOf("tonemap", v, TONEMAP_ACCEPTED);
+export const checkTonemap = (v: string): string => oneOf("tonemap", v, TONEMAP_OPERATORS);
 export const checkCompareMode = (v: string): string => oneOf("mode", v, COMPARE_PUBLIC_MODES);
 export const checkAlign = (v: string): string => oneOf("align", v, COMPARE_ALIGNS);
 export const checkFit = (v: string): string => oneOf("fit", v, COMPARE_FITS);

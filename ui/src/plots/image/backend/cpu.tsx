@@ -74,7 +74,7 @@ import { clamp01 } from "../../../primitives/util/clamp";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { floatPixelReader, widenFloatPixels } from "../model/pixel-buffer.ts";
 import {
-  toSdrTonemap,
+  resolveDisplayOperator,
   DEFAULT_TONEMAP,
   applyExposureOffset,
   outputEncode,
@@ -450,7 +450,7 @@ function CpuSdrImagePane(
     propColormap: colormapProp,
     propTonemap: tonemapProp,
     resolveDefaultCurve: (t) => {
-      const s = toSdrTonemap(t);
+      const s = resolveDisplayOperator(t);
       return s === "gamma" || s === "linear" ? s : "srgb";
     },
     // The settings store rules when present; picks publish and flow back down.
@@ -1094,7 +1094,7 @@ function CpuHdrImagePane(
     (props as unknown as { colormap?: Colormap }).colormap ?? "none";
   const sourceArity = shapeDims(hdr.shape).c;
   const resolveDefaultCurve = useCallback(
-    (t: string | null | undefined) => toSdrTonemap(t ?? undefined),
+    (t: string | null | undefined) => resolveDisplayOperator(t ?? undefined),
     [],
   );
   const enc = usePaneEncoding({

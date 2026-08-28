@@ -15,14 +15,6 @@
     "aces",
     "normal"
   ],
-  "$comment_tonemapOperatorAliases": "DEPRECATED pre-unification operator names, kept ACCEPTED as aliases resolving to a (canonical operator, peak) pair under the unified surface (PEAK is the mode; SDR = P=1): extended→linear+P=inf, extended-clamp→linear, extended-reinhard→reinhard, extended-aces→aces, extended-gamma→gamma.",
-  "tonemapOperatorAliases": [
-    "extended",
-    "extended-clamp",
-    "extended-reinhard",
-    "extended-aces",
-    "extended-gamma"
-  ],
   "displayTransfers": [
     "srgb",
     "gamma",

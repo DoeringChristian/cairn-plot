@@ -7,7 +7,6 @@ colormap / HDR tone-map / public compare-kernel sets without failing a guard:
 
   - `_COLORMAPS`               ↔ contract `colormaps`
   - `_TONEMAP_OPERATORS`       ↔ contract `tonemapOperators`
-  - `_TONEMAP_ALIASES`         ↔ contract `tonemapOperatorAliases`
   - `_COMPARE_KERNEL_MODES`    ↔ contract `compareKernelPublicNames`
 
 Comparisons are set-based (the JSON's order is documentation only). A cheap
@@ -26,7 +25,6 @@ from cairn_plot.components import (
     _COMPARE_FITS,
     _PIXEL_VALUE_NOTATIONS,
     _TONEMAP_OPERATORS,
-    _TONEMAP_ALIASES,
     _SDR_DISPLAY_TRANSFERS,
 )
 
@@ -40,10 +38,6 @@ def test_colormaps_match_contract() -> None:
 
 def test_tonemap_operators_match_contract() -> None:
     assert set(_TONEMAP_OPERATORS) == set(CONTRACT["tonemapOperators"])
-
-
-def test_tonemap_operator_aliases_match_contract() -> None:
-    assert set(_TONEMAP_ALIASES) == set(CONTRACT["tonemapOperatorAliases"])
 
 
 def test_display_transfers_match_contract() -> None:
@@ -125,7 +119,6 @@ def test_api_doc_lists_every_contract_name() -> None:
     for group in (
         "colormaps",
         "tonemapOperators",
-        "tonemapOperatorAliases",
         "displayTransfers",
         "compareKernelPublicNames",
     ):

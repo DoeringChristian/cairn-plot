@@ -42,9 +42,9 @@ const componentsPath = resolve(repoRoot, "packages/python/src/cairn_plot/compone
 
 const sorted = (xs: readonly string[]): string[] => [...xs].sort();
 
-/** The tone-map operator ID set the registry defines: the non-HDR light CURVES
- *  (the `extended*` HDR-out curves are deprecated aliases, not menu operators)
- *  plus the structural REMAPS (the `normal` map). Mirrors `SDR_TONEMAP_OPERATORS`
+/** The public tone-map operator ID set the registry defines: the non-HDR light
+ *  CURVES plus the structural REMAPS (the `normal` map). Internal HDR execution
+ *  curves are not menu operators. Mirrors `SDR_TONEMAP_OPERATORS`
  *  in `image/tonemap.ts`, but computed here straight from the registry. */
 const registryTonemapOperators = (): string[] => [
   ...listEncodingsByKind("curve").filter((e) => !e.needsHdrSurface),

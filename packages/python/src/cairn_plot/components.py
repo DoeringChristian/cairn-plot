@@ -798,15 +798,7 @@ def _check_pixel_value_notation(value: str) -> str:
 # UNIFIED tone-map surface. There is ONE operator set (a curve); the PEAK
 # ceiling ``P`` is the mode — every operator respects ``P`` as its clip point, so
 # an SDR pane is just ``P = 1``. ``_TONEMAP_OPERATORS`` is the canonical set
-# (``↔`` contract ``tonemapOperators``); ``_TONEMAP_ALIASES`` are the DEPRECATED
-# pre-unification names, kept ACCEPTED and resolved by the client to a
-# ``(operator, peak)`` pair (``↔`` contract ``tonemapOperatorAliases``):
-#   extended          → linear   + peak ∞ (raw browser-clipped pass-through)
-#   extended-clamp    → linear   + peak (managed ceiling = the PEAK slider)
-#   extended-reinhard → reinhard + peak
-#   extended-aces     → aces     + peak
-#   extended-gamma    → gamma    + peak
-# See ``image/tonemap.ts``'s ``resolveEffectiveTonemap`` / ``resolveRenderTonemap``.
+# (``↔`` contract ``tonemapOperators``).
 _TONEMAP_OPERATORS = (
     "linear",
     "srgb",
@@ -818,15 +810,7 @@ _TONEMAP_OPERATORS = (
     # output-encode, like ``linear``). ``↔`` TS ``TonemapOperator`` "normal".
     "normal",
 )
-_TONEMAP_ALIASES = (
-    "extended",
-    "extended-clamp",
-    "extended-reinhard",
-    "extended-aces",
-    "extended-gamma",
-)
-# The names ``cp.Image(tonemap=)`` accepts on the HDR path: canonical ∪ aliases.
-_HDR_TONEMAP_OPERATORS = _TONEMAP_OPERATORS + _TONEMAP_ALIASES
+_HDR_TONEMAP_OPERATORS = _TONEMAP_OPERATORS
 
 # The pure DISPLAY-TRANSFER encodes: sRGB (default) · Gamma(γ) · Linear (``↔``
 # contract ``displayTransfers``, ``↔`` TS ``SDR_DISPLAY_TRANSFER_OPERATORS``).
@@ -864,13 +848,8 @@ def _image_hdr_props(
     aces}`` and ``peak`` (``P``, ×SDR white) is the HDR MODE — every operator
     clips at ``P`` (Linear/sRGB/Gamma hard-clip, Reinhard/ACES roll off), so
     ``P = 1`` is the SDR rendition and ``P > 1`` extends onto an HDR surface. The
-    DEPRECATED ``"extended"`` family (``extended`` · ``extended-clamp`` ·
-    ``extended-reinhard`` · ``extended-aces`` · ``extended-gamma``) is still
-    ACCEPTED and resolved by the client to a ``(operator, peak)`` pair
-    (``extended``→``linear`` + ``P=∞``; ``extended-clamp``→``linear``;
-    ``extended-reinhard``→``reinhard``; ``extended-aces``→``aces``;
-    ``extended-gamma``→``gamma``)."""
-    # An explicit tonemap is emitted verbatim (client canonicalizes aliases). If
+    """
+    # An explicit tonemap is emitted verbatim. If
     # only `gamma=` was given, select the Gamma operator (so `cp.Image(hdr,
     # gamma=2.2)` means "display with gamma 2.2"). Otherwise emit NO tonemap and
     # let the client apply its surface default.
@@ -979,10 +958,8 @@ class Image(Component):
       ``.npy`` (``imghdr`` DataSpec) and tone-mapped client-side (1.0 = display
       white, values >1 preserved as headroom). There is NO ``max>1``/``min<0``
       auto-HDR heuristic: an in-``[0,1]`` float and an EXR share the ONE float
-      pipeline. Float props route to the real tone-map: ``tonemap`` ∈
-      the SDR set ``{linear,srgb,reinhard,aces}`` OR the HDR-out ``extended``
-      family ``{extended,extended-clamp,extended-reinhard,extended-aces}``
-      (default ``srgb``),
+      pipeline. Float props route to the canonical tone-map set
+      ``{linear,srgb,gamma,reinhard,aces}`` (default ``srgb``),
       ``exposure`` (base EV stops), ``offset`` (base additive offset, applied
       after exposure), and an OPTIONAL ``gamma`` override;
       ``showAxes``/``interpolation`` are honoured;
@@ -991,18 +968,10 @@ class Image(Component):
       a leading toolbar **TONEMAP menu** to switch the operator interactively;
       ``tonemap=`` sets its default. When the client's true-HDR surface engages
       (WebGPU ``rgba16float`` + extended canvas tone-mapping on an HDR display)
-      the menu adds the HDR-out group in order — ``Extended · Linear``
-      (unclamped pass-through; each browser clips it at its own headroom
-      estimate), ``Extended · Linear (managed)`` (``extended-clamp``: identity
-      below PEAK, hard-clipped at PEAK in cairn-plot's shader for cross-browser
-      determinism, with a **PEAK** slider), ``Extended · Reinhard`` and
-      ``Extended · ACES`` (peak roll-off, with a **PEAK** slider) — and the
-      default-in-effect stays ``Extended · Linear`` (raw fidelity) unless
-      ``tonemap=`` explicitly names an ``extended*`` operator (used verbatim);
-      ``Extended · Linear (managed)`` is an explicit opt-in for when
-      cross-browser linearity matters. Off an HDR surface, an ``extended*``
-      ``tonemap=`` falls back to its SDR counterpart. The engaged menu state + PEAK are
-      client-only; ``tonemap=`` is the only Python input.
+      the selected canonical curve is evaluated with the HDR surface's PEAK.
+      The renderer chooses its internal HDR execution operator; those internal
+      names are not Python inputs. The engaged menu state + PEAK are client-only;
+      ``tonemap=`` is the only Python operator input.
 
     NOTE: a ``run[tag]`` handle always takes the 8-bit path — the tracking
     ingest clamps images to 8-bit, so no float artifact exists yet. Real HDR is

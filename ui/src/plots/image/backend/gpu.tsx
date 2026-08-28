@@ -131,7 +131,6 @@ import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
   resolveEncodeGamma,
-  aliasPeakHint,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   EXTENDED_TONEMAP_PEAK_MIN,
   EXTENDED_TONEMAP_PEAK_MAX,
@@ -702,7 +701,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const seedPeak = (): number =>
     propPeak != null && propPeak > 0
       ? propPeak
-      : (aliasPeakHint(propTonemap) ?? EXTENDED_TONEMAP_PEAK_DEFAULT);
+      : EXTENDED_TONEMAP_PEAK_DEFAULT;
   // PEAK resolves at RENDER through the one lookup (the settings contract):
   // store value > descriptor seed. No pane state, no adoption effect.
   const peakSeed = seedPeak();

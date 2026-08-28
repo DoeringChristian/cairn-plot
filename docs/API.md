@@ -39,9 +39,9 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 ### Containers
 | Container | Purpose |
 | --- | --- |
-| `cp.Grid` | Lay out child components in a grid (per-column widths, optional viewport/camera sync via `Shared`). |
-| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`split`; `slide`/`blend` are deprecated aliases) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip` · `flip_ldr` · `ssim`). `flip` is perceptual FLIP — auto-dispatched LDR-FLIP for u8 sources, HDR-FLIP (multi-exposure) for float/HDR sources; `flip_ldr` forces the tone-mapped LDR comparison on float sources. `ssim` is structural similarity (Wang et al. 2004) on linear luminance — the map shows the error field `1 − SSIM`. `flip`/`ssim` are GPU-only. `colormap=` colors the diff map. |
-| `cp.Shared` | Declare shared viewport/camera sync scope for children of a `Grid`. |
+| `cp.Grid` | Lay out child components in a grid (per-column widths, optional view/camera settings sync via `Shared`). |
+| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`split`) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip` · `flip_ldr` · `ssim`). `flip` is perceptual FLIP — auto-dispatched LDR-FLIP for u8 sources, HDR-FLIP (multi-exposure) for float/HDR sources; `flip_ldr` forces the tone-mapped LDR comparison on float sources. `ssim` is structural similarity (Wang et al. 2004) on linear luminance — the map shows the error field `1 − SSIM`. `flip`/`ssim` are GPU-only. `colormap=` colors the diff map. |
+| `cp.Shared` | Declare shared view/camera settings for children of a `Grid`. |
 | `cp.Component` | Base class for the above (subclassing seam). |
 
 #### `cp.Compare` mismatched-size operands: `align=` / `fit=`
@@ -354,12 +354,6 @@ the PEAK default; see `docs/browser-support.md`.)
 **replaces** the pre-unification raw-`extended` default; type `P = inf` to recover
 the raw browser-clipped look), and **sRGB** on SDR (the bit-exact 8-bit
 round-trip). `peak=` (a float) seeds the slider; unset → `1` on SDR / `4` on HDR.
-
-**Deprecated aliases.** The pre-unification `tonemap=` names still validate and
-resolve to a `(operator, peak)` pair (so old code keeps working): `extended` →
-`linear` + `P=∞`; `extended-clamp` → `linear`; `extended-reinhard` → `reinhard`;
-`extended-aces` → `aces`; `extended-gamma` → `gamma`. They are contract-listed as
-`tonemapOperatorAliases` (distinct from the canonical 5 `tonemapOperators`).
 
 **CPU backend — the P=1 hardware exception.** The 2D-canvas backend cannot emit
 extended output (a `<canvas>` 2D context has no HDR/`rgba16float` surface), so it
