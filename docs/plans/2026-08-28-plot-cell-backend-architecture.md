@@ -1,6 +1,6 @@
 # Plot cell, plot definition, backend, and engine architecture
 
-Status: implementation in progress
+Status: implemented
 
 ## Implementation progress
 
@@ -98,7 +98,7 @@ Status: implementation in progress
 - [x] Extract image CPU/WebGPU capability selection and fallback policy into
   the image plot boundary. The reusable WebGPU facade remains plot-agnostic;
   image backend policy no longer lives in the central registration module.
-- [ ] Move the remaining retained image surface orchestration out of
+- [x] Move the remaining retained image surface orchestration out of
   `host/PlotNodeView.tsx` and behind an image-owned host adapter. Generic leaf
   resolution and preloading already route exclusively through plot definitions.
 - [x] Replace flattened React prop bags with one typed view contract carrying
@@ -171,14 +171,18 @@ ui/src/
   primitives/   generic presentation components
 ```
 
-Concrete implementations live with their plot semantics:
+Concrete implementations live directly with their plot semantics. There is no
+`implementations/` or per-plot `backends/` wrapper directory:
 
 ```text
-plots/image/backends/webgpu/
-plots/image/backends/canvas/
+plots/image/definition/
+plots/image/runtime/
+plots/image/resources/
+plots/image/webgpu/
+plots/image/cpu/
 plots/scalar/backends/svg/
-plots/scatter/backends/webgpu/
-plots/mesh/backends/three/
+plots/scatter/backends/svg/
+plots/three/backends/three/
 ```
 
 The current `ui/src/lib/cairn-plot` nesting is removed progressively after the

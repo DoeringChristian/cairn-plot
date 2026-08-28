@@ -282,7 +282,7 @@ change over time — a server endpoint that `302`-redirects to a
 content-addressed blob (e.g. `/api/query?run=latest&tag=…` → `/api/artifacts/{digest}`).
 The image/diff caches key on the URL string, so before a URL reaches the panes
 it is resolved to its **final post-redirect URL** (`res.url`, the digest) via
-`resolveFinalUrl` (`plots/image/model/final-url.ts`). Two "latest" resolutions
+`resolveFinalUrl` (`plots/image/resources/final-url.ts`). Two "latest" resolutions
 that land on different digests therefore get different cache identities (no stale
 pixels); identical content across queries shares one digest (free dedup). A
 non-redirecting or `data:`/`blob:` URL resolves to itself (unchanged), and a
@@ -301,17 +301,22 @@ addon installs a backend.
 See [Authoring plot types](plot-type-authoring.md) for the internal extension
 contract and invariants.
 
-### Image-backend contract (`ui/src/plots/image/backends/contracts.ts`)
+### Image runtime and backend contracts
+
+Image semantics are declared in `ui/src/plots/image/definition/`. Resolved
+content and comparison meaning are backend-neutral. Runtime orchestration lives
+in `ui/src/plots/image/runtime/`; concrete implementations live directly in
+`ui/src/plots/image/cpu/` and `ui/src/plots/image/webgpu/`.
 
 The interchangeable CPU and WebGPU image backends consume the same semantic
 image presentation and the same cell-owned settings. Backend selection changes
 implementation only; it cannot initialize or mutate settings. Both backends
 receive the standard `{ presentation, settings, commands }` input and are picked
-per mount by `resolveRenderMode(...)`.
+by the image runtime's capability policy.
 
-- `type RenderMode = "cpu" | "gpu" | "auto"`; `resolveRenderMode(explicit?)`.
-- `interface HdrData` — a parsed float image buffer (`data`, `shape`, `dtype`,
-  `precision?`). See the F16 pipeline below for `precision`.
+- `interface ImageSource` — one backend-neutral decoded source tagged as
+  `float` or `uint8`.
+- `interface FloatImageData` — the backend's parsed float image buffer.
 - `tonemapToImageData(hdr, tonemap, exposure, gamma?, offset?)` — pure HDR-float →
   `ImageData` tone-mapper (exported from `CpuImagePane`). `offset` (default 0) is
   the TEV display offset, added after exposure (before the tone-map operator).
@@ -431,7 +436,7 @@ A host (e.g. cairn) can hide a pane's `PlotToolbar` and drive the whole view fro
 its **own** menu. `cp.Image(toolbar=False)` / `cp.Compare(toolbar=False)` (and the
 JS `image(data, { toolbar:false })` / `compare(a, b, { toolbar:false })`) emit
 `props.toolbar = false`; the default `True` is omitted (minimal descriptor). The
-flag is a validated bool and rides the shared `ImageBackendProps.toolbar` seam, so
+flag is a validated bool and rides the shared `ImageBackendInput.toolbar` seam, so
 **both panes** (`CpuImagePane`, `GpuImagePane` — the ONE unified pane for images
 AND every compare mode) hide it identically.
 
@@ -470,11 +475,11 @@ CPU HDR tone-map path both do); a colormapped SDR pane forces a raw passthrough,
 EV/offset don't apply there either. Deep-EXR depth sliders + region-select are
 **data-driven** (present only for a deep source), not host-menu controls.
 
-#### Half-precision (F16) HDR pipeline (`plots/image/model/half.ts`)
+#### Half-precision (F16) HDR pipeline (`plots/image/runtime/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end
 instead of widening to f32 on decode. The float payload carries a
-`precision: "f32" | "f16-bits"` tag (`DecodedImage`, `HdrData`,
-`CompareFloatSource`; default/absent = `"f32"`):
+`precision: "f32" | "f16-bits"` tag (`DecodedImage`, `FloatImageSource`, and
+`ResolvedFloatImage`; default/absent = `"f32"`):
 - `"f16-bits"` ⇒ `data` is a `Uint16Array` of half bits (2 bytes/sample); the
   pure-TS `exr.ts` reader emits it when **every** channel is `HALF` (a mix with
   any `FLOAT`/`UINT` channel stays `"f32"`).
@@ -545,7 +550,7 @@ Two resolvers share one decode seam:
   format (`.exr` / float `.npy` — detect from `args.mimes`/`args.referenceMimes`,
   the host's `artifact_mime`, else the URL extension + magic bytes) it fetches
   (via `source.bytes`) and decodes, attaching a decoded
-  `float: CompareFloatSource` to the item and
+  `float: ResolvedFloatImage` to the item and
   clearing its `url`. Browser-native panes (png/jpeg/…) and extension-less URLs
   pass through UNCHANGED (no extra fetch/decode), so it is a strict superset a
   host adopts to get true-HDR panes/compare (rgba16float, HDR-FLIP
@@ -554,9 +559,9 @@ Two resolvers share one decode seam:
 The decode itself is the shared `decodeImageSource({ url?, bytes?, mime? })` →
 `{ url, float? }` seam (also consumed by `plot-node.tsx`'s `resolveFrame`): fetch
 (redirect-following; the final URL is the diff-cache content key), sniff via
-`decodeImage`, and route `f32` → a `CompareFloatSource` vs `u8` → a PNG `data:`
-URL. `decodedFloatToCompareSource(decoded, contentKey)` is the pure
-`DecodedImage` (f32) → `CompareFloatSource` map (carries the `precision` tag);
+`decodeImage`, and route `f32` → a `ResolvedFloatImage` vs `u8` → a PNG `data:`
+URL. `decodedFloatToImageComparisonInput(decoded, contentKey)` is the pure
+`DecodedImage` (f32) → `ResolvedFloatImage` map (carries the `precision` tag);
 `isFloatCandidateArtifact({ url?, mime? })` is the raw-buffer-format detection
 gate. The image comparison presentation forwards decoded float operands to the
 selected backend through its typed input contract.

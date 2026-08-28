@@ -77,6 +77,25 @@ definition, and the addon installs a backend through
 `__cairnPlotRegisterBackends`. Addons do not register untyped renderer
 components or redefine plot semantics.
 
+### Image implementation layout
+
+The image plot is the reference implementation of the split:
+
+```text
+plots/image/
+  definition/  fields, settings, operation manifests, comparison capability
+  runtime/     host adapter, settings projection, backend selection
+  resources/   decode, resolution, and cache helpers
+  cpu/         CPU and Canvas implementations of image/display operations
+  webgpu/      WebGPU implementations, shaders, pipelines, and retained surfaces
+```
+
+Semantic operation definitions expose IDs, arity, output fields, cache policy,
+and settings. CPU and WebGPU implementations reference those definitions but
+do not leak executable code upward. WebGPU selects a cached pipeline specialized
+to exactly one image operation and one display operation; operations are never
+encoded as numeric shader dispatch IDs.
+
 ## Review checklist
 
 - The data and resolved-presentation validators reject malformed input.

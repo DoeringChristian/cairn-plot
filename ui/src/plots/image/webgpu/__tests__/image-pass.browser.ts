@@ -602,7 +602,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   // non-default peak to exercise the P uniform. GRADIENT_PIXELS includes 3.0
   // (HDR), so extended-reinhard/-aces produce >1 display-linear light; for
   // extended-clamp (managed linear) every gradient value is < 6, so this pins
-  // the GPU identity region (operatorId=7 routed correctly, y=x below P).
+  // the GPU identity region (the specialized linear pipeline keeps y=x below P).
   for (const op of ["linear", "reinhard", "aces"]) {
     const caseLabel = `${label}/hdrOut/${op}/peak=6`;
     const params: ImageParams = {
