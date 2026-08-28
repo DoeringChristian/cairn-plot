@@ -11,14 +11,14 @@
  * a KB partial readback instead of the ~64MB full-texture transfer + 4M-iter JS
  * loop.
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import {
   cpuReduce,
   getReduceOp,
   getReduceProgram,
 } from "../reduce/registry";
 import { meanSsimFromErrorMap } from "../ssim-metric";
-import type { Device, Texture } from "../../../../engines/webgpu/types";
+import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "REDUCE" });

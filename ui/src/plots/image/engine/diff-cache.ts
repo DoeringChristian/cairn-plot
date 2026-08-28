@@ -9,7 +9,7 @@
  * count and a byte budget; the reasoning for the (deliberately generous) caps
  * lives on `DEFAULT_MAX_ENTRIES` below.
  */
-import type { Device, Texture } from "../../../engines/webgpu/types.ts";
+import type { Device, Texture } from "./webgpu/device-contract";
 // Type-only imports — fully erased by the type stripper, so they do NOT pull the
 // `./kernels` value barrel (which is a directory import Node's strip-only mode
 // rejects) into this module's runtime graph.

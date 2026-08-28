@@ -34,9 +34,9 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with the
  * command above whenever this harness or its imports change.
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { loadExrDecoder } from "../../model/decoders/wasm-inline/wasm-exr-inline";
-import type { Device, Texture } from "../../../../engines/webgpu/types";
+import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const TRUNKS_URL = "https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr-images/main/v2/Stereo/Trunks.exr";

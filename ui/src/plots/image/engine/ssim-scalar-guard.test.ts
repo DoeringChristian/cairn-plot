@@ -19,7 +19,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { guardedSsimScalar, getSsimComputeCount } from "./ssim-scalar-guard.ts";
 import { ssimMeanFromLuminanceChunked } from "./kernels/ssim-reference.ts";
-import type { Device } from "../../../engines/webgpu/types.ts";
+import type { Device } from "./webgpu/device-contract";
 
 /** A stand-in device object — the guard only uses it as a WeakMap key. */
 const fakeDevice = (): Device => ({}) as unknown as Device;

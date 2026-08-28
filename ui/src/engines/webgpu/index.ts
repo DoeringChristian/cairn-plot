@@ -1,9 +1,8 @@
 export type {
-  WebGpuEngine,
   WebGpuEngineContext,
   WebGpuSurfaceOptions,
 } from "./contracts.ts";
-export { webGpuEngine } from "./facade.ts";
+export { createWebGpuEngineContext } from "./facade.ts";
 export type {
   RhiBindGroup,
   RhiBindGroupEntry,

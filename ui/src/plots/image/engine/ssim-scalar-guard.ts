@@ -21,7 +21,7 @@
  * testable under Node's `--experimental-strip-types` without pulling in the
  * whole kernel/diff graph.
  */
-import type { Device } from "../../../engines/webgpu/types";
+import type { Device } from "./webgpu/device-contract";
 
 const cache = new WeakMap<Device, Map<string, Promise<number>>>();
 

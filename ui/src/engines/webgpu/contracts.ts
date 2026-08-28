@@ -1,9 +1,4 @@
-import type {
-  Capabilities,
-  Device,
-  Surface,
-} from "./types.ts";
-import type { WebGpuRhi } from "./rhi.ts";
+import type { RhiCapabilities, RhiSurface, WebGpuRhi } from "./rhi.ts";
 
 export interface WebGpuSurfaceOptions {
   hdr?: boolean;
@@ -14,18 +9,8 @@ export interface WebGpuSurfaceOptions {
  * used by reusable passes; plot backends should prefer the named operations.
  */
 export interface WebGpuEngineContext {
-  readonly capabilities: Readonly<Capabilities>;
-  /** Stable plot-agnostic interface for new GPU backends and shared passes. */
+  readonly capabilities: Readonly<RhiCapabilities>;
   readonly rhi: WebGpuRhi;
-  /** @internal Transitional access for legacy image-specific extensions. */
-  readonly device: Device;
-  createSurface(canvas: HTMLCanvasElement, options?: WebGpuSurfaceOptions): Surface;
-  readSurface(surface: Surface): ReturnType<Device["readback"]>;
-}
-
-export interface WebGpuEngine {
-  isAvailable(): boolean;
-  acquire(): Promise<WebGpuEngineContext>;
-  /** Device-loss/test recovery. Existing contexts become invalid. */
-  reset(): void;
+  createSurface(canvas: HTMLCanvasElement, options?: WebGpuSurfaceOptions): RhiSurface;
+  readSurface(surface: RhiSurface): Promise<Uint8Array | Float32Array>;
 }

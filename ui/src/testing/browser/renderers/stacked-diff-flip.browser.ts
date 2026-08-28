@@ -24,7 +24,7 @@ import { isDeviceLostError } from "../../../plots/image/engine/webgpu/device";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/backends/webgpu";
 import { urlSource } from "../../../plots/image/backends/contracts";
-import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../../../plots/image/engine/webgpu/device-provider.ts";
 import { getDiffComputeCount } from "../../../plots/image/engine/diff-engine";
 import { createHarness, waitFor } from "../../harness";
 

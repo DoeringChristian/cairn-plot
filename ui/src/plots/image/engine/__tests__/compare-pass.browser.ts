@@ -20,14 +20,14 @@
  * RUNNING: bundle with esbuild, serve over http, open compare-pass.browser.html
  * (see the sibling *.browser.ts for the exact commands).
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
 import { getDiffKernel } from "../kernels/index";
 import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/encodings/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/index";
-import type { Device, Texture } from "../../../../engines/webgpu/types";
+import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "COMPARE PASS", resultFlag: "__comparePassTestResult" });

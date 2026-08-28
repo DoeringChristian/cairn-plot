@@ -16,7 +16,7 @@
  * `rgba8unorm` target (byte-exact within 1/255); the `extended*` encodings need
  * the HDR surface, so they render to an `rgba32float` target (float, looser eps).
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
 import {
   applyExposure,
@@ -36,7 +36,7 @@ import {
 } from "../../model/encodings/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../settings/colormaps/lut";
-import type { Device, Texture } from "../../../../engines/webgpu/types";
+import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "ENCODING REGISTRY" });

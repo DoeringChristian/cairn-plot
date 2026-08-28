@@ -22,7 +22,7 @@
  * reduction over the sources) and cached in the entry, fixing the legacy
  * remount-recompute.
  */
-import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat, BindGroupEntry } from "../../../engines/webgpu/types";
+import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat, BindGroupEntry } from "./webgpu/device-contract";
 // Import from the registry INDEX (not the bare registry) so the built-in
 // kernels are registered as a side effect before any lookup.
 import {

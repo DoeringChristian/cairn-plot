@@ -12,15 +12,9 @@
  * at all, not something this module re-derives.
  *
  * ## `alphaMode: 'premultiplied'` (Q18)
- * Both configs use `'premultiplied'`, not `'opaque'`: `image.wgsl.ts`/
- * `compare.wgsl.ts` output a fully-transparent `vec4(0.0)` fragment for any
- * pixel outside the sampled image's `[0,1]` bounds (zoomed-out borders) — an
- * `'opaque'`-configured surface would force every composited pixel's alpha
- * to 1, silently discarding that transparency and defeating the fix. Every
- * fragment this pipeline ever emits has alpha exactly 0 or 1 (never a
- * fractional in-between), so premultiplied-vs-straight alpha is a
- * distinction without a difference here (0*rgb=0 either way) — no shader
- * change was needed beyond the OOB check itself.
+ * Both configs use `'premultiplied'`, not `'opaque'`, so concrete backends may
+ * render transparent pixels over host chrome. The shared engine deliberately
+ * does not prescribe a plot's fragment semantics.
  */
 /// <reference types="@webgpu/types" />
 

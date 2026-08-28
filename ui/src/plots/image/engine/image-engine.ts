@@ -32,7 +32,7 @@
  * later task finalizes bundling (Task 6's `GpuImagePane`, Task 8). Nothing
  * in `cairn-plot` currently imports this file.
  */
-import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "../../../engines/webgpu/types";
+import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./webgpu/device-contract";
 import { imageWGSL } from "./shaders/image.wgsl.ts";
 import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl.ts";
 import { computeCompareMapping, type CompareMapping } from "./compare-align";

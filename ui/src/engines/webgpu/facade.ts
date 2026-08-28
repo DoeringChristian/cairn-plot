@@ -1,39 +1,16 @@
-import type { Device } from "./types.ts";
-import {
-  getSharedWebGpuDevice,
-  resetSharedWebGpuDevice,
-} from "./device-provider.ts";
-import type {
-  WebGpuEngine,
-  WebGpuEngineContext,
-  WebGpuSurfaceOptions,
-} from "./contracts.ts";
+import type { WebGpuEngineContext, WebGpuSurfaceOptions } from "./contracts.ts";
+import type { WebGpuRhi } from "./rhi.ts";
 
-export function createWebGpuEngineContext(device: Device): WebGpuEngineContext {
+/** Wrap a plot-agnostic RHI without adding plot-specific operations. */
+export function createWebGpuEngineContext(rhi: WebGpuRhi): WebGpuEngineContext {
   return {
-    capabilities: device.capabilities,
-    rhi: device,
-    device,
+    capabilities: rhi.capabilities,
+    rhi,
     createSurface(canvas: HTMLCanvasElement, options: WebGpuSurfaceOptions = {}) {
-      return device.createSurface(canvas, { hdr: options.hdr ?? false });
+      return rhi.createSurface(canvas, { hdr: options.hdr ?? false });
     },
     readSurface(surface) {
-      return device.readback(surface);
+      return rhi.readback(surface);
     },
   };
 }
-
-let contextPromise: Promise<WebGpuEngineContext> | null = null;
-
-export const webGpuEngine: WebGpuEngine = {
-  isAvailable() {
-    return typeof navigator !== "undefined" && "gpu" in navigator && !!navigator.gpu;
-  },
-  acquire() {
-    return (contextPromise ??= getSharedWebGpuDevice().then(createWebGpuEngineContext));
-  },
-  reset() {
-    contextPromise = null;
-    resetSharedWebGpuDevice();
-  },
-};

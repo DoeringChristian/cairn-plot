@@ -19,10 +19,10 @@
  * RUNNING: bundle with esbuild, serve over http, open flip.browser.html (same
  * commands as the sibling *.browser.ts).
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { flipLDR } from "../kernels/flip-reference";
-import type { Device, Texture } from "../../../../engines/webgpu/types";
+import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "FLIP", resultFlag: "__flipTestResult" });

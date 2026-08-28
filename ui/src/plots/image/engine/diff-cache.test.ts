@@ -15,7 +15,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Texture, TextureFormat } from "../../../engines/webgpu/types.ts";
+import type { Texture, TextureFormat } from "./webgpu/device-contract";
 import { DiffCache, DEFAULT_MAX_ENTRIES, DEFAULT_MAX_BYTES, type DiffCacheEntry } from "./diff-cache.ts";
 
 let destroyed = 0;

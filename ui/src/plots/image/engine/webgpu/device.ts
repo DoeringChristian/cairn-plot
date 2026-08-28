@@ -115,8 +115,8 @@ import type {
   Surface,
   TextureFormat,
   Capabilities,
-} from "../../../../engines/webgpu/types";
-import type { DeepSampleBuffers, DeepGpuCsrSpec } from "../../../../engines/webgpu/types";
+} from "./device-contract";
+import type { DeepSampleBuffers, DeepGpuCsrSpec } from "./device-contract";
 import {
   configureHDRSurface,
   configureSDRSurface,
@@ -152,7 +152,7 @@ import {
   histParamsData,
 } from "../histogram/compute";
 import { tevBinMapping } from "../../model/histogram-binning";
-import type { TexHistogramSpec, TexHistogramResult, DeepDepthHistogramResult } from "../../../../engines/webgpu/types";
+import type { TexHistogramSpec, TexHistogramResult, DeepDepthHistogramResult } from "./device-contract";
 
 /**
  * Thrown by `readback()`/`reduceDiffSumSquaredAbs()` when the GPU device (or

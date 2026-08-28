@@ -41,8 +41,8 @@
  * re-`createSurface`-ing the SAME canvas on restore is a safe idempotent
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
-import { webGpuEngine } from "../../../engines/webgpu/facade.ts";
-import type { WebGpuEngineContext } from "../../../engines/webgpu/contracts.ts";
+import { imageWebGpuRuntime } from "./webgpu/runtime.ts";
+import type { ImageWebGpuRuntime } from "./webgpu/runtime.ts";
 import { renderImage, computeMetrics, type ImageParams, type DiffMetrics } from "./image-engine";
 // Phase 2b: the CACHED-op render path (FLIP / HDR-FLIP / SSIM) runs the diff
 // engine's content-keyed compute + cache from INSIDE the pool (the pool owns the
@@ -69,7 +69,7 @@ import type {
   TexHistogramSpec,
   TexHistogramResult,
   DeepDepthHistogramResult,
-} from "../../../engines/webgpu/types";
+} from "./webgpu/device-contract";
 import {
   forceEngineFailRequested,
   recordPaneRender,
@@ -415,7 +415,7 @@ interface PaneEntry {
    *  plain image on a page would alias to one baseline). */
   paneId: number;
   canvas: HTMLCanvasElement;
-  engine: WebGpuEngineContext;
+  engine: ImageWebGpuRuntime;
   device: Device;
   hdr: boolean;
   surface: Surface | null;
@@ -1190,7 +1190,7 @@ export async function acquirePane(
   canvas: HTMLCanvasElement,
   opts?: { hdr?: boolean },
 ): Promise<PaneHandle> {
-  const engine = await webGpuEngine.acquire();
+  const engine = await imageWebGpuRuntime.acquire();
   const device = engine.device;
   const entry: PaneEntry = {
     paneId: ++paneIdCounter,

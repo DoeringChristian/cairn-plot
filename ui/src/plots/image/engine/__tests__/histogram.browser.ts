@@ -20,8 +20,8 @@
  *      twin quantized at the same scale EXACTLY (dyadic sums), with exact
  *      zMin/zMax; an all-non-finite-Z CSR yields null.
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
-import type { Device, Texture, DeepGpuCsrSpec } from "../../../../engines/webgpu/types";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
+import type { Device, Texture, DeepGpuCsrSpec } from "../webgpu/device-contract";
 import {
   computeTevHistograms,
   resolveHistogramSeries,

@@ -20,12 +20,12 @@
  * RUNNING: bundle with esbuild, serve over http, open ssim.browser.html (same
  * commands as the sibling *.browser.ts).
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { ssim } from "../kernels/ssim-reference";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
 import { computeCompareMapping, type CompareAlign, type CompareFit } from "../compare-align";
-import type { Device, Texture } from "../../../../engines/webgpu/types";
+import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "SSIM", resultFlag: "__ssimTestResult" });

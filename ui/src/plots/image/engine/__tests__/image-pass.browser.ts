@@ -61,7 +61,7 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
  */
-import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
 import {
   applyExposure,
@@ -74,7 +74,7 @@ import {
 } from "../../model/tonemap";
 import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index";
 import { buildLUT, COLORMAP_STOPS } from "../../../../settings/colormaps/lut";
-import type { Device, Texture } from "../../../../engines/webgpu/types";
+import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "IMAGE PASS", resultFlag: "__imagePassTestResult" });

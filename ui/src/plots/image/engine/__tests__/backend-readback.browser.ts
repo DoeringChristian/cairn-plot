@@ -58,7 +58,7 @@
 import { createWebGPUDevice, isDeviceLostError } from "../webgpu/device";
 import { passthroughWGSL } from "../shaders/passthrough.wgsl.ts";
 import { scaleBiasWGSL } from "../shaders/scalebias.wgsl.ts";
-import type { Device } from "../../../../engines/webgpu/types";
+import type { Device } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const WIDTH = 2;
