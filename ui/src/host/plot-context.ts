@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 
 import type { DataSource } from "../lib/cairn-plot/store/data-sources.ts";
-import type { ViewportSettings } from "../lib/cairn-plot/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
 import type { SharedProps } from "../plot-descriptor.ts";
 
 /** Host data shared by every node in one authored plot tree. */

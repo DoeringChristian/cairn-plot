@@ -1,4 +1,4 @@
-import { resolveEffectiveTonemap, TONEMAP_GAMMA_DEFAULT } from "../image/tonemap.ts";
+import { resolveEffectiveTonemap, TONEMAP_GAMMA_DEFAULT } from "../../lib/cairn-plot/image/tonemap.ts";
 import type { ViewportSettings } from "./viewport-settings.ts";
 
 interface InitialSettingsNode {

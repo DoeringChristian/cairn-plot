@@ -264,7 +264,7 @@ export interface PaneEncodingConfig {
    *  `ViewportSettings`). When it holds an `encoding`, that id IS the pane's
    *  encoding — derived by value every render, no local copy, no adoption
    *  effect. Applicability stays a render decision. */
-  settings?: import("../settings/viewport-settings").ViewportSettings | null;
+  settings?: import("../../../state/settings/viewport-settings").ViewportSettings | null;
 }
 
 /** What a pane needs from the unified encoding state. */

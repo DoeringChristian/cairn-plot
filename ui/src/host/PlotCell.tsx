@@ -33,9 +33,9 @@ import {
   DEFAULT_GRID_CELL_ASPECT,
 } from "../lib/cairn-plot/renderers/grid-uniform-aspect.tsx";
 import { ChartFillContext } from "../plot-standalone-helpers.tsx";
-import { useViewportSettings } from "../lib/cairn-plot/settings/use-viewport-settings.ts";
-import { initialViewportSettings } from "../lib/cairn-plot/settings/viewport-initial-settings.ts";
-import type { ViewportSettings } from "../lib/cairn-plot/settings/viewport-settings.ts";
+import { useViewportSettings } from "../state/settings/use-viewport-settings.ts";
+import { initialViewportSettings } from "../state/settings/viewport-initial-settings.ts";
+import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
 import { PaneSyncContext, useSharedPlot, type PaneSyncCtx } from "./plot-context.ts";
 import { usePlotSessionController } from "../state/session/session-context.ts";
 

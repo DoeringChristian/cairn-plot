@@ -4,7 +4,7 @@ import {
   ChartViewportSyncProvider,
   type ChartViewportSyncTarget,
 } from "../lib/cairn-plot/chart/use-chart-viewport.ts";
-import type { ViewportSettings } from "../lib/cairn-plot/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
 import type { ChartSettings } from "./chart-settings.ts";
 
 /** Connect a cell's chart-domain settings to the shared 2D chart controls. */

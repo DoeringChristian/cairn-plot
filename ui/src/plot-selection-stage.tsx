@@ -52,8 +52,8 @@ import {
   type SelectionSnapshot,
   type StageMode,
 } from "./lib/cairn-plot/selection/selection-store";
-import type { ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
-import { useViewportSettings } from "./lib/cairn-plot/settings/use-viewport-settings";
+import type { ViewportSettings } from "./state/settings/viewport-settings";
+import { useViewportSettings } from "./state/settings/use-viewport-settings";
 import {
   imageCompatibleCount,
   planCompareGrid,

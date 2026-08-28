@@ -12,7 +12,7 @@ import type {
   CompareSource,
   DecodedSource,
 } from "../../lib/cairn-plot/renderers/image-backend.ts";
-import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
 import type { CompareViewMode } from "./use-comparison-control.ts";
 
 export interface ImageComparisonHostInput {

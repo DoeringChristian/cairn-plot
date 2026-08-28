@@ -57,8 +57,8 @@ import {
 } from "./resources/resolution-cache";
 import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "./lib/cairn-plot/image/channel-menu";
 import { applyChannelSlice } from "./lib/cairn-plot/image/channel-slice";
-import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
-import { initialViewportSettings } from "./lib/cairn-plot/settings/viewport-initial-settings.ts";
+import { type ViewportSettings } from "./state/settings/viewport-settings";
+import { initialViewportSettings } from "./state/settings/viewport-initial-settings.ts";
 import { GridLayout, type GridLayoutState } from "./layout/GridLayout.tsx";
 import {
   PaneSyncContext,

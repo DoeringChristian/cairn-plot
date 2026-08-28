@@ -39,7 +39,7 @@ import GpuImagePane from "../GpuImagePane";
 import { urlSource } from "../image-backend";
 import { getSharedDevice } from "../../../../plots/image/engine/device";
 import { createHarness, waitFor } from "../../testing/harness";
-import type { ViewportSettings } from "../../settings/viewport-settings.ts";
+import type { ViewportSettings } from "../../../../state/settings/viewport-settings.ts";
 import type { Colormap } from "../../types.ts";
 
 const h = React.createElement;

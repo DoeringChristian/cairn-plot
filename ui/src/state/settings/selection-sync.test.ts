@@ -12,7 +12,7 @@
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { SelectionStore, paneSyncGroups } from "../selection/selection-store.ts";
+import { SelectionStore, paneSyncGroups } from "../../lib/cairn-plot/selection/selection-store.ts";
 import {
   __resetSettingsChannelsForTest,
   publishSettingsPatch,

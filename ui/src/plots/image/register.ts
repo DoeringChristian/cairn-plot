@@ -8,7 +8,7 @@ import type {
   ImageBackendProps,
   RenderMode,
 } from "../../lib/cairn-plot/renderers/image-backend.ts";
-import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";

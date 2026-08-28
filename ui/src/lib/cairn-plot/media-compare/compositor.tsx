@@ -43,7 +43,7 @@ import { resolveRenderMode, urlSource } from "../renderers/image-backend";
 import {
   useSeedGroupOnFormation,
   useViewportSettings,
-} from "../settings/use-viewport-settings";
+} from "../../../state/settings/use-viewport-settings";
 
 import type {
   CompareSource,

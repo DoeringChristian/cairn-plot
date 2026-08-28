@@ -116,7 +116,7 @@ import {
   type TevHistogramsResult,
 } from "./image-histogram";
 import { TEV_HISTOGRAM_BINS } from "../image/histogram-binning";
-import { useViewportSettings } from "../settings/use-viewport-settings";
+import { useViewportSettings } from "../../../state/settings/use-viewport-settings";
 import {
   displayToolbarButton,
   scalarFaceColormap,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import type { PlotNode } from "../../../../packages/spec/src/spec.ts";
-import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
 import { normalizeImageComparisonPresentation } from "./comparison-plan.ts";
 
 export type CompareViewMode = "split" | "diff";
