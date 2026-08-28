@@ -41,6 +41,8 @@ import ScatterPlot from "./lib/cairn-plot/renderers/ScatterPlot";
 import ParallelCoords from "./lib/cairn-plot/renderers/ParallelCoords";
 import BarChart from "./lib/cairn-plot/renderers/BarChart";
 import HistogramPlot from "./lib/cairn-plot/renderers/HistogramPlot";
+import { ensureBarPlotType } from "./plots/bar/register";
+import { ensureHistogramPlotType } from "./plots/histogram/register";
 import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
 import CpuImagePane from "./lib/cairn-plot/renderers/CpuImagePane";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
@@ -292,12 +294,10 @@ function BarChartStandalone(p: P) {
 
 function HistogramStandalone(p: P) {
   const { height, ...rest } = p;
-  // Discriminated on `view` ("bars" | "heatmap"); default to bars.
-  const props = (rest.view ? rest : { ...rest, view: "bars" }) as any;
   return (
     <ChartBox height={height}>
       <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
-        <HistogramPlot {...props} />
+        <HistogramPlot {...(rest as React.ComponentProps<typeof HistogramPlot>)} />
       </ChartSyncBoundary>
     </ChartBox>
   );
@@ -451,8 +451,6 @@ function TableStandalone(p: P) {
  */
 export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
   parallel: ParallelCoordsStandalone,
-  bar: BarChartStandalone,
-  histogram: HistogramStandalone,
   heatmap: HeatmapStandalone,
   table: TableStandalone,
 };
@@ -462,6 +460,8 @@ export function registerCoreRenderers(): void {
   ensureImagePlotType(ImageStandalone, resolveDataProps);
   ensureScalarPlotType(ScalarPlotStandalone, resolveDataProps);
   ensureScatterPlotType(ScatterPlotStandalone, resolveDataProps);
+  ensureBarPlotType(BarChartStandalone, resolveDataProps);
+  ensureHistogramPlotType(HistogramStandalone, resolveDataProps);
   for (const [name, component] of Object.entries(CORE_RENDERERS)) {
     registerRenderer(name, component);
   }

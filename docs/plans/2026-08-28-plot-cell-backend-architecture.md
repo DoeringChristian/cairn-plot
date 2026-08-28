@@ -69,6 +69,10 @@ Status: accepted design; implementation in progress
   from the legacy renderer map. Scatter now has checked point presentation,
   chart-domain settings projection, backend commands, and exclusive kind
   ownership through `PlotDefinition`.
+- [x] Migrate bar and histogram through the same typed inline-plot seam. Bar
+  validates its datum contract; histogram validates and normalizes its
+  bars/heatmap presentation during resolution instead of branching with an
+  untyped fallback in the React host.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry
