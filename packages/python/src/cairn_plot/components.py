@@ -13,7 +13,7 @@ wraps that into a :class:`~cairn.sdk.elements.PlotElement`:
 
 every component — a **leaf** (``cp.Image(...)`` / ``cp.scalar(...)``) or a
 **container** (``Grid``/``Compare`` split/blend/diff) — lowers to the ONE
-recursive ``PlotDescriptorSpec(root=…)`` tree descriptor the ``<PlotGrid>``
+recursive ``PlotSpec(root=…)`` tree descriptor the ``<PlotGrid>``
 compositor renders. The tree root form is the only descriptor shape.
 
 The heavy data-shaping (scalar sequence → ``Series``, plotly ``Figure`` → JSON,
@@ -303,23 +303,23 @@ class Component:
         """Wrap this component into a :class:`~cairn.sdk.elements.PlotElement`.
 
         Every component — leaf (``plot``) or container (``grid``/``compare``) —
-        lowers to the ONE recursive ``PlotDescriptorSpec`` tree descriptor
+        lowers to the ONE recursive ``PlotSpec`` tree descriptor
         (``{root, mode?, endpoint?}``). The tree root form is the only descriptor
         the renderer accepts."""
         from .elements import PlotElement
-        from .spec import PlotDescriptorSpec
+        from .spec import PlotSpec
 
         node = self.to_node()
         store = self._collect_store()
 
         if node.get("kind") == "plot" and self._data_mode == "endpoint":
             server = self._endpoint_server()
-            spec = PlotDescriptorSpec(root=node, mode="endpoint", endpoint=server)
+            spec = PlotSpec(root=node, mode="endpoint", endpoint=server)
             return PlotElement(
                 spec, bundle="link", server=server, label=self._label, height=self._height
             )
 
-        spec = PlotDescriptorSpec(root=node, mode="local")
+        spec = PlotSpec(root=node, mode="local")
         return PlotElement(
             spec, store=store, bundle="inline", label=self._label, height=self._height
         )

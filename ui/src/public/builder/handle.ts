@@ -8,7 +8,7 @@
  * stay free of React and can be ESM-imported cheaply. When the core bundle is
  * not present, `.mount()`/`.toElement()` throw a clear, actionable error.
  */
-import type { PlotDescriptor, PlotNode } from "../../host/descriptor-resolver.ts";
+import type { PlotSpec, PlotNode } from "../../host/descriptor-resolver.ts";
 import type { PlotStore } from "../../resources/data/local-store.ts";
 import type { RuntimeStoreEntry } from "../../resources/data/runtime-store.ts";
 
@@ -17,7 +17,7 @@ import type { RuntimeStoreEntry } from "../../resources/data/runtime-store.ts";
  *  in-memory runtime entries. Returns an `unmount` handle. */
 export type Mounter = (
   el: Element,
-  descriptor: PlotDescriptor,
+  descriptor: PlotSpec,
   data: { store?: PlotStore; runtime?: Array<[string, RuntimeStoreEntry]> },
 ) => { unmount(): void };
 
@@ -30,7 +30,7 @@ export interface MountedPlot {
 
 export interface PlotHandle {
   /** The `{root, mode}` descriptor this builder produced (schema-conformant). */
-  readonly descriptor: PlotDescriptor;
+  readonly descriptor: PlotSpec;
   /** The single tree node (== `descriptor.root`) — used when nesting handles
    *  into a `grid`/`compare` container. */
   readonly node: PlotNode;
@@ -75,7 +75,7 @@ export function makeHandle(
 ): PlotHandle {
   const store = data.store ?? {};
   const runtime = data.runtime ?? [];
-  const descriptor: PlotDescriptor = { root: node, mode: "local" };
+  const descriptor: PlotSpec = { root: node, mode: "local" };
   return {
     descriptor,
     node,

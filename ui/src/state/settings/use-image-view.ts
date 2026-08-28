@@ -18,7 +18,7 @@
  */
 import { useCallback, useState } from "react";
 import type { Viewport as ImageViewport } from "../../host/hooks/use-image-viewport";
-import type { PlotSettings } from "./viewport-settings";
+import type { PlotSettings } from "../../settings/schema.ts";
 
 export function useImageView(
   settings: Readonly<PlotSettings> | null | undefined,

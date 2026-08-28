@@ -264,7 +264,7 @@ export interface PaneEncodingConfig {
    *  `PlotSettings`). When it holds an `encoding`, that id IS the pane's
    *  encoding — derived by value every render, no local copy, no adoption
    *  effect. Applicability stays a render decision. */
-  settings?: import("../../../state/settings/viewport-settings").PlotSettings | null;
+  settings?: import("../../../settings/schema.ts").PlotSettings | null;
 }
 
 /** What a pane needs from the unified encoding state. */

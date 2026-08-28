@@ -1,6 +1,6 @@
 // Phase C drift-check: regenerate the plot-spec JSON Schema from the TS source
 // and fail if it differs from the committed
-// docs/schemas/cairn-plot-spec.schema.json. This keeps TS `PlotDescriptor` and
+// docs/schemas/cairn-plot-spec.schema.json. This keeps TS `PlotSpec` and
 // the committed schema (and therefore the Python `PlotSpec` pydantic model
 // derived from it) from silently drifting. Mirrors check-card-spec-schema.mjs.
 //

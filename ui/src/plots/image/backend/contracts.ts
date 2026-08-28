@@ -27,7 +27,7 @@ import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-vi
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import { floatPixelsFrom, type FloatPixels } from "../model/pixel-buffer.ts";
 import type { DeepFlattenController } from "../model/decoders.ts";
-import type { PlotSettings } from "../../../state/settings/viewport-settings";
+import type { PlotSettings } from "../../../settings/schema.ts";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`
@@ -127,7 +127,7 @@ export interface HdrImageProps {
   /** True when this pane is the reused renderer of a STACKED viewport (see
    *  {@link ImageBackendProps.inStackedGrid}). */
   inStackedGrid?: boolean;
-  resetViewportSettings?: () => void;
+  resetSettings?: () => void;
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
@@ -199,7 +199,7 @@ export interface SdrImageProps {
   /** True when this pane is the reused renderer of a STACKED viewport (see
    *  {@link ImageBackendProps.inStackedGrid}). */
   inStackedGrid?: boolean;
-  resetViewportSettings?: () => void;
+  resetSettings?: () => void;
 }
 
 /**
@@ -355,7 +355,7 @@ export interface ImageBackendProps {
    *  byte-identical single-image path. Only the GPU backend honors it; the CPU
    *  backend ignores it (single-image fallback). */
   compareSource?: CompareSource;
-  /** The viewport's EFFECTIVE settings from its ONE store (`useViewportSettings`
+  /** The viewport's EFFECTIVE settings from its ONE store (`useCellSettings`
    *  at the node/stage/compositor level): the `group > local` merge, driven DOWN.
    *  The pane derives its display values from these at RENDER (no adoption, no
    *  local copy) and writes changes back via {@link setSyncedSettings}. The pane
@@ -372,7 +372,7 @@ export interface ImageBackendProps {
    *  truth rule); init must never fan to group peers. */
   /** HOME command supplied by the viewport owner. The renderer does not derive
    *  defaults from its current rendering mode or source. */
-  resetViewportSettings?: () => void;
+  resetSettings?: () => void;
   /** CONTROLLED single-pane fullscreen state, owned by the plot leaf ABOVE the
    *  async-resolve swap (`LeafView`) so a cold re-resolve (a channel pick's
    *  "Loading…" placeholder unmounting this pane) cannot reset it. Threaded to
@@ -527,7 +527,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       channelModified: p.channelModified,
       onChannelReset: p.onChannelReset,
       inStackedGrid: p.inStackedGrid,
-      resetViewportSettings: p.resetViewportSettings,
+      resetSettings: p.resetSettings,
     };
   }
   return {
@@ -560,7 +560,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     channelModified: p.channelModified,
     onChannelReset: p.onChannelReset,
     inStackedGrid: p.inStackedGrid,
-    resetViewportSettings: p.resetViewportSettings,
+    resetSettings: p.resetSettings,
   };
 }
 

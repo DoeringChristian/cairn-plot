@@ -2,7 +2,7 @@ const SETTINGS_PLUMBING_KEYS = new Set([
   "syncedSettings",
   "setSyncedSettings",
   "applySyncedSettings",
-  "resetViewportSettings",
+  "resetSettings",
 ]);
 
 /** Runtime settings enter typed backends only through BackendInput. */

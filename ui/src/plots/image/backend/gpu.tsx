@@ -117,7 +117,7 @@ import {
   type TevHistogramsResult,
 } from "../components/image-histogram";
 import { TEV_HISTOGRAM_BINS } from "../model/histogram-binning";
-import { useViewportSettings } from "../../../state/settings/use-viewport-settings";
+import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import {
   displayToolbarButton,
   scalarFaceColormap,
@@ -558,7 +558,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // host) owns its own group-of-one store, so settings live ONLY in stores —
   // never in pane state. An empty store lets the descriptor seeds shine
   // through (the one lookup: store value > prop seed).
-  const ownStore = useViewportSettings();
+  const ownStore = useCellSettings();
   const threadedSet = backendProps.setSyncedSettings;
   const synced = threadedSet ? backendProps.syncedSettings : ownStore.settings;
   const setSynced = threadedSet ?? ownStore.set;
@@ -657,7 +657,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   });
   // HOME is owned by the viewport. The renderer neither derives defaults nor
   // branches on image/compare/stack state.
-  const resetViewportSettings = () => backendProps.resetViewportSettings?.();
+  const resetSettings = () => backendProps.resetSettings?.();
   // Derived back-compat values the render pipeline / sync already consume: the
   // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
   // each path's "no colormap" condition (`sdrPlain`) is exact.
@@ -2053,7 +2053,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // HOME reset (the pane's own `onReset` chain): restore the HOISTED compare
       // control (mode/kernel/split/blend, via the owner) AND re-seed the viewport's ONE
       // encoding — which, for a diff, IS the diff colormap → back to the shared default.
-      home: resetViewportSettings,
+      home: resetSettings,
     };
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
@@ -2083,7 +2083,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       },
       changePeak, // a user pick → the viewport's peak (a stack shares it across slots)
       changeEncoding, // a user pick → the viewport's encoding (a stack shares it across slots)
-      home: resetViewportSettings,
+      home: resetSettings,
     };
     return () => {
       if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
@@ -2556,7 +2556,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           : undefined
       }
       onReset={() => {
-        resetViewportSettings();
+        resetSettings();
         deepFlatten.reset();
         props.onChannelReset?.(); // channel override folds into HOME
       }}

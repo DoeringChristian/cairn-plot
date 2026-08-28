@@ -63,16 +63,13 @@ export interface SharedProps {
   colorRange?: [number, number];
   colorbar?: boolean;
   reference?: DataSpec;
-  sync?: { viewport?: boolean; camera?: boolean };
+  sync?: { view?: boolean; camera?: boolean };
 }
 
 /** The one durable recursive plot specification shared by Python and JS. */
-export interface PlotDescriptor {
+export interface PlotSpec {
   root: PlotNode;
   /** Standalone bootstrap transport metadata; PlotHost always receives DataSource explicitly. */
   mode?: "local" | "endpoint";
   endpoint?: string;
 }
-
-/** Public spelling. Kept aliased to avoid a second wire format. */
-export type PlotSpec = PlotDescriptor;

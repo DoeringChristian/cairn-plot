@@ -10,6 +10,8 @@
  * renderer imports.
  */
 import React from "react";
+import { ChartFillContext } from "../layout/chart-fill.ts";
+export { ChartFillContext } from "../layout/chart-fill.ts";
 
 export const DEFAULT_CHART_HEIGHT = 400;
 
@@ -22,8 +24,6 @@ export const DEFAULT_CHART_HEIGHT = 400;
  * single flag with no extra dependency. Default `false` → behaviour-identical
  * to pre-G1 standalone pages.
  */
-export const ChartFillContext = React.createContext<boolean>(false);
-
 /**
  * Wrap a container-filling chart renderer in a default-height box so it has
  * something to measure on a bare standalone page. The pure chart renderers

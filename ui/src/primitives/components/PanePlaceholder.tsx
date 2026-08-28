@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// ViewportPlaceholder — the SINGLE non-content state chip shared by every 3D
+// PanePlaceholder — the SINGLE non-content state chip shared by every 3D
 // viewport (mesh/pointcloud/boxes/volume). It owns ALL styling/layout for the
 // three placeholder states so they are pixel-identical everywhere:
 //
@@ -27,7 +27,7 @@ export const VIEWPORT_PLACEHOLDER_CLASS: Record<ViewportPlaceholderVariant, stri
   error: `${BASE} rounded bg-bg p-4 text-center text-sm text-fg-muted`,
 };
 
-export default function ViewportPlaceholder({
+export default function PanePlaceholder({
   variant,
   children,
 }: {

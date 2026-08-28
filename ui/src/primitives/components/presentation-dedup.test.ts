@@ -1,7 +1,7 @@
 /**
  * Contract + re-divergence guard for the two shared 3D-viewport chrome
- * primitives — `ViewportCaption` (the per-pane metadata caption) and
- * `ViewportPlaceholder` (the empty/loading/error non-content states). No test
+ * primitives — `ContentCaption` (the per-pane metadata caption) and
+ * `PanePlaceholder` (the empty/loading/error non-content states). No test
  * runner / DOM is configured in this package (see capability-notice.test.ts)
  * and the components are JSX (can't be imported under
  * `--experimental-strip-types`), so this asserts the contract at the SOURCE
@@ -29,14 +29,14 @@ const SRC = join(HERE, "../..");
 const read = (rel: string) => readFileSync(join(SRC, rel), "utf8");
 
 const VIEWPORTS = [
-  "plots/three/viewports/mesh.tsx",
-  "plots/three/viewports/pointcloud.tsx",
-  "plots/three/viewports/boxes.tsx",
-  "plots/three/viewports/volume.tsx",
+  "plots/three/presentations/mesh.tsx",
+  "plots/three/presentations/pointcloud.tsx",
+  "plots/three/presentations/boxes.tsx",
+  "plots/three/presentations/volume.tsx",
 ];
 
-test("ViewportCaption: single-owner caption class contract", () => {
-  const src = read("primitives/components/ViewportCaption.tsx");
+test("ContentCaption: single-owner caption class contract", () => {
+  const src = read("primitives/components/ContentCaption.tsx");
   const m = src.match(/VIEWPORT_CAPTION_CLASS\s*=\s*\n?\s*"([^"]+)"/);
   assert.ok(m, "VIEWPORT_CAPTION_CLASS string literal must be present");
   const cls = m![1];
@@ -50,8 +50,8 @@ test("ViewportCaption: single-owner caption class contract", () => {
   assert.match(cls, /pointer-events-none/, "caption must be pointer-transparent");
 });
 
-test("ViewportPlaceholder: single-owner placeholder classes, w-full always", () => {
-  const src = read("integration/cairn-card/ViewportPlaceholder.tsx");
+test("PanePlaceholder: single-owner placeholder classes, w-full always", () => {
+  const src = read("primitives/components/PanePlaceholder.tsx");
   // Every variant must be full-width — the centering-inconsistency fix (the
   // old reference-side "empty" dropped w-full).
   const classLits = src.match(/`\$\{BASE\}[^`]*`/g) ?? [];
@@ -71,30 +71,30 @@ test("ViewportPlaceholder: single-owner placeholder classes, w-full always", () 
   assert.match(src, /p-4 text-center/, "error variant must be padded + centered");
 });
 
-test("every 3D viewport renders ViewportCaption (closes the pointcloud gap)", () => {
+test("every 3D viewport renders ContentCaption (closes the pointcloud gap)", () => {
   for (const rel of VIEWPORTS) {
     const src = read(rel);
-    assert.match(src, /<ViewportCaption\b/, `${rel} must render <ViewportCaption />`);
+    assert.match(src, /<ContentCaption\b/, `${rel} must render <ContentCaption />`);
   }
 });
 
-test("every 3D viewport renders ViewportPlaceholder (no inline placeholders)", () => {
+test("every 3D viewport renders PanePlaceholder (no inline placeholders)", () => {
   for (const rel of VIEWPORTS) {
     const src = read(rel);
-    assert.match(src, /<ViewportPlaceholder\b/, `${rel} must render <ViewportPlaceholder />`);
+    assert.match(src, /<PanePlaceholder\b/, `${rel} must render <PanePlaceholder />`);
   }
 });
 
 test("no 3D viewport re-declares the caption class inline", () => {
   // The caption chip's unmistakable class signature — the gray monospace
   // backdrop-blurred chip. If it appears verbatim in a viewport, someone
-  // re-inlined it instead of using ViewportCaption.
+  // re-inlined it instead of using ContentCaption.
   for (const rel of VIEWPORTS) {
     const src = read(rel);
     assert.doesNotMatch(
       src,
       /text-fg-subtle backdrop-blur-sm/,
-      `${rel} must not re-declare the caption class inline (use ViewportCaption)`,
+      `${rel} must not re-declare the caption class inline (use ContentCaption)`,
     );
   }
 });
@@ -106,18 +106,18 @@ test("no 3D viewport re-declares the placeholder classes inline", () => {
     assert.doesNotMatch(
       src,
       /motion-safe:animate-pulse/,
-      `${rel} must not re-declare the loading placeholder inline (use ViewportPlaceholder)`,
+      `${rel} must not re-declare the loading placeholder inline (use PanePlaceholder)`,
     );
     assert.doesNotMatch(
       src,
       /bg-bg p-4 text-center text-sm text-fg-muted/,
-      `${rel} must not re-declare the error placeholder inline (use ViewportPlaceholder)`,
+      `${rel} must not re-declare the error placeholder inline (use PanePlaceholder)`,
     );
     // The bare empty-state signature (centered gray sm text with no viewer).
     assert.doesNotMatch(
       src,
       /items-center justify-center text-sm text-fg-muted/,
-      `${rel} must not re-declare the empty placeholder inline (use ViewportPlaceholder)`,
+      `${rel} must not re-declare the empty placeholder inline (use PanePlaceholder)`,
     );
   }
 });

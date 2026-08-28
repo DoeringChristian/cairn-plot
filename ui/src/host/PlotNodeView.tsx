@@ -1,5 +1,5 @@
 /**
- * The recursive cairn-plot compositor (G1). A `PlotDescriptor` is a TREE of
+ * The recursive cairn-plot compositor (G1). A `PlotSpec` is a TREE of
  * `PlotNode`s — `plot` leaves, `grid` layouts, `compare` panes — and this
  * module renders it. `PlotApp` (plot-bootstrap.tsx) is now a thin root wrapper
  * that builds ONE `DataSource` for the whole tree, seeds a `SharedPlotContext`,
@@ -53,11 +53,11 @@ import {
 } from "../resources/resolution-cache";
 import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "../plots/image/model/channel-menu";
 import { applyChannelSlice } from "../plots/image/model/channel-slice";
-import { type PlotSettings } from "../state/settings/viewport-settings";
-import { initialViewportSettings } from "../settings/defaults.ts";
+import { type PlotSettings } from "../settings/schema.ts";
+import { initialCellSettings } from "../settings/defaults.ts";
 import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
 import {
-  PaneSyncContext,
+  CellSettingsContext,
   SharedPlotContext,
   useSharedPlot,
 } from "./plot-context.ts";
@@ -90,8 +90,8 @@ import { getRegisteredPane } from "../state/selection/pane-registry.ts";
 
 // Compatibility exports for existing standalone/stage imports. The host owns
 // these contracts; plot-node only consumes and re-exports them.
-export { PaneSyncContext, SharedPlotContext } from "./plot-context.ts";
-export type { PaneSyncCtx, SharedPlotCtx } from "./plot-context.ts";
+export { CellSettingsContext, SharedPlotContext } from "./plot-context.ts";
+export type { CellSettingsContextValue, SharedPlotCtx } from "./plot-context.ts";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -152,7 +152,7 @@ if (typeof window !== "undefined") {
 function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafSpec }) {
   const { source, shared } = useSharedPlot();
   // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
-  const paneSync = useContext(PaneSyncContext);
+  const paneSync = useContext(CellSettingsContext);
   // True inside a STACKED viewport — threaded to the pane so it treats its display
   // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
   // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
@@ -165,8 +165,8 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // image renderer. The channel strip / exr tree / shared-colormap merge below
   // are single-image concerns and are inert on this path.
   const isDiff = !!diffSpec;
-  const activeDefaults = diffSpec?.viewportDefaults ?? initialViewportSettings(node, shared) ?? {};
-  const resetViewportSettings = useCallback(() => {
+  const activeDefaults = diffSpec?.cellDefaults ?? initialCellSettings(node, shared) ?? {};
+  const resetSettings = useCallback(() => {
     (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(activeDefaults);
   }, [paneSync?.resetSyncedSettings, paneSync?.setSyncedSettings, activeDefaults]);
 
@@ -352,8 +352,8 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
 
   // Merge the shared block + the live sync group ids over the resolved data
   // props at render (leaf `node.props` win over `shared`, data props win over
-  // all). The viewport-sync group id is the selection override when this pane is
-  // in a ≥2 selection, else the grid-wide static `shared.sync.viewport` group;
+  // all). The view-sync group id is the selection override when this pane is
+  // in a ≥2 selection, else the grid-wide static `shared.sync.view` group;
   // the settings-sync group + anchor flag come only from an active selection.
   const mergedProps = useMemo<Record<string, unknown>>(() => {
     if (!dataProps) return {};
@@ -452,7 +452,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         settings={settings}
         commands={{
           patch: (patch) => paneSync?.setSyncedSettings?.(patch as PlotSettings),
-          reset: resetViewportSettings,
+          reset: resetSettings,
         }}
         invalidation="presentation"
       />
@@ -482,7 +482,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
   const children = node.children ?? [];
   const cols = node.cols ?? node.colWidths?.length ?? children.length ?? 1;
   const shared = node.shared ?? parentShared;
-  const viewSettingsGroupId = node.shared?.sync?.viewport
+  const viewSettingsGroupId = node.shared?.sync?.view
     ? `plot-grid-view-${localId}`
     : null;
   const sessionController = usePlotSessionController();
@@ -503,9 +503,9 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
         .map(getRegisteredPane)
         .find((entry) => entry?.sessionId?.startsWith(`cell:${path}/`));
       const saved = sessionController.getSession();
-      const firstSettings = Object.entries(saved.viewports)
+      const firstSettings = Object.entries(saved.cells)
         .find(([id]) => id.startsWith(`cell:${path}/`))?.[1].settings;
-      sessionController.seedViewport(
+      sessionController.seedCell(
         `stack:${path}`,
         selectedEntry?.settings?.get() ?? firstSettings ?? {},
       );
@@ -752,7 +752,7 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
 /** Capability-backed host for comparisons that do not require image continuity. */
 function GenericComparisonView({ node }: { node: CompareNode }) {
   const { source } = useSharedPlot();
-  const paneSync = useContext(PaneSyncContext);
+  const paneSync = useContext(CellSettingsContext);
   const key = resolutionKey(source, node, "|comparison");
   useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
   const planned = useMemo(() => {
@@ -815,7 +815,7 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
  */
 function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
   const { shared } = useSharedPlot();
-  const paneSync = useContext(PaneSyncContext);
+  const paneSync = useContext(CellSettingsContext);
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
   const control = useImageComparisonControl(
@@ -854,7 +854,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
     onDiffKernelChange: control.setDiffKernel,
     onCompareModeChange: control.setViewMode,
     onSplitPositionChange: control.setSplitPos,
-    viewportDefaults: initialViewportSettings(node, shared) ?? {},
+    cellDefaults: initialCellSettings(node, shared) ?? {},
     compareModified: control.modified,
   };
   return (

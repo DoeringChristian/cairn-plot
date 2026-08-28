@@ -19,7 +19,7 @@ import {
   decodeImageSource,
   decodedFloatToCompareSource,
   isFloatCandidateArtifact,
-  resolveImageViewportItemsAsync,
+  resolveImageArtifactsAsync,
 } from "./artifact-resolvers.ts";
 import {
   createEndpointDataSource,
@@ -144,7 +144,7 @@ test("decodeImageSource: a committed EXR fixture decodes to a float source", asy
 });
 
 // ---------------------------------------------------------------------------
-// resolveImageViewportItemsAsync — the adapter resolver end to end.
+// resolveImageArtifactsAsync — the adapter resolver end to end.
 // ---------------------------------------------------------------------------
 function fakeSource(bytesByHash: Record<string, ArrayBuffer>): DataSource & { fetched: string[] } {
   const fetched: string[] = [];
@@ -160,9 +160,9 @@ function fakeSource(bytesByHash: Record<string, ArrayBuffer>): DataSource & { fe
   };
 }
 
-test("resolveImageViewportItemsAsync: an EXR foreground resolves to a float item", async () => {
+test("resolveImageArtifactsAsync: an EXR foreground resolves to a float item", async () => {
   const source = fakeSource({ fg: readFixture("rgb-zip-half-64x48.exr") });
-  const res = await resolveImageViewportItemsAsync(
+  const res = await resolveImageArtifactsAsync(
     { hashes: ["fg"], referenceHashes: [null], metadata: [null], mimes: ["image/x-exr"] },
     source,
     () => null,
@@ -174,9 +174,9 @@ test("resolveImageViewportItemsAsync: an EXR foreground resolves to a float item
   assert.equal(res.isLoading, false);
 });
 
-test("resolveImageViewportItemsAsync: a float .npy reference resolves to a float item", async () => {
+test("resolveImageArtifactsAsync: a float .npy reference resolves to a float item", async () => {
   const source = fakeSource({ ref: makeF32Npy([1, 2], [10, 20]) });
-  const res = await resolveImageViewportItemsAsync(
+  const res = await resolveImageArtifactsAsync(
     { hashes: [null], referenceHashes: ["ref"], metadata: [null], referenceMimes: ["application/x-npy"] },
     source,
     () => null,
@@ -187,9 +187,9 @@ test("resolveImageViewportItemsAsync: a float .npy reference resolves to a float
   assert.equal(ref.float!.width, 2);
 });
 
-test("resolveImageViewportItemsAsync: a PNG artifact passes through as a plain URL (no fetch)", async () => {
+test("resolveImageArtifactsAsync: a PNG artifact passes through as a plain URL (no fetch)", async () => {
   const source = fakeSource({});
-  const res = await resolveImageViewportItemsAsync(
+  const res = await resolveImageArtifactsAsync(
     { hashes: ["png"], referenceHashes: [null], metadata: [null], mimes: ["image/png"] },
     source,
     () => null,
@@ -200,9 +200,9 @@ test("resolveImageViewportItemsAsync: a PNG artifact passes through as a plain U
   assert.deepEqual(source.fetched, [], "browser-native artifacts are never fetched/decoded");
 });
 
-test("resolveImageViewportItemsAsync: a null hash stays null", async () => {
+test("resolveImageArtifactsAsync: a null hash stays null", async () => {
   const source = fakeSource({});
-  const res = await resolveImageViewportItemsAsync(
+  const res = await resolveImageArtifactsAsync(
     { hashes: [null], referenceHashes: [null], metadata: [null] },
     source,
     () => null,

@@ -27,7 +27,7 @@ Provenance: monorepo `hdr-post` @ `270e6380`.
   and 3D-array paths are vendored under `cairn_plot._sdk` and registered as the
   default resolvers, so the full gallery renders offline with no `cairn-track`.
 - Committed JSON schema (`schema/cairn-plot-spec.schema.json`) generated from
-  the TS `PlotDescriptor`, with a drift guard.
+  the TS `PlotSpec`, with a drift guard.
 - CI: tsc, node tests, schema + boundary guards, `build:plot-inline`, pytest,
   wheel + bare-venv quickstart, and a headless-Chromium gallery smoke.
 

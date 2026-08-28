@@ -2,7 +2,7 @@
  * The `cairnPlot.*` builder functions — the first-class JS/HTML face that
  * mirrors the Python `cairn_plot` builder surface one-to-one. Each returns a
  * {@link PlotHandle} (`.mount(el)` / `.toElement()`), lowering to the SAME
- * `PlotDescriptor` tree the Python emitter produces, validated by the same
+ * `PlotSpec` tree the Python emitter produces, validated by the same
  * rules (`./validate`) and shaped by the same data contracts (`./shapers`,
  * `./data`) — so a JS-authored plot is identical to its Python twin.
  */

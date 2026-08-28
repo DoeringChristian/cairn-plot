@@ -17,14 +17,14 @@ import {
   subscribeSettingsChanges,
   type PlotSettingKey,
   type PlotSettings,
-} from "./viewport-settings.ts";
+} from "./settings-channels.ts";
 
 beforeEach(() => {
   __resetSettingsChannelsForTest();
 });
 
 /** The frame's applier, verbatim in miniature: own object + identity dedupe. */
-function makeViewport(memberships: Array<{ id: string; keys?: readonly PlotSettingKey[] }>) {
+function makeCell(memberships: Array<{ id: string; keys?: readonly PlotSettingKey[] }>) {
   const vp = {
     settings: null as PlotSettings | null,
     applies: 0,
@@ -57,8 +57,8 @@ function makeViewport(memberships: Array<{ id: string; keys?: readonly PlotSetti
 }
 
 test("a set() fans into every member's OWN object; the writer applies exactly once", () => {
-  const a = makeViewport([{ id: "g" }]);
-  const b = makeViewport([{ id: "g" }]);
+  const a = makeCell([{ id: "g" }]);
+  const b = makeCell([{ id: "g" }]);
   a.set({ encoding: "turbo" });
   assert.deepEqual(a.settings, { encoding: "turbo" });
   assert.deepEqual(b.settings, { encoding: "turbo" });
@@ -67,8 +67,8 @@ test("a set() fans into every member's OWN object; the writer applies exactly on
 });
 
 test("edits PERSIST after leaving the group (ruling reversal)", () => {
-  const a = makeViewport([{ id: "g" }]);
-  const b = makeViewport([{ id: "g" }]);
+  const a = makeCell([{ id: "g" }]);
+  const b = makeCell([{ id: "g" }]);
   a.set({ encoding: "magma", exposureEV: 1.5 });
   a.leave();
   b.leave();
@@ -79,26 +79,26 @@ test("edits PERSIST after leaving the group (ruling reversal)", () => {
 });
 
 test("key-scoped memberships apply ONLY their keys (authored grid view sync)", () => {
-  const a = makeViewport([{ id: "grid", keys: ["view"] }]);
-  const b = makeViewport([{ id: "grid", keys: ["view"] }]);
+  const a = makeCell([{ id: "grid", keys: ["view"] }]);
+  const b = makeCell([{ id: "grid", keys: ["view"] }]);
   a.set({ encoding: "magma", view: { zoom: 2, pan: { x: 1, y: 1 } } });
   // The writer always takes its full patch; the peer only the scoped keys.
   assert.equal(a.settings!.encoding, "magma");
   assert.deepEqual(b.settings, { view: { zoom: 2, pan: { x: 1, y: 1 } } });
 });
 
-test("a viewport in an unscoped AND a scoped group applies the full patch once each way", () => {
-  const a = makeViewport([{ id: "sel" }, { id: "grid", keys: ["view"] }]);
-  const b = makeViewport([{ id: "sel" }, { id: "grid", keys: ["view"] }]);
+test("an cell in an unscoped AND a scoped group applies the full patch once each way", () => {
+  const a = makeCell([{ id: "sel" }, { id: "grid", keys: ["view"] }]);
+  const b = makeCell([{ id: "sel" }, { id: "grid", keys: ["view"] }]);
   a.set({ encoding: "x", view: { zoom: 3, pan: { x: 0, y: 0 } } });
   assert.equal(b.settings!.encoding, "x"); // via the unscoped channel
   assert.equal(b.settings!.view!.zoom, 3);
 });
 
 test("channels are stateless: a late subscriber receives nothing until the next publish", () => {
-  const a = makeViewport([{ id: "g" }]);
+  const a = makeCell([{ id: "g" }]);
   a.set({ encoding: "turbo" });
-  const late = makeViewport([{ id: "g" }]);
+  const late = makeCell([{ id: "g" }]);
   assert.equal(late.settings, null); // converge-on-join is a peer DEREF, not channel state
   a.set({ peak: 4 });
   assert.deepEqual(late.settings, { peak: 4 });
@@ -110,7 +110,7 @@ test("scopeSettingsPatch returns null when nothing survives (skip empty applies)
 });
 
 test("a null mask survives the merge (panel.info back-to-auto; masks are null, never undefined)", () => {
-  const a = makeViewport([{ id: "g" }]);
+  const a = makeCell([{ id: "g" }]);
   a.set({ "panel.info": true });
   a.set({ "panel.info": null });
   assert.ok("panel.info" in a.settings!);
@@ -118,7 +118,7 @@ test("a null mask survives the merge (panel.info back-to-auto; masks are null, n
 });
 
 test("unsubscribing the last member drops the channel (no leaks)", () => {
-  const a = makeViewport([{ id: "gone" }]);
+  const a = makeCell([{ id: "gone" }]);
   a.leave();
   // Publishing to a dead channel is a no-op (nothing throws, nothing applies).
   publishSettingsPatch("gone", { encoding: "x" });

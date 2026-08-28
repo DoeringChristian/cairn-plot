@@ -19,7 +19,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const { report, setOverallStatus } = createHarness({ title: "CONTENT-ASPECT" });
@@ -37,7 +37,7 @@ function makeImageUrl(w: number, h: number, color: string): string {
   ctx.fillRect(0, 0, w, h);
   return c.toDataURL("image/png");
 }
-function imageDescriptor(w: number, h: number, color: string): PlotDescriptor {
+function imageDescriptor(w: number, h: number, color: string): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -46,7 +46,7 @@ function imageDescriptor(w: number, h: number, color: string): PlotDescriptor {
       data: { kind: "url", src: makeImageUrl(w, h, color) },
       props: { toolbar: true },
     },
-  } as PlotDescriptor;
+  } as PlotSpec;
 }
 
 /** The content-aspect FRAME element inside a host (it IS the content-aspect box
@@ -64,7 +64,7 @@ async function run(): Promise<boolean> {
 
   const roots: Root[] = [];
   const HOST_W = 300;
-  const mount = (divId: string, d: PlotDescriptor) => {
+  const mount = (divId: string, d: PlotSpec) => {
     const el = document.getElementById(divId)!;
     // A fixed-WIDTH, AUTO-HEIGHT host (a gallery column / report body / auto card):
     // the exact context where "big empty bands" appear. With the fix the host

@@ -8,7 +8,7 @@ import type {
   ImageBackendProps,
   RenderMode,
 } from "./backend/contracts.ts";
-import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../settings/schema.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
@@ -24,7 +24,7 @@ type ImageRuntimePlumbing =
   | "source"
   | "syncedSettings"
   | "setSyncedSettings"
-  | "resetViewportSettings"
+  | "resetSettings"
   | "onViewportChange";
 
 /** Semantic image input. Cell-owned settings and commands are deliberately absent. */

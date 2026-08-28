@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { ReportNaturalSizeContext } from "../plots/image/components/natural-size-report";
+import { ReportNaturalSizeContext } from "./natural-size";
 import { finitePositive, VIEWPORT_HEIGHT_MARGIN } from "./grid-uniform-aspect";
 
 export function ContentAspectFrame({

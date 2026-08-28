@@ -12,7 +12,7 @@ import type {
   CompareSource,
   DecodedSource,
 } from "./backend/contracts.ts";
-import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../settings/schema.ts";
 import type { CompareViewMode } from "./use-comparison-control.ts";
 
 export interface ImageComparisonHostInput {
@@ -20,7 +20,7 @@ export interface ImageComparisonHostInput {
   readonly mode: CompareViewMode;
   readonly diffKernel: string;
   readonly colormap: CompareSource["colormap"];
-  readonly viewportDefaults: PlotSettings;
+  readonly cellDefaults: PlotSettings;
   readonly splitPosition: number;
   readonly align?: CompareAlign;
   readonly fit?: CompareFit;

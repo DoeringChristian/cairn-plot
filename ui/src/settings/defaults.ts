@@ -14,7 +14,7 @@ interface InitialSettingsShared {
 }
 
 /** Materialize authored values exactly once when a render surface forms. */
-export function initialViewportSettings(
+export function initialCellSettings(
   node: InitialSettingsNode,
   shared: InitialSettingsShared | undefined,
 ): PlotSettings {

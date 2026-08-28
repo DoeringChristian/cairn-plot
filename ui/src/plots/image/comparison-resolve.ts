@@ -1,7 +1,7 @@
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
 import {
   decodeImageSource,
-  resolveImageViewportItems,
+  resolveImageArtifacts,
 } from "../artifact-resolvers.ts";
 import type { DataSource } from "../../resources/data/data-source.ts";
 import type { CompareFloatSource } from "./compare/compositor.tsx";
@@ -40,7 +40,7 @@ async function resolveOperand(
         overlay: parseOverlay(data.metadata) ?? undefined,
       };
     }
-    const resolved = resolveImageViewportItems(
+    const resolved = resolveImageArtifacts(
       {
         hashes: [data.hash ?? null],
         referenceHashes: [data.referenceHash ?? null],

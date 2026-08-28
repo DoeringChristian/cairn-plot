@@ -45,7 +45,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { getSharedDevice } from "../../../plots/image/engine/device";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import {
@@ -133,7 +133,7 @@ const diffCompare = (label: string) => ({
   props: { toolbar: true, label },
 });
 
-function sideBySideGrid(): PlotDescriptor {
+function sideBySideGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -142,9 +142,9 @@ function sideBySideGrid(): PlotDescriptor {
       gap: 8,
       children: [imageLeaf("runtime:img", "Image"), diffCompare("Diff")],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
-function stackedGrid(): PlotDescriptor {
+function stackedGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -154,7 +154,7 @@ function stackedGrid(): PlotDescriptor {
       mode: "stacked",
       children: [imageLeaf("runtime:img", "Image"), diffCompare("Diff")],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 // A stacked grid whose slot 0 is a k=1 SCALAR float image AUTHORED with colormap
 // "magma" (the reported OFFICIAL-FLIP slot) and slot 1 a plain RGB image — flipping
@@ -165,7 +165,7 @@ const magmaScalarLeaf = (label: string) => ({
   data: imghdr("runtime:scalar"),
   props: { toolbar: true, label, colormap: "magma" },
 });
-function stackedScalarMagmaGrid(): PlotDescriptor {
+function stackedScalarMagmaGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -175,7 +175,7 @@ function stackedScalarMagmaGrid(): PlotDescriptor {
       mode: "stacked",
       children: [magmaScalarLeaf("Magma scalar"), imageLeaf("runtime:img", "Image")],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 // A SINGLE compare in a given authored mode (reg 1: HOME must restore this mode
 // after the user switches away).
@@ -187,11 +187,11 @@ const compareNode = (mode: "diff" | "split", label: string) => ({
   diffSubmode: "flip",
   props: { toolbar: true, label },
 });
-function singleCompareGrid(mode: "diff" | "split"): PlotDescriptor {
+function singleCompareGrid(mode: "diff" | "split"): PlotSpec {
   return {
     mode: "local",
     root: { kind: "grid", cols: 1, gap: 8, children: [compareNode(mode, "Cmp")] },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 // A plain SCALAR float image (k=1) with NO authored colormap (its default curve).
 const scalarPlainLeaf = (label: string) => ({
@@ -203,7 +203,7 @@ const scalarPlainLeaf = (label: string) => ({
 // Two scalar slots with DISTINCT authored defaults (slot0 magma, slot1 none) — the
 // stack-shared-settings test (reg 2): a pick applies to BOTH, HOME on a slot adopts
 // THAT slot's authored default stack-wide, exit to grid restores per-image defaults.
-function stackedTwoScalarGrid(): PlotDescriptor {
+function stackedTwoScalarGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -213,7 +213,7 @@ function stackedTwoScalarGrid(): PlotDescriptor {
       mode: "stacked",
       children: [magmaScalarLeaf("Magma scalar"), scalarPlainLeaf("Plain scalar")],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 // Two scalar slots with DISTINCT authored PEAK values — the "shares settings BEYOND
 // encoding" test (reg b): peak is a viewport setting too, so a pick persists across
@@ -225,7 +225,7 @@ const peakScalarLeaf = (label: string, peak: number) => ({
   data: imghdr("runtime:scalar"),
   props: { toolbar: true, label, peak },
 });
-function stackedTwoPeakGrid(): PlotDescriptor {
+function stackedTwoPeakGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -235,12 +235,12 @@ function stackedTwoPeakGrid(): PlotDescriptor {
       mode: "stacked",
       children: [peakScalarLeaf("Peak 8", 8), peakScalarLeaf("Peak 3", 3)],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 // The SAME two distinct-default scalar slots, but a NORMAL side-by-side grid — TWO
-// separate viewports (each its own settings), for the HOME-while-selected locality
+// separate cells (each its own settings), for the HOME-while-selected locality
 // test (reg a): multi-select syncs settings BETWEEN them, but HOME on one is LOCAL.
-function sideBySideTwoScalarGrid(): PlotDescriptor {
+function sideBySideTwoScalarGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -249,10 +249,10 @@ function sideBySideTwoScalarGrid(): PlotDescriptor {
       gap: 8,
       children: [magmaScalarLeaf("Magma scalar"), scalarPlainLeaf("Plain scalar")],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 // A DIFF compare authored with a specific kernel + NO colormap prop (so its display
-// colormap uses the shared diff default). Two side-by-side DIFF viewports with
+// colormap uses the shared diff default). Two side-by-side DIFF cells with
 // distinct kernels drive the state-
 // unification scenario 1: the diff colormap is the viewport's ONE display encoding,
 // so HOME (double-click) on one resets it to the shared diff default while a
@@ -265,7 +265,7 @@ const diffCompareKernel = (label: string, submode: string) => ({
   diffSubmode: submode,
   props: { toolbar: true, label },
 });
-function sideBySideTwoDiffGrid(): PlotDescriptor {
+function sideBySideTwoDiffGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -274,15 +274,15 @@ function sideBySideTwoDiffGrid(): PlotDescriptor {
       gap: 8,
       children: [diffCompareKernel("FLIP", "flip"), diffCompareKernel("Abs", "absolute")],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
-// THREE side-by-side DIFF viewports with DISTINCT kernels (flip → magma, ssim →
+// THREE side-by-side DIFF cells with DISTINCT kernels (flip → magma, ssim →
 // magma, absolute → turbo) — the served report's exact `FLIP vs SSIM vs absolute`
 // grid. Drives PHASE L: under the settings-model simplification (ruling 3) a
 // page-wide 3-diff multi-select MIRRORS the first viewport's kernel to the others
 // on formation — the diff-face `settingsSnapshot` carries `diffKernel` by value
 // and every receiver adopts it. This phase pins that at THREE distinct kernels.
-function sideBySideThreeDiffGrid(): PlotDescriptor {
+function sideBySideThreeDiffGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -295,7 +295,7 @@ function sideBySideThreeDiffGrid(): PlotDescriptor {
         diffCompareKernel("Abs", "absolute"),
       ],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 
 // ---- oracle ------------------------------------------------------------------
@@ -559,7 +559,7 @@ async function main(): Promise<void> {
             gap: 8,
             children: [imageLeaf("runtime:img", "Image"), imageLeaf("runtime:img2", "Image2")],
           },
-        } as unknown as PlotDescriptor,
+        } as unknown as PlotSpec,
       }),
     );
     await waitFor(() => framePaneIds("m2").length >= 2, 12000, 30);
@@ -966,7 +966,7 @@ async function main(): Promise<void> {
     // ============ PHASE H — HOME IS A GROUP ACTION WHILE MULTI-SELECTED ==========
     // (User ruling — supersedes the old "HOME stays local" reg: HOME/double-click
     // sets the WHOLE GROUP to the clicked viewport's defaults.) Two SEPARATE
-    // viewports (side-by-side grid: slot0 authored magma, slot1 a curve default).
+    // cells (side-by-side grid: slot0 authored magma, slot1 a curve default).
     // Multi-select forms ONE settings-sync group (slot0 = anchor). A pick on one
     // MIRRORS to the peer. HOME on ANY member publishes THAT member's defaults to
     // the group, so EVERY member adopts them — anchor or not.
@@ -1025,8 +1025,8 @@ async function main(): Promise<void> {
       return { seed0, seed1, syncedPeer, homePeer1, homePeerKept0, homeAnchor0, homeAnchorKept1 };
     };
     const h = await runH("hSel");
-    report(h.seed0 === "magma" && h.seed1 !== "magma", `PHASE H setup: two viewports with DISTINCT authored defaults (slot0=${h.seed0}, slot1=${h.seed1})`);
-    report(h.syncedPeer === "turbo", `PHASE H: multi-select mirrors a pick between viewports (peer→turbo: ${h.syncedPeer})`);
+    report(h.seed0 === "magma" && h.seed1 !== "magma", `PHASE H setup: two cells with DISTINCT authored defaults (slot0=${h.seed0}, slot1=${h.seed1})`);
+    report(h.syncedPeer === "turbo", `PHASE H: multi-select mirrors a pick between cells (peer→turbo: ${h.syncedPeer})`);
     report(h.homePeer1 === h.seed1, `PHASE H: HOME on a selected member resets it to the CLICKED pane's default (${h.homePeer1})`);
     report(h.homePeerKept0 === h.seed1, `PHASE H: HOME is a GROUP action — the neighbour ADOPTS the clicked pane's default too (${h.homePeerKept0})`);
     report(h.homeAnchor0 === "magma", `PHASE H: HOME on the anchor → the anchor's own default (${h.homeAnchor0})`);
@@ -1107,7 +1107,7 @@ async function main(): Promise<void> {
     if (iK.afterFlip !== "squared") allOk = false;
 
     // ============ PHASE J — DIFF-GRID HOME → SHARED DEFAULT (scenario 1) =========
-    // A NORMAL side-by-side grid of TWO DIFF viewports with DISTINCT kernels (slot0
+    // A NORMAL side-by-side grid of TWO DIFF cells with DISTINCT kernels (slot0
     // FLIP and absolute, both with the same display default). Multi-select forms ONE
     // sync group; a colormap pick MIRRORS to the peer. Then HOME (double-click) on ONE
     // viewport resets its colormap to the shared diff default. Pre-unification
@@ -1150,7 +1150,7 @@ async function main(): Promise<void> {
       // -- PART B: multi-select MIRROR + GROUP HOME (user ruling — supersedes the
       // old local-HOME reg). Select both (slot0 anchor); a colormap pick mirrors
       // to the peer; HOME on slot0 publishes slot0's visible-diff DEFAULT to the
-      // GROUP, so BOTH viewports adopt it.
+      // GROUP, so BOTH cells adopt it.
       const ids = framePaneIds(hostId);
       const store = getGlobalSelectionStore();
       store.select(ids[0], "replace");
@@ -1170,16 +1170,16 @@ async function main(): Promise<void> {
       return { seed0, seed1, home1Solo, home0Solo, mirrored1, home0, kept1 };
     };
     const j = await runJ("jDiffGrid");
-    report(j.seed0 === "srgb" && j.seed1 === "srgb", `PHASE J setup: unauthored DIFF viewports use the viewport image default (FLIP=${j.seed0}, absolute=${j.seed1})`);
+    report(j.seed0 === "srgb" && j.seed1 === "srgb", `PHASE J setup: unauthored DIFF cells use the viewport image default (FLIP=${j.seed0}, absolute=${j.seed1})`);
     report(j.home1Solo === "srgb", `PHASE J (scenario 1): HOME on the absolute diff restores its viewport default (${j.home1Solo})`);
     report(j.home0Solo === "srgb", `PHASE J (scenario 1): HOME on the FLIP diff restores its viewport default (${j.home0Solo})`);
-    report(j.mirrored1 === "red-blue", `PHASE J (scenario 1): multi-select mirrors a diff colormap pick between viewports (peer→red-blue: ${j.mirrored1})`);
+    report(j.mirrored1 === "red-blue", `PHASE J (scenario 1): multi-select mirrors a diff colormap pick between cells (peer→red-blue: ${j.mirrored1})`);
     report(j.home0 === "srgb", `PHASE J (scenario 1): HOME on a multi-selected diff restores the clicked viewport default (${j.home0})`);
     report(j.kept1 === "srgb", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts that default too (${j.kept1})`);
     if (j.seed0 !== "srgb" || j.seed1 !== "srgb" || j.home1Solo !== "srgb" || j.home0Solo !== "srgb" || j.mirrored1 !== "red-blue" || j.home0 !== "srgb" || j.kept1 !== "srgb") allOk = false;
 
     // ============ PHASE K — MULTI-SELECT KERNEL: FORMATION MIRRORS THE FIRST ===
-    // Two side-by-side DIFF viewports with DISTINCT kernels (slot0 FLIP, slot1
+    // Two side-by-side DIFF cells with DISTINCT kernels (slot0 FLIP, slot1
     // absolute). Multi-selecting them forms ONE sync group; the settings-model
     // simplification (ruling 3) applies the FIRST viewport's CURRENT values — the
     // kernel included — to the others, so slot1 ADOPTS the anchor's flip on
@@ -1221,7 +1221,7 @@ async function main(): Promise<void> {
       return { seed0, seed1, afterSelect0, afterSelect1, mirrored1 };
     };
     const k = await runK("kKernelGrid");
-    report(k.seed0 === "flip" && k.seed1 === "absolute", `PHASE K setup: two DIFF viewports with DISTINCT kernels (${k.seed0}/${k.seed1})`);
+    report(k.seed0 === "flip" && k.seed1 === "absolute", `PHASE K setup: two DIFF cells with DISTINCT kernels (${k.seed0}/${k.seed1})`);
     report(
       k.afterSelect0 === "flip" && k.afterSelect1 === "flip",
       `PHASE K (ruling 3): multi-selecting mirrors the FIRST viewport's kernel to the peer on formation (${k.afterSelect0}/${k.afterSelect1})`,
@@ -1260,7 +1260,7 @@ async function main(): Promise<void> {
       // NOSTACK: patches no longer ride an EventTarget bus (subscribers re-read
       // their own registry entry), so the former dispatchEvent capture is
       // retired. The seed-carries-kernel proof is now the REGISTRY OBSERVABLE:
-      // after formation the NON-ANCHOR viewports' own entries must hold the
+      // after formation the NON-ANCHOR cells' own entries must hold the
       // anchor's kernel (the fan-out wrote them — that IS the seed patch).
       const ids = framePaneIds(hostId);
       const store = getGlobalSelectionStore();
@@ -1293,7 +1293,7 @@ async function main(): Promise<void> {
     const l = await runL("lThreeKernelGrid");
     report(
       l.seeds[0] === "flip" && l.seeds[1] === "ssim" && l.seeds[2] === "absolute",
-      `PHASE L setup: three DIFF viewports with DISTINCT kernels (${l.seeds.join("/")})`,
+      `PHASE L setup: three DIFF cells with DISTINCT kernels (${l.seeds.join("/")})`,
     );
     report(
       l.formationPatchCount > 0 && l.seedPatchHadKernel,

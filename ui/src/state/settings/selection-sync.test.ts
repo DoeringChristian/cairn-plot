@@ -18,7 +18,7 @@ import {
   publishSettingsPatch,
   subscribeSettingsPatches,
   type PlotSettings,
-} from "./viewport-settings.ts";
+} from "./settings-channels.ts";
 
 let n = 0;
 const freshBase = () => `sel-int-${n++}`;

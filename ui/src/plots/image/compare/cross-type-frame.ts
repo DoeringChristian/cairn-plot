@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { FrameSource } from "../../../integration/cairn-card/types";
+import type { FrameSource } from "../../../backends/frame-source";
 
 // ---------------------------------------------------------------------------
 // WS-VC6 cross-type bridge — the pure (JSX-free) half of the "foreign 3D type"

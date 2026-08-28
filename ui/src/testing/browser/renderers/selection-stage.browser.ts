@@ -26,7 +26,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
@@ -54,7 +54,7 @@ function makeImageUrl(color: string): string {
   return c.toDataURL("image/png");
 }
 
-function imageDescriptor(label: string, color: string): PlotDescriptor {
+function imageDescriptor(label: string, color: string): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -63,7 +63,7 @@ function imageDescriptor(label: string, color: string): PlotDescriptor {
       data: { kind: "url", src: makeImageUrl(color) },
       props: { label, toolbar: true },
     },
-  } as PlotDescriptor;
+  } as PlotSpec;
 }
 
 function clickPane(el: Element, shift = false): void {
@@ -279,7 +279,7 @@ async function run(): Promise<boolean> {
   (window as unknown as { __cairnPlotEagerMount?: boolean }).__cairnPlotEagerMount = true;
 
   const roots: Root[] = [];
-  const mount = (divId: string, d: PlotDescriptor) => {
+  const mount = (divId: string, d: PlotSpec) => {
     const el = document.getElementById(divId)!;
     const root = createRoot(el);
     root.render(createElement(PlotApp, { descriptor: d }));
@@ -504,7 +504,7 @@ async function run(): Promise<boolean> {
     }
   }
 
-  // === VIEWPORT SYNC — the fix for "viewports not synced in multi-enlarge".
+  // === VIEWPORT SYNC — the fix for "cells not synced in multi-enlarge".
   //     Drive a REAL ctrl+wheel zoom on cell A's viewport and assert cell B zooms
   //     to the SAME transform: the stage cells share one settings membership
   //     (the group the stage previously dropped while keeping only settings). ====

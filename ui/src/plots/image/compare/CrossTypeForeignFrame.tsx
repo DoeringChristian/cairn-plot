@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo } from "react";
-import type { FrameSource } from "../../../integration/cairn-card/types";
+import type { FrameSource } from "../../../backends/frame-source";
 import type { ForeignFrameLoaders } from "./cross-type-frame";
 
 /**

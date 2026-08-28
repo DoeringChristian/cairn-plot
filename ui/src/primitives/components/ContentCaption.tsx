@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// ViewportCaption — the SINGLE per-pane metadata caption chip shared by every
+// ContentCaption — the SINGLE per-pane metadata caption chip shared by every
 // 3D viewport (mesh/pointcloud/boxes/volume). It owns ALL styling and
 // positioning so the caption is pixel-identical (same element, same classes)
 // and sits in the SAME corner in every type.
@@ -25,6 +25,6 @@
 export const VIEWPORT_CAPTION_CLASS =
   "pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm";
 
-export default function ViewportCaption({ text }: { text: string }) {
+export default function ContentCaption({ text }: { text: string }) {
   return <div className={VIEWPORT_CAPTION_CLASS}>{text}</div>;
 }

@@ -5,7 +5,7 @@ import type { Scene3DSyncOptions } from "../../three/runtime/use-scene3d";
 import { createCameraSettingsPeer, type CameraState } from "../../three/runtime/camera-settings";
 import { CrossTypeCompositeMediaPane } from "./compositor";
 import type { MediaCompareModeKind } from "./mode";
-import type { FrameSource } from "../../../integration/cairn-card/types";
+import type { FrameSource } from "../../../backends/frame-source";
 import type { Colormap, DiffMode } from "../../types";
 import { useOffscreenSnapshot } from "./use-offscreen-snapshot";
 
@@ -59,7 +59,7 @@ export interface OffscreenComparePanesProps {
   alignForDiff?: boolean;
   /**
    * WS-3DR2: the card's own live camera-sync group id (`cameraSyncGroupId`
-   * from `ViewportPaneProps`, non-null only when the card's "Sync 3D views"
+   * from `PaneProps`, non-null only when the card's "Sync 3D views"
    * toggle is on), so this pane's two offscreen mirrors + interaction
    * controller join THAT group instead of a private per-mount one.
    *

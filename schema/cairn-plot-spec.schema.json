@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$ref": "#/definitions/PlotDescriptor",
+  "$ref": "#/definitions/PlotSpec",
   "definitions": {
-    "PlotDescriptor": {
+    "PlotSpec": {
       "type": "object",
       "properties": {
         "root": {
@@ -347,7 +347,7 @@
         "sync": {
           "type": "object",
           "properties": {
-            "viewport": {
+            "view": {
               "type": "boolean"
             },
             "camera": {

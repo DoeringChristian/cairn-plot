@@ -16,7 +16,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { createHarness, waitFor } from "../../../testing/harness";
 
 interface CompareProbe {
@@ -107,7 +107,7 @@ async function run(): Promise<boolean> {
             compareChild("#e67e22", "#16a085"),
           ],
         },
-      } as unknown as PlotDescriptor,
+      } as unknown as PlotSpec,
     }),
   );
   roots.push(root);

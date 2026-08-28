@@ -30,7 +30,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { ContentAspectFrame } from "../../../layout/ContentAspectFrame";
 import { createHarness, sleep, waitFor } from "../../harness";
 
@@ -79,7 +79,7 @@ function cellBodies(hostId: string): HTMLElement[] {
   const host = document.getElementById(hostId);
   return host ? Array.from(host.querySelectorAll<HTMLElement>("[data-cairn-grid-cell]")) : [];
 }
-function gridDescriptor(sizes: Array<[number, number]>): PlotDescriptor {
+function gridDescriptor(sizes: Array<[number, number]>): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -88,7 +88,7 @@ function gridDescriptor(sizes: Array<[number, number]>): PlotDescriptor {
       gap: 8,
       children: sizes.map(([w, h]) => floatLeaf(w, h)),
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 
 async function run(): Promise<boolean> {
@@ -155,7 +155,7 @@ async function run(): Promise<boolean> {
     });
   }, 6000, 20);
   const bCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
-  report(bCells.length >= 3, `SAME-ASPECT: three viewports present (${bCells.length})`);
+  report(bCells.length >= 3, `SAME-ASPECT: three cells present (${bCells.length})`);
   const bWide = bCells.length >= 3 && bCells.every((r) => near(r.width / r.height, 2, 0.15) && r.width > r.height);
   report(
     bWide,
@@ -166,7 +166,7 @@ async function run(): Promise<boolean> {
     bCells.every((r) => near(r.width, bCells[0].width, 2) && near(r.height, bCells[0].height, 2));
   report(
     bUniform,
-    `SAME-ASPECT: all viewports the SAME size (${bCells.map((r) => `${r.width.toFixed(0)}×${r.height.toFixed(0)}`).join(", ")})`,
+    `SAME-ASPECT: all cells the SAME size (${bCells.map((r) => `${r.width.toFixed(0)}×${r.height.toFixed(0)}`).join(", ")})`,
   );
   ok = ok && bCells.length >= 3 && bWide && bUniform;
 
@@ -190,13 +190,13 @@ async function run(): Promise<boolean> {
   await sleep(120); // let the representative aspect settle across all three reports
   const cCells = gridCells("grid-host").map((c) => c.getBoundingClientRect());
   const cBodies = cellBodies("grid-host").map((c) => c.getBoundingClientRect());
-  report(cCells.length >= 3, `MIXED: three viewports present (${cCells.length})`);
+  report(cCells.length >= 3, `MIXED: three cells present (${cCells.length})`);
   const cUniform =
     cCells.length >= 3 &&
     cCells.every((r) => near(r.width, cCells[0].width, 2) && near(r.height, cCells[0].height, 2));
   report(
     cUniform,
-    `MIXED: viewports are UNIFORM despite different content aspects (${cCells.map((r) => `${r.width.toFixed(0)}×${r.height.toFixed(0)}`).join(", ")})`,
+    `MIXED: cells are UNIFORM despite different content aspects (${cCells.map((r) => `${r.width.toFixed(0)}×${r.height.toFixed(0)}`).join(", ")})`,
   );
   // The pane body fills the cell → viewport == selectable frame → ring matches.
   const cFills =

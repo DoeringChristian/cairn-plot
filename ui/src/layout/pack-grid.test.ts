@@ -4,7 +4,7 @@
  * DOM/React:
  *
  *   node --experimental-strip-types --test \
- *     src/state/selection/pack-grid.test.ts
+ *     src/layout/pack-grid.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -86,9 +86,9 @@ test("packContentGrid: a SINGLE cell fills the stage at its CONTENT aspect (no l
   assert.equal(p.rows, 1);
 });
 
-test("packContentGrid: multi-cell viewports are UNIFORM (every cell the same size)", () => {
+test("packContentGrid: multi-cell cells are UNIFORM (every cell the same size)", () => {
   // A grid is a uniform layout: every cell is the representative-aspect slot, so
-  // all viewports are identical (a mismatched image letterboxes WITHIN its cell,
+  // all cells are identical (a mismatched image letterboxes WITHIN its cell,
   // and a synced zoom/pan lines up pixel-for-pixel across cells).
   const p = packContentGrid({ count: 3, width: 1000, height: 400, aspect: 2, gap: 8 });
   assert.equal(p.rects.length, 3);

@@ -18,7 +18,7 @@
  * `PlotSpec` (Phase C) in lockstep.
  */
 import {
-  resolveImageViewportItems,
+  resolveImageArtifacts,
   fetchPointCloudArrays,
   fetchMeshArrays,
   fetchVolumeArray,
@@ -43,7 +43,7 @@ export type {
   CompareNode,
   DataSpec,
   GridNode,
-  PlotDescriptor,
+  PlotSpec,
   PlotLeafNode,
   PlotNode,
   SharedProps,
@@ -154,7 +154,7 @@ export async function resolveDataProps(
           ...(exrTree ? { exrTree } : {}),
         };
       }
-      const res = resolveImageViewportItems(
+      const res = resolveImageArtifacts(
         {
           hashes: [data.hash ?? null],
           referenceHashes: [data.referenceHash ?? null],

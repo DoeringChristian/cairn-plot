@@ -1,7 +1,7 @@
 """Python ↔ committed-schema conformance for the plot-descriptor pydantic models.
 
 `packages/python/src/cairn_plot/spec.py`'s pydantic models MIRROR the authoritative TS
-`PlotDescriptor` (from which `schema/cairn-plot-spec.schema.json` is generated).
+`PlotSpec` (from which `schema/cairn-plot-spec.schema.json` is generated).
 This test keeps them honest field-for-field against that committed schema:
 
   - field parity      — every model's fields == the schema definition's properties
@@ -30,7 +30,7 @@ DEFS = SCHEMA["definitions"]
 
 # Pydantic model -> schema `definitions` key (the object-shaped nodes).
 MODEL_TO_DEF = {
-    spec.PlotDescriptorSpec: "PlotDescriptor",
+    spec.PlotSpec: "PlotSpec",
     spec.PlotLeafSpec: "PlotLeafNode",
     spec.GridSpec: "GridNode",
     spec.CompareSpec: "CompareNode",

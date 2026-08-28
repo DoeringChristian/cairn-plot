@@ -12,16 +12,16 @@ test("persistence restores before allowing session writes", async () => {
   const connection = connectSessionPersistence(controller, {
     async load() {
       await gate;
-      return { version: 1, viewports: { a: { settings: { "image.encoding": "magma" } } }, grids: {} };
+      return { version: 2, cells: { a: { settings: { "image.encoding": "magma" } } }, grids: {} };
     },
     save(session) { saves.push(session); },
   });
-  controller.recordViewport("a", { "image.encoding": "turbo" });
+  controller.recordCell("a", { "image.encoding": "turbo" });
   await Promise.resolve();
   assert.equal(saves.length, 0);
   release();
   await connection.ready;
-  assert.equal(controller.getSession().viewports.a.settings["image.encoding"], "magma");
+  assert.equal(controller.getSession().cells.a.settings["image.encoding"], "magma");
   connection.dispose();
 });
 
@@ -33,15 +33,15 @@ test("persistence serializes saves and keeps the latest pending snapshot", async
   const connection = connectSessionPersistence(controller, {
     load: () => null,
     async save(session) {
-      saved.push(session.viewports.a?.settings["image.encoding"] ?? "none");
+      saved.push(session.cells.a?.settings["image.encoding"] ?? "none");
       if (saved.length === 1) await gate;
     },
   });
   await connection.ready;
-  controller.recordViewport("a", { "image.encoding": "magma" });
+  controller.recordCell("a", { "image.encoding": "magma" });
   await Promise.resolve();
-  controller.recordViewport("a", { "image.encoding": "gray" });
-  controller.recordViewport("a", { "image.encoding": "turbo" });
+  controller.recordCell("a", { "image.encoding": "gray" });
+  controller.recordCell("a", { "image.encoding": "turbo" });
   await Promise.resolve();
   release();
   await new Promise((resolve) => setTimeout(resolve, 0));

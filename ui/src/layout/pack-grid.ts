@@ -16,7 +16,7 @@
  * `compare-grid.ts` so BOTH stages agree on the grid shape. A single
  * REPRESENTATIVE aspect sizes every cell uniformly (see {@link representativeAspect})
  * — that keeps synced panes framed identically, so a synced zoom/pan lines up
- * pixel-for-pixel across cells (the viewport-sync contract).
+ * pixel-for-pixel across cells (the view-sync contract).
  */
 import { gridColumns } from "./compare-grid.ts";
 
@@ -129,7 +129,7 @@ export function packContentGrid(opts: PackOptions): PackResult {
   // is identical (a differently-shaped image object-contain letterboxes WITHIN
   // its uniform cell rather than getting a differently-sized viewport). Uniform
   // slots are also what makes a SYNCED zoom/pan line up pixel-for-pixel across
-  // cells (the viewport-sync contract).
+  // cells (the view-sync contract).
   const availCellW = (width - (cols - 1) * gap) / cols;
   const availCellH = (height - (rows - 1) * gap) / rows;
   const { width: slotW, height: slotH } = fitContentBox(Math.max(0, availCellW), Math.max(0, availCellH), aspect);

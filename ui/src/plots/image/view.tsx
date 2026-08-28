@@ -53,7 +53,7 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     onViewportChange={onViewportChange}
     syncedSettings={settings}
     setSyncedSettings={(patch) => commands.patch({ ...patch } as ImageSettings)}
-    resetViewportSettings={commands.reset}
+    resetSettings={commands.reset}
     channelMenu={p.channelMenu}
     channelModified={p.channelModified}
     onChannelReset={p.onChannelReset}

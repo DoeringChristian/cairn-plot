@@ -7,8 +7,8 @@
  * "A viewport simply stores a settings instance, that gets synced over the
  * group bus." Concretely:
  * - Each VIEWPORT OWNS a plain {@link PlotSettings} object, held in a
- *   box (`useRef`) by the frame that renders it (`useViewportSettings` in
- *   renderers/use-viewport-settings.ts). Patches REPLACE the object
+ *   box (`useRef`) by the frame that renders it (`useCellSettings` in
+ *   renderers/use-cell-settings.ts). Patches REPLACE the object
  *   (`{...prev, ...patch}`) so identity checks stay valid. Nothing global
  *   stores settings — no registry, no ids, no leaked rows: the object dies
  *   with its viewport.
@@ -16,7 +16,7 @@
  *   listener set per group id, carrying patches, remembering NOTHING. A
  *   write is a publish; every subscribed member applies the patch into its
  *   OWN object (persistent — leaving a group changes nothing). Channels may
- *   be KEY-SCOPED per subscriber (an authored grid `sync.viewport`
+ *   be KEY-SCOPED per subscriber (an authored grid `sync.view`
  *   membership applies only the `view` key — today's semantics).
  * - Peer READS (formation seed, late-join converge, stage copy-on-create)
  *   are a deref of the owning frame's box, reached through the existing
@@ -31,7 +31,6 @@
  */
 
 import type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
-export type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
 
 /**
  * THE SETTINGS TYPE (unified-viewport ruling, 2026-08-26): one flat,
@@ -52,7 +51,7 @@ export type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
  *   - `scene3d.*` — 3D camera pose, NATIVE: each 3D viewer owns a settings
  *     object and joins its group as a peer (`three/camera-settings.ts`);
  *     late-join converges by PEER DEREF (`settings-peers.ts`), the frame
- *     registry's twin for frameless viewports.
+ *     registry's twin for frameless cells.
  *
  * MASKS are `null`, never `undefined` (JSON-round-trippable by construction):
  * `"panel.info": null` = back-to-auto; `"image.colorRange": null` = bounds

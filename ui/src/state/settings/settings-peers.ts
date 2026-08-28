@@ -4,7 +4,7 @@
  * a member joining an existing group converges by DEREFERENCING a live peer's
  * settings object (the same peer-read seam frames use via the pane registry:
  * `registerSelectionPane(...).settings.get`). This module is that seam for
- * viewports that are NOT selection panes (the 3D viewer kits, the offscreen
+ * cells that are NOT selection panes (the 3D viewer kits, the offscreen
  * compare mirrors): a member registers a live accessor to its OWN settings
  * object; a late joiner peeks any peer's current object.
  *
@@ -16,7 +16,7 @@
  * (`viewport-settings.ts`): the three-addon and core IIFE chunks must share
  * one membership map.
  */
-import type { PlotSettings } from "./viewport-settings.ts";
+import type { PlotSettings } from "../../settings/schema.ts";
 
 type PeerAccessor = () => PlotSettings | null;
 

@@ -15,9 +15,9 @@ export {
   REF_BADGE_TEXT,
 } from "./RefBadge";
 export {
-  default as ViewportCaption,
+  default as ContentCaption,
   VIEWPORT_CAPTION_CLASS,
-} from "./ViewportCaption";
+} from "./ContentCaption";
 export { default as PlotToolbar, type PlotToolbarProps } from "./PlotToolbar";
 export {
   default as PlotLegend,

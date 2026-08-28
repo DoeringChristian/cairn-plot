@@ -41,7 +41,7 @@ import {
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { PlotNodeView } from "./PlotNodeView";
-import { PaneSyncContext, SharedPlotContext } from "./plot-context.ts";
+import { CellSettingsContext, SharedPlotContext } from "./plot-context.ts";
 import { ChartFillContext } from "./standalone-helpers";
 import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./descriptor-resolver";
 import type { DataSource } from "../resources/data/data-source";
@@ -52,25 +52,25 @@ import {
   type SelectionSnapshot,
   type StageMode,
 } from "../state/selection/selection-store";
-import type { PlotSettings } from "../state/settings/viewport-settings";
-import { useViewportSettings } from "../state/settings/use-viewport-settings";
+import type { PlotSettings } from "../settings/schema.ts";
+import { useCellSettings } from "../state/settings/use-cell-settings";
 import {
   imageCompatibleCount,
   planCompareGrid,
   type SelEntry,
-} from "../state/selection/compare-grid";
+} from "../layout/compare-grid";
 import {
   packContentGrid,
   DEFAULT_STAGE_GAP,
   type Rect,
-} from "../state/selection/pack-grid";
+} from "../layout/pack-grid";
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
   useUniformGridAspect,
   useReportCellAspect,
 } from "../layout/grid-uniform-aspect";
-import { ReportNaturalSizeContext } from "../plots/image/components/natural-size-report";
+import { ReportNaturalSizeContext } from "../layout/natural-size";
 import {
   useStackKeyboard,
   StackTabStrip,
@@ -317,14 +317,14 @@ function StageCell({
    *  INDEPENDENT viewport whose entry is seeded by COPY-ON-CREATE from its
    *  source pane's entry (the sources are group-synced, so cells open
    *  identical). Cells join this group so edits fan out across the stage —
-   *  persist while open, and die with the stage's viewports on close. Stage
-   *  edits never touch the original panes (user ruling: stage viewports are
+   *  persist while open, and die with the stage's cells on close. Stage
+   *  edits never touch the original panes (user ruling: stage cells are
    *  independent). */
   stageSettingsGroupId: string;
   initialSettings: PlotSettings | null;
   onSettingsChange: (type: "patch" | "replace", settings: PlotSettings) => void;
 }) {
-  const settings = useViewportSettings([{ id: stageSettingsGroupId }], initialSettings);
+  const settings = useCellSettings([{ id: stageSettingsGroupId }], initialSettings);
   const patchSettings = useCallback((patch: PlotSettings) => {
     settings.set(patch);
     onSettingsChange("patch", patch);
@@ -398,7 +398,7 @@ function StageCell({
   // Fill the cell (`height:100%`) so N cells stretch to fill the overlay height:
   // `ChartFillContext=true` makes the fresh `PaneSelectionFrame` + `ChartBox`
   // fill their track rather than collapse to content height. The shared
-  // settings-sync group threads through the `PaneSyncContext` — the
+  // settings-sync group threads through the `CellSettingsContext` — the
   // non-selectable stage leaf passes it through to its inner leaf/compare. The
   // pane's own content aspect flows up via `GridUniformAspectContext` (a
   // `GridCellReporter` inside `ImageStandalone`, since the stage provides that
@@ -443,11 +443,11 @@ function StageCell({
       <div style={{ position: "relative", flex: "1 1 0%", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <ReportNaturalSizeContext.Provider value={reportAspect}>
           <ChartFillContext.Provider value={true}>
-            <PaneSyncContext.Provider value={paneSync}>
+            <CellSettingsContext.Provider value={paneSync}>
               <SharedPlotContext.Provider value={{ source: spec.source, shared: spec.shared }}>
                 <PlotNodeView node={spec.node} />
               </SharedPlotContext.Provider>
-            </PaneSyncContext.Provider>
+            </CellSettingsContext.Provider>
           </ChartFillContext.Provider>
         </ReportNaturalSizeContext.Provider>
       </div>

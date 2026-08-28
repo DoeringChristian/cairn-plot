@@ -7,7 +7,7 @@ import {
 } from "../components/gpu-image-gate";
 import { InFullscreenOverlayContext } from "../../../primitives/components/FullscreenOverlayShell";
 import { InStackedGridContext } from "../../../layout/stack/stack-context";
-import { usePublishNaturalSize } from "../components/natural-size-report";
+import { usePublishNaturalSize } from "../../../layout/natural-size";
 import type {
   Colormap,
   DiffMode,
@@ -42,8 +42,8 @@ import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../backend/contracts";
 import {
   useSeedGroupOnFormation,
-  useViewportSettings,
-} from "../../../state/settings/use-viewport-settings";
+  useCellSettings,
+} from "../../../state/settings/use-cell-settings";
 
 import type {
   CompareSource,
@@ -729,7 +729,7 @@ export interface CompositeMediaPaneProps {
   /** Multi-pane SELECTION settings-sync — forwarded to the engine compare pane
    *  (`GpuComparePane`) so a selected compare pane joins the ONE shared settings
    *  bus (mode / kernel / colormap / tonemap / … sync), the same bus the image
-   *  panes use. Threaded from `PaneSyncContext` via `CompareView`. Only the
+   *  panes use. Threaded from `CellSettingsContext` via `CompareView`. Only the
    *  engine-composited (split/diff) pane participates. */
   settingsSyncGroupId?: string;
   syncIsAnchor?: boolean;
@@ -817,8 +817,8 @@ export function CompositeMediaPane({
   // The settings STORE for the LIVE-compare (card / 3D-snapshot) viewport: this
   // pane is NOT under a plot-node `PaneSelectionFrame`, so IT owns the one store
   // per viewport (local store + group while synced; group > local > default —
-  // see use-viewport-settings.ts) and drives the composited pane top-down.
-  const vst = useViewportSettings(
+  // see use-cell-settings.ts) and drives the composited pane top-down.
+  const vst = useCellSettings(
     settingsSyncGroupId ? [{ id: settingsSyncGroupId }] : undefined,
   );
   const syncedSettings = vst.settings;

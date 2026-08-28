@@ -24,7 +24,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "STACKED DIFF FLIP RESOLVE" });
@@ -55,7 +55,7 @@ function imgUrl(color: string): string {
 
 // The report's Validation grid shape: a plain IMAGE leaf next to a DIFF compare,
 // stacked → homogeneous (both lower to `plot:image`) → ONE reused LeafView.
-function imageDiffGrid(): PlotDescriptor {
+function imageDiffGrid(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -75,7 +75,7 @@ function imageDiffGrid(): PlotDescriptor {
         },
       ],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 
 interface LeafResolveStats { placeholderMounts: number; }

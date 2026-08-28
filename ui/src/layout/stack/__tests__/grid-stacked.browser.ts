@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "GRID-STACKED" });
@@ -67,7 +67,7 @@ function diffUrlChild(fg: string, ref: string, label: string): unknown {
 // A stacked grid mixing an image LEAF and a DIFF compare — homogeneous by the
 // Phase 2c `stackKindKey` (both lower to `plot:image`), so the flip is a reused-
 // instance source-swap, NOT a mount-swap.
-function imageDiffGrid(mode: "normal" | "stacked"): PlotDescriptor {
+function imageDiffGrid(mode: "normal" | "stacked"): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -80,7 +80,7 @@ function imageDiffGrid(mode: "normal" | "stacked"): PlotDescriptor {
         diffUrlChild("#c0392b", "#2980b9", "Diff"),
       ],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 // A HETEROGENEOUS grid: an image LEAF next to a COMPARE pane. Stacking these
 // Phase 3: an image LEAF next to a SPLIT compare — HOMOGENEOUS (both lower to
@@ -88,7 +88,7 @@ function imageDiffGrid(mode: "normal" | "stacked"): PlotDescriptor {
 // (the 341c577 mixed-stack sync-group machinery is retired). Both sides are URL
 // sources ⇒ CpuImagePane renders each as an `<img>`, so the SAME surface DOM node
 // survives the flip (the no-remount proof, no WebGPU needed).
-function mixedGrid(mode: "normal" | "stacked"): PlotDescriptor {
+function mixedGrid(mode: "normal" | "stacked"): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -101,9 +101,9 @@ function mixedGrid(mode: "normal" | "stacked"): PlotDescriptor {
         compareUrlChild("#c0392b", "#2980b9", "Compare"),
       ],
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
-function stackedGrid(labels: string[], mode: "normal" | "stacked"): PlotDescriptor {
+function stackedGrid(labels: string[], mode: "normal" | "stacked"): PlotSpec {
   // DELIBERATELY different sizes/aspects per child: the stacked viewport BOX is
   // latched (one fixed surface; a differently-shaped slot letterboxes within
   // it), and the box-stability assertions below depend on the children actually
@@ -122,7 +122,7 @@ function stackedGrid(labels: string[], mode: "normal" | "stacked"): PlotDescript
       mode,
       children: labels.map((l, i) => floatLeaf(...(dims[i % dims.length] as [number, number]), l)),
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 
 function host(id: string): HTMLElement {
@@ -157,7 +157,7 @@ async function run(): Promise<boolean> {
   const up = await waitFor(() => qa("m1", "[data-cairn-stack-tab]").length >= 1 || qa("m1", "[role='tab']").length >= 3, 5000, 20);
   const tabs = qa("m1", "[role='tab']");
   report(tabs.length === 3, `stacked grid renders a tab strip with 3 tabs (got ${tabs.length})`);
-  report(!!q("m1", "[data-cairn-grid-header]"), "grid header (holds tabs + toggle, above the viewports) present");
+  report(!!q("m1", "[data-cairn-grid-header]"), "grid header (holds tabs + toggle, above the cells) present");
   report(!!q("m1", "[data-cairn-stacked-view]"), "stacked panes container present");
   // Single-renderer model: exactly ONE pane is rendered (the active source), not
   // three hidden ones — flipping swaps the source on this reused instance.

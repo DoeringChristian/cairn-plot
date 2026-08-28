@@ -80,7 +80,7 @@ python examples/demo_url_images.py --open     # URL-referenced EXR images (needs
   `cp.Report`: markdown + components in the themed report layout, every
   `cp.Compare` mode and diff kernel (incl. FLIP validated against NVIDIA's
   official `flip-evaluator`, shown side by side in magma), HDR-FLIP, and
-  viewport-synced grids.
+  view-synced grids.
 - [`demo_url_images.py`](examples/demo_url_images.py) — `cp.Image(url=...)`:
   the page bakes no pixels; the browser fetches and decodes EXR (ZIP + PIZ)
   client-side. See [`docs/API.md`](docs/API.md) for the full 0.1 API contract,
@@ -157,7 +157,7 @@ cd ui
 npm install
 npm run typecheck            # tsc -b --noEmit
 npm test                     # node --test over the lib's *.test.ts
-npm run check:plot-schema    # TS PlotDescriptor ↔ committed JSON schema
+npm run check:plot-schema    # TS PlotSpec ↔ committed JSON schema
 npm run check:plot-boundary  # the library must not import app code
 npm run smoke:plot           # headless-Chromium gallery render check (Python emit)
 npm run smoke:js             # headless-Chromium render check (window.cairnPlot JS face)

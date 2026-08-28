@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (relative: string) =>
   readFileSync(new URL(relative, import.meta.url), "utf8");
 
-test("the public host drives the production plot tree without exposing viewports", () => {
+test("the public host drives the production plot tree without exposing cells", () => {
   const host = read("PlotHost.tsx");
   const surface = read("../host/PlotSurface.tsx");
   const api = read("index.ts");
@@ -23,6 +23,6 @@ test("the canonical spec is recursive and has no public viewport/pane map", () =
   const spec = read("../../../packages/spec/src/spec.ts");
 
   assert.match(spec, /children: PlotNode\[\]/);
-  assert.match(spec, /type PlotSpec = PlotDescriptor/);
+  assert.match(spec, /interface PlotSpec/);
   assert.doesNotMatch(spec, /PaneId|PaneSpec|LayoutSpec|PlotSession/);
 });

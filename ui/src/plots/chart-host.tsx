@@ -4,7 +4,7 @@ import {
   ChartViewportSyncProvider,
   type ChartViewportSyncTarget,
 } from "./chart/use-chart-viewport.ts";
-import type { PlotSettings } from "../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../settings/schema.ts";
 import type { ChartSettings } from "./chart-settings.ts";
 
 /** Connect a cell's chart-domain settings to the shared 2D chart controls. */

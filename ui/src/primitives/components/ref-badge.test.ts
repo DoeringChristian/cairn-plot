@@ -57,10 +57,6 @@ const CONSUMERS = [
   "plots/image/compare/compositor.tsx",
   "plots/image/backend/gpu.tsx",
   "plots/image/backend/cpu.tsx",
-  "plots/three/viewports/mesh.tsx",
-  "plots/three/viewports/pointcloud.tsx",
-  "plots/three/viewports/boxes.tsx",
-  "plots/three/viewports/volume.tsx",
 ];
 
 test("every compare pane renders the shared RefBadge (no divergent REF chip)", () => {

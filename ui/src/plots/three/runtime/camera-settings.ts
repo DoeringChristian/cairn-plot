@@ -23,8 +23,8 @@
 import {
   publishSettingsPatch,
   subscribeSettingsPatches,
-  type PlotSettings,
-} from "../../../state/settings/viewport-settings.ts";
+} from "../../../state/settings/settings-channels.ts";
+import type { PlotSettings } from "../../../settings/schema.ts";
 import { peekGroupSettings, registerSettingsPeer } from "../../../state/settings/settings-peers.ts";
 
 /** A 3D camera pose — the `"scene3d.camera"` settings value (ATOMIC:

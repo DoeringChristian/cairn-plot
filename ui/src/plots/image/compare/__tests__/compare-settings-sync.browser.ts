@@ -6,7 +6,7 @@
  * compare mode, diff kernel, colormap, tone-map, split position — did NOT sync,
  * because `GpuComparePane` never subscribed to the shared SETTINGS bus at all.
  * The fix wires `GpuComparePane` onto the SAME settings-sync path the image
- * panes use (`useViewportSettings` + `viewport-settings` bus + the
+ * panes use (`useCellSettings` + `viewport-settings` bus + the
  * broadened `PlotSettings` payload). This harness proves it end-to-end.
  *
  * It mounts TWO independent `PlotApp` roots (the gallery shape — two separate
@@ -39,7 +39,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../register-core";
-import type { PlotDescriptor } from "../../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../../host/descriptor-resolver";
 import { InFullscreenOverlayContext } from "../../../../primitives/components/FullscreenOverlayShell";
 import {
   getGlobalSelectionStore,
@@ -95,7 +95,7 @@ function makeImageUrl(color: string): string {
 /** A standalone compare descriptor (two URL frames composited). `mode` starts
  *  in a COMPOSITED mode so the engine `GpuComparePane` mounts (side would be a
  *  2-cell layout with no compare pane). */
-function compareDescriptor(fg: string, ref: string): PlotDescriptor {
+function compareDescriptor(fg: string, ref: string): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -108,7 +108,7 @@ function compareDescriptor(fg: string, ref: string): PlotDescriptor {
       // bottom-right in slide; folded into the diff caption in diff mode.
       props: { toolbar: true, labelA: "REF_CAP", labelB: "FG_CAP" },
     },
-  } as PlotDescriptor;
+  } as PlotSpec;
 }
 
 /** Stationary press (select gesture). `shift` = additive multi-select. */
@@ -172,7 +172,7 @@ async function run(): Promise<boolean> {
   w.__cairnPlotEagerMount = true;
 
   const roots: Root[] = [];
-  const mount = (divId: string, d: PlotDescriptor) => {
+  const mount = (divId: string, d: PlotSpec) => {
     const el = document.getElementById(divId)!;
     const root = createRoot(el);
     root.render(createElement(PlotApp, { descriptor: d }));

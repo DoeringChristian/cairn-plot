@@ -1,4 +1,4 @@
-import type { PlotSettings } from "../settings/viewport-settings.ts";
+import type { PlotSettings } from "../../settings/schema.ts";
 import {
   clonePlotSession,
   emptyPlotSession,
@@ -8,7 +8,7 @@ import {
 } from "./plot-session.ts";
 
 export interface PlotSessionTopology {
-  viewportIds: ReadonlySet<string>;
+  cellIds: ReadonlySet<string>;
   grids: ReadonlyMap<string, { count: number; defaultMode: GridSessionState["mode"] }>;
 }
 
@@ -17,9 +17,9 @@ export interface PlotSessionController {
   restoreSession(input: unknown): void;
   subscribe(listener: (session: PlotSession) => void): () => void;
   setTopology(topology: PlotSessionTopology): void;
-  registerViewport(id: string, replace: (settings: PlotSettings) => void, initial: PlotSettings): () => void;
-  recordViewport(id: string, settings: PlotSettings): void;
-  seedViewport(id: string, settings: PlotSettings): void;
+  registerCell(id: string, replace: (settings: PlotSettings) => void, initial: PlotSettings): () => void;
+  recordCell(id: string, settings: PlotSettings): void;
+  seedCell(id: string, settings: PlotSettings): void;
   registerGrid(id: string, replace: (state: GridSessionState) => void, initial: GridSessionState): () => void;
   recordGrid(id: string, state: GridSessionState): void;
   destroy(): void;
@@ -36,7 +36,7 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
   let destroyed = false;
   let notificationQueued = false;
   const listeners = new Set<(value: PlotSession) => void>();
-  const viewports = new Map<string, (settings: PlotSettings) => void>();
+  const cells = new Map<string, (settings: PlotSettings) => void>();
   const grids = new Map<string, (state: GridSessionState) => void>();
 
   const live = () => {
@@ -54,7 +54,7 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
   };
   const prune = () => {
     if (!topology) return;
-    for (const id of Object.keys(session.viewports)) if (!topology.viewportIds.has(id)) delete session.viewports[id];
+    for (const id of Object.keys(session.cells)) if (!topology.cellIds.has(id)) delete session.cells[id];
     for (const id of Object.keys(session.grids)) if (!topology.grids.has(id)) delete session.grids[id];
     for (const [id, value] of Object.entries(session.grids)) {
       value.activeSlot = clampGrid(value, topology.grids.get(id)!.count).activeSlot;
@@ -67,8 +67,8 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
       live();
       session = parsePlotSession(input);
       prune();
-      for (const [id, replace] of viewports) {
-        const value = session.viewports[id];
+      for (const [id, replace] of cells) {
+        const value = session.cells[id];
         if (value) replace({ ...value.settings });
       }
       for (const [id, replace] of grids) {
@@ -80,20 +80,20 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
     },
     subscribe(listener) { live(); listeners.add(listener); return () => listeners.delete(listener); },
     setTopology(next) { live(); topology = next; prune(); notify(); },
-    registerViewport(id, replace, initialSettings) {
-      live(); viewports.set(id, replace);
-      const saved = session.viewports[id];
+    registerCell(id, replace, initialSettings) {
+      live(); cells.set(id, replace);
+      const saved = session.cells[id];
       if (saved) replace({ ...saved.settings });
-      else session.viewports[id] = { settings: { ...initialSettings } };
-      return () => { if (viewports.get(id) === replace) viewports.delete(id); };
+      else session.cells[id] = { settings: { ...initialSettings } };
+      return () => { if (cells.get(id) === replace) cells.delete(id); };
     },
-    recordViewport(id, settings) {
-      live(); session.viewports[id] = { settings: { ...settings } }; notify();
+    recordCell(id, settings) {
+      live(); session.cells[id] = { settings: { ...settings } }; notify();
     },
-    seedViewport(id, settings) {
+    seedCell(id, settings) {
       live();
-      if (session.viewports[id]) return;
-      session.viewports[id] = { settings: { ...settings } };
+      if (session.cells[id]) return;
+      session.cells[id] = { settings: { ...settings } };
       notify();
     },
     registerGrid(id, replace, initialState) {
@@ -112,7 +112,7 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
     },
     destroy() {
       if (destroyed) return;
-      destroyed = true; listeners.clear(); viewports.clear(); grids.clear();
+      destroyed = true; listeners.clear(); cells.clear(); grids.clear();
     },
   };
 }

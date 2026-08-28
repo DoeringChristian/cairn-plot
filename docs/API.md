@@ -458,16 +458,7 @@ The prior `HdrGpuImagePaneProps` / `SdrGpuImagePaneProps` names and the
 `GpuImagePaneProps` / `ImageRenderProps` aliases were removed — use the canonical
 names above.
 
-### Cairn dashboard integration barrel (`integration/cairn-card.ts`)
-This internal integration barrel re-exports the pure renderers (`ScatterPlot`, `BarChart`,
-`ScalarPlot`, `Heatmap`, `HistogramPlot`, `ParallelCoords`, `Table`,
-`PointCloudViewer`, `CpuImagePane`, `ImageOverlay`), the media-compare core, the
-viewport contract, colormaps, tonemap operators, transforms, and the image-backend
-contract above. (`Figure` is intentionally *not* re-exported here — import it from
-`plots/figure/renderer/Figure` so Plotly stays out of the eager chunk.) This is a
-deliberate Cairn-dashboard compatibility seam; standalone consumers use `public/`.
-
-#### media-compare seams (`plots/image/compare`)
+### Internal media-compare seams (`plots/image/compare`)
 The unified visual-media comparison core. A host card supplies the app bindings
 (react-query fetching, run/series identity, persistence); cairn-plot owns the
 renderer-shaped seams below, all reachable from the pure barrel:
@@ -506,18 +497,18 @@ renderer-shaped seams below, all reachable from the pure barrel:
 - **Cross-type diff alignment** — `alignFrameSourcesForDiff` resamples + letterboxes
   two mismatched-size frames onto one raster before the pixel-diff pipeline.
 
-#### Cairn card adapter — HDR float artifacts (`resources/data/data-sources.ts`)
-The image `ViewportModule` turns per-pane artifact hashes into render-ready
-`ImageViewportItem`s. Two resolvers share ONE decode seam:
+#### Image artifact resolution (`plots/artifact-resolvers.ts`)
+The image plot turns artifact hashes into render-ready `ResolvedImageItem`s.
+Two resolvers share one decode seam:
 
-- `resolveImageViewportItems(args, source, parseOverlay)` — the synchronous
+- `resolveImageArtifacts(args, source, parseOverlay)` — the synchronous
   hash → `{ url, overlay }` mapping (an `<img src>` URL, no fetch). Unchanged.
-- `resolveImageViewportItemsAsync(args, source, parseOverlay)` — the **async,
+- `resolveImageArtifactsAsync(args, source, parseOverlay)` — the **async,
   float-aware** superset. For any pane whose URL/MIME sniffs to a raw-buffer
   format (`.exr` / float `.npy` — detect from `args.mimes`/`args.referenceMimes`,
   the host's `artifact_mime`, else the URL extension + magic bytes) it fetches
   (via `source.bytes`) and decodes, attaching a decoded
-  `float: CompareFloatSource` to the item (`ImageViewportItem.float`) and
+  `float: CompareFloatSource` to the item and
   clearing its `url`. Browser-native panes (png/jpeg/…) and extension-less URLs
   pass through UNCHANGED (no extra fetch/decode), so it is a strict superset a
   host adopts to get true-HDR panes/compare (rgba16float, HDR-FLIP
@@ -530,11 +521,8 @@ The decode itself is the shared `decodeImageSource({ url?, bytes?, mime? })` →
 URL. `decodedFloatToCompareSource(decoded, contentKey)` is the pure
 `DecodedImage` (f32) → `CompareFloatSource` map (carries the `precision` tag);
 `isFloatCandidateArtifact({ url?, mime? })` is the raw-buffer-format detection
-gate. `ImageViewportPane` threads `imageFloat`/`baselineFloat` (explicit props,
-else the item's own `float`) to `CompositeMediaPane`, plus the compare-kernel
-callbacks `diffKernel` · `onDiffKernelChange` · `onCompareModeChange` ·
-`onRequestSide` (all new on `ViewportPaneProps`) so a host can persist the diff
-kernel choice.
+gate. The image comparison presentation forwards decoded float operands to the
+selected backend through its typed input contract.
 
 #### Auto image-interpolation threshold (`plots/image/components/interp-auto.ts`)
 Both image backends snap magnification to nearest/pixelated at the SAME zoom —

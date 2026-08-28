@@ -33,13 +33,13 @@ import {
   DEFAULT_GRID_CELL_ASPECT,
 } from "../layout/grid-uniform-aspect.tsx";
 import { ChartFillContext } from "./standalone-helpers.tsx";
-import { useViewportSettings } from "../state/settings/use-viewport-settings.ts";
-import { initialViewportSettings } from "../settings/defaults.ts";
-import type { PlotSettings } from "../state/settings/viewport-settings.ts";
-import { PaneSyncContext, useSharedPlot, type PaneSyncCtx } from "./plot-context.ts";
+import { useCellSettings } from "../state/settings/use-cell-settings.ts";
+import { initialCellSettings } from "../settings/defaults.ts";
+import type { PlotSettings } from "../settings/schema.ts";
+import { CellSettingsContext, useSharedPlot, type CellSettingsContextValue } from "./plot-context.ts";
 import { usePlotSessionController } from "../state/session/session-context.ts";
 
-/** The authored grid `sync.viewport` group fans only view transforms. */
+/** The authored grid `sync.view` group fans only view transforms. */
 const VIEW_TRANSFORM_KEYS = [
   "image.view",
   "chart.domainX",
@@ -71,7 +71,7 @@ export function PlotCell({
   const fill = useContext(ChartFillContext);
   const gridUniform = useContext(GridUniformAspectContext);
   const uniformImageCell = !!gridUniform && !fill && isImageCompatibleNode(node);
-  const inheritedPaneSync = useContext(PaneSyncContext);
+  const inheritedPaneSync = useContext(CellSettingsContext);
   const sessionController = usePlotSessionController();
 
   const initialSettingsRef = useRef<{
@@ -81,7 +81,7 @@ export function PlotCell({
   if (!initialSettingsRef.current.captured && node.kind !== "grid") {
     initialSettingsRef.current = {
       captured: true,
-      value: initialViewportSettings(node, shared),
+      value: initialCellSettings(node, shared),
     };
   }
 
@@ -92,9 +92,9 @@ export function PlotCell({
 
   const groups = selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
   const recordSessionSettings = useCallback((settings: PlotSettings) => {
-    sessionController?.recordViewport(sessionId, settings);
+    sessionController?.recordCell(sessionId, settings);
   }, [sessionController, sessionId]);
-  const vst = useViewportSettings(
+  const vst = useCellSettings(
     [
       ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
       ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_TRANSFORM_KEYS }] : []),
@@ -105,7 +105,7 @@ export function PlotCell({
 
   useEffect(() => {
     if (!sessionController) return;
-    return sessionController.registerViewport(
+    return sessionController.registerCell(
       sessionId,
       vst.replaceLocal,
       vst.get() ?? {},
@@ -203,12 +203,12 @@ export function PlotCell({
     style.zIndex = 1;
   }
 
-  const paneSync = useMemo<PaneSyncCtx | null>(
+  const paneSync = useMemo<CellSettingsContextValue | null>(
     () =>
       groups
         ? {
             syncedSettings: vst.settings,
-            viewportDefaults: initialSettingsRef.current.value,
+            cellDefaults: initialSettingsRef.current.value,
             setSyncedSettings: vst.set,
             resetSyncedSettings: vst.replace,
           }
@@ -216,12 +216,12 @@ export function PlotCell({
     [groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.replace],
   );
   const ownsViewport = node.kind !== "grid";
-  const localSync = useMemo<PaneSyncCtx | null>(
+  const localSync = useMemo<CellSettingsContextValue | null>(
     () =>
       ownsViewport
         ? {
             syncedSettings: vst.settings,
-            viewportDefaults: initialSettingsRef.current.value,
+            cellDefaults: initialSettingsRef.current.value,
             setSyncedSettings: vst.set,
             resetSyncedSettings: vst.replace,
           }
@@ -240,11 +240,11 @@ export function PlotCell({
       onPointerDownCapture={selectable ? onPointerDownCapture : undefined}
       onPointerUpCapture={selectable ? onPointerUpCapture : undefined}
     >
-      <PaneSyncContext.Provider value={paneSync ?? inheritedPaneSync ?? localSync}>
+      <CellSettingsContext.Provider value={paneSync ?? inheritedPaneSync ?? localSync}>
         <EnlargeInterceptContext.Provider value={enlargeIntercept}>
           {children}
         </EnlargeInterceptContext.Provider>
-      </PaneSyncContext.Provider>
+      </CellSettingsContext.Provider>
     </div>
   );
 }

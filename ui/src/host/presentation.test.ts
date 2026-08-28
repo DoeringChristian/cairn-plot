@@ -11,7 +11,7 @@ test("typed backend presentations cannot carry settings plumbing", () => {
     syncedSettings: { "image.encoding": "turbo" },
     setSyncedSettings: () => {},
     applySyncedSettings: () => {},
-    resetViewportSettings: () => {},
+    resetSettings: () => {},
   });
   assert.deepEqual(semantic, { source: { id: "image" }, label: "result" });
 });
@@ -47,5 +47,5 @@ test("leaf presentation assembly does not manufacture settings props", () => {
   const merge = host.slice(mergeStart, mergeEnd);
   assert.doesNotMatch(merge, /\.syncedSettings\s*=/);
   assert.doesNotMatch(merge, /\.setSyncedSettings\s*=/);
-  assert.doesNotMatch(merge, /resetViewportSettings\s*=/);
+  assert.doesNotMatch(merge, /resetSettings\s*=/);
 });

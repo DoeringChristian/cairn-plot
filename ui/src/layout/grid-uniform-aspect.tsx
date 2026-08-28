@@ -22,8 +22,8 @@
  */
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { representativeAspect } from "../state/selection/pack-grid";
-import { ReportNaturalSizeContext } from "../plots/image/components/natural-size-report";
+import { representativeAspect } from "./pack-grid";
+import { ReportNaturalSizeContext } from "./natural-size";
 
 /** A finite, strictly-positive aspect (w / h), or `null` for any other input
  *  (missing / NaN / ≤ 0) — the ONE validity guard aspects flow through. */

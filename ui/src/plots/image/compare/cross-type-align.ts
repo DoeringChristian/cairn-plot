@@ -1,4 +1,4 @@
-import type { FrameSource } from "../../../integration/cairn-card/types";
+import type { FrameSource } from "../../../backends/frame-source";
 
 // ---------------------------------------------------------------------------
 // Cross-type raster alignment (WS-VC6, prototype-first per the design doc's

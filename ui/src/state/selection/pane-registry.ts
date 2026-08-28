@@ -48,8 +48,8 @@ export interface RegisteredPane {
    *  frame's live box, for peer reads (formation converge, stage
    *  copy-on-create, harness/Host-API seams) and external writes. */
   readonly settings?: {
-    get: () => import("../settings/viewport-settings").PlotSettings | null;
-    set: (patch: import("../settings/viewport-settings").PlotSettings) => void;
+    get: () => import("../../settings/schema.ts").PlotSettings | null;
+    set: (patch: import("../../settings/schema.ts").PlotSettings) => void;
   };
 }
 

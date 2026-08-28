@@ -8,7 +8,7 @@
  * gallery renders each plot as a separate mount), which a per-grid or per-root
  * React context could never do — a module singleton can. Selection is the
  * switch that decides WHICH panes are in a live sync group: while ≥2 panes are
- * selected, the React layer threads a shared viewport-sync group id
+ * selected, the React layer threads a shared view-sync group id
  * (`viewport-settings.ts`) and settings-sync group id
  * (`viewport-settings.ts`) into every selected pane, so zoom/pan and
  * display-setting changes broadcast across the whole selected group.
@@ -27,7 +27,7 @@
  * (a context + `useSyncExternalStore`) lives in `plot-node.tsx`.
  */
 
-import { __resetSettingsChannelsForTest } from "../settings/viewport-settings.ts";
+import { __resetSettingsChannelsForTest } from "../settings/settings-channels.ts";
 
 export type SelectionListener = () => void;
 

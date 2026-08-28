@@ -14,7 +14,7 @@
  * CPU image pane, then drives real pointer gestures and asserts:
  *   1. plain click on pane A → A gets the ring (`data-selected`), B/C do not;
  *   2. shift-click pane B → BOTH A and B selected (cross-MOUNT selection);
- *   3. the two selected panes share ONE viewport-sync group AND ONE
+ *   3. the two selected panes share ONE view-sync group AND ONE
  *      settings-sync group (probed via `paneSyncGroups` on the global store);
  *      the unselected third pane derives to NO group;
  *   4. a plain click on C → single-select resets (only C selected).
@@ -29,7 +29,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor, PlotNode } from "../../../host/descriptor-resolver";
+import type { PlotSpec, PlotNode } from "../../../host/descriptor-resolver";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,
@@ -61,7 +61,7 @@ function makeImageUrl(color: string): string {
 
 /** A standalone single-image descriptor (the `url` data spec → a uint8 source →
  *  CPU `<img>` pane). */
-function imageDescriptor(label: string, color: string): PlotDescriptor {
+function imageDescriptor(label: string, color: string): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -70,7 +70,7 @@ function imageDescriptor(label: string, color: string): PlotDescriptor {
       data: { kind: "url", src: makeImageUrl(color) },
       props: { label, toolbar: true },
     },
-  } as PlotDescriptor;
+  } as PlotSpec;
 }
 
 /** One image LEAF node for a `cp.Grid` cell (Bug 2's 2×2 grid). */
@@ -121,7 +121,7 @@ async function run(): Promise<boolean> {
   (window as unknown as { __cairnPlotEagerMount?: boolean }).__cairnPlotEagerMount = true;
 
   const roots: Root[] = [];
-  const mount = (divId: string, d: PlotDescriptor) => {
+  const mount = (divId: string, d: PlotSpec) => {
     const el = document.getElementById(divId)!;
     const root = createRoot(el);
     root.render(createElement(PlotApp, { descriptor: d }));
@@ -218,7 +218,7 @@ async function run(): Promise<boolean> {
   await sleep(30);
   __resetGlobalSelectionStoreForTest();
 
-  const gridDesc: PlotDescriptor = {
+  const gridDesc: PlotSpec = {
     mode: "local",
     root: {
       kind: "grid",
@@ -230,7 +230,7 @@ async function run(): Promise<boolean> {
         gridCell("g3", "#8e44ad"),
       ],
     },
-  } as PlotDescriptor;
+  } as PlotSpec;
   const gridRoot = createRoot(document.getElementById("mount-c")!);
   gridRoot.render(createElement(PlotApp, { descriptor: gridDesc }));
 

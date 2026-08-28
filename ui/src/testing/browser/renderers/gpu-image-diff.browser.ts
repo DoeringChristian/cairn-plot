@@ -39,7 +39,7 @@ import GpuImagePane from "../../../plots/image/backend/gpu";
 import { urlSource } from "../../../plots/image/backend/contracts";
 import { getSharedDevice } from "../../../plots/image/engine/device";
 import { createHarness, waitFor } from "../../harness";
-import type { PlotSettings } from "../../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../../settings/schema.ts";
 import type { Colormap } from "../../../plots/types.ts";
 
 const h = React.createElement;
@@ -199,7 +199,7 @@ function mountUnifiedDiff(container: HTMLElement, opId: string, encoding: Colorm
       label: "",
       syncedSettings: settings,
       setSyncedSettings: patchSettings,
-      resetViewportSettings: () => setSettings({ ...defaults }),
+      resetSettings: () => setSettings({ ...defaults }),
     });
   };
   const root = createRoot(container);

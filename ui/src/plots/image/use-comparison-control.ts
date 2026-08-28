@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import type { PlotNode } from "../../../../packages/spec/src/spec.ts";
-import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../settings/schema.ts";
 import { normalizeImageComparisonPresentation } from "./comparison-plan.ts";
 
 export type CompareViewMode = "split" | "diff";

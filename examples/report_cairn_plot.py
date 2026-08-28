@@ -488,7 +488,7 @@ def build_report() -> cp.Report:
     rep.md("### Synced image controls — zoom/pan linked")
     rep.grid(
         [[cp.Image(sync_a, label="view A"), cp.Image(sync_b, label="view B")]],
-        shared=cp.Shared(sync={"viewport": True}),
+        shared=cp.Shared(sync={"view": True}),
     )
     sx = np.linspace(0, 20, 120)
     chart_a = cp.Scatter(
@@ -502,7 +502,7 @@ def build_report() -> cp.Report:
     rep.md("### Synced chart viewports — zoom/pan linked")
     rep.grid(
         [[chart_a, chart_b]],
-        shared=cp.Shared(sync={"viewport": True}),
+        shared=cp.Shared(sync={"view": True}),
     )
 
     # ── 3D (WebGL): pointcloud / mesh / volume / boxes ───────────────────────

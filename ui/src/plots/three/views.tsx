@@ -19,10 +19,10 @@
  * (resolved through each viewport's `resolve*ViewConfig`), with any field
  * overridable via the descriptor's `props`.
  */
-import { PointCloudSingleView, type PointCloudViewportItem } from "./viewports/pointcloud";
-import { MeshSingleView, type MeshViewportItem } from "./viewports/mesh";
-import { VolumeSingleView, type VolumeViewportItem } from "./viewports/volume";
-import { BoxesSingleView, type BoxesViewportItem } from "./viewports/boxes";
+import { PointCloudSingleView, type PointCloudContent } from "./presentations/pointcloud";
+import { MeshSingleView, type MeshContent } from "./presentations/mesh";
+import { VolumeSingleView, type VolumeContent } from "./presentations/volume";
+import { BoxesSingleView, type BoxesContent } from "./presentations/boxes";
 import { ChartBox } from "../../host/standalone-helpers";
 import type { SettingsRecord } from "../contracts.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
@@ -52,7 +52,7 @@ const DEFAULT_POINTCLOUD_VIEW = {
 
 export function PointCloudStandalone(p: Partial<typeof DEFAULT_POINTCLOUD_VIEW> & {
   readonly height?: number;
-  readonly item?: PointCloudViewportItem | null;
+  readonly item?: PointCloudContent | null;
   readonly label?: string;
 }) {
   const { height, item, ...rest } = p;
@@ -98,7 +98,7 @@ const DEFAULT_MESH_VIEW = {
 
 export function MeshStandalone(p: Partial<typeof DEFAULT_MESH_VIEW> & {
   readonly height?: number;
-  readonly item?: MeshViewportItem | null;
+  readonly item?: MeshContent | null;
   readonly label?: string;
 }) {
   const { height, item, ...rest } = p;
@@ -145,7 +145,7 @@ const DEFAULT_VOLUME_VIEW = {
 
 export function VolumeStandalone(p: Partial<typeof DEFAULT_VOLUME_VIEW> & {
   readonly height?: number;
-  readonly item?: VolumeViewportItem | null;
+  readonly item?: VolumeContent | null;
   readonly label?: string;
 }) {
   const { height, item, ...rest } = p;
@@ -189,7 +189,7 @@ const DEFAULT_BOXES_VIEW = {
 
 export function BoxesStandalone(p: Partial<typeof DEFAULT_BOXES_VIEW> & {
   readonly height?: number;
-  readonly item?: BoxesViewportItem | null;
+  readonly item?: BoxesContent | null;
   readonly label?: string;
   readonly depthMin?: number;
   readonly depthMax?: number;

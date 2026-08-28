@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 
-import type { PlotDescriptor } from "../../../packages/spec/src/spec.ts";
+import type { PlotSpec } from "../../../packages/spec/src/spec.ts";
 import type { DataSource } from "../resources/data/data-source.ts";
 import { useEmitAutoHeight } from "./hooks/use-emit-auto-height.ts";
 import { PlotNodeView } from "./PlotNodeView.tsx";
@@ -13,7 +13,7 @@ import type { PlotSession } from "../state/session/plot-session.ts";
 import { connectSessionPersistence, type SessionPersistence } from "../state/session/session-persistence.ts";
 
 export interface PlotSurfaceProps {
-  descriptor: PlotDescriptor;
+  descriptor: PlotSpec;
   dataSource: DataSource;
   className?: string;
   autoHeight?: boolean;

@@ -118,7 +118,7 @@ export interface EnlargeControl {
   setEnlarged: (v: boolean) => void;
 }
 import { EnlargeInterceptContext } from "../../../host/enlarge-intercept";
-import { usePublishNaturalSize } from "./natural-size-report";
+import { usePublishNaturalSize } from "../../../layout/natural-size";
 
 
 /** `data-*` markers spread onto the root / viewport box. Boolean values render

@@ -18,7 +18,7 @@
  * - `setLocal(patch)` — apply without publishing (per-pane geometry
  *   adaptations that must not propagate, e.g. reframe-on-resize).
  * - Scoped memberships apply only their keys (an authored grid
- *   `sync.viewport` membership passes `keys: ["view"]`).
+ *   `sync.view` membership passes `keys: ["view"]`).
  * - No adoption effects, no stored group state, no echo guards; publish
  *   path == apply path (one `applyPatch`, used by both).
  *
@@ -33,9 +33,8 @@ import {
   publishSettingsReplacement,
   scopeSettingsPatch,
   subscribeSettingsChanges,
-  type PlotSettings,
-  type PlotSettingKey,
-} from "./viewport-settings";
+} from "./settings-channels";
+import type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
 import { registerSettingsPeer } from "./settings-peers.ts";
 
 /** A group this viewport belongs to. `keys` scopes what this MEMBER applies
@@ -46,7 +45,7 @@ export interface SettingsMembership {
 }
 
 /** What the owning frame gets. */
-export interface ViewportSettingsHandle {
+export interface CellSettingsHandle {
   /** The viewport's explicitly-set settings, or `null` while untouched.
    *  Identity-stable until the next applied patch. */
   settings: PlotSettings | null;
@@ -65,11 +64,11 @@ export interface ViewportSettingsHandle {
   apply: (patch: PlotSettings) => void;
 }
 
-export function useViewportSettings(
+export function useCellSettings(
   memberships?: readonly SettingsMembership[],
   initialSettings: PlotSettings | null = null,
   onChange?: (settings: PlotSettings) => void,
-): ViewportSettingsHandle {
+): CellSettingsHandle {
   // The owner materializes authored/default settings BEFORE its renderer mounts.
   // This is deliberately a useRef initializer: later descriptor/source changes
   // (notably a stacked tab flip) cannot reseed the viewport.
@@ -123,7 +122,7 @@ export function useViewportSettings(
       }),
       // Membership also REGISTERS this viewport as a peer, so late joiners of
       // any kind converge by deref (`peekGroupSettings`) — the one converge
-      // seam (frames and frameless viewports alike).
+      // seam (frames and frameless cells alike).
       registerSettingsPeer(m.id, getBox),
     ]);
     return () => unsubs.forEach((u) => u());

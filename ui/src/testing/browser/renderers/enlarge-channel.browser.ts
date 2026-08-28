@@ -23,7 +23,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import { createHarness, sleep, waitFor } from "../../harness";
 
@@ -49,7 +49,7 @@ function registerFloatData(): void {
   });
 }
 
-function descriptor(): PlotDescriptor {
+function descriptor(): PlotSpec {
   return {
     mode: "local",
     root: {
@@ -58,7 +58,7 @@ function descriptor(): PlotDescriptor {
       data: { kind: "imghdr", hash: "runtime:rgb", meta: {} },
       props: { toolbar: true, label: "enlarge-channel" },
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 
 const enlargeBtn = () =>

@@ -1,4 +1,4 @@
-import { createEndpointDataSource, mountPlot, type PlotDescriptor } from "../index.ts";
+import { createEndpointDataSource, mountPlot, type PlotSpec } from "../index.ts";
 import { createHarness, sleep, waitFor } from "../../testing/harness.ts";
 
 const { report, setOverallStatus } = createHarness({ title: "PUBLIC HOST" });
@@ -18,7 +18,7 @@ function imageUrl(color: string): string {
   return canvas.toDataURL("image/png");
 }
 
-const descriptor: PlotDescriptor = {
+const descriptor: PlotSpec = {
   root: {
     kind: "plot",
     renderer: "image",
@@ -43,18 +43,18 @@ async function run() {
 
   mounted.restoreSession({
     version: 1,
-    viewports: { "cell:root": { settings: { "panel.info": false } } },
+    cells: { "cell:root": { settings: { "panel.info": false } } },
     grids: {},
   });
   check(
-    mounted.getSession().viewports["cell:root"]?.settings["panel.info"] === false,
+    mounted.getSession().cells["cell:root"]?.settings["panel.info"] === false,
     "imperative session restore updates the mounted cell",
   );
   let sessionNotifications = 0;
   const unsubscribe = mounted.subscribeSession(() => sessionNotifications++);
   mounted.restoreSession({
     version: 1,
-    viewports: { "cell:root": { settings: { "panel.info": true } } },
+    cells: { "cell:root": { settings: { "panel.info": true } } },
     grids: {},
   });
   await sleep(0);

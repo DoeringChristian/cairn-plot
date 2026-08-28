@@ -8,9 +8,8 @@ export type {
   CompareNode,
   DataSpec,
   GridNode,
-  PlotDescriptor,
+  PlotSpec,
   PlotLeafNode,
   PlotNode,
-  PlotSpec,
   SharedProps,
 } from "../../../packages/spec/src/index.ts";

@@ -514,12 +514,12 @@ def build_gallery() -> list[tuple[str, object]]:
     ))
 
     # ── Synced image controls — zoom/pan linked ────────────────────────────
-    # `Grid(shared={"sync": {"viewport": True}})` (`cp.Shared(sync=...)` here)
+    # `Grid(shared={"sync": {"view": True}})` (`cp.Shared(sync=...)` here)
     # links every IMAGE leaf in the grid into one live zoom/pan group — the
     # image mirror of the existing 3D camera-sync mechanism ("Sync 3D views"
     # on PointCloud/Mesh/Volume/Boxes cards). Hold Alt/Ctrl and wheel-zoom or
     # drag-pan EITHER pane below; the other mirrors it in lock-step (same
-    # zoom + pan) because both leaves resolve the SAME viewport-sync group id
+    # zoom + pan) because both leaves resolve the SAME view-sync group id
     # from this one grid. Two related (same-size, offset-gradient) images
     # make the linkage visually obvious.
     sync_a = _gradient_image(160, 120)
@@ -529,14 +529,14 @@ def build_gallery() -> list[tuple[str, object]]:
         "(Alt/Ctrl + wheel/drag on either pane moves both together)",
         cp.Grid(
             [[cp.Image(sync_a, label="view A"), cp.Image(sync_b, label="view B")]],
-            shared=cp.Shared(sync={"viewport": True}),
+            shared=cp.Shared(sync={"view": True}),
         ),
     ))
 
     # ── Synced chart viewports — zoom/pan linked (S7) ──────────────────────
-    # The SAME `Grid(shared={"sync": {"viewport": True}})` flag that links image
+    # The SAME `Grid(shared={"sync": {"view": True}})` flag that links image
     # panes above also links 2D CHART leaves: every chart in the grid joins one
-    # live zoom/pan group via `chart-viewport-sync.ts`'s pub/sub bus (the chart
+    # live zoom/pan group via `chart-view-sync.ts`'s pub/sub bus (the chart
     # mirror of the image + 3D-camera sync buses). Box-zoom, pan (drag or the
     # axis gutters), Alt/Ctrl+wheel, or double-click-to-reset on EITHER chart
     # and the other adopts the exact same DATA-SPACE window (Plotly matched-axes
@@ -553,7 +553,7 @@ def build_gallery() -> list[tuple[str, object]]:
         "(box-zoom / drag / Alt+wheel / double-click on either chart moves both)",
         cp.Grid(
             [[chart_a, chart_b]],
-            shared=cp.Shared(sync={"viewport": True}),
+            shared=cp.Shared(sync={"view": True}),
         ),
     ))
 

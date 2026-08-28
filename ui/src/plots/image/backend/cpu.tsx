@@ -96,8 +96,8 @@ import {
 } from "../../../primitives/components/PixelValueOverlay";
 import ImagePaneShell, { type EnlargeControl } from "../components/ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
-import { useViewportSettings } from "../../../state/settings/use-viewport-settings";
-import type { PlotSettings } from "../../../state/settings/viewport-settings";
+import { useCellSettings } from "../../../state/settings/use-cell-settings";
+import type { PlotSettings } from "../../../settings/schema.ts";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-encoding";
 import {
   computeDataIndex,
@@ -423,10 +423,10 @@ function CpuSdrImagePane(
   } = props;
 
   // Toolbar visibility is presentation only; the viewport store owns settings.
-  // The viewport's settings STORE (see use-viewport-settings.ts): threaded
+  // The viewport's settings STORE (see use-cell-settings.ts): threaded
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
-  const sdrOwnStore = useViewportSettings();
+  const sdrOwnStore = useCellSettings();
   const sdrThreadedSet = props.setSyncedSettings;
   const synced = sdrThreadedSet ? props.syncedSettings : sdrOwnStore.settings;
   const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
@@ -993,7 +993,7 @@ function CpuSdrImagePane(
           : undefined
       }
       onReset={() => {
-        props.resetViewportSettings?.();
+        props.resetSettings?.();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
@@ -1067,10 +1067,10 @@ function CpuHdrImagePane(
     toolbar = true,
   } = props;
 
-  // The viewport's settings STORE (see use-viewport-settings.ts): threaded
+  // The viewport's settings STORE (see use-cell-settings.ts): threaded
   // down from its owner when present; a BARE mount owns its own group-of-one
   // store — settings live ONLY in stores, never in pane state.
-  const hdrOwnStore = useViewportSettings();
+  const hdrOwnStore = useCellSettings();
   const hdrThreadedSet = props.setSyncedSettings;
   const synced = hdrThreadedSet ? props.syncedSettings : hdrOwnStore.settings;
   const setSynced = hdrThreadedSet ?? hdrOwnStore.set;
@@ -1448,7 +1448,7 @@ function CpuHdrImagePane(
       }
       onReset={() => {
         deepFlatten.reset();
-        props.resetViewportSettings?.();
+        props.resetSettings?.();
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={

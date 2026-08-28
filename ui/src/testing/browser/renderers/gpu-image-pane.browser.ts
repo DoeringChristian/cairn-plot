@@ -162,7 +162,7 @@ async function runSingleCase(): Promise<boolean> {
         zoom: viewport.zoom,
         pan: viewport.pan,
         onViewportChange,
-        resetViewportSettings: () => onViewportChange({ zoom: 1, pan: { x: 0, y: 0 } }),
+        resetSettings: () => onViewportChange({ zoom: 1, pan: { x: 0, y: 0 } }),
         label: "gpu-image-pane-test",
       }),
     );

@@ -13,13 +13,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotDescriptor } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/descriptor-resolver";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const { report, setOverallStatus } = createHarness({ title: "GPU-PAGE-CAP" });
 
 /** A TALL float source [H, W, 3] (H >> W), diagonal gradient. */
-function tallFloatDescriptor(w: number, h: number): PlotDescriptor {
+function tallFloatDescriptor(w: number, h: number): PlotSpec {
   const data = new Float32Array(h * w * 3);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -38,7 +38,7 @@ function tallFloatDescriptor(w: number, h: number): PlotDescriptor {
       data: { kind: "inline", props: { source: { dtype: "float", pixels: floatValues(data), shape: [h, w, 3] } } },
       props: { toolbar: true },
     },
-  } as unknown as PlotDescriptor;
+  } as unknown as PlotSpec;
 }
 
 async function run(): Promise<boolean> {

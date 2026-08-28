@@ -4,7 +4,7 @@
  * React (the module is framework-free):
  *
  *   node --experimental-strip-types --test \
- *     src/state/selection/compare-grid.test.ts
+ *     src/layout/compare-grid.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

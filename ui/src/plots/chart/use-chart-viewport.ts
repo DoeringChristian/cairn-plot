@@ -55,7 +55,7 @@ import {
   type PixelPoint,
   type PixelRect,
 } from "./chart-viewport-math";
-import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../settings/schema.ts";
 import { useModifierKey } from "../../host/hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";
@@ -83,7 +83,7 @@ const ChartViewportSyncContext = createContext<ChartViewportSyncTarget | null>(n
 /**
  * Opts every {@link useChartViewport} in the subtree into the given sync group.
  * The standalone chart adapters (`plot-renderers.tsx`) wrap their pure renderer
- * in this when a grid enables `shared.sync.viewport`, so the shared hook picks
+ * in this when a grid enables `shared.sync.view`, so the shared hook picks
  * the group up from context without any renderer-component plumbing. An explicit
  * `sync` arg still wins over context (see the hook body).
  */
@@ -185,7 +185,7 @@ export interface UseChartViewportArgs {
    *  against it. When absent, select/lasso drags draw their overlay but emit
    *  nothing (so a chart that doesn't opt in never selects). */
   onSelect?: (geometry: SelectionGeometry) => void;
-  /** Live viewport-sync group. When set (directly, or inherited from
+  /** Live view-sync group. When set (directly, or inherited from
    *  {@link ChartViewportSyncProvider}), every viewport COMMIT publishes the
    *  new domain to the group and peers' commits are applied here — Plotly
    *  matched-axes behaviour across a grid. A direct arg wins over context. */

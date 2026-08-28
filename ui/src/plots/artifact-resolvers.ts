@@ -1,38 +1,6 @@
-/**
- * The data-source seam for `ViewportModule.useData` implementations.
- *
- * `ViewportModule.useData` turns an already-resolved artifact hash into
- * render-ready `TData` (see `types.ts`'s doc comments). Today the ONLY
- * concrete implementations are app-side (`components/viewport-registry.tsx`'s
- * `useImageData`, `components/PointCloudVisualCard.tsx`'s `usePointCloudData`)
- * and both resolve a hash via the app's `api.artifactUrl` — a dependency
- * cairn-plot itself must NOT import (it would pull the app's API client into
- * a library that's meant to also ship as a standalone Python-emitted bundle,
- * see the cairn-plot design spec's "data-sources" section).
- *
- * This file extracts the PURE hash -> TData mapping cores, parameterized by
- * a small `DataSource` interface, so the app and a future plot bundle share
- * the exact same logic:
- *  - the app passes an ENDPOINT `DataSource` wrapping its own
- *    `api.artifactUrl` (`createEndpointDataSource`, this file's only
- *    implementation today);
- *  - a future plot bundle (Phase B) passes either the SAME kind of ENDPOINT
- *    source (pointed at an absolute server URL) or a LOCAL source that reads
- *    content-addressed blobs baked into the page (a page-level
- *    `window.__cairnPlotStore`, see the design spec's §5) — `DataSource` is
- *    the seam either implementation plugs into; no local provider is wired
- *    up yet (that's Phase B — this file only adds the interface + today's
- *    endpoint impl).
- *
- * BEHAVIOR-PRESERVING: `resolveImageViewportItems`/`fetchPointCloudArrays`
- * are the same logic that lived inline in `viewport-registry.tsx` /
- * `PointCloudVisualCard.tsx`, just parameterized over `source` instead of
- * calling `api.artifactUrl` directly.
- */
+/** Plot-specific artifact resolution built on the generic DataSource seam. */
 
 import type { ImageOverlayData } from "./types";
-import type { ImageViewportItem } from "../integration/cairn-card/image-viewport";
-import type { ViewportDataArgs, ViewportDataResult } from "../integration/cairn-card/types";
 import type { DataSource } from "../resources/data/data-source.ts";
 // Explicit `.ts` module path (not the `../transforms` barrel) so this module —
 // and its float-decode helpers — load under Node's type-stripping test runner
@@ -60,6 +28,27 @@ import {
 import type { CompareFloatSource } from "./image/compare/compositor";
 import { floatPixelsFrom } from "./image/model/pixel-buffer.ts";
 
+export interface ResolvedImageItem {
+  url: string | null;
+  overlay?: ImageOverlayData | null;
+  float?: CompareFloatSource | null;
+}
+
+export interface ArtifactBatchRequest {
+  hashes: (string | null)[];
+  referenceHashes: (string | null)[];
+  metadata?: (string | null | undefined)[];
+  referenceMetadata?: (string | null | undefined)[];
+  mimes?: (string | null | undefined)[];
+  referenceMimes?: (string | null | undefined)[];
+}
+
+export interface ArtifactBatchResult<T> {
+  items: (T | null)[];
+  referenceItems: (T | null)[];
+  isLoading: boolean;
+}
+
 /**
  * Resolves a content-addressed artifact hash to fetchable data. Two shapes
  * are needed across today's viewport types:
@@ -73,18 +62,18 @@ import { floatPixelsFrom } from "./image/model/pixel-buffer.ts";
  *    the source kind.
  */
 // ---------------------------------------------------------------------------
-// image — pure, synchronous hash -> ImageViewportItem mapping (no network:
+// image — pure, synchronous hash -> ResolvedImageItem mapping (no network:
 // `DataSource.artifactUrl` is a plain string formatter). Mirrors
 // `viewport-registry.tsx`'s pre-extraction `useImageData` body exactly;
 // `parseOverlay` is passed in rather than imported here since it's app-owned
 // (`viewport-registry.tsx`, reused by `VisualContentCard.tsx`) and has no
 // dependency of its own on `api.artifactUrl` that needs extracting.
 // ---------------------------------------------------------------------------
-export function resolveImageViewportItems(
-  args: Pick<ViewportDataArgs, "hashes" | "referenceHashes" | "metadata">,
+export function resolveImageArtifacts(
+  args: Pick<ArtifactBatchRequest, "hashes" | "referenceHashes" | "metadata">,
   source: DataSource,
   parseOverlay: (raw: string | null | undefined) => ImageOverlayData | null,
-): ViewportDataResult<ImageViewportItem> {
+): ArtifactBatchResult<ResolvedImageItem> {
   const { hashes, referenceHashes, metadata } = args;
   return {
     items: hashes.map((h, i) =>
@@ -98,7 +87,7 @@ export function resolveImageViewportItems(
 // ---------------------------------------------------------------------------
 // HDR/float decode seam — the ONE decode-to-CompareFloatSource core shared by
 // the compare DESCRIPTOR resolver (`plot-node.tsx`'s `resolveFrame`) and the
-// viewport ADAPTER's float-resolving resolver (`resolveImageViewportItemsAsync`
+// viewport ADAPTER's float-resolving resolver (`resolveImageArtifactsAsync`
 // below). Both need the SAME "fetch a URL, decode it, and route float samples
 // to a `CompareFloatSource` (the GPU/HDR path) vs 8-bit bytes to a browser-
 // decodable `imageUrl`" mapping, so it lives here once rather than copy-pasted.
@@ -188,7 +177,7 @@ export function isFloatCandidateArtifact(hint: { url?: string; mime?: string }):
 }
 
 /**
- * The ASYNC, float-aware counterpart of {@link resolveImageViewportItems}: the
+ * The ASYNC, float-aware counterpart of {@link resolveImageArtifacts}: the
  * SAME hash → `{url, overlay}` mapping, plus — for any pane whose URL/MIME
  * sniffs to a raw-buffer format (`.exr` / float `.npy`) — a fetch (via
  * `source.bytes`, so the endpoint AND local sources both work) + decode through
@@ -203,14 +192,14 @@ export function isFloatCandidateArtifact(hint: { url?: string; mime?: string }):
  * `artifact_mime`) when supplied, else the artifact URL's extension + magic
  * bytes. `isLoading` is false because every decode is awaited before returning.
  */
-export async function resolveImageViewportItemsAsync(
+export async function resolveImageArtifactsAsync(
   args: Pick<
-    ViewportDataArgs,
+    ArtifactBatchRequest,
     "hashes" | "referenceHashes" | "metadata" | "mimes" | "referenceMimes"
   >,
   source: DataSource,
   parseOverlay: (raw: string | null | undefined) => ImageOverlayData | null,
-): Promise<ViewportDataResult<ImageViewportItem>> {
+): Promise<ArtifactBatchResult<ResolvedImageItem>> {
   const { hashes, referenceHashes, metadata, mimes, referenceMimes } = args;
   const [items, referenceItems] = await Promise.all([
     Promise.all(
@@ -225,17 +214,17 @@ export async function resolveImageViewportItemsAsync(
   return { items, referenceItems, isLoading: false };
 }
 
-/** Resolve ONE artifact hash to an {@link ImageViewportItem}, decoding a
+/** Resolve ONE artifact hash to an {@link ResolvedImageItem}, decoding a
  *  raw-buffer float artifact (`.exr` / float `.npy`) to a `CompareFloatSource`.
  *  A browser-native / un-sniffable artifact stays the plain `{url, overlay}`
  *  (no fetch). Shared by the foreground + reference passes of
- *  {@link resolveImageViewportItemsAsync}. */
+ *  {@link resolveImageArtifactsAsync}. */
 async function resolveOneImageItem(
   hash: string | null,
   source: DataSource,
   mime: string | null | undefined,
   overlay: ImageOverlayData | null,
-): Promise<ImageViewportItem | null> {
+): Promise<ResolvedImageItem | null> {
   if (!hash) return null;
   const url = source.artifactUrl(hash);
   if (!isFloatCandidateArtifact({ url, mime: mime ?? undefined })) return { url, overlay };

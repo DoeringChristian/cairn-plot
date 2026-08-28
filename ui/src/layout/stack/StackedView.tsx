@@ -2,10 +2,10 @@
  * STACKED grid view pieces: a keyboard hook + a tab strip + a panes container +
  * the mode toggle. A grid in `stacked` mode shows ONE child at a time; the OWNER
  * (`GridView` / the stage) composes a thin HEADER (tab strip + toggle) ABOVE the
- * viewports (so the toggle never overlaps pane controls) and the panes below.
+ * cells (so the toggle never overlaps pane controls) and the panes below.
  *
  * Every child stays MOUNTED (inactive ones `display:none`) so flipping is instant
- * and the grid's viewport-sync carries over (a synced stacked grid flips A/B).
+ * and the grid's view-sync carries over (a synced stacked grid flips A/B).
  *
  * Keys (via `useStackKeyboard`, when the stack is hovered/focused or inside a
  * fullscreen overlay): `←/↑/h/k` prev, `→/↓/l/j` next (wrap), `1`–`9`/`0` and

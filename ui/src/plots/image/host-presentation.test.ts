@@ -22,7 +22,7 @@ test("comparison composition changes content operation without choosing an encod
       operands: [leaf.data, { kind: "image" as const, hash: "foreground" }],
     },
     colormap: "turbo" as const,
-    viewportDefaults: {},
+    cellDefaults: {},
     splitPosition: 0.5,
     inStackedGrid: true,
     inOverlay: false,
