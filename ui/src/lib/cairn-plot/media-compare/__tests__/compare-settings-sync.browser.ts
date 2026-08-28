@@ -46,7 +46,7 @@ import {
   paneSyncGroups,
   GLOBAL_SELECTION_BASE,
   __resetGlobalSelectionStoreForTest,
-} from "../../selection/selection-store";
+} from "../../../../state/selection/selection-store";
 import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 /** The subset of `GpuComparePane`'s `__cairnCompareProbe` this harness drives. */

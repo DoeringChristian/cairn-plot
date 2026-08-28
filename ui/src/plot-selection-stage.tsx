@@ -51,19 +51,19 @@ import {
   REFERENCE_COLOR_RGB,
   type SelectionSnapshot,
   type StageMode,
-} from "./lib/cairn-plot/selection/selection-store";
+} from "./state/selection/selection-store";
 import type { ViewportSettings } from "./state/settings/viewport-settings";
 import { useViewportSettings } from "./state/settings/use-viewport-settings";
 import {
   imageCompatibleCount,
   planCompareGrid,
   type SelEntry,
-} from "./lib/cairn-plot/selection/compare-grid";
+} from "./state/selection/compare-grid";
 import {
   packContentGrid,
   DEFAULT_STAGE_GAP,
   type Rect,
-} from "./lib/cairn-plot/selection/pack-grid";
+} from "./state/selection/pack-grid";
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,

@@ -4,7 +4,7 @@
  * DOM/React:
  *
  *   node --experimental-strip-types --test \
- *     src/lib/cairn-plot/selection/pack-grid.test.ts
+ *     src/state/selection/pack-grid.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

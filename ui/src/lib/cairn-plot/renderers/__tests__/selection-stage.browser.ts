@@ -30,7 +30,7 @@ import type { PlotDescriptor } from "../../../../plot-descriptor";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
-} from "../../selection/selection-store";
+} from "../../../../state/selection/selection-store";
 import { __resetSelectionOverlayHostForTest } from "../../../../plot-selection-stage";
 import { __resetSelectionRegistryForTest } from "../../../../plot-selection-pane-registry";
 import { createHarness, sleep, waitFor } from "../../testing/harness";

@@ -27,7 +27,7 @@
  * (a context + `useSyncExternalStore`) lives in `plot-node.tsx`.
  */
 
-import { __resetSettingsChannelsForTest } from "../../../state/settings/viewport-settings.ts";
+import { __resetSettingsChannelsForTest } from "../settings/viewport-settings.ts";
 
 export type SelectionListener = () => void;
 

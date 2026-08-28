@@ -89,7 +89,7 @@ import {
   type ImageComparisonHostInput,
 } from "./plots/image/host-presentation.ts";
 import { usePlotSessionController } from "./state/session/session-context.ts";
-import { getGlobalSelectionStore } from "./lib/cairn-plot/selection/selection-store.ts";
+import { getGlobalSelectionStore } from "./state/selection/selection-store.ts";
 import { getRegisteredPane } from "./plot-selection-pane-registry.ts";
 
 // Compatibility exports for existing standalone/stage imports. The host owns

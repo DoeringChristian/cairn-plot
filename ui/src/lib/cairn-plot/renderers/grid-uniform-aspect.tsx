@@ -22,7 +22,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { representativeAspect } from "../selection/pack-grid";
+import { representativeAspect } from "../../../state/selection/pack-grid";
 import { ReportNaturalSizeContext } from "./natural-size-report";
 
 /** A finite, strictly-positive aspect (w / h), or `null` for any other input

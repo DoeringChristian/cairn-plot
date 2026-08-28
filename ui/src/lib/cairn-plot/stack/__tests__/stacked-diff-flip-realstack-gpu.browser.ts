@@ -63,7 +63,7 @@ import {
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
-} from "../../selection/selection-store";
+} from "../../../../state/selection/selection-store";
 import { getRegisteredPane } from "../../../../plot-selection-pane-registry";
 import { createHarness, sleep, waitFor } from "../../testing/harness";
 

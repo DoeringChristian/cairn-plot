@@ -17,7 +17,7 @@ import {
   REFERENCE_COLOR,
   REFERENCE_COLOR_RGB,
   type SelectionMode,
-} from "../lib/cairn-plot/selection/selection-store.ts";
+} from "../state/selection/selection-store.ts";
 import {
   EnlargeInterceptContext,
   type EnlargeIntercept,
