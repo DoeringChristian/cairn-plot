@@ -29,25 +29,6 @@ export function acesScalar(x: number): number {
   return clamp01(num / den);
 }
 
-// ---------------------------------------------------------------------------
-// WGSL helpers used by non-registry numerical shaders. Display-operation WGSL is
-// assembled from each operation's own `channel.wgsl` below.
-// ---------------------------------------------------------------------------
-export const CURVE_HELPER_FNS_WGSL = `
-fn reinhardCurve(x: f32) -> f32 {
-  let v = max(x, 0.0);
-  return v / (1.0 + v);
-}
-
-fn acesCurve(x: f32) -> f32 {
-  let v = max(x, 0.0);
-  let num = v * (2.51 * v + 0.03);
-  let den = v * (2.43 * v + 0.59) + 0.14;
-  return clamp(num / den, 0.0, 1.0);
-}
-
-`;
-
 /** The WGSL curve expression the shader's default `applyOperator` fall-through
  *  returns (`linear`/`srgb`/`gamma` — the RANGE-MAP clamp; the transfer lives in
  *  the output-encode stage). Entries equal to this are covered by the default and

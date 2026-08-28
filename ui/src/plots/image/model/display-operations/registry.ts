@@ -245,7 +245,7 @@ export interface DisplayOperation {
    * WGSL curve — an EXPRESSION over `rgb: vec3<f32>` and `peak: f32` evaluating
    * to `vec3<f32>` (the operator applied to the exposure/offset-adjusted,
    * post-scalar-LUT rgb). Assembled into the shared `applyOperator` dispatch by
-   * `./wgsl.ts`; may reference the curve helper fns in `CURVE_HELPERS_WGSL`.
+   * `./wgsl.ts`.
    *
    * (Deviation from the design's literal `fn encode(v: vec4f, p: Params) ->
    * vec3f`: an EXPRESSION over `rgb`/`peak` composes cleanly into the ONE curve
