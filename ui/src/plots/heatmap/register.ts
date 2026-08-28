@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 
 import type { ColormapName } from "../types.ts";
-import type { DataSource } from "../../resources/data/data-sources.ts";
+import type { DataSource } from "../../resources/data/data-source.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";

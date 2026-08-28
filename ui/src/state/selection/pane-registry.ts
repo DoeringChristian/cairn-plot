@@ -16,7 +16,7 @@
  * only WRITES the registry; the stage READS it. Framework-light (a plain Map +
  * a version tick for `useSyncExternalStore`).
  */
-import type { DataSource } from "../../resources/data/data-sources";
+import type { DataSource } from "../../resources/data/data-source";
 import type { PlotNode, SharedProps } from "../../host/descriptor-resolver";
 
 /** Renderer names whose panes can take part in an image comparison. Charts

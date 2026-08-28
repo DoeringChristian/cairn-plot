@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import type { PlotDescriptor } from "../../../packages/spec/src/spec.ts";
-import type { DataSource } from "../resources/data/data-sources.ts";
+import type { DataSource } from "../resources/data/data-source.ts";
 import { useEmitAutoHeight } from "./hooks/use-emit-auto-height.ts";
 import { PlotNodeView } from "./PlotNodeView.tsx";
 import { SharedPlotContext } from "./plot-context.ts";

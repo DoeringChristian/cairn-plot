@@ -27,7 +27,7 @@ import ReactDOM from "react-dom/client";
 import {
   createEndpointDataSource,
   type DataSource,
-} from "../resources/data/data-sources";
+} from "../resources/data/data-source";
 import {
   createLocalDataSource,
   loadPlotStoreFromDom,

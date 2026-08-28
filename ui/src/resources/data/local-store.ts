@@ -18,7 +18,7 @@
  * and then rely on this reader). The Python emitter and this reader MUST agree
  * on the shape below.
  */
-import type { DataSource } from "./data-sources";
+import type { DataSource } from "./data-source";
 import {
   getRuntimeEntry,
   runtimeArtifactUrl,

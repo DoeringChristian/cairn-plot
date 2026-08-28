@@ -50,7 +50,6 @@ export {
 // (parseNpy/parseNpz/PropertyMap are already eager-safe, see their own
 // barrels), safe to re-export from this eagerly-reached barrel.
 export {
-  createEndpointDataSource,
   resolveImageViewportItems,
   resolveImageViewportItemsAsync,
   decodeImageSource,
@@ -60,16 +59,19 @@ export {
   fetchMeshArrays,
   fetchVolumeArray,
   fetchBoxesArrays,
-  type DataSource,
   type ResolvedImageSource,
   type PointCloudArrays,
   type MeshArrays,
   type BoxesArrays,
-} from "../../resources/data/data-sources";
+} from "../../plots/artifact-resolvers";
+export {
+  createEndpointDataSource,
+  type DataSource,
+} from "../../resources/data/data-source";
 
 // Overlay-metadata parser (shared by the app's viewport-registry and the
 // standalone plot bundle's LOCAL image provider). Pure, no `api` dependency.
-export { parseOverlay } from "../../resources/data/parse-overlay";
+export { parseOverlay } from "../../plots/image/overlay-metadata";
 
 // LOCAL content-addressed blob store (design spec §5) — the DataSource the
 // standalone plot bundle uses for baked/self-contained data. Eager-safe

@@ -25,7 +25,7 @@
  * accessor guards `typeof window` so the Node test runner (no `window`) simply
  * sees an empty registry.
  */
-import type { Precision } from "../../plots/image/model/half.ts";
+import type { FloatPrecision } from "./numeric.ts";
 
 /** An already-encoded image container (PNG/JPEG/WebP/…) carried by reference. */
 export interface RuntimeBytesEntry {
@@ -44,7 +44,7 @@ export interface RuntimeFloatEntry {
   shape: number[];
   /** Numpy dtype string mirroring the baked path (`"<f4"` / `"<f2"`). */
   dtype: string;
-  precision: Precision;
+  precision: FloatPrecision;
 }
 
 export type RuntimeStoreEntry = RuntimeBytesEntry | RuntimeFloatEntry;

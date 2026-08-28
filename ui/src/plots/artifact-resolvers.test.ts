@@ -12,7 +12,7 @@
  * built in-process by `makeF32Npy`.
  */
 import { test } from "node:test";
-import { floatPixelsLength } from "../../plots/image/model/pixel-buffer.ts";
+import { floatPixelsLength } from "./image/model/pixel-buffer.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
@@ -20,9 +20,11 @@ import {
   decodedFloatToCompareSource,
   isFloatCandidateArtifact,
   resolveImageViewportItemsAsync,
+} from "./artifact-resolvers.ts";
+import {
   createEndpointDataSource,
   type DataSource,
-} from "./data-sources.ts";
+} from "../resources/data/data-source.ts";
 
 test("createEndpointDataSource uses the host fetch implementation", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -71,7 +73,7 @@ function makeF32Npy(shape: number[], values: number[]): ArrayBuffer {
 
 function readFixture(name: string): ArrayBuffer {
   const bytes = readFileSync(
-    new URL(`../../plots/image/model/decoders/fixtures/${name}`, import.meta.url),
+    new URL(`./image/model/decoders/fixtures/${name}`, import.meta.url),
   );
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }

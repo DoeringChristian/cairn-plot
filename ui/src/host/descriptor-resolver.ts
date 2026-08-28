@@ -23,9 +23,9 @@ import {
   fetchMeshArrays,
   fetchVolumeArray,
   fetchBoxesArrays,
-  type DataSource,
-} from "../resources/data/data-sources";
-import { parseOverlay } from "../resources/data/parse-overlay";
+} from "../plots/artifact-resolvers";
+import type { DataSource } from "../resources/data/data-source";
+import { parseOverlay } from "../plots/image/overlay-metadata";
 import { parseNpy } from "../resources/transforms/index";
 import {
   decodeImage,

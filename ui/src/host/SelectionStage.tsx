@@ -44,7 +44,7 @@ import { PlotNodeView } from "./PlotNodeView";
 import { PaneSyncContext, SharedPlotContext } from "./plot-context.ts";
 import { ChartFillContext } from "./standalone-helpers";
 import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./descriptor-resolver";
-import type { DataSource } from "../resources/data/data-sources";
+import type { DataSource } from "../resources/data/data-source";
 import {
   getGlobalSelectionStore,
   REFERENCE_COLOR,

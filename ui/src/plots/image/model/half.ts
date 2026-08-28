@@ -18,7 +18,7 @@
  */
 
 /** Precision tag carried alongside a float image payload's `data` array. */
-export type Precision = "f32" | "f16-bits";
+export type { FloatPrecision as Precision } from "../../../resources/data/numeric.ts";
 
 /** IEEE-754 binary16 bit pattern for +1.0 — the alpha fill for RGB→RGBA. */
 export const HALF_ONE = 0x3c00;

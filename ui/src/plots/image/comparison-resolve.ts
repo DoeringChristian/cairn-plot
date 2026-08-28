@@ -2,10 +2,10 @@ import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
 import {
   decodeImageSource,
   resolveImageViewportItems,
-  type DataSource,
-} from "../../resources/data/data-sources.ts";
+} from "../artifact-resolvers.ts";
+import type { DataSource } from "../../resources/data/data-source.ts";
 import type { CompareFloatSource } from "./compare/compositor.tsx";
-import { parseOverlay } from "../../resources/data/parse-overlay.ts";
+import { parseOverlay } from "../../plots/image/overlay-metadata.ts";
 import { parseNpy } from "../../resources/transforms/parse-npy.ts";
 import { resolveFinalUrl } from "./model/final-url.ts";
 import type { ImageOverlayData } from "../types.ts";

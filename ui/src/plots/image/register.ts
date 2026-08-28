@@ -1,7 +1,7 @@
 import { createElement, type ComponentType } from "react";
 
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
-import type { DataSource } from "../../resources/data/data-sources.ts";
+import type { DataSource } from "../../resources/data/data-source.ts";
 import type { DeepFlattenController } from "./model/decoders.ts";
 import type {
   DecodedSource,

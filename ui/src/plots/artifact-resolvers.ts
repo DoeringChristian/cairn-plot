@@ -30,10 +30,10 @@
  * calling `api.artifactUrl` directly.
  */
 
-import type { ImageOverlayData } from "../../plots/types";
-import type { ImageViewportItem } from "../../integration/cairn-card/image-viewport";
-import type { ViewportDataArgs, ViewportDataResult } from "../../integration/cairn-card/types";
-import type { RuntimeStoreEntry } from "./runtime-store";
+import type { ImageOverlayData } from "./types";
+import type { ImageViewportItem } from "../integration/cairn-card/image-viewport";
+import type { ViewportDataArgs, ViewportDataResult } from "../integration/cairn-card/types";
+import type { DataSource } from "../resources/data/data-source.ts";
 // Explicit `.ts` module path (not the `../transforms` barrel) so this module —
 // and its float-decode helpers — load under Node's type-stripping test runner
 // (a directory/barrel import is unsupported there); mirrors `image/decoders.ts`.
@@ -41,24 +41,24 @@ import type { RuntimeStoreEntry } from "./runtime-store";
 // `parse-npz` (the `DecompressionStream` inflate path) is loaded LAZILY at its
 // call sites below — again matching `image/decoders.ts` — so the eager module
 // graph (and this file's own float-decode unit test) stays clean.
-import { parseNpy } from "../transforms/parse-npy.ts";
-import type { parseNpz as ParseNpzFn } from "../transforms/parse-npz.ts";
+import { parseNpy } from "../resources/transforms/parse-npy.ts";
+import type { parseNpz as ParseNpzFn } from "../resources/transforms/parse-npz.ts";
 
 /** Lazily load the `.npz` parser (see the import note above). */
 async function loadParseNpz(): Promise<typeof ParseNpzFn> {
-  return (await import("../transforms/parse-npz.ts")).parseNpz;
+  return (await import("../resources/transforms/parse-npz.ts")).parseNpz;
 }
-import type { PropertyMap } from "../../engines/three/properties.ts";
-import { extractProperties } from "../../engines/three/properties.ts";
+import type { PropertyMap } from "../engines/three/properties.ts";
+import { extractProperties } from "../engines/three/properties.ts";
 import {
   decodeImage,
   decodedU8ToDataUrl,
   isRawBufferFormat,
   sniffFormat,
   type DecodedImage,
-} from "../../plots/image/model/decoders.ts";
-import type { CompareFloatSource } from "../../plots/image/compare/compositor";
-import { floatPixelsFrom } from "../../plots/image/model/pixel-buffer.ts";
+} from "./image/model/decoders.ts";
+import type { CompareFloatSource } from "./image/compare/compositor";
+import { floatPixelsFrom } from "./image/model/pixel-buffer.ts";
 
 /**
  * Resolves a content-addressed artifact hash to fetchable data. Two shapes
@@ -72,47 +72,6 @@ import { floatPixelsFrom } from "../../plots/image/model/pixel-buffer.ts";
  *    practice but still returns a `Promise` so call sites don't branch on
  *    the source kind.
  */
-export interface DataSource {
-  artifactUrl(hash: string): string;
-  bytes(hash: string): Promise<ArrayBuffer>;
-  /**
-   * OPTIONAL: the in-memory RUNTIME entry for `hash`, when the source keeps a
-   * JS-side runtime registry (the LOCAL source does; the ENDPOINT source does
-   * not). Present ONLY for JS-authored plots (`window.cairnPlot`), where it lets
-   * a resolver hand a `Float32Array`/`ImageData`-derived value straight to a
-   * renderer BY REFERENCE — skipping the base64/`.npy` encode the Python-baked
-   * path takes. `undefined` (or the method absent) means "not a runtime hash;
-   * resolve via `artifactUrl`/`bytes`", so every existing call site is
-   * unaffected.
-   */
-  runtime?(hash: string): RuntimeStoreEntry | undefined;
-}
-
-/**
- * The ENDPOINT `DataSource` — wraps an `artifactUrl` formatter (the app's
- * `api.artifactUrl`, or an absolute `${server}/api/artifacts/${hash}`
- * builder for the future plot-bundle ENDPOINT mode) and derives `bytes`
- * from it via a plain `fetch()`. This is the app's default (and, today,
- * only) `DataSource` — behavior-identical to the pre-extraction inline
- * `api.artifactUrl(...)` / `fetch(api.artifactUrl(...))` call sites.
- */
-export function createEndpointDataSource(
-  artifactUrl: (hash: string) => string,
-  options: { fetch?: typeof fetch; requestInit?: RequestInit } = {},
-): DataSource {
-  const fetchArtifact = options.fetch ?? fetch;
-  return {
-    artifactUrl,
-    async bytes(hash: string): Promise<ArrayBuffer> {
-      const res = await fetchArtifact(artifactUrl(hash), options.requestInit);
-      if (!res.ok) {
-        throw new Error(`failed to fetch artifact ${hash} (${res.status})`);
-      }
-      return res.arrayBuffer();
-    },
-  };
-}
-
 // ---------------------------------------------------------------------------
 // image — pure, synchronous hash -> ImageViewportItem mapping (no network:
 // `DataSource.artifactUrl` is a plain string formatter). Mirrors
