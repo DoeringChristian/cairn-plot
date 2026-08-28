@@ -34,7 +34,7 @@ import {
 } from "../layout/grid-uniform-aspect.tsx";
 import { ChartFillContext } from "./standalone-helpers.tsx";
 import { useCellSettings } from "../state/settings/use-cell-settings.ts";
-import { initialCellSettings } from "../settings/defaults.ts";
+import { defaultSettingsForNode } from "../plots/settings.ts";
 import type { PlotSettings } from "../settings/schema.ts";
 import { CellSettingsContext, useSharedPlot, type CellSettingsContextValue } from "./plot-context.ts";
 import { usePlotSessionController } from "../state/session/session-context.ts";
@@ -81,7 +81,7 @@ export function PlotCell({
   if (!initialSettingsRef.current.captured && node.kind !== "grid") {
     initialSettingsRef.current = {
       captured: true,
-      value: initialCellSettings(node, shared),
+      value: defaultSettingsForNode(node, shared),
     };
   }
 

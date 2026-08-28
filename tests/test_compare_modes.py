@@ -22,7 +22,7 @@ def test_view_modes_lower_to_descriptor():
     # split (public == internal name).
     split = cp.Compare(_img(), _img(), mode="split", split_position=0.25).to_node()
     assert split["kind"] == "compare" and split["presentation"] == "split"
-    assert split["props"]["splitPosition"] == 0.25
+    assert split["settings"]["compare.split"] == 0.25
 
 
 @pytest.mark.parametrize("mode", ["slide", "blend"])
@@ -69,15 +69,14 @@ def test_diff_kernel_modes(mode, kernel_id):
     node = cp.Compare(_img(), _img(), mode=mode, colormap="turbo").to_node()
     assert node["kind"] == "compare"
     assert node["presentation"] == "difference"
-    # The kernel id rides on `diffSubmode` — the pane's initial diff kernel.
-    assert node["props"]["diffSubmode"] == kernel_id
-    assert node["props"]["colormap"] == "turbo"
+    assert node["settings"]["compare.operation"] == kernel_id
+    assert node["settings"]["image.encoding"] == "turbo"
 
 
 def test_flip_is_accepted_and_orientation():
     # `flip` is the additive perceptual kernel; reference is the baseline.
     node = cp.Compare(_img(), _img(), mode="flip").to_node()
-    assert node["props"]["diffSubmode"] == "flip"
+    assert node["settings"]["compare.operation"] == "flip"
     assert node["referenceIndex"] == 0
 
 
@@ -85,7 +84,7 @@ def test_flip_ldr_forced_mode_accepted():
     # `flip_ldr` forces the LDR-FLIP comparison (tone-map-first on float sources).
     node = cp.Compare(_img(), _img(), mode="flip_ldr").to_node()
     assert node["presentation"] == "difference"
-    assert node["props"]["diffSubmode"] == "flip_ldr"
+    assert node["settings"]["compare.operation"] == "flip_ldr"
     assert node["referenceIndex"] == 0
 
 
@@ -93,7 +92,7 @@ def test_ssim_mode_accepted():
     # `ssim` is the structural-similarity diff kernel (displays 1 - SSIM).
     node = cp.Compare(_img(), _img(), mode="ssim").to_node()
     assert node["presentation"] == "difference"
-    assert node["props"]["diffSubmode"] == "ssim"
+    assert node["settings"]["compare.operation"] == "ssim"
     assert node["referenceIndex"] == 0
 
 

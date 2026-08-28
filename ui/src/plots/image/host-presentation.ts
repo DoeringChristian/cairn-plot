@@ -82,8 +82,6 @@ export function composeSingleImagePresentation(args: {
   readonly inStackedGrid: boolean;
 }): { presentation: Record<string, unknown>; baseChannelTree?: ChannelMenuTree } {
   const hostProps: Record<string, unknown> = {};
-  if (args.shared?.colormap != null) hostProps.colormap = args.shared.colormap;
-  if (args.shared?.colorRange != null) hostProps.colorRange = args.shared.colorRange;
   const described = args.resolved.exrTree as ChannelMenuTree | undefined;
   const resolvedTree =
     (described && treeHasSelectableChannels(described) ? described : undefined) ??

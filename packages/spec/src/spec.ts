@@ -13,6 +13,7 @@ export type PlotNode = PlotLeafNode | GridNode | CompareNode;
 export interface PlotLeafNode {
   kind: "plot";
   type: string;
+  settings?: Record<string, JsonValue>;
   props?: Record<string, JsonValue>;
   data: DataSpec;
 }
@@ -42,12 +43,12 @@ export interface CompareNode {
   /** How the plot definition groups the operands into visible outputs. */
   strategy: "reference" | "all";
   referenceIndex?: number;
+  settings?: Record<string, JsonValue>;
   props?: Record<string, JsonValue>;
 }
 
 export interface SharedProps {
-  colormap?: string;
-  colorRange?: [number, number];
+  settings?: Record<string, JsonValue>;
   colorbar?: boolean;
   reference?: DataSpec;
   sync?: { view?: boolean; camera?: boolean };

@@ -65,7 +65,7 @@ def test_image_sdr_toolbar_coexists_with_display_props() -> None:
     node = cp.Image(_sdr(), toolbar=False, colormap="turbo", show_axes=True).to_node()
     props = node["props"]
     assert props["toolbar"] is False
-    assert props["colormap"] == "turbo"
+    assert node["settings"]["image.encoding"] == "turbo"
     assert props["showAxes"] is True
 
 
@@ -89,16 +89,15 @@ def test_image_hdr_base_exposure_and_offset_are_controlled() -> None:
     # EV/offset are the CONTROLLED host-menu surface for the HDR pane: both emit
     # top-level so a host can drive them with the toolbar hidden.
     node = cp.Image(_hdr(), toolbar=False, exposure=1.5, offset=0.25).to_node()
-    props = node["props"]
-    assert props["exposure"] == 1.5
-    assert props["offset"] == 0.25
-    assert props["toolbar"] is False
+    assert node["settings"]["image.exposureEV"] == 1.5
+    assert node["settings"]["image.offset"] == 0.25
+    assert node["props"]["toolbar"] is False
 
 
 def test_image_hdr_offset_no_longer_ignored(caplog: pytest.LogCaptureFixture) -> None:
     # `offset` used to be warned-and-dropped on the HDR path; it is now honoured.
     node = cp.Image(_hdr(), offset=0.2).to_node()
-    assert node["props"]["offset"] == 0.2
+    assert node["settings"]["image.offset"] == 0.2
     assert "offset" not in caplog.text
 
 
@@ -121,8 +120,8 @@ def test_compare_toolbar_coexists_with_mode_and_colormap() -> None:
     ).to_node()
     props = node["props"]
     assert props["toolbar"] is False
-    assert props["colormap"] == "magma"
-    assert props["diffSubmode"] == "absolute"  # the controlled kernel still rides along
+    assert node["settings"]["image.encoding"] == "magma"
+    assert node["settings"]["compare.operation"] == "absolute"
 
 
 def test_compare_toolbar_rejects_non_bool() -> None:

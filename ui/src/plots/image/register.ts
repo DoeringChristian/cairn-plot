@@ -1,6 +1,6 @@
 import { createElement, type ComponentType } from "react";
 
-import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
+import type { CompareNode, DataSpec, PlotLeafNode } from "../../../../packages/spec/src/spec.ts";
 import type { DataSource } from "../../resources/data/data-source.ts";
 import type { DeepFlattenController } from "./model/decoders.ts";
 import type {
@@ -18,6 +18,7 @@ import {
   planImageComparison,
   type ImageComparisonPlan,
 } from "./comparison-plan.ts";
+import { resolveEffectiveTonemap, TONEMAP_GAMMA_DEFAULT } from "./model/tonemap.ts";
 
 type ImageSpec = Extract<DataSpec, { kind: "inline" | "image" | "imghdr" | "url" }>;
 type ImageRuntimePlumbing =
@@ -42,6 +43,25 @@ export type ImagePresentation = Omit<ImageBackendProps, ImageRuntimePlumbing> & 
   readonly height?: number;
 };
 export type ImageSettings = PlotSettings & SettingsRecord;
+
+/** Image-owned HOME state. Authored node settings are merged by the host. */
+export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSettings {
+  return {
+    "image.view": { zoom: 1, pan: { x: 0, y: 0 } },
+    "image.encoding": resolveEffectiveTonemap(undefined, false),
+    "image.tonemapGamma": TONEMAP_GAMMA_DEFAULT,
+    "image.exposureEV": 0,
+    "image.offset": 0,
+    "image.colorRange": null,
+    "panel.info": null,
+    ...(node.kind === "compare"
+      ? {
+          "compare.operation": node.presentation === "difference" ? "absolute" : "split",
+          "compare.split": 0.5,
+        }
+      : {}),
+  };
+}
 
 /** Checked erasure boundary for resolved and legacy-inline image payloads. */
 export function imagePresentation(value: Record<string, unknown>): ImagePresentation {
@@ -91,7 +111,7 @@ export function ensureImagePlotType(
     kind: "image",
     data: { validate: validateImageData },
     settings: {
-      defaults: () => ({}),
+      defaults: defaultImageSettings,
       project: (settings) => ({ ...settings }) as ImageSettings,
     },
     resolve: (spec, context) => resolve(spec, context.source),

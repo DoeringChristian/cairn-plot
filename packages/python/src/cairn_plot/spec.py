@@ -149,6 +149,7 @@ class PlotLeafSpec(_Strict):
 
     kind: Literal["plot"]
     type: str
+    settings: Optional[dict[str, Any]] = None
     props: Optional[dict[str, Any]] = None
     data: DataSpec
 
@@ -156,8 +157,7 @@ class PlotLeafSpec(_Strict):
 class SharedPropsSpec(_Strict):
     """`SharedProps` — properties shared across a grid's cells."""
 
-    colormap: Optional[str] = None
-    colorRange: Optional[tuple[float, float]] = None
+    settings: Optional[dict[str, Any]] = None
     colorbar: Optional[bool] = None
     reference: Optional[DataSpec] = None
     sync: Optional["_SyncSpec"] = None
@@ -192,6 +192,7 @@ class CompareSpec(_Strict):
     operands: list[DataSpec]
     strategy: Literal["reference", "all"]
     referenceIndex: Optional[int] = None
+    settings: Optional[dict[str, Any]] = None
     props: Optional[dict[str, Any]] = None
 
 

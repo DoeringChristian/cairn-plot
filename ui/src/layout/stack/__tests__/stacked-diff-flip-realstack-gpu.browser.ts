@@ -56,7 +56,6 @@ import {
   stopPaintPhaseLog,
   getPaintPhaseLog,
   isPipelineMismatch,
-  isEncodingGenerationMismatch,
   type PaneRenderRecord,
   type PaintPhaseRecord,
 } from "../../../plots/image/engine/test-hooks";
@@ -131,7 +130,8 @@ const diffCompare = (label: string) => ({
   operands: [imghdr("runtime:ref"), imghdr("runtime:fg")],
   strategy: "reference" as const,
   referenceIndex: 0,
-  props: { toolbar: true, label, diffSubmode: "flip" },
+  settings: { "compare.operation": "flip" },
+  props: { toolbar: true, label },
 });
 
 function sideBySideGrid(): PlotSpec {
@@ -164,7 +164,8 @@ const magmaScalarLeaf = (label: string) => ({
   kind: "plot" as const,
   type: "image",
   data: imghdr("runtime:scalar"),
-  props: { toolbar: true, label, colormap: "magma" },
+  settings: { "image.encoding": "magma" },
+  props: { toolbar: true, label },
 });
 function stackedScalarMagmaGrid(): PlotSpec {
   return {
@@ -187,7 +188,8 @@ const compareNode = (mode: "diff" | "split", label: string) => ({
   operands: [imghdr("runtime:ref"), imghdr("runtime:fg")],
   strategy: "reference" as const,
   referenceIndex: 0,
-  props: { toolbar: true, label, diffSubmode: "flip" },
+  settings: { "compare.operation": mode === "diff" ? "flip" : "split" },
+  props: { toolbar: true, label },
 });
 function singleCompareGrid(mode: "diff" | "split"): PlotSpec {
   return {
@@ -225,7 +227,8 @@ const peakScalarLeaf = (label: string, peak: number) => ({
   kind: "plot" as const,
   type: "image",
   data: imghdr("runtime:scalar"),
-  props: { toolbar: true, label, peak },
+  settings: { "image.peak": peak },
+  props: { toolbar: true, label },
 });
 function stackedTwoPeakGrid(): PlotSpec {
   return {
@@ -266,7 +269,8 @@ const diffCompareKernel = (label: string, submode: string) => ({
   operands: [imghdr("runtime:ref"), imghdr("runtime:fg")],
   strategy: "reference" as const,
   referenceIndex: 0,
-  props: { toolbar: true, label, diffSubmode: submode },
+  settings: { "compare.operation": submode },
+  props: { toolbar: true, label },
 });
 function sideBySideTwoDiffGrid(): PlotSpec {
   return {
@@ -746,9 +750,8 @@ async function main(): Promise<void> {
     // ============ PHASE E — AUTHORED-COLORMAP ENCODING GENERATION ============
     // A stacked [magma-scalar image, plain image] grid: flipping to the authored-
     // magma slot must never paint a frame with NO colormap bound (the encoding
-    // reseed landing a commit late = raw gray-none for one frame). The render-log
-    // `isEncodingGenerationMismatch` tripwire asserts ZERO such presents now that the
-    // encoding derivation is commit-synchronous.
+    // reseed landing a commit late = raw gray-none for one frame). The render log
+    // directly asserts that every scalar-slot frame has a colormap bound.
     {
       const host = document.createElement("div");
       host.id = "rpE";
@@ -775,8 +778,9 @@ async function main(): Promise<void> {
       const log = getPaneRenderLog();
       stopPaneRenderLog();
       root.unmount();
-      const encMiss = log.filter(isEncodingGenerationMismatch).length;
-      const magmaPresents = log.filter((r) => r.mode === "image" && r.authoredColormap === true).length;
+      const scalarPresents = log.filter((r) => r.mode === "image" && r.isScalar === true);
+      const encMiss = scalarPresents.filter((r) => r.hasColormap !== true).length;
+      const magmaPresents = scalarPresents.length;
       note(`PHASE E magma-scalar flip storm: ${log.length} presents, magma-slot image presents=${magmaPresents}, encoding-gen mismatches=${encMiss}`);
       report(magmaPresents >= 5, `PHASE E exercised the authored-magma scalar slot (${magmaPresents} presents)`);
       report(encMiss === 0, `PHASE E: ZERO encoding-generation mismatches — authored magma never drops to gray-none on a flip (${encMiss})`);

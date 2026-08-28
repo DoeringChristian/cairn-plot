@@ -182,12 +182,51 @@ export interface CairnPlot {
   registerRuntime(entries: Runtime): void;
 }
 
-function leaf(type: string, data: DataSpec, props?: Opts): PlotNode {
+function leaf(type: string, data: DataSpec, props?: Opts, settings?: Opts): PlotNode {
   const node: PlotNode = { kind: "plot", type, data };
+  if (settings && Object.keys(settings).length) {
+    node.settings = jsonRecord(settings, `${type}.settings`);
+  }
   if (props && Object.keys(props).length) {
     node.props = jsonRecord(props, `${type}.props`);
   }
   return node;
+}
+
+function takeImageSettings(props: Opts): Opts {
+  const settings: Opts = {};
+  const take = (prop: string, key: string, map: (value: unknown) => unknown = (value) => value) => {
+    if (props[prop] === undefined) return;
+    settings[key] = map(props[prop]);
+    delete props[prop];
+  };
+  take("tonemap", "image.encoding");
+  take("gamma", "image.tonemapGamma");
+  take("peak", "image.peak");
+  take("exposure", "image.exposureEV");
+  take("offset", "image.offset");
+  take("colorRange", "image.colorRange", (value) => {
+    const range = value as [number, number];
+    return { min: range[0], max: range[1] };
+  });
+  take("colormap", "image.encoding", (value) => value === "viridis" ? "turbo" : value);
+  const zoom = props.zoom;
+  const pan = props.pan;
+  if (zoom !== undefined || pan !== undefined) {
+    settings["image.view"] = {
+      zoom: zoom ?? 1,
+      pan: pan ?? { x: 0, y: 0 },
+    };
+    delete props.zoom;
+    delete props.pan;
+  }
+  take("splitPosition", "compare.split");
+  take("diffSubmode", "compare.operation");
+  if (props.settings && typeof props.settings === "object") {
+    Object.assign(settings, props.settings);
+    delete props.settings;
+  }
+  return settings;
 }
 
 /** Builder shapers produce plain JSON objects; this is their wire boundary. */
@@ -350,7 +389,8 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
             : String(opts.channels);
         }
       }
-      return handle(leaf("image", shaped.data, props), shaped.runtime);
+      const settings = takeImageSettings(props);
+      return handle(leaf("image", shaped.data, props, settings), shaped.runtime);
     },
 
     table(rows) {
@@ -384,6 +424,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       // `cp.Compare(toolbar=...)`); omitted at the default `true`.
       if (opts.toolbar === false) built.toolbar = false;
       if (opts.props && typeof opts.props === "object") Object.assign(built, opts.props);
+      const settings = takeImageSettings(built);
       const node: PlotNode = {
         kind: "compare",
         type: "image",
@@ -393,6 +434,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
         referenceIndex: 0,
       };
       if (Object.keys(built).length) (node as { props?: Opts }).props = built;
+      if (Object.keys(settings).length) node.settings = jsonRecord(settings, "compare.settings");
       return handle(node, [...A.runtime, ...B.runtime]);
     },
 

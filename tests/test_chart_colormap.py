@@ -67,4 +67,4 @@ def test_magma_is_an_accepted_colormap():
 def test_compare_accepts_magma_colormap():
     img = cp.Image(np.zeros((2, 2, 3), dtype=np.uint8))
     node = cp.Compare(img, img, mode="flip", colormap="magma").to_node()
-    assert node["props"]["colormap"] == "magma"
+    assert node["settings"]["image.encoding"] == "magma"

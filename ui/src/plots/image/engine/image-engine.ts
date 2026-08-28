@@ -224,15 +224,6 @@ export interface ImageParams {
    * production (only the render log reads it, and only when a harness armed it).
    */
   compareIntended?: boolean;
-  /**
-   * TEST-ONLY oracle tag (never read by the shader / render path). Set true by the
-   * pane when the DESCRIPTOR authored a colormap LUT for this single-image pane, so
-   * the render-log oracle can flag an ENCODING-GENERATION lag: a plain present with
-   * NO colormap bound (`hasColormap` false) while the authored encoding is a LUT —
-   * the authored-`magma` scalar painting raw gray-none for one frame on a flip
-   * before the encoding reseed lands. See {@link isEncodingGenerationMismatch}.
-   */
-  authoredColormap?: boolean;
 }
 
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */

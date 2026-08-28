@@ -191,10 +191,10 @@ test("image/compare emit props.toolbar=false only when explicitly disabled", () 
   // SDR image
   const sdr = cp.image(f32, { shape: [2, 3], toolbar: false });
   assert.equal((sdr.node as any).props.toolbar, false);
-  // HDR image (offset is a controlled base prop too)
+  // HDR image (offset is authored cell state)
   const hdr = cp.image(f32, { shape: [2, 3], tonemap: "aces", toolbar: false, offset: 0.2 });
   assert.equal((hdr.node as any).props.toolbar, false);
-  assert.equal((hdr.node as any).props.offset, 0.2);
+  assert.equal((hdr.node as any).settings["image.offset"], 0.2);
   // compare
   const cmp = cp.compare(cp.image(f32, { shape: [2, 3] }), cp.image(f32, { shape: [2, 3] }), {
     mode: "split",
@@ -210,18 +210,19 @@ test("image/compare emit props.toolbar=false only when explicitly disabled", () 
 });
 
 // ── FIX 1: exposure/offset lifted TOP-LEVEL on the non-float (URL) path ──────
-test("URL image emits exposure/offset TOP-LEVEL, not into the CSS processing block", () => {
+test("URL image emits exposure/offset as settings, not CSS processing props", () => {
   // FLOAT URL (.exr): the client decodes it to a FLOAT source, which discards
   // `processing` — exposure/offset MUST ride top-level or they are silently
   // dropped (~2× too bright). tonemap/gamma/peak already survived; this is the gap.
   const exr = cp.image({ url: "render.exr" }, { exposure: -1, offset: 0.1, tonemap: "aces" });
   const p = (exr.node as any).props;
-  assert.equal(p.exposure, -1, "exposure must be top-level");
-  assert.equal(p.offset, 0.1, "offset must be top-level");
-  assert.equal(p.tonemap, "aces");
+  const settings = (exr.node as any).settings;
+  assert.equal(settings["image.exposureEV"], -1);
+  assert.equal(settings["image.offset"], 0.1);
+  assert.equal(settings["image.encoding"], "aces");
   // and NEVER also in the CSS-filter `processing` block (would double-apply).
-  assert.equal(p.processing?.exposure, undefined);
-  assert.equal(p.processing?.offset, undefined);
+  assert.equal(p?.processing?.exposure, undefined);
+  assert.equal(p?.processing?.offset, undefined);
   // a float URL routes to the fetch+decode seam (not a verbatim <img>).
   assert.equal((exr.node as any).data.kind, "image");
 
@@ -229,15 +230,15 @@ test("URL image emits exposure/offset TOP-LEVEL, not into the CSS processing blo
   // ONCE (not dropped, not doubled by ALSO living in `processing`).
   const png = cp.image({ url: "photo.png" }, { exposure: -1 });
   const pp = (png.node as any).props;
-  assert.equal(pp.exposure, -1);
-  assert.equal(pp.processing, undefined);
+  assert.equal((png.node as any).settings["image.exposureEV"], -1);
+  assert.equal(pp?.processing, undefined);
   // a known browser-native ext keeps the verbatim <img> fast path.
   assert.equal((png.node as any).data.kind, "url");
 
   // Sanity: with NO exposure/offset the keys are absent (renderer defaults hold).
   const plain = cp.image({ url: "render.exr" }, { tonemap: "aces" });
-  assert.equal((plain.node as any).props.exposure, undefined);
-  assert.equal((plain.node as any).props.offset, undefined);
+  assert.equal((plain.node as any).settings["image.exposureEV"], undefined);
+  assert.equal((plain.node as any).settings["image.offset"], undefined);
 });
 
 // ── FIX 2: URL decode routing matches Python (unknown/ext-less → decode seam) ─

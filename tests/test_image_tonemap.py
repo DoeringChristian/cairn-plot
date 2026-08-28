@@ -26,7 +26,7 @@ def test_normal_map_operator_accepted() -> None:
     import cairn_plot as cp
 
     node = cp.Image(np.zeros((4, 4, 3), dtype=np.float32), tonemap="normal").to_node()
-    assert node["props"]["tonemap"] == "normal"
+    assert node["settings"]["image.encoding"] == "normal"
 
 
 @pytest.mark.parametrize("op", list(_HDR_TONEMAP_OPERATORS))
@@ -230,7 +230,7 @@ def test_float_image_colormap_is_emitted_not_ignored() -> None:
     assert img._data["kind"] == "imghdr"
     assert img._props.get("colormap") == "magma"
     node = img.to_node()
-    assert node["props"]["colormap"] == "magma"
+    assert node["settings"]["image.encoding"] == "magma"
 
     # validation still applies on the float path (same canonical set + "none").
     import pytest

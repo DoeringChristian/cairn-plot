@@ -668,13 +668,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // an HDR surface); the `normal` remap and colormap LUTs don't. The pane never
   // inspects encoding kinds.
   const activeRespectsPeak = enc.hasParam("peak");
-  // TEST-ONLY tripwire tag: did the DESCRIPTOR author a colormap LUT for this pane?
-  // A plain identity present with NO colormap bound while this is true is the
-  // encoding-generation lag (`isEncodingGenerationMismatch`). Static, from the
-  // descriptor prop — independent of the (possibly lagging) live `enc` state, so it
-  // catches a stale-generation present rather than agreeing with it.
-  const authoredColormapIsLut = propColormap !== "none" && getEncoding(propColormap)?.kind === "lut";
-
   // GRAY NONE (the plain-grayscale "none" DATA encoding — HDR-native follow-up).
   // A SINGLE-CHANNEL source with no colormap LUT is DATA, not light: its raw scalar
   // (after exposure/offset + any norm/bounds) is linear light that should ride the
@@ -744,7 +737,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // the engine norm machinery `cairnDataIndex`/`computeDataIndex`/`u_bind9` stays,
   // but the UI is gone and the effective norm is always linear; see the
   // norm-UI-removal follow-up.) `colorRange` (the grid-shared
-  // descriptor prop — `shared.colorRange` → LeafView mergedProps) SEEDS the
+  // authored `image.colorRange` cell setting SEEDS the
   // min/max BOUNDS skin: the ALTERNATIVE to EV/OFF (bounds-first, data-speak).
   // The two are skins over ONE affine and are NEVER composed — when bounds are
   // active EV/OFF are hidden and inert (single-application; see the shader's
@@ -1752,7 +1745,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // try/catch is belt-and-suspenders. Either way `engineFailed` falls this pane
     // back to the CPU pane — it never blanks.
     try {
-      const ok = handle.render({ ...params, compareIntended: hasCompare, authoredColormap: authoredColormapIsLut });
+      const ok = handle.render({ ...params, compareIntended: hasCompare });
       if (!ok) setEngineFailed(true);
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -1774,9 +1767,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // (`imageUrl`), a compare toggle (`hasCompare`), a deep toggle (`deepActive`),
     // or the presence of the `b` operand — else the guard would compare against a
     // stale expected id and hold the previous frame forever.
-    hasCompare, deepActive, hdrMode ? null : (props as SdrImageProps).imageUrl, compareSource?.b,
-    // TEST-ONLY tripwire tag (fresh across a descriptor colormap change).
-    authoredColormapIsLut]);
+    hasCompare, deepActive, hdrMode ? null : (props as SdrImageProps).imageUrl, compareSource?.b]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.

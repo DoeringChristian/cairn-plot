@@ -54,7 +54,7 @@ import {
 import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "../plots/image/model/channel-menu";
 import { applyChannelSlice } from "../plots/image/model/channel-slice";
 import { type PlotSettings } from "../settings/schema.ts";
-import { initialCellSettings } from "../settings/defaults.ts";
+import { defaultSettingsForNode } from "../plots/settings.ts";
 import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
 import {
   CellSettingsContext,
@@ -146,8 +146,8 @@ if (typeof window !== "undefined") {
 // ---------------------------------------------------------------------------
 // Leaf — the former flat `PlotApp` body. Resolves the leaf's DataSpec against
 // the shared source, waits (bounded) for its renderer to register, and renders
-// the registered `*Standalone` adapter. `shared.colormap`/`colorRange` merge in
-// BELOW the leaf's own props (leaf props win).
+// the registered backend. Authored display state is already in the cell's
+// settings; presentation props remain non-interactive rendering inputs.
 // ---------------------------------------------------------------------------
 function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafSpec }) {
   const { source, shared } = useSharedPlot();
@@ -165,7 +165,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // image renderer. The channel strip / exr tree / shared-colormap merge below
   // are single-image concerns and are inert on this path.
   const isDiff = !!diffSpec;
-  const activeDefaults = diffSpec?.cellDefaults ?? initialCellSettings(node, shared) ?? {};
+  const activeDefaults = diffSpec?.cellDefaults ?? defaultSettingsForNode(node, shared);
   const resetSettings = useCallback(() => {
     (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(activeDefaults);
   }, [paneSync?.resetSyncedSettings, paneSync?.setSyncedSettings, activeDefaults]);
@@ -590,8 +590,9 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
   ) : grid;
 
   if (!node.shared?.colorbar) return body;
-  const cbColormap = (node.shared.colormap as ColormapName | undefined) ?? "turbo";
-  const [min, max] = node.shared.colorRange ?? [undefined, undefined];
+  const cbColormap = (node.shared.settings?.["image.encoding"] as ColormapName | undefined) ?? "turbo";
+  const range = node.shared.settings?.["image.colorRange"] as { min?: number; max?: number } | null | undefined;
+  const { min, max } = range ?? {};
   return (
     <div style={{ display: "flex", alignItems: "stretch", gap: 4, width: "100%" }}>
       <div style={{ flex: 1, minWidth: 0 }}>{body}</div>
@@ -787,7 +788,7 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
     return <Message text={`comparison ${JSON.stringify(planned.value.type)} returned an invalid presentation`} error />;
   }
   const settings = {
-    ...planned.value.definition.defaults(),
+    ...planned.value.definition.defaults(node),
     ...(paneSync?.syncedSettings ?? {}),
   };
   return (
@@ -800,7 +801,7 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
         patch: (patch) => paneSync?.setSyncedSettings?.(patch as PlotSettings),
         reset: () => {
           (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(
-            planned.value!.definition.defaults() as PlotSettings,
+            planned.value!.definition.defaults(node) as PlotSettings,
           );
         },
       }}
@@ -842,7 +843,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
     diffKernel: control.diffKernel,
     colormap: ((paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
       (node.props?.colormap as CompareSource["colormap"]) ??
-      (shared?.colormap as CompareSource["colormap"]) ??
+      (shared?.settings?.["image.encoding"] as CompareSource["colormap"]) ??
       "none") as CompareSource["colormap"],
     splitPosition: control.splitPos,
     align: synth.align,
@@ -854,7 +855,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
     onDiffKernelChange: control.setDiffKernel,
     onCompareModeChange: control.setViewMode,
     onSplitPositionChange: control.setSplitPos,
-    cellDefaults: initialCellSettings(node, shared) ?? {},
+    cellDefaults: defaultSettingsForNode(node, shared),
     compareModified: control.modified,
   };
   return (

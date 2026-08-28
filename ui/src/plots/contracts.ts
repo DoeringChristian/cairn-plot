@@ -1,5 +1,5 @@
 import type { JsonValue } from "../../../packages/spec/src/json.ts";
-import type { DataSpec, PlotLeafNode } from "../../../packages/spec/src/spec.ts";
+import type { CompareNode, DataSpec, PlotLeafNode } from "../../../packages/spec/src/spec.ts";
 import type { PlotBackend } from "../backends/contracts.ts";
 import type { DataSource } from "../resources/data/data-source.ts";
 
@@ -15,7 +15,7 @@ export interface DataSchema<TSpec extends DataSpec> {
 }
 
 export interface SettingsSchema<TSettings extends SettingsRecord> {
-  defaults(): TSettings;
+  defaults(node: PlotLeafNode | CompareNode): TSettings;
   project(settings: Readonly<SettingsRecord>): TSettings;
 }
 
@@ -94,7 +94,7 @@ export interface PlotDefinition<
 export interface RegisteredPlotDefinition {
   readonly kind: string;
   validateData(value: DataSpec): DataSpec;
-  defaults(): SettingsRecord;
+  defaults(node: PlotLeafNode | CompareNode): SettingsRecord;
   projectSettings(settings: Readonly<SettingsRecord>): SettingsRecord;
   resolve(node: PlotLeafNode, context: ResolveContext): Promise<unknown>;
   present(content: unknown): unknown;
@@ -115,7 +115,7 @@ export function definePlot<
   return {
     kind: definition.kind,
     validateData: (value) => definition.data.validate(value),
-    defaults: () => definition.settings.defaults(),
+    defaults: (node) => definition.settings.defaults(node),
     projectSettings: (settings) => definition.settings.project(settings),
     resolve: (node, context) => definition.resolve(definition.data.validate(node.data), context),
     present: (content) => definition.present(content as TContent),

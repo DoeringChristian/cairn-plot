@@ -199,10 +199,16 @@ class Shared:
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        settings: dict[str, Any] = {}
         if self.colormap is not None:
-            out["colormap"] = self.colormap
+            settings["image.encoding"] = "turbo" if self.colormap == "viridis" else self.colormap
         if self.colorRange is not None:
-            out["colorRange"] = list(self.colorRange)
+            settings["image.colorRange"] = {
+                "min": float(self.colorRange[0]),
+                "max": float(self.colorRange[1]),
+            }
+        if settings:
+            out["settings"] = settings
         if self.colorbar is not None:
             out["colorbar"] = self.colorbar
         if self.reference is not None:
@@ -238,6 +244,40 @@ def _normalize_shared(shared: Any) -> tuple[dict[str, Any] | None, dict[str, dic
         raw["reference"] = data
         store.update(ref._collect_store())
     return raw, store
+
+
+def _take_image_settings(props: dict[str, Any]) -> dict[str, Any]:
+    """Move authored image interaction state out of presentation props."""
+    settings: dict[str, Any] = {}
+    mapping = {
+        "tonemap": "image.encoding",
+        "gamma": "image.tonemapGamma",
+        "peak": "image.peak",
+        "exposure": "image.exposureEV",
+        "offset": "image.offset",
+        "splitPosition": "compare.split",
+        "diffSubmode": "compare.operation",
+    }
+    for prop, key in mapping.items():
+        if prop in props:
+            settings[key] = props.pop(prop)
+    if "colormap" in props:
+        colormap = props.pop("colormap")
+        settings["image.encoding"] = "turbo" if colormap == "viridis" else colormap
+    if "colorRange" in props:
+        lo, hi = props.pop("colorRange")
+        settings["image.colorRange"] = {"min": lo, "max": hi}
+    zoom = props.pop("zoom", None)
+    pan = props.pop("pan", None)
+    if zoom is not None or pan is not None:
+        settings["image.view"] = {
+            "zoom": 1 if zoom is None else zoom,
+            "pan": {"x": 0, "y": 0} if pan is None else pan,
+        }
+    explicit = props.pop("settings", None)
+    if isinstance(explicit, dict):
+        settings.update(explicit)
+    return settings
 
 
 # ---------------------------------------------------------------------------
@@ -1277,6 +1317,9 @@ class Image(Component):
         # `cp.Compare` reads it off the lowered node for its per-side labels.
         if self._image_label is not None:
             props["label"] = self._image_label
+        settings = _take_image_settings(props)
+        if settings:
+            node["settings"] = settings
         if props:
             node["props"] = props
         return node
@@ -2051,12 +2094,15 @@ class Compare(Component):
         # (split), or folds them into the diff caption. A hand-passed `props`
         # value still wins (`setdefault`).
         props = dict(self._props or {})
+        settings = _take_image_settings(props)
         label_a = _leaf_label_of(self._a)
         label_b = _leaf_label_of(self._b)
         if label_a is not None:
             props.setdefault("labelA", label_a)
         if label_b is not None:
             props.setdefault("labelB", label_b)
+        if settings:
+            node["settings"] = settings
         if props:
             node["props"] = props
         return node

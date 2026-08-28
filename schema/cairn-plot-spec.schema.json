@@ -49,6 +49,9 @@
         "type": {
           "type": "string"
         },
+        "settings": {
+          "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
+        },
         "props": {
           "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
         },
@@ -327,16 +330,8 @@
     "SharedProps": {
       "type": "object",
       "properties": {
-        "colormap": {
-          "type": "string"
-        },
-        "colorRange": {
-          "type": "array",
-          "items": {
-            "type": "number"
-          },
-          "minItems": 2,
-          "maxItems": 2
+        "settings": {
+          "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
         },
         "colorbar": {
           "type": "boolean"
@@ -391,6 +386,9 @@
         },
         "referenceIndex": {
           "type": "number"
+        },
+        "settings": {
+          "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
         },
         "props": {
           "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"

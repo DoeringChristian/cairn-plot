@@ -64,7 +64,8 @@ function diffUrlChild(fg: string, ref: string, label: string): unknown {
     operands: [{ kind: "url", src: imgUrl(ref) }, { kind: "url", src: imgUrl(fg) }],
     strategy: "reference",
     referenceIndex: 0,
-    props: { toolbar: true, label, diffSubmode: "absolute" },
+    settings: { "compare.operation": "absolute" },
+    props: { toolbar: true, label },
   };
 }
 // A stacked grid mixing an image LEAF and a DIFF compare — homogeneous by the

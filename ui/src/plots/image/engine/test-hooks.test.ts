@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   isOrangeSuspect,
   isPipelineMismatch,
-  isEncodingGenerationMismatch,
   recordDeepColorSample,
   setDeepColorDetectorForTest,
   getHueAnomalies,
@@ -61,34 +60,6 @@ const identityWhileCompareIntended: PaneRenderRecord = {
 
 test("pipeline-mismatch oracle: an identity present while a compare is intended IS a mismatch", () => {
   assert.equal(isPipelineMismatch(identityWhileCompareIntended), true);
-});
-
-// The ENCODING-GENERATION lag: an authored-colormap scalar pane painting one frame
-// with NO colormap bound (the reseed landed a commit late).
-const authoredMagmaButRenderedGray: PaneRenderRecord = {
-  mode: "image",
-  sourceKey: "img:a",
-  sourceBKey: undefined,
-  contentOpId: 0,
-  hasSrcB: false,
-  isScalar: true,
-  authoredColormap: true,
-  hasColormap: false,
-};
-
-test("encoding-generation oracle: an authored-colormap pane rendered with no colormap IS a mismatch", () => {
-  assert.equal(isEncodingGenerationMismatch(authoredMagmaButRenderedGray), true);
-});
-
-test("encoding-generation oracle exempts the settled colormap present + non-authored panes", () => {
-  // The authored colormap actually bound (the correct/settled frame).
-  assert.equal(isEncodingGenerationMismatch({ ...authoredMagmaButRenderedGray, hasColormap: true }), false);
-  // A pane the descriptor did NOT author a colormap for (a plain light image).
-  assert.equal(isEncodingGenerationMismatch({ ...authoredMagmaButRenderedGray, authoredColormap: false }), false);
-  assert.equal(isEncodingGenerationMismatch({ ...authoredMagmaButRenderedGray, authoredColormap: undefined }), false);
-  // A cached-diff / direct-op present is never this class.
-  assert.equal(isEncodingGenerationMismatch({ ...authoredMagmaButRenderedGray, mode: "cached-diff" }), false);
-  assert.equal(isEncodingGenerationMismatch({ ...authoredMagmaButRenderedGray, contentOpId: 3, hasSrcB: true }), false);
 });
 
 test("pipeline-mismatch oracle exempts legit compare presents + plain images", () => {

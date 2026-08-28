@@ -739,7 +739,6 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
         hasSrcB: entry.srcTextureB != null,
         isScalar: params.isScalar,
         compareIntended: params.compareIntended,
-        authoredColormap: params.authoredColormap,
         ...displayFingerprint(params),
       };
       recordPaneRender(record);

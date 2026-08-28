@@ -93,11 +93,6 @@ export interface PaneRenderRecord {
    *  presenting while the pane is semantically in compare mode. See
    *  {@link isPipelineMismatch}. */
   compareIntended?: boolean;
-  /** `params.authoredColormap` — the pane set this true iff the DESCRIPTOR authored
-   *  a colormap LUT for this single-image pane. With `mode:"image"` + no bound
-   *  colormap (`hasColormap` false) it is the ENCODING-GENERATION-lag signal. See
-   *  {@link isEncodingGenerationMismatch}. */
-  authoredColormap?: boolean;
 }
 
 /**
@@ -115,30 +110,6 @@ export interface PaneRenderRecord {
  */
 export function isPipelineMismatch(r: PaneRenderRecord): boolean {
   return r.mode === "image" && !r.contentOpId && !r.hasSrcB && r.compareIntended === true;
-}
-
-/**
- * ENCODING-GENERATION-MISMATCH oracle (the authored-colormap flash, one layer up
- * from the pipeline mismatch). A present is a mismatch iff the pane's DESCRIPTOR
- * authored a colormap LUT (`authoredColormap`) yet the frame was drawn with NO
- * colormap bound (`hasColormap` false) on the plain identity/image pipeline
- * (`mode:"image"`, no `contentOpId`) — i.e. an authored-`magma` scalar painted
- * raw gray-none/srgb for one frame because the encoding state reseeded a commit
- * LATE. Like the pipeline mismatch, this present is param-coherent (the encoding
- * IS internally consistent — it is simply the WRONG GENERATION, the previous
- * slot's), which is why the source⊗encode oracles were silent. Post-fix (the
- * encoding derivation is commit-synchronous) this is 0. NOTE: a deliberate
- * user/sync override to a curve on a colormap-authored pane is a benign case of
- * this shape; it is not exercised by the flip harnesses, which drive descriptor
- * flips only — so as a harness tripwire the predicate stays precise. */
-export function isEncodingGenerationMismatch(r: PaneRenderRecord): boolean {
-  return (
-    r.mode === "image" &&
-    !r.contentOpId &&
-    !r.hasSrcB &&
-    r.authoredColormap === true &&
-    r.hasColormap !== true
-  );
 }
 
 /**
