@@ -33,7 +33,7 @@ import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index"
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../settings/colormaps/lut";
-import { DEFAULT_DIFF_ENCODING } from "../kernels/index";
+import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../../model/encodings/index.ts";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
@@ -581,7 +581,7 @@ const DIRECT_DIFF_OPS = ["absolute", "signed", "squared", "relative_absolute", "
 /** Operation and display encoding are independent axes. Exercise every operation
  * with the shared default, plus the analytic encoding supported by signed data. */
 const DIRECT_DIFF_CASES = [
-  ...DIRECT_DIFF_OPS.map((opId) => ({ opId, encodingId: DEFAULT_DIFF_ENCODING })),
+  ...DIRECT_DIFF_OPS.map((opId) => ({ opId, encodingId: DEFAULT_COMPARISON_DISPLAY_OPERATION_ID })),
   { opId: "signed", encodingId: "red-green" },
   { opId: "relative_signed", encodingId: "red-green" },
 ];

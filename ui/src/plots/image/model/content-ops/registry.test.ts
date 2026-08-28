@@ -46,7 +46,6 @@ test("identity declares the expected shape (arity-1 direct passthrough)", () => 
   assert.equal(id!.implementation.kind, "inline");
   assert.equal(id!.outputArity, "source"); // passthrough marker
   assert.equal(id!.outputRange, "light");
-  assert.equal(id!.defaultEncoding, "srgb");
   assert.deepEqual(id!.params ?? [], []);
   assert.equal(id!.implementation.kind === "inline" && id!.implementation.wgsl.trim(), "a");
 });
@@ -64,7 +63,7 @@ test("pointwise diffs are arity-2 direct ops with range metadata", () => {
   }
 });
 
-test("cached metrics are arity-2 cached ops delegating to a kernel", () => {
+test("cached metrics are arity-2 multipass image operations", () => {
   for (const opId of CACHED) {
     const op = getImageOperation(opId);
     assert.ok(op, `${opId} registered`);
@@ -74,7 +73,7 @@ test("cached metrics are arity-2 cached ops delegating to a kernel", () => {
     assert.equal(op!.outputArity, 1, `${opId} scalar-metric DISPLAY gating`);
     assert.equal(op!.outputRange, "R+", `${opId} range`);
     // The shared display default is asserted separately from kernel metadata.
-    assert.equal(op!.implementation.kind === "multipass" && op!.implementation.kernelId, opId, `${opId} delegates to its kernel id`);
+    assert.equal(typeof (op!.implementation.kind === "multipass" && op!.implementation.buildPasses), "function");
   }
 });
 
@@ -86,7 +85,6 @@ test("compositor ops are arity-2 direct LIGHT ops (k=3, srgb default) with a spl
     assert.equal(op!.implementation.kind, "inline", `${opId} implementation`);
     assert.equal(op!.outputArity, 3, `${opId} light RGB → k=3 DISPLAY gating (luts off, curves offered)`);
     assert.equal(op!.outputRange, "light", `${opId} range`);
-    assert.equal(op!.defaultEncoding, "srgb", `${opId} default encoding`);
     assert.deepEqual(op!.params ?? [], [opId], `${opId} declares its own param name`);
   }
 });

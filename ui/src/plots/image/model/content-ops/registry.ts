@@ -131,10 +131,6 @@ export interface ImageOperation {
   outputArity: OutputArity;
   /** The op output's value range (gates the DISPLAY stage). */
   outputRange: OutputRange;
-  /** The DISPLAY encoding applied by default (a display-encoding registry id):
-   *  identity/compositors use their image encoding; scalar diff ops use the
-   *  shared diff colormap default. */
-  defaultEncoding: string;
   /** Param MANIFEST — which named params this op reads (toolbar-row gating). */
   params?: ContentParamName[];
   /** React contributions the pane shell renders (Phase 3+). */
@@ -147,16 +143,22 @@ export interface ImageOperation {
       }
     | {
         kind: "multipass";
-        kernelId: string;
-      };
+      } & import("../../engine/operation-pass.ts").MultipassImageOperationProgram;
 }
 
 export type InlineImageOperation = ImageOperation & {
   implementation: Extract<ImageOperation["implementation"], { kind: "inline" }>;
 };
+export type MultipassImageOperation = ImageOperation & {
+  implementation: Extract<ImageOperation["implementation"], { kind: "multipass" }>;
+};
 
 export function isInlineImageOperation(op: ImageOperation): op is InlineImageOperation {
   return op.implementation.kind === "inline";
+}
+
+export function isMultipassImageOperation(op: ImageOperation): op is MultipassImageOperation {
+  return op.implementation.kind === "multipass";
 }
 
 /**
@@ -192,4 +194,20 @@ export function listImageOperations(): ImageOperation[] {
  *  shader assembles into `cairnContent`'s opId dispatch (`./wgsl.ts`). */
 export function listInlineImageOperations(): InlineImageOperation[] {
   return listImageOperations().filter(isInlineImageOperation);
+}
+
+export function listMultipassImageOperations(): MultipassImageOperation[] {
+  return listImageOperations().filter(isMultipassImageOperation);
+}
+
+export function getMultipassImageOperation(id: string): MultipassImageOperation | undefined {
+  const operation = getImageOperation(id);
+  return operation && isMultipassImageOperation(operation) ? operation : undefined;
+}
+
+export function resolveImageOperationParams(
+  operation: MultipassImageOperation,
+  params?: Record<string, number>,
+): Record<string, number> {
+  return { ...(operation.implementation.params ?? {}), ...(params ?? {}) };
 }

@@ -10,18 +10,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { listDiffKernels, getDiffKernel } from "./index.ts";
-import { getImageOperation, listImageOperations } from "../../model/content-ops/index.ts";
+import { getImageOperation, listImageOperations, listMultipassImageOperations } from "../../model/content-ops/index.ts";
 
-test("every registered kernel declares a valid output arity", () => {
-  const kernels = listDiffKernels();
-  assert.ok(kernels.length >= 4, "expected the multipass FLIP/SSIM implementations");
-  for (const k of kernels) {
-    assert.ok(
-      k.output === "scalar" || k.output === "per-channel",
-      `kernel "${k.id}" has invalid output arity ${JSON.stringify(k.output)}`,
-    );
-  }
+test("every multipass operation declares scalar display output", () => {
+  const operations = listMultipassImageOperations();
+  assert.ok(operations.length >= 4, "expected the multipass FLIP/SSIM implementations");
+  for (const operation of operations) assert.equal(operation.outputArity, 1, `${operation.id} must be scalar`);
 });
 
 test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
@@ -35,7 +29,7 @@ test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
     "relative_squared",
   ];
   for (const id of scalar) {
-    assert.equal(getDiffKernel(id)?.output, "scalar", `${id} must be scalar`);
+    assert.equal(getImageOperation(id)?.outputArity, 1, `${id} must be scalar`);
   }
   for (const id of perChannel) {
     const operation = getImageOperation(id);
@@ -44,10 +38,10 @@ test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
   }
 });
 
-test("pointwise differences exist only in the image-operation registry", () => {
+test("pointwise differences and multipass metrics share the image-operation registry", () => {
   const pointwise = listImageOperations().filter(
     (operation) => operation.implementation.kind === "inline" && operation.inputCount === 2 && operation.outputArity === 1,
   );
   assert.equal(pointwise.length, 6);
-  for (const operation of pointwise) assert.equal(getDiffKernel(operation.id), undefined);
+  for (const operation of pointwise) assert.equal(operation.implementation.kind, "inline");
 });

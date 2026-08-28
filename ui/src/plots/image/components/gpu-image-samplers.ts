@@ -23,8 +23,7 @@
  */
 import { useCallback } from "react";
 import { floatPixelReader } from "../model/pixel-buffer.ts";
-import { getImageOperation, isInlineImageOperation } from "../model/content-ops/index";
-import { getDiffKernel } from "../engine/kernels/index";
+import { getImageOperation, getMultipassImageOperation, isInlineImageOperation } from "../model/content-ops/index";
 import {
   buildChannelSample,
   type PixelSample,
@@ -115,15 +114,15 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
 
   const sampleDiffPixel = useCallback(
     (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
-      const kernel = getDiffKernel(resolvedKernelId);
+      const operation = getMultipassImageOperation(resolvedKernelId);
       // CACHED metric — the result readback (min-cropped resolution).
-      if (kernel?.kind === "multipass") {
+      if (operation) {
         const arr = diffSamplesRef.current;
         const rdims = diffResultDimsRef.current;
         if (!arr || !rdims || px < 0 || py < 0 || px >= rdims.w || py >= rdims.h) return null;
         const base = (py * rdims.w + px) * 4;
         const values =
-          kernel.output === "scalar"
+          operation.outputArity === 1
             ? [arr[base] ?? 0]
             : [arr[base] ?? 0, arr[base + 1] ?? 0, arr[base + 2] ?? 0];
         return buildChannelSample(values, "unit", notation);

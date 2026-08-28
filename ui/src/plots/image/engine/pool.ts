@@ -57,8 +57,8 @@ import {
   type DiffCacheEntry,
 } from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
-import { getDiffKernel, type KernelComputeCtx } from "./kernels/kernel-registry";
-import { contentOpId } from "../model/content-ops/index";
+import { contentOpId, getMultipassImageOperation } from "../model/content-ops/index";
+import type { ImageOperationComputeContext } from "./operation-pass.ts";
 import type {
   Device,
   Surface,
@@ -315,7 +315,7 @@ export interface PaneHandle {
   renderDiff(
     kernelId: string,
     contentKeys: { a: string; b: string },
-    ctx: KernelComputeCtx,
+    ctx: ImageOperationComputeContext,
     display: ImageParams,
     mapping?: CompareMapping,
   ): { entry: DiffCacheEntry | null } | "hold" | "failed";
@@ -330,7 +330,7 @@ export interface PaneHandle {
   isDiffContentResident(
     kernelId: string,
     contentKeys: { a: string; b: string },
-    ctx: KernelComputeCtx,
+    ctx: ImageOperationComputeContext,
     mapping?: CompareMapping,
   ): boolean;
   /**
@@ -1089,19 +1089,19 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     renderDiff(
       kernelId: string,
       contentKeys: { a: string; b: string },
-      ctx: KernelComputeCtx,
+      ctx: ImageOperationComputeContext,
       display: ImageParams,
       mapping?: CompareMapping,
     ): { entry: DiffCacheEntry | null } | "hold" | "failed" {
-      const kernel = getDiffKernel(kernelId);
-      if (kernel?.kind === "multipass") {
+      const operation = getMultipassImageOperation(kernelId);
+      if (operation) {
         // CACHED metric: computed once, content-keyed; the RESULT (a scalar
         // error) is displayed via IDENTITY content + the isScalar colormap.
         const cached = attemptRenderDiffCached(
           entry,
           kernelId,
           contentKeys,
-          kernel.computeParams?.(ctx),
+          operation.implementation.computeParams?.(ctx),
           { ...display, channelCount: 1, isScalar: true, norm: "linear" },
           mapping,
         );
@@ -1117,18 +1117,18 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     isDiffContentResident(
       kernelId: string,
       contentKeys: { a: string; b: string },
-      ctx: KernelComputeCtx,
+      ctx: ImageOperationComputeContext,
       mapping?: CompareMapping,
     ): boolean {
-      const kernel = getDiffKernel(kernelId);
-      if (kernel?.kind !== "multipass") return contentOpId(kernelId) !== 0;
+      const operation = getMultipassImageOperation(kernelId);
+      if (!operation) return contentOpId(kernelId) !== 0;
       if (entry.disposed || !entry.source || !entry.sourceB) return false;
       return hasDiff(
         entry.device,
         { w: entry.source.width, h: entry.source.height },
         { w: entry.sourceB.width, h: entry.sourceB.height },
         kernelId,
-        kernel.computeParams?.(ctx),
+        operation.implementation.computeParams?.(ctx),
         contentKeys.a,
         contentKeys.b,
         mapping,

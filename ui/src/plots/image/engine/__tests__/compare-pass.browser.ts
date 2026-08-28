@@ -22,8 +22,8 @@
  */
 import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
-import { computeDiff, renderDiffDisplay } from "../diff-engine";
-import { getDiffKernel } from "../kernels/index";
+import { computeDiff, displayRangeForOperation, renderDiffDisplay } from "../diff-engine";
+import { getImageOperation } from "../../model/content-ops/index.ts";
 import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/encodings/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/index";
@@ -133,7 +133,7 @@ async function runSwapGuardCase(device: Device, label: string, params: ComparePa
 /** RAW diff (matches the pointwise kernels), then displayRange map (no
  *  colormap). `a` = reference/baseline. */
 function expectedDiffPixel(pxRef: number[], pxFg: number[], kernelId: string): RgbTriple {
-  const range = getDiffKernel(kernelId)!.displayRange;
+  const range = displayRangeForOperation(getImageOperation(kernelId)!.outputRange);
   const out: number[] = [];
   for (let c = 0; c < 3; c++) {
     const a = pxRef[c]!;
@@ -160,7 +160,7 @@ async function runDiffCase(device: Device, kernelId: string): Promise<boolean> {
   const texFg = buildRowTexture(device, PIXELS_FG);
   const result = computeDiff(device, texRef, texFg, kernelId);
   const target = device.createTexture(WIDTH, 1, "rgba8unorm");
-  const range = getDiffKernel(kernelId)!.displayRange;
+  const range = displayRangeForOperation(getImageOperation(kernelId)!.outputRange);
   renderDiffDisplay(device, target, result, range, { uv: uvFull });
   const out = await device.readback(target);
   texRef.destroy();

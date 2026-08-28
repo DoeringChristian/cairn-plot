@@ -13,14 +13,14 @@ import type { Device, Texture } from "./webgpu/device-contract";
 // Type-only imports — fully erased by the type stripper, so they do NOT pull the
 // `./kernels` value barrel (which is a directory import Node's strip-only mode
 // rejects) into this module's runtime graph.
-import type { DisplayRange } from "./kernels/index";
+import type { ImageOperationDisplayRange } from "./operation-pass.ts";
 import type { DiffMetrics } from "./image-engine";
 
 export interface DiffCacheEntry {
   texture: Texture;
   width: number;
   height: number;
-  displayRange: DisplayRange;
+  displayRange: ImageOperationDisplayRange;
   bytes: number;
   /** Lazily-computed + cached MSE/PSNR/MAE over the SOURCES (kernel-independent). */
   scalars?: DiffMetrics;

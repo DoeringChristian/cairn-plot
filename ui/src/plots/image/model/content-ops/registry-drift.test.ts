@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { buildContentOpWGSL, getImageOperation, listInlineImageOperations, CONTENT_OP_ID } from "./index.ts";
 import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
 import { IMAGE_OPERATIONS } from "./ops.ts";
-import { DEFAULT_DIFF_ENCODING, getDiffKernel } from "../../engine/kernels/index.ts";
+import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../encodings/index.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
   const assembled = buildContentOpWGSL();
@@ -64,26 +64,19 @@ test("the assembled dispatch has identity as the fallthrough + a branch per non-
   }
 });
 
-test("D2 drift: every diff op uses the single shared diff default", () => {
+test("comparison display policy is independent from image operations", () => {
   const diffOps = IMAGE_OPERATIONS.filter((op) => op.inputCount === 2 && op.outputArity === 1);
   assert.ok(diffOps.length >= 10, `expected the 6 pointwise + 4 multipass diff ops, got ${diffOps.length}`);
   for (const op of diffOps) {
-    // pointwise: op.id IS the kernel id; cached: op.kernelId.
-    if (op.implementation.kind === "multipass") {
-      const kernel = getDiffKernel(op.implementation.kernelId);
-      assert.ok(kernel, `multipass operation "${op.id}" must resolve its backend implementation`);
-    }
-    assert.equal(op.defaultEncoding, DEFAULT_DIFF_ENCODING);
+    assert.ok(op.implementation.kind === "inline" || op.implementation.kind === "multipass");
   }
+  assert.equal(DEFAULT_COMPARISON_DISPLAY_OPERATION_ID, "linear");
 });
 
-test("D2: compositor/identity ops keep a NON-kernel literal encoding (no kernel default to derive)", () => {
-  // identity + split have no kernel — their `defaultEncoding` is a legitimate
-  // standalone literal (srgb), NOT part of the derived diff subset.
+test("identity and split remain ordinary image operations", () => {
   for (const id of ["identity", "split"]) {
     const op = getImageOperation(id)!;
-    assert.equal(op.defaultEncoding, "srgb", `${id} should keep its literal srgb encoding`);
-    assert.equal(getDiffKernel(id), undefined, `${id} must not be a diff kernel`);
+    assert.ok(op);
   }
 });
 

@@ -39,7 +39,11 @@
  */
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
 import { SSIM_K1, SSIM_K2, SSIM_L, SSIM_SIGMA, SSIM_RADIUS } from "./ssim-reference.ts";
-import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
+import type {
+  MultipassImageOperationProgram as MultipassKernel,
+  ImageOperationPass as KernelPass,
+  ImageOperationBuildContext as KernelBuildCtx,
+} from "../operation-pass.ts";
 import type { BindGroupEntry } from "../webgpu/device-contract";
 
 // Shared luminance front-end (matches ssim-reference.ts's ssimLuminance).
@@ -191,15 +195,7 @@ function blurPasses(input: string, prefix: string): { passes: KernelPass[]; out:
   return { passes, out: v };
 }
 
-export const ssimKernel: MultipassKernel = {
-  kind: "multipass",
-  id: "ssim",
-  label: "SSIM (1−SSIM)",
-  publicName: "ssim",
-  displayRange: "unit",
-  // SSIM is a single structural-error value per pixel (1-SSIM, replicated across
-  // R/G/B); the overlay prints ONE untinted number, never three channels.
-  output: "scalar",
+export const ssimProgram: MultipassKernel = {
   buildPasses(_ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
     const c1 = (SSIM_K1 * SSIM_L) ** 2;
     const c2 = (SSIM_K2 * SSIM_L) ** 2;

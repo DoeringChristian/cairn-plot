@@ -25,7 +25,7 @@
  * unit-tests without any GPU/engine imports.
  */
 import { DIVERGING_COLORMAPS } from "../../../settings/colormaps/lut.ts";
-import type { DisplayRange } from "./kernels/kernel-registry.ts";
+import type { ImageOperationDisplayRange } from "./operation-pass.ts";
 
 /** Colormap index mode the diff display shader applies (see module doc). */
 export type DiffCmapMode = "linear" | "signed" | "positive";
@@ -36,7 +36,7 @@ export type DiffCmapMode = "linear" | "signed" | "positive";
  * LUT-backed; the returned mode is then moot but remains well-defined.
  */
 export function resolveDiffCmapMode(
-  displayRange: DisplayRange,
+  displayRange: ImageOperationDisplayRange,
   colormapName: string | null | undefined,
 ): DiffCmapMode {
   // Signed/relative ranges are centered on zero: the blit remaps them to

@@ -22,7 +22,10 @@
  *    multi-pass kernel; all diff ops use the same display default.
  */
 import { registerImageOperation, type ImageOperation, type InlineImageOperation } from "./registry.ts";
-import { DEFAULT_DIFF_ENCODING } from "../../engine/kernels/index.ts";
+import { flipProgram, flipLdrForcedProgram } from "../../engine/kernels/flip.wgsl.ts";
+import { hdrFlipProgram } from "../../engine/kernels/hdr-flip.ts";
+import { ssimProgram } from "../../engine/kernels/ssim.wgsl.ts";
+import type { MultipassImageOperationProgram } from "../../engine/operation-pass.ts";
 
 /**
  * IDENTITY — the single-source passthrough. This is "where the source sample
@@ -38,7 +41,6 @@ const identity: InlineImageOperation = {
   cachePolicy: "never",
   outputArity: "source",
   outputRange: "light",
-  defaultEncoding: "srgb",
   params: [],
   // The sampled source enters the display pipeline HERE — passthrough.
   implementation: {
@@ -79,7 +81,6 @@ function pointwise(
     // applied (the per-channel error vec4 is REDUCED to the scalar the LUT indexes).
     outputArity: 1,
     outputRange: range,
-    defaultEncoding: DEFAULT_DIFF_ENCODING,
     params: [],
     implementation: {
       kind: "inline",
@@ -185,7 +186,6 @@ function compositor(
     // a plain image via defaultEncoding srgb.
     outputArity: 3,
     outputRange: "light",
-    defaultEncoding: "srgb",
     params: [id],
     implementation: {
       kind: "inline",
@@ -215,24 +215,24 @@ const split = compositor(
 );
 
 /** Build a `cached` metric op delegating to a multi-pass `engine/kernels` kernel. */
-function cached(id: string, label: string, kernelId: string): ImageOperation {
+function cached(id: string, label: string, program: MultipassImageOperationProgram, publicName?: string): ImageOperation {
   return {
     id,
     label,
+    publicName,
     inputCount: 2,
     cachePolicy: "global-lru",
     outputArity: 1, // scalar perceptual error → colormaps offered
     outputRange: "R+",
-    defaultEncoding: DEFAULT_DIFF_ENCODING,
     params: [],
-    implementation: { kind: "multipass", kernelId },
+    implementation: { kind: "multipass", ...program },
   };
 }
 
-const flip = cached("flip", "FLIP (perceptual)", "flip");
-const hdrFlip = cached("hdr-flip", "HDR-FLIP", "hdr-flip");
-const flipLdrForced = cached("flip-ldr-forced", "FLIP (LDR forced)", "flip-ldr-forced");
-const ssim = cached("ssim", "SSIM", "ssim");
+const flip = cached("flip", "FLIP (perceptual)", flipProgram, "flip");
+const hdrFlip = cached("hdr-flip", "HDR-FLIP", hdrFlipProgram);
+const flipLdrForced = cached("flip-ldr-forced", "FLIP (LDR forced)", flipLdrForcedProgram, "flip_ldr");
+const ssim = cached("ssim", "SSIM", ssimProgram, "ssim");
 
 /** Registration order == menu order: identity, the six pointwise diffs, the
  *  compositor op (split), then the three cached metrics (mirrors

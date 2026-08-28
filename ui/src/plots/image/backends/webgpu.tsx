@@ -62,13 +62,12 @@ import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
 // imports are safe here: this file only ships in the gpu-image addon bundle,
 // never `core.iife.js`.
-import { contentOpId, getImageOperation } from "../model/content-ops/index";
+import { contentOpId, getImageOperation, getMultipassImageOperation } from "../model/content-ops/index";
 import {
-  getDiffKernel,
   resolveDiffKernelId,
-  DEFAULT_DIFF_ENCODING,
   listDiffMenuModes,
 } from "../engine/kernels/index";
+import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../model/encodings/index.ts";
 import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { formatSsim } from "../engine/ssim-metric";
@@ -612,7 +611,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const sourcesAreFloat =
     backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
   const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
-  const diffDefaultEncoding = diffSeedColormap ?? DEFAULT_DIFF_ENCODING;
+  const diffDefaultEncoding = diffSeedColormap ?? DEFAULT_COMPARISON_DISPLAY_OPERATION_ID;
   // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
   // the INITIALLY-VISIBLE face's defaults — diff → authored/shared default colormap,
   // image → authored props — and then PERSISTS. Flips and kernel switches never
@@ -1889,8 +1888,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       diffResultDimsRef.current = null;
       return;
     }
-    const kernel = getDiffKernel(resolvedKernelId);
-    if (kernel?.kind !== "multipass") {
+    const operation = getMultipassImageOperation(resolvedKernelId);
+    if (!operation) {
       // Direct op: no result readback — the cpu twin drives the readout.
       diffSamplesRef.current = null;
       diffResultDimsRef.current = null;

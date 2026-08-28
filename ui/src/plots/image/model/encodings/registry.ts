@@ -266,6 +266,10 @@ export interface DisplayOperation {
   cpu(v: readonly number[], k: number, p: EncodeParams): [number, number, number];
 }
 
+/** Runtime default for displaying comparison fields. It belongs to display
+ * policy, never to an image operation. */
+export const DEFAULT_COMPARISON_DISPLAY_OPERATION_ID = "linear" as const;
+
 /** Default params for a curve when a caller only cares about the operator (e.g.
  *  the non-peak `TONEMAP_OPERATORS` delegates) — peak defaults are guarded by the
  *  peak curves anyway. Callers that read `peak` always pass a real value. `norm`

@@ -28,7 +28,7 @@
  */
 import { VERTEX_WGSL, FLIP_COLOR_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
 import { FLIP_CMAX } from "./flip-reference.ts";
-import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
+import type { MultipassImageOperationProgram, ImageOperationPass, ImageOperationBuildContext } from "../operation-pass.ts";
 import type { BindGroupEntry } from "../webgpu/device-contract";
 
 const GW = 0.082;
@@ -234,7 +234,7 @@ export function u(binding: number, arr: number[]): BindGroupEntry {
  * that source's alignment offset (crop) or the fill flag + RESULT dims — mirrors
  * `SOURCE_MAP_WGSL`. Absent `ctx.sourceMap` ⇒ zero offsets / crop (identity, the
  * legacy top-left mapping). */
-export function sourceMapUniforms(logicalStart: number, which: "a" | "b", ctx: KernelBuildCtx): BindGroupEntry[] {
+export function sourceMapUniforms(logicalStart: number, which: "a" | "b", ctx: ImageOperationBuildContext): BindGroupEntry[] {
   const sm = ctx.sourceMap;
   const off = sm ? (which === "a" ? sm.offsetA : sm.offsetB) : { x: 0, y: 0 };
   const fill = sm?.fill ? 1 : 0;
@@ -261,9 +261,9 @@ export function buildLdrFlipPasses(
   ycxczShader: string,
   srcA: string,
   srcB: string,
-  ctx: KernelBuildCtx,
+  ctx: ImageOperationBuildContext,
   suffix = "",
-): { passes: KernelPass[]; flipRef: string } {
+): { passes: ImageOperationPass[]; flipRef: string } {
   const csf = csfConstants(ppd);
   const feat = featureConstants(ppd);
   const yA = `ycxczA${suffix}`;
@@ -274,7 +274,7 @@ export function buildLdrFlipPasses(
   // The front-end YCxCz passes read the SOURCES, so they carry the align/fit
   // source-map uniforms (offsetA for srcA, offsetB for srcB). All later passes
   // work over RESULT-resolution intermediates and are unaffected.
-  const passes: KernelPass[] = [
+  const passes: ImageOperationPass[] = [
     { name: yA, shader: ycxczShader, inputs: [srcA], output: yA, uniforms: () => sourceMapUniforms(1, "a", ctx) },
     { name: yB, shader: ycxczShader, inputs: [srcB], output: yB, uniforms: () => sourceMapUniforms(1, "b", ctx) },
     { name: lA, shader: LAB_SHADER, inputs: [yA], output: lA, uniforms: () => labUniforms(csf) },
@@ -290,17 +290,9 @@ export function buildLdrFlipPasses(
   return { passes, flipRef: flip };
 }
 
-export const flipKernel: MultipassKernel = {
-  kind: "multipass",
-  id: "flip",
-  label: "FLIP (perceptual)",
-  publicName: "flip",
-  displayRange: "unit",
-  // FLIP is a single perceptual error per pixel (replicated across R/G/B in the
-  // result); the overlay prints ONE untinted number, never three channels.
-  output: "scalar",
+export const flipProgram: MultipassImageOperationProgram = {
   params: { ppd: 67 },
-  buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
+  buildPasses(ctx: ImageOperationBuildContext): { passes: ImageOperationPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;
     const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_SHADER, "srcA", "srcB", ctx);
     return { passes, final: flipRef };
@@ -315,15 +307,9 @@ export const flipKernel: MultipassKernel = {
  * the plain `flip` kernel instead (auto-dispatch, `kernels/index.ts`), so this
  * kernel only ever runs on float sources.
  */
-export const flipLdrForcedKernel: MultipassKernel = {
-  kind: "multipass",
-  id: "flip-ldr-forced",
-  label: "FLIP (LDR forced)",
-  publicName: "flip_ldr",
-  displayRange: "unit",
-  output: "scalar",
+export const flipLdrForcedProgram: MultipassImageOperationProgram = {
   params: { ppd: 67 },
-  buildPasses(ctx: KernelBuildCtx): { passes: KernelPass[]; final: string } {
+  buildPasses(ctx: ImageOperationBuildContext): { passes: ImageOperationPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;
     const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_LINEAR_CLAMP_SHADER, "srcA", "srcB", ctx);
     return { passes, final: flipRef };

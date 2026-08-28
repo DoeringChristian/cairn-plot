@@ -7,28 +7,7 @@
  *
  * Registration order == menu order (`listDiffKernels()`).
  */
-import { registerDiffKernel, listDiffKernels, getDiffKernel } from "./kernel-registry.ts";
-import { listImageOperations } from "../../model/content-ops/index.ts";
-import { flipKernel, flipLdrForcedKernel } from "./flip.wgsl.ts";
-import { hdrFlipKernel } from "./hdr-flip.ts";
-import { ssimKernel } from "./ssim.wgsl.ts";
-
-let registered = false;
-function registerBuiltins(): void {
-  if (registered) return;
-  registered = true;
-  // Pointwise diffs (menu order), then the multi-pass FLIP family (LDR, HDR,
-  // forced-LDR). HDR-FLIP + forced-LDR are reached via auto-dispatch under the
-  // single public `flip` menu entry (+ `flip_ldr`), never listed on their own —
-  // see `listDiffMenuModes` / `resolveDiffKernelId`.
-  registerDiffKernel(flipKernel);
-  registerDiffKernel(hdrFlipKernel);
-  registerDiffKernel(flipLdrForcedKernel);
-  // SSIM (Wang et al.) — a self-contained multi-pass kernel with its own public
-  // menu entry (unlike the auto-dispatched FLIP family, it maps 1:1 to a mode).
-  registerDiffKernel(ssimKernel);
-}
-registerBuiltins();
+import { getImageOperation, listImageOperations, listMultipassImageOperations } from "../../model/content-ops/index.ts";
 
 /**
  * A selectable diff MODE for the compare toolbar menu. Unlike raw
@@ -52,7 +31,7 @@ export function listDiffMenuModes(): DiffMenuMode[] {
   out.push({ id: "flip", label: "FLIP (perceptual)" });
   out.push({ id: "flip_ldr", label: "FLIP (LDR forced)" });
   // SSIM is a plain 1:1 mode (no LDR/HDR collapse), so surface it directly.
-  const ssim = getDiffKernel("ssim");
+  const ssim = getImageOperation("ssim");
   if (ssim) out.push({ id: ssim.id, label: ssim.label });
   return out;
 }
@@ -79,7 +58,7 @@ export function kernelIdForPublicName(publicName: string): string | undefined {
     (operation) => operation.implementation.kind === "inline" && operation.publicName === publicName,
   );
   if (pointwise) return pointwise.id;
-  for (const k of listDiffKernels()) if (k.publicName === publicName) return k.id;
+  for (const operation of listMultipassImageOperations()) if (operation.publicName === publicName) return operation.id;
   return undefined;
 }
 
@@ -111,10 +90,7 @@ export function listDiffKernelPublicNames(): string[] {
   const pointwise = listImageOperations()
     .filter((operation) => operation.implementation.kind === "inline" && operation.inputCount === 2 && operation.outputArity === 1)
     .flatMap((operation) => operation.publicName ? [operation.publicName] : []);
-  return [...pointwise, ...listDiffKernels()
-    .map((k) => k.publicName)
+  return [...pointwise, ...listMultipassImageOperations()
+    .flatMap((operation) => operation.publicName ? [operation.publicName] : [])
     .filter((name) => !AUTO_DISPATCH_ONLY_PUBLIC_NAMES.has(name))];
 }
-
-export * from "./kernel-registry.ts";
-export { getDiffKernel };

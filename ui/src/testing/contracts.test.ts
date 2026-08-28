@@ -37,7 +37,6 @@ import {
 import {
   listDiffKernelPublicNames,
   resolveDiffKernelId,
-  getDiffKernel,
 } from "../plots/image/engine/kernels/index.ts";
 import { getImageOperation } from "../plots/image/model/content-ops/index.ts";
 import {
@@ -125,7 +124,7 @@ test("compareKernelModes: every emitted diffSubmode resolves to a registered ker
     for (const sourcesAreFloat of [false, true]) {
       const kernelId = resolveDiffKernelId(submode, sourcesAreFloat);
       assert.ok(
-        getImageOperation(kernelId) ?? getDiffKernel(kernelId),
+        getImageOperation(kernelId),
         `diffSubmode ${JSON.stringify(submode)} (mode ${publicName}, float=${sourcesAreFloat}) → operation id ${JSON.stringify(kernelId)} is not registered`,
       );
     }

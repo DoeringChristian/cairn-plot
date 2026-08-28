@@ -37,7 +37,11 @@ import {
   sourceMapUniforms,
   u,
 } from "./flip.wgsl.ts";
-import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
+import type {
+  MultipassImageOperationProgram as MultipassKernel,
+  ImageOperationPass as KernelPass,
+  ImageOperationBuildContext as KernelBuildCtx,
+} from "../operation-pass.ts";
 
 // ACES filmic tone mapper (pre-exposure cancellation folded in), matching
 // hdr-flip-reference.ts's `acesToneMapChannel`.
@@ -154,15 +158,7 @@ fn hyab(l1: vec3<f32>, l2: vec3<f32>) -> f32 {
 }
 `;
 
-export const hdrFlipKernel: MultipassKernel = {
-  kind: "multipass",
-  id: "hdr-flip",
-  label: "FLIP (perceptual)", // shown once in the menu (via `flip`) — never listed directly
-  // No `publicName`: HDR-FLIP is reached only by auto-dispatch under the public
-  // `flip` mode when sources are float (see `kernels/index.ts`).
-  publicName: "flip_hdr",
-  displayRange: "unit",
-  output: "scalar",
+export const hdrFlipProgram: MultipassKernel = {
   // Exposure params default to placeholders; the pane / harness computes the real
   // range from the reference luminance (`computeHdrFlipExposures`) and passes them,
   // so they enter the cache key. A direct `computeDiff` with only `ppd` falls back

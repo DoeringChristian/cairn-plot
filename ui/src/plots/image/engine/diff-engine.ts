@@ -26,13 +26,14 @@ import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat
 // Import from the registry INDEX (not the bare registry) so the built-in
 // kernels are registered as a side effect before any lookup.
 import {
-  getDiffKernel,
-  resolveKernelParams,
-  type DiffKernel,
-  type DisplayRange,
-  type KernelBuildCtx,
-} from "./kernels/index";
-import { getImageOperation, isInlineImageOperation } from "../model/content-ops/index.ts";
+  getImageOperation,
+  getMultipassImageOperation,
+  isInlineImageOperation,
+  isMultipassImageOperation,
+  resolveImageOperationParams,
+  type MultipassImageOperation,
+} from "../model/content-ops/index.ts";
+import type { ImageOperationBuildContext, ImageOperationDisplayRange } from "./operation-pass.ts";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl.ts";
 import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../model/encodings/index.ts";
 import { makeCpuMapSampler } from "./image-engine";
@@ -94,6 +95,10 @@ ${kernelSource}
 
 const RESULT_FORMAT: TextureFormat = "rgba16float";
 
+export function displayRangeForOperation(outputRange: "R+" | "R" | "light"): ImageOperationDisplayRange {
+  return outputRange === "R" ? "signed" : "unit";
+}
+
 // Global count of actual kernel computations (cache misses). The pane /
 // browser harness assert this does NOT increase on zoom / pan / exposure /
 // colormap changes — proof that display is decoupled from recompute.
@@ -116,8 +121,7 @@ export function computeDiff(
   mapping?: CompareMapping,
 ): Texture {
   const operation = getImageOperation(kernelId);
-  const kernel = getDiffKernel(kernelId);
-  if (!operation && !kernel) throw new Error(`computeDiff: unknown image operation "${kernelId}"`);
+  if (!operation) throw new Error(`computeDiff: unknown image operation "${kernelId}"`);
   // The RESULT grid + per-source sample mapping. Absent ⇒ legacy top-left crop
   // (result = min(A,B), zero offsets) — identical to the prior behavior.
   const map =
@@ -126,7 +130,9 @@ export function computeDiff(
   const width = map.result.w;
   const height = map.result.h;
   const fitFill = map.fit === "fill" ? 1 : 0;
-  const resolved = kernel ? resolveKernelParams(kernel, params) : { ...(params ?? {}) };
+  const resolved = isMultipassImageOperation(operation)
+    ? resolveImageOperationParams(operation, params)
+    : { ...(params ?? {}) };
   computeCount++;
 
   if (operation && isInlineImageOperation(operation)) {
@@ -150,14 +156,14 @@ export function computeDiff(
   }
 
   // Multi-pass: run the pass graph over pooled intermediates.
-  const ctx: KernelBuildCtx = {
+  const ctx: ImageOperationBuildContext = {
     width,
     height,
     params: resolved,
     sourceMap: { fill: map.fit === "fill", offsetA: map.offsetA, offsetB: map.offsetB },
   };
-  if (!kernel || kernel.kind !== "multipass") throw new Error(`computeDiff: operation "${kernelId}" has no multipass implementation`);
-  const graph = kernel.buildPasses(ctx);
+  if (operation.implementation.kind !== "multipass") throw new Error(`computeDiff: operation "${kernelId}" has no multipass implementation`);
+  const graph = operation.implementation.buildPasses(ctx);
   const textures = new Map<string, Texture>([
     ["srcA", texA],
     ["srcB", texB],
@@ -168,7 +174,7 @@ export function computeDiff(
       const out = device.createTexture(width, height, RESULT_FORMAT);
       owned.push(out);
       textures.set(pass.output, out);
-      const pipeline = getPipeline(device, `mp:${kernel.id}:${pass.name}`, pass.shader, RESULT_FORMAT);
+      const pipeline = getPipeline(device, `mp:${operation.id}:${pass.name}`, pass.shader, RESULT_FORMAT);
       const entries: BindGroupEntry[] = pass.inputs.map((ref, i) => {
         const tex = textures.get(ref);
         if (!tex) throw new Error(`computeDiff: pass "${pass.name}" input "${ref}" not produced yet`);
@@ -203,8 +209,8 @@ export function computeDiff(
 // ===========================================================================
 export type { DiffCacheEntry };
 
-function paramsHash(kernel: DiffKernel, params?: Record<string, number>): string {
-  const resolved = resolveKernelParams(kernel, params);
+function paramsHash(operation: MultipassImageOperation, params?: Record<string, number>): string {
+  const resolved = resolveImageOperationParams(operation, params);
   const keys = Object.keys(resolved).sort();
   return keys.map((k) => `${k}=${resolved[k]}`).join(",");
 }
@@ -216,8 +222,8 @@ export function diffCacheKey(
   params?: Record<string, number>,
   mapping?: CompareMapping,
 ): string {
-  const kernel = getDiffKernel(kernelId);
-  const ph = kernel ? paramsHash(kernel, params) : "";
+  const operation = getMultipassImageOperation(kernelId);
+  const ph = operation ? paramsHash(operation, params) : "";
   // align/fit change the RESULT grid + sampling, so they must key the cache —
   // otherwise a re-diff at a new alignment would return a stale texture.
   const mk = mapping ? mappingKey(mapping) : "";
@@ -266,8 +272,8 @@ export function ensureDiff(
   contentKeyB: string,
   mapping?: CompareMapping,
 ): DiffCacheEntry {
-  const kernel = getDiffKernel(kernelId);
-  if (!kernel) throw new Error(`ensureDiff: unknown diff kernel "${kernelId}"`);
+  const operation = getMultipassImageOperation(kernelId);
+  if (!operation) throw new Error(`ensureDiff: image operation "${kernelId}" is not multipass`);
   const cache = cacheFor(device);
   const map =
     mapping ??
@@ -283,7 +289,7 @@ export function ensureDiff(
     texture,
     width,
     height,
-    displayRange: kernel.displayRange,
+    displayRange: displayRangeForOperation(operation.outputRange),
     bytes: width * height * 8, // rgba16float
   };
   cache.set(key, entry);
@@ -589,7 +595,7 @@ ${OUTPUT_ENCODE_WGSL}
 }
 `;
 
-const DISPLAY_RANGE_ID: Record<DisplayRange, number> = { unit: 0, signed: 1, relative: 2 };
+const DISPLAY_RANGE_ID: Record<ImageOperationDisplayRange, number> = { unit: 0, signed: 1, relative: 2 };
 const CMAP_MODE_ID: Record<DiffCmapMode, number> = { linear: 0, signed: 1, positive: 2 };
 
 export interface DiffDisplayParams {
@@ -676,7 +682,7 @@ export function renderDiffDisplay(
   device: Device,
   target: Surface | Texture,
   result: Texture,
-  displayRange: DisplayRange,
+  displayRange: ImageOperationDisplayRange,
   params: DiffDisplayParams,
 ): void {
   const targetFormat = targetFormatOf(target);
