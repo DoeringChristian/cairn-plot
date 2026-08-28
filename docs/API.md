@@ -217,10 +217,10 @@ Addons cannot `import` from core; they attach at runtime via the registry seam.
 | `cairnPlot` | The JS builder surface (`cairnPlot.line(...)` etc.) — installed by core; mirrors the Python `cairn_plot` builders. |
 | `__cairnPlotMountObject(el, descriptor, { store, runtime })` | Render a descriptor OBJECT into `el` (the seam `PlotHandle.mount`/`.toElement` render through); registers the base64 store + in-memory runtime entries first. |
 | `__cairnPlotRuntimeStore` | In-memory `Map<hash, RuntimeStoreEntry>` for JS-provided data (bytes/float) — consulted before the base64 store, zero base64. |
-| `__cairnPlotHasRenderer(name)` | Read companion to `__cairnPlotRegisterRenderer` — the builder's 3D gate uses it to tell "three addon loaded" from "missing". |
+| `__cairnPlotHasRenderer(name)` | Reports whether the typed plot definition named by `name` currently has an installed backend; the builder's 3D gate uses it to distinguish "three addon loaded" from "missing". |
 | `__cairnPlotBootstrap(divId, descId)` | Mount one plot: div `#divId` from the descriptor JSON in `#descId`. |
 | `__cairnPlotQueue` | Pre-load mount queue (GA-style `push`); drained + replaced with an immediate-mount shim once core loads. |
-| `__cairnPlotRegisterRenderer(name, component)` | Core→addon seam: an addon IIFE registers its renderer by name (`"figure"`, `"image"`, 3D types). |
+| `__cairnPlotRegisterBackends(name, backends)` | Core→addon seam: an addon IIFE installs one or more backend implementations on a core-owned typed plot definition (`"figure"` and the 3D kinds). |
 | `__cairnPlotBundleLoaded` | Include-once guard for core. |
 | `__cairnPlotFigureLoaded` / `__cairnPlotThreeLoaded` / `__cairnPlotGpuImageLoaded` | Include-once guards per addon. |
 | `__cairnPlotRenderMode` (`"cpu"\|"gpu"\|"auto"`) | Settable override for the image backend selection. |
@@ -246,21 +246,26 @@ non-redirecting or `data:`/`blob:` URL resolves to itself (unchanged), and a
 CORS-blocked probe falls back to the raw URL so cross-origin `<img src>` rendering
 still works.
 
-### Renderer registry seam
-`plot-registry.tsx` exposes the in-bundle registry the bootstrap and addons use:
-- `registerRenderer(name, component)` — register a renderer by name.
-- `getRenderer(name)` — look one up.
-- `onRegister(cb)` — subscribe to registrations (leaves bounded-wait for a
-  late-loading addon).
+### Typed plot/backend registry seam
 
-### Image-backend contract (`lib/cairn-plot/renderers/image-backend.ts`)
-The one place the interchangeable image-backend contract lives. `CpuImagePane`
-(2D canvas) and `GpuImagePane` (WebGPU, addon) both accept the same props and are
-picked per mount by `resolveRenderMode(...)`.
-- `type ImageBackendProps = HdrImageProps | SdrImageProps` — the shared prop union
-  (float-HDR shape vs. 8-bit `imageUrl` shape), discriminated by the presence of `hdr`.
-- `type ImageBackend = (props: ImageBackendProps) => JSX.Element`.
-- `isHdrProps(props)` — the discriminant.
+Core owns every plot definition: data validation, settings projection,
+resolution, semantic presentation, comparison capability, and the ordered list
+of compatible backends. Optional addon bundles install implementations on those
+existing definitions through `__cairnPlotRegisterBackends`; they do not create a
+parallel renderer namespace. The registry notifies waiting mounts when a late
+addon installs a backend.
+
+See [Authoring plot types](plot-type-authoring.md) for the internal extension
+contract and invariants.
+
+### Image-backend contract (`ui/src/plots/image/backend/contracts.ts`)
+
+The interchangeable CPU and WebGPU image backends consume the same semantic
+image presentation and the same cell-owned settings. Backend selection changes
+implementation only; it cannot initialize or mutate settings. Both backends
+receive the standard `{ presentation, settings, commands }` input and are picked
+per mount by `resolveRenderMode(...)`.
+
 - `type RenderMode = "cpu" | "gpu" | "auto"`; `resolveRenderMode(explicit?)`.
 - `interface HdrData` — a parsed float image buffer (`data`, `shape`, `dtype`,
   `precision?`). See the F16 pipeline below for `precision`.

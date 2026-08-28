@@ -1,7 +1,7 @@
 # Cairn integration boundary
 
 Cairn supplies authored plot descriptors and one artifact data source. Cairn
-Plot owns all rendering and interactive viewport behavior.
+Plot owns all rendering and interactive cell behavior.
 
 ```tsx
 import { PlotHost, createEndpointDataSource } from "cairn-plot";
@@ -23,12 +23,12 @@ plot.destroy();
 ```
 
 Cairn owns runs, series, training steps, artifact identity, card chrome,
-downloads and persistence location. Cairn Plot owns internal viewports,
+downloads and persistence location. Cairn Plot owns internal plot cells,
 settings, grid/stack interpretation, comparison, linking, selection, stage,
 decoding, resources and concrete renderers.
 
-Cairn must not import viewport stores, renderer components, registries, camera
-synchronization or comparison internals. The supported browser exports are
+Cairn must not import cell settings stores, renderer components, registries,
+camera synchronization or comparison internals. The supported browser exports are
 `PlotHost`, `mountPlot`, `createEndpointDataSource`, `DataSource`, the recursive
 descriptor types, `PlotSession`, and `SessionPersistence`. Cairn may hydrate a
 versioned runtime session explicitly with `initialSession`/`restoreSession`, or

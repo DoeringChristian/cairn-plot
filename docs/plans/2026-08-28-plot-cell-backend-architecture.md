@@ -1,6 +1,6 @@
 # Plot cell, plot definition, backend, and engine architecture
 
-Status: accepted design; implementation in progress
+Status: implemented
 
 ## Implementation progress
 
@@ -112,8 +112,13 @@ Status: accepted design; implementation in progress
   multi-output image plans as an internal grid of pairwise comparison cells.
   This preserves per-output settings/surfaces and gives selection/stage code a
   plot-agnostic mapping back to the originating operands.
-- [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
-  `lib/cairn-plot` tree.
+- [x] Extract the reusable WebGPU and Three facades and progressively flatten
+  runtime ownership out of `lib/cairn-plot`: image engine/backend/presentation,
+  resource resolution, state, stack layout, and typed 3D views now live at their
+  architectural boundaries.
+- [x] Migrate optional Figure and Three addons to core-owned typed definitions
+  and backend installation, standardize their React view inputs, and delete the
+  legacy renderer registry.
 
 ## Objective
 

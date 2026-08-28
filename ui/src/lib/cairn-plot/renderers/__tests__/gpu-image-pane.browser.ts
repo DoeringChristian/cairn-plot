@@ -33,7 +33,7 @@
  *      reason as case 2. Proves a re-render on a cap-parked-but-visible pane
  *      never paints into a destroyed/parked GPU context.
  *   6. The gpu-image addon's CAPABILITY-GATED registration
- *      (`plot-gpu-image-addon.tsx`): stub `__cairnPlotRegisterRenderer`,
+ *      (`plot-gpu-image-addon.tsx`): stub `__cairnPlotRegisterBackends`,
  *      import the addon module, and assert it registers `"image"`/
  *      `"imagehdr"` and sets `__cairnPlotGpuImageLoaded` once
  *      `getSharedDevice()` resolves.
@@ -413,7 +413,7 @@ async function runParkAwareRenderCase(): Promise<boolean> {
 /**
  * Case 6 (addon capability-gated registration) is intentionally NOT tested
  * from this bundle: `plot-gpu-image-addon.tsx`'s top-level side effect
- * (`void tryRegister()`) must observe `window.__cairnPlotRegisterRenderer`
+ * (`void tryRegister()`) must observe `window.__cairnPlotRegisterBackends`
  * as it existed BEFORE the addon module first evaluates. A dynamic
  * `import()` of a LOCALLY-bundled module inside a single-file esbuild
  * bundle (no `--splitting`) does not reliably defer that top-level
