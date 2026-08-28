@@ -7,6 +7,7 @@ import type {
   CompareAlign,
   CompareFit,
 } from "../../lib/cairn-plot/renderers/image-backend.ts";
+import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
 import { planComparison } from "../registry.ts";
 
 export type ImageComparisonPresentation = "split" | "difference";
@@ -91,4 +92,19 @@ export function planRegisteredImageComparison(node: CompareNode): ImageCompariso
     );
   }
   return planned.plan as ImageComparisonPlan;
+}
+
+/** Resolve through the registered capability; the host never calls image decode directly. */
+export async function resolveRegisteredImageComparison(
+  node: CompareNode,
+  source: DataSource,
+  signal: AbortSignal = new AbortController().signal,
+): Promise<Record<string, unknown>> {
+  const planned = planComparison(node);
+  if (planned.renderer !== "image") {
+    throw new Error(
+      `cairn-plot: comparison host for ${JSON.stringify(planned.renderer)} is not installed`,
+    );
+  }
+  return planned.capability.resolve(planned.plan, { source, signal }) as Promise<Record<string, unknown>>;
 }

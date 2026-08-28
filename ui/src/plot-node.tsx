@@ -32,7 +32,7 @@ import type {
 } from "./lib/cairn-plot/renderers/image-backend";
 import {
   resolveDataProps,
-  type DataSpec,
+  type CompareNode,
   type GridNode,
   type PlotLeafNode,
   type PlotNode,
@@ -84,8 +84,8 @@ import { getReactPlotType } from "./plots/react-registry.ts";
 import type { RenderEnvironment } from "./backends/contracts.ts";
 import {
   planRegisteredImageComparison as synthDiffLeafOf,
+  resolveRegisteredImageComparison,
 } from "./plots/image/comparison-plan.ts";
-import { resolveImageComparisonPair as resolveDiffPair } from "./plots/image/comparison-resolve.ts";
 import {
   useImageComparisonControl,
   type CompareViewMode,
@@ -250,7 +250,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const [rendererError, setRendererError] = useState<string | null>(null);
   const [, bumpRegistry] = useState(0);
 
-  const diffFgData = diffSpec?.fgData;
   useEffect(() => {
     const key = resolveKey;
     // Already resolved (warm/prefetched) or errored → nothing to kick off; the pure
@@ -261,8 +260,8 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // carries the decoded foreground (`__diffB`) + content keys alongside the reference
     // `source`. SIGN convention: `source` = reference, `compareSource.b` = foreground
     // (`diff = source − b`, byte-parity with the compare pane's `texA − texB`).
-    if (diffSpec && diffFgData) {
-      void resolveCached(key, () => resolveDiffPair(node.data, diffFgData, source)).catch(() => {
+    if (diffSpec) {
+      void resolveCached(key, () => resolveRegisteredImageComparison(diffSpec.node, source)).catch(() => {
         /* error is cached (peekResolveError) — the pure read surfaces it */
       });
       return () => {
@@ -302,7 +301,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     return () => {
       cancelled = true;
     };
-  }, [node, source, selKey, effectiveData, resolveKey, diffSpec, diffFgData]);
+  }, [node, source, selKey, effectiveData, resolveKey, diffSpec]);
 
   // Strip pick: ONE store write (a group flips every pane to the same
   // part/layer BY NAME; a lone viewport's pick sticks in its local store).
@@ -542,8 +541,8 @@ function browserRenderEnvironment(): RenderEnvironment {
  *  operand IS the synthesized leaf's `node.data` (resolved through the leaf's own
  *  cache); this carries everything else. */
 interface DiffLeafSpec {
-  /** The foreground/comparison operand (`compareSource.b`). */
-  fgData: DataSpec;
+  /** Durable comparison used to resolve through its registered capability. */
+  node: CompareNode;
   /** The compare MODE (`diff` | `split`) — lifted state. Diff renders the
    *  scalar-error kernel; split renders the LIGHT slide compositor. */
   mode: CompareViewMode;
@@ -649,7 +648,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
           const synth = synthDiffLeafOf(child);
           entries.push({
             key: resolutionKey(source, synth.leaf, "|diffpair"),
-            run: () => resolveDiffPair(synth.leaf.data, synth.fgData, source),
+            run: () => resolveRegisteredImageComparison(child, source),
           });
         }
       }
@@ -853,7 +852,7 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
     case "compare": {
       if (!synth) return <Message text="invalid compare node" error />;
       const diffSpec: DiffLeafSpec = {
-        fgData: synth.fgData,
+        node,
         mode: control.viewMode,
         diffKernel: control.diffKernel,
         colormap: ((paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
