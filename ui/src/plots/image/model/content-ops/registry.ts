@@ -118,6 +118,8 @@ export interface ImageOperation {
   id: string;
   /** Menu label. */
   label: string;
+  /** Optional short public selector used by descriptor builders. */
+  publicName?: string;
   /** Number of source SLOTS the op reads (1 = single image; 2 = a comparison). */
   inputCount: 1 | 2;
   /** Expensive field operations opt into the global result cache. Cheap

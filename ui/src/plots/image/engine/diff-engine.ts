@@ -32,6 +32,7 @@ import {
   type DisplayRange,
   type KernelBuildCtx,
 } from "./kernels/index";
+import { getImageOperation, isInlineImageOperation } from "../model/content-ops/index.ts";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl.ts";
 import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../model/encodings/index.ts";
 import { makeCpuMapSampler } from "./image-engine";
@@ -114,8 +115,9 @@ export function computeDiff(
   params?: Record<string, number>,
   mapping?: CompareMapping,
 ): Texture {
+  const operation = getImageOperation(kernelId);
   const kernel = getDiffKernel(kernelId);
-  if (!kernel) throw new Error(`computeDiff: unknown diff kernel "${kernelId}"`);
+  if (!operation && !kernel) throw new Error(`computeDiff: unknown image operation "${kernelId}"`);
   // The RESULT grid + per-source sample mapping. Absent ⇒ legacy top-left crop
   // (result = min(A,B), zero offsets) — identical to the prior behavior.
   const map =
@@ -124,12 +126,12 @@ export function computeDiff(
   const width = map.result.w;
   const height = map.result.h;
   const fitFill = map.fit === "fill" ? 1 : 0;
-  const resolved = resolveKernelParams(kernel, params);
+  const resolved = kernel ? resolveKernelParams(kernel, params) : { ...(params ?? {}) };
   computeCount++;
 
-  if (kernel.kind === "pointwise") {
+  if (operation && isInlineImageOperation(operation)) {
     const result = device.createTexture(width, height, RESULT_FORMAT);
-    const pipeline = getPipeline(device, `pw:${kernel.id}`, pointwiseShader(kernel.source), RESULT_FORMAT);
+    const pipeline = getPipeline(device, `pw:${operation.id}`, pointwiseShader(operation.implementation.wgsl), RESULT_FORMAT);
     const uMap = new Float32Array([map.offsetA.x, map.offsetA.y, map.offsetB.x, map.offsetB.y]);
     const uRes = new Float32Array([width, height, fitFill, 0]);
     let bg: BindGroup | undefined;
@@ -154,6 +156,7 @@ export function computeDiff(
     params: resolved,
     sourceMap: { fill: map.fit === "fill", offsetA: map.offsetA, offsetB: map.offsetB },
   };
+  if (!kernel || kernel.kind !== "multipass") throw new Error(`computeDiff: operation "${kernelId}" has no multipass implementation`);
   const graph = kernel.buildPasses(ctx);
   const textures = new Map<string, Texture>([
     ["srcA", texA],

@@ -66,12 +66,13 @@ test("the assembled dispatch has identity as the fallthrough + a branch per non-
 
 test("D2 drift: every diff op uses the single shared diff default", () => {
   const diffOps = IMAGE_OPERATIONS.filter((op) => op.inputCount === 2 && op.outputArity === 1);
-  assert.ok(diffOps.length >= 9, `expected the 6 pointwise + 3 cached diff ops, got ${diffOps.length}`);
+  assert.ok(diffOps.length >= 10, `expected the 6 pointwise + 4 multipass diff ops, got ${diffOps.length}`);
   for (const op of diffOps) {
     // pointwise: op.id IS the kernel id; cached: op.kernelId.
-    const kernelId = op.implementation.kind === "multipass" ? op.implementation.kernelId : op.id;
-    const kernel = getDiffKernel(kernelId);
-    assert.ok(kernel, `diff op "${op.id}" must map to a registered kernel "${kernelId}"`);
+    if (op.implementation.kind === "multipass") {
+      const kernel = getDiffKernel(op.implementation.kernelId);
+      assert.ok(kernel, `multipass operation "${op.id}" must resolve its backend implementation`);
+    }
     assert.equal(op.defaultEncoding, DEFAULT_DIFF_ENCODING);
   }
 });

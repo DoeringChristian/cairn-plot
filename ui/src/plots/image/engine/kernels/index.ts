@@ -8,12 +8,7 @@
  * Registration order == menu order (`listDiffKernels()`).
  */
 import { registerDiffKernel, listDiffKernels, getDiffKernel } from "./kernel-registry.ts";
-import { signedKernel } from "./signed.wgsl.ts";
-import { absoluteKernel } from "./absolute.wgsl.ts";
-import { squaredKernel } from "./squared.wgsl.ts";
-import { relativeSignedKernel } from "./relative-signed.wgsl.ts";
-import { relativeAbsoluteKernel } from "./relative-absolute.wgsl.ts";
-import { relativeSquaredKernel } from "./relative-squared.wgsl.ts";
+import { listImageOperations } from "../../model/content-ops/index.ts";
 import { flipKernel, flipLdrForcedKernel } from "./flip.wgsl.ts";
 import { hdrFlipKernel } from "./hdr-flip.ts";
 import { ssimKernel } from "./ssim.wgsl.ts";
@@ -26,12 +21,6 @@ function registerBuiltins(): void {
   // forced-LDR). HDR-FLIP + forced-LDR are reached via auto-dispatch under the
   // single public `flip` menu entry (+ `flip_ldr`), never listed on their own —
   // see `listDiffMenuModes` / `resolveDiffKernelId`.
-  registerDiffKernel(absoluteKernel);
-  registerDiffKernel(signedKernel);
-  registerDiffKernel(squaredKernel);
-  registerDiffKernel(relativeAbsoluteKernel);
-  registerDiffKernel(relativeSignedKernel);
-  registerDiffKernel(relativeSquaredKernel);
   registerDiffKernel(flipKernel);
   registerDiffKernel(hdrFlipKernel);
   registerDiffKernel(flipLdrForcedKernel);
@@ -55,8 +44,10 @@ export interface DiffMenuMode {
 }
 export function listDiffMenuModes(): DiffMenuMode[] {
   const out: DiffMenuMode[] = [];
-  for (const k of listDiffKernels()) {
-    if (k.kind === "pointwise") out.push({ id: k.id, label: k.label });
+  for (const operation of listImageOperations()) {
+    if (operation.implementation.kind === "inline" && operation.inputCount === 2 && operation.outputArity === 1) {
+      out.push({ id: operation.id, label: operation.label });
+    }
   }
   out.push({ id: "flip", label: "FLIP (perceptual)" });
   out.push({ id: "flip_ldr", label: "FLIP (LDR forced)" });
@@ -84,6 +75,10 @@ export function resolveDiffKernelId(selection: string, sourcesAreFloat: boolean)
 
 /** Map a flat public name (`abs`, `rel_signed`, `flip`, …) → internal kernel id. */
 export function kernelIdForPublicName(publicName: string): string | undefined {
+  const pointwise = listImageOperations().find(
+    (operation) => operation.implementation.kind === "inline" && operation.publicName === publicName,
+  );
+  if (pointwise) return pointwise.id;
   for (const k of listDiffKernels()) if (k.publicName === publicName) return k.id;
   return undefined;
 }
@@ -113,9 +108,12 @@ const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr"]);
  * by Python `_COMPARE_KERNEL_MODES` (a pytest asserts the two match as sets).
  */
 export function listDiffKernelPublicNames(): string[] {
-  return listDiffKernels()
+  const pointwise = listImageOperations()
+    .filter((operation) => operation.implementation.kind === "inline" && operation.inputCount === 2 && operation.outputArity === 1)
+    .flatMap((operation) => operation.publicName ? [operation.publicName] : []);
+  return [...pointwise, ...listDiffKernels()
     .map((k) => k.publicName)
-    .filter((name) => !AUTO_DISPATCH_ONLY_PUBLIC_NAMES.has(name));
+    .filter((name) => !AUTO_DISPATCH_ONLY_PUBLIC_NAMES.has(name))];
 }
 
 export * from "./kernel-registry.ts";

@@ -64,6 +64,7 @@ function rgb3(v: readonly number[] | undefined): [number, number, number] {
 function pointwise(
   id: string,
   label: string,
+  publicName: string,
   range: "R" | "R+",
   wgsl: string,
   f: (a: number, b: number) => number,
@@ -71,6 +72,7 @@ function pointwise(
   return {
     id,
     label,
+    publicName,
     inputCount: 2,
     cachePolicy: "never",
     // Scalar-error DISPLAY gating: k=1 → colormaps offered, defaultEncoding
@@ -94,6 +96,7 @@ function pointwise(
 const signed = pointwise(
   "signed",
   "Signed Error",
+  "signed",
   "R",
   "vec4<f32>(a.rgb - b.rgb, 1.0)",
   (a, b) => a - b,
@@ -102,6 +105,7 @@ const signed = pointwise(
 const absolute = pointwise(
   "absolute",
   "Absolute Error",
+  "abs",
   "R+",
   "vec4<f32>(abs(a.rgb - b.rgb), 1.0)",
   (a, b) => Math.abs(a - b),
@@ -110,6 +114,7 @@ const absolute = pointwise(
 const squared = pointwise(
   "squared",
   "Squared Error",
+  "square",
   "R+",
   "vec4<f32>((a.rgb - b.rgb) * (a.rgb - b.rgb), 1.0)",
   (a, b) => (a - b) * (a - b),
@@ -118,6 +123,7 @@ const squared = pointwise(
 const relativeSigned = pointwise(
   "relative_signed",
   "Relative Signed",
+  "rel_signed",
   "R",
   "vec4<f32>((a.rgb - b.rgb) / max(a.rgb, vec3<f32>(1.0 / 255.0)), 1.0)",
   (a, b) => (a - b) / Math.max(a, REL_EPS),
@@ -126,6 +132,7 @@ const relativeSigned = pointwise(
 const relativeAbsolute = pointwise(
   "relative_absolute",
   "Relative Absolute",
+  "rel_abs",
   "R+",
   "vec4<f32>(abs(a.rgb - b.rgb) / max(a.rgb, vec3<f32>(1.0 / 255.0)), 1.0)",
   (a, b) => Math.abs(a - b) / Math.max(a, REL_EPS),
@@ -134,6 +141,7 @@ const relativeAbsolute = pointwise(
 const relativeSquared = pointwise(
   "relative_squared",
   "Relative Squared",
+  "rel_square",
   "R+",
   "vec4<f32>(((a.rgb - b.rgb) * (a.rgb - b.rgb)) / (max(a.rgb, vec3<f32>(1.0 / 255.0)) * max(a.rgb, vec3<f32>(1.0 / 255.0))), 1.0)",
   (a, b) => {
@@ -223,6 +231,7 @@ function cached(id: string, label: string, kernelId: string): ImageOperation {
 
 const flip = cached("flip", "FLIP (perceptual)", "flip");
 const hdrFlip = cached("hdr-flip", "HDR-FLIP", "hdr-flip");
+const flipLdrForced = cached("flip-ldr-forced", "FLIP (LDR forced)", "flip-ldr-forced");
 const ssim = cached("ssim", "SSIM", "ssim");
 
 /** Registration order == menu order: identity, the six pointwise diffs, the
@@ -240,6 +249,7 @@ export const IMAGE_OPERATIONS: ImageOperation[] = [
   split,
   flip,
   hdrFlip,
+  flipLdrForced,
   ssim,
 ];
 

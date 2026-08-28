@@ -27,7 +27,7 @@ import {
 
 const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
 const COMPOSITOR = ["split"];
-const CACHED = ["flip", "hdr-flip", "ssim"];
+const CACHED = ["flip", "hdr-flip", "flip-ldr-forced", "ssim"];
 
 test("the expected op set is registered (identity + pointwise diffs + compositor + cached metrics)", () => {
   const ids = listImageOperations().map((o) => o.id);

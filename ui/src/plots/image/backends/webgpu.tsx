@@ -62,7 +62,7 @@ import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
 // imports are safe here: this file only ships in the gpu-image addon bundle,
 // never `core.iife.js`.
-import { contentOpId } from "../model/content-ops/index";
+import { contentOpId, getImageOperation } from "../model/content-ops/index";
 import {
   getDiffKernel,
   resolveDiffKernelId,
@@ -1515,7 +1515,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Wait for the reference slot to upload (else a direct op would sample the
       // 1×1 placeholder). The render effect re-fires on `refUploadVersion`.
       if (!refDims) return false;
-      const kernelId = getDiffKernel(resolvedKernelId) ? resolvedKernelId : "absolute";
+      const kernelId = getImageOperation(resolvedKernelId) ? resolvedKernelId : "absolute";
       const displayEncoding = effectiveDiffEncoding;
       const display = prepareDisplayBinding(displayEncoding, { hdrSurface: useHdrRef.current });
       // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
