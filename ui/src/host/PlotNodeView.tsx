@@ -20,7 +20,6 @@ import React, {
 } from "react";
 import { Colorbar } from "../primitives/components/index";
 import type { ColormapName } from "../plots/types";
-import type { CompareSource } from "../plots/image/runtime/contracts";
 import {
   type CompareNode,
   type GridNode,
@@ -28,8 +27,6 @@ import {
   type PlotNode,
 } from "../resources/resolve-data";
 import { stackLabelFor } from "../layout/stack/StackedView";
-import { InStackedGridContext } from "../layout/stack/stack-context";
-import FullscreenOverlayShell, { InFullscreenOverlayContext } from "../primitives/components/FullscreenOverlayShell";
 import {
   ChartFillContext,
   DEFAULT_CHART_HEIGHT,
@@ -49,8 +46,6 @@ import {
   subscribeResolveCache,
   resolveCacheVersion,
 } from "../resources/resolution-cache";
-import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "../plots/image/definition/channel-menu";
-import { applyChannelSlice } from "../plots/image/definition/channel-slice";
 import { type PlotSettings } from "../settings/schema.ts";
 import { defaultSettingsForNode } from "../plots/settings.ts";
 import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
@@ -74,14 +69,7 @@ import {
   resolveRegisteredImageComparison,
   expandImageComparison,
 } from "../plots/image/definition/comparison-plan.ts";
-import {
-  useImageComparisonControl,
-} from "../plots/image/runtime/use-comparison-control.ts";
-import {
-  composeImageComparisonPresentation,
-  composeSingleImagePresentation,
-  type ImageComparisonHostInput,
-} from "../plots/image/definition/host-presentation.ts";
+import { ImageNodeHost } from "../plots/image/runtime/host-adapter.tsx";
 import { usePlotSessionController } from "../state/session/session-context.ts";
 import { getGlobalSelectionStore } from "../state/selection/selection-store.ts";
 import { getRegisteredPane } from "../state/selection/pane-registry.ts";
@@ -98,8 +86,6 @@ export type { CellSettingsContextValue, SharedPlotCtx } from "./plot-context.ts"
  * push and runs same-page, so registration always wins in practice; this bound
  * only guards a genuinely unknown/misspelled renderer, which shouldn't stall 8s.
  */
-const RENDERER_WAIT_MS = 4000;
-
 // ---------------------------------------------------------------------------
 // Multi-viewport SELECTION (see viewport/selection-store.ts) is PAGE-WIDE. There
 // is ONE document-scoped `SelectionStore` (`getGlobalSelectionStore`) shared by
@@ -123,7 +109,15 @@ function Message({ text, error }: { text: string; error?: boolean }) {
   );
 }
 
-// TEST-ONLY no-flash instrumentation. `ImageLeafView` reads its resolved value straight
+function browserRenderEnvironment(): RenderEnvironment {
+  return {
+    webgpu: typeof navigator !== "undefined" && "gpu" in navigator,
+    webgl2: typeof WebGL2RenderingContext !== "undefined",
+    pixelRatio: typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1,
+  };
+}
+
+// TEST-ONLY no-flash instrumentation. `ImageHostAdapter` reads its resolved value straight
 // from the subscribable resolve-cache (a pure function of `resolveKey`), so there is
 // no component-held `state` cell that can hold a PREVIOUS slot's resolution across a
 // flip: a WARM/prefetched slot resolves synchronously (instant, no placeholder); a
@@ -133,344 +127,6 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 // witnessed is now UNREPRESENTABLE: the leaf never emits a `compareSource` with an
 // undefined `b`, because it only builds one from a RESOLVED diff-pair.) No production
 // code reads this; the increment is a single integer.
-interface LeafResolveStats {
-  placeholderMounts: number;
-}
-const leafResolveStats: LeafResolveStats = { placeholderMounts: 0 };
-if (typeof window !== "undefined") {
-  (window as unknown as { __cairnLeafResolveStats?: LeafResolveStats }).__cairnLeafResolveStats = leafResolveStats;
-}
-
-// ---------------------------------------------------------------------------
-// Leaf — the former flat `PlotApp` body. Resolves the leaf's DataSpec against
-// the shared source, waits (bounded) for its renderer to register, and renders
-// the registered backend. Authored display state is already in the cell's
-// settings; presentation props remain non-interactive rendering inputs.
-// ---------------------------------------------------------------------------
-function ImageLeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafSpec }) {
-  const { source, shared } = useSharedPlot();
-  // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
-  const paneSync = useContext(CellSettingsContext);
-  // True inside a STACKED viewport — threaded to the pane so it treats its display
-  // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
-  // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
-  const inStackedGrid = useContext(InStackedGridContext);
-  // DIFF path (Phase 2c): a diff-mode compare lowers to THIS component (so an
-  // `[image, diff]` stack is homogeneous — no remount on a flip). When present,
-  // BOTH operands resolve through the compare resolver (`node.data` = reference =
-  // `source`; `diffSpec.fgData` = foreground = `compareSource.b`) instead of the
-  // single-image `resolveDataProps`, and a `compareSource` is threaded to the
-  // image renderer. The channel strip / exr tree / shared-colormap merge below
-  // are single-image concerns and are inert on this path.
-  const isDiff = !!diffSpec;
-  const activeDefaults = diffSpec?.cellDefaults ?? defaultSettingsForNode(node, shared);
-  const resetSettings = useCallback(() => {
-    (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(activeDefaults);
-  }, [paneSync?.resetSyncedSettings, paneSync?.setSyncedSettings, activeDefaults]);
-
-  // CHANNEL-STRIP selection override (EXR part/layer). `null` = follow the
-  // node's own `data.part`/`data.layer`. Resolves at RENDER through the one
-  // lookup: store value > local state (the local cell serves only a viewport
-  // with no store). Deliberately NOT reset on a node swap: in a STACKED
-  // surface the same ImageLeafView instance flips between slots, and the picked
-  // layer must carry across (shared-settings semantics).
-  const [localChSel, setChSel] = useState<ChannelSelection | null>(null);
-  const syncedChannelSelect = paneSync?.syncedSettings?.["image.channelSelect"];
-  const chSel =
-    syncedChannelSelect !== undefined
-      ? (syncedChannelSelect as ChannelSelection | null)
-      : localChSel;
-  const chSelRef = useRef<ChannelSelection | null>(null);
-  chSelRef.current = chSel;
-  // The last UNSLICED resolve's channel tree (see the menu block below).
-  const baseChannelTreeRef = useRef<ChannelMenuTree | undefined>(undefined);
-  // The ONE write path for a channel pick (store when present, local else) —
-  // shared by the strip handler and the failed-decode revert.
-  const setSyncedRef = useRef(paneSync?.setSyncedSettings);
-  setSyncedRef.current = paneSync?.setSyncedSettings;
-  const applyChannelSelect = useCallback((next: ChannelSelection | null) => {
-    // TOP-OF-STACK write (transient-group ruling): the store when present
-    // (group while selected — transient; local otherwise — sticks); the local
-    // cell only serves a storeless viewport. Writing both would let a
-    // group-session pick survive unselect through the local cell.
-    if (setSyncedRef.current) setSyncedRef.current({ "image.channelSelect": next });
-    else setChSel(next);
-  }, []);
-  // SINGLE-PANE FULLSCREEN (enlarge) — the flag lives HERE, above the async-
-  // resolve swap: a channel pick's cold re-resolve renders the "Loading…"
-  // placeholder, unmounting the whole renderer subtree — component-local
-  // enlarge state there was reset, throwing the user out of fullscreen (the
-  // reported bug). ImageLeafView survives that swap, so the pane consumes this as
-  // a CONTROLLED `enlargeControl` and fullscreen persists across re-resolves.
-  const [paneEnlarged, setPaneEnlarged] = useState(false);
-  const enlargeControl = useMemo(
-    () => ({ enlarged: paneEnlarged, setEnlarged: setPaneEnlarged }),
-    [paneEnlarged],
-  );
-  // Theme origin for the enlarged-placeholder overlay (null → default theme;
-  // the ready pane's own overlay re-themes from its real in-tree element).
-  const placeholderOriginRef = useRef<HTMLElement | null>(null);
-
-  // The EFFECTIVE data spec: the strip override merged over the node's data
-  // (image specs only — the strip never renders for other kinds).
-  const effectiveData = useMemo(() => {
-    if (!chSel || node.data.kind !== "image") return node.data;
-    return { ...node.data, part: chSel.part, layer: chSel.layer };
-  }, [node.data, chSel]);
-  // The resolve-cache key includes the override so each selection caches its own
-  // decode (flipping BACK to a seen layer is instant).
-  const selLayerKey = Array.isArray(chSel?.layer) ? chSel.layer.join(",") : (chSel?.layer ?? "");
-  const selKey = chSel ? `|${chSel.part ?? ""}|${selLayerKey}` : "";
-  // The resolve-cache key: the diff pair (reference + foreground, decoded once)
-  // when in diff mode; the single-image (+ channel override) key otherwise.
-  const resolveKey = resolutionKey(source, node, isDiff ? "|diffpair" : selKey);
-
-  // SUBSCRIBABLE RESOLVE (the flip-commit model). The async-resolved DATA props are
-  // NOT held in a component `state` cell — they are read PURELY from the resolve-cache
-  // (a `useSyncExternalStore` over the cache) keyed by THIS render's `resolveKey`. So
-  // the resolved value is a pure function of `resolveKey`: a WARM/prefetched flip
-  // resolves the new slot SYNCHRONOUSLY in the flip commit itself (instant, no
-  // placeholder), and a COLD swap (cache miss) renders a brief `"Loading…"` — the
-  // accepted loading state (user ruling: brief loading OK), never a HOLD of the
-  // previous slot's frame. There is therefore no lag cell to leak a stale operand:
-  // the stale-diff / reference-flash windows are structurally unrepresentable, not
-  // guarded. The shared-block + selection-sync props are merged at RENDER time (below)
-  // so a selection change re-renders WITHOUT re-fetching the data.
-  useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
-  // Local error surface for a renderer-registration TIMEOUT only; a decode/resolve
-  // error lives in the cache (read via `peekResolveError`).
-  const [rendererError, setRendererError] = useState<string | null>(null);
-  const [, bumpRegistry] = useState(0);
-
-  useEffect(() => {
-    const key = resolveKey;
-    // Already resolved (warm/prefetched) or errored → nothing to kick off; the pure
-    // read below shows it. On resolution the cache NOTIFIES and this leaf re-renders.
-    if (peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
-    let cancelled = false;
-    // DIFF path: resolve BOTH operands through the compare resolver; the cached payload
-    // carries the decoded foreground (`__diffB`) + content keys alongside the reference
-    // `source`. SIGN convention: `source` = reference, `compareSource.b` = foreground
-    // (`diff = source − b`, byte-parity with the compare pane's `texA − texB`).
-    if (diffSpec) {
-      void resolveCached(key, () => resolveRegisteredImageComparison(diffSpec.node, source)).catch(() => {
-        /* error is cached (peekResolveError) — the pure read surfaces it */
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    void resolveCached(key, async () => {
-      const registered = getReactPlotType(node.type);
-      if (!registered) {
-        throw new Error(`cairn-plot: plot type ${JSON.stringify(node.type)} is not registered`);
-      }
-      const dp = registered.definition.present(await registered.definition.resolve(
-        { ...node, data: effectiveData },
-        { source, signal: new AbortController().signal },
-      )) as Record<string, unknown>;
-      // FORMAT-AGNOSTIC channel selection: EXR selects at decode (dp.exrTree present —
-      // the selector already rode `effectiveData`); everything else is an N-channel
-      // array and the selection is a pure post-decode SLICE.
-      const describedSelectable =
-        !!dp.exrTree && treeHasSelectableChannels(dp.exrTree as ChannelMenuTree);
-      if (chSelRef.current?.layer != null && !describedSelectable) {
-        return applyChannelSlice(dp, chSelRef.current.layer);
-      }
-      return dp;
-    }).catch((err) => {
-      if (cancelled) return;
-      // A CHANNEL-OVERRIDE decode that fails must never strand the pane in an error
-      // state with no way back (the CHANNELS menu only renders on the ready pane):
-      // revert the override (a different resolveKey re-resolves the base source) and
-      // keep the last good frame. A non-channel error stays in the cache and the pure
-      // read surfaces it as the error state.
-      if (chSelRef.current) {
-        // eslint-disable-next-line no-console
-        console.warn("cairn-plot: channel selection failed, reverting:", err);
-        applyChannelSelect(null);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [node, source, selKey, effectiveData, resolveKey, diffSpec]);
-
-  // Strip pick: ONE store write (a group flips every pane to the same
-  // part/layer BY NAME; a lone viewport's pick sticks in its local store).
-  const selectChannels = useCallback(
-    (sel: ChannelSelection) => {
-      const next = sel.part == null && sel.layer == null ? null : sel;
-      applyChannelSelect(next);
-    },
-    [applyChannelSelect],
-  );
-
-  // PURE READ of THIS render's resolveKey (the flip-commit guarantee). `peekResolved`
-  // returns the SAME cached object across renders, so `dataProps` is reference-stable;
-  // a flip swaps `resolveKey` and the value it reads in the SAME commit — a warm slot
-  // is instant, a cold slot misses (→ `undefined` → the brief loading state). There is
-  // no `state` fallback, so a previous slot's resolution can never leak: the stale-diff
-  // reference-flash is structurally impossible, not guarded.
-  const resolvedNow: Record<string, unknown> | undefined = peekResolved<Record<string, unknown>>(resolveKey);
-  useEffect(() => {
-    if (resolvedNow === undefined) return;
-    const lease = acquireResolved(resolveKey);
-    return () => lease?.release();
-  }, [resolveKey, resolvedNow]);
-  const cacheError = peekResolveError(resolveKey);
-  // CHANNEL-PICK HOLD (user ruling: a channel pick must NEVER create a new
-  // pane). The pick rides the settings store like any other display setting,
-  // so its pending re-resolve must not swap the viewport for a placeholder —
-  // the SAME pane instance keeps showing the previous channel's payload and
-  // the new decode swaps IN PLACE as a prop change when it lands (exactly how
-  // a colormap change propagates; the pane re-uploads, nothing remounts).
-  // Gated to the SAME BASE SOURCE (`sourceKey(node)` unchanged — only the
-  // channel-selection suffix differs): a STACKED-slot flip changes the base
-  // key, so the flip-commit ruling ("a cold flip renders loading, never a
-  // hold of the previous slot's frame" — the stale-diff guarantee) is
-  // untouched, as is the first mount (no previous payload to hold).
-  const baseKey = resolutionKey(source, node, isDiff ? "|diffpair" : "");
-  const lastReadyRef = useRef<{ base: string; dataProps: Record<string, unknown> } | null>(null);
-  const held =
-    resolvedNow === undefined && cacheError === undefined && lastReadyRef.current?.base === baseKey
-      ? lastReadyRef.current.dataProps
-      : undefined;
-  const dataProps = resolvedNow ?? held;
-  if (resolvedNow !== undefined) {
-    lastReadyRef.current = { base: baseKey, dataProps: resolvedNow };
-  }
-  // A `kind:"diff"` payload STRUCTURALLY carries its foreground (`__diffB`) — the leaf
-  // only builds a `compareSource` from a RESOLVED diff pair, so `b` is never undefined.
-  // This guard is defensive (should be unreachable): if a diff payload ever lacked its
-  // operand, render loading rather than a half-built `compareSource`.
-  const diffOperandMissing = !!diffSpec && dataProps !== undefined && dataProps.__diffB === undefined;
-  const errorMsg = rendererError ?? cacheError;
-  const status: "loading" | "error" | "ready" =
-    dataProps !== undefined && !diffOperandMissing ? "ready" : errorMsg !== undefined ? "error" : "loading";
-
-  // Merge the shared block + the live sync group ids over the resolved data
-  // props at render (leaf `node.props` win over `shared`, data props win over
-  // all). The view-sync group id is the selection override when this pane is
-  // in a ≥2 selection, else the grid-wide static `shared.sync.view` group;
-  // the settings-sync group + anchor flag come only from an active selection.
-  const mergedProps = useMemo<Record<string, unknown>>(() => {
-    if (!dataProps) return {};
-    // COMPARE path (diff + split/blend): the resolved reference `source` + the
-    // LIVE `compareSource` (the decoded foreground + content keys from the cache,
-    // plus the per-render mode/kernel/split/blend settings + callbacks). No
-    // shared-colormap merge, no channel strip — those are single-image concerns.
-    // `node.props` carries the synth leaf's view controls
-    // (interpolation/showAxes/toolbar/pixelValueNotation).
-    if (diffSpec) {
-      return composeImageComparisonPresentation({
-        leaf: node,
-        resolved: dataProps,
-        comparison: diffSpec,
-        enlargeControl,
-      });
-    }
-    const composed = composeSingleImagePresentation({
-      leaf: node,
-      resolved: dataProps,
-      shared,
-      channelSelection: chSel,
-      baseChannelTree: baseChannelTreeRef.current,
-      selectChannels,
-      enlargeControl,
-      inStackedGrid,
-    });
-    baseChannelTreeRef.current = composed.baseChannelTree;
-    return composed.presentation;
-  }, [dataProps, shared, node, chSel, selectChannels, diffSpec, inStackedGrid, enlargeControl]);
-
-  // Wait-for-registration: re-render the instant the renderer arrives, else
-  // surface a bounded "unknown renderer" error.
-  const typedRegistration = getReactPlotType(node.type);
-  const rendererMissing = status === "ready" &&
-    (!typedRegistration || typedRegistration.backends.length === 0);
-  useEffect(() => {
-    if (status !== "ready" || getReactPlotType(node.type)?.backends.length) return;
-    const name = node.type;
-    let settled = false;
-    const registered = () => {
-      if (!settled && getReactPlotType(name)?.backends.length) {
-        settled = true;
-        setRendererError(null); // renderer arrived → clear any prior timeout error
-        bumpRegistry((n) => n + 1);
-      }
-    };
-    const unsubTyped = onRegisterReactPlotType(registered);
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        setRendererError(`unknown renderer "${name}"`);
-      }
-    }, RENDERER_WAIT_MS);
-    return () => {
-      settled = true;
-      unsubTyped();
-      clearTimeout(timer);
-    };
-  }, [status, rendererMissing, node.type]);
-
-  // While ENLARGED, the loading/error placeholder renders INSIDE the fullscreen
-  // overlay chrome (same backdrop/✕/Escape seam), so a slow re-resolve (an EXR
-  // channel pick's decode) never visually drops the user back to the grid —
-  // the pane re-enters the shell-owned overlay when ready (`enlargeControl`).
-  const placeholderInShell = (child: JSX.Element) =>
-    paneEnlarged ? (
-      <FullscreenOverlayShell
-        open
-        onClose={() => setPaneEnlarged(false)}
-        originRef={placeholderOriginRef}
-        ariaLabel="Enlarged plot"
-      >
-        {child}
-      </FullscreenOverlayShell>
-    ) : (
-      child
-    );
-  if (status === "loading") {
-    leafResolveStats.placeholderMounts++;
-    return placeholderInShell(<Message text="Loading…" />);
-  }
-  if (status === "error") {
-    return placeholderInShell(<Message text={`Plot error: ${errorMsg ?? "unknown"}`} error />);
-  }
-  const registered = getReactPlotType(node.type);
-  if (registered?.backends.length) {
-    const settings = registered.definition.projectSettings(
-      (paneSync?.syncedSettings ?? {}) as import("../plots/contracts.ts").SettingsRecord,
-    );
-    return (
-      <ReactBackendOutlet
-        backends={registered.backends}
-        environment={browserRenderEnvironment()}
-        presentation={withoutSettingsPlumbing(mergedProps)}
-        settings={settings}
-        commands={{
-          patch: (patch) => paneSync?.setSyncedSettings?.(patch as PlotSettings),
-          reset: resetSettings,
-        }}
-        invalidation="presentation"
-      />
-    );
-  }
-  return <Message text="Loading renderer…" />;
-}
-
-
-function browserRenderEnvironment(): RenderEnvironment {
-  return {
-    webgpu: typeof navigator !== "undefined" && "gpu" in navigator,
-    webgl2: typeof WebGL2RenderingContext !== "undefined",
-    pixelRatio: typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1,
-  };
-}
-
-type DiffLeafSpec = ImageComparisonHostInput;
-
 /** The lifted compare view-mode state a compare node's `NodeDispatch` owns and
  *  threads to the unified pane via `compareSource` — hoisted so it survives the
  *  mode-switch op-swap and the stacked flip (the reused-instance control state). */
@@ -731,7 +387,7 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
 /**
  * Dispatch on `node.kind`, INSIDE the pane's `PlotCell` (so it can read
  * the pane's sync identity). Phase 3: a compare node in ANY mode (diff AND
- * split/blend) lowers to `ImageLeafView` with a synthesized image leaf + a resolved
+ * split/blend) lowers to `ImageHostAdapter` with a synthesized image leaf + a resolved
  * `compareSource` — the SAME component an image plot leaf renders — so every
  * image-compatible stack is homogeneous and a mode switch / stacked flip is a
  * source-swap on the reused pane (NO remount, no `CompositeMediaPane`/
@@ -744,14 +400,18 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
       // Grids are cheap layout — only their leaf/compare descendants gate.
       return <GridView node={node} path={path} />;
     case "plot":
-      if (node.type === "image") return <ImageCompatibleView node={node} />;
+      if (node.type === "image") {
+        return <LazyGate reservedHeight={reservedHeightOf(node.props)}><ImageNodeHost node={node} /></LazyGate>;
+      }
       return (
         <LazyGate reservedHeight={reservedHeightOf(node.props)}>
           <GenericLeafView node={node} />
         </LazyGate>
       );
     case "compare":
-      if (comparisonType(node) === "image") return <ImageCompatibleView node={node} />;
+      if (comparisonType(node) === "image") {
+        return <LazyGate reservedHeight={reservedHeightOf(node.props)}><ImageNodeHost node={node} /></LazyGate>;
+      }
       return <GenericComparisonView node={node} />;
     default:
       return <Message text={`unknown node kind "${(node as PlotNode).kind}"`} error />;
@@ -879,59 +539,6 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
       }}
       invalidation="presentation"
     />
-  );
-}
-
-/**
- * One stable React boundary for ordinary images and image comparisons. A stack
- * flip between them therefore updates the retained ImageLeafView/surface in place.
- */
-function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
-  const { shared } = useSharedPlot();
-  const paneSync = useContext(CellSettingsContext);
-  const inStackedGrid = useContext(InStackedGridContext);
-  const inOverlay = useContext(InFullscreenOverlayContext);
-  const control = useImageComparisonControl(
-    node,
-    paneSync?.syncedSettings,
-    paneSync?.setSyncedSettings,
-  );
-  if (node.kind === "plot") {
-    return (
-      <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-        <ImageLeafView node={node} />
-      </LazyGate>
-    );
-  }
-  let synth;
-  try {
-    synth = synthDiffLeafOf(node);
-  } catch (error) {
-    return <Message text={error instanceof Error ? error.message : String(error)} error />;
-  }
-  const diffSpec: DiffLeafSpec = {
-    node,
-    mode: control.viewMode,
-    comparisonOperationId: control.comparisonOperationId,
-    colormap: (paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
-      (defaultSettingsForNode(node, shared)["image.encoding"] as CompareSource["colormap"] | undefined),
-    splitPosition: control.splitPos,
-    align: synth.align,
-    fit: synth.fit,
-    referenceLabel: synth.referenceLabel,
-    foregroundLabel: synth.foregroundLabel,
-    inStackedGrid,
-    inOverlay,
-    onComparisonOperationChange: control.setComparisonOperation,
-    onCompareModeChange: control.setViewMode,
-    onSplitPositionChange: control.setSplitPos,
-    cellDefaults: defaultSettingsForNode(node, shared),
-    compareModified: control.modified,
-  };
-  return (
-    <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-      <ImageLeafView node={synth.leaf} diffSpec={diffSpec} />
-    </LazyGate>
   );
 }
 
