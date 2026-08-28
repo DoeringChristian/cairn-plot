@@ -1,21 +1,6 @@
-/**
- * The plot descriptor — the ONE input that drives the standalone plot bundle
- * (`plot-main.tsx`). It is renderer-props-shaped (design spec §4/§6): it names
- * a renderer, carries that renderer's non-data config `props`, and a `data`
- * spec the bootstrap resolves — through a pluggable `DataSource` — into the
- * renderer's data-contract props (§1).
- *
- * Source order (see `plot-main.tsx`):
- *  - LOCAL default: an inlined `<script type="application/cairn-plot+json">`
- *    blob on the page (self-contained, no URL param);
- *  - ENDPOINT: a `?src=`/`?sid=` URL param pointing at a descriptor the
- *    bootstrap fetches from the repo endpoint.
- *
- * LOCAL vs ENDPOINT is ONE branch in the resolve step: same descriptor shape,
- * same `RENDERER_MAP`, same renderers — only the `DataSource` differs.
- *
- * Phase C's Python emitter builds this exact shape; keep it and the Python
- * `PlotSpec` (Phase C) in lockstep.
+/** Resource resolution shared by plot definitions. The durable specification
+ * lives in `packages/spec`; this module only turns its data references into
+ * decoded content through the injected `DataSource`.
  */
 import {
   resolveImageArtifacts,
@@ -24,7 +9,7 @@ import {
   fetchVolumeArray,
   fetchBoxesArrays,
 } from "../plots/artifact-resolvers";
-import type { DataSource } from "../resources/data/data-source";
+import type { DataSource } from "./data/data-source";
 import { parseOverlay } from "../plots/image/overlay-metadata";
 import { parseNpy } from "../plots/transforms/index";
 import {
@@ -34,7 +19,7 @@ import {
   sniffFormat,
   resolveFinalUrl,
 } from "../plots/image/model/index";
-import { fetchImageBytes } from "../resources/fetch-image";
+import { fetchImageBytes } from "./fetch-image";
 import { floatPixelsFrom, floatValues } from "../plots/image/model/pixel-buffer.ts";
 import { describeExr } from "../plots/image/model/decoders/exr-describe";
 import { groupChannels, type ChannelGroup } from "../plots/image/model/channel-groups";

@@ -39,7 +39,7 @@ import {
   type RuntimeStoreEntry,
 } from "../resources/data/runtime-store";
 import { useEmitAutoHeight } from "./hooks/use-emit-auto-height";
-import { type PlotSpec } from "./spec-resolver";
+import { type PlotSpec } from "../resources/resolve-data";
 import { getReactPlotType } from "../plots/react-registry.ts";
 import { PlotSurface } from "./PlotSurface.tsx";
 import { createCairnPlot, type CairnPlot, type Mounter } from "../public/builder/index";

@@ -6,7 +6,7 @@
  * rules (`./validate`) and shaped by the same data contracts (`./shapers`,
  * `./data`) — so a JS-authored plot is identical to its Python twin.
  */
-import type { DataSpec, PlotNode } from "../../host/spec-resolver.ts";
+import type { DataSpec, PlotNode } from "../../resources/resolve-data.ts";
 import type { JsonValue } from "../../../../packages/spec/src/json.ts";
 import type { RuntimeStoreEntry } from "../../resources/data/runtime-store.ts";
 import { makeHandle, type Mounter, type PlotHandle } from "./handle.ts";

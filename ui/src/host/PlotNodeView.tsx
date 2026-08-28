@@ -26,7 +26,7 @@ import {
   type GridNode,
   type PlotLeafNode,
   type PlotNode,
-} from "./spec-resolver";
+} from "../resources/resolve-data";
 import { stackLabelFor } from "../layout/stack/StackedView";
 import { InStackedGridContext } from "../layout/stack/stack-context";
 import FullscreenOverlayShell, { InFullscreenOverlayContext } from "../primitives/components/FullscreenOverlayShell";

@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 
 import type { DataSource } from "../resources/data/data-source.ts";
 import type { PlotSettings } from "../settings/schema.ts";
-import type { SharedProps } from "./spec-resolver.ts";
+import type { SharedProps } from "../resources/resolve-data.ts";
 
 /** Host data shared by every node in one authored plot tree. */
 export interface SharedPlotCtx {

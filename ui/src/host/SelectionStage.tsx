@@ -43,7 +43,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { PlotNodeView } from "./PlotNodeView";
 import { CellSettingsContext, SharedPlotContext } from "./plot-context.ts";
 import { ChartFillContext } from "./standalone-helpers";
-import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./spec-resolver";
+import type { CompareNode, DataSpec, PlotNode, SharedProps } from "../resources/resolve-data";
 import type { DataSource } from "../resources/data/data-source";
 import {
   getGlobalSelectionStore,

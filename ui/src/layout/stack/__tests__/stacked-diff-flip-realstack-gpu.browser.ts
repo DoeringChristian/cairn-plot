@@ -45,7 +45,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/spec-resolver";
+import type { PlotSpec } from "../../../resources/resolve-data";
 import { getSharedWebGpuDevice } from "../../../plots/image/engine/webgpu/device-provider.ts";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import {
