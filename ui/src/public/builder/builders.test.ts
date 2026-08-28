@@ -165,7 +165,7 @@ test("builder rejects non-JSON values at the durable descriptor boundary", () =>
 test("builder colormap/tonemap/kernel sets match the contract", () => {
   const sorted = (xs: readonly string[]) => [...xs].sort();
   assert.deepEqual(sorted(CHART_COLORMAPS), sorted(contract.colormaps));
-  assert.deepEqual(sorted(IMAGE_COLORMAPS), sorted(["none", ...contract.colormaps]));
+  assert.deepEqual(sorted(IMAGE_COLORMAPS), sorted(contract.colormaps));
   assert.deepEqual(sorted(TONEMAP_OPERATORS), sorted(contract.tonemapOperators));
   assert.deepEqual(sorted(Object.keys(COMPARE_KERNEL_MODES)), sorted(contract.compareKernelPublicNames));
 });

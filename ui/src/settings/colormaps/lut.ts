@@ -32,7 +32,7 @@ export function buildLUT(stops: Array<[number, number, number]>): Uint8Array {
 //   - `ColormapName` (the TS union)            = `keyof typeof COLORMAP_STOPS`
 //   - `COLORMAP_NAMES` (the runtime name list) = `Object.keys(COLORMAP_STOPS)`
 //   - `COLORMAP_OPTIONS` (id+label menu list)  = names zipped with COLORMAP_LABELS
-//   - `types.ts` re-exports `ColormapName`; `Colormap = "none" | ColormapName`
+//   - `types.ts` re-exports `ColormapName` as `Colormap`
 //   - Python `_COLORMAPS` + the committed `schema/cairn-plot-contracts.json` are
 //     pinned to the SAME set (asserted by `contracts.test.ts` + a pytest).
 // Add a colormap by adding ONE entry here (+ its label below — the exhaustive

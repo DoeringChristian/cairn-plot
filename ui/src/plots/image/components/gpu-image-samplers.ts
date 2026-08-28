@@ -47,8 +47,8 @@ interface Cell<T> {
 export interface PixelSamplerInputs {
   hdrMode: boolean;
   naturalDims: { w: number; h: number } | null;
-  /** `"none"` or a colormap id — a false-colored SDR pixel prints one scalar line. */
-  sdrColormap: string;
+  /** Active LUT id, or null when a curve display operation is active. */
+  sdrColormap: string | null;
   /** The concrete diff kernel id (float sources auto-dispatch flip -> hdr-flip). */
   resolvedKernelId: string;
   /** Retained primary buffers (mutually exclusive by `hdrMode`). */
@@ -107,7 +107,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
       // A false-colored (colormap) pixel prints one untinted scalar line; an RGB
       // pixel ALWAYS prints three channel lines, even when the channels are equal
       // (a gray pixel is still RGB — never collapse on value equality).
-      const single = sdrColormap !== "none";
+      const single = sdrColormap != null;
       return buildChannelSample(single ? [r] : [r, g, b], "uint8", notation);
     },
     [hdrMode, naturalDims, sdrColormap, hdrDataRef, sdrImageDataRef],

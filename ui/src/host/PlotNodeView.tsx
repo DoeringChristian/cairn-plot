@@ -913,9 +913,8 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
     node,
     mode: control.viewMode,
     diffKernel: control.diffKernel,
-    colormap: ((paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
-      (defaultSettingsForNode(node, shared)["image.encoding"] as CompareSource["colormap"] | undefined) ??
-      "none") as CompareSource["colormap"],
+    colormap: (paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
+      (defaultSettingsForNode(node, shared)["image.encoding"] as CompareSource["colormap"] | undefined),
     splitPosition: control.splitPos,
     align: synth.align,
     fit: synth.fit,

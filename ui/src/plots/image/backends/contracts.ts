@@ -78,13 +78,13 @@ export interface HdrImageProps {
    *  = raw browser-clipped). Seeds the pane's PEAK slider; unset → the pane default
    *  (4 on an engaged HDR surface). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
   peak?: number;
-  /** Authored false-color colormap for the FLOAT surface (`"none"` or a LUT id).
+  /** Optional authored false-color LUT for the FLOAT surface.
    *  The unified float pipeline runs a named colormap through the GPU/CPU LUT
    *  family on the scalar channel (a k>1 sample is reduced first), so a float
    *  scalar authored with `colormap=` seeds the DISPLAY encoding to that LUT —
    *  exactly as the 8-bit path does via {@link SdrImageProps.colormap}. Threaded
    *  through {@link useLegacyImageProps} so `GpuImagePane`/`CpuImagePane` read it
-   *  as `propColormap`. Unset ⇒ `"none"` (plain-grayscale scalar / light RGB). */
+   *  as `propColormap`. Unset leaves the display-operation default in effect. */
   colormap?: Colormap;
   showAxes?: boolean;
   label?: string;
@@ -312,8 +312,8 @@ export interface CompareSource {
   inStackedGrid?: boolean;
   /** True when this compare pane is inside a FULLSCREEN overlay (see above). */
   inOverlay?: boolean;
-  /** Colormap for the diff display (a display-encoding/colormap id, or `"none"`
-   *  for raw per-channel error). `null`/absent uses the shared diff default.
+  /** Optional authored display operation for the comparison. Absence uses the
+   *  shared Linear default.
    *  Kernel changes do not alter it. */
   colormap?: Colormap | null;
   /** Alignment anchor for mismatched-size operands (ignored under `fit:"fill"`). */

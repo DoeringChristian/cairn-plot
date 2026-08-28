@@ -8,8 +8,8 @@
  * them into ONE arity-gated DISPLAY menu (`displayToolbarButton`) driven by the
  * `image/encodings` registry, plus a hook (`usePaneEncoding`) that projects the
  * viewport's SINGLE `encoding` id: selecting a colormap LUT deactivates the curve
- * and vice-versa STRUCTURALLY (no more `colormap==="none" ? [...tonemap] : []`
- * per-pane conditionals). Mutable state remains in the viewport store.
+ * and vice-versa structurally. Mutable state remains in the surface settings
+ * store.
  *
  * ## Arity gating (`resolveDisplayEncodingIds`)
  *   - `mode:"arity"` (the FLOAT/HDR path, which KNOWS its channel count from the
@@ -164,8 +164,9 @@ export interface PaneEncodingConfig {
   arity: number;
   /** Ordered curve/remap ids the pane can render (may include `"normal"`). */
   curveSet: readonly string[];
-  /** Descriptor colormap seed (`"none"` or a LUT id). */
-  propColormap: string;
+  /** Optional authored LUT seed. Absence falls back to the authored/default
+   * display operation; it is not itself a display operation. */
+  propColormap: string | null | undefined;
   /** Descriptor tone-map seed (a canonical curve id or undefined). */
   propTonemap: string | null | undefined;
   /** Pane-specific default-curve resolver from `propTonemap` (HDR uses
@@ -185,8 +186,8 @@ export interface PaneEncoding {
   encodingId: string;
   /** `true` when the active encoding is a colormap LUT. */
   isLut: boolean;
-  /** Derived colormap value for the render/back-compat sync (`"none"` or a LUT id). */
-  colormap: string;
+  /** Derived LUT id when the active operation uses one. */
+  colormap: string | null;
   /** Derived curve id for the render/back-compat sync (the active curve, or the
    *  default curve when a LUT is active). */
   curveId: string;
@@ -224,8 +225,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const seedFor = useCallback(
     (a: number): string => {
       const avail = idsFor(a);
-      const seedIsLut =
-        !!propColormap && propColormap !== "none" && avail.lutIds.includes(propColormap);
+      const seedIsLut = !!propColormap && avail.lutIds.includes(propColormap);
       // "both set → colormap wins for scalars": lut is only in `lutIds` when the
       // arity permits it, so this already scopes the colormap win to scalars.
       return seedIsLut ? propColormap : pickDefaultCurve(avail);
@@ -246,7 +246,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const activeEncoding = getEncoding(encodingId);
   const isLut = activeEncoding?.kind === "lut";
   const curveId = isLut ? pickDefaultCurve(ids) : encodingId;
-  const colormap = isLut ? encodingId : "none";
+  const colormap = isLut ? encodingId : null;
   const encodingModified = encodingId !== seedFor(arity);
   const hasParam = useCallback(
     (name: string) => !!getEncoding(encodingId)?.params.includes(name as never),

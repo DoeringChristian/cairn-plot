@@ -161,7 +161,7 @@ export function tonemapToImageData(
   exposure: number,
   gamma?: number,
   offset: number = 0,
-  colormap: string = "none",
+  colormap: string | null = null,
   // DATA-encoding norm + bounds (Phase 4) — the colormap-only extras. `norm`
   // reshapes the LUT index (linear/log/power; `normExponent` is the power
   // exponent); `colorMin`/`colorMax` (both set) engage the min/max BOUNDS skin
@@ -181,7 +181,7 @@ export function tonemapToImageData(
   // TURBO false-color (the tev-exact follow-up) indexes the bound turbo table at
   // tev's FIXED log2 mapping (`turboDataIndex`) instead of `computeDataIndex`, and
   // defaults `reduce` to MEAN (tev averages RGB) regardless of k.
-  const turboCmap = colormap !== "none" && !!getEncoding(colormap)?.turbo;
+  const turboCmap = colormap != null && !!getEncoding(colormap)?.turbo;
   const reduceMode: ReduceMode = reduce ?? (turboCmap ? "mean" : defaultReduceMode(c));
   // COLORMAP (LUT family, CPU twin — Phase 2/4): when a colormap is active the
   // SCALAR channel (channel 0) indexes the colormap LUT and the DISPLAY color is
@@ -195,8 +195,8 @@ export function tonemapToImageData(
   // UNCLAMPED) → SHARED output-encode (like a curve), NOT a baked-sRGB LUT sample.
   // This CPU fallback writes an 8-bit ImageData, so |v|>1 clamps here (the extended
   // >1 survival is the GPU/HDR-surface path); |v|<=1 matches the GPU exactly.
-  const analyticCmap = colormap !== "none" && !!getEncoding(colormap)?.analytic;
-  const cmapLut = colormap !== "none" && !analyticCmap ? getColormapLUT(colormap as never) : null;
+  const analyticCmap = colormap != null && !!getEncoding(colormap)?.analytic;
+  const cmapLut = colormap != null && !analyticCmap ? getColormapLUT(colormap as never) : null;
   // TURBO bakes its own FIXED index (`turboDataIndex`), bypassing the norm/bounds
   // path — so its params (norm/bounds) are inert on this branch.
   const cmapBoundsOn =
@@ -404,7 +404,7 @@ function CpuSdrImagePane(
     isBaseline = false,
     diffMode = "none",
     interpolation = "auto",
-    colormap: colormapProp = "none",
+    colormap: colormapProp,
     tonemap: tonemapProp,
     gamma: gammaProp,
     showAxes = false,
@@ -456,7 +456,7 @@ function CpuSdrImagePane(
     // The settings store rules when present; picks publish and flow back down.
     settings: synced,
   });
-  const colormap = enc.colormap as Colormap;
+  const colormap = enc.colormap as Colormap | null;
   const sdrTransfer = enc.curveId as TonemapOperator;
   const gammaSeed = gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT;
   // γ resolves at RENDER: store value > descriptor seed (the one lookup).
@@ -559,7 +559,7 @@ function CpuSdrImagePane(
 
   const isDiffActive = diffMode !== "none" && baselineUrl != null;
   const useFalseColor =
-    colormap !== "none" &&
+    colormap != null &&
     !showDiff &&
     !(isBaseline && isDiffActive) &&
     imageUrl != null;
@@ -602,7 +602,7 @@ function CpuSdrImagePane(
       const cmapMode = resolveColormapMode(colormap);
       const mapped = applyColormap(
         src,
-        colormap as Exclude<Colormap, "none">,
+        colormap,
         cmapMode,
       );
       setCachedImageData(cacheKey, mapped);
@@ -698,7 +698,7 @@ function CpuSdrImagePane(
       // value IS a single scalar. An RGB pixel ALWAYS prints three channel-tinted
       // lines, even when the channels happen to be equal (a bright/gray pixel is
       // still RGB — do NOT collapse it to one value on value equality).
-      const single = colormap !== "none";
+      const single = colormap != null;
       return buildChannelSample(single ? [r] : [r, g, b], "uint8", notation);
     },
     [colormap],
@@ -757,8 +757,8 @@ function CpuSdrImagePane(
         ? "signed"
         : "positive";
       const gpuLut =
-        colormap !== "none"
-          ? getColormapLUT(colormap as Exclude<Colormap, "none">)
+        colormap != null
+          ? getColormapLUT(colormap)
           : null;
       const gpuOpts = {
         diffMode: diffMode as DiffMode,
@@ -799,10 +799,10 @@ function CpuSdrImagePane(
         otherData,
         diffMode as DiffMode,
       );
-      if (colormap !== "none") {
+      if (colormap != null) {
         diffData = applyColormap(
           diffData,
-          colormap as Exclude<Colormap, "none">,
+          colormap,
           cmapMode,
         );
       }
@@ -1090,8 +1090,8 @@ function CpuHdrImagePane(
   // descriptor `tonemap=` coerced to an SDR operator (the CPU pane tone-maps to
   // an 8-bit ImageData — "extended" is never offered); a colormap `colormap=`
   // wins the seed for a scalar source. HOME restores the authored seed.
-  const propColormap: Colormap =
-    (props as unknown as { colormap?: Colormap }).colormap ?? "none";
+  const propColormap: Colormap | null =
+    (props as unknown as { colormap?: Colormap }).colormap ?? null;
   const sourceArity = shapeDims(hdr.shape).c;
   const resolveDefaultCurve = useCallback(
     (t: string | null | undefined) => resolveDisplayOperator(t ?? undefined),
@@ -1274,7 +1274,7 @@ function CpuHdrImagePane(
       // A colormapped scalar prints ONE value (its false-color display is a
       // single scalar), like the SDR colormap pane.
       const values =
-        c === 1 || colormap !== "none"
+        c === 1 || colormap != null
           ? [readV(base)]
           : [readV(base), readV(base + 1), readV(base + 2)];
       return buildChannelSample(values, "unit", notation);

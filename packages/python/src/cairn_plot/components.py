@@ -113,24 +113,9 @@ def _check_colormap(value: str) -> str:
     return value
 
 
-# The image / compare colormap set = the named ramps PLUS the ``"none"`` raw /
-# grayscale passthrough (mirrors the TS toolbar `COLORMAP_MENU_OPTIONS`, which
-# prepends `"none"` to the canonical `COLORMAP_OPTIONS`). Charts always need a
-# real ramp so they use ``_check_colormap`` (no ``"none"``); an image / diff pane
-# may show the raw pixels, so ``"none"`` is valid there.
-_IMAGE_COLORMAPS = ("none", *_COLORMAPS)
-
-
 def _check_image_colormap(value: str) -> str:
-    """Validate an image / compare ``colormap`` kwarg against the named ramps +
-    the ``"none"`` passthrough, raising a clear ``ValueError`` on an unknown
-    name. Used for ``cp.Image``/``cp.Compare`` (charts use ``_check_colormap``).
-    """
-    if value not in _IMAGE_COLORMAPS:
-        raise ValueError(
-            f"colormap must be one of {_IMAGE_COLORMAPS!r}, got {value!r}"
-        )
-    return value
+    """Validate an image / comparison colormap against the named ramps."""
+    return _check_colormap(value)
 
 
 # The compare compositor's INTERNAL descriptor modes — each lowers to a
@@ -783,7 +768,7 @@ def _image_display_props(
             "flipSign": bool(flip_sign) if flip_sign is not None else False,
         }
     if colormap is not None:
-        # Validated through the SAME canonical set the charts use (+ "none"),
+        # Validated through the same canonical set the charts use,
         # so cp.Image/cp.Compare can't silently accept a bogus colormap name
         # that the charts reject.
         props["colormap"] = _check_image_colormap(colormap)

@@ -62,10 +62,9 @@ export type DiffMode =
 // `colormaps/lut.ts`'s `COLORMAP_STOPS` (single source of truth) and re-exported
 // here (type-only, erased at build — no runtime dependency on lut.ts) so the
 // plot backends can keep importing it from `../types`.
-// `Colormap` adds the image-only `"none"` raw/grayscale passthrough on top.
 export type { ColormapName } from "../settings/colormaps/lut";
 import type { ColormapName } from "../settings/colormaps/lut";
-export type Colormap = "none" | ColormapName;
+export type Colormap = ColormapName;
 export type Interpolation = "auto" | "pixelated" | "crisp-edges";
 // The old per-card "compare mode" enum (side-by-side | split | blend) was
 // replaced by the unified media-compare/mode.ts MediaCompareModeKind

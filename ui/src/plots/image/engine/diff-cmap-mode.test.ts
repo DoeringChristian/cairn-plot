@@ -30,10 +30,9 @@ test("unit range + DIVERGING colormap keeps the upper-half midpoint ('positive')
   assert.equal(resolveDiffCmapMode("unit", "red-green"), "positive");
 });
 
-test("unit range + no colormap defaults to 'linear' (moot: no LUT applied)", () => {
+test("unit range + non-LUT display operation defaults to 'linear' (moot: no LUT applied)", () => {
   assert.equal(resolveDiffCmapMode("unit", null), "linear");
   assert.equal(resolveDiffCmapMode("unit", undefined), "linear");
-  assert.equal(resolveDiffCmapMode("unit", "none"), "linear");
 });
 
 test("resolveColormapMode: the shared sequential-vs-diverging rule", () => {
@@ -44,11 +43,10 @@ test("resolveColormapMode: the shared sequential-vs-diverging rule", () => {
   assert.equal(resolveColormapMode("plasma"), "linear");
   assert.equal(resolveColormapMode(null), "linear");
   assert.equal(resolveColormapMode(undefined), "linear");
-  assert.equal(resolveColormapMode("none"), "linear");
 });
 
 test("resolveDiffCmapMode's unit branch matches resolveColormapMode", () => {
-  for (const cmap of ["turbo", "plasma", "magma", "red-blue", "red-green", "none", null]) {
+  for (const cmap of ["turbo", "plasma", "magma", "red-blue", "red-green", null]) {
     assert.equal(resolveDiffCmapMode("unit", cmap), resolveColormapMode(cmap));
   }
 });

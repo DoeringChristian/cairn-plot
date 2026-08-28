@@ -32,8 +32,8 @@ export type DiffCmapMode = "linear" | "signed" | "positive";
 
 /**
  * Decide the diff colormap index mode from the kernel's `displayRange` and the
- * colormap name (`null`/`"none"` = no LUT; the returned mode is then moot but
- * still well-defined). See the module doc for the full rationale.
+ * colormap name. `null` means that the active display operation is not
+ * LUT-backed; the returned mode is then moot but remains well-defined.
  */
 export function resolveDiffCmapMode(
   displayRange: DisplayRange,
@@ -56,7 +56,7 @@ export function resolveDiffCmapMode(
  * neutral midpoint); a SEQUENTIAL map indexes the full ramp linearly
  * (`"linear"`). Shared by `resolveDiffCmapMode`'s unit branch (GPU diff blit)
  * and the CPU false-color / diff paths (`applyColormap`'s `mode`), so the two
- * pipelines never disagree. `null`/`"none"`/unknown → `"linear"`.
+ * pipelines never disagree. `null`/unknown → `"linear"`.
  */
 export function resolveColormapMode(
   colormapName: string | null | undefined,

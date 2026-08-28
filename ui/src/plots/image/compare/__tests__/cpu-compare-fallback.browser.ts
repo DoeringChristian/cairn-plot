@@ -75,7 +75,6 @@ async function run(): Promise<boolean> {
     imageUrl: null as string | null,
     baselineUrl: null as string | null,
     diffSubmode: "absolute" as DiffMode,
-    colormap: "none" as const,
     interpolation: "auto" as const,
     zoom: 1,
     pan: { x: 0, y: 0 },

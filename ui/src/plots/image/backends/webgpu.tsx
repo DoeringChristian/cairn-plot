@@ -544,7 +544,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // its scalar channel (the channel selector's scalar isolations — layer "Z",
   // "diffuse.G" — become colormappable). An absent prop (the common HDR case)
   // reads `"none"`; the toolbar COLORMAP menu / sync bus then drive it view-local.
-  const propColormap: Colormap = (props as SdrImageProps).colormap ?? "none";
+  const propColormap: Colormap | null = (props as SdrImageProps).colormap ?? null;
   const propTonemap = hdrMode
     ? (props as HdrImageProps).tonemap
     : (props as SdrImageProps).tonemap;
@@ -572,7 +572,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // -----------------------------------------------------------------------
   const diffSeedColormap = ((): Colormap | null => {
     const c = compareSource?.colormap;
-    if (c == null || c === "none") return null;
+    if (c == null) return null;
     return c;
   })();
   // The diff KERNEL (which error metric) is a per-VIEWPORT content-op choice OWNED
@@ -655,10 +655,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // branches on image/compare/stack state.
   const resetSettings = () => backendProps.resetSettings?.();
   // Derived back-compat values the render pipeline / sync already consume: the
-  // colormap ("none" or a LUT id) and the curve id in effect. Split per path so
+  // optional authored colormap and the curve id in effect. Split per path so
   // each path's "no colormap" condition (`sdrPlain`) is exact.
-  const sdrColormap: Colormap = hdrMode ? "none" : (enc.colormap as Colormap);
-  const hdrColormap: Colormap = hdrMode ? (enc.colormap as Colormap) : "none";
+  const sdrColormap: Colormap | null = hdrMode ? null : (enc.colormap as Colormap | null);
+  const hdrColormap: Colormap | null = hdrMode ? (enc.colormap as Colormap | null) : null;
   const effectiveTonemap: TonemapOperator = enc.curveId as TonemapOperator;
   // PEAK (HDR ceiling) gates off the ACTIVE encoding's param MANIFEST — like
   // γ / EV / OFF. Every curve declares `peak` (each respects P as its ceiling on
@@ -677,7 +677,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // NORM/BOUNDS pickers. Real tone-mappers (reinhard/aces) stay on the curve path —
   // they compress highlights (a LIGHT concept), so a scalar keeps them selectable.
   const scalarNoneData =
-    hdrMode && sourceArity === 1 && hdrColormap === "none" && NONE_GRAY_CURVES.has(effectiveTonemap);
+    hdrMode && sourceArity === 1 && hdrColormap == null && NONE_GRAY_CURVES.has(effectiveTonemap);
 
   // PEAK white (×SDR white) — the UNIFIED HDR MODE control. On an engaged HDR
   // surface it is ALWAYS shown and every operator respects it as its ceiling `P`
@@ -946,7 +946,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         // display-p3 extended surface (which would shift its colors toward P3) is
         // suppressed. A plain 8-bit source (light) engages; the render still forces
         // P=1 / hdrOut:false whenever the surface did NOT engage (resolveRenderTonemap).
-        const sourceIsLight = hdrMode || propColormap === "none";
+        const sourceIsLight = hdrMode || propColormap == null;
         const useHdr =
           browserHasExtendedToneMapping && hasHighDynamicRangeDisplay && sourceIsLight;
         useHdrRef.current = useHdr;
@@ -1121,7 +1121,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // COMPARE mode uploads the RAW source (diff samples raw `a`/`b`; a compositor
     // composites raw light) — never a CPU false-color, which is the single-image
     // display convenience only.
-    const colormap = hasCompare ? "none" : sdrColormap;
+    const colormap = hasCompare ? null : sdrColormap;
     if (!imageUrl) {
       sdrImageDataRef.current = null;
       appliedPrimaryIdRef.current = `img:`;
@@ -1158,7 +1158,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       setPixelDataVersion((v) => v + 1);
       setUploadVersion((v) => v + 1);
     };
-    // FLIP-BACK / PAINT-ATOMIC FAST PATH (colormap "none" — a raw source with no
+    // FLIP-BACK / PAINT-ATOMIC FAST PATH (no authored colormap — a raw source with no
     // CPU false-color, i.e. every compare primary AND every plain non-colormapped
     // image): if the decode is already resident, bind SYNCHRONOUSLY so the target
     // presents on THIS commit with no async gap. In a `useLayoutEffect` (below)
@@ -1166,8 +1166,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // slot flip renders pre-paint (no one-frame stale flash). The plain-image case
     // matters for the diff→image direction: without it the image slot's primary
     // uploads async and the diff frame is held for one paint. A colormapped image
-    // (`colormap !== "none"`) keeps its async bake below (unchanged).
-    if (colormap === "none") {
+    // (an authored colormap is present) keeps its async bake below (unchanged).
+    if (colormap == null) {
       const raw = getCachedLoadedImageData(imageUrl);
       if (raw) {
         applySdr(raw, raw, p);
@@ -1178,7 +1178,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     loadImageData(imageUrl).then((raw) => {
       if (cancelled || !raw) return;
       let display = raw;
-      if (colormap !== "none") {
+      if (colormap != null) {
         // Exposure/offset are folded into the LUT INDEX here (before the LUT),
         // so the toolbar sliders change colormap SENSITIVITY — matching the GPU
         // diff blit. They enter the cache key so a bake is reused per EV/offset.
@@ -1190,7 +1190,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           const cmapMode = resolveColormapMode(colormap);
           display = applyColormap(
             raw,
-            colormap as Exclude<Colormap, "none">,
+            colormap,
             cmapMode,
             displayEV,
             displayOffset,
@@ -1352,7 +1352,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // The plain (non-colormap) SDR path runs the tev display-transfer pipeline
   // (sRGB-DECODE → exposure → operator → encode); a colormapped SDR image is
   // already false-colored / display-ready, so it stays a raw passthrough.
-  const sdrPlain = !hdrMode && sdrColormap === "none";
+  const sdrPlain = !hdrMode && sdrColormap == null;
 
   // ----------------------------------------------------------------------
   // THE RENDER SNAPSHOT — assembled ONCE from the current commit's props and the
@@ -1524,7 +1524,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       const isAnalytic = !!encEntry?.analytic;
       const isTurbo = !!encEntry?.turbo;
       const lut =
-        encEntry.needsLut ? colormapFloatLUT((encEntry.lutName ?? encEntry.id) as Exclude<Colormap, "none">) : undefined;
+        encEntry.needsLut ? colormapFloatLUT((encEntry.lutName ?? encEntry.id) as Colormap) : undefined;
       // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
       // colormap sensitivity, the resolved encoding face. `gamma` is LEFT UNSET so
       // the analytic branch encodes via sRGB OETF (a gamma of 1 would flip it to an
@@ -1608,7 +1608,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // short-circuits the tone-map operator + output-encode in the shader (the LUT
     // holds display sRGB), so operator/gamma/hdrOut are moot; the LUT table comes
     // from the shared `colormapFloatLUT`, the SAME the diff blit binds.
-    const hdrColormapActive = hdrMode && hdrColormap !== "none";
+    const hdrColormapActive = hdrMode && hdrColormap != null;
     // ANALYTIC colormap (tev-style signed red-green): computed color, no LUT bind.
     // Unlike the LUT branch (which bakes display sRGB → hdrOut:false), the analytic
     // color is SCENE-LINEAR and rides the SHARED output-encode, so it takes the
@@ -1646,7 +1646,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           operator: "linear",
           gamma: 1,
           isScalar: true,
-          colormap: colormapFloatLUT(hdrColormap as Exclude<Colormap, "none">),
+          colormap: colormapFloatLUT(hdrColormap),
           hdrOut: false,
           peak: rt.peak,
           srgbDecode: false,

@@ -36,7 +36,7 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     baselineUrl={p.baselineUrl ?? null}
     diffMode={p.diffMode ?? "none"}
     interpolation={p.interpolation ?? "auto"}
-    colormap={p.colormap ?? "none"}
+    colormap={p.colormap}
     tonemap={p.tonemap}
     exposure={p.exposure}
     offset={p.offset}

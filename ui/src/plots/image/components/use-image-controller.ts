@@ -40,7 +40,7 @@ import type { ToolbarConfig, ToolbarButtonSpec } from "../../../primitives/contr
 import { adaptiveMaxZoom, type ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
-import { getEncoding, listEncodingsByKind } from "../model/encodings/index";
+import { getEncoding } from "../model/encodings/index";
 import { SDR_DISPLAY_TRANSFER_OPERATORS } from "../model/tonemap";
 
 /** The registry label for an encoding id, falling back to the id itself. Both the
@@ -87,30 +87,6 @@ export function notationToolbarButton(
     onClick: () => onChange(notation === "int" ? "decimal" : "int"),
   };
 }
-
-/**
- * The registered colormaps as a toolbar-menu option list (diff-kernels
- * toolbar-selection track). DERIVED from the display-encoding registry's
- * `kind:"lut"` entries (`listEncodingsByKind("lut")`) — the SAME registry the
- * GPU LUT family binds — with the image-only `"none"` raw/grayscale passthrough
- * prepended, so this menu can never drift from the actual colormap set (the
- * tonemap menu's `SDR_TONEMAP_OPERATORS` precedent). `"none"` shows the raw image
- * / grayscale diff. Kept here (not in the toolbar primitive) so the panes' shared
- * image-controller module owns the one canonical list both single-image backends
- * and the compare pane's diff colormap draw from.
- */
-export const COLORMAP_MENU_OPTIONS: { id: string; label: string }[] = [
-  { id: "none", label: "None" },
-  ...listEncodingsByKind("lut").map((e) => ({ id: e.id, label: e.label })),
-];
-
-// NOTE: `colormapToolbarButton` / `tonemapToolbarButton` (+ the derived
-// `TONEMAP_MENU_OPTIONS`) were removed in Phase 4 (content-op unification) —
-// their last consumer was the deleted `GpuComparePane`. The single-image panes
-// use `displayTransferToolbarButton` (below) + `compareDisplayToolbarButton`
-// (`renderers/display-encoding.ts`); the compare diff colormap rides the SAME
-// `compareDisplayToolbarButton` on the unified pane. `COLORMAP_MENU_OPTIONS`
-// stays — `colormaps/lut.ts` consumes it.
 
 /**
  * The DISPLAY-TRANSFER options for an SDR / 8-bit image pane (menu order

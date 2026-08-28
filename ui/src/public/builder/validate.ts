@@ -16,9 +16,10 @@ import { SDR_TONEMAP_OPERATORS } from "../../plots/image/model/tonemap.ts";
  *  `_COLORMAPS`). */
 export const CHART_COLORMAPS: readonly string[] = COLORMAP_NAMES;
 
-/** Image/compare colormaps = the named ramps PLUS the `"none"` passthrough
- *  (mirrors Python `_IMAGE_COLORMAPS`). */
-export const IMAGE_COLORMAPS: readonly string[] = ["none", ...COLORMAP_NAMES];
+/** Named display colormaps accepted by image and comparison builders. An
+ * omitted colormap selects the normal display-operation default; omission is
+ * not represented by a synthetic colormap name. */
+export const IMAGE_COLORMAPS: readonly string[] = COLORMAP_NAMES;
 
 /** The canonical tone-map operator set — the UNIFIED 5-operator menu (mirrors
  *  Python `_TONEMAP_OPERATORS`, ↔ contract `tonemapOperators`). */
