@@ -32,6 +32,9 @@ Status: accepted design; implementation in progress
   groups, surfaces, submission, and readback. Keep image diff/histogram/deep
   extensions on the transitional legacy device instead of leaking them into
   the reusable contract.
+- [x] Move image comparison planning and operand resolution out of the recursive
+  host into `plots/image`, including baseline ordering, labels, stable leaf
+  identity, redirect/content keys, float precision, and comparison packing.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 

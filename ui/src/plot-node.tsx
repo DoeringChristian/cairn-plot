@@ -22,17 +22,8 @@ import React, {
 } from "react";
 import {
   Colorbar,
-  decodeImageSource,
-  parseNpy,
-  parseOverlay,
-  resolveFinalUrl,
-  resolveImageViewportItems,
   type ColormapName,
-  type CompareFloatSource,
-  type DataSource,
-  type ImageOverlayData,
 } from "./lib/cairn-plot";
-import { floatPixelsFrom, floatValues } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import type {
   CompareSource,
   DecodedSource,
@@ -95,6 +86,7 @@ import {
   normalizeImageComparisonPresentation,
   planImageComparison as synthDiffLeafOf,
 } from "./plots/image/comparison-plan.ts";
+import { resolveImageComparisonPair as resolveDiffPair } from "./plots/image/comparison-resolve.ts";
 import { usePlotSessionController } from "./state/session/session-context.ts";
 import { getGlobalSelectionStore } from "./lib/cairn-plot/selection/selection-store.ts";
 import { getRegisteredPane } from "./plot-selection-pane-registry.ts";
@@ -541,198 +533,7 @@ function browserRenderEnvironment(): RenderEnvironment {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Compare — two DataSpec frames composited into one pane. Resolves each frame
-// to a compare source (image → DataSource lookup or the `url` client-decode
-// seam, url → verbatim), picks the reference by `baselineIndex`, and delegates
-// to `CompositeMediaPane`. Wrapped in `ChartBox` so it fills a sized grid cell
-// (fill) or gets a default height standalone.
-//
-// Resolution is ASYNC (like `LeafView`): a `url`-bearing `image` side is
-// FETCHED + decoded (`decodeImage`), the SAME client-decode seam the image
-// LEAF uses — u8 → a browser-decodable data URL (the texture path), float
-// (`.exr`/float `.npy`) → a decoded `CompareFloatSource` the GPU pane uploads
-// as `rgba32float`. A side that resolves to NEITHER a url nor a float payload
-// surfaces the standard error state — never a silent blank pane (the bug this
-// fixes: a compare node whose sides were `url`-only `image` specs resolved to
-// null hashes and rendered nothing).
-// ---------------------------------------------------------------------------
-interface ResolvedCompareFrame {
-  url: string | null;
-  float?: CompareFloatSource;
-  overlay?: ImageOverlayData;
-}
-
-async function resolveFrame(
-  data: DataSpec,
-  source: DataSource,
-): Promise<ResolvedCompareFrame> {
-  if (data.kind === "url") {
-    // Resolve to the FINAL post-redirect URL so a live/redirecting query URL
-    // keys the GPU diff cache (via this frame's `url`) on the content-addressed
-    // digest, not the mutable request URL. Non-redirecting/`data:` URLs resolve
-    // to themselves; a CORS-blocked fetch falls back to the raw URL.
-    const url = await resolveFinalUrl(data.src);
-    return { url, overlay: parseOverlay(data.metadata) ?? undefined };
-  }
-  if (data.kind === "image") {
-    // Direct-URL CLIENT-DECODE seam — the compare mirror of the image LEAF's
-    // `image.url` path (`plot-descriptor.ts`): fetch the bytes and normalize
-    // through `decodeImage` (sniffed by Content-Type → URL ext → magic bytes).
-    // Float buffers (`.exr`/float `.npy`) become a `CompareFloatSource` (the
-    // GPU pane uploads them as `rgba32float`, diffing in true float values);
-    // uint8/browser-native buffers become an `imageUrl` PNG data URL (the
-    // existing texture path). CORS applies to the fetch.
-    if (data.url) {
-      // Shared decode-to-CompareFloatSource seam (viewport/data-sources.ts):
-      // fetch (redirect-following, final url = content key), sniff, and route
-      // float → a `CompareFloatSource` (`rgba*float`, true float diff) vs u8 →
-      // a PNG `data:` URL (the texture path). NOTE: no `deepLiveFlatten` here —
-      // the DEPTH slider is RESTRICTED to single-image panes for now, so a deep
-      // EXR in Compare shows the FULL composite (Z ≤ zMax), same as before.
-      const resolved = await decodeImageSource({ url: data.url });
-      const overlay = parseOverlay(data.metadata) ?? undefined;
-      return { url: resolved.url, float: resolved.float, overlay };
-    }
-    const res = resolveImageViewportItems(
-      {
-        hashes: [data.hash ?? null],
-        referenceHashes: [data.referenceHash ?? null],
-        metadata: [data.metadata ?? null],
-      },
-      source,
-      parseOverlay,
-    );
-    const item = res.items[0] ?? null;
-    return { url: item?.url ?? null, overlay: item?.overlay ?? undefined };
-  }
-  if (data.kind === "imghdr") {
-    // True float-HDR side (`cp.Image(hdr_float)`): fetch the float `.npy` from
-    // the store/endpoint and hand the GPU compare pane a `CompareFloatSource`
-    // (uploaded as `rgba32float`), mirroring the `.exr`/float-`.npy` URL path
-    // above. This is what makes `mode="flip"` auto-dispatch to HDR-FLIP on baked
-    // HDR arrays. The store hash is the stable diff-cache content key. No `meta`
-    // needed — shape/channels come from the npy header itself.
-    if (!data.hash) return { url: null };
-    // RUNTIME fast path (JS-authored compare): a float buffer registered by
-    // `window.cairnPlot` rides by reference into the GPU compare pane, skipping
-    // the `.npy` encode/parse. `f16-bits` (a `Uint16Array`) is expanded to
-    // float32 for the `rgba32float` upload the compare pane takes.
-    const rt = source.runtime?.(data.hash);
-    if (rt && rt.kind === "float") {
-      const height = rt.shape[0] ?? 0;
-      const width = rt.shape[1] ?? 0;
-      const channels = rt.shape.length >= 3 ? (rt.shape[2] ?? 1) : 1;
-      if (!width || !height) return { url: null };
-      return {
-        url: null,
-        // The SELF-DESCRIBING buffer keeps the runtime payload's representation
-        // intact (f16 bits stay half through to the rgba16float upload).
-        float: {
-          pixels: floatPixelsFrom(
-            rt.data instanceof Float32Array || rt.data instanceof Uint16Array
-              ? rt.data
-              : Float32Array.from(rt.data),
-            rt.precision,
-          ),
-          width,
-          height,
-          channels,
-          contentKey: data.hash,
-        },
-      };
-    }
-    const npy = parseNpy(await source.bytes(data.hash));
-    const height = npy.shape[0] ?? 0;
-    const width = npy.shape[1] ?? 0;
-    const channels = npy.shape.length >= 3 ? (npy.shape[2] ?? 1) : 1;
-    if (!width || !height) return { url: null };
-    return {
-      url: null,
-      float: {
-        pixels: floatValues(Float32Array.from(npy.data)),
-        width,
-        height,
-        channels,
-        contentKey: data.hash,
-      },
-    };
-  }
-  // `inline` frames have no image URL — compare needs images.
-  return { url: null };
-}
-
-/** The compare view modes the client can switch between (the flat Python enum,
- *  minus the kernel short names which ride on `diff` via `diffKernel`). The
- *  `blend` mode was removed (user ruling); a legacy `blend` aliases to `split`
- *  on read (see `normalizeCompareViewMode`). */
 type CompareViewMode = "split" | "diff";
-
-// ---------------------------------------------------------------------------
-// DIFF ROUTING (content-op unification, Phase 2c Landing 2). A compare node in
-// a DIFF mode lowers to the SAME `LeafView` → `image` renderer → `GpuImagePane`
-// family an image leaf uses, with a resolved `compareSource` (b = foreground),
-// so a `[image, diff]` stack is HOMOGENEOUS and flips are a source-swap (no
-// remount, no flicker). slide/blend still route to `CompareView` (the one
-// documented remaining remount). See {@link NodeDispatch}.
-// ---------------------------------------------------------------------------
-
-/** Convert a resolved compare frame into the unified dtype-tagged decoded
- *  source the image backend consumes (`float` → `FloatSource`, `url` →
- *  `Uint8Source`). Reuses the compare resolver for both operands so the diff
- *  decode is byte-identical to `GpuComparePane`'s. */
-function frameToSource(f: ResolvedCompareFrame): DecodedSource | null {
-  if (f.float) {
-    const { pixels, width, height, channels } = f.float;
-    // The SELF-DESCRIBING buffer travels whole — the representation can no
-    // longer be dropped in transit (the 2^14 "compare exposure" bug class;
-    // see image/pixel-buffer.ts).
-    return {
-      dtype: "float",
-      pixels,
-      shape: channels > 1 ? [height, width, channels] : [height, width],
-    };
-  }
-  if (f.url != null) return { dtype: "uint8", url: f.url };
-  return null;
-}
-
-/** Stable content-identity cache key for a resolved frame — a source URL or the
- *  float payload's content key, NOT the decoded bytes (survives remount). */
-function frameContentKey(f: ResolvedCompareFrame, fallback: string): string {
-  return f.float?.contentKey ?? f.url ?? fallback;
-}
-
-/** Resolve BOTH operands of a diff pair (reference = `refData`, foreground =
- *  `fgData`) and pack the decoded reference `source` + the foreground (`__diffB`)
- *  + content keys into the dataProps `LeafView` folds into a `compareSource`. ONE
- *  source of truth, shared by `LeafView`'s resolve effect AND the stacked PREFETCH
- *  (`GridView`), so a `[image, diff]` stack warms its `|diffpair` key on mount and
- *  the FIRST flip into the diff tab is a synchronous cache hit — the flip commit
- *  carries the full diff dataProps, so it is paint-atomic (no async hold, no
- *  outgoing-slot frame inside the incoming tab). SIGN convention: `source` =
- *  reference, `compareSource.b` = foreground (`diff = source − b`). */
-async function resolveDiffPair(
-  refData: DataSpec,
-  fgData: DataSpec,
-  source: DataSource,
-): Promise<Record<string, unknown>> {
-  const [refFrame, fgFrame] = await Promise.all([
-    resolveFrame(refData, source),
-    resolveFrame(fgData, source),
-  ]);
-  const refSource = frameToSource(refFrame);
-  const bSource = frameToSource(fgFrame);
-  if (!refSource) throw new Error("compare reference did not resolve to an image source");
-  if (!bSource) throw new Error("compare foreground did not resolve to an image source");
-  return {
-    source: refSource,
-    __diffB: bSource,
-    __diffContentKeyA: frameContentKey(refFrame, "diff:a"),
-    __diffContentKeyB: frameContentKey(fgFrame, "diff:b"),
-    __diffOverlay: fgFrame.overlay,
-  };
-}
 
 /** The LIVE compare settings + resolved foreground operand a compare node hands
  *  `LeafView` (Phase 3: EVERY mode — diff AND split — lowers here, so the

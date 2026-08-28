@@ -1,7 +1,7 @@
 /**
  * Regression pin — the compare operands' F16-PIPELINE tag must survive packing.
  *
- * `plot-node.tsx`'s `frameToSource` converts a resolved compare frame
+ * `plots/image/comparison-resolve.ts`'s `decodedSource` converts a resolved compare frame
  * (`CompareFloatSource`) into the `DecodedSource` the unified pane uploads. A
  * `"f16-bits"` payload is a `Uint16Array` of raw IEEE-754 binary16 BIT
  * PATTERNS; dropping the `precision` tag makes `decodedSourceToUpload` take
@@ -23,14 +23,17 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const plotNode = readFileSync(join(HERE, "..", "..", "..", "plot-node.tsx"), "utf8");
+const comparisonResolve = readFileSync(
+  join(HERE, "..", "..", "..", "plots", "image", "comparison-resolve.ts"),
+  "utf8",
+);
 
 test("frameToSource forwards the SELF-DESCRIBING pixels buffer", () => {
-  const fn = plotNode.slice(
-    plotNode.indexOf("function frameToSource"),
-    plotNode.indexOf("function frameContentKey"),
+  const fn = comparisonResolve.slice(
+    comparisonResolve.indexOf("function decodedSource"),
+    comparisonResolve.indexOf("function contentKey"),
   );
-  assert.ok(fn.length > 0, "frameToSource must exist in plot-node.tsx");
+  assert.ok(fn.length > 0, "decodedSource must exist in the image comparison resolver");
   // The original bug (an optional side-channel `precision` tag dropped in
   // transit) is now STRUCTURALLY impossible: the representation travels
   // inside the `pixels` buffer object (image/pixel-buffer.ts). This pin
@@ -38,7 +41,7 @@ test("frameToSource forwards the SELF-DESCRIBING pixels buffer", () => {
   assert.match(
     fn,
     /pixels/,
-    "frameToSource must forward the self-describing `pixels` buffer — the " +
+    "decodedSource must forward the self-describing `pixels` buffer — the " +
       "representation must travel WITH the bytes (the 2^14 compare-exposure bug class)",
   );
 });
