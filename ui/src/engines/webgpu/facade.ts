@@ -12,6 +12,7 @@ import type {
 export function createWebGpuEngineContext(device: Device): WebGpuEngineContext {
   return {
     capabilities: device.capabilities,
+    rhi: device,
     device,
     createSurface(canvas: HTMLCanvasElement, options: WebGpuSurfaceOptions = {}) {
       return device.createSurface(canvas, { hdr: options.hdr ?? false });

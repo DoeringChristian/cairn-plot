@@ -4,6 +4,18 @@ export type {
   WebGpuSurfaceOptions,
 } from "./contracts.ts";
 export { webGpuEngine } from "./facade.ts";
+export type {
+  RhiBindGroup,
+  RhiBindGroupEntry,
+  RhiCapabilities,
+  RhiComputePipeline,
+  RhiRenderPipeline,
+  RhiSampler,
+  RhiSurface,
+  RhiTexture,
+  RhiTextureFormat,
+  WebGpuRhi,
+} from "./rhi.ts";
 export {
   configureHDRSurface,
   configureSDRSurface,

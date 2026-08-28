@@ -26,4 +26,5 @@ test("WebGPU context centralizes surface creation and readback", async () => {
     ["read", surface],
   ]);
   assert.equal(context.capabilities.hdr, true);
+  assert.equal(context.rhi, device);
 });

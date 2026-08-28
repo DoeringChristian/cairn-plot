@@ -28,6 +28,10 @@ Status: accepted design; implementation in progress
 - [x] Introduce the WebGPU engine facade for capability discovery, shared
   acquisition, surface creation, readback, and recovery; route the production
   image pool through its acquired context.
+- [x] Define a plot-agnostic WebGPU RHI for textures, samplers, pipelines, bind
+  groups, surfaces, submission, and readback. Keep image diff/histogram/deep
+  extensions on the transitional legacy device instead of leaking them into
+  the reusable contract.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
