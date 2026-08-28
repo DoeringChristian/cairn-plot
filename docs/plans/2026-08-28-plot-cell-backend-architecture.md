@@ -410,3 +410,13 @@ state while an asynchronous load is pending.
 
 Every slice must pass TypeScript, unit tests, browser behavior harnesses, bundle
 checks, and Python descriptor/report tests before the next slice begins.
+
+## Completion status
+
+All ten migration steps are complete. The former `ui/src/lib/cairn-plot`
+namespace no longer exists: source ownership is expressed by the top-level
+`public`, `host`, `layout`, `state`, `plots`, `backends`, `engines`, `resources`,
+`settings`, `primitives`, `testing`, and `integration` directories. Core runtime
+code has no dependency on the Cairn dashboard compatibility seam. Cairn's
+standalone plot entry consumes `public/`; legacy dashboard composition is
+contained behind `integration/cairn-card.ts` rather than arbitrary legacy paths.

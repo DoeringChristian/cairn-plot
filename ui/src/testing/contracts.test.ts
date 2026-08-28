@@ -21,7 +21,7 @@
  * order-insensitive (set equality) — the JSON's order is documentation only.
  *
  *   node --experimental-strip-types --test \
- *     src/lib/cairn-plot/contracts.test.ts
+ *     src/testing/contracts.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

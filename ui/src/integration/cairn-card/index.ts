@@ -103,6 +103,6 @@ export {
 // in `three`/`PointCloudViewer`, and this repo's existing lazy-loading
 // boundary keeps that dependency out of the main bundle (see
 // CardRenderer.tsx's `lazy(() => import("../viewport/PointCloudVisualCard"))`).
-// Import it directly: `lib/cairn-plot/viewport/pointcloud-viewport`. Rollup
+// Import it directly: `plots/three/viewports/pointcloud`. Rollup
 // tree-shaking would likely elide an unused barrel re-export too, but this
 // avoids depending on that guarantee for a dependency this heavy.

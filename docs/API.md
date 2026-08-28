@@ -186,7 +186,7 @@ JS-provided data is registered in an in-memory `window.__cairnPlotRuntimeStore`
 precision }`). `createLocalDataSource` consults it **before** the base64 store, so
 the committed descriptor schema is untouched (a runtime hash is an opaque string).
 A float buffer routes straight into the `imagehdr` `hdr` prop by reference. See
-[`lib/cairn-plot/viewport/runtime-store.ts`](../ui/src/lib/cairn-plot/viewport/runtime-store.ts).
+[`resources/data/runtime-store.ts`](../ui/src/resources/data/runtime-store.ts).
 
 > Out of scope (follow-up): a tabs/selector container, and JS-side 3D data baking
 > (the 3D builders gate on the three addon but leave data baking to Python).
@@ -239,7 +239,7 @@ change over time — a server endpoint that `302`-redirects to a
 content-addressed blob (e.g. `/api/query?run=latest&tag=…` → `/api/artifacts/{digest}`).
 The image/diff caches key on the URL string, so before a URL reaches the panes
 it is resolved to its **final post-redirect URL** (`res.url`, the digest) via
-`resolveFinalUrl` (`lib/cairn-plot/image/final-url.ts`). Two "latest" resolutions
+`resolveFinalUrl` (`plots/image/model/final-url.ts`). Two "latest" resolutions
 that land on different digests therefore get different cache identities (no stale
 pixels); identical content across queries shares one digest (free dedup). A
 non-redirecting or `data:`/`blob:` URL resolves to itself (unchanged), and a
@@ -433,7 +433,7 @@ CPU HDR tone-map path both do); a colormapped SDR pane forces a raw passthrough,
 EV/offset don't apply there either. Deep-EXR depth sliders + region-select are
 **data-driven** (present only for a deep source), not host-menu controls.
 
-#### Half-precision (F16) HDR pipeline (`lib/cairn-plot/image/half.ts`)
+#### Half-precision (F16) HDR pipeline (`plots/image/model/half.ts`)
 An all-`HALF` EXR keeps its raw IEEE-754 **binary16 bit patterns** end-to-end
 instead of widening to f32 on decode. The float payload carries a
 `precision: "f32" | "f16-bits"` tag (`DecodedImage`, `HdrData`,
@@ -458,16 +458,16 @@ The prior `HdrGpuImagePaneProps` / `SdrGpuImagePaneProps` names and the
 `GpuImagePaneProps` / `ImageRenderProps` aliases were removed — use the canonical
 names above.
 
-### Pure library barrel (`lib/cairn-plot/index.ts`)
-The library barrel re-exports the pure renderers (`ScatterPlot`, `BarChart`,
+### Cairn dashboard integration barrel (`integration/cairn-card.ts`)
+This internal integration barrel re-exports the pure renderers (`ScatterPlot`, `BarChart`,
 `ScalarPlot`, `Heatmap`, `HistogramPlot`, `ParallelCoords`, `Table`,
 `PointCloudViewer`, `CpuImagePane`, `ImageOverlay`), the media-compare core, the
 viewport contract, colormaps, tonemap operators, transforms, and the image-backend
 contract above. (`Figure` is intentionally *not* re-exported here — import it from
-`renderers/Figure` so Plotly stays out of the eager chunk.) These are stable for
-in-repo composition and the `cairn` monorepo submodule consumer.
+`plots/figure/renderer/Figure` so Plotly stays out of the eager chunk.) This is a
+deliberate Cairn-dashboard compatibility seam; standalone consumers use `public/`.
 
-#### media-compare seams (`lib/cairn-plot/media-compare`)
+#### media-compare seams (`plots/image/compare`)
 The unified visual-media comparison core. A host card supplies the app bindings
 (react-query fetching, run/series identity, persistence); cairn-plot owns the
 renderer-shaped seams below, all reachable from the pure barrel:
@@ -498,7 +498,7 @@ renderer-shaped seams below, all reachable from the pure barrel:
   caller-supplied `render` callback per side). `OffscreenComparePanes` imports
   `three`, so its runtime value is **not** re-exported through the barrel (which is
   core-reachable, and core ships no three) — import it directly from
-  `media-compare/OffscreenComparePanes`; only its types cross the barrel.
+  `plots/image/compare/OffscreenComparePanes`; only its types cross the barrel.
 - **Cross-type bridge** — `hasForeignFrameBridge(objectType, loaders)` +
   `CrossTypeForeignFrame` (renders a foreign 3D type's reference off-screen to a
   `FrameSource` for image↔3D compare). The per-type loader registry is injected by
@@ -506,7 +506,7 @@ renderer-shaped seams below, all reachable from the pure barrel:
 - **Cross-type diff alignment** — `alignFrameSourcesForDiff` resamples + letterboxes
   two mismatched-size frames onto one raster before the pixel-diff pipeline.
 
-#### Viewport adapter — HDR float artifacts (`lib/cairn-plot/viewport/data-sources.ts`)
+#### Cairn card adapter — HDR float artifacts (`resources/data/data-sources.ts`)
 The image `ViewportModule` turns per-pane artifact hashes into render-ready
 `ImageViewportItem`s. Two resolvers share ONE decode seam:
 
@@ -536,7 +536,7 @@ callbacks `diffKernel` · `onDiffKernelChange` · `onCompareModeChange` ·
 `onRequestSide` (all new on `ViewportPaneProps`) so a host can persist the diff
 kernel choice.
 
-#### Auto image-interpolation threshold (`lib/cairn-plot/renderers/interp-auto.ts`)
+#### Auto image-interpolation threshold (`plots/image/components/interp-auto.ts`)
 Both image backends snap magnification to nearest/pixelated at the SAME zoom —
 once one source texel covers `PIXEL_VALUE_MIN_SCREEN_PX` screen px (the point
 `PixelValueOverlay` starts drawing per-pixel numbers). `GpuImagePane` flips its
