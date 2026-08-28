@@ -144,6 +144,7 @@ function walk(dir, out = []) {
 
 /**
  * @typedef {{ id:string, htmlPath:string, dir:string, urlPath:string,
+ *             query:string,
  *             sources:string[], selfDriving:boolean }} Harness
  */
 
@@ -162,6 +163,7 @@ function discoverHarnesses() {
     // (e.g. page-wide selection) is gated by CI just like the engine parity
     // proofs, unlike the gesture-dependent interaction harnesses.
     const selfDriving = /data-cairn-harness\s*=\s*["']self-driving["']/i.test(html);
+    const query = html.match(/data-cairn-harness-query\s*=\s*["']([^"']*)["']/i)?.[1] ?? "";
     // Every `<script ... src="./X.browser.bundle.js">` maps to source X.browser.ts
     const sources = [];
     for (const m of html.matchAll(
@@ -173,7 +175,7 @@ function discoverHarnesses() {
       sources.push(src);
     }
     const urlPath = "/" + relative(UI_ROOT, htmlPath).split("\\").join("/");
-    harnesses.push({ id, htmlPath, dir, urlPath, sources, selfDriving });
+    harnesses.push({ id, htmlPath, dir, urlPath, query, sources, selfDriving });
   }
   return harnesses;
 }
@@ -524,7 +526,7 @@ async function probeAdapter(cdp, baseUrl) {
 
 /** Drive one harness page to completion; poll #status until PASS/FAIL or timeout. */
 async function runHarness(cdp, baseUrl, harness) {
-  const url = baseUrl + harness.urlPath;
+  const url = baseUrl + harness.urlPath + (harness.query ? `?${harness.query}` : "");
   return withPage(cdp, url, async (sessionId) => {
     const start = Date.now();
     const poll = `(() => {

@@ -26,7 +26,7 @@
 // focusable (`tabindex=-1`, out of the tab order) so the focus path works for
 // keyboard users and tests.
 // ---------------------------------------------------------------------------
-import { useContext, useEffect } from "react";
+import { useContext, useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
 import { InStackedGridContext } from "../../../layout/stack/stack-context";
@@ -37,6 +37,10 @@ export function useSplitFlipKeys(
   onSplitPositionChange?: (pos: number) => void,
   opts?: { inStackedGrid?: boolean; inOverlay?: boolean },
 ): void {
+  // Persist hover across effect re-subscriptions. Controlled settings updates
+  // commonly replace the callback identity; a local boolean would forget an
+  // already-hovered pane after the first key press until the pointer moved.
+  const hoveredRef = useRef(false);
   // `inOverlay` / `inStackedGrid` are resolved from React context by CORE callers
   // (e.g. the CPU `MediaComparePane`). But the GPU `GpuComparePane` ships in a
   // SEPARATE bundle: its copy of these context objects is a DIFFERENT identity
@@ -66,17 +70,19 @@ export function useSplitFlipKeys(
     // whenever the split-change callback's identity does) does not reset
     // `hovered` to false mid-hover — otherwise a stationary pointer (no new
     // pointerenter) would silently stop the arrows working.
-    let hovered = false;
+    let hovered = hoveredRef.current;
     try {
-      hovered = el.matches(":hover");
+      hovered ||= el.matches(":hover");
     } catch {
       /* :hover unsupported — rely on pointerenter/leave below */
     }
     const onEnter = () => {
       hovered = true;
+      hoveredRef.current = true;
     };
     const onLeave = () => {
       hovered = false;
+      hoveredRef.current = false;
     };
     el.addEventListener("pointerenter", onEnter);
     el.addEventListener("pointerleave", onLeave);

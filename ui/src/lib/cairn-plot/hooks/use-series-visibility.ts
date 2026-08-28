@@ -68,7 +68,10 @@ export function useSeriesVisibility(keys: string[]): SeriesVisibility {
       const all = keysRef.current;
       const visible = all.filter((k) => !prev.has(k));
       // Already isolated to just this series → un-isolate (show all).
-      if (visible.length === 1 && visible[0] === key) {
+      // A browser emits click(s) before dblclick. If the isolated chip's paired
+      // click hid that final visible series, `visible` is empty by the time the
+      // dblclick handler runs; that is the same un-isolate intent.
+      if (visible.length === 0 || (visible.length === 1 && visible[0] === key)) {
         return new Set<string>();
       }
       // Otherwise hide everything except `key`.

@@ -78,9 +78,9 @@ async function main(): Promise<void> {
       "[2] set back to seed clears isModified");
 
     // (3) reset restores seed + clears modified
-    probe!.set("turbo");
+    probe!.set("magma");
     await wait(40);
-    gate(probe!.meta.isModified === true, "[3] set('turbo') → modified");
+    gate(probe!.meta.isModified === true, "[3] set('magma') → modified");
     probe!.meta.reset();
     await wait(40);
     gate(probe!.value === "turbo" && probe!.meta.isModified === false,

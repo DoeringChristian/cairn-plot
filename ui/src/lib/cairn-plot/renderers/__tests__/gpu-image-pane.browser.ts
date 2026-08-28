@@ -162,6 +162,7 @@ async function runSingleCase(): Promise<boolean> {
         zoom: viewport.zoom,
         pan: viewport.pan,
         onViewportChange,
+        resetViewportSettings: () => onViewportChange({ zoom: 1, pan: { x: 0, y: 0 } }),
         label: "gpu-image-pane-test",
       }),
     );
@@ -326,18 +327,16 @@ async function runParkAwareRenderCase(): Promise<boolean> {
   const buildHdrN = (): HdrData => ({ pixels: floatValues(new Float32Array(hdrValues)), shape: [4, 4], dtype: "<f4" });
   const operator = "srgb";
   const initialExposure = 0.2;
-  const newExposure = 1.7;
-
-  const setExposureFns: Array<(e: number) => void> = new Array(N);
+  const setSourceFns: Array<(hdr: HdrData) => void> = new Array(N);
   const roots: ReturnType<typeof createRoot>[] = [];
 
   function Pane({ index }: { index: number }) {
-    const [exposure, setExposure] = React.useState(initialExposure);
-    setExposureFns[index] = setExposure;
+    const [hdr, setHdr] = React.useState(buildHdrN);
+    setSourceFns[index] = setHdr;
     return h(GpuImagePane, {
-      source: hdrSource(buildHdrN()),
+      source: hdrSource(hdr),
       tonemap: operator,
-      exposure,
+      exposure: initialExposure,
       label: `park-pane-${index}`,
     });
   }
@@ -388,20 +387,32 @@ async function runParkAwareRenderCase(): Promise<boolean> {
     return false;
   }
 
-  // Trigger a RE-RENDER on the still-parked, still-visible pane (an exposure
-  // change) — the pool must transparently restore it before rendering.
-  setExposureFns[parkedIndex]!(newExposure);
-  await sleep(1000);
-
   const targetCanvas = canvases[parkedIndex]!;
-  const restoredLive = isCanvasLive(targetCanvas);
-  report(restoredLive, `[park-aware] pane[${parkedIndex}] restored to LIVE after its re-render request`);
-  ok = ok && restoredLive;
+  const before = await readbackCanvas(targetCanvas);
+
+  // Trigger a content update on the still-parked, still-visible pane. Authored
+  // settings props are mount seeds now, so mutating `exposure` here would test
+  // the deleted second settings owner rather than backend restoration.
+  const changed = buildHdrN();
+  const changedPixels = new Float32Array(hdrValues.length);
+  changedPixels.fill(0.8);
+  setSourceFns[parkedIndex]!({ ...changed, pixels: floatValues(changedPixels) });
+
+  // Residency may be shorter than a polling turn: restoring this pane can
+  // immediately rotate another visible pane through the soft cap. The durable
+  // contract is that the requested frame commits, so test the bitmap rather
+  // than an incidental post-render LRU snapshot.
+  let img = before;
+  const changedFrame = await waitFor(async () => {
+    img = await readbackCanvas(targetCanvas);
+    return img.data.some((value, index) => value !== before.data[index]);
+  }, 3000, 20);
+  report(changedFrame, `[park-aware] pane[${parkedIndex}] committed its updated frame after restore`);
+  ok = ok && changedFrame;
 
   // Checked structurally (not pixel-exact) — see this file's module doc note
   // on why (canvas-compositing color management can introduce small
   // non-deterministic differences).
-  const img = await readbackCanvas(targetCanvas);
   const nonBlank = isNonBlank(img);
   report(nonBlank, `[park-aware] pane[${parkedIndex}] re-rendered parked pane has non-blank content`);
   ok = ok && nonBlank;
