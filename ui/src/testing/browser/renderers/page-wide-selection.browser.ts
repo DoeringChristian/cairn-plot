@@ -29,7 +29,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec, PlotNode } from "../../../host/descriptor-resolver";
+import type { PlotSpec, PlotNode } from "../../../host/spec-resolver";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,
@@ -124,7 +124,7 @@ async function run(): Promise<boolean> {
   const mount = (divId: string, d: PlotSpec) => {
     const el = document.getElementById(divId)!;
     const root = createRoot(el);
-    root.render(createElement(PlotApp, { descriptor: d }));
+    root.render(createElement(PlotApp, { spec: d }));
     roots.push(root);
   };
   // THREE independent mounts (separate roots) — the gallery shape, not a grid.
@@ -232,7 +232,7 @@ async function run(): Promise<boolean> {
     },
   } as PlotSpec;
   const gridRoot = createRoot(document.getElementById("mount-c")!);
-  gridRoot.render(createElement(PlotApp, { descriptor: gridDesc }));
+  gridRoot.render(createElement(PlotApp, { spec: gridDesc }));
 
   const gridReady = await waitFor(() => frames().length === 4, 6000, 20);
   report(gridReady, `a 2×2 grid mounts four selectable cells (got ${frames().length})`);

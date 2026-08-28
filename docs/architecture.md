@@ -8,7 +8,7 @@ PlotSpec -> PlotHost -> layout -> PlotCell -> backend -> engine
 
 ## Durable specification
 
-`packages/spec` contains the one JSON-safe recursive descriptor shared by the
+`packages/spec` contains the one JSON-safe recursive specification shared by the
 Python builders, JavaScript builders, standalone reports and browser host. It
 does not contain cell ids, mounted state, decoded data, selections or GPU
 resources. A stacked grid describes several content children; layout interprets
@@ -49,7 +49,7 @@ Layout never interprets image, chart, table, or 3D semantics. See
 The supported browser API is `ui/src/public`:
 
 ```tsx
-<PlotHost descriptor={descriptor} dataSource={dataSource} />
+<PlotHost spec={spec} dataSource={dataSource} />
 ```
 
 The imperative `mountPlot` function mounts the same React host; it is not a
@@ -63,6 +63,6 @@ resource machinery remain private.
 - `ui`: the single browser implementation and public host.
 
 The former controller/plugin/React package experiment was removed because it
-did not drive production and duplicated the descriptor, settings and renderer
+did not drive production and duplicated the specification, settings and backend
 models. Optional figure and Three bundles install backends on core-owned typed
 definitions; there is no second renderer registry.

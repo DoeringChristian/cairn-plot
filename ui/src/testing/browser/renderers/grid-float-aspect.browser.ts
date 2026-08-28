@@ -30,7 +30,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { ContentAspectFrame } from "../../../layout/ContentAspectFrame";
 import { createHarness, sleep, waitFor } from "../../harness";
 
@@ -144,7 +144,7 @@ async function run(): Promise<boolean> {
     const el = document.getElementById("grid-host")!;
     el.style.cssText = "width:960px;background:#222";
     const rootB = createRoot(el);
-    rootB.render(createElement(PlotApp, { descriptor: gridDescriptor([[128, 64], [128, 64], [128, 64]]) }));
+    rootB.render(createElement(PlotApp, { spec: gridDescriptor([[128, 64], [128, 64], [128, 64]]) }));
     roots.push(rootB);
   }
   await waitFor(() => {
@@ -183,7 +183,7 @@ async function run(): Promise<boolean> {
     const el = document.getElementById("grid-host")!;
     el.style.cssText = "width:960px;background:#222";
     const rootC = createRoot(el);
-    rootC.render(createElement(PlotApp, { descriptor: gridDescriptor([[128, 64], [96, 96], [64, 128]]) }));
+    rootC.render(createElement(PlotApp, { spec: gridDescriptor([[128, 64], [96, 96], [64, 128]]) }));
     roots.push(rootC);
   }
   await waitFor(() => gridCells("grid-host").length >= 3 && cellBodies("grid-host").length >= 3, 6000, 20);
@@ -219,7 +219,7 @@ async function run(): Promise<boolean> {
     const el = document.getElementById("grid-host")!;
     el.style.cssText = "width:960px;background:#222";
     const rootD = createRoot(el);
-    rootD.render(createElement(PlotApp, { descriptor: gridDescriptor([[64, 512], [64, 512], [64, 512]]) }));
+    rootD.render(createElement(PlotApp, { spec: gridDescriptor([[64, 512], [64, 512], [64, 512]]) }));
     roots.push(rootD);
   }
   const CAP = window.innerHeight - 24; // matches VIEWPORT_HEIGHT_MARGIN

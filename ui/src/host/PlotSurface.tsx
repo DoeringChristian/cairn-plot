@@ -13,7 +13,7 @@ import type { PlotSession } from "../state/session/plot-session.ts";
 import { connectSessionPersistence, type SessionPersistence } from "../state/session/session-persistence.ts";
 
 export interface PlotSurfaceProps {
-  descriptor: PlotSpec;
+  spec: PlotSpec;
   dataSource: DataSource;
   className?: string;
   autoHeight?: boolean;
@@ -27,7 +27,7 @@ export interface PlotSurfaceProps {
 
 /** The one production host surface. Renderer registration is an entry concern. */
 export function PlotSurface({
-  descriptor,
+  spec,
   dataSource,
   className = "p-2",
   autoHeight = true,
@@ -44,7 +44,7 @@ export function PlotSurface({
     ownedControllerRef.current = createPlotSessionController(initialSession);
   }
   const controller = sessionController ?? ownedControllerRef.current!;
-  const topology = useMemo(() => compileSessionTopology(descriptor), [descriptor]);
+  const topology = useMemo(() => compileSessionTopology(spec), [spec]);
   useEffect(() => {
     controller.setTopology(topology);
   }, [controller, topology]);
@@ -63,7 +63,7 @@ export function PlotSurface({
     <div ref={containerRef} className={className}>
       <PlotSessionContext.Provider value={controller}>
         <SharedPlotContext.Provider value={{ source: dataSource, shared: undefined }}>
-          <PlotNodeView node={descriptor.root} />
+          <PlotNodeView node={spec.root} />
         </SharedPlotContext.Provider>
       </PlotSessionContext.Provider>
     </div>

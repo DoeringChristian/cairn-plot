@@ -2,11 +2,11 @@
  * The shared cairn-plot bootstrap (Phase B `PlotApp` + Phase C multi-mount).
  *
  * Phase B's `plot-main.tsx` auto-mounted ONE page-level `#cairn-plot-root` from
- * a single inline descriptor — right for the server `/plot` route, but a
+ * a single inline spec — right for the server `/plot` route, but a
  * notebook page (Phase C) carries MANY plots, each in its own `<div>`, each
- * with its own descriptor. So the mount logic is factored here and exposed as
+ * with its own spec. So the mount logic is factored here and exposed as
  * `window.__cairnPlotBootstrap(divId, descId)` (mount ONE div from the
- * descriptor in the `<script id=descId application/cairn-plot+json>` blob),
+ * spec in the `<script id=descId application/cairn-plot+json>` blob),
  * plus a tiny queue-drain so a Python-emitted page can enqueue mounts before
  * the bundle finishes loading (GA-style `push` shim).
  *
@@ -17,7 +17,7 @@
  *    IIFEs (`dist/plot-inline/core.iife.js` + optional addon IIFEs) Python
  *    inlines for the offline LOCAL default (no server, no external network).
  *
- * G1: the descriptor is a recursive TREE; `PlotApp` is now a thin root wrapper
+ * G1: the spec is a recursive TREE; `PlotApp` is now a thin root wrapper
  * that builds one `DataSource` and renders `<PlotNodeView>` under a
  * `SharedPlotContext` (see plot-node.tsx). The former flat single-renderer body
  * lives on there as `LeafView`.
@@ -39,14 +39,14 @@ import {
   type RuntimeStoreEntry,
 } from "../resources/data/runtime-store";
 import { useEmitAutoHeight } from "./hooks/use-emit-auto-height";
-import { type PlotSpec } from "./descriptor-resolver";
+import { type PlotSpec } from "./spec-resolver";
 import { getReactPlotType } from "../plots/react-registry.ts";
 import { PlotSurface } from "./PlotSurface.tsx";
 import { createCairnPlot, type CairnPlot, type Mounter } from "../public/builder/index";
 import { registerReactPlotBackends } from "../plots/react-registry.ts";
 
-const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
-const DESCRIPTOR_MIME = "application/cairn-plot+json";
+const SPEC_SCRIPT_ID = "__cairn_plot_descriptor__";
+const SPEC_MIME = "application/cairn-plot+json";
 
 type QueueEntry = [divId: string, descId: string];
 
@@ -80,7 +80,7 @@ declare global {
      */
     cairnPlot?: CairnPlot;
     /**
-     * Render a descriptor OBJECT (not a `<script>` blob) into `el`, registering
+     * Render a spec OBJECT (not a `<script>` blob) into `el`, registering
      * its base64 store + in-memory runtime entries first. The seam the JS builder
      * handles (`PlotHandle.mount`/`.toElement`) render through.
      */
@@ -89,12 +89,12 @@ declare global {
 }
 
 /**
- * Mount a descriptor OBJECT into `el` — the JS-builder counterpart to
+ * Mount a spec OBJECT into `el` — the JS-builder counterpart to
  * `mountOne` (which reads a DOM `<script>` blob). Registers the plot's base64
  * store + in-memory RUNTIME entries (JS data by reference) BEFORE rendering, so
  * `PlotApp`'s `createLocalDataSource` resolves both. Returns an `unmount` handle.
  */
-export const mountDescriptorObject: Mounter = (el, descriptor, data) => {
+export const mountSpecObject: Mounter = (el, spec, data) => {
   if (data.store) registerPlotStore(data.store as PlotStore);
   if (data.runtime && data.runtime.length) {
     registerRuntimeEntries(data.runtime as Array<[string, RuntimeStoreEntry]>);
@@ -102,7 +102,7 @@ export const mountDescriptorObject: Mounter = (el, descriptor, data) => {
   const root = ReactDOM.createRoot(el);
   root.render(
     <React.StrictMode>
-      <PlotApp descriptor={descriptor} />
+      <PlotApp spec={spec} />
     </React.StrictMode>,
   );
   return { unmount: () => root.unmount() };
@@ -115,20 +115,20 @@ export const mountDescriptorObject: Mounter = (el, descriptor, data) => {
  */
 export function installCairnPlotApi(): void {
   if (window.__cairnPlotMountObject) return;
-  window.__cairnPlotMountObject = mountDescriptorObject;
-  window.cairnPlot = createCairnPlot(mountDescriptorObject);
+  window.__cairnPlotMountObject = mountSpecObject;
+  window.cairnPlot = createCairnPlot(mountSpecObject);
 }
 
 /**
- * Read the plot descriptor for the page-level root (server `/plot` route).
+ * Read the plot spec for the page-level root (server `/plot` route).
  * LOCAL default: an inlined `<script application/cairn-plot+json>` blob; a
  * `?src=<url>` param the bootstrap fetches (ENDPOINT). Per-div notebook mounts
- * do NOT use this — they get their descriptor by id via `__cairnPlotBootstrap`.
+ * do NOT use this — they get their spec by id via `__cairnPlotBootstrap`.
  */
 async function readPageDescriptor(): Promise<PlotSpec> {
   const inline =
-    document.getElementById(DESCRIPTOR_SCRIPT_ID) ??
-    document.querySelector(`script[type="${DESCRIPTOR_MIME}"]`);
+    document.getElementById(SPEC_SCRIPT_ID) ??
+    document.querySelector(`script[type="${SPEC_MIME}"]`);
   if (inline?.textContent) {
     return JSON.parse(inline.textContent) as PlotSpec;
   }
@@ -137,23 +137,23 @@ async function readPageDescriptor(): Promise<PlotSpec> {
   if (src) {
     const res = await fetch(src);
     if (!res.ok) {
-      throw new Error(`failed to fetch descriptor from ${src} (${res.status})`);
+      throw new Error(`failed to fetch spec from ${src} (${res.status})`);
     }
     return (await res.json()) as PlotSpec;
   }
   if (params.get("sid")) {
-    throw new Error("?sid= descriptor loading is not available yet (Phase C).");
+    throw new Error("?sid= spec loading is not available yet (Phase C).");
   }
   throw new Error(
-    "No plot descriptor found (expected an inline " +
-      `<script type="${DESCRIPTOR_MIME}"> blob or a ?src= param).`,
+    "No plot spec found (expected an inline " +
+      `<script type="${SPEC_MIME}"> blob or a ?src= param).`,
   );
 }
 
-/** Build the `DataSource` the descriptor's `mode` selects. */
-function dataSourceFor(descriptor: PlotSpec): DataSource {
-  if (descriptor.mode === "endpoint") {
-    const base = (descriptor.endpoint ?? window.location.origin).replace(/\/$/, "");
+/** Build the `DataSource` the spec's `mode` selects. */
+function dataSourceFor(spec: PlotSpec): DataSource {
+  if (spec.mode === "endpoint") {
+    const base = (spec.endpoint ?? window.location.origin).replace(/\/$/, "");
     return createEndpointDataSource((hash) => `${base}/api/artifacts/${hash}`);
   }
   // LOCAL: read the page's content-addressed store (§5) once.
@@ -169,40 +169,40 @@ function Message({ text, error }: { text: string; error?: boolean }) {
 }
 
 /**
- * Mount ONE plot tree. `descriptor` may be supplied directly (per-div notebook
+ * Mount ONE plot tree. `spec` may be supplied directly (per-div notebook
  * mount) or read from the page (server `/plot` root, possibly via a `?src=`
  * fetch). Thin root wrapper (G1): build ONE
  * `DataSource` → seed `SharedPlotContext` → `<PlotNodeView node={root}>`. Each
  * leaf owns its own resolve + bounded registry-wait (plot-node.tsx). NEVER
- * throws to the host — a descriptor read failure degrades to a visible message.
+ * throws to the host — a spec read failure degrades to a visible message.
  */
-export function PlotApp({ descriptor: given }: { descriptor?: PlotSpec }) {
+export function PlotApp({ spec: given }: { spec?: PlotSpec }) {
   const containerRef = useRef<HTMLDivElement>(null);
   useEmitAutoHeight(containerRef);
 
   const [state, setState] = React.useState<
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "ready"; descriptor: PlotSpec; source: DataSource }
+    | { status: "ready"; spec: PlotSpec; source: DataSource }
   >(() => {
     if (!given) return { status: "loading" };
-    return { status: "ready", descriptor: given, source: dataSourceFor(given) };
+    return { status: "ready", spec: given, source: dataSourceFor(given) };
   });
 
   useEffect(() => {
     if (given) {
-      setState({ status: "ready", descriptor: given, source: dataSourceFor(given) });
+      setState({ status: "ready", spec: given, source: dataSourceFor(given) });
       return;
     }
     let cancelled = false;
     (async () => {
       try {
-        const descriptor = await readPageDescriptor();
+        const spec = await readPageDescriptor();
         if (cancelled) return;
         setState({
           status: "ready",
-          descriptor,
-          source: dataSourceFor(descriptor),
+          spec,
+          source: dataSourceFor(spec),
         });
       } catch (err) {
         if (cancelled) return;
@@ -223,7 +223,7 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotSpec }) {
   } else if (state.status === "error") {
     body = <Message text={`Plot error: ${state.message}`} error />;
   } else {
-    body = <PlotSurface descriptor={state.descriptor} dataSource={state.source} className="" autoHeight={false} />;
+    body = <PlotSurface spec={state.spec} dataSource={state.source} className="" autoHeight={false} />;
   }
 
   return (
@@ -233,26 +233,26 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotSpec }) {
   );
 }
 
-/** Mount one notebook plot: div `#divId` from descriptor JSON in `#descId`. */
+/** Mount one notebook plot: div `#divId` from spec JSON in `#descId`. */
 function mountOne(divId: string, descId: string): void {
   const el = document.getElementById(divId);
   if (!el) return;
   const descEl = document.getElementById(descId);
-  let descriptor: PlotSpec | null = null;
+  let spec: PlotSpec | null = null;
   try {
-    descriptor = descEl?.textContent
+    spec = descEl?.textContent
       ? (JSON.parse(descEl.textContent) as PlotSpec)
       : null;
   } catch {
-    descriptor = null;
+    spec = null;
   }
-  if (!descriptor) {
-    el.textContent = "cairn-plot: missing/invalid descriptor";
+  if (!spec) {
+    el.textContent = "cairn-plot: missing/invalid spec";
     return;
   }
   ReactDOM.createRoot(el).render(
     <React.StrictMode>
-      <PlotApp descriptor={descriptor} />
+      <PlotApp spec={spec} />
     </React.StrictMode>,
   );
 }
@@ -291,7 +291,7 @@ export function installCairnPlotBootstrap(): void {
     push: ([divId, descId]: QueueEntry) => mountOne(divId, descId),
   };
 
-  // Server `/plot` route (single page-level descriptor). Absent on notebook
+  // Server `/plot` route (single page-level spec). Absent on notebook
   // pages (they use per-div `__cairnPlotBootstrap`), so guard on existence.
   const root = document.getElementById("cairn-plot-root");
   if (root) {

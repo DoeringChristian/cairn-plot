@@ -26,7 +26,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
@@ -282,7 +282,7 @@ async function run(): Promise<boolean> {
   const mount = (divId: string, d: PlotSpec) => {
     const el = document.getElementById(divId)!;
     const root = createRoot(el);
-    root.render(createElement(PlotApp, { descriptor: d }));
+    root.render(createElement(PlotApp, { spec: d }));
     roots.push(root);
   };
   mount("mount-a", imageDescriptor("A", "#c0392b"));

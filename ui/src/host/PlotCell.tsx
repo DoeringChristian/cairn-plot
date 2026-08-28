@@ -8,7 +8,7 @@ import React, {
   useSyncExternalStore,
 } from "react";
 
-import type { PlotNode } from "./descriptor-resolver.ts";
+import type { PlotNode } from "./spec-resolver.ts";
 import {
   getGlobalSelectionStore,
   nextSelectionPaneId,

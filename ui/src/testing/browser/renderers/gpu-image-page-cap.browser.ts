@@ -13,7 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const { report, setOverallStatus } = createHarness({ title: "GPU-PAGE-CAP" });
@@ -54,7 +54,7 @@ async function run(): Promise<boolean> {
   const el = document.getElementById("host")!;
   el.style.cssText = `width:${HOST_W}px;background:#222`; // fixed width, AUTO height
   const root = createRoot(el);
-  root.render(createElement(PlotApp, { descriptor: tallFloatDescriptor(64, 512) })); // aspect 0.125
+  root.render(createElement(PlotApp, { spec: tallFloatDescriptor(64, 512) })); // aspect 0.125
   const roots: Root[] = [root];
 
   const gpuUp = await waitFor(() => !!el.querySelector("canvas[data-gpu-image-canvas]"), 8000, 25);

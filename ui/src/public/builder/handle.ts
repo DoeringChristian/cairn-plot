@@ -1,6 +1,6 @@
 /**
  * `PlotHandle` — what every `cairnPlot.*` builder returns: an authored plot
- * descriptor (+ its runtime data) with `.mount(el)` and `.toElement()`.
+ * specification (+ its runtime data) with `.mount(el)` and `.toElement()`.
  *
  * The handle is PURE DATA plus a `Mounter` seam. The actual React/ReactDOM
  * rendering lives in the CORE bundle (`plot-bootstrap.tsx`), which installs
@@ -8,16 +8,16 @@
  * stay free of React and can be ESM-imported cheaply. When the core bundle is
  * not present, `.mount()`/`.toElement()` throw a clear, actionable error.
  */
-import type { PlotSpec, PlotNode } from "../../host/descriptor-resolver.ts";
+import type { PlotSpec, PlotNode } from "../../host/spec-resolver.ts";
 import type { PlotStore } from "../../resources/data/local-store.ts";
 import type { RuntimeStoreEntry } from "../../resources/data/runtime-store.ts";
 
-/** The renderer seam the CORE bundle satisfies: render a descriptor OBJECT
+/** The renderer seam the CORE bundle satisfies: render a specification object
  *  (not a DOM `<script>` blob) into `el`, first registering its base64 store +
  *  in-memory runtime entries. Returns an `unmount` handle. */
 export type Mounter = (
   el: Element,
-  descriptor: PlotSpec,
+  spec: PlotSpec,
   data: { store?: PlotStore; runtime?: Array<[string, RuntimeStoreEntry]> },
 ) => { unmount(): void };
 
@@ -29,15 +29,15 @@ export interface MountedPlot {
 }
 
 export interface PlotHandle {
-  /** The `{root, mode}` descriptor this builder produced (schema-conformant). */
-  readonly descriptor: PlotSpec;
-  /** The single tree node (== `descriptor.root`) — used when nesting handles
+  /** The `{root, mode}` specification this builder produced. */
+  readonly spec: PlotSpec;
+  /** The single tree node (== `spec.root`) — used when nesting handles
    *  into a `grid`/`compare` container. */
   readonly node: PlotNode;
   /** Base64 blob store (usually empty for JS-authored plots — data rides in
    *  `runtime` instead). */
   readonly store: PlotStore;
-  /** In-memory runtime entries the descriptor references by hash. */
+  /** In-memory runtime entries the specification references by hash. */
   readonly runtime: Array<[string, RuntimeStoreEntry]>;
   /** Render into `el` (an Element or a CSS selector). */
   mount(target: string | Element): MountedPlot;
@@ -75,20 +75,20 @@ export function makeHandle(
 ): PlotHandle {
   const store = data.store ?? {};
   const runtime = data.runtime ?? [];
-  const descriptor: PlotSpec = { root: node, mode: "local" };
+  const spec: PlotSpec = { root: node, mode: "local" };
   return {
-    descriptor,
+    spec,
     node,
     store,
     runtime,
     mount(target) {
       const el = resolveEl(target);
-      const m = resolveMounter(mount)(el, descriptor, { store, runtime });
+      const m = resolveMounter(mount)(el, spec, { store, runtime });
       return { element: el, unmount: m.unmount };
     },
     toElement() {
       const div = document.createElement("div");
-      resolveMounter(mount)(div, descriptor, { store, runtime });
+      resolveMounter(mount)(div, spec, { store, runtime });
       return div;
     },
   };

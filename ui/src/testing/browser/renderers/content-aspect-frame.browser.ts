@@ -19,7 +19,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const { report, setOverallStatus } = createHarness({ title: "CONTENT-ASPECT" });
@@ -72,7 +72,7 @@ async function run(): Promise<boolean> {
     // unset so the parent tracks the child.)
     el.style.cssText = `width:${HOST_W}px;background:#222`;
     const root = createRoot(el);
-    root.render(createElement(PlotApp, { descriptor: d }));
+    root.render(createElement(PlotApp, { spec: d }));
     roots.push(root);
   };
   mount("mount-square", imageDescriptor(64, 64, "#c0392b")); // aspect 1
@@ -133,7 +133,7 @@ async function run(): Promise<boolean> {
     const el = document.getElementById("mount-square")!;
     el.style.cssText = `width:${HOST_W}px;background:#222`;
     const root = createRoot(el);
-    root.render(createElement(PlotApp, { descriptor: imageDescriptor(32, 512, "#16a085") }));
+    root.render(createElement(PlotApp, { spec: imageDescriptor(32, 512, "#16a085") }));
     roots.push(root);
   }
   const cap = window.innerHeight - VIEWPORT_MARGIN;
@@ -173,7 +173,7 @@ async function run(): Promise<boolean> {
     const el = document.getElementById(id)!;
     el.style.cssText = `width:${hostW}px;height:${hostH}px;overflow:hidden;background:#222`;
     const root = createRoot(el);
-    root.render(createElement(PlotApp, { descriptor: imageDescriptor(imgW, imgH, "#8e44ad") }));
+    root.render(createElement(PlotApp, { spec: imageDescriptor(imgW, imgH, "#8e44ad") }));
     roots.push(root);
     const aspect = imgW / imgH;
     const settled = await waitFor(() => {

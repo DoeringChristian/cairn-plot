@@ -548,7 +548,7 @@ test("UNIFIED §B: the render matrix is SOURCE-AGNOSTIC (u8-post-decode ≡ floa
 });
 
 test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap", () => {
-  // UNSET descriptor: sRGB on EVERY surface (user decision — tev's default).
+  // UNSET spec: sRGB on EVERY surface (user decision — tev's default).
   // Engaged HDR → extended sRGB encode with the managed PEAK ceiling (default).
   const hdrDefault = resolveEffectiveTonemap(undefined, true); // "srgb"
   assert.equal(hdrDefault, "srgb");

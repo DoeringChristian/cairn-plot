@@ -39,7 +39,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../register-core";
-import type { PlotSpec } from "../../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../../host/spec-resolver";
 import { InFullscreenOverlayContext } from "../../../../primitives/components/FullscreenOverlayShell";
 import {
   getGlobalSelectionStore,
@@ -180,7 +180,7 @@ async function run(): Promise<boolean> {
   const mount = (divId: string, d: PlotSpec) => {
     const el = document.getElementById(divId)!;
     const root = createRoot(el);
-    root.render(createElement(PlotApp, { descriptor: d }));
+    root.render(createElement(PlotApp, { spec: d }));
     roots.push(root);
   };
   mount("mount-a", compareDescriptor("#c0392b", "#2980b9"));
@@ -344,7 +344,7 @@ async function run(): Promise<boolean> {
     createElement(
       InFullscreenOverlayContext.Provider,
       { value: true },
-      createElement(PlotApp, { descriptor: compareDescriptor("#e67e22", "#16a085") }),
+      createElement(PlotApp, { spec: compareDescriptor("#e67e22", "#16a085") }),
     ),
   );
   roots.push(rootC);

@@ -5,7 +5,7 @@ import { createPlotSessionController } from "../state/session/PlotSessionControl
 import type { PlotSession } from "../state/session/plot-session.ts";
 
 export interface MountedPlot {
-  update(next: Partial<Pick<PlotHostProps, "descriptor" | "dataSource">>): void;
+  update(next: Partial<Pick<PlotHostProps, "spec" | "dataSource">>): void;
   getSession(): PlotSession;
   restoreSession(session: unknown): void;
   subscribeSession(listener: (session: PlotSession) => void): () => void;

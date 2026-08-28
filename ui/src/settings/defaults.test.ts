@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { initialCellSettings } from "./defaults.ts";
-import type { CompareNode } from "../host/descriptor-resolver.ts";
+import type { CompareNode } from "../host/spec-resolver.ts";
 
 const compare = (colormap: string, kernel: string): CompareNode => ({
   kind: "compare",

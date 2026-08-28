@@ -119,7 +119,7 @@ to the Python emit's, validated by the same
 
 ### Builders
 Each returns a **handle** with `.mount(elOrSelector)` and `.toElement()`
-(a detached `<div>`); `.descriptor` / `.node` / `.store` / `.runtime` expose the
+(a detached `<div>`); `.spec` / `.node` / `.store` / `.runtime` expose the
 lowered data.
 
 | Builder | Signature | Python twin |

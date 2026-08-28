@@ -10,14 +10,14 @@ const dataSource = createEndpointDataSource(api.artifactUrl, {
   fetch: api.authenticatedFetch,
 });
 
-<PlotHost descriptor={descriptor} dataSource={dataSource} />;
+<PlotHost spec={spec} dataSource={dataSource} />;
 ```
 
 Imperative hosts use the same implementation:
 
 ```ts
-const plot = mountPlot(element, { descriptor, dataSource });
-plot.update({ descriptor: nextDescriptor, dataSource });
+const plot = mountPlot(element, { spec, dataSource });
+plot.update({ spec: nextSpec, dataSource });
 saveWorkspace(plot.getSession());
 plot.destroy();
 ```
@@ -34,7 +34,7 @@ explicit `ui/src/integration/cairn-card.ts` compatibility seam; core runtime cod
 never imports that seam. New host integrations must use the public API, and the
 compatibility seam must not grow new runtime ownership. The supported browser exports are
 `PlotHost`, `mountPlot`, `createEndpointDataSource`, `DataSource`, the recursive
-descriptor types, `PlotSession`, and `SessionPersistence`. Cairn may hydrate a
+specification types, `PlotSession`, and `SessionPersistence`. Cairn may hydrate a
 runtime session explicitly with `initialSession`/`restoreSession`, or
 inject a persistence adapter. Persistence is disabled by default and can be
 made explicit with `persistence={false}`; this never disables the in-memory

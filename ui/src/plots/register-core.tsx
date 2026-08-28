@@ -1,5 +1,5 @@
 /** Composition root for the always-present typed plot definitions. */
-import { resolveDataProps } from "../host/descriptor-resolver.ts";
+import { resolveDataProps } from "../host/spec-resolver.ts";
 import { ensureBarPlotType } from "./bar/register.ts";
 import { BarPlotView } from "./bar/view.tsx";
 import { ensureHeatmapPlotType } from "./heatmap/register.ts";

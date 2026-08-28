@@ -8,7 +8,7 @@ export type PlotHostProps = PlotSurfaceProps;
 
 /**
  * The supported browser host. Callers provide authored content and a data
- * source; viewport identity, settings, selection and renderers remain private.
+ * source; cell identity, settings, selection and backends remain private.
  */
 export function PlotHost(props: PlotHostProps) {
   return <PlotSurface {...props} />;

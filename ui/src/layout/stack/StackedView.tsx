@@ -201,7 +201,7 @@ export function GridModeToggle({
   );
 }
 
-/** A stable per-tab label from a child descriptor: its own caption if present,
+/** A stable per-tab label from a child spec: its own caption if present,
  *  else a positional "View N". */
 export function stackLabelFor(node: unknown, index: number): string {
   const p =

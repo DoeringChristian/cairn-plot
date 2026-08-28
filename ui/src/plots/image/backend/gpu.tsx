@@ -706,7 +706,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // store value > descriptor seed. No pane state, no adoption effect.
   const peakSeed = seedPeak();
   const peak = synced?.["image.peak"] != null && synced["image.peak"] > 0 ? synced["image.peak"] : peakSeed;
-  // HOME target + modified dot track the CURRENTLY-VISIBLE slot's descriptor:
+  // HOME target + modified dot track the CURRENTLY-VISIBLE slot's spec:
   // HOME adopts the visible image's default; the dot lights when the effective
   // value differs from it.
   const peakModified = peak !== peakSeed;

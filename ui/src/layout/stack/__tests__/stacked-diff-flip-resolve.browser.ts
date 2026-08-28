@@ -24,7 +24,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "STACKED DIFF FLIP RESOLVE" });
@@ -101,7 +101,7 @@ async function main(): Promise<void> {
     const hostEl = document.getElementById("m1")!;
     hostEl.style.cssText = "width:480px;height:320px;background:#222";
     const root: Root = createRoot(hostEl);
-    root.render(createElement(PlotApp, { descriptor: imageDiffGrid() }));
+    root.render(createElement(PlotApp, { spec: imageDiffGrid() }));
 
     const up = await waitFor(() => qa("m1", "[role='tab']").length >= 2, 6000, 20);
     report(up, `stacked [image, diff] grid renders a 2-tab strip`);

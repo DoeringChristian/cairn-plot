@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "GRID-STACKED" });
@@ -151,7 +151,7 @@ async function run(): Promise<boolean> {
 
   // ── A stacked grid of 3 labelled panes ────────────────────────────────────
   const rootA = createRoot(host("m1"));
-  rootA.render(createElement(PlotApp, { descriptor: stackedGrid(["Alpha", "Bravo", "Charlie"], "stacked") }));
+  rootA.render(createElement(PlotApp, { spec: stackedGrid(["Alpha", "Bravo", "Charlie"], "stacked") }));
   roots.push(rootA);
 
   const up = await waitFor(() => qa("m1", "[data-cairn-stack-tab]").length >= 1 || qa("m1", "[role='tab']").length >= 3, 5000, 20);
@@ -260,7 +260,7 @@ async function run(): Promise<boolean> {
 
   // ── The live toggle: a NORMAL grid has the button; click → stacked ────────
   const rootB = createRoot(host("m2"));
-  rootB.render(createElement(PlotApp, { descriptor: stackedGrid(["one", "two", "three"], "normal") }));
+  rootB.render(createElement(PlotApp, { spec: stackedGrid(["one", "two", "three"], "normal") }));
   roots.push(rootB);
   const toggleUp = await waitFor(() => !!q("m2", "[data-cairn-grid-mode-toggle]"), 5000, 20);
   report(toggleUp, "NORMAL grid shows the normal|stacked toggle button (the missing button)");
@@ -278,7 +278,7 @@ async function run(): Promise<boolean> {
 
   // ── Single-child grid: no toggle (stacking a lone child is a no-op) ───────
   const rootC = createRoot(host("m3"));
-  rootC.render(createElement(PlotApp, { descriptor: stackedGrid(["solo"], "normal") }));
+  rootC.render(createElement(PlotApp, { spec: stackedGrid(["solo"], "normal") }));
   roots.push(rootC);
   await sleep(150);
   const noToggle = !q("m3", "[data-cairn-grid-mode-toggle]");
@@ -290,7 +290,7 @@ async function run(): Promise<boolean> {
   const fixedDescriptor = stackedGrid(["fixed-a", "fixed-b"], "stacked");
   if (fixedDescriptor.root.kind === "grid") fixedDescriptor.root.switchable = false;
   const rootFixed = createRoot(host("m6"));
-  rootFixed.render(createElement(PlotApp, { descriptor: fixedDescriptor }));
+  rootFixed.render(createElement(PlotApp, { spec: fixedDescriptor }));
   roots.push(rootFixed);
   const fixedStacked = await waitFor(() => qa("m6", "[role='tab']").length === 0 && !!q("m6", "[data-cairn-stacked-view]"), 5000, 20);
   const fixedNoToggle = !q("m6", "[data-cairn-grid-mode-toggle]");
@@ -305,7 +305,7 @@ async function run(): Promise<boolean> {
   // section below): tag the surface on tab 0, flip to the compare tab, and assert
   // the SAME node survives + zoom persists + exactly ONE stacked-pane.
   const rootD = createRoot(host("m4"));
-  rootD.render(createElement(PlotApp, { descriptor: mixedGrid("normal") }));
+  rootD.render(createElement(PlotApp, { spec: mixedGrid("normal") }));
   roots.push(rootD);
   const mixToggle = await waitFor(() => !!q("m4", "[data-cairn-grid-mode-toggle]"), 5000, 20);
   report(mixToggle, "image+compare grid shows the normal|stacked toggle");
@@ -372,7 +372,7 @@ async function run(): Promise<boolean> {
   // is still the active surface (a remount would replace it), zoom persists, and
   // there is exactly ONE stacked-pane (no hidden sibling).
   const rootE = createRoot(host("m5"));
-  rootE.render(createElement(PlotApp, { descriptor: imageDiffGrid("stacked") }));
+  rootE.render(createElement(PlotApp, { spec: imageDiffGrid("stacked") }));
   roots.push(rootE);
   const diffUp = await waitFor(() => qa("m5", "[role='tab']").length === 2, 5000, 20);
   report(diffUp, `[image, diff] stack renders 2 tabs (got ${qa("m5", "[role='tab']").length})`);

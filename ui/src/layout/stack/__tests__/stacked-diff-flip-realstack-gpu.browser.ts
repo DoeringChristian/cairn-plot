@@ -45,7 +45,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import {
@@ -415,7 +415,7 @@ async function main(): Promise<void> {
       const host = document.getElementById(hostId)!;
       host.style.cssText = "width:520px;height:280px;background:#222";
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: sideBySideGrid() }));
+      root.render(createElement(PlotApp, { spec: sideBySideGrid() }));
 
       // Settle: wait for a coherent present of BOTH a plain image (isScalar false)
       // and a cached diff — proves GPU is live and both panes rendered.
@@ -493,7 +493,7 @@ async function main(): Promise<void> {
     const hostB = document.getElementById("m1")!;
     hostB.style.cssText = "width:520px;height:280px;background:#222";
     const rootB: Root = createRoot(hostB);
-    rootB.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+    rootB.render(createElement(PlotApp, { spec: stackedGrid() }));
     const upB = await waitFor(() => document.querySelectorAll("#m1 [role='tab']").length >= 2, 12000, 30);
     report(upB, `stacked [image, FLIP] grid renders a 2-tab strip`);
     // Hover so the stack keyboard is in scope.
@@ -551,7 +551,7 @@ async function main(): Promise<void> {
     const rootC: Root = createRoot(hostC);
     rootC.render(
       createElement(PlotApp, {
-        descriptor: {
+        spec: {
           mode: "local",
           root: {
             kind: "grid",
@@ -654,7 +654,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:520px;height:280px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+      root.render(createElement(PlotApp, { spec: stackedGrid() }));
       await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host
         .querySelector<HTMLElement>("[data-cairn-grid-root]")
@@ -753,7 +753,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:520px;height:280px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: stackedScalarMagmaGrid() }));
+      root.render(createElement(PlotApp, { spec: stackedScalarMagmaGrid() }));
       await waitFor(() => document.querySelectorAll("#rpE [role='tab']").length >= 2, 12000, 30);
       host
         .querySelector<HTMLElement>("[data-cairn-grid-root]")
@@ -799,7 +799,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:420px;height:260px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: singleCompareGrid(authored) }));
+      root.render(createElement(PlotApp, { spec: singleCompareGrid(authored) }));
       await waitFor(() => !!diffProbe(hostId), 12000, 30);
       await sleep(200);
       diffProbe(hostId)!.changeCompareMode(switchTo);
@@ -853,7 +853,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: stackedTwoScalarGrid() }));
+      root.render(createElement(PlotApp, { spec: stackedTwoScalarGrid() }));
       await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000, 30);
@@ -911,7 +911,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+      root.render(createElement(PlotApp, { spec: stackedGrid() }));
       await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       key("2");
@@ -986,7 +986,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:520px;height:280px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: sideBySideTwoScalarGrid() }));
+      root.render(createElement(PlotApp, { spec: sideBySideTwoScalarGrid() }));
       await waitFor(() => allImgProbes(hostId).length >= 2, 12000, 30);
       await sleep(200);
       const p = () => allImgProbes(hostId);
@@ -1049,7 +1049,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: stackedTwoPeakGrid() }));
+      root.render(createElement(PlotApp, { spec: stackedTwoPeakGrid() }));
       await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000, 30);
@@ -1080,7 +1080,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:460px;height:280px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: stackedGrid() }));
+      root.render(createElement(PlotApp, { spec: stackedGrid() }));
       await waitFor(() => document.querySelectorAll(`#${hostId} [role='tab']`).length >= 2, 12000, 30);
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       key("2");
@@ -1130,7 +1130,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:560px;height:300px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: sideBySideTwoDiffGrid() }));
+      root.render(createElement(PlotApp, { spec: sideBySideTwoDiffGrid() }));
       await waitFor(() => allDiffProbes(hostId).length >= 2, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);
@@ -1198,7 +1198,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:560px;height:300px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: sideBySideTwoDiffGrid() }));
+      root.render(createElement(PlotApp, { spec: sideBySideTwoDiffGrid() }));
       await waitFor(() => allDiffProbes(hostId).length >= 2, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);
@@ -1252,7 +1252,7 @@ async function main(): Promise<void> {
       host.style.cssText = "width:840px;height:300px;background:#222;position:relative";
       document.body.appendChild(host);
       const root: Root = createRoot(host);
-      root.render(createElement(PlotApp, { descriptor: sideBySideThreeDiffGrid() }));
+      root.render(createElement(PlotApp, { spec: sideBySideThreeDiffGrid() }));
       await waitFor(() => allDiffProbes(hostId).length >= 3, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);

@@ -18,7 +18,7 @@ function imageUrl(color: string): string {
   return canvas.toDataURL("image/png");
 }
 
-const descriptor: PlotSpec = {
+const spec: PlotSpec = {
   root: {
     kind: "plot",
     type: "image",
@@ -32,7 +32,7 @@ async function run() {
   const red = imageUrl("red");
   const blue = imageUrl("blue");
   const mounted = mountPlot(element, {
-    descriptor,
+    spec,
     dataSource: createEndpointDataSource(() => red),
     autoHeight: false,
   });
@@ -70,7 +70,7 @@ async function run() {
   check(document.querySelectorAll("[data-cairn-selection-overlay-host]").length === 0, "last destroy releases the overlay host");
   let rejected = false;
   try {
-    mounted.update({ descriptor });
+    mounted.update({ spec });
   } catch {
     rejected = true;
   }

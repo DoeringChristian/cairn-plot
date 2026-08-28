@@ -133,15 +133,15 @@ function samples(): Record<string, any> {
 
 test("every builder emits a schema-conformant descriptor", () => {
   for (const [name, handle] of Object.entries(samples())) {
-    const errs = validate(schema, handle.descriptor);
-    assert.equal(errs.length, 0, `${name}: ${errs.join("; ")}\n${JSON.stringify(handle.descriptor)}`);
+    const errs = validate(schema, handle.spec);
+    assert.equal(errs.length, 0, `${name}: ${errs.join("; ")}\n${JSON.stringify(handle.spec)}`);
   }
 });
 
 test("grid switching is enabled by omission and can be explicitly disabled", () => {
   const child = cp.line([1, 2]);
-  const normal = cp.grid([child, child]).descriptor.root;
-  const fixed = cp.grid([child, child], { switchable: false }).descriptor.root;
+  const normal = cp.grid([child, child]).spec.root;
+  const fixed = cp.grid([child, child], { switchable: false }).spec.root;
   assert.equal(normal.kind, "grid");
   assert.equal(fixed.kind, "grid");
   if (normal.kind !== "grid" || fixed.kind !== "grid") return;

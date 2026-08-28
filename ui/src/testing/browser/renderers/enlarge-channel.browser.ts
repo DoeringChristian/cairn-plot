@@ -23,7 +23,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import { createHarness, sleep, waitFor } from "../../harness";
 
@@ -72,7 +72,7 @@ async function run(): Promise<boolean> {
   registerFloatData();
   const host = document.getElementById("mount")!;
   const root: Root = createRoot(host);
-  root.render(createElement(PlotApp, { descriptor: descriptor() }));
+  root.render(createElement(PlotApp, { spec: descriptor() }));
 
   // --- 1. pane ready: enlarge button + CHANNELS menu -----------------------
   const ready = await waitFor(() => !!enlargeBtn() && !!channelsBtn(), 8000, 30);

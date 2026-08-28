@@ -16,7 +16,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec } from "../../../host/descriptor-resolver";
+import type { PlotSpec } from "../../../host/spec-resolver";
 import { createHarness, waitFor } from "../../../testing/harness";
 
 interface CompareProbe {
@@ -94,7 +94,7 @@ async function run(): Promise<boolean> {
   const root = createRoot(mountEl());
   root.render(
     createElement(PlotApp, {
-      descriptor: {
+      spec: {
         mode: "local",
         root: {
           kind: "grid",
