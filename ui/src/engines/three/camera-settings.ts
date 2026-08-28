@@ -24,8 +24,8 @@ import {
   publishSettingsPatch,
   subscribeSettingsPatches,
   type ViewportSettings,
-} from "../settings/viewport-settings.ts";
-import { peekGroupSettings, registerSettingsPeer } from "../settings/settings-peers.ts";
+} from "../../lib/cairn-plot/settings/viewport-settings.ts";
+import { peekGroupSettings, registerSettingsPeer } from "../../lib/cairn-plot/settings/settings-peers.ts";
 
 /** A 3D camera pose — the `"scene3d.camera"` settings value (ATOMIC:
  *  position/target/zoom move together in one orbit gesture). */

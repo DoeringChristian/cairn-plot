@@ -19,7 +19,7 @@
 
 import type { MediaCompareModeKind } from "./mode";
 import type { Colormap, DiffMode, Interpolation, ImageOverlaySettings } from "../types";
-import type { DiffColormap } from "../three/diff";
+import type { DiffColormap } from "../../../engines/three/diff";
 
 /**
  * The renderer-owned subset of a visual-media card's persisted settings: the

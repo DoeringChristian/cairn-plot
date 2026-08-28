@@ -6,7 +6,7 @@ import PointCloudViewer, {
   type PointSizeMode,
   extractPositions,
 } from "../renderers/PointCloudViewer";
-import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../../../engines/three/use-scene3d";
 import {
   computeDelta,
   computeDisplacementMagnitude,
@@ -14,12 +14,12 @@ import {
   diffDomain,
   unionDiffDomain,
   type DiffColormap,
-} from "../three/diff";
+} from "../../../engines/three/diff";
 import {
   resolveActiveProperty,
   type PropertyMap,
   type PropertyMeta,
-} from "../three/properties";
+} from "../../../engines/three/properties";
 import { LabelChip, RefBadge, ViewportCaption } from "../primitives";
 import ViewportPlaceholder from "./ViewportPlaceholder";
 import type { ColormapName } from "../types";

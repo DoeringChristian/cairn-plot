@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { Scene3DSyncOptions } from "../three/use-scene3d";
-import { createCameraSettingsPeer, type CameraState } from "../three/camera-settings";
+import type { Scene3DSyncOptions } from "../../../engines/three/use-scene3d";
+import { createCameraSettingsPeer, type CameraState } from "../../../engines/three/camera-settings";
 import { CrossTypeCompositeMediaPane } from "./compositor";
 import type { MediaCompareModeKind } from "./mode";
 import type { FrameSource } from "../host/types";

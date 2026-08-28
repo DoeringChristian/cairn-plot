@@ -2,9 +2,9 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { useScene3D, type Scene3DBounds, type Scene3DCameraMode, type Scene3DSyncOptions } from "./use-scene3d";
 import { Scene3DCanvas } from "./Scene3DCanvas";
-import { getColormapLUT } from "../colormaps";
-import type { ColormapName } from "../types";
-import PaneUnavailable from "../primitives/PaneUnavailable";
+import { getColormapLUT } from "../../lib/cairn-plot/colormaps";
+import type { ColormapName } from "../../lib/cairn-plot/types";
+import PaneUnavailable from "../../lib/cairn-plot/primitives/PaneUnavailable";
 
 export type VolumeRenderMode = "mip" | "iso";
 export type VolumeBackground = "dark" | "light";

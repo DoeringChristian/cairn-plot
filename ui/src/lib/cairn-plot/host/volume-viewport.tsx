@@ -2,10 +2,10 @@ import VolumeViewer, {
   type VolumeBackground,
   type VolumeQuality,
   type VolumeRenderMode,
-} from "../three/VolumeViewer";
-import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
-import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../three/diff";
-import type { PropertyMeta } from "../three/properties";
+} from "../../../engines/three/VolumeViewer";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../../../engines/three/use-scene3d";
+import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../../../engines/three/diff";
+import type { PropertyMeta } from "../../../engines/three/properties";
 import { LabelChip, RefBadge, ViewportCaption } from "../primitives";
 import ViewportPlaceholder from "./ViewportPlaceholder";
 import type { ColormapName } from "../types";

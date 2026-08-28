@@ -48,8 +48,8 @@ import type { parseNpz as ParseNpzFn } from "../transforms/parse-npz.ts";
 async function loadParseNpz(): Promise<typeof ParseNpzFn> {
   return (await import("../transforms/parse-npz.ts")).parseNpz;
 }
-import type { PropertyMap } from "../three/properties.ts";
-import { extractProperties } from "../three/properties.ts";
+import type { PropertyMap } from "../../../engines/three/properties.ts";
+import { extractProperties } from "../../../engines/three/properties.ts";
 import {
   decodeImage,
   decodedU8ToDataUrl,

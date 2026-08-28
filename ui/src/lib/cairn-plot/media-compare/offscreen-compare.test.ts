@@ -50,11 +50,12 @@ test("OffscreenComparePanes owns the offscreen compositor orchestration", () => 
   assert.match(offscreen, /frameSourceToUrl\(/, "a frame side feeds its URL straight in");
 });
 
-test("OffscreenComparePanes stays app-agnostic (no app-reaching or @cairn-plot imports)", () => {
+test("OffscreenComparePanes stays app-agnostic", () => {
   // Parameterized by a `render` callback + FrameSource — never imports a
-  // concrete app viewer or api client. All relative imports stay intra-lib.
+  // concrete app viewer or api client. The reusable Three engine is allowed.
   assert.doesNotMatch(offscreen, /@cairn-plot\//, "no self-referential package import");
-  assert.doesNotMatch(offscreen, /from "\.\.\/\.\.\//, "no import escaping the cairn-plot lib root");
+  assert.doesNotMatch(offscreen, /components\/|api\//, "no app-layer import");
+  assert.match(offscreen, /engines\/three/, "camera machinery comes from the Three engine");
   assert.match(offscreen, /render:\s*\(/, "the live side is a caller-supplied render callback");
 });
 

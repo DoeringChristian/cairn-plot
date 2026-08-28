@@ -36,7 +36,7 @@ test("PaneUnavailable: neutral-muted (not an error), title + body", () => {
 
 // Every capability-fact placeholder in scope routes through PaneUnavailable and
 // no longer paints its own bespoke styling.
-const CONSUMERS = ["three/VolumeViewer.tsx", "media-compare/compositor.tsx"];
+const CONSUMERS = ["../../engines/three/VolumeViewer.tsx", "media-compare/compositor.tsx"];
 
 test("VolumeViewer + compositor render the shared PaneUnavailable (no bespoke card)", () => {
   for (const rel of CONSUMERS) {

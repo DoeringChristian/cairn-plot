@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "../three/use-scene3d";
-import { Scene3DCanvas } from "../three/Scene3DCanvas";
-import { valuesToColors, categoriesToColors, packRgbColors } from "../three/value-colors";
+import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "../../../engines/three/use-scene3d";
+import { Scene3DCanvas } from "../../../engines/three/Scene3DCanvas";
+import { valuesToColors, categoriesToColors, packRgbColors } from "../../../engines/three/value-colors";
 
 export type PointCloudChannels = "xyz" | "xyzc" | "xyzrgb";
 export type PointColorMode = "auto" | "rgb" | "category" | "height";
