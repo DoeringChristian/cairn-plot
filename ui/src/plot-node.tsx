@@ -62,6 +62,7 @@ import {
 } from "./lib/cairn-plot/lazy-mount";
 import {
   resolutionKey,
+  acquireResolved,
   peekResolved,
   peekResolveError,
   resolveCached,
@@ -319,6 +320,11 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // no `state` fallback, so a previous slot's resolution can never leak: the stale-diff
   // reference-flash is structurally impossible, not guarded.
   const resolvedNow: Record<string, unknown> | undefined = peekResolved<Record<string, unknown>>(resolveKey);
+  useEffect(() => {
+    if (resolvedNow === undefined) return;
+    const lease = acquireResolved(resolveKey);
+    return () => lease?.release();
+  }, [resolveKey, resolvedNow]);
   const cacheError = peekResolveError(resolveKey);
   // CHANNEL-PICK HOLD (user ruling: a channel pick must NEVER create a new
   // pane). The pick rides the settings store like any other display setting,

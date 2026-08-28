@@ -23,6 +23,10 @@ import {
   globalPreparationScheduler,
   type PreparationPriority,
 } from "../../resources/scheduler.ts";
+import {
+  globalResourceCache,
+  type ResourceLease,
+} from "../../resources/cache.ts";
 
 const idMap = new WeakMap<object, string>();
 let counter = 0;
@@ -42,13 +46,8 @@ export function resolutionKey(source: object, node: object, suffix = ""): string
   return `${sourceKey(source)}|${sourceKey(node)}${suffix}`;
 }
 
-interface Entry<T> {
-  data?: T;
-  error?: string;
-  promise?: Promise<void>;
-}
-
-const cache = new Map<string, Entry<unknown>>();
+const errors = new Map<string, string>();
+const resolving = new Map<string, Promise<void>>();
 
 // SUBSCRIBABLE STORE. The cache is a tiny external store a React leaf reads via
 // `useSyncExternalStore`: the resolved value for a key is then a PURE FUNCTION of the
@@ -79,12 +78,17 @@ export function resolveCacheVersion(): number {
 /** The resolved payload for `key`, or `undefined` if not yet resolved (or errored).
  *  Synchronous — a leaf reads the new source in the SAME commit on a cache hit. */
 export function peekResolved<T>(key: string): T | undefined {
-  return cache.get(key)?.data as T | undefined;
+  return globalResourceCache.peek<T>(key);
+}
+
+/** Pin a resolved payload while it is visible. */
+export function acquireResolved<T>(key: string): ResourceLease<T> | undefined {
+  return globalResourceCache.acquire<T>(key);
 }
 
 /** The cached error for `key`, if the last resolve failed. */
 export function peekResolveError(key: string): string | undefined {
-  return cache.get(key)?.error;
+  return errors.get(key);
 }
 
 /** Resolve `key` via `run` exactly once and cache the result; concurrent/repeat
@@ -94,31 +98,38 @@ export function resolveCached<T>(
   run: () => Promise<T>,
   priority: PreparationPriority = "foreground",
 ): Promise<T> {
-  const existing = cache.get(key) as Entry<T> | undefined;
-  if (existing?.data !== undefined) return Promise.resolve(existing.data);
-  if (existing?.promise) {
+  const hit = globalResourceCache.peek<T>(key);
+  if (hit !== undefined) return Promise.resolve(hit);
+  const existing = resolving.get(key);
+  if (existing) {
     // This may promote a queued preload. The scheduler returns the same work;
     // the cache keeps its single completion/notification path below.
     void globalPreparationScheduler.schedule(key, priority, run).catch(() => {});
-    return existing.promise.then(() => cache.get(key)!.data as T);
+    return existing.then(() => globalResourceCache.peek<T>(key) as T);
   }
-  const entry: Entry<T> = {};
-  entry.promise = globalPreparationScheduler.schedule(key, priority, run).then(
-    (data) => {
-      entry.data = data;
-      entry.error = undefined;
-      entry.promise = undefined;
+  const promise = globalResourceCache.getOrCreate(key, async () => {
+    const value = await globalPreparationScheduler.schedule(key, priority, run);
+    return { value, bytes: estimateResolvedBytes(value) };
+  }).then(
+    (lease) => {
+      lease.release();
+      errors.delete(key);
+      resolving.delete(key);
       notifyResolveCache(); // wake subscribed leaves — they re-read peekResolved(key)
     },
     (err) => {
-      entry.error = err instanceof Error ? err.message : String(err);
-      entry.promise = undefined;
-      notifyResolveCache();
+      // Background failures are diagnostics only. A later foreground request
+      // retries and becomes visible only if it also fails.
+      if (priority === "foreground") {
+        errors.set(key, err instanceof Error ? err.message : String(err));
+        notifyResolveCache();
+      }
+      resolving.delete(key);
       throw err;
     },
   );
-  cache.set(key, entry as Entry<unknown>);
-  return entry.promise.then(() => cache.get(key)!.data as T);
+  resolving.set(key, promise);
+  return promise.then(() => globalResourceCache.peek<T>(key) as T);
 }
 
 /** Warm several sources in the background (a stacked viewport calls this on mount
@@ -126,7 +137,7 @@ export function resolveCached<T>(
  *  leaf surfaces them if/when that tab is actually shown. */
 export function prefetchResolved(entries: Array<{ key: string; run: () => Promise<unknown> }>): void {
   for (const { key, run } of entries) {
-    if (cache.get(key)?.data !== undefined) continue;
+    if (globalResourceCache.has(key)) continue;
     void resolveCached(key, run, "preload").catch(() => {});
   }
 }
@@ -134,6 +145,27 @@ export function prefetchResolved(entries: Array<{ key: string; run: () => Promis
 /** Test seam only — drop all cached resolutions (the `sourceKey` WeakMap is left
  *  intact; ids stay stable). */
 export function __resetResolveCacheForTest(): void {
-  cache.clear();
+  globalResourceCache.clear();
+  errors.clear();
+  resolving.clear();
   notifyResolveCache();
+}
+
+/** Conservative retained-byte estimate for decoded resolution payloads. */
+export function estimateResolvedBytes(value: unknown): number {
+  const seen = new Set<object>();
+  const visit = (current: unknown): number => {
+    if (current == null) return 0;
+    if (typeof current === "string") return current.length * 2;
+    if (typeof current !== "object") return 8;
+    if (seen.has(current)) return 0;
+    seen.add(current);
+    if (current instanceof ArrayBuffer) return current.byteLength;
+    if (ArrayBuffer.isView(current)) return current.byteLength;
+    if (typeof Blob !== "undefined" && current instanceof Blob) return current.size;
+    if (Array.isArray(current)) return current.reduce((sum, item) => sum + visit(item), 0);
+    return Object.entries(current as Record<string, unknown>)
+      .reduce((sum, [key, item]) => sum + key.length * 2 + visit(item), 0);
+  };
+  return Math.max(1, visit(value));
 }

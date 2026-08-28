@@ -8,6 +8,7 @@ import {
   peekResolveError,
   resolveCached,
   prefetchResolved,
+  estimateResolvedBytes,
   __resetResolveCacheForTest,
 } from "./resolve-cache.ts";
 
@@ -74,4 +75,20 @@ test("prefetchResolved warms entries so a later peek is synchronous", async () =
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(peekResolved<number>("p1"), 1);
   assert.equal(peekResolved<number>("p2"), 2);
+});
+
+test("preload failure stays silent and foreground selection retries", async () => {
+  __resetResolveCacheForTest();
+  prefetchResolved([{ key: "cold", run: async () => { throw new Error("preload failed"); } }]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(peekResolveError("cold"), undefined);
+  assert.equal(await resolveCached("cold", async () => "ready"), "ready");
+});
+
+test("resolved byte estimates count buffers once and tolerate cycles", () => {
+  const pixels = new Float32Array(16);
+  const value: { pixels: Float32Array; alias: Float32Array; self?: unknown } = { pixels, alias: pixels };
+  value.self = value;
+  assert.ok(estimateResolvedBytes(value) >= pixels.byteLength);
+  assert.ok(estimateResolvedBytes(value) < pixels.byteLength * 2 + 64);
 });

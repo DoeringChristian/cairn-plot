@@ -18,8 +18,9 @@ Status: accepted design; implementation in progress
 - [x] Adapt the production image definition and existing renderer through a
   same-root React backend; remove image from the legacy registry and enforce
   exclusive kind ownership during migration.
-- [ ] Replace the legacy unbounded resolution cache with the lease-aware runtime
-  cache at a concrete resolution boundary.
+- [x] Replace the legacy unbounded resolution storage with the lease-aware
+  runtime cache; visible leaves pin leases while adjacent preloads stay
+  evictable and retry silently after background failure.
 - [ ] Implement branch-retaining grid/stack sessions and optional persistence.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
