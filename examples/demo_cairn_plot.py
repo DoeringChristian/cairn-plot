@@ -331,7 +331,7 @@ def build_gallery() -> list[tuple[str, object]]:
 
     _exr_path = (
         pathlib.Path(__file__).resolve().parent.parent
-        / "ui/src/lib/cairn-plot/image/decoders/fixtures/layers-demo-128x96.exr"
+        / "ui/src/plots/image/model/decoders/fixtures/layers-demo-128x96.exr"
     )
     if _exr_path.exists():
         _exr_url = "data:image/x-exr;base64," + _b64.b64encode(_exr_path.read_bytes()).decode()

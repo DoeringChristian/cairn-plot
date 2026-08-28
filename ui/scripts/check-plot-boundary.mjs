@@ -8,12 +8,12 @@
  * import app code. The APP importing the library is fine (that becomes the
  * `@cairn-plot/*` package dependency at cutover) — but nothing in the surface
  * below may reach the other way, into `src/components/**`, `src/lib/**`
- * (outside `lib/cairn-plot`), app CSS, or app entry files. Any such import
+ * outside the owned plot roots, app CSS, or app entry files. Any such import
  * would break the clean `git filter-repo` split, so we fail CI on it here,
  * next to the other plot guards (`check:plot-schema`, `check:plot-assets`).
  *
  * The surface (kept in sync with the spec's P-A list):
- *   - src/lib/cairn-plot/**                    (the library)
+ *   - src/{public,host,layout,plots,...}/**    (the library)
  *   - src/plot-*.ts / src/plot-*.tsx           (standalone entries/bootstrap)
  *   - vite.plot-*.config.ts                    (standalone build configs)
  *   - scripts/{gen,check}-plot-spec-schema.mjs, sync-plot-assets.mjs,
@@ -188,7 +188,7 @@ for (const v of violations.sort((a, b) =>
 }
 console.error(
   `\nThe cairn-plot library must not import app code. Move the shared code into` +
-    ` src/lib/cairn-plot/**, inject it via a prop/registry seam, or duplicate a` +
+    ` an owned plot root, inject it via a prop/registry seam, or duplicate a` +
     ` tiny constant with a comment. See the P-A audit in the extraction spec.`,
 );
 process.exit(1);

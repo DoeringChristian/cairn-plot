@@ -1,7 +1,7 @@
 """Cross-face CONTRACT guard (Python side).
 
 Pins the Python string-enum tuples to the committed canonical contract
-`schema/cairn-plot-contracts.json` — the SAME file `ui/src/lib/cairn-plot/
+`schema/cairn-plot-contracts.json` — the SAME file `ui/src/testing/
 contracts.test.ts` pins the TS sources to. So neither language can drift the
 colormap / HDR tone-map / public compare-kernel sets without failing a guard:
 

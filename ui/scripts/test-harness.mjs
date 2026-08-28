@@ -49,7 +49,7 @@
  *
  * Usage:   node scripts/test-harness.mjs            (or: npm run test:harness)
  * Flags:   --only <substr>     run only harnesses whose id contains <substr>
- *          --root <dir>        harness search root (default: src/lib/cairn-plot)
+ *          --root <dir>        harness search root (default: src)
  *          --keep-bundles      do not delete generated .browser.bundle.js on exit
  * Env:     CHROME_BIN          path to a Chromium-family browser (else auto)
  *          HARNESS_TIMEOUT_MS  per-harness completion timeout (default 60000)
@@ -89,7 +89,8 @@ function flag(name) {
   return i >= 0 ? (argv[i + 1] ?? "") : undefined;
 }
 const ONLY = flag("--only");
-const SEARCH_ROOT = resolve(UI_ROOT, flag("--root") ?? "src/lib/cairn-plot");
+const DEFAULT_SEARCH_ROOT = resolve(UI_ROOT, "src");
+const SEARCH_ROOT = resolve(UI_ROOT, flag("--root") ?? "src");
 const KEEP_BUNDLES = argv.includes("--keep-bundles");
 // `--all` also drives the INTERACTION harnesses (media-compare / renderers /
 // primitives). Those mount live React panes and settle their `#status` only in
@@ -587,7 +588,7 @@ async function main() {
 
   // Interaction harnesses are human-run (see isParityHarness / RUN_ALL notes).
   // With a custom --root (e.g. the self-test), treat everything as runnable.
-  const customRoot = SEARCH_ROOT !== resolve(UI_ROOT, "src/lib/cairn-plot");
+  const customRoot = SEARCH_ROOT !== DEFAULT_SEARCH_ROOT;
   const interactionSkips = [];
   if (!RUN_ALL && !customRoot) {
     harnesses = harnesses.filter((h) => {

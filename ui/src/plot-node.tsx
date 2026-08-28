@@ -19,10 +19,8 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  Colorbar,
-  type ColormapName,
-} from "./integration/cairn-card";
+import { Colorbar } from "./primitives/components";
+import type { ColormapName } from "./plots/types";
 import type { CompareSource } from "./plots/image/backend/contracts";
 import {
   resolveDataProps,

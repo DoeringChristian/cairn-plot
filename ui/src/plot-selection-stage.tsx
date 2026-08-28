@@ -44,7 +44,7 @@ import { PlotNodeView } from "./plot-node";
 import { PaneSyncContext, SharedPlotContext } from "./host/plot-context.ts";
 import { ChartFillContext } from "./plot-standalone-helpers";
 import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./plot-descriptor";
-import type { DataSource } from "./integration/cairn-card";
+import type { DataSource } from "./resources/data/data-sources";
 import {
   getGlobalSelectionStore,
   REFERENCE_COLOR,

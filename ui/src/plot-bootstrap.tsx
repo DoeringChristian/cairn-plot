@@ -26,14 +26,18 @@ import React, { useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import {
   createEndpointDataSource,
+  type DataSource,
+} from "./resources/data/data-sources";
+import {
   createLocalDataSource,
   loadPlotStoreFromDom,
   registerPlotStore,
-  registerRuntimeEntries,
-  type DataSource,
   type PlotStore,
+} from "./resources/data/local-store";
+import {
+  registerRuntimeEntries,
   type RuntimeStoreEntry,
-} from "./integration/cairn-card";
+} from "./resources/data/runtime-store";
 import { useEmitAutoHeight } from "./host/hooks/use-emit-auto-height";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { getReactPlotType } from "./plots/react-registry.ts";

@@ -23,15 +23,17 @@ import {
   fetchMeshArrays,
   fetchVolumeArray,
   fetchBoxesArrays,
-  parseOverlay,
-  parseNpy,
+  type DataSource,
+} from "./resources/data/data-sources";
+import { parseOverlay } from "./resources/data/parse-overlay";
+import { parseNpy } from "./resources/transforms";
+import {
   decodeImage,
   decodedU8ToDataUrl,
   isRawBufferFormat,
   sniffFormat,
   resolveFinalUrl,
-  type DataSource,
-} from "./integration/cairn-card";
+} from "./plots/image/model";
 import { fetchImageBytes } from "./resources/fetch-image";
 import { floatPixelsFrom, floatValues } from "./plots/image/model/pixel-buffer.ts";
 import { describeExr } from "./plots/image/model/decoders/exr-describe";
@@ -291,7 +293,7 @@ export async function resolveDataProps(
  * controller threaded through), `u8` → a uint8 source carrying a PNG data URL
  * (the byte-exact `<img>` / SDR-surface path).
  */
-function decodedToSource(decoded: import("./integration/cairn-card").DecodedImage) {
+function decodedToSource(decoded: import("./plots/image/model").DecodedImage) {
   if (decoded.kind === "f32") {
     const shape =
       decoded.channels === 1

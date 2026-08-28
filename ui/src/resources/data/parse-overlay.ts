@@ -1,15 +1,4 @@
-/**
- * `parseOverlay` — turn a point's raw `artifact_metadata` JSON string into an
- * `ImageOverlayData` (box + segmentation-mask annotations), or `null` when
- * there are none / it doesn't parse.
- *
- * Moved into cairn-plot (from `components/viewport-registry.tsx`) so BOTH the
- * app (`viewport-registry` re-exports it for `VisualContentCard`'s overlay
- * settings aggregation) and the standalone plot bundle's LOCAL image provider
- * (`plot-main.tsx`) share ONE parser. Behavior-preserving — identical body to
- * the former app-owned copy. It has no dependency on the app's `api` client,
- * so it lives cleanly beside the `DataSource` seam (`data-sources.ts`).
- */
+/** Parse Cairn-compatible image annotation metadata without host dependencies. */
 import type { ImageOverlayData, OverlayMask } from "../../plots/types";
 
 export function parseOverlay(
@@ -33,10 +22,10 @@ export function parseOverlay(
         >)
       : undefined;
   const masks: OverlayMask[] | undefined = masksObj
-    ? Object.entries(masksObj).map(([name, m]) => ({
+    ? Object.entries(masksObj).map(([name, mask]) => ({
         name,
-        png_b64: m.png_b64,
-        class_labels: m.class_labels,
+        png_b64: mask.png_b64,
+        class_labels: mask.class_labels,
       }))
     : undefined;
   const class_labels =

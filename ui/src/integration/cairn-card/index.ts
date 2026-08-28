@@ -69,7 +69,7 @@ export {
 
 // Overlay-metadata parser (shared by the app's viewport-registry and the
 // standalone plot bundle's LOCAL image provider). Pure, no `api` dependency.
-export { parseOverlay } from "./parse-overlay";
+export { parseOverlay } from "../../resources/data/parse-overlay";
 
 // LOCAL content-addressed blob store (design spec §5) — the DataSource the
 // standalone plot bundle uses for baked/self-contained data. Eager-safe
