@@ -74,7 +74,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
 import { hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
-import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../../plots/image/webgpu/engine/pool";
+import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../../plots/image/webgpu/pool";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { createHarness, sleep, waitFor } from "../../harness";
 

@@ -53,7 +53,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../../types";
 import { applyColormap } from "../model/apply-colormap.ts";
-import { resolveColormapMode } from "./engine/diff-cmap-mode";
+import { resolveColormapMode } from "./diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../model/index";
 import { HALF_ONE } from "../model/half";
 import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
@@ -71,12 +71,12 @@ import {
 import type { ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation } from "./display.ts";
-import { computeCompareMapping, type CompareMapping } from "./engine/compare-align";
-import { computeHdrFlipExposures } from "./engine/kernels/hdr-flip-reference";
-import { formatSsim } from "./engine/ssim-metric";
-import type { DiffMetrics } from "./engine/image-engine";
-import type { DiffCacheEntry } from "./engine/diff-engine";
-import { defaultReduceForDisplayOperation, prepareDisplayOperation } from "./engine/prepare-display-operation.ts";
+import { computeCompareMapping, type CompareMapping } from "./compare-align";
+import { computeHdrFlipExposures } from "./kernels/hdr-flip-reference";
+import { formatSsim } from "./ssim-metric";
+import type { DiffMetrics } from "./image-engine";
+import type { DiffCacheEntry } from "./diff-engine";
+import { defaultReduceForDisplayOperation, prepareDisplayOperation } from "./prepare-display-operation.ts";
 import { compareCaptions } from "../compare/compare-captions";
 import { buildCompareModeMenu } from "../compare/compare-mode-menu";
 import SplitDivider from "../compare/SplitDivider";
@@ -98,10 +98,10 @@ import {
   MAX_RETAINED_SOURCE_TEXTURES as POOL_MAX_RETAINED_SOURCE_TEXTURES,
   type PaneHandle,
   type SourceUpload,
-} from "./engine/pool";
-import { imageWebGpuRuntime } from "./engine/webgpu/runtime.ts";
-import { isPaintPhaseLogActive, recordPaintPhase } from "./engine/test-hooks";
-import type { ImageParams } from "./engine/image-engine";
+} from "./pool";
+import { imageWebGpuRuntime } from "./device/runtime.ts";
+import { isPaintPhaseLogActive, recordPaintPhase } from "./test-hooks";
+import type { ImageParams } from "./image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
 // when the engine fails to activate/render (see `engineFailed` state below).
 // Safe to import here: this file only ever ships inside the gpu-image ADDON

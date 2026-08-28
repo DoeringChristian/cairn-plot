@@ -37,7 +37,7 @@ import { compareCaptions } from "./compare-captions";
 import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
 import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
-import type { CompareAlign, CompareFit } from "../webgpu/engine/compare-align";
+import type { CompareAlign, CompareFit } from "../webgpu/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../runtime/contracts";
 import {

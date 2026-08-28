@@ -69,7 +69,7 @@ import { getColormapLUT } from "../../../settings/colormaps/index";
 import { applyColormap } from "../model/apply-colormap.ts";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
-import { resolveColormapMode } from "../webgpu/engine/diff-cmap-mode";
+import { resolveColormapMode } from "../webgpu/diff-cmap-mode";
 import { floatPixelReader, widenFloatPixels } from "../model/pixel-buffer.ts";
 import {
   resolveDisplayOperator,

@@ -33,11 +33,11 @@
  * the composited view.
  */
 import React from "react";
-import { isDeviceLostError } from "../../../plots/image/webgpu/engine/webgpu/device";
+import { isDeviceLostError } from "../../../plots/image/webgpu/device/device";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
 import { urlSource } from "../../../plots/image/runtime/contracts";
-import { getSharedWebGpuDevice } from "../../../plots/image/webgpu/engine/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../../../plots/image/webgpu/device/device-provider.ts";
 import { createHarness, waitFor } from "../../harness";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import type { Colormap } from "../../../plots/types.ts";

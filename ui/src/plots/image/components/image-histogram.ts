@@ -28,7 +28,7 @@
  * per-pixel-under-cursor deep readout.
  */
 import type { DeepGpuCsrData } from "../model/decoders.ts";
-import { cpuDeepDepthWeights } from "../webgpu/engine/histogram/compute.ts";
+import { cpuDeepDepthWeights } from "../webgpu/histogram/compute.ts";
 import {
   emptyChannelStats,
   foldChannelStat,

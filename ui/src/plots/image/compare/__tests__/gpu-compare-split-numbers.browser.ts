@@ -53,7 +53,7 @@ import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../webgpu/view";
 import { urlSource, type CompareSource } from "../../runtime/contracts";
 import type { ImageViewState } from "../../../../host/hooks/use-image-gestures";
-import { isDeviceLostError } from "../../webgpu/engine/webgpu/device";
+import { isDeviceLostError } from "../../webgpu/device/device";
 import { createHarness, sleep, waitFor } from "../../../../testing/harness";
 
 const h = React.createElement;

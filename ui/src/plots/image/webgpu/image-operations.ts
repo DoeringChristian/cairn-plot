@@ -1,8 +1,8 @@
 import { getImageOperation, type ImageOperationDefinition } from "../definition/index.ts";
-import type { MultipassImageOperationProgram } from "./engine/operation-pass.ts";
-import { flipLdrForcedProgram, flipProgram } from "./engine/kernels/flip.wgsl.ts";
-import { hdrFlipProgram } from "./engine/kernels/hdr-flip.ts";
-import { ssimProgram } from "./engine/kernels/ssim.wgsl.ts";
+import type { MultipassImageOperationProgram } from "./operation-pass.ts";
+import { flipLdrForcedProgram, flipProgram } from "./kernels/flip.wgsl.ts";
+import { hdrFlipProgram } from "./kernels/hdr-flip.ts";
+import { ssimProgram } from "./kernels/ssim.wgsl.ts";
 
 export type WebGpuImageOperation =
   | { readonly definition: ImageOperationDefinition; readonly kind: "inline"; readonly expression: string }
