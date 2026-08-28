@@ -1,185 +1,24 @@
-/**
- * The standalone plot bundle's always-present plot definitions cover the 2D
- * charts, single-image, and table renderers. It imports the SAME pure
- * `lib/cairn-plot` renderers the viewer app
- * uses, so a Python-emitted plot is pixel-identical to the same renderer in
- * the app (consistency by construction).
- *
- * O2 bundle-split: Plotly `figure` is NO LONGER in this map — it ships as a
- * separate addon (`plot-figure-renderer.tsx` → `figure.iife.js`) registered at
- * runtime via `registerRenderer` so a scalar/table/image page never carries
- * Plotly. 3D (three.js) is likewise Phase-D addon territory and absent here.
- * `registerCoreRenderers()` seeds the runtime registry (`plot-registry.tsx`).
- *
- * Each entry is a thin STANDALONE ADAPTER around the pure renderer. The pure
- * renderers are prop-pure but several expect controlled interactive state
- * (e.g. `ScalarPlot`'s `viewport`/`onViewportChange`) or required config the
- * app's cards normally supply; standalone there is no card, so these adapters:
- *   1. own the interactive state locally (`useState`) with sensible seeds,
- *   2. fill required config props with defaults (overridable by the
- *      descriptor's `props`), and
- *   3. give chart renderers (which fill their container via `useContainerSize`)
- *      a default height box so they don't collapse to 0 on a bare page.
- *
- * DATA props arrive already-resolved from the descriptor (`resolveDataProps`)
- * merged over the descriptor's config `props`; adapters spread that as `p`.
- */
-import { floatPixelsFrom } from "./lib/cairn-plot/image/pixel-buffer.ts";
-import {
-  useContext,
-} from "react";
-import { ensureBarPlotType } from "./plots/bar/register";
-import { ensureHistogramPlotType } from "./plots/histogram/register";
-import { ensureHeatmapPlotType } from "./plots/heatmap/register";
-import { ensureParallelPlotType } from "./plots/parallel/register";
-import { ensureTablePlotType } from "./plots/table/register";
-import {
-  resolveRenderMode,
-  shapeDims,
-} from "./lib/cairn-plot/renderers/image-backend";
-import { useImageView } from "./lib/cairn-plot/settings/use-image-view";
-import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
-import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
-import {
-  GridUniformAspectContext,
-  GridCellReporter,
-  finitePositive,
-} from "./lib/cairn-plot/renderers/grid-uniform-aspect";
-import { ensureImagePlotType } from "./plots/image/register.ts";
-import { ensureScalarPlotType } from "./plots/scalar/register.ts";
-import { ensureScatterPlotType } from "./plots/scatter/register.ts";
-import { BarPlotView } from "./plots/bar/view.tsx";
-import { HeatmapPlotView } from "./plots/heatmap/view.tsx";
-import { HistogramPlotView } from "./plots/histogram/view.tsx";
-import { ParallelPlotView } from "./plots/parallel/view.tsx";
-import { ScatterPlotView } from "./plots/scatter/view.tsx";
-import { TablePlotView } from "./plots/table/view.tsx";
-import { ScalarPlotView } from "./plots/scalar/view.tsx";
-import { useImageBackend } from "./plots/image/backend-select.ts";
+/** Composition root for the always-present typed plot definitions. */
 import { resolveDataProps } from "./plot-descriptor.ts";
+import { ensureBarPlotType } from "./plots/bar/register.ts";
+import { BarPlotView } from "./plots/bar/view.tsx";
+import { ensureHeatmapPlotType } from "./plots/heatmap/register.ts";
+import { HeatmapPlotView } from "./plots/heatmap/view.tsx";
+import { ensureHistogramPlotType } from "./plots/histogram/register.ts";
+import { HistogramPlotView } from "./plots/histogram/view.tsx";
+import { ensureImagePlotType } from "./plots/image/register.ts";
+import { ImagePlotView } from "./plots/image/view.tsx";
+import { ensureParallelPlotType } from "./plots/parallel/register.ts";
+import { ParallelPlotView } from "./plots/parallel/view.tsx";
+import { ensureScalarPlotType } from "./plots/scalar/register.ts";
+import { ScalarPlotView } from "./plots/scalar/view.tsx";
+import { ensureScatterPlotType } from "./plots/scatter/register.ts";
+import { ScatterPlotView } from "./plots/scatter/view.tsx";
+import { ensureTablePlotType } from "./plots/table/register.ts";
+import { TablePlotView } from "./plots/table/view.tsx";
 
-/** Loose prop bag — resolved data props + descriptor config, unified. */
-type P = Record<string, any>;
-
-// `useImageView` (the pane viewport ↔ selection-group sync hook) now
-// lives in `renderers/use-image-view.ts` so both this module's
-// `ImageStandalone` and `plot-node.tsx`'s `CompareView` drive it from ONE
-// definition (imported above).
-
-// --- ImagePane: content/aspect-sized, fills required config with defaults ---
-// Like ScalarPlotStandalone, owns the interactive viewport locally: ImagePane's
-// wheel-zoom (modifier-gated) + drag-pan are CONTROLLED — they need a
-// `zoom`/`pan` value plus an `onViewportChange` callback to persist the gesture.
-// Standalone has no settings store, so the adapter holds the state itself,
-// seeded from descriptor-provided `zoom`/`pan`. Grid linking is handled by the
-// owning frame's key-scoped settings membership, not by this adapter.
-export function ImageStandalone(p: P) {
-  // DEFAULT framing: size the pane's box to the image's CONTENT aspect within the
-  // available space. `ChartFillContext` (set by a grid with `rowHeights`, or the
-  // compare/enlarge stage) decides fill-the-cell vs the standalone default height.
-  const fill = useContext(ChartFillContext);
-  // Inside ANY grid layout — a `cp.Grid` OR the compare/enlarge stage — every
-  // image viewport is UNIFORM (the grid picks ONE representative aspect and sizes
-  // every cell to it): the pane FILLS its cell and this reporter feeds the cell's
-  // content aspect up so the grid can choose that representative. Absent (a
-  // standalone mount) ⇒ null ⇒ the per-content `ContentAspectFrame` framing below.
-  const gridUniform = useContext(GridUniformAspectContext);
-  // NOSTACK: the viewport is a pure projection of the settings entry
-  // (`settings.view`), written through the ONE settings write path — group
-  // fan-out (selection / authored grid sync) rides the settings bus. A bare
-  // host mount (no store) falls back to hook-local state.
-  const [viewport, onViewportChange] = useImageView(
-    p.syncedSettings,
-    p.setSyncedSettings,
-    { zoom: p.zoom ?? 1, pan: p.pan ?? { x: 0, y: 0 } },
-  );
-  // resolveImageRenderer: the backend for this mount (GpuImagePane or
-  // CpuImagePane — both satisfy the ONE `ImageBackendProps` contract, so the
-  // swap is a drop-in replacement), chosen by the user-settable render mode:
-  // explicit `renderMode` → `window.__cairnPlotRenderMode` → `?render=` → "auto".
-  const Pane = useImageBackend(resolveRenderMode(p.renderMode));
-  // The ONE dtype-tagged decoded source arrives resolved from `resolveDataProps`.
-  // Back-compat: a legacy `imageUrl`/`hdr` prop (e.g. a hand-built descriptor)
-  // is normalized to a `source` here so a single code path renders both.
-  const source =
-    p.source ??
-    (p.hdr
-      ? {
-          dtype: "float" as const,
-          // Legacy WIRE bridge (hand-built descriptors author {data, precision}):
-          // interpreted exactly ONCE, into the self-describing buffer.
-          pixels: floatPixelsFrom(p.hdr.data, p.hdr.precision),
-          shape: p.hdr.shape,
-          numpyDtype: p.hdr.dtype,
-          deep: p.hdr.deep,
-        }
-      : { dtype: "uint8" as const, url: p.imageUrl ?? null });
-  const pane = (
-    <Pane
-      source={source}
-      compareSource={p.compareSource}
-      toolbar={p.toolbar}
-      baselineUrl={p.baselineUrl ?? null}
-      diffMode={p.diffMode ?? "none"}
-      interpolation={p.interpolation ?? "auto"}
-      colormap={p.colormap ?? "none"}
-      tonemap={p.tonemap}
-      exposure={p.exposure}
-      offset={p.offset}
-      peak={p.peak}
-      gamma={p.gamma}
-      processing={p.processing}
-      showAxes={p.showAxes ?? false}
-      label={p.label ?? ""}
-      overlay={p.overlay}
-      overlaySettings={p.overlaySettings}
-      pixelValueNotation={p.pixelValueNotation}
-      zoom={viewport.zoom}
-      pan={viewport.pan}
-      onViewportChange={onViewportChange}
-      syncedSettings={p.syncedSettings}
-      setSyncedSettings={p.setSyncedSettings}
-      resetViewportSettings={p.resetViewportSettings}
-      channelMenu={p.channelMenu}
-      channelModified={p.channelModified}
-      onChannelReset={p.onChannelReset}
-      enlargeControl={p.enlargeControl}
-      inStackedGrid={p.inStackedGrid}
-    />
-  );
-  // A FLOAT/EXR source carries its pixel dims in `source.shape` ([H, W, …]) — the
-  // content aspect is known SYNCHRONOUSLY (before the WebGPU pane is ready / the
-  // payload is decoded). uint8/URL sources have no upfront shape (the pane's
-  // `<img>` onload reports it) → null.
-  const dims = source.dtype === "float" && source.shape.length >= 2 ? shapeDims(source.shape) : null;
-  const knownAspect = dims ? finitePositive(dims.w / dims.h) : null;
-  // In a grid the pane FILLS its (uniformly-sized) cell — no per-cell shrink —
-  // and reports its aspect so the grid can size every cell to ONE representative
-  // aspect (uniform viewports; selection ring = cell = viewport).
-  if (gridUniform) return <GridCellReporter seedAspect={knownAspect}>{pane}</GridCellReporter>;
-  // Otherwise the pane's box tracks the CONTENT aspect within the available space.
-  // The OUTER frame keeps the pre-existing sizing so the component stays a
-  // well-behaved embeddable: it FILLS a grid cell (`fill`) or a host-sized box
-  // (a uint8/URL image previously rendered a bare, host-filling pane), and only a
-  // FLOAT image on a BARE page keeps the standalone default height (the old
-  // `ChartBox` behaviour). Within that box the drawable viewport shrink-wraps the
-  // image, so the empty letterbox/pillarbox bands are minimised.
-  const outerHeight: number | string =
-    fill || source.dtype !== "float" ? "100%" : (p.height ?? DEFAULT_CHART_HEIGHT);
-  // Hand the frame the known aspect (float/EXR) so it sizes the viewport to the
-  // content aspect IMMEDIATELY — not after the pane's async natural-size report
-  // (which for the WebGPU float path only fires post-`paneReady` + decode; until
-  // then the frame sits in its tall `outerHeight` fallback → a portrait viewport).
-  return (
-    <ContentAspectFrame outerHeight={outerHeight} contentAspect={knownAspect}>
-      {pane}
-    </ContentAspectFrame>
-  );
-}
-
-/** Seed the typed runtime registry with every always-present core plot. */
 export function registerCoreRenderers(): void {
-  ensureImagePlotType(ImageStandalone, resolveDataProps);
+  ensureImagePlotType(ImagePlotView, resolveDataProps);
   ensureScalarPlotType(ScalarPlotView, resolveDataProps);
   ensureScatterPlotType(ScatterPlotView, resolveDataProps);
   ensureBarPlotType(BarPlotView, resolveDataProps);

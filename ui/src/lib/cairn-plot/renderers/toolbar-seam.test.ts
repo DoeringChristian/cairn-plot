@@ -29,7 +29,7 @@ const shell = read("renderers/ImagePaneShell.tsx");
 const backend = read("renderers/image-backend.ts");
 const cpu = read("renderers/CpuImagePane.tsx");
 const gpu = read("renderers/GpuImagePane.tsx");
-const standalone = readFileSync(join(HERE, "../../../plot-renderers.tsx"), "utf8");
+const standalone = readFileSync(join(HERE, "../../../plots/image/view.tsx"), "utf8");
 
 // --- the shared contract: the shape carries `toolbar` ---------------------
 

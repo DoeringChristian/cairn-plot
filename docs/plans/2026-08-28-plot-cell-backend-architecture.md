@@ -98,6 +98,8 @@ Status: accepted design; implementation in progress
 - [x] Extract image CPU/WebGPU capability selection and fallback policy into
   the image plot boundary. The reusable WebGPU facade remains plot-agnostic;
   image backend policy no longer lives in the central registration module.
+- [x] Colocate the image surface host with the image plot. The core renderer
+  entry point is now a small composition root containing registration only.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry
