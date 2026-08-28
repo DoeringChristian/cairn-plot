@@ -10,7 +10,7 @@ import {
   prefetchResolved,
   estimateResolvedBytes,
   __resetResolveCacheForTest,
-} from "./resolve-cache.ts";
+} from "./resolution-cache.ts";
 
 test("resolution keys include DataSource identity", () => {
   const node = {};

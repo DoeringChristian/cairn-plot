@@ -22,11 +22,11 @@
 import {
   globalPreparationScheduler,
   type PreparationPriority,
-} from "../../resources/scheduler.ts";
+} from "./scheduler.ts";
 import {
   globalResourceCache,
   type ResourceLease,
-} from "../../resources/cache.ts";
+} from "./cache.ts";
 
 const idMap = new WeakMap<object, string>();
 let counter = 0;

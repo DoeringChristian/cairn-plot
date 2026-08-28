@@ -54,7 +54,7 @@ import {
   prefetchResolved,
   subscribeResolveCache,
   resolveCacheVersion,
-} from "./lib/cairn-plot/resolve-cache";
+} from "./resources/resolution-cache";
 import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "./lib/cairn-plot/image/channel-menu";
 import { applyChannelSlice } from "./lib/cairn-plot/image/channel-slice";
 import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
