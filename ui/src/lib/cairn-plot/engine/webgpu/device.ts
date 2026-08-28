@@ -117,7 +117,11 @@ import type {
   Capabilities,
 } from "../types";
 import type { DeepSampleBuffers, DeepGpuCsrSpec } from "../types";
-import { configureHDRSurface, configureSDRSurface, type SurfaceConfigResult } from "./surface";
+import {
+  configureHDRSurface,
+  configureSDRSurface,
+  type SurfaceConfigResult,
+} from "../../../../engines/webgpu/surface.ts";
 import { recordContextLossEvent } from "../test-hooks";
 import {
   REDUCE_WORKGROUP_SIZE,
