@@ -2,6 +2,12 @@ import { createElement, type ComponentType } from "react";
 
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
+import type { DeepFlattenController } from "../../lib/cairn-plot/image/decoders.ts";
+import type {
+  DecodedSource,
+  ImageBackendProps,
+  RenderMode,
+} from "../../lib/cairn-plot/renderers/image-backend.ts";
 import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
@@ -14,8 +20,39 @@ import {
 } from "./comparison-plan.ts";
 
 type ImageSpec = Extract<DataSpec, { kind: "inline" | "image" | "imghdr" | "url" }>;
-export type ImagePresentation = Record<string, any>;
+type ImageRuntimePlumbing =
+  | "source"
+  | "syncedSettings"
+  | "setSyncedSettings"
+  | "resetViewportSettings"
+  | "onViewportChange";
+
+/** Semantic image input. Cell-owned settings and commands are deliberately absent. */
+export type ImagePresentation = Omit<ImageBackendProps, ImageRuntimePlumbing> & {
+  readonly source?: DecodedSource;
+  readonly imageUrl?: string | null;
+  readonly hdr?: {
+    readonly data: Float32Array | Float64Array | Uint16Array;
+    readonly precision?: "f32" | "f16-bits";
+    readonly shape: number[];
+    readonly dtype: string;
+    readonly deep?: DeepFlattenController;
+  };
+  readonly renderMode?: RenderMode;
+  readonly height?: number;
+};
 export type ImageSettings = ViewportSettings & SettingsRecord;
+
+/** Checked erasure boundary for resolved and legacy-inline image payloads. */
+export function imagePresentation(value: Record<string, unknown>): ImagePresentation {
+  const source = value.source;
+  const hasSource = source !== null && typeof source === "object" &&
+    ((source as { dtype?: unknown }).dtype === "float" || (source as { dtype?: unknown }).dtype === "uint8");
+  if (!hasSource && value.hdr == null && value.imageUrl == null) {
+    throw new Error("cairn-plot: image presentation requires a decoded source");
+  }
+  return value as unknown as ImagePresentation;
+}
 
 function validateImageData(value: DataSpec): ImageSpec {
   if (value.kind === "inline" || value.kind === "image" || value.kind === "imghdr" || value.kind === "url") {
@@ -27,7 +64,7 @@ function validateImageData(value: DataSpec): ImageSpec {
 /** Register the existing proven ImageView as the first typed production kind. */
 export function ensureImagePlotType(
   View: ComponentType<ReactPlotViewProps<ImagePresentation, ImageSettings>>,
-  resolve: (spec: ImageSpec, source: DataSource) => Promise<ImagePresentation>,
+  resolve: (spec: ImageSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   if (getPlotType("image")) return;
   const backend: ReactPlotBackend<ImagePresentation, ImageSettings> = {
@@ -58,7 +95,7 @@ export function ensureImagePlotType(
       project: (settings) => ({ ...settings }) as ImageSettings,
     },
     resolve: (spec, context) => resolve(spec, context.source),
-    present: (content) => content,
+    present: imagePresentation,
     comparison: {
       presentations: [
         { id: "split", label: "Split", minOperands: 2 },
@@ -81,7 +118,7 @@ export function ensureImagePlotType(
       plan: planImageComparison,
       async resolve(plan, context) {
         const { resolveImageComparisonPair } = await import("./comparison-resolve.ts");
-        return resolveImageComparisonPair(plan.reference, plan.foreground, context.source);
+        return imagePresentation(await resolveImageComparisonPair(plan.reference, plan.foreground, context.source));
       },
     },
     // The current adapter is same-root React. Imperative image backends can be

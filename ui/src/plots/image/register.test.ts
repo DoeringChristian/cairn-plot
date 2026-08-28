@@ -5,10 +5,16 @@ import test from "node:test";
 import { claimPlotKind } from "../kind-ownership.ts";
 import { clearPlotTypesForTest, planComparison, requirePlotType } from "../registry.ts";
 import { clearReactPlotTypesForTest, getReactPlotType } from "../react-registry.ts";
-import { ensureImagePlotType } from "./register.ts";
+import { ensureImagePlotType, imagePresentation } from "./register.ts";
 import { expandImageComparison } from "./comparison-plan.ts";
 
 const View = () => null;
+
+test("image presentation validates its typed decoded-source boundary", () => {
+  const source = { dtype: "uint8" as const, url: "data:image/png;base64," };
+  assert.deepEqual(imagePresentation({ source, label: "preview" }), { source, label: "preview" });
+  assert.throws(() => imagePresentation({ label: "missing" }), /requires a decoded source/);
+});
 
 test("image is exclusively owned by the typed plot registry", () => {
   clearReactPlotTypesForTest();
