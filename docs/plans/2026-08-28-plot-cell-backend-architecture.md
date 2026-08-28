@@ -86,6 +86,9 @@ Status: accepted design; implementation in progress
   and extract their shared chart-settings boundary. The central compatibility
   renderer module no longer imports or implements scatter, bar, histogram,
   heatmap, parallel-coordinate, or table hosts.
+- [x] Colocate the scalar backend view and remove its local viewport and
+  promoted-series fallback stores. The typed backend command port is now its
+  only interaction-state write path.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

@@ -26,13 +26,10 @@
  */
 import { floatPixelsFrom } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import {
-  useCallback,
   useContext,
   useEffect,
-  useState,
   useSyncExternalStore,
 } from "react";
-import ScalarPlot from "./lib/cairn-plot/renderers/ScalarPlot";
 import { ensureBarPlotType } from "./plots/bar/register";
 import { ensureHistogramPlotType } from "./plots/histogram/register";
 import { ensureHeatmapPlotType } from "./plots/heatmap/register";
@@ -52,10 +49,8 @@ import {
   type RenderMode,
 } from "./lib/cairn-plot/renderers/image-backend";
 import { warnGpuUnavailable } from "./lib/cairn-plot/primitives/capability-notice";
-import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
 import { useImageView } from "./lib/cairn-plot/settings/use-image-view";
-import type { ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings.ts";
-import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
+import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
 import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
 import {
   GridUniformAspectContext,
@@ -71,6 +66,7 @@ import { HistogramPlotView } from "./plots/histogram/view.tsx";
 import { ParallelPlotView } from "./plots/parallel/view.tsx";
 import { ScatterPlotView } from "./plots/scatter/view.tsx";
 import { TablePlotView } from "./plots/table/view.tsx";
+import { ScalarPlotView } from "./plots/scalar/view.tsx";
 import { resolveDataProps } from "./plot-descriptor.ts";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
@@ -154,71 +150,6 @@ function resolveImageRenderer(mode: RenderMode): ImageBackend {
   // "auto": engine once the probe confirms it (the host opt-out short-circuits
   // the probe to "unavailable" inside the gate).
   return gate === "ready" ? GpuImagePane : CpuImagePane;
-}
-
-// --- ScalarPlot: cell-owned viewport + local promoted-series presentation --
-function ScalarPlotStandalone(p: P) {
-  const [localViewport, setLocalViewport] = useState<Viewport>(
-    p.viewport ?? { xMin: null, xMax: null, yMin: null, yMax: null },
-  );
-  const scalarSettings = p.syncedSettings as ViewportSettings | null | undefined;
-  const setScalarSettings = p.setSyncedSettings as ((patch: ViewportSettings) => void) | undefined;
-  const domainX = scalarSettings?.["chart.domainX"];
-  const domainY = scalarSettings?.["chart.domainY"];
-  const viewport: Viewport = setScalarSettings
-    ? {
-        xMin: domainX?.[0] ?? null,
-        xMax: domainX?.[1] ?? null,
-        yMin: domainY?.[0] ?? null,
-        yMax: domainY?.[1] ?? null,
-      }
-    : localViewport;
-  const setViewport = useCallback((next: Viewport) => {
-    if (!setScalarSettings) {
-      setLocalViewport(next);
-      return;
-    }
-    setScalarSettings({
-      "chart.domainX": next.xMin == null || next.xMax == null ? null : [next.xMin, next.xMax],
-      "chart.domainY": next.yMin == null || next.yMax == null ? null : [next.yMin, next.yMax],
-    });
-  }, [setScalarSettings]);
-  const [localPromoted, setLocalPromoted] = useState<Record<string, PromotedSeriesConfig>>(
-    p.promotedSeries ?? {},
-  );
-  const promoted = setScalarSettings
-    ? scalarSettings?.["chart.promotedSeries"] ?? {}
-    : localPromoted;
-  const setPromoted = useCallback((next: Record<string, PromotedSeriesConfig>) => {
-    if (setScalarSettings) setScalarSettings({ "chart.promotedSeries": next });
-    else setLocalPromoted(next);
-  }, [setScalarSettings]);
-  const {
-    height,
-    viewport: _v,
-    promotedSeries: _p,
-    syncedSettings: _settings,
-    setSyncedSettings: _setSettings,
-    resetViewportSettings: _resetSettings,
-    ...rest
-  } = p;
-  return (
-    <ChartBox height={height}>
-      <ScalarPlot
-        series={p.series ?? []}
-        xAxis={p.xAxis ?? "step"}
-        xScale={p.xScale ?? "linear"}
-        yScale={p.yScale ?? "linear"}
-        xRange={p.xRange ?? [null, null]}
-        yRange={p.yRange ?? [null, null]}
-        {...rest}
-        viewport={viewport}
-        onViewportChange={setViewport}
-        promotedSeries={promoted}
-        onPromotedSeriesChange={setPromoted}
-      />
-    </ChartBox>
-  );
 }
 
 // `useImageView` (the pane viewport ↔ selection-group sync hook) now
@@ -341,7 +272,7 @@ export function ImageStandalone(p: P) {
 /** Seed the typed runtime registry with every always-present core plot. */
 export function registerCoreRenderers(): void {
   ensureImagePlotType(ImageStandalone, resolveDataProps);
-  ensureScalarPlotType(ScalarPlotStandalone, resolveDataProps);
+  ensureScalarPlotType(ScalarPlotView, resolveDataProps);
   ensureScatterPlotType(ScatterPlotView, resolveDataProps);
   ensureBarPlotType(BarPlotView, resolveDataProps);
   ensureHistogramPlotType(HistogramPlotView, resolveDataProps);
