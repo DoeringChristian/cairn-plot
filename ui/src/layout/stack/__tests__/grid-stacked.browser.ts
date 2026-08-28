@@ -1,5 +1,5 @@
 /**
- * STACKED GRID — a `cp.Grid(mode="stacked")` shows ONE child at a time with a
+ * STACKED GRID — a `cp.Grid(mode="stack")` shows ONE child at a time with a
  * keyboard-driven tab strip, plus a live normal⇄stacked toggle on the grid.
  * Verifies: the toggle exists (the reported "no such button"); stacked shows one
  * pane + N tabs; arrows / hjkl / number / letter switch the active tab; clicking
@@ -43,9 +43,11 @@ function imgUrl(color: string): string {
 function compareUrlChild(fg: string, ref: string, label: string): unknown {
   return {
     kind: "compare",
-    mode: "split", // Phase 3: split lowers to the SAME image family → homogeneous stack (source-swap, no remount)
-    a: { kind: "url", src: imgUrl(fg) },
-    b: { kind: "url", src: imgUrl(ref) },
+    type: "image",
+    presentation: "split",
+    operands: [{ kind: "url", src: imgUrl(ref) }, { kind: "url", src: imgUrl(fg) }],
+    strategy: "reference",
+    referenceIndex: 0,
     props: { toolbar: true, label },
   };
 }
@@ -57,24 +59,25 @@ function compareUrlChild(fg: string, ref: string, label: string): unknown {
 function diffUrlChild(fg: string, ref: string, label: string): unknown {
   return {
     kind: "compare",
-    mode: "diff",
-    a: { kind: "url", src: imgUrl(fg) },
-    b: { kind: "url", src: imgUrl(ref) },
-    diffSubmode: "absolute",
-    props: { toolbar: true, label },
+    type: "image",
+    presentation: "difference",
+    operands: [{ kind: "url", src: imgUrl(ref) }, { kind: "url", src: imgUrl(fg) }],
+    strategy: "reference",
+    referenceIndex: 0,
+    props: { toolbar: true, label, diffSubmode: "absolute" },
   };
 }
 // A stacked grid mixing an image LEAF and a DIFF compare — homogeneous by the
 // Phase 2c `stackKindKey` (both lower to `plot:image`), so the flip is a reused-
 // instance source-swap, NOT a mount-swap.
-function imageDiffGrid(mode: "normal" | "stacked"): PlotSpec {
+function imageDiffGrid(initialLayout: "grid" | "stack"): PlotSpec {
   return {
     mode: "local",
     root: {
       kind: "grid",
       cols: 2,
       gap: 8,
-      mode,
+      initialLayout,
       children: [
         { kind: "plot", type: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
         diffUrlChild("#c0392b", "#2980b9", "Diff"),
@@ -88,14 +91,14 @@ function imageDiffGrid(mode: "normal" | "stacked"): PlotSpec {
 // (the 341c577 mixed-stack sync-group machinery is retired). Both sides are URL
 // sources ⇒ CpuImagePane renders each as an `<img>`, so the SAME surface DOM node
 // survives the flip (the no-remount proof, no WebGPU needed).
-function mixedGrid(mode: "normal" | "stacked"): PlotSpec {
+function mixedGrid(initialLayout: "grid" | "stack"): PlotSpec {
   return {
     mode: "local",
     root: {
       kind: "grid",
       cols: 2,
       gap: 8,
-      mode,
+      initialLayout,
       children: [
         { kind: "plot", type: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
         compareUrlChild("#c0392b", "#2980b9", "Compare"),
@@ -103,7 +106,7 @@ function mixedGrid(mode: "normal" | "stacked"): PlotSpec {
     },
   } as unknown as PlotSpec;
 }
-function stackedGrid(labels: string[], mode: "normal" | "stacked"): PlotSpec {
+function stackedGrid(labels: string[], initialLayout: "grid" | "stack"): PlotSpec {
   // DELIBERATELY different sizes/aspects per child: the stacked viewport BOX is
   // latched (one fixed surface; a differently-shaped slot letterboxes within
   // it), and the box-stability assertions below depend on the children actually
@@ -119,7 +122,7 @@ function stackedGrid(labels: string[], mode: "normal" | "stacked"): PlotSpec {
       kind: "grid",
       cols: labels.length,
       gap: 8,
-      mode,
+      initialLayout,
       children: labels.map((l, i) => floatLeaf(...(dims[i % dims.length] as [number, number]), l)),
     },
   } as unknown as PlotSpec;
@@ -151,7 +154,7 @@ async function run(): Promise<boolean> {
 
   // ── A stacked grid of 3 labelled panes ────────────────────────────────────
   const rootA = createRoot(host("m1"));
-  rootA.render(createElement(PlotApp, { spec: stackedGrid(["Alpha", "Bravo", "Charlie"], "stacked") }));
+  rootA.render(createElement(PlotApp, { spec: stackedGrid(["Alpha", "Bravo", "Charlie"], "stack") }));
   roots.push(rootA);
 
   const up = await waitFor(() => qa("m1", "[data-cairn-stack-tab]").length >= 1 || qa("m1", "[role='tab']").length >= 3, 5000, 20);
@@ -260,14 +263,14 @@ async function run(): Promise<boolean> {
 
   // ── The live toggle: a NORMAL grid has the button; click → stacked ────────
   const rootB = createRoot(host("m2"));
-  rootB.render(createElement(PlotApp, { spec: stackedGrid(["one", "two", "three"], "normal") }));
+  rootB.render(createElement(PlotApp, { spec: stackedGrid(["one", "two", "three"], "grid") }));
   roots.push(rootB);
-  const toggleUp = await waitFor(() => !!q("m2", "[data-cairn-grid-mode-toggle]"), 5000, 20);
+  const toggleUp = await waitFor(() => !!q("m2", "[data-cairn-grid-layout-toggle]"), 5000, 20);
   report(toggleUp, "NORMAL grid shows the normal|stacked toggle button (the missing button)");
   const startsNormal = await waitFor(() => qa("m2", "[role='tab']").length === 0, 5000, 20);
   report(startsNormal, "normal grid shows NO tab strip");
   report(qa("m2", "[data-plot-pane-id]").length === 3, "normal 3-child grid owns three independent plot cells");
-  const stackedBtn = q("m2", '[data-cairn-grid-mode="stacked"]');
+  const stackedBtn = q("m2", '[data-cairn-grid-layout="stack"]');
   report(!!stackedBtn, "toggle has a 'stacked' button");
   stackedBtn?.click();
   const flipped = await waitFor(() => qa("m2", "[role='tab']").length === 3, 5000, 20);
@@ -278,22 +281,22 @@ async function run(): Promise<boolean> {
 
   // ── Single-child grid: no toggle (stacking a lone child is a no-op) ───────
   const rootC = createRoot(host("m3"));
-  rootC.render(createElement(PlotApp, { spec: stackedGrid(["solo"], "normal") }));
+  rootC.render(createElement(PlotApp, { spec: stackedGrid(["solo"], "grid") }));
   roots.push(rootC);
   await sleep(150);
-  const noToggle = !q("m3", "[data-cairn-grid-mode-toggle]");
+  const noToggle = !q("m3", "[data-cairn-grid-layout-toggle]");
   report(noToggle, "single-child grid has NO mode toggle");
   ok = ok && noToggle;
 
   // `switchable:false` disables authoring UI; it must not override the authored
   // initial presentation.
-  const fixedDescriptor = stackedGrid(["fixed-a", "fixed-b"], "stacked");
+  const fixedDescriptor = stackedGrid(["fixed-a", "fixed-b"], "stack");
   if (fixedDescriptor.root.kind === "grid") fixedDescriptor.root.switchable = false;
   const rootFixed = createRoot(host("m6"));
   rootFixed.render(createElement(PlotApp, { spec: fixedDescriptor }));
   roots.push(rootFixed);
   const fixedStacked = await waitFor(() => qa("m6", "[role='tab']").length === 0 && !!q("m6", "[data-cairn-stacked-view]"), 5000, 20);
-  const fixedNoToggle = !q("m6", "[data-cairn-grid-mode-toggle]");
+  const fixedNoToggle = !q("m6", "[data-cairn-grid-layout-toggle]");
   report(fixedStacked && fixedNoToggle, "switchable:false preserves authored stacked mode while hiding switching controls");
   ok = ok && fixedStacked && fixedNoToggle;
 
@@ -305,11 +308,11 @@ async function run(): Promise<boolean> {
   // section below): tag the surface on tab 0, flip to the compare tab, and assert
   // the SAME node survives + zoom persists + exactly ONE stacked-pane.
   const rootD = createRoot(host("m4"));
-  rootD.render(createElement(PlotApp, { spec: mixedGrid("normal") }));
+  rootD.render(createElement(PlotApp, { spec: mixedGrid("grid") }));
   roots.push(rootD);
-  const mixToggle = await waitFor(() => !!q("m4", "[data-cairn-grid-mode-toggle]"), 5000, 20);
+  const mixToggle = await waitFor(() => !!q("m4", "[data-cairn-grid-layout-toggle]"), 5000, 20);
   report(mixToggle, "image+compare grid shows the normal|stacked toggle");
-  q("m4", '[data-cairn-grid-mode="stacked"]')?.click();
+  q("m4", '[data-cairn-grid-layout="stack"]')?.click();
   const mixStacked = await waitFor(() => qa("m4", "[role='tab']").length === 2, 5000, 20);
   report(mixStacked, `image+compare grid switches to stacked: 2 tabs (got ${qa("m4", "[role='tab']").length})`);
   const oneMixPane = qa("m4", '[data-cairn-stacked-pane="active"]').length === 1;
@@ -372,7 +375,7 @@ async function run(): Promise<boolean> {
   // is still the active surface (a remount would replace it), zoom persists, and
   // there is exactly ONE stacked-pane (no hidden sibling).
   const rootE = createRoot(host("m5"));
-  rootE.render(createElement(PlotApp, { spec: imageDiffGrid("stacked") }));
+  rootE.render(createElement(PlotApp, { spec: imageDiffGrid("stack") }));
   roots.push(rootE);
   const diffUp = await waitFor(() => qa("m5", "[role='tab']").length === 2, 5000, 20);
   report(diffUp, `[image, diff] stack renders 2 tabs (got ${qa("m5", "[role='tab']").length})`);

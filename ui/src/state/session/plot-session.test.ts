@@ -7,7 +7,7 @@ import { emptyPlotSession, parsePlotSession, PlotSessionError } from "./plot-ses
 test("plot sessions round-trip canonical cell settings", () => {
   const parsed = parsePlotSession({
     cells: { a: { settings: { "compare.operation": "signed-error" } } },
-    grids: { g: { mode: "stacked", activeSlot: 2 } },
+    grids: { g: { layout: "stack", activeSlot: 2 } },
   });
   assert.deepEqual(parsed.cells.a.settings, { "compare.operation": "signed-error" });
   assert.deepEqual(parsePlotSession(parsed), parsed);

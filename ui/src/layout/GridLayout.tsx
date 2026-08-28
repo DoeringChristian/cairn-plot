@@ -6,7 +6,7 @@ import {
   useUniformGridAspect,
 } from "./grid-uniform-aspect.tsx";
 import {
-  GridModeToggle,
+  GridLayoutToggle,
   StackTabStrip,
   useStackKeyboard,
 } from "./stack/StackedView.tsx";
@@ -14,8 +14,8 @@ import { InStackedGridContext } from "./stack/stack-context.ts";
 import { ChartFillContext } from "./chart-fill.ts";
 import { adjacentStackIndices } from "./stack-preload.ts";
 
-export type GridMode = "normal" | "stacked";
-export interface GridLayoutState { mode: GridMode; activeSlot: number }
+export type GridLayoutKind = "grid" | "stack";
+export interface GridLayoutState { layout: GridLayoutKind; activeSlot: number }
 
 export interface GridLayoutProps {
   count: number;
@@ -23,13 +23,13 @@ export interface GridLayoutProps {
   colWidths?: Array<number | string>;
   rowHeights?: Array<number | string>;
   gap?: number | string;
-  initialMode?: GridMode;
+  initialLayout?: GridLayoutKind;
   state?: GridLayoutState;
   onStateChange?(state: GridLayoutState): void;
   switchable?: boolean;
   labels: string[];
-  renderNormal(index: number): React.ReactNode;
-  renderStacked(index: number): React.ReactNode;
+  renderGridCell(index: number): React.ReactNode;
+  renderStackSlot(index: number): React.ReactNode;
   preload?(indices: number[]): void;
 }
 
@@ -51,27 +51,27 @@ export function GridLayout({
   colWidths,
   rowHeights,
   gap,
-  initialMode = "normal",
+  initialLayout = "grid",
   state,
   onStateChange,
   switchable = true,
   labels,
-  renderNormal,
-  renderStacked,
+  renderGridCell,
+  renderStackSlot,
   preload,
 }: GridLayoutProps) {
   const fill = !!rowHeights && rowHeights.length > 0;
   const gridAspectApi = useUniformGridAspect();
   const supportsStack = count >= 2;
   const canSwitch = supportsStack && switchable;
-  const [localState, setLocalState] = useState<GridLayoutState>({ mode: initialMode, activeSlot: 0 });
+  const [localState, setLocalState] = useState<GridLayoutState>({ layout: initialLayout, activeSlot: 0 });
   const current = state ?? localState;
   const updateState = useCallback((next: GridLayoutState | ((prev: GridLayoutState) => GridLayoutState)) => {
     const value = typeof next === "function" ? next(current) : next;
     if (!state) setLocalState(value);
     onStateChange?.(value);
   }, [current, state, onStateChange]);
-  const setMode = useCallback((mode: GridMode) => updateState({ ...current, mode }), [current, updateState]);
+  const setLayout = useCallback((layout: GridLayoutKind) => updateState({ ...current, layout }), [current, updateState]);
   const setActive = useCallback<React.Dispatch<React.SetStateAction<number>>>(
     (next) => updateState((previous) => ({
       ...previous,
@@ -79,9 +79,9 @@ export function GridLayout({
     })),
     [updateState],
   );
-  const mode = current.mode;
+  const layout = current.layout;
   const active = current.activeSlot;
-  const effectiveMode = supportsStack ? mode : "normal";
+  const effectiveLayout = supportsStack ? layout : "grid";
   const clampedActive = Math.min(active, Math.max(0, count - 1));
   const stackRootRef = useRef<HTMLDivElement | null>(null);
 
@@ -102,7 +102,7 @@ export function GridLayout({
   // One stacked viewport keeps one physical box. Freeze its first established
   // aspect and letterbox differently-shaped content inside it.
   const stackAspectRef = useRef<number | null>(null);
-  if (effectiveMode === "stacked") {
+  if (effectiveLayout === "stack") {
     if (stackAspectRef.current == null && gridAspectApi.uniformAspect != null) {
       stackAspectRef.current = gridAspectApi.uniformAspect;
     }
@@ -123,11 +123,11 @@ export function GridLayout({
         }
       : {};
 
-  useStackKeyboard(stackRootRef, effectiveMode === "stacked", clampedActive, count, setActive);
+  useStackKeyboard(stackRootRef, effectiveLayout === "stack", clampedActive, count, setActive);
   useEffect(() => {
-    if (effectiveMode !== "stacked" || !preload) return;
+    if (effectiveLayout !== "stack" || !preload) return;
     preload(adjacentStackIndices(clampedActive, count));
-  }, [effectiveMode, clampedActive, count, preload]);
+  }, [effectiveLayout, clampedActive, count, preload]);
 
   const stackedPane = count > 0 ? (
     <InStackedGridContext.Provider value={true}>
@@ -141,7 +141,7 @@ export function GridLayout({
             data-cairn-stacked-pane="active"
             style={{ minWidth: 0, ...(fill ? { height: "100%" } : null) }}
           >
-            {renderStacked(clampedActive)}
+            {renderStackSlot(clampedActive)}
           </div>
         </div>
       </GridUniformAspectContext.Provider>
@@ -159,20 +159,20 @@ export function GridLayout({
         >
           {canSwitch && (
             <div data-cairn-grid-header="" className="mb-1 flex items-center gap-2" style={{ minHeight: 26 }}>
-              {effectiveMode === "stacked" ? (
+              {effectiveLayout === "stack" ? (
                 <StackTabStrip labels={labels} active={clampedActive} onSelect={setActive} />
               ) : (
                 <div className="flex-1" />
               )}
-              <GridModeToggle mode={effectiveMode} onChange={setMode} />
+              <GridLayoutToggle layout={effectiveLayout} onChange={setLayout} />
             </div>
           )}
-          {effectiveMode === "stacked" ? (
+          {effectiveLayout === "stack" ? (
             stackedPane
           ) : (
             <div style={gridStyle}>
               {Array.from({ length: count }, (_, index) => (
-                <React.Fragment key={index}>{renderNormal(index)}</React.Fragment>
+                <React.Fragment key={index}>{renderGridCell(index)}</React.Fragment>
               ))}
             </div>
           )}

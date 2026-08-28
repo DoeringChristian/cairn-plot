@@ -3,7 +3,7 @@ import type { PlotSessionTopology } from "./PlotSessionController.ts";
 
 export function compileSessionTopology(spec: PlotSpec): PlotSessionTopology {
   const cellIds = new Set<string>();
-  const grids = new Map<string, { count: number; defaultMode: "normal" | "stacked" }>();
+  const grids = new Map<string, { count: number; defaultLayout: "grid" | "stack" }>();
   const visit = (node: PlotNode, path: string): void => {
     if (node.kind !== "grid") {
       cellIds.add(`cell:${path}`);
@@ -11,7 +11,7 @@ export function compileSessionTopology(spec: PlotSpec): PlotSessionTopology {
     }
     grids.set(`grid:${path}`, {
       count: node.children.length,
-      defaultMode: node.mode ?? "normal",
+      defaultLayout: node.initialLayout ?? "grid",
     });
     if (node.children.length > 0) cellIds.add(`stack:${path}`);
     node.children.forEach((child, index) => visit(child, `${path}/${index}`));

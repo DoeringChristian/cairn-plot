@@ -9,7 +9,7 @@ import {
 
 export interface PlotSessionTopology {
   cellIds: ReadonlySet<string>;
-  grids: ReadonlyMap<string, { count: number; defaultMode: GridSessionState["mode"] }>;
+  grids: ReadonlyMap<string, { count: number; defaultLayout: GridSessionState["layout"] }>;
 }
 
 export interface PlotSessionController {
@@ -26,7 +26,7 @@ export interface PlotSessionController {
 }
 
 const clampGrid = (state: GridSessionState, count: number): GridSessionState => ({
-  mode: count >= 2 ? state.mode : "normal",
+  layout: count >= 2 ? state.layout : "grid",
   activeSlot: Math.min(state.activeSlot, Math.max(0, count - 1)),
 });
 

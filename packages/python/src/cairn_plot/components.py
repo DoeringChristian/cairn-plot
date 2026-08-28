@@ -1810,10 +1810,10 @@ class Grid(Component):
     raise). ``col_widths``/``row_heights`` entries: number → ``Nfr``, string →
     verbatim CSS. ``shared`` is a dict or :class:`Shared`.
 
-    ``mode`` is the view mode: ``"normal"`` (default) is the uniform grid;
-    ``"stacked"`` shows ONE child at a time with a keyboard-driven tab strip
+    ``initial_layout`` selects the authored initial arrangement: ``"grid"``
+    (default) shows every child; ``"stack"`` shows one child at a time with a keyboard-driven tab strip
     (flip with arrows / ``hjkl`` / number / letter keys). The viewer can also
-    switch normal⇄stacked live via a toggle on the grid unless
+    switch grid⇄stack live via a toggle on the grid unless
     ``switchable=False``."""
 
     _label = "grid"
@@ -1827,11 +1827,14 @@ class Grid(Component):
         row_heights: Sequence[float | str] | None = None,
         gap: float | str | None = None,
         shared: Any = None,
-        mode: str = "normal",
+        initial_layout: str = "grid",
         switchable: bool = True,
     ) -> None:
-        if mode not in ("normal", "stacked"):
-            raise ValueError(f"cp.Grid(mode=...) must be 'normal' or 'stacked'; got {mode!r}")
+        if initial_layout not in ("grid", "stack"):
+            raise ValueError(
+                "cp.Grid(initial_layout=...) must be 'grid' or 'stack'; "
+                f"got {initial_layout!r}"
+            )
         children = list(children)
         if not children:
             raise ValueError("cp.Grid(...) requires at least one child")
@@ -1880,7 +1883,7 @@ class Grid(Component):
         self._col_widths = list(col_widths) if col_widths is not None else None
         self._row_heights = list(row_heights) if row_heights is not None else None
         self._gap = gap
-        self._mode = mode
+        self._initial_layout = initial_layout
         self._switchable = bool(switchable)
         self._shared, self._shared_store = _normalize_shared(shared)
 
@@ -1897,8 +1900,8 @@ class Grid(Component):
             node["rowHeights"] = self._row_heights
         if self._gap is not None:
             node["gap"] = self._gap
-        if self._mode != "normal":
-            node["mode"] = self._mode
+        if self._initial_layout != "grid":
+            node["initialLayout"] = self._initial_layout
         if not self._switchable:
             node["switchable"] = False
         if self._shared is not None:

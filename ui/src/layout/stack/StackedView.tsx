@@ -134,29 +134,28 @@ export function StackTabStrip({
 }
 
 /**
- * The `▦ | ▭` segmented control that toggles a grid between `normal` and
- * `stacked`. Lives in the grid's header row (never overlapping pane controls).
+ * The `▦ | ▭` segmented control that toggles between grid and stack layout.
  */
-export function GridModeToggle({
-  mode,
+export function GridLayoutToggle({
+  layout,
   onChange,
   className,
 }: {
-  mode: "normal" | "stacked";
-  onChange: (m: "normal" | "stacked") => void;
+  layout: "grid" | "stack";
+  onChange: (layout: "grid" | "stack") => void;
   className?: string;
 }) {
-  const btn = (m: "normal" | "stacked", icon: ReactNode, title: string) => (
+  const btn = (next: "grid" | "stack", icon: ReactNode, title: string) => (
     <button
       type="button"
       title={title}
-      aria-pressed={mode === m}
-      data-cairn-grid-mode={m}
-      data-active={mode === m ? "true" : undefined}
-      onClick={() => onChange(m)}
+      aria-pressed={layout === next}
+      data-cairn-grid-layout={next}
+      data-active={layout === next ? "true" : undefined}
+      onClick={() => onChange(next)}
       className={
         "flex h-6 w-6 items-center justify-center rounded " +
-        (mode === m ? "bg-accent/20 text-fg ring-1 ring-accent" : "text-fg-muted hover:bg-bg-hover hover:text-fg")
+        (layout === next ? "bg-accent/20 text-fg ring-1 ring-accent" : "text-fg-muted hover:bg-bg-hover hover:text-fg")
       }
     >
       {icon}
@@ -169,14 +168,14 @@ export function GridModeToggle({
   );
   return (
     <div
-      data-cairn-grid-mode-toggle=""
+      data-cairn-grid-layout-toggle=""
       className={
         "inline-flex shrink-0 gap-0.5 rounded border border-border bg-bg-elevated/90 p-0.5 opacity-60 transition-opacity group-hover:opacity-100 focus-within:opacity-100 " +
         (className ?? "")
       }
     >
       {btn(
-        "normal",
+        "grid",
         svg(
           <>
             <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -185,17 +184,17 @@ export function GridModeToggle({
             <rect x="14" y="14" width="7" height="7" rx="1" />
           </>,
         ),
-        "Grid view",
+        "Grid layout",
       )}
       {btn(
-        "stacked",
+        "stack",
         svg(
           <>
             <rect x="4" y="4" width="16" height="10" rx="1" />
             <path d="M6 17h12M7 20h10" />
           </>,
         ),
-        "Stacked view (flip with arrows / hjkl / number / letter)",
+        "Stack layout (flip with arrows / hjkl / number / letter)",
       )}
     </div>
   );

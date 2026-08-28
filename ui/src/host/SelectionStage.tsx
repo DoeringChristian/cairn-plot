@@ -74,7 +74,7 @@ import { ReportNaturalSizeContext } from "../layout/natural-size";
 import {
   useStackKeyboard,
   StackTabStrip,
-  GridModeToggle,
+  GridLayoutToggle,
   stackLabelFor,
 } from "../layout/stack/StackedView";
 import { InStackedGridContext } from "../layout/stack/stack-context";
@@ -582,9 +582,9 @@ function SelectionStage({
   // grid/stacked toggle as `cp.Grid`). Keyboard flips between the tabs (the stage
   // is a fullscreen overlay, so keys act unconditionally).
   const canStack = cells.length > 1;
-  const [stackMode, setStackMode] = useState<"normal" | "stacked">("normal");
+  const [stageLayout, setStageLayout] = useState<"grid" | "stack">("grid");
   const [stackActive, setStackActive] = useState(0);
-  const stackedNow = canStack && stackMode === "stacked";
+  const stackedNow = canStack && stageLayout === "stack";
   const stackActiveClamped = Math.min(stackActive, Math.max(0, cells.length - 1));
   // The stage is a fullscreen overlay → tab keys act unconditionally (no
   // hover/focus), like the slide-flip. This hook runs ABOVE the overlay's own
@@ -621,7 +621,7 @@ function SelectionStage({
         <div className="group flex items-center gap-2">
           <StageModeToggle mode={mode} imageCount={imageCount} onSwitchMode={onSwitchMode} />
           <div style={{ flex: 1 }} />
-          {canStack && <GridModeToggle mode={stackedNow ? "stacked" : "normal"} onChange={setStackMode} />}
+          {canStack && <GridLayoutToggle layout={stackedNow ? "stack" : "grid"} onChange={setStageLayout} />}
         </div>
         {stackedNow && cells.length > 0 && (
           <div className="mt-1 flex min-w-0">
@@ -636,7 +636,7 @@ function SelectionStage({
           ref={gridRef}
           data-cairn-stage-grid=""
           data-cairn-stage-mode={mode}
-          data-cairn-stage-stack={stackedNow ? "stacked" : "normal"}
+          data-cairn-stage-layout={stackedNow ? "stack" : "grid"}
           data-cairn-stage-cols={pack.cols}
           data-cairn-stage-rows={pack.rows}
           style={{

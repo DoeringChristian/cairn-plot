@@ -301,9 +301,11 @@ def build_report() -> cp.Report:
         ]
     )
     rep.md(
-        "### All 6 diff submodes\n\n"
-        "Row-major: **signed · absolute · squared** (top), "
-        "**relative_signed · relative_absolute · relative_squared** (bottom). "
+        "### All 6 diff submodes — stack-first grid\n\n"
+        "This grid starts in **stack** layout, exercising one shared settings "
+        "store and retained image surface; use the header toggle to show the "
+        "six comparisons as a grid. Grid order is **signed · absolute · squared**, "
+        "then **relative_signed · relative_absolute · relative_squared**. "
         "Diverging errors use the red-blue map; magnitude errors use "
         "turbo / red-green."
     )
@@ -331,7 +333,8 @@ def build_report() -> cp.Report:
                     cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_square", colormap="red-green",
                 ),
             ],
-        ]
+        ],
+        initial_layout="stack",
     )
 
     # ── perceptual diff — FLIP ───────────────────────────────────────────────
@@ -475,8 +478,8 @@ def build_report() -> cp.Report:
 
     # ── synced images + synced charts ────────────────────────────────────────
     rep.md(
-        "## Synced viewports\n\n"
-        "`cp.Grid(shared=cp.Shared(sync={\"viewport\": True}))` links every leaf "
+        "## Synced views\n\n"
+        "`cp.Grid(shared=cp.Shared(sync={\"view\": True}))` links every leaf "
         "of one KIND into a single live zoom/pan group. For **images**, "
         "Alt/Ctrl + wheel/drag on either pane moves both together. For **2D "
         "charts**, box-zoom / drag / Alt+wheel / double-click on either chart "

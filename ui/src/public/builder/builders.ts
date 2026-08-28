@@ -423,7 +423,12 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       if (opts.rowHeights != null) (node as { rowHeights?: unknown }).rowHeights = opts.rowHeights;
       if (opts.gap != null) (node as { gap?: unknown }).gap = opts.gap;
       if (opts.shared != null) (node as { shared?: unknown }).shared = opts.shared;
-      if (opts.mode != null) (node as { mode?: unknown }).mode = opts.mode; // "normal" | "stacked"
+      if (opts.initialLayout != null) {
+        if (opts.initialLayout !== "grid" && opts.initialLayout !== "stack") {
+          throw new Error("cairnPlot: grid initialLayout must be 'grid' or 'stack'");
+        }
+        (node as { initialLayout?: "grid" | "stack" }).initialLayout = opts.initialLayout;
+      }
       if (opts.switchable === false) (node as { switchable?: boolean }).switchable = false;
       const runtime: Runtime = flatHandles.flatMap((h) => h.runtime);
       return handle(node, runtime);

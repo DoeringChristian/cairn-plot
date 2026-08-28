@@ -10,7 +10,7 @@ Status: implemented
   bounded concurrency, and retry after failure.
 - [x] Adjacent stack preloading with keyboard-equivalent wraparound.
 - [x] Extracted host contexts and `PlotCell` from the recursive plot interpreter.
-- [x] Grid containers are layout-only; normal grids explicitly own one cell per
+- [x] Grid containers are layout-only; grid layout explicitly owns one cell per
   child and stacks explicitly own one stable cell for the active slot.
 - [x] Extracted renderer-agnostic `GridLayout` with render/preload callbacks.
 - [x] WebGPU content-op parity tests keep difference operation and display
@@ -135,7 +135,7 @@ PlotSpec -> layout -> PlotCell -> SurfaceHost -> plot backend -> engine
 ```
 
 A cell owns one settings store and one or more retained backend surfaces. A
-normal grid has one cell per child. A stacked grid has one cell with multiple
+grid layout has one cell per child. Stack layout has one cell with multiple
 slots.
 
 ## Non-negotiable invariants
@@ -196,10 +196,8 @@ Every grid normally offers grid/stack switching. An author may disable it.
 interface GridSpec {
   kind: "grid";
   children: PlotNode[];
-  presentation?: {
-    initial?: "grid" | "stack";
-    switchable?: boolean; // default true
-  };
+  initialLayout?: "grid" | "stack";
+  switchable?: boolean; // default true
 }
 ```
 
@@ -295,8 +293,7 @@ interface ComparisonPlan<TOutputPlan> {
 ```
 
 The durable `CompareNode` uses `operands`, `strategy`, and `referenceIndex`.
-Legacy `a`, `b`, and `baselineIndex` are accepted only at normalization and are
-never exposed to plot capabilities.
+There are no legacy comparison fields or normalization aliases.
 
 The distinction is plot-defined:
 

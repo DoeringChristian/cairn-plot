@@ -305,13 +305,13 @@
         "shared": {
           "$ref": "#/definitions/SharedProps"
         },
-        "mode": {
+        "initialLayout": {
           "type": "string",
           "enum": [
-            "normal",
-            "stacked"
+            "grid",
+            "stack"
           ],
-          "description": "`normal` creates one internal viewport per child. `stacked` creates one internal viewport whose children are content slots. Switching slots never replaces that viewport's settings."
+          "description": "Authored initial layout. The runtime may store a different active layout."
         },
         "switchable": {
           "type": "boolean",

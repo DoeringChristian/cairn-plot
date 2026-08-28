@@ -1,5 +1,5 @@
 /**
- * STACKED GRID — single-renderer model. A `cp.Grid(mode="stacked")` renders ONE
+ * STACKED GRID — single-renderer model. A `cp.Grid(mode="stack")` renders ONE
  * reused renderer and SWAPS its source when you flip tabs; it does NOT mount N
  * panes. So display + compare settings (incl. DIFF MODE) are shared BY
  * CONSTRUCTION — there is nothing to re-sync, and a flip cannot "reset" them.
@@ -42,9 +42,11 @@ function imgUrl(color: string): string {
 function compareChild(fg: string, ref: string): unknown {
   return {
     kind: "compare",
-    mode: "split",
-    a: { kind: "url", src: imgUrl(fg) },
-    b: { kind: "url", src: imgUrl(ref) },
+    type: "image",
+    presentation: "split",
+    operands: [{ kind: "url", src: imgUrl(ref) }, { kind: "url", src: imgUrl(fg) }],
+    strategy: "reference",
+    referenceIndex: 0,
     props: { toolbar: true },
   };
 }
@@ -100,7 +102,7 @@ async function run(): Promise<boolean> {
           kind: "grid",
           cols: 3,
           gap: 8,
-          mode: "stacked",
+          initialLayout: "stack",
           children: [
             compareChild("#c0392b", "#2980b9"),
             compareChild("#27ae60", "#8e44ad"),

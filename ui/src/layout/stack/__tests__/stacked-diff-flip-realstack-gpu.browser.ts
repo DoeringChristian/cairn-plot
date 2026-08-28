@@ -126,11 +126,12 @@ const imageLeaf = (hash: string, label: string) => ({
 });
 const diffCompare = (label: string) => ({
   kind: "compare" as const,
-  mode: "diff" as const,
-  a: imghdr("runtime:ref"),
-  b: imghdr("runtime:fg"),
-  diffSubmode: "flip",
-  props: { toolbar: true, label },
+  type: "image",
+  presentation: "difference",
+  operands: [imghdr("runtime:ref"), imghdr("runtime:fg")],
+  strategy: "reference" as const,
+  referenceIndex: 0,
+  props: { toolbar: true, label, diffSubmode: "flip" },
 });
 
 function sideBySideGrid(): PlotSpec {
@@ -151,7 +152,7 @@ function stackedGrid(): PlotSpec {
       kind: "grid",
       cols: 2,
       gap: 8,
-      mode: "stacked",
+      initialLayout: "stack",
       children: [imageLeaf("runtime:img", "Image"), diffCompare("Diff")],
     },
   } as unknown as PlotSpec;
@@ -172,7 +173,7 @@ function stackedScalarMagmaGrid(): PlotSpec {
       kind: "grid",
       cols: 2,
       gap: 8,
-      mode: "stacked",
+      initialLayout: "stack",
       children: [magmaScalarLeaf("Magma scalar"), imageLeaf("runtime:img", "Image")],
     },
   } as unknown as PlotSpec;
@@ -181,11 +182,12 @@ function stackedScalarMagmaGrid(): PlotSpec {
 // after the user switches away).
 const compareNode = (mode: "diff" | "split", label: string) => ({
   kind: "compare" as const,
-  mode,
-  a: imghdr("runtime:ref"),
-  b: imghdr("runtime:fg"),
-  diffSubmode: "flip",
-  props: { toolbar: true, label },
+  type: "image",
+  presentation: mode === "diff" ? "difference" : "split",
+  operands: [imghdr("runtime:ref"), imghdr("runtime:fg")],
+  strategy: "reference" as const,
+  referenceIndex: 0,
+  props: { toolbar: true, label, diffSubmode: "flip" },
 });
 function singleCompareGrid(mode: "diff" | "split"): PlotSpec {
   return {
@@ -210,7 +212,7 @@ function stackedTwoScalarGrid(): PlotSpec {
       kind: "grid",
       cols: 2,
       gap: 8,
-      mode: "stacked",
+      initialLayout: "stack",
       children: [magmaScalarLeaf("Magma scalar"), scalarPlainLeaf("Plain scalar")],
     },
   } as unknown as PlotSpec;
@@ -232,7 +234,7 @@ function stackedTwoPeakGrid(): PlotSpec {
       kind: "grid",
       cols: 2,
       gap: 8,
-      mode: "stacked",
+      initialLayout: "stack",
       children: [peakScalarLeaf("Peak 8", 8), peakScalarLeaf("Peak 3", 3)],
     },
   } as unknown as PlotSpec;
@@ -259,11 +261,12 @@ function sideBySideTwoScalarGrid(): PlotSpec {
 // multi-select neighbour keeps the mirrored pick.
 const diffCompareKernel = (label: string, submode: string) => ({
   kind: "compare" as const,
-  mode: "diff" as const,
-  a: imghdr("runtime:ref"),
-  b: imghdr("runtime:fg"),
-  diffSubmode: submode,
-  props: { toolbar: true, label },
+  type: "image",
+  presentation: "difference",
+  operands: [imghdr("runtime:ref"), imghdr("runtime:fg")],
+  strategy: "reference" as const,
+  referenceIndex: 0,
+  props: { toolbar: true, label, diffSubmode: submode },
 });
 function sideBySideTwoDiffGrid(): PlotSpec {
   return {
@@ -831,9 +834,9 @@ async function main(): Promise<void> {
     // slot makes the stack adopt THAT slot's authored defaults; leaving stacked mode
     // discards the shared settings (each pane reverts to its own authored defaults).
     // Grid: [magma-scalar (slot0, authored magma), plain-scalar (slot1, no colormap)].
-    const clickGridMode = (hostId: string, m: "normal" | "stacked"): void => {
+    const clickGridMode = (hostId: string, m: "grid" | "stack"): void => {
       document
-        .querySelector<HTMLElement>(`#${hostId} [data-cairn-grid-mode="${m}"]`)
+        .querySelector<HTMLElement>(`#${hostId} [data-cairn-grid-layout="${m}"]`)
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     };
     interface GResult {
@@ -885,7 +888,7 @@ async function main(): Promise<void> {
       await sleep(150);
       const slot1AfterHome = imgProbe(hostId)?.encodingId ?? "?";
       // EXIT stacked → grid layout: each pane reverts to its OWN authored defaults.
-      clickGridMode(hostId, "normal");
+      clickGridMode(hostId, "grid");
       await waitFor(() => allImgProbes(hostId).length >= 2, 8000, 30);
       await sleep(250);
       const probes = allImgProbes(hostId);

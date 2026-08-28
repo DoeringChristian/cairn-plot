@@ -1,7 +1,7 @@
 import type { PlotSettings } from "../../settings/schema.ts";
 
 export interface GridSessionState {
-  mode: "normal" | "stacked";
+  layout: "grid" | "stack";
   activeSlot: number;
 }
 
@@ -56,13 +56,13 @@ export function parsePlotSession(input: unknown): PlotSession {
   }
   for (const [id, value] of Object.entries(grids)) {
     const grid = record(value, `session.grids.${id}`);
-    if (grid.mode !== "normal" && grid.mode !== "stacked") {
-      throw new PlotSessionError(`session.grids.${id}.mode is invalid`);
+    if (grid.layout !== "grid" && grid.layout !== "stack") {
+      throw new PlotSessionError(`session.grids.${id}.layout is invalid`);
     }
     if (!Number.isInteger(grid.activeSlot) || (grid.activeSlot as number) < 0) {
       throw new PlotSessionError(`session.grids.${id}.activeSlot must be a non-negative integer`);
     }
-    parsed.grids[id] = { mode: grid.mode, activeSlot: grid.activeSlot as number };
+    parsed.grids[id] = { layout: grid.layout, activeSlot: grid.activeSlot as number };
   }
   return parsed;
 }

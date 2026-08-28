@@ -25,12 +25,8 @@ export interface GridNode {
   rowHeights?: Array<number | string>;
   gap?: number | string;
   shared?: SharedProps;
-  /**
-   * `normal` creates one internal viewport per child. `stacked` creates one
-   * internal viewport whose children are content slots. Switching slots never
-   * replaces that viewport's settings.
-   */
-  mode?: "normal" | "stacked";
+  /** Authored initial layout. The runtime may store a different active layout. */
+  initialLayout?: "grid" | "stack";
   /** Every multi-child grid is switchable by default; false hides the toggle. */
   switchable?: boolean;
 }

@@ -488,7 +488,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
   const sessionController = usePlotSessionController();
   const sessionId = `grid:${path}`;
   const [layoutState, setLayoutState] = useState<GridLayoutState>({
-    mode: node.mode ?? "normal",
+    layout: node.initialLayout ?? "grid",
     activeSlot: 0,
   });
   useEffect(() => {
@@ -498,7 +498,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionController, sessionId]);
   const changeLayoutState = useCallback((next: GridLayoutState) => {
-    if (layoutState.mode === "normal" && next.mode === "stacked" && sessionController) {
+    if (layoutState.layout === "grid" && next.layout === "stack" && sessionController) {
       const selectedEntry = getGlobalSelectionStore().getSelected()
         .map(getRegisteredPane)
         .find((entry) => entry?.sessionId?.startsWith(`cell:${path}/`));
@@ -512,13 +512,13 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
     }
     setLayoutState(next);
     sessionController?.recordGrid(sessionId, next);
-  }, [layoutState.mode, path, sessionController, sessionId]);
+  }, [layoutState.layout, path, sessionController, sessionId]);
 
-  const renderNormal = useCallback(
+  const renderGridCell = useCallback(
     (index: number) => <PlotNodeView node={children[index]!} path={`${path}/${index}`} />,
     [children, path],
   );
-  const renderStacked = useCallback(
+  const renderStackSlot = useCallback(
     (index: number) => {
       const child = children[index];
       if (!child) return null;
@@ -573,13 +573,13 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
       colWidths={node.colWidths}
       rowHeights={node.rowHeights}
       gap={node.gap}
-      initialMode={node.mode}
+      initialLayout={node.initialLayout}
       state={layoutState}
       onStateChange={changeLayoutState}
       switchable={node.switchable !== false}
       labels={children.map((child, index) => stackLabelFor(child, index))}
-      renderNormal={renderNormal}
-      renderStacked={renderStacked}
+      renderGridCell={renderGridCell}
+      renderStackSlot={renderStackSlot}
       preload={preload}
     />
   );
