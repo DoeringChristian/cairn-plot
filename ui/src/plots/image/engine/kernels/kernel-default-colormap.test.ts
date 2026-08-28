@@ -1,12 +1,13 @@
-/** Diff colormap policy is global display state, not kernel metadata. */
+/** Comparison display policy is global display state, not kernel metadata. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_DIFF_COLORMAP, listDiffKernels } from "./index.ts";
+import { DEFAULT_DIFF_ENCODING, listDiffKernels } from "./index.ts";
 import { getContentOp } from "../../model/content-ops/index.ts";
-import { COLORMAP_NAMES } from "../../../../settings/colormaps/lut.ts";
+import { getEncoding } from "../../model/encodings/index.ts";
 
-test("the shared diff default is a registered colormap", () => {
-  assert.ok((COLORMAP_NAMES as readonly string[]).includes(DEFAULT_DIFF_COLORMAP));
+test("the shared comparison default is the registered Linear display operation", () => {
+  assert.equal(DEFAULT_DIFF_ENCODING, "linear");
+  assert.equal(getEncoding(DEFAULT_DIFF_ENCODING)?.id, "linear");
 });
 
 test("kernels do not own colormap defaults", () => {
@@ -18,6 +19,6 @@ test("kernels do not own colormap defaults", () => {
 test("every diff content op uses the shared default", () => {
   for (const kernel of listDiffKernels()) {
     const op = getContentOp(kernel.id);
-    if (op) assert.equal(op.defaultEncoding, DEFAULT_DIFF_COLORMAP);
+    if (op) assert.equal(op.defaultEncoding, DEFAULT_DIFF_ENCODING);
   }
 });

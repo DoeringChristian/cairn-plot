@@ -67,7 +67,7 @@ import { contentOpId } from "../model/content-ops/index";
 import {
   getDiffKernel,
   resolveDiffKernelId,
-  DEFAULT_DIFF_COLORMAP,
+  DEFAULT_DIFF_ENCODING,
   listDiffMenuModes,
 } from "../engine/kernels/index";
 import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
@@ -120,11 +120,8 @@ import { TEV_HISTOGRAM_BINS } from "../model/histogram-binning";
 import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import {
   displayToolbarButton,
-  scalarFaceColormap,
   reduceSegment,
   usePaneEncoding,
-  compareDisplayToolbarButton,
-  deriveCompareEncodingId,
 } from "../components/display-encoding";
 import { getEncoding, defaultReduceMode, type ReduceMode } from "../model/encodings/index";
 import {
@@ -615,15 +612,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const sourcesAreFloat =
     backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
   const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
-  const diffDefaultColormap = (diffSeedColormap ?? DEFAULT_DIFF_COLORMAP) as Colormap;
+  const diffDefaultEncoding = diffSeedColormap ?? DEFAULT_DIFF_ENCODING;
   // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
   // the INITIALLY-VISIBLE face's defaults — diff → authored/shared default colormap,
   // image → authored props — and then PERSISTS. Flips and kernel switches never
   // reseed; only a pick or HOME (which copies the currently-visible face's defaults)
   // assigns a new value. Frozen in a ref so later prop churn can't re-derive it.
-  const initialEncSeedRef = useRef<Colormap | null>(null);
+  const initialEncSeedRef = useRef<string | null>(null);
   if (initialEncSeedRef.current == null) {
-    initialEncSeedRef.current = hasCompare && diffMode ? diffDefaultColormap : propColormap;
+    initialEncSeedRef.current = hasCompare && diffMode ? diffDefaultEncoding : propColormap;
   }
 
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
@@ -790,10 +787,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
-  // DIFF display colormap — the viewport's ONE encoding value, resolved for the
-  // scalar face by the encoding layer (applicability at render, ruling 5): a
-  // LUT applies; a curve doesn't, so the shared diff default stands.
-  const effectiveDiffColormap = scalarFaceColormap(enc, diffDefaultColormap) as Colormap;
+  // Image and comparison fields use the exact same selected display operation.
+  // The field operation determines the values; display selection never changes
+  // their arity or interpretation.
+  const effectiveDiffEncoding = enc.encodingId;
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
@@ -859,16 +856,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (id: string) => setDiffKernel(id),
     [setDiffKernel],
   );
-  const changeDiffColormap = useCallback(
-    (id: Colormap) => {
-      // The picked id writes the viewport's ONE encoding store (`enc`). An explicit
-      // "None" = the raw per-channel error → clear the LUT by selecting the current
-      // curve id (so `enc.colormap` becomes "none"); otherwise select the LUT. The pick
-      // sticks across kernel switches AND — in a stack — across image↔diff flips (one
-      // viewport, one setting). HOME re-seeds `enc` to the shared diff default.
-      publishSettings({ "image.encoding": deriveCompareEncodingId("scalar", effectiveTonemap, id) });
-    },
-    [enc, publishSettings, effectiveTonemap],
+  const changeDiffEncoding = useCallback(
+    (id: string) => publishSettings({ "image.encoding": id }),
+    [publishSettings],
   );
   // MODE menu picking SLIDE delegates to the owner (which remounts to
   // `GpuComparePane` — the documented slide remount) AND broadcasts on the
@@ -1527,12 +1517,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // 1×1 placeholder). The render effect re-fires on `refUploadVersion`.
       if (!refDims) return false;
       const kernelId = getDiffKernel(resolvedKernelId) ? resolvedKernelId : "absolute";
-      const cmap = effectiveDiffColormap; // an encoding/colormap id, or "none"
-      const encEntry = cmap !== "none" ? getEncoding(cmap) : undefined;
+      const displayEncoding = effectiveDiffEncoding;
+      const encEntry = getEncoding(displayEncoding);
+      if (!encEntry) throw new Error(`unknown display encoding ${JSON.stringify(displayEncoding)}`);
+      const mapsToScalar = encEntry.kind === "lut";
       const isAnalytic = !!encEntry?.analytic;
       const isTurbo = !!encEntry?.turbo;
       const lut =
-        cmap !== "none" && !isAnalytic ? colormapFloatLUT(cmap as Exclude<Colormap, "none">) : undefined;
+        encEntry.needsLut ? colormapFloatLUT((encEntry.lutName ?? encEntry.id) as Exclude<Colormap, "none">) : undefined;
       // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
       // colormap sensitivity, the resolved encoding face. `gamma` is LEFT UNSET so
       // the analytic branch encodes via sRGB OETF (a gamma of 1 would flip it to an
@@ -1541,7 +1533,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         exposureEV: displayEV,
         offset: displayOffset,
         operator: "linear",
-        isScalar: cmap !== "none",
+        isScalar: mapsToScalar,
         reduce: "mean",
         channelCount: 3,
         // The LUT/turbo tables hold display-sRGB → SDR (hdrOut false); the analytic
@@ -1757,7 +1749,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr,
     // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
     // change, or the hdr-flip exposures resolve.
-    diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffColormap, diffMapping, hdrExposures, contentKeyA, contentKeyB,
+    diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffEncoding, diffMapping, hdrExposures, contentKeyA, contentKeyB,
     // COMPOSITOR deps: re-render on a divider drag / mode change
     // (only the compositor param uniform changes — no recompile).
     compositorMode, compareOpMode, splitPosition,
@@ -1970,12 +1962,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         return resolvedKernelId;
       },
       get colormap() {
-        return effectiveDiffColormap;
+        return effectiveDiffEncoding;
       },
       // The ONE derived encoding id this pane publishes on the shared bus — a
       // migrated compare-settings-sync harness asserts a peer follows it.
       get encodingId() {
-        return deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap);
+        return effectiveDiffEncoding;
       },
       get effectiveTonemap() {
         return effectiveTonemap;
@@ -2033,13 +2025,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       },
       changeCompareMode,
       changeDiffKernel,
-      changeDiffColormap,
+      changeDiffColormap: changeDiffEncoding,
       // The compare display curve (light compositor tonemap) — the unified encoding
       // set; mirrors `GpuComparePane.changeTonemap` for the settings-sync harness.
       changeTonemap: (id: string) => changeEncoding(id),
       // Alias mirroring `GpuComparePane`'s probe field name (the diff colormap
       // menu) so a unified harness drives either pane with one call.
-      changeColormap: changeDiffColormap,
+      changeColormap: changeDiffEncoding,
       // HOME reset (the pane's own `onReset` chain): restore the HOISTED compare
       // control (mode/kernel/split/blend, via the owner) AND re-seed the viewport's ONE
       // encoding — which, for a diff, IS the diff colormap → back to the shared default.
@@ -2048,7 +2040,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffColormap, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffColormap, changeEncoding, setDiffKernel, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffEncoding, changeEncoding, setDiffKernel, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2180,17 +2172,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // exactly as an image would be.
       return [modeMenu, displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding })];
     }
-    // DIFF: the scalar-error DISPLAY menu (None + colormap LUTs); no light curves.
-    const displayMenu = compareDisplayToolbarButton({
-      mode: "scalar",
-      curveIds: [],
-      curveValue: effectiveTonemap,
-      lutValue: effectiveDiffColormap,
-      onSelectCurve: () => {},
-      onSelectLut: (id) => changeDiffColormap(id as Colormap),
+    // A comparison field uses the exact same display-operation menu and command
+    // path as an ordinary image field.
+    const displayMenu = displayToolbarButton({
+      value: enc.encodingId,
+      ids: enc.ids,
+      onSelect: changeDiffEncoding,
     });
     return [modeMenu, displayMenu];
-  }, [hasCompare, compositorMode, compareOpMode, diffKernel, effectiveDiffColormap, effectiveTonemap, enc.encodingId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffColormap]);
+  }, [hasCompare, compositorMode, compareOpMode, diffKernel, enc.encodingId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffEncoding]);
 
   // Captions (same DOM / selectors as `GpuComparePane`): diff → ONE bottom-left
   // "<metric> · <fg> compared to <ref>"; split/blend → REFERENCE bottom-left +

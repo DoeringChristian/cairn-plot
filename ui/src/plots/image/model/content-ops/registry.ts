@@ -121,6 +121,9 @@ interface ContentOpBase {
   label: string;
   /** Number of source SLOTS the op reads (1 = single image; 2 = a comparison). */
   sourceArity: 1 | 2;
+  /** Expensive field operations opt into the global result cache. Cheap
+   * pointwise operations use the same pipeline with no cached intermediate. */
+  cachePolicy: import("../../pipeline/contracts.ts").FieldCachePolicy;
   /** k fed to the DISPLAY stage's arity gating — a fixed number, or `"source"`
    *  (passthrough = source channel count). See {@link OutputArity} +
    *  {@link resolveOutputArity}. */

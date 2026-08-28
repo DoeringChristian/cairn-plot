@@ -143,5 +143,6 @@ export function resolveKernelParams(kernel: DiffKernel, params?: Record<string, 
   return { ...(kernel.params ?? {}), ...(params ?? {}) };
 }
 
-/** One display default for every diff mode. Kernels do not choose presentation. */
-export const DEFAULT_DIFF_COLORMAP = "turbo" as const;
+/** One display default for every comparison result. Field operations do not
+ * choose presentation; Linear is an ordinary display operation. */
+export const DEFAULT_DIFF_ENCODING = "linear" as const;

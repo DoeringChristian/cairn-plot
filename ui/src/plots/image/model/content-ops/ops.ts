@@ -22,7 +22,7 @@
  *    multi-pass kernel; all diff ops use the same display default.
  */
 import { registerContentOp, type ContentOp, type DirectContentOp, type CachedContentOp } from "./registry.ts";
-import { DEFAULT_DIFF_COLORMAP } from "../../engine/kernels/index.ts";
+import { DEFAULT_DIFF_ENCODING } from "../../engine/kernels/index.ts";
 
 /**
  * IDENTITY — the single-source passthrough. This is "where the source sample
@@ -35,6 +35,7 @@ const identity: DirectContentOp = {
   id: "identity",
   label: "Identity",
   sourceArity: 1,
+  cachePolicy: "never",
   renderClass: "direct",
   outputArity: "source",
   outputRange: "light",
@@ -69,12 +70,13 @@ function pointwise(
     id,
     label,
     sourceArity: 2,
+    cachePolicy: "never",
     renderClass: "direct",
     // Scalar-error DISPLAY gating: k=1 → colormaps offered, defaultEncoding
     // applied (the per-channel error vec4 is REDUCED to the scalar the LUT indexes).
     outputArity: 1,
     outputRange: range,
-    defaultEncoding: DEFAULT_DIFF_COLORMAP,
+    defaultEncoding: DEFAULT_DIFF_ENCODING,
     params: [],
     wgsl,
     cpu: (sources) => {
@@ -166,6 +168,7 @@ function compositor(
     id,
     label,
     sourceArity: 2,
+    cachePolicy: "never",
     renderClass: "direct",
     // Light RGB composite: gates as k=3 (curves offered, luts OFF), displayed as
     // a plain image via defaultEncoding srgb.
@@ -203,10 +206,11 @@ function cached(id: string, label: string, kernelId: string): CachedContentOp {
     id,
     label,
     sourceArity: 2,
+    cachePolicy: "global-lru",
     renderClass: "cached",
     outputArity: 1, // scalar perceptual error → colormaps offered
     outputRange: "R+",
-    defaultEncoding: DEFAULT_DIFF_COLORMAP,
+    defaultEncoding: DEFAULT_DIFF_ENCODING,
     params: [],
     kernelId,
   };

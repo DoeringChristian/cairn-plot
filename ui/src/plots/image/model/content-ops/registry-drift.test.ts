@@ -18,7 +18,7 @@ import { buildContentOpWGSL, getContentOp, listDirectContentOps, CONTENT_OP_ID }
 import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
 import { CONTENT_OPS } from "./ops.ts";
 import type { CachedContentOp } from "./registry.ts";
-import { DEFAULT_DIFF_COLORMAP, getDiffKernel } from "../../engine/kernels/index.ts";
+import { DEFAULT_DIFF_ENCODING, getDiffKernel } from "../../engine/kernels/index.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
   const assembled = buildContentOpWGSL();
@@ -72,7 +72,7 @@ test("D2 drift: every diff op uses the single shared diff default", () => {
     const kernelId = op.renderClass === "cached" ? (op as CachedContentOp).kernelId : op.id;
     const kernel = getDiffKernel(kernelId);
     assert.ok(kernel, `diff op "${op.id}" must map to a registered kernel "${kernelId}"`);
-    assert.equal(op.defaultEncoding, DEFAULT_DIFF_COLORMAP);
+    assert.equal(op.defaultEncoding, DEFAULT_DIFF_ENCODING);
   }
 });
 
