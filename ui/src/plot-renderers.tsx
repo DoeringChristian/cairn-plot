@@ -72,6 +72,8 @@ import {
   finitePositive,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { registerRenderer } from "./plot-registry";
+import { ensureImagePlotType } from "./plots/image/register.ts";
+import { resolveDataProps } from "./plot-descriptor.ts";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
 type P = Record<string, any>;
@@ -285,7 +287,7 @@ function HeatmapStandalone(p: P) {
 // Standalone has no settings store, so the adapter holds the state itself,
 // seeded from descriptor-provided `zoom`/`pan`. Grid linking is handled by the
 // owning frame's key-scoped settings membership, not by this adapter.
-function ImageStandalone(p: P) {
+export function ImageStandalone(p: P) {
   // DEFAULT framing: size the pane's box to the image's CONTENT aspect within the
   // available space. `ChartFillContext` (set by a grid with `rowHeights`, or the
   // compare/enlarge stage) decides fill-the-cell vs the standalone default height.
@@ -415,12 +417,12 @@ export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
   bar: BarChartStandalone,
   histogram: HistogramStandalone,
   heatmap: HeatmapStandalone,
-  image: ImageStandalone,
   table: TableStandalone,
 };
 
 /** Seed the runtime registry with the always-present core renderers. */
 export function registerCoreRenderers(): void {
+  ensureImagePlotType(ImageStandalone, resolveDataProps);
   for (const [name, component] of Object.entries(CORE_RENDERERS)) {
     registerRenderer(name, component);
   }

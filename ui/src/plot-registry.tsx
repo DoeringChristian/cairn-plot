@@ -28,12 +28,14 @@
  * renderer" — the bootstrap uses this for the bounded wait-for-registration.
  */
 import type { ComponentType } from "react";
+import { claimPlotKind } from "./plots/kind-ownership.ts";
 
 const registry: Record<string, ComponentType<any>> = {};
 const listeners = new Set<() => void>();
 
 /** Register (or replace) the renderer for `name`, notifying any waiters. */
 export function registerRenderer(name: string, component: ComponentType<any>): void {
+  claimPlotKind(name, "legacy-renderer");
   registry[name] = component;
   for (const cb of [...listeners]) {
     try {

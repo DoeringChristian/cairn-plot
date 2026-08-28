@@ -1,4 +1,5 @@
 import type { RegisteredPlotDefinition } from "./contracts.ts";
+import { claimPlotKind, releasePlotKinds } from "./kind-ownership.ts";
 
 const definitions = new Map<string, RegisteredPlotDefinition>();
 const listeners = new Set<() => void>();
@@ -7,6 +8,7 @@ export function registerPlotType(definition: RegisteredPlotDefinition): void {
   if (definitions.has(definition.kind)) {
     throw new Error(`cairn-plot: duplicate plot type ${JSON.stringify(definition.kind)}`);
   }
+  claimPlotKind(definition.kind, "definition");
   definitions.set(definition.kind, definition);
   for (const listener of listeners) listener();
 }
@@ -30,4 +32,5 @@ export function onPlotTypeRegister(listener: () => void): () => void {
 /** Test seam; production registration is process-wide and internal. */
 export function clearPlotTypesForTest(): void {
   definitions.clear();
+  releasePlotKinds("definition");
 }

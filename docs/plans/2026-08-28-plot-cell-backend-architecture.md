@@ -15,8 +15,9 @@ Status: accepted design; implementation in progress
 - [x] Extracted renderer-agnostic `GridLayout` with render/preload callbacks.
 - [x] WebGPU content-op parity tests keep difference operation and display
   encoding independent.
-- [ ] Adapt one production plot definition and its current renderer through the
-  backend lifecycle, then delete the parallel registration path for that kind.
+- [x] Adapt the production image definition and existing renderer through a
+  same-root React backend; remove image from the legacy registry and enforce
+  exclusive kind ownership during migration.
 - [ ] Replace the legacy unbounded resolution cache with the lease-aware runtime
   cache at a concrete resolution boundary.
 - [ ] Implement branch-retaining grid/stack sessions and optional persistence.

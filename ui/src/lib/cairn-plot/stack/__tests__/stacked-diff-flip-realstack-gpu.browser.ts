@@ -434,6 +434,12 @@ async function main(): Promise<void> {
       const imageId = ids[0];
       const diffId = ids[1];
 
+      // Difference operation and display encoding are independent. Give the
+      // diff an explicit scalar encoding so this phase tests anchor adoption,
+      // not a removed per-operation colormap default.
+      allDiffProbes(hostId)[0]?.changeColormap("magma");
+      await waitFor(() => allDiffProbes(hostId)[0]?.colormap === "magma", 4000, 30);
+
       // Form the page-wide selection AFTER settle. Anchor = first-selected.
       const store = getGlobalSelectionStore();
       startPaneRenderLog();
@@ -1164,13 +1170,13 @@ async function main(): Promise<void> {
       return { seed0, seed1, home1Solo, home0Solo, mirrored1, home0, kept1 };
     };
     const j = await runJ("jDiffGrid");
-    report(j.seed0 === "turbo" && j.seed1 === "turbo", `PHASE J setup: two DIFF viewports share one default (FLIP=${j.seed0}, absolute=${j.seed1})`);
-    report(j.home1Solo === "turbo", `PHASE J (scenario 1): HOME on the absolute diff resets to shared turbo (${j.home1Solo})`);
-    report(j.home0Solo === "turbo", `PHASE J (scenario 1): HOME on the FLIP diff resets to shared turbo (${j.home0Solo})`);
+    report(j.seed0 === "srgb" && j.seed1 === "srgb", `PHASE J setup: unauthored DIFF viewports use the viewport image default (FLIP=${j.seed0}, absolute=${j.seed1})`);
+    report(j.home1Solo === "srgb", `PHASE J (scenario 1): HOME on the absolute diff restores its viewport default (${j.home1Solo})`);
+    report(j.home0Solo === "srgb", `PHASE J (scenario 1): HOME on the FLIP diff restores its viewport default (${j.home0Solo})`);
     report(j.mirrored1 === "red-blue", `PHASE J (scenario 1): multi-select mirrors a diff colormap pick between viewports (peer→red-blue: ${j.mirrored1})`);
-    report(j.home0 === "turbo", `PHASE J (scenario 1): HOME on a multi-selected diff resets to the shared default (${j.home0})`);
-    report(j.kept1 === "turbo", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts the shared default too (${j.kept1})`);
-    if (j.seed0 !== "turbo" || j.seed1 !== "turbo" || j.home1Solo !== "turbo" || j.home0Solo !== "turbo" || j.mirrored1 !== "red-blue" || j.home0 !== "turbo" || j.kept1 !== "turbo") allOk = false;
+    report(j.home0 === "srgb", `PHASE J (scenario 1): HOME on a multi-selected diff restores the clicked viewport default (${j.home0})`);
+    report(j.kept1 === "srgb", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts that default too (${j.kept1})`);
+    if (j.seed0 !== "srgb" || j.seed1 !== "srgb" || j.home1Solo !== "srgb" || j.home0Solo !== "srgb" || j.mirrored1 !== "red-blue" || j.home0 !== "srgb" || j.kept1 !== "srgb") allOk = false;
 
     // ============ PHASE K — MULTI-SELECT KERNEL: FORMATION MIRRORS THE FIRST ===
     // Two side-by-side DIFF viewports with DISTINCT kernels (slot0 FLIP, slot1
@@ -1262,8 +1268,10 @@ async function main(): Promise<void> {
       store.select(ids[1], "toggle"); // + slot1 (ssim)
       store.select(ids[2], "toggle"); // + slot2 (absolute) → ONE 3-pane group
       await sleep(500); // let the anchor seed + every joiner adopt run
-      const entryKernel = (paneId: string | undefined) =>
-        paneId ? getRegisteredPane(paneId)?.settings?.get()?.["compare.kernel"] : undefined;
+      const entryKernel = (paneId: string | undefined) => {
+        const operation = paneId ? getRegisteredPane(paneId)?.settings?.get()?.["compare.operation"] : undefined;
+        return operation === "split" ? undefined : operation;
+      };
       const seedPatchHadKernel = entryKernel(ids[1]) === seeds[0] && entryKernel(ids[2]) === seeds[0];
       const formationPatchCount = [ids[1], ids[2]].filter((id) => entryKernel(id) !== undefined).length;
       const afterSelect = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
@@ -1289,7 +1297,7 @@ async function main(): Promise<void> {
     );
     report(
       l.formationPatchCount > 0 && l.seedPatchHadKernel,
-      `PHASE L (ruling 3): the anchor SEED on 3-diff formation lands diffKernel in both peers' OWN entries (${l.formationPatchCount}/2 entries written)`,
+      `PHASE L (ruling 3): the anchor SEED lands compare.operation in both peers' OWN entries (${l.formationPatchCount}/2 entries written)`,
     );
     report(
       l.afterSelect[0] === "flip" && l.afterSelect[1] === "flip" && l.afterSelect[2] === "flip",
@@ -1297,7 +1305,7 @@ async function main(): Promise<void> {
     );
     report(
       l.pickPatchHadKernel && l.mirrored[0] === "squared" && l.mirrored[1] === "squared",
-      `PHASE L (ruling 4): an EXPLICIT kernel pick publishes {diffKernel} and MIRRORS to BOTH selected peers (${l.mirrored.join("/")})`,
+      `PHASE L (ruling 4): an EXPLICIT operation pick mirrors to BOTH selected peers (${l.mirrored.join("/")})`,
     );
     if (
       l.seeds[0] !== "flip" || l.seeds[1] !== "ssim" || l.seeds[2] !== "absolute" ||

@@ -88,6 +88,9 @@ import {
   useSharedPlot,
 } from "./host/plot-context.ts";
 import { PlotCell } from "./host/PlotCell.tsx";
+import { ReactBackendOutlet } from "./host/react-backend.ts";
+import { getReactPlotType } from "./plots/react-registry.ts";
+import type { RenderEnvironment } from "./backends/contracts.ts";
 
 // Compatibility exports for existing standalone/stage imports. The host owns
 // these contracts; plot-node only consumes and re-exports them.
@@ -265,7 +268,13 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       };
     }
     void resolveCached(key, async () => {
-      const dp = await resolveDataProps(effectiveData, source);
+      const registered = getReactPlotType(node.renderer);
+      const dp = registered
+        ? registered.definition.present(await registered.definition.resolve(
+            { ...node, data: effectiveData },
+            { source, signal: new AbortController().signal },
+          )) as Record<string, unknown>
+        : await resolveDataProps(effectiveData, source);
       // FORMAT-AGNOSTIC channel selection: EXR selects at decode (dp.exrTree present —
       // the selector already rode `effectiveData`); everything else is an N-channel
       // array and the selection is a pure post-decode SLICE.
@@ -440,9 +449,9 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
-  const rendererMissing = status === "ready" && !getRenderer(node.renderer);
+  const rendererMissing = status === "ready" && !getReactPlotType(node.renderer) && !getRenderer(node.renderer);
   useEffect(() => {
-    if (status !== "ready" || getRenderer(node.renderer)) return;
+    if (status !== "ready" || getReactPlotType(node.renderer) || getRenderer(node.renderer)) return;
     const name = node.renderer;
     let settled = false;
     const unsub = onRegister(() => {
@@ -490,6 +499,19 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     return placeholderInShell(<Message text={`Plot error: ${errorMsg ?? "unknown"}`} error />);
   }
   const Renderer = getRenderer(node.renderer);
+  const registered = getReactPlotType(node.renderer);
+  if (registered) {
+    const settings = (paneSync?.syncedSettings ?? {}) as import("./plots/contracts.ts").SettingsRecord;
+    return (
+      <ReactBackendOutlet
+        backends={registered.backends}
+        environment={browserRenderEnvironment()}
+        presentation={mergedProps}
+        settings={settings}
+        invalidation="presentation"
+      />
+    );
+  }
   return Renderer ? (
     <Suspense fallback={<Message text="Loading renderer…" />}>
       <Renderer {...mergedProps} />
@@ -497,6 +519,14 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   ) : (
     <Message text="Loading renderer…" />
   );
+}
+
+function browserRenderEnvironment(): RenderEnvironment {
+  return {
+    webgpu: typeof navigator !== "undefined" && "gpu" in navigator,
+    webgl2: typeof WebGL2RenderingContext !== "undefined",
+    pixelRatio: typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1,
+  };
 }
 
 // ---------------------------------------------------------------------------
