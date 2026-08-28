@@ -9,7 +9,7 @@
  *   - `renderers/GpuImagePane.tsx` — the WebGPU engine backend.
  * Both are `(props: ImageBackendProps) => JSX.Element` and are picked per mount
  * by `plot-renderers.tsx`'s `resolveImageRenderer(mode)` (the "backends used
- * upstream" seam). This module holds the shared prop union, the `isHdrProps`
+ * upstream" seam). This module holds the shared prop union, the `isFloatSurfaceProps`
  * discriminant, and the user-settable render-mode resolution so BOTH backends
  * (and the seam) import them from one spot with no import cycle onto either
  * pane component.
@@ -25,9 +25,15 @@ import type {
 } from "../../types";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
-import { floatPixelsFrom, type FloatPixels } from "../runtime/pixel-buffer.ts";
-import type { DeepFlattenController } from "../resources/decoders.ts";
+import type { FloatPixels } from "../runtime/pixel-buffer.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
+import type {
+  FloatImageSource,
+  ImageCompareAlign,
+  ImageCompareFit,
+  ImageSource,
+  Uint8ImageSource,
+} from "../definition/content.ts";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`
@@ -57,7 +63,7 @@ export interface HdrData {
 }
 
 /** The float-HDR prop shape (presence of `hdr` selects this backend path). */
-export interface HdrImageProps {
+export interface FloatSurfaceProps {
   hdr: HdrData;
   tonemap?: string;
   /** Base exposure in EV stops (`color * 2^EV`), applied in scene-linear BEFORE
@@ -82,8 +88,8 @@ export interface HdrImageProps {
    *  The unified float pipeline runs a named colormap through the GPU/CPU LUT
    *  family on the scalar channel (a k>1 sample is reduced first), so a float
    *  scalar authored with `colormap=` seeds the DISPLAY encoding to that LUT —
-   *  exactly as the 8-bit path does via {@link SdrImageProps.colormap}. Threaded
-   *  through {@link useLegacyImageProps} so `GpuImagePane`/`CpuImagePane` read it
+   *  exactly as the 8-bit path does via {@link Uint8SurfaceProps.colormap}. Threaded
+   *  through {@link useImageSurfaceProps} so `GpuImagePane`/`CpuImagePane` read it
    *  as `propColormap`. Unset leaves the display-operation default in effect. */
   colormap?: Colormap;
   showAxes?: boolean;
@@ -91,15 +97,15 @@ export interface HdrImageProps {
   interpolation?: Interpolation;
   /** DETECTION overlay (bounding boxes + segmentation masks) drawn ON TOP of the
    *  FLOAT surface — the exact same annotation layer the 8-bit path honours (see
-   *  {@link SdrImageProps.overlay}). The overlay is a display-space CSS layer
+   *  {@link Uint8SurfaceProps.overlay}). The overlay is a display-space CSS layer
    *  ({@link ../ImageOverlay}); it composites over ANY decoded dtype, so a float
    *  EXR authored with `overlay=` draws its boxes/masks identically to a uint8
-   *  PNG. Threaded through {@link useLegacyImageProps} on BOTH dtype branches;
+   *  PNG. Threaded through {@link useImageSurfaceProps} on BOTH dtype branches;
    *  unset ⇒ no annotations. */
   overlay?: ImageOverlayData;
   /** Display settings for {@link overlay} (visible classes, score threshold,
    *  mask opacity, box/mask toggles). Defaults on (`DEFAULT_OVERLAY_SETTINGS`).
-   *  See {@link SdrImageProps.overlaySettings}. */
+   *  See {@link Uint8SurfaceProps.overlaySettings}. */
   overlaySettings?: ImageOverlaySettings;
   zoom?: number;
   pan?: { x: number; y: number };
@@ -113,7 +119,7 @@ export interface HdrImageProps {
    *  is active). */
   toolbar?: boolean;
   /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
-   *  Threaded through `useLegacyImageProps` so the pane body reads it here. */
+   *  Threaded through `useImageSurfaceProps` so the pane body reads it here. */
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
    *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
@@ -131,7 +137,7 @@ export interface HdrImageProps {
 }
 
 /** The 8-bit `imageUrl` prop shape (plus the legacy compare/diff plumbing). */
-export interface SdrImageProps {
+export interface Uint8SurfaceProps {
   imageUrl: string | null;
   baselineUrl?: string | null;
   isBaseline?: boolean;
@@ -152,7 +158,7 @@ export interface SdrImageProps {
    *  exponent in `display = clamp(value)^(1/γ)`. Default 2.2. */
   gamma?: number;
   /** Default PEAK ceiling `P` (×SDR white) for the plain 8-bit path — the UNIFIED
-   *  HDR mode (§B), identical to {@link HdrImageProps.peak}: every operator clips
+   *  HDR mode (§B), identical to {@link FloatSurfaceProps.peak}: every operator clips
    *  at `P` (SDR = `P=1`, `P>1` extends onto an HDR surface). Seeds the pane's PEAK
    *  slider (shown only when the extended surface engages); unset → the pane
    *  default (4). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
@@ -160,7 +166,7 @@ export interface SdrImageProps {
   /** Base exposure in EV stops for the WebGPU 8-bit pipeline (`GpuImagePane`'s
    *  plain-SDR path sRGB-decodes to scene-linear, then applies `color * 2^EV`) —
    *  the controlled EV surface, additive with the toolbar's runtime EV slider (see
-   *  {@link HdrImageProps.exposure}). Default 0. NOTE: the CPU 2D-canvas backend
+   *  {@link FloatSurfaceProps.exposure}). Default 0. NOTE: the CPU 2D-canvas backend
    *  has no scene-linear recompute stage on the plain-SDR `<img>` path, so it does
    *  NOT apply this (documented graceful degradation — the WebGPU backend does). */
   exposure?: number;
@@ -182,10 +188,10 @@ export interface SdrImageProps {
   overlaySettings?: ImageOverlaySettings;
   pixelValueNotation?: PixelValueNotation;
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`); see
-   *  {@link HdrImageProps.toolbar} and `ImagePaneShell`. */
+   *  {@link FloatSurfaceProps.toolbar} and `ImagePaneShell`. */
   toolbar?: boolean;
   /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
-   *  Threaded through `useLegacyImageProps` so the pane body reads it here. */
+   *  Threaded through `useImageSurfaceProps` so the pane body reads it here. */
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
    *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
@@ -205,17 +211,17 @@ export interface SdrImageProps {
 /**
  * The two INTERNAL, dtype-keyed pane representations. Formerly the public
  * backend union; now a pane-private detail reconstructed from the ONE unified
- * {@link ImageBackendProps} by {@link useLegacyImageProps}. Kept (and still
- * exported for back-compat) because both panes' bodies dispatch on
- * {@link isHdrProps} and the "SDR-`rgba8unorm`-surface vs float-`rgba16float`-
+ * {@link ImageBackendProps} by {@link useImageSurfaceProps}. Kept (and still
+ * used by both backend views because their bodies dispatch on
+ * {@link isFloatSurfaceProps} and the "SDR-`rgba8unorm`-surface vs float-`rgba16float`-
  * surface" choice is exactly this internal split, keyed on the decoded source's
  * dtype (design §3).
  */
-export type LegacyImageProps = HdrImageProps | SdrImageProps;
+export type ImageSurfaceProps = FloatSurfaceProps | Uint8SurfaceProps;
 
 /** Discriminant on the INTERNAL union: `true` for the float-HDR pane path. */
-export function isHdrProps(p: LegacyImageProps): p is HdrImageProps {
-  return "hdr" in p && (p as HdrImageProps).hdr != null;
+export function isFloatSurfaceProps(p: ImageSurfaceProps): p is FloatSurfaceProps {
+  return "hdr" in p && (p as FloatSurfaceProps).hdr != null;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,30 +229,6 @@ export function isHdrProps(p: LegacyImageProps): p is HdrImageProps {
 // consume THIS shape; the CPU/GPU split and the surface-format choice are
 // INTERNAL, keyed on `source.dtype`.
 // ---------------------------------------------------------------------------
-
-/** A decoded FLOAT source (EXR / float `.npy` / PFM / float-by-reference). */
-export interface FloatSource {
-  dtype: "float";
-  /** Row-major samples — SELF-DESCRIBING (see {@link HdrData.pixels}). */
-  pixels: FloatPixels;
-  /** `[H,W]` | `[H,W,C]` with `C∈{1,3,4}`. */
-  shape: number[];
-  /** Informational numpy dtype string (e.g. `"<f4"`). */
-  numpyDtype?: string;
-  /** Present only for a DEEP EXR opened with live-flatten (the depth slider). */
-  deep?: DeepFlattenController;
-}
-
-/** A decoded UINT8 (SDR) source — a URL/data-URL the browser `<img>`-decodes
- *  (browser-native passthrough OR a uint8 `.npy` re-encoded to a PNG data URL).
- *  Kept as a URL so the byte-exact `<img>` path + URL-keyed caches survive. */
-export interface Uint8Source {
-  dtype: "uint8";
-  url: string | null;
-}
-
-/** The ONE decoded-source shape, tagged by dtype (design §3). */
-export type DecodedSource = FloatSource | Uint8Source;
 
 // ---------------------------------------------------------------------------
 // COMPARE source (content-op unification). Presence of `compareSource` on
@@ -266,17 +248,7 @@ export type DecodedSource = FloatSource | Uint8Source;
 // ---------------------------------------------------------------------------
 
 /** Where the smaller operand sits within the larger before the overlap crop (a
- *  mismatched-size diff). Mirrors `engine/compare-align`'s `CompareAlign`. */
-export type CompareAlign =
-  | "top-left"
-  | "center"
-  | "top-right"
-  | "bottom-left"
-  | "bottom-right";
-/** Mismatched-size handling — `"crop"` (min-crop overlap) or `"fill"` (rescale to
- *  the primary). Mirrors `engine/compare-align`'s `CompareFit`. */
-export type CompareFit = "crop" | "fill";
-
+ *  mismatched-size diff). Mirrors `engine/compare-align`'s `ImageCompareAlign`. */
 /**
  * The COMPARE operand + diff settings that turn the GPU image pane into a diff
  * pane. Ported from `GpuComparePane`'s diff plumbing, but routed THROUGH the pool
@@ -287,7 +259,7 @@ export interface CompareSource {
    *  {@link ImageBackendProps.source} (which is the REFERENCE / slot `a`). Slot
    *  convention (diff + compositor): `a` = reference (texA), `b` = foreground
    *  (texB), so `diff = a − b` and split shows the reference left of the divider. */
-  b: DecodedSource;
+  b: ImageSource;
   /** The DIFF kernel — a menu selection token (a pointwise id, `"flip"`,
    *  `"flip_ldr"`, `"ssim"`). SEEDS the pane's diff-kernel state (always a real
    *  kernel, even while {@link mode} is a compositor mode — so switching INTO diff
@@ -317,9 +289,9 @@ export interface CompareSource {
    *  Kernel changes do not alter it. */
   colormap?: Colormap | null;
   /** Alignment anchor for mismatched-size operands (ignored under `fit:"fill"`). */
-  align?: CompareAlign;
+  align?: ImageCompareAlign;
   /** Mismatched-size handling (`"crop"` default | `"fill"`). */
-  fit?: CompareFit;
+  fit?: ImageCompareFit;
   /** Content-identity cache keys for the diff cache (stable across remount — a
    *  source URL, not the decoded bytes). `a` = foreground/primary, `b` = reference. */
   contentKeyA?: string;
@@ -349,7 +321,7 @@ export interface CompareSource {
  */
 export interface ImageBackendProps {
   /** The decoded image, tagged by dtype (`float` | `uint8`). */
-  source: DecodedSource;
+  source: ImageSource;
   /** When set, the pane renders a DIFF of `source` (foreground/`a`) against
    *  `compareSource.b` (reference) — see {@link CompareSource}. Absent = the
    *  byte-identical single-image path. Only the GPU backend honors it; the CPU
@@ -439,8 +411,8 @@ export function isFloatSource(p: ImageBackendProps): boolean {
   return p.source.dtype === "float";
 }
 
-/** Wrap a decoded float `HdrData` as the unified {@link FloatSource}. */
-export function hdrSource(hdr: HdrData): FloatSource {
+/** Wrap decoded float data as a backend-neutral image source. */
+export function hdrSource(hdr: HdrData): FloatImageSource {
   return {
     dtype: "float",
     pixels: hdr.pixels,
@@ -450,13 +422,13 @@ export function hdrSource(hdr: HdrData): FloatSource {
   };
 }
 
-/** Wrap a URL/data-URL as the unified uint8 (SDR) {@link Uint8Source}. */
-export function urlSource(url: string | null): Uint8Source {
+/** Wrap a URL/data-URL as a backend-neutral uint8 image source. */
+export function urlSource(url: string | null): Uint8ImageSource {
   return { dtype: "uint8", url };
 }
 
 /**
- * Reconstruct a pane's INTERNAL {@link LegacyImageProps} from the ONE unified
+ * Reconstruct a pane's INTERNAL {@link ImageSurfaceProps} from the ONE unified
  * {@link ImageBackendProps}, keyed on `source.dtype`. This is the ONE place the
  * unified shape fans out into the two dtype-keyed internal representations the
  * pane bodies already consume — so those ~1000-line bodies stay unchanged. The
@@ -464,23 +436,13 @@ export function urlSource(url: string | null): Uint8Source {
  * identity is preserved across renders — the decode/upload/deep-flatten effects
  * depend on it. A hook (uses `useMemo`); call it once at the top of each pane.
  */
-export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
+export function useImageSurfaceProps(p: ImageBackendProps): ImageSurfaceProps {
   const src = p.source;
   // Memoize on the UNDERLYING stable fields (pixels/shape/deep), NOT the
   // `source` wrapper identity — call sites (the compare side panes) may build a
   // fresh wrapper each render around a stable `pixels`/`deep`, and the decode/
   // upload/deep-flatten effects that key on `hdr` must not thrash.
-  const floatPixels =
-    src.dtype === "float"
-      ? (src.pixels ??
-        // Legacy WIRE bridge: a hand-built descriptor source may still author
-        // {data, precision}. Interpreted exactly ONCE here — `floatPixelsFrom`
-        // REFUSES an untagged Uint16Array (no silent bits-as-values misread).
-        floatPixelsFrom(
-          (src as unknown as { data: Float32Array | Float64Array | Uint16Array }).data,
-          (src as unknown as { precision?: "f32" | "f16-bits" }).precision,
-        ))
-      : null;
+  const floatPixels = src.dtype === "float" ? src.pixels : null;
   const floatShape = src.dtype === "float" ? src.shape : null;
   const floatNumpyDtype = src.dtype === "float" ? src.numpyDtype : undefined;
   const floatDeep = src.dtype === "float" ? src.deep : undefined;

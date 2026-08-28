@@ -16,23 +16,25 @@ export { default as ScalarPlot, type ScalarPlotProps } from "../../scalar/backen
 // `image-backend.ts`'s module doc.
 export { default as CpuImagePane, tonemapToImageData } from "../cpu/view";
 export {
-  isHdrProps,
+  isFloatSurfaceProps,
   isFloatSource,
-  useLegacyImageProps,
+  useImageSurfaceProps,
   hdrSource,
   urlSource,
   resolveRenderMode,
   type ImageBackend,
   type ImageBackendProps,
-  type DecodedSource,
-  type FloatSource,
-  type Uint8Source,
-  type LegacyImageProps,
-  type HdrImageProps,
-  type SdrImageProps,
+  type ImageSurfaceProps,
+  type FloatSurfaceProps,
+  type Uint8SurfaceProps,
   type HdrData,
   type RenderMode,
 } from "../runtime/contracts";
+export type {
+  ImageSource,
+  FloatImageSource,
+  Uint8ImageSource,
+} from "../definition/content.ts";
 export { default as Heatmap, type HeatmapProps } from "../../heatmap/backends/svg/Heatmap";
 export {
   default as HistogramPlot,

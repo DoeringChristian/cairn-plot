@@ -4,7 +4,7 @@ import {
   resolveImageArtifacts,
 } from "../../artifact-resolvers.ts";
 import type { DataSource } from "../../../resources/data/data-source.ts";
-import type { CompareFloatSource } from "../compare/compositor.tsx";
+import type { ImageSource, ResolvedFloatImage } from "./content.ts";
 import { parseOverlay } from "./overlay-metadata.ts";
 import { parseNpy } from "../../transforms/parse-npy.ts";
 import { resolveFinalUrl } from "../resources/final-url.ts";
@@ -13,11 +13,10 @@ import {
   floatPixelsFrom,
   floatValues,
 } from "../runtime/pixel-buffer.ts";
-import type { DecodedSource } from "../runtime/contracts.ts";
 
 interface ResolvedImageOperand {
   url: string | null;
-  float?: CompareFloatSource;
+  float?: ResolvedFloatImage;
   overlay?: ImageOverlayData;
 }
 
@@ -95,7 +94,7 @@ async function resolveOperand(
   return { url: null };
 }
 
-function decodedSource(operand: ResolvedImageOperand): DecodedSource | null {
+function decodedSource(operand: ResolvedImageOperand): ImageSource | null {
   if (operand.float) {
     const { pixels, width, height, channels } = operand.float;
     return {

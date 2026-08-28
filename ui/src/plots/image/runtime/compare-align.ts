@@ -34,8 +34,8 @@
  * full common grid under fill.
  */
 
-export type CompareAlign = "top-left" | "center" | "top-right" | "bottom-left" | "bottom-right";
-export type CompareFit = "crop" | "fill";
+export type ImageCompareAlign = "top-left" | "center" | "top-right" | "bottom-left" | "bottom-right";
+export type ImageCompareFit = "crop" | "fill";
 
 export interface Dims {
   w: number;
@@ -48,7 +48,7 @@ export interface TexelOffset {
 }
 
 export interface CompareMapping {
-  fit: CompareFit;
+  fit: ImageCompareFit;
   /** The common RESULT/overlap grid: min(A,B) under crop, primary dims under fill. */
   result: Dims;
   /** Integer texel offset into source A for RESULT pixel (0,0). `{0,0}` under fill. */
@@ -58,7 +58,7 @@ export interface CompareMapping {
 }
 
 /** (vertical, horizontal) anchor pair for an alignment token. */
-function anchors(align: CompareAlign): { v: "top" | "center" | "bottom"; h: "left" | "center" | "right" } {
+function anchors(align: ImageCompareAlign): { v: "top" | "center" | "bottom"; h: "left" | "center" | "right" } {
   switch (align) {
     case "center":
       return { v: "center", h: "center" };
@@ -76,7 +76,7 @@ function anchors(align: CompareAlign): { v: "top" | "center" | "bottom"; h: "lef
 
 /** Top-left offset of the `overlap` rect within a `src`-sized rect under `align`.
  *  `src.* - overlap.*` is always >= 0 under crop (overlap = min dims). */
-function anchorOffset(src: Dims, overlap: Dims, align: CompareAlign): TexelOffset {
+function anchorOffset(src: Dims, overlap: Dims, align: ImageCompareAlign): TexelOffset {
   const { v, h } = anchors(align);
   const dx = src.w - overlap.w;
   const dy = src.h - overlap.h;
@@ -94,8 +94,8 @@ function anchorOffset(src: Dims, overlap: Dims, align: CompareAlign): TexelOffse
 export function computeCompareMapping(
   a: Dims,
   b: Dims,
-  align: CompareAlign,
-  fit: CompareFit,
+  align: ImageCompareAlign,
+  fit: ImageCompareFit,
   primary: "a" | "b" = "b",
 ): CompareMapping {
   if (fit === "fill") {

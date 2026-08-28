@@ -37,7 +37,7 @@ import { compareCaptions } from "./compare-captions";
 import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
 import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
-import type { CompareAlign, CompareFit } from "../runtime/compare-align";
+import type { ImageCompareAlign, ImageCompareFit } from "../runtime/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../runtime/contracts";
 import {
@@ -47,10 +47,13 @@ import {
 
 import type {
   CompareSource,
-  DecodedSource,
-  FloatSource,
   ImageBackend,
 } from "../runtime/contracts";
+import type {
+  FloatImageSource,
+  ImageSource,
+  ResolvedFloatImage,
+} from "../definition/content.ts";
 
 /**
  * Resolve the UNIFIED engine image pane (`GpuImagePane`, statically in core
@@ -80,9 +83,9 @@ function useGpuCompareReadyTick(): void {
   }, []);
 }
 
-/** Map a decoded-float compare side ({@link CompareFloatSource}) to the unified
- *  {@link FloatSource} the image backend consumes (`[H,W,C]` shape). */
-function compareFloatToDecoded(src: CompareFloatSource): FloatSource {
+/** Map a decoded-float compare side ({@link ResolvedFloatImage}) to the unified
+ *  {@link FloatImageSource} the image backend consumes (`[H,W,C]` shape). */
+function compareFloatToDecoded(src: ResolvedFloatImage): FloatImageSource {
   return {
     dtype: "float",
     pixels: src.pixels,
@@ -478,20 +481,9 @@ export function MediaComparePane({
  * original source URL (NOT the float bytes), so a remount/rerender with the
  * same URL is a cache hit.
  */
-export interface CompareFloatSource {
-  /** Row-major samples — SELF-DESCRIBING (`image/pixel-buffer.ts`): the
-   *  representation (`"values"` vs `"f16-bits"` bit patterns) travels WITH the
-   *  bytes, so an operand can never be misread by a dropped tag. */
-  pixels: import("../runtime/pixel-buffer.ts").FloatPixels;
-  width: number;
-  height: number;
-  channels: number;
-  contentKey: string;
-}
-
 /**
  * The standard "this side can't render on the CPU compare" error state. Shown
- * when a `CompareFloatSource` side is present but the engine compare pane is
+ * when a `ResolvedFloatImage` side is present but the engine compare pane is
  * unavailable (render mode `cpu`, the gpu-image addon never loaded, or WebGPU
  * is unavailable) — a float side is GPU-only (`rgba32float` upload), and the
  * legacy CPU panes take only URL sources. Never a blank pane (Task point 3).
@@ -531,7 +523,7 @@ export function isEngineOnlyDiff(kernel: string): boolean {
  *  compare panes take only URL sources). A visual approximation good enough for a
  *  slide OVERLAY — those aren't pixel math (that's what a float DIFF needs
  *  the GPU for). Returns `null` if the browser can't rasterize. */
-function floatSourceToDataUrl(src: CompareFloatSource, tonemap: string, gamma?: number): string | null {
+function floatSourceToDataUrl(src: ResolvedFloatImage, tonemap: string, gamma?: number): string | null {
   try {
     const imageData = tonemapToImageData(
       { pixels: src.pixels, shape: [src.height, src.width, src.channels], dtype: "<f4" },
@@ -675,9 +667,9 @@ export interface CompositeMediaPaneProps {
   imageUrl: string | null;
   baselineUrl: string | null;
   /** DECODED float sides (`.exr`/float `.npy` URLs) — the GPU-only alternative
-   *  to the URL sources above; see {@link CompareFloatSource}. */
-  imageFloat?: CompareFloatSource;
-  baselineFloat?: CompareFloatSource;
+   *  to the URL sources above; see {@link ResolvedFloatImage}. */
+  imageFloat?: ResolvedFloatImage;
+  baselineFloat?: ResolvedFloatImage;
   /** True when this pane's own image IS the resolved reference series
    *  (the "series-same-step" baseline pane rendered alongside its peers). */
   isReferencePane?: boolean;
@@ -690,8 +682,8 @@ export interface CompositeMediaPaneProps {
   /** Mismatched-size diff operand handling (engine compare pane, diff modes):
    *  `align` = overlap anchor (default "top-left"); `fit` = "crop" (default) |
    *  "fill". Ignored in split. */
-  align?: CompareAlign;
-  fit?: CompareFit;
+  align?: ImageCompareAlign;
+  fit?: ImageCompareFit;
   /** Fired when the engine pane's diff kernel changes (menu). */
   onComparisonOperationChange?: (operationId: string) => void;
   /** Fired when the engine pane's compare mode changes (split/diff menu).
@@ -856,10 +848,10 @@ export function CompositeMediaPane({
   // Float sides (`imageFloat`/`baselineFloat`) are threaded through here — the
   // engine pane ingests them as `rgba16float` textures.
   if (GpuImagePane && hasBaseline && engineComposited) {
-    const referenceSource: DecodedSource = baselineFloat
+    const referenceSource: ImageSource = baselineFloat
       ? compareFloatToDecoded(baselineFloat)
       : urlSource(baselineUrl);
-    const foregroundSource: DecodedSource = imageFloat
+    const foregroundSource: ImageSource = imageFloat
       ? compareFloatToDecoded(imageFloat)
       : urlSource(imageUrl);
     // Stable diff-cache identity keys (a source URL / float contentKey, NOT the

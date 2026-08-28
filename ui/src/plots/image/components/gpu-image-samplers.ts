@@ -30,7 +30,8 @@ import {
   type PixelSample,
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
-import { shapeDims, type HdrData, type DecodedSource } from "../runtime/contracts";
+import { shapeDims, type HdrData } from "../runtime/contracts";
+import type { ImageSource } from "../definition/content.ts";
 
 /** A retained decoded uint8 RGBA buffer (a source or the reference operand). */
 interface U8Buffer {
@@ -55,7 +56,7 @@ export interface PixelSamplerInputs {
   hdrDataRef: Cell<HdrData | null>;
   sdrImageDataRef: Cell<ImageData | null>;
   /** Retained reference/foreground operand `b` (float vs decoded uint8). */
-  refFloatRef: Cell<DecodedSource | null>;
+  refFloatRef: Cell<ImageSource | null>;
   refU8Ref: Cell<U8Buffer | null>;
   /** Cached-metric result readback + its dims (multi-pass diffs only). */
   diffSamplesRef: Cell<Float32Array | null>;

@@ -2,7 +2,7 @@
  * Regression pin — the compare operands' F16-PIPELINE tag must survive packing.
  *
  * `plots/image/definition/comparison-resolve.ts`'s `decodedSource` converts a resolved compare frame
- * (`CompareFloatSource`) into the `DecodedSource` the unified pane uploads. A
+ * (`ResolvedFloatImage`) into the `ImageSource` the unified pane uploads. A
  * `"f16-bits"` payload is a `Uint16Array` of raw IEEE-754 binary16 BIT
  * PATTERNS; dropping the `precision` tag makes `decodedSourceToUpload` take
  * the f32 branch and read the bits as VALUES (1.0 → 15360 ≈ 2^14) — the

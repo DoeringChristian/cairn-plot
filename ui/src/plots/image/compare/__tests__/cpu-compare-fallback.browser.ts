@@ -18,14 +18,15 @@
 import { floatValues } from "../../runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { CompositeMediaPane, type CompareFloatSource } from "../compositor";
+import { CompositeMediaPane } from "../compositor";
+import type { ResolvedFloatImage } from "../../definition/content.ts";
 import type { DiffMode } from "../../../types";
 import { createHarness, waitFor } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "CPU-COMPARE-FALLBACK" });
 
 /** A tiny wide float source (2:1), a diagonal gradient so the tone-map isn't flat. */
-function floatSource(key: string): CompareFloatSource {
+function floatSource(key: string): ResolvedFloatImage {
   const w = 8;
   const h = 4;
   const data = new Float32Array(w * h * 3);

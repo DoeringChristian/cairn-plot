@@ -24,7 +24,7 @@ import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { ssim } from "../kernels/ssim-reference";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
-import { computeCompareMapping, type CompareAlign, type CompareFit } from "../../runtime/compare-align";
+import { computeCompareMapping, type ImageCompareAlign, type ImageCompareFit } from "../../runtime/compare-align";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
@@ -224,7 +224,7 @@ async function runScalarCase(device: Device, w: number, h: number, seed: number)
 async function runMismatchCase(
   device: Device,
   aw: number, ah: number, bw: number, bh: number,
-  align: CompareAlign, fit: CompareFit, seedA: number, seedB: number,
+  align: ImageCompareAlign, fit: ImageCompareFit, seedA: number, seedB: number,
 ): Promise<boolean> {
   const a = makeImage(aw, ah, seedA);
   const b = makeImage(bw, bh, seedB);

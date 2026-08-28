@@ -2,12 +2,7 @@ import { createElement, type ComponentType } from "react";
 
 import type { CompareNode, DataSpec, PlotLeafNode } from "../../../../../packages/spec/src/spec.ts";
 import type { DataSource } from "../../../resources/data/data-source.ts";
-import type { DeepFlattenController } from "../resources/decoders.ts";
-import type {
-  DecodedSource,
-  ImageBackendProps,
-  RenderMode,
-} from "../runtime/contracts.ts";
+import type { ImagePresentation } from "../runtime/presentation.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../../backends/react.ts";
 import { definePlot, type SettingsRecord } from "../../contracts.ts";
@@ -21,27 +16,7 @@ import {
 import { resolveDisplayOperator, TONEMAP_GAMMA_DEFAULT } from "../runtime/tonemap.ts";
 
 type ImageSpec = Extract<DataSpec, { kind: "inline" | "image" | "imghdr" | "url" }>;
-type ImageRuntimePlumbing =
-  | "source"
-  | "syncedSettings"
-  | "setSyncedSettings"
-  | "resetSettings"
-  | "onViewChange";
-
-/** Semantic image input. Cell-owned settings and commands are deliberately absent. */
-export type ImagePresentation = Omit<ImageBackendProps, ImageRuntimePlumbing> & {
-  readonly source?: DecodedSource;
-  readonly imageUrl?: string | null;
-  readonly hdr?: {
-    readonly data: Float32Array | Float64Array | Uint16Array;
-    readonly precision?: "f32" | "f16-bits";
-    readonly shape: number[];
-    readonly dtype: string;
-    readonly deep?: DeepFlattenController;
-  };
-  readonly renderMode?: RenderMode;
-  readonly height?: number;
-};
+export type { ImagePresentation } from "../runtime/presentation.ts";
 export type ImageSettings = PlotSettings & SettingsRecord;
 
 /** Image-owned HOME state. Authored node settings are merged by the host. */

@@ -360,7 +360,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
         // Emit `exposure`/`offset` TOP-LEVEL (in-shader), NOT into the CSS-filter
         // `processing` block. The unified FLOAT surface discards `processing`, so
         // a float URL (.exr/.npy/…) would silently drop them; BOTH surfaces read
-        // them top-level (SdrImageProps for uint8, the HDR reconstruction for
+        // them top-level (Uint8SurfaceProps for uint8, the HDR reconstruction for
         // float). Suppressed from `processing` above so they are never applied
         // twice. Mirrors how `gamma` is lifted via `suppressGamma`.
         if (opts.exposure != null) props.exposure = num(opts.exposure);

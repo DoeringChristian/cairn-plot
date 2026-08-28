@@ -86,8 +86,8 @@ export {
   type CompositeMediaPaneProps,
   CrossTypeCompositeMediaPane,
   CompareFloatUnsupportedError,
-  type CompareFloatSource,
 } from "./compositor";
+export type { ResolvedFloatImage } from "../definition/content.ts";
 
 // NB: `GpuComparePane` is DELETED (content-op unification, Phase 4). Every
 // image-compare now renders on the unified `GpuImagePane` via `compareSource`

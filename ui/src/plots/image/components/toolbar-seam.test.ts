@@ -34,7 +34,7 @@ const standalone = read("plots/image/runtime/view.tsx");
 // --- the shared contract: the shape carries `toolbar` ---------------------
 
 test("image-backend: both pane prop shapes declare the `toolbar` host seam", () => {
-  // Present on both HdrImageProps and SdrImageProps so a single flag flows
+  // Present on both FloatSurfaceProps and Uint8SurfaceProps so a single flag flows
   // through the whole ImageBackend union (and the resolveImageRenderer seam).
   const decls = backend.match(/toolbar\?: boolean/g) ?? [];
   assert.ok(decls.length >= 2, "toolbar?: boolean must be on both HDR + SDR shapes");

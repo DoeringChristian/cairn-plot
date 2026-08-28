@@ -5,9 +5,9 @@ import type {
   PlotLeafNode,
 } from "../../../../../packages/spec/src/spec.ts";
 import type {
-  CompareAlign,
-  CompareFit,
-} from "../runtime/contracts.ts";
+  ImageCompareAlign,
+  ImageCompareFit,
+} from "./content.ts";
 import type { DataSource } from "../../../resources/data/data-source.ts";
 import type { ComparisonPlan, ComparisonRequest } from "../../contracts.ts";
 import { planComparison } from "../../registry.ts";
@@ -19,8 +19,8 @@ export interface ImageComparisonPlan {
   readonly reference: DataSpec;
   readonly foreground: DataSpec;
   readonly leaf: PlotLeafNode;
-  readonly align?: CompareAlign;
-  readonly fit?: CompareFit;
+  readonly align?: ImageCompareAlign;
+  readonly fit?: ImageCompareFit;
   readonly referenceLabel?: string;
   readonly foregroundLabel?: string;
 }
@@ -66,8 +66,8 @@ export function planImageComparison(
         reference,
         foreground,
         leaf: { kind: "plot" as const, type: "image", data: reference, props: leafProps },
-        align: props.align as CompareAlign | undefined,
-        fit: props.fit as CompareFit | undefined,
+        align: props.align as ImageCompareAlign | undefined,
+        fit: props.fit as ImageCompareFit | undefined,
         referenceLabel: labelAt(referenceIndex),
         foregroundLabel: labelAt(index) ?? legacyLabel,
       },

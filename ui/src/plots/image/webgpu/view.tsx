@@ -145,18 +145,18 @@ import { useDeepFlatten } from "../components/use-deep-flatten";
 import { usePixelSamplers } from "../components/gpu-image-samplers";
 import { buildRenderSnapshot } from "../components/render-snapshot";
 import {
-  isHdrProps,
-  useLegacyImageProps,
+  isFloatSurfaceProps,
+  useImageSurfaceProps,
   shapeDims,
   finite,
   type HdrData,
-  type HdrImageProps,
-  type SdrImageProps,
+  type FloatSurfaceProps,
+  type Uint8SurfaceProps,
   type ImageBackend,
   type ImageBackendProps,
   type CompareSource,
-  type DecodedSource,
 } from "../runtime/contracts";
+import type { ImageSource } from "../definition/content.ts";
 
 // A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
@@ -240,7 +240,7 @@ function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
  *  (via {@link hdrToRGBAFloat32}), a uint8 source is `<img>`-decoded to
  *  `rgba8unorm`. Async because the uint8 path decodes a URL. Mirrors
  *  `GpuComparePane`'s `loadSide`, but yields the pool's `SourceUpload` shape. */
-async function decodedSourceToUpload(src: DecodedSource): Promise<SourceUpload | null> {
+async function decodedSourceToUpload(src: ImageSource): Promise<SourceUpload | null> {
   if (src.dtype === "float") {
     return hdrToRGBAFloat32({
       pixels: src.pixels,
@@ -365,10 +365,10 @@ export function screenPxPerTexel(
 export default function GpuImagePane(backendProps: ImageBackendProps) {
   // The ONE unified `source` fans out (keyed on `source.dtype`) into the two
   // internal dtype-keyed representations the body below consumes — so the body
-  // (and its `isHdrProps(props)` dispatch) is unchanged. `backendProps` is
+  // (and its `isFloatSurfaceProps(props)` dispatch) is unchanged. `backendProps` is
   // forwarded verbatim to the CPU fallback (which reconstructs it the same way).
-  const props = useLegacyImageProps(backendProps);
-  const hdrMode = isHdrProps(props);
+  const props = useImageSurfaceProps(backendProps);
+  const hdrMode = isFloatSurfaceProps(props);
   // COMPARE capability (content-op unification): when `compareSource` is present
   // the pane renders a COMPARE of `source` (reference/`a`) against
   // `compareSource.b` (foreground). The single-image path is byte-identical when
@@ -405,13 +405,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // flatten, no CPU upload). Called unconditionally (rules-of-hooks) with a null
   // HDR in the SDR branch.
   const renderPassRef = useRef<(() => void) | null>(null);
-  const deepActive = hdrMode && !!(props as HdrImageProps).hdr?.deep;
+  const deepActive = hdrMode && !!(props as FloatSurfaceProps).hdr?.deep;
   const onDeepWindow = useCallback((zNear: number, zFar: number) => {
     paneHandleRef.current?.setDeepWindow(zNear, zFar);
     renderPassRef.current?.();
   }, []);
   const deepFlatten = useDeepFlatten(
-    hdrMode ? (props as HdrImageProps).hdr : NULL_HDR,
+    hdrMode ? (props as FloatSurfaceProps).hdr : NULL_HDR,
     deepActive ? onDeepWindow : undefined,
   );
   // True once the acquire effect below has resolved a real HDR (rgba16float/
@@ -455,8 +455,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const sdrImageDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
   // DIFF reference (`b`) retained pixels — the diff TEV readout's `b` operand for a
-  // DIRECT op's cpu twin. Float → the raw DecodedSource; uint8 → the decoded RGBA.
-  const refFloatRef = useRef<DecodedSource | null>(null);
+  // DIRECT op's cpu twin. Float → the raw ImageSource; uint8 → the decoded RGBA.
+  const refFloatRef = useRef<ImageSource | null>(null);
   const refU8Ref = useRef<{ data: ArrayLike<number>; width: number; height: number } | null>(null);
   // FLIP-BACK RETENTION (content-op unification follow-up — residual stacked-flip
   // flicker). A stacked viewport reuses ONE pane across its slots; flipping BACK
@@ -469,7 +469,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // re-upload happens. Bounded (LRU) to the pool's retention cap so CPU-buffer
   // memory can't grow unbounded across many flips. See the setSource/setSourceB
   // effects below for the synchronous fast-path.
-  const uploadCacheRef = useRef<Map<string, { upload: SourceUpload; ref: DecodedSource }>>(new Map());
+  const uploadCacheRef = useRef<Map<string, { upload: SourceUpload; ref: ImageSource }>>(new Map());
   // -----------------------------------------------------------------------
   // PRESENT-COHERENCY GUARD (residual fast-flip flicker). The pane's content
   // config — which primary/`b` source, and whether it's a diff/composite/plain
@@ -513,7 +513,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const contentEpochRef = useRef(0);
   const contentEpochIdentityRef = useRef<string | undefined>(undefined);
   const lastCommitEpochRef = useRef(-1);
-  const rememberUpload = useCallback((key: string, upload: SourceUpload, ref: DecodedSource) => {
+  const rememberUpload = useCallback((key: string, upload: SourceUpload, ref: ImageSource) => {
     const m = uploadCacheRef.current;
     if (m.has(key)) m.delete(key);
     m.set(key, { upload, ref });
@@ -546,10 +546,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // its scalar channel (the channel selector's scalar isolations — layer "Z",
   // "diffuse.G" — become colormappable). An absent prop (the common HDR case)
   // reads `"none"`; the toolbar COLORMAP menu / sync bus then drive it view-local.
-  const propColormap: Colormap | null = (props as SdrImageProps).colormap ?? null;
+  const propColormap: Colormap | null = (props as Uint8SurfaceProps).colormap ?? null;
   const propTonemap = hdrMode
-    ? (props as HdrImageProps).tonemap
-    : (props as SdrImageProps).tonemap;
+    ? (props as FloatSurfaceProps).tonemap
+    : (props as Uint8SurfaceProps).tonemap;
 
   // The viewport's settings STORE: threaded down from its owner (node frame /
   // stage cell / compositor) when present; a BARE mount (card / cross-type
@@ -688,8 +688,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // the deprecated raw `extended` alias (recovering its browser-clipped look).
   // HOME restores the seed. Never a source re-upload.
   const propPeak = hdrMode
-    ? (props as HdrImageProps).peak
-    : (props as SdrImageProps).peak;
+    ? (props as FloatSurfaceProps).peak
+    : (props as Uint8SurfaceProps).peak;
   const seedPeak = (): number =>
     propPeak != null && propPeak > 0
       ? propPeak
@@ -709,8 +709,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // Seeded from the descriptor `gamma=` prop (HDR or SDR) when present, else the
   // default 2.2; re-seeds on prop change; HOME restores it.
   const propGamma: number | undefined = hdrMode
-    ? (props as HdrImageProps).gamma
-    : (props as SdrImageProps).gamma;
+    ? (props as FloatSurfaceProps).gamma
+    : (props as Uint8SurfaceProps).gamma;
   const gammaSeed = propGamma && propGamma > 0 ? propGamma : TONEMAP_GAMMA_DEFAULT;
   // γ resolves at RENDER: store value > descriptor seed.
   const tonemapGamma =
@@ -1081,7 +1081,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // while the source is deep AND the pane is a live WebGPU HDR pane.
   useEffect(() => {
     if (!hdrMode || !paneReady || !deepActive) return;
-    const hdr = (props as HdrImageProps).hdr;
+    const hdr = (props as FloatSurfaceProps).hdr;
     const deep = hdr.deep!;
     hdrDataRef.current = hdr; // TEV overlay reads the full-composite values
     let cancelled = false;
@@ -1104,7 +1104,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, deepActive, hdrMode ? (props as HdrImageProps).hdr.deep : null]);
+  }, [hdrMode, paneReady, deepActive, hdrMode ? (props as FloatSurfaceProps).hdr.deep : null]);
 
   // -----------------------------------------------------------------------
   // SDR mode: decode `imageUrl` (+ optional CPU colormap false-color, exact
@@ -1117,7 +1117,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // Deps exclude the viewport, so this never runs per pan/zoom frame.
   useLayoutEffect(() => {
     if (hdrMode || !paneReady) return;
-    const p = props as SdrImageProps;
+    const p = props as Uint8SurfaceProps;
     const imageUrl = p.imageUrl;
     // COMPARE mode uploads the RAW source (diff samples raw `a`/`b`; a compositor
     // composites raw light) — never a CPU false-color, which is the single-image
@@ -1140,7 +1140,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // (`contentKeyA`) so a stacked flip BACK to this slot rebinds the resident
     // primary texture instead of re-uploading. Unkeyed for the single-image path.
     const primaryKey = hasCompare ? contentKeyA : undefined;
-    const applySdr = (raw: ImageData, display: ImageData, p2: SdrImageProps) => {
+    const applySdr = (raw: ImageData, display: ImageData, p2: Uint8SurfaceProps) => {
       sdrImageDataRef.current = raw; // TEV overlay reads the RAW source, like ImagePane.
       const upload: SourceUpload = {
         data: display.data,
@@ -1208,7 +1208,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }, [
     hdrMode,
     paneReady,
-    hdrMode ? null : (props as SdrImageProps).imageUrl,
+    hdrMode ? null : (props as Uint8SurfaceProps).imageUrl,
     hdrMode ? null : sdrColormap,
     // Exposure/offset re-bake the colormap (pre-LUT) — only meaningful when a
     // colormap is active; harmless (re-uploads the raw) otherwise.
@@ -1330,11 +1330,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // prop shapes now carry `exposure`/`offset`; the plain-SDR pipeline applies them
   // in-shader exactly like the HDR path (the colormapped SDR passthrough does not).
   const baseExposure = hdrMode
-    ? ((props as HdrImageProps).exposure ?? 0)
-    : ((props as SdrImageProps).exposure ?? 0);
+    ? ((props as FloatSurfaceProps).exposure ?? 0)
+    : ((props as Uint8SurfaceProps).exposure ?? 0);
   const baseOffset = hdrMode
-    ? ((props as HdrImageProps).offset ?? 0)
-    : ((props as SdrImageProps).offset ?? 0);
+    ? ((props as FloatSurfaceProps).offset ?? 0)
+    : ((props as Uint8SurfaceProps).offset ?? 0);
   // DISPLAY-space post-processing (the 8-bit `processing` block's brightness/
   // contrast/flipSign) — honored IN-SHADER (u_bind14 via ImageParams) so a single
   // knob renders IDENTICALLY to the CPU SDR pane's CSS filter (audit H1: this pane,
@@ -1344,7 +1344,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // brightness/contrast/flip_sign on the float path), so this is identity there;
   // spread into the plain-image params below (identity default = bit-for-bit the
   // pre-processing render for every image with no processing set).
-  const processing = hdrMode ? undefined : (props as SdrImageProps).processing;
+  const processing = hdrMode ? undefined : (props as Uint8SurfaceProps).processing;
   const displayAdjust: Pick<ImageParams, "brightness" | "contrast" | "flipSign"> = {
     brightness: processing?.brightness ?? 0,
     contrast: processing?.contrast ?? 0,
@@ -1368,7 +1368,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     hasCompare,
     hdrMode,
     deepActive,
-    imageUrl: (props as SdrImageProps).imageUrl ?? "",
+    imageUrl: (props as Uint8SurfaceProps).imageUrl ?? "",
     contentKeyA,
     contentKeyB,
     hasBOperand: !!compareSource?.b,
@@ -1743,7 +1743,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // (`imageUrl`), a compare toggle (`hasCompare`), a deep toggle (`deepActive`),
     // or the presence of the `b` operand — else the guard would compare against a
     // stale expected id and hold the previous frame forever.
-    hasCompare, deepActive, hdrMode ? null : (props as SdrImageProps).imageUrl, compareSource?.b]);
+    hasCompare, deepActive, hdrMode ? null : (props as Uint8SurfaceProps).imageUrl, compareSource?.b]);
 
   // Keep a live ref to the latest renderPass so the (stable) deep-zClip callback
   // (`onDeepZClip`, declared before renderPass exists) can trigger a repaint.
@@ -2109,7 +2109,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     if (hdrMode) {
       const hdr = hdrDataRef.current;
       if (!hdr) return undefined;
-      const deep = (props as HdrImageProps).hdr?.deep;
+      const deep = (props as FloatSurfaceProps).hdr?.deep;
       const base = floatHistogramSource(hdr, pixelDataVersion, deep ? () => deep.getGpuCsr() : undefined);
       if (deep) {
         return {
@@ -2207,7 +2207,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // Render.
   // -----------------------------------------------------------------------
   const showAxes = props.showAxes ?? false;
-  const label = hdrMode ? ((props as HdrImageProps).label ?? "") : (props as SdrImageProps).label;
+  const label = hdrMode ? ((props as FloatSurfaceProps).label ?? "") : (props as Uint8SurfaceProps).label;
   const interpolation = props.interpolation ?? "auto";
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
   // Detection overlays composite over the display surface regardless of dtype —
@@ -2217,8 +2217,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // union members declare `overlay`/`overlaySettings`, so no dtype cast is needed.
   const overlay = props.overlay;
   const overlaySettings = props.overlaySettings;
-  const isDraggable = hdrMode ? false : ((props as SdrImageProps).isDraggable ?? false);
-  const onDragStart = hdrMode ? undefined : (props as SdrImageProps).onDragStart;
+  const isDraggable = hdrMode ? false : ((props as Uint8SurfaceProps).isDraggable ?? false);
+  const onDragStart = hdrMode ? undefined : (props as Uint8SurfaceProps).onDragStart;
 
   // C1 fix (whole-branch review) — engine bailout: the GPU backend self-heals
   // to the CPU backend (`CpuImagePane`) on any activation/render hard

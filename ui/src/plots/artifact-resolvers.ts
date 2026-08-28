@@ -25,13 +25,13 @@ import {
   sniffFormat,
   type DecodedImage,
 } from "./image/resources/decoders.ts";
-import type { CompareFloatSource } from "./image/compare/compositor";
+import type { ResolvedFloatImage } from "./image/definition/content.ts";
 import { floatPixelsFrom } from "./image/runtime/pixel-buffer.ts";
 
 export interface ResolvedImageItem {
   url: string | null;
   overlay?: ImageOverlayData | null;
-  float?: CompareFloatSource | null;
+  float?: ResolvedFloatImage | null;
 }
 
 export interface ArtifactBatchRequest {
@@ -85,11 +85,11 @@ export function resolveImageArtifacts(
 }
 
 // ---------------------------------------------------------------------------
-// HDR/float decode seam — the ONE decode-to-CompareFloatSource core shared by
+// HDR/float decode seam — the ONE decode-to-ResolvedFloatImage core shared by
 // the compare DESCRIPTOR resolver (`plot-node.tsx`'s `resolveFrame`) and the
 // viewport ADAPTER's float-resolving resolver (`resolveImageArtifactsAsync`
 // below). Both need the SAME "fetch a URL, decode it, and route float samples
-// to a `CompareFloatSource` (the GPU/HDR path) vs 8-bit bytes to a browser-
+// to a `ResolvedFloatImage` (the GPU/HDR path) vs 8-bit bytes to a browser-
 // decodable `imageUrl`" mapping, so it lives here once rather than copy-pasted.
 // Pure `image/decoders` + `image/half` types underneath — no `api/*`, no
 // react-query — so it stays inside the cairn-plot boundary.
@@ -103,11 +103,11 @@ export interface ResolvedImageSource {
    *  decoded to float (`float` is set instead). */
   url: string | null;
   /** Decoded float samples for the GPU/HDR compare path — absent for 8-bit. */
-  float?: CompareFloatSource;
+  float?: ResolvedFloatImage;
 }
 
 /**
- * Map an already-DECODED float image → the `CompareFloatSource` the GPU/HDR
+ * Map an already-DECODED float image → the `ResolvedFloatImage` the GPU/HDR
  * compare panes upload. Pure and DOM-free (the piece that unit-tests without a
  * browser); `contentKey` is the STABLE diff-cache key (the source URL / store
  * hash, NOT the float bytes). Carries the `precision` tag through so an F16
@@ -116,7 +116,7 @@ export interface ResolvedImageSource {
 export function decodedFloatToCompareSource(
   decoded: Extract<DecodedImage, { kind: "f32" }>,
   contentKey: string,
-): CompareFloatSource {
+): ResolvedFloatImage {
   return {
     pixels: floatPixelsFrom(decoded.data, decoded.precision),
     width: decoded.width,
@@ -131,7 +131,7 @@ export function decodedFloatToCompareSource(
  * (and is now consumed by) `plot-node.tsx`'s `resolveFrame` client-decode seam:
  * fetch the bytes (following redirects — the FINAL url is the content key),
  * normalize through `decodeImage` (sniffed by Content-Type → URL ext → magic
- * bytes), and route `f32` → a `CompareFloatSource` (uploaded as
+ * bytes), and route `f32` → a `ResolvedFloatImage` (uploaded as
  * `rgba16float`/`rgba32float`, diffing in TRUE float values) vs `u8` → a PNG
  * `data:` URL (the existing texture path). Pass `bytes` to decode an
  * already-fetched buffer (skips the network — the unit-test path). CORS applies
@@ -181,7 +181,7 @@ export function isFloatCandidateArtifact(hint: { url?: string; mime?: string }):
  * SAME hash → `{url, overlay}` mapping, plus — for any pane whose URL/MIME
  * sniffs to a raw-buffer format (`.exr` / float `.npy`) — a fetch (via
  * `source.bytes`, so the endpoint AND local sources both work) + decode through
- * {@link decodeImageSource}, attaching a decoded `float: CompareFloatSource` to
+ * {@link decodeImageSource}, attaching a decoded `float: ResolvedFloatImage` to
  * the item (and clearing its `url`, since a float buffer has no
  * browser-decodable URL). Browser-native panes (png/jpeg/…) and un-sniffable
  * extension-less URLs pass through UNCHANGED — the exact `{url, overlay}` the
@@ -215,7 +215,7 @@ export async function resolveImageArtifactsAsync(
 }
 
 /** Resolve ONE artifact hash to an {@link ResolvedImageItem}, decoding a
- *  raw-buffer float artifact (`.exr` / float `.npy`) to a `CompareFloatSource`.
+ *  raw-buffer float artifact (`.exr` / float `.npy`) to a `ResolvedFloatImage`.
  *  A browser-native / un-sniffable artifact stays the plain `{url, overlay}`
  *  (no fetch). Shared by the foreground + reference passes of
  *  {@link resolveImageArtifactsAsync}. */

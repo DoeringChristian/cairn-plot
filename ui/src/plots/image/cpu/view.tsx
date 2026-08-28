@@ -6,7 +6,7 @@
  * auto), so the rest of the app is backend-agnostic.
  *
  * ## One component, two prop shapes (mirrors `GpuImagePane` exactly)
- * `isHdrProps(props)` (presence of `hdr`) selects the branch:
+ * `isFloatSurfaceProps(props)` (presence of `hdr`) selects the branch:
  *   - SDR (`imageUrl` shape) — the former `ImagePane`'s FULL path, ported
  *     verbatim: `<img>` display with `processing` CSS/SVG filters
  *     (gamma/offset/flipSign via `useGammaFilter`), CPU `applyColormap`
@@ -17,7 +17,7 @@
  *     gamma)` per-pixel → `putImageData`.
  * ASYMMETRY (unchanged from before the unification): the HDR branch has no
  * colormap / compare-diff / `processing` — those props only exist on the SDR
- * shape (`SdrImageProps`), exactly as the two separate panes had it.
+ * shape (`Uint8SurfaceProps`), exactly as the two separate panes had it.
  *
  * ## Shared plumbing — the shared `ImagePaneShell`
  * Both branches render through `renderers/ImagePaneShell.tsx` (the ONE frame
@@ -105,13 +105,13 @@ import { getCpuDisplayOperation } from "./display-operations.ts";
 import { getCpuImageOperation, type CpuImageOperation } from "./image-operations.ts";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
-  isHdrProps,
-  useLegacyImageProps,
+  isFloatSurfaceProps,
+  useImageSurfaceProps,
   shapeDims,
   finite,
   type HdrData,
-  type HdrImageProps,
-  type SdrImageProps,
+  type FloatSurfaceProps,
+  type Uint8SurfaceProps,
   type ImageBackend,
   type ImageBackendProps,
 } from "../runtime/contracts";
@@ -370,7 +370,7 @@ function useAutoImageRendering(
 // ---------------------------------------------------------------------------
 
 function CpuSdrImagePane(
-  props: SdrImageProps & {
+  props: Uint8SurfaceProps & {
     toolbar?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
@@ -1022,7 +1022,7 @@ function CpuSdrImagePane(
 // ---------------------------------------------------------------------------
 
 function CpuHdrImagePane(
-  props: HdrImageProps & {
+  props: FloatSurfaceProps & {
     toolbar?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
@@ -1468,7 +1468,7 @@ function CpuHdrImagePane(
  * `GpuImagePane` for the WebGPU other); both accept the ONE
  * {@link ImageBackendProps} and are assignable to `ImageBackend`. The unified
  * `source` fans out (keyed on `source.dtype`) into the two internal pane
- * representations via {@link useLegacyImageProps}; the sub-panes below are
+ * representations via {@link useImageSurfaceProps}; the sub-panes below are
  * unchanged.
  */
 /**
@@ -1514,10 +1514,10 @@ function cpuCompareChrome(cs: ImageBackendProps["compareSource"]): ReactNode {
 }
 
 export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Element {
-  const props = useLegacyImageProps(backendProps);
+  const props = useImageSurfaceProps(backendProps);
   // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
   // reconstructed legacy props (they aren't part of the dtype-keyed
-  // `LegacyImageProps` shape).
+  // `ImageSurfaceProps` shape).
   //
   // CPU COMPARE FALLBACK (content-op unification). The unified COMPOSITOR is
   // GPU-only; on the no-WebGPU / render=cpu path a descriptor image-compare
@@ -1544,7 +1544,7 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
     compareChrome: cpuCompareChrome(backendProps.compareSource),
     isCompareMode: isCompare,
   };
-  return isHdrProps(props) ? (
+  return isFloatSurfaceProps(props) ? (
     <CpuHdrImagePane {...props} {...sync} />
   ) : (
     <CpuSdrImagePane {...props} {...sync} />

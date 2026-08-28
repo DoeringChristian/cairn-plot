@@ -7,11 +7,11 @@ import {
 } from "./channel-menu.ts";
 import { syntheticChannelTree } from "./channel-slice.ts";
 import type {
-  CompareAlign,
-  CompareFit,
-  CompareSource,
-  DecodedSource,
-} from "../runtime/contracts.ts";
+  ImageCompareAlign,
+  ImageCompareFit,
+  ImageSource,
+} from "./content.ts";
+import type { CompareSource } from "../runtime/contracts.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import type { CompareViewMode } from "../runtime/use-comparison-control.ts";
 
@@ -22,8 +22,8 @@ export interface ImageComparisonHostInput {
   readonly colormap: CompareSource["colormap"];
   readonly cellDefaults: PlotSettings;
   readonly splitPosition: number;
-  readonly align?: CompareAlign;
-  readonly fit?: CompareFit;
+  readonly align?: ImageCompareAlign;
+  readonly fit?: ImageCompareFit;
   readonly referenceLabel?: string;
   readonly foregroundLabel?: string;
   readonly inStackedGrid: boolean;
@@ -44,7 +44,7 @@ export function composeImageComparisonPresentation(args: {
   const { leaf, resolved, comparison, enlargeControl } = args;
   if (resolved.__diffB === undefined) return {};
   const compareSource: CompareSource = {
-    b: resolved.__diffB as DecodedSource,
+    b: resolved.__diffB as ImageSource,
     opId: comparison.comparisonOperationId,
     mode: comparison.mode,
     colormap: comparison.colormap,

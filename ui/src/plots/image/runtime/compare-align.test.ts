@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeCompareMapping, mappingKey, type CompareAlign } from "../runtime/compare-align.ts";
+import { computeCompareMapping, mappingKey, type ImageCompareAlign } from "../runtime/compare-align.ts";
 
 const A = { w: 160, h: 120 }; // reference (a) — wider & taller here
 const B = { w: 96, h: 64 }; // foreground/primary (b) — smaller
@@ -22,7 +22,7 @@ test("top-left crop = legacy behavior: min-crop, zero offsets", () => {
 
 test("equal-size pair: identity mapping under every align", () => {
   const S = { w: 128, h: 96 };
-  for (const align of ["top-left", "center", "top-right", "bottom-left", "bottom-right"] as CompareAlign[]) {
+  for (const align of ["top-left", "center", "top-right", "bottom-left", "bottom-right"] as ImageCompareAlign[]) {
     const m = computeCompareMapping(S, S, align, "crop", "b");
     assert.deepEqual(m.result, S);
     assert.deepEqual(m.offsetA, { x: 0, y: 0 });
@@ -64,7 +64,7 @@ test("mixed dims (A wider, B taller): overlap = min per-axis, per-source centere
 });
 
 test("fill: result = PRIMARY dims, zero offsets, align irrelevant", () => {
-  for (const align of ["top-left", "center", "bottom-right"] as CompareAlign[]) {
+  for (const align of ["top-left", "center", "bottom-right"] as ImageCompareAlign[]) {
     const mb = computeCompareMapping(A, B, align, "fill", "b");
     assert.deepEqual(mb.result, B); // primary = b
     assert.deepEqual(mb.offsetA, { x: 0, y: 0 });

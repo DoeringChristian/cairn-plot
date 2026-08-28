@@ -273,7 +273,7 @@ export async function resolveDataProps(
 }
 
 /**
- * Normalize a {@link DecodedImage} into the ONE unified {@link DecodedSource}
+ * Normalize a {@link DecodedImage} into the ONE unified {@link ImageSource}
  * the image renderer consumes: `f32` → a float source (shape derived from
  * width/height/channels; `precision` preserved for the F16 pipeline; deep-flatten
  * controller threaded through), `u8` → a uint8 source carrying a PNG data URL

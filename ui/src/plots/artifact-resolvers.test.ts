@@ -1,7 +1,7 @@
 /**
  * Adapter float-resolution unit tests — the HDR seam that lets a host hand the
  * viewport adapter an `.exr` / float-`.npy` artifact and get a decoded
- * `CompareFloatSource` (true-HDR panes/compare) instead of an LDR URL.
+ * `ResolvedFloatImage` (true-HDR panes/compare) instead of an LDR URL.
  *
  *   node --experimental-strip-types --test \
  *     src/lib/cairn-plot/viewport/data-sources.test.ts
@@ -96,7 +96,7 @@ test("isFloatCandidateArtifact: browser-native + extension-less URLs are NOT can
 });
 
 // ---------------------------------------------------------------------------
-// decodedFloatToCompareSource — the pure DecodedImage → CompareFloatSource map.
+// decodedFloatToCompareSource — the pure DecodedImage → ResolvedFloatImage map.
 // ---------------------------------------------------------------------------
 test("decodedFloatToCompareSource carries dims/channels/precision + content key", () => {
   const src = decodedFloatToCompareSource(
@@ -114,7 +114,7 @@ test("decodedFloatToCompareSource carries dims/channels/precision + content key"
 // ---------------------------------------------------------------------------
 // decodeImageSource — fetch-less decode (bytes provided) → float source.
 // ---------------------------------------------------------------------------
-test("decodeImageSource: a float .npy decodes to a CompareFloatSource (url null)", async () => {
+test("decodeImageSource: a float .npy decodes to a ResolvedFloatImage (url null)", async () => {
   const bytes = makeF32Npy([2, 3], [0, 0.5, 1, 1.5, 2, 2.5]);
   const r = await decodeImageSource({ url: "grad.npy", bytes });
   assert.equal(r.url, null);
