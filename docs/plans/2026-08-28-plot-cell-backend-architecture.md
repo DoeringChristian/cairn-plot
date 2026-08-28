@@ -75,6 +75,9 @@ Status: accepted design; implementation in progress
   untyped fallback in the React host.
 - [x] Migrate heatmap from the legacy renderer map with numeric, rectangular
   matrix validation and the shared chart-domain settings projection.
+- [x] Migrate parallel coordinates with aligned column/row/domain validation
+  and an explicit empty settings schema. Hover remains transient and selection
+  remains host-owned; nonexistent 2D viewport settings are not invented.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

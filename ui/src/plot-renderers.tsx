@@ -44,6 +44,7 @@ import HistogramPlot from "./lib/cairn-plot/renderers/HistogramPlot";
 import { ensureBarPlotType } from "./plots/bar/register";
 import { ensureHistogramPlotType } from "./plots/histogram/register";
 import { ensureHeatmapPlotType } from "./plots/heatmap/register";
+import { ensureParallelPlotType } from "./plots/parallel/register";
 import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
 import CpuImagePane from "./lib/cairn-plot/renderers/CpuImagePane";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
@@ -451,7 +452,6 @@ function TableStandalone(p: P) {
  * registered at runtime — deliberately absent so they stay out of core.
  */
 export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
-  parallel: ParallelCoordsStandalone,
   table: TableStandalone,
 };
 
@@ -463,6 +463,7 @@ export function registerCoreRenderers(): void {
   ensureBarPlotType(BarChartStandalone, resolveDataProps);
   ensureHistogramPlotType(HistogramStandalone, resolveDataProps);
   ensureHeatmapPlotType(HeatmapStandalone, resolveDataProps);
+  ensureParallelPlotType(ParallelCoordsStandalone, resolveDataProps);
   for (const [name, component] of Object.entries(CORE_RENDERERS)) {
     registerRenderer(name, component);
   }
