@@ -28,6 +28,20 @@ export type ImageCompareAlign =
 
 export type ImageCompareFit = "crop" | "fill";
 
+/** Resolved, backend-neutral meaning of an image comparison. */
+export interface ImageComparisonContent {
+  readonly foreground: ImageSource;
+  readonly presentation: "split" | "difference";
+  readonly defaultOperation: string;
+  readonly defaultSplit: number;
+  readonly align?: ImageCompareAlign;
+  readonly fit?: ImageCompareFit;
+  readonly contentKeyA?: string;
+  readonly contentKeyB?: string;
+  readonly referenceLabel?: string;
+  readonly foregroundLabel?: string;
+}
+
 /** Float operand used while resolving an authored image comparison. */
 export interface ResolvedFloatImage {
   readonly pixels: FloatPixels;

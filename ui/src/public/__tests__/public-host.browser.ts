@@ -23,11 +23,12 @@ const spec: PlotSpec = {
     kind: "plot",
     type: "image",
     data: { kind: "image", hash: "same-hash" },
-    props: { renderMode: "cpu", toolbar: false },
+    props: { toolbar: false },
   },
 };
 
 async function run() {
+  window.__cairnPlotRenderMode = "cpu";
   const element = document.getElementById("mount")!;
   const red = imageUrl("red");
   const blue = imageUrl("blue");

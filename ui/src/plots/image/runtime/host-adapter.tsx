@@ -18,10 +18,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { CompareNode, PlotLeafNode } from "../../../resources/resolve-data.ts";
-import { InStackedGridContext } from "../../../layout/stack/stack-context.ts";
-import FullscreenOverlayShell, {
-  InFullscreenOverlayContext,
-} from "../../../primitives/components/FullscreenOverlayShell.tsx";
+import FullscreenOverlayShell from "../../../primitives/components/FullscreenOverlayShell.tsx";
 import {
   resolutionKey,
   acquireResolved,
@@ -56,8 +53,7 @@ import {
   composeSingleImagePresentation,
   type ImageComparisonHostInput,
 } from "../definition/host-presentation.ts";
-import type { ImageComparisonInput } from "./contracts.ts";
-import { useImageComparisonControl } from "./use-comparison-control.ts";
+import { ImageHostRuntimeContext } from "./host-context.ts";
 
 /**
  * How long an image host waits for a not-yet-registered backend (an addon
@@ -129,7 +125,6 @@ export function ImageHostAdapter({
   // True inside a STACKED viewport — threaded to the pane so it treats its display
   // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
   // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
-  const inStackedGrid = useContext(InStackedGridContext);
   // DIFF path (Phase 2c): a diff-mode compare lowers to THIS component (so an
   // `[image, diff]` stack is homogeneous — no remount on a flip). When present,
   // BOTH operands resolve through the compare resolver (`node.data` = reference =
@@ -143,34 +138,14 @@ export function ImageHostAdapter({
     (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(activeDefaults);
   }, [paneSync?.resetSyncedSettings, paneSync?.setSyncedSettings, activeDefaults]);
 
-  // CHANNEL-STRIP selection override (EXR part/layer). `null` = follow the
-  // node's own `data.part`/`data.layer`. Resolves at RENDER through the one
-  // lookup: store value > local state (the local cell serves only a viewport
-  // with no store). Deliberately NOT reset on a node swap: in a STACKED
-  // surface the same ImageLeafView instance flips between slots, and the picked
-  // layer must carry across (shared-settings semantics).
-  const [localChSel, setChSel] = useState<ChannelSelection | null>(null);
+  // Channel selection is an ordinary cell setting. It changes resolution but
+  // never creates a renderer-local fallback store.
   const syncedChannelSelect = paneSync?.syncedSettings?.["image.channelSelect"];
-  const chSel =
-    syncedChannelSelect !== undefined
-      ? (syncedChannelSelect as ChannelSelection | null)
-      : localChSel;
+  const chSel = (syncedChannelSelect as ChannelSelection | null | undefined) ?? null;
   const chSelRef = useRef<ChannelSelection | null>(null);
   chSelRef.current = chSel;
   // The last UNSLICED resolve's channel tree (see the menu block below).
   const baseChannelTreeRef = useRef<ChannelMenuTree | undefined>(undefined);
-  // The ONE write path for a channel pick (store when present, local else) —
-  // shared by the strip handler and the failed-decode revert.
-  const setSyncedRef = useRef(paneSync?.setSyncedSettings);
-  setSyncedRef.current = paneSync?.setSyncedSettings;
-  const applyChannelSelect = useCallback((next: ChannelSelection | null) => {
-    // TOP-OF-STACK write (transient-group ruling): the store when present
-    // (group while selected — transient; local otherwise — sticks); the local
-    // cell only serves a storeless viewport. Writing both would let a
-    // group-session pick survive unselect through the local cell.
-    if (setSyncedRef.current) setSyncedRef.current({ "image.channelSelect": next });
-    else setChSel(next);
-  }, []);
   // SINGLE-PANE FULLSCREEN (enlarge) — the flag lives HERE, above the async-
   // resolve swap: a channel pick's cold re-resolve renders the "Loading…"
   // placeholder, unmounting the whole renderer subtree — component-local
@@ -263,23 +238,13 @@ export function ImageHostAdapter({
       if (chSelRef.current) {
         // eslint-disable-next-line no-console
         console.warn("cairn-plot: channel selection failed, reverting:", err);
-        applyChannelSelect(null);
+        paneSync?.setSyncedSettings?.({ "image.channelSelect": null });
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [node, source, selKey, effectiveData, resolveKey, diffSpec]);
-
-  // Strip pick: ONE store write (a group flips every pane to the same
-  // part/layer BY NAME; a lone viewport's pick sticks in its local store).
-  const selectChannels = useCallback(
-    (sel: ChannelSelection) => {
-      const next = sel.part == null && sel.layer == null ? null : sel;
-      applyChannelSelect(next);
-    },
-    [applyChannelSelect],
-  );
+  }, [node, source, selKey, effectiveData, resolveKey, diffSpec, paneSync]);
 
   // PURE READ of THIS render's resolveKey (the flip-commit guarantee). `peekResolved`
   // returns the SAME cached object across renders, so `dataProps` is reference-stable;
@@ -342,7 +307,6 @@ export function ImageHostAdapter({
         leaf: node,
         resolved: dataProps,
         comparison: diffSpec,
-        enlargeControl,
       });
     }
     const composed = composeSingleImagePresentation({
@@ -351,13 +315,10 @@ export function ImageHostAdapter({
       shared,
       channelSelection: chSel,
       baseChannelTree: baseChannelTreeRef.current,
-      selectChannels,
-      enlargeControl,
-      inStackedGrid,
     });
     baseChannelTreeRef.current = composed.baseChannelTree;
     return composed.presentation;
-  }, [dataProps, shared, node, chSel, selectChannels, diffSpec, inStackedGrid, enlargeControl]);
+  }, [dataProps, shared, node, chSel, diffSpec]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -419,6 +380,7 @@ export function ImageHostAdapter({
       (paneSync?.syncedSettings ?? {}) as import("../../contracts.ts").SettingsRecord,
     );
     return (
+      <ImageHostRuntimeContext.Provider value={{ enlargeControl }}>
       <ReactBackendOutlet
         backends={registered.backends}
         environment={browserRenderEnvironment()}
@@ -430,6 +392,7 @@ export function ImageHostAdapter({
         }}
         invalidation="presentation"
       />
+      </ImageHostRuntimeContext.Provider>
     );
   }
   return <Message text="Loading renderer…" />;
@@ -447,14 +410,6 @@ function browserRenderEnvironment(): RenderEnvironment {
 /** Image-owned adapter for ordinary images and image comparisons. */
 export function ImageNodeHost({ node }: { node: PlotLeafNode | CompareNode }) {
   const { shared } = useSharedPlot();
-  const cell = useContext(CellSettingsContext);
-  const inStack = useContext(InStackedGridContext);
-  const inOverlay = useContext(InFullscreenOverlayContext);
-  const control = useImageComparisonControl(
-    node,
-    cell?.syncedSettings,
-    cell?.setSyncedSettings,
-  );
   if (node.kind === "plot") return <ImageHostAdapter node={node} />;
 
   let planned;
@@ -463,25 +418,13 @@ export function ImageNodeHost({ node }: { node: PlotLeafNode | CompareNode }) {
   } catch (error) {
     return <Message text={error instanceof Error ? error.message : String(error)} error />;
   }
-  const defaults = defaultSettingsForNode(node, shared);
   const comparison: ImageComparisonHostInput = {
     node,
-    mode: control.viewMode,
-    comparisonOperationId: control.comparisonOperationId,
-    colormap: (cell?.syncedSettings?.["image.encoding"] as ImageComparisonInput["colormap"] | undefined) ??
-      (defaults["image.encoding"] as ImageComparisonInput["colormap"] | undefined),
-    splitPosition: control.splitPos,
     align: planned.align,
     fit: planned.fit,
     referenceLabel: planned.referenceLabel,
     foregroundLabel: planned.foregroundLabel,
-    inStackedGrid: inStack,
-    inOverlay,
-    onComparisonOperationChange: control.setComparisonOperation,
-    onCompareModeChange: control.setViewMode,
-    onSplitPositionChange: control.setSplitPos,
-    cellDefaults: defaults,
-    compareModified: control.modified,
+    cellDefaults: defaultSettingsForNode(node, shared),
   };
   return <ImageHostAdapter node={planned.leaf} comparison={comparison} />;
 }

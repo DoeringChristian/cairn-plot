@@ -571,14 +571,9 @@ function isRenderMode(v: unknown): v is RenderMode {
 }
 
 /**
- * Resolve the active render mode. FIRST DEFINED WINS:
- *   1. an explicit `renderMode` (threaded from the plot spec),
- *   2. `window.__cairnPlotRenderMode` (a settable global),
- *   3. the URL query `?render=cpu|gpu|auto`,
- *   4. default `"auto"`.
+ * Resolve the internal backend preference from the runtime override or query.
  */
-export function resolveRenderMode(explicit?: RenderMode | string | null): RenderMode {
-  if (isRenderMode(explicit)) return explicit;
+export function resolveRenderMode(): RenderMode {
   if (typeof window !== "undefined") {
     if (isRenderMode(window.__cairnPlotRenderMode)) return window.__cairnPlotRenderMode;
     try {

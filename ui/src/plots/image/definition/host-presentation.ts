@@ -1,6 +1,5 @@
 import type { CompareNode, PlotLeafNode, SharedProps } from "../../../../../packages/spec/src/spec.ts";
 import {
-  channelToolbarButton,
   treeHasSelectableChannels,
   type ChannelMenuTree,
   type ChannelSelection,
@@ -9,29 +8,18 @@ import { syntheticChannelTree } from "./channel-slice.ts";
 import type {
   ImageCompareAlign,
   ImageCompareFit,
+  ImageComparisonContent,
   ImageSource,
 } from "./content.ts";
-import type { ImageComparisonInput } from "../runtime/contracts.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
-import type { CompareViewMode } from "../runtime/use-comparison-control.ts";
 
 export interface ImageComparisonHostInput {
   readonly node: CompareNode;
-  readonly mode: CompareViewMode;
-  readonly comparisonOperationId: string;
-  readonly colormap: ImageComparisonInput["colormap"];
   readonly cellDefaults: PlotSettings;
-  readonly splitPosition: number;
   readonly align?: ImageCompareAlign;
   readonly fit?: ImageCompareFit;
   readonly referenceLabel?: string;
   readonly foregroundLabel?: string;
-  readonly inStackedGrid: boolean;
-  readonly inOverlay: boolean;
-  readonly onComparisonOperationChange: (id: string) => void;
-  readonly onCompareModeChange: (mode: CompareViewMode) => void;
-  readonly onSplitPositionChange: (position: number) => void;
-  readonly compareModified: boolean;
 }
 
 /** Lower a resolved image comparison into the retained image backend contract. */
@@ -39,34 +27,26 @@ export function composeImageComparisonPresentation(args: {
   readonly leaf: PlotLeafNode;
   readonly resolved: Readonly<Record<string, unknown>>;
   readonly comparison: ImageComparisonHostInput;
-  readonly enlargeControl: { enlarged: boolean; setEnlarged(value: boolean): void };
 }): Record<string, unknown> {
-  const { leaf, resolved, comparison, enlargeControl } = args;
+  const { leaf, resolved, comparison } = args;
   if (resolved.__diffB === undefined) return {};
-  const compareSource: ImageComparisonInput = {
-    b: resolved.__diffB as ImageSource,
-    operationId: comparison.comparisonOperationId,
-    mode: comparison.mode,
-    colormap: comparison.colormap,
+  const props = (comparison.node.props ?? {}) as Record<string, unknown>;
+  const content: ImageComparisonContent = {
+    foreground: resolved.__diffB as ImageSource,
+    presentation: comparison.node.presentation === "difference" ? "difference" : "split",
+    defaultOperation: typeof props.operation === "string" ? props.operation : "absolute",
+    defaultSplit: typeof props.splitPosition === "number" ? props.splitPosition : 0.5,
     align: comparison.align,
     fit: comparison.fit,
     contentKeyA: resolved.__diffContentKeyA as string,
     contentKeyB: resolved.__diffContentKeyB as string,
     referenceLabel: comparison.referenceLabel,
     foregroundLabel: comparison.foregroundLabel,
-    splitPosition: comparison.splitPosition,
-    inStackedGrid: comparison.inStackedGrid,
-    inOverlay: comparison.inOverlay,
-    onComparisonOperationChange: comparison.onComparisonOperationChange,
-    onCompareModeChange: comparison.onCompareModeChange,
-    onSplitPositionChange: comparison.onSplitPositionChange,
-    compareModified: comparison.compareModified,
   };
   return {
     ...(leaf.props ?? {}),
     source: resolved.source,
-    compareSource,
-    enlargeControl,
+    comparison: content,
     ...(resolved.__diffOverlay ? { overlay: resolved.__diffOverlay } : {}),
   };
 }
@@ -77,9 +57,6 @@ export function composeSingleImagePresentation(args: {
   readonly shared?: SharedProps;
   readonly channelSelection: ChannelSelection | null;
   readonly baseChannelTree?: ChannelMenuTree;
-  readonly selectChannels: (selection: ChannelSelection) => void;
-  readonly enlargeControl: { enlarged: boolean; setEnlarged(value: boolean): void };
-  readonly inStackedGrid: boolean;
 }): { presentation: Record<string, unknown>; baseChannelTree?: ChannelMenuTree } {
   const hostProps: Record<string, unknown> = {};
   const described = args.resolved.exrTree as ChannelMenuTree | undefined;
@@ -96,22 +73,14 @@ export function composeSingleImagePresentation(args: {
       (args.leaf.data.kind === "image"
         ? { part: args.leaf.data.part, layer: args.leaf.data.layer }
         : {});
-    const menu = channelToolbarButton(channelTree, effectiveSelection, (selection) => {
-      args.selectChannels(selection ?? {});
-    });
-    if (menu) {
-      hostProps.channelMenu = menu;
-      hostProps.channelModified = args.channelSelection != null;
-      hostProps.onChannelReset = () => args.selectChannels({});
-    }
+    hostProps.channelTree = channelTree;
+    hostProps.authoredChannelSelection = effectiveSelection;
   }
-  hostProps.enlargeControl = args.enlargeControl;
   return {
     presentation: {
       ...hostProps,
       ...(args.leaf.props ?? {}),
       ...args.resolved,
-      inStackedGrid: args.inStackedGrid,
     },
     baseChannelTree,
   };

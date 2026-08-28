@@ -1,4 +1,3 @@
-import type { ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig.ts";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay.tsx";
 import type {
   Colormap,
@@ -8,9 +7,9 @@ import type {
   ImageProcessing,
   Interpolation,
 } from "../../types.ts";
-import type { ImageSource } from "../definition/content.ts";
+import type { ImageComparisonContent, ImageSource } from "../definition/content.ts";
 import type { DeepFlattenController } from "../resources/decoders.ts";
-import type { ImageComparisonInput, RenderMode } from "./contracts.ts";
+import type { ChannelMenuTree, ChannelSelection } from "../definition/channel-menu.ts";
 
 /**
  * Resolved input presented by the host to the image runtime.
@@ -21,7 +20,7 @@ import type { ImageComparisonInput, RenderMode } from "./contracts.ts";
  */
 export interface ImagePresentation {
   readonly source?: ImageSource;
-  readonly compareSource?: ImageComparisonInput;
+  readonly comparison?: ImageComparisonContent;
   readonly imageUrl?: string | null;
   readonly hdr?: {
     readonly data: Float32Array | Float64Array | Uint16Array;
@@ -30,7 +29,6 @@ export interface ImagePresentation {
     readonly dtype: string;
     readonly deep?: DeepFlattenController;
   };
-  readonly renderMode?: RenderMode;
   readonly height?: number;
   readonly toolbar?: boolean;
   readonly baselineUrl?: string | null;
@@ -50,12 +48,6 @@ export interface ImagePresentation {
   readonly pixelValueNotation?: PixelValueNotation;
   readonly zoom?: number;
   readonly pan?: { readonly x: number; readonly y: number };
-  readonly channelMenu?: ToolbarButtonSpec;
-  readonly channelModified?: boolean;
-  readonly onChannelReset?: () => void;
-  readonly enlargeControl?: {
-    readonly enlarged: boolean;
-    readonly setEnlarged: (value: boolean) => void;
-  };
-  readonly inStackedGrid?: boolean;
+  readonly channelTree?: ChannelMenuTree;
+  readonly authoredChannelSelection?: ChannelSelection;
 }

@@ -9,7 +9,7 @@ const leaf = {
   data: { kind: "image" as const, hash: "reference" },
 };
 
-test("comparison composition changes image operationeration without choosing an encoding", () => {
+test("comparison composition contains only semantic comparison content", () => {
   const resolved = {
     source: { dtype: "uint8" as const, url: "reference.png" },
     __diffB: { dtype: "uint8" as const, url: "foreground.png" },
@@ -21,31 +21,25 @@ test("comparison composition changes image operationeration without choosing an 
       kind: "compare" as const,
       operands: [leaf.data, { kind: "image" as const, hash: "foreground" }],
     },
-    colormap: "turbo" as const,
     cellDefaults: {},
-    splitPosition: 0.5,
-    inStackedGrid: true,
-    inOverlay: false,
-    onComparisonOperationChange: () => {},
-    onCompareModeChange: () => {},
-    onSplitPositionChange: () => {},
-    compareModified: false,
   };
   const split = composeImageComparisonPresentation({
     leaf,
     resolved,
-    comparison: { ...base, mode: "split", comparisonOperationId: "absolute" },
-    enlargeControl: { enlarged: false, setEnlarged: () => {} },
+    comparison: base,
   });
   const difference = composeImageComparisonPresentation({
     leaf,
     resolved,
-    comparison: { ...base, mode: "diff", comparisonOperationId: "signed" },
-    enlargeControl: { enlarged: false, setEnlarged: () => {} },
+    comparison: {
+      ...base,
+      node: { ...base.node, presentation: "difference" as const, props: { operation: "signed" } },
+    },
   });
-  assert.equal((split.compareSource as { colormap: string }).colormap, "turbo");
-  assert.equal((difference.compareSource as { colormap: string }).colormap, "turbo");
-  assert.equal((split.compareSource as { mode: string }).mode, "split");
-  assert.equal((difference.compareSource as { operationId: string }).operationId, "signed");
+  assert.equal((split.comparison as { presentation: string }).presentation, "split");
+  assert.equal((difference.comparison as { presentation: string }).presentation, "difference");
+  assert.equal((difference.comparison as { defaultOperation: string }).defaultOperation, "signed");
+  assert.equal("colormap" in (difference.comparison as object), false);
+  assert.equal("onComparisonOperationChange" in (difference.comparison as object), false);
   assert.equal("syncedSettings" in split, false);
 });
