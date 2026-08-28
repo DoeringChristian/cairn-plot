@@ -8,12 +8,12 @@ import {
   type CompareFloatSource,
   type DataSource,
   type ImageOverlayData,
-} from "../../lib/cairn-plot/index.ts";
+} from "../../integration/cairn-card.ts";
 import {
   floatPixelsFrom,
   floatValues,
-} from "../../lib/cairn-plot/image/pixel-buffer.ts";
-import type { DecodedSource } from "../../plots/image/backend/contracts.ts";
+} from "./model/pixel-buffer.ts";
+import type { DecodedSource } from "./backend/contracts.ts";
 
 interface ResolvedImageOperand {
   url: string | null;

@@ -18,11 +18,11 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../../../engines/three/properties";
-import { LabelChip, RefBadge, ViewportCaption } from "../../../lib/cairn-plot/primitives";
-import ViewportPlaceholder from "../../../lib/cairn-plot/host/ViewportPlaceholder";
-import type { ColormapName } from "../../../lib/cairn-plot/types";
-import type { MediaCompareModeKind } from "../../../lib/cairn-plot/media-compare/mode";
-import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "../../../lib/cairn-plot/host/types";
+import { LabelChip, RefBadge, ViewportCaption } from "../../../primitives/components";
+import ViewportPlaceholder from "../../../integration/cairn-card/ViewportPlaceholder";
+import type { ColormapName } from "../../types";
+import type { MediaCompareModeKind } from "../../image/compare/mode";
+import type { ViewportCapabilities, ViewportPaneProps, ViewState } from "../../../integration/cairn-card/types";
 
 // ---------------------------------------------------------------------------
 // MeshViewport — the mesh object_type's PURE Viewport pieces (WS-VC5, mirrors

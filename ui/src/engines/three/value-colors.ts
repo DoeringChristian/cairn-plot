@@ -1,7 +1,7 @@
-import type { ColormapName } from "../../lib/cairn-plot/types";
-import { getColormapLUT } from "../../lib/cairn-plot/colormaps";
-import { lutRow, normToT } from "../../lib/cairn-plot/colormaps/lut-sample";
-import { SERIES_COLORS } from "../../lib/cairn-plot/types";
+import type { ColormapName } from "../../plots/types";
+import { getColormapLUT } from "../../settings/colormaps";
+import { lutRow, normToT } from "../../settings/colormaps/lut-sample";
+import { SERIES_COLORS } from "../../plots/types";
 
 /** Options shared by the strided color helpers below. */
 export interface StridedColorOptions {

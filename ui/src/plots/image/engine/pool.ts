@@ -58,7 +58,7 @@ import {
 } from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
 import { getDiffKernel, type KernelComputeCtx } from "./kernels/kernel-registry";
-import { contentOpId } from "../../../lib/cairn-plot/image/content-ops/index";
+import { contentOpId } from "../model/content-ops/index";
 import type {
   Device,
   Surface,

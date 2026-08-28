@@ -23,7 +23,7 @@ import { getSharedDevice } from "../device";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { flipLDR } from "../kernels/flip-reference";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "FLIP", resultFlag: "__flipTestResult" });
 

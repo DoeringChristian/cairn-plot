@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import HistogramPlot from "../../lib/cairn-plot/renderers/HistogramPlot.tsx";
+import HistogramPlot from "./renderer/HistogramPlot.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
 import type { ChartSettings } from "../chart-settings.ts";

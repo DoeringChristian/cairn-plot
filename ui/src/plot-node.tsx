@@ -22,7 +22,7 @@ import React, {
 import {
   Colorbar,
   type ColormapName,
-} from "./lib/cairn-plot";
+} from "./integration/cairn-card";
 import type { CompareSource } from "./plots/image/backend/contracts";
 import {
   resolveDataProps,
@@ -33,7 +33,7 @@ import {
 } from "./plot-descriptor";
 import { stackLabelFor } from "./layout/stack/StackedView";
 import { InStackedGridContext } from "./layout/stack/stack-context";
-import FullscreenOverlayShell, { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
+import FullscreenOverlayShell, { InFullscreenOverlayContext } from "./primitives/components/FullscreenOverlayShell";
 import {
   ChartFillContext,
   DEFAULT_CHART_HEIGHT,
@@ -42,7 +42,7 @@ import {
   isEagerMount,
   LAZY_ROOT_MARGIN,
   type EagerMountSignals,
-} from "./lib/cairn-plot/lazy-mount";
+} from "./host/lazy-mount";
 import {
   resolutionKey,
   acquireResolved,
@@ -53,8 +53,8 @@ import {
   subscribeResolveCache,
   resolveCacheVersion,
 } from "./resources/resolution-cache";
-import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "./lib/cairn-plot/image/channel-menu";
-import { applyChannelSlice } from "./lib/cairn-plot/image/channel-slice";
+import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "./plots/image/model/channel-menu";
+import { applyChannelSlice } from "./plots/image/model/channel-slice";
 import { type ViewportSettings } from "./state/settings/viewport-settings";
 import { initialViewportSettings } from "./state/settings/viewport-initial-settings.ts";
 import { GridLayout, type GridLayoutState } from "./layout/GridLayout.tsx";
@@ -621,7 +621,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
 // `window.__cairnPlotEagerMount === true`, and print (matchMedia("print") /
 // `beforeprint`). Grid children inherit eager naturally: the signals are
 // page-global, so every gate on the page reads the same answer. See
-// `lib/cairn-plot/lazy-mount.ts` for the pure decision fn.
+// `host/lazy-mount.ts` for the pure decision fn.
 // ---------------------------------------------------------------------------
 
 declare global {

@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 
-import type { ColormapName, ParallelColumn, ParallelRow } from "../../lib/cairn-plot/types.ts";
-import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
+import type { ColormapName, ParallelColumn, ParallelRow } from "../types.ts";
+import type { DataSource } from "../../resources/data/data-sources.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 

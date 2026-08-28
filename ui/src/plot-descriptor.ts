@@ -31,11 +31,11 @@ import {
   sniffFormat,
   resolveFinalUrl,
   type DataSource,
-} from "./lib/cairn-plot";
-import { fetchImageBytes } from "./lib/cairn-plot/fetch-image";
-import { floatPixelsFrom, floatValues } from "./lib/cairn-plot/image/pixel-buffer.ts";
-import { describeExr } from "./lib/cairn-plot/image/decoders/exr-describe";
-import { groupChannels, type ChannelGroup } from "./lib/cairn-plot/image/channel-groups";
+} from "./integration/cairn-card";
+import { fetchImageBytes } from "./resources/fetch-image";
+import { floatPixelsFrom, floatValues } from "./plots/image/model/pixel-buffer.ts";
+import { describeExr } from "./plots/image/model/decoders/exr-describe";
+import { groupChannels, type ChannelGroup } from "./plots/image/model/channel-groups";
 import type { DataSpec } from "../../packages/spec/src/spec.ts";
 export type {
   CompareNode,
@@ -291,7 +291,7 @@ export async function resolveDataProps(
  * controller threaded through), `u8` → a uint8 source carrying a PNG data URL
  * (the byte-exact `<img>` / SDR-surface path).
  */
-function decodedToSource(decoded: import("./lib/cairn-plot").DecodedImage) {
+function decodedToSource(decoded: import("./integration/cairn-card").DecodedImage) {
   if (decoded.kind === "f32") {
     const shape =
       decoded.channels === 1

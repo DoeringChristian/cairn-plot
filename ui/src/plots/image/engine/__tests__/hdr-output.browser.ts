@@ -53,9 +53,9 @@
  */
 import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams } from "../image-engine";
-import { extendedSrgbOetf, srgbEotf } from "../../../../lib/cairn-plot/image/tonemap";
+import { extendedSrgbOetf, srgbEotf } from "../../model/tonemap";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "HDR OUTPUT", resultFlag: "__hdrOutputTestResult" });
 

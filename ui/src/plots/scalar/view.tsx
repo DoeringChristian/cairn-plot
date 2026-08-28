@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 
-import ScalarPlot from "../../lib/cairn-plot/renderers/ScalarPlot.tsx";
-import type { PromotedSeriesConfig, Viewport } from "../../lib/cairn-plot/types.ts";
+import ScalarPlot from "./renderer/ScalarPlot.tsx";
+import type { PromotedSeriesConfig, Viewport } from "../types.ts";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import type { ScalarPresentation, ScalarSettings } from "./types.ts";

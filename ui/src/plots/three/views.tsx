@@ -19,10 +19,10 @@
  * (resolved through each viewport's `resolve*ViewConfig`), with any field
  * overridable via the descriptor's `props`.
  */
-import { PointCloudSingleView, type PointCloudViewportItem } from "../../plots/three/viewports/pointcloud";
-import { MeshSingleView, type MeshViewportItem } from "../../plots/three/viewports/mesh";
-import { VolumeSingleView, type VolumeViewportItem } from "../../plots/three/viewports/volume";
-import { BoxesSingleView, type BoxesViewportItem } from "../../plots/three/viewports/boxes";
+import { PointCloudSingleView, type PointCloudViewportItem } from "./viewports/pointcloud";
+import { MeshSingleView, type MeshViewportItem } from "./viewports/mesh";
+import { VolumeSingleView, type VolumeViewportItem } from "./viewports/volume";
+import { BoxesSingleView, type BoxesViewportItem } from "./viewports/boxes";
 import { ChartBox } from "../../plot-standalone-helpers";
 import type { SettingsRecord } from "../contracts.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";

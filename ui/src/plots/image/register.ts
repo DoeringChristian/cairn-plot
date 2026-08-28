@@ -1,13 +1,13 @@
 import { createElement, type ComponentType } from "react";
 
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
-import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
-import type { DeepFlattenController } from "../../lib/cairn-plot/image/decoders.ts";
+import type { DataSource } from "../../resources/data/data-sources.ts";
+import type { DeepFlattenController } from "./model/decoders.ts";
 import type {
   DecodedSource,
   ImageBackendProps,
   RenderMode,
-} from "../../plots/image/backend/contracts.ts";
+} from "./backend/contracts.ts";
 import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";

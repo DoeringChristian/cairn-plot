@@ -22,11 +22,11 @@ import type {
   ImageOverlaySettings,
   ImageProcessing,
   Interpolation,
-} from "../../../lib/cairn-plot/types";
-import type { Viewport as ImageViewport } from "../../../lib/cairn-plot/hooks/use-image-viewport";
-import type { PixelValueNotation } from "../../../lib/cairn-plot/primitives/PixelValueOverlay";
-import { floatPixelsFrom, type FloatPixels } from "../../../lib/cairn-plot/image/pixel-buffer.ts";
-import type { DeepFlattenController } from "../../../lib/cairn-plot/image/decoders.ts";
+} from "../../types";
+import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-viewport";
+import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
+import { floatPixelsFrom, type FloatPixels } from "../model/pixel-buffer.ts";
+import type { DeepFlattenController } from "../model/decoders.ts";
 import type { ViewportSettings } from "../../../state/settings/viewport-settings";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ export interface HdrData {
    * Z cutoff. The consuming pane MUST `dispose()` it on unmount. See
    * `../image/decoders.ts` and `./use-deep-flatten.ts`.
    */
-  deep?: import("../../../lib/cairn-plot/image/decoders.ts").DeepFlattenController;
+  deep?: import("../model/decoders.ts").DeepFlattenController;
 }
 
 /** The float-HDR prop shape (presence of `hdr` selects this backend path). */
@@ -119,7 +119,7 @@ export interface HdrImageProps {
    *  the selection state and re-decodes on pick). The pane just renders it at
    *  the leading edge next to its own menus, folds `channelModified` into HOME's
    *  modified state, and calls `onChannelReset` from its reset handler. */
-  channelMenu?: import("../../../lib/cairn-plot/controls/ToolbarConfig").ToolbarButtonSpec;
+  channelMenu?: import("../../../primitives/controls/ToolbarConfig").ToolbarButtonSpec;
   /** True while a view-local channel override is active (drives HOME's dot). */
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
@@ -191,7 +191,7 @@ export interface SdrImageProps {
    *  the selection state and re-decodes on pick). The pane just renders it at
    *  the leading edge next to its own menus, folds `channelModified` into HOME's
    *  modified state, and calls `onChannelReset` from its reset handler. */
-  channelMenu?: import("../../../lib/cairn-plot/controls/ToolbarConfig").ToolbarButtonSpec;
+  channelMenu?: import("../../../primitives/controls/ToolbarConfig").ToolbarButtonSpec;
   /** True while a view-local channel override is active (drives HOME's dot). */
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
@@ -412,7 +412,7 @@ export interface ImageBackendProps {
    *  the selection state and re-decodes on pick). The pane just renders it at
    *  the leading edge next to its own menus, folds `channelModified` into HOME's
    *  modified state, and calls `onChannelReset` from its reset handler. */
-  channelMenu?: import("../../../lib/cairn-plot/controls/ToolbarConfig").ToolbarButtonSpec;
+  channelMenu?: import("../../../primitives/controls/ToolbarConfig").ToolbarButtonSpec;
   /** True while a view-local channel override is active (drives HOME's dot). */
   channelModified?: boolean;
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */

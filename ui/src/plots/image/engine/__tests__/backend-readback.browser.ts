@@ -56,10 +56,10 @@
  * the command above whenever this harness or its imports change.
  */
 import { createWebGPUDevice, isDeviceLostError } from "../webgpu/device";
-import { passthroughWGSL } from "../shaders/passthrough.wgsl";
-import { scaleBiasWGSL } from "../shaders/scalebias.wgsl";
+import { passthroughWGSL } from "../shaders/passthrough.wgsl.ts";
+import { scaleBiasWGSL } from "../shaders/scalebias.wgsl.ts";
 import type { Device } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const WIDTH = 2;
 const HEIGHT = 2;

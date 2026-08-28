@@ -47,7 +47,7 @@ import { PlotApp } from "../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../plot-renderers";
 import type { PlotDescriptor } from "../../../plot-descriptor";
 import { getSharedDevice } from "../../../plots/image/engine/device";
-import { registerRuntimeEntries } from "../../../lib/cairn-plot/store/runtime-store";
+import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import {
   startPaneRenderLog,
   stopPaneRenderLog,
@@ -65,7 +65,7 @@ import {
   __resetGlobalSelectionStoreForTest,
 } from "../../../state/selection/selection-store";
 import { getRegisteredPane } from "../../../plot-selection-pane-registry";
-import { createHarness, sleep, waitFor } from "../../../lib/cairn-plot/testing/harness";
+import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "REALSTACK GPU" });
 

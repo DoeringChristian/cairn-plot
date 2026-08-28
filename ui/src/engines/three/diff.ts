@@ -19,7 +19,7 @@
  */
 
 import { valuesToColors } from "./value-colors";
-import type { ColormapName } from "../../lib/cairn-plot/types";
+import type { ColormapName } from "../../plots/types";
 
 /** The two native-diff-mode colormaps every 3D type's diff modes offer. */
 export type DiffColormap = Extract<ColormapName, "red-green" | "turbo">;

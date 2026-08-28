@@ -15,9 +15,9 @@
  * than `plot-renderers`, so importing this module does NOT drag the 2D
  * renderers into the addon bundle.
  */
-import Figure from "../../lib/cairn-plot/renderers/Figure";
-import type { FigureInteractionSettings } from "../../lib/cairn-plot/renderers/Figure";
-import type { PlotlyFigureLike } from "../../lib/cairn-plot/types.ts";
+import Figure from "./renderer/Figure";
+import type { FigureInteractionSettings } from "./renderer/Figure";
+import type { PlotlyFigureLike } from "../types.ts";
 import { ChartBox } from "../../plot-standalone-helpers";
 import type { SettingsRecord } from "../contracts.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";

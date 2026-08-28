@@ -1,7 +1,7 @@
 export { PlotHost, type PlotHostProps } from "./PlotHost.tsx";
 export { mountPlot, type MountedPlot } from "./mountPlot.tsx";
-export { createEndpointDataSource } from "../lib/cairn-plot/store/data-sources.ts";
-export type { DataSource } from "../lib/cairn-plot/store/data-sources.ts";
+export { createEndpointDataSource } from "../resources/data/data-sources.ts";
+export type { DataSource } from "../resources/data/data-sources.ts";
 export type { PlotSession } from "../state/session/plot-session.ts";
 export type { SessionPersistence } from "../state/session/session-persistence.ts";
 export type {

@@ -25,7 +25,7 @@ import {
   resolveEncodeGamma,
   TONEMAP_GAMMA_DEFAULT,
   type RgbTriple,
-} from "../../../../lib/cairn-plot/image/tonemap";
+} from "../../model/tonemap";
 import {
   listEncodings,
   computeDataIndex,
@@ -33,11 +33,11 @@ import {
   type DisplayEncoding,
   type EncodeParams,
   type NormMode,
-} from "../../../../lib/cairn-plot/image/encodings/index";
-import { colormapFloatLUT } from "../../../../lib/cairn-plot/colormaps/lut";
-import type { ColormapName } from "../../../../lib/cairn-plot/colormaps/lut";
+} from "../../model/encodings/index";
+import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
+import type { ColormapName } from "../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "ENCODING REGISTRY" });
 

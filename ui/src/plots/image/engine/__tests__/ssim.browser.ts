@@ -26,7 +26,7 @@ import { ssim } from "../kernels/ssim-reference";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
 import { computeCompareMapping, type CompareAlign, type CompareFit } from "../compare-align";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "SSIM", resultFlag: "__ssimTestResult" });
 

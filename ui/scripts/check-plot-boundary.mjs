@@ -34,7 +34,20 @@ import { dirname, resolve, join, relative, extname } from "node:path";
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(UI_ROOT, "src");
 const LIB = join(SRC, "lib", "cairn-plot");
-const INTERNAL_ROOTS = ["backends", "host", "layout", "plots", "resources", "state", "settings", "engines", "primitives"]
+const INTERNAL_ROOTS = [
+  "backends",
+  "host",
+  "layout",
+  "plots",
+  "resources",
+  "state",
+  "settings",
+  "engines",
+  "primitives",
+  "public",
+  "integration",
+  "testing",
+]
   .map((name) => join(SRC, name));
 const REPO_ROOT = resolve(UI_ROOT, "..");
 const PACKAGES = join(REPO_ROOT, "packages");

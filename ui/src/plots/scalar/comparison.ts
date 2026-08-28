@@ -1,6 +1,6 @@
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
 import type { ComparisonPlan, ComparisonRequest } from "../contracts.ts";
-import type { Series } from "../../lib/cairn-plot/types.ts";
+import type { Series } from "../types.ts";
 import type { ScalarPresentation } from "./types.ts";
 
 export type ScalarSpec = Extract<DataSpec, { kind: "inline" }>;

@@ -16,7 +16,7 @@
  * only WRITES the registry; the stage READS it. Framework-light (a plain Map +
  * a version tick for `useSyncExternalStore`).
  */
-import type { DataSource } from "./lib/cairn-plot";
+import type { DataSource } from "./integration/cairn-card";
 import type { PlotNode, SharedProps } from "./plot-descriptor";
 
 /** Renderer names whose panes can take part in an image comparison. Charts

@@ -1,4 +1,4 @@
-import ParallelCoords from "../../lib/cairn-plot/renderers/ParallelCoords.tsx";
+import ParallelCoords from "./renderer/ParallelCoords.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import type { ParallelPresentation } from "./register.ts";

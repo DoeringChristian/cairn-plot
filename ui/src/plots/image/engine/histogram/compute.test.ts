@@ -23,7 +23,7 @@ import {
   foldHistogramStatsPartials,
   histParamsData,
 } from "./compute.ts";
-import { tevBinMapping, tevBinOfValue } from "../../../../lib/cairn-plot/image/histogram-binning.ts";
+import { tevBinMapping, tevBinOfValue } from "../../model/histogram-binning.ts";
 
 const FLT_BIG = 3.402823e38;
 

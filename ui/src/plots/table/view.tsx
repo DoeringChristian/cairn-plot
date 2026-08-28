@@ -1,4 +1,4 @@
-import Table from "../../lib/cairn-plot/renderers/Table.tsx";
+import Table from "./renderer/Table.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import type { TablePresentation, TableSettings } from "./register.ts";
 

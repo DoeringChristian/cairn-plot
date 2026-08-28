@@ -1,7 +1,7 @@
 import type { JsonValue } from "../../../packages/spec/src/json.ts";
 import type { DataSpec, PlotLeafNode } from "../../../packages/spec/src/spec.ts";
 import type { PlotBackend } from "../backends/contracts.ts";
-import type { DataSource } from "../lib/cairn-plot/store/data-sources.ts";
+import type { DataSource } from "../resources/data/data-sources.ts";
 
 export type SettingsRecord = Record<string, JsonValue>;
 

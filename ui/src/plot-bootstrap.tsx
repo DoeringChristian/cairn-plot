@@ -33,12 +33,12 @@ import {
   type DataSource,
   type PlotStore,
   type RuntimeStoreEntry,
-} from "./lib/cairn-plot";
-import { useEmitAutoHeight } from "./lib/cairn-plot/hooks/use-emit-auto-height";
+} from "./integration/cairn-card";
+import { useEmitAutoHeight } from "./host/hooks/use-emit-auto-height";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { getReactPlotType } from "./plots/react-registry.ts";
 import { PlotSurface } from "./plot-surface.tsx";
-import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
+import { createCairnPlot, type CairnPlot, type Mounter } from "./public/builder";
 import { registerReactPlotBackends } from "./plots/react-registry.ts";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";

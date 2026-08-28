@@ -71,11 +71,11 @@ import {
   applyDisplayAdjust,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
-} from "../../../../lib/cairn-plot/image/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../../../lib/cairn-plot/image/encodings";
-import { buildLUT, COLORMAP_STOPS } from "../../../../lib/cairn-plot/colormaps/lut";
+} from "../../model/tonemap";
+import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings";
+import { buildLUT, COLORMAP_STOPS } from "../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "IMAGE PASS", resultFlag: "__imagePassTestResult" });
 

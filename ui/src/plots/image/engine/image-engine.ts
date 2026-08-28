@@ -33,14 +33,14 @@
  * in `cairn-plot` currently imports this file.
  */
 import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./types";
-import { imageWGSL } from "./shaders/image.wgsl";
-import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl";
+import { imageWGSL } from "./shaders/image.wgsl.ts";
+import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl.ts";
 import { computeCompareMapping, type CompareMapping } from "./compare-align";
-import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../../../lib/cairn-plot/image/tonemap";
+import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../model/tonemap";
 // The operatorId uniform values are GENERATED from the display-encoding registry
 // (image/encodings) — the SAME source the shader's assembled `applyOperator`
 // dispatch keys on, so the CPU packing here and the GPU dispatch can never drift.
-import { OPERATOR_ID, NORM_ID, REDUCE_ID, type NormMode, type ReduceMode } from "../../../lib/cairn-plot/image/encodings/index.ts";
+import { OPERATOR_ID, NORM_ID, REDUCE_ID, type NormMode, type ReduceMode } from "../model/encodings/index.ts";
 
 export type ImageOperator =
   | "linear"

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { useContainerSize } from "../../lib/cairn-plot/hooks/use-container-size";
+import { useContainerSize } from "../../host/hooks/use-container-size";
 import {
   createCameraSettingsPeer,
   type CameraSettingsPeer,

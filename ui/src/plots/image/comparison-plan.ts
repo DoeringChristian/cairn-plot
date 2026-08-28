@@ -7,8 +7,8 @@ import type {
 import type {
   CompareAlign,
   CompareFit,
-} from "../../plots/image/backend/contracts.ts";
-import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
+} from "./backend/contracts.ts";
+import type { DataSource } from "../../resources/data/data-sources.ts";
 import type { ComparisonPlan, ComparisonRequest } from "../contracts.ts";
 import { planComparison } from "../registry.ts";
 

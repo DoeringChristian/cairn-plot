@@ -1,4 +1,4 @@
-import Heatmap from "../../lib/cairn-plot/renderers/Heatmap.tsx";
+import Heatmap from "./renderer/Heatmap.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
 import type { ChartSettings } from "../chart-settings.ts";

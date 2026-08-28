@@ -20,7 +20,7 @@
  *     passed as uniforms), so no filter-coefficient buffer plumbing is needed.
  */
 
-import { buildTonemapCurvesWGSL } from "../../../../lib/cairn-plot/image/encodings/index.ts";
+import { buildTonemapCurvesWGSL } from "../../model/encodings/index.ts";
 
 export const VERTEX_WGSL = `
 struct VSOut {

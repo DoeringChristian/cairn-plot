@@ -57,7 +57,7 @@ import {
   symmetricLog2,
   type ChannelStats,
   type TevBinMapping,
-} from "../../../../lib/cairn-plot/image/histogram-binning.ts";
+} from "../../model/histogram-binning.ts";
 
 /** Max texel channels the GPU path handles (an RGBA texel) — sources with more
  *  (aux-channel EXRs) fall back to the CPU reader loop. */

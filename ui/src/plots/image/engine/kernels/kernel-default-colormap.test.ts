@@ -2,8 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_DIFF_COLORMAP, listDiffKernels } from "./index.ts";
-import { getContentOp } from "../../../../lib/cairn-plot/image/content-ops/index.ts";
-import { COLORMAP_NAMES } from "../../../../lib/cairn-plot/colormaps/lut.ts";
+import { getContentOp } from "../../model/content-ops/index.ts";
+import { COLORMAP_NAMES } from "../../../../settings/colormaps/lut.ts";
 
 test("the shared diff default is a registered colormap", () => {
   assert.ok((COLORMAP_NAMES as readonly string[]).includes(DEFAULT_DIFF_COLORMAP));

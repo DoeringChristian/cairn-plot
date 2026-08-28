@@ -1,5 +1,5 @@
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
-import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
+import type { DataSource } from "../../resources/data/data-sources.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";

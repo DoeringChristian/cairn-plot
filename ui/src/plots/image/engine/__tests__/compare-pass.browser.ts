@@ -24,11 +24,11 @@ import { getSharedDevice } from "../device";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
 import { getDiffKernel } from "../kernels";
-import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../../../lib/cairn-plot/image/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../../../lib/cairn-plot/image/encodings";
-import { colormapFloatLUT } from "../../../../lib/cairn-plot/colormaps";
+import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
+import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/encodings";
+import { colormapFloatLUT } from "../../../../settings/colormaps";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "COMPARE PASS", resultFlag: "__comparePassTestResult" });
 

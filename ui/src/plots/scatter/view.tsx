@@ -1,4 +1,4 @@
-import ScatterPlot from "../../lib/cairn-plot/renderers/ScatterPlot.tsx";
+import ScatterPlot from "./renderer/ScatterPlot.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
 import type { ChartSettings } from "../chart-settings.ts";

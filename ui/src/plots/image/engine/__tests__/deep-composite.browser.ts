@@ -35,9 +35,9 @@
  * command above whenever this harness or its imports change.
  */
 import { getSharedDevice } from "../device";
-import { loadExrDecoder } from "../../../../lib/cairn-plot/image/decoders/wasm-inline/wasm-exr-inline";
+import { loadExrDecoder } from "../../model/decoders/wasm-inline/wasm-exr-inline";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const TRUNKS_URL = "https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr-images/main/v2/Stereo/Trunks.exr";
 const FIXTURE_URL = new URL("../../image/decoders/fixtures/deep-rgba-32x32.exr", import.meta.url).href;

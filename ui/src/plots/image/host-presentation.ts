@@ -4,14 +4,14 @@ import {
   treeHasSelectableChannels,
   type ChannelMenuTree,
   type ChannelSelection,
-} from "../../lib/cairn-plot/image/channel-menu.ts";
-import { syntheticChannelTree } from "../../lib/cairn-plot/image/channel-slice.ts";
+} from "./model/channel-menu.ts";
+import { syntheticChannelTree } from "./model/channel-slice.ts";
 import type {
   CompareAlign,
   CompareFit,
   CompareSource,
   DecodedSource,
-} from "../../plots/image/backend/contracts.ts";
+} from "./backend/contracts.ts";
 import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
 import type { CompareViewMode } from "./use-comparison-control.ts";
 

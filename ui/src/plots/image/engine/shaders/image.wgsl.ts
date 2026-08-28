@@ -161,8 +161,8 @@
  * the linear path (`sampleLutLinearF`) — both need only `textureLoad`'s
  * exact-texel semantics, no filterable-float sampler.
  */
-import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL } from "../../../../lib/cairn-plot/image/encodings/index.ts";
-import { buildContentOpWGSL } from "../../../../lib/cairn-plot/image/content-ops/index.ts";
+import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL } from "../../model/encodings/index.ts";
+import { buildContentOpWGSL } from "../../model/content-ops/index.ts";
 
 export const imageWGSL = `
 struct VSOut {

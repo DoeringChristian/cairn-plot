@@ -35,7 +35,7 @@
  * to scene-linear PER SIDE (a float side passes 0) so mixed u8/float operands are
  * both compared in linear light — see `image/tonemap.ts`'s `resolveRenderTonemap`.
  */
-import { VERTEX_WGSL, SAMPLING_WGSL, TONEMAP_WGSL } from "../kernels/prelude.wgsl";
+import { VERTEX_WGSL, SAMPLING_WGSL, TONEMAP_WGSL } from "../kernels/prelude.wgsl.ts";
 
 function composeShader(finalExpr: string): string {
   return `

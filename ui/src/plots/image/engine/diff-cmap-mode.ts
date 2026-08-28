@@ -24,7 +24,7 @@
  * Pure + dependency-light on purpose (only the `DIVERGING_COLORMAPS` set), so it
  * unit-tests without any GPU/engine imports.
  */
-import { DIVERGING_COLORMAPS } from "../../../lib/cairn-plot/colormaps/lut.ts";
+import { DIVERGING_COLORMAPS } from "../../../settings/colormaps/lut.ts";
 import type { DisplayRange } from "./kernels/kernel-registry.ts";
 
 /** Colormap index mode the diff display shader applies (see module doc). */

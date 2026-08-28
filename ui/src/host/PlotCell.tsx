@@ -21,7 +21,7 @@ import {
 import {
   EnlargeInterceptContext,
   type EnlargeIntercept,
-} from "../lib/cairn-plot/renderers/enlarge-intercept.ts";
+} from "./enlarge-intercept.ts";
 import {
   getRegisteredPane,
   isImageCompatibleNode,
@@ -31,7 +31,7 @@ import {
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
-} from "../lib/cairn-plot/renderers/grid-uniform-aspect.tsx";
+} from "../layout/grid-uniform-aspect.tsx";
 import { ChartFillContext } from "../plot-standalone-helpers.tsx";
 import { useViewportSettings } from "../state/settings/use-viewport-settings.ts";
 import { initialViewportSettings } from "../state/settings/viewport-initial-settings.ts";

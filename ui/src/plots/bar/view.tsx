@@ -1,4 +1,4 @@
-import BarChart, { type BarChartProps } from "../../lib/cairn-plot/renderers/BarChart.tsx";
+import BarChart, { type BarChartProps } from "./renderer/BarChart.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
 import type { ChartSettings } from "../chart-settings.ts";

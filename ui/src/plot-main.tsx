@@ -22,7 +22,7 @@ import type { FigurePresentation } from "./plots/figure/view.tsx";
 import type { SettingsRecord } from "./plots/contracts.ts";
 import type { ReactPlotViewProps } from "./plots/react-view.ts";
 import { eraseReactPlotBackend, registerReactPlotBackends } from "./plots/react-registry.ts";
-import "./lib/cairn-plot/styles/plot.css";
+import "./public/theme/plot.css";
 
 installCairnPlotBootstrap();
 registerCoreRenderers();

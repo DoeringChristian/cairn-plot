@@ -46,17 +46,17 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import PaneUnavailable from "../../../lib/cairn-plot/primitives/PaneUnavailable";
-import LabelChip from "../../../lib/cairn-plot/primitives/LabelChip";
-import RefBadge from "../../../lib/cairn-plot/primitives/RefBadge";
-import type { Colormap, DiffMode, Interpolation } from "../../../lib/cairn-plot/types";
-import { autoImageRendering, containScreenPxPerTexel } from "../../../lib/cairn-plot/renderers/interp-auto";
+import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
+import LabelChip from "../../../primitives/components/LabelChip";
+import RefBadge from "../../../primitives/components/RefBadge";
+import type { Colormap, DiffMode, Interpolation } from "../../types";
+import { autoImageRendering, containScreenPxPerTexel } from "../components/interp-auto";
 // The ONE shared magnification threshold — the SAME constant `GpuImagePane`
 // reads for its nearest/linear sampler switch (and `PixelValueOverlay` for its
 // per-pixel numbers), so the CPU pane's `pixelated` flip stays in lockstep.
-import { PIXEL_VALUE_MIN_SCREEN_PX } from "../../../lib/cairn-plot/primitives/PixelValueOverlay";
-import { useGammaFilter, GammaFilterSvg } from "../../../lib/cairn-plot/media-compare/post-processing";
-import ImageOverlay from "../../../lib/cairn-plot/renderers/ImageOverlay";
+import { PIXEL_VALUE_MIN_SCREEN_PX } from "../../../primitives/components/PixelValueOverlay";
+import { useGammaFilter, GammaFilterSvg } from "../compare/post-processing";
+import ImageOverlay from "../components/ImageOverlay";
 import {
   computeDiff,
   loadImageData,
@@ -64,14 +64,14 @@ import {
   getRenderMode,
   getCachedImageData,
   setCachedImageData,
-} from "../../../lib/cairn-plot/image";
-import { applyColormap, getColormapLUT } from "../../../lib/cairn-plot/colormaps";
-import { sampleLutByte } from "../../../lib/cairn-plot/colormaps/lut-sample";
-import { clamp01 } from "../../../lib/cairn-plot/util/clamp";
+} from "../model";
+import { applyColormap, getColormapLUT } from "../../../settings/colormaps";
+import { sampleLutByte } from "../../../settings/colormaps/lut-sample";
+import { clamp01 } from "../../../primitives/util/clamp";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
-import { floatPixelReader, widenFloatPixels } from "../../../lib/cairn-plot/image/pixel-buffer.ts";
+import { floatPixelReader, widenFloatPixels } from "../model/pixel-buffer.ts";
 import {
   toSdrTonemap,
   DEFAULT_TONEMAP,
@@ -87,17 +87,17 @@ import {
   SDR_TONEMAP_OPERATORS,
   type RgbTriple,
   type TonemapOperator,
-} from "../../../lib/cairn-plot/image/tonemap";
+} from "../model/tonemap";
 import {
   buildChannelSample,
   type PixelSample,
   type PixelValueNotation,
-} from "../../../lib/cairn-plot/primitives/PixelValueOverlay";
-import ImagePaneShell, { type EnlargeControl } from "../../../lib/cairn-plot/renderers/ImagePaneShell";
-import { u8HistogramSource, floatHistogramSource } from "../../../lib/cairn-plot/renderers/image-histogram-source";
+} from "../../../primitives/components/PixelValueOverlay";
+import ImagePaneShell, { type EnlargeControl } from "../components/ImagePaneShell";
+import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import { useViewportSettings } from "../../../state/settings/use-viewport-settings";
 import type { ViewportSettings } from "../../../state/settings/viewport-settings";
-import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../../../lib/cairn-plot/renderers/display-encoding";
+import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-encoding";
 import {
   computeDataIndex,
   reduceToScalar,
@@ -109,9 +109,9 @@ import {
   type EncodeParams,
   type NormMode,
   type ReduceMode,
-} from "../../../lib/cairn-plot/image/encodings";
-import { getContentOp, isDirectContentOp, type DirectContentOp } from "../../../lib/cairn-plot/image/content-ops";
-import { useDeepFlatten } from "../../../lib/cairn-plot/renderers/use-deep-flatten";
+} from "../model/encodings";
+import { getContentOp, isDirectContentOp, type DirectContentOp } from "../model/content-ops";
+import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isHdrProps,
   useLegacyImageProps,
@@ -122,8 +122,8 @@ import {
   type SdrImageProps,
   type ImageBackend,
   type ImageBackendProps,
-} from "../../../plots/image/backend/contracts";
-import type { ImageProcessing } from "../../../lib/cairn-plot/types";
+} from "./contracts";
+import type { ImageProcessing } from "../../types";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,

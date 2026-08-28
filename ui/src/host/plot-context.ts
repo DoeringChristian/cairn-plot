@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 
-import type { DataSource } from "../lib/cairn-plot/store/data-sources.ts";
+import type { DataSource } from "../resources/data/data-sources.ts";
 import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
 import type { SharedProps } from "../plot-descriptor.ts";
 

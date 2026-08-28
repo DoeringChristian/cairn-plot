@@ -1,14 +1,14 @@
 import { useEffect, useSyncExternalStore } from "react";
 
-import { warnGpuUnavailable } from "../../lib/cairn-plot/primitives/capability-notice.ts";
-import CpuImagePane from "../../plots/image/backend/cpu.tsx";
-import GpuImagePane from "../../plots/image/backend/gpu.tsx";
+import { warnGpuUnavailable } from "../../primitives/components/capability-notice.ts";
+import CpuImagePane from "./backend/cpu.tsx";
+import GpuImagePane from "./backend/gpu.tsx";
 import {
   ensureGpuImageProbe,
   gpuImageGateState,
   subscribeGpuImageGate,
-} from "../../lib/cairn-plot/renderers/gpu-image-gate.ts";
-import type { ImageBackend, RenderMode } from "../../plots/image/backend/contracts.ts";
+} from "./components/gpu-image-gate.ts";
+import type { ImageBackend, RenderMode } from "./backend/contracts.ts";
 
 let warnedForcedGpuUnavailable = false;
 

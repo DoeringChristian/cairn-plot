@@ -25,7 +25,7 @@ import React from "react";
 import * as JsxRuntime from "react/jsx-runtime";
 import { installCairnPlotBootstrap } from "./plot-bootstrap";
 import { registerCoreRenderers } from "./plot-renderers";
-import "./lib/cairn-plot/styles/plot.css";
+import "./public/theme/plot.css";
 
 declare global {
   interface Window {

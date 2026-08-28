@@ -51,18 +51,18 @@
  * render, so a zoom/pan/exposure change always paints a live frame.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Colormap } from "../../../lib/cairn-plot/types";
-import { applyColormap, colormapFloatLUT } from "../../../lib/cairn-plot/colormaps";
+import type { Colormap } from "../../types";
+import { applyColormap, colormapFloatLUT } from "../../../settings/colormaps";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
-import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../../../lib/cairn-plot/image";
-import { HALF_ONE } from "../../../lib/cairn-plot/image/half";
-import { floatValues, widenFloatPixels } from "../../../lib/cairn-plot/image/pixel-buffer.ts";
+import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../model";
+import { HALF_ONE } from "../model/half";
+import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
 // DIFF capability: the pane samples a second source slot (`compareSource.b` via
 // the pool's `setSourceB`) and renders a diff CONTENT op — a DIRECT pointwise op
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
 // imports are safe here: this file only ships in the gpu-image addon bundle,
 // never `core.iife.js`.
-import { contentOpId } from "../../../lib/cairn-plot/image/content-ops/index";
+import { contentOpId } from "../model/content-ops/index";
 import {
   getDiffKernel,
   resolveDiffKernelId,
@@ -74,20 +74,20 @@ import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { formatSsim } from "../engine/ssim-metric";
 import type { DiffMetrics } from "../engine/image-engine";
 import type { DiffCacheEntry } from "../engine/diff-engine";
-import { compareCaptions } from "../../../lib/cairn-plot/media-compare/compare-captions";
-import { buildCompareModeMenu } from "../../../lib/cairn-plot/media-compare/compare-mode-menu";
-import SplitDivider from "../../../lib/cairn-plot/media-compare/SplitDivider";
-import { useSplitFlipKeys } from "../../../lib/cairn-plot/media-compare/use-split-flip-keys";
-import RefBadge from "../../../lib/cairn-plot/primitives/RefBadge";
-import { sourceTexelCenter, computeFit, screenPerTexel } from "../../../lib/cairn-plot/renderers/region-select";
-import LabelChip from "../../../lib/cairn-plot/primitives/LabelChip";
-import type { ToolbarButtonSpec } from "../../../lib/cairn-plot/controls/ToolbarConfig";
-import ImageOverlay from "../../../lib/cairn-plot/renderers/ImageOverlay";
+import { compareCaptions } from "../compare/compare-captions";
+import { buildCompareModeMenu } from "../compare/compare-mode-menu";
+import SplitDivider from "../compare/SplitDivider";
+import { useSplitFlipKeys } from "../compare/use-split-flip-keys";
+import RefBadge from "../../../primitives/components/RefBadge";
+import { sourceTexelCenter, computeFit, screenPerTexel } from "../components/region-select";
+import LabelChip from "../../../primitives/components/LabelChip";
+import type { ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig";
+import ImageOverlay from "../components/ImageOverlay";
 import PixelValueOverlay, {
   PIXEL_VALUE_MIN_SCREEN_PX,
-} from "../../../lib/cairn-plot/primitives/PixelValueOverlay";
-import type { Viewport as ImageViewport } from "../../../lib/cairn-plot/hooks/use-image-viewport";
-import { useDevicePixelRatio } from "../../../lib/cairn-plot/hooks/use-device-pixel-ratio";
+} from "../../../primitives/components/PixelValueOverlay";
+import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-viewport";
+import { useDevicePixelRatio } from "../../../host/hooks/use-device-pixel-ratio";
 import {
   acquirePane,
   releasePane,
@@ -106,16 +106,16 @@ import type { ImageParams } from "../engine/image-engine";
 // core-bundle guard is about core staying free of the ENGINE, not about the
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
 import CpuImagePane from "./cpu";
-import ImagePaneShell from "../../../lib/cairn-plot/renderers/ImagePaneShell";
-import { u8HistogramSource, floatHistogramSource } from "../../../lib/cairn-plot/renderers/image-histogram-source";
+import ImagePaneShell from "../components/ImagePaneShell";
+import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import {
   depthHistogramFromWeights,
   seriesWeightsFor,
   tevResultFromRawHistogram,
   type HistogramSeriesSpec,
   type TevHistogramsResult,
-} from "../../../lib/cairn-plot/renderers/image-histogram";
-import { TEV_HISTOGRAM_BINS } from "../../../lib/cairn-plot/image/histogram-binning";
+} from "../components/image-histogram";
+import { TEV_HISTOGRAM_BINS } from "../model/histogram-binning";
 import { useViewportSettings } from "../../../state/settings/use-viewport-settings";
 import {
   displayToolbarButton,
@@ -124,8 +124,8 @@ import {
   usePaneEncoding,
   compareDisplayToolbarButton,
   deriveCompareEncodingId,
-} from "../../../lib/cairn-plot/renderers/display-encoding";
-import { getEncoding, defaultReduceMode, type ReduceMode } from "../../../lib/cairn-plot/image/encodings";
+} from "../components/display-encoding";
+import { getEncoding, defaultReduceMode, type ReduceMode } from "../model/encodings";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
@@ -141,10 +141,10 @@ import {
   TONEMAP_GAMMA_STEP,
   SDR_TONEMAP_OPERATORS,
   type TonemapOperator,
-} from "../../../lib/cairn-plot/image/tonemap";
-import { useDeepFlatten } from "../../../lib/cairn-plot/renderers/use-deep-flatten";
-import { usePixelSamplers } from "../../../lib/cairn-plot/renderers/gpu-image-samplers";
-import { buildRenderSnapshot } from "../../../lib/cairn-plot/renderers/render-snapshot";
+} from "../model/tonemap";
+import { useDeepFlatten } from "../components/use-deep-flatten";
+import { usePixelSamplers } from "../components/gpu-image-samplers";
+import { buildRenderSnapshot } from "../components/render-snapshot";
 import {
   isHdrProps,
   useLegacyImageProps,
@@ -157,7 +157,7 @@ import {
   type ImageBackendProps,
   type CompareSource,
   type DecodedSource,
-} from "../../../plots/image/backend/contracts";
+} from "./contracts";
 
 // A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
@@ -170,7 +170,7 @@ const NULL_HDR: HdrData = { pixels: floatValues(new Float32Array(0)), shape: [0,
  *  unclamped on an HDR surface, byte-identically to the curve on SDR. Real tone-
  *  mappers (reinhard/aces) compress highlights and stay on the curve path. */
 const NONE_GRAY_CURVES: ReadonlySet<string> = new Set(["linear", "srgb", "gamma"]);
-import { reportCapabilityLimit } from "../../../lib/cairn-plot/primitives/capability-notice";
+import { reportCapabilityLimit } from "../../../primitives/components/capability-notice";
 
 /** Expand the raw HDR buffer into an RGBA source upload — NO exposure/tonemap/
  *  encode here (that's the GPU shader's job); mirrors `HdrImagePane`'s

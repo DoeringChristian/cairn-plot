@@ -29,16 +29,16 @@ import {
   seriesWeightsFor,
   tevResultFromRawHistogram,
   type HistogramSeriesSpec,
-} from "../../../../lib/cairn-plot/renderers/image-histogram";
+} from "../../components/image-histogram";
 import {
   symmetricLog2,
   tevBinMapping,
   tevBinOfValue,
   TEV_HISTOGRAM_BINS,
   type TevBinMapping,
-} from "../../../../lib/cairn-plot/image/histogram-binning";
+} from "../../model/histogram-binning";
 import { cpuDeepDepthWeights, DEPTH_WEIGHT_FIXED_SCALE } from "../histogram/compute";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "HISTOGRAM-GPU" });
 

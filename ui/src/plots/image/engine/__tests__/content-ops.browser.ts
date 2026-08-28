@@ -28,14 +28,14 @@ import { isDeviceLostError } from "../webgpu/device";
 import { renderImage, computeMetrics, type ImageParams, type ImageOperator } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
-import { getContentOp, isDirectContentOp, contentOpId, type ContentOpCpuCtx } from "../../../../lib/cairn-plot/image/content-ops/index";
-import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../../../lib/cairn-plot/image/encodings/index";
-import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../../../lib/cairn-plot/image/tonemap";
-import { colormapFloatLUT } from "../../../../lib/cairn-plot/colormaps/lut";
-import type { ColormapName } from "../../../../lib/cairn-plot/colormaps/lut";
+import { getContentOp, isDirectContentOp, contentOpId, type ContentOpCpuCtx } from "../../model/content-ops/index";
+import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index";
+import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
+import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
+import type { ColormapName } from "../../../../settings/colormaps/lut";
 import { DEFAULT_DIFF_COLORMAP } from "../kernels";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "CONTENT OPS" });
 

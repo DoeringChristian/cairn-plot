@@ -1,5 +1,5 @@
 import { createEndpointDataSource, mountPlot, type PlotDescriptor } from "../index.ts";
-import { createHarness, sleep, waitFor } from "../../lib/cairn-plot/testing/harness.ts";
+import { createHarness, sleep, waitFor } from "../../testing/harness.ts";
 
 const { report, setOverallStatus } = createHarness({ title: "PUBLIC HOST" });
 let passed = true;

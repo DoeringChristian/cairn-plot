@@ -132,7 +132,7 @@ import {
   type ReduceOp,
   type ReduceProgram,
 } from "../reduce/registry";
-import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl";
+import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl.ts";
 import {
   HIST_BIN_WORKGROUP_SIZE,
   HIST_MAX_CHANNELS,
@@ -151,7 +151,7 @@ import {
   foldHistogramStatsPartials,
   histParamsData,
 } from "../histogram/compute";
-import { tevBinMapping } from "../../../../lib/cairn-plot/image/histogram-binning";
+import { tevBinMapping } from "../../model/histogram-binning";
 import type { TexHistogramSpec, TexHistogramResult, DeepDepthHistogramResult } from "../types";
 
 /**

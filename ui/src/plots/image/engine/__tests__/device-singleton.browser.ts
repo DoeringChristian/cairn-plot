@@ -36,7 +36,7 @@
  * the command above whenever this harness or its imports change.
  */
 import { getSharedDevice, resetSharedDevice } from "../device";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "DEVICE SINGLETON", resultFlag: "__deviceSingletonTestResult" });
 

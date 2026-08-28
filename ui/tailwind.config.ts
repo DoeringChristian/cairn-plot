@@ -3,7 +3,7 @@ import type { Config } from "tailwindcss";
 // cairn-plot library preset so the library is self-contained; the standalone
 // build consumes it directly (no app-only theme layered on top — that's the
 // cairn app's concern).
-import cairnPlotPreset from "./src/lib/cairn-plot/tailwind-preset";
+import cairnPlotPreset from "./src/public/tailwind-preset";
 
 export default {
   presets: [cairnPlotPreset],

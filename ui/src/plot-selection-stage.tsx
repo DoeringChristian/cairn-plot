@@ -44,7 +44,7 @@ import { PlotNodeView } from "./plot-node";
 import { PaneSyncContext, SharedPlotContext } from "./host/plot-context.ts";
 import { ChartFillContext } from "./plot-standalone-helpers";
 import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./plot-descriptor";
-import type { DataSource } from "./lib/cairn-plot";
+import type { DataSource } from "./integration/cairn-card";
 import {
   getGlobalSelectionStore,
   REFERENCE_COLOR,
@@ -69,8 +69,8 @@ import {
   DEFAULT_GRID_CELL_ASPECT,
   useUniformGridAspect,
   useReportCellAspect,
-} from "./lib/cairn-plot/renderers/grid-uniform-aspect";
-import { ReportNaturalSizeContext } from "./lib/cairn-plot/renderers/natural-size-report";
+} from "./layout/grid-uniform-aspect";
+import { ReportNaturalSizeContext } from "./plots/image/components/natural-size-report";
 import {
   useStackKeyboard,
   StackTabStrip,
@@ -78,8 +78,8 @@ import {
   stackLabelFor,
 } from "./layout/stack/StackedView";
 import { InStackedGridContext } from "./layout/stack/stack-context";
-import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
-import { useOriginTheme } from "./lib/cairn-plot/primitives/themed-portal";
+import FullscreenOverlayShell from "./primitives/components/FullscreenOverlayShell";
+import { useOriginTheme } from "./primitives/components/themed-portal";
 import {
   getRegisteredPane,
   getSelectionRegistryVersion,

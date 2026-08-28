@@ -1,4 +1,4 @@
-import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../settings/viewport-settings.ts";
 
 export const PLOT_SESSION_VERSION = 1 as const;
 

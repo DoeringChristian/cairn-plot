@@ -24,7 +24,7 @@ import { getSharedDevice } from "../device";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { flipHDR, computeHdrFlipExposures } from "../kernels/hdr-flip-reference";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "HDR-FLIP", resultFlag: "__hdrFlipTestResult" });
 

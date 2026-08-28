@@ -19,7 +19,7 @@ import {
 } from "../reduce/registry";
 import { meanSsimFromErrorMap } from "../ssim-metric";
 import type { Device, Texture } from "../types";
-import { createHarness } from "../../../../lib/cairn-plot/testing/harness";
+import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "REDUCE" });
 

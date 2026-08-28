@@ -4,13 +4,13 @@ import {
   GridUniformAspectContext,
   VIEWPORT_HEIGHT_MARGIN,
   useUniformGridAspect,
-} from "../lib/cairn-plot/renderers/grid-uniform-aspect.tsx";
+} from "./grid-uniform-aspect.tsx";
 import {
   GridModeToggle,
   StackTabStrip,
   useStackKeyboard,
-} from "../layout/stack/StackedView.tsx";
-import { InStackedGridContext } from "../layout/stack/stack-context.ts";
+} from "./stack/StackedView.tsx";
+import { InStackedGridContext } from "./stack/stack-context.ts";
 import { ChartFillContext } from "../plot-standalone-helpers.tsx";
 import { adjacentStackIndices } from "./stack-preload.ts";
 
