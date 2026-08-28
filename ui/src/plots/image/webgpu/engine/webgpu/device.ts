@@ -1,0 +1,1504 @@
+/// <reference types="@webgpu/types" />
+/**
+ * WebGPU backend of the RHI (`engine/types.ts`) — the engine's ONLY backend
+ * (HDR, compute, float16 all `true`). A reduced/SDR WebGL2 backend used to
+ * exist as a fallback for when `navigator.gpu` is unavailable; it was
+ * removed in favor of a clean WebGPU-or-legacy-CPU-pane boundary — see
+ * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`. When WebGPU is
+ * unavailable, `engine/device.ts`'s `getSharedDevice()` rejects and callers
+ * fall back to the legacy CPU/2D-canvas pane, not another GPU backend.
+ *
+ * ## Bind-group convention: native WebGPU bind groups
+ * WebGPU has native bind groups/layouts, so this backend uses REAL
+ * `GPUBindGroup`s — a logical binding N (`BindGroupEntry.binding`) needs a
+ * deterministic mapping onto a native `@group(0) @binding(M)` slot. WebGPU
+ * requires every resource KIND (texture / sampler / uniform buffer) to
+ * occupy its OWN
+ * binding slot even when a `Texture` and a `Sampler` entry share the same
+ * *logical* binding (e.g. `scalebias.wgsl.ts`'s `{binding:0, resource:
+ * sampler}` + `{binding:0, resource: texture}, so this backend spreads each
+ * logical binding N across THREE native slots, one per kind:
+ *
+ *   nativeBinding(N, kind) = N*3 + kindOffset
+ *     kindOffset: texture=0, sampler=1, uniform=2
+ *
+ * A WGSL shader authored for this backend (see `engine/shaders/*.wgsl.ts`)
+ * declares `@group(0) @binding(nativeBinding(N,kind))` for whatever logical
+ * bindings/kinds it actually reads — e.g. logical binding 1's uniform ->
+ * `@group(0) @binding(5) var<uniform> u_bind1: vec4<f32>;` (1*3+2=5).
+ *
+ * `createRenderPipeline` parses the shader source (regex over
+ * `@binding(M) var<uniform>? name: type`) to learn which NATIVE bindings the
+ * pipeline's auto-derived `GPUBindGroupLayout` actually contains, and caches
+ * that as `{nativeBinding -> {kind, sizeBytes?}}` on the pipeline wrapper.
+ * `createBindGroup` then:
+ *   1. Seeds EVERY declared binding with a default resource (a shared
+ *      NEAREST/clamp `GPUSampler` for `sampler` bindings; a fresh
+ *      zero-filled `GPUBuffer` for `uniform` bindings — WebGPU buffers are
+ *      zero-initialized on creation, so this reproduces the WebGL2
+ *      backend's "never-`gl.uniform*`-assigned uniform defaults to zero"
+ *      behavior, which WebGPU has no native equivalent for: EVERY declared
+ *      binding needs a bound resource or bind-group creation fails
+ *      validation).
+ *   2. For each caller-supplied `BindGroupEntry`, computes its native
+ *      binding and OVERWRITES the default IF the pipeline's shader actually
+ *      declares that native binding — entries the shader doesn't read are
+ *      silently dropped (mirrors the WebGL2 backend's "uniform location
+ *      doesn't exist in the compiled program -> skip", i.e. a bind group
+ *      may be a superset of what a given pipeline reads).
+ * Every `GPUBuffer` allocated in steps 1/2 is owned by the returned
+ * `WGPUBindGroup` (see that class's doc comment) and freed by its
+ * `destroy()` — a per-frame render loop MUST call `bindGroup.destroy?.()`
+ * once done with a bind group, or one `GPUBuffer` per uniform binding leaks
+ * per `createBindGroup()` call.
+ *
+ * ## SDR surface readback channel order (`bgra8unorm` vs `rgba8unorm`)
+ * `configureSDRSurface` (`./surface.ts`) configures the canvas with
+ * `navigator.gpu.getPreferredCanvasFormat()`, which is commonly
+ * `bgra8unorm` (e.g. Chrome/macOS), NOT `rgba8unorm`. `WGPUSurface.format`
+ * records whatever `SurfaceConfigResult.format` the last `configure()` call
+ * actually got. `readback()` always returns bytes in RGBA order regardless
+ * of the backend's native format — for a `bgra8unorm` surface it swaps the
+ * B/R bytes of the raw `copyTextureToBuffer` result back into place before
+ * returning. Offscreen `Texture`s never hit this path (`gpuFormatFor`
+ * always creates the exact requested `TextureFormat`); an HDR surface is
+ * always `rgba16float` (correct order already).
+ *
+ * ## Texel fetch (`textureLoad`), not filtered `textureSample`
+ * See `engine/shaders/passthrough.wgsl.ts`'s module doc comment: our two
+ * hand-authored shaders read texels with `textureLoad` (no sampler
+ * involved) rather than `textureSample`, to avoid the `unfilterable-float`
+ * sample-type restriction WebGPU imposes on `rgba32float`/`r32float`
+ * textures. `createSampler`/the `Sampler` resource type are still fully
+ * implemented and exercised by the readback harness's bind groups even
+ * though these particular shaders don't sample through them.
+ *
+ * ## The WebGPU-vs-WebGL2 Y-flip
+ * `passthrough.wgsl.ts`'s doc comment covers this in detail: WebGL2's
+ * `readPixels` row 0 = bottom scanline (GL NDC y=-1), WebGPU's
+ * `copyTextureToBuffer` row 0 = top scanline (WebGPU NDC y=+1) — the
+ * OPPOSITE relationship. Our two WGSL shaders flip `uv.y` (not `position`)
+ * in the vertex stage to cancel this out, so `readback()` returns
+ * row-identical results across both backends for the same input texture —
+ * exactly the invariant the readback harness checks pixel-for-pixel.
+ *
+ * ## Adapter/device lifecycle
+ * `createWebGPUDevice()` is async (`requestAdapter`/`requestDevice`) — a new
+ * adapter+device are requested on every call; Task 6's shared-device pool
+ * memoizes this into a page-wide singleton. `destroy()` releases the
+ * `GPUDevice` (`device.destroy()`); a destroyed device cannot be reused —
+ * callers must not call any other method on this `Device` afterward.
+ *
+ * ## Device-loss-safe readback
+ * `readback()` and `reduceDiffSumSquaredAbs()` end in a staging-buffer
+ * `mapAsync` that spans a task boundary — a window in which the device (or
+ * its Dawn instance) can be lost/destroyed on a slow or software backend
+ * (SwiftShader/Dawn), or in production on tab-discard / GPU reset / a
+ * `destroy()` racing an in-flight readback. WebGPU rejects the pending map
+ * with an `AbortError` when that happens; `mapReadBufferGuarded` catches it
+ * and normalizes it into a typed {@link DeviceLostError} (enriched with the
+ * loss reason from a single per-device `gpuDevice.lost` watcher), so callers
+ * never see a raw, backend-specific `AbortError` (and floating-promise
+ * readbacks — e.g. `diff-engine.ts`'s retained samples — don't surface an
+ * unhandled rejection on teardown). `readback()` additionally keeps its
+ * `source` reachable across the map await so liveness-based GC cannot reclaim
+ * a detached-canvas surface's context (and its Dawn instance) mid-map.
+ */
+import type {
+  Device,
+  Texture,
+  Sampler,
+  RenderPipeline,
+  ComputePipeline,
+  BindGroupEntry,
+  BindGroup,
+  Surface,
+  TextureFormat,
+  Capabilities,
+} from "./device-contract";
+import type { DeepSampleBuffers, DeepGpuCsrSpec } from "./device-contract";
+import {
+  configureHDRSurface,
+  configureSDRSurface,
+  type SurfaceConfigResult,
+} from "../../../../../engines/webgpu/surface.ts";
+import { recordContextLossEvent } from "../test-hooks";
+import {
+  REDUCE_WORKGROUP_SIZE,
+  assembleReduceWGSL,
+  foldReducePartials,
+  getReduceOp,
+  getReduceProgram,
+  type ReduceOp,
+  type ReduceProgram,
+} from "../reduce/registry";
+import { deepCompositeWGSL } from "../shaders/deep-composite.wgsl.ts";
+import {
+  HIST_BIN_WORKGROUP_SIZE,
+  HIST_MAX_CHANNELS,
+  HIST_MAX_SERIES,
+  HIST_PARAMS_BYTES,
+  HIST_STATS_LANES,
+  HIST_STATS_WORKGROUP_SIZE,
+  DEEP_PARAMS_BYTES,
+  DEPTH_WEIGHT_FIXED_SCALE,
+  assembleDeepDepthBinWGSL,
+  assembleDeepDepthStatsWGSL,
+  assembleHistogramBinWGSL,
+  assembleHistogramStatsWGSL,
+  deepParamsData,
+  foldDeepDepthStatsPartials,
+  foldHistogramStatsPartials,
+  histParamsData,
+} from "../histogram/compute";
+import { tevBinMapping } from "../../../model/histogram-binning";
+import type { TexHistogramSpec, TexHistogramResult, DeepDepthHistogramResult } from "./device-contract";
+
+/**
+ * Thrown by `readback()`/`reduceDiffSumSquaredAbs()` when the GPU device (or
+ * its owning Dawn instance) is lost or destroyed WHILE a staging-buffer
+ * `mapAsync` is still pending. WebGPU surfaces that condition as a bare
+ * `DOMException {name:"AbortError"}` whose message varies by backend and
+ * teardown path — e.g. `"Buffer was unmapped before mapping was resolved."`
+ * (device `destroy()` mid-map) or, on the SwiftShader/Dawn software backend,
+ * `"A valid external Instance reference no longer exists."` (the canvas
+ * context's Dawn instance getting reclaimed mid-map). None of these are a
+ * readback/parity DEFECT — they mean the backend gave up on the device
+ * mid-readback — so this typed error lets callers (and the parity harness)
+ * distinguish "the device went away" from "the bytes were wrong" instead of
+ * leaking a raw, opaque `AbortError`. `readback()` in production is also
+ * called in floating-promise form (e.g. `diff-engine.ts`'s retained-sample
+ * readback), where a raw rejection would surface as an unhandled rejection on
+ * teardown/tab-discard; a typed, documented error is the clean contract.
+ */
+export class DeviceLostError extends Error {
+  /** Discriminant that survives cross-bundle `instanceof` uncertainty. */
+  readonly deviceLost = true as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "DeviceLostError";
+  }
+}
+
+/** Robust `instanceof`-independent check for {@link DeviceLostError}. */
+export function isDeviceLostError(err: unknown): err is DeviceLostError {
+  return (
+    err instanceof DeviceLostError ||
+    (typeof err === "object" && err !== null && (err as { deviceLost?: unknown }).deviceLost === true)
+  );
+}
+
+/** Single memoized `gpuDevice.lost` watcher — see `mapReadBufferGuarded`. */
+interface DeviceLostRef {
+  info?: GPUDeviceLostInfo;
+}
+
+/**
+ * `await buffer.mapAsync(READ)`, but SAFE against the device being lost or
+ * destroyed while the map is pending. On a slow/software backend the device
+ * (or its Dawn instance) can disappear mid-map — WebGPU then REJECTS the
+ * pending map with a `DOMException {name:"AbortError"}` (empirically reliable
+ * on Dawn/Chromium: all pending maps are rejected on device loss, they do NOT
+ * hang), which without this guard escapes raw and backend-specific. Here we
+ * catch that rejection and normalize it into a typed {@link DeviceLostError},
+ * enriched with the `GPUDeviceLostInfo` reason when the paired `gpuDevice.lost`
+ * watcher (`lostRef`, populated by a SINGLE per-device `.lost.then`, not one
+ * reaction per readback — avoids leaking a reaction onto the long-lived
+ * `.lost` promise for per-frame readback callers) has already resolved. Any
+ * OTHER map rejection (a genuine validation/state error, which should never
+ * happen for a freshly-created `MAP_READ` staging buffer) is rethrown
+ * unchanged.
+ */
+async function mapReadBufferGuarded(
+  buffer: GPUBuffer,
+  lostRef: DeviceLostRef,
+): Promise<void> {
+  try {
+    await buffer.mapAsync(GPUMapMode.READ);
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    if (name === "AbortError") {
+      const info = lostRef.info;
+      throw new DeviceLostError(
+        `webgpu readback: buffer map aborted — device lost or destroyed mid-readback` +
+          (info ? ` (reason=${String(info.reason)}${info.message ? `: ${info.message}` : ""})` : "") +
+          `: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+function gpuFormatFor(format: TextureFormat): GPUTextureFormat {
+  switch (format) {
+    case "rgba8unorm":
+      return "rgba8unorm";
+    case "rgba16float":
+      return "rgba16float";
+    case "rgba32float":
+      return "rgba32float";
+    case "r32float":
+      return "r32float";
+    default: {
+      const exhaustive: never = format;
+      throw new Error(`webgpu device: unknown TextureFormat ${String(exhaustive)}`);
+    }
+  }
+}
+
+function bytesPerPixelFor(format: TextureFormat): number {
+  switch (format) {
+    case "rgba8unorm":
+      return 4;
+    case "rgba16float":
+      return 8;
+    case "rgba32float":
+      return 16;
+    case "r32float":
+      return 4;
+    default: {
+      const exhaustive: never = format;
+      throw new Error(`webgpu device: unknown TextureFormat ${String(exhaustive)}`);
+    }
+  }
+}
+
+/** Half-precision (IEEE 754 binary16) bit pattern -> JS number. */
+function halfToFloat(h: number): number {
+  const sign = (h & 0x8000) >> 15;
+  const exponent = (h & 0x7c00) >> 10;
+  const fraction = h & 0x03ff;
+  let value: number;
+  if (exponent === 0) {
+    value = (fraction / 1024) * Math.pow(2, -14);
+  } else if (exponent === 0x1f) {
+    value = fraction ? NaN : Infinity;
+  } else {
+    value = (1 + fraction / 1024) * Math.pow(2, exponent - 15);
+  }
+  return sign ? -value : value;
+}
+
+/** Native-binding "kind" — see module doc comment's `nativeBinding` scheme. */
+type BindingKind = "texture" | "sampler" | "uniform";
+
+const KIND_OFFSET: Record<BindingKind, number> = { texture: 0, sampler: 1, uniform: 2 };
+
+function nativeBinding(logicalBinding: number, kind: BindingKind): number {
+  return logicalBinding * 3 + KIND_OFFSET[kind];
+}
+
+interface UniformBindingInfo {
+  kind: "uniform";
+  sizeBytes: number;
+}
+interface ResourceBindingInfo {
+  kind: "texture" | "sampler";
+}
+type BindingInfo = UniformBindingInfo | ResourceBindingInfo;
+
+/**
+ * `vec4<f32>`/`vec4f` is the only uniform type our Sub-project-1 shaders
+ * use (see `engine/shaders/scalebias.wgsl.ts`) — this table is intentionally
+ * minimal, not a general WGSL type-size evaluator.
+ */
+const WGSL_UNIFORM_TYPE_SIZE: Record<string, number> = {
+  "f32": 4,
+  "i32": 4,
+  "u32": 4,
+  "vec2<f32>": 8,
+  "vec2f": 8,
+  "vec3<f32>": 12,
+  "vec3f": 12,
+  "vec4<f32>": 16,
+  "vec4f": 16,
+  "mat4x4<f32>": 64,
+  "mat4x4f": 64,
+};
+
+/**
+ * Parse `@group(0) @binding(M) var[<uniform>] name: type;` declarations out
+ * of a WGSL module string, returning `{nativeBinding -> BindingInfo}`. Only
+ * handles `@group(0)` (this RHI never uses a second bind group) and the
+ * plain resource-var forms our hand-written shaders use (texture_2d,
+ * sampler, `var<uniform>`).
+ */
+function parseWGSLBindings(source: string): Map<number, BindingInfo> {
+  const result = new Map<number, BindingInfo>();
+  const re = /@group\(0\)\s*@binding\((\d+)\)\s*var(<uniform>)?\s+\w+\s*:\s*([^;]+);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    const binding = Number(m[1]);
+    const isUniform = m[2] !== undefined;
+    const typeText = m[3]!.trim();
+    if (isUniform) {
+      const sizeBytes = WGSL_UNIFORM_TYPE_SIZE[typeText];
+      if (sizeBytes === undefined) {
+        throw new Error(
+          `webgpu device: parseWGSLBindings doesn't know the size of uniform type "${typeText}" (binding ${binding}). ` +
+            `Add it to WGSL_UNIFORM_TYPE_SIZE.`,
+        );
+      }
+      result.set(binding, { kind: "uniform", sizeBytes });
+    } else if (typeText === "sampler" || typeText === "sampler_comparison") {
+      result.set(binding, { kind: "sampler" });
+    } else {
+      // texture_2d<f32>, texture_2d<u32>, etc.
+      result.set(binding, { kind: "texture" });
+    }
+  }
+  return result;
+}
+
+class WGPUTexture implements Texture {
+  readonly width: number;
+  readonly height: number;
+  readonly format: TextureFormat;
+  readonly gpuTexture: GPUTexture;
+  private readonly device: GPUDevice;
+  private destroyed = false;
+
+  constructor(device: GPUDevice, width: number, height: number, format: TextureFormat) {
+    this.device = device;
+    this.width = width;
+    this.height = height;
+    this.format = format;
+    this.gpuTexture = device.createTexture({
+      size: { width, height, depthOrArrayLayers: 1 },
+      format: gpuFormatFor(format),
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+  }
+
+  write(data: ArrayBufferView): void {
+    if (this.destroyed) throw new Error("webgpu device: write() on a destroyed texture");
+    const bytesPerRow = this.width * bytesPerPixelFor(this.format);
+    this.device.queue.writeTexture(
+      { texture: this.gpuTexture },
+      data as BufferSource,
+      { bytesPerRow, rowsPerImage: this.height },
+      { width: this.width, height: this.height, depthOrArrayLayers: 1 },
+    );
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.gpuTexture.destroy();
+    this.destroyed = true;
+  }
+}
+
+class WGPUSampler implements Sampler {
+  readonly _s: unknown;
+  readonly gpuSampler: GPUSampler;
+  constructor(gpuSampler: GPUSampler) {
+    this.gpuSampler = gpuSampler;
+    this._s = gpuSampler;
+  }
+}
+
+/**
+ * `gpuPipeline`'s fragment target is baked to whatever `GPUTextureFormat`
+ * `createRenderPipeline`'s `spec.targetFormat` mapped to (via `gpuFormatFor`)
+ * — always one of the four `TextureFormat`s, NEVER `bgra8unorm`. But
+ * `renderFullscreen` can be asked to draw onto a `Surface` whose ACTUAL
+ * native format (`WGPUSurface.format`) is `bgra8unorm` (the common
+ * `getPreferredCanvasFormat()` result — see `readback()`'s "SDR surface
+ * readback channel order" doc note). A `GPURenderPipeline`'s fragment
+ * target format must EXACTLY match its render pass's color attachment
+ * format or WebGPU raises a validation error and the draw is silently
+ * dropped (empirically confirmed while adding the surface-channel-order
+ * regression test — this was a real, previously-unexercised gap: SDR-surface
+ * rendering was silently broken any time the preferred format wasn't
+ * `rgba8unorm`, independent of the readback byte-order bug).
+ *
+ * `pipelineFor(format)` lazily compiles+caches a same-shader pipeline
+ * VARIANT targeting a different format, all sharing ONE EXPLICIT
+ * `bindGroupLayout` (built by `createRenderPipeline` from the parsed
+ * `BindingInfo`, NOT `layout: 'auto'`) so a `BindGroup` created once against
+ * that shared layout stays valid across every variant. An auto-derived
+ * layout (`gpuPipeline.getBindGroupLayout(0)`) can NOT be reused this way —
+ * empirically, Chrome's WebGPU implementation rejects
+ * `createPipelineLayout({bindGroupLayouts:[autoLayout]})` with "it was
+ * created as part of a pipeline's default layout", so every variant (the
+ * primary pipeline included) is built with `layout: pipelineLayout`
+ * (explicit), never `'auto'`.
+ */
+class WGPURenderPipeline implements RenderPipeline {
+  readonly _p: unknown;
+  readonly gpuPipeline: GPURenderPipeline;
+  readonly bindings: Map<number, BindingInfo>;
+  readonly bindGroupLayout: GPUBindGroupLayout;
+  private readonly variants: Map<GPUTextureFormat, GPURenderPipeline>;
+  private readonly buildVariant: (format: GPUTextureFormat) => GPURenderPipeline;
+
+  constructor(
+    gpuPipeline: GPURenderPipeline,
+    bindings: Map<number, BindingInfo>,
+    bindGroupLayout: GPUBindGroupLayout,
+    primaryFormat: GPUTextureFormat,
+    buildVariant: (format: GPUTextureFormat) => GPURenderPipeline,
+  ) {
+    this.gpuPipeline = gpuPipeline;
+    this.bindings = bindings;
+    this.bindGroupLayout = bindGroupLayout;
+    this.buildVariant = buildVariant;
+    this.variants = new Map([[primaryFormat, gpuPipeline]]);
+    this._p = gpuPipeline;
+  }
+
+  pipelineFor(format: GPUTextureFormat): GPURenderPipeline {
+    let variant = this.variants.get(format);
+    if (!variant) {
+      variant = this.buildVariant(format);
+      this.variants.set(format, variant);
+    }
+    return variant;
+  }
+}
+
+/**
+ * Builds an EXPLICIT `GPUBindGroupLayout` from the `BindingInfo` map
+ * `parseWGSLBindings` produces — see `WGPURenderPipeline`'s doc comment for
+ * why this replaces `layout: 'auto'` for render pipelines (auto-derived
+ * layouts can't be shared across the format-variant pipelines
+ * `renderFullscreen` needs for `Surface` targets). `texture` bindings always
+ * declare `sampleType: 'unfilterable-float'` — per `passthrough.wgsl.ts`'s
+ * doc comment, every texture-kind binding is read via `textureLoad` (never
+ * `textureSample`), and `'unfilterable-float'` is compatible with binding
+ * ANY float-ish texture format (filterable or not), so this is never overly
+ * restrictive for how these shaders actually sample. `sampler` bindings
+ * (declared as `'filtering'`) are similarly unexercised by either
+ * hand-authored shader today — see `WGSL_UNIFORM_TYPE_SIZE`'s doc comment
+ * for the same "intentionally minimal" caveat.
+ */
+function buildExplicitBindGroupLayout(gpuDevice: GPUDevice, bindings: Map<number, BindingInfo>): GPUBindGroupLayout {
+  const entries: GPUBindGroupLayoutEntry[] = [];
+  for (const [native, info] of bindings) {
+    if (info.kind === "uniform") {
+      entries.push({ binding: native, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } });
+    } else if (info.kind === "sampler") {
+      entries.push({ binding: native, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } });
+    } else {
+      entries.push({ binding: native, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } });
+    }
+  }
+  return gpuDevice.createBindGroupLayout({ entries });
+}
+
+class WGPUComputePipeline implements ComputePipeline {
+  readonly _c: unknown;
+  readonly gpuPipeline: GPUComputePipeline;
+  constructor(gpuPipeline: GPUComputePipeline) {
+    this.gpuPipeline = gpuPipeline;
+    this._c = gpuPipeline;
+  }
+}
+
+/**
+ * GPU-resident deep samples for the depth-composite pass (see
+ * `../shaders/deep-composite.wgsl.ts`). Owns three storage buffers
+ * (offsets/colors/zs), a small params uniform buffer, and a bind group built
+ * once against the shared deep-composite pipeline layout. `compositeDeep` only
+ * rewrites the params buffer + re-runs the pass, so the (large) sample buffers
+ * upload ONCE. `destroy()` frees all four buffers.
+ */
+class WGPUDeepSampleBuffers implements DeepSampleBuffers {
+  readonly width: number;
+  readonly height: number;
+  readonly paramsBuffer: GPUBuffer;
+  readonly bindGroup: GPUBindGroup;
+  /** Flat premultiplied RGBA colors (`4·sampleCount` f32) — the depth-histogram
+   *  compute reads per-sample alpha at `4i+3`. `buffers[1]`. */
+  readonly colorsBuffer: GPUBuffer;
+  /** Per-sample Z (`sampleCount` f32). `buffers[2]`. */
+  readonly zsBuffer: GPUBuffer;
+  /** Total deep sample count (the zs length). */
+  readonly sampleCount: number;
+  private readonly buffers: GPUBuffer[];
+  private destroyed = false;
+
+  constructor(
+    width: number,
+    height: number,
+    buffers: GPUBuffer[],
+    paramsBuffer: GPUBuffer,
+    bindGroup: GPUBindGroup,
+    sampleCount: number,
+  ) {
+    this.width = width;
+    this.height = height;
+    this.buffers = buffers;
+    this.colorsBuffer = buffers[1]!;
+    this.zsBuffer = buffers[2]!;
+    this.sampleCount = sampleCount;
+    this.paramsBuffer = paramsBuffer;
+    this.bindGroup = bindGroup;
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    for (const b of this.buffers) b.destroy();
+    this.paramsBuffer.destroy();
+    this.destroyed = true;
+  }
+}
+
+/**
+ * Owns the `GPUBuffer`(s) `createBindGroup` allocates for `{uniform}`
+ * bindings (both the default zero-fill buffers and the caller-supplied-value
+ * buffers — see module doc comment's `createBindGroup` section). `destroy()`
+ * releases them; callers that rebuild bind groups per frame (a real render
+ * loop, Task 6+) MUST call this once a bind group is no longer needed, or
+ * these buffers leak until `Device.destroy()`. Idempotent — a second
+ * `destroy()` call is a no-op, matching `WGPUTexture`/`Device`'s convention.
+ */
+class WGPUBindGroup implements BindGroup {
+  readonly _b: unknown;
+  readonly gpuBindGroup: GPUBindGroup;
+  private readonly ownedBuffers: GPUBuffer[];
+  private destroyed = false;
+
+  constructor(gpuBindGroup: GPUBindGroup, ownedBuffers: GPUBuffer[]) {
+    this.gpuBindGroup = gpuBindGroup;
+    this.ownedBuffers = ownedBuffers;
+    this._b = gpuBindGroup;
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    for (const buffer of this.ownedBuffers) buffer.destroy();
+    this.destroyed = true;
+  }
+}
+
+class WGPUSurface implements Surface {
+  readonly canvas: HTMLCanvasElement;
+  hdr: boolean;
+  /**
+   * The ACTUAL `GPUTextureFormat` this surface's canvas context is
+   * configured with (from `SurfaceConfigResult.format`) — NOT necessarily
+   * `"rgba8unorm"` for an SDR surface. `configureSDRSurface` uses
+   * `navigator.gpu.getPreferredCanvasFormat()`, which is commonly
+   * `"bgra8unorm"` on Chrome/macOS. `Device.readback` reads this to know
+   * whether it must swap the B/R bytes of a raw `copyTextureToBuffer` result
+   * back into the RHI's RGBA contract. Non-interface escape hatch, like
+   * `getCurrentGPUTexture()` below.
+   */
+  format: GPUTextureFormat;
+  private readonly context: GPUCanvasContext;
+  private readonly reconfigure: () => SurfaceConfigResult;
+
+  constructor(
+    canvas: HTMLCanvasElement,
+    context: GPUCanvasContext,
+    initial: SurfaceConfigResult,
+    reconfigure: () => SurfaceConfigResult,
+  ) {
+    this.canvas = canvas;
+    this.context = context;
+    this.hdr = initial.hdr;
+    this.format = initial.format;
+    this.reconfigure = reconfigure;
+  }
+
+  configure(width: number, height: number): void {
+    this.canvas.width = width;
+    this.canvas.height = height;
+    const result = this.reconfigure();
+    this.hdr = result.hdr;
+    this.format = result.format;
+  }
+
+  getCurrentTextureView(): unknown {
+    return this.context.getCurrentTexture().createView();
+  }
+
+  /** Non-interface escape hatch used only by `Device.readback` (below). */
+  getCurrentGPUTexture(): GPUTexture {
+    return this.context.getCurrentTexture();
+  }
+}
+
+function isSurface(target: Surface | Texture): target is Surface {
+  return "canvas" in target;
+}
+
+export async function createWebGPUDevice(): Promise<Device> {
+  if (!("gpu" in navigator) || !navigator.gpu) {
+    throw new Error("webgpu device: navigator.gpu is not available in this browser");
+  }
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("webgpu device: requestAdapter() returned null");
+  const gpuDevice = await adapter.requestDevice();
+
+  // WebGPU is the PRIMARY/full-featured backend — all three capabilities
+  // are true unconditionally (unlike WebGL2's probed float16/hdr=false).
+  const capabilities: Capabilities = { hdr: true, compute: true, float16: true };
+
+  let defaultSampler: GPUSampler | null = null;
+  function getDefaultSampler(): GPUSampler {
+    if (!defaultSampler) {
+      defaultSampler = gpuDevice.createSampler({
+        magFilter: "nearest",
+        minFilter: "nearest",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
+    }
+    return defaultSampler;
+  }
+
+  function targetView(target: Surface | Texture): GPUTextureView {
+    if (isSurface(target)) {
+      return (target as WGPUSurface).getCurrentTextureView() as GPUTextureView;
+    }
+    return (target as WGPUTexture).gpuTexture.createView();
+  }
+
+  function targetSize(target: Surface | Texture): { width: number; height: number } {
+    if (isSurface(target)) {
+      return { width: target.canvas.width, height: target.canvas.height };
+    }
+    const tex = target as WGPUTexture;
+    return { width: tex.width, height: tex.height };
+  }
+
+  let destroyed = false;
+
+  // Single per-device `lost` watcher: records the `GPUDeviceLostInfo` once, so
+  // `mapReadBufferGuarded` can enrich a `DeviceLostError` with the loss reason
+  // WITHOUT attaching a fresh `.lost.then`/`Promise.race` reaction per
+  // readback (which would accumulate on the never-settling `.lost` promise for
+  // per-frame readback callers). `gpuDevice.lost` resolves (never rejects) on
+  // loss, including via `destroy()`.
+  const lostRef: DeviceLostRef = {};
+  gpuDevice.lost.then(
+    (info) => {
+      lostRef.info = info;
+      // Context-loss instrumentation (test-only; no-op unless the user-facing
+      // paneRenderLog capture is armed). A WebGPU device loss means EVERY 2D
+      // image/diff pane on the page is now on a dead device — surfaced with a
+      // timestamp so a repro can correlate it with a flip/flash. (`reason:
+      // "destroyed"` is the ordinary teardown path, still recorded for
+      // completeness — a repro filters on `reason: "unknown"`, the real loss.)
+      recordContextLossEvent("webgpu-device-lost", { reason: info.reason, message: info.message });
+    },
+    () => {
+      /* `.lost` never rejects, but be defensive */
+    },
+  );
+
+  // Memoized (one per GPUDevice) probe of whether THIS BROWSER can configure a
+  // canvas with `toneMapping:{mode:"extended"}` — the true-HDR canvas path.
+  // `capabilities.hdr` above is hardcoded `true` for the WebGPU backend and is
+  // NOT this signal; the real answer is only knowable by actually configuring a
+  // context and reading `getConfiguration()` BACK. A browser that silently
+  // IGNORES the unknown `toneMapping` dictionary member (WebIDL drops unknown
+  // members rather than throwing — Firefox does exactly this) does NOT throw on
+  // `configure()`, so a throw-based probe would misreport it as supported; the
+  // `getConfiguration().toneMapping.mode === "extended"` readback is the only
+  // reliable discriminator. When `getConfiguration` is unavailable we
+  // conservatively report `false` (extended tone mapping and `getConfiguration`
+  // shipped together in Chromium, so a browser lacking the readback is old/
+  // limited enough that "browser limitation" is the correct diagnosis).
+  let extendedToneMappingProbe: boolean | null = null;
+  function probeExtendedToneMapping(): boolean {
+    if (extendedToneMappingProbe !== null) return extendedToneMappingProbe;
+    let supported = false;
+    try {
+      if (typeof document !== "undefined") {
+        const probeCanvas = document.createElement("canvas");
+        probeCanvas.width = 1;
+        probeCanvas.height = 1;
+        const ctx = probeCanvas.getContext("webgpu");
+        if (ctx) {
+          try {
+            ctx.configure({
+              device: gpuDevice,
+              format: "rgba16float",
+              colorSpace: "display-p3",
+              toneMapping: { mode: "extended" },
+              alphaMode: "premultiplied",
+              usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            const cfg = (
+              ctx as GPUCanvasContext & {
+                getConfiguration?: () => { toneMapping?: { mode?: string } } | null;
+              }
+            ).getConfiguration?.();
+            supported = cfg?.toneMapping?.mode === "extended";
+          } catch {
+            // configure() threw → the browser rejected the extended-HDR config
+            // outright (genuinely unsupported).
+            supported = false;
+          } finally {
+            try {
+              ctx.unconfigure();
+            } catch {
+              /* best-effort cleanup */
+            }
+          }
+        }
+      }
+    } catch {
+      supported = false;
+    }
+    extendedToneMappingProbe = supported;
+    return supported;
+  }
+
+  // GPU REDUCTION FAMILY harness (`engine/reduce/registry.ts`). Compute pipelines
+  // + bind-group layouts are memoized per `(program, op)` VARIANT (a tiny map,
+  // NOT one-per-call) — the "shared harness, declared entries, no per-use
+  // pipelines" house pattern. `reduceDiffSumSquaredAbs` (MSE/MAE/PSNR) and
+  // `reduceTextureChannelMean` (SSIM error-map mean) are both thin callers of the
+  // ONE `runReduce` below.
+  const reducePipelines = new Map<string, { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout }>();
+  function getReducePipeline(program: ReduceProgram, op: ReduceOp): { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout } {
+    const key = `${program.id}:${op.id}`;
+    let cached = reducePipelines.get(key);
+    if (!cached) {
+      const module = gpuDevice.createShaderModule({ code: assembleReduceWGSL(program, op) });
+      const arity = program.textureArity;
+      const entries: GPUBindGroupLayoutEntry[] = [];
+      for (let t = 0; t < arity; t++) {
+        entries.push({ binding: t, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } });
+      }
+      entries.push({ binding: arity, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } });
+      entries.push({ binding: arity + 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } });
+      const layout = gpuDevice.createBindGroupLayout({ entries });
+      const pipelineLayout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [layout] });
+      const pipeline = gpuDevice.createComputePipeline({
+        layout: pipelineLayout,
+        compute: { module, entryPoint: "cs_main" },
+      });
+      cached = { pipeline, layout };
+      reducePipelines.set(key, cached);
+    }
+    return cached;
+  }
+
+  /**
+   * Run one reduction VARIANT over the top-left `width*height` region of the
+   * given source texture(s), returning the finalized per-lane scalars. The O(N)
+   * per-pixel work + workgroup tree-reduce run on the GPU; only a tiny
+   * `numWorkgroups * lanes` partial buffer is read back and folded on the host
+   * (`foldReducePartials`) — KB, not the MB of a full-texture readback.
+   */
+  async function runReduce(
+    program: ReduceProgram,
+    op: ReduceOp,
+    textures: WGPUTexture[],
+    width: number,
+    height: number,
+    channel: number,
+  ): Promise<number[]> {
+    const lanes = program.lanes;
+    const count = Math.max(0, width * height);
+    const numWorkgroups = Math.max(1, Math.ceil(count / REDUCE_WORKGROUP_SIZE));
+    const { pipeline, layout } = getReducePipeline(program, op);
+
+    const partialSize = numWorkgroups * lanes * 4; // lanes f32 per workgroup
+    const partialBuffer = gpuDevice.createBuffer({
+      size: partialSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    const dimsBuffer = gpuDevice.createBuffer({
+      size: 16, // Dims struct: 4x u32
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    gpuDevice.queue.writeBuffer(
+      dimsBuffer,
+      0,
+      new Uint32Array([Math.max(1, width), Math.max(1, height), count, channel >>> 0]),
+    );
+
+    const bindEntries: GPUBindGroupEntry[] = textures.map((t, i) => ({ binding: i, resource: t.gpuTexture.createView() }));
+    bindEntries.push({ binding: program.textureArity, resource: { buffer: partialBuffer } });
+    bindEntries.push({ binding: program.textureArity + 1, resource: { buffer: dimsBuffer } });
+    const bindGroup = gpuDevice.createBindGroup({ layout, entries: bindEntries });
+
+    const readBuffer = gpuDevice.createBuffer({
+      size: partialSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const encoder = gpuDevice.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(numWorkgroups);
+    pass.end();
+    encoder.copyBufferToBuffer(partialBuffer, 0, readBuffer, 0, partialSize);
+    gpuDevice.queue.submit([encoder.finish()]);
+
+    // Same device-loss guard as `readback()` — a lost/destroyed device mid-map
+    // yields a typed `DeviceLostError`, not a raw `AbortError`.
+    try {
+      await mapReadBufferGuarded(readBuffer, lostRef);
+    } catch (err) {
+      for (const b of [readBuffer, partialBuffer, dimsBuffer]) {
+        try {
+          b.destroy();
+        } catch {
+          /* already invalid after device loss — best effort */
+        }
+      }
+      throw err;
+    }
+    const mapped = new Float32Array(readBuffer.getMappedRange());
+    const partial = mapped.slice(); // copy out before unmap invalidates `mapped`
+    readBuffer.unmap();
+    readBuffer.destroy();
+    partialBuffer.destroy();
+    dimsBuffer.destroy();
+
+    return foldReducePartials(partial, numWorkgroups, lanes, op, count);
+  }
+
+  // Lazily-built, memoized deep-composite RENDER pipeline (one per GPUDevice).
+  // Dedicated (not the generic parseWGSLBindings path — that only knows
+  // uniform/texture/sampler) so it can bind read-only STORAGE buffers. Targets
+  // rgba16float — the pane source-texture format the display pass samples.
+  let deepPipeline: GPURenderPipeline | null = null;
+  let deepBindGroupLayout: GPUBindGroupLayout | null = null;
+  function getDeepCompositePipeline(): { pipeline: GPURenderPipeline; layout: GPUBindGroupLayout } {
+    if (!deepPipeline || !deepBindGroupLayout) {
+      const module = gpuDevice.createShaderModule({ code: deepCompositeWGSL });
+      deepBindGroupLayout = gpuDevice.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
+          { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+        ],
+      });
+      const layout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [deepBindGroupLayout] });
+      deepPipeline = gpuDevice.createRenderPipeline({
+        layout,
+        vertex: { module, entryPoint: "vs_main" },
+        fragment: { module, entryPoint: "fs_main", targets: [{ format: "rgba16float" }] },
+        primitive: { topology: "triangle-list" },
+      });
+    }
+    return { pipeline: deepPipeline, layout: deepBindGroupLayout };
+  }
+
+  // GPU HISTOGRAM COMPUTE (info panel M2 — `engine/histogram/compute.ts`).
+  // Compute pipelines + explicit bind-group layouts memoized per variant, the
+  // same "shared harness, no per-use pipelines" discipline as `reducePipelines`
+  // above. Dedicated layouts (not parseWGSLBindings) because these passes bind
+  // STORAGE buffers, which the generic RHI bind-group path doesn't know.
+  const histPipelines = new Map<string, { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout }>();
+  type HistBinding = "texture" | "storage" | "read-only-storage" | "uniform";
+  function getHistPipeline(
+    key: string,
+    wgsl: () => string,
+    bindings: HistBinding[],
+  ): { pipeline: GPUComputePipeline; layout: GPUBindGroupLayout } {
+    let cached = histPipelines.get(key);
+    if (!cached) {
+      const module = gpuDevice.createShaderModule({ code: wgsl() });
+      const entries: GPUBindGroupLayoutEntry[] = bindings.map((kind, i) =>
+        kind === "texture"
+          ? { binding: i, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "unfilterable-float" } }
+          : { binding: i, visibility: GPUShaderStage.COMPUTE, buffer: { type: kind } },
+      );
+      const layout = gpuDevice.createBindGroupLayout({ entries });
+      const pipeline = gpuDevice.createComputePipeline({
+        layout: gpuDevice.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: { module, entryPoint: "cs_main" },
+      });
+      cached = { pipeline, layout };
+      histPipelines.set(key, cached);
+    }
+    return cached;
+  }
+
+  /** Dispatch one compute pass and read a result buffer back (guarded map). */
+  async function runHistPass(
+    pipeline: GPUComputePipeline,
+    bindGroup: GPUBindGroup,
+    numWorkgroups: number,
+    resultBuffer: GPUBuffer,
+    resultBytes: number,
+  ): Promise<ArrayBuffer> {
+    const readBuffer = gpuDevice.createBuffer({
+      size: resultBytes,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const encoder = gpuDevice.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(numWorkgroups);
+    pass.end();
+    encoder.copyBufferToBuffer(resultBuffer, 0, readBuffer, 0, resultBytes);
+    gpuDevice.queue.submit([encoder.finish()]);
+    try {
+      await mapReadBufferGuarded(readBuffer, lostRef);
+    } catch (err) {
+      try {
+        readBuffer.destroy();
+      } catch {
+        /* already invalid after device loss — best effort */
+      }
+      throw err;
+    }
+    const out = readBuffer.getMappedRange().slice(0);
+    readBuffer.unmap();
+    readBuffer.destroy();
+    return out;
+  }
+
+  const device: Device = {
+    backend: "webgpu",
+    capabilities,
+    probeExtendedToneMapping,
+
+    createTexture(width, height, format) {
+      return new WGPUTexture(gpuDevice, width, height, format);
+    },
+
+    createSampler(opts) {
+      const filter = opts?.filter === "linear" ? "linear" : "nearest";
+      const gpuSampler = gpuDevice.createSampler({
+        magFilter: filter,
+        minFilter: filter,
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
+      return new WGPUSampler(gpuSampler);
+    },
+
+    createRenderPipeline(spec) {
+      const module = gpuDevice.createShaderModule({ code: spec.shaderWGSL });
+      const bindings = parseWGSLBindings(spec.shaderWGSL);
+      const primaryFormat = gpuFormatFor(spec.targetFormat);
+      // Explicit (never 'auto') bind group layout, shared by the primary
+      // pipeline and every lazily-built format variant — see
+      // `WGPURenderPipeline`'s doc comment for why 'auto' can't be reused
+      // across pipelines here.
+      const bindGroupLayout = buildExplicitBindGroupLayout(gpuDevice, bindings);
+      const pipelineLayout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+      const buildVariant = (format: GPUTextureFormat): GPURenderPipeline =>
+        gpuDevice.createRenderPipeline({
+          layout: pipelineLayout,
+          vertex: { module, entryPoint: "vs_main" },
+          fragment: { module, entryPoint: "fs_main", targets: [{ format }] },
+          primitive: { topology: "triangle-list" },
+        });
+      const gpuPipeline = buildVariant(primaryFormat);
+      return new WGPURenderPipeline(gpuPipeline, bindings, bindGroupLayout, primaryFormat, buildVariant);
+    },
+
+    createComputePipeline(spec) {
+      // Minimal implementation — compute is not exercised by the Task 2/3
+      // readback harness; full use (image/metrics reduction passes) lands
+      // in later tasks (§5, §7 of the sub-project plan).
+      const module = gpuDevice.createShaderModule({ code: spec.shaderWGSL });
+      const gpuPipeline = gpuDevice.createComputePipeline({
+        layout: "auto",
+        compute: { module, entryPoint: "cs_main" },
+      });
+      return new WGPUComputePipeline(gpuPipeline);
+    },
+
+    createBindGroup(pipeline, entries) {
+      const p = pipeline as WGPURenderPipeline;
+      const resolved = new Map<number, GPUBindGroupEntry>();
+      // Every `GPUBuffer` allocated below (defaults AND caller-value
+      // buffers) is owned by the returned `WGPUBindGroup` and freed by its
+      // `destroy()` — see that class's doc comment. `createBindGroup` itself
+      // never reuses a buffer across calls (each call gets its own set), so
+      // callers driving a per-frame render loop must destroy the bind group
+      // once done with it to avoid leaking one `GPUBuffer` per uniform
+      // binding per frame.
+      const ownedBuffers: GPUBuffer[] = [];
+
+      // 1. Seed every binding the shader actually declares with a default
+      //    resource (zero-filled uniform buffer / shared nearest sampler —
+      //    see module doc comment for why this is required on WebGPU).
+      for (const [native, info] of p.bindings) {
+        if (info.kind === "uniform") {
+          const buffer = gpuDevice.createBuffer({
+            size: info.sizeBytes,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          });
+          ownedBuffers.push(buffer);
+          resolved.set(native, { binding: native, resource: { buffer } });
+        } else if (info.kind === "sampler") {
+          resolved.set(native, { binding: native, resource: getDefaultSampler() });
+        }
+        // "texture" bindings have no sensible default; must come from `entries`.
+      }
+
+      // 2. Overwrite defaults with the caller's explicit entries, for
+      //    whichever ones the shader actually declares (superset bind
+      //    groups are allowed — unused entries are silently dropped, same
+      //    as the WebGL2 backend).
+      for (const entry of entries as BindGroupEntry[]) {
+        const resource = entry.resource;
+        if (resource instanceof WGPUTexture) {
+          const native = nativeBinding(entry.binding, "texture");
+          if (p.bindings.has(native)) {
+            resolved.set(native, { binding: native, resource: resource.gpuTexture.createView() });
+          }
+        } else if (resource instanceof WGPUSampler) {
+          const native = nativeBinding(entry.binding, "sampler");
+          if (p.bindings.has(native)) {
+            resolved.set(native, { binding: native, resource: resource.gpuSampler });
+          }
+        } else {
+          const native = nativeBinding(entry.binding, "uniform");
+          const info = p.bindings.get(native);
+          if (info && info.kind === "uniform") {
+            const view = (resource as { uniform: ArrayBufferView }).uniform;
+            const buffer = gpuDevice.createBuffer({
+              size: Math.max(info.sizeBytes, view.byteLength),
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            });
+            gpuDevice.queue.writeBuffer(buffer, 0, view.buffer as ArrayBuffer, view.byteOffset, view.byteLength);
+            // The default buffer allocated for this native binding in step 1
+            // is now unreferenced by `resolved` (about to be overwritten
+            // below) but was already pushed to `ownedBuffers` — it still
+            // gets destroyed alongside the replacement, just one call early.
+            ownedBuffers.push(buffer);
+            resolved.set(native, { binding: native, resource: { buffer } });
+          }
+        }
+      }
+
+      const gpuBindGroup = gpuDevice.createBindGroup({
+        layout: p.bindGroupLayout,
+        entries: Array.from(resolved.values()),
+      });
+      return new WGPUBindGroup(gpuBindGroup, ownedBuffers);
+    },
+
+    createSurface(canvas, opts) {
+      const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
+      if (!context) throw new Error("webgpu device: canvas.getContext('webgpu') returned null");
+      const wantsHDR = opts.hdr && capabilities.hdr;
+      const reconfigure = () =>
+        wantsHDR ? configureHDRSurface(context, gpuDevice) : configureSDRSurface(context, gpuDevice);
+      const result = reconfigure();
+      return new WGPUSurface(canvas, context, result, reconfigure);
+    },
+
+    renderFullscreen(target, pipeline, bindGroup) {
+      const p = pipeline as WGPURenderPipeline;
+      const bg = bindGroup as WGPUBindGroup;
+      const view = targetView(target);
+      const { width, height } = targetSize(target);
+      // The pipeline's fragment target format must EXACTLY match the actual
+      // attachment format or WebGPU raises a validation error and silently
+      // drops the draw — see `WGPURenderPipeline`'s doc comment. A `Surface`
+      // can be `bgra8unorm`-native even though `p.gpuPipeline`'s default
+      // format is always one of the four `TextureFormat`s (never
+      // `bgra8unorm`), so resolve the correct pipeline VARIANT for
+      // whatever `target` actually is.
+      const nativeFormat: GPUTextureFormat = isSurface(target)
+        ? (target as WGPUSurface).format
+        : gpuFormatFor((target as WGPUTexture).format);
+      const gpuPipeline = p.pipelineFor(nativeFormat);
+      const encoder = gpuDevice.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view,
+            loadOp: "clear",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            storeOp: "store",
+          },
+        ],
+      });
+      pass.setPipeline(gpuPipeline);
+      pass.setBindGroup(0, bg.gpuBindGroup);
+      pass.setViewport(0, 0, width, height, 0, 1);
+      pass.draw(3);
+      pass.end();
+      gpuDevice.queue.submit([encoder.finish()]);
+    },
+
+    createDeepSampleBuffers(spec: DeepGpuCsrSpec): DeepSampleBuffers {
+      const { layout } = getDeepCompositePipeline();
+      const storage = (view: ArrayBufferView): GPUBuffer => {
+        const buf = gpuDevice.createBuffer({
+          size: view.byteLength,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+        gpuDevice.queue.writeBuffer(buf, 0, view.buffer as ArrayBuffer, view.byteOffset, view.byteLength);
+        return buf;
+      };
+      const offsetsBuf = storage(spec.offsets);
+      const colorsBuf = storage(spec.colors);
+      const zsBuf = storage(spec.zs);
+      const paramsBuffer = gpuDevice.createBuffer({
+        size: 16, // vec4<f32>
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const bindGroup = gpuDevice.createBindGroup({
+        layout,
+        entries: [
+          { binding: 0, resource: { buffer: offsetsBuf } },
+          { binding: 1, resource: { buffer: colorsBuf } },
+          { binding: 2, resource: { buffer: zsBuf } },
+          { binding: 3, resource: { buffer: paramsBuffer } },
+        ],
+      });
+      return new WGPUDeepSampleBuffers(
+        spec.width,
+        spec.height,
+        [offsetsBuf, colorsBuf, zsBuf],
+        paramsBuffer,
+        bindGroup,
+        spec.zs.length,
+      );
+    },
+
+    compositeDeep(buffers: DeepSampleBuffers, target: Texture, zNear: number, zFar: number): void {
+      const b = buffers as WGPUDeepSampleBuffers;
+      const t = target as WGPUTexture;
+      const { pipeline } = getDeepCompositePipeline();
+      // params = (width, height, zFar, zNear) — see deep-composite.wgsl.ts.
+      gpuDevice.queue.writeBuffer(
+        b.paramsBuffer,
+        0,
+        new Float32Array([b.width, b.height, zFar, zNear]),
+      );
+      const encoder = gpuDevice.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: t.gpuTexture.createView(),
+            loadOp: "clear",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            storeOp: "store",
+          },
+        ],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, b.bindGroup);
+      pass.setViewport(0, 0, t.width, t.height, 0, 1);
+      pass.draw(3);
+      pass.end();
+      gpuDevice.queue.submit([encoder.finish()]);
+    },
+
+    async readback(source) {
+      const surfaceMode = isSurface(source);
+      const { width, height } = targetSize(source);
+      const format: TextureFormat = surfaceMode ? ((source as WGPUSurface).hdr ? "rgba16float" : "rgba8unorm") : (source as WGPUTexture).format;
+      // The RHI's `readback()` contract is always RGBA byte order, but an
+      // SDR `Surface`'s ACTUAL native format (`WGPUSurface.format`, set from
+      // `configureSDRSurface`'s `navigator.gpu.getPreferredCanvasFormat()`)
+      // is commonly `bgra8unorm`, not `rgba8unorm` — see module doc's "SDR
+      // surface readback channel order" note. `copyTextureToBuffer` below
+      // copies raw texel bytes with no reordering, so a `bgra8unorm` source
+      // needs its B/R bytes swapped back into RGBA order after the copy.
+      // Offscreen `Texture`s are never `bgra8unorm` (`gpuFormatFor` only
+      // ever produces the exact `TextureFormat` requested), and an HDR
+      // surface is always `rgba16float` (already correct byte order) — so
+      // only this one case needs the swap.
+      const needsBGRASwap = surfaceMode && (source as WGPUSurface).format === "bgra8unorm";
+      const sourceTexture: GPUTexture = surfaceMode
+        ? (source as WGPUSurface).getCurrentGPUTexture()
+        : (source as WGPUTexture).gpuTexture;
+
+      const bpp = bytesPerPixelFor(format);
+      const unpaddedBytesPerRow = width * bpp;
+      const align = 256;
+      const paddedBytesPerRow = Math.ceil(unpaddedBytesPerRow / align) * align;
+      const bufferSize = paddedBytesPerRow * height;
+
+      const readBuffer = gpuDevice.createBuffer({
+        size: bufferSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      const encoder = gpuDevice.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture: sourceTexture },
+        { buffer: readBuffer, bytesPerRow: paddedBytesPerRow, rowsPerImage: height },
+        { width, height, depthOrArrayLayers: 1 },
+      );
+      gpuDevice.queue.submit([encoder.finish()]);
+
+      // Guard the map against device/instance teardown mid-readback (see
+      // `mapReadBufferGuarded` / `DeviceLostError`). On failure, drop the
+      // staging buffer (best-effort — it may already be invalid) so we don't
+      // leak it, and let the typed error propagate.
+      try {
+        await mapReadBufferGuarded(readBuffer, lostRef);
+      } catch (err) {
+        try {
+          readBuffer.destroy();
+        } catch {
+          /* buffer already invalid after device loss — best effort */
+        }
+        throw err;
+      }
+      const mapped = new Uint8Array(readBuffer.getMappedRange());
+      const tight = new Uint8Array(unpaddedBytesPerRow * height);
+      for (let row = 0; row < height; row++) {
+        const src = row * paddedBytesPerRow;
+        const dst = row * unpaddedBytesPerRow;
+        tight.set(mapped.subarray(src, src + unpaddedBytesPerRow), dst);
+      }
+      readBuffer.unmap();
+      readBuffer.destroy();
+
+      // Keep `source` (and, for a Surface, its private `GPUCanvasContext`)
+      // reachable ACROSS the map await above. V8's liveness-based GC can
+      // otherwise collect a local that is never read again after its last
+      // use — and a detached-canvas surface's context is not read again once
+      // `sourceTexture`/`needsBGRASwap` are captured. Collecting the context
+      // mid-map can tear down the Dawn "external Instance" the pending map
+      // depends on (the SwiftShader/Dawn "A valid external Instance reference
+      // no longer exists." abort) — referencing `source` here extends its
+      // liveness past the await so that teardown can't happen underneath us.
+      void source;
+
+      if (format === "rgba8unorm") {
+        if (needsBGRASwap) {
+          for (let i = 0; i < tight.length; i += 4) {
+            const b = tight[i]!;
+            const r = tight[i + 2]!;
+            tight[i] = r;
+            tight[i + 2] = b;
+          }
+        }
+        return tight;
+      }
+      if (format === "rgba16float") {
+        const half = new Uint16Array(tight.buffer, tight.byteOffset, tight.byteLength / 2);
+        const out = new Float32Array(half.length);
+        for (let i = 0; i < half.length; i++) out[i] = halfToFloat(half[i]!);
+        return out;
+      }
+      // rgba32float / r32float: raw bytes are already IEEE754 float32.
+      return new Float32Array(tight.buffer, tight.byteOffset, tight.byteLength / 4);
+    },
+
+    async reduceDiffSumSquaredAbs(texA, texB, width, height) {
+      // MSE/MAE/PSNR: the fused per-channel squared+absolute diff sums, now the
+      // `diffSqAbs` program (2 lanes) under the `sum` op on the shared harness.
+      const program = getReduceProgram("diffSqAbs")!;
+      const op = getReduceOp("sum")!;
+      const [sumSq, sumAbs] = await runReduce(program, op, [texA as WGPUTexture, texB as WGPUTexture], width, height, 0);
+      return { sumSq: sumSq!, sumAbs: sumAbs! };
+    },
+
+    async reduceTextureChannelMean(tex, channel, width, height) {
+      // SSIM error-map mean: reduce ONE channel of the RESULT texture with the
+      // `mean` op — a KB partial-buffer readback instead of the full ~64MB
+      // texture-to-CPU transfer the JS loop used to average.
+      const program = getReduceProgram("channel")!;
+      const op = getReduceOp("mean")!;
+      const [mean] = await runReduce(program, op, [tex as WGPUTexture], width, height, channel);
+      return mean!;
+    },
+
+    async computeTevTextureHistogram(
+      tex: Texture,
+      width: number,
+      height: number,
+      spec: TexHistogramSpec,
+    ): Promise<TexHistogramResult> {
+      const t = tex as WGPUTexture;
+      const count = Math.max(0, Math.floor(width) * Math.floor(height));
+      const bins = Math.max(1, Math.floor(spec.bins));
+      const seriesCount = Math.min(HIST_MAX_SERIES, Math.max(0, spec.seriesCount));
+      const channelCount = Math.min(HIST_MAX_CHANNELS, Math.max(0, spec.channelCount));
+      const counts = new Uint32Array(seriesCount * bins);
+      if (count <= 0) {
+        return { channelStats: foldHistogramStatsPartials([], 0).channelStats.slice(0, channelCount), range: null, counts };
+      }
+
+      const uniformBuffer = gpuDevice.createBuffer({
+        size: HIST_PARAMS_BYTES,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const paramsBase = {
+        width: Math.floor(width),
+        height: Math.floor(height),
+        channelCount,
+        seriesCount,
+        u8Scale: spec.u8Scale,
+        bins,
+        seriesWeights: spec.seriesWeights,
+      };
+      gpuDevice.queue.writeBuffer(uniformBuffer, 0, histParamsData(paramsBase));
+
+      // Pass 1 — stats tree-reduce (per-channel min/max/mean + series range).
+      const statsWorkgroups = Math.max(1, Math.ceil(count / HIST_STATS_WORKGROUP_SIZE));
+      const partialBytes = statsWorkgroups * HIST_STATS_LANES * 4;
+      const partialBuffer = gpuDevice.createBuffer({
+        size: partialBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const countsBuffer = gpuDevice.createBuffer({
+        size: Math.max(4, counts.byteLength), // zero-initialized by WebGPU
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      try {
+        const stats = getHistPipeline("hist:stats", assembleHistogramStatsWGSL, ["texture", "storage", "uniform"]);
+        const statsBg = gpuDevice.createBindGroup({
+          layout: stats.layout,
+          entries: [
+            { binding: 0, resource: t.gpuTexture.createView() },
+            { binding: 1, resource: { buffer: partialBuffer } },
+            { binding: 2, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        const partial = new Float32Array(
+          await runHistPass(stats.pipeline, statsBg, statsWorkgroups, partialBuffer, partialBytes),
+        );
+        const fold = foldHistogramStatsPartials(partial, statsWorkgroups);
+
+        // Pass 2 — atomic binning through the host-derived symlog mapping
+        // (f64 `tevBinMapping`, exactly what the CPU reference builds).
+        if (fold.range && seriesCount > 0) {
+          const mapping = tevBinMapping(fold.range.min, fold.range.max, bins);
+          // Degenerate range (constant data): the CPU's 1e-12 diffLog floor
+          // divides an EXACT f64 zero, but the GPU's f32 symlog can differ from
+          // the rounded minLog by an ULP — amplified by /1e-12 into a wrong
+          // clamp-to-top bin. A unit divisor keeps that noise ≪ 1 bin, so every
+          // sample lands in bin 0 exactly like the CPU.
+          const diffLog = mapping.diffLog < 1e-6 ? 1 : mapping.diffLog;
+          gpuDevice.queue.writeBuffer(
+            uniformBuffer,
+            0,
+            histParamsData({ ...paramsBase, minLog: mapping.minLog, diffLog }),
+          );
+          const bin = getHistPipeline("hist:bin", assembleHistogramBinWGSL, ["texture", "storage", "uniform"]);
+          const binBg = gpuDevice.createBindGroup({
+            layout: bin.layout,
+            entries: [
+              { binding: 0, resource: t.gpuTexture.createView() },
+              { binding: 1, resource: { buffer: countsBuffer } },
+              { binding: 2, resource: { buffer: uniformBuffer } },
+            ],
+          });
+          const binWorkgroups = Math.max(1, Math.ceil(count / HIST_BIN_WORKGROUP_SIZE));
+          counts.set(new Uint32Array(await runHistPass(bin.pipeline, binBg, binWorkgroups, countsBuffer, counts.byteLength)));
+        }
+        return { channelStats: fold.channelStats.slice(0, channelCount), range: fold.range, counts };
+      } finally {
+        for (const b of [partialBuffer, countsBuffer, uniformBuffer]) {
+          try {
+            b.destroy();
+          } catch {
+            /* already invalid after device loss — best effort */
+          }
+        }
+      }
+    },
+
+    async computeDeepDepthHistogram(buffers, bins): Promise<DeepDepthHistogramResult | null> {
+      const b = buffers as WGPUDeepSampleBuffers;
+      const count = b.sampleCount;
+      const nBins = Math.max(1, Math.floor(bins));
+      if (count <= 0) return null;
+
+      const uniformBuffer = gpuDevice.createBuffer({
+        size: DEEP_PARAMS_BYTES,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      gpuDevice.queue.writeBuffer(uniformBuffer, 0, deepParamsData({ count, bins: nBins }));
+      const statsWorkgroups = Math.max(1, Math.ceil(count / HIST_BIN_WORKGROUP_SIZE));
+      const partialBytes = statsWorkgroups * 2 * 4;
+      const partialBuffer = gpuDevice.createBuffer({
+        size: partialBytes,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      const countsBuffer = gpuDevice.createBuffer({
+        size: nBins * 4, // zero-initialized by WebGPU
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+      });
+      try {
+        const stats = getHistPipeline("hist:deep-stats", assembleDeepDepthStatsWGSL, [
+          "read-only-storage",
+          "storage",
+          "uniform",
+        ]);
+        const statsBg = gpuDevice.createBindGroup({
+          layout: stats.layout,
+          entries: [
+            { binding: 0, resource: { buffer: b.zsBuffer } },
+            { binding: 1, resource: { buffer: partialBuffer } },
+            { binding: 2, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        const partial = new Float32Array(
+          await runHistPass(stats.pipeline, statsBg, statsWorkgroups, partialBuffer, partialBytes),
+        );
+        const zRange = foldDeepDepthStatsPartials(partial, statsWorkgroups);
+        if (!zRange) return null;
+
+        const mapping = tevBinMapping(zRange.zMin, zRange.zMax, nBins);
+        // Same degenerate-range guard as the value pass above (constant Z).
+        const diffLog = mapping.diffLog < 1e-6 ? 1 : mapping.diffLog;
+        gpuDevice.queue.writeBuffer(
+          uniformBuffer,
+          0,
+          deepParamsData({ count, bins: nBins, minLog: mapping.minLog, diffLog }),
+        );
+        const bin = getHistPipeline("hist:deep-bin", assembleDeepDepthBinWGSL, [
+          "read-only-storage",
+          "read-only-storage",
+          "storage",
+          "uniform",
+        ]);
+        const binBg = gpuDevice.createBindGroup({
+          layout: bin.layout,
+          entries: [
+            { binding: 0, resource: { buffer: b.zsBuffer } },
+            { binding: 1, resource: { buffer: b.colorsBuffer } },
+            { binding: 2, resource: { buffer: countsBuffer } },
+            { binding: 3, resource: { buffer: uniformBuffer } },
+          ],
+        });
+        const fixed = new Uint32Array(
+          await runHistPass(bin.pipeline, binBg, statsWorkgroups, countsBuffer, nBins * 4),
+        );
+        const weights = new Float64Array(nBins);
+        let totalWeight = 0;
+        for (let i = 0; i < nBins; i++) {
+          weights[i] = fixed[i]! / DEPTH_WEIGHT_FIXED_SCALE;
+          totalWeight += weights[i]!;
+        }
+        return { zMin: zRange.zMin, zMax: zRange.zMax, weights, totalWeight };
+      } finally {
+        for (const buf of [partialBuffer, countsBuffer, uniformBuffer]) {
+          try {
+            buf.destroy();
+          } catch {
+            /* already invalid after device loss — best effort */
+          }
+        }
+      }
+    },
+
+    destroy() {
+      if (destroyed) return;
+      gpuDevice.destroy();
+      destroyed = true;
+    },
+
+    // WebGPU's `createSurface` is always a safe, idempotent re-configure
+    // (see this module's doc comment) — there is no WebGL2-style "canvas
+    // already has a lost context bound to it" state to recover from, so
+    // this is always `false`. See `types.ts`'s `Device.isContextLost` doc.
+    isContextLost() {
+      return false;
+    },
+  };
+
+  return device;
+}

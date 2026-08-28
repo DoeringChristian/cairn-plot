@@ -11,8 +11,8 @@
 import type { HistogramSource } from "../../../primitives/components/ImageInfoPanel";
 import type { HistogramChannel } from "./image-histogram.ts";
 import { defaultChannelColor } from "./image-histogram.ts";
-import type { HdrData } from "../backends/contracts";
-import { shapeDims } from "../backends/contracts";
+import type { HdrData } from "../runtime/contracts";
+import { shapeDims } from "../runtime/contracts";
 import { floatPixelReader } from "../model/pixel-buffer.ts";
 import type { DeepGpuCsrData } from "../model/decoders.ts";
 

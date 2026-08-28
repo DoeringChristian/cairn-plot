@@ -36,6 +36,7 @@ import {
 // dispatch are reconstructed here as thin REGISTRY ADAPTERS so these goldens keep
 // pinning the exact same math the panes/shaders run via `getDisplayOperation(id).cpu`.
 import {
+  evaluateDisplayOperation,
   getDisplayOperation,
   listDisplayOperations,
   DEFAULT_ENCODE_PARAMS,
@@ -46,17 +47,17 @@ import {
  *  `image/tonemap.ts`'s `TONEMAP_OPERATORS`). Every curve is surface-independent. */
 const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
   listDisplayOperations()
-    .filter((e) => e.kind !== "lut")
-    .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => e.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS)]),
+    .filter((e) => e.category !== "colormap")
+    .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => evaluateDisplayOperation(e, rgb, 3, DEFAULT_ENCODE_PARAMS)]),
 );
 /** Resolve an operator name to its non-peak CPU curve fn, srgb fallback. */
 const getDisplayCurveId = (name: string | undefined | null): ((rgb: RgbTriple) => RgbTriple) =>
   (name && TONEMAP_OPERATORS[name]) || TONEMAP_OPERATORS.srgb!;
 /** Peak-aware operator dispatch (extended-* read `peak`; the rest ignore it). */
 const applyDisplayCurveIdTriple = (rgb: RgbTriple, operator: string, peak: number): RgbTriple =>
-  (getDisplayOperation(operator) ?? getDisplayOperation("srgb")!).cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
+  evaluateDisplayOperation((getDisplayOperation(operator) ?? getDisplayOperation("srgb")!), rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
 const curveValue = (id: "linear" | "reinhard" | "aces", value: number, peak: number): number =>
-  getDisplayOperation(id)!.channel!.cpu(value, { ...DEFAULT_ENCODE_PARAMS, peak });
+  (getDisplayOperation(id)!.implementation.kind === "per-channel" ? getDisplayOperation(id)!.implementation.cpu(value, { ...DEFAULT_ENCODE_PARAMS, peak }) : value);
 
 const approx = (a: number, b: number, eps = 1e-9) =>
   assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);

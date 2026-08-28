@@ -1,14 +1,14 @@
 import { useEffect, useSyncExternalStore } from "react";
 
 import { warnGpuUnavailable } from "../../primitives/components/capability-notice.ts";
-import CpuImagePane from "./backends/canvas.tsx";
-import GpuImagePane from "./backends/webgpu.tsx";
+import CpuImagePane from "./cpu/view.tsx";
+import GpuImagePane from "./webgpu/view.tsx";
 import {
   ensureGpuImageProbe,
   gpuImageGateState,
   subscribeGpuImageGate,
 } from "./components/gpu-image-gate.ts";
-import type { ImageBackend, RenderMode } from "./backends/contracts.ts";
+import type { ImageBackend, RenderMode } from "./runtime/contracts.ts";
 
 let warnedForcedGpuUnavailable = false;
 

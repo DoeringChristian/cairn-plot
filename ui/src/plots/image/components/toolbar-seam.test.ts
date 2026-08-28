@@ -26,9 +26,9 @@ const SRC = join(HERE, "../../..");
 const read = (rel: string) => readFileSync(join(SRC, rel), "utf8");
 
 const shell = read("plots/image/components/ImagePaneShell.tsx");
-const backend = read("plots/image/backends/contracts.ts");
-const cpu = read("plots/image/backends/canvas.tsx");
-const gpu = read("plots/image/backends/webgpu.tsx");
+const backend = read("plots/image/runtime/contracts.ts");
+const cpu = read("plots/image/cpu/view.tsx");
+const gpu = read("plots/image/webgpu/view.tsx");
 const standalone = read("plots/image/view.tsx");
 
 // --- the shared contract: the shape carries `toolbar` ---------------------

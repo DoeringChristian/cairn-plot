@@ -46,7 +46,7 @@ import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
 import type { PlotSpec } from "../../../resources/resolve-data";
-import { getSharedWebGpuDevice } from "../../../plots/image/engine/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../../../plots/image/webgpu/engine/webgpu/device-provider.ts";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import {
   startPaneRenderLog,
@@ -58,7 +58,7 @@ import {
   isPipelineMismatch,
   type PaneRenderRecord,
   type PaintPhaseRecord,
-} from "../../../plots/image/engine/test-hooks";
+} from "../../../plots/image/webgpu/engine/test-hooks";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,

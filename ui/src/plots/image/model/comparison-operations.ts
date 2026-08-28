@@ -1,7 +1,7 @@
 /** Public comparison-operation selection and source-dependent resolution.
  * Implementations themselves live in the image-operation registry; this module
  * only defines the menu projection and maps public selections to concrete ids. */
-import { getImageOperation, listImageOperations, listMultipassImageOperations } from "./operations/index.ts";
+import { getImageOperation, listImageOperations } from "../definition/image-operations.ts";
 
 /**
  * A selectable diff MODE for the compare toolbar menu. Unlike raw
@@ -18,7 +18,7 @@ export interface ComparisonOperationOption {
 export function listComparisonOperationOptions(): ComparisonOperationOption[] {
   const out: ComparisonOperationOption[] = [];
   for (const operation of listImageOperations()) {
-    if (operation.implementation.kind === "inline" && operation.inputCount === 2 && operation.outputArity === 1) {
+    if (operation.cache === "never" && operation.inputs === 2 && operation.output.arity === 1 && operation.id !== "split") {
       out.push({ id: operation.id, label: operation.label });
     }
   }
@@ -49,10 +49,10 @@ export function resolveComparisonOperationId(selection: string, sourcesAreFloat:
 /** Map a flat public name (`abs`, `rel_signed`, `flip`, …) → internal kernel id. */
 export function operationIdForPublicName(publicName: string): string | undefined {
   const pointwise = listImageOperations().find(
-    (operation) => operation.implementation.kind === "inline" && operation.publicName === publicName,
+    (operation) => operation.cache === "never" && operation.publicName === publicName,
   );
   if (pointwise) return pointwise.id;
-  for (const operation of listMultipassImageOperations()) if (operation.publicName === publicName) return operation.id;
+  for (const operation of listImageOperations()) if (operation.cache === "global-lru" && operation.publicName === publicName) return operation.id;
   return undefined;
 }
 
@@ -82,9 +82,9 @@ const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr"]);
  */
 export function listComparisonOperationPublicNames(): string[] {
   const pointwise = listImageOperations()
-    .filter((operation) => operation.implementation.kind === "inline" && operation.inputCount === 2 && operation.outputArity === 1)
+    .filter((operation) => operation.cache === "never" && operation.inputs === 2 && operation.output.arity === 1 && operation.id !== "split")
     .flatMap((operation) => operation.publicName ? [operation.publicName] : []);
-  return [...pointwise, ...listMultipassImageOperations()
+  return [...pointwise, ...listImageOperations().filter((operation) => operation.cache === "global-lru")
     .flatMap((operation) => operation.publicName ? [operation.publicName] : [])
     .filter((name) => !AUTO_DISPATCH_ONLY_PUBLIC_NAMES.has(name))];
 }

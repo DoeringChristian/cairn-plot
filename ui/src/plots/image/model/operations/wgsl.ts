@@ -12,8 +12,7 @@ import { getImageOperation, isInlineImageOperation, listInlineImageOperations } 
  * into the `imageOperationId` uniform and the shader's `cairnContent` dispatch keys
  * on. Assigned by registration order of the `direct` ops (identity FIRST → 0), so
  * the zero-filled uniform default is IDENTITY (the passthrough) and a pane that
- * sets no op renders bit-for-bit as before. Mirrors `image/encodings`' generated
- * `OPERATOR_ID`. Cached ops are NOT in this map (they render into a result
+ * sets no op renders bit-for-bit as before. Cached ops are NOT in this map (they render into a result
  * texture the display samples, not an inline dispatch).
  *
  * Computed LAZILY + memoized (like {@link buildImageOperationWGSL}) rather than as an
@@ -63,7 +62,7 @@ export function imageOperationId(id: string | undefined | null): number {
 /**
  * Assemble `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param:
  * vec4<f32>, opId: i32) -> vec4<f32>` from the registry: an opId dispatch over the
- * `direct` ops (mirroring `buildApplyOperatorWGSL`), with IDENTITY as the
+ * `direct` operations, with IDENTITY as the
  * fallthrough (`return a;`). Each non-identity direct op emits `if (opId == N) {
  * return <expr>; }` where `<expr>` is the op's `wgsl`. Diff/identity exprs read
  * only `a`,`b`; the COMPOSITOR op (split) also reads `uv` (the fragment

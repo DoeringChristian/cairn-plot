@@ -30,7 +30,7 @@
  */
 import { useCallback, useMemo, useRef } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../../../primitives/controls/ToolbarConfig";
-import { getDisplayOperation, listDisplayOperationsByKind, type ReduceMode } from "../model/display-operations/index.ts";
+import { getDisplayOperation, listDisplayOperationsByCategory, type ReduceMode } from "../model/display-operations/index.ts";
 
 /** The DATA-encoding multi-channel REDUCE options, in order (the multi-channel-
  *  colormap follow-up). Shown ONLY while a colormap LUT is active AND the source
@@ -77,7 +77,7 @@ export interface DisplayOperationIds {
 
 /** Every registered colormap LUT id, in registry (== menu) order. */
 function allLutIds(): string[] {
-  return listDisplayOperationsByKind("lut").map((e) => e.id);
+  return listDisplayOperationsByCategory("colormap").map((e) => e.id);
 }
 
 /** The colormap LUT ids whose declared `arities` include `arity`. Colormaps now
@@ -85,7 +85,7 @@ function allLutIds(): string[] {
  *  the multi-channel follow-up), so this is the full set at any 1..4 arity and
  *  empty beyond it. */
 function lutIdsForArity(arity: number): string[] {
-  return listDisplayOperationsByKind("lut")
+  return listDisplayOperationsByCategory("colormap")
     .filter((e) => e.arities.includes(arity))
     .map((e) => e.id);
 }
@@ -102,8 +102,8 @@ export function resolveDisplayOperationIds(opts: {
   curveSet: readonly string[];
 }): DisplayOperationIds {
   const { mode, arity, curveSet } = opts;
-  const curveIds = curveSet.filter((id) => getDisplayOperation(id)?.kind === "curve");
-  const hasNormal = curveSet.some((id) => getDisplayOperation(id)?.kind === "remap");
+  const curveIds = curveSet.filter((id) => getDisplayOperation(id)?.category === "curve");
+  const hasNormal = curveSet.some((id) => getDisplayOperation(id)?.category === "remap");
   let lutIds: string[];
   let remapIds: string[];
   if (mode === "sdr") {
@@ -243,7 +243,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
   const activeEncoding = getDisplayOperation(displayOperationId);
-  const isLut = activeEncoding?.kind === "lut";
+  const isLut = activeEncoding?.category === "colormap";
   const curveId = isLut ? pickDefaultCurve(ids) : displayOperationId;
   const colormap = isLut ? displayOperationId : null;
   const displayOperationModified = displayOperationId !== seedFor(arity);

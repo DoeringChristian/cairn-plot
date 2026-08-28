@@ -23,13 +23,14 @@
  */
 import { useCallback } from "react";
 import { floatPixelReader } from "../model/pixel-buffer.ts";
-import { getImageOperation, getMultipassImageOperation, isInlineImageOperation } from "../model/operations/index";
+import { getImageOperation } from "../definition/image-operations.ts";
+import { getCpuImageOperation } from "../cpu/image-operations.ts";
 import {
   buildChannelSample,
   type PixelSample,
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
-import { shapeDims, type HdrData, type DecodedSource } from "../backends/contracts";
+import { shapeDims, type HdrData, type DecodedSource } from "../runtime/contracts";
 
 /** A retained decoded uint8 RGBA buffer (a source or the reference operand). */
 interface U8Buffer {
@@ -114,22 +115,22 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
 
   const sampleDiffPixel = useCallback(
     (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
-      const operation = getMultipassImageOperation(resolvedOperationId);
+      const operation = getImageOperation(resolvedOperationId);
       // CACHED metric — the result readback (min-cropped resolution).
-      if (operation) {
+      if (operation?.cache === "global-lru") {
         const arr = diffSamplesRef.current;
         const rdims = diffResultDimsRef.current;
         if (!arr || !rdims || px < 0 || py < 0 || px >= rdims.w || py >= rdims.h) return null;
         const base = (py * rdims.w + px) * 4;
         const values =
-          operation.outputArity === 1
+          operation.output.arity === 1
             ? [arr[base] ?? 0]
             : [arr[base] ?? 0, arr[base + 1] ?? 0, arr[base + 2] ?? 0];
         return buildChannelSample(values, "unit", notation);
       }
       // DIRECT op — the cpu twin over the two source pixels.
-      const op = getImageOperation(resolvedOperationId);
-      if (!op || !isInlineImageOperation(op)) return null;
+      const op = getCpuImageOperation(resolvedOperationId);
+      if (!op) return null;
       // Slot A = the primary `source` (normalized to the GPU's textureLoad).
       const readA = (): number[] | null => {
         if (hdrMode) {
@@ -164,7 +165,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
       const a = readA();
       const b = readB();
       if (!a || !b) return null;
-      return buildChannelSample(op.implementation.cpu([a, b], 3), "unit", notation);
+      return buildChannelSample(op.evaluate([a, b], 3), "unit", notation);
     },
     [resolvedOperationId, hdrMode, naturalDims, hdrDataRef, sdrImageDataRef, refFloatRef, refU8Ref, diffSamplesRef, diffResultDimsRef],
   );

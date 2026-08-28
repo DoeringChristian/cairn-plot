@@ -22,10 +22,10 @@
  *    multi-pass kernel; all diff ops use the same display default.
  */
 import { registerImageOperation, type ImageOperation, type InlineImageOperation } from "./registry.ts";
-import { flipProgram, flipLdrForcedProgram } from "../../engine/kernels/flip.wgsl.ts";
-import { hdrFlipProgram } from "../../engine/kernels/hdr-flip.ts";
-import { ssimProgram } from "../../engine/kernels/ssim.wgsl.ts";
-import type { MultipassImageOperationProgram } from "../../engine/operation-pass.ts";
+import { flipProgram, flipLdrForcedProgram } from "../../webgpu/engine/kernels/flip.wgsl.ts";
+import { hdrFlipProgram } from "../../webgpu/engine/kernels/hdr-flip.ts";
+import { ssimProgram } from "../../webgpu/engine/kernels/ssim.wgsl.ts";
+import type { MultipassImageOperationProgram } from "../../webgpu/engine/operation-pass.ts";
 
 /**
  * IDENTITY — the single-source passthrough. This is "where the source sample

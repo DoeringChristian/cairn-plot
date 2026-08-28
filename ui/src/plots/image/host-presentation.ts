@@ -11,7 +11,7 @@ import type {
   CompareFit,
   CompareSource,
   DecodedSource,
-} from "./backends/contracts.ts";
+} from "./runtime/contracts.ts";
 import type { PlotSettings } from "../../settings/schema.ts";
 import type { CompareViewMode } from "./use-comparison-control.ts";
 

@@ -64,8 +64,8 @@
 import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GpuImagePane from "../../../plots/image/backends/webgpu";
-import { hdrSource, urlSource, type HdrData } from "../../../plots/image/backends/contracts";
+import GpuImagePane from "../../../plots/image/webgpu/view";
+import { hdrSource, urlSource, type HdrData } from "../../../plots/image/runtime/contracts";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const h = React.createElement;

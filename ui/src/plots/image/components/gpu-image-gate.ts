@@ -21,7 +21,7 @@
  * probe entirely. The failure path carries the addon's capability triage
  * (secure-context vs genuinely unsupported) unchanged.
  */
-import { getSharedWebGpuDevice } from "../engine/webgpu/device-provider.ts";
+import { getSharedWebGpuDevice } from "../webgpu/engine/webgpu/device-provider.ts";
 import {
   noWebgpuKind,
   reportCapabilityLimit,

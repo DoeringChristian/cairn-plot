@@ -13,7 +13,7 @@ import {
   floatPixelsFrom,
   floatValues,
 } from "./model/pixel-buffer.ts";
-import type { DecodedSource } from "./backends/contracts.ts";
+import type { DecodedSource } from "./runtime/contracts.ts";
 
 interface ResolvedImageOperand {
   url: string | null;

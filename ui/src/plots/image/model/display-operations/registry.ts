@@ -26,6 +26,11 @@
  */
 import { clamp01 } from "../../../../primitives/util/clamp.ts";
 
+function sampleDisplayOperationLut(table: Float32Array, index: number): [number, number, number] {
+  const row = Math.round(clamp01(index) * 255);
+  return [table[row * 4]!, table[row * 4 + 1]!, table[row * 4 + 2]!];
+}
+
 /** A named display parameter an encoding may DECLARE it reads (its slider
  *  manifest — UI gating only; the pipeline reads uniforms directly). `norm` is NOT
  *  a manifest param: the norm Lin·Log·Pow picker was removed (norm-UI-removal
@@ -132,7 +137,31 @@ export const NORM_ID: Record<NormMode, number> = { linear: 0, log: 1, power: 2 }
  *  - `lut`:   a data colormap (Phase 2) — binds a 256×1 texture.
  *  - `remap`: a pure structural remap (the normal map `(x+1)/2`) — declares
  *             nothing, arity 3 only. */
-export type DisplayOperationKind = "curve" | "lut" | "remap";
+export type DisplayOperationCategory = "curve" | "colormap" | "remap";
+
+export type DisplayOperationImplementation =
+  | {
+      kind: "per-channel";
+      /** WGSL function body over `value: f32` and `peak: f32`. */
+      wgsl: string;
+      cpu(value: number, params: EncodeParams): number;
+    }
+  | {
+      kind: "lut";
+      /** GPU-ready 256×1 RGBA table owned by this operation. */
+      table: Float32Array;
+      index: {
+        /** WGSL function body over `value` plus the shared data-index params. */
+        wgsl: string;
+        cpu(value: number, params: EncodeParams): number;
+      };
+    }
+  | {
+      kind: "analytic";
+      /** WGSL function body over `value: f32`, returning `vec3<f32>`. */
+      wgsl: string;
+      cpu(value: number, params: EncodeParams): [number, number, number];
+    };
 
 /**
  * The named params an encoding's curve reads at render time. Phase-1 curves read
@@ -176,95 +205,40 @@ export interface DisplayOperation {
   id: string;
   /** Menu label. */
   label: string;
-  /** Structural family / menu section. */
-  kind: DisplayOperationKind;
+  /** Authoring/menu category; independent from the implementation strategy. */
+  category: DisplayOperationCategory;
   /** Channel arities this encoding supports (runtime state; arity gating is
    *  Phase 3). `normal`: [3]; curves: [1,2,3,4]; luts: [1]. */
   arities: number[];
   /** Param MANIFEST — which named params this encoding reads (slider gating). */
   params: ParamName[];
-  /** LUT family binds a 256×1 texture (Phase 2). */
-  needsLut?: boolean;
-  /**
-   * ANALYTIC data encoding (the tev-style signed red-green follow-up) — a
-   * `kind:"lut"` DATA encoding whose color is COMPUTED per value (no texture
-   * bind: `needsLut` is false, `lutName` absent), so it lives in the COLORMAPS
-   * menu section and gates as a data encoding (arity/reduce), but the GPU
-   * dispatches {@link signedAnalyticColor}'s WGSL twin instead of sampling a LUT.
-   *
-   * ## Output treatment (the convention chosen — documented)
-   * Unlike a LUT entry (whose `cpu`/family return BAKED display-sRGB written to
-   * the surface UNCHANGED), an analytic entry's `cpu`/WGSL return SCENE-LINEAR
-   * color that flows through the SHARED output-encode stage — exactly like a
-   * curve. So the surface's own encoder decides the range: the SDR path
-   * (`outputEncode`) clamps to `[0,1]`, the extended/HDR path
-   * (`extendedOutputEncode`) lets values past 1 SURVIVE (unclamped, per W3C
-   * ColorWeb-CG). Because the two encoders AGREE on `[0,1]`, an amplitude `|v|≤1`
-   * renders identically on both surfaces; only `|v|>1` diverges (HDR keeps the
-   * over-range error, SDR clamps). The `cpu` twin therefore returns the LINEAR
-   * color (pre-encode), and the parity harness threads it through the SAME
-   * `outputEncode`/`extendedOutputEncode` the curves use.
-   *
-   * ## Norm/bounds/exposure (documented)
-   * The analytic map is intrinsically linear in `|v|`, so it declares NEITHER
-   * `norm` NOR `min`/`max` (a log/power reshape or a normalize-to-[0,1] bounds
-   * affine has no meaning on an unbounded signed diverging map). It DOES declare
-   * `exposure`/`offset` (the sensitivity skin — exposure SCALES the amplitude,
-   * matching tev applying exposure BEFORE the POS_NEG operator) and `reduce`
-   * (collapse a k>1 sample to the signed scalar; tev averages the per-channel
-   * difference — `mean` is the tev-faithful reduce, `luminance` the k≥3 default).
-   */
-  analytic?: boolean;
-  /**
-   * TURBO false-color (the tev-exact follow-up) — a table-backed `kind:"lut"`
-   * DATA encoding (`needsLut`/`lutName:"turbo"`, so it DOES bind the LUT texture)
-   * whose LUT INDEX is tev's FIXED log2 mapping ({@link turboDataIndex}) BAKED into
-   * the encoding, NOT the user-facing {@link computeDataIndex} norm path. So it
-   * declares NO `norm`/`min`/`max` (those pickers are hidden), defaults `reduce` to
-   * `mean` (tev averages RGB), and exposure/offset apply BEFORE the log2 (sliding
-   * the image along the ramp). The GPU routes it via scalar-mode `3` (`u_bind10.z`),
-   * which calls `cairnTurboDataIndex` instead of `cairnDataIndex` before sampling
-   * the bound turbo table. Unset on every other entry.
-   */
-  turbo?: boolean;
-  /**
-   * For `kind:"lut"` encodings: the colormap TABLE id (== a `ColormapName` in
-   * `colormaps/lut.ts`) whose 256×4 float LUT the shared LUT shader family binds.
-   * The entry references the table by id — it does NOT carry texel data — so
-   * every colormap is ONE family parameterized by texture, never a per-colormap
-   * pipeline (per the design). Absent on curve/remap entries.
-   */
-  lutName?: string;
-  /**
-   * GPU operator id — the uniform value (`u_bind2.y`) the assembled
-   * `applyOperator` dispatch and `engine/image-engine.ts`'s `OPERATOR_ID` map
-   * both key on. Stable across the codebase (documented in `image.wgsl.ts`).
-   */
-  operatorId: number;
-  /**
-   * WGSL curve — an EXPRESSION over `rgb: vec3<f32>` and `peak: f32` evaluating
-   * to `vec3<f32>` (the operator applied to the exposure/offset-adjusted,
-   * post-scalar-LUT rgb). Assembled into the shared `applyOperator` dispatch by
-   * `./wgsl.ts`.
-   *
-   * (Deviation from the design's literal `fn encode(v: vec4f, p: Params) ->
-   * vec3f`: an EXPRESSION over `rgb`/`peak` composes cleanly into the ONE curve
-   * FAMILY dispatch — curves share a single cached pipeline, unlike per-kernel
-   * pipelines — without fn-name collisions, and stays the WGSL twin of `cpu`.)
-   */
-  wgsl: string;
-  /**
-   * CPU twin of `wgsl` — the operator curve applied to `v` (the exposure/offset-
-   * adjusted rgb), for the first `k` channels. Returns the display triple.
-   */
-  cpu(v: readonly number[], k: number, p: EncodeParams): [number, number, number];
-  /** Per-channel implementation for curve/remap operations. `wgsl` is a function
-   * body over `value: f32` and `peak: f32`; it must return one `f32`. The
-   * assembler owns function naming and RGB channel application. */
-  channel?: {
-    wgsl: string;
-    cpu(value: number, params: EncodeParams): number;
-  };
+  /** Default multi-channel reduction when the authored settings omit one. */
+  defaultReduce?: ReduceMode;
+  implementation: DisplayOperationImplementation;
+}
+
+/** CPU execution twin for a registered display operation. Channel packing and
+ * reduction are shared mechanics; the selected implementation owns the actual
+ * transform. */
+export function evaluateDisplayOperation(
+  operation: DisplayOperation,
+  values: readonly number[],
+  channels: number,
+  params: EncodeParams = DEFAULT_ENCODE_PARAMS,
+): [number, number, number] {
+  const implementation = operation.implementation;
+  if (implementation.kind === "per-channel") {
+    return [
+      implementation.cpu(values[0] ?? 0, params),
+      implementation.cpu(values[1] ?? 0, params),
+      implementation.cpu(values[2] ?? 0, params),
+    ];
+  }
+  const scalar = reduceToScalar(values, channels, params.reduce ?? operation.defaultReduce ?? defaultReduceMode(channels));
+  if (implementation.kind === "analytic") return implementation.cpu(scalar, params);
+  const index = implementation.index.cpu(scalar, params);
+  const [r, g, b] = sampleDisplayOperationLut(implementation.table, index);
+  return [r, g, b];
 }
 
 /** Runtime default for displaying comparison fields. It belongs to display
@@ -359,7 +333,7 @@ export const TURBO_LOG2_STOPS = 10;
  * WGSL twin: `cairnTurboDataIndex` in `./wgsl.ts`, kept byte-parallel.
  */
 export function turboDataIndex(scalar: number): number {
-  return clamp01(Math.log2(scalar + TURBO_LOG2_OFFSET) / TURBO_LOG2_STOPS + 0.5);
+  return clamp01((Math.log2(Math.max(scalar, TURBO_LOG2_OFFSET)) + 5) / TURBO_LOG2_STOPS);
 }
 
 /**
@@ -408,8 +382,8 @@ export function listDisplayOperations(): DisplayOperation[] {
 }
 
 /** Display operations of a given kind (menu section), in registration order. */
-export function listDisplayOperationsByKind(kind: DisplayOperationKind): DisplayOperation[] {
-  return listDisplayOperations().filter((e) => e.kind === kind);
+export function listDisplayOperationsByCategory(category: DisplayOperationCategory): DisplayOperation[] {
+  return listDisplayOperations().filter((operation) => operation.category === category);
 }
 
 // Re-export the shared clamp so entry modules import it from one place.

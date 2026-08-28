@@ -32,7 +32,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { listDisplayOperations, listDisplayOperationsByKind } from "./index.ts";
+import { listDisplayOperations, listDisplayOperationsByCategory } from "./index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // ui/src/plots/image/model/display-operations/ → repo root is six levels up.
@@ -47,12 +47,12 @@ const sorted = (xs: readonly string[]): string[] => [...xs].sort();
  *  curves are not menu operators. Mirrors `DISPLAY_OPERATION_IDS`
  *  in `image/tonemap.ts`, but computed here straight from the registry. */
 const registryDisplayCurveIds = (): string[] => [
-  ...listDisplayOperationsByKind("curve"),
-  ...listDisplayOperationsByKind("remap"),
+  ...listDisplayOperationsByCategory("curve"),
+  ...listDisplayOperationsByCategory("remap"),
 ].map((e) => e.id);
 
-/** The colormap ID set the registry defines: every `kind:"lut"` entry. */
-const registryColormaps = (): string[] => listDisplayOperationsByKind("lut").map((e) => e.id);
+/** The colormap ID set the registry defines. */
+const registryColormaps = (): string[] => listDisplayOperationsByCategory("colormap").map((e) => e.id);
 
 /** Extract a Python module-level tuple of string literals, e.g.
  *  `_COLORMAPS = ("viridis", "plasma", ...)`. `#` line comments are stripped
@@ -88,7 +88,7 @@ test("registry colormaps === Python _COLORMAPS", () => {
 });
 
 test("every registry lut id is a real, unique encoding", () => {
-  const luts = listDisplayOperationsByKind("lut");
+  const luts = listDisplayOperationsByCategory("colormap");
   assert.ok(luts.length > 0, "no lut encodings registered");
   const all = new Set(listDisplayOperations().map((e) => e.id));
   for (const id of registryColormaps()) assert.ok(all.has(id), `lut ${id} not in registry`);

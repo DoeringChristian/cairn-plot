@@ -34,9 +34,9 @@
 import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import GpuImagePane from "../../../plots/image/backends/webgpu";
-import { urlSource, hdrSource, type HdrData } from "../../../plots/image/backends/contracts";
-import { getSharedWebGpuDevice } from "../../../plots/image/engine/webgpu/device-provider.ts";
+import GpuImagePane from "../../../plots/image/webgpu/view";
+import { urlSource, hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
+import { getSharedWebGpuDevice } from "../../../plots/image/webgpu/engine/webgpu/device-provider.ts";
 import {
   startPaneRenderLog,
   stopPaneRenderLog,
@@ -45,7 +45,7 @@ import {
   getHueAnomalies,
   getDeepColorStats,
   type PaneRenderRecord,
-} from "../../../plots/image/engine/test-hooks";
+} from "../../../plots/image/webgpu/engine/test-hooks";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const h = React.createElement;

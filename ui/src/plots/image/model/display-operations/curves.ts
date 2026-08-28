@@ -39,38 +39,25 @@ const CURVE_ARITIES = [1, 2, 3, 4];
 
 /** Build the CPU triple by applying a per-channel scalar curve to v[0..2]. */
 function perChannelOperation(
-  definition: Omit<DisplayOperation, "cpu" | "wgsl" | "channel"> & {
-    channel: NonNullable<DisplayOperation["channel"]>;
+  definition: Omit<DisplayOperation, "implementation"> & {
+    implementation: Extract<DisplayOperation["implementation"], { kind: "per-channel" }>;
   },
 ): DisplayOperation {
-  const { channel, ...metadata } = definition;
-  return {
-    ...metadata,
-    channel,
-    wgsl: `vec3<f32>(cairnDisplayChannel${metadata.operatorId}(rgb.r, peak), cairnDisplayChannel${metadata.operatorId}(rgb.g, peak), cairnDisplayChannel${metadata.operatorId}(rgb.b, peak))`,
-    cpu: (values, _channels, params) => [
-      channel.cpu(values[0] ?? 0, params),
-      channel.cpu(values[1] ?? 0, params),
-      channel.cpu(values[2] ?? 0, params),
-    ],
-  };
+  return definition;
 }
 
 // ---------------------------------------------------------------------------
-// Entries. operatorId values are STABLE (baked into image.wgsl.ts's uniform doc
-// + assembled dispatch + OPERATOR_ID); do not renumber. Registration order is
-// chosen so `image/tonemap.ts`'s `TONEMAP_OPERATORS` (built from the non-peak
-// entries) comes out in its historical key order.
+// Registration order is the menu order.
 // ---------------------------------------------------------------------------
 
 const linear = perChannelOperation({
   id: "linear",
   label: "Linear",
-  kind: "curve",
+  category: "curve",
   arities: CURVE_ARITIES,
   params: ["exposure", "offset", "peak"],
-  operatorId: 0,
-  channel: {
+  implementation: {
+    kind: "per-channel",
     wgsl: `
       return min(max(value, 0.0), max(peak, 1e-6));
     `,
@@ -81,13 +68,13 @@ const linear = perChannelOperation({
 const srgb = perChannelOperation({
   id: "srgb",
   label: "sRGB",
-  kind: "curve",
+  category: "curve",
   arities: CURVE_ARITIES,
   params: ["exposure", "offset", "peak"],
-  operatorId: 1,
   // Identity tone-map: the HDR→[0,1] step is a clamp; the sRGB OETF is applied by
   // the output-encode stage (`tonemap === "srgb"`).
-  channel: {
+  implementation: {
+    kind: "per-channel",
     wgsl: `
       return min(max(value, 0.0), max(peak, 1e-6));
     `,
@@ -98,13 +85,13 @@ const srgb = perChannelOperation({
 const gamma = perChannelOperation({
   id: "gamma",
   label: "Gamma",
-  kind: "curve",
+  category: "curve",
   arities: CURVE_ARITIES,
   // Reads γ — the power curve `pow(x,1/γ)` is applied at the output-encode stage
   // (resolveEncodeGamma), the RANGE-MAP here is the same clamp as linear/srgb.
   params: ["exposure", "offset", "gamma", "peak"],
-  operatorId: 8,
-  channel: {
+  implementation: {
+    kind: "per-channel",
     wgsl: `
       return min(max(value, 0.0), max(peak, 1e-6));
     `,
@@ -115,11 +102,11 @@ const gamma = perChannelOperation({
 const reinhard = perChannelOperation({
   id: "reinhard",
   label: "Reinhard",
-  kind: "curve",
+  category: "curve",
   arities: CURVE_ARITIES,
   params: ["exposure", "offset", "peak"],
-  operatorId: 2,
-  channel: {
+  implementation: {
+    kind: "per-channel",
     wgsl: `
       let v = max(value, 0.0);
       return v / (1.0 + v / max(peak, 1e-6));
@@ -134,11 +121,11 @@ const reinhard = perChannelOperation({
 const aces = perChannelOperation({
   id: "aces",
   label: "ACES",
-  kind: "curve",
+  category: "curve",
   arities: CURVE_ARITIES,
   params: ["exposure", "offset", "peak"],
-  operatorId: 3,
-  channel: {
+  implementation: {
+    kind: "per-channel",
     wgsl: `
       let p = max(peak, 1e-6);
       let v = max(value, 0.0) / p;
@@ -158,11 +145,11 @@ const normal = perChannelOperation({
   id: "normal",
   label: "Normal map",
   // The remap `(x+1)/2` IS the whole mapping — declares NOTHING, arity 3 only.
-  kind: "remap",
+  category: "remap",
   arities: [3],
   params: [],
-  operatorId: 9,
-  channel: {
+  implementation: {
+    kind: "per-channel",
     wgsl: `
       return clamp((value + 1.0) * 0.5, 0.0, 1.0);
     `,

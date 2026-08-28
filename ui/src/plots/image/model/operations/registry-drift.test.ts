@@ -15,9 +15,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildImageOperationWGSL, getImageOperation, listInlineImageOperations, IMAGE_OPERATION_ID } from "./index.ts";
-import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
+import { buildImageWGSL } from "../../webgpu/engine/shaders/image.wgsl.ts";
 import { IMAGE_OPERATIONS } from "./ops.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../display-operations/index.ts";
+import { getDisplayOperation } from "../display-operations/index.ts";
+
+const imageWGSL = buildImageWGSL(getDisplayOperation("linear")!);
 
 test("the image shader interpolates the registry-assembled content function", () => {
   const assembled = buildImageOperationWGSL();

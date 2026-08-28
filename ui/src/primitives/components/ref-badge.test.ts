@@ -55,8 +55,8 @@ test("RefBadge: single top-left, accent-tinted, pointer-transparent contract", (
 // `RefBadge` and must not contain a competing inline REF label/span.
 const CONSUMERS = [
   "plots/image/compare/compositor.tsx",
-  "plots/image/backends/webgpu.tsx",
-  "plots/image/backends/canvas.tsx",
+  "plots/image/webgpu/view.tsx",
+  "plots/image/cpu/view.tsx",
 ];
 
 test("every compare pane renders the shared RefBadge (no divergent REF chip)", () => {

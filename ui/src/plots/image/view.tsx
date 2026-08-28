@@ -3,7 +3,7 @@ import { useContext } from "react";
 import { floatPixelsFrom } from "./model/pixel-buffer.ts";
 import { ContentAspectFrame } from "../../layout/ContentAspectFrame.tsx";
 import { GridCellReporter, GridUniformAspectContext, finitePositive } from "../../layout/grid-uniform-aspect.tsx";
-import { resolveRenderMode, shapeDims } from "./backends/contracts.ts";
+import { resolveRenderMode, shapeDims } from "./runtime/contracts.ts";
 import { useImageView } from "../../state/settings/use-image-view.ts";
 import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "../../host/standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";

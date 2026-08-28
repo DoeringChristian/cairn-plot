@@ -8,23 +8,9 @@
  */
 import { registerCurveEncodings } from "./curves.ts";
 import { registerLutEncodings } from "./luts.ts";
-import { listDisplayOperations } from "./registry.ts";
 
-// Curves first (operatorIds 0–9), then the colormap LUT family (10+) — the
-// registration order `listDisplayOperationsByKind` returns, so the colormap menu order
-// matches `COLORMAP_NAMES`.
 registerCurveEncodings();
 registerLutEncodings();
-
-/**
- * The `operatorId` uniform value for each encoding id — the map
- * `engine/image-engine.ts` packs into `u_bind2.y` (was a hand-maintained
- * `OPERATOR_ID` literal, now GENERATED from the registry so the shader dispatch
- * — also assembled from the registry — and the CPU packing can never drift).
- */
-export const OPERATOR_ID: Record<string, number> = Object.fromEntries(
-  listDisplayOperations().map((e) => [e.id, e.operatorId]),
-);
 
 export * from "./registry.ts";
 export * from "./curves.ts";

@@ -30,9 +30,9 @@ test("image backend receives settings and commands explicitly and cannot initial
   assert.match(adapter, /commands:\s*input\.commands/);
 
   for (const relative of [
-    "../plots/image/backends/webgpu.tsx",
-    "../plots/image/backends/canvas.tsx",
-    "../plots/image/backends/contracts.ts",
+    "../plots/image/webgpu/view.tsx",
+    "../plots/image/cpu/view.tsx",
+    "../plots/image/runtime/contracts.ts",
   ]) {
     const source = readFileSync(new URL(relative, import.meta.url), "utf8");
     assert.doesNotMatch(source, /applySyncedSettings/);

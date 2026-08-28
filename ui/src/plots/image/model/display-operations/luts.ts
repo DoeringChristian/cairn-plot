@@ -1,196 +1,192 @@
-/**
- * The DATA-LUT display encodings (Phase 2) — the colormaps (viridis / plasma /
- * magma / red-green / red-blue) as `kind:"lut"` registry entries. A LUT encoding
- * is the DATA-side rival to a light-curve tone-map: it answers "how does ONE
- * scalar channel become RGB" by indexing a 256-entry colormap table.
- *
- * ## One family, tables not code
- * Unlike curves (each an inlined WGSL expression in the shared `applyOperator`
- * dispatch), colormaps are ONE shader family (`LUT_FAMILY_WGSL`'s `cairnLutColor`)
- * parameterized by the bound 256×1 texture. So an entry carries only a `lutName`
- * REFERENCE to its table (`colormaps/lut.ts`'s `COLORMAP_STOPS`), never texel
- * data or its own pipeline — adding a colormap is one `COLORMAP_STOPS` entry, and
- * these registry entries + the menus regenerate from it.
- *
- * ## Parity twin
- * `cpu` mirrors the GPU family for the FLOAT-image path (cmap-mode `linear`, the
- * sequential full ramp): clamp the (exposure/offset-adjusted) scalar to `[0,1]`,
- * round to a LUT row, read the DISPLAY (sRGB) color — the exact bytes the GPU
- * family samples and writes to the surface unchanged. The `display-operation-registry`
- * parity harness renders a scalar float image through the image pass with each
- * colormap's table bound and compares to this twin.
- *
- * The diff-display blit reuses the SAME family for its `signed`/`positive` index
- * modes (see `engine/diff-engine.ts`); those live on the diff path (a kernel
- * `displayRange` + diverging fold), not on these float-image entries. Phase 4
- * added the DATA norms + bounds: an entry now declares `exposure`/`offset`
- * (sensitivity) + `min`/`max` (the bounds skin) + `norm` (linear/log/power), and
- * the `cpu` twin threads the scalar through `computeDataIndex` before the LUT.
- */
 import {
   registerDisplayOperation,
-  clamp01,
   computeDataIndex,
-  reduceToScalar,
-  defaultReduceMode,
   signedAnalyticColor,
   turboDataIndex,
-  DEFAULT_ENCODE_PARAMS,
   type DisplayOperation,
 } from "./registry.ts";
-import { COLORMAP_NAMES, COLORMAP_LABELS, getColormapLUT } from "../../../../settings/colormaps/lut.ts";
-import { sampleLutByte } from "../../../../settings/colormaps/lut-sample.ts";
 
-/** operatorId space: curves own 0–9 (see `curves.ts`); LUT entries take 10+.
- *  The id is never dispatched through `applyOperator` (the `isScalar` path
- *  short-circuits to the LUT family before it), but the registry requires every
- *  entry's operatorId to be a UNIQUE integer, so LUT ids stay disjoint. */
-const LUT_OPERATOR_ID_BASE = 10;
+type Rgb8 = readonly [number, number, number];
 
-/** The float-image LUT reads the DISPLAY color directly — the WGSL twin is the
- *  shared family call (`LUT_FAMILY_WGSL`), not a per-entry dispatch branch. Held
- *  as the entry's `wgsl` so the registry's "non-empty wgsl" invariant holds and
- *  the string documents which family the entry belongs to. */
-const LUT_FAMILY_WGSL_REF = "cairnLutColor(lut, scalar, /*cmapMode*/ 0, filterLinear)";
-
-/** The analytic entry computes its color directly — the WGSL twin is the shared
- *  family call (`LUT_FAMILY_WGSL`'s `cairnSignedAnalyticColor`), whose result the
- *  isScalar path runs through output-encode (NOT written unchanged). Held as the
- *  entry's `wgsl` so the registry's "non-empty wgsl" invariant holds. */
-const ANALYTIC_WGSL_REF = "cairnSignedAnalyticColor(scalar)";
-
-/** The TURBO entry binds its table like an ordinary LUT — the WGSL twin is the
- *  shared family call, but the isScalar path indexes it at `cairnTurboDataIndex`
- *  (scalar-mode 3) instead of `cairnDataIndex`. Held as the entry's `wgsl` for the
- *  registry's "non-empty wgsl" invariant + to document the family. */
-const TURBO_WGSL_REF = "cairnLutColor(lut, cairnTurboDataIndex(scalar), /*cmapMode*/ 0, filterLinear)";
-
-/** CPU twin of the LUT family: the (reduced) scalar → the DISPLAY (sRGB) colormap
- *  color in `[0,1]`. The k>1 sample is first collapsed to a scalar by
- *  {@link reduceToScalar} (the multi-channel follow-up: luminance / mean over the
- *  color channels), then the LUT INDEX runs through {@link computeDataIndex} (the
- *  norm reshape + optional min/max bounds affine — the shared CPU source of truth
- *  the WGSL `cairnDataIndex` mirrors). At k=1 `reduceToScalar` returns `v[0]`
- *  unchanged, so with DEFAULT params (norm `linear`, no bounds) the scalar passes
- *  straight through — byte-identical to the pre-follow-up behavior. `reduce`
- *  defaults to the k-based mode ({@link defaultReduceMode}) when unset. */
-function lutCpu(name: string): DisplayOperation["cpu"] {
-  return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
-    const scalar = reduceToScalar(v, k, p.reduce ?? defaultReduceMode(k));
-    const idx = computeDataIndex(scalar, p);
-    const [r, g, b] = sampleLutByte(getColormapLUT(name as never), clamp01(idx));
-    return [r / 255, g / 255, b / 255];
-  };
+function buildDisplayLut(stops: readonly Rgb8[]): Float32Array {
+  const table = new Float32Array(256 * 4);
+  for (let row = 0; row < 256; row++) {
+    const position = (row / 255) * (stops.length - 1);
+    const lower = Math.floor(position);
+    const upper = Math.min(lower + 1, stops.length - 1);
+    const fraction = position - lower;
+    for (let channel = 0; channel < 3; channel++) {
+      const a = stops[lower]![channel];
+      const b = stops[upper]![channel];
+      table[row * 4 + channel] = Math.round(a + (b - a) * fraction) / 255;
+    }
+    table[row * 4 + 3] = 1;
+  }
+  return table;
 }
 
-/** The ANALYTIC colormaps (tev-style signed error) — computed per value, NO LUT
- *  bind. `red-green` ports tev's POS_NEG (negative → red, positive → green,
- *  amplitude `2*|v|`, UNCLAMPED linear). Same `id` as the retired LUT entry so
- *  descriptors / back-compat aliases / sync keys keep working; `analytic:true`
- *  (not `needsLut`) routes the GPU to `cairnSignedAnalyticColor` + the shared
- *  output-encode (surviving >1 on the HDR surface) instead of a texture sample —
- *  see {@link DisplayOperation.analytic}. Declares exposure/offset (sensitivity =
- *  amplitude scaling) + reduce (k>1 collapse), NOT norm/min/max (an unbounded
- *  signed map has no log/power or normalize-to-[0,1] skin). */
-const ANALYTIC_LUT_IDS = new Set<string>(["red-green"]);
+const LINEAR_INDEX = {
+  wgsl: `
+    return cairnDataIndex(value, normMode, normMin, normMax, boundsActive, gamma);
+  `,
+  cpu: computeDataIndex,
+};
 
-/** The TURBO false-color colormap (the tev-exact follow-up) — a table-backed LUT
- *  whose INDEX is tev's FIXED log2 mapping ({@link turboDataIndex}) BAKED into the
- *  encoding (not the user-facing norm path). `turbo:true` routes the GPU to
- *  scalar-mode 3 (`cairnTurboDataIndex` before the LUT sample); it declares NO
- *  norm/min/max (the log2 is intrinsic) and defaults `reduce` to `mean` (tev
- *  averages RGB). Exposure/offset apply BEFORE the log2 (sliding along the ramp). */
-const TURBO_LUT_IDS = new Set<string>(["turbo"]);
+const turbo: DisplayOperation = {
+  id: "turbo",
+  label: "Turbo",
+  category: "colormap",
+  arities: [1, 2, 3, 4],
+  params: ["exposure", "offset", "reduce"],
+  defaultReduce: "mean",
+  implementation: {
+    kind: "lut",
+    table: buildDisplayLut([
+    [48,18,59], [50,21,67], [51,24,74], [52,27,81], [53,30,88], [54,33,95], [55,36,102], [56,39,109],
+    [57,42,115], [58,45,121], [59,47,128], [60,50,134], [61,53,139], [62,56,145], [63,59,151], [63,62,156],
+    [64,64,162], [65,67,167], [65,70,172], [66,73,177], [66,75,181], [67,78,186], [68,81,191], [68,84,195],
+    [68,86,199], [69,89,203], [69,92,207], [69,94,211], [70,97,214], [70,100,218], [70,102,221], [70,105,224],
+    [70,107,227], [71,110,230], [71,113,233], [71,115,235], [71,118,238], [71,120,240], [71,123,242], [70,125,244],
+    [70,128,246], [70,130,248], [70,133,250], [70,135,251], [69,138,252], [69,140,253], [68,143,254], [67,145,254],
+    [66,148,255], [65,150,255], [64,153,255], [62,155,254], [61,158,254], [59,160,253], [58,163,252], [56,165,251],
+    [55,168,250], [53,171,248], [51,173,247], [49,175,245], [47,178,244], [46,180,242], [44,183,240], [42,185,238],
+    [40,188,235], [39,190,233], [37,192,231], [35,195,228], [34,197,226], [32,199,223], [31,201,221], [30,203,218],
+    [28,205,216], [27,208,213], [26,210,210], [26,212,208], [25,213,205], [24,215,202], [24,217,200], [24,219,197],
+    [24,221,194], [24,222,192], [24,224,189], [25,226,187], [25,227,185], [26,228,182], [28,230,180], [29,231,178],
+    [31,233,175], [32,234,172], [34,235,170], [37,236,167], [39,238,164], [42,239,161], [44,240,158], [47,241,155],
+    [50,242,152], [53,243,148], [56,244,145], [60,245,142], [63,246,138], [67,247,135], [70,248,132], [74,248,128],
+    [78,249,125], [82,250,122], [85,250,118], [89,251,115], [93,252,111], [97,252,108], [101,253,105], [105,253,102],
+    [109,254,98], [113,254,95], [117,254,92], [121,254,89], [125,255,86], [128,255,83], [132,255,81], [136,255,78],
+    [139,255,75], [143,255,73], [146,255,71], [150,254,68], [153,254,66], [156,254,64], [159,253,63], [161,253,61],
+    [164,252,60], [167,252,58], [169,251,57], [172,251,56], [175,250,55], [177,249,54], [180,248,54], [183,247,53],
+    [185,246,53], [188,245,52], [190,244,52], [193,243,52], [195,241,52], [198,240,52], [200,239,52], [203,237,52],
+    [205,236,52], [208,234,52], [210,233,53], [212,231,53], [215,229,53], [217,228,54], [219,226,54], [221,224,55],
+    [223,223,55], [225,221,55], [227,219,56], [229,217,56], [231,215,57], [233,213,57], [235,211,57], [236,209,58],
+    [238,207,58], [239,205,58], [241,203,58], [242,201,58], [244,199,58], [245,197,58], [246,195,58], [247,193,58],
+    [248,190,57], [249,188,57], [250,186,57], [251,184,56], [251,182,55], [252,179,54], [252,177,54], [253,174,53],
+    [253,172,52], [254,169,51], [254,167,50], [254,164,49], [254,161,48], [254,158,47], [254,155,45], [254,153,44],
+    [254,150,43], [254,147,42], [254,144,41], [253,141,39], [253,138,38], [252,135,37], [252,132,35], [251,129,34],
+    [251,126,33], [250,123,31], [249,120,30], [249,117,29], [248,114,28], [247,111,26], [246,108,25], [245,105,24],
+    [244,102,23], [243,99,21], [242,96,20], [241,93,19], [240,91,18], [239,88,17], [237,85,16], [236,83,15],
+    [235,80,14], [234,78,13], [232,75,12], [231,73,12], [229,71,11], [228,69,10], [226,67,10], [225,65,9],
+    [223,63,8], [221,61,8], [220,59,7], [218,57,7], [216,55,6], [214,53,6], [212,51,5], [210,49,5],
+    [208,47,5], [206,45,4], [204,43,4], [202,42,4], [200,40,3], [197,38,3], [195,37,3], [193,35,2],
+    [190,33,2], [188,32,2], [185,30,2], [183,29,2], [180,27,1], [178,26,1], [175,24,1], [172,23,1],
+    [169,22,1], [167,20,1], [164,19,1], [161,18,1], [158,16,1], [155,15,1], [152,14,1], [149,13,1],
+    [146,11,1], [142,10,1], [139,9,2], [136,8,2], [133,7,2], [129,6,2], [126,5,2], [122,4,3],
+  ]),
+    index: {
+      wgsl: `
+        return clamp((log2(max(value, 0.03125)) + 5.0) / 10.0, 0.0, 1.0);
+      `,
+      cpu: turboDataIndex,
+    },
+  },
+};
 
-/** CPU twin of the TURBO entry: the (reduced, exposure/offset-adjusted) scalar →
- *  tev's FIXED log2 index → the DISPLAY (sRGB) turbo color in `[0,1]`. The k>1
- *  sample is collapsed to a scalar first; the turbo entry defaults `reduce` to
- *  `mean` (tev's RGB average), NOT the k-based {@link defaultReduceMode}. */
-function turboCpu(): DisplayOperation["cpu"] {
-  return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
-    const scalar = reduceToScalar(v, k, p.reduce ?? "mean");
-    const idx = turboDataIndex(scalar);
-    const [r, g, b] = sampleLutByte(getColormapLUT("turbo" as never), clamp01(idx));
-    return [r / 255, g / 255, b / 255];
-  };
-}
+const plasma: DisplayOperation = {
+  id: "plasma",
+  label: "Plasma",
+  category: "colormap",
+  arities: [1, 2, 3, 4],
+  params: ["exposure", "offset", "min", "max", "reduce"],
+  implementation: {
+    kind: "lut",
+    table: buildDisplayLut([[13, 8, 135], [126, 3, 168], [204, 71, 120], [248, 149, 64], [240, 249, 33]]),
+    index: LINEAR_INDEX,
+  },
+};
 
-/** CPU twin of an analytic entry: the (reduced, exposure/offset-adjusted) signed
- *  scalar → the SCENE-LINEAR analytic color (UNCLAMPED, pre-output-encode — the
- *  caller runs it through outputEncode/extendedOutputEncode, exactly like a
- *  curve). At k=1 `reduceToScalar` returns `v[0]`; k>1 collapses per `reduce`. */
-function analyticCpu(): DisplayOperation["cpu"] {
-  return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
-    const scalar = reduceToScalar(v, k, p.reduce ?? defaultReduceMode(k));
-    return signedAnalyticColor(scalar);
-  };
-}
+const magma: DisplayOperation = {
+  id: "magma",
+  label: "Magma",
+  category: "colormap",
+  arities: [1, 2, 3, 4],
+  params: ["exposure", "offset", "min", "max", "reduce"],
+  implementation: {
+    kind: "lut",
+    table: buildDisplayLut([
+    [0,0,4], [1,0,5], [1,1,6], [1,1,8], [2,1,9], [2,2,11], [2,2,13], [3,3,15],
+    [3,3,18], [4,4,20], [5,4,22], [6,5,24], [6,5,26], [7,6,28], [8,7,30], [9,7,32],
+    [10,8,34], [11,9,36], [12,9,38], [13,10,41], [14,11,43], [16,11,45], [17,12,47], [18,13,49],
+    [19,13,52], [20,14,54], [21,14,56], [22,15,59], [24,15,61], [25,16,63], [26,16,66], [28,16,68],
+    [29,17,71], [30,17,73], [32,17,75], [33,17,78], [34,17,80], [36,18,83], [37,18,85], [39,18,88],
+    [41,17,90], [42,17,92], [44,17,95], [45,17,97], [47,17,99], [49,17,101], [51,16,103], [52,16,105],
+    [54,16,107], [56,16,108], [57,15,110], [59,15,112], [61,15,113], [63,15,114], [64,15,116], [66,15,117],
+    [68,15,118], [69,16,119], [71,16,120], [73,16,120], [74,16,121], [76,17,122], [78,17,123], [79,18,123],
+    [81,18,124], [82,19,124], [84,19,125], [86,20,125], [87,21,126], [89,21,126], [90,22,126], [92,22,127],
+    [93,23,127], [95,24,127], [96,24,128], [98,25,128], [100,26,128], [101,26,128], [103,27,128], [104,28,129],
+    [106,28,129], [107,29,129], [109,29,129], [110,30,129], [112,31,129], [114,31,129], [115,32,129], [117,33,129],
+    [118,33,129], [120,34,129], [121,34,130], [123,35,130], [124,35,130], [126,36,130], [128,37,130], [129,37,129],
+    [131,38,129], [132,38,129], [134,39,129], [136,39,129], [137,40,129], [139,41,129], [140,41,129], [142,42,129],
+    [144,42,129], [145,43,129], [147,43,128], [148,44,128], [150,44,128], [152,45,128], [153,45,128], [155,46,127],
+    [156,46,127], [158,47,127], [160,47,127], [161,48,126], [163,48,126], [165,49,126], [166,49,125], [168,50,125],
+    [170,51,125], [171,51,124], [173,52,124], [174,52,123], [176,53,123], [178,53,123], [179,54,122], [181,54,122],
+    [183,55,121], [184,55,121], [186,56,120], [188,57,120], [189,57,119], [191,58,119], [192,58,118], [194,59,117],
+    [196,60,117], [197,60,116], [199,61,115], [200,62,115], [202,62,114], [204,63,113], [205,64,113], [207,64,112],
+    [208,65,111], [210,66,111], [211,67,110], [213,68,109], [214,69,108], [216,69,108], [217,70,107], [219,71,106],
+    [220,72,105], [222,73,104], [223,74,104], [224,76,103], [226,77,102], [227,78,101], [228,79,100], [229,80,100],
+    [231,82,99], [232,83,98], [233,84,98], [234,86,97], [235,87,96], [236,88,96], [237,90,95], [238,91,94],
+    [239,93,94], [240,95,94], [241,96,93], [242,98,93], [242,100,92], [243,101,92], [244,103,92], [244,105,92],
+    [245,107,92], [246,108,92], [246,110,92], [247,112,92], [247,114,92], [248,116,92], [248,118,92], [249,120,93],
+    [249,121,93], [249,123,93], [250,125,94], [250,127,94], [250,129,95], [251,131,95], [251,133,96], [251,135,97],
+    [252,137,97], [252,138,98], [252,140,99], [252,142,100], [252,144,101], [253,146,102], [253,148,103], [253,150,104],
+    [253,152,105], [253,154,106], [253,155,107], [254,157,108], [254,159,109], [254,161,110], [254,163,111], [254,165,113],
+    [254,167,114], [254,169,115], [254,170,116], [254,172,118], [254,174,119], [254,176,120], [254,178,122], [254,180,123],
+    [254,182,124], [254,183,126], [254,185,127], [254,187,129], [254,189,130], [254,191,132], [254,193,133], [254,194,135],
+    [254,196,136], [254,198,138], [254,200,140], [254,202,141], [254,204,143], [254,205,144], [254,207,146], [254,209,148],
+    [254,211,149], [254,213,151], [254,215,153], [254,216,154], [253,218,156], [253,220,158], [253,222,160], [253,224,161],
+    [253,226,163], [253,227,165], [253,229,167], [253,231,169], [253,233,170], [253,235,172], [252,236,174], [252,238,176],
+    [252,240,178], [252,242,180], [252,244,182], [252,246,184], [252,247,185], [252,249,187], [252,251,189], [252,253,191],
+  ]),
+    index: LINEAR_INDEX,
+  },
+};
 
-/** The colormaps as registry encodings, in `COLORMAP_NAMES` (canonical) order so
- *  `listDisplayOperationsByKind("lut")` matches the colormap menu order. `red-green` is
- *  the ANALYTIC entry (computed, no LUT bind); the rest are table-backed LUTs. */
-export const LUT_ENCODINGS: DisplayOperation[] = COLORMAP_NAMES.map((name, i) =>
-  TURBO_LUT_IDS.has(name)
-    ? {
-        id: name,
-        label: COLORMAP_LABELS[name],
-        kind: "lut", // COLORMAPS menu section; gates as a DATA encoding.
-        arities: [1, 2, 3, 4],
-        needsLut: true,
-        turbo: true,
-        // Sensitivity (exposure slides along the ramp BEFORE the log2) + offset +
-        // the k>1 reduce (default `mean`, tev's RGB average). NO norm/min/max — the
-        // log2 index is BAKED into the encoding (see TURBO_LUT_IDS / turboDataIndex).
-        params: ["exposure", "offset", "reduce"],
-        operatorId: LUT_OPERATOR_ID_BASE + i,
-        lutName: name,
-        wgsl: TURBO_WGSL_REF,
-        cpu: turboCpu(),
+const redGreen: DisplayOperation = {
+  id: "red-green",
+  label: "Red–Green",
+  category: "colormap",
+  arities: [1, 2, 3, 4],
+  params: ["exposure", "offset", "reduce"],
+  implementation: {
+    kind: "analytic",
+    wgsl: `
+      let amplitude = 2.0 * abs(value);
+      if (value < 0.0) {
+        return vec3<f32>(amplitude, 0.0, 0.0);
       }
-    : ANALYTIC_LUT_IDS.has(name)
-    ? {
-        id: name,
-        label: COLORMAP_LABELS[name],
-        kind: "lut", // COLORMAPS menu section; gates as a DATA encoding.
-        arities: [1, 2, 3, 4],
-        // NO needsLut / lutName — the color is COMPUTED, not sampled.
-        analytic: true,
-        // Sensitivity (exposure scales the error amplitude) + offset + the k>1
-        // reduce. NO norm/min/max (see ANALYTIC_LUT_IDS doc).
-        params: ["exposure", "offset", "reduce"],
-        operatorId: LUT_OPERATOR_ID_BASE + i,
-        wgsl: ANALYTIC_WGSL_REF,
-        cpu: analyticCpu(),
-      }
-    : {
-        id: name,
-        label: COLORMAP_LABELS[name],
-        kind: "lut",
-        // Colormaps map the selected channels → RGB. The follow-up makes them legal
-        // at EVERY k∈[1,4]: a k>1 sample is REDUCED to a scalar (luminance/mean)
-        // before the LUT (see `reduce` below + `reduceToScalar`), so a colormap is
-        // offered on RGB / RGBA sources too, not only isolated scalars.
-        // usePaneEncoding gates the menu by this arity set.
-        arities: [1, 2, 3, 4],
-        needsLut: true,
-        // The DATA encoding declares the sensitivity skin (exposure/offset), the
-        // bounds skin (min/max — the ALTERNATIVE affine, shown only when the
-        // descriptor seeds a colorRange), and the multi-channel `reduce`
-        // (luminance/mean — shown only at k>1). All are UI-gating metadata; the
-        // pipeline reads uniforms directly. (The `norm` picker was removed — the
-        // engine `cairnDataIndex`/`u_bind9` norm machinery stays but is unused
-        // UI-side; the manifest no longer declares it — norm-UI-removal follow-up.)
-        params: ["exposure", "offset", "min", "max", "reduce"],
-        operatorId: LUT_OPERATOR_ID_BASE + i,
-        lutName: name,
-        wgsl: LUT_FAMILY_WGSL_REF,
-        cpu: lutCpu(name),
-      },
-);
+      return vec3<f32>(0.0, amplitude, 0.0);
+    `,
+    cpu: signedAnalyticColor,
+  },
+};
+
+const redBlue: DisplayOperation = {
+  id: "red-blue",
+  label: "Red–Blue",
+  category: "colormap",
+  arities: [1, 2, 3, 4],
+  params: ["exposure", "offset", "min", "max", "reduce"],
+  implementation: {
+    kind: "lut",
+    table: buildDisplayLut([[215, 25, 28], [255, 255, 255], [44, 123, 182]]),
+    index: LINEAR_INDEX,
+  },
+};
+
+export const LUT_ENCODINGS: readonly DisplayOperation[] = [
+  turbo,
+  plasma,
+  magma,
+  redGreen,
+  redBlue,
+];
 
 let registered = false;
 export function registerLutEncodings(): void {
   if (registered) return;
   registered = true;
-  for (const e of LUT_ENCODINGS) registerDisplayOperation(e);
+  for (const operation of LUT_ENCODINGS) registerDisplayOperation(operation);
 }
+

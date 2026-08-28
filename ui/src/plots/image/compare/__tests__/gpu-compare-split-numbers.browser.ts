@@ -50,10 +50,10 @@ import { createRoot } from "react-dom/client";
 // Phase 3: split renders on the UNIFIED pane (`GpuImagePane` + a `compareSource`
 // whose `mode:"split"`), so the #88 per-side number-alignment proof migrates onto
 // it — reading the SAME per-side geometry seams (now on `__cairnImageDiffProbe`).
-import GpuImagePane from "../../backends/webgpu";
-import { urlSource, type CompareSource } from "../../backends/contracts";
+import GpuImagePane from "../../webgpu/view";
+import { urlSource, type CompareSource } from "../../runtime/contracts";
 import type { ImageViewState } from "../../../../host/hooks/use-image-gestures";
-import { isDeviceLostError } from "../../engine/webgpu/device";
+import { isDeviceLostError } from "../../webgpu/engine/webgpu/device";
 import { createHarness, sleep, waitFor } from "../../../../testing/harness";
 
 const h = React.createElement;

@@ -146,7 +146,7 @@ export interface ImageOperation {
       }
     | {
         kind: "multipass";
-      } & import("../../engine/operation-pass.ts").MultipassImageOperationProgram;
+      } & import("../../webgpu/engine/operation-pass.ts").MultipassImageOperationProgram;
 }
 
 export type InlineImageOperation = ImageOperation & {
