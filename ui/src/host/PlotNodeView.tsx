@@ -6,8 +6,7 @@
  * and mounts `<PlotNodeView node={root} />`.
  *
  * The former flat single-renderer body of `PlotApp` lives on here as
- * `LeafView` (resolveDataProps → bounded wait-for-registration → render via the
- * `*Standalone` adapters in the registry).
+ * a generic definition-backed leaf outlet plus the retained image-family host.
  */
 import React, {
   useCallback,
@@ -93,7 +92,7 @@ export { CellSettingsContext, SharedPlotContext } from "./plot-context.ts";
 export type { CellSettingsContextValue, SharedPlotCtx } from "./plot-context.ts";
 
 /**
- * How long a `LeafView` waits for a not-yet-registered renderer (an addon
+ * How long an image host waits for a not-yet-registered backend (an addon
  * `<script>` still parsing) before surfacing "unknown renderer". Reduced from
  * 8000 (O2 review M1): the addon IIFE is emitted synchronously BEFORE the mount
  * push and runs same-page, so registration always wins in practice; this bound
@@ -124,7 +123,7 @@ function Message({ text, error }: { text: string; error?: boolean }) {
   );
 }
 
-// TEST-ONLY no-flash instrumentation. `LeafView` reads its resolved value straight
+// TEST-ONLY no-flash instrumentation. `ImageLeafView` reads its resolved value straight
 // from the subscribable resolve-cache (a pure function of `resolveKey`), so there is
 // no component-held `state` cell that can hold a PREVIOUS slot's resolution across a
 // flip: a WARM/prefetched slot resolves synchronously (instant, no placeholder); a
@@ -148,7 +147,7 @@ if (typeof window !== "undefined") {
 // the registered backend. Authored display state is already in the cell's
 // settings; presentation props remain non-interactive rendering inputs.
 // ---------------------------------------------------------------------------
-function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafSpec }) {
+function ImageLeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafSpec }) {
   const { source, shared } = useSharedPlot();
   // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
   const paneSync = useContext(CellSettingsContext);
@@ -173,7 +172,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // node's own `data.part`/`data.layer`. Resolves at RENDER through the one
   // lookup: store value > local state (the local cell serves only a viewport
   // with no store). Deliberately NOT reset on a node swap: in a STACKED
-  // viewport the same LeafView instance flips between slots, and the picked
+  // surface the same ImageLeafView instance flips between slots, and the picked
   // layer must carry across (shared-settings semantics).
   const [localChSel, setChSel] = useState<ChannelSelection | null>(null);
   const syncedChannelSelect = paneSync?.syncedSettings?.["image.channelSelect"];
@@ -201,7 +200,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // resolve swap: a channel pick's cold re-resolve renders the "Loading…"
   // placeholder, unmounting the whole renderer subtree — component-local
   // enlarge state there was reset, throwing the user out of fullscreen (the
-  // reported bug). LeafView survives that swap, so the pane consumes this as
+  // reported bug). ImageLeafView survives that swap, so the pane consumes this as
   // a CONTROLLED `enlargeControl` and fullscreen persists across re-resolves.
   const [paneEnlarged, setPaneEnlarged] = useState(false);
   const enlargeControl = useMemo(
@@ -732,7 +731,7 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
 /**
  * Dispatch on `node.kind`, INSIDE the pane's `PlotCell` (so it can read
  * the pane's sync identity). Phase 3: a compare node in ANY mode (diff AND
- * split/blend) lowers to `LeafView` with a synthesized image leaf + a resolved
+ * split/blend) lowers to `ImageLeafView` with a synthesized image leaf + a resolved
  * `compareSource` — the SAME component an image plot leaf renders — so every
  * image-compatible stack is homogeneous and a mode switch / stacked flip is a
  * source-swap on the reused pane (NO remount, no `CompositeMediaPane`/
@@ -748,7 +747,7 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
       if (node.type === "image") return <ImageCompatibleView node={node} />;
       return (
         <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-          <LeafView node={node} />
+          <GenericLeafView node={node} />
         </LazyGate>
       );
     case "compare":
@@ -759,9 +758,73 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
   }
 }
 
+/** Generic definition-backed leaf host. Plot-specific behavior belongs behind
+ * the registered definition/backend pair; this component only resolves,
+ * leases, and connects the cell settings command port. */
+function GenericLeafView({ node }: { node: PlotLeafNode }) {
+  const { source, shared } = useSharedPlot();
+  const cell = useContext(CellSettingsContext);
+  const key = resolutionKey(source, node);
+  const [, bumpRegistry] = useState(0);
+  useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
+
+  const registered = getReactPlotType(node.type);
+  useEffect(() => {
+    if (registered) return;
+    return onRegisterReactPlotType(() => bumpRegistry((value) => value + 1));
+  }, [registered, node.type]);
+  useEffect(() => {
+    if (!registered || peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
+    void resolveCached(key, async () => registered.definition.present(
+      await registered.definition.resolve(node, {
+        source,
+        signal: new AbortController().signal,
+      }),
+    )).catch(() => {});
+  }, [key, node, registered, source]);
+
+  const presentation = peekResolved<unknown>(key);
+  useEffect(() => {
+    if (presentation === undefined) return;
+    const lease = acquireResolved(key);
+    return () => lease?.release();
+  }, [key, presentation]);
+
+  const error = peekResolveError(key);
+  if (error) return <Message text={`Plot error: ${error}`} error />;
+  if (!registered) return <Message text={`plot type ${JSON.stringify(node.type)} is not installed`} error />;
+  if (presentation === undefined) return <Message text="Loading…" />;
+  if (presentation === null || typeof presentation !== "object" || Array.isArray(presentation)) {
+    return <Message text={`plot ${JSON.stringify(node.type)} returned an invalid presentation`} error />;
+  }
+  if (!registered.backends.length) {
+    return <Message text={`backend for ${JSON.stringify(node.type)} is not installed`} error />;
+  }
+
+  return (
+    <ReactBackendOutlet
+      backends={registered.backends}
+      environment={browserRenderEnvironment()}
+      presentation={withoutSettingsPlumbing(presentation as Record<string, unknown>)}
+      settings={registered.definition.projectSettings(
+        (cell?.syncedSettings ?? {}) as import("../plots/contracts.ts").SettingsRecord,
+      )}
+      commands={{
+        patch: (patch) => cell?.setSyncedSettings?.(patch as PlotSettings),
+        reset: () => {
+          (cell?.resetSyncedSettings ?? cell?.setSyncedSettings)?.(
+            defaultSettingsForNode(node, shared),
+          );
+        },
+      }}
+      invalidation="presentation"
+    />
+  );
+}
+
 /** Capability-backed host for comparisons that do not require image continuity. */
 function GenericComparisonView({ node }: { node: CompareNode }) {
-  const { source } = useSharedPlot();
+  const { source, shared } = useSharedPlot();
   const paneSync = useContext(CellSettingsContext);
   const key = resolutionKey(source, node, "|comparison");
   useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
@@ -810,7 +873,7 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
         patch: (patch) => paneSync?.setSyncedSettings?.(patch as PlotSettings),
         reset: () => {
           (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(
-            planned.value!.definition.defaults(node) as PlotSettings,
+            defaultSettingsForNode(node, shared),
           );
         },
       }}
@@ -821,7 +884,7 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
 
 /**
  * One stable React boundary for ordinary images and image comparisons. A stack
- * flip between them therefore updates the retained LeafView/surface in place.
+ * flip between them therefore updates the retained ImageLeafView/surface in place.
  */
 function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
   const { shared } = useSharedPlot();
@@ -836,7 +899,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
   if (node.kind === "plot") {
     return (
       <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-        <LeafView node={node} />
+        <ImageLeafView node={node} />
       </LazyGate>
     );
   }
@@ -868,7 +931,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
   };
   return (
     <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-      <LeafView node={synth.leaf} diffSpec={diffSpec} />
+      <ImageLeafView node={synth.leaf} diffSpec={diffSpec} />
     </LazyGate>
   );
 }
