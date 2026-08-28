@@ -23,8 +23,8 @@
 import { floatValues } from "../../image/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import GpuImagePane from "../GpuImagePane";
-import { hdrSource, type HdrData } from "../image-backend";
+import GpuImagePane from "../../../../plots/image/backend/gpu";
+import { hdrSource, type HdrData } from "../../../../plots/image/backend/contracts";
 import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "HISTOGRAM" });

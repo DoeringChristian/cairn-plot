@@ -26,9 +26,9 @@ const LIB = join(HERE, ".."); // src/lib/cairn-plot
 const read = (rel: string) => readFileSync(join(LIB, rel), "utf8");
 
 const shell = read("renderers/ImagePaneShell.tsx");
-const backend = read("renderers/image-backend.ts");
-const cpu = read("renderers/CpuImagePane.tsx");
-const gpu = read("renderers/GpuImagePane.tsx");
+const backend = read("../../plots/image/backend/contracts.ts");
+const cpu = read("../../plots/image/backend/cpu.tsx");
+const gpu = read("../../plots/image/backend/gpu.tsx");
 const standalone = readFileSync(join(HERE, "../../../plots/image/view.tsx"), "utf8");
 
 // --- the shared contract: the shape carries `toolbar` ---------------------

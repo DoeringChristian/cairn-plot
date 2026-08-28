@@ -38,8 +38,8 @@
 import { floatValues } from "../../image/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GpuImagePane from "../GpuImagePane";
-import { hdrSource, type HdrData } from "../image-backend";
+import GpuImagePane from "../../../../plots/image/backend/gpu";
+import { hdrSource, type HdrData } from "../../../../plots/image/backend/contracts";
 import {
   DEFAULT_OVERLAY_SETTINGS,
   type ImageOverlayData,

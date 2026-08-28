@@ -24,7 +24,7 @@ import {
   Colorbar,
   type ColormapName,
 } from "./lib/cairn-plot";
-import type { CompareSource } from "./lib/cairn-plot/renderers/image-backend";
+import type { CompareSource } from "./plots/image/backend/contracts";
 import {
   resolveDataProps,
   type CompareNode,

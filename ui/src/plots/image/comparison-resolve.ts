@@ -13,7 +13,7 @@ import {
   floatPixelsFrom,
   floatValues,
 } from "../../lib/cairn-plot/image/pixel-buffer.ts";
-import type { DecodedSource } from "../../lib/cairn-plot/renderers/image-backend.ts";
+import type { DecodedSource } from "../../plots/image/backend/contracts.ts";
 
 interface ResolvedImageOperand {
   url: string | null;

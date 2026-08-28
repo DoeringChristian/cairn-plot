@@ -36,8 +36,8 @@
  */
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import GpuImagePane from "../GpuImagePane";
-import { urlSource } from "../image-backend";
+import GpuImagePane from "../../../../plots/image/backend/gpu";
+import { urlSource } from "../../../../plots/image/backend/contracts";
 import { getSharedDevice } from "../../../../plots/image/engine/device";
 import {
   startPaneRenderLog,

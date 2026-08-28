@@ -22,7 +22,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { useLegacyImageProps, type ImageBackendProps } from "./image-backend.ts";
+import { useLegacyImageProps, type ImageBackendProps } from "../../../plots/image/backend/contracts.ts";
 import {
   DEFAULT_OVERLAY_SETTINGS,
   type ImageOverlayData,

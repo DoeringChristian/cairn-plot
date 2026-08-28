@@ -30,9 +30,9 @@ test("image backend receives settings and commands explicitly and cannot initial
   assert.match(adapter, /commands:\s*input\.commands/);
 
   for (const relative of [
-    "../lib/cairn-plot/renderers/GpuImagePane.tsx",
-    "../lib/cairn-plot/renderers/CpuImagePane.tsx",
-    "../lib/cairn-plot/renderers/image-backend.ts",
+    "../plots/image/backend/gpu.tsx",
+    "../plots/image/backend/cpu.tsx",
+    "../plots/image/backend/contracts.ts",
   ]) {
     const source = readFileSync(new URL(relative, import.meta.url), "utf8");
     assert.doesNotMatch(source, /applySyncedSettings/);

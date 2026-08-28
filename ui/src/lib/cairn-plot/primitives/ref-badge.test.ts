@@ -55,8 +55,8 @@ test("RefBadge: single top-left, accent-tinted, pointer-transparent contract", (
 // `RefBadge` and must not contain a competing inline REF label/span.
 const CONSUMERS = [
   "media-compare/compositor.tsx",
-  "renderers/GpuImagePane.tsx",
-  "renderers/CpuImagePane.tsx",
+  "../../plots/image/backend/gpu.tsx",
+  "../../plots/image/backend/cpu.tsx",
   "../../plots/three/viewports/mesh.tsx",
   "../../plots/three/viewports/pointcloud.tsx",
   "../../plots/three/viewports/boxes.tsx",

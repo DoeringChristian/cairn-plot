@@ -46,8 +46,8 @@ import { createRoot } from "react-dom/client";
 // canvas ALSO loses its backing store if remounted, so the "canvas survives the
 // reparent" proof is just as meaningful here; the WebGPU pane is verified
 // interactively in a foreground browser.
-import CpuImagePane from "../CpuImagePane";
-import { hdrSource, type HdrData } from "../image-backend";
+import CpuImagePane from "../../../../plots/image/backend/cpu";
+import { hdrSource, type HdrData } from "../../../../plots/image/backend/contracts";
 import type { Viewport as ImageViewport } from "../../hooks/use-image-viewport";
 import { reframeViewportForResize } from "../../image/reframe";
 import { createHarness, sleep, waitFor } from "../../testing/harness";

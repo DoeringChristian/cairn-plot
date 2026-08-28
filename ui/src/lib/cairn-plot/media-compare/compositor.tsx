@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import GpuImagePane from "../renderers/GpuImagePane";
+import GpuImagePane from "../../../plots/image/backend/gpu";
 import {
   ensureGpuImageProbe,
   gpuImageGateState,
@@ -19,7 +19,7 @@ import type {
 import { useImageViewport, type Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../renderers/ImageOverlay";
-import CpuImagePane, { tonemapToImageData } from "../renderers/CpuImagePane";
+import CpuImagePane, { tonemapToImageData } from "../../../plots/image/backend/cpu";
 import { DEFAULT_TONEMAP } from "../image/tonemap";
 import { DIFF_MODE_LABELS } from "../image/diff";
 import PixelValueOverlay, {
@@ -39,7 +39,7 @@ import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../../../plots/image/engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
-import { resolveRenderMode, urlSource } from "../renderers/image-backend";
+import { resolveRenderMode, urlSource } from "../../../plots/image/backend/contracts";
 import {
   useSeedGroupOnFormation,
   useViewportSettings,
@@ -50,7 +50,7 @@ import type {
   DecodedSource,
   FloatSource,
   ImageBackend,
-} from "../renderers/image-backend";
+} from "../../../plots/image/backend/contracts";
 
 /**
  * Resolve the UNIFIED engine image pane (`GpuImagePane`, statically in core

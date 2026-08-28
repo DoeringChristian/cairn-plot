@@ -3,7 +3,7 @@ import { useContext } from "react";
 import { floatPixelsFrom } from "../../lib/cairn-plot/image/pixel-buffer.ts";
 import { ContentAspectFrame } from "../../lib/cairn-plot/renderers/ContentAspectFrame.tsx";
 import { GridCellReporter, GridUniformAspectContext, finitePositive } from "../../lib/cairn-plot/renderers/grid-uniform-aspect.tsx";
-import { resolveRenderMode, shapeDims } from "../../lib/cairn-plot/renderers/image-backend.ts";
+import { resolveRenderMode, shapeDims } from "../../plots/image/backend/contracts.ts";
 import { useImageView } from "../../state/settings/use-image-view.ts";
 import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "../../plot-standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";

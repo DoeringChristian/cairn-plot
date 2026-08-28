@@ -7,7 +7,7 @@ import type {
   DecodedSource,
   ImageBackendProps,
   RenderMode,
-} from "../../lib/cairn-plot/renderers/image-backend.ts";
+} from "../../plots/image/backend/contracts.ts";
 import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";

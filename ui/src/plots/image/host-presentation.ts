@@ -11,7 +11,7 @@ import type {
   CompareFit,
   CompareSource,
   DecodedSource,
-} from "../../lib/cairn-plot/renderers/image-backend.ts";
+} from "../../plots/image/backend/contracts.ts";
 import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
 import type { CompareViewMode } from "./use-comparison-control.ts";
 

@@ -10,7 +10,7 @@
  * begun to diverge. They now consume this one component; the correct dbl-click
  * behavior (`stopPropagation`, so it never also triggers the pane's own view
  * reset) lives here once. Post content-op unification (Phase 4) the split-mode
- * panes are the unified GPU pane (`renderers/GpuImagePane.tsx`) and the CPU
+ * panes are the unified GPU pane (`../../plots/image/backend/gpu.tsx`) and the CPU
  * split/blend fallback (`media-compare/compositor.tsx`'s `MediaComparePane`).
  */
 import { test } from "node:test";
@@ -47,7 +47,7 @@ test("SplitDivider owns the element, the drag handler and the correct dbl-click"
 // One SplitDivider consumer contract: every split-mode pane renders <SplitDivider>
 // and NO pane keeps its own inline divider. The `cairn-plot-split-divider` class
 // now appears ONLY in SplitDivider.tsx across the whole media-compare surface.
-const CONSUMERS = ["media-compare/compositor.tsx", "renderers/GpuImagePane.tsx"];
+const CONSUMERS = ["media-compare/compositor.tsx", "../../plots/image/backend/gpu.tsx"];
 
 test("both compare panes consume the shared SplitDivider (no inline copy)", () => {
   for (const rel of CONSUMERS) {
