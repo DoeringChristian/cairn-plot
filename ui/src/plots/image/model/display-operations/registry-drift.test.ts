@@ -44,9 +44,9 @@ const sorted = (xs: readonly string[]): string[] => [...xs].sort();
 
 /** The public tone-map operator ID set the registry defines: the non-HDR light
  *  CURVES plus the structural REMAPS (the `normal` map). Internal HDR execution
- *  curves are not menu operators. Mirrors `SDR_TONEMAP_OPERATORS`
+ *  curves are not menu operators. Mirrors `DISPLAY_OPERATION_IDS`
  *  in `image/tonemap.ts`, but computed here straight from the registry. */
-const registryTonemapOperators = (): string[] => [
+const registryDisplayCurveIds = (): string[] => [
   ...listDisplayOperationsByKind("curve"),
   ...listDisplayOperationsByKind("remap"),
 ].map((e) => e.id);
@@ -72,7 +72,7 @@ const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
 const pySrc = readFileSync(componentsPath, "utf8");
 
 test("registry tonemap operators === contract.tonemapOperators", () => {
-  assert.deepEqual(sorted(registryTonemapOperators()), sorted(contract.tonemapOperators));
+  assert.deepEqual(sorted(registryDisplayCurveIds()), sorted(contract.tonemapOperators));
 });
 
 test("registry colormaps === contract.colormaps", () => {
@@ -80,7 +80,7 @@ test("registry colormaps === contract.colormaps", () => {
 });
 
 test("registry tonemap operators === Python _TONEMAP_OPERATORS", () => {
-  assert.deepEqual(sorted(registryTonemapOperators()), sorted(pyStringTuple(pySrc, "_TONEMAP_OPERATORS")));
+  assert.deepEqual(sorted(registryDisplayCurveIds()), sorted(pyStringTuple(pySrc, "_TONEMAP_OPERATORS")));
 });
 
 test("registry colormaps === Python _COLORMAPS", () => {

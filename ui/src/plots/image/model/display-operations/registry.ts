@@ -15,7 +15,7 @@
  * Only the ~10 existing tone-map operators are migrated (curves + the `normal`
  * remap). The registry's `wgsl`/`cpu` capture the OPERATOR CURVE only — the
  * ℝ³→display-RGB compression/remap stage that today lives in `applyOperator`
- * (GPU) / `applyTonemapOperatorTriple` (CPU). The shared front stage
+ * (GPU) / `applyDisplayCurveIdTriple` (CPU). The shared front stage
  * (exposure/offset), the scalar-LUT stage, and the output-encode/transfer stage
  * stay exactly where they are; folding those per-encoding is scheduled for later
  * phases (LUT family, norms/bounds, tonemap.ts absorption). `params` are still
@@ -258,8 +258,9 @@ export interface DisplayOperation {
    * adjusted rgb), for the first `k` channels. Returns the display triple.
    */
   cpu(v: readonly number[], k: number, p: EncodeParams): [number, number, number];
-  /** Per-channel implementation for curve operations. The pipeline owns channel
-   * packing; the operation owns the scalar transform. */
+  /** Per-channel implementation for curve/remap operations. `wgsl` is a function
+   * body over `value: f32` and `peak: f32`; it must return one `f32`. The
+   * assembler owns function naming and RGB channel application. */
   channel?: {
     wgsl: string;
     cpu(value: number, params: EncodeParams): number;

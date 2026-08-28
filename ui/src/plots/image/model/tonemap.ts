@@ -11,10 +11,10 @@
  *     functions (`srgbOetf` / `srgbEotf`) they are built on.
  *   - The UI CONFIG the sliders read: gamma (`TONEMAP_GAMMA_*`) and peak
  *     (`EXTENDED_TONEMAP_PEAK_*`) bounds + `resolveEncodeGamma` / `tonemapHasGamma`.
- *   - The UNIFIED RENDER-TRANSLATION: `resolveEffectiveTonemap` /
- *     `resolveRenderTonemap` "pick a curve, pick a
+ *   - The render translation: `resolveRenderTonemap` carries a display
+ *     operation and independent output-surface parameters to the engine.
  *     ceiling" mapping onto the engine's operator + `hdrOut` + `peak`.
- *   - The menu operator SET (`SDR_TONEMAP_OPERATORS`), DERIVED from the registry.
+ *   - The menu operator SET (`DISPLAY_OPERATION_IDS`), DERIVED from the registry.
  *
  * The pipeline per pixel is still EXPOSURE → CURVE (registry) → OUTPUT-ENCODE; a
  * caller applies the curve via `getDisplayOperation(id).cpu(rgb, 3, params)`.
@@ -45,7 +45,7 @@ export type RgbTriple = [number, number, number];
  * (pre-gamma / pre-sRGB). Keep it a plain object so adding an operator is a
  * one-line addition (see module doc).
  */
-export type TonemapOperator =
+export type DisplayCurveId =
   | "linear"
   | "srgb"
   | "gamma" //             Gamma(γ) display transfer — pow(clamp01(x), 1/γ), tev-style
@@ -68,7 +68,7 @@ export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
 // tonemap.ts no longer wraps them — see the module doc.
 
 /** The default operator when none / an unknown key is supplied. */
-export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
+export const DEFAULT_DISPLAY_OPERATION_ID: DisplayCurveId = "srgb";
 
 /**
  * The user-selectable SDR tone-map operators — the ONE unified operator menu
@@ -78,10 +78,10 @@ export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
  * are independent of whether the host surface is SDR or HDR.
  * Registration order yields the historical menu order.
  */
-export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
+export const DISPLAY_OPERATION_IDS: readonly DisplayCurveId[] = [
   ...listDisplayOperationsByKind("curve"),
   ...listDisplayOperationsByKind("remap"),
-].map((e) => e.id as TonemapOperator);
+].map((e) => e.id as DisplayCurveId);
 
 /**
  * The DISPLAY-TRANSFER operators offered on an SDR / 8-bit image pane (menu
@@ -92,10 +92,10 @@ export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
  * linear to the display). tev applies the same transfer selector to LDR images.
  * The compression operators (`reinhard`/`aces`) are NOT offered on an 8-bit pane
  * (its pixels are already in `[0,1]`), so this is a subset of
- * {@link SDR_TONEMAP_OPERATORS}. See `renderers/GpuImagePane`/`CpuImagePane` for
+ * {@link DISPLAY_OPERATION_IDS}. See `renderers/GpuImagePane`/`CpuImagePane` for
  * the sRGB-DECODE-first pipeline the 8-bit source runs through first.
  */
-export const SDR_DISPLAY_TRANSFER_OPERATORS: readonly TonemapOperator[] = [
+export const DISPLAY_TRANSFER_OPERATION_IDS: readonly DisplayCurveId[] = [
   "srgb",
   "gamma",
   "linear",
@@ -104,46 +104,17 @@ export const SDR_DISPLAY_TRANSFER_OPERATORS: readonly TonemapOperator[] = [
 // The name→CPU-curve resolver and the peak-aware triple dispatch were removed in
 // Phase 5: callers apply a curve straight from the registry via
 // `getDisplayOperation(id).cpu(rgb, 3, params)` (the single source of truth the GPU
-// `applyOperator` mirrors), with `getDisplayOperation(DEFAULT_TONEMAP)` as the fallback.
+// `applyOperator` mirrors), with `getDisplayOperation(DEFAULT_DISPLAY_OPERATION_ID)` as the fallback.
 
 /**
  * Resolve a public display operator. Invalid input falls back to
- * `DEFAULT_TONEMAP` ("srgb"). Internal HDR execution operators are never
+ * `DEFAULT_DISPLAY_OPERATION_ID` ("srgb"). Internal HDR execution operators are never
  * accepted through this public-facing seam.
  */
-export function resolveDisplayOperator(name: string | undefined | null): TonemapOperator {
-  return name && (SDR_TONEMAP_OPERATORS as readonly string[]).includes(name)
-    ? (name as TonemapOperator)
-    : DEFAULT_TONEMAP;
-}
-
-/**
- * The tone-map operator ACTUALLY IN EFFECT for an image pane — the value the
- * (single) TONEMAP toolbar menu shows, and the pane's HOME-reset target. Under
- * the UNIFIED model this is TRIVIAL: the operator (curve) is surface-independent
- * — only the PEAK ceiling `P` differs between SDR and HDR (see
- * {@link resolveRenderTonemap}). So:
- *
- *   - An explicit descriptor `tonemap=` is honored when it names a registered
- *     display operation.
- *   - An UNSET descriptor defaults to `"srgb"` on EVERY surface (user
- *     decision): on SDR it is the bit-exact round-trip for an already-sRGB
- *     8-bit source; on an engaged HDR surface it is the extended sRGB encode
- *     with the managed PEAK ceiling (default P=4) — the tev-default rendition.
- *     Manual PEAK=∞ recovers the raw browser-clipped look; Linear stays one
- *     menu click away.
- *
- * Pure (no DOM / GPU) so it is unit-tested directly. The panes layer a
- * view-local override on top of this default; HOME clears the override back to
- * this value.
- */
-export function resolveEffectiveTonemap(
-  descriptorTonemap: string | undefined | null,
-  hdrSurfaceEngaged: boolean,
-): TonemapOperator {
-  void hdrSurfaceEngaged; // one default for every surface (see doc above)
-  if (descriptorTonemap == null) return "srgb";
-  return resolveDisplayOperator(descriptorTonemap);
+export function resolveDisplayOperator(name: string | undefined | null): DisplayCurveId {
+  return name && (DISPLAY_OPERATION_IDS as readonly string[]).includes(name)
+    ? (name as DisplayCurveId)
+    : DEFAULT_DISPLAY_OPERATION_ID;
 }
 
 /** Apply an exposure of `ev` stops in scene-linear space: v * 2**ev. */

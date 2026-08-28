@@ -9,8 +9,8 @@
  * All curve operators share ONE cached pipeline and are selected at render time
  * by the `operatorId` uniform (`u_bind2.y`) — NOT a per-operator pipeline. A
  * slider drag only updates uniforms, so the pipeline never recompiles. This
- * assembler therefore emits ONE `applyOperator` dispatch covering every entry,
- * with each entry's own `wgsl` expression inlined into its `operatorId` branch.
+ * assembler emits one scalar function from each operation-owned WGSL body and
+ * one shared RGB dispatcher selected by the numeric operation id.
  */
 import { listDisplayOperations } from "./registry.ts";
 import { DEFAULT_CLAMP_WGSL } from "./curves.ts";
@@ -25,25 +25,29 @@ export interface ApplyOperatorOptions {
 
 /**
  * Assemble `fn applyOperator(rgb, operatorId, peak) -> vec3<f32>` from the
- * registry: one `if (operatorId == N) { return <expr>; }` per entry whose curve
- * differs from the default clamp (`linear`/`srgb`/`gamma` ARE the default, so
- * they emit no branch and fall through). Branches are ordered by `operatorId`
- * for readability; the ids are mutually exclusive so order is irrelevant to
- * behavior.
+ * registry. Function bodies belong to operations; this assembler supplies only
+ * stable function names, per-channel application, and numeric dispatch.
  */
 export function buildApplyOperatorWGSL(opts: ApplyOperatorOptions): string {
   const entries = listDisplayOperations()
     .filter((e) => e.kind !== "lut") // curves + remaps only (Phase 1)
     .filter((e) => opts.remaps || e.kind !== "remap")
-    .filter((e) => e.wgsl.trim() !== DEFAULT_CLAMP_WGSL) // default-clamp entries fall through
     .slice()
     .sort((a, b) => a.operatorId - b.operatorId);
+
+  const functions = entries
+    .map((entry) => `fn cairnDisplayChannel${entry.operatorId}(value: f32, peak: f32) -> f32 {
+${entry.channel!.wgsl.trim()}
+}`)
+    .join("\n\n");
 
   const branches = entries
     .map((e) => `  if (operatorId == ${e.operatorId}) { return ${e.wgsl}; }`)
     .join("\n");
 
-  return `fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
+  return `${functions}
+
+fn applyOperator(rgb: vec3<f32>, operatorId: i32, peak: f32) -> vec3<f32> {
 ${branches}
   return ${DEFAULT_CLAMP_WGSL};
 }`;

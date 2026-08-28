@@ -41,7 +41,7 @@ import { adaptiveMaxZoom, type ImageViewState } from "../../../host/hooks/use-im
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import { getDisplayOperation } from "../model/display-operations/index";
-import { SDR_DISPLAY_TRANSFER_OPERATORS } from "../model/tonemap";
+import { DISPLAY_TRANSFER_OPERATION_IDS } from "../model/tonemap";
 
 /** The registry label for an encoding id, falling back to the id itself. Both the
  *  tone-map and display-transfer menus source their labels from here so they can
@@ -91,7 +91,7 @@ export function notationToolbarButton(
 /**
  * The DISPLAY-TRANSFER options for an SDR / 8-bit image pane (menu order
  * sRGB · Gamma · Linear). DERIVED from `image/tonemap.ts`'s
- * `SDR_DISPLAY_TRANSFER_OPERATORS` + the registry entry labels (`encodingLabel`),
+ * `DISPLAY_TRANSFER_OPERATION_IDS` + the registry entry labels (`encodingLabel`),
  * so it can't drift.
  * tev applies the same transfer selector to LDR images: the pane sRGB-DECODEs
  * the 8-bit source to linear, then re-encodes via the chosen transfer (sRGB is
@@ -99,7 +99,7 @@ export function notationToolbarButton(
  * raw linear).
  */
 export const SDR_DISPLAY_TRANSFER_MENU_OPTIONS: { id: string; label: string }[] =
-  SDR_DISPLAY_TRANSFER_OPERATORS.map((id) => ({ id, label: encodingLabel(id) }));
+  DISPLAY_TRANSFER_OPERATION_IDS.map((id) => ({ id, label: encodingLabel(id) }));
 
 /**
  * A DISPLAY-TRANSFER dropdown as a toolbar LEADING button (menu variant) for an

@@ -169,9 +169,8 @@ export interface PaneEncodingConfig {
   propColormap: string | null | undefined;
   /** Descriptor tone-map seed (a canonical curve id or undefined). */
   propTonemap: string | null | undefined;
-  /** Pane-specific default-curve resolver from `propTonemap` (HDR uses
-   *  `resolveEffectiveTonemap`; the CPU-SDR transfer path coerces to
-   *  srgb/gamma/linear). Must return a curve id. */
+  /** Pane-specific default-curve resolver from `propTonemap`. The CPU-SDR
+   * transfer path may restrict the result to srgb/gamma/linear. */
   resolveDefaultCurve: (propTonemap: string | null | undefined) => string;
   /** The cell's settings store (the node-level accumulated
    *  `PlotSettings`). When it holds an `encoding`, that id IS the pane's

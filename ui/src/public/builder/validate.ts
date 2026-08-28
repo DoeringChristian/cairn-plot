@@ -10,7 +10,7 @@
  * sets without a contract guard failing.
  */
 import { COLORMAP_NAMES } from "../../settings/colormaps/lut.ts";
-import { SDR_TONEMAP_OPERATORS } from "../../plots/image/model/tonemap.ts";
+import { DISPLAY_OPERATION_IDS } from "../../plots/image/model/tonemap.ts";
 
 /** Named scalar colormaps a color-by-value chart accepts (mirrors Python
  *  `_COLORMAPS`). */
@@ -23,7 +23,7 @@ export const IMAGE_COLORMAPS: readonly string[] = COLORMAP_NAMES;
 
 /** The canonical tone-map operator set — the UNIFIED 5-operator menu (mirrors
  *  Python `_TONEMAP_OPERATORS`, ↔ contract `tonemapOperators`). */
-export const TONEMAP_OPERATORS: readonly string[] = SDR_TONEMAP_OPERATORS;
+export const TONEMAP_OPERATORS: readonly string[] = DISPLAY_OPERATION_IDS;
 
 /** Public `compare(mode=)` diff-kernel short names → the registry kernel id
  *  carried as the descriptor `operation` (mirrors Python

@@ -20,7 +20,7 @@ import { useImageGestures, type ImageViewState } from "../../../host/hooks/use-i
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../components/ImageOverlay";
 import CpuImagePane, { tonemapToImageData } from "../backends/canvas";
-import { DEFAULT_TONEMAP } from "../model/tonemap";
+import { DEFAULT_DISPLAY_OPERATION_ID } from "../model/tonemap";
 import { DIFF_MODE_LABELS } from "../model/diff";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
@@ -608,7 +608,7 @@ function CpuFloatComparePane({
   | "overlaySettings"
   | "pixelValueNotation"
 >) {
-  const tm = tonemap ?? DEFAULT_TONEMAP;
+  const tm = tonemap ?? DEFAULT_DISPLAY_OPERATION_ID;
   const fgUrl = useMemo(
     () => (imageFloat ? floatSourceToDataUrl(imageFloat, tm, tonemap_gamma) : imageUrl),
     [imageFloat, tm, tonemap_gamma, imageUrl],

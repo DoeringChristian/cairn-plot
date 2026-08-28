@@ -124,7 +124,7 @@ import {
 } from "../components/display-operation";
 import { type ReduceMode } from "../model/display-operations/index";
 import {
-  resolveEffectiveTonemap,
+  resolveDisplayOperator,
   resolveRenderTonemap,
   resolveEncodeGamma,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
@@ -135,8 +135,8 @@ import {
   TONEMAP_GAMMA_MIN,
   TONEMAP_GAMMA_MAX,
   TONEMAP_GAMMA_STEP,
-  SDR_TONEMAP_OPERATORS,
-  type TonemapOperator,
+  DISPLAY_OPERATION_IDS,
+  type DisplayCurveId,
 } from "../model/tonemap";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import { usePixelSamplers } from "../components/gpu-image-samplers";
@@ -632,7 +632,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // seed for scalars, per the descriptor back-compat contract).
   const sourceArity = hdrMode ? shapeDims(deepFlatten.hdr.shape).c : 1;
   const resolveDefaultCurve = useCallback(
-    (t: string | null | undefined) => resolveEffectiveTonemap(t, false),
+    (t: string | null | undefined) => resolveDisplayOperator(t),
     [],
   );
   // Settings belong to the viewport regardless of toolbar visibility. Hiding
@@ -640,7 +640,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const enc = usePaneEncoding({
     mode: hdrMode ? "arity" : "sdr",
     arity: sourceArity,
-    curveSet: SDR_TONEMAP_OPERATORS,
+    curveSet: DISPLAY_OPERATION_IDS,
     // ONE encoding for image AND diff faces (the viewport's single display-
     // encoding value). The store's `encoding` id rules when present (see
     // usePaneEncoding); these props are only the SEED term of the lookup.
@@ -658,7 +658,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // each path's "no colormap" condition (`sdrPlain`) is exact.
   const sdrColormap: Colormap | null = hdrMode ? null : (enc.colormap as Colormap | null);
   const hdrColormap: Colormap | null = hdrMode ? (enc.colormap as Colormap | null) : null;
-  const effectiveTonemap: TonemapOperator = enc.curveId as TonemapOperator;
+  const effectiveTonemap: DisplayCurveId = enc.curveId as DisplayCurveId;
   // PEAK (HDR ceiling) gates off the ACTIVE encoding's param MANIFEST — like
   // γ / EV / OFF. Every curve declares `peak` (each respects P as its ceiling on
   // an HDR surface); the `normal` remap and colormap LUTs don't. The pane never

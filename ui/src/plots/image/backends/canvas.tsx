@@ -75,7 +75,7 @@ import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { floatPixelReader, widenFloatPixels } from "../model/pixel-buffer.ts";
 import {
   resolveDisplayOperator,
-  DEFAULT_TONEMAP,
+  DEFAULT_DISPLAY_OPERATION_ID,
   applyExposureOffset,
   outputEncode,
   srgbEotf,
@@ -84,10 +84,10 @@ import {
   TONEMAP_GAMMA_MIN,
   TONEMAP_GAMMA_MAX,
   TONEMAP_GAMMA_STEP,
-  SDR_DISPLAY_TRANSFER_OPERATORS,
-  SDR_TONEMAP_OPERATORS,
+  DISPLAY_TRANSFER_OPERATION_IDS,
+  DISPLAY_OPERATION_IDS,
   type RgbTriple,
-  type TonemapOperator,
+  type DisplayCurveId,
 } from "../model/tonemap";
 import {
   buildChannelSample,
@@ -222,7 +222,7 @@ export function tonemapToImageData(
   const opEnc =
     curveEnc && curveEnc.kind !== "lut"
       ? curveEnc
-      : getDisplayOperation(DEFAULT_TONEMAP)!;
+      : getDisplayOperation(DEFAULT_DISPLAY_OPERATION_ID)!;
   const op = (rgb: RgbTriple): RgbTriple => opEnc.cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak: 1 });
   const out = new Uint8ClampedArray(w * h * 4);
 
@@ -443,7 +443,7 @@ function CpuSdrImagePane(
   const enc = usePaneEncoding({
     mode: "sdr",
     arity: 1,
-    curveSet: SDR_DISPLAY_TRANSFER_OPERATORS,
+    curveSet: DISPLAY_TRANSFER_OPERATION_IDS,
     propColormap: colormapProp,
     propTonemap: tonemapProp,
     resolveDefaultCurve: (t) => {
@@ -454,7 +454,7 @@ function CpuSdrImagePane(
     settings: synced,
   });
   const colormap = enc.colormap as Colormap | null;
-  const sdrTransfer = enc.curveId as TonemapOperator;
+  const sdrTransfer = enc.curveId as DisplayCurveId;
   const gammaSeed = gammaProp && gammaProp > 0 ? gammaProp : TONEMAP_GAMMA_DEFAULT;
   // γ resolves at RENDER: store value > descriptor seed (the one lookup).
   const tonemapGamma =
@@ -1097,7 +1097,7 @@ function CpuHdrImagePane(
   const enc = usePaneEncoding({
     mode: "arity",
     arity: sourceArity,
-    curveSet: SDR_TONEMAP_OPERATORS,
+    curveSet: DISPLAY_OPERATION_IDS,
     propColormap,
     propTonemap: tonemap,
     resolveDefaultCurve,
@@ -1105,7 +1105,7 @@ function CpuHdrImagePane(
     settings: synced,
   });
   const colormap = enc.colormap as Colormap;
-  const tonemapOp = enc.curveId as TonemapOperator;
+  const tonemapOp = enc.curveId as DisplayCurveId;
 
   // Gamma(γ) for the Gamma operator (the γ slider is gated by the active
   // encoding's param manifest — only the Gamma curve declares γ). Seeded from the

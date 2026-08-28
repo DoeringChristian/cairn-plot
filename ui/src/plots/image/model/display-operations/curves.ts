@@ -29,10 +29,7 @@ export function acesScalar(x: number): number {
   return clamp01(num / den);
 }
 
-/** The WGSL curve expression the shader's default `applyOperator` fall-through
- *  returns (`linear`/`srgb`/`gamma` — the RANGE-MAP clamp; the transfer lives in
- *  the output-encode stage). Entries equal to this are covered by the default and
- *  emit no explicit dispatch branch — reproducing the pre-registry shaders exactly. */
+/** Safe fallback for an unknown numeric operation id. */
 export const DEFAULT_CLAMP_WGSL = "clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0))";
 
 // Curves apply per-channel to the first up-to-4 channels — but the operator
@@ -50,7 +47,7 @@ function perChannelOperation(
   return {
     ...metadata,
     channel,
-    wgsl: `vec3<f32>(${["rgb.x", "rgb.y", "rgb.z"].map((x) => channel.wgsl.split("$value").join(x)).join(", ")})`,
+    wgsl: `vec3<f32>(cairnDisplayChannel${metadata.operatorId}(rgb.r, peak), cairnDisplayChannel${metadata.operatorId}(rgb.g, peak), cairnDisplayChannel${metadata.operatorId}(rgb.b, peak))`,
     cpu: (values, _channels, params) => [
       channel.cpu(values[0] ?? 0, params),
       channel.cpu(values[1] ?? 0, params),
@@ -74,7 +71,9 @@ const linear = perChannelOperation({
   params: ["exposure", "offset", "peak"],
   operatorId: 0,
   channel: {
-    wgsl: "min(max($value, 0.0), max(peak, 1e-6))",
+    wgsl: `
+      return min(max(value, 0.0), max(peak, 1e-6));
+    `,
     cpu: (value, params) => Math.min(Math.max(value, 0), Math.max(params.peak, 1e-6)),
   },
 });
@@ -89,7 +88,9 @@ const srgb = perChannelOperation({
   // Identity tone-map: the HDR→[0,1] step is a clamp; the sRGB OETF is applied by
   // the output-encode stage (`tonemap === "srgb"`).
   channel: {
-    wgsl: "min(max($value, 0.0), max(peak, 1e-6))",
+    wgsl: `
+      return min(max(value, 0.0), max(peak, 1e-6));
+    `,
     cpu: (value, params) => Math.min(Math.max(value, 0), Math.max(params.peak, 1e-6)),
   },
 });
@@ -104,7 +105,9 @@ const gamma = perChannelOperation({
   params: ["exposure", "offset", "gamma", "peak"],
   operatorId: 8,
   channel: {
-    wgsl: "min(max($value, 0.0), max(peak, 1e-6))",
+    wgsl: `
+      return min(max(value, 0.0), max(peak, 1e-6));
+    `,
     cpu: (value, params) => Math.min(Math.max(value, 0), Math.max(params.peak, 1e-6)),
   },
 });
@@ -117,7 +120,10 @@ const reinhard = perChannelOperation({
   params: ["exposure", "offset", "peak"],
   operatorId: 2,
   channel: {
-    wgsl: "max($value, 0.0) / (1.0 + max($value, 0.0) / max(peak, 1e-6))",
+    wgsl: `
+      let v = max(value, 0.0);
+      return v / (1.0 + v / max(peak, 1e-6));
+    `,
     cpu: (value, params) => {
       const v = Math.max(value, 0);
       return v / (1 + v / Math.max(params.peak, 1e-6));
@@ -133,7 +139,13 @@ const aces = perChannelOperation({
   params: ["exposure", "offset", "peak"],
   operatorId: 3,
   channel: {
-    wgsl: "max(peak, 1e-6) * clamp((max($value, 0.0) / max(peak, 1e-6)) * (2.51 * (max($value, 0.0) / max(peak, 1e-6)) + 0.03) / ((max($value, 0.0) / max(peak, 1e-6)) * (2.43 * (max($value, 0.0) / max(peak, 1e-6)) + 0.59) + 0.14), 0.0, 1.0)",
+    wgsl: `
+      let p = max(peak, 1e-6);
+      let v = max(value, 0.0) / p;
+      let numerator = v * (2.51 * v + 0.03);
+      let denominator = v * (2.43 * v + 0.59) + 0.14;
+      return p * clamp(numerator / denominator, 0.0, 1.0);
+    `,
     cpu: (value, params) => {
       const peak = Math.max(params.peak, 1e-6);
       const v = Math.max(value, 0) / peak;
@@ -151,7 +163,9 @@ const normal = perChannelOperation({
   params: [],
   operatorId: 9,
   channel: {
-    wgsl: "clamp(($value + 1.0) * 0.5, 0.0, 1.0)",
+    wgsl: `
+      return clamp((value + 1.0) * 0.5, 0.0, 1.0);
+    `,
     cpu: (value) => clamp01((value + 1) / 2),
   },
 });

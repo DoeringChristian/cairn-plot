@@ -18,7 +18,7 @@ import {
   planImageComparison,
   type ImageComparisonPlan,
 } from "./comparison-plan.ts";
-import { resolveEffectiveTonemap, TONEMAP_GAMMA_DEFAULT } from "./model/tonemap.ts";
+import { resolveDisplayOperator, TONEMAP_GAMMA_DEFAULT } from "./model/tonemap.ts";
 
 type ImageSpec = Extract<DataSpec, { kind: "inline" | "image" | "imghdr" | "url" }>;
 type ImageRuntimePlumbing =
@@ -48,7 +48,7 @@ export type ImageSettings = PlotSettings & SettingsRecord;
 export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSettings {
   return {
     "image.view": { zoom: 1, pan: { x: 0, y: 0 } },
-    "image.encoding": resolveEffectiveTonemap(undefined, false),
+    "image.encoding": resolveDisplayOperator(undefined),
     "image.tonemapGamma": TONEMAP_GAMMA_DEFAULT,
     "image.exposureEV": 0,
     "image.offset": 0,

@@ -9,11 +9,11 @@ export {
   REC709_LUMINANCE_WEIGHTS,
 } from "./luminance";
 export {
-  DEFAULT_TONEMAP,
+  DEFAULT_DISPLAY_OPERATION_ID,
   applyExposure,
   srgbOetf,
   outputEncode,
-  type TonemapOperator,
+  type DisplayCurveId,
   type RgbTriple,
 } from "./tonemap";
 

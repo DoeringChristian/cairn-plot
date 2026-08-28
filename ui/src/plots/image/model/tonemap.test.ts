@@ -11,10 +11,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   resolveDisplayOperator,
-  resolveEffectiveTonemap,
   resolveRenderTonemap,
-  SDR_TONEMAP_OPERATORS,
-  SDR_DISPLAY_TRANSFER_OPERATORS,
+  DISPLAY_OPERATION_IDS,
+  DISPLAY_TRANSFER_OPERATION_IDS,
   tonemapHasGamma,
   resolveEncodeGamma,
   TONEMAP_GAMMA_DEFAULT,
@@ -33,7 +32,7 @@ import {
 } from "./tonemap.ts";
 // The operator CURVE math now lives in the display-operation registry (Phase 5).
 // The peak-parameterized scalar curves are imported under their historical names;
-// the former `TONEMAP_OPERATORS` table + `getTonemapOperator` / peak-aware triple
+// the former `TONEMAP_OPERATORS` table + `getDisplayCurveId` / peak-aware triple
 // dispatch are reconstructed here as thin REGISTRY ADAPTERS so these goldens keep
 // pinning the exact same math the panes/shaders run via `getDisplayOperation(id).cpu`.
 import {
@@ -51,10 +50,10 @@ const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.
     .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => e.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS)]),
 );
 /** Resolve an operator name to its non-peak CPU curve fn, srgb fallback. */
-const getTonemapOperator = (name: string | undefined | null): ((rgb: RgbTriple) => RgbTriple) =>
+const getDisplayCurveId = (name: string | undefined | null): ((rgb: RgbTriple) => RgbTriple) =>
   (name && TONEMAP_OPERATORS[name]) || TONEMAP_OPERATORS.srgb!;
 /** Peak-aware operator dispatch (extended-* read `peak`; the rest ignore it). */
-const applyTonemapOperatorTriple = (rgb: RgbTriple, operator: string, peak: number): RgbTriple =>
+const applyDisplayCurveIdTriple = (rgb: RgbTriple, operator: string, peak: number): RgbTriple =>
   (getDisplayOperation(operator) ?? getDisplayOperation("srgb")!).cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
 const curveValue = (id: "linear" | "reinhard" | "aces", value: number, peak: number): number =>
   getDisplayOperation(id)!.channel!.cpu(value, { ...DEFAULT_ENCODE_PARAMS, peak });
@@ -113,13 +112,13 @@ test("normal: remaps [-1,1] → [0,1] per channel, clamps, identity encode", () 
   // Shown RAW: the output-encode is identity (γ=1), like linear — not sRGB.
   assert.equal(resolveEncodeGamma("normal", 2.2), 1);
   // It is offered as an SDR-menu operator.
-  assert.ok(SDR_TONEMAP_OPERATORS.includes("normal"));
+  assert.ok(DISPLAY_OPERATION_IDS.includes("normal"));
 });
 
-test("getTonemapOperator falls back to srgb for unknown key", () => {
-  assert.equal(getTonemapOperator("does-not-exist"), TONEMAP_OPERATORS.srgb);
-  assert.equal(getTonemapOperator(null), TONEMAP_OPERATORS.srgb);
-  assert.equal(getTonemapOperator("aces"), TONEMAP_OPERATORS.aces);
+test("getDisplayCurveId falls back to srgb for unknown key", () => {
+  assert.equal(getDisplayCurveId("does-not-exist"), TONEMAP_OPERATORS.srgb);
+  assert.equal(getDisplayCurveId(null), TONEMAP_OPERATORS.srgb);
+  assert.equal(getDisplayCurveId("aces"), TONEMAP_OPERATORS.aces);
 });
 
 test("resolveDisplayOperator: canonical pass-through, else srgb", () => {
@@ -131,31 +130,7 @@ test("resolveDisplayOperator: canonical pass-through, else srgb", () => {
   assert.equal(resolveDisplayOperator("nope"), "srgb");
   assert.equal(resolveDisplayOperator(undefined), "srgb");
   assert.equal(resolveDisplayOperator(null), "srgb");
-  assert.equal(resolveDisplayOperator("extended"), "srgb");
-});
-
-// (The former `isHdrTonemap` / `tonemapHasPeak` classifiers + the
-// `HDR_TONEMAP_OPERATORS` / `EXTENDED_ROLLOFF_OPERATORS` / `EXTENDED_PEAK_OPERATORS`
-// menu-group arrays were removed in Phase 5 — unused post-unification. Which
-// extended curves declare `peak` is still pinned by `encodings/registry.test.ts`.)
-
-test("resolveEffectiveTonemap: UNIFIED — canonical operator passes through; surface only sets the UNSET default", () => {
-  // The operator (curve) is surface-independent; only the PEAK ceiling differs
-  // (that lives in resolveRenderTonemap). So an explicit descriptor is honored
-  // on BOTH surfaces, canonicalized to the 5-op menu set.
-  for (const engaged of [false, true]) {
-    assert.equal(resolveEffectiveTonemap("aces", engaged), "aces");
-    assert.equal(resolveEffectiveTonemap("srgb", engaged), "srgb");
-    assert.equal(resolveEffectiveTonemap("gamma", engaged), "gamma");
-    assert.equal(resolveEffectiveTonemap("garbage", engaged), "srgb");
-  }
-  // UNSET default is surface-dependent: Linear on an engaged HDR surface (managed
-  // determinism, PEAK default 4 — replaces the old raw-extended default), sRGB on
-  // SDR (the bit-exact round-trip for an 8-bit source).
-  assert.equal(resolveEffectiveTonemap(undefined, true), "srgb");
-  assert.equal(resolveEffectiveTonemap(null, true), "srgb");
-  assert.equal(resolveEffectiveTonemap(undefined, false), "srgb");
-  assert.equal(resolveEffectiveTonemap(null, false), "srgb");
+  assert.equal(resolveDisplayOperator("not-an-operation"), "srgb");
 });
 
 test("reinhard operation: monotone, ≈x for x≪1, →P asymptote", () => {
@@ -248,7 +223,7 @@ test("Gamma operator: RANGE-MAP is the clamp; γ lives in the encode (resolveEnc
   assert.equal(resolveEncodeGamma("aces", 2.2), undefined);
   // gamma is in the SDR group (menu order Linear · sRGB · Gamma · Reinhard ·
   // ACES) and passes through resolveDisplayOperator unchanged.
-  assert.ok(SDR_TONEMAP_OPERATORS.includes("gamma"));
+  assert.ok(DISPLAY_OPERATION_IDS.includes("gamma"));
   assert.equal(resolveDisplayOperator("gamma"), "gamma");
 });
 
@@ -280,10 +255,10 @@ test("srgbEotf ∘ srgbOetf round-trips (linearize an 8-bit sRGB source)", () =>
   }
 });
 
-test("SDR_DISPLAY_TRANSFER_OPERATORS: the 8-bit pane's menu subset (sRGB · Gamma · Linear)", () => {
-  assert.deepEqual([...SDR_DISPLAY_TRANSFER_OPERATORS], ["srgb", "gamma", "linear"]);
+test("DISPLAY_TRANSFER_OPERATION_IDS: the 8-bit pane's menu subset (sRGB · Gamma · Linear)", () => {
+  assert.deepEqual([...DISPLAY_TRANSFER_OPERATION_IDS], ["srgb", "gamma", "linear"]);
   // Subset of the full SDR group (no reinhard/aces on an already-[0,1] source).
-  for (const op of SDR_DISPLAY_TRANSFER_OPERATORS) assert.ok(SDR_TONEMAP_OPERATORS.includes(op));
+  for (const op of DISPLAY_TRANSFER_OPERATION_IDS) assert.ok(DISPLAY_OPERATION_IDS.includes(op));
 });
 
 test("linear operation: identity below P, hard ceiling at/above P, monotone", () => {
@@ -312,14 +287,14 @@ test("linear operation: identity below P, hard ceiling at/above P, monotone", ()
   assert.equal(curveValue("linear", 10, 8), 8); // above 8 → clamped to 8
 });
 
-test("applyTonemapOperatorTriple dispatches one peak-aware operation per authored id", () => {
+test("applyDisplayCurveIdTriple dispatches one peak-aware operation per authored id", () => {
   const hi: RgbTriple = [2, 2, 2];
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "linear", 4), [2, 2, 2]);
-  assert.deepEqual(applyTonemapOperatorTriple([8, 8, 8], "linear", 4), [4, 4, 4]);
+  assert.deepEqual(applyDisplayCurveIdTriple(hi, "linear", 4), [2, 2, 2]);
+  assert.deepEqual(applyDisplayCurveIdTriple([8, 8, 8], "linear", 4), [4, 4, 4]);
   const r = curveValue("reinhard", 2, 4);
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "reinhard", 4), [r, r, r]);
+  assert.deepEqual(applyDisplayCurveIdTriple(hi, "reinhard", 4), [r, r, r]);
   const a = curveValue("aces", 2, 4);
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "aces", 4), [a, a, a]);
+  assert.deepEqual(applyDisplayCurveIdTriple(hi, "aces", 4), [a, a, a]);
 });
 
 test("applyExposure scales by 2**ev", () => {
@@ -446,14 +421,14 @@ test("resolveRenderTonemap makes the peak GPU-safe without changing operations",
 test("UNIFIED INVARIANT: P=1 render == the legacy SDR curve+encode, per operator (byte-for-byte)", () => {
   // The full display value at P=1 (engaged HDR pane) equals the SDR rendition.
   // resolveRenderTonemap returns the SDR path at P=1, so simulate the pass:
-  //   rangeMap = applyTonemapOperatorTriple(x, op, peak) ; encode = outputEncode.
+  //   rangeMap = applyDisplayCurveIdTriple(x, op, peak) ; encode = outputEncode.
   const encodeOf = (v: number, g: number | undefined) => outputEncode(v, g);
   for (const op of ["linear", "srgb", "gamma", "reinhard", "aces"]) {
     const rt = resolveRenderTonemap(op, 1, true, 2.2);
     assert.equal(rt.hdrOut, true);
     assert.equal(rt.peak, 1);
     for (let x = -0.25; x <= 6; x += 0.37) {
-      const uni = encodeOf(applyTonemapOperatorTriple([x, x, x], rt.displayOperationId, rt.peak)[0], rt.gamma);
+      const uni = encodeOf(applyDisplayCurveIdTriple([x, x, x], rt.displayOperationId, rt.peak)[0], rt.gamma);
       const legacy = outputEncode(TONEMAP_OPERATORS[op]!([x, x, x] as RgbTriple)[0], resolveEncodeGamma(op, 2.2));
       approx(uni, legacy, 1e-12);
     }
@@ -464,14 +439,14 @@ test("UNIFIED goldens: HDR Gamma is UNCLAMPED (above-white survives), P>1 clips 
   // Gamma on an engaged HDR pane, x=4 below the P=8 ceiling: the value survives
   // above 1.0, gamma-corrected. extended-clamp(4, 8)=4 → extendedGammaEncode(4, 2.2).
   const rt = resolveRenderTonemap("gamma", 8, true, 2.2);
-  const ranged = applyTonemapOperatorTriple([4, 4, 4], rt.displayOperationId, rt.peak)[0]; // extended-clamp(4,8)=4
+  const ranged = applyDisplayCurveIdTriple([4, 4, 4], rt.displayOperationId, rt.peak)[0]; // extended-clamp(4,8)=4
   approx(ranged, 4, 1e-12);
   const display = extendedOutputEncode(ranged, rt.gamma);
   approx(display, Math.pow(4, 1 / 2.2), 1e-12); // ≈ 1.877776 — ABOVE 1.0 (extended)
   assert.ok(display > 1.0, "HDR Gamma preserves extended brightness (above-white survives)");
   // At a LOWER ceiling P=2, the same x=4 hard-clips to 2 first: 2^(1/2.2).
   const rt2 = resolveRenderTonemap("gamma", 2, true, 2.2);
-  const ranged2 = applyTonemapOperatorTriple([4, 4, 4], rt2.displayOperationId, rt2.peak)[0]; // extended-clamp(4,2)=2
+  const ranged2 = applyDisplayCurveIdTriple([4, 4, 4], rt2.displayOperationId, rt2.peak)[0]; // extended-clamp(4,2)=2
   approx(ranged2, 2, 1e-12);
   approx(extendedOutputEncode(ranged2, rt2.gamma), Math.pow(2, 1 / 2.2), 1e-12);
 });
@@ -498,20 +473,16 @@ test("UNIFIED §B: the render matrix is SOURCE-AGNOSTIC (u8-post-decode ≡ floa
   }
 });
 
-test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap", () => {
-  // UNSET spec: sRGB on EVERY surface (user decision — tev's default).
-  // Engaged HDR → extended sRGB encode with the managed PEAK ceiling (default).
-  const hdrDefault = resolveEffectiveTonemap(undefined, true); // "srgb"
-  assert.equal(hdrDefault, "srgb");
-  assert.deepEqual(resolveRenderTonemap(hdrDefault, EXTENDED_TONEMAP_PEAK_DEFAULT, true, 2.2), {
+test("default display operation is unchanged across output surfaces", () => {
+  const defaultOperation = resolveDisplayOperator(undefined);
+  assert.equal(defaultOperation, "srgb");
+  assert.deepEqual(resolveRenderTonemap(defaultOperation, EXTENDED_TONEMAP_PEAK_DEFAULT, true, 2.2), {
     displayOperationId: "srgb",
     hdrOut: true,
     peak: EXTENDED_TONEMAP_PEAK_DEFAULT,
     gamma: undefined,
   });
-  const sdrDefault = resolveEffectiveTonemap(undefined, false); // "srgb"
-  assert.equal(sdrDefault, "srgb");
-  assert.deepEqual(resolveRenderTonemap(sdrDefault, 1, false, 2.2), {
+  assert.deepEqual(resolveRenderTonemap(defaultOperation, 1, false, 2.2), {
     displayOperationId: "srgb",
     hdrOut: false,
     peak: 1,
