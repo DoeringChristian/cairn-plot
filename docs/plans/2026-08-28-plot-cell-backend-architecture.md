@@ -65,6 +65,10 @@ Status: accepted design; implementation in progress
 - [x] Move scalar promoted-axis state into the cell settings object as
   `chart.promotedSeries`; hosted scalar renderers no longer keep an independent
   promoted-series store across stack swaps, HOME, sync, or persistence.
+- [x] Extract the typed inline-plot registration adapter and migrate scatter
+  from the legacy renderer map. Scatter now has checked point presentation,
+  chart-domain settings projection, backend commands, and exclusive kind
+  ownership through `PlotDefinition`.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

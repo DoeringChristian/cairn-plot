@@ -2,6 +2,7 @@ import type { JsonValue } from "../../../../packages/spec/src/json.ts";
 import type { AxisScale, PromotedSeriesConfig, Series } from "../../lib/cairn-plot/types.ts";
 import type { AxisSource } from "../../lib/cairn-plot/transforms/x-axis.ts";
 import type { SettingsRecord } from "../contracts.ts";
+import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
 
 export interface ScalarPresentation {
   readonly series: readonly Series[];
@@ -16,9 +17,7 @@ export interface ScalarPresentation {
   readonly height?: number;
 }
 
-export type ScalarSettings = SettingsRecord & {
-  "chart.domainX"?: [number, number] | null;
-  "chart.domainY"?: [number, number] | null;
+export type ScalarSettings = ChartSettings & {
   "chart.promotedSeries"?: Record<string, PromotedSeriesConfig>;
 };
 
@@ -40,12 +39,8 @@ export function scalarPresentation(value: Record<string, unknown>): ScalarPresen
 }
 
 export function projectScalarSettings(settings: Readonly<SettingsRecord>): ScalarSettings {
-  const projected: ScalarSettings = {};
-  const x = settings["chart.domainX"];
-  const y = settings["chart.domainY"];
+  const projected: ScalarSettings = projectChartSettings(settings);
   const promoted = settings["chart.promotedSeries"];
-  if (x === null || isDomain(x)) projected["chart.domainX"] = x;
-  if (y === null || isDomain(y)) projected["chart.domainY"] = y;
   if (isPromotedSeries(promoted)) {
     projected["chart.promotedSeries"] = promoted as unknown as Record<string, PromotedSeriesConfig>;
   }
@@ -61,10 +56,4 @@ function isPromotedSeries(
     typeof entry.min === "number" && Number.isFinite(entry.min) &&
     typeof entry.max === "number" && Number.isFinite(entry.max)
   );
-}
-
-function isDomain(value: JsonValue | undefined): value is [number, number] {
-  return Array.isArray(value) && value.length === 2 &&
-    typeof value[0] === "number" && Number.isFinite(value[0]) &&
-    typeof value[1] === "number" && Number.isFinite(value[1]);
 }

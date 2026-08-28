@@ -74,6 +74,7 @@ import {
 import { registerRenderer } from "./plot-registry";
 import { ensureImagePlotType } from "./plots/image/register.ts";
 import { ensureScalarPlotType } from "./plots/scalar/register.ts";
+import { ensureScatterPlotType } from "./plots/scatter/register.ts";
 import { resolveDataProps } from "./plot-descriptor.ts";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
@@ -449,7 +450,6 @@ function TableStandalone(p: P) {
  * registered at runtime — deliberately absent so they stay out of core.
  */
 export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
-  scatter: ScatterPlotStandalone,
   parallel: ParallelCoordsStandalone,
   bar: BarChartStandalone,
   histogram: HistogramStandalone,
@@ -461,6 +461,7 @@ export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
 export function registerCoreRenderers(): void {
   ensureImagePlotType(ImageStandalone, resolveDataProps);
   ensureScalarPlotType(ScalarPlotStandalone, resolveDataProps);
+  ensureScatterPlotType(ScatterPlotStandalone, resolveDataProps);
   for (const [name, component] of Object.entries(CORE_RENDERERS)) {
     registerRenderer(name, component);
   }
