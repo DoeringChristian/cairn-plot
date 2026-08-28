@@ -40,7 +40,7 @@ import type { Device, Texture } from "../types";
 import { createHarness } from "../../../../testing/harness";
 
 const TRUNKS_URL = "https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr-images/main/v2/Stereo/Trunks.exr";
-const FIXTURE_URL = new URL("../../image/decoders/fixtures/deep-rgba-32x32.exr", import.meta.url).href;
+const FIXTURE_URL = new URL("../../model/decoders/fixtures/deep-rgba-32x32.exr", import.meta.url).href;
 
 const { report, setOverallStatus } = createHarness({ title: "DEEP COMPOSITE", resultFlag: "__deepCompositeTestResult" });
 
