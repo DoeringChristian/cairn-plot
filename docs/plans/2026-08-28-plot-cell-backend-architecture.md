@@ -55,6 +55,10 @@ Status: accepted design; implementation in progress
   port. Backends receive readonly effective settings and may change them only
   through `patch` or `reset`; renderer-local fallback stores are not part of
   the authoring interface.
+- [x] Register scalar as the second typed production plot definition and
+  implement its `overlay` comparison by combining uniquely keyed series into
+  one scalar backend presentation. Scalar zoom/pan now projects through the
+  cell's `chart.domainX`/`chart.domainY` settings when hosted.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 

@@ -73,6 +73,7 @@ import {
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
 import { registerRenderer } from "./plot-registry";
 import { ensureImagePlotType } from "./plots/image/register.ts";
+import { ensureScalarPlotType } from "./plots/scalar/register.ts";
 import { resolveDataProps } from "./plot-descriptor.ts";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
@@ -160,13 +161,43 @@ function resolveImageRenderer(mode: RenderMode): ImageBackend {
 
 // --- ScalarPlot: owns viewport + promotedSeries interactive state ----------
 function ScalarPlotStandalone(p: P) {
-  const [viewport, setViewport] = useState<Viewport>(
+  const [localViewport, setLocalViewport] = useState<Viewport>(
     p.viewport ?? { xMin: null, xMax: null, yMin: null, yMax: null },
   );
+  const scalarSettings = p.syncedSettings as ViewportSettings | null | undefined;
+  const setScalarSettings = p.setSyncedSettings as ((patch: ViewportSettings) => void) | undefined;
+  const domainX = scalarSettings?.["chart.domainX"];
+  const domainY = scalarSettings?.["chart.domainY"];
+  const viewport: Viewport = setScalarSettings
+    ? {
+        xMin: domainX?.[0] ?? null,
+        xMax: domainX?.[1] ?? null,
+        yMin: domainY?.[0] ?? null,
+        yMax: domainY?.[1] ?? null,
+      }
+    : localViewport;
+  const setViewport = useCallback((next: Viewport) => {
+    if (!setScalarSettings) {
+      setLocalViewport(next);
+      return;
+    }
+    setScalarSettings({
+      "chart.domainX": next.xMin == null || next.xMax == null ? null : [next.xMin, next.xMax],
+      "chart.domainY": next.yMin == null || next.yMax == null ? null : [next.yMin, next.yMax],
+    });
+  }, [setScalarSettings]);
   const [promoted, setPromoted] = useState<Record<string, PromotedSeriesConfig>>(
     p.promotedSeries ?? {},
   );
-  const { height, viewport: _v, promotedSeries: _p, ...rest } = p;
+  const {
+    height,
+    viewport: _v,
+    promotedSeries: _p,
+    syncedSettings: _settings,
+    setSyncedSettings: _setSettings,
+    resetViewportSettings: _resetSettings,
+    ...rest
+  } = p;
   return (
     <ChartBox height={height}>
       <ScalarPlot
@@ -411,7 +442,6 @@ function TableStandalone(p: P) {
  * registered at runtime — deliberately absent so they stay out of core.
  */
 export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
-  scalar: ScalarPlotStandalone,
   scatter: ScatterPlotStandalone,
   parallel: ParallelCoordsStandalone,
   bar: BarChartStandalone,
@@ -423,6 +453,7 @@ export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
 /** Seed the runtime registry with the always-present core renderers. */
 export function registerCoreRenderers(): void {
   ensureImagePlotType(ImageStandalone, resolveDataProps);
+  ensureScalarPlotType(ScalarPlotStandalone, resolveDataProps);
   for (const [name, component] of Object.entries(CORE_RENDERERS)) {
     registerRenderer(name, component);
   }
