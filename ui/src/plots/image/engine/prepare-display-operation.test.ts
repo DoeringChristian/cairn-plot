@@ -1,0 +1,26 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { prepareDisplayBinding } from "./prepare-display-operation.ts";
+
+test("all display operations prepare through one engine seam", () => {
+  const linear = prepareDisplayBinding("linear", { hdrSurface: true });
+  assert.deepEqual(linear, { operator: "linear", isScalar: false, hdrOut: true });
+
+  const magma = prepareDisplayBinding("magma", { hdrSurface: true });
+  assert.equal(magma.isScalar, true);
+  assert.equal(magma.hdrOut, false);
+  assert.ok(magma.colormap instanceof Float32Array);
+
+  const analytic = prepareDisplayBinding("red-green", { hdrSurface: true });
+  assert.equal(analytic.isScalar, true);
+  assert.equal(analytic.analytic, true);
+  assert.equal(analytic.hdrOut, true);
+  assert.equal(analytic.colormap, undefined);
+});
+
+test("an unknown display operation fails at the preparation boundary", () => {
+  assert.throws(
+    () => prepareDisplayBinding("none", { hdrSurface: false }),
+    /unknown display operation/,
+  );
+});

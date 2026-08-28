@@ -75,6 +75,7 @@ import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { formatSsim } from "../engine/ssim-metric";
 import type { DiffMetrics } from "../engine/image-engine";
 import type { DiffCacheEntry } from "../engine/diff-engine";
+import { prepareDisplayBinding } from "../engine/prepare-display-operation.ts";
 import { compareCaptions } from "../compare/compare-captions";
 import { buildCompareModeMenu } from "../compare/compare-mode-menu";
 import SplitDivider from "../compare/SplitDivider";
@@ -1518,13 +1519,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (!refDims) return false;
       const kernelId = getDiffKernel(resolvedKernelId) ? resolvedKernelId : "absolute";
       const displayEncoding = effectiveDiffEncoding;
-      const encEntry = getEncoding(displayEncoding);
-      if (!encEntry) throw new Error(`unknown display encoding ${JSON.stringify(displayEncoding)}`);
-      const mapsToScalar = encEntry.kind === "lut";
-      const isAnalytic = !!encEntry?.analytic;
-      const isTurbo = !!encEntry?.turbo;
-      const lut =
-        encEntry.needsLut ? colormapFloatLUT((encEntry.lutName ?? encEntry.id) as Colormap) : undefined;
+      const display = prepareDisplayBinding(displayEncoding, { hdrSurface: useHdrRef.current });
       // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
       // colormap sensitivity, the resolved encoding face. `gamma` is LEFT UNSET so
       // the analytic branch encodes via sRGB OETF (a gamma of 1 would flip it to an
@@ -1532,20 +1527,15 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       const diffDisplay: ImageParams = {
         exposureEV: displayEV,
         offset: displayOffset,
-        operator: "linear",
-        isScalar: mapsToScalar,
+        ...display,
         reduce: "mean",
         channelCount: 3,
         // The LUT/turbo tables hold display-sRGB → SDR (hdrOut false); the analytic
         // color is scene-linear and rides the shared output-encode, so |v|>1 error
         // survives on an engaged HDR surface.
-        hdrOut: isAnalytic ? useHdrRef.current : false,
         srgbDecode: false,
         uv,
         filter,
-        ...(isAnalytic ? { analytic: true } : {}),
-        ...(isTurbo ? { turbo: true } : {}),
-        ...(lut ? { colormap: lut } : {}),
       };
       try {
         // ONE kernel-agnostic call: the POOL picks the execution strategy from

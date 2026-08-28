@@ -1,0 +1,39 @@
+import { colormapFloatLUT } from "../../../settings/colormaps/lut.ts";
+import type { Colormap } from "../../types.ts";
+import { getEncoding } from "../model/encodings/index.ts";
+import type { ImageParams } from "./image-engine.ts";
+
+/** The image engine's private binding for one registered display operation.
+ * Callers select an operation by id; whether it needs auxiliary LUT data or an
+ * analytic shader branch is resolved here and never becomes host policy. */
+export type PreparedDisplayBinding = Pick<
+  ImageParams,
+  "operator" | "isScalar" | "analytic" | "turbo" | "colormap" | "hdrOut"
+>;
+
+export function prepareDisplayBinding(
+  id: string,
+  options: { hdrSurface: boolean },
+): PreparedDisplayBinding {
+  const operation = getEncoding(id);
+  if (!operation) throw new Error(`unknown display operation ${JSON.stringify(id)}`);
+
+  if (operation.kind !== "lut") {
+    return {
+      operator: id as ImageParams["operator"],
+      isScalar: false,
+      hdrOut: options.hdrSurface,
+    };
+  }
+
+  return {
+    operator: "linear",
+    isScalar: true,
+    hdrOut: operation.analytic ? options.hdrSurface : false,
+    ...(operation.analytic ? { analytic: true } : {}),
+    ...(operation.turbo ? { turbo: true } : {}),
+    ...(operation.needsLut
+      ? { colormap: colormapFloatLUT((operation.lutName ?? operation.id) as Colormap) }
+      : {}),
+  };
+}
