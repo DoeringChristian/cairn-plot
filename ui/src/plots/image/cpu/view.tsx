@@ -1,7 +1,7 @@
 /**
  * CpuImagePane — the CPU (2D-canvas) image backend. One of TWO interchangeable
  * image backends (see `GpuImagePane.tsx` for the WebGPU one): both accept the
- * SAME `ImageBackendProps` union (`renderers/image-backend.ts`) and are chosen
+ * SAME `ImageBackendInput` union (`renderers/image-backend.ts`) and are chosen
  * upstream by the user-settable render mode (`resolveRenderMode` — cpu | gpu |
  * auto), so the rest of the app is backend-agnostic.
  *
@@ -32,7 +32,7 @@
  *
  * ## `toolbar` (the shared host seam)
  * `toolbar?: boolean` (default `true`) is now an OFFICIAL host seam on the shared
- * `ImageBackendProps` contract — the SAME prop `GpuImagePane`/`GpuComparePane`
+ * `ImageBackendInput` contract — the SAME prop `GpuImagePane`/`GpuComparePane`
  * accept, so all three panes hide the toolbar identically. When `false` the shell
  * renders NO `PlotToolbar` (and no hover `group`); the ONLY floating affordance
  * kept is the `PixelNotationToggle` chip while the TEV overlay is active — the
@@ -46,7 +46,6 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
 import LabelChip from "../../../primitives/components/LabelChip";
 import RefBadge from "../../../primitives/components/RefBadge";
 import type { Colormap, DiffMode, Interpolation } from "../../types";
@@ -66,7 +65,6 @@ import {
 } from "../resources/cache.ts";
 import { computeDiff } from "./diff.ts";
 import { webglRenderDiffToCanvas } from "./webgl-diff.ts";
-import { getRenderMode } from "../runtime/render-mode.ts";
 import { getColormapLUT } from "../../../settings/colormaps/index";
 import { applyColormap } from "../cpu/apply-colormap.ts";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
@@ -109,11 +107,11 @@ import {
   useImageSurfaceProps,
   shapeDims,
   finite,
-  type HdrData,
+  type FloatImageData,
   type FloatSurfaceProps,
   type Uint8SurfaceProps,
-  type ImageBackend,
-  type ImageBackendProps,
+  type ImageBackendView,
+  type ImageBackendInput,
 } from "../runtime/contracts";
 import type { ImageProcessing } from "../../types";
 
@@ -147,7 +145,7 @@ const IDENTITY_CONTENT: CpuImageOperation = _identityOp;
  * pixel, exactly the pipeline documented in `tonemap.ts`.
  */
 export function tonemapToImageData(
-  hdr: HdrData,
+  hdr: FloatImageData,
   tonemap: string,
   exposure: number,
   gamma?: number,
@@ -373,12 +371,12 @@ function CpuSdrImagePane(
   props: Uint8SurfaceProps & {
     toolbar?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
-     *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
+     *  driven down by the store owner (see `ImageBackendInput.syncedSettings`). */
     syncedSettings?: PlotSettings;
-    /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
+    /** The store's ONE write path (see `ImageBackendInput.setSyncedSettings`). */
     setSyncedSettings?: (patch: PlotSettings) => void;
-    /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
-    /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
+    /** LOCAL apply (initialization writes — see `ImageBackendInput`). */
+    /** Controlled fullscreen state (see `ImageBackendInput.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) when this pane renders a
      *  compare's reference (degraded CPU fallback); suppresses the label chip. */
@@ -523,7 +521,6 @@ function CpuSdrImagePane(
     if (el) displayElRef.current = el;
   }, []);
   const [diffReady, setDiffReady] = useState(false);
-  const [webglUnavailable, setWebglUnavailable] = useState(false);
   const [falseColorReady, setFalseColorReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{
     w: number;
@@ -700,36 +697,27 @@ function CpuSdrImagePane(
   );
 
   useEffect(() => {
-    setWebglUnavailable(false);
     if (!showDiff) {
       setDiffReady(false);
       return;
     }
     let cancelled = false;
 
-    const renderMode = getRenderMode();
-    const useGPU = renderMode === "gpu" || renderMode === "auto";
-
     const cacheKey = `${baselineUrl}::${imageUrl}::${diffMode}::${colormap}`;
-    if (renderMode !== "gpu") {
-      const cached = getCachedImageData(cacheKey);
-      if (cached) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          if (
-            canvas.width !== cached.width ||
-            canvas.height !== cached.height
-          ) {
-            canvas.width = cached.width;
-            canvas.height = cached.height;
-          }
-          const ctx = canvas.getContext("2d");
-          if (ctx) ctx.putImageData(cached, 0, 0);
-          updateDims(cached.width, cached.height);
-          setDiffReady(true);
+    const cached = getCachedImageData(cacheKey);
+    if (cached) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        if (canvas.width !== cached.width || canvas.height !== cached.height) {
+          canvas.width = cached.width;
+          canvas.height = cached.height;
         }
-        return;
+        const ctx = canvas.getContext("2d");
+        if (ctx) ctx.putImageData(cached, 0, 0);
+        updateDims(cached.width, cached.height);
+        setDiffReady(true);
       }
+      return;
     }
 
     (async () => {
@@ -754,33 +742,19 @@ function CpuSdrImagePane(
         cmapMode,
       };
 
-      if (useGPU) {
-        try {
-          const canvas = canvasRef.current;
-          if (canvas) {
-            const dims = webglRenderDiffToCanvas(
-              baseData,
-              otherData,
-              gpuOpts,
-              canvas,
-            );
-            if (dims) {
-              if (cancelled) return;
-              updateDims(dims.width, dims.height);
-              setDiffReady(true);
-              return;
-            }
+      try {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const dims = webglRenderDiffToCanvas(baseData, otherData, gpuOpts, canvas);
+          if (dims) {
+            if (cancelled) return;
+            updateDims(dims.width, dims.height);
+            setDiffReady(true);
+            return;
           }
-        } catch (err) {
-          console.warn("[cairn] WebGL 2 diff error:", err);
         }
-      }
-
-      if (renderMode === "gpu") {
-        // Forced-GPU mode with no WebGL2: show the shared placeholder instead
-        // of a silent blank pane (the third divergence PaneUnavailable unifies).
-        if (!cancelled) setWebglUnavailable(true);
-        return;
+      } catch (err) {
+        console.warn("cairn-plot: WebGL 2 diff acceleration failed; using CPU", err);
       }
       let diffData = computeDiff(
         baseData,
@@ -842,11 +816,6 @@ function CpuSdrImagePane(
 
   const surface = !imageUrl ? (
     <span className="text-xs text-fg-muted">no image</span>
-  ) : showDiff && webglUnavailable ? (
-    <PaneUnavailable
-      title="WebGL 2 unavailable"
-      body="GPU render mode needs WebGL 2 here — switch render mode to Auto or CPU."
-    />
   ) : showDiff ? (
     <>
       {!diffReady && (
@@ -1025,12 +994,12 @@ function CpuHdrImagePane(
   props: FloatSurfaceProps & {
     toolbar?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
-     *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
+     *  driven down by the store owner (see `ImageBackendInput.syncedSettings`). */
     syncedSettings?: PlotSettings;
-    /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
+    /** The store's ONE write path (see `ImageBackendInput.setSyncedSettings`). */
     setSyncedSettings?: (patch: PlotSettings) => void;
-    /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
-    /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
+    /** LOCAL apply (initialization writes — see `ImageBackendInput`). */
+    /** Controlled fullscreen state (see `ImageBackendInput.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
      *  fallback; suppresses the label chip. See {@link cpuCompareChrome}. */
@@ -1466,7 +1435,7 @@ function CpuHdrImagePane(
 /**
  * One of the two interchangeable image backends (the CPU/2D-canvas one — see
  * `GpuImagePane` for the WebGPU other); both accept the ONE
- * {@link ImageBackendProps} and are assignable to `ImageBackend`. The unified
+ * {@link ImageBackendInput} and are assignable to `ImageBackendView`. The unified
  * `source` fans out (keyed on `source.dtype`) into the two internal pane
  * representations via {@link useImageSurfaceProps}; the sub-panes below are
  * unchanged.
@@ -1482,7 +1451,7 @@ function CpuHdrImagePane(
  * gap (see the default export + the design doc's Phase-4 note). Captions are
  * inlined (NOT `compareCaptions`, which pulls `engine/kernels` into the CORE
  * bundle — the CPU pane must stay engine-free). */
-function cpuCompareChrome(cs: ImageBackendProps["compareSource"]): ReactNode {
+function cpuCompareChrome(cs: ImageBackendInput["compareSource"]): ReactNode {
   if (!cs) return undefined;
   const mode = cs.mode ?? "diff";
   if (mode === "diff") {
@@ -1513,7 +1482,7 @@ function cpuCompareChrome(cs: ImageBackendProps["compareSource"]): ReactNode {
   );
 }
 
-export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Element {
+export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Element {
   const props = useImageSurfaceProps(backendProps);
   // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
   // reconstructed legacy props (they aren't part of the dtype-keyed
@@ -1552,7 +1521,7 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
 }
 
 // Compile-time contract check: CpuImagePane implements the shared backend
-// interface (accepts the plain `ImageBackendProps` union — `toolbar` is
-  // optional, so the plain union is assignable to `ImageBackendProps`).
-const _backendCheck: ImageBackend = CpuImagePane;
+// interface (accepts the plain `ImageBackendInput` union — `toolbar` is
+  // optional, so the plain union is assignable to `ImageBackendInput`).
+const _backendCheck: ImageBackendView = CpuImagePane;
 void _backendCheck;

@@ -101,7 +101,7 @@ function diffProps(): Record<string, unknown> {
     source: urlSource(REF_URL),
     compareSource: {
       b: urlSource(FG_URL),
-      opId: "flip",
+      operationId: "flip",
       mode: "diff",
       contentKeyA: STACK_KEYS.a,
       contentKeyB: STACK_KEYS.b,

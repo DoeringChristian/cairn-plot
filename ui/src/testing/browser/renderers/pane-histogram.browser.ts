@@ -24,7 +24,7 @@ import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import GpuImagePane from "../../../plots/image/webgpu/view";
-import { hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
+import { hdrSource, type FloatImageData } from "../../../plots/image/runtime/contracts";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const { report, setOverallStatus } = createHarness({ title: "HISTOGRAM" });
@@ -38,7 +38,7 @@ console.error = (...args: unknown[]) => {
 
 /** A small MULTI-CHANNEL float image: R ramps across x, G ramps across y, B is a
  *  constant mid-grey — three genuinely distinct channel distributions. */
-function makeMultiChannelHdr(w: number, h: number): HdrData {
+function makeMultiChannelHdr(w: number, h: number): FloatImageData {
   const data = new Float32Array(w * h * 3);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {

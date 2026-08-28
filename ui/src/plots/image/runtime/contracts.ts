@@ -7,7 +7,7 @@
  *   - `renderers/CpuImagePane.tsx` — the 2D-canvas / CSS-transform CPU backend
  *     (unifies the former `ImagePane` SDR pane + `HdrImagePane` float-HDR pane).
  *   - `renderers/GpuImagePane.tsx` — the WebGPU engine backend.
- * Both are `(props: ImageBackendProps) => JSX.Element` and are picked per mount
+ * Both are `(props: ImageBackendInput) => JSX.Element` and are picked per mount
  * by `plot-renderers.tsx`'s `resolveImageRenderer(mode)` (the "backends used
  * upstream" seam). This module holds the shared prop union, the `isFloatSurfaceProps`
  * discriminant, and the user-settable render-mode resolution so BOTH backends
@@ -39,7 +39,7 @@ import type {
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`
 // DataSpec). `[H,W]` grayscale, `[H,W,C]` with `C∈{1,3,4}`.
 // ---------------------------------------------------------------------------
-export interface HdrData {
+export interface FloatImageData {
   /**
    * Flattened samples in row-major order — a SELF-DESCRIBING buffer whose
    * representation travels WITH the bytes (`image/pixel-buffer.ts`, user
@@ -64,7 +64,7 @@ export interface HdrData {
 
 /** The float-HDR prop shape (presence of `hdr` selects this backend path). */
 export interface FloatSurfaceProps {
-  hdr: HdrData;
+  hdr: FloatImageData;
   tonemap?: string;
   /** Base exposure in EV stops (`color * 2^EV`), applied in scene-linear BEFORE
    *  the tone-map operator. The CONTROLLED surface for the host-menu EV: the
@@ -118,7 +118,7 @@ export interface FloatSurfaceProps {
    *  `group`, only the free-floating pixel-notation toggle while the TEV overlay
    *  is active). */
   toolbar?: boolean;
-  /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
+  /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendInput}).
    *  Threaded through `useImageSurfaceProps` so the pane body reads it here. */
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
    *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
@@ -131,7 +131,7 @@ export interface FloatSurfaceProps {
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
   /** True when this pane is the reused renderer of a STACKED viewport (see
-   *  {@link ImageBackendProps.inStackedGrid}). */
+   *  {@link ImageBackendInput.inStackedGrid}). */
   inStackedGrid?: boolean;
   resetSettings?: () => void;
 }
@@ -190,7 +190,7 @@ export interface Uint8SurfaceProps {
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`); see
    *  {@link FloatSurfaceProps.toolbar} and `ImagePaneShell`. */
   toolbar?: boolean;
-  /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendProps}).
+  /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendInput}).
    *  Threaded through `useImageSurfaceProps` so the pane body reads it here. */
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
    *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
@@ -203,7 +203,7 @@ export interface Uint8SurfaceProps {
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
   /** True when this pane is the reused renderer of a STACKED viewport (see
-   *  {@link ImageBackendProps.inStackedGrid}). */
+   *  {@link ImageBackendInput.inStackedGrid}). */
   inStackedGrid?: boolean;
   resetSettings?: () => void;
 }
@@ -211,7 +211,7 @@ export interface Uint8SurfaceProps {
 /**
  * The two INTERNAL, dtype-keyed pane representations. Formerly the public
  * backend union; now a pane-private detail reconstructed from the ONE unified
- * {@link ImageBackendProps} by {@link useImageSurfaceProps}. Kept (and still
+ * {@link ImageBackendInput} by {@link useImageSurfaceProps}. Kept (and still
  * used by both backend views because their bodies dispatch on
  * {@link isFloatSurfaceProps} and the "SDR-`rgba8unorm`-surface vs float-`rgba16float`-
  * surface" choice is exactly this internal split, keyed on the decoded source's
@@ -232,11 +232,11 @@ export function isFloatSurfaceProps(p: ImageSurfaceProps): p is FloatSurfaceProp
 
 // ---------------------------------------------------------------------------
 // COMPARE source (content-op unification). Presence of `compareSource` on
-// {@link ImageBackendProps} turns the GPU image pane into a COMPARE pane over two
+// {@link ImageBackendInput} turns the GPU image pane into a COMPARE pane over two
 // operands: the primary `source` is the REFERENCE (slot `a`) and `compareSource.b`
 // is the FOREGROUND (slot `b`) — the pane uploads `b` via the pool's second source
 // slot (`setSourceB`) and renders a compare IMAGE operation (`image/operations`)
-// instead of the single-image identity. The `opId` selects the mode:
+// instead of the single-image identity. The `operationId` selects the mode:
 //   - DIFF (Phase 2c): a pointwise DIRECT op (signed/absolute/…) samples both
 //     slots inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) runs through
 //     `renderDiffCached`; displayed as a scalar error (colormap).
@@ -254,9 +254,9 @@ export function isFloatSurfaceProps(p: ImageSurfaceProps): p is FloatSurfaceProp
  * pane. Ported from `GpuComparePane`'s diff plumbing, but routed THROUGH the pool
  * (`setSourceB` + `renderDiffCached`) rather than self-managed textures.
  */
-export interface CompareSource {
+export interface ImageComparisonInput {
   /** The FOREGROUND operand `b` — same dtype-tagged shape as the primary
-   *  {@link ImageBackendProps.source} (which is the REFERENCE / slot `a`). Slot
+   *  {@link ImageBackendInput.source} (which is the REFERENCE / slot `a`). Slot
    *  convention (diff + compositor): `a` = reference (texA), `b` = foreground
    *  (texB), so `diff = a − b` and split shows the reference left of the divider. */
   b: ImageSource;
@@ -264,13 +264,13 @@ export interface CompareSource {
    *  `"flip_ldr"`, `"ssim"`). SEEDS the pane's diff-kernel state (always a real
    *  kernel, even while {@link mode} is a compositor mode — so switching INTO diff
    *  restores it). Resolved to a concrete kernel id by `resolveComparisonOperationId`. */
-  opId: string;
-  /** The COMPARE mode: `"diff"` (the scalar-error diff of {@link opId}, the
+  operationId: string;
+  /** The COMPARE mode: `"diff"` (the scalar-error diff of {@link operationId}, the
    *  default when absent) OR the Phase-3 compositor mode `"split"` (a LIGHT
    *  composite of the two operands by divider). Selecting a mode is an OP switch
    *  on the reused pane — the display + chrome change, no remount. */
   mode?: "diff" | "split";
-  /** Split-divider position `[0,1]` (`opId:"split"`) — the reference is shown
+  /** Split-divider position `[0,1]` (`operationId:"split"`) — the reference is shown
    *  where the fragment `uv.x < splitPosition`. Controlled: the pane's divider /
    *  `[`·`]` keys report up via {@link onSplitPositionChange}; the owner lifts it
    *  and the new value flows back. Default 0.5. */
@@ -319,14 +319,14 @@ export interface CompareSource {
  * processing; a float surface honours tonemap/exposure/offset/peak/gamma; both
  * honour the common view controls). No `imageUrl` vs `hdr` fork.
  */
-export interface ImageBackendProps {
+export interface ImageBackendInput {
   /** The decoded image, tagged by dtype (`float` | `uint8`). */
   source: ImageSource;
   /** When set, the pane renders a DIFF of `source` (foreground/`a`) against
-   *  `compareSource.b` (reference) — see {@link CompareSource}. Absent = the
+   *  `compareSource.b` (reference) — see {@link ImageComparisonInput}. Absent = the
    *  byte-identical single-image path. Only the GPU backend honors it; the CPU
    *  backend ignores it (single-image fallback). */
-  compareSource?: CompareSource;
+  compareSource?: ImageComparisonInput;
   /** The viewport's EFFECTIVE settings from its ONE store (`useCellSettings`
    *  at the node/stage/compositor level): the `group > local` merge, driven DOWN.
    *  The pane derives its display values from these at RENDER (no adoption, no
@@ -401,18 +401,18 @@ export interface ImageBackendProps {
 
 /**
  * The interchangeable image-backend interface: a component accepting the ONE
- * {@link ImageBackendProps}. Both `CpuImagePane` and `GpuImagePane` are
+ * {@link ImageBackendInput}. Both `CpuImagePane` and `GpuImagePane` are
  * assignable; `resolveImageRenderer(mode)` returns one of them.
  */
-export type ImageBackend = (props: ImageBackendProps) => JSX.Element;
+export type ImageBackendView = (props: ImageBackendInput) => JSX.Element;
 
 /** `true` when the unified props carry a FLOAT source (the HDR surface path). */
-export function isFloatSource(p: ImageBackendProps): boolean {
+export function isFloatSource(p: ImageBackendInput): boolean {
   return p.source.dtype === "float";
 }
 
 /** Wrap decoded float data as a backend-neutral image source. */
-export function hdrSource(hdr: HdrData): FloatImageSource {
+export function hdrSource(hdr: FloatImageData): FloatImageSource {
   return {
     dtype: "float",
     pixels: hdr.pixels,
@@ -429,14 +429,14 @@ export function urlSource(url: string | null): Uint8ImageSource {
 
 /**
  * Reconstruct a pane's INTERNAL {@link ImageSurfaceProps} from the ONE unified
- * {@link ImageBackendProps}, keyed on `source.dtype`. This is the ONE place the
+ * {@link ImageBackendInput}, keyed on `source.dtype`. This is the ONE place the
  * unified shape fans out into the two dtype-keyed internal representations the
  * pane bodies already consume — so those ~1000-line bodies stay unchanged. The
  * float `hdr` wrapper is memoized on the (stable, resolve-once) `source` so its
  * identity is preserved across renders — the decode/upload/deep-flatten effects
  * depend on it. A hook (uses `useMemo`); call it once at the top of each pane.
  */
-export function useImageSurfaceProps(p: ImageBackendProps): ImageSurfaceProps {
+export function useImageSurfaceProps(p: ImageBackendInput): ImageSurfaceProps {
   const src = p.source;
   // Memoize on the UNDERLYING stable fields (pixels/shape/deep), NOT the
   // `source` wrapper identity — call sites (the compare side panes) may build a
@@ -446,7 +446,7 @@ export function useImageSurfaceProps(p: ImageBackendProps): ImageSurfaceProps {
   const floatShape = src.dtype === "float" ? src.shape : null;
   const floatNumpyDtype = src.dtype === "float" ? src.numpyDtype : undefined;
   const floatDeep = src.dtype === "float" ? src.deep : undefined;
-  const hdr = useMemo<HdrData | null>(
+  const hdr = useMemo<FloatImageData | null>(
     () =>
       floatPixels
         ? {

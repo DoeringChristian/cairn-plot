@@ -73,7 +73,7 @@ import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
-import { hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
+import { hdrSource, type FloatImageData } from "../../../plots/image/runtime/contracts";
 import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../../plots/image/webgpu/pool";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { createHarness, sleep, waitFor } from "../../harness";
@@ -103,7 +103,7 @@ console.error = (...args: unknown[]) => {
 // ---------------------------------------------------------------------------
 // A small 4x4 grayscale HDR gradient (scene-linear), includes a value >1.0.
 // ---------------------------------------------------------------------------
-function buildHdr(): HdrData {
+function buildHdr(): FloatImageData {
   const values = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
   return { pixels: floatValues(new Float32Array(values)), shape: [4, 4], dtype: "<f4" };
 }
@@ -268,7 +268,7 @@ async function runPoolCapCase(): Promise<boolean> {
     paneEl.style.width = "64px";
     paneEl.style.height = "64px";
     container.appendChild(paneEl);
-    const hdr: HdrData = { pixels: floatValues(new Float32Array([0.1 * i, 0.2, 0.3, 0.4])), shape: [2, 2], dtype: "<f4" };
+    const hdr: FloatImageData = { pixels: floatValues(new Float32Array([0.1 * i, 0.2, 0.3, 0.4])), shape: [2, 2], dtype: "<f4" };
     const root = createRoot(paneEl);
     root.render(h(GpuImagePane, { source: hdrSource(hdr), tonemap: "srgb", exposure: 0, label: `pane-${i}` }));
     roots.push(root);
@@ -324,10 +324,10 @@ async function runParkAwareRenderCase(): Promise<boolean> {
   document.body.appendChild(container);
 
   const hdrValues = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
-  const buildHdrN = (): HdrData => ({ pixels: floatValues(new Float32Array(hdrValues)), shape: [4, 4], dtype: "<f4" });
+  const buildHdrN = (): FloatImageData => ({ pixels: floatValues(new Float32Array(hdrValues)), shape: [4, 4], dtype: "<f4" });
   const operator = "srgb";
   const initialExposure = 0.2;
-  const setSourceFns: Array<(hdr: HdrData) => void> = new Array(N);
+  const setSourceFns: Array<(hdr: FloatImageData) => void> = new Array(N);
   const roots: ReturnType<typeof createRoot>[] = [];
 
   function Pane({ index }: { index: number }) {

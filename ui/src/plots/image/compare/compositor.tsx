@@ -46,8 +46,8 @@ import {
 } from "../../../state/settings/use-cell-settings";
 
 import type {
-  CompareSource,
-  ImageBackend,
+  ImageComparisonInput,
+  ImageBackendView,
 } from "../runtime/contracts";
 import type {
   FloatImageSource,
@@ -64,11 +64,11 @@ import type {
  * consumers (`ImageViewStatePane` / `OffscreenComparePanes`) render the SAME
  * unified pane a descriptor image-compare leaf does.
  */
-function resolveGpuImagePane(): ImageBackend | null {
+function resolveGpuImagePane(): ImageBackendView | null {
   if (typeof window === "undefined") return null;
   const mode = resolveRenderMode();
   if (mode === "cpu") return null;
-  return gpuImageGateState() === "ready" ? (GpuImagePane as ImageBackend) : null;
+  return gpuImageGateState() === "ready" ? (GpuImagePane as ImageBackendView) : null;
 }
 
 /**
@@ -859,9 +859,9 @@ export function CompositeMediaPane({
     // `ensureDiff(texA, texB)` ordering (see `renderers/image-backend.ts`).
     const contentKeyA = baselineFloat?.contentKey ?? baselineUrl ?? "diff:a";
     const contentKeyB = imageFloat?.contentKey ?? imageUrl ?? "diff:b";
-    const compareSource: CompareSource = {
+    const compareSource: ImageComparisonInput = {
       b: foregroundSource,
-      opId: comparisonOperationId ?? operation,
+      operationId: comparisonOperationId ?? operation,
       mode: effectiveMode as "split" | "diff",
       colormap,
       splitPosition: splitPosition ?? 0.5,

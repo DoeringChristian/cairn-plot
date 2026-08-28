@@ -8,12 +8,12 @@ import {
   gpuImageGateState,
   subscribeGpuImageGate,
 } from "../components/gpu-image-gate.ts";
-import type { ImageBackend, RenderMode } from "./contracts.ts";
+import type { ImageBackendView, RenderMode } from "./contracts.ts";
 
 let warnedForcedGpuUnavailable = false;
 
 /** Select the image backend while capability discovery settles asynchronously. */
-export function useImageBackend(mode: RenderMode): ImageBackend {
+export function useImageBackend(mode: RenderMode): ImageBackendView {
   const gate = useSyncExternalStore(subscribeGpuImageGate, gpuImageGateState, gpuImageGateState);
   useEffect(() => {
     if (mode !== "cpu") ensureGpuImageProbe();

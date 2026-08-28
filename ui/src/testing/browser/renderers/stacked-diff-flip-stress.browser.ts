@@ -35,7 +35,7 @@ import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
-import { urlSource, hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
+import { urlSource, hdrSource, type FloatImageData } from "../../../plots/image/runtime/contracts";
 import { getSharedWebGpuDevice } from "../../../plots/image/webgpu/device/device-provider.ts";
 import {
   startPaneRenderLog,
@@ -108,7 +108,7 @@ function diffProps(): Record<string, unknown> {
     source: urlSource(REF_URL),
     compareSource: {
       b: urlSource(FG_URL),
-      opId: "flip",
+      operationId: "flip",
       mode: "diff",
       contentKeyA: STACK_KEYS.a,
       contentKeyB: STACK_KEYS.b,
@@ -130,7 +130,7 @@ function diffMagmaProps(): Record<string, unknown> {
     source: urlSource(REF_URL),
     compareSource: {
       b: urlSource(FG_URL),
-      opId: "absolute",
+      operationId: "absolute",
       mode: "diff",
       colormap: "magma",
       contentKeyA: STACK_KEYS.a,
@@ -148,7 +148,7 @@ function diffMagmaProps(): Record<string, unknown> {
 // it lands high on the ramp (orange). Unlike SDR (colormap CPU-baked → present
 // isScalar false, invisible to the encode oracle), a float image false-colored
 // through `enc` runs the GPU `isScalar` path — VISIBLE to the render-log oracle.
-function floatHdr(fill: (x: number, y: number) => number): HdrData {
+function floatHdr(fill: (x: number, y: number) => number): FloatImageData {
   const W = 32, H = 32;
   const data = new Float32Array(W * H * 3);
   for (let y = 0; y < H; y++)
@@ -170,7 +170,7 @@ function floatDiffProps(): Record<string, unknown> {
     source: hdrSource(FLOAT_REF),
     compareSource: {
       b: hdrSource(FLOAT_FG),
-      opId: "flip",
+      operationId: "flip",
       mode: "diff",
       contentKeyA: STACK_KEYS.a,
       contentKeyB: STACK_KEYS.b,

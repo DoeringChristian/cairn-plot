@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   decodeImageSource,
-  decodedFloatToCompareSource,
+  decodedFloatToImageComparisonInput,
   isFloatCandidateArtifact,
   resolveImageArtifactsAsync,
 } from "./artifact-resolvers.ts";
@@ -96,10 +96,10 @@ test("isFloatCandidateArtifact: browser-native + extension-less URLs are NOT can
 });
 
 // ---------------------------------------------------------------------------
-// decodedFloatToCompareSource — the pure DecodedImage → ResolvedFloatImage map.
+// decodedFloatToImageComparisonInput — the pure DecodedImage → ResolvedFloatImage map.
 // ---------------------------------------------------------------------------
-test("decodedFloatToCompareSource carries dims/channels/precision + content key", () => {
-  const src = decodedFloatToCompareSource(
+test("decodedFloatToImageComparisonInput carries dims/channels/precision + content key", () => {
+  const src = decodedFloatToImageComparisonInput(
     { kind: "f32", data: new Float32Array([1, 2, 3, 4]), width: 2, height: 2, channels: 1, precision: "f32" },
     "content-key-1",
   );

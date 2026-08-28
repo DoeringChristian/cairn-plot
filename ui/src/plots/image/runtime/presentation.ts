@@ -10,7 +10,7 @@ import type {
 } from "../../types.ts";
 import type { ImageSource } from "../definition/content.ts";
 import type { DeepFlattenController } from "../resources/decoders.ts";
-import type { CompareSource, RenderMode } from "./contracts.ts";
+import type { ImageComparisonInput, RenderMode } from "./contracts.ts";
 
 /**
  * Resolved input presented by the host to the image runtime.
@@ -21,7 +21,7 @@ import type { CompareSource, RenderMode } from "./contracts.ts";
  */
 export interface ImagePresentation {
   readonly source?: ImageSource;
-  readonly compareSource?: CompareSource;
+  readonly compareSource?: ImageComparisonInput;
   readonly imageUrl?: string | null;
   readonly hdr?: {
     readonly data: Float32Array | Float64Array | Uint16Array;

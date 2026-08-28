@@ -88,15 +88,15 @@ function buildTex(device: Device, rows: number[][]): Texture {
  * average) over the 3 diff channels. SDR target, nearest filter, EV 0 → byte-exact
  * within 1/255.
  */
-async function runDiffOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
-  const op = getCpuImageOperation(opId);
-  if (!op || getWebGpuImageOperation(opId)?.kind !== "inline") {
-    report(false, `[${opId}] is not implemented as an inline operation by both backends`);
+async function runDiffOpCase(device: Device, operationId: string, displayOperationId: string): Promise<boolean> {
+  const op = getCpuImageOperation(operationId);
+  if (!op || getWebGpuImageOperation(operationId)?.kind !== "inline") {
+    report(false, `[${operationId}] is not implemented as an inline operation by both backends`);
     return false;
   }
   const enc = getDisplayOperation(displayOperationId);
   if (!enc) {
-    report(false, `[${opId}/${displayOperationId}] encoding is not registered`);
+    report(false, `[${operationId}/${displayOperationId}] encoding is not registered`);
     return false;
   }
   const encParams = { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" as const };
@@ -109,7 +109,7 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
     exposureEV: 0,
     ...prepareDisplayOperation(displayOperationId, { hdrSurface: false }),
     srcB: texB,
-    imageOperation: opId,
+    imageOperation: operationId,
     reduce: "mean",
     channelCount: 3,
     uv: uvFull,
@@ -122,7 +122,7 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
   target.destroy();
 
   if (!(out instanceof Uint8Array)) {
-    report(false, `[${opId}] expected Uint8Array readback, got ${out.constructor.name}`);
+    report(false, `[${operationId}] expected Uint8Array readback, got ${out.constructor.name}`);
     return false;
   }
 
@@ -148,12 +148,12 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
         ok = false;
         report(
           false,
-          `[${opId}] px[${i}] a=${JSON.stringify(PAIRS[i]!.a.slice(0, 3))} b=${JSON.stringify(PAIRS[i]!.b.slice(0, 3))} ch[${c}] expected=${eb} actual=${ab}`,
+          `[${operationId}] px[${i}] a=${JSON.stringify(PAIRS[i]!.a.slice(0, 3))} b=${JSON.stringify(PAIRS[i]!.b.slice(0, 3))} ch[${c}] expected=${eb} actual=${ab}`,
         );
       }
     }
   }
-  report(ok, `[${opId}/${displayOperationId}] GPU cairnContent + display === composed cpu twin`);
+  report(ok, `[${operationId}/${displayOperationId}] GPU cairnContent + display === composed cpu twin`);
   return ok;
 }
 
@@ -211,10 +211,10 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
  * the display twin (operator srgb = clamp, then output-encode), the SAME
  * two-registry composition the diff case uses.
  */
-async function runCompositorOpCase(device: Device, opId: "split", param: number): Promise<boolean> {
-  const op = getCpuImageOperation(opId);
-  if (!op || getWebGpuImageOperation(opId)?.kind !== "inline") {
-    report(false, `[${opId}] not a registered direct image operation`);
+async function runCompositorOpCase(device: Device, operationId: "split", param: number): Promise<boolean> {
+  const op = getCpuImageOperation(operationId);
+  if (!op || getWebGpuImageOperation(operationId)?.kind !== "inline") {
+    report(false, `[${operationId}] not a registered direct image operation`);
     return false;
   }
   // Reference (a) / foreground (b) rows, incl. an OVER-RANGE operand (2.0) that
@@ -254,7 +254,7 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
       displayOperationId: hdrOut ? "linear" : "srgb",
       isScalar: false,
       srcB: texB,
-      imageOperation: opId,
+      imageOperation: operationId,
       contentParam: param,
       hdrOut,
       srgbDecode: false, // scene-linear float operands
@@ -275,20 +275,20 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
           // f16 storage step near the encoded over-range values (~1.35) is ~1e-3.
           if (Math.abs(act - exp) > 3e-3) {
             ok = false;
-            report(false, `[${opId}:hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${act.toFixed(4)}`);
+            report(false, `[${operationId}:hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${act.toFixed(4)}`);
           }
         } else {
           const exp = byteOf(outputEncode(composite, undefined));
           const act = (out as Uint8Array)[i * 4 + c] ?? 0;
           if (Math.abs(act - exp) > 1) {
             ok = false;
-            report(false, `[${opId}:sdr] px[${i}].ch[${c}] expected=${exp} actual=${act}`);
+            report(false, `[${operationId}:sdr] px[${i}].ch[${c}] expected=${exp} actual=${act}`);
           }
         }
       }
     }
   }
-  report(ok, `[${opId}] (param=${param}) GPU cairnContent composite === composed cpu twin (SDR + HDR surfaces)`);
+  report(ok, `[${operationId}] (param=${param}) GPU cairnContent composite === composed cpu twin (SDR + HDR surfaces)`);
   return ok;
 }
 
@@ -307,15 +307,15 @@ function buildUpload(rows: number[][]): SourceUpload {
  * `renderImage(srcB,…)` path. Proves the pool retains + uploads the second slot
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
  */
-async function runPoolDirectOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
-  const op = getCpuImageOperation(opId);
-  if (!op || getWebGpuImageOperation(opId)?.kind !== "inline") {
-    report(false, `[pool:${opId}] not a registered direct image operation`);
+async function runPoolDirectOpCase(device: Device, operationId: string, displayOperationId: string): Promise<boolean> {
+  const op = getCpuImageOperation(operationId);
+  if (!op || getWebGpuImageOperation(operationId)?.kind !== "inline") {
+    report(false, `[pool:${operationId}] not a registered direct image operation`);
     return false;
   }
   const enc = getDisplayOperation(displayOperationId);
   if (!enc) {
-    report(false, `[pool:${opId}/${displayOperationId}] encoding is not registered`);
+    report(false, `[pool:${operationId}/${displayOperationId}] encoding is not registered`);
     return false;
   }
   const encParams = { ...DEFAULT_ENCODE_PARAMS, reduce: "mean" as const };
@@ -330,7 +330,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
     exposureEV: 0,
     ...prepareDisplayOperation(displayOperationId, { hdrSurface: false }),
     // NB: NO `srcB` here — the pool supplies it from `setSourceB`.
-    imageOperation: opId,
+    imageOperation: operationId,
     reduce: "mean",
     channelCount: 3,
     uv: uvFull,
@@ -339,7 +339,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
   const ok0 = handle.render(params);
   const surface = getCanvasSurfaceForTest(canvas);
   if (!surface) {
-    report(false, `[pool:${opId}] no live surface after render`);
+    report(false, `[pool:${operationId}] no live surface after render`);
     releasePane(handle);
     canvas.remove();
     return false;
@@ -349,11 +349,11 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
   canvas.remove();
 
   if (!ok0) {
-    report(false, `[pool:${opId}] handle.render returned false (engine failed)`);
+    report(false, `[pool:${operationId}] handle.render returned false (engine failed)`);
     return false;
   }
   if (!(out instanceof Uint8Array)) {
-    report(false, `[pool:${opId}] expected Uint8Array surface readback, got ${out.constructor.name}`);
+    report(false, `[pool:${operationId}] expected Uint8Array surface readback, got ${out.constructor.name}`);
     return false;
   }
   let ok = true;
@@ -371,11 +371,11 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
       const ab = out[i * 4 + c]!;
       if (Math.abs(ab - eb) > 1) {
         ok = false;
-        report(false, `[pool:${opId}] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
+        report(false, `[pool:${operationId}] px[${i}].ch[${c}] expected=${eb} actual=${ab}`);
       }
     }
   }
-  report(ok, `[pool:${opId}] setSource + setSourceB + render(imageOperation) surface === composed cpu twin`);
+  report(ok, `[pool:${operationId}] setSource + setSourceB + render(imageOperation) surface === composed cpu twin`);
   return ok;
 }
 
@@ -587,9 +587,9 @@ const DIRECT_DIFF_OPS = ["absolute", "signed", "squared", "relative_absolute", "
 /** Operation and display encoding are independent axes. Exercise every operation
  * with the shared default, plus the analytic encoding supported by signed data. */
 const DIRECT_DIFF_CASES = [
-  ...DIRECT_DIFF_OPS.map((opId) => ({ opId, displayOperationId: DEFAULT_COMPARISON_DISPLAY_OPERATION_ID })),
-  { opId: "signed", displayOperationId: "red-green" },
-  { opId: "relative_signed", displayOperationId: "red-green" },
+  ...DIRECT_DIFF_OPS.map((operationId) => ({ operationId, displayOperationId: DEFAULT_COMPARISON_DISPLAY_OPERATION_ID })),
+  { operationId: "signed", displayOperationId: "red-green" },
+  { operationId: "relative_signed", displayOperationId: "red-green" },
 ];
 
 async function main(): Promise<void> {
@@ -598,16 +598,16 @@ async function main(): Promise<void> {
     report(true, `device.backend = ${device.backend}`);
     let allOk = true;
     if (!(await runIdentityInertCase(device))) allOk = false;
-    for (const { opId, displayOperationId } of DIRECT_DIFF_CASES) {
-      if (!(await runDiffOpCase(device, opId, displayOperationId))) allOk = false;
+    for (const { operationId, displayOperationId } of DIRECT_DIFF_CASES) {
+      if (!(await runDiffOpCase(device, operationId, displayOperationId))) allOk = false;
     }
     report(allOk, `all ${DIRECT_DIFF_CASES.length} direct diff/encoding cases: GPU cairnContent + display === composed cpu twin`);
     // Phase 3 — COMPOSITOR op (split): light composite === composed cpu twin.
     if (!(await runCompositorOpCase(device, "split", 0.5))) allOk = false;
     report(allOk, `compositor op (split): GPU composite === composed cpu twin (SDR + HDR)`);
     // Phase 2b — POOL wiring: the second source slot + the cached-op render path.
-    for (const { opId, displayOperationId } of DIRECT_DIFF_CASES) {
-      if (!(await runPoolDirectOpCase(device, opId, displayOperationId))) allOk = false;
+    for (const { operationId, displayOperationId } of DIRECT_DIFF_CASES) {
+      if (!(await runPoolDirectOpCase(device, operationId, displayOperationId))) allOk = false;
     }
     if (!(await runPoolCachedOpCase(device))) allOk = false;
     if (!(await runPoolChromeCase(device))) allOk = false;

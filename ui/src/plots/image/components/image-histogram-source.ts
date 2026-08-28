@@ -11,7 +11,7 @@
 import type { HistogramSource } from "../../../primitives/components/ImageInfoPanel";
 import type { HistogramChannel } from "./image-histogram.ts";
 import { defaultChannelColor } from "./image-histogram.ts";
-import type { HdrData } from "../runtime/contracts";
+import type { FloatImageData } from "../runtime/contracts";
 import { shapeDims } from "../runtime/contracts";
 import { floatPixelReader } from "../runtime/pixel-buffer.ts";
 import type { DeepGpuCsrData } from "../resources/decoders.ts";
@@ -53,13 +53,13 @@ export function u8HistogramSource(
 }
 
 /**
- * Build a histogram source for a FLOAT (HDR) pane from its raw `HdrData` buffer
+ * Build a histogram source for a FLOAT (HDR) pane from its raw `FloatImageData` buffer
  * (row-major `[H,W,C]`, read per `precision` — f16 bit patterns are widened
  * lazily per sample). Samples are scene values (`unit` scale, 1.0 = SDR white).
  * `getDeepCsr` (DEEP EXR only) enables the per-pixel depth read-out.
  */
 export function floatHistogramSource(
-  hdr: HdrData,
+  hdr: FloatImageData,
   version: number,
   getDeepCsr?: () => Promise<DeepGpuCsrData | null>,
 ): HistogramSource {

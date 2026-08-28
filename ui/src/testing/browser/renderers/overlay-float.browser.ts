@@ -7,7 +7,7 @@
  * `test:harness` set via `data-cairn-harness="self-driving"`.
  *
  * THE BUG IT PINS. `overlay`/`overlaySettings` are declared on the unified
- * `ImageBackendProps` for ANY dtype, but were threaded only on the uint8 branch
+ * `ImageBackendInput` for ANY dtype, but were threaded only on the uint8 branch
  * and HARD-NULLED for the float surface (`GpuImagePane`'s
  * `const overlay = hdrMode ? undefined : …`), so identical detection metadata drew
  * boxes on a uint8 PNG but rendered NOTHING on an EXR/float image — no error, no
@@ -39,7 +39,7 @@ import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
-import { hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
+import { hdrSource, type FloatImageData } from "../../../plots/image/runtime/contracts";
 import {
   DEFAULT_OVERLAY_SETTINGS,
   type ImageOverlayData,
@@ -59,7 +59,7 @@ console.error = (...args: unknown[]) => {
 };
 
 // A small 8×8 grayscale HDR gradient (scene-linear, includes values >1.0).
-function buildHdr(): HdrData {
+function buildHdr(): FloatImageData {
   const data = new Float32Array(8 * 8);
   for (let i = 0; i < data.length; i++) data[i] = (i / (data.length - 1)) * 3.0;
   return { pixels: floatValues(data), shape: [8, 8], dtype: "<f4" };

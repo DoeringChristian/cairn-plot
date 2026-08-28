@@ -24,7 +24,7 @@ test("image shaders specialize to one image operation", () => {
   assert.notEqual(identity, signed);
   assert.match(signed, /a\.rgb - b\.rgb/);
   assert.doesNotMatch(identity, /a\.rgb - b\.rgb/);
-  assert.doesNotMatch(signed, /opId|IMAGE_OPERATION_ID/);
+  assert.doesNotMatch(signed, /operationId|IMAGE_OPERATION_ID/);
 });
 
 test("split and blend shaders use the same operation specialization seam", () => {

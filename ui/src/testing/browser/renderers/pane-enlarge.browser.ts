@@ -47,7 +47,7 @@ import { createRoot } from "react-dom/client";
 // reparent" proof is just as meaningful here; the WebGPU pane is verified
 // interactively in a foreground browser.
 import CpuImagePane from "../../../plots/image/cpu/view";
-import { hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
+import { hdrSource, type FloatImageData } from "../../../plots/image/runtime/contracts";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { reframeViewForResize } from "../../../plots/image/runtime/reframe-view";
 import { createHarness, sleep, waitFor } from "../../harness";
@@ -64,7 +64,7 @@ console.error = (...args: unknown[]) => {
 };
 
 // A small 4x4 grayscale HDR gradient (scene-linear), includes values >1.0.
-function buildHdr(): HdrData {
+function buildHdr(): FloatImageData {
   const values = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 0.05, 0.3, 0.6, 0.9, 1.2, 1.8, 2.5, 3.0];
   return { pixels: floatValues(new Float32Array(values)), shape: [4, 4], dtype: "<f4" };
 }

@@ -6,7 +6,7 @@
  * optional `mime`/`ext` hint) into ONE canonical pixel payload — a
  * {@link DecodedImage} — that the CPU/GPU image backends already consume:
  *   - `kind: "u8"`  feeds the SDR path (8-bit, the `imageUrl`/`ImageData` world).
- *   - `kind: "f32"` feeds the HDR path (float samples, `HdrData`-compatible).
+ *   - `kind: "f32"` feeds the HDR path (float samples, `FloatImageData`-compatible).
  *
  * The registry is keyed by a normalized {@link ImageFormat}:
  *   - png/jpeg/webp/avif/gif → browser-native decode (`createImageBitmap` →
@@ -74,7 +74,7 @@ import {
  *  - `u8`  — 8-bit samples for the SDR path. `data` is an `ImageData` (RGBA,
  *    from the browser-native decoders) or a raw `Uint8ClampedArray` (from a
  *    uint8 `.npy`/`.npz`, laid out row-major, `width*height*channels`).
- *  - `f32` — the float/HDR path (`HdrData`-compatible). `channels` is `1` for
+ *  - `f32` — the float/HDR path (`FloatImageData`-compatible). `channels` is `1` for
  *    `[H,W]`, else the trailing dim of `[H,W,C]`. The `precision` tag says how
  *    to read `data` (F16 pipeline — see `./half.ts`):
  *      - `"f32"`      → `data` is a `Float32Array` of IEEE-754 f32 VALUES.

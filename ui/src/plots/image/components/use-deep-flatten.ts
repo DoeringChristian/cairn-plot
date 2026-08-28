@@ -2,7 +2,7 @@
  * `useDeepFlatten` — the DEEP EXR depth-WINDOW controller shared by both image
  * backends (CPU + GPU HDR paths).
  *
- * A deep source arrives as an `HdrData` whose `data` is the FULL composite plus
+ * A deep source arrives as an `FloatImageData` whose `data` is the FULL composite plus
  * a `deep` {@link DeepFlattenController} (retained wasm-side samples). This hook
  * exposes a depth WINDOW `[zNear, zFar]` (default `[zMin, zMax]` = full
  * composite) and:
@@ -25,7 +25,7 @@
  * undefined`, `hasDeep:false`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { HdrData } from "../runtime/contracts";
+import type { FloatImageData } from "../runtime/contracts";
 import { floatPixelsFrom } from "../runtime/pixel-buffer.ts";
 import type { ToolbarSliderSpec } from "../../../primitives/controls/ToolbarConfig";
 import { useResettableState } from "../../../host/hooks/use-resettable-state";
@@ -44,8 +44,8 @@ const cancelRaf: (h: number) => void =
   typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : (h) => clearTimeout(h);
 
 export interface DeepFlattenState {
-  /** The effective `HdrData` — the prop `hdr`, or a windowed re-flatten of it. */
-  hdr: HdrData;
+  /** The effective `FloatImageData` — the prop `hdr`, or a windowed re-flatten of it. */
+  hdr: FloatImageData;
   /** The Z-NEAR + Z-FAR sliders for the toolbar (absent for non-deep sources). */
   sliders?: ToolbarSliderSpec[];
   /** True when the source is deep (the region-select button shows). */
@@ -75,7 +75,7 @@ export interface DeepFlattenState {
 }
 
 export function useDeepFlatten(
-  hdr: HdrData,
+  hdr: FloatImageData,
   onWindow?: (zNear: number, zFar: number) => void,
 ): DeepFlattenState {
   const deep = hdr.deep;
@@ -177,7 +177,7 @@ export function useDeepFlatten(
     request();
   }, [deep, zNear, zFar, zMin, zMax, request, gpuMode, onWindow]);
 
-  const effectiveHdr = useMemo<HdrData>(
+  const effectiveHdr = useMemo<FloatImageData>(
     () =>
       deep && !gpuMode && flatData != null
         ? // The windowed buffer keeps the SOURCE's representation (the deep

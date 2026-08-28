@@ -46,6 +46,6 @@ test("comparison composition changes image operationeration without choosing an 
   assert.equal((split.compareSource as { colormap: string }).colormap, "turbo");
   assert.equal((difference.compareSource as { colormap: string }).colormap, "turbo");
   assert.equal((split.compareSource as { mode: string }).mode, "split");
-  assert.equal((difference.compareSource as { opId: string }).opId, "signed");
+  assert.equal((difference.compareSource as { operationId: string }).operationId, "signed");
   assert.equal("syncedSettings" in split, false);
 });

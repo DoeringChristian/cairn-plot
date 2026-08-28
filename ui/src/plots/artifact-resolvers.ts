@@ -113,7 +113,7 @@ export interface ResolvedImageSource {
  * hash, NOT the float bytes). Carries the `precision` tag through so an F16
  * (`f16-bits`) buffer stays half-precision to the `rgba16float` upload.
  */
-export function decodedFloatToCompareSource(
+export function decodedFloatToImageComparisonInput(
   decoded: Extract<DecodedImage, { kind: "f32" }>,
   contentKey: string,
 ): ResolvedFloatImage {
@@ -161,7 +161,7 @@ export async function decodeImageSource(input: {
   }
   const decoded = await decodeImage({ bytes, url: input.url, mime });
   if (decoded.kind === "f32") {
-    return { url: null, float: decodedFloatToCompareSource(decoded, contentKey) };
+    return { url: null, float: decodedFloatToImageComparisonInput(decoded, contentKey) };
   }
   return { url: decodedU8ToDataUrl(decoded) };
 }

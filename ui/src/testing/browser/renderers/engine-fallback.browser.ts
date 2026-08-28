@@ -65,7 +65,7 @@ import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
-import { hdrSource, urlSource, type HdrData } from "../../../plots/image/runtime/contracts";
+import { hdrSource, urlSource, type FloatImageData } from "../../../plots/image/runtime/contracts";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const h = React.createElement;
@@ -170,7 +170,7 @@ async function runHdrImageCase(): Promise<boolean> {
   container.style.height = "160px";
   document.body.appendChild(container);
 
-  const hdr: HdrData = { pixels: floatValues(new Float32Array([0.1, 0.4, 0.7, 1.0])), shape: [2, 2], dtype: "<f4" };
+  const hdr: FloatImageData = { pixels: floatValues(new Float32Array([0.1, 0.4, 0.7, 1.0])), shape: [2, 2], dtype: "<f4" };
   const root = createRoot(container);
   root.render(h(GpuImagePane, { source: hdrSource(hdr), tonemap: "srgb", exposure: 0, label: "hdr-fallback-test" }));
 
@@ -221,7 +221,7 @@ async function runCompareSplitCase(): Promise<boolean> {
       source: urlSource(RED_PNG_DATA_URL),
       compareSource: {
         b: urlSource(RED_PNG_DATA_URL),
-        opId: "absolute",
+        operationId: "absolute",
         mode: "split",
         splitPosition: 0.5,
       },
@@ -263,7 +263,7 @@ async function runCompareDiffCase(): Promise<boolean> {
       source: urlSource(RED_PNG_DATA_URL),
       compareSource: {
         b: urlSource(RED_PNG_DATA_URL),
-        opId: "signed",
+        operationId: "signed",
         mode: "diff",
         colormap: "red-blue",
       },

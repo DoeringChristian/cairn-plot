@@ -11,7 +11,7 @@ import type {
   ImageCompareFit,
   ImageSource,
 } from "./content.ts";
-import type { CompareSource } from "../runtime/contracts.ts";
+import type { ImageComparisonInput } from "../runtime/contracts.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import type { CompareViewMode } from "../runtime/use-comparison-control.ts";
 
@@ -19,7 +19,7 @@ export interface ImageComparisonHostInput {
   readonly node: CompareNode;
   readonly mode: CompareViewMode;
   readonly comparisonOperationId: string;
-  readonly colormap: CompareSource["colormap"];
+  readonly colormap: ImageComparisonInput["colormap"];
   readonly cellDefaults: PlotSettings;
   readonly splitPosition: number;
   readonly align?: ImageCompareAlign;
@@ -43,9 +43,9 @@ export function composeImageComparisonPresentation(args: {
 }): Record<string, unknown> {
   const { leaf, resolved, comparison, enlargeControl } = args;
   if (resolved.__diffB === undefined) return {};
-  const compareSource: CompareSource = {
+  const compareSource: ImageComparisonInput = {
     b: resolved.__diffB as ImageSource,
-    opId: comparison.comparisonOperationId,
+    operationId: comparison.comparisonOperationId,
     mode: comparison.mode,
     colormap: comparison.colormap,
     align: comparison.align,

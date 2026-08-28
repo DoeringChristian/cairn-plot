@@ -1,7 +1,7 @@
 /**
  * Regression tests for the ONE image-backend prop fan-out
  * (`useImageSurfaceProps`) — the seam that reconstructs each pane's internal
- * {@link ImageSurfaceProps} from the unified {@link ImageBackendProps}, keyed on
+ * {@link ImageSurfaceProps} from the unified {@link ImageBackendInput}, keyed on
  * `source.dtype`.
  *
  * BUG PINNED HERE: the FLOAT branch dropped `colormap`, so an authored
@@ -22,7 +22,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { useImageSurfaceProps, type ImageBackendProps } from "../runtime/contracts.ts";
+import { useImageSurfaceProps, type ImageBackendInput } from "../runtime/contracts.ts";
 import { floatValues } from "../runtime/pixel-buffer.ts";
 import {
   DEFAULT_OVERLAY_SETTINGS,
@@ -32,7 +32,7 @@ import {
 
 /** Render `useImageSurfaceProps(backend)` and surface the fanned-out props'
  *  `{surface}:{colormap}` so a test can assert what the pane body would read. */
-function fanOut(backend: ImageBackendProps): { surface: "hdr" | "sdr"; colormap: string } {
+function fanOut(backend: ImageBackendInput): { surface: "hdr" | "sdr"; colormap: string } {
   let captured!: { surface: "hdr" | "sdr"; colormap: string };
   function Probe() {
     const legacy = useImageSurfaceProps(backend) as { hdr?: unknown; colormap?: string };
@@ -48,7 +48,7 @@ function fanOut(backend: ImageBackendProps): { surface: "hdr" | "sdr"; colormap:
 
 /** Fan out and surface `{surface}` plus whether `overlay`/`overlaySettings`
  *  survived — what the pane's `overlayNode` gate reads. */
-function fanOutOverlay(backend: ImageBackendProps): {
+function fanOutOverlay(backend: ImageBackendInput): {
   surface: "hdr" | "sdr";
   overlay: ImageOverlayData | undefined;
   overlaySettings: ImageOverlaySettings | undefined;
@@ -86,7 +86,7 @@ const sampleOverlay = (): ImageOverlayData => ({
 });
 const sampleOverlaySettings = (): ImageOverlaySettings => ({ ...DEFAULT_OVERLAY_SETTINGS });
 
-const floatSource = (): ImageBackendProps["source"] => ({
+const floatSource = (): ImageBackendInput["source"] => ({
   dtype: "float",
   pixels: floatValues(new Float32Array([0, 0.25, 0.5, 0.75, 1, 0.5])),
   shape: [2, 3],

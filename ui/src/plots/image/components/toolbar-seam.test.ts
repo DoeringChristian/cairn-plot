@@ -35,7 +35,7 @@ const standalone = read("plots/image/runtime/view.tsx");
 
 test("image-backend: both pane prop shapes declare the `toolbar` host seam", () => {
   // Present on both FloatSurfaceProps and Uint8SurfaceProps so a single flag flows
-  // through the whole ImageBackend union (and the resolveImageRenderer seam).
+  // through the whole ImageBackendView union (and the resolveImageRenderer seam).
   const decls = backend.match(/toolbar\?: boolean/g) ?? [];
   assert.ok(decls.length >= 2, "toolbar?: boolean must be on both HDR + SDR shapes");
   // Base EV/offset — the controlled EV/offset surface, additive with the

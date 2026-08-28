@@ -56,7 +56,7 @@ import {
   composeSingleImagePresentation,
   type ImageComparisonHostInput,
 } from "../definition/host-presentation.ts";
-import type { CompareSource } from "./contracts.ts";
+import type { ImageComparisonInput } from "./contracts.ts";
 import { useImageComparisonControl } from "./use-comparison-control.ts";
 
 /**
@@ -468,8 +468,8 @@ export function ImageNodeHost({ node }: { node: PlotLeafNode | CompareNode }) {
     node,
     mode: control.viewMode,
     comparisonOperationId: control.comparisonOperationId,
-    colormap: (cell?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
-      (defaults["image.encoding"] as CompareSource["colormap"] | undefined),
+    colormap: (cell?.syncedSettings?.["image.encoding"] as ImageComparisonInput["colormap"] | undefined) ??
+      (defaults["image.encoding"] as ImageComparisonInput["colormap"] | undefined),
     splitPosition: control.splitPos,
     align: planned.align,
     fit: planned.fit,

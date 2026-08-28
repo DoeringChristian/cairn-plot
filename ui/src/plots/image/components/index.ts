@@ -12,7 +12,7 @@ export {
 export { default as ScalarPlot, type ScalarPlotProps } from "../../scalar/backends/svg/ScalarPlot";
 // The CPU image backend + the shared backend contract. `CpuImagePane` and the
 // WebGPU `GpuImagePane` (addon-loaded via the runtime registry seam) are the
-// two interchangeable backends behind `ImageBackendProps` — see
+// two interchangeable backends behind `ImageBackendInput` — see
 // `image-backend.ts`'s module doc.
 export { default as CpuImagePane, tonemapToImageData } from "../cpu/view";
 export {
@@ -22,12 +22,12 @@ export {
   hdrSource,
   urlSource,
   resolveRenderMode,
-  type ImageBackend,
-  type ImageBackendProps,
+  type ImageBackendView,
+  type ImageBackendInput,
   type ImageSurfaceProps,
   type FloatSurfaceProps,
   type Uint8SurfaceProps,
-  type HdrData,
+  type FloatImageData,
   type RenderMode,
 } from "../runtime/contracts";
 export type {

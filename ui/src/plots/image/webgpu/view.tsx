@@ -1,7 +1,7 @@
 /**
  * GpuImagePane — the WebGPU image BACKEND. One of two interchangeable image
  * backends (see `CpuImagePane.tsx` for the CPU/2D-canvas twin); both accept the
- * shared `ImageBackendProps` union (`renderers/image-backend.ts`) and are chosen
+ * shared `ImageBackendInput` union (`renderers/image-backend.ts`) and are chosen
  * upstream by the render mode (`resolveRenderMode` — cpu | gpu | auto). It wraps
  * `engine/image-engine.ts`'s `renderImage()` + `engine/pool.ts`'s many-panes
  * resource pool. On any hard GPU-init/render failure it self-heals to
@@ -149,18 +149,18 @@ import {
   useImageSurfaceProps,
   shapeDims,
   finite,
-  type HdrData,
+  type FloatImageData,
   type FloatSurfaceProps,
   type Uint8SurfaceProps,
-  type ImageBackend,
-  type ImageBackendProps,
-  type CompareSource,
+  type ImageBackendView,
+  type ImageBackendInput,
+  type ImageComparisonInput,
 } from "../runtime/contracts";
 import type { ImageSource } from "../definition/content.ts";
 
 // A stable empty HDR for the SDR branch's unconditional `useDeepFlatten` call
 // (rules-of-hooks): no `deep`, so it yields the source unchanged + no slider.
-const NULL_HDR: HdrData = { pixels: floatValues(new Float32Array(0)), shape: [0, 0], dtype: "<f4" };
+const NULL_HDR: FloatImageData = { pixels: floatValues(new Float32Array(0)), shape: [0, 0], dtype: "<f4" };
 
 /** The IDENTITY-TRANSFER curves — the ones whose tone-map "operator" is a pure
  *  clamp, the display transfer living entirely in the output-encode stage. A
@@ -183,7 +183,7 @@ import { reportCapabilityLimit } from "../../../primitives/components/capability
  *  identical to the f32 path. NaN/Inf half bits pass through as-is (no
  *  `finite()` guard) — the diff/tonemap kernels handle non-finite samples the
  *  same way they would after a float upload. The `"f32"` path is unchanged. */
-function hdrToRGBAFloat32(hdr: HdrData): SourceUpload {
+function hdrToRGBAFloat32(hdr: FloatImageData): SourceUpload {
   const { h, w, c } = shapeDims(hdr.shape);
   if (hdr.pixels.kind === "f16-bits") {
     const src = hdr.pixels.bits;
@@ -362,7 +362,7 @@ export function screenPxPerTexel(
   });
 }
 
-export default function GpuImagePane(backendProps: ImageBackendProps) {
+export default function GpuImagePane(backendProps: ImageBackendInput) {
   // The ONE unified `source` fans out (keyed on `source.dtype`) into the two
   // internal dtype-keyed representations the body below consumes — so the body
   // (and its `isFloatSurfaceProps(props)` dispatch) is unchanged. `backendProps` is
@@ -372,14 +372,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // COMPARE capability (content-op unification): when `compareSource` is present
   // the pane renders a COMPARE of `source` (reference/`a`) against
   // `compareSource.b` (foreground). The single-image path is byte-identical when
-  // absent. The `opId` selects the mode:
+  // absent. The `operationId` selects the mode:
   //   - `compositorMode` (Phase 3): `split` — a LIGHT composite (divider),
   //     displayed as a plain image with the divider + per-side chrome.
   //   - `diffMode` (Phase 2c): a diff kernel — the scalar-error display.
   // `hasCompare` gates the SHARED operand plumbing (upload `b`, mapping, metrics).
-  const compareSource: CompareSource | undefined = backendProps.compareSource;
+  const compareSource: ImageComparisonInput | undefined = backendProps.compareSource;
   const hasCompare = !!compareSource;
-  // The compare mode is EXPLICIT (`compareSource.mode`, default "diff"), so `opId`
+  // The compare mode is EXPLICIT (`compareSource.mode`, default "diff"), so `operationId`
   // stays the diff kernel even in a compositor mode (switching INTO diff restores it).
   // A legacy "blend" (removed view mode) aliases to "split".
   const compareMode: "diff" | "split" | null = hasCompare
@@ -451,7 +451,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
   // TEV overlay source buffers (retained CPU pixels, mirrors ImagePane's
   // valueDataRef / HdrImagePane's `hdr.data`).
-  const hdrDataRef = useRef<HdrData | null>(null);
+  const hdrDataRef = useRef<FloatImageData | null>(null);
   const sdrImageDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
   // DIFF reference (`b`) retained pixels — the diff TEV readout's `b` operand for a
@@ -579,8 +579,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   })();
   // The diff KERNEL (which error metric) is a per-VIEWPORT content-op choice OWNED
   // by the hoisted `useCompareControl` (descriptor path) — surfaced here as
-  // `compareSource.opId` and mutated via `compareSource.onComparisonOperationChange`. When
-  // that owner is present the pane DERIVES the kernel straight from `opId` (ONE
+  // `compareSource.operationId` and mutated via `compareSource.onComparisonOperationChange`. When
+  // that owner is present the pane DERIVES the kernel straight from `operationId` (ONE
   // authoritative store — no parallel pane-local seed/reseed to hand-sync; M2). The
   // owner also carries the viewport settings subscription, so remote operation
   // patches flow through it, not a second copy here. A cross-type consumer with NO owner (the live-3D snapshot
@@ -589,16 +589,16 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const hasKernelOwner = !!compareSource?.onComparisonOperationChange;
   const initialKernelSeedRef = useRef<string | null>(null);
   if (initialKernelSeedRef.current == null && compareSource) {
-    initialKernelSeedRef.current = compareSource.opId ?? "absolute";
+    initialKernelSeedRef.current = compareSource.operationId ?? "absolute";
   }
   // Kernel state has the same ownership rule as encoding: node controller when
   // present, otherwise the viewport store with an immutable bootstrap seed.
   const comparisonOperationId = hasKernelOwner
-    ? (compareSource!.opId ?? "absolute")
+    ? (compareSource!.operationId ?? "absolute")
     : ((synced?.["compare.operation"] !== "split" ? synced?.["compare.operation"] : undefined) ?? initialKernelSeedRef.current ?? "absolute");
   const setComparisonOperation = useCallback(
     (id: string) => {
-      // ONE write path: route to the owner when present (it re-derives `opId` back
+      // ONE write path: route to the owner when present (it re-derives `operationId` back
       // into this pane). No owner ⇒ ONE settings-store write (the render lookup
       // reads `synced.comparisonOperationId` first; a local-only write would stay shadowed
       // by a store value — the HOME-can't-reset-the-kernel bug). Every pane has
@@ -812,7 +812,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // threads no `onComparisonOperationChange`, so its kernel has no node-level owner): mirror
   // `synced.comparisonOperationId` into the local fallback store here. When an owner IS present
   // (the descriptor / stage path) the kernel mirrors through `useCompareControl` at
-  // the node, so the pane must NOT also drive it (that owner re-derives `opId`).
+  // the node, so the pane must NOT also drive it (that owner re-derives `operationId`).
   // The ONE write path into the viewport's settings entry (NOSTACK): fans out
   // to the selection group while selected — PERSISTENTLY (leaving changes
   // nothing) — else writes just this viewport's entry.
@@ -913,7 +913,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // HDR-out gate: requires (1) the WebGPU device reporting `capabilities.hdr`,
     // (2) the OS/display actually reporting extended dynamic range (an HDR surface
     // on a plain SDR panel just re-clips at the OS compositor, so there's no
-    // point paying for it), and (3) this pane rendering the FLOAT `HdrData`
+    // point paying for it), and (3) this pane rendering the FLOAT `FloatImageData`
     // path (`hdrMode`, i.e. the `imagehdr` prop shape) — plain 8-bit
     // `imageUrl` images have no values >1.0 to preserve, so they stay SDR
     // unconditionally. `hdrMode` is read from the closure (stable for a
@@ -2222,14 +2222,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
   // C1 fix (whole-branch review) — engine bailout: the GPU backend self-heals
   // to the CPU backend (`CpuImagePane`) on any activation/render hard
-  // failure. Both backends accept the SAME `ImageBackendProps` union (see
+  // failure. Both backends accept the SAME `ImageBackendInput` union (see
   // `renderers/image-backend.ts`), so the props forward verbatim and the
   // image still renders — never a blank card. Placed after every hook above
   // runs unconditionally (rules-of-hooks) but before this component paints
   // its own GPU canvas.
   if (engineFailed) {
     // Forward the UNIFIED props verbatim — CpuImagePane accepts the same
-    // `ImageBackendProps` and reconstructs its own internal representation.
+    // `ImageBackendInput` and reconstructs its own internal representation.
     return <CpuImagePane {...backendProps} />;
   }
 
@@ -2549,5 +2549,5 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
 // Compile-time contract check: GpuImagePane implements the shared backend
 // interface (`renderers/image-backend.ts`) — interchangeable with CpuImagePane.
-const _backendCheck: ImageBackend = GpuImagePane;
+const _backendCheck: ImageBackendView = GpuImagePane;
 void _backendCheck;

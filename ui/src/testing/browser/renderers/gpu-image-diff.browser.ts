@@ -8,7 +8,7 @@
  *
  * WHAT IT PROVES (the Landing-1 asserts of the content-op unification):
  *   1. signed → RED-GREEN: `GpuImagePane` driven with `compareSource` (source=REF,
- *      b=FG, opId "signed") renders a diverging diff — the composited canvas
+ *      b=FG, operationId "signed") renders a diverging diff — the composited canvas
  *      carries BOTH red-dominant (negative error) AND green-dominant (positive
  *      error) pixels, the analytic red-green map. The EXACT per-byte equivalence to
  *      the diff engine (and thus to GpuComparePane's diff blit for signed→red-green)
@@ -174,10 +174,10 @@ function redGreenPresence(bytes: Uint8Array): { red: number; green: number } {
  *  probe object (with fresh state getters) is re-set on every render. */
 type ProbeRef = () => DiffProbe;
 
-function mountUnifiedDiff(container: HTMLElement, opId: string, encoding: Colormap): Promise<ProbeRef> {
+function mountUnifiedDiff(container: HTMLElement, operationId: string, encoding: Colormap): Promise<ProbeRef> {
   const OwnedDiff = () => {
     const defaults = React.useMemo(() => ({
-      "compare.operation": opId,
+      "compare.operation": operationId,
       "image.encoding": encoding,
       "image.view": { zoom: 1, pan: { x: 0, y: 0 } },
     }), []);
@@ -189,7 +189,7 @@ function mountUnifiedDiff(container: HTMLElement, opId: string, encoding: Colorm
       source: urlSource(REF_URL),
       compareSource: {
         b: urlSource(FG_URL),
-        opId: settings["compare.operation"] as string,
+        operationId: settings["compare.operation"] as string,
         colormap: encoding,
         referenceLabel: "ref",
         foregroundLabel: "fg",

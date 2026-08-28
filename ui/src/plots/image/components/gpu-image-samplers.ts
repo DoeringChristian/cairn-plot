@@ -30,7 +30,7 @@ import {
   type PixelSample,
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
-import { shapeDims, type HdrData } from "../runtime/contracts";
+import { shapeDims, type FloatImageData } from "../runtime/contracts";
 import type { ImageSource } from "../definition/content.ts";
 
 /** A retained decoded uint8 RGBA buffer (a source or the reference operand). */
@@ -53,7 +53,7 @@ export interface PixelSamplerInputs {
   /** The concrete diff kernel id (float sources auto-dispatch flip -> hdr-flip). */
   resolvedOperationId: string;
   /** Retained primary buffers (mutually exclusive by `hdrMode`). */
-  hdrDataRef: Cell<HdrData | null>;
+  hdrDataRef: Cell<FloatImageData | null>;
   sdrImageDataRef: Cell<ImageData | null>;
   /** Retained reference/foreground operand `b` (float vs decoded uint8). */
   refFloatRef: Cell<ImageSource | null>;
