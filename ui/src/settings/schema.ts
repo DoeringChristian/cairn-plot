@@ -10,9 +10,6 @@ export interface PlotSettings {
   "image.view"?: { zoom: number; pan: { x: number; y: number } };
   "image.channelSelect"?: { part?: number | string; layer?: string | string[] } | null;
   "compare.operation"?: string;
-  /** Migration-only legacy inputs. */
-  "compare.mode"?: string;
-  "compare.kernel"?: string;
   "compare.split"?: number;
   "panel.info"?: boolean | null;
   "chart.domainX"?: [number, number] | null;

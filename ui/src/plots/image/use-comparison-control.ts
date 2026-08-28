@@ -52,9 +52,6 @@ export function useImageComparisonControl(
   const seedSplit = seed.current?.split ?? descriptorSplit;
 
   const operation = settings?.["compare.operation"] ??
-    (settings?.["compare.mode"] === "diff"
-      ? (settings?.["compare.kernel"] ?? seedKernel)
-      : settings?.["compare.mode"]) ??
     (seedMode === "split" ? "split" : seedKernel);
   const viewMode: CompareViewMode = operation === "split" ? "split" : "diff";
   const diffKernel = operation === "split" ? seedKernel : operation;

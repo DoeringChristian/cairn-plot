@@ -618,8 +618,7 @@ async function main(): Promise<void> {
     const diffPatch = await observeAfter(() =>
       selectedPaneSet({
         "image.encoding": "magma",
-        "compare.mode": "diff",
-        "compare.kernel": "flip",
+        "compare.operation": "flip",
       }),
     );
     note(`PHASE C diff-patch (compareMode:diff): image presents=${diffPatch.total}, ORANGE=${diffPatch.orange}`);
