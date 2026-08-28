@@ -39,6 +39,7 @@ import { type PlotDescriptor } from "./plot-descriptor";
 import { registerRenderer, getRenderer } from "./plot-registry";
 import { PlotSurface } from "./plot-surface.tsx";
 import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
+import { registerReactPlotBackends } from "./plots/react-registry.ts";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
 const DESCRIPTOR_MIME = "application/cairn-plot+json";
@@ -56,6 +57,8 @@ declare global {
      * at runtime. GENERIC: figure today, three.js 3D in Phase D — same hook.
      */
     __cairnPlotRegisterRenderer?: (name: string, component: ComponentType<any>) => void;
+    /** Addon → core seam for typed plot backends. Definitions remain in core. */
+    __cairnPlotRegisterBackends?: (kind: string, backends: readonly unknown[]) => void;
     /**
      * Whether a renderer name is registered — the read companion to
      * `__cairnPlotRegisterRenderer`. The JS builder's 3D gate consults it to tell
@@ -264,6 +267,12 @@ export function installCairnPlotBootstrap(): void {
   // Expose the addon → core seam BEFORE marking the bundle loaded, so an addon
   // IIFE (emitted after core) can always find it (O2 / generic for Phase D).
   window.__cairnPlotRegisterRenderer = registerRenderer;
+  window.__cairnPlotRegisterBackends = (kind, backends) => {
+    registerReactPlotBackends(
+      kind,
+      backends as Parameters<typeof registerReactPlotBackends>[1],
+    );
+  };
   window.__cairnPlotHasRenderer = (name: string) => getRenderer(name) !== undefined;
   // Install the JS builder surface (`window.cairnPlot`) + its mount runtime, so
   // an HTML page can author plots entirely in JavaScript the moment core loads.

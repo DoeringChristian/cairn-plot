@@ -17,26 +17,22 @@
  * `boxes3d` (G3b). They share the one bundled `three` copy, so a 3D element of
  * any type triggers this single addon include-once.
  */
-import {
-  PointCloudStandalone,
-  MeshStandalone,
-  VolumeStandalone,
-  BoxesStandalone,
-} from "./plots/three/views";
+import { threePlotBackends } from "./plots/three/backends.ts";
 
 if (!window.__cairnPlotThreeLoaded) {
-  if (typeof window.__cairnPlotRegisterRenderer === "function") {
-    window.__cairnPlotRegisterRenderer("pointcloud", PointCloudStandalone);
-    window.__cairnPlotRegisterRenderer("mesh", MeshStandalone);
-    window.__cairnPlotRegisterRenderer("volume", VolumeStandalone);
-    window.__cairnPlotRegisterRenderer("boxes3d", BoxesStandalone);
+  if (typeof window.__cairnPlotRegisterBackends === "function") {
+    const backends = threePlotBackends();
+    window.__cairnPlotRegisterBackends("pointcloud", [backends.pointcloud]);
+    window.__cairnPlotRegisterBackends("mesh", [backends.mesh]);
+    window.__cairnPlotRegisterBackends("volume", [backends.volume]);
+    window.__cairnPlotRegisterBackends("boxes3d", [backends.boxes3d]);
     window.__cairnPlotThreeLoaded = true;
   } else {
     // Core must run first (Python emits it before this addon). If it somehow
     // hasn't, fail loud in the console rather than silently no-op.
     console.error(
       "cairn-plot three addon: core bundle not installed " +
-        "(window.__cairnPlotRegisterRenderer missing) — 3D plots will not render.",
+        "(window.__cairnPlotRegisterBackends missing) — 3D plots will not render.",
     );
   }
 }

@@ -68,7 +68,7 @@ import {
 import { PlotCell } from "./host/PlotCell.tsx";
 import { ReactBackendOutlet } from "./host/react-backend.ts";
 import { withoutSettingsPlumbing } from "./host/presentation.ts";
-import { getReactPlotType } from "./plots/react-registry.ts";
+import { getReactPlotType, onRegisterReactPlotType } from "./plots/react-registry.ts";
 import {
   comparisonRenderer,
   planComparison,
@@ -391,18 +391,23 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
-  const rendererMissing = status === "ready" && !getReactPlotType(node.renderer) && !getRenderer(node.renderer);
+  const typedRegistration = getReactPlotType(node.renderer);
+  const rendererMissing = status === "ready" &&
+    (!typedRegistration || typedRegistration.backends.length === 0) &&
+    !getRenderer(node.renderer);
   useEffect(() => {
-    if (status !== "ready" || getReactPlotType(node.renderer) || getRenderer(node.renderer)) return;
+    if (status !== "ready" || getReactPlotType(node.renderer)?.backends.length || getRenderer(node.renderer)) return;
     const name = node.renderer;
     let settled = false;
-    const unsub = onRegister(() => {
-      if (!settled && getRenderer(name)) {
+    const registered = () => {
+      if (!settled && (getReactPlotType(name)?.backends.length || getRenderer(name))) {
         settled = true;
         setRendererError(null); // renderer arrived → clear any prior timeout error
         bumpRegistry((n) => n + 1);
       }
-    });
+    };
+    const unsubLegacy = onRegister(registered);
+    const unsubTyped = onRegisterReactPlotType(registered);
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
@@ -411,7 +416,8 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     }, RENDERER_WAIT_MS);
     return () => {
       settled = true;
-      unsub();
+      unsubLegacy();
+      unsubTyped();
       clearTimeout(timer);
     };
   }, [status, rendererMissing, node.renderer]);
@@ -442,7 +448,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   }
   const Renderer = getRenderer(node.renderer);
   const registered = getReactPlotType(node.renderer);
-  if (registered) {
+  if (registered?.backends.length) {
     const settings = registered.definition.projectSettings(
       (paneSync?.syncedSettings ?? {}) as import("./plots/contracts.ts").SettingsRecord,
     );
