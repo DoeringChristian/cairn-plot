@@ -57,7 +57,7 @@ import {
   type DiffCacheEntry,
 } from "./diff-engine";
 import type { CompareMapping } from "../runtime/compare-align";
-import { imageOperationId, getWebGpuMultipassOperation } from "./image-operations.ts";
+import { getWebGpuImageOperation, getWebGpuMultipassOperation } from "./image-operations.ts";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
 import type {
   Device,
@@ -194,9 +194,9 @@ export interface PaneHandle {
    * the next `render()`/`restore()` when parked. Pass `null` to drop it (back to
    * the single-image path). INDEPENDENT of {@link setSource} — the primary `a`
    * slot is untouched. Once set, {@link render}'s `params` are bound with this
-   * texture as `srcB`, so a `params.imageOperationId` selecting a `direct` diff op
+   * texture as `srcB`, so a `params.imageOperation` selecting a `direct` diff op
    * (signed/absolute/…) samples both slots; the single-image (identity) path is
-   * unaffected when `b` is null (a 1x1 placeholder is bound and opId 0 ignores it).
+   * unaffected when `b` is null (a 1x1 placeholder is bound and identity ignores it).
    *
    * `contentKey` (optional) opts the `b` slot into the SAME content-keyed
    * retention {@link setSource} documents — a stacked flip back to a diff slot
@@ -722,9 +722,9 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
     activateEntry(entry);
     if (!entry.surface || !entry.srcTexture) return false;
     // Bind the pool-owned SECOND source slot `b` (arity-2 direct diff ops) when
-    // present — the caller sets `params.imageOperationId`; the pool supplies the
+    // present — the caller sets `params.imageOperation`; the pool supplies the
     // physical texture. Absent → the single-image path (renderImage binds a 1x1
-    // placeholder, and opId 0 / identity ignores it), byte-identical to before.
+    // placeholder, and the specialized identity operation ignores it).
     const p = entry.srcTextureB ? { ...params, srcB: entry.srcTextureB } : params;
     renderImage(entry.device, entry.surface, entry.srcTexture, p);
     // Present-coherency instrumentation (test-only; guarded so NO per-present cost
@@ -735,7 +735,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
         mode: "image",
         sourceKey: entry.sourceKey,
         sourceBKey: entry.sourceBKey,
-        imageOperationId: params.imageOperationId,
+        imageOperation: params.imageOperation,
         hasSrcB: entry.srcTextureB != null,
         isScalar: params.isScalar,
         compareIntended: params.compareIntended,
@@ -796,7 +796,7 @@ function attemptRenderDiffCached(
       mapping,
     );
     // The cached RESULT is the scalar error — displayed via IDENTITY content
-    // (`displayParams.imageOperationId` unset/0, no `srcB`) + the isScalar colormap.
+    // (`displayParams.imageOperation` unset/0, no `srcB`) + the isScalar colormap.
     // Bind it as the PRIMARY source; `srcTextureB` is intentionally NOT injected
     // (the display is single-source over the result).
     renderImage(entry.device, entry.surface, cacheEntry.texture, displayParams);
@@ -808,7 +808,7 @@ function attemptRenderDiffCached(
         mode: "cached-diff",
         sourceKey: entry.sourceKey,
         sourceBKey: entry.sourceBKey,
-        imageOperationId: displayParams.imageOperationId,
+        imageOperation: displayParams.imageOperation,
         hasSrcB: entry.srcTextureB != null,
         isScalar: displayParams.isScalar,
         ...displayFingerprint(displayParams),
@@ -1107,12 +1107,11 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         );
         return cached ? { entry: cached } : "failed";
       }
-      // DIRECT pointwise op, evaluated per frame: the pool injects `srcB`;
-      // `cairnContent(a,b,opId)`. Op id 0 = IDENTITY (an unregistered or
-      // transiently mis-resolved kernel) — the identity-op floor holds.
-      const opId = imageOperationId(operationId);
-      if (opId === 0) return "hold";
-      return attemptRender(entry, { ...display, imageOperationId: opId }) ? { entry: null } : "failed";
+      // Direct operation: pipeline selection is keyed by the semantic id. An
+      // unknown or non-inline operation is held rather than shown as identity.
+      const inline = getWebGpuImageOperation(operationId);
+      if (!inline || inline.kind !== "inline" || inline.definition.id === "identity") return "hold";
+      return attemptRender(entry, { ...display, imageOperation: operationId }) ? { entry: null } : "failed";
     },
     isDiffContentResident(
       operationId: string,
@@ -1121,7 +1120,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       mapping?: CompareMapping,
     ): boolean {
       const operation = getWebGpuMultipassOperation(operationId);
-      if (!operation) return imageOperationId(operationId) !== 0;
+      if (!operation) return getWebGpuImageOperation(operationId)?.kind === "inline";
       if (entry.disposed || !entry.source || !entry.sourceB) return false;
       return hasDiff(
         entry.device,

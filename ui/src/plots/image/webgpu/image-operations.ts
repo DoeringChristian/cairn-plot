@@ -40,24 +40,21 @@ export function getWebGpuMultipassOperation(id: string): Extract<WebGpuImageOper
   return operation?.kind === "multipass" ? operation : undefined;
 }
 
-const inlineOperations = WEBGPU_IMAGE_OPERATIONS.filter(
-  (operation): operation is Extract<WebGpuImageOperation, { kind: "inline" }> => operation.kind === "inline",
-);
-const inlineIds = new Map(inlineOperations.map((operation, id) => [operation.definition.id, id]));
-
-export function imageOperationId(id: string): number | undefined {
-  return inlineIds.get(id);
+export function requireWebGpuInlineOperation(
+  id: string | null | undefined,
+): Extract<WebGpuImageOperation, { kind: "inline" }> {
+  const operation = getWebGpuImageOperation(id ?? "identity");
+  if (!operation || operation.kind !== "inline") {
+    throw new Error(`unknown inline WebGPU image operation ${JSON.stringify(id)}`);
+  }
+  return operation;
 }
 
-export function buildImageOperationWGSL(): string {
-  const identity = getWebGpuImageOperation("identity");
-  if (!identity || identity.kind !== "inline") throw new Error("missing WebGPU identity operation");
-  const branches = inlineOperations
-    .filter((operation) => operation.definition.id !== "identity")
-    .map((operation) => `  if (opId == ${inlineIds.get(operation.definition.id)}) { return ${operation.expression}; }`)
-    .join("\n");
-  return `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>, opId: i32) -> vec4<f32> {
-${branches}
-  return ${identity.expression};
+/** Compile exactly one content operation into a render pipeline. */
+export function buildImageOperationWGSL(
+  operation: Extract<WebGpuImageOperation, { kind: "inline" }>,
+): string {
+  return `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>) -> vec4<f32> {
+  return ${operation.expression};
 }`;
 }

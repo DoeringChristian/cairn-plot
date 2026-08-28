@@ -34,11 +34,17 @@ test("CPU pointwise implementations retain comparison math", () => {
   assert.deepEqual(getCpuImageOperation("absolute")!.evaluate([a, b], 3), [0.5, 0.09999999999999998, 0]);
 });
 
-test("WebGPU JIT dispatch contains only inline backend implementations", () => {
-  const wgsl = buildImageOperationWGSL();
+test("WebGPU JIT compiles one inline backend implementation at a time", () => {
   for (const operation of WEBGPU_IMAGE_OPERATIONS) {
-    if (operation.kind === "inline" && operation.definition.id !== "identity") {
+    if (operation.kind === "inline") {
+      const wgsl = buildImageOperationWGSL(operation);
       assert.ok(wgsl.includes(operation.expression), operation.definition.id);
+      assert.doesNotMatch(wgsl, /opId|IMAGE_OPERATION_ID/);
+      for (const other of WEBGPU_IMAGE_OPERATIONS) {
+        if (other.kind === "inline" && other !== operation) {
+          assert.ok(!wgsl.includes(`return ${other.expression};`), `${operation.definition.id} contains ${other.definition.id}`);
+        }
+      }
     }
   }
   for (const id of ["flip", "hdr-flip", "ssim"]) assert.equal(getWebGpuImageOperation(id)?.kind, "multipass");

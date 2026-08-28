@@ -13,9 +13,9 @@
  * back-buffer mid-present (the documented `gpu-image-diff` readback gotcha), so
  * sampling the presented pixels per-frame is unreliable. The pool render log
  * instead records the GROUND TRUTH of what textures were BOUND at each present
- * (`entry.sourceKey`/`sourceBKey` + `params.imageOperationId` + mode). Each present
+ * (`entry.sourceKey`/`sourceBKey` + `params.imageOperation` + mode). Each present
  * must be one of exactly two SELF-CONSISTENT shapes:
- *   - VALID IMAGE: mode "image", identity op (imageOperationId falsy), primary UNKEYED
+ *   - VALID IMAGE: mode "image", identity op (imageOperation falsy), primary UNKEYED
  *     (`sourceKey === undefined`) — the plain image, no `b`.
  *   - VALID DIFF:  mode "cached-diff", `sourceKey === "flip:ref"`,
  *     `sourceBKey === "flip:fg"`, `hasSrcB` — the FLIP over its two operands.
@@ -25,7 +25,7 @@
  * up. That is the objective artefact signal (the "flicker").
  *
  * The op transition (image↔diff) is deliberately the stress axis: it flips
- * `diffMode`/`imageOperationId`/the display encoding/`compareSource` together, and
+ * `diffMode`/`imageOperation`/the display encoding/`compareSource` together, and
  * those flow through different React effects — so under fast flipping a present
  * can slip through with a mismatched combination. A same-kind CONTROL
  * (image↔image) is run first and must stay 0 (matching the field report that
@@ -193,7 +193,7 @@ function fullSig(r: PaneRenderRecord): string {
     a: r.sourceKey ?? null,
     b: r.sourceBKey ?? null,
     hasSrcB: r.hasSrcB,
-    op: r.imageOperationId ?? 0,
+    op: r.imageOperation ?? 0,
     isScalar: !!r.isScalar,
     scalarMode: r.scalarMode ?? 0,
     hasColormap: !!r.hasColormap,
@@ -225,10 +225,10 @@ function probeEl(container: HTMLElement): HTMLElement | null {
 
 /** Classify one present's SOURCE binding (the 9368ee2 oracle). Returns null if
  *  the bound textures match the present's mode/op, else a reason string. Accepts
- *  both a CACHED diff (imageOperationId 0, RESULT blit) and a DIRECT diff op
- *  (imageOperationId nonzero, samples both keyed operands). */
+ *  both a CACHED diff (imageOperation 0, RESULT blit) and a DIRECT diff op
+ *  (imageOperation nonzero, samples both keyed operands). */
 function incoherentReason(r: PaneRenderRecord): string | null {
-  const isDiffOp = !!r.imageOperationId; // nonzero imageOperationId = a direct diff/compositor op
+  const isDiffOp = !!r.imageOperation; // nonzero imageOperation = a direct diff/compositor op
   if (r.mode === "cached-diff" || isDiffOp) {
     // A diff present (cached RESULT, or a direct op over both operands): the two
     // bound source keys must be the diff's keyed operands.
@@ -291,7 +291,7 @@ async function main(): Promise<void> {
         return log.some(
           (r) =>
             incoherentReason(r) === null &&
-            (wantDiff ? r.mode === "cached-diff" || !!r.imageOperationId : r.mode === "image" && r.sourceKey === undefined && !r.imageOperationId),
+            (wantDiff ? r.mode === "cached-diff" || !!r.imageOperation : r.mode === "image" && r.sourceKey === undefined && !r.imageOperation),
         );
       }, 8000, 40);
       await sleep(200); // quiesce
@@ -533,7 +533,7 @@ async function main(): Promise<void> {
     for (const r of frecords) {
       // A float IMAGE present carrying a scalar LUT (isScalar + hasColormap, op 0,
       // NOT a diff's keyed operands) = the light float image false-colored → orange.
-      const isImagePresent = r.mode === "image" && !r.imageOperationId;
+      const isImagePresent = r.mode === "image" && !r.imageOperation;
       if (isImagePresent && r.isScalar && r.hasColormap) {
         floatOrange++;
         const k = fullSig(r);

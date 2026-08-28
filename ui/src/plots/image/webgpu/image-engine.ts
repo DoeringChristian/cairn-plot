@@ -39,6 +39,10 @@ import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../runtime/tonemap";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import type { NormMode } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation, NORM_ID, REDUCE_ID, type WebGpuDisplayOperation } from "./display.ts";
+import {
+  requireWebGpuInlineOperation,
+  type WebGpuImageOperation,
+} from "./image-operations.ts";
 
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
@@ -152,21 +156,19 @@ export interface ImageParams {
   filter?: "nearest" | "linear";
   /**
    * SECOND source slot `b` (the reference/baseline of an arity-2 diff IMAGE operation)
-   * — sampled at the same source UV as `src` and fed to `cairnContent(a, b, opId)`.
-   * Only read when {@link imageOperationId} selects a `direct` diff op; for the
+   * — sampled at the same source UV as `src` and fed to the specialized content operation.
+   * Only read when {@link imageOperation} selects a `direct` diff op; for the
    * single-image (identity) path it is omitted and a 1x1 placeholder is bound
    * (WebGPU requires every declared binding to have a resource). See
    * `image/operations` + `image.wgsl.ts`'s t_bind11.
    */
   srcB?: Texture;
   /**
-   * CONTENT-op dispatch id (`image/operations`' `IMAGE_OPERATION_ID`): 0 = IDENTITY
-   * (passthrough of `src`; the default, so omitting it renders bit-for-bit as
-   * before), 1.. = the direct pointwise diff ops (signed/absolute/…). Packed into
-   * the u_bind12 uniform. Cached metrics (FLIP/SSIM) are NOT dispatched here —
-   * they render into a result texture bound as `src` + identity. Unset = 0.
+   * Semantic content-operation id. It selects a cached specialized pipeline;
+   * there is no numeric uniform dispatch. Cached metrics render into a result
+   * texture and use the identity operation. Unset means identity.
    */
-  imageOperationId?: number;
+  imageOperation?: string;
   /**
    * COMPOSITOR param (Phase 3) — the per-frame scalar the split/blend image operations
    * read from `u_bind13.x`: the split DIVIDER position (`[0,1]` dest-space, the
@@ -194,7 +196,7 @@ export interface ImageParams {
    * TEST-ONLY oracle tag (never read by the shader / render path). Set true by the
    * pane whenever a COMPARE is intended (`hasCompare`), so the pool's render-log
    * oracle can flag a PIPELINE MISMATCH: a plain identity/image-pipeline present
-   * (`mode:"image"`, no `imageOperationId`) that fires while the pane is semantically in
+   * (`mode:"image"`, no `imageOperation`) that fires while the pane is semantically in
    * compare mode — i.e. a raw blit of the REFERENCE primary that slipped onto the
    * visible surface before the diff result. Costs one boolean copy; unused in
    * production (only the render log reads it, and only when a harness armed it).
@@ -205,16 +207,24 @@ export interface ImageParams {
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
 const pipelineCache = new WeakMap<Device, Map<string, RenderPipeline>>();
 
-function getImagePipeline(device: Device, targetFormat: TextureFormat, operation: WebGpuDisplayOperation): RenderPipeline {
+function getImagePipeline(
+  device: Device,
+  targetFormat: TextureFormat,
+  displayOperation: WebGpuDisplayOperation,
+  imageOperation: Extract<WebGpuImageOperation, { kind: "inline" }>,
+): RenderPipeline {
   let byFormat = pipelineCache.get(device);
   if (!byFormat) {
     byFormat = new Map();
     pipelineCache.set(device, byFormat);
   }
-  const key = `${targetFormat}:${operation.definition.id}`;
+  const key = `${targetFormat}:${displayOperation.definition.id}:${imageOperation.definition.id}`;
   let pipeline = byFormat.get(key);
   if (!pipeline) {
-    pipeline = device.createRenderPipeline({ shaderWGSL: buildImageWGSL(operation), targetFormat });
+    pipeline = device.createRenderPipeline({
+      shaderWGSL: buildImageWGSL(displayOperation, imageOperation),
+      targetFormat,
+    });
     byFormat.set(key, pipeline);
   }
   return pipeline;
@@ -268,9 +278,10 @@ function buildColormapTexture(device: Device, colormap: Float32Array | undefined
  */
 export function renderImage(device: Device, target: Surface | Texture, src: Texture, params: ImageParams): void {
   const targetFormat = targetFormatOf(target);
-  const operation = getWebGpuDisplayOperation(params.displayOperationId);
-  if (!operation) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
-  const pipeline = getImagePipeline(device, targetFormat, operation);
+  const displayOperation = getWebGpuDisplayOperation(params.displayOperationId);
+  if (!displayOperation) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
+  const imageOperation = requireWebGpuInlineOperation(params.imageOperation);
+  const pipeline = getImagePipeline(device, targetFormat, displayOperation, imageOperation);
   const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);
 
   const gamma = typeof params.gamma === "number" && params.gamma > 0 ? params.gamma : 0;
@@ -318,8 +329,6 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
     typeof params.linearScalarGamma === "number" && params.linearScalarGamma > 0 ? params.linearScalarGamma : 0;
   const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, linearScalarGamma]);
 
-  // u_bind12 = CONTENT-op dispatch id (0 = identity passthrough, the default).
-  const imageOperationIdVec = new Float32Array([params.imageOperationId ?? 0]);
   // u_bind13 = COMPOSITOR param (split divider position / blend alpha) in .x;
   // .yzw reserved. Default 0 — the diff/identity ops ignore it.
   const contentParamVec = new Float32Array([params.contentParam ?? 0, 0, 0, 0]);
@@ -354,7 +363,6 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 9, resource: { uniform: normVec } },
       { binding: 10, resource: { uniform: reduceVec } },
       { binding: 11, resource: srcB },
-      { binding: 12, resource: { uniform: imageOperationIdVec } },
       { binding: 13, resource: { uniform: contentParamVec } },
       { binding: 14, resource: { uniform: displayAdjustVec } },
     ]);

@@ -64,7 +64,7 @@ import { floatValues, widenFloatPixels } from "../runtime/pixel-buffer.ts";
 // imports are safe here: this file only ships in the gpu-image addon bundle,
 // never `core.iife.js`.
 import { getImageOperation } from "../definition/image-operations.ts";
-import { imageOperationId, getWebGpuMultipassOperation } from "./image-operations.ts";
+import { getWebGpuMultipassOperation } from "./image-operations.ts";
 import {
   resolveComparisonOperationId,
   listComparisonOperationOptions,
@@ -1460,7 +1460,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // ---- COMPOSITOR path (split, Phase 3) -------------------------------
     // Renders a LIGHT composite of the two operands (slot a = reference =
     // `source`, slot b = foreground = `compareSource.b`) through the SAME unified
-    // image pipeline: `render({imageOperationId: split, contentParam})`, the pool
+    // image pipeline: `render({imageOperation: split, contentParam})`, the pool
     // injects `srcB`, and `cairnContent` composites by the fragment uv against the
     // compositor param. The composite is ordinary scene light → the DISPLAY stage
     // (operator × peak × surface, output-encode) runs EXACTLY as a plain image
@@ -1492,7 +1492,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         srgbDecode: !hdrMode,
         uv,
         filter,
-        imageOperationId: imageOperationId(compareOpMode!),
+        imageOperation: compareOpMode!,
         contentParam: splitPosition,
       };
       try {
@@ -1508,7 +1508,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
     // ---- DIFF path (content-op unification, Phase 2c) --------------------
     // Renders `source − compareSource.b` through the pool: a DIRECT pointwise op
-    // inline (`render({imageOperationId})`, the pool injects `srcB`); a CACHED metric
+    // inline (`render({imageOperation})`, the pool injects `srcB`); a CACHED metric
     // (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. The DISPLAY reuses the pane's
     // display-operation machinery: analytic red-green (signed), turbo-log2
     // (magnitude), a plain LUT (magma/…) or raw per-channel error ("none"). Proven

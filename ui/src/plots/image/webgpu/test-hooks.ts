@@ -53,15 +53,14 @@ export interface PaneRenderRecord {
   sourceKey: string | undefined;
   /** The pool entry's currently-bound `b` source key (`entry.sourceBKey`). */
   sourceBKey: string | undefined;
-  /** `params.imageOperationId` (0/undefined = identity/plain image; nonzero = a
-   *  direct diff/compositor op sampling slot `b`). */
-  imageOperationId: number | undefined;
+  /** Selected semantic image operation; absence means identity/plain image. */
+  imageOperation: string | undefined;
   /** Whether slot `b` had a real texture bound (`entry.srcTextureB != null`). */
   hasSrcB: boolean;
   /** `params.isScalar` — the display arity (a scalar-error colormap vs light). */
   isScalar: boolean | undefined;
   // ---- FULL display-encode fingerprint (sharpened orange-frame oracle) -------
-  // The source-identity fields above (sourceKey/sourceBKey/imageOperationId) catch a
+  // The source-identity fields above (sourceKey/sourceBKey/imageOperation) catch a
   // MISBOUND texture; these catch a MISMATCHED display-encode combination — the
   // orange-frame artefact, where the source is RIGHT but the encode params
   // (isScalar/lut/reduce/scalarMode) are a STALE diff's applied to a light image
@@ -88,7 +87,7 @@ export interface PaneRenderRecord {
   /** `params.contentParam` (split divider / blend alpha). */
   contentParam?: number;
   /** `params.compareIntended` — the pane set this true iff a COMPARE was intended
-   *  (`hasCompare`) for this present. With `mode:"image"` + no `imageOperationId` it is
+   *  (`hasCompare`) for this present. With `mode:"image"` + no `imageOperation` it is
    *  the PIPELINE-MISMATCH signal: a raw identity blit of the reference primary
    *  presenting while the pane is semantically in compare mode. See
    *  {@link isPipelineMismatch}. */
@@ -99,7 +98,7 @@ export interface PaneRenderRecord {
  * PIPELINE-MISMATCH oracle (the reference-image flash, caught by PIPELINE not by
  * params). A present is a mismatch iff the pane was semantically in COMPARE mode
  * (`compareIntended`) yet the frame was produced by the plain IDENTITY/IMAGE
- * pipeline (`mode:"image"`, no `imageOperationId`, no bound `b`) — i.e. a raw blit of
+ * pipeline (`mode:"image"`, no `imageOperation`, no bound `b`) — i.e. a raw blit of
  * the REFERENCE primary reached the visible surface instead of the diff result.
  * This present is fully param-COHERENT (the reference texture IS the bound
  * primary, no colormap ⇒ no orange-suspect flag), which is exactly why every
@@ -109,7 +108,7 @@ export interface PaneRenderRecord {
  * is 0.
  */
 export function isPipelineMismatch(r: PaneRenderRecord): boolean {
-  return r.mode === "image" && !r.imageOperationId && !r.hasSrcB && r.compareIntended === true;
+  return r.mode === "image" && !r.imageOperation && !r.hasSrcB && r.compareIntended === true;
 }
 
 /**
@@ -314,11 +313,11 @@ let orangeSuspects: PaneRenderRecord[] = [];
  *  false-colored" mismatch class, so gating on `channelCount > 1` exempts the
  *  authored scalar pane while still catching the real ch>1-colormap-on-identity
  *  mismatch. (A cached diff is `mode:"cached-diff"` and a direct diff/compositor
- *  op has a nonzero `imageOperationId` + `hasSrcB`, so both are already exempt.) */
+ *  op has a nonzero `imageOperation` + `hasSrcB`, so both are already exempt.) */
 export function isOrangeSuspect(r: PaneRenderRecord): boolean {
   return (
     r.mode === "image" &&
-    !r.imageOperationId &&
+    !r.imageOperation &&
     !r.hasSrcB &&
     r.isScalar === true &&
     r.hasColormap === true &&
@@ -435,7 +434,7 @@ function rgbToHsv(r: number, g: number, b: number): { hue: number; saturation: n
  *  (image vs diff, or one pane vs another) forms distinct baselines; only the
  *  SAME slot presenting a jumped color is an anomaly. */
 function slotSignature(r: PaneRenderRecord, paneId: number): string {
-  return `p${paneId}|${r.mode}|${r.sourceKey ?? ""}|${r.sourceBKey ?? ""}|${r.imageOperationId ?? 0}|${r.isScalar ? "s" : "l"}|${r.colormapSig ?? ""}|${r.reduce ?? ""}`;
+  return `p${paneId}|${r.mode}|${r.sourceKey ?? ""}|${r.sourceBKey ?? ""}|${r.imageOperation ?? 0}|${r.isScalar ? "s" : "l"}|${r.colormapSig ?? ""}|${r.reduce ?? ""}`;
 }
 
 /**

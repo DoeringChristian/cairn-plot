@@ -8,9 +8,9 @@
  *
  * WHAT IT PROVES. The Phase-2 content-op unification renders a DIFF through the
  * SAME image pipeline as a single image: the shader samples TWO source slots and
- * `cairnContent(a, b, opId)` produces the raw per-channel error, which the DISPLAY
+ * the specialized `cairnContent(a, b)` produces the raw per-channel error, which the DISPLAY
  * stage (the display-operation registry) then encodes. This harness drives that
- * exact GPU path (`renderImage` with `srcB` + `imageOperationId` + the op's
+ * exact GPU path (`renderImage` with `srcB` + `imageOperation` + the op's
  * defaultEncoding) for every DIRECT diff op and asserts the readback equals the
  * COMPOSED CPU twin — `displayEncoding.cpu(contentOp.cpu([a],[b]), 3, params)` —
  * i.e. the content-op `cpu` twin (the diff pixel-value readout's source of truth)
@@ -30,7 +30,7 @@ import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } 
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
 import { prepareDisplayOperation } from "../prepare-display-operation.ts";
 import { getCpuImageOperation, type CpuImageOperationContext } from "../../cpu/image-operations.ts";
-import { getWebGpuImageOperation, imageOperationId } from "../image-operations.ts";
+import { getWebGpuImageOperation } from "../image-operations.ts";
 import { evaluateDisplayOperation as evaluateCpuDisplayOperation, getCpuDisplayOperation, type CpuDisplayOperation } from "../../cpu/display-operations.ts";
 import { getWebGpuDisplayOperation } from "../display.ts";
 import { DEFAULT_DISPLAY_PARAMETERS, DEFAULT_COMPARISON_DISPLAY_OPERATION_ID, type DisplayParameters } from "../../runtime/display-settings.ts";
@@ -109,7 +109,7 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
     exposureEV: 0,
     ...prepareDisplayOperation(displayOperationId, { hdrSurface: false }),
     srcB: texB,
-    imageOperationId: imageOperationId(opId),
+    imageOperation: opId,
     reduce: "mean",
     channelCount: 3,
     uv: uvFull,
@@ -157,20 +157,19 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
   return ok;
 }
 
-/** IDENTITY sanity: opId 0 with a placeholder second slot renders the single
+/** Identity sanity: a placeholder second slot renders the single
  *  source unchanged (turbo of the raw scalar) — the second slot never leaks in. */
 async function runIdentityInertCase(device: Device): Promise<boolean> {
   const scalars = [[0.0, 0, 0, 1], [0.25, 0, 0, 1], [0.5, 0, 0, 1], [1.0, 0, 0, 1]];
   const enc = getDisplayOperation("turbo")!;
   const texA = buildTex(device, scalars);
   const target = device.createTexture(scalars.length, 1, "rgba8unorm");
-  // No srcB → placeholder; imageOperationId 0 (identity) ignores it.
+  // No srcB → placeholder; imageOperation 0 (identity) ignores it.
   const params: ImageParams = {
     exposureEV: 0,
     displayOperationId: "turbo",
     isScalar: true,
     colormap: colormapFloatLUT("turbo"),
-    imageOperationId: 0,
     reduce: "mean",
     channelCount: 1,
     hdrOut: false,
@@ -197,7 +196,7 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
       }
     }
   }
-  report(ok, `[identity] opId 0 ignores the (placeholder) second slot — single-source render unchanged`);
+  report(ok, `[identity] specialized identity ignores the placeholder second slot`);
   return ok;
 }
 
@@ -255,7 +254,7 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
       displayOperationId: hdrOut ? "linear" : "srgb",
       isScalar: false,
       srcB: texB,
-      imageOperationId: imageOperationId(opId),
+      imageOperation: opId,
       contentParam: param,
       hdrOut,
       srgbDecode: false, // scene-linear float operands
@@ -303,7 +302,7 @@ function buildUpload(rows: number[][]): SourceUpload {
 
 /**
  * STAGE A (pool second slot): drive the SAME direct diff op through the POOL —
- * `setSource(a)` + `setSourceB(b)` + `render({imageOperationId})` — and assert the
+ * `setSource(a)` + `setSourceB(b)` + `render({imageOperation})` — and assert the
  * SURFACE readback equals the composed CPU twin, byte-for-byte with the direct
  * `renderImage(srcB,…)` path. Proves the pool retains + uploads the second slot
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
@@ -331,7 +330,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
     exposureEV: 0,
     ...prepareDisplayOperation(displayOperationId, { hdrSurface: false }),
     // NB: NO `srcB` here — the pool supplies it from `setSourceB`.
-    imageOperationId: imageOperationId(opId),
+    imageOperation: opId,
     reduce: "mean",
     channelCount: 3,
     uv: uvFull,
@@ -376,7 +375,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
       }
     }
   }
-  report(ok, `[pool:${opId}] setSource + setSourceB + render(imageOperationId) surface === composed cpu twin`);
+  report(ok, `[pool:${opId}] setSource + setSourceB + render(imageOperation) surface === composed cpu twin`);
   return ok;
 }
 

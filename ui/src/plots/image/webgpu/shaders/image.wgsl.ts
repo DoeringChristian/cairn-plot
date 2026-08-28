@@ -161,9 +161,12 @@
  * exact-texel semantics, no filterable-float sampler.
  */
 import { buildDisplayOperationWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, type WebGpuDisplayOperation } from "../display.ts";
-import { buildImageOperationWGSL } from "../image-operations.ts";
+import { buildImageOperationWGSL, type WebGpuImageOperation } from "../image-operations.ts";
 
-export function buildImageWGSL(displayOperation: WebGpuDisplayOperation): string {
+export function buildImageWGSL(
+  displayOperation: WebGpuDisplayOperation,
+  imageOperation: Extract<WebGpuImageOperation, { kind: "inline" }>,
+): string {
 return `
 struct VSOut {
   @builtin(position) position: vec4<f32>,
@@ -238,17 +241,10 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // Logical binding 11 (texture, SECOND source slot b — the reference/baseline of
 // an arity-2 diff IMAGE operation) -> native binding 11*3+0 = 33. For a single-image
 // (arity-1) render this is a 1x1 placeholder the caller binds (WebGPU requires
-// every declared binding to have a resource); the IDENTITY image operation (opId 0)
+// every declared binding to have a resource); the identity image operation
 // ignores b, so the single-image path is byte-for-byte unaffected. See
 // engine/image-engine.ts's srcB handling + operations/wgsl.ts.
 @group(0) @binding(33) var t_bind11: texture_2d<f32>;
-// Logical binding 12 (uniform f32: imageOperationId — the CONTENT-op dispatch id) ->
-// native binding 12*3+2 = 38. Selects the image operation cairnContent applies to the
-// two sampled slots: 0 = IDENTITY (passthrough of a; the zero-filled default, so
-// a caller that sets no op renders as before), 1.. = the direct diff ops
-// (signed/absolute/…) assembled from the content-op registry. See
-// operations/wgsl.ts (IMAGE_OPERATION_ID).
-@group(0) @binding(38) var<uniform> u_bind12: f32;
 // Logical binding 13 (uniform vec4: COMPOSITOR param — the per-frame scalar the
 // Phase-3 compositor image operations (split/blend) read) -> native binding 13*3+2 = 41.
 // .x = the divider position (split) or the mix alpha (blend); .yzw reserved (0).
@@ -343,21 +339,13 @@ fn sampleBilinearB(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
 ${LUT_FAMILY_WGSL}
 ${buildDisplayOperationWGSL(displayOperation)}
 
-// CONTENT stage — ASSEMBLED from the content-op registry (image/operations),
-// the single source of truth for "what k-channel value does this texel carry".
-// cairnContent(a, b, uv, param, opId) dispatches on the imageOperationId uniform
-// (u_bind12): opId 0 = IDENTITY (passthrough of the single sampled slot a — the
-// sampled source enters the display pipeline here, byte-for-byte the pre-diff
-// path); opId 1.. = the direct pointwise diff ops (signed/absolute/squared +
-// relative variants), each the raw per-channel error over the two sampled slots
-// a,b; and the COMPOSITOR ops split/blend, which composite a,b by the fragment
-// SCREEN uv against the compositor param (u_bind13.x — the divider position /
-// alpha). The display stage downstream (exposure, isScalar/reduce/dataIndex,
-// applyOperator, output-encode) is unchanged and consumes cairnContent's output —
+// CONTENT stage — specialized for one registered image operation when this
+// cached pipeline is compiled. There is no numeric shader dispatcher. The
+// display stage downstream consumes cairnContent's output —
 // a diff is displayed as a scalar error (reduce → colormap) via its
 // defaultEncoding; a split/blend composite is LIGHT (k=3) displayed as a plain
 // image (curves).
-${buildImageOperationWGSL()}
+${buildImageOperationWGSL(imageOperation)}
 
 // DISPLAY-space post-processing (brightness/contrast/flipSign) — the numeric
 // mirror of image/tonemap.ts's applyDisplayAdjust1 (which itself is the numeric
@@ -421,18 +409,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let srgbDecode = u_bind8 > 0.5;
 
   // CONTENT stage — the sampled source slot(s) enter the display pipeline through
-  // the content-op registry (cairnContent, assembled above), dispatched by the
-  // imageOperationId uniform (u_bind12). opId 0 = IDENTITY (passthrough of a, the
-  // zero-filled default), so content == sampled and the single-image display
-  // pipeline below is byte-for-byte unchanged; opId 1.. = the direct diff ops
-  // (raw per-channel error over a,b), which the display stage then encodes
-  // (reduce -> colormap) via the op's defaultEncoding.
-  let imageOperationId = i32(round(u_bind12));
+  // the selected content operation (cairnContent, specialized above).
   // uv (fragment SCREEN uv) + u_bind13 (the compositor param) feed the split/
   // blend COMPOSITOR ops — the divider is a DEST-space cut (uv.x < param.x), so
   // it stays put under source zoom/pan exactly like GpuComparePane. The diff /
   // identity ops ignore both, so this is inert for every non-compositor op.
-  let content = cairnContent(sampled, sampledB, uv, u_bind13, imageOperationId);
+  let content = cairnContent(sampled, sampledB, uv, u_bind13);
 
   // 0) [SDR display-transfer path] sRGB-DECODE the sampled 8-bit source to
   //    linear light so exposure/offset + the chosen transfer operate on linear
