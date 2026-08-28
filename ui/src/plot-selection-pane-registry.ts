@@ -34,6 +34,8 @@ export function isImageCompatibleNode(node: PlotNode): boolean {
 
 export interface RegisteredPane {
   readonly paneId: string;
+  /** Opaque host identity associating ephemeral selection with session state. */
+  readonly sessionId?: string;
   readonly node: PlotNode;
   readonly source: DataSource;
   readonly shared?: SharedProps;

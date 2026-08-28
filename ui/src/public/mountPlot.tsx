@@ -1,9 +1,14 @@
 import { createRoot, type Root } from "react-dom/client";
 
 import { PlotHost, type PlotHostProps } from "./PlotHost.tsx";
+import { createPlotSessionController } from "../state/session/PlotSessionController.ts";
+import type { PlotSession } from "../state/session/plot-session.ts";
 
 export interface MountedPlot {
   update(next: Partial<Pick<PlotHostProps, "descriptor" | "dataSource">>): void;
+  getSession(): PlotSession;
+  restoreSession(session: unknown): void;
+  subscribeSession(listener: (session: PlotSession) => void): () => void;
   destroy(): void;
 }
 
@@ -12,7 +17,8 @@ export function mountPlot(element: HTMLElement, initial: PlotHostProps): Mounted
   const root: Root = createRoot(element);
   let props = initial;
   let destroyed = false;
-  const render = () => root.render(<PlotHost {...props} />);
+  const controller = createPlotSessionController(initial.initialSession);
+  const render = () => root.render(<PlotHost {...props} sessionController={controller} />);
   render();
   return {
     update(next) {
@@ -20,10 +26,14 @@ export function mountPlot(element: HTMLElement, initial: PlotHostProps): Mounted
       props = { ...props, ...next };
       render();
     },
+    getSession: () => controller.getSession(),
+    restoreSession: (session) => controller.restoreSession(session),
+    subscribeSession: (listener) => controller.subscribe(listener),
     destroy() {
       if (destroyed) return;
       destroyed = true;
       root.unmount();
+      controller.destroy();
     },
   };
 }

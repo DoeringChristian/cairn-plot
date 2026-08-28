@@ -82,7 +82,7 @@ import {
 } from "./lib/cairn-plot/image/channel-slice";
 import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
 import { initialViewportSettings } from "./lib/cairn-plot/settings/viewport-initial-settings.ts";
-import { GridLayout } from "./layout/GridLayout.tsx";
+import { GridLayout, type GridLayoutState } from "./layout/GridLayout.tsx";
 import {
   PaneSyncContext,
   SharedPlotContext,
@@ -92,6 +92,9 @@ import { PlotCell } from "./host/PlotCell.tsx";
 import { ReactBackendOutlet } from "./host/react-backend.ts";
 import { getReactPlotType } from "./plots/react-registry.ts";
 import type { RenderEnvironment } from "./backends/contracts.ts";
+import { usePlotSessionController } from "./state/session/session-context.ts";
+import { getGlobalSelectionStore } from "./lib/cairn-plot/selection/selection-store.ts";
+import { getRegisteredPane } from "./plot-selection-pane-registry.ts";
 
 // Compatibility exports for existing standalone/stage imports. The host owns
 // these contracts; plot-node only consumes and re-exports them.
@@ -837,7 +840,7 @@ interface CompareControl {
 }
 
 /** Bind an authored grid to the renderer-agnostic layout shell. */
-function GridView({ node }: { node: GridNode }) {
+function GridView({ node, path }: { node: GridNode; path: string }) {
   const { source, shared: parentShared } = useSharedPlot();
   const localId = useId();
   const children = node.children ?? [];
@@ -846,24 +849,52 @@ function GridView({ node }: { node: GridNode }) {
   const viewSettingsGroupId = node.shared?.sync?.viewport
     ? `plot-grid-view-${localId}`
     : null;
+  const sessionController = usePlotSessionController();
+  const sessionId = `grid:${path}`;
+  const [layoutState, setLayoutState] = useState<GridLayoutState>({
+    mode: node.mode ?? "normal",
+    activeSlot: 0,
+  });
+  useEffect(() => {
+    if (!sessionController) return;
+    return sessionController.registerGrid(sessionId, setLayoutState, layoutState);
+    // Registration deliberately captures only the authored initial state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionController, sessionId]);
+  const changeLayoutState = useCallback((next: GridLayoutState) => {
+    if (layoutState.mode === "normal" && next.mode === "stacked" && sessionController) {
+      const selectedEntry = getGlobalSelectionStore().getSelected()
+        .map(getRegisteredPane)
+        .find((entry) => entry?.sessionId?.startsWith(`cell:${path}/`));
+      const saved = sessionController.getSession();
+      const firstSettings = Object.entries(saved.viewports)
+        .find(([id]) => id.startsWith(`cell:${path}/`))?.[1].settings;
+      sessionController.seedViewport(
+        `stack:${path}`,
+        selectedEntry?.settings?.get() ?? firstSettings ?? {},
+      );
+    }
+    setLayoutState(next);
+    sessionController?.recordGrid(sessionId, next);
+  }, [layoutState.mode, path, sessionController, sessionId]);
 
   const renderNormal = useCallback(
-    (index: number) => <PlotNodeView node={children[index]!} />,
-    [children],
+    (index: number) => <PlotNodeView node={children[index]!} path={`${path}/${index}`} />,
+    [children, path],
   );
   const renderStacked = useCallback(
     (index: number) => {
       const child = children[index];
       if (!child) return null;
       return child.kind === "grid" ? (
-        <LayoutFrame><NodeDispatch node={child} /></LayoutFrame>
+        <LayoutFrame><NodeDispatch node={child} path={`${path}/${index}`} /></LayoutFrame>
       ) : (
-        <PlotCell selectable={isSelectableNode(child)} node={child}>
-          <NodeDispatch node={child} />
+        <PlotCell sessionId={`stack:${path}`} selectable={isSelectableNode(child)} node={child}>
+          <NodeDispatch node={child} path={`${path}/${index}`} />
         </PlotCell>
       );
     },
-    [children],
+    [children, path],
   );
   const preload = useCallback(
     (indices: number[]) => {
@@ -897,6 +928,8 @@ function GridView({ node }: { node: GridNode }) {
       rowHeights={node.rowHeights}
       gap={node.gap}
       initialMode={node.mode}
+      state={layoutState}
+      onStateChange={changeLayoutState}
       switchable={node.switchable !== false}
       labels={children.map((child, index) => stackLabelFor(child, index))}
       renderNormal={renderNormal}
@@ -1164,7 +1197,7 @@ function useCompareControl(
  * `GpuComparePane`, no flicker). The `mode`/`splitPosition`/`blendAlpha` ride the
  * `compareSource`; the pane's MODE menu lifts changes back through the callbacks.
  */
-function NodeDispatch({ node }: { node: PlotNode }) {
+function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }) {
   const { shared } = useSharedPlot();
   const paneSync = useContext(PaneSyncContext);
   // In a stacked grid / fullscreen overlay — read on the CORE side (the addon
@@ -1186,7 +1219,7 @@ function NodeDispatch({ node }: { node: PlotNode }) {
   switch (node.kind) {
     case "grid":
       // Grids are cheap layout — only their leaf/compare descendants gate.
-      return <GridView node={node} />;
+      return <GridView node={node} path={path} />;
     case "plot":
       return (
         <LazyGate reservedHeight={reservedHeightOf(node.props)}>
@@ -1233,13 +1266,13 @@ function NodeDispatch({ node }: { node: PlotNode }) {
  * their stable active-content position, so tab changes update its content
  * without replacing the cell.
  */
-export function PlotNodeView({ node }: { node: PlotNode }) {
+export function PlotNodeView({ node, path = "root" }: { node: PlotNode; path?: string }) {
   if (node.kind === "grid") {
-    return <LayoutFrame><NodeDispatch node={node} /></LayoutFrame>;
+    return <LayoutFrame><NodeDispatch node={node} path={path} /></LayoutFrame>;
   }
   return (
-    <PlotCell selectable={isSelectableNode(node)} node={node}>
-      <NodeDispatch node={node} />
+    <PlotCell sessionId={`cell:${path}`} selectable={isSelectableNode(node)} node={node}>
+      <NodeDispatch node={node} path={path} />
     </PlotCell>
   );
 }

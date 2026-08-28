@@ -41,6 +41,26 @@ async function run() {
   check(element.querySelector("img")?.src === red, "public mount renders through the supplied DataSource");
   check(document.querySelectorAll("[data-cairn-selection-overlay-host]").length === 1, "one overlay host is acquired");
 
+  mounted.restoreSession({
+    version: 1,
+    viewports: { "cell:root": { settings: { "panel.info": false } } },
+    grids: {},
+  });
+  check(
+    mounted.getSession().viewports["cell:root"]?.settings["panel.info"] === false,
+    "imperative session restore updates the mounted cell",
+  );
+  let sessionNotifications = 0;
+  const unsubscribe = mounted.subscribeSession(() => sessionNotifications++);
+  mounted.restoreSession({
+    version: 1,
+    viewports: { "cell:root": { settings: { "panel.info": true } } },
+    grids: {},
+  });
+  await sleep(0);
+  unsubscribe();
+  check(sessionNotifications >= 1, "imperative session subscriptions receive restored state");
+
   mounted.update({ dataSource: createEndpointDataSource(() => blue) });
   await waitFor(() => element.querySelector("img")?.src === blue, 3_000);
   check(element.querySelector("img")?.src === blue, "DataSource update cannot reuse stale resolved content");
@@ -57,6 +77,13 @@ async function run() {
     rejected = true;
   }
   check(rejected, "updates after destroy fail clearly");
+  let sessionRejected = false;
+  try {
+    mounted.getSession();
+  } catch {
+    sessionRejected = true;
+  }
+  check(sessionRejected, "session access after destroy fails clearly");
   setOverallStatus(passed);
 }
 

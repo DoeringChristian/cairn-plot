@@ -57,6 +57,8 @@ export interface ViewportSettingsHandle {
   replace: (settings: ViewportSettings) => void;
   /** Apply locally only (no publish). */
   setLocal: (patch: ViewportSettings) => void;
+  /** Replace locally without publishing or reporting a user change (session restore). */
+  replaceLocal: (settings: ViewportSettings) => void;
   /** Live accessors for the pane registry (peer reads / external writes). */
   get: () => ViewportSettings | null;
   /** Apply as if received from a group (external-write seam). */
@@ -66,6 +68,7 @@ export interface ViewportSettingsHandle {
 export function useViewportSettings(
   memberships?: readonly SettingsMembership[],
   initialSettings: ViewportSettings | null = null,
+  onChange?: (settings: ViewportSettings) => void,
 ): ViewportSettingsHandle {
   // The owner materializes authored/default settings BEFORE its renderer mounts.
   // This is deliberately a useRef initializer: later descriptor/source changes
@@ -75,6 +78,8 @@ export function useViewportSettings(
   // Patch-identity dedupe: `set` applies the patch directly AND publishes the
   // same object; the writer's own (unscoped) subscription then skips it.
   const lastAppliedRef = useRef<ViewportSettings | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const getBox = useCallback(() => box.current, []);
   const applyPatch = useCallback((patch: ViewportSettings) => {
@@ -82,12 +87,14 @@ export function useViewportSettings(
     lastAppliedRef.current = patch;
     box.current = { ...(box.current ?? {}), ...patch };
     bump();
+    onChangeRef.current?.(box.current);
   }, []);
   const applyReplacement = useCallback((settings: ViewportSettings) => {
     if (lastAppliedRef.current === settings) return;
     lastAppliedRef.current = settings;
     box.current = { ...settings };
     bump();
+    onChangeRef.current?.(box.current);
   }, []);
 
   // Memberships: subscribe each channel; scoped members apply only their keys.
@@ -135,14 +142,20 @@ export function useViewportSettings(
       lastAppliedRef.current = settings;
       box.current = { ...settings };
       bump();
+      onChangeRef.current?.(box.current);
       for (const m of membershipsRef.current ?? []) publishSettingsReplacement(m.id, settings);
     },
     [],
   );
   const setLocal = applyPatch;
+  const replaceLocal = useCallback((settings: ViewportSettings) => {
+    lastAppliedRef.current = settings;
+    box.current = { ...settings };
+    bump();
+  }, []);
   const get = getBox;
 
-  return { settings: box.current, set, replace, setLocal, get, apply: applyPatch };
+  return { settings: box.current, set, replace, setLocal, replaceLocal, get, apply: applyPatch };
 }
 
 /** Anchor formation seed, run by the PANE (it owns the snapshot of its

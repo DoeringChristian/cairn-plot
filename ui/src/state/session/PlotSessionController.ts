@@ -1,4 +1,4 @@
-import type { ViewportSettings } from "../lib/cairn-plot/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
 import {
   clonePlotSession,
   emptyPlotSession,
@@ -19,6 +19,7 @@ export interface PlotSessionController {
   setTopology(topology: PlotSessionTopology): void;
   registerViewport(id: string, replace: (settings: ViewportSettings) => void, initial: ViewportSettings): () => void;
   recordViewport(id: string, settings: ViewportSettings): void;
+  seedViewport(id: string, settings: ViewportSettings): void;
   registerGrid(id: string, replace: (state: GridSessionState) => void, initial: GridSessionState): () => void;
   recordGrid(id: string, state: GridSessionState): void;
   destroy(): void;
@@ -88,6 +89,12 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
     },
     recordViewport(id, settings) {
       live(); session.viewports[id] = { settings: { ...settings } }; notify();
+    },
+    seedViewport(id, settings) {
+      live();
+      if (session.viewports[id]) return;
+      session.viewports[id] = { settings: { ...settings } };
+      notify();
     },
     registerGrid(id, replace, initialState) {
       live(); grids.set(id, replace);

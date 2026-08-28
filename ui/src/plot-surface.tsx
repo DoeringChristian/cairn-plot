@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { PlotDescriptor } from "../../packages/spec/src/spec.ts";
 import type { DataSource } from "./lib/cairn-plot/store/data-sources.ts";
@@ -6,12 +6,20 @@ import { useEmitAutoHeight } from "./lib/cairn-plot/hooks/use-emit-auto-height.t
 import { PlotNodeView } from "./plot-node.tsx";
 import { SharedPlotContext } from "./host/plot-context.ts";
 import { acquireSelectionOverlayHost } from "./plot-selection-stage.tsx";
+import { createPlotSessionController, type PlotSessionController } from "./state/session/PlotSessionController.ts";
+import { PlotSessionContext } from "./state/session/session-context.ts";
+import { compileSessionTopology } from "./state/session/session-topology.ts";
+import type { PlotSession } from "./state/session/plot-session.ts";
 
 export interface PlotSurfaceProps {
   descriptor: PlotDescriptor;
   dataSource: DataSource;
   className?: string;
   autoHeight?: boolean;
+  initialSession?: PlotSession;
+  onSessionChange?: (session: PlotSession) => void;
+  /** Advanced lifecycle injection used by the imperative host. */
+  sessionController?: PlotSessionController;
 }
 
 /** The one production host surface. Renderer registration is an entry concern. */
@@ -20,15 +28,33 @@ export function PlotSurface({
   dataSource,
   className = "p-2",
   autoHeight = true,
+  initialSession,
+  onSessionChange,
+  sessionController,
 }: PlotSurfaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   useEmitAutoHeight(containerRef, autoHeight);
   useEffect(() => acquireSelectionOverlayHost(), []);
+  const ownedControllerRef = useRef<PlotSessionController | null>(null);
+  if (!sessionController && !ownedControllerRef.current) {
+    ownedControllerRef.current = createPlotSessionController(initialSession);
+  }
+  const controller = sessionController ?? ownedControllerRef.current!;
+  const topology = useMemo(() => compileSessionTopology(descriptor), [descriptor]);
+  useEffect(() => {
+    controller.setTopology(topology);
+  }, [controller, topology]);
+  useEffect(() => onSessionChange ? controller.subscribe(onSessionChange) : undefined, [controller, onSessionChange]);
+  useEffect(() => () => {
+    if (!sessionController) ownedControllerRef.current?.destroy();
+  }, [sessionController]);
   return (
     <div ref={containerRef} className={className}>
-      <SharedPlotContext.Provider value={{ source: dataSource, shared: undefined }}>
-        <PlotNodeView node={descriptor.root} />
-      </SharedPlotContext.Provider>
+      <PlotSessionContext.Provider value={controller}>
+        <SharedPlotContext.Provider value={{ source: dataSource, shared: undefined }}>
+          <PlotNodeView node={descriptor.root} />
+        </SharedPlotContext.Provider>
+      </PlotSessionContext.Provider>
     </div>
   );
 }

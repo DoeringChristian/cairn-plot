@@ -43,6 +43,15 @@ test("restore updates live bindings and notifications are coalesced", async () =
   assert.equal(notifications, 1);
 });
 
+test("viewport seeding initializes once and retains the independent branch", () => {
+  const controller = createPlotSessionController();
+  controller.seedViewport("stack:root", { "image.encoding": "magma" });
+  controller.seedViewport("stack:root", { "image.encoding": "turbo" });
+  assert.deepEqual(controller.getSession().viewports["stack:root"].settings, {
+    "image.encoding": "magma",
+  });
+});
+
 test("destroyed controllers reject operations", () => {
   const controller = createPlotSessionController();
   controller.destroy();

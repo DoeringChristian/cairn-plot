@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   GridUniformAspectContext,
@@ -15,6 +15,7 @@ import { ChartFillContext } from "../plot-standalone-helpers.tsx";
 import { adjacentStackIndices } from "./stack-preload.ts";
 
 export type GridMode = "normal" | "stacked";
+export interface GridLayoutState { mode: GridMode; activeSlot: number }
 
 export interface GridLayoutProps {
   count: number;
@@ -23,6 +24,8 @@ export interface GridLayoutProps {
   rowHeights?: Array<number | string>;
   gap?: number | string;
   initialMode?: GridMode;
+  state?: GridLayoutState;
+  onStateChange?(state: GridLayoutState): void;
   switchable?: boolean;
   labels: string[];
   renderNormal(index: number): React.ReactNode;
@@ -49,6 +52,8 @@ export function GridLayout({
   rowHeights,
   gap,
   initialMode = "normal",
+  state,
+  onStateChange,
   switchable = true,
   labels,
   renderNormal,
@@ -59,8 +64,23 @@ export function GridLayout({
   const gridAspectApi = useUniformGridAspect();
   const supportsStack = count >= 2;
   const canSwitch = supportsStack && switchable;
-  const [mode, setMode] = useState<GridMode>(initialMode);
-  const [active, setActive] = useState(0);
+  const [localState, setLocalState] = useState<GridLayoutState>({ mode: initialMode, activeSlot: 0 });
+  const current = state ?? localState;
+  const updateState = useCallback((next: GridLayoutState | ((prev: GridLayoutState) => GridLayoutState)) => {
+    const value = typeof next === "function" ? next(current) : next;
+    if (!state) setLocalState(value);
+    onStateChange?.(value);
+  }, [current, state, onStateChange]);
+  const setMode = useCallback((mode: GridMode) => updateState({ ...current, mode }), [current, updateState]);
+  const setActive = useCallback<React.Dispatch<React.SetStateAction<number>>>(
+    (next) => updateState((previous) => ({
+      ...previous,
+      activeSlot: typeof next === "function" ? next(previous.activeSlot) : next,
+    })),
+    [updateState],
+  );
+  const mode = current.mode;
+  const active = current.activeSlot;
   const effectiveMode = supportsStack ? mode : "normal";
   const clampedActive = Math.min(active, Math.max(0, count - 1));
   const stackRootRef = useRef<HTMLDivElement | null>(null);

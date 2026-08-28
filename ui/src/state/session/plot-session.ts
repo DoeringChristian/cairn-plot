@@ -1,10 +1,9 @@
-import type { GridMode } from "../layout/GridLayout.tsx";
-import type { ViewportSettings } from "../lib/cairn-plot/settings/viewport-settings.ts";
+import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
 
 export const PLOT_SESSION_VERSION = 1 as const;
 
 export interface GridSessionState {
-  mode: GridMode;
+  mode: "normal" | "stacked";
   activeSlot: number;
 }
 

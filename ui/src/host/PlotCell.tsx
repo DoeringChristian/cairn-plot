@@ -37,6 +37,7 @@ import { useViewportSettings } from "../lib/cairn-plot/settings/use-viewport-set
 import { initialViewportSettings } from "../lib/cairn-plot/settings/viewport-initial-settings.ts";
 import type { ViewportSettings } from "../lib/cairn-plot/settings/viewport-settings.ts";
 import { PaneSyncContext, useSharedPlot, type PaneSyncCtx } from "./plot-context.ts";
+import { usePlotSessionController } from "../state/session/session-context.ts";
 
 /** The authored grid `sync.viewport` group fans only view transforms. */
 const VIEW_TRANSFORM_KEYS = [
@@ -53,10 +54,12 @@ const SELECTION_CLICK_SLOP_PX = 5;
  * visible selection frame while content beneath it may change.
  */
 export function PlotCell({
+  sessionId,
   selectable,
   node,
   children,
 }: {
+  sessionId: string;
   selectable: boolean;
   node: PlotNode;
   children: React.ReactNode;
@@ -69,6 +72,7 @@ export function PlotCell({
   const gridUniform = useContext(GridUniformAspectContext);
   const uniformImageCell = !!gridUniform && !fill && isImageCompatibleNode(node);
   const inheritedPaneSync = useContext(PaneSyncContext);
+  const sessionController = usePlotSessionController();
 
   const initialSettingsRef = useRef<{
     captured: boolean;
@@ -87,15 +91,32 @@ export function PlotCell({
   const selected = snapshot.selected;
 
   const groups = selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
-  const vst = useViewportSettings([
-    ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
-    ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_TRANSFORM_KEYS }] : []),
-  ], initialSettingsRef.current.value);
+  const recordSessionSettings = useCallback((settings: ViewportSettings) => {
+    sessionController?.recordViewport(sessionId, settings);
+  }, [sessionController, sessionId]);
+  const vst = useViewportSettings(
+    [
+      ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
+      ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_TRANSFORM_KEYS }] : []),
+    ],
+    initialSettingsRef.current.value,
+    recordSessionSettings,
+  );
+
+  useEffect(() => {
+    if (!sessionController) return;
+    return sessionController.registerViewport(
+      sessionId,
+      vst.replaceLocal,
+      vst.get() ?? {},
+    );
+  }, [sessionController, sessionId, vst.replaceLocal, vst.get]);
 
   useEffect(() => {
     if (!selectable) return;
     registerSelectionPane({
       paneId,
+      sessionId,
       node,
       source,
       settings: { get: vst.get, set: vst.set },
@@ -104,7 +125,7 @@ export function PlotCell({
       getElement: () => frameRef.current,
     });
     return () => unregisterSelectionPane(paneId);
-  }, [paneId, selectable, node, source, shared]);
+  }, [paneId, sessionId, selectable, node, source, shared]);
 
   useEffect(() => {
     if (!selectable) return;
