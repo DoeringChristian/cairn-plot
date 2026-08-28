@@ -41,7 +41,6 @@ import type {
 } from "./lib/cairn-plot/renderers/image-backend";
 import {
   resolveDataProps,
-  type CompareNode,
   type DataSpec,
   type GridNode,
   type PlotLeafNode,
@@ -92,6 +91,10 @@ import { PlotCell } from "./host/PlotCell.tsx";
 import { ReactBackendOutlet } from "./host/react-backend.ts";
 import { getReactPlotType } from "./plots/react-registry.ts";
 import type { RenderEnvironment } from "./backends/contracts.ts";
+import {
+  normalizeImageComparisonPresentation,
+  planImageComparison as synthDiffLeafOf,
+} from "./plots/image/comparison-plan.ts";
 import { usePlotSessionController } from "./state/session/session-context.ts";
 import { getGlobalSelectionStore } from "./lib/cairn-plot/selection/selection-store.ts";
 import { getRegisteredPane } from "./plot-selection-pane-registry.ts";
@@ -665,21 +668,6 @@ async function resolveFrame(
  *  on read (see `normalizeCompareViewMode`). */
 type CompareViewMode = "split" | "diff";
 
-// Back-compat: a legacy descriptor / synced patch may still carry the removed
-// `"blend"` view mode. Alias it to `"split"` on read (never hard-fail an old
-// baked report) and warn ONCE per session.
-let warnedBlendRemoved = false;
-function normalizeCompareViewMode(mode: string | undefined | null): CompareViewMode {
-  if (mode === "blend") {
-    if (!warnedBlendRemoved) {
-      warnedBlendRemoved = true;
-      // eslint-disable-next-line no-console
-      console.warn("cairn-plot: the 'blend' compare mode was removed; rendering as 'split'.");
-    }
-    return "split";
-  }
-  return mode === "diff" ? "diff" : "split";
-}
 // ---------------------------------------------------------------------------
 // DIFF ROUTING (content-op unification, Phase 2c Landing 2). A compare node in
 // a DIFF mode lowers to the SAME `LeafView` → `image` renderer → `GpuImagePane`
@@ -782,47 +770,6 @@ interface DiffLeafSpec {
   onSplitPositionChange: (p: number) => void;
   /** True when the hoisted compare control differs from the descriptor (HOME dot). */
   compareModified: boolean;
-}
-
-/** The synthesized image leaf + static per-side derivations for a compare node,
- *  memoized on the node OBJECT so its identity is STABLE across renders and
- *  stacked flips (a stable `sourceKey` ⇒ the resolve cache hits synchronously on
- *  flip-back — no "Loading…" flash). Only the LIVE diff settings (kernel/
- *  colormap/callbacks) are rebuilt per render in {@link NodeDispatch}. */
-interface SynthDiffLeaf {
-  leaf: PlotLeafNode;
-  fgData: DataSpec;
-  align?: CompareAlign;
-  fit?: CompareFit;
-  referenceLabel?: string;
-  foregroundLabel?: string;
-}
-const synthDiffLeafCache = new WeakMap<CompareNode, SynthDiffLeaf>();
-function synthDiffLeafOf(node: CompareNode): SynthDiffLeaf {
-  let e = synthDiffLeafCache.get(node);
-  if (!e) {
-    const baseIdx = node.baselineIndex ?? 0;
-    const refData = baseIdx === 0 ? node.a : node.b;
-    const fgData = baseIdx === 0 ? node.b : node.a;
-    const props = node.props ?? {};
-    const labelA = typeof props.labelA === "string" ? props.labelA : undefined;
-    const labelB = typeof props.labelB === "string" ? props.labelB : undefined;
-    const legacyLabel = typeof props.label === "string" ? props.label : undefined;
-    const referenceLabel = baseIdx === 0 ? labelA : labelB;
-    const foregroundLabel = (baseIdx === 0 ? labelB : labelA) ?? legacyLabel;
-    const leafProps: NonNullable<PlotLeafNode["props"]> = {
-      interpolation: (props.interpolation as string | undefined) ?? "auto",
-      showAxes: (props.showAxes as boolean | undefined) ?? false,
-    };
-    if (props.toolbar !== undefined) leafProps.toolbar = props.toolbar;
-    if (props.pixelValueNotation !== undefined) leafProps.pixelValueNotation = props.pixelValueNotation;
-    if (props.processing !== undefined) leafProps.processing = props.processing;
-    if (typeof props.height === "number") leafProps.height = props.height;
-    const leaf: PlotLeafNode = { kind: "plot", renderer: "image", data: refData, props: leafProps };
-    e = { leaf, fgData, align: node.align, fit: node.fit, referenceLabel, foregroundLabel };
-    synthDiffLeafCache.set(node, e);
-  }
-  return e;
 }
 
 /** The lifted compare view-mode state a compare node's `NodeDispatch` owns and
@@ -1099,7 +1046,7 @@ function useCompareControl(
   // `normalizeCompareViewMode` folds the removed `"blend"` (and legacy `"side"`)
   // into `"split"` so an old baked descriptor still lowers.
   const descriptorMode: CompareViewMode = cmp
-    ? normalizeCompareViewMode(cmp.mode as string)
+    ? normalizeImageComparisonPresentation(cmp.mode as string) === "difference" ? "diff" : "split"
     : "split";
   const descriptorKernel =
     (props.diffSubmode as string | undefined) ?? (cmp?.diffSubmode as string | undefined) ?? "absolute";
