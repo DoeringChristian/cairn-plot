@@ -39,6 +39,8 @@ import GpuImagePane from "../GpuImagePane";
 import { urlSource } from "../image-backend";
 import { getSharedDevice } from "../../engine/device";
 import { createHarness, waitFor } from "../../testing/harness";
+import type { ViewportSettings } from "../../settings/viewport-settings.ts";
+import type { Colormap } from "../../types.ts";
 
 const h = React.createElement;
 
@@ -172,21 +174,41 @@ function redGreenPresence(bytes: Uint8Array): { red: number; green: number } {
  *  probe object (with fresh state getters) is re-set on every render. */
 type ProbeRef = () => DiffProbe;
 
-function mountUnifiedDiff(container: HTMLElement, opId: string): Promise<ProbeRef> {
+function mountUnifiedDiff(container: HTMLElement, opId: string, encoding: Colormap): Promise<ProbeRef> {
+  const OwnedDiff = () => {
+    const defaults = React.useMemo(() => ({
+      "compare.operation": opId,
+      "image.encoding": encoding,
+      "image.view": { zoom: 1, pan: { x: 0, y: 0 } },
+    }), []);
+    const [settings, setSettings] = React.useState<ViewportSettings>(defaults);
+    const patchSettings = React.useCallback((patch: ViewportSettings) => {
+      setSettings((current) => ({ ...current, ...patch }));
+    }, []);
+    return h(GpuImagePane, {
+      source: urlSource(REF_URL),
+      compareSource: {
+        b: urlSource(FG_URL),
+        opId: settings["compare.operation"] as string,
+        colormap: encoding,
+        referenceLabel: "ref",
+        foregroundLabel: "fg",
+      },
+      zoom: 1,
+      pan: { x: 0, y: 0 },
+      label: "",
+      syncedSettings: settings,
+      setSyncedSettings: patchSettings,
+      applySyncedSettings: patchSettings,
+      resetViewportSettings: () => setSettings({ ...defaults }),
+    });
+  };
   const root = createRoot(container);
   root.render(
     h(
       "div",
       { style: { width: "128px", height: "128px" } },
-      h(GpuImagePane, {
-        // source = REFERENCE (slot a), compareSource.b = FOREGROUND (slot b) →
-        // diff = a−b = REF−FG, matching GpuComparePane's texA(ref)−texB(fg).
-        source: urlSource(REF_URL),
-        compareSource: { b: urlSource(FG_URL), opId, referenceLabel: "ref", foregroundLabel: "fg" },
-        zoom: 1,
-        pan: { x: 0, y: 0 },
-        label: "",
-      }),
+      h(OwnedDiff),
     ),
   );
   // The probe rides `paneRef.current` = the VIEWPORT box (`data-gpu-image-viewport`).
@@ -260,7 +282,7 @@ async function main(): Promise<void> {
     cUnified.style.cssText = "width:128px;height:128px;position:absolute;left:0;top:0";
     document.body.appendChild(cUnified);
 
-    const probe = await mountUnifiedDiff(cUnified, "signed");
+    const probe = await mountUnifiedDiff(cUnified, "signed", "red-green");
     // Wait for the red-green diff frame ITSELF (both polarities present), not a
     // generic non-zero paint — otherwise a slow adapter's pre-diff source frame
     // is sampled and red/green come back 0.
@@ -306,7 +328,7 @@ async function main(): Promise<void> {
     const cFlip = document.createElement("div");
     cFlip.style.cssText = "width:128px;height:128px;position:absolute;left:320px;top:0";
     document.body.appendChild(cFlip);
-    const flipProbe = await mountUnifiedDiff(cFlip, "flip");
+    const flipProbe = await mountUnifiedDiff(cFlip, "flip", "magma");
     // FLIP is a cached multi-pass kernel displayed through magma — wait for the
     // colormap to resolve, THEN poll for a non-degenerate composited frame. On
     // slow software adapters the cached compute + blit lands well after mount, so
