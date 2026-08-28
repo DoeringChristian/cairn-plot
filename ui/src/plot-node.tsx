@@ -80,6 +80,7 @@ import {
 } from "./host/plot-context.ts";
 import { PlotCell } from "./host/PlotCell.tsx";
 import { ReactBackendOutlet } from "./host/react-backend.ts";
+import { withoutSettingsPlumbing } from "./host/presentation.ts";
 import { getReactPlotType } from "./plots/react-registry.ts";
 import {
   comparisonRenderer,
@@ -385,7 +386,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       const dsync: Record<string, unknown> = {};
       if (paneSync?.syncedSettings) dsync.syncedSettings = paneSync.syncedSettings;
       if (paneSync?.setSyncedSettings) dsync.setSyncedSettings = paneSync.setSyncedSettings;
-      if (paneSync?.applySyncedSettings) dsync.applySyncedSettings = paneSync.applySyncedSettings;
       dsync.resetViewportSettings = resetViewportSettings;
       const compareSource: CompareSource = {
         b: dp.__diffB as DecodedSource,
@@ -420,7 +420,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
     if (paneSync?.syncedSettings) sharedProps.syncedSettings = paneSync.syncedSettings;
     if (paneSync?.setSyncedSettings) sharedProps.setSyncedSettings = paneSync.setSyncedSettings;
-    if (paneSync?.applySyncedSettings) sharedProps.applySyncedSettings = paneSync.applySyncedSettings;
     sharedProps.resetViewportSettings = resetViewportSettings;
     // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
     // selection state) and handed to the pane as a standard ToolbarButtonSpec —
@@ -518,7 +517,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       <ReactBackendOutlet
         backends={registered.backends}
         environment={browserRenderEnvironment()}
-        presentation={mergedProps}
+        presentation={withoutSettingsPlumbing(mergedProps)}
         settings={settings}
         commands={{
           patch: (patch) => paneSync?.setSyncedSettings?.(patch as ViewportSettings),
@@ -536,6 +535,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     <Message text="Loading renderer…" />
   );
 }
+
 
 function browserRenderEnvironment(): RenderEnvironment {
   return {
@@ -933,7 +933,6 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
     node,
     paneSync?.syncedSettings,
     paneSync?.setSyncedSettings,
-    paneSync?.applySyncedSettings,
   );
   if (node.kind === "plot") {
     return (

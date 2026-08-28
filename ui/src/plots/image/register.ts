@@ -34,7 +34,12 @@ export function ensureImagePlotType(
     supports: () => ({ supported: true, priority: 1 }),
     canReuse: () => true,
     component({ input }: ReactBackendProps<ImagePresentation, SettingsRecord>) {
-      return createElement(View, input.presentation);
+      return createElement(View, {
+        ...input.presentation,
+        syncedSettings: input.settings,
+        setSyncedSettings: input.commands.patch,
+        resetViewportSettings: input.commands.reset,
+      });
     },
   };
   const definition = definePlot<

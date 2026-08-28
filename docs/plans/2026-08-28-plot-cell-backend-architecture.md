@@ -89,6 +89,11 @@ Status: accepted design; implementation in progress
 - [x] Colocate the scalar backend view and remove its local viewport and
   promoted-series fallback stores. The typed backend command port is now its
   only interaction-state write path.
+- [x] Remove image renderer mount-time settings initialization and the private
+  `applySyncedSettings` path. Typed presentations are stripped of settings
+  plumbing; the image backend receives readonly settings plus patch/reset only
+  through `BackendInput`. Renderer defaults remain projections until a user
+  command writes an override, so stack flips cannot write settings.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

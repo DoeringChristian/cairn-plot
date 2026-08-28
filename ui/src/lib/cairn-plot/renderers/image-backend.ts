@@ -370,7 +370,6 @@ export interface ImageBackendProps {
   /** LOCAL apply (no fan-out) — the INITIALIZATION write path: the pane seeds
    *  MISSING settings keys from the first content it shows (single source of
    *  truth rule); init must never fan to group peers. */
-  applySyncedSettings?: (patch: ViewportSettings) => void;
   /** HOME command supplied by the viewport owner. The renderer does not derive
    *  defaults from its current rendering mode or source. */
   resetViewportSettings?: () => void;

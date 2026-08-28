@@ -230,7 +230,6 @@ export function ImageStandalone(p: P) {
       onViewportChange={onViewportChange}
       syncedSettings={p.syncedSettings}
       setSyncedSettings={p.setSyncedSettings}
-      applySyncedSettings={p.applySyncedSettings}
       resetViewportSettings={p.resetViewportSettings}
       channelMenu={p.channelMenu}
       channelModified={p.channelModified}

@@ -389,7 +389,6 @@ function CpuSdrImagePane(
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
     setSyncedSettings?: (patch: ViewportSettings) => void;
     /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
-    applySyncedSettings?: (patch: ViewportSettings) => void;
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) when this pane renders a
@@ -464,34 +463,7 @@ function CpuSdrImagePane(
     synced?.["image.tonemapGamma"] != null && synced["image.tonemapGamma"] > 0 ? synced["image.tonemapGamma"] : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
-  // Renderer initialization only; sync formation belongs to the viewport owner.
-  const initialSettingsSnapshot = useCallback(
-    (): ViewportSettings => ({
-      "image.encoding": enc.encodingId,
-      "image.tonemapGamma": tonemapGamma,
-      // Formation converges the VIEW too (view transforms are settings).
-      "image.view": { zoom: zoomProp, pan: panProp },
-    }),
-    [enc.encodingId, tonemapGamma, zoomProp, panProp],
-  );
   const publishSettings = setSynced;
-  // INITIALIZATION (single-source-of-truth ruling — see GpuImagePane's twin):
-  // fill MISSING keys once from the first-shown content; idempotent,
-  // LOCAL-only; fills missing viewport keys once.
-  const applySynced = sdrThreadedSet
-    ? (props.applySyncedSettings ?? sdrThreadedSet)
-    : sdrOwnStore.setLocal;
-  const syncedInitRef = useRef(synced);
-  syncedInitRef.current = synced;
-  useEffect(() => {
-    const snap = initialSettingsSnapshot();
-    const cur = (syncedInitRef.current ?? {}) as Record<string, unknown>;
-    const missing: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(snap)) {
-      if (!(k in cur) && v !== undefined) missing[k] = v;
-    }
-    if (Object.keys(missing).length > 0) applySynced(missing as ViewportSettings);
-  });
   const changeEncoding = useCallback(
     (id: string) => {
       publishSettings({ "image.encoding": id });
@@ -1069,7 +1041,6 @@ function CpuHdrImagePane(
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
     setSyncedSettings?: (patch: ViewportSettings) => void;
     /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
-    applySyncedSettings?: (patch: ViewportSettings) => void;
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;
     /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
@@ -1200,40 +1171,7 @@ function CpuHdrImagePane(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propColorRange?.[0], propColorRange?.[1]]);
 
-  // Renderer initialization only; sync formation belongs to the viewport owner.
-  const initialSettingsSnapshot = useCallback(
-    (): ViewportSettings => ({
-      "image.encoding": enc.encodingId,
-      "image.tonemapGamma": tonemapGamma,
-      "image.exposureEV": displayEV,
-      "image.offset": displayOffset,
-      "image.reduce": effectiveReduce,
-      ...(colorBounds
-        ? { "image.colorRange": { min: colorBounds[0], max: colorBounds[1] } }
-        : {}),
-      // Formation converges the VIEW too (view transforms are settings).
-      "image.view": { zoom, pan },
-    }),
-    [enc.encodingId, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds, zoom, pan],
-  );
   const publishSettings = setSynced;
-  // INITIALIZATION (single-source-of-truth ruling — see GpuImagePane's twin):
-  // fill MISSING keys once from the first-shown content; idempotent,
-  // LOCAL-only; fills missing viewport keys once.
-  const applySynced = hdrThreadedSet
-    ? (props.applySyncedSettings ?? hdrThreadedSet)
-    : hdrOwnStore.setLocal;
-  const syncedInitRef = useRef(synced);
-  syncedInitRef.current = synced;
-  useEffect(() => {
-    const snap = initialSettingsSnapshot();
-    const cur = (syncedInitRef.current ?? {}) as Record<string, unknown>;
-    const missing: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(snap)) {
-      if (!(k in cur) && v !== undefined) missing[k] = v;
-    }
-    if (Object.keys(missing).length > 0) applySynced(missing as ViewportSettings);
-  });
   // Every display gesture is ONE store write; the value flows back down through
   // the render lookup — no pane state to keep consistent.
   const changeEncoding = useCallback(
@@ -1611,7 +1549,6 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
   const sync = {
     syncedSettings: backendProps.syncedSettings,
     setSyncedSettings: backendProps.setSyncedSettings,
-    applySyncedSettings: backendProps.applySyncedSettings,
     enlargeControl: backendProps.enlargeControl,
     channelMenu: backendProps.channelMenu,
     channelModified: backendProps.channelModified,

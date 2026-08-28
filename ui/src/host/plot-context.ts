@@ -25,7 +25,6 @@ export interface PaneSyncCtx {
   viewportDefaults?: ViewportSettings | null;
   setSyncedSettings?: (patch: ViewportSettings) => void;
   resetSyncedSettings?: (settings: ViewportSettings) => void;
-  applySyncedSettings?: (patch: ViewportSettings) => void;
 }
 
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);

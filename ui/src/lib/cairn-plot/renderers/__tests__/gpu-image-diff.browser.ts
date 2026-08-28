@@ -199,7 +199,6 @@ function mountUnifiedDiff(container: HTMLElement, opId: string, encoding: Colorm
       label: "",
       syncedSettings: settings,
       setSyncedSettings: patchSettings,
-      applySyncedSettings: patchSettings,
       resetViewportSettings: () => setSettings({ ...defaults }),
     });
   };

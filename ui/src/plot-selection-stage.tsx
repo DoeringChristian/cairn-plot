@@ -408,7 +408,6 @@ function StageCell({
       syncedSettings: settings.settings,
       setSyncedSettings: patchSettings,
       resetSyncedSettings: replaceSettings,
-      applySyncedSettings: applySettings,
     }),
     [settings.settings, patchSettings, replaceSettings, applySettings],
   );

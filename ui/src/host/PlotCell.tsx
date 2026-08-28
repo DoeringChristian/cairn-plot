@@ -211,10 +211,9 @@ export function PlotCell({
             viewportDefaults: initialSettingsRef.current.value,
             setSyncedSettings: vst.set,
             resetSyncedSettings: vst.replace,
-            applySyncedSettings: vst.setLocal,
           }
         : null,
-    [groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.replace, vst.setLocal],
+    [groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.replace],
   );
   const ownsViewport = node.kind !== "grid";
   const localSync = useMemo<PaneSyncCtx | null>(
@@ -225,10 +224,9 @@ export function PlotCell({
             viewportDefaults: initialSettingsRef.current.value,
             setSyncedSettings: vst.set,
             resetSyncedSettings: vst.replace,
-            applySyncedSettings: vst.setLocal,
           }
         : null,
-    [ownsViewport, vst.settings, vst.set, vst.replace, vst.setLocal],
+    [ownsViewport, vst.settings, vst.set, vst.replace],
   );
 
   return (

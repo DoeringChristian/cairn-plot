@@ -117,7 +117,6 @@ import {
 } from "./image-histogram";
 import { TEV_HISTOGRAM_BINS } from "../image/histogram-binning";
 import { useViewportSettings } from "../settings/use-viewport-settings";
-import type { ViewportSettings } from "../settings/viewport-settings";
 import {
   displayToolbarButton,
   scalarFaceColormap,
@@ -562,10 +561,6 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const threadedSet = backendProps.setSyncedSettings;
   const synced = threadedSet ? backendProps.syncedSettings : ownStore.settings;
   const setSynced = threadedSet ?? ownStore.set;
-  // LOCAL apply (no fan-out) — the initialization write path.
-  const applySynced = threadedSet
-    ? (backendProps.applySyncedSettings ?? backendProps.setSyncedSettings!)
-    : ownStore.setLocal;
 
   // -----------------------------------------------------------------------
   // DIFF kernel + DEFAULT colormap (state-unification). The diff/compare face no
@@ -827,75 +822,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `synced.diffKernel` into the local fallback store here. When an owner IS present
   // (the descriptor / stage path) the kernel mirrors through `useCompareControl` at
   // the node, so the pane must NOT also drive it (that owner re-derives `opId`).
-  const initialSettingsSnapshot = useCallback(
-    (): ViewportSettings =>
-      diffMode
-        ? {
-            // DIFF face: the scalar-error encoding + the effective diff colormap
-            // (shared default when unoverridden), the real `compareMode:"diff"`,
-            // and the diff KERNEL — all the viewport's CURRENT values, so formation
-            // mirrors the first diff's settings to the group (ruling 3). A light peer
-            // stores the scalar colormap and simply doesn't false-color (ruling 5:
-            // arity gating at render).
-            "image.encoding": deriveCompareEncodingId("scalar", effectiveTonemap, effectiveDiffColormap),
-            "image.tonemapGamma": tonemapGamma,
-            "image.peak": peak,
-            "image.exposureEV": displayEV,
-            "image.offset": displayOffset,
-            "image.reduce": effectiveReduce,
-            "compare.operation": diffKernel,
-            // Formation converges the VIEW too (view transforms are settings).
-            "image.view": { zoom, pan },
-          }
-        : {
-            // The ONE `encoding` id — the registry derives colormap/curve from it.
-            "image.encoding": enc.encodingId,
-            "image.tonemapGamma": tonemapGamma,
-            "image.peak": peak,
-            "image.exposureEV": displayEV,
-            "image.offset": displayOffset,
-            "image.reduce": effectiveReduce,
-            ...(colorBounds
-              ? { "image.colorRange": { min: colorBounds[0], max: colorBounds[1] } }
-              : {}),
-            // COMPOSITOR (split): the LIGHT display look above (a compare peer
-            // follows it) PLUS the compare-only keys so a selected peer's control
-            // follows the mode + divider (`useCompareControl` reads them). Omitted
-            // in the plain single-image case.
-            ...(compositorMode
-              ? { "compare.operation": compareOpMode as string, "compare.split": splitPosition }
-              : {}),
-            // Formation converges the VIEW too (view transforms are settings).
-            "image.view": { zoom, pan },
-          },
-    [diffMode, effectiveDiffColormap, diffKernel, enc.encodingId, enc.colormap, effectiveTonemap, tonemapGamma, peak, displayEV, displayOffset, effectiveReduce, colorBounds, compositorMode, compareOpMode, splitPosition, zoom, pan],
-  );
   // The ONE write path into the viewport's settings entry (NOSTACK): fans out
   // to the selection group while selected — PERSISTENTLY (leaving changes
   // nothing) — else writes just this viewport's entry.
   const publishSettings = setSynced;
-  // INITIALIZATION (single-source-of-truth ruling): a viewport's settings are
-  // seeded from the FIRST content that makes each key applicable — one LOCAL
-  // write per missing key — and from then on every read is the settings
-  // object, period. Idempotent + self-quiescing (only MISSING keys are ever
-  // written, so slot flips on a stacked viewport change NOTHING); host-driven
-  // Toolbar visibility has no bearing on settings ownership.
-  const syncedRef2 = useRef(synced);
-  syncedRef2.current = synced;
-  useEffect(() => {
-    const snap = initialSettingsSnapshot();
-    const cur = (syncedRef2.current ?? {}) as Record<string, unknown>;
-    const missing: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(snap)) {
-      // COMPARE keys are initialized by their OWNER (the node-level
-      // useCompareControl / a prop driver) — a pane-level init would capture
-      // a transient local default and permanently shadow the driven kernel
-      // (the flip-storm cached-diff starvation caught by the stress harness).
-      if (k === "compare.operation" || k === "compare.mode" || k === "compare.kernel" || k === "compare.split") continue;
-      if (!(k in cur) && v !== undefined) missing[k] = v;
-    }
-    if (Object.keys(missing).length > 0) applySynced(missing as ViewportSettings);
-  });
   const changeEncoding = useCallback(
     (id: string) => {
       publishSettings({ "image.encoding": id });
