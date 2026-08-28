@@ -26,21 +26,31 @@ import {
   TONEMAP_GAMMA_DEFAULT,
   type RgbTriple,
 } from "../../../model/tonemap";
-import {
-  evaluateDisplayOperation,
-  listDisplayOperations,
-  computeDataIndex,
-  DEFAULT_ENCODE_PARAMS,
-  type DisplayOperation,
-  type EncodeParams,
-  type NormMode,
-} from "../../../model/display-operations/index";
+import { evaluateDisplayOperation as evaluateCpuDisplayOperation, getCpuDisplayOperation } from "../../../cpu/display-operations.ts";
+import { computeDataIndex } from "../../../cpu/display-math.ts";
+import { listWebGpuDisplayOperations, type WebGpuDisplayOperation } from "../../display.ts";
+import { DEFAULT_DISPLAY_PARAMETERS, type DisplayParameters, type NormMode } from "../../../runtime/display-settings.ts";
 import { colormapFloatLUT } from "../../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "ENCODING REGISTRY" });
+
+type EncodeParams = DisplayParameters;
+type DisplayOperation = WebGpuDisplayOperation & { id: string; category: string };
+const DEFAULT_ENCODE_PARAMS = DEFAULT_DISPLAY_PARAMETERS;
+const listDisplayOperations = (): DisplayOperation[] => listWebGpuDisplayOperations().map((operation) => ({
+  ...operation,
+  id: operation.definition.id,
+  category: operation.definition.category,
+}));
+const evaluateDisplayOperation = (
+  operation: DisplayOperation,
+  values: readonly number[],
+  channels: number,
+  parameters: DisplayParameters,
+): RgbTriple => evaluateCpuDisplayOperation(getCpuDisplayOperation(operation.id)!, values, channels, parameters);
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 const byteOf = (x: number): number => Math.round(clamp01(x) * 255);

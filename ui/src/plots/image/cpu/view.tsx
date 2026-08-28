@@ -67,7 +67,6 @@ import {
 } from "../model/index";
 import { getColormapLUT } from "../../../settings/colormaps/index";
 import { applyColormap } from "../model/apply-colormap.ts";
-import { clamp01 } from "../../../primitives/util/clamp";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
 import { resolveColormapMode } from "../webgpu/engine/diff-cmap-mode";
@@ -98,15 +97,9 @@ import { u8HistogramSource, floatHistogramSource } from "../components/image-his
 import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-operation";
-import {
-  reduceToScalar,
-  defaultReduceMode,
-  getDisplayOperation,
-  DEFAULT_ENCODE_PARAMS,
-  type EncodeParams,
-  type NormMode,
-  type ReduceMode,
-} from "../model/display-operations/index";
+import { getDisplayOperation, type ReduceMode } from "../definition/display-operations.ts";
+import { DEFAULT_DISPLAY_PARAMETERS, defaultReduceMode, type DisplayParameters, type NormMode } from "../runtime/display-settings.ts";
+import { getCpuDisplayOperation } from "./display-operations.ts";
 import { getCpuImageOperation, type CpuImageOperation } from "./image-operations.ts";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
@@ -177,8 +170,9 @@ export function tonemapToImageData(
   // TURBO false-color (the tev-exact follow-up) indexes the bound turbo table at
   // tev's FIXED log2 mapping (`turboDataIndex`) instead of `computeDataIndex`, and
   // defaults `reduce` to MEAN (tev averages RGB) regardless of k.
-  const colormapOperation = colormap != null ? getDisplayOperation(colormap) : undefined;
-  const reduceMode: ReduceMode = reduce ?? colormapOperation?.defaultReduce ?? defaultReduceMode(c);
+  const colormapDefinition = colormap != null ? getDisplayOperation(colormap) : undefined;
+  const colormapOperation = colormap != null ? getCpuDisplayOperation(colormap) : undefined;
+  const reduceMode: ReduceMode = reduce ?? colormapDefinition?.defaultReduce ?? defaultReduceMode(c);
   // COLORMAP (LUT family, CPU twin — Phase 2/4): when a colormap is active the
   // SCALAR channel (channel 0) indexes the colormap LUT and the DISPLAY color is
   // written straight out — the tone-map operator + output-encode are SHORT-
@@ -191,15 +185,13 @@ export function tonemapToImageData(
   // UNCLAMPED) → SHARED output-encode (like a curve), NOT a baked-sRGB LUT sample.
   // This CPU fallback writes an 8-bit ImageData, so |v|>1 clamps here (the extended
   // >1 survival is the GPU/HDR-surface path); |v|<=1 matches the GPU exactly.
-  const analyticCmap = colormapOperation?.implementation.kind === "analytic";
-  const lutImplementation = colormapOperation?.implementation.kind === "lut" ? colormapOperation.implementation : null;
-  const cmapLut = lutImplementation?.table ?? null;
+  const analyticCmap = colormapOperation?.kind === "analytic";
   // TURBO bakes its own FIXED index (`turboDataIndex`), bypassing the norm/bounds
   // path — so its params (norm/bounds) are inert on this branch.
   const cmapBoundsOn =
     typeof colorMin === "number" && Number.isFinite(colorMin) &&
     typeof colorMax === "number" && Number.isFinite(colorMax);
-  const cmapDataParams: EncodeParams = {
+  const cmapDataParams: DisplayParameters = {
     exposure,
     offset,
     peak: 4,
@@ -215,16 +207,14 @@ export function tonemapToImageData(
   // Resolve the operator CURVE straight from the registry (the single source of
   // truth). Every curve works on this SDR surface; the output conversion below
   // performs the surface-specific clamp.
-  const curveEnc = getDisplayOperation(tonemap);
+  const curveDefinition = getDisplayOperation(tonemap);
   const opEnc =
-    curveEnc && curveEnc.category !== "colormap"
-      ? curveEnc
-      : getDisplayOperation(DEFAULT_DISPLAY_OPERATION_ID)!;
+    curveDefinition && curveDefinition.category !== "colormap"
+      ? getCpuDisplayOperation(tonemap)!
+      : getCpuDisplayOperation(DEFAULT_DISPLAY_OPERATION_ID)!;
   const op = (rgb: RgbTriple): RgbTriple => {
-    const implementation = opEnc.implementation;
-    if (implementation.kind !== "per-channel") return rgb;
-    const params = { ...DEFAULT_ENCODE_PARAMS, peak: 1 };
-    return [implementation.cpu(rgb[0], params), implementation.cpu(rgb[1], params), implementation.cpu(rgb[2], params)];
+    const params = { ...DEFAULT_DISPLAY_PARAMETERS, peak: 1 };
+    return opEnc.evaluate(rgb, 3, params);
   };
   const out = new Uint8ClampedArray(w * h * 4);
 
@@ -268,10 +258,7 @@ export function tonemapToImageData(
     if (analyticCmap) {
       // The (exposure/offset-adjusted) color channels REDUCE to a signed scalar,
       // then the analytic color runs through the SAME output-encode as a curve.
-      const scalar = reduceToScalar(lit, c, reduceMode);
-      const [lr, lg, lb] = colormapOperation!.implementation.kind === "analytic"
-        ? colormapOperation!.implementation.cpu(scalar, cmapDataParams)
-        : [scalar, scalar, scalar];
+      const [lr, lg, lb] = colormapOperation!.evaluate(lit, c, { ...cmapDataParams, reduce: reduceMode });
       // sRGB OETF (no gamma) — matches the GPU analytic branch's hasGamma=false.
       out[o] = 255 * outputEncode(lr);
       out[o + 1] = 255 * outputEncode(lg);
@@ -279,19 +266,17 @@ export function tonemapToImageData(
       out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
       continue;
     }
-    if (cmapLut) {
+    if (colormapOperation?.kind === "lut") {
       // Multi-channel follow-up: the color channels are first REDUCED to a scalar
       // (luminance/mean — `reduceToScalar`, the shared CPU source of truth the WGSL
       // `cairnReduceScalar` mirrors), then data index → LUT → display color
       // directly (no operator/encode). The BOUNDS skin reduces the RAW channels
       // (`r,g,b`); otherwise the exposure/offset sensitivity (`lit`) — the two are
       // never composed. At k=1 the reduce returns channel 0 unchanged.
-      const scalar = reduceToScalar(cmapBoundsOn ? [r, g, b] : lit, c, reduceMode);
-      const idx = lutImplementation!.index.cpu(scalar, cmapDataParams);
-      const row = Math.round(clamp01(idx) * 255);
-      out[o] = 255 * cmapLut[row * 4]!;
-      out[o + 1] = 255 * cmapLut[row * 4 + 1]!;
-      out[o + 2] = 255 * cmapLut[row * 4 + 2]!;
+      const [cr, cg, cb] = colormapOperation.evaluate(cmapBoundsOn ? [r, g, b] : lit, c, { ...cmapDataParams, reduce: reduceMode });
+      out[o] = 255 * cr;
+      out[o + 1] = 255 * cg;
+      out[o + 2] = 255 * cb;
       out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
       continue;
     }

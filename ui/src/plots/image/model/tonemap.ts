@@ -35,7 +35,7 @@ import { clamp01 } from "../../../primitives/util/clamp.ts";
 // the gamma/peak UI config, and the UNIFIED render-translation `resolve*` +
 // alias tables). It reads the registry only to DERIVE the menu operator SET so
 // that set can't drift from the entries.
-import { listDisplayOperationsByCategory } from "./display-operations/index.ts";
+import { listDisplayOperations } from "../definition/display-operations.ts";
 
 export type RgbTriple = [number, number, number];
 
@@ -79,8 +79,8 @@ export const DEFAULT_DISPLAY_OPERATION_ID: DisplayCurveId = "srgb";
  * Registration order yields the historical menu order.
  */
 export const DISPLAY_OPERATION_IDS: readonly DisplayCurveId[] = [
-  ...listDisplayOperationsByCategory("curve"),
-  ...listDisplayOperationsByCategory("remap"),
+  ...listDisplayOperations("curve"),
+  ...listDisplayOperations("remap"),
 ].map((e) => e.id as DisplayCurveId);
 
 /**

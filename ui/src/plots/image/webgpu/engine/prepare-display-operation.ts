@@ -1,4 +1,6 @@
-import { defaultReduceMode, getDisplayOperation, type ReduceMode } from "../../model/display-operations/index.ts";
+import { getDisplayOperation, type ReduceMode } from "../../definition/display-operations.ts";
+import { defaultReduceMode } from "../../runtime/display-settings.ts";
+import { getWebGpuDisplayOperation } from "../display.ts";
 import type { ImageParams } from "./image-engine.ts";
 
 /** The image engine's private binding for one registered display operation.
@@ -13,7 +15,7 @@ export function prepareDisplayOperation(
   id: string,
   options: { hdrSurface: boolean },
 ): PreparedDisplayOperation {
-  const operation = getDisplayOperation(id);
+  const operation = getWebGpuDisplayOperation(id);
   if (!operation) throw new Error(`unknown display operation ${JSON.stringify(id)}`);
 
   const implementation = operation.implementation;

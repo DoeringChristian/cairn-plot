@@ -160,10 +160,10 @@
  * the linear path (`sampleLutLinearF`) — both need only `textureLoad`'s
  * exact-texel semantics, no filterable-float sampler.
  */
-import { buildDisplayOperationWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, type DisplayOperation } from "../../../model/display-operations/index.ts";
+import { buildDisplayOperationWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, type WebGpuDisplayOperation } from "../../display.ts";
 import { buildImageOperationWGSL } from "../../image-operations.ts";
 
-export function buildImageWGSL(displayOperation: DisplayOperation): string {
+export function buildImageWGSL(displayOperation: WebGpuDisplayOperation): string {
 return `
 struct VSOut {
   @builtin(position) position: vec4<f32>,

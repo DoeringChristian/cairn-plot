@@ -5,7 +5,7 @@ import {
   displayToolbarButton,
   resolveDisplayOperationIds,
 } from "../../../plots/image/components/display-operation.ts";
-import { getDisplayOperation } from "../../../plots/image/model/display-operations/index.ts";
+import { getDisplayOperation } from "../../../plots/image/definition/display-operations.ts";
 
 const CURVES = ["linear", "srgb", "gamma", "reinhard", "aces"];
 

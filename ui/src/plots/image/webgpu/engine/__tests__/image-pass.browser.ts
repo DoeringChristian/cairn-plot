@@ -72,12 +72,15 @@ import {
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
 } from "../../../model/tonemap";
-import { evaluateDisplayOperation, getDisplayOperation, DEFAULT_ENCODE_PARAMS } from "../../../model/display-operations/index";
+import { evaluateDisplayOperation, getCpuDisplayOperation } from "../../../cpu/display-operations.ts";
+import { DEFAULT_DISPLAY_PARAMETERS } from "../../../runtime/display-settings.ts";
 import { buildLUT, COLORMAP_STOPS } from "../../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "IMAGE PASS", resultFlag: "__imagePassTestResult" });
+const getDisplayOperation = getCpuDisplayOperation;
+const DEFAULT_ENCODE_PARAMS = DEFAULT_DISPLAY_PARAMETERS;
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 const byteOf = (x: number): number => Math.round(clamp01(x) * 255);

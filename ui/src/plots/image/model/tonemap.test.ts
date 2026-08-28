@@ -37,27 +37,27 @@ import {
 // pinning the exact same math the panes/shaders run via `getDisplayOperation(id).cpu`.
 import {
   evaluateDisplayOperation,
-  getDisplayOperation,
-  listDisplayOperations,
-  DEFAULT_ENCODE_PARAMS,
-} from "./display-operations/index.ts";
+  getCpuDisplayOperation,
+  CPU_DISPLAY_OPERATIONS,
+  DEFAULT_DISPLAY_PARAMETERS,
+} from "../cpu/display-operations.ts";
 
 /** The plain SDR (non-HDR-surface), non-lut curve operators as `(rgb)=>rgb` —
  *  the CPU triple path's operator table, resolved from the registry (was
  *  `image/tonemap.ts`'s `TONEMAP_OPERATORS`). Every curve is surface-independent. */
 const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
-  listDisplayOperations()
-    .filter((e) => e.category !== "colormap")
-    .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => evaluateDisplayOperation(e, rgb, 3, DEFAULT_ENCODE_PARAMS)]),
+  CPU_DISPLAY_OPERATIONS
+    .filter((operation) => operation.definition.category !== "colormap")
+    .map((operation) => [operation.definition.id, (rgb: RgbTriple): RgbTriple => evaluateDisplayOperation(operation, rgb, 3, DEFAULT_DISPLAY_PARAMETERS)]),
 );
 /** Resolve an operator name to its non-peak CPU curve fn, srgb fallback. */
 const getDisplayCurveId = (name: string | undefined | null): ((rgb: RgbTriple) => RgbTriple) =>
   (name && TONEMAP_OPERATORS[name]) || TONEMAP_OPERATORS.srgb!;
 /** Peak-aware operator dispatch (extended-* read `peak`; the rest ignore it). */
 const applyDisplayCurveIdTriple = (rgb: RgbTriple, operator: string, peak: number): RgbTriple =>
-  evaluateDisplayOperation((getDisplayOperation(operator) ?? getDisplayOperation("srgb")!), rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
+  evaluateDisplayOperation((getCpuDisplayOperation(operator) ?? getCpuDisplayOperation("srgb"))!, rgb, 3, { ...DEFAULT_DISPLAY_PARAMETERS, peak });
 const curveValue = (id: "linear" | "reinhard" | "aces", value: number, peak: number): number =>
-  (getDisplayOperation(id)!.implementation.kind === "per-channel" ? getDisplayOperation(id)!.implementation.cpu(value, { ...DEFAULT_ENCODE_PARAMS, peak }) : value);
+  getCpuDisplayOperation(id)!.evaluate([value, value, value], 3, { ...DEFAULT_DISPLAY_PARAMETERS, peak })[0];
 
 const approx = (a: number, b: number, eps = 1e-9) =>
   assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);

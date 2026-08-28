@@ -36,7 +36,9 @@ import { buildImageWGSL } from "./shaders/image.wgsl.ts";
 import { buildCompareWGSL } from "./shaders/compare.wgsl.ts";
 import { computeCompareMapping, type CompareMapping } from "./compare-align";
 import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../../model/tonemap";
-import { getDisplayOperation, NORM_ID, REDUCE_ID, type DisplayOperation, type NormMode, type ReduceMode } from "../../model/display-operations/index.ts";
+import type { ReduceMode } from "../../definition/display-operations.ts";
+import type { NormMode } from "../../runtime/display-settings.ts";
+import { getWebGpuDisplayOperation, NORM_ID, REDUCE_ID, type WebGpuDisplayOperation } from "../display.ts";
 
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
@@ -203,13 +205,13 @@ export interface ImageParams {
 /** One compiled pipeline per (Device, target TextureFormat) — pipelines are format-specific (targetFormat is baked into createRenderPipeline). */
 const pipelineCache = new WeakMap<Device, Map<string, RenderPipeline>>();
 
-function getImagePipeline(device: Device, targetFormat: TextureFormat, operation: DisplayOperation): RenderPipeline {
+function getImagePipeline(device: Device, targetFormat: TextureFormat, operation: WebGpuDisplayOperation): RenderPipeline {
   let byFormat = pipelineCache.get(device);
   if (!byFormat) {
     byFormat = new Map();
     pipelineCache.set(device, byFormat);
   }
-  const key = `${targetFormat}:${operation.id}`;
+  const key = `${targetFormat}:${operation.definition.id}`;
   let pipeline = byFormat.get(key);
   if (!pipeline) {
     pipeline = device.createRenderPipeline({ shaderWGSL: buildImageWGSL(operation), targetFormat });
@@ -266,7 +268,7 @@ function buildColormapTexture(device: Device, colormap: Float32Array | undefined
  */
 export function renderImage(device: Device, target: Surface | Texture, src: Texture, params: ImageParams): void {
   const targetFormat = targetFormatOf(target);
-  const operation = getDisplayOperation(params.displayOperationId);
+  const operation = getWebGpuDisplayOperation(params.displayOperationId);
   if (!operation) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
   const pipeline = getImagePipeline(device, targetFormat, operation);
   const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);
@@ -397,13 +399,13 @@ export interface CompareParams extends ImageParams {
 // One compiled pipeline per (Device, split|blend shader, target format).
 const composeCache = new WeakMap<Device, Map<string, RenderPipeline>>();
 
-function getComposePipeline(device: Device, mode: "split" | "blend", targetFormat: TextureFormat, operation: DisplayOperation): RenderPipeline {
+function getComposePipeline(device: Device, mode: "split" | "blend", targetFormat: TextureFormat, operation: WebGpuDisplayOperation): RenderPipeline {
   let byKey = composeCache.get(device);
   if (!byKey) {
     byKey = new Map();
     composeCache.set(device, byKey);
   }
-  const key = `${mode}:${targetFormat}:${operation.id}`;
+  const key = `${mode}:${targetFormat}:${operation.definition.id}`;
   let pipeline = byKey.get(key);
   if (!pipeline) {
     pipeline = device.createRenderPipeline({
@@ -435,7 +437,7 @@ export function renderCompose(
     throw new Error("renderCompose: mode 'diff' is handled by the diff-engine, not renderCompose");
   }
   const targetFormat = targetFormatOf(target);
-  const operation = getDisplayOperation(params.displayOperationId);
+  const operation = getWebGpuDisplayOperation(params.displayOperationId);
   if (!operation) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
   const pipeline = getComposePipeline(device, params.mode, targetFormat, operation);
   const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);

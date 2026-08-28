@@ -68,7 +68,9 @@ import {
   resolveComparisonOperationId,
   listComparisonOperationOptions,
 } from "../model/comparison-operations";
-import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID, getDisplayOperation } from "../model/display-operations/index.ts";
+import type { ReduceMode } from "../definition/display-operations.ts";
+import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
+import { getWebGpuDisplayOperation } from "./display.ts";
 import { computeCompareMapping, type CompareMapping } from "./engine/compare-align";
 import { computeHdrFlipExposures } from "./engine/kernels/hdr-flip-reference";
 import { formatSsim } from "./engine/ssim-metric";
@@ -123,7 +125,6 @@ import {
   reduceSegment,
   usePaneEncoding,
 } from "../components/display-operation";
-import { type ReduceMode } from "../model/display-operations/index";
 import {
   resolveDisplayOperator,
   resolveRenderTonemap,
@@ -1604,7 +1605,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // pane's real hdrOut (`rt.hdrOut`) — |v|>1 error survives on the engaged HDR
     // surface, |v|<=1 renders identically on SDR. Exposure/offset SCALE the
     // amplitude (no bounds/norm skin on the analytic entry). See DisplayOperation.
-    const analyticColormapActive = hdrColormapActive && getDisplayOperation(enc.displayOperationId)?.implementation.kind === "analytic";
+    const analyticColormapActive = hdrColormapActive && getWebGpuDisplayOperation(enc.displayOperationId)?.implementation.kind === "analytic";
     // Phase 4 DATA-encoding skins (float LUT path only): when the min/max BOUNDS
     // skin is engaged (`boundsEngaged`, seeded from `colorRange`), it is the SOLE
     // affine — EV/OFF are held NEUTRAL so the two skins never double-apply

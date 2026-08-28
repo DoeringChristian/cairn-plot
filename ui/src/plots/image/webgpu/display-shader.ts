@@ -1,8 +1,8 @@
-import type { DisplayOperation } from "./registry.ts";
+import type { WebGpuDisplayOperation } from "./display-operations.ts";
 
 /** Compile one display operation into stable shader functions. Selecting an
  * operation selects a cached pipeline; the shader never dispatches on an id. */
-export function buildDisplayOperationWGSL(operation: DisplayOperation): string {
+export function buildDisplayOperationWGSL(operation: WebGpuDisplayOperation): string {
   const implementation = operation.implementation;
   if (implementation.kind === "per-channel") {
     return `

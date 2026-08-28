@@ -35,10 +35,10 @@
  * to scene-linear PER SIDE (a float side passes 0) so mixed u8/float operands are
  * both compared in linear light — see `image/tonemap.ts`'s `resolveRenderTonemap`.
  */
-import type { DisplayOperation } from "../../../model/display-operations/index.ts";
+import type { WebGpuDisplayOperation } from "../../display.ts";
 import { VERTEX_WGSL, SAMPLING_WGSL, buildTonemapWGSL } from "../kernels/prelude.wgsl.ts";
 
-function composeShader(finalExpr: string, displayOperation: DisplayOperation): string {
+function composeShader(finalExpr: string, displayOperation: WebGpuDisplayOperation): string {
   return `
 ${VERTEX_WGSL}
 ${SAMPLING_WGSL}
@@ -93,7 +93,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 `;
 }
 
-export function buildCompareWGSL(mode: "split" | "blend", displayOperation: DisplayOperation): string {
+export function buildCompareWGSL(mode: "split" | "blend", displayOperation: WebGpuDisplayOperation): string {
   return composeShader(
     mode === "split" ? "select(colorB, colorA, uv.x < split)" : "mix(colorA, colorB, alpha)",
     displayOperation,

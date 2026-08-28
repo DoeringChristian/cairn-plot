@@ -20,7 +20,7 @@
  *     passed as uniforms), so no filter-coefficient buffer plumbing is needed.
  */
 
-import { buildDisplayOperationWGSL, type DisplayOperation } from "../../../model/display-operations/index.ts";
+import { buildDisplayOperationWGSL, type WebGpuDisplayOperation } from "../../display.ts";
 
 export const VERTEX_WGSL = `
 struct VSOut {
@@ -121,7 +121,7 @@ fn mapSample(
 // from `image.wgsl.ts`; the GPU↔TS parity harness (`compare-pass.browser.ts`)
 // pins the compose path to the SAME `image/tonemap.ts` reference the image path
 // uses. Keep the math in lockstep with `image.wgsl.ts` when either changes.
-export function buildTonemapWGSL(displayOperation: DisplayOperation): string {
+export function buildTonemapWGSL(displayOperation: WebGpuDisplayOperation): string {
 const scalarStage = displayOperation.implementation.kind === "lut"
   ? `if (isScalar) {
     let index = applyDisplayIndex(rgb.x, 0, 0.0, 1.0, false, gamma);

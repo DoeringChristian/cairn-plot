@@ -31,7 +31,8 @@ import {
 } from "../image-operations.ts";
 import type { ImageOperationBuildContext, ImageOperationDisplayRange } from "./operation-pass.ts";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl.ts";
-import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../../model/display-operations/index.ts";
+import type { NormMode } from "../../runtime/display-settings.ts";
+import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID } from "../display.ts";
 import { makeCpuMapSampler } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";

@@ -31,14 +31,31 @@ import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engin
 import { prepareDisplayOperation } from "../prepare-display-operation.ts";
 import { getCpuImageOperation, type CpuImageOperationContext } from "../../../cpu/image-operations.ts";
 import { getWebGpuImageOperation, imageOperationId } from "../../image-operations.ts";
-import { evaluateDisplayOperation, getDisplayOperation, DEFAULT_ENCODE_PARAMS } from "../../../model/display-operations/index";
+import { evaluateDisplayOperation as evaluateCpuDisplayOperation, getCpuDisplayOperation, type CpuDisplayOperation } from "../../../cpu/display-operations.ts";
+import { getWebGpuDisplayOperation } from "../../display.ts";
+import { DEFAULT_DISPLAY_PARAMETERS, DEFAULT_COMPARISON_DISPLAY_OPERATION_ID, type DisplayParameters } from "../../../runtime/display-settings.ts";
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../../model/tonemap";
 import { colormapFloatLUT } from "../../../../../settings/colormaps/lut";
-import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../../../model/display-operations/index.ts";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "CONTENT OPS" });
+type HarnessDisplayOperation = CpuDisplayOperation & {
+  category: CpuDisplayOperation["definition"]["category"];
+  implementation: NonNullable<ReturnType<typeof getWebGpuDisplayOperation>>["implementation"];
+};
+const getDisplayOperation = (id: string): HarnessDisplayOperation | undefined => {
+  const cpu = getCpuDisplayOperation(id);
+  const gpu = getWebGpuDisplayOperation(id);
+  return cpu && gpu ? { ...cpu, category: cpu.definition.category, implementation: gpu.implementation } : undefined;
+};
+const evaluateDisplayOperation = (
+  operation: HarnessDisplayOperation,
+  values: readonly number[],
+  channels: number,
+  parameters: DisplayParameters,
+) => evaluateCpuDisplayOperation(operation, values, channels, parameters);
+const DEFAULT_ENCODE_PARAMS = DEFAULT_DISPLAY_PARAMETERS;
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 const byteOf = (x: number): number => Math.round(clamp01(x) * 255);

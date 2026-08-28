@@ -1,10 +1,5 @@
-import {
-  registerDisplayOperation,
-  computeDataIndex,
-  signedAnalyticColor,
-  turboDataIndex,
-  type DisplayOperation,
-} from "./registry.ts";
+import { getDisplayOperation } from "../definition/display-operations.ts";
+import { registerWebGpuDisplayOperation, type WebGpuDisplayOperation } from "./display-operations.ts";
 
 type Rgb8 = readonly [number, number, number];
 
@@ -29,16 +24,10 @@ const LINEAR_INDEX = {
   wgsl: `
     return cairnDataIndex(value, normMode, normMin, normMax, boundsActive, gamma);
   `,
-  cpu: computeDataIndex,
 };
 
-const turbo: DisplayOperation = {
-  id: "turbo",
-  label: "Turbo",
-  category: "colormap",
-  arities: [1, 2, 3, 4],
-  params: ["exposure", "offset", "reduce"],
-  defaultReduce: "mean",
+const turbo: WebGpuDisplayOperation = {
+  definition: getDisplayOperation("turbo")!,
   implementation: {
     kind: "lut",
     table: buildDisplayLut([
@@ -79,17 +68,12 @@ const turbo: DisplayOperation = {
       wgsl: `
         return clamp((log2(max(value, 0.03125)) + 5.0) / 10.0, 0.0, 1.0);
       `,
-      cpu: turboDataIndex,
     },
   },
 };
 
-const plasma: DisplayOperation = {
-  id: "plasma",
-  label: "Plasma",
-  category: "colormap",
-  arities: [1, 2, 3, 4],
-  params: ["exposure", "offset", "min", "max", "reduce"],
+const plasma: WebGpuDisplayOperation = {
+  definition: getDisplayOperation("plasma")!,
   implementation: {
     kind: "lut",
     table: buildDisplayLut([[13, 8, 135], [126, 3, 168], [204, 71, 120], [248, 149, 64], [240, 249, 33]]),
@@ -97,12 +81,8 @@ const plasma: DisplayOperation = {
   },
 };
 
-const magma: DisplayOperation = {
-  id: "magma",
-  label: "Magma",
-  category: "colormap",
-  arities: [1, 2, 3, 4],
-  params: ["exposure", "offset", "min", "max", "reduce"],
+const magma: WebGpuDisplayOperation = {
+  definition: getDisplayOperation("magma")!,
   implementation: {
     kind: "lut",
     table: buildDisplayLut([
@@ -143,12 +123,8 @@ const magma: DisplayOperation = {
   },
 };
 
-const redGreen: DisplayOperation = {
-  id: "red-green",
-  label: "Red–Green",
-  category: "colormap",
-  arities: [1, 2, 3, 4],
-  params: ["exposure", "offset", "reduce"],
+const redGreen: WebGpuDisplayOperation = {
+  definition: getDisplayOperation("red-green")!,
   implementation: {
     kind: "analytic",
     wgsl: `
@@ -158,16 +134,11 @@ const redGreen: DisplayOperation = {
       }
       return vec3<f32>(0.0, amplitude, 0.0);
     `,
-    cpu: signedAnalyticColor,
   },
 };
 
-const redBlue: DisplayOperation = {
-  id: "red-blue",
-  label: "Red–Blue",
-  category: "colormap",
-  arities: [1, 2, 3, 4],
-  params: ["exposure", "offset", "min", "max", "reduce"],
+const redBlue: WebGpuDisplayOperation = {
+  definition: getDisplayOperation("red-blue")!,
   implementation: {
     kind: "lut",
     table: buildDisplayLut([[215, 25, 28], [255, 255, 255], [44, 123, 182]]),
@@ -175,7 +146,7 @@ const redBlue: DisplayOperation = {
   },
 };
 
-export const LUT_ENCODINGS: readonly DisplayOperation[] = [
+export const WEBGPU_DISPLAY_COLORMAPS: readonly WebGpuDisplayOperation[] = [
   turbo,
   plasma,
   magma,
@@ -183,10 +154,4 @@ export const LUT_ENCODINGS: readonly DisplayOperation[] = [
   redBlue,
 ];
 
-let registered = false;
-export function registerLutEncodings(): void {
-  if (registered) return;
-  registered = true;
-  for (const operation of LUT_ENCODINGS) registerDisplayOperation(operation);
-}
-
+for (const operation of WEBGPU_DISPLAY_COLORMAPS) registerWebGpuDisplayOperation(operation);

@@ -40,7 +40,7 @@ import type { ToolbarConfig, ToolbarButtonSpec } from "../../../primitives/contr
 import { adaptiveMaxZoom, type ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
-import { getDisplayOperation } from "../model/display-operations/index";
+import { getDisplayOperation } from "../definition/display-operations.ts";
 import { DISPLAY_TRANSFER_OPERATION_IDS } from "../model/tonemap";
 
 /** The registry label for an encoding id, falling back to the id itself. Both the
