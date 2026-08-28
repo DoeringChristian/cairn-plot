@@ -20,7 +20,7 @@
  * RUNNING: bundle with esbuild, serve over http, open ssim.browser.html (same
  * commands as the sibling *.browser.ts).
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { ssim } from "../kernels/ssim-reference";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
@@ -301,7 +301,7 @@ async function runCacheContract(device: Device): Promise<boolean> {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
     let ok = true;
     ok = (await runSsimCase(device, 14, 14, 1)) && ok;

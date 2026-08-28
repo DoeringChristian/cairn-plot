@@ -21,37 +21,27 @@ def _img():
 def test_view_modes_lower_to_descriptor():
     # split (public == internal name).
     split = cp.Compare(_img(), _img(), mode="split", split_position=0.25).to_node()
-    assert split["kind"] == "compare" and split["mode"] == "split"
+    assert split["kind"] == "compare" and split["presentation"] == "split"
     assert split["props"]["splitPosition"] == 0.25
 
 
-def test_slide_mode_aliases_to_split_with_deprecation():
-    # `slide` was the old public name for `split`; it still works with a
-    # DeprecationWarning rather than hard-failing old code.
-    with pytest.warns(DeprecationWarning, match="renamed"):
-        node = cp.Compare(_img(), _img(), mode="slide", split_position=0.25).to_node()
-    assert node["mode"] == "split"
-    assert node["props"]["splitPosition"] == 0.25
+@pytest.mark.parametrize("mode", ["slide", "blend"])
+def test_removed_view_modes_are_rejected(mode):
+    with pytest.raises(ValueError):
+        cp.Compare(_img(), _img(), mode=mode)
 
 
-def test_blend_mode_aliases_to_split_with_deprecation():
-    # The blend view mode was removed; passing it aliases to split with a
-    # DeprecationWarning rather than hard-failing an old baked report / call.
-    with pytest.warns(DeprecationWarning, match="removed"):
-        node = cp.Compare(_img(), _img(), mode="blend").to_node()
-    assert node["mode"] == "split"
-    # A stray blend_alpha kwarg is accepted, warns, and is NOT emitted to the node.
-    with pytest.warns(DeprecationWarning):
-        node2 = cp.Compare(_img(), _img(), blend_alpha=0.5).to_node()
-    assert "blendAlpha" not in node2.get("props", {})
+def test_removed_blend_alpha_is_rejected():
+    with pytest.raises(TypeError):
+        cp.Compare(_img(), _img(), blend_alpha=0.5)
 
 
 def test_default_mode_is_split():
     # The removed side-by-side view is gone; the default is "split".
     node = cp.Compare(_img(), _img()).to_node()
     assert node["kind"] == "compare"
-    assert node["mode"] == "split"
-    assert node["baselineIndex"] == 0
+    assert node["presentation"] == "split"
+    assert node["referenceIndex"] == 0
 
 
 def test_side_mode_rejected():
@@ -76,35 +66,35 @@ def test_side_mode_rejected():
     ],
 )
 def test_diff_kernel_modes(mode, kernel_id):
-    node = cp.Compare(_img(), _img(), mode=mode, colormap="viridis").to_node()  # viridis aliases to turbo
+    node = cp.Compare(_img(), _img(), mode=mode, colormap="turbo").to_node()
     assert node["kind"] == "compare"
-    assert node["mode"] == "diff"
+    assert node["presentation"] == "difference"
     # The kernel id rides on `diffSubmode` — the pane's initial diff kernel.
     assert node["props"]["diffSubmode"] == kernel_id
-    assert node["props"]["colormap"] == "turbo"  # viridis -> turbo alias
+    assert node["props"]["colormap"] == "turbo"
 
 
 def test_flip_is_accepted_and_orientation():
     # `flip` is the additive perceptual kernel; reference is the baseline.
     node = cp.Compare(_img(), _img(), mode="flip").to_node()
     assert node["props"]["diffSubmode"] == "flip"
-    assert node["baselineIndex"] == 0
+    assert node["referenceIndex"] == 0
 
 
 def test_flip_ldr_forced_mode_accepted():
     # `flip_ldr` forces the LDR-FLIP comparison (tone-map-first on float sources).
     node = cp.Compare(_img(), _img(), mode="flip_ldr").to_node()
-    assert node["mode"] == "diff"
+    assert node["presentation"] == "difference"
     assert node["props"]["diffSubmode"] == "flip_ldr"
-    assert node["baselineIndex"] == 0
+    assert node["referenceIndex"] == 0
 
 
 def test_ssim_mode_accepted():
     # `ssim` is the structural-similarity diff kernel (displays 1 - SSIM).
     node = cp.Compare(_img(), _img(), mode="ssim").to_node()
-    assert node["mode"] == "diff"
+    assert node["presentation"] == "difference"
     assert node["props"]["diffSubmode"] == "ssim"
-    assert node["baselineIndex"] == 0
+    assert node["referenceIndex"] == 0
 
 
 def test_unknown_mode_rejected():
@@ -121,8 +111,8 @@ def test_align_and_fit_defaults_omitted_from_node():
 
 def test_align_and_fit_non_default_emitted_top_level():
     node = cp.Compare(_img(), _img(), mode="abs", align="center", fit="fill").to_node()
-    assert node["align"] == "center"
-    assert node["fit"] == "fill"
+    assert node["props"]["align"] == "center"
+    assert node["props"]["fit"] == "fill"
 
 
 @pytest.mark.parametrize(
@@ -134,12 +124,12 @@ def test_each_align_value_accepted(align):
     if align == "top-left":
         assert "align" not in node
     else:
-        assert node["align"] == align
+        assert node["props"]["align"] == align
 
 
 def test_fit_fill_accepted_and_crop_omitted():
     fill_node = cp.Compare(_img(), _img(), mode="abs", fit="fill").to_node()
-    assert fill_node["fit"] == "fill"
+    assert fill_node["props"]["fit"] == "fill"
     crop_node = cp.Compare(_img(), _img(), mode="abs", fit="crop").to_node()
     assert "fit" not in crop_node
 

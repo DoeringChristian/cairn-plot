@@ -215,7 +215,7 @@ def _scatter_points_from_raw(
 ) -> list[dict[str, Any]]:
     """Raw x/y (+ optional per-point color / labels) → ``ScatterPoint[]``
     (``{id,x,y,color,label?}`` — ``color`` is a numeric value the renderer maps
-    through the viridis colorbar, or ``None``)."""
+    through the turbo colorbar, or ``None``)."""
     xa = np.asarray(list(x), dtype=np.float64).ravel()
     ya = np.asarray(list(y), dtype=np.float64).ravel()
     if xa.size == 0:

@@ -34,7 +34,7 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with the
  * command above whenever this harness or its imports change.
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { loadExrDecoder } from "../../model/decoders/wasm-inline/wasm-exr-inline";
 import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
@@ -196,7 +196,7 @@ async function timingCase(device: Device, dec: Decoder): Promise<void> {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
     const dec = await loadExrDecoder();
     const bytes = await fetchBytes(FIXTURE_URL);

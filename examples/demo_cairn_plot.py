@@ -245,7 +245,7 @@ def build_gallery() -> list[tuple[str, object]]:
         "Heatmap",
         cp.Heatmap(np.add.outer(np.sin(np.linspace(0, 3, 24)),
                                 np.cos(np.linspace(0, 3, 32))),
-                   colormap="viridis"),
+                   colormap="turbo"),
     ))
     items.append((
         "ParallelCoordinates — numeric + categorical",
@@ -297,7 +297,7 @@ def build_gallery() -> list[tuple[str, object]]:
         cp.Grid(
             [[cp.Image(base, exposure=-2.0, label="EV −2"), cp.Image(base, label="EV 0"),
               cp.Image(base, exposure=2.0, label="EV +2")],
-             [cp.Image(base, gamma=0.5, label="γ 0.5"), cp.Image(base, colormap="viridis", label="viridis"),
+             [cp.Image(base, gamma=0.5, label="γ 0.5"), cp.Image(base, colormap="turbo", label="turbo"),
               cp.Image(base, gamma=2.2, label="γ 2.2")]],
         ),
     ))
@@ -381,7 +381,7 @@ def build_gallery() -> list[tuple[str, object]]:
     # Every diff submode the renderer supports (see DiffMode in types.ts /
     # image/diff.ts), laid out row-major in a 3×2 Grid. Diverging errors
     # (signed / relative_signed) use the red-blue diverging map; magnitude
-    # errors use viridis / red-green. The two source images differ by a real
+    # errors use turbo / red-green. The two source images differ by a real
     # red-channel shift, so every submode renders a visibly distinct field.
     items.append((
         "Compare — all 6 diff submodes "
@@ -391,12 +391,12 @@ def build_gallery() -> list[tuple[str, object]]:
             [
                 [
                     cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs", colormap="viridis"),
-                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="square", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs", colormap="turbo"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="square", colormap="turbo"),
                 ],
                 [
                     cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_signed", colormap="red-blue"),
-                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_abs", colormap="viridis"),
+                    cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_abs", colormap="turbo"),
                     cp.Compare(cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_square", colormap="red-green"),
                 ],
             ],
@@ -449,9 +449,9 @@ def build_gallery() -> list[tuple[str, object]]:
         "(pane toolbar: MODE menu split · kernels; COLORMAP menu)",
         cp.Grid(
             [[cp.Compare(cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
-                         colormap="viridis"),
+                         colormap="turbo"),
               cp.Compare(cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="abs",
-                         colormap="viridis")]],
+                         colormap="turbo")]],
         ),
     ))
 
@@ -494,7 +494,7 @@ def build_gallery() -> list[tuple[str, object]]:
     ))
     items.append((
         "Volume — 3D scalar grid, Gaussian blob (WebGL raymarch)",
-        cp.Volume(_volume(), colormap="viridis", show_axes=True),
+        cp.Volume(_volume(), colormap="turbo", show_axes=True),
     ))
     b_mins, b_maxs, b_vals = _boxes()
     items.append((

@@ -51,7 +51,7 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { renderImage, type ImageParams } from "../image-engine";
 import { extendedSrgbOetf, srgbEotf } from "../../model/tonemap";
 import type { Device, Texture } from "../../../../engines/webgpu/types";
@@ -167,8 +167,8 @@ async function runSdrExtendedCase(device: Device): Promise<boolean> {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
-    report(true, `getSharedDevice() resolved backend="${device.backend}", capabilities.hdr=${device.capabilities.hdr}`);
+    const device = await getSharedWebGpuDevice();
+    report(true, `getSharedWebGpuDevice() resolved backend="${device.backend}", capabilities.hdr=${device.capabilities.hdr}`);
 
     if (!device.capabilities.hdr) {
       // A WebGPU device without HDR support has no extended-range target to

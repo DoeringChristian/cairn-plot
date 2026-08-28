@@ -16,12 +16,15 @@ test("scalar definition registers overlay comparison through the typed registry"
     kind: "compare" as const,
     renderer: "scalar",
     presentation: "overlay",
-    a: { kind: "inline" as const, props: { series: [] } },
-    b: { kind: "inline" as const, props: { series: [] } },
+    operands: [
+      { kind: "inline" as const, props: { series: [] } },
+      { kind: "inline" as const, props: { series: [] } },
+    ],
+    strategy: "all" as const,
   };
   const request = {
     renderer: "scalar",
-    operands: [node.a, node.b],
+    operands: node.operands,
     strategy: "all" as const,
     presentation: "overlay",
     props: {},

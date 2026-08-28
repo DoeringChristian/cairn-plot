@@ -102,17 +102,10 @@ def _resolver(name: str) -> Any:
 # / Heatmap validate against the same allowed set with one error style.
 _COLORMAPS = ("turbo", "plasma", "magma", "red-green", "red-blue")
 
-# Back-compat: ``viridis`` was REMOVED (the tev-mapped ``turbo`` replaced it as the
-# default sequential map). An incoming ``viridis`` reference is ALIASED to ``turbo``
-# rather than raising — mirrors the TS ``aliasColormap`` (``colormaps/lut.ts``).
-_COLORMAP_ALIASES = {"viridis": "turbo"}
-
-
 def _check_colormap(value: str) -> str:
     """Validate a chart's ``colormap`` kwarg against the named colormap set,
     raising a clear ``ValueError`` (same style as ``_check_pixel_value_notation``)
-    on an unknown name. A legacy ``viridis`` aliases to ``turbo``."""
-    value = _COLORMAP_ALIASES.get(value, value)
+    on an unknown name."""
     if value not in _COLORMAPS:
         raise ValueError(
             f"colormap must be one of {_COLORMAPS!r}, got {value!r}"
@@ -132,8 +125,7 @@ def _check_image_colormap(value: str) -> str:
     """Validate an image / compare ``colormap`` kwarg against the named ramps +
     the ``"none"`` passthrough, raising a clear ``ValueError`` on an unknown
     name. Used for ``cp.Image``/``cp.Compare`` (charts use ``_check_colormap``).
-    A legacy ``viridis`` aliases to ``turbo``."""
-    value = _COLORMAP_ALIASES.get(value, value)
+    """
     if value not in _IMAGE_COLORMAPS:
         raise ValueError(
             f"colormap must be one of {_IMAGE_COLORMAPS!r}, got {value!r}"
@@ -150,12 +142,8 @@ _COMPARE_NODE_MODES = ("split", "diff")
 # the diff-kernel short names; each kernel short name maps to a registry kernel
 # id (== the descriptor `diffSubmode`, mirrored by the TS `listDiffKernels()`
 # `publicName`s). `"split"` is the single view mode (== the internal mode) and
-# the default. `"slide"` was its old public name and `"blend"` was removed;
-# both are still ACCEPTED as deprecated aliases so old code keeps working.
+# the default.
 _COMPARE_VIEW_MODES = {"split"}
-# Deprecated public view modes that alias to a surviving mode (warn on use):
-# `slide` = the old public name for `split`; `blend` = removed outright.
-_COMPARE_DEPRECATED_VIEW_ALIASES = {"blend": "split", "slide": "split"}
 _COMPARE_KERNEL_MODES = {
     "signed": "signed",
     "abs": "absolute",
@@ -1961,11 +1949,7 @@ class Compare(Component):
 
     Flat ``mode`` enum:
 
-    * View composition: ``"split"`` (draggable divider — the DEFAULT), which
-      lowers to a ``compare`` node with ``mode="split"``. (``"slide"`` is the
-      old public name for the same mode and the legacy ``"blend"`` opacity-mix
-      mode was removed; passing either aliases to ``"split"`` with a
-      ``DeprecationWarning``.)
+    * View composition: ``"split"`` (draggable divider — the DEFAULT).
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
       ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
       a ``compare`` node with ``mode="diff"`` and the kernel id as ``diffSubmode``
@@ -2004,7 +1988,6 @@ class Compare(Component):
         align: str = "top-left",
         fit: str = "crop",
         split_position: float | None = None,
-        blend_alpha: float | None = None,
         colormap: str | None = None,
         exposure: float | None = None,
         gamma: float | None = None,
@@ -2018,28 +2001,8 @@ class Compare(Component):
         toolbar: bool | None = None,
         props: dict[str, Any] | None = None,
     ) -> None:
-        # Back-compat: `slide` (the old public name for `split`) and the removed
-        # `blend` view mode alias to `split` (do not hard-error old code) with a
-        # deprecation warning.
-        if mode in _COMPARE_DEPRECATED_VIEW_ALIASES:
-            aliased = _COMPARE_DEPRECATED_VIEW_ALIASES[mode]
-            why = "was renamed" if mode == "slide" else "was removed"
-            warnings.warn(
-                f"cp.Compare(mode={mode!r}) is deprecated; the {mode!r} view mode "
-                f"{why} — using {aliased!r} instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            mode = aliased
         self._mode = mode
         toolbar = _check_toolbar(toolbar)
-        if blend_alpha is not None:
-            warnings.warn(
-                "cp.Compare(blend_alpha=...) is deprecated and ignored; the blend "
-                "view mode was removed.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         if mode not in _COMPARE_PUBLIC_MODES:
             raise ValueError(
                 f"cp.Compare(mode=...) must be one of {_COMPARE_PUBLIC_MODES!r}, "
@@ -2078,6 +2041,10 @@ class Compare(Component):
             # Carried as `diffSubmode` (the kernel id) — the pane initializes its
             # diff kernel from this; the toolbar menu (next track) preselects it.
             built["diffSubmode"] = diff_kernel
+        if align != "top-left":
+            built["align"] = align
+        if fit != "crop":
+            built["fit"] = fit
         # Host seam ("Host-controlled panes"): `toolbar=False` hides the compare
         # pane's toolbar so a host drives mode/kernel/colormap/split/blend from its
         # own menu. Emitted only when disabled (a hand-passed `props` still wins).
@@ -2086,10 +2053,7 @@ class Compare(Component):
             built.update(props)
         self._props = built or None
 
-        # Every mode lowers to a `compare` node composited through the compare
-        # stack (client-switchable via the view-mode menu). `a` = reference/
-        # baseline (baselineIndex 0, texA / REF chip); `b` = prediction/
-        # foreground. Keeps the existing internal A/B semantics.
+        # The first operand is the reference; the second is the prediction.
         self._a = _as_component(reference)
         self._b = _as_component(prediction)
         if self._a._leaf_dataspec() is None or self._b._leaf_dataspec() is None:
@@ -2103,18 +2067,14 @@ class Compare(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "compare",
-            "mode": self._internal_mode,
-            "a": self._a._leaf_dataspec(),
-            "b": self._b._leaf_dataspec(),
-            "baselineIndex": 0,
+            "renderer": "image",
+            "presentation": "difference" if self._internal_mode == "diff" else "split",
+            "operands": [self._a._leaf_dataspec(), self._b._leaf_dataspec()],
+            "strategy": "reference",
+            "referenceIndex": 0,
         }
-        if self._align != "top-left":
-            node["align"] = self._align
-        if self._fit != "crop":
-            node["fit"] = self._fit
         # Thread each side's own caption onto the compare node, matched to the
-        # a/b slots (`a` = reference/baseline, `b` = prediction/foreground). The
-        # pane derives which is reference from `baselineIndex` and renders the
+        # operand slots (reference first, prediction second). The pane renders the
         # reference label bottom-left, the foreground label bottom-right
         # (split), or folds them into the diff caption. A hand-passed `props`
         # value still wins (`setdefault`).

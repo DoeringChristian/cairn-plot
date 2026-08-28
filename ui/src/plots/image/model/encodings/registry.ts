@@ -29,7 +29,6 @@
  * doesn't care".
  */
 import { clamp01 } from "../../../../primitives/util/clamp.ts";
-import { aliasColormap } from "../../../../settings/colormaps/lut.ts";
 
 /** A named display parameter an encoding may DECLARE it reads (its slider
  *  manifest — UI gating only; the pipeline reads uniforms directly). `norm` is NOT
@@ -395,13 +394,7 @@ export function registerEncoding(encoding: DisplayEncoding): void {
 
 export function getEncoding(id: string | undefined | null): DisplayEncoding | undefined {
   if (!id) return undefined;
-  // Back-compat: `viridis` was REMOVED (the tev-mapped `turbo` replaced it as the
-  // default sequential map). Delegate to the ONE alias site (`colormaps/lut.ts`'s
-  // `aliasColormap`, backed by `COLORMAP_ALIASES`) so the mapping lives in a
-  // single place instead of a hand-kept inline literal (audit addendum D3). The
-  // LUT-encoding registry (`luts.ts`) already imports `lut.ts`, so this pulls no
-  // new module into the graph.
-  return REGISTRY.get(aliasColormap(id));
+  return REGISTRY.get(id);
 }
 
 /** All registered encodings, in registration order. */

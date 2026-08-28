@@ -20,7 +20,7 @@
  *      twin quantized at the same scale EXACTLY (dyadic sums), with exact
  *      zMin/zMax; an all-non-finite-Z CSR yields null.
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import type { Device, Texture, DeepGpuCsrSpec } from "../../../../engines/webgpu/types";
 import {
   computeTevHistograms,
@@ -369,7 +369,7 @@ async function runDeepCases(device: Device): Promise<boolean> {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
     if (!device.computeTevTextureHistogram || !device.computeDeepDepthHistogram) {
       report(false, "device is missing the histogram compute methods");

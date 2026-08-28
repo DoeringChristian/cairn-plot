@@ -37,24 +37,15 @@ export interface GridNode {
 
 export interface CompareNode {
   kind: "compare";
-  /** Plot definition that owns comparison semantics. Omission means `image`. */
-  renderer?: string;
+  /** Plot definition that owns comparison semantics. */
+  renderer: string;
   /** Plot-defined presentation (`overlay`, `difference`, …). */
-  presentation?: string;
-  /** Legacy image spelling. New descriptors should use `presentation`. */
-  mode?: "split" | "diff";
-  /** Ordered comparison inputs. New descriptors should use this form. */
-  operands?: DataSpec[];
+  presentation: string;
+  /** Ordered comparison inputs. */
+  operands: DataSpec[];
   /** How the plot definition groups the operands into visible outputs. */
-  strategy?: "reference" | "all";
+  strategy: "reference" | "all";
   referenceIndex?: number;
-  /** Legacy two-operand inputs, normalized immediately by the runtime. */
-  a?: DataSpec;
-  b?: DataSpec;
-  baselineIndex?: 0 | 1;
-  diffSubmode?: string;
-  align?: "top-left" | "center" | "top-right" | "bottom-left" | "bottom-right";
-  fit?: "crop" | "fill";
   props?: Record<string, JsonValue>;
 }
 

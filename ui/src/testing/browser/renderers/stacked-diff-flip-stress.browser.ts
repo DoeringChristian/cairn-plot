@@ -36,7 +36,7 @@ import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/backend/gpu";
 import { urlSource, hdrSource, type HdrData } from "../../../plots/image/backend/contracts";
-import { getSharedDevice } from "../../../plots/image/engine/device";
+import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import {
   startPaneRenderLog,
   stopPaneRenderLog,
@@ -259,7 +259,7 @@ function analyze(records: PaneRenderRecord[]): { total: number; incoherent: Pane
 
 async function main(): Promise<void> {
   try {
-    await getSharedDevice();
+    await getSharedWebGpuDevice();
 
     const container = document.createElement("div");
     container.style.cssText = "width:128px;height:128px;position:absolute;left:0;top:0";

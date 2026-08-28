@@ -16,7 +16,7 @@
  * `rgba8unorm` target (byte-exact within 1/255); the `extended*` encodings need
  * the HDR surface, so they render to an `rgba32float` target (float, looser eps).
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
 import {
   applyExposure,
@@ -537,7 +537,7 @@ const LUT_NORM_VARIANTS: Array<{ variant: string; params: EncodeParams }> = [
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
     const encodings = listEncodings();
     report(true, `iterating ${encodings.length} registry encoding(s)`);

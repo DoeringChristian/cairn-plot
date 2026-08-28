@@ -577,7 +577,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const diffSeedColormap = ((): Colormap | null => {
     const c = compareSource?.colormap;
     if (c == null || c === "none") return null;
-    return (c as string) === "viridis" ? ("turbo" as Colormap) : c;
+    return c;
   })();
   // The diff KERNEL (which error metric) is a per-VIEWPORT content-op choice OWNED
   // by the hoisted `useCompareControl` (descriptor path) — surfaced here as

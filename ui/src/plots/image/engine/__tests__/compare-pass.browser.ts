@@ -20,7 +20,7 @@
  * RUNNING: bundle with esbuild, serve over http, open compare-pass.browser.html
  * (see the sibling *.browser.ts for the exact commands).
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
 import { getDiffKernel } from "../kernels/index";
@@ -443,7 +443,7 @@ async function runAll(device: Device): Promise<boolean> {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     setOverallStatus(await runAll(device));
   } catch (err) {
     report(false, `threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

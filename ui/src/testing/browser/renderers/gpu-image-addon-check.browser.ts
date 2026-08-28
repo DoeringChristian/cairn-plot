@@ -41,7 +41,7 @@ async function main(): Promise<void> {
     });
     ensureGpuImageProbe();
     const becameReady = await waitFor(() => gpuImageGateState() === "ready");
-    report(becameReady, "gate settles to 'ready' once getSharedDevice() resolves");
+    report(becameReady, "gate settles to 'ready' once getSharedWebGpuDevice() resolves");
     report(ticks >= 1, "gate notifies subscribers on the flip");
     unsub();
 

@@ -368,26 +368,18 @@
         },
         "renderer": {
           "type": "string",
-          "description": "Plot definition that owns comparison semantics. Omission means `image`."
+          "description": "Plot definition that owns comparison semantics."
         },
         "presentation": {
           "type": "string",
           "description": "Plot-defined presentation (`overlay`, `difference`, …)."
-        },
-        "mode": {
-          "type": "string",
-          "enum": [
-            "split",
-            "diff"
-          ],
-          "description": "Legacy image spelling. New descriptors should use `presentation`."
         },
         "operands": {
           "type": "array",
           "items": {
             "$ref": "#/definitions/DataSpec"
           },
-          "description": "Ordered comparison inputs. New descriptors should use this form."
+          "description": "Ordered comparison inputs."
         },
         "strategy": {
           "type": "string",
@@ -400,46 +392,16 @@
         "referenceIndex": {
           "type": "number"
         },
-        "a": {
-          "$ref": "#/definitions/DataSpec",
-          "description": "Legacy two-operand inputs, normalized immediately by the runtime."
-        },
-        "b": {
-          "$ref": "#/definitions/DataSpec"
-        },
-        "baselineIndex": {
-          "type": "number",
-          "enum": [
-            0,
-            1
-          ]
-        },
-        "diffSubmode": {
-          "type": "string"
-        },
-        "align": {
-          "type": "string",
-          "enum": [
-            "top-left",
-            "center",
-            "top-right",
-            "bottom-left",
-            "bottom-right"
-          ]
-        },
-        "fit": {
-          "type": "string",
-          "enum": [
-            "crop",
-            "fill"
-          ]
-        },
         "props": {
           "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
         }
       },
       "required": [
-        "kind"
+        "kind",
+        "renderer",
+        "presentation",
+        "operands",
+        "strategy"
       ],
       "additionalProperties": false
     }

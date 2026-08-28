@@ -61,7 +61,7 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
 import {
   applyExposure,
@@ -765,7 +765,7 @@ function allResultsOk(results: Map<string, CaseResult>): boolean {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     const results = await runAllCases(device, "shared");
     const sharedOk = allResultsOk(results);
 

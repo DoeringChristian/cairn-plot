@@ -173,18 +173,6 @@ def inline_three_addon_js() -> str:
     return js_inline_safe(_THREE_JS.read_text(encoding="utf-8"))
 
 
-# Backward-compatible aliases (pre-O2 names) → the core bundle. Kept so the
-# Phase C emit/XSS tests and any external callers still resolve.
-def inline_bundle_js() -> str:
-    """Deprecated alias for :func:`inline_core_js` (pre-O2 name)."""
-    return inline_core_js()
-
-
-def inline_bundle_css() -> str:
-    """Deprecated alias for :func:`inline_core_css` (pre-O2 name)."""
-    return inline_core_css()
-
-
 @lru_cache(maxsize=1)
 def _link_asset_paths() -> tuple[str, str]:
     """(module-entry path, css path) parsed from the committed ``plot.html``.

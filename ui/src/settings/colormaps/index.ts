@@ -8,5 +8,4 @@ export {
   DIVERGING_COLORMAPS,
   getColormapLUT,
   colormapFloatLUT,
-  aliasColormap,
 } from "./lut";

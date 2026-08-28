@@ -11,7 +11,7 @@
  * a KB partial readback instead of the ~64MB full-texture transfer + 4M-iter JS
  * loop.
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import {
   cpuReduce,
   getReduceOp,
@@ -162,7 +162,7 @@ async function runPerf(device: Device): Promise<boolean> {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
     let ok = true;
     if (!device.reduceTextureChannelMean || !device.reduceDiffSumSquaredAbs) {

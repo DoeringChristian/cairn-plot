@@ -46,7 +46,7 @@ import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
 import type { PlotSpec } from "../../../host/descriptor-resolver";
-import { getSharedDevice } from "../../../plots/image/engine/device";
+import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import {
   startPaneRenderLog,
@@ -399,7 +399,7 @@ async function main(): Promise<void> {
     // `plot-gpu-image-addon.tsx` does, so `resolveImageRenderer("gpu")` returns
     // the engine pane instead of the CPU fallback. (A source harness never loads
     // the lazy addon bundle that normally sets this.)
-    await getSharedDevice();
+    await getSharedWebGpuDevice();
     (window as unknown as { __cairnPlotRenderMode?: string }).__cairnPlotRenderMode = "gpu";
     (window as unknown as { __cairnPlotEagerMount?: boolean }).__cairnPlotEagerMount = true;
 

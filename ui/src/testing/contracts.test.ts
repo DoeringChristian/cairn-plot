@@ -29,7 +29,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { COLORMAP_NAMES, COLORMAP_ALIASES } from "../settings/colormaps/lut.ts";
+import { COLORMAP_NAMES } from "../settings/colormaps/lut.ts";
 import {
   SDR_TONEMAP_OPERATORS,
   SDR_DISPLAY_TRANSFER_OPERATORS,
@@ -52,7 +52,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const contractPath = resolve(here, "../../../schema/cairn-plot-contracts.json");
 const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
   colormaps: string[];
-  colormapAliases: Record<string, string>;
   tonemapOperators: string[];
   tonemapOperatorAliases: string[];
   displayTransfers: string[];
@@ -68,21 +67,6 @@ const sorted = (xs: readonly string[]): string[] => [...xs].sort();
 
 test("colormaps: COLORMAP_NAMES matches the contract", () => {
   assert.deepEqual(sorted(COLORMAP_NAMES), sorted(contract.colormaps));
-});
-
-// --- audit addendum D3: the back-compat colormap ALIAS mapping ---------------
-
-test("colormapAliases: COLORMAP_ALIASES matches the contract mapping", () => {
-  // Full key→value equality: pins the removed-name → replacement table.
-  assert.deepEqual({ ...COLORMAP_ALIASES }, contract.colormapAliases);
-});
-
-test("colormapAliases: every alias target is a real colormap, every source is removed", () => {
-  const canonical = new Set(contract.colormaps);
-  for (const [from, to] of Object.entries(contract.colormapAliases)) {
-    assert.ok(canonical.has(to), `alias ${from}→${to}: target ${to} is not a canonical colormap`);
-    assert.ok(!canonical.has(from), `alias source ${from} is still a canonical colormap (shadowed)`);
-  }
 });
 
 test("tonemapOperators: the canonical 5-operator menu set matches the contract", () => {

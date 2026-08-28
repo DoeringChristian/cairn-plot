@@ -154,7 +154,7 @@ def build_report() -> cp.Report:
     rep.add(
         cp.Heatmap(
             np.add.outer(np.sin(np.linspace(0, 3, 24)), np.cos(np.linspace(0, 3, 32))),
-            colormap="viridis",
+            colormap="turbo",
         )
     )
     rep.md("### ParallelCoordinates — numeric + categorical axes")
@@ -226,7 +226,7 @@ def build_report() -> cp.Report:
              cp.Image(base, exposure=2.0, label="EV +2")],
             [
                 cp.Image(base, gamma=0.5, label="γ 0.5"),
-                cp.Image(base, colormap="viridis", label="viridis"),
+                cp.Image(base, colormap="turbo", label="turbo"),
                 cp.Image(base, gamma=2.2, label="γ 2.2"),
             ],
         ]
@@ -305,7 +305,7 @@ def build_report() -> cp.Report:
         "Row-major: **signed · absolute · squared** (top), "
         "**relative_signed · relative_absolute · relative_squared** (bottom). "
         "Diverging errors use the red-blue map; magnitude errors use "
-        "viridis / red-green."
+        "turbo / red-green."
     )
     rep.grid(
         [
@@ -314,10 +314,10 @@ def build_report() -> cp.Report:
                     cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue",
                 ),
                 cp.Compare(
-                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs", colormap="viridis",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs", colormap="turbo",
                 ),
                 cp.Compare(
-                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="square", colormap="viridis",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="square", colormap="turbo",
                 ),
             ],
             [
@@ -325,7 +325,7 @@ def build_report() -> cp.Report:
                     cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_signed", colormap="red-blue",
                 ),
                 cp.Compare(
-                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_abs", colormap="viridis",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_abs", colormap="turbo",
                 ),
                 cp.Compare(
                     cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_square", colormap="red-green",
@@ -463,11 +463,11 @@ def build_report() -> cp.Report:
             [
                 cp.Compare(
                     cp.Image(hdr_pred, label="prediction"), cp.Image(hdr_ref, label="reference"), mode="flip",
-                    colormap="viridis",
+                    colormap="turbo",
                 ),
                 cp.Compare(
                     cp.Image(hdr_pred, label="prediction"), cp.Image(hdr_ref, label="reference"), mode="flip_ldr",
-                    colormap="viridis",
+                    colormap="turbo",
                 ),
             ]
         ]
@@ -531,7 +531,7 @@ def build_report() -> cp.Report:
     rep.md("### Mesh — tetrahedron, distinct per-face colors")
     rep.add(cp.Mesh(tetra_v, tetra_f, face_colors=tetra_face_colors, show_axes=True))
     rep.md("### Volume — scalar grid, Gaussian blob (raymarch)")
-    rep.add(cp.Volume(_volume(), colormap="viridis", show_axes=True))
+    rep.add(cp.Volume(_volume(), colormap="turbo", show_axes=True))
     b_mins, b_maxs, b_vals = _boxes()
     rep.md("### Boxes — axis-aligned, colored by value")
     rep.add(cp.Boxes(b_mins, b_maxs, values=b_vals, color_mode="value", show_axes=True))

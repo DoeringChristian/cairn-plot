@@ -4,6 +4,7 @@ import type { PlotSettings } from "./schema.ts";
 interface InitialSettingsNode {
   kind: string;
   mode?: string;
+  presentation?: string;
   diffSubmode?: string;
   props?: Record<string, unknown>;
 }
@@ -47,8 +48,8 @@ export function initialCellSettings(
     settings["image.colorRange"] = { min: shared.colorRange[0], max: shared.colorRange[1] };
   }
   if (node.kind === "compare") {
-    const mode = node.mode === "diff" ? "diff" : "split";
-    const difference = (props.diffSubmode as string | undefined) ?? node.diffSubmode ?? "absolute";
+    const mode = node.presentation === "difference" ? "diff" : "split";
+    const difference = (props.diffSubmode as string | undefined) ?? "absolute";
     settings["compare.operation"] = mode === "split" ? "split" : difference;
     settings["compare.split"] = typeof props.splitPosition === "number" ? props.splitPosition : 0.5;
   }

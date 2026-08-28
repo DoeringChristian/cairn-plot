@@ -65,18 +65,6 @@ function jsonRecord(value: object, path: string): Record<string, JsonValue> {
   return value as Record<string, JsonValue>;
 }
 
-// Back-compat: `slide` (the old public name for `split`) and the removed
-// `blend` compare view mode alias to `split`. Warn once per session per alias
-// (never hard-fail an old builder call / baked descriptor).
-const warnedCompareModeAlias = new Set<string>();
-function warnCompareModeAlias(rawMode: string): void {
-  if (warnedCompareModeAlias.has(rawMode)) return;
-  warnedCompareModeAlias.add(rawMode);
-  const why = rawMode === "slide" ? "was renamed" : "was removed";
-  // eslint-disable-next-line no-console
-  console.warn(`cairn-plot: the '${rawMode}' compare mode ${why}; using 'split' instead.`);
-}
-
 /** The camelCase builder names shared by BOTH faces — pinned to
  *  `schema/cairn-plot-contracts.json`'s `builders` by the parity test, so the
  *  JS namespace and the Python composable surface can't drift. */
@@ -374,40 +362,36 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
     },
 
     compare(a, b, opts = {}) {
-      // Back-compat: `slide` / the removed `blend` view mode alias to `split`
-      // (warn once, never hard-fail an old builder call).
-      const rawMode = String(opts.mode ?? "split");
-      const aliased = rawMode === "blend" || rawMode === "slide";
-      const mode = checkCompareMode(aliased ? "split" : rawMode);
-      if (aliased) warnCompareModeAlias(rawMode);
+      const mode = checkCompareMode(String(opts.mode ?? "split"));
       const align = checkAlign(String(opts.align ?? "top-left"));
       const fit = checkFit(String(opts.fit ?? "crop"));
-      let internalMode: "split" | "diff";
+      let presentation: "split" | "difference";
       let diffKernel: string | null = null;
-      if (mode === "split") internalMode = "split";
+      if (mode === "split") presentation = "split";
       else {
-        internalMode = "diff";
+        presentation = "difference";
         diffKernel = COMPARE_KERNEL_MODES[mode]!;
       }
-      // reference = a (baselineIndex 0); prediction = b — matching Python A/B.
+      // The first operand is the reference; the second is the prediction.
       const A = compareSide(a);
       const B = compareSide(b);
       const built = imageDisplayProps(opts);
       if (opts.splitPosition != null) built.splitPosition = num(opts.splitPosition);
       if (diffKernel != null) built.diffSubmode = diffKernel;
+      if (align !== "top-left") built.align = align;
+      if (fit !== "crop") built.fit = fit;
       // Host seam: `toolbar:false` only when explicitly disabled (mirrors Python
       // `cp.Compare(toolbar=...)`); omitted at the default `true`.
       if (opts.toolbar === false) built.toolbar = false;
       if (opts.props && typeof opts.props === "object") Object.assign(built, opts.props);
       const node: PlotNode = {
         kind: "compare",
-        mode: internalMode,
-        a: A.data,
-        b: B.data,
-        baselineIndex: 0,
+        renderer: "image",
+        presentation,
+        operands: [A.data, B.data],
+        strategy: "reference",
+        referenceIndex: 0,
       };
-      if (align !== "top-left") (node as { align?: string }).align = align;
-      if (fit !== "crop") (node as { fit?: string }).fit = fit;
       if (Object.keys(built).length) (node as { props?: Opts }).props = built;
       return handle(node, [...A.runtime, ...B.runtime]);
     },

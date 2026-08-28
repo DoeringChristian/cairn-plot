@@ -186,25 +186,14 @@ class GridSpec(_Strict):
 
 
 class CompareSpec(_Strict):
-    """`PlotNode{kind:"compare"}` — two DataSpec frames composited into one pane."""
+    """A plot-defined comparison of an ordered operand set."""
 
     kind: Literal["compare"]
-    # Plot definition that owns comparison semantics. Omission preserves the
-    # original wire format and means ``"image"``.
-    renderer: Optional[str] = None
-    presentation: Optional[str] = None
-    # Legacy image spelling. New comparison kinds use ``presentation``.
-    mode: Optional[Literal["split", "diff"]] = None
-    operands: Optional[list[DataSpec]] = None
-    strategy: Optional[Literal["reference", "all"]] = None
+    renderer: str
+    presentation: str
+    operands: list[DataSpec]
+    strategy: Literal["reference", "all"]
     referenceIndex: Optional[int] = None
-    # Legacy two-operand form, accepted at the boundary and normalized by JS.
-    a: Optional[DataSpec] = None
-    b: Optional[DataSpec] = None
-    baselineIndex: Optional[Literal[0, 1]] = None
-    diffSubmode: Optional[str] = None
-    align: Optional[Literal["top-left", "center", "top-right", "bottom-left", "bottom-right"]] = None
-    fit: Optional[Literal["crop", "fill"]] = None
     props: Optional[dict[str, Any]] = None
 
 

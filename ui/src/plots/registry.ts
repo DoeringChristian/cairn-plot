@@ -29,9 +29,8 @@ export function requirePlotType(kind: string): RegisteredPlotDefinition {
   return definition;
 }
 
-/** The plot kind that owns a comparison. Old descriptors are image comparisons. */
 export function comparisonRenderer(node: CompareNode): string {
-  return node.renderer ?? "image";
+  return node.renderer;
 }
 
 export interface PlannedComparison {
@@ -45,29 +44,20 @@ export interface PlannedComparison {
 function normalizeComparison(
   node: CompareNode,
   renderer: string,
-  capability: ComparisonCapability<unknown, unknown>,
 ): ComparisonRequest {
-  const operands = node.operands?.length
-    ? node.operands
-    : node.a && node.b
-      ? [node.a, node.b]
-      : [];
+  const operands = node.operands;
   if (operands.length < 2) {
     throw new Error("cairn-plot: comparison requires at least two operands");
   }
-  const strategy = node.strategy ?? capability.defaultStrategy;
-  const referenceIndex = node.referenceIndex ?? node.baselineIndex ??
+  const strategy = node.strategy;
+  const referenceIndex = node.referenceIndex ??
     (strategy === "reference" ? 0 : undefined);
   if (referenceIndex !== undefined &&
       (!Number.isInteger(referenceIndex) || referenceIndex < 0 || referenceIndex >= operands.length)) {
     throw new Error(`cairn-plot: comparison reference index ${referenceIndex} is out of range`);
   }
-  const presentation = node.presentation ??
-    (node.mode === "diff" ? "difference" : node.mode === "split" ? "split" : undefined);
+  const presentation = node.presentation;
   const props = { ...(node.props ?? {}) };
-  if (node.diffSubmode !== undefined) props.diffSubmode = node.diffSubmode;
-  if (node.align !== undefined) props.align = node.align;
-  if (node.fit !== undefined) props.fit = node.fit;
   return { renderer, operands, strategy, referenceIndex, presentation, props };
 }
 
@@ -86,7 +76,7 @@ export function planComparison(node: CompareNode): PlannedComparison {
       `cairn-plot: plot type ${JSON.stringify(renderer)} does not support comparison`,
     );
   }
-  const request = normalizeComparison(node, renderer, capability);
+  const request = normalizeComparison(node, renderer);
   const acceptance = capability.accepts(request);
   if (!acceptance.accepted) {
     const suffix = acceptance.reason ? `: ${acceptance.reason}` : "";

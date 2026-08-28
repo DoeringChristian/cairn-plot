@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef } from "react";
 
 import type { PlotNode } from "../../../../packages/spec/src/spec.ts";
 import type { PlotSettings } from "../../settings/schema.ts";
-import { normalizeImageComparisonPresentation } from "./comparison-plan.ts";
 
 export type CompareViewMode = "split" | "diff";
 
@@ -29,12 +28,11 @@ export function useImageComparisonControl(
 ): ImageComparisonControl {
   const comparison = node.kind === "compare" ? node : null;
   const props = (comparison?.props ?? {}) as Record<string, unknown>;
-  const descriptorMode: CompareViewMode = comparison &&
-    normalizeImageComparisonPresentation(comparison.presentation ?? comparison.mode) === "difference"
+  const descriptorMode: CompareViewMode = comparison?.presentation === "difference"
     ? "diff"
     : "split";
   const descriptorKernel =
-    (props.diffSubmode as string | undefined) ?? comparison?.diffSubmode ?? "absolute";
+    (props.diffSubmode as string | undefined) ?? "absolute";
   const descriptorSplit = (props.splitPosition as number | undefined) ?? 0.5;
 
   const seed = useRef<{

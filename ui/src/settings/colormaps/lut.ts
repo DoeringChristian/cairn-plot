@@ -164,40 +164,14 @@ export const COLORMAP_OPTIONS: { id: ColormapName; label: string }[] =
 
 export const DIVERGING_COLORMAPS = new Set<string>(["red-green", "red-blue"]);
 
-/**
- * Back-compat colormap ALIAS mapping (removed name → canonical replacement).
- * `viridis` was REMOVED from the registry (the tev-mapped `turbo` replaced it as
- * the default sequential map). This is the ONE runtime data structure the TS
- * face keeps: `aliasColormap` resolves through it, `image/encodings/registry.ts`
- * delegates to `aliasColormap`, and the cross-language contract
- * (`schema/cairn-plot-contracts.json` → `contracts.test.ts`) pins it to Python
- * `_COLORMAP_ALIASES` by KEY and VALUE.
- */
-export const COLORMAP_ALIASES: Readonly<Record<string, string>> = {
-  viridis: "turbo",
-};
-
-/**
- * Back-compat colormap ALIAS resolver. Any INCOMING `viridis` reference — a
- * descriptor kwarg, a settings-sync payload, a Python `colormap=` user —
- * resolves to `turbo` rather than erroring; every other name (a real colormap
- * id, or a typo handled downstream) passes through unchanged. Reads the single
- * {@link COLORMAP_ALIASES} table so TS + the LUT lookups + the panes agree.
- */
-export function aliasColormap(name: string): string {
-  return COLORMAP_ALIASES[name] ?? name;
-}
-
 const colormapLUTs = new Map<string, Uint8Array>();
 
 export function getColormapLUT(name: string): Uint8Array {
-  const key = aliasColormap(name);
+  const key = name;
   let lut = colormapLUTs.get(key);
   if (!lut) {
-    // Degrade an unknown colormap name to turbo (the default sequential map, since
-    // viridis was removed) rather than crash. The G2 Python composable API lets a
-    // caller pass an arbitrary `shared.colormap` string, so a typo must not read
-    // `undefined.length` and blank the page. `viridis` aliases to turbo above.
+    // Descriptor-level validation normally rejects unknown names. Keep this
+    // low-level lookup total for renderer safety by falling back to turbo.
     const stops = COLORMAP_STOPS[key as ColormapName] ?? COLORMAP_STOPS.turbo;
     lut = buildLUT(stops);
     colormapLUTs.set(key, lut);
@@ -217,7 +191,7 @@ const colormapFloatLUTs = new Map<string, Float32Array>();
  * straight to the display surface (no re-encode) — see `image/encodings`. Cached
  * per name (the tables are immutable). */
 export function colormapFloatLUT(name: string): Float32Array {
-  const key = aliasColormap(name);
+  const key = name;
   let out = colormapFloatLUTs.get(key);
   if (!out) {
     const bytes = getColormapLUT(key);

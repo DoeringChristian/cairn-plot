@@ -4,7 +4,7 @@
  * `core.iife.js`; only `three` and `figure` remain addons).
  *
  * What stays from the addon era is the genuinely irreducible part: device
- * acquisition (`getSharedDevice()`) is ASYNC and can fail, so image surfaces
+ * acquisition (`getSharedWebGpuDevice()`) is ASYNC and can fail, so image surfaces
  * must render the CPU backend first and flip to the engine pane when the
  * probe settles. What is DELETED: the window component seam
  * (`__cairnPlotGpuImagePane`), the ready `CustomEvent` whose name three files
@@ -21,7 +21,7 @@
  * probe entirely. The failure path carries the addon's capability triage
  * (secure-context vs genuinely unsupported) unchanged.
  */
-import { getSharedDevice } from "../engine/device";
+import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import {
   noWebgpuKind,
   reportCapabilityLimit,
@@ -71,7 +71,7 @@ export function ensureGpuImageProbe(): void {
     return;
   }
   probing = true;
-  getSharedDevice().then(
+  getSharedWebGpuDevice().then(
     () => {
       probing = false;
       setState("ready");

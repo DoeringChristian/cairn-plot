@@ -100,9 +100,14 @@ function compareDescriptor(fg: string, ref: string): PlotSpec {
     mode: "local",
     root: {
       kind: "compare",
-      mode: "split",
-      a: { kind: "url", src: makeImageUrl(fg) },
-      b: { kind: "url", src: makeImageUrl(ref) },
+      renderer: "image",
+      presentation: "split",
+      operands: [
+        { kind: "url", src: makeImageUrl(ref) },
+        { kind: "url", src: makeImageUrl(fg) },
+      ],
+      strategy: "reference",
+      referenceIndex: 0,
       // Per-side captions (baselineIndex defaults to 0 → a = reference, b =
       // foreground): reference "REF_CAP" bottom-left, foreground "FG_CAP"
       // bottom-right in slide; folded into the diff caption in diff mode.

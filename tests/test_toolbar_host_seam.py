@@ -62,10 +62,10 @@ def test_image_sdr_toolbar_default_omitted() -> None:
 
 
 def test_image_sdr_toolbar_coexists_with_display_props() -> None:
-    node = cp.Image(_sdr(), toolbar=False, colormap="viridis", show_axes=True).to_node()
+    node = cp.Image(_sdr(), toolbar=False, colormap="turbo", show_axes=True).to_node()
     props = node["props"]
     assert props["toolbar"] is False
-    assert props["colormap"] == "turbo"  # viridis -> turbo alias
+    assert props["colormap"] == "turbo"
     assert props["showAxes"] is True
 
 

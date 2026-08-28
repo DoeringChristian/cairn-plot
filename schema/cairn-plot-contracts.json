@@ -1,5 +1,5 @@
 {
-  "$comment": "Cross-language contract for cairn-plot's cross-face string enums (colormaps, HDR tone-map operators, public compare-kernel modes, compare view-modes/aligns/fits, and pixel-value notations) PLUS two mappings (the back-compat colormap alias table and the public-mode->kernel-id `diffSubmode` table) AND the shared builder-name set (the composable builders both faces expose). This ONE file is the canonical set; the TS sources are pinned to it by ui/src/lib/cairn-plot/contracts.test.ts + ui/src/lib/cairn-plot/builder/builders.test.ts and the Python side by tests/test_contracts.py. To change a set, edit this file AND both language sources — a single edit on either side fails its guard. Order is documentation only; every guard compares as a set (mappings compare key+value).",
+  "$comment": "Cross-language contract for cairn-plot's cross-face string enums and the public-mode-to-kernel-id mapping. This file is canonical for both TypeScript and Python.",
   "colormaps": [
     "turbo",
     "plasma",
@@ -7,10 +7,6 @@
     "red-green",
     "red-blue"
   ],
-  "$comment_colormapAliases": "Back-compat colormap ALIAS mapping (audit addendum D3): removed name -> canonical replacement. `viridis` was dropped when tev-mapped `turbo` became the default sequential map, so an incoming `viridis` resolves to `turbo` rather than erroring. ONE runtime source per face — Python `_COLORMAP_ALIASES` (components.py) <-> TS `COLORMAP_ALIASES` (colormaps/lut.ts, which `aliasColormap` and `image/encodings/registry.ts`'s `getEncoding` both delegate to). The guard checks KEY+VALUE; contracts.test.ts additionally asserts every alias target is a real colormap.",
-  "colormapAliases": {
-    "viridis": "turbo"
-  },
   "tonemapOperators": [
     "linear",
     "srgb",

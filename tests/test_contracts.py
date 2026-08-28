@@ -20,7 +20,6 @@ from pathlib import Path
 
 from cairn_plot.components import (
     _COLORMAPS,
-    _COLORMAP_ALIASES,
     _COMPARE_KERNEL_MODES,
     _COMPARE_VIEW_MODES,
     _COMPARE_ALIGNS,
@@ -37,14 +36,6 @@ CONTRACT = json.loads((ROOT / "schema" / "cairn-plot-contracts.json").read_text(
 
 def test_colormaps_match_contract() -> None:
     assert set(_COLORMAPS) == set(CONTRACT["colormaps"])
-
-
-def test_colormap_aliases_mapping_matches_contract() -> None:
-    # Audit addendum D3: guard the back-compat alias MAPPING (removed name →
-    # replacement) by key AND value, not just the alias set. Both faces keep one
-    # runtime table; the TS contract test additionally asserts every target is a
-    # real colormap, so pinning Python to the same JSON keeps them in lockstep.
-    assert _COLORMAP_ALIASES == CONTRACT["colormapAliases"]
 
 
 def test_tonemap_operators_match_contract() -> None:

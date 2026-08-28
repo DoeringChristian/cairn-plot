@@ -24,7 +24,7 @@ import { isDeviceLostError } from "../../../plots/image/engine/webgpu/device";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/backend/gpu";
 import { urlSource } from "../../../plots/image/backend/contracts";
-import { getSharedDevice } from "../../../plots/image/engine/device";
+import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import { getDiffComputeCount } from "../../../plots/image/engine/diff-engine";
 import { createHarness, waitFor } from "../../harness";
 
@@ -147,7 +147,7 @@ let uploadCount = 0;
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     // Instrument SOURCE uploads: count createTexture of the 64×64 source formats
     // (rgba8unorm here). The diff RESULT is rgba16float — excluded — so this counts
     // ONLY source (re)uploads, isolating the "re-upload on every flip" hypothesis.

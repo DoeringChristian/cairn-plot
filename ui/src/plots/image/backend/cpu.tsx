@@ -1475,9 +1475,6 @@ function CpuHdrImagePane(
 // Public component.
 // ---------------------------------------------------------------------------
 
-/** The unified backend prop shape this pane accepts (kept as a public alias). */
-export type CpuImagePaneProps = ImageBackendProps;
-
 /**
  * One of the two interchangeable image backends (the CPU/2D-canvas one — see
  * `GpuImagePane` for the WebGPU other); both accept the ONE
@@ -1568,6 +1565,6 @@ export default function CpuImagePane(backendProps: ImageBackendProps): JSX.Eleme
 
 // Compile-time contract check: CpuImagePane implements the shared backend
 // interface (accepts the plain `ImageBackendProps` union — `toolbar` is
-// optional, so the plain union is assignable to `CpuImagePaneProps`).
+  // optional, so the plain union is assignable to `ImageBackendProps`).
 const _backendCheck: ImageBackend = CpuImagePane;
 void _backendCheck;

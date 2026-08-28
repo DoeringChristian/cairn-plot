@@ -30,14 +30,6 @@ test("colormapColor('turbo', ...) returns the turbo endpoints + midpoint", () =>
   assert.equal(colormapColor("turbo", 1), "rgb(122,4,3)");
 });
 
-// Back-compat: `viridis` was REMOVED → aliases to `turbo` (aliasColormap), so a
-// legacy `viridis` reference resolves to the turbo ramp rather than erroring.
-test("colormapColor('viridis', ...) aliases to turbo (viridis was removed)", () => {
-  assert.equal(colormapColor("viridis", 0), colormapColor("turbo", 0));
-  assert.equal(colormapColor("viridis", 0.5), colormapColor("turbo", 0.5));
-  assert.equal(colormapColor("viridis", 1), colormapColor("turbo", 1));
-});
-
 // Magma (matplotlib anchors) — sequential, used by the reference FLIP tools.
 // Endpoints are the exact first/last stops run through `buildLUT`.
 test("colormapColor('magma', ...) returns the magma endpoints", () => {

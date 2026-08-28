@@ -37,7 +37,7 @@ import { isDeviceLostError } from "../../../plots/image/engine/webgpu/device";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/backend/gpu";
 import { urlSource } from "../../../plots/image/backend/contracts";
-import { getSharedDevice } from "../../../plots/image/engine/device";
+import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import { createHarness, waitFor } from "../../harness";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import type { Colormap } from "../../../plots/types.ts";
@@ -273,7 +273,7 @@ async function paintedUntilChanged(
 
 async function main(): Promise<void> {
   try {
-    await getSharedDevice();
+    await getSharedWebGpuDevice();
     let allOk = true;
 
     // ---- Case 1: signed → red-green diverging diff -----------------------

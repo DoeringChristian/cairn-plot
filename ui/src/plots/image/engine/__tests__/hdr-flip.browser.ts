@@ -20,7 +20,7 @@
  * RUNNING: bundle with esbuild, serve over http, open hdr-flip.browser.html
  * (same commands as the sibling *.browser.ts).
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { flipHDR, computeHdrFlipExposures } from "../kernels/hdr-flip-reference";
 import type { Device, Texture } from "../../../../engines/webgpu/types";
@@ -148,7 +148,7 @@ async function runCacheContract(device: Device): Promise<boolean> {
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
     let ok = true;
     ok = (await runHdrFlipCase(device, 16, 16, 1)) && ok;

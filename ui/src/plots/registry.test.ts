@@ -67,9 +67,12 @@ function comparableDefinition(accepted = true) {
 const comparisonNode = {
   kind: "compare" as const,
   renderer: "test",
-  mode: "split" as const,
-  a: { kind: "inline" as const, props: { value: 1 } },
-  b: { kind: "inline" as const, props: { value: 2 } },
+  presentation: "overlay",
+  operands: [
+    { kind: "inline" as const, props: { value: 1 } },
+    { kind: "inline" as const, props: { value: 2 } },
+  ],
+  strategy: "all" as const,
 };
 
 test("plot registry contains type erasure at one checked adapter", async () => {
@@ -116,12 +119,6 @@ test("comparison planning is selected by the authored plot kind", () => {
     layout: "single",
   });
   assert.equal(planComparison(comparisonNode), planned, "plans stay stable for cache-safe rerenders");
-});
-
-test("legacy comparisons select the image plot kind", () => {
-  clearPlotTypesForTest();
-  registerPlotType({ ...comparableDefinition(), kind: "image" });
-  assert.equal(planComparison({ ...comparisonNode, renderer: undefined }).renderer, "image");
 });
 
 test("comparison planning reports missing and rejected capabilities", () => {

@@ -293,9 +293,7 @@ export interface PaneEncoding {
  */
 export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const { mode, arity, curveSet, propTonemap, resolveDefaultCurve } = config;
-  // Back-compat: `viridis` was REMOVED → alias an incoming descriptor colormap to
-  // `turbo` so the seed resolves to a real lut id (mirrors `aliasColormap`).
-  const propColormap = config.propColormap === "viridis" ? "turbo" : config.propColormap;
+  const propColormap = config.propColormap;
 
   const idsFor = useCallback(
     (a: number): DisplayEncodingIds => resolveDisplayEncodingIds({ mode, arity: a, curveSet }),
@@ -330,7 +328,7 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   // the first render before the owner's initialization effect fills the store.
   const storeId = config.settings?.["image.encoding"];
   const rawEncodingId = storeId ?? initialSeedRef.current;
-  const encodingId = rawEncodingId === "viridis" ? "turbo" : rawEncodingId;
+  const encodingId = rawEncodingId;
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
   const activeEncoding = getEncoding(encodingId);

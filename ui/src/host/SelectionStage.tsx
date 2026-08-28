@@ -147,12 +147,8 @@ function nonSelectable(node: PlotNode): PlotNode {
 function operandDataSpec(node: PlotNode): DataSpec | null {
   if (node.kind === "plot") return node.data;
   if (node.kind === "compare") {
-    const operands = node.operands?.length
-      ? node.operands
-      : node.a && node.b
-        ? [node.a, node.b]
-        : [];
-    const referenceIndex = node.referenceIndex ?? node.baselineIndex ?? 0;
+    const operands = node.operands;
+    const referenceIndex = node.referenceIndex ?? 0;
     return operands.find((_, index) => index !== referenceIndex) ?? null;
   }
   return null;
@@ -250,10 +246,11 @@ function buildCompareCells(
     // "reference" so the left side stays identifiable.
     const node: CompareNode = cached ?? {
       kind: "compare",
-      mode: "split",
-      a: fgSpec,
-      b: refSpec,
-      baselineIndex: 1,
+      renderer: "image",
+      presentation: "split",
+      operands: [fgSpec, refSpec],
+      strategy: "reference",
+      referenceIndex: 1,
       props: {
         toolbar: true,
         selectable: false,

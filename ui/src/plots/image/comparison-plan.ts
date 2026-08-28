@@ -14,28 +14,10 @@ import { planComparison } from "../registry.ts";
 
 export type ImageComparisonPresentation = "split" | "difference";
 
-let warnedBlendRemoved = false;
-
-/** Normalize durable/legacy spelling into semantic image presentations. */
-export function normalizeImageComparisonPresentation(
-  mode: string | undefined | null,
-): ImageComparisonPresentation {
-  if (mode === "blend") {
-    if (!warnedBlendRemoved) {
-      warnedBlendRemoved = true;
-      console.warn("cairn-plot: the 'blend' compare mode was removed; rendering as 'split'.");
-    }
-    return "split";
-  }
-  return mode === "diff" || mode === "difference" ? "difference" : "split";
-}
-
 export interface ImageComparisonPlan {
   readonly presentation: ImageComparisonPresentation;
   readonly reference: DataSpec;
   readonly foreground: DataSpec;
-  /** Transitional spelling consumed by the existing image leaf adapter. */
-  readonly fgData: DataSpec;
   readonly leaf: PlotLeafNode;
   readonly align?: CompareAlign;
   readonly fit?: CompareFit;
@@ -80,10 +62,9 @@ export function planImageComparison(
     return [{
       operandIndices: [referenceIndex, index],
       plan: {
-        presentation: normalizeImageComparisonPresentation(request.presentation),
+        presentation: request.presentation as ImageComparisonPresentation,
         reference,
         foreground,
-        fgData: foreground,
         leaf: { kind: "plot" as const, renderer: "image", data: reference, props: leafProps },
         align: props.align as CompareAlign | undefined,
         fit: props.fit as CompareFit | undefined,

@@ -36,7 +36,7 @@
  *      (`plot-gpu-image-addon.tsx`): stub `__cairnPlotRegisterBackends`,
  *      import the addon module, and assert it registers `"image"`/
  *      `"imagehdr"` and sets `__cairnPlotGpuImageLoaded` once
- *      `getSharedDevice()` resolves.
+ *      `getSharedWebGpuDevice()` resolves.
  *
  * No console.error during the whole run is asserted throughout (a
  * `console.error` override records every call; the final status factors it

@@ -23,7 +23,7 @@
  * the `flip`/`hdr-flip`/`ssim` harnesses; the unified pane binds that result as a
  * single source + identity display (pane-level wiring, a later phase).
  */
-import { getSharedDevice } from "../device";
+import { getSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { isDeviceLostError } from "../webgpu/device";
 import { renderImage, computeMetrics, type ImageParams, type ImageOperator } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
@@ -588,7 +588,7 @@ const DIRECT_DIFF_CASES = [
 
 async function main(): Promise<void> {
   try {
-    const device = await getSharedDevice();
+    const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
     let allOk = true;
     if (!(await runIdentityInertCase(device))) allOk = false;

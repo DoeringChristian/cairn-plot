@@ -106,6 +106,9 @@ export function ensureImagePlotType(
       accepts(request) {
         try {
           if (request.strategy !== "reference") throw new Error("image comparison requires a reference");
+          if (request.presentation !== "split" && request.presentation !== "difference") {
+            throw new Error(`unsupported image comparison presentation ${JSON.stringify(request.presentation)}`);
+          }
           for (const operand of request.operands) validateImageData(operand);
           return { accepted: true };
         } catch (error) {

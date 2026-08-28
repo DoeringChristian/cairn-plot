@@ -1,7 +1,7 @@
 /**
  * Shared-device singleton harness (Task 4 of the WebGPU engine,
- * Sub-project 1) — `engine/device.ts`'s `getSharedDevice()`/
- * `resetSharedDevice()`.
+ * Sub-project 1) — `engine/device.ts`'s `getSharedWebGpuDevice()`/
+ * `resetSharedWebGpuDevice()`.
  *
  * jsdom has no WebGPU, so — like `backend-readback.browser.ts` — this is NOT
  * a unit test, it's a browser page driven via claude-in-chrome.
@@ -10,13 +10,13 @@
  * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`); there is no
  * `?forceWebGL2` mode to exercise anymore. Assertions run on a plain page
  * load:
- *   1. `getSharedDevice()` called twice (back to back, before either
+ *   1. `getSharedWebGpuDevice()` called twice (back to back, before either
  *      resolves) returns the SAME `Device` instance (`===`).
  *   2. On a WebGPU-capable browser (`navigator.gpu` present), the resolved
  *      device's `.backend === "webgpu"`.
- *   3. `resetSharedDevice()` then `getSharedDevice()` again yields a FRESH
+ *   3. `resetSharedWebGpuDevice()` then `getSharedWebGpuDevice()` again yields a FRESH
  *      instance (`!==` the first one).
- *   4. On a browser WITHOUT `navigator.gpu`, `getSharedDevice()` REJECTS
+ *   4. On a browser WITHOUT `navigator.gpu`, `getSharedWebGpuDevice()` REJECTS
  *      (no in-engine fallback — see `engine/device.ts`'s module doc; the
  *      caller is responsible for falling back to the legacy CPU pane).
  *
@@ -35,19 +35,19 @@
  * The generated `.bundle.js` is NOT committed (gitignored) — regenerate with
  * the command above whenever this harness or its imports change.
  */
-import { getSharedDevice, resetSharedDevice } from "../device";
+import { getSharedWebGpuDevice, resetSharedWebGpuDevice } from "../../../../engines/webgpu/device-provider.ts";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "DEVICE SINGLETON", resultFlag: "__deviceSingletonTestResult" });
 
 async function runNoWebGPUCheck(): Promise<boolean> {
-  resetSharedDevice();
+  resetSharedWebGpuDevice();
   try {
-    const device = await getSharedDevice();
-    report(false, `navigator.gpu is NOT available, but getSharedDevice() resolved anyway (backend=${device.backend}) — expected a rejection (no in-engine fallback)`);
+    const device = await getSharedWebGpuDevice();
+    report(false, `navigator.gpu is NOT available, but getSharedWebGpuDevice() resolved anyway (backend=${device.backend}) — expected a rejection (no in-engine fallback)`);
     return false;
   } catch (err) {
-    report(true, `navigator.gpu is NOT available -> getSharedDevice() REJECTED as expected (${err instanceof Error ? err.message : String(err)})`);
+    report(true, `navigator.gpu is NOT available -> getSharedWebGpuDevice() REJECTED as expected (${err instanceof Error ? err.message : String(err)})`);
     return true;
   }
 }
@@ -56,31 +56,31 @@ async function runDefaultModeChecks(): Promise<boolean> {
   let allOk = true;
 
   // 1. Two concurrent calls (before either resolves) return the same instance.
-  const p1 = getSharedDevice();
-  const p2 = getSharedDevice();
+  const p1 = getSharedWebGpuDevice();
+  const p2 = getSharedWebGpuDevice();
   const [d1, d2] = await Promise.all([p1, p2]);
   const sameInstance = d1 === d2;
   allOk = allOk && sameInstance;
-  report(sameInstance, `getSharedDevice() called twice concurrently returns the SAME instance (backend=${d1.backend})`);
+  report(sameInstance, `getSharedWebGpuDevice() called twice concurrently returns the SAME instance (backend=${d1.backend})`);
 
   // A third, later call (after the first has resolved) must also return the
   // same memoized instance.
-  const d3 = await getSharedDevice();
+  const d3 = await getSharedWebGpuDevice();
   const stillSame = d3 === d1;
   allOk = allOk && stillSame;
-  report(stillSame, `getSharedDevice() called again after resolution still returns the SAME instance`);
+  report(stillSame, `getSharedWebGpuDevice() called again after resolution still returns the SAME instance`);
 
   // 2. The shared device is always WebGPU (the engine's only backend).
   const isWebGPU = d1.backend === "webgpu";
   allOk = allOk && isWebGPU;
   report(isWebGPU, `shared device backend === "webgpu" (actual: ${d1.backend})`);
 
-  // 3. resetSharedDevice() + a fresh getSharedDevice() call yields a new instance.
-  resetSharedDevice();
-  const d4 = await getSharedDevice();
+  // 3. resetSharedWebGpuDevice() + a fresh getSharedWebGpuDevice() call yields a new instance.
+  resetSharedWebGpuDevice();
+  const d4 = await getSharedWebGpuDevice();
   const isFresh = d4 !== d1;
   allOk = allOk && isFresh;
-  report(isFresh, `resetSharedDevice() then getSharedDevice() yields a FRESH instance (backend=${d4.backend})`);
+  report(isFresh, `resetSharedWebGpuDevice() then getSharedWebGpuDevice() yields a FRESH instance (backend=${d4.backend})`);
 
   return allOk;
 }
