@@ -16,14 +16,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  listContentOps,
-  listDirectContentOps,
-  getContentOp,
+  listImageOperations,
+  listInlineImageOperations,
+  getImageOperation,
   resolveOutputArity,
-  isDirectContentOp,
+  isInlineImageOperation,
   contentOpId,
   CONTENT_OP_ID,
-  type RenderClass,
 } from "./index.ts";
 
 const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
@@ -31,33 +30,33 @@ const COMPOSITOR = ["split"];
 const CACHED = ["flip", "hdr-flip", "ssim"];
 
 test("the expected op set is registered (identity + pointwise diffs + compositor + cached metrics)", () => {
-  const ids = listContentOps().map((o) => o.id);
+  const ids = listImageOperations().map((o) => o.id);
   assert.deepEqual(ids, ["identity", ...POINTWISE, ...COMPOSITOR, ...CACHED]);
 });
 
 test("ids are unique", () => {
-  const ids = listContentOps().map((o) => o.id);
+  const ids = listImageOperations().map((o) => o.id);
   assert.equal(new Set(ids).size, ids.length, "duplicate content-op id");
 });
 
 test("identity declares the expected shape (arity-1 direct passthrough)", () => {
-  const id = getContentOp("identity");
-  assert.ok(id && isDirectContentOp(id));
-  assert.equal(id!.sourceArity, 1);
-  assert.equal<RenderClass>(id!.renderClass, "direct");
+  const id = getImageOperation("identity");
+  assert.ok(id && isInlineImageOperation(id));
+  assert.equal(id!.inputCount, 1);
+  assert.equal(id!.implementation.kind, "inline");
   assert.equal(id!.outputArity, "source"); // passthrough marker
   assert.equal(id!.outputRange, "light");
   assert.equal(id!.defaultEncoding, "srgb");
   assert.deepEqual(id!.params ?? [], []);
-  assert.equal((id as { wgsl: string }).wgsl.trim(), "a");
+  assert.equal(id!.implementation.kind === "inline" && id!.implementation.wgsl.trim(), "a");
 });
 
 test("pointwise diffs are arity-2 direct ops with range metadata", () => {
   for (const opId of POINTWISE) {
-    const op = getContentOp(opId);
-    assert.ok(op && isDirectContentOp(op), `${opId} must be a registered direct op`);
-    assert.equal(op!.sourceArity, 2, `${opId} sourceArity`);
-    assert.equal(op!.renderClass, "direct", `${opId} renderClass`);
+    const op = getImageOperation(opId);
+    assert.ok(op && isInlineImageOperation(op), `${opId} must be a registered inline op`);
+    assert.equal(op!.inputCount, 2, `${opId} inputCount`);
+    assert.equal(op!.implementation.kind, "inline", `${opId} implementation`);
     assert.equal(op!.outputArity, 1, `${opId} scalar-error DISPLAY gating`);
     const signed = opId === "signed" || opId === "relative_signed";
     assert.equal(op!.outputRange, signed ? "R" : "R+", `${opId} range`);
@@ -67,24 +66,24 @@ test("pointwise diffs are arity-2 direct ops with range metadata", () => {
 
 test("cached metrics are arity-2 cached ops delegating to a kernel", () => {
   for (const opId of CACHED) {
-    const op = getContentOp(opId);
+    const op = getImageOperation(opId);
     assert.ok(op, `${opId} registered`);
-    assert.equal(op!.renderClass, "cached", `${opId} renderClass`);
-    assert.equal(isDirectContentOp(op!), false, `${opId} is not a direct op`);
-    assert.equal(op!.sourceArity, 2, `${opId} sourceArity`);
+    assert.equal(op!.implementation.kind, "multipass", `${opId} implementation`);
+    assert.equal(isInlineImageOperation(op!), false, `${opId} is not an inline op`);
+    assert.equal(op!.inputCount, 2, `${opId} inputCount`);
     assert.equal(op!.outputArity, 1, `${opId} scalar-metric DISPLAY gating`);
     assert.equal(op!.outputRange, "R+", `${opId} range`);
     // The shared display default is asserted separately from kernel metadata.
-    assert.equal((op as { kernelId: string }).kernelId, opId, `${opId} delegates to its kernel id`);
+    assert.equal(op!.implementation.kind === "multipass" && op!.implementation.kernelId, opId, `${opId} delegates to its kernel id`);
   }
 });
 
 test("compositor ops are arity-2 direct LIGHT ops (k=3, srgb default) with a split param", () => {
   for (const opId of COMPOSITOR) {
-    const op = getContentOp(opId);
-    assert.ok(op && isDirectContentOp(op), `${opId} must be a registered direct op`);
-    assert.equal(op!.sourceArity, 2, `${opId} sourceArity`);
-    assert.equal(op!.renderClass, "direct", `${opId} renderClass`);
+    const op = getImageOperation(opId);
+    assert.ok(op && isInlineImageOperation(op), `${opId} must be a registered inline op`);
+    assert.equal(op!.inputCount, 2, `${opId} inputCount`);
+    assert.equal(op!.implementation.kind, "inline", `${opId} implementation`);
     assert.equal(op!.outputArity, 3, `${opId} light RGB → k=3 DISPLAY gating (luts off, curves offered)`);
     assert.equal(op!.outputRange, "light", `${opId} range`);
     assert.equal(op!.defaultEncoding, "srgb", `${opId} default encoding`);
@@ -95,33 +94,33 @@ test("compositor ops are arity-2 direct LIGHT ops (k=3, srgb default) with a spl
 test("compositor cpu twins composite over the fragment uv + param (readout parity)", () => {
   const a = [0.8, 0.6, 0.4];
   const b = [0.2, 0.3, 0.1];
-  const splitOp = getContentOp("split")!;
-  assert.ok(isDirectContentOp(splitOp));
+  const splitOp = getImageOperation("split")!;
+  assert.ok(isInlineImageOperation(splitOp));
   // split: uv.x < param → reference (a); else foreground (b).
-  assert.deepEqual(splitOp.cpu([a, b], 3, { uv: [0.2, 0.5], param: 0.5 }), a);
-  assert.deepEqual(splitOp.cpu([a, b], 3, { uv: [0.8, 0.5], param: 0.5 }), b);
+  assert.deepEqual(splitOp.implementation.cpu([a, b], 3, { uv: [0.2, 0.5], param: 0.5 }), a);
+  assert.deepEqual(splitOp.implementation.cpu([a, b], 3, { uv: [0.8, 0.5], param: 0.5 }), b);
   // No ctx → param/uv default 0: split picks foreground everywhere (uv.x 0 < 0 is false).
-  assert.deepEqual(splitOp.cpu([a, b], 3), b);
+  assert.deepEqual(splitOp.implementation.cpu([a, b], 3), b);
 });
 
-test("getContentOp is falsy-safe", () => {
-  assert.equal(getContentOp(undefined), undefined);
-  assert.equal(getContentOp(null), undefined);
-  assert.equal(getContentOp(""), undefined);
-  assert.equal(getContentOp("nope"), undefined);
+test("getImageOperation is falsy-safe", () => {
+  assert.equal(getImageOperation(undefined), undefined);
+  assert.equal(getImageOperation(null), undefined);
+  assert.equal(getImageOperation(""), undefined);
+  assert.equal(getImageOperation("nope"), undefined);
 });
 
 test("resolveOutputArity: identity is a passthrough, diffs are fixed scalar", () => {
-  const id = getContentOp("identity")!;
+  const id = getImageOperation("identity")!;
   for (const k of [1, 2, 3, 4]) {
     assert.equal(resolveOutputArity(id, k), k, `identity output arity must equal source arity k=${k}`);
   }
-  const signed = getContentOp("signed")!;
+  const signed = getImageOperation("signed")!;
   for (const k of [1, 2, 3, 4]) assert.equal(resolveOutputArity(signed, k), 1, "diff gates as scalar regardless of k");
 });
 
 test("dispatch ids: identity is 0, direct ops are contiguous, cached ops are unmapped", () => {
-  const direct = listDirectContentOps().map((o) => o.id);
+  const direct = listInlineImageOperations().map((o) => o.id);
   assert.deepEqual(direct, ["identity", ...POINTWISE, ...COMPOSITOR], "direct set == identity + pointwise + compositor");
   assert.equal(CONTENT_OP_ID["identity"], 0, "identity must dispatch to 0 (zero-filled default)");
   assert.equal(contentOpId("identity"), 0);
@@ -134,20 +133,20 @@ test("dispatch ids: identity is 0, direct ops are contiguous, cached ops are unm
 });
 
 test("identity cpu twin is a passthrough of source slot A", () => {
-  const id = getContentOp("identity")!;
-  assert.ok(isDirectContentOp(id));
-  assert.deepEqual(id.cpu([[0.25, 0.5, 0.75]], 3), [0.25, 0.5, 0.75]);
-  assert.deepEqual(id.cpu([[0.42]], 1), [0.42]);
-  assert.deepEqual(id.cpu([[-1, 2.5, 100]], 3), [-1, 2.5, 100]);
+  const id = getImageOperation("identity")!;
+  assert.ok(isInlineImageOperation(id));
+  assert.deepEqual(id.implementation.cpu([[0.25, 0.5, 0.75]], 3), [0.25, 0.5, 0.75]);
+  assert.deepEqual(id.implementation.cpu([[0.42]], 1), [0.42]);
+  assert.deepEqual(id.implementation.cpu([[-1, 2.5, 100]], 3), [-1, 2.5, 100]);
 });
 
 test("pointwise cpu twins compute the per-channel diff math (readout source of truth)", () => {
   const a = [0.8, 0.5, 0.2];
   const b = [0.3, 0.6, 0.2];
   const get = (opId: string) => {
-    const op = getContentOp(opId)!;
-    assert.ok(isDirectContentOp(op));
-    return op.cpu([a, b], 3);
+    const op = getImageOperation(opId)!;
+    assert.ok(isInlineImageOperation(op));
+    return op.implementation.cpu([a, b], 3);
   };
   const near = (got: number[], exp: number[]) => {
     for (let i = 0; i < 3; i++) assert.ok(Math.abs(got[i]! - exp[i]!) < 1e-9, `${got} !~ ${exp}`);
@@ -162,10 +161,10 @@ test("pointwise cpu twins compute the per-channel diff math (readout source of t
 });
 
 test("relative diffs guard divide-by-zero with the 1/255 denominator floor", () => {
-  const op = getContentOp("relative_signed")!;
-  assert.ok(isDirectContentOp(op));
+  const op = getImageOperation("relative_signed")!;
+  assert.ok(isInlineImageOperation(op));
   // a=0 → denom floors to 1/255, so the value is finite (b/-denom), not Infinity.
-  const [v] = op.cpu([[0, 0, 0], [0.1, 0, 0]], 3);
+  const [v] = op.implementation.cpu([[0, 0, 0], [0.1, 0, 0]], 3);
   assert.ok(Number.isFinite(v!), "relative diff must not divide by zero");
   assert.ok(Math.abs(v! - (0 - 0.1) / (1 / 255)) < 1e-9);
 });

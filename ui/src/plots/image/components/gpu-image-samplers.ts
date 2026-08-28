@@ -23,7 +23,7 @@
  */
 import { useCallback } from "react";
 import { floatPixelReader } from "../model/pixel-buffer.ts";
-import { getContentOp, isDirectContentOp } from "../model/content-ops/index";
+import { getImageOperation, isInlineImageOperation } from "../model/content-ops/index";
 import { getDiffKernel } from "../engine/kernels/index";
 import {
   buildChannelSample,
@@ -129,8 +129,8 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
         return buildChannelSample(values, "unit", notation);
       }
       // DIRECT op — the cpu twin over the two source pixels.
-      const op = getContentOp(resolvedKernelId);
-      if (!op || !isDirectContentOp(op)) return null;
+      const op = getImageOperation(resolvedKernelId);
+      if (!op || !isInlineImageOperation(op)) return null;
       // Slot A = the primary `source` (normalized to the GPU's textureLoad).
       const readA = (): number[] | null => {
         if (hdrMode) {
@@ -165,7 +165,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
       const a = readA();
       const b = readB();
       if (!a || !b) return null;
-      return buildChannelSample(op.cpu([a, b], 3), "unit", notation);
+      return buildChannelSample(op.implementation.cpu([a, b], 3), "unit", notation);
     },
     [resolvedKernelId, hdrMode, naturalDims, hdrDataRef, sdrImageDataRef, refFloatRef, refU8Ref, diffSamplesRef, diffResultDimsRef],
   );

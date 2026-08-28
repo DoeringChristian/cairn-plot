@@ -111,7 +111,7 @@ import {
   type NormMode,
   type ReduceMode,
 } from "../model/encodings/index";
-import { getContentOp, isDirectContentOp, type DirectContentOp } from "../model/content-ops/index";
+import { getImageOperation, isInlineImageOperation, type InlineImageOperation } from "../model/content-ops/index";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isHdrProps,
@@ -144,11 +144,11 @@ const DEFAULT_PROCESSING: ImageProcessing = {
  *  declaration the GPU shader's `cairnContent` assembles from. Identity returns
  *  the sampled source channels unchanged, so the pixel pipeline is byte-for-byte
  *  as before. */
-const _identityOp = getContentOp("identity");
-if (!_identityOp || !isDirectContentOp(_identityOp)) {
+const _identityOp = getImageOperation("identity");
+if (!_identityOp || !isInlineImageOperation(_identityOp)) {
   throw new Error("CpuImagePane: the 'identity' content op must be registered as a direct op");
 }
-const IDENTITY_CONTENT: DirectContentOp = _identityOp;
+const IDENTITY_CONTENT: InlineImageOperation = _identityOp;
 
 /**
  * Tone-map the float HDR buffer into an 8-bit RGBA `ImageData`. Pure — no DOM
@@ -253,7 +253,7 @@ export function tonemapToImageData(
     // display pipeline through the content-op registry's `cpu` twin, mirroring
     // the GPU shader's `cairnContent`. Identity is a passthrough, so [r,g,b] is
     // unchanged (alpha is a coverage value, handled separately below).
-    const content = IDENTITY_CONTENT.cpu([[r, g, b]], c);
+    const content = IDENTITY_CONTENT.implementation.cpu([[r, g, b]], c);
     r = content[0]!;
     g = content[1]!;
     b = content[2]!;

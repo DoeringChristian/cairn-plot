@@ -9,14 +9,6 @@ export interface ImageFieldDescriptor {
 
 export type FieldCachePolicy = "never" | "global-lru";
 
-/** Sources -> image field. Cache policy is execution metadata on the operation,
- * not a different operation interface and never a display concern. */
-export interface ImageFieldOperationDeclaration {
-  readonly id: string;
-  readonly inputCount: number;
-  readonly cachePolicy: FieldCachePolicy;
-}
-
 /** Image field -> three display channels. Linear, ACES, Turbo and LUT-backed
  * mappings all implement this same contract; auxiliary resources are private to
  * their backend implementation. */

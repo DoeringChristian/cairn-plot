@@ -21,7 +21,7 @@
  *  - FLIP / HDR-FLIP / SSIM — arity-2 `cached` ops delegating to the matching
  *    multi-pass kernel; all diff ops use the same display default.
  */
-import { registerContentOp, type ContentOp, type DirectContentOp, type CachedContentOp } from "./registry.ts";
+import { registerImageOperation, type ImageOperation, type InlineImageOperation } from "./registry.ts";
 import { DEFAULT_DIFF_ENCODING } from "../../engine/kernels/index.ts";
 
 /**
@@ -31,19 +31,21 @@ import { DEFAULT_DIFF_ENCODING } from "../../engine/kernels/index.ts";
  * routing its content through identity renders byte-for-byte as before the
  * registry existed.
  */
-const identity: DirectContentOp = {
+const identity: InlineImageOperation = {
   id: "identity",
   label: "Identity",
-  sourceArity: 1,
+  inputCount: 1,
   cachePolicy: "never",
-  renderClass: "direct",
   outputArity: "source",
   outputRange: "light",
   defaultEncoding: "srgb",
   params: [],
   // The sampled source enters the display pipeline HERE — passthrough.
-  wgsl: "a",
-  cpu: (sources) => sources[0] as number[],
+  implementation: {
+    kind: "inline",
+    wgsl: "a",
+    cpu: (sources) => sources[0] as number[],
+  },
 };
 
 /** DENOM epsilon for the relative diffs — matches the pointwise kernels'
@@ -65,24 +67,26 @@ function pointwise(
   range: "R" | "R+",
   wgsl: string,
   f: (a: number, b: number) => number,
-): DirectContentOp {
+): InlineImageOperation {
   return {
     id,
     label,
-    sourceArity: 2,
+    inputCount: 2,
     cachePolicy: "never",
-    renderClass: "direct",
     // Scalar-error DISPLAY gating: k=1 → colormaps offered, defaultEncoding
     // applied (the per-channel error vec4 is REDUCED to the scalar the LUT indexes).
     outputArity: 1,
     outputRange: range,
     defaultEncoding: DEFAULT_DIFF_ENCODING,
     params: [],
-    wgsl,
-    cpu: (sources) => {
-      const [a0, a1, a2] = rgb3(sources[0]);
-      const [b0, b1, b2] = rgb3(sources[1]);
-      return [f(a0, b0), f(a1, b1), f(a2, b2)];
+    implementation: {
+      kind: "inline",
+      wgsl,
+      cpu: (sources) => {
+        const [a0, a1, a2] = rgb3(sources[0]);
+        const [b0, b1, b2] = rgb3(sources[1]);
+        return [f(a0, b0), f(a1, b1), f(a2, b2)];
+      },
     },
   };
 }
@@ -163,30 +167,32 @@ function compositor(
   label: string,
   wgsl: string,
   compose: (a: number, b: number, uvx: number, param: number) => number,
-): DirectContentOp {
+): InlineImageOperation {
   return {
     id,
     label,
-    sourceArity: 2,
+    inputCount: 2,
     cachePolicy: "never",
-    renderClass: "direct",
     // Light RGB composite: gates as k=3 (curves offered, luts OFF), displayed as
     // a plain image via defaultEncoding srgb.
     outputArity: 3,
     outputRange: "light",
     defaultEncoding: "srgb",
     params: [id],
-    wgsl,
-    cpu: (sources, _k, ctx) => {
-      const uvx = ctx?.uv[0] ?? 0;
-      const param = ctx?.param ?? 0;
-      const [a0, a1, a2] = rgb3(sources[0]);
-      const [b0, b1, b2] = rgb3(sources[1]);
-      return [
-        compose(a0, b0, uvx, param),
-        compose(a1, b1, uvx, param),
-        compose(a2, b2, uvx, param),
-      ];
+    implementation: {
+      kind: "inline",
+      wgsl,
+      cpu: (sources, _k, ctx) => {
+        const uvx = ctx?.uv[0] ?? 0;
+        const param = ctx?.param ?? 0;
+        const [a0, a1, a2] = rgb3(sources[0]);
+        const [b0, b1, b2] = rgb3(sources[1]);
+        return [
+          compose(a0, b0, uvx, param),
+          compose(a1, b1, uvx, param),
+          compose(a2, b2, uvx, param),
+        ];
+      },
     },
   };
 }
@@ -201,18 +207,17 @@ const split = compositor(
 );
 
 /** Build a `cached` metric op delegating to a multi-pass `engine/kernels` kernel. */
-function cached(id: string, label: string, kernelId: string): CachedContentOp {
+function cached(id: string, label: string, kernelId: string): ImageOperation {
   return {
     id,
     label,
-    sourceArity: 2,
+    inputCount: 2,
     cachePolicy: "global-lru",
-    renderClass: "cached",
     outputArity: 1, // scalar perceptual error → colormaps offered
     outputRange: "R+",
     defaultEncoding: DEFAULT_DIFF_ENCODING,
     params: [],
-    kernelId,
+    implementation: { kind: "multipass", kernelId },
   };
 }
 
@@ -224,7 +229,7 @@ const ssim = cached("ssim", "SSIM", "ssim");
  *  compositor op (split), then the three cached metrics (mirrors
  *  `engine/kernels`' bootstrap order). The DIRECT ops (identity + pointwise +
  *  split) get contiguous dispatch ids (identity → 0) in THIS order. */
-export const CONTENT_OPS: ContentOp[] = [
+export const IMAGE_OPERATIONS: ImageOperation[] = [
   identity,
   absolute,
   signed,
@@ -239,8 +244,8 @@ export const CONTENT_OPS: ContentOp[] = [
 ];
 
 let registered = false;
-export function registerContentOps(): void {
+export function registerImageOperations(): void {
   if (registered) return;
   registered = true;
-  for (const op of CONTENT_OPS) registerContentOp(op);
+  for (const op of IMAGE_OPERATIONS) registerImageOperation(op);
 }

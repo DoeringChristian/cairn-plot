@@ -5,7 +5,7 @@
  * calls `cairnContent(sampledA, sampledB, contentOpId)` so the CONTENT stage is
  * consumed THROUGH the registry.
  */
-import { getContentOp, listDirectContentOps } from "./registry.ts";
+import { getImageOperation, isInlineImageOperation, listInlineImageOperations } from "./registry.ts";
 
 /**
  * The GPU dispatch id of each `direct` content op — the value the engine packs
@@ -26,7 +26,7 @@ let ID_MAP: Record<string, number> | undefined;
 function contentOpDispatchIds(): Record<string, number> {
   if (ID_MAP) return ID_MAP;
   const map: Record<string, number> = {};
-  listDirectContentOps().forEach((op, i) => {
+  listInlineImageOperations().forEach((op, i) => {
     map[op.id] = i;
   });
   if (map["identity"] !== 0) {
@@ -78,17 +78,17 @@ export function contentOpId(id: string | undefined | null): number {
  * and the (zero) param.
  */
 export function buildContentOpWGSL(): string {
-  const direct = listDirectContentOps();
-  const identity = getContentOp("identity");
-  if (!identity || identity.renderClass !== "direct") {
+  const direct = listInlineImageOperations();
+  const identity = getImageOperation("identity");
+  if (!identity || !isInlineImageOperation(identity)) {
     throw new Error("buildContentOpWGSL: the 'identity' content op is not registered as a direct op");
   }
   const branches = direct
     .filter((op) => op.id !== "identity")
-    .map((op) => `  if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.wgsl}; }`)
+    .map((op) => `  if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.implementation.wgsl}; }`)
     .join("\n");
   return `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>, opId: i32) -> vec4<f32> {
 ${branches}
-  return ${identity.wgsl};
+  return ${identity.implementation.wgsl};
 }`;
 }

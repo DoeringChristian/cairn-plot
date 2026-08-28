@@ -5,9 +5,9 @@
  * (`renderers/CpuImagePane.tsx`) import it for that. Re-exports the registry API
  * + the GPU WGSL assembler.
  */
-import { registerContentOps } from "./ops.ts";
+import { registerImageOperations } from "./ops.ts";
 
-registerContentOps();
+registerImageOperations();
 
 export * from "./registry.ts";
 export * from "./ops.ts";

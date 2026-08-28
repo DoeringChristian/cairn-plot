@@ -28,7 +28,7 @@ import { isDeviceLostError } from "../webgpu/device";
 import { renderImage, computeMetrics, type ImageParams, type ImageOperator } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
-import { getContentOp, isDirectContentOp, contentOpId, type ContentOpCpuCtx } from "../../model/content-ops/index";
+import { getImageOperation, isInlineImageOperation, contentOpId, type ImageOperationCpuContext } from "../../model/content-ops/index";
 import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index";
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
@@ -71,8 +71,8 @@ function buildTex(device: Device, rows: number[][]): Texture {
  * within 1/255.
  */
 async function runDiffOpCase(device: Device, opId: string, encodingId: string): Promise<boolean> {
-  const op = getContentOp(opId);
-  if (!op || !isDirectContentOp(op)) {
+  const op = getImageOperation(opId);
+  if (!op || !isInlineImageOperation(op)) {
     report(false, `[${opId}] not a registered direct content op`);
     return false;
   }
@@ -117,7 +117,7 @@ async function runDiffOpCase(device: Device, opId: string, encodingId: string): 
   let ok = true;
   for (let i = 0; i < PAIRS.length; i++) {
     // CONTENT twin: the op's per-channel raw diff (the readout source of truth).
-    const content = op.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const content = op.implementation.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     // DISPLAY twin: the op's defaultEncoding cpu (reduce → colormap/analytic).
     let exp: RgbTriple;
     if (analytic) {
@@ -202,8 +202,8 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
  * two-registry composition the diff case uses.
  */
 async function runCompositorOpCase(device: Device, opId: "split", param: number): Promise<boolean> {
-  const op = getContentOp(opId);
-  if (!op || !isDirectContentOp(op)) {
+  const op = getImageOperation(opId);
+  if (!op || !isInlineImageOperation(op)) {
     report(false, `[${opId}] not a registered direct content op`);
     return false;
   }
@@ -227,8 +227,8 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
   ];
   const N = rowsA.length;
   const twin = (i: number, c: number): number => {
-    const ctx: ContentOpCpuCtx = { uv: [(i + 0.5) / N, 0.5], param };
-    return op.cpu([rowsA[i]!, rowsB[i]!], 3, ctx)[c]!;
+    const ctx: ImageOperationCpuContext = { uv: [(i + 0.5) / N, 0.5], param };
+    return op.implementation.cpu([rowsA[i]!, rowsB[i]!], 3, ctx)[c]!;
   };
 
   let ok = true;
@@ -298,8 +298,8 @@ function buildUpload(rows: number[][]): SourceUpload {
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
  */
 async function runPoolDirectOpCase(device: Device, opId: string, encodingId: string): Promise<boolean> {
-  const op = getContentOp(opId);
-  if (!op || !isDirectContentOp(op)) {
+  const op = getImageOperation(opId);
+  if (!op || !isInlineImageOperation(op)) {
     report(false, `[pool:${opId}] not a registered direct content op`);
     return false;
   }
@@ -352,7 +352,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, encodingId: str
   }
   let ok = true;
   for (let i = 0; i < PAIRS.length; i++) {
-    const content = op.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const content = op.implementation.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     let exp: RgbTriple;
     if (analytic) {
       const lin = enc.cpu(content, 3, encParams);

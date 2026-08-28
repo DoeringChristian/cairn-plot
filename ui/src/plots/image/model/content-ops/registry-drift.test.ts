@@ -14,10 +14,9 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildContentOpWGSL, getContentOp, listDirectContentOps, CONTENT_OP_ID } from "./index.ts";
+import { buildContentOpWGSL, getImageOperation, listInlineImageOperations, CONTENT_OP_ID } from "./index.ts";
 import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
-import { CONTENT_OPS } from "./ops.ts";
-import type { CachedContentOp } from "./registry.ts";
+import { IMAGE_OPERATIONS } from "./ops.ts";
 import { DEFAULT_DIFF_ENCODING, getDiffKernel } from "../../engine/kernels/index.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
@@ -44,8 +43,8 @@ test("the image shader binds the second source slot + the content-op id + compos
 });
 
 test("the assembled dispatch has identity as the fallthrough + a branch per non-identity direct op", () => {
-  const identity = getContentOp("identity")!;
-  assert.equal(identity.renderClass, "direct");
+  const identity = getImageOperation("identity")!;
+  assert.equal(identity.implementation.kind, "inline");
   const assembled = buildContentOpWGSL();
   assert.ok(
     assembled.startsWith(
@@ -53,23 +52,24 @@ test("the assembled dispatch has identity as the fallthrough + a branch per non-
     ),
   );
   // Identity is the fallthrough (opId 0 / any unmatched id → return a).
-  assert.ok(assembled.trimEnd().endsWith(`return ${(identity as { wgsl: string }).wgsl};\n}`));
+  assert.ok(identity.implementation.kind === "inline");
+  assert.ok(assembled.trimEnd().endsWith(`return ${identity.implementation.wgsl};\n}`));
   // Every non-identity direct op emits its own `if (opId == N)` branch.
-  for (const op of listDirectContentOps()) {
+  for (const op of listInlineImageOperations()) {
     if (op.id === "identity") continue;
     assert.ok(
-      assembled.includes(`if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.wgsl}; }`),
+      assembled.includes(`if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.implementation.wgsl}; }`),
       `dispatch branch missing for ${op.id}`,
     );
   }
 });
 
 test("D2 drift: every diff op uses the single shared diff default", () => {
-  const diffOps = CONTENT_OPS.filter((op) => op.sourceArity === 2 && op.outputArity === 1);
+  const diffOps = IMAGE_OPERATIONS.filter((op) => op.inputCount === 2 && op.outputArity === 1);
   assert.ok(diffOps.length >= 9, `expected the 6 pointwise + 3 cached diff ops, got ${diffOps.length}`);
   for (const op of diffOps) {
     // pointwise: op.id IS the kernel id; cached: op.kernelId.
-    const kernelId = op.renderClass === "cached" ? (op as CachedContentOp).kernelId : op.id;
+    const kernelId = op.implementation.kind === "multipass" ? op.implementation.kernelId : op.id;
     const kernel = getDiffKernel(kernelId);
     assert.ok(kernel, `diff op "${op.id}" must map to a registered kernel "${kernelId}"`);
     assert.equal(op.defaultEncoding, DEFAULT_DIFF_ENCODING);
@@ -80,7 +80,7 @@ test("D2: compositor/identity ops keep a NON-kernel literal encoding (no kernel 
   // identity + split have no kernel — their `defaultEncoding` is a legitimate
   // standalone literal (srgb), NOT part of the derived diff subset.
   for (const id of ["identity", "split"]) {
-    const op = getContentOp(id)!;
+    const op = getImageOperation(id)!;
     assert.equal(op.defaultEncoding, "srgb", `${id} should keep its literal srgb encoding`);
     assert.equal(getDiffKernel(id), undefined, `${id} must not be a diff kernel`);
   }
