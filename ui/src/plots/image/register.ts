@@ -54,13 +54,15 @@ export function ensureImagePlotType(
     present: (content) => content,
     comparison: {
       presentations: [
-        { id: "split", label: "Split", minOperands: 2, maxOperands: 2 },
-        { id: "difference", label: "Difference", minOperands: 2, maxOperands: 2 },
+        { id: "split", label: "Split", minOperands: 2 },
+        { id: "difference", label: "Difference", minOperands: 2 },
       ],
-      accepts(node) {
+      strategies: [{ id: "reference", minOperands: 2, requiresReference: true }],
+      defaultStrategy: "reference",
+      accepts(request) {
         try {
-          validateImageData(node.a);
-          validateImageData(node.b);
+          if (request.strategy !== "reference") throw new Error("image comparison requires a reference");
+          for (const operand of request.operands) validateImageData(operand);
           return { accepted: true };
         } catch (error) {
           return {

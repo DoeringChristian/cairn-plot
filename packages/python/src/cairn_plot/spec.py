@@ -195,8 +195,12 @@ class CompareSpec(_Strict):
     presentation: Optional[str] = None
     # Legacy image spelling. New comparison kinds use ``presentation``.
     mode: Optional[Literal["split", "diff"]] = None
-    a: DataSpec
-    b: DataSpec
+    operands: Optional[list[DataSpec]] = None
+    strategy: Optional[Literal["reference", "all"]] = None
+    referenceIndex: Optional[int] = None
+    # Legacy two-operand form, accepted at the boundary and normalized by JS.
+    a: Optional[DataSpec] = None
+    b: Optional[DataSpec] = None
     baselineIndex: Optional[Literal[0, 1]] = None
     diffSubmode: Optional[str] = None
     align: Optional[Literal["top-left", "center", "top-right", "bottom-left", "bottom-right"]] = None

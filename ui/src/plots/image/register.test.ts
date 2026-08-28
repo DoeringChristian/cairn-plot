@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { claimPlotKind } from "../kind-ownership.ts";
-import { clearPlotTypesForTest, requirePlotType } from "../registry.ts";
+import { clearPlotTypesForTest, planComparison, requirePlotType } from "../registry.ts";
 import { clearReactPlotTypesForTest, getReactPlotType } from "../react-registry.ts";
 import { ensureImagePlotType } from "./register.ts";
 
@@ -18,18 +18,18 @@ test("image is exclusively owned by the typed plot registry", () => {
   const comparison = requirePlotType("image").comparison;
   assert.ok(comparison, "image definition owns comparison semantics");
   assert.deepEqual(comparison.presentations.map((entry) => entry.id), ["split", "difference"]);
-  assert.equal(comparison.accepts({
+  assert.equal(planComparison({
     kind: "compare",
     mode: "split",
     a: { kind: "image", hash: "a" },
     b: { kind: "url", src: "data:image/png;base64," },
-  }).accepted, true);
-  assert.equal(comparison.accepts({
-    kind: "compare",
-    mode: "split",
-    a: { kind: "image", hash: "a" },
-    b: { kind: "npz", hash: "mesh", objectType: "mesh", meta: {} },
-  }).accepted, false);
+  }).plan.outputs.length, 1);
+  assert.throws(() => planComparison({
+      kind: "compare",
+      mode: "split",
+      a: { kind: "image", hash: "a" },
+      b: { kind: "npz", hash: "mesh", objectType: "mesh", meta: {} },
+    }), /does not accept data kind/);
   assert.throws(() => claimPlotKind("image", "legacy-renderer"), /already owned by definition/);
 
   const legacySource = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");

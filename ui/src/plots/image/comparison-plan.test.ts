@@ -1,21 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { CompareNode } from "../../../../packages/spec/src/spec.ts";
+import type { ComparisonRequest } from "../contracts.ts";
 import { planImageComparison } from "./comparison-plan.ts";
 
 const image = (hash: string) => ({ kind: "image" as const, hash });
 
 test("image comparison planning owns baseline ordering and presentation", () => {
-  const node: CompareNode = {
-    kind: "compare",
-    mode: "diff",
-    a: image("a"),
-    b: image("b"),
-    baselineIndex: 1,
+  const request: ComparisonRequest = {
+    renderer: "image",
+    operands: [image("a"), image("b")],
+    strategy: "reference",
+    referenceIndex: 1,
+    presentation: "difference",
     props: { labelA: "candidate", labelB: "reference" },
   };
-  const plan = planImageComparison(node);
+  const plan = planImageComparison(request).outputs[0]!;
   assert.equal(plan.presentation, "difference");
   assert.equal((plan.reference as { hash: string }).hash, "b");
   assert.equal((plan.foreground as { hash: string }).hash, "a");
@@ -24,8 +24,16 @@ test("image comparison planning owns baseline ordering and presentation", () => 
   assert.equal(plan.leaf.data, plan.reference);
 });
 
-test("image comparison plans are identity-stable for cache-safe stack flips", () => {
-  const node: CompareNode = { kind: "compare", mode: "split", a: image("a"), b: image("b") };
-  assert.equal(planImageComparison(node), planImageComparison(node));
-  assert.equal(planImageComparison(node).leaf, planImageComparison(node).leaf);
+test("image reference comparison plans one output per non-reference operand", () => {
+  const result = planImageComparison({
+    renderer: "image",
+    operands: [image("a"), image("b"), image("c")],
+    strategy: "reference",
+    referenceIndex: 1,
+    presentation: "split",
+    props: {},
+  });
+  assert.equal(result.layout, "grid");
+  assert.deepEqual(result.outputs.map((plan) => (plan.foreground as { hash: string }).hash), ["a", "c"]);
+  assert.ok(result.outputs.every((plan) => plan.reference === result.outputs[0]!.reference));
 });

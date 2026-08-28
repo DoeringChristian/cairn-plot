@@ -51,10 +51,12 @@ export function ensureScalarPlotType(
     resolve: (spec, context) => resolve(spec, context.source),
     present: (content) => content,
     comparison: {
-      presentations: [{ id: "overlay", label: "Overlay", minOperands: 2, maxOperands: 2 }],
-      accepts(node) {
+      presentations: [{ id: "overlay", label: "Overlay", minOperands: 2 }],
+      strategies: [{ id: "all", minOperands: 2, requiresReference: false }],
+      defaultStrategy: "all",
+      accepts(request) {
         try {
-          planScalarComparison(node);
+          planScalarComparison(request);
           return { accepted: true };
         } catch (error) {
           return { accepted: false, reason: error instanceof Error ? error.message : String(error) };
@@ -62,11 +64,10 @@ export function ensureScalarPlotType(
       },
       plan: planScalarComparison,
       async resolve(plan, context) {
-        const [a, b] = await Promise.all([
-          resolve(plan.a, context.source),
-          resolve(plan.b, context.source),
-        ]);
-        return overlayScalarPresentations(plan, a, b);
+        const presentations = await Promise.all(
+          plan.operands.map((operand) => resolve(operand, context.source)),
+        );
+        return overlayScalarPresentations(plan, presentations);
       },
     },
     backends: [],

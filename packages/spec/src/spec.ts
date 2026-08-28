@@ -43,8 +43,14 @@ export interface CompareNode {
   presentation?: string;
   /** Legacy image spelling. New descriptors should use `presentation`. */
   mode?: "split" | "diff";
-  a: DataSpec;
-  b: DataSpec;
+  /** Ordered comparison inputs. New descriptors should use this form. */
+  operands?: DataSpec[];
+  /** How the plot definition groups the operands into visible outputs. */
+  strategy?: "reference" | "all";
+  referenceIndex?: number;
+  /** Legacy two-operand inputs, normalized immediately by the runtime. */
+  a?: DataSpec;
+  b?: DataSpec;
   baselineIndex?: 0 | 1;
   diffSubmode?: string;
   align?: "top-left" | "center" | "top-right" | "bottom-left" | "bottom-right";

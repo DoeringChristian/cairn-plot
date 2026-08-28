@@ -146,7 +146,15 @@ function nonSelectable(node: PlotNode): PlotNode {
  *  own `data`; a compare pane gives its FOREGROUND side (the non-baseline one). */
 function operandDataSpec(node: PlotNode): DataSpec | null {
   if (node.kind === "plot") return node.data;
-  if (node.kind === "compare") return (node.baselineIndex ?? 0) === 0 ? node.b : node.a;
+  if (node.kind === "compare") {
+    const operands = node.operands?.length
+      ? node.operands
+      : node.a && node.b
+        ? [node.a, node.b]
+        : [];
+    const referenceIndex = node.referenceIndex ?? node.baselineIndex ?? 0;
+    return operands.find((_, index) => index !== referenceIndex) ?? null;
+  }
   return null;
 }
 

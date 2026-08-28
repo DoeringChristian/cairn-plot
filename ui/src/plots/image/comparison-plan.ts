@@ -8,6 +8,7 @@ import type {
   CompareFit,
 } from "../../lib/cairn-plot/renderers/image-backend.ts";
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
+import type { ComparisonPlan, ComparisonRequest } from "../contracts.ts";
 import { planComparison } from "../registry.ts";
 
 export type ImageComparisonPresentation = "split" | "difference";
@@ -25,7 +26,7 @@ export function normalizeImageComparisonPresentation(
     }
     return "split";
   }
-  return mode === "diff" ? "difference" : "split";
+  return mode === "diff" || mode === "difference" ? "difference" : "split";
 }
 
 export interface ImageComparisonPlan {
@@ -41,46 +42,53 @@ export interface ImageComparisonPlan {
   readonly foregroundLabel?: string;
 }
 
-const plans = new WeakMap<CompareNode, ImageComparisonPlan>();
-
 /**
  * Interpret an authored comparison into image semantics. Layout receives one
  * ordinary image leaf plus ordered operands; it does not choose baselines,
  * labels, or presentation meaning itself.
  */
-export function planImageComparison(node: CompareNode): ImageComparisonPlan {
-  let plan = plans.get(node);
-  if (plan) return plan;
-
-  const baselineIndex = node.baselineIndex ?? 0;
-  const reference = baselineIndex === 0 ? node.a : node.b;
-  const foreground = baselineIndex === 0 ? node.b : node.a;
-  const props = node.props ?? {};
+export function planImageComparison(
+  request: ComparisonRequest,
+): ComparisonPlan<ImageComparisonPlan> {
+  if (request.strategy !== "reference" || request.referenceIndex === undefined) {
+    throw new Error("cairn-plot: image comparison requires a reference strategy");
+  }
+  const referenceIndex = request.referenceIndex;
+  const props = request.props;
   const labelA = typeof props.labelA === "string" ? props.labelA : undefined;
   const labelB = typeof props.labelB === "string" ? props.labelB : undefined;
+  const labels = Array.isArray(props.labels) ? props.labels : [];
   const legacyLabel = typeof props.label === "string" ? props.label : undefined;
-  const leafProps: NonNullable<PlotLeafNode["props"]> = {
-    interpolation: (props.interpolation as string | undefined) ?? "auto",
-    showAxes: (props.showAxes as boolean | undefined) ?? false,
+  const labelAt = (index: number): string | undefined => {
+    const label = labels[index];
+    if (typeof label === "string") return label;
+    if (request.operands.length === 2) return index === 0 ? labelA : labelB;
+    return undefined;
   };
-  if (props.toolbar !== undefined) leafProps.toolbar = props.toolbar;
-  if (props.pixelValueNotation !== undefined) leafProps.pixelValueNotation = props.pixelValueNotation;
-  if (props.processing !== undefined) leafProps.processing = props.processing;
-  if (typeof props.height === "number") leafProps.height = props.height;
-
-  plan = {
-    presentation: normalizeImageComparisonPresentation(node.presentation ?? node.mode),
-    reference,
-    foreground,
-    fgData: foreground,
-    leaf: { kind: "plot", renderer: "image", data: reference, props: leafProps },
-    align: node.align,
-    fit: node.fit,
-    referenceLabel: baselineIndex === 0 ? labelA : labelB,
-    foregroundLabel: (baselineIndex === 0 ? labelB : labelA) ?? legacyLabel,
-  };
-  plans.set(node, plan);
-  return plan;
+  const reference = request.operands[referenceIndex]!;
+  const outputs = request.operands.flatMap((foreground, index) => {
+    if (index === referenceIndex) return [];
+    const leafProps: NonNullable<PlotLeafNode["props"]> = {
+      interpolation: (props.interpolation as string | undefined) ?? "auto",
+      showAxes: (props.showAxes as boolean | undefined) ?? false,
+    };
+    if (props.toolbar !== undefined) leafProps.toolbar = props.toolbar;
+    if (props.pixelValueNotation !== undefined) leafProps.pixelValueNotation = props.pixelValueNotation;
+    if (props.processing !== undefined) leafProps.processing = props.processing;
+    if (typeof props.height === "number") leafProps.height = props.height;
+    return [{
+      presentation: normalizeImageComparisonPresentation(request.presentation),
+      reference,
+      foreground,
+      fgData: foreground,
+      leaf: { kind: "plot" as const, renderer: "image", data: reference, props: leafProps },
+      align: props.align as CompareAlign | undefined,
+      fit: props.fit as CompareFit | undefined,
+      referenceLabel: labelAt(referenceIndex),
+      foregroundLabel: labelAt(index) ?? legacyLabel,
+    }];
+  });
+  return { outputs, layout: outputs.length === 1 ? "single" : "grid" };
 }
 
 /** Checked adapter while the production host has only an image comparison UI. */
@@ -91,7 +99,10 @@ export function planRegisteredImageComparison(node: CompareNode): ImageCompariso
       `cairn-plot: comparison host for ${JSON.stringify(planned.renderer)} is not installed`,
     );
   }
-  return planned.plan as ImageComparisonPlan;
+  if (planned.plan.outputs.length !== 1) {
+    throw new Error(`cairn-plot: image comparison host expected one output, got ${planned.plan.outputs.length}`);
+  }
+  return planned.plan.outputs[0] as ImageComparisonPlan;
 }
 
 /** Resolve through the registered capability; the host never calls image decode directly. */
@@ -106,5 +117,8 @@ export async function resolveRegisteredImageComparison(
       `cairn-plot: comparison host for ${JSON.stringify(planned.renderer)} is not installed`,
     );
   }
-  return planned.capability.resolve(planned.plan, { source, signal }) as Promise<Record<string, unknown>>;
+  if (planned.plan.outputs.length !== 1) {
+    throw new Error(`cairn-plot: image comparison host expected one output, got ${planned.plan.outputs.length}`);
+  }
+  return planned.capability.resolve(planned.plan.outputs[0], { source, signal }) as Promise<Record<string, unknown>>;
 }

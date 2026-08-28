@@ -382,8 +382,27 @@
           ],
           "description": "Legacy image spelling. New descriptors should use `presentation`."
         },
+        "operands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DataSpec"
+          },
+          "description": "Ordered comparison inputs. New descriptors should use this form."
+        },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "reference",
+            "all"
+          ],
+          "description": "How the plot definition groups the operands into visible outputs."
+        },
+        "referenceIndex": {
+          "type": "number"
+        },
         "a": {
-          "$ref": "#/definitions/DataSpec"
+          "$ref": "#/definitions/DataSpec",
+          "description": "Legacy two-operand inputs, normalized immediately by the runtime."
         },
         "b": {
           "$ref": "#/definitions/DataSpec"
@@ -420,9 +439,7 @@
         }
       },
       "required": [
-        "kind",
-        "a",
-        "b"
+        "kind"
       ],
       "additionalProperties": false
     }

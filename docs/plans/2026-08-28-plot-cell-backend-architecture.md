@@ -59,6 +59,10 @@ Status: accepted design; implementation in progress
   implement its `overlay` comparison by combining uniquely keyed series into
   one scalar backend presentation. Scalar zoom/pan now projects through the
   cell's `chart.domainX`/`chart.domainY` settings when hosted.
+- [x] Generalize comparison authoring and capability planning to ordered
+  `operands`, plot-declared `reference`/`all` strategies, optional reference,
+  and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry
+  boundary; image plans N−1 reference pairs while scalar plans one N-way merge.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
@@ -217,9 +221,40 @@ losing cell settings.
 
 ## Comparison
 
-A comparison contains plot operands and an optional presentation name. The
-compatible plot definition decides operand compatibility and count, resolution,
-composition, settings, controls, and supported presentations.
+A comparison contains an ordered operand list, an optional presentation name,
+an optional reference, and a grouping strategy. The compatible plot definition
+decides operand compatibility and count, resolution, composition, settings,
+controls, supported presentations, and how many visible outputs are planned.
+
+```ts
+interface ComparisonRequest {
+  operands: readonly DataSpec[];
+  strategy: "reference" | "all";
+  referenceIndex?: number;
+  presentation?: string;
+}
+
+interface ComparisonPlan<TOutputPlan> {
+  outputs: readonly TOutputPlan[];
+  layout: "single" | "grid";
+}
+```
+
+The durable `CompareNode` uses `operands`, `strategy`, and `referenceIndex`.
+Legacy `a`, `b`, and `baselineIndex` are accepted only at normalization and are
+never exposed to plot capabilities.
+
+The distinction is plot-defined:
+
+- image `reference`: N operands plan N−1 pairwise image outputs against the
+  reference; image `all` is rejected until an image presentation supports it;
+- scalar `all`: N operands plan one merged scalar output;
+- scalar `reference`: may plan one reference-emphasized merge or several
+  outputs when that presentation is implemented;
+- future table/mesh plot definitions declare their own strategy and arity.
+
+Selection and stage code supplies operands, strategy, and reference. It never
+constructs plot-specific pairs itself.
 
 Examples:
 

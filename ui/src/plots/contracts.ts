@@ -1,5 +1,5 @@
 import type { JsonValue } from "../../../packages/spec/src/json.ts";
-import type { CompareNode, DataSpec, PlotLeafNode } from "../../../packages/spec/src/spec.ts";
+import type { DataSpec, PlotLeafNode } from "../../../packages/spec/src/spec.ts";
 import type { PlotBackend } from "../backends/contracts.ts";
 import type { DataSource } from "../lib/cairn-plot/store/data-sources.ts";
 
@@ -23,7 +23,29 @@ export interface ComparisonPresentationDefinition {
   readonly id: string;
   readonly label: string;
   readonly minOperands: number;
-  readonly maxOperands: number;
+  readonly maxOperands?: number;
+}
+
+export interface ComparisonStrategyDefinition {
+  readonly id: "reference" | "all";
+  readonly minOperands: number;
+  readonly maxOperands?: number;
+  readonly requiresReference: boolean;
+}
+
+/** Normalized comparison intent. Plot definitions never inspect legacy a/b. */
+export interface ComparisonRequest {
+  readonly renderer: string;
+  readonly operands: readonly DataSpec[];
+  readonly strategy: "reference" | "all";
+  readonly referenceIndex?: number;
+  readonly presentation?: string;
+  readonly props: Readonly<Record<string, JsonValue>>;
+}
+
+export interface ComparisonPlan<TOutputPlan> {
+  readonly outputs: readonly TOutputPlan[];
+  readonly layout: "single" | "grid";
 }
 
 export interface ComparisonAcceptance {
@@ -36,8 +58,10 @@ export interface ComparisonCapability<
   TPresentation,
 > {
   readonly presentations: readonly ComparisonPresentationDefinition[];
-  accepts(node: CompareNode): ComparisonAcceptance;
-  plan(node: CompareNode): TPlan;
+  readonly strategies: readonly ComparisonStrategyDefinition[];
+  readonly defaultStrategy: "reference" | "all";
+  accepts(request: ComparisonRequest): ComparisonAcceptance;
+  plan(request: ComparisonRequest): ComparisonPlan<TPlan>;
   resolve(plan: TPlan, context: ResolveContext): Promise<TPresentation>;
 }
 

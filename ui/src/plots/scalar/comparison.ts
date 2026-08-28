@@ -1,13 +1,12 @@
-import type { CompareNode, DataSpec } from "../../../../packages/spec/src/spec.ts";
+import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
+import type { ComparisonPlan, ComparisonRequest } from "../contracts.ts";
 
 export type ScalarSpec = Extract<DataSpec, { kind: "inline" }>;
 export type ScalarPresentation = Record<string, unknown>;
 
 export interface ScalarComparisonPlan {
-  readonly a: ScalarSpec;
-  readonly b: ScalarSpec;
-  readonly labelA: string;
-  readonly labelB: string;
+  readonly operands: readonly ScalarSpec[];
+  readonly labels: readonly string[];
 }
 
 export function validateScalarData(value: DataSpec): ScalarSpec {
@@ -17,16 +16,29 @@ export function validateScalarData(value: DataSpec): ScalarSpec {
   return value;
 }
 
-export function planScalarComparison(node: CompareNode): ScalarComparisonPlan {
-  const presentation = node.presentation ?? "overlay";
+export function planScalarComparison(
+  request: ComparisonRequest,
+): ComparisonPlan<ScalarComparisonPlan> {
+  const presentation = request.presentation ?? "overlay";
   if (presentation !== "overlay") {
     throw new Error(`cairn-plot: scalar comparison does not support ${JSON.stringify(presentation)}`);
   }
+  if (request.strategy !== "all") {
+    throw new Error("cairn-plot: scalar overlay comparison requires the all strategy");
+  }
+  const authoredLabels = Array.isArray(request.props.labels) ? request.props.labels : [];
+  const labels = request.operands.map((_, index) => {
+    const authored = authoredLabels[index];
+    if (typeof authored === "string") return authored;
+    if (request.operands.length === 2) {
+      const legacy = index === 0 ? request.props.labelA : request.props.labelB;
+      if (typeof legacy === "string") return legacy;
+    }
+    return String.fromCharCode(65 + index);
+  });
   return {
-    a: validateScalarData(node.a),
-    b: validateScalarData(node.b),
-    labelA: typeof node.props?.labelA === "string" ? node.props.labelA : "A",
-    labelB: typeof node.props?.labelB === "string" ? node.props.labelB : "B",
+    outputs: [{ operands: request.operands.map(validateScalarData), labels }],
+    layout: "single",
   };
 }
 
@@ -44,14 +56,13 @@ function prefixedSeries(value: ScalarPresentation, prefix: string, side: string)
 /** Overlay both operands as uniquely keyed series in one scalar presentation. */
 export function overlayScalarPresentations(
   plan: ScalarComparisonPlan,
-  a: ScalarPresentation,
-  b: ScalarPresentation,
+  presentations: readonly ScalarPresentation[],
 ): ScalarPresentation {
+  const first = presentations[0] ?? {};
   return {
-    ...a,
-    series: [
-      ...prefixedSeries(a, plan.labelA, "a"),
-      ...prefixedSeries(b, plan.labelB, "b"),
-    ],
+    ...first,
+    series: presentations.flatMap((presentation, index) =>
+      prefixedSeries(presentation, plan.labels[index] ?? String(index + 1), String(index))
+    ),
   };
 }

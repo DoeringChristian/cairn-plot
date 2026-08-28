@@ -19,8 +19,15 @@ test("scalar definition registers overlay comparison through the typed registry"
     a: { kind: "inline" as const, props: { series: [] } },
     b: { kind: "inline" as const, props: { series: [] } },
   };
-  const plan = definition.comparison!.plan(node);
-  const result = await definition.comparison!.resolve(plan, {
+  const request = {
+    renderer: "scalar",
+    operands: [node.a, node.b],
+    strategy: "all" as const,
+    presentation: "overlay",
+    props: {},
+  };
+  const plan = definition.comparison!.plan(request);
+  const result = await definition.comparison!.resolve(plan.outputs[0], {
     source: { artifactUrl: () => null, bytes: async () => new ArrayBuffer(0) },
     signal: new AbortController().signal,
   });
