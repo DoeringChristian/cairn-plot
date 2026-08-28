@@ -23,7 +23,6 @@ import { Colorbar } from "../primitives/components/index";
 import type { ColormapName } from "../plots/types";
 import type { CompareSource } from "../plots/image/backends/contracts";
 import {
-  resolveDataProps,
   type CompareNode,
   type GridNode,
   type PlotLeafNode,
@@ -264,12 +263,13 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     }
     void resolveCached(key, async () => {
       const registered = getReactPlotType(node.type);
-      const dp = registered
-        ? registered.definition.present(await registered.definition.resolve(
-            { ...node, data: effectiveData },
-            { source, signal: new AbortController().signal },
-          )) as Record<string, unknown>
-        : await resolveDataProps(effectiveData, source);
+      if (!registered) {
+        throw new Error(`cairn-plot: plot type ${JSON.stringify(node.type)} is not registered`);
+      }
+      const dp = registered.definition.present(await registered.definition.resolve(
+        { ...node, data: effectiveData },
+        { source, signal: new AbortController().signal },
+      )) as Record<string, unknown>;
       // FORMAT-AGNOSTIC channel selection: EXR selects at decode (dp.exrTree present —
       // the selector already rode `effectiveData`); everything else is an N-channel
       // array and the selection is a pure post-decode SLICE.
@@ -541,7 +541,16 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
         if (child.kind === "plot") {
           entries.push({
             key: resolutionKey(source, child),
-            run: () => resolveDataProps(child.data, source),
+            run: async () => {
+              const registered = getReactPlotType(child.type);
+              if (!registered) {
+                throw new Error(`cairn-plot: plot type ${JSON.stringify(child.type)} is not registered`);
+              }
+              return registered.definition.present(await registered.definition.resolve(child, {
+                source,
+                signal: new AbortController().signal,
+              }));
+            },
           });
         } else if (child.kind === "compare") {
           if (comparisonType(child) === "image") {
@@ -842,8 +851,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
     mode: control.viewMode,
     diffKernel: control.diffKernel,
     colormap: ((paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
-      (node.props?.colormap as CompareSource["colormap"]) ??
-      (shared?.settings?.["image.encoding"] as CompareSource["colormap"]) ??
+      (defaultSettingsForNode(node, shared)["image.encoding"] as CompareSource["colormap"] | undefined) ??
       "none") as CompareSource["colormap"],
     splitPosition: control.splitPos,
     align: synth.align,
