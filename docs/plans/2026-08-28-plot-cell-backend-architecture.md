@@ -21,7 +21,8 @@ Status: accepted design; implementation in progress
 - [x] Replace the legacy unbounded resolution storage with the lease-aware
   runtime cache; visible leaves pin leases while adjacent preloads stay
   evictable and retry silently after background failure.
-- [ ] Implement branch-retaining grid/stack sessions and optional persistence.
+- [x] Implement versioned branch-retaining grid/stack sessions, imperative
+  import/export/subscription, and opt-in external persistence.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
@@ -241,10 +242,12 @@ Cache content is runtime-only and is never serialized.
 
 ## Session and persistence
 
-The in-memory session contains cell settings, grid/stack presentation, active
-stack slots, retained grid and stack branches, selection, links, and stage
-state. It excludes caches, errors, resolved content, backend IDs, handles, and
-GPU state.
+The in-memory session currently contains cell settings, grid/stack
+presentation, active stack slots, and retained grid and stack branches. It
+excludes caches, errors, resolved content, backend IDs, handles, and GPU state.
+Selection and stage remain page-global and ephemeral until their ownership is
+scoped to an individual plot root; serializing them into one plot session now
+would be incorrect. Links remain authored intent.
 
 The public controller provides `getSession` and `restoreSession`. Persistence is
 an optional injected adapter and is disabled by default. Disabling persistence
@@ -258,7 +261,9 @@ interface SessionPersistence {
 }
 ```
 
-Sessions are versioned and migrated on restore.
+Sessions are versioned and migrated on restore. Persistence writes are
+serialized, collapse to the latest pending snapshot, and never overwrite saved
+state while an asynchronous load is pending.
 
 ## Migration sequence
 

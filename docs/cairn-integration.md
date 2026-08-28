@@ -18,6 +18,7 @@ Imperative hosts use the same implementation:
 ```ts
 const plot = mountPlot(element, { descriptor, dataSource });
 plot.update({ descriptor: nextDescriptor, dataSource });
+saveWorkspace(plot.getSession());
 plot.destroy();
 ```
 
@@ -28,10 +29,12 @@ decoding, resources and concrete renderers.
 
 Cairn must not import viewport stores, renderer components, registries, camera
 synchronization or comparison internals. The supported browser exports are
-`PlotHost`, `mountPlot`, `createEndpointDataSource`, `DataSource`, and the
-recursive descriptor types. Plot session hydration is intentionally not yet a
-public promise; Cairn continues to persist its authored/card inputs until that
-contract is implemented end to end.
+`PlotHost`, `mountPlot`, `createEndpointDataSource`, `DataSource`, the recursive
+descriptor types, `PlotSession`, and `SessionPersistence`. Cairn may hydrate a
+versioned runtime session explicitly with `initialSession`/`restoreSession`, or
+inject a persistence adapter. Persistence is disabled by default and can be
+made explicit with `persistence={false}`; this never disables the in-memory
+session or manual import/export.
 
 The injected fetch function is used for byte/decode requests. `artifactUrl`
 must still return a URL that browser elements can load directly (for example a

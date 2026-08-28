@@ -10,6 +10,7 @@ import { createPlotSessionController, type PlotSessionController } from "./state
 import { PlotSessionContext } from "./state/session/session-context.ts";
 import { compileSessionTopology } from "./state/session/session-topology.ts";
 import type { PlotSession } from "./state/session/plot-session.ts";
+import { connectSessionPersistence, type SessionPersistence } from "./state/session/session-persistence.ts";
 
 export interface PlotSurfaceProps {
   descriptor: PlotDescriptor;
@@ -18,6 +19,8 @@ export interface PlotSurfaceProps {
   autoHeight?: boolean;
   initialSession?: PlotSession;
   onSessionChange?: (session: PlotSession) => void;
+  /** External storage is opt-in; omission or false keeps the session runtime-only. */
+  persistence?: SessionPersistence | false;
   /** Advanced lifecycle injection used by the imperative host. */
   sessionController?: PlotSessionController;
 }
@@ -30,6 +33,7 @@ export function PlotSurface({
   autoHeight = true,
   initialSession,
   onSessionChange,
+  persistence,
   sessionController,
 }: PlotSurfaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -45,6 +49,13 @@ export function PlotSurface({
     controller.setTopology(topology);
   }, [controller, topology]);
   useEffect(() => onSessionChange ? controller.subscribe(onSessionChange) : undefined, [controller, onSessionChange]);
+  useEffect(() => {
+    if (!persistence) return;
+    const connection = connectSessionPersistence(controller, persistence, {
+      skipLoad: initialSession !== undefined,
+    });
+    return () => connection.dispose();
+  }, [controller, persistence, initialSession]);
   useEffect(() => () => {
     if (!sessionController) ownedControllerRef.current?.destroy();
   }, [sessionController]);
