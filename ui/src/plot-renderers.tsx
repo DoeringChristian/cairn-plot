@@ -27,28 +27,16 @@
 import { floatPixelsFrom } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import {
   useContext,
-  useEffect,
-  useSyncExternalStore,
 } from "react";
 import { ensureBarPlotType } from "./plots/bar/register";
 import { ensureHistogramPlotType } from "./plots/histogram/register";
 import { ensureHeatmapPlotType } from "./plots/heatmap/register";
 import { ensureParallelPlotType } from "./plots/parallel/register";
 import { ensureTablePlotType } from "./plots/table/register";
-import CpuImagePane from "./lib/cairn-plot/renderers/CpuImagePane";
-import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
-import {
-  ensureGpuImageProbe,
-  gpuImageGateState,
-  subscribeGpuImageGate,
-} from "./lib/cairn-plot/renderers/gpu-image-gate";
 import {
   resolveRenderMode,
   shapeDims,
-  type ImageBackend,
-  type RenderMode,
 } from "./lib/cairn-plot/renderers/image-backend";
-import { warnGpuUnavailable } from "./lib/cairn-plot/primitives/capability-notice";
 import { useImageView } from "./lib/cairn-plot/settings/use-image-view";
 import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
 import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
@@ -67,90 +55,11 @@ import { ParallelPlotView } from "./plots/parallel/view.tsx";
 import { ScatterPlotView } from "./plots/scatter/view.tsx";
 import { TablePlotView } from "./plots/table/view.tsx";
 import { ScalarPlotView } from "./plots/scalar/view.tsx";
+import { useImageBackend } from "./plots/image/backend-select.ts";
 import { resolveDataProps } from "./plot-descriptor.ts";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
 type P = Record<string, any>;
-
-// ---------------------------------------------------------------------------
-// resolveImageRenderer — the render-mode BACKEND seam for the standalone
-// image path (formalized from Task 8's WebGPU-or-legacy check; see
-// `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`). Two
-// interchangeable backends — `CpuImagePane` (CPU/2D-canvas) and
-// `GpuImagePane` (WebGPU engine) — accept the SAME `ImageBackendProps`
-// (`lib/cairn-plot/renderers/image-backend.ts`); THIS is where one is chosen
-// per mount, by the user-settable `RenderMode` (cpu | gpu | auto — see
-// `resolveRenderMode` for the prop → window global → `?render=` → "auto"
-// precedence). The rest of the app is backend-agnostic.
-//
-// The RUNTIME safety net (a mounted `GpuImagePane` that fails mid-render
-// self-heals to `CpuImagePane` — the C1 fix, `GpuImagePane.tsx`'s
-// `engineFailed` state) is a SEPARATE, later line of defense — both land on
-// the same CPU backend, so a page never blanks whether WebGPU is simply
-// unavailable (this seam) or available-but-fails-at-runtime (C1).
-//
-// `GpuImagePane` ships IN core (addon-fold ruling 2026-08-26) — the async
-// part that remains is DEVICE acquisition, owned by `gpu-image-gate.ts`:
-// image surfaces render the CPU backend until the probe settles, then flip.
-// Warn once (not per render) when `"gpu"` is forced but the engine backend
-// is genuinely unavailable and the CPU backend is substituted.
-let warnedForcedGpuUnavailable = false;
-
-/**
- * Resolves the image BACKEND component to render THIS mount, by `mode`:
- *   - `"cpu"`  → `CpuImagePane`, always.
- *   - `"gpu"`  → the engine's `GpuImagePane` if the gpu-image addon has
- *     registered it (`window.__cairnPlotGpuImagePane`, set once
- *     `getSharedDevice()` resolves — bypassing the `__cairnPlotUseGpuImage`
- *     opt-out, since an explicit force outranks the default gate); if the
- *     addon/WebGPU is genuinely unavailable, `console.warn` once and fall
- *     back to `CpuImagePane` — never a blank pane.
- *   - `"auto"` → today's behavior: `GpuImagePane` when the addon has loaded
- *     AND the capability flag is on (`__cairnPlotUseGpuImage === true`),
- *     else `CpuImagePane` — covering "addon hasn't run yet", "opted out",
- *     and "`getSharedDevice()` rejected" uniformly.
- *
- * Implemented as a React hook (despite the name — no `use` prefix, since
- * this is the seam's public name, not just an internal implementation
- * detail) because it must re-render the caller once, the instant the addon
- * finishes, via the `GPU_IMAGE_READY_EVENT` it dispatches — fixing the
- * async-registration race where the addon's `getSharedDevice()` check
- * resolves AFTER this component's first paint. Return type is the shared
- * `ImageBackend` interface (`image-backend.ts`) — both backends this
- * resolves between accept the same `ImageBackendProps` shape.
- */
-function resolveImageRenderer(mode: RenderMode): ImageBackend {
-  const gate = useSyncExternalStore(subscribeGpuImageGate, gpuImageGateState, gpuImageGateState);
-  // Kick the LAZY device probe from the first image surface (an effect, so
-  // render stays pure; idempotent afterwards).
-  useEffect(() => {
-    if (mode !== "cpu") ensureGpuImageProbe();
-  }, [mode]);
-  if (typeof window === "undefined" || mode === "cpu") return CpuImagePane;
-  if (mode === "gpu") {
-    if (gate === "ready") return GpuImagePane;
-    // WebGPU GENUINELY absent (`navigator.gpu` hidden — unsupported browser OR
-    // an insecure origin, which `[SecureContext]`-gates it away) → the shared
-    // bootstrap-level, two-case, once-per-page warn. `unknown` = the probe
-    // hasn't settled yet — the flip to the engine pane follows automatically.
-    if (gate === "unavailable") {
-      if (!("gpu" in navigator)) {
-        warnGpuUnavailable();
-      } else if (!warnedForcedGpuUnavailable) {
-        warnedForcedGpuUnavailable = true;
-        // eslint-disable-next-line no-console
-        console.warn(
-          'cairn-plot: render mode "gpu" was forced but the WebGPU image backend is unavailable — ' +
-            "falling back to the CPU backend",
-        );
-      }
-    }
-    return CpuImagePane;
-  }
-  // "auto": engine once the probe confirms it (the host opt-out short-circuits
-  // the probe to "unavailable" inside the gate).
-  return gate === "ready" ? GpuImagePane : CpuImagePane;
-}
 
 // `useImageView` (the pane viewport ↔ selection-group sync hook) now
 // lives in `renderers/use-image-view.ts` so both this module's
@@ -188,7 +97,7 @@ export function ImageStandalone(p: P) {
   // CpuImagePane — both satisfy the ONE `ImageBackendProps` contract, so the
   // swap is a drop-in replacement), chosen by the user-settable render mode:
   // explicit `renderMode` → `window.__cairnPlotRenderMode` → `?render=` → "auto".
-  const Pane = resolveImageRenderer(resolveRenderMode(p.renderMode));
+  const Pane = useImageBackend(resolveRenderMode(p.renderMode));
   // The ONE dtype-tagged decoded source arrives resolved from `resolveDataProps`.
   // Back-compat: a legacy `imageUrl`/`hdr` prop (e.g. a hand-built descriptor)
   // is normalized to a `source` here so a single code path renders both.

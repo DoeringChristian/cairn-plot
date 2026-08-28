@@ -95,6 +95,9 @@ Status: accepted design; implementation in progress
   through `BackendInput`. Renderer defaults remain projections until a user
   command writes an override, so stack flips cannot write settings. Leaf
   presentation assembly no longer manufactures those runtime props either.
+- [x] Extract image CPU/WebGPU capability selection and fallback policy into
+  the image plot boundary. The reusable WebGPU facade remains plot-agnostic;
+  image backend policy no longer lives in the central registration module.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry
