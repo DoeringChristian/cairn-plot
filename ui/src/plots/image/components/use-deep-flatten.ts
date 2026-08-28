@@ -26,7 +26,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HdrData } from "../runtime/contracts";
-import { floatPixelsFrom } from "../model/pixel-buffer.ts";
+import { floatPixelsFrom } from "../runtime/pixel-buffer.ts";
 import type { ToolbarSliderSpec } from "../../../primitives/controls/ToolbarConfig";
 import { useResettableState } from "../../../host/hooks/use-resettable-state";
 import { IDLE_COALESCE, requestCoalesce, resolveCoalesce, type CoalesceState } from "../../../resources/coalesce";

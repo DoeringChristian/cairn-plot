@@ -6,7 +6,7 @@ import {
   pointerDistance,
   pointerMidpoint,
 } from "../../plots/chart/chart-view-math";
-import { reframeViewForResize } from "../../plots/image/model/reframe-view";
+import { reframeViewForResize } from "../../plots/image/runtime/reframe-view";
 
 export { reframeViewForResize };
 

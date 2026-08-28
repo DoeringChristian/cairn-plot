@@ -8,7 +8,7 @@
  * mode, then mounts a standalone float image via `PlotApp` so it goes through
  * `ImageStandalone` → `ContentAspectFrame` (the capped frame). Needs WebGPU.
  */
-import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
+import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";

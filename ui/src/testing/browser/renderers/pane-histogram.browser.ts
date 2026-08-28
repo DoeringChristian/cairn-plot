@@ -20,7 +20,7 @@
  * `data-cairn-harness="self-driving"` in the HTML) so `npm run test:harness`
  * runs it in the DEFAULT set.
  */
-import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
+import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import GpuImagePane from "../../../plots/image/webgpu/view";

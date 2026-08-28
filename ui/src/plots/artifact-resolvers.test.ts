@@ -12,7 +12,7 @@
  * built in-process by `makeF32Npy`.
  */
 import { test } from "node:test";
-import { floatPixelsLength } from "./image/model/pixel-buffer.ts";
+import { floatPixelsLength } from "./image/runtime/pixel-buffer.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
@@ -73,7 +73,7 @@ function makeF32Npy(shape: number[], values: number[]): ArrayBuffer {
 
 function readFixture(name: string): ArrayBuffer {
   const bytes = readFileSync(
-    new URL(`./image/model/decoders/fixtures/${name}`, import.meta.url),
+    new URL(`./image/resources/decoders/fixtures/${name}`, import.meta.url),
   );
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }

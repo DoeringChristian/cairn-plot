@@ -25,8 +25,8 @@ import type {
 } from "../../types";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
-import { floatPixelsFrom, type FloatPixels } from "../model/pixel-buffer.ts";
-import type { DeepFlattenController } from "../model/decoders.ts";
+import { floatPixelsFrom, type FloatPixels } from "../runtime/pixel-buffer.ts";
+import type { DeepFlattenController } from "../resources/decoders.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ export interface HdrData {
    * Z cutoff. The consuming pane MUST `dispose()` it on unmount. See
    * `../image/decoders.ts` and `./use-deep-flatten.ts`.
    */
-  deep?: import("../model/decoders.ts").DeepFlattenController;
+  deep?: import("../resources/decoders.ts").DeepFlattenController;
 }
 
 /** The float-HDR prop shape (presence of `hdr` selects this backend path). */

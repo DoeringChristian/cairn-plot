@@ -53,7 +53,7 @@
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { renderImage, type ImageParams } from "../image-engine";
-import { extendedSrgbOetf, srgbEotf } from "../../model/tonemap";
+import { extendedSrgbOetf, srgbEotf } from "../../runtime/tonemap";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";
 

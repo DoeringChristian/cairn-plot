@@ -10,7 +10,7 @@
  * sets without a contract guard failing.
  */
 import { COLORMAP_NAMES } from "../../settings/colormaps/lut.ts";
-import { DISPLAY_OPERATION_IDS } from "../../plots/image/model/tonemap.ts";
+import { DISPLAY_OPERATION_IDS } from "../../plots/image/runtime/tonemap.ts";
 
 /** Named scalar colormaps a color-by-value chart accepts (mirrors Python
  *  `_COLORMAPS`). */

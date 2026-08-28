@@ -49,8 +49,8 @@ import {
   subscribeResolveCache,
   resolveCacheVersion,
 } from "../resources/resolution-cache";
-import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "../plots/image/model/channel-menu";
-import { applyChannelSlice } from "../plots/image/model/channel-slice";
+import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "../plots/image/definition/channel-menu";
+import { applyChannelSlice } from "../plots/image/definition/channel-slice";
 import { type PlotSettings } from "../settings/schema.ts";
 import { defaultSettingsForNode } from "../plots/settings.ts";
 import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
@@ -73,15 +73,15 @@ import {
   planRegisteredImageComparison as synthDiffLeafOf,
   resolveRegisteredImageComparison,
   expandImageComparison,
-} from "../plots/image/comparison-plan.ts";
+} from "../plots/image/definition/comparison-plan.ts";
 import {
   useImageComparisonControl,
-} from "../plots/image/use-comparison-control.ts";
+} from "../plots/image/runtime/use-comparison-control.ts";
 import {
   composeImageComparisonPresentation,
   composeSingleImagePresentation,
   type ImageComparisonHostInput,
-} from "../plots/image/host-presentation.ts";
+} from "../plots/image/definition/host-presentation.ts";
 import { usePlotSessionController } from "../state/session/session-context.ts";
 import { getGlobalSelectionStore } from "../state/selection/selection-store.ts";
 import { getRegisteredPane } from "../state/selection/pane-registry.ts";

@@ -15,7 +15,7 @@
  * Mounts `CompositeMediaPane` directly (bypassing the descriptor pipeline) in
  * forced CPU mode. No WebGPU needed — that's the whole point.
  */
-import { floatValues } from "../../model/pixel-buffer.ts";
+import { floatValues } from "../../runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { CompositeMediaPane, type CompareFloatSource } from "../compositor";

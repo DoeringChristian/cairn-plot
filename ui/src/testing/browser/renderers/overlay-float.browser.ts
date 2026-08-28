@@ -35,7 +35,7 @@
  *   Open:    http://localhost:8937/src/testing/browser/renderers/overlay-float.browser.html
  *   The `.bundle.js` is gitignored — `npm run test:harness` regenerates it.
  */
-import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
+import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";

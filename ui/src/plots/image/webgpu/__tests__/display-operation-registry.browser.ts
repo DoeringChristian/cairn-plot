@@ -25,7 +25,7 @@ import {
   resolveEncodeGamma,
   TONEMAP_GAMMA_DEFAULT,
   type RgbTriple,
-} from "../../model/tonemap";
+} from "../../runtime/tonemap";
 import { evaluateDisplayOperation as evaluateCpuDisplayOperation, getCpuDisplayOperation } from "../../cpu/display-operations.ts";
 import { computeDataIndex } from "../../cpu/display-math.ts";
 import { listWebGpuDisplayOperations, type WebGpuDisplayOperation } from "../display.ts";

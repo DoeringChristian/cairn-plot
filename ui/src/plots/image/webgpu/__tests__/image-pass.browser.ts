@@ -71,7 +71,7 @@ import {
   applyDisplayAdjust,
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
-} from "../../model/tonemap";
+} from "../../runtime/tonemap";
 import { evaluateDisplayOperation, getCpuDisplayOperation } from "../../cpu/display-operations.ts";
 import { DEFAULT_DISPLAY_PARAMETERS } from "../../runtime/display-settings.ts";
 import { buildLUT, COLORMAP_STOPS } from "../../../../settings/colormaps/lut";

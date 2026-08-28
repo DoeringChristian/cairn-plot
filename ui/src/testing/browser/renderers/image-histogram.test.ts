@@ -17,7 +17,7 @@ import {
   seriesValueAt,
   type HistogramChannel,
 } from "../../../plots/image/components/image-histogram.ts";
-import type { DeepGpuCsrData } from "../../../plots/image/model/decoders.ts";
+import type { DeepGpuCsrData } from "../../../plots/image/resources/decoders.ts";
 
 const RGB: HistogramChannel[] = [{ name: "R" }, { name: "G" }, { name: "B" }];
 const RGBA: HistogramChannel[] = [...RGB, { name: "A" }];
@@ -263,7 +263,7 @@ test("tevResultFromRawHistogram assembles GPU folds bin-for-bin like computeTevH
   const { computeTevHistograms: computeTev, seriesValueAt: sVal, tevResultFromRawHistogram } =
     await import("../../../plots/image/components/image-histogram.ts");
   const { tevBinMapping, tevBinOfValue, foldChannelStat, emptyChannelStats } =
-    await import("../../../plots/image/model/histogram-binning.ts");
+    await import("../../../plots/image/definition/histogram-binning.ts");
   // A deterministic 3-channel image (values well inside bins, incl. negatives).
   const w = 37;
   const h = 11;

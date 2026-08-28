@@ -22,7 +22,7 @@
  * pool access, so it is trivially reusable and testable in isolation.
  */
 import { useCallback } from "react";
-import { floatPixelReader } from "../model/pixel-buffer.ts";
+import { floatPixelReader } from "../runtime/pixel-buffer.ts";
 import { getImageOperation } from "../definition/image-operations.ts";
 import { getCpuImageOperation } from "../cpu/image-operations.ts";
 import {

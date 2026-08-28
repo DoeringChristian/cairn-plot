@@ -25,7 +25,7 @@
  *    propagation so interacting with it never starts a viewport pan/zoom.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DeepGpuCsrData } from "../../plots/image/model/decoders.ts";
+import type { DeepGpuCsrData } from "../../plots/image/resources/decoders.ts";
 import { useDevicePixelRatio } from "../../host/hooks/use-device-pixel-ratio";
 import { formatChannelValue, type PixelValueScale } from "./PixelValueOverlay";
 import {
@@ -40,7 +40,7 @@ import {
   type HistogramSeriesSpec,
   type TevHistogramsResult,
 } from "../../plots/image/components/image-histogram.ts";
-import { symmetricLog2, tevBinOfValue, TEV_HISTOGRAM_BINS } from "../../plots/image/model/histogram-binning.ts";
+import { symmetricLog2, tevBinOfValue, TEV_HISTOGRAM_BINS } from "../../plots/image/definition/histogram-binning.ts";
 
 /**
  * The pane-supplied data the panel bins. The pane closes `readChannel` over

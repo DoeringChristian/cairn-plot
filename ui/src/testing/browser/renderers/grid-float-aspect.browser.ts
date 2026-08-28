@@ -25,7 +25,7 @@
  *      selection ring matches the viewport ("ring larger than viewport" fix).
  * CPU backend forced — `CpuImagePane` tone-maps float on the CPU, no WebGPU.
  */
-import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
+import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";

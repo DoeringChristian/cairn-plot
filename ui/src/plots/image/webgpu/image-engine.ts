@@ -34,8 +34,8 @@
 import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./device/device-contract";
 import { buildImageWGSL } from "./shaders/image.wgsl.ts";
 import { buildCompareWGSL } from "./shaders/compare.wgsl.ts";
-import { computeCompareMapping, type CompareMapping } from "./compare-align";
-import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../model/tonemap";
+import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
+import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../runtime/tonemap";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import type { NormMode } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation, NORM_ID, REDUCE_ID, type WebGpuDisplayOperation } from "./display.ts";

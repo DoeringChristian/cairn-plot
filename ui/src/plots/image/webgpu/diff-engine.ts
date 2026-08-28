@@ -29,20 +29,21 @@ import {
   getWebGpuMultipassOperation,
   type WebGpuImageOperation,
 } from "./image-operations.ts";
-import type { ImageOperationBuildContext, ImageOperationDisplayRange } from "./operation-pass.ts";
+import type { ImageDisplayRange } from "../definition/fields.ts";
+import type { ImageOperationBuildContext } from "./operation-pass.ts";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl.ts";
 import type { NormMode } from "../runtime/display-settings.ts";
 import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID } from "./display.ts";
 import { makeCpuMapSampler } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
-import { type DiffCmapMode } from "./diff-cmap-mode";
-import { computeCompareMapping, mappingKey, type CompareMapping } from "./compare-align";
+import { type DiffCmapMode } from "../runtime/diff-colormap";
+import { computeCompareMapping, mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { meanSsimFromErrorMap } from "./ssim-metric";
 import { ssimMeanFromLuminanceChunked, ssimLuminance, defaultYield, SSIM_CHUNK_ROWS } from "./kernels/ssim-reference";
 import { guardedSsimScalar } from "./ssim-scalar-guard";
 
-export { resolveDiffCmapMode } from "./diff-cmap-mode";
-export type { DiffCmapMode } from "./diff-cmap-mode";
+export { resolveDiffCmapMode } from "../runtime/diff-colormap";
+export type { DiffCmapMode } from "../runtime/diff-colormap";
 
 // ===========================================================================
 // Pipeline caching (per device, per shader source, per target format)
@@ -92,7 +93,7 @@ ${kernelSource}
 
 const RESULT_FORMAT: TextureFormat = "rgba16float";
 
-export function displayRangeForOperation(domain: "light" | "signed" | "nonnegative" | "unbounded"): ImageOperationDisplayRange {
+export function displayRangeForOperation(domain: "light" | "signed" | "nonnegative" | "unbounded"): ImageDisplayRange {
   return domain === "signed" || domain === "unbounded" ? "signed" : "unit";
 }
 
@@ -601,7 +602,7 @@ ${OUTPUT_ENCODE_WGSL}
 }
 `;
 
-const DISPLAY_RANGE_ID: Record<ImageOperationDisplayRange, number> = { unit: 0, signed: 1, relative: 2 };
+const DISPLAY_RANGE_ID: Record<ImageDisplayRange, number> = { unit: 0, signed: 1, relative: 2 };
 const CMAP_MODE_ID: Record<DiffCmapMode, number> = { linear: 0, signed: 1, positive: 2 };
 
 export interface DiffDisplayParams {
@@ -688,7 +689,7 @@ export function renderDiffDisplay(
   device: Device,
   target: Surface | Texture,
   result: Texture,
-  displayRange: ImageOperationDisplayRange,
+  displayRange: ImageDisplayRange,
   params: DiffDisplayParams,
 ): void {
   const targetFormat = targetFormatOf(target);

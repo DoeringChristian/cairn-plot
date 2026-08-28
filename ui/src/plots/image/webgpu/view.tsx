@@ -52,11 +52,12 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../../types";
-import { applyColormap } from "../model/apply-colormap.ts";
-import { resolveColormapMode } from "./diff-cmap-mode";
-import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../model/index";
-import { HALF_ONE } from "../model/half";
-import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
+import { applyColormap } from "../cpu/apply-colormap.ts";
+import { resolveColormapMode } from "../runtime/diff-colormap";
+import { loadImageData } from "../resources/load-image-data.ts";
+import { getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../resources/cache.ts";
+import { HALF_ONE } from "../runtime/half";
+import { floatValues, widenFloatPixels } from "../runtime/pixel-buffer.ts";
 // DIFF capability: the pane samples a second source slot (`compareSource.b` via
 // the pool's `setSourceB`) and renders a diff IMAGE operation — a DIRECT pointwise op
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
@@ -67,11 +68,11 @@ import { imageOperationId, getWebGpuMultipassOperation } from "./image-operation
 import {
   resolveComparisonOperationId,
   listComparisonOperationOptions,
-} from "../model/comparison-operations";
+} from "../definition/comparison-operations";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation } from "./display.ts";
-import { computeCompareMapping, type CompareMapping } from "./compare-align";
+import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
 import { computeHdrFlipExposures } from "./kernels/hdr-flip-reference";
 import { formatSsim } from "./ssim-metric";
 import type { DiffMetrics } from "./image-engine";
@@ -118,7 +119,7 @@ import {
   type HistogramSeriesSpec,
   type TevHistogramsResult,
 } from "../components/image-histogram";
-import { TEV_HISTOGRAM_BINS } from "../model/histogram-binning";
+import { TEV_HISTOGRAM_BINS } from "../definition/histogram-binning";
 import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import {
   displayToolbarButton,
@@ -139,7 +140,7 @@ import {
   TONEMAP_GAMMA_STEP,
   DISPLAY_OPERATION_IDS,
   type DisplayCurveId,
-} from "../model/tonemap";
+} from "../runtime/tonemap";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import { usePixelSamplers } from "../components/gpu-image-samplers";
 import { buildRenderSnapshot } from "../components/render-snapshot";

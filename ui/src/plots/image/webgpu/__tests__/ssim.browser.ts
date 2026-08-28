@@ -24,7 +24,7 @@ import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { ssim } from "../kernels/ssim-reference";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
-import { computeCompareMapping, type CompareAlign, type CompareFit } from "../compare-align";
+import { computeCompareMapping, type CompareAlign, type CompareFit } from "../../runtime/compare-align";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";
 

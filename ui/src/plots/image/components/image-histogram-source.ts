@@ -13,8 +13,8 @@ import type { HistogramChannel } from "./image-histogram.ts";
 import { defaultChannelColor } from "./image-histogram.ts";
 import type { HdrData } from "../runtime/contracts";
 import { shapeDims } from "../runtime/contracts";
-import { floatPixelReader } from "../model/pixel-buffer.ts";
-import type { DeepGpuCsrData } from "../model/decoders.ts";
+import { floatPixelReader } from "../runtime/pixel-buffer.ts";
+import type { DeepGpuCsrData } from "../resources/decoders.ts";
 
 /** Channel names for a `C`-channel float source (1→Y, 3→RGB, 4→RGBA, else Ch0…). */
 function floatChannelNames(c: number): string[] {

@@ -20,8 +20,8 @@ import { useImageGestures, type ImageViewState } from "../../../host/hooks/use-i
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../components/ImageOverlay";
 import CpuImagePane, { tonemapToImageData } from "../cpu/view";
-import { DEFAULT_DISPLAY_OPERATION_ID } from "../model/tonemap";
-import { DIFF_MODE_LABELS } from "../model/diff";
+import { DEFAULT_DISPLAY_OPERATION_ID } from "../runtime/tonemap";
+import { DIFF_MODE_LABELS } from "../cpu/diff.ts";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
   PixelNotationToggle,
@@ -29,7 +29,7 @@ import PixelValueOverlay, {
   type PixelSample,
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
-import { loadImageData } from "../model/index";
+import { loadImageData } from "../resources/load-image-data.ts";
 import RefBadge from "../../../primitives/components/RefBadge";
 import LabelChip from "../../../primitives/components/LabelChip";
 import { useSplitFlipKeys } from "./use-split-flip-keys";
@@ -37,7 +37,7 @@ import { compareCaptions } from "./compare-captions";
 import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
 import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
-import type { CompareAlign, CompareFit } from "../webgpu/compare-align";
+import type { CompareAlign, CompareFit } from "../runtime/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
 import { resolveRenderMode, urlSource } from "../runtime/contracts";
 import {
@@ -482,7 +482,7 @@ export interface CompareFloatSource {
   /** Row-major samples — SELF-DESCRIBING (`image/pixel-buffer.ts`): the
    *  representation (`"values"` vs `"f16-bits"` bit patterns) travels WITH the
    *  bytes, so an operand can never be misread by a dropped tag. */
-  pixels: import("../model/pixel-buffer.ts").FloatPixels;
+  pixels: import("../runtime/pixel-buffer.ts").FloatPixels;
   width: number;
   height: number;
   channels: number;

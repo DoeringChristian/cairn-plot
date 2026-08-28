@@ -69,7 +69,7 @@
  * regenerate with the commands above whenever this harness, its sibling
  * Case-6 script, or their imports change.
  */
-import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
+import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";

@@ -35,12 +35,12 @@
  * command above whenever this harness or its imports change.
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
-import { loadExrDecoder } from "../../model/decoders/wasm-inline/wasm-exr-inline";
+import { loadExrDecoder } from "../../resources/decoders/wasm-inline/wasm-exr-inline";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
 const TRUNKS_URL = "https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr-images/main/v2/Stereo/Trunks.exr";
-const FIXTURE_URL = new URL("../../model/decoders/fixtures/deep-rgba-32x32.exr", import.meta.url).href;
+const FIXTURE_URL = new URL("../../resources/decoders/fixtures/deep-rgba-32x32.exr", import.meta.url).href;
 
 const { report, setOverallStatus } = createHarness({ title: "DEEP COMPOSITE", resultFlag: "__deepCompositeTestResult" });
 

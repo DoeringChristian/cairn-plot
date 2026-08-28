@@ -34,7 +34,7 @@ import { getWebGpuImageOperation, imageOperationId } from "../image-operations.t
 import { evaluateDisplayOperation as evaluateCpuDisplayOperation, getCpuDisplayOperation, type CpuDisplayOperation } from "../../cpu/display-operations.ts";
 import { getWebGpuDisplayOperation } from "../display.ts";
 import { DEFAULT_DISPLAY_PARAMETERS, DEFAULT_COMPARISON_DISPLAY_OPERATION_ID, type DisplayParameters } from "../../runtime/display-settings.ts";
-import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
+import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../runtime/tonemap";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";

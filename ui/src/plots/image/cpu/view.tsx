@@ -58,19 +58,21 @@ import { PIXEL_VALUE_MIN_SCREEN_PX } from "../../../primitives/components/PixelV
 import { useGammaFilter, GammaFilterSvg } from "../compare/post-processing";
 import ImageOverlay from "../components/ImageOverlay";
 import {
-  computeDiff,
   loadImageData,
-  webglRenderDiffToCanvas,
-  getRenderMode,
+} from "../resources/load-image-data.ts";
+import {
   getCachedImageData,
   setCachedImageData,
-} from "../model/index";
+} from "../resources/cache.ts";
+import { computeDiff } from "./diff.ts";
+import { webglRenderDiffToCanvas } from "./webgl-diff.ts";
+import { getRenderMode } from "../runtime/render-mode.ts";
 import { getColormapLUT } from "../../../settings/colormaps/index";
-import { applyColormap } from "../model/apply-colormap.ts";
+import { applyColormap } from "../cpu/apply-colormap.ts";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
-import { resolveColormapMode } from "../webgpu/diff-cmap-mode";
-import { floatPixelReader, widenFloatPixels } from "../model/pixel-buffer.ts";
+import { resolveColormapMode } from "../runtime/diff-colormap";
+import { floatPixelReader, widenFloatPixels } from "../runtime/pixel-buffer.ts";
 import {
   resolveDisplayOperator,
   DEFAULT_DISPLAY_OPERATION_ID,
@@ -86,7 +88,7 @@ import {
   DISPLAY_OPERATION_IDS,
   type RgbTriple,
   type DisplayCurveId,
-} from "../model/tonemap";
+} from "../runtime/tonemap";
 import {
   buildChannelSample,
   type PixelSample,

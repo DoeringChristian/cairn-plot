@@ -27,7 +27,7 @@
  * premultiplied RGBA) out of the deep CSR the deep controller exports — the
  * per-pixel-under-cursor deep readout.
  */
-import type { DeepGpuCsrData } from "../model/decoders.ts";
+import type { DeepGpuCsrData } from "../resources/decoders.ts";
 import { cpuDeepDepthWeights } from "../webgpu/histogram/compute.ts";
 import {
   emptyChannelStats,
@@ -38,7 +38,7 @@ import {
   TEV_HISTOGRAM_BINS,
   type ChannelStats,
   type TevBinMapping,
-} from "../model/histogram-binning.ts";
+} from "../definition/histogram-binning.ts";
 
 // The per-channel R/G/B tints + neutral fill. Kept in sync WITH (but not
 // imported FROM) `primitives/PixelValueOverlay`'s `CHANNEL_COLORS` /

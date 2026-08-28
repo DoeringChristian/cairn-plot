@@ -56,7 +56,7 @@ import {
   ensureDiffResultReadback,
   type DiffCacheEntry,
 } from "./diff-engine";
-import type { CompareMapping } from "./compare-align";
+import type { CompareMapping } from "../runtime/compare-align";
 import { imageOperationId, getWebGpuMultipassOperation } from "./image-operations.ts";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
 import type {

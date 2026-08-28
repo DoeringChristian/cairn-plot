@@ -151,7 +151,7 @@ import {
   foldHistogramStatsPartials,
   histParamsData,
 } from "../histogram/compute";
-import { tevBinMapping } from "../../model/histogram-binning";
+import { tevBinMapping } from "../../definition/histogram-binning";
 import type { TexHistogramSpec, TexHistogramResult, DeepDepthHistogramResult } from "./device-contract";
 
 /**

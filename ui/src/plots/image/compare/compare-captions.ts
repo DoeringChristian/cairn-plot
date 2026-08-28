@@ -8,7 +8,7 @@
 //     naming the error map, where <metric> is the active diff kernel's display
 //     name. Missing side captions fall back to "image"/"reference".
 // ---------------------------------------------------------------------------
-import { listComparisonOperationOptions } from "../model/comparison-operations";
+import { listComparisonOperationOptions } from "../definition/comparison-operations";
 
 export interface CompareCaptions {
   /** Bottom-LEFT chip: the reference caption (slide) OR the whole diff

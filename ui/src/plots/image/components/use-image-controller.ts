@@ -41,7 +41,7 @@ import { adaptiveMaxZoom, type ImageViewState } from "../../../host/hooks/use-im
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import { getDisplayOperation } from "../definition/display-operations.ts";
-import { DISPLAY_TRANSFER_OPERATION_IDS } from "../model/tonemap";
+import { DISPLAY_TRANSFER_OPERATION_IDS } from "../runtime/tonemap";
 
 /** The registry label for an encoding id, falling back to the id itself. Both the
  *  tone-map and display-transfer menus source their labels from here so they can

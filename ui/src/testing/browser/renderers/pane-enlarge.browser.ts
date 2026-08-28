@@ -35,7 +35,7 @@
  * runner regenerates it via esbuild (`--jsx=automatic`, same gotcha as the
  * sibling harnesses).
  */
-import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
+import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 // The enlarge feature lives entirely in the SHARED `ImagePaneShell` (every image
@@ -49,7 +49,7 @@ import { createRoot } from "react-dom/client";
 import CpuImagePane from "../../../plots/image/cpu/view";
 import { hdrSource, type HdrData } from "../../../plots/image/runtime/contracts";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
-import { reframeViewForResize } from "../../../plots/image/model/reframe-view";
+import { reframeViewForResize } from "../../../plots/image/runtime/reframe-view";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const h = React.createElement;

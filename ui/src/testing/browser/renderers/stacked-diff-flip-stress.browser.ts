@@ -31,7 +31,7 @@
  * (image↔image) is run first and must stay 0 (matching the field report that
  * same-kind flips never flicker).
  */
-import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
+import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";

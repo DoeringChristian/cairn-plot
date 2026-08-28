@@ -16,7 +16,7 @@
  *    the fetch+decode `image.url` seam (`.exr`/`.npy` HDR), by reference.
  */
 import { mintRuntimeHash, type RuntimeStoreEntry } from "../../resources/data/runtime-store.ts";
-import { isBrowserNativeFormat, sniffFormat } from "../../plots/image/model/decoders.ts";
+import { isBrowserNativeFormat, sniffFormat } from "../../plots/image/resources/decoders.ts";
 import type { DataSpec } from "../../resources/resolve-data.ts";
 
 export interface ShapedImage {

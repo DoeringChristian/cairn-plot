@@ -24,7 +24,7 @@ import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, displayRangeForOperation, renderDiffDisplay } from "../diff-engine";
 import { getImageOperation } from "../../definition/image-operations.ts";
-import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
+import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../runtime/tonemap";
 import { evaluateDisplayOperation, getCpuDisplayOperation } from "../../cpu/display-operations.ts";
 import { computeDataIndex, signedAnalyticColor } from "../../cpu/display-math.ts";
 import { DEFAULT_DISPLAY_PARAMETERS, type NormMode } from "../../runtime/display-settings.ts";

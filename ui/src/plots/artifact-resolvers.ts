@@ -24,9 +24,9 @@ import {
   isRawBufferFormat,
   sniffFormat,
   type DecodedImage,
-} from "./image/model/decoders.ts";
+} from "./image/resources/decoders.ts";
 import type { CompareFloatSource } from "./image/compare/compositor";
-import { floatPixelsFrom } from "./image/model/pixel-buffer.ts";
+import { floatPixelsFrom } from "./image/runtime/pixel-buffer.ts";
 
 export interface ResolvedImageItem {
   url: string | null;

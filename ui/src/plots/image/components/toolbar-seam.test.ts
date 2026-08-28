@@ -29,7 +29,7 @@ const shell = read("plots/image/components/ImagePaneShell.tsx");
 const backend = read("plots/image/runtime/contracts.ts");
 const cpu = read("plots/image/cpu/view.tsx");
 const gpu = read("plots/image/webgpu/view.tsx");
-const standalone = read("plots/image/view.tsx");
+const standalone = read("plots/image/runtime/view.tsx");
 
 // --- the shared contract: the shape carries `toolbar` ---------------------
 

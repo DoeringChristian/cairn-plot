@@ -1,4 +1,5 @@
 export type ImageFieldDomain = "light" | "signed" | "nonnegative" | "unbounded";
+export type ImageDisplayRange = "unit" | "signed" | "relative";
 export type ImageFieldArity = number | "source";
 
 /** Semantic output of an image operation. It deliberately contains no texture,

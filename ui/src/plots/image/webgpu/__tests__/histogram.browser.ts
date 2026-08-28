@@ -36,7 +36,7 @@ import {
   tevBinOfValue,
   TEV_HISTOGRAM_BINS,
   type TevBinMapping,
-} from "../../model/histogram-binning";
+} from "../../definition/histogram-binning";
 import { cpuDeepDepthWeights, DEPTH_WEIGHT_FIXED_SCALE } from "../histogram/compute";
 import { createHarness } from "../../../../testing/harness";
 

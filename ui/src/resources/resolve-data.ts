@@ -10,19 +10,20 @@ import {
   fetchBoxesArrays,
 } from "../plots/artifact-resolvers";
 import type { DataSource } from "./data/data-source";
-import { parseOverlay } from "../plots/image/overlay-metadata";
+import { parseOverlay } from "../plots/image/definition/overlay-metadata";
 import { parseNpy } from "../plots/transforms/index";
 import {
   decodeImage,
   decodedU8ToDataUrl,
   isRawBufferFormat,
   sniffFormat,
-  resolveFinalUrl,
-} from "../plots/image/model/index";
+  type DecodedImage,
+} from "../plots/image/resources/decoders.ts";
+import { resolveFinalUrl } from "../plots/image/resources/final-url.ts";
 import { fetchImageBytes } from "./fetch-image";
-import { floatPixelsFrom, floatValues } from "../plots/image/model/pixel-buffer.ts";
-import { describeExr } from "../plots/image/model/decoders/exr-describe";
-import { groupChannels, type ChannelGroup } from "../plots/image/model/channel-groups";
+import { floatPixelsFrom, floatValues } from "../plots/image/runtime/pixel-buffer.ts";
+import { describeExr } from "../plots/image/resources/decoders/exr-describe";
+import { groupChannels, type ChannelGroup } from "../plots/image/definition/channel-groups";
 import type { DataSpec } from "../../../packages/spec/src/spec.ts";
 export type {
   CompareNode,
@@ -278,7 +279,7 @@ export async function resolveDataProps(
  * controller threaded through), `u8` → a uint8 source carrying a PNG data URL
  * (the byte-exact `<img>` / SDR-surface path).
  */
-function decodedToSource(decoded: import("../plots/image/model/index").DecodedImage) {
+function decodedToSource(decoded: DecodedImage) {
   if (decoded.kind === "f32") {
     const shape =
       decoded.channels === 1

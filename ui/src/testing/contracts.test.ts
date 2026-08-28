@@ -33,11 +33,11 @@ import { COLORMAP_NAMES } from "../settings/colormaps/lut.ts";
 import {
   DISPLAY_OPERATION_IDS,
   DISPLAY_TRANSFER_OPERATION_IDS,
-} from "../plots/image/model/tonemap.ts";
+} from "../plots/image/runtime/tonemap.ts";
 import {
   listComparisonOperationPublicNames,
   resolveComparisonOperationId,
-} from "../plots/image/model/comparison-operations.ts";
+} from "../plots/image/definition/comparison-operations.ts";
 import { getImageOperation } from "../plots/image/definition/image-operations.ts";
 import {
   COMPARE_VIEW_MODES,

@@ -35,6 +35,3 @@ export interface MultipassImageOperationProgram {
   computeParams?: (context: ImageOperationComputeContext) => Readonly<Record<string, number>> | undefined;
   buildPasses(context: ImageOperationBuildContext): ImageOperationPassGraph;
 }
-
-/** How a scalar operation field is normalized before a display operation. */
-export type ImageOperationDisplayRange = "unit" | "signed" | "relative";
