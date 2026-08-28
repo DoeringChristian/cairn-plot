@@ -11,8 +11,8 @@
  *     functions (`srgbOetf` / `srgbEotf`) they are built on.
  *   - The UI CONFIG the sliders read: gamma (`TONEMAP_GAMMA_*`) and peak
  *     (`EXTENDED_TONEMAP_PEAK_*`) bounds + `resolveEncodeGamma` / `tonemapHasGamma`.
- *   - The UNIFIED RENDER-TRANSLATION: the deprecated `extended*` alias table and
- *     the `resolveEffectiveTonemap` / `resolveRenderTonemap` "pick a curve, pick a
+ *   - The UNIFIED RENDER-TRANSLATION: `resolveEffectiveTonemap` /
+ *     `resolveRenderTonemap` "pick a curve, pick a
  *     ceiling" mapping onto the engine's operator + `hdrOut` + `peak`.
  *   - The menu operator SET (`SDR_TONEMAP_OPERATORS`), DERIVED from the registry.
  *
@@ -51,23 +51,9 @@ export type TonemapOperator =
   | "gamma" //             Gamma(γ) display transfer — pow(clamp01(x), 1/γ), tev-style
   | "reinhard"
   | "aces"
-  | "normal" //            Normal map — remap [-1,1] → [0,1] per channel (inspect normal maps)
-  // HDR-OUT family (selectable only when the extended surface engaged):
-  | "extended" //          Extended · Linear           — unclamped pass-through
-  | "extended-clamp" //    Extended · Linear (managed) — identity below P, hard ceiling at P
-  | "extended-reinhard" // Extended · Reinhard         — peak/white-point roll-off
-  | "extended-aces"; //    Extended · ACES             — ACES fit rescaled to the peak
+  | "normal"; //            Normal map — remap [-1,1] → [0,1] per channel
 
 // ---------------------------------------------------------------------------
-// HDR-OUT roll-off operators (the "extended" family). HDR-out-only: they emit
-// DISPLAY-LINEAR light in [0, peak] (NOT [0,1]) so a real HDR surface
-// (`rgba16float` + extended canvas tone-mapping) preserves values above SDR
-// white while rolling the very brightest ones off toward the panel's headroom.
-// `peak` is the white point in multiples of SDR white (the PEAK slider; default
-// EXTENDED_TONEMAP_PEAK_DEFAULT). Ported verbatim into `engine/shaders/
-// image.wgsl.ts`'s `applyOperator`; the GPU-vs-TS parity harness checks them.
-// ---------------------------------------------------------------------------
-
 /** Peak-white slider bounds (×SDR white). Default 16, range 1..16, step 0.5.
  *  FOLLOW-UP: a browser-exposed display headroom (once standardized) would seed
  *  the default; until then it is a fixed 16 (the max — preserve the most HDR
@@ -77,8 +63,7 @@ export const EXTENDED_TONEMAP_PEAK_MIN = 1;
 export const EXTENDED_TONEMAP_PEAK_MAX = 16;
 export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
 
-// The peak-parameterized curve MATH (extendedClamp/Reinhard/Aces scalars) and
-// the per-operator CPU dispatch now live entirely in the registry
+// Peak-parameterized curve math and per-operation CPU dispatch live entirely in the registry
 // (`image/encodings`); callers apply a curve via `getDisplayOperation(id).cpu(...)`.
 // tonemap.ts no longer wraps them — see the module doc.
 
@@ -88,14 +73,13 @@ export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
 /**
  * The user-selectable SDR tone-map operators — the ONE unified operator menu
  * (Linear · sRGB · Gamma · Reinhard · ACES · Normal map). DERIVED from the
- * display-operation registry so it can never drift from the entries: the non-HDR
- * `kind:"curve"` operators (the `extended*` HDR-out curves declare
- * `needsHdrSurface` and are excluded — the PEAK slider is the HDR mode now, not a
- * second menu group) followed by the `kind:"remap"` entries (the `normal` map).
+ * display-operation registry so it can never drift from the entries: the
+ * `kind:"curve"` operators followed by the `kind:"remap"` entries. Operations
+ * are independent of whether the host surface is SDR or HDR.
  * Registration order yields the historical menu order.
  */
 export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
-  ...listDisplayOperationsByKind("curve").filter((e) => !e.needsHdrSurface),
+  ...listDisplayOperationsByKind("curve"),
   ...listDisplayOperationsByKind("remap"),
 ].map((e) => e.id as TonemapOperator);
 
@@ -140,8 +124,8 @@ export function resolveDisplayOperator(name: string | undefined | null): Tonemap
  * — only the PEAK ceiling `P` differs between SDR and HDR (see
  * {@link resolveRenderTonemap}). So:
  *
- *   - An explicit descriptor `tonemap=` is honored, {@link canonicalizeTonemap}d
- *     to one of the 5 (a deprecated `extended*` alias resolves to its curve).
+ *   - An explicit descriptor `tonemap=` is honored when it names a registered
+ *     display operation.
  *   - An UNSET descriptor defaults to `"srgb"` on EVERY surface (user
  *     decision): on SDR it is the bit-exact round-trip for an already-sRGB
  *     8-bit source; on an engaged HDR surface it is the extended sRGB encode
@@ -381,8 +365,8 @@ export function tonemapHasGamma(name: string | undefined | null): boolean {
  *   - `linear` → `1` (the encode does `pow(x, 1) = x`, i.e. IDENTITY — raw
  *                linear to the display, tev's "Linear"/gamma-1 look; distinct
  *                from `srgb`, which sRGB-encodes).
- *   - everything else (`srgb`/`reinhard`/`aces`/`extended*`) → `undefined`
- *                (the encode uses the sRGB OETF; skipped entirely when `hdrOut`).
+ *   - everything else (`srgb`/`reinhard`/`aces`) → `undefined`
+ *                (the encode uses the sRGB OETF).
  * Returns `undefined` to mean "no gamma override → sRGB OETF", matching
  * `outputEncode`/`ImageParams.gamma`'s `undefined` convention.
  */
@@ -398,28 +382,20 @@ export function resolveEncodeGamma(
 }
 
 // ---------------------------------------------------------------------------
-// UNIFIED render translation — "pick a curve, pick a ceiling".
+// Render translation — operation selection and surface selection stay separate.
 //
-// The USER-FACING surface is ONE 5-operator menu + the PEAK slider `P`. This
-// translator maps a (display operator, P, surface, γ) tuple onto the render
-// pass's ENGINE operator + `hdrOut` + `peak` + encode `gamma`, reusing the
-// engine's registered peak-parameterized display operations. It is the single
-// place the unified model is
-// expressed; pure so `tonemap.test.ts` pins the whole operator × peak × surface
-// matrix. Invariant: at `P = 1` (and on any non-HDR surface) it returns the
-// plain SDR operator with `hdrOut:false` — the legacy SDR rendition BYTE-FOR-BYTE.
+// This translator preserves the registered operation id and independently
+// carries the output surface, peak, and transfer parameters to the engine.
 // ---------------------------------------------------------------------------
 
-/** The PEAK at/above which the ceiling is UNBOUNDED (`P = ∞`): Linear/sRGB/Gamma
- *  degrade to RAW browser-clipped extended (engine operator `extended` — no
- *  in-shader ceiling), and Reinhard degenerates to pass-through. Manual slider
- *  entry of `inf` yields `Infinity`; ANY non-finite peak counts as unbounded. */
+/** Sentinel accepted by the authoring UI for an unbounded peak. The render seam
+ * converts it to the largest supported finite uniform value. */
 export const EXTENDED_TONEMAP_PEAK_UNBOUNDED = Infinity;
 
 /** The engine render parameters a display operator + ceiling resolve to. */
 export interface RenderTonemapParams {
   /** Registered display-operation id to hand the render pass. */
-  operator: string;
+  displayOperationId: string;
   /** Whether the EXTENDED (HDR-out) encode + surface path runs. */
   hdrOut: boolean;
   /** GPU-safe (always FINITE) peak uniform. */
@@ -434,18 +410,9 @@ export interface RenderTonemapParams {
  * doc. `peak` is the PEAK slider value (`Infinity`/non-finite = unbounded);
  * `gammaValue` is the shared γ state (used only by the Gamma operator).
  *
- * Surface/ceiling rules:
- *  - Non-HDR surface OR `P ≤ 1` → SDR path: the canonical operator verbatim,
- *    `hdrOut:false`, `peak` forced to 1. This IS the degrade rule.
- *  - HDR surface, finite `P > 1` → the peak-parameterized extended operator
- *    (`linear/srgb/gamma`→`extended-clamp` clamp(x,0,P); `reinhard`→
- *    `extended-reinhard`; `aces`→`extended-aces`), `hdrOut:true`. The encode
- *    transfer is carried by `gamma` exactly as on SDR (identity/sRGB/power), so
- *    `P=1` and `P>1` share one curve family.
- *  - HDR surface, `P = ∞` → Linear/sRGB/Gamma become RAW `extended` (browser
- *    clips); Reinhard degenerates to `extended` pass-through; ACES has no
- *    meaningful `∞` (its `P·aces(x/P)` collapses toward 0), so its ceiling is
- *    CLAMPED to {@link EXTENDED_TONEMAP_PEAK_MAX} and it rolls off there.
+ * The operation id is invariant across surfaces. `hdrOut` selects only the
+ * output target/encoding. `peak` is a finite uniform consumed by operations
+ * that expose it; an unbounded UI value is capped at the supported maximum.
  */
 export function resolveRenderTonemap(
   displayOperator: string | undefined | null,
@@ -455,26 +422,10 @@ export function resolveRenderTonemap(
 ): RenderTonemapParams {
   const op = resolveDisplayOperator(displayOperator);
   const encGamma = resolveEncodeGamma(op, gammaValue);
-  if (!hdrSurfaceEngaged || (Number.isFinite(peak) && peak <= 1)) {
-    return { operator: op, hdrOut: false, peak: 1, gamma: encGamma };
-  }
-  const unbounded = !Number.isFinite(peak);
-  switch (op) {
-    case "reinhard":
-      return unbounded
-        ? { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: undefined }
-        : { operator: "extended-reinhard", hdrOut: true, peak, gamma: undefined };
-    case "aces":
-      return {
-        operator: "extended-aces",
-        hdrOut: true,
-        peak: unbounded ? EXTENDED_TONEMAP_PEAK_MAX : peak,
-        gamma: undefined,
-      };
-    default:
-      // linear / srgb / gamma — one CLAMP range-map, three encode transfers.
-      return unbounded
-        ? { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: encGamma }
-        : { operator: "extended-clamp", hdrOut: true, peak, gamma: encGamma };
-  }
+  return {
+    displayOperationId: op,
+    hdrOut: hdrSurfaceEngaged,
+    peak: Number.isFinite(peak) ? Math.max(EXTENDED_TONEMAP_PEAK_MIN, peak) : EXTENDED_TONEMAP_PEAK_MAX,
+    gamma: encGamma,
+  };
 }

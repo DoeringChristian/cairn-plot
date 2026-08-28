@@ -13,6 +13,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   listDisplayOperations,
+  listDisplayOperationsByKind,
   getDisplayOperation,
   OPERATOR_ID,
   DEFAULT_ENCODE_PARAMS,
@@ -37,7 +38,7 @@ import {
 const ALLOWED_PARAMS: ParamName[] = ["exposure", "offset", "peak", "gamma", "min", "max", "reduce"];
 const ALLOWED_KINDS = new Set(["curve", "lut", "remap"]);
 
-test("registry is non-empty and includes the 10 migrated operators", () => {
+test("registry includes the five curve operations and normal remap", () => {
   const ids = listDisplayOperations().map((e) => e.id);
   for (const id of [
     "linear",
@@ -46,10 +47,6 @@ test("registry is non-empty and includes the 10 migrated operators", () => {
     "reinhard",
     "aces",
     "normal",
-    "extended",
-    "extended-clamp",
-    "extended-reinhard",
-    "extended-aces",
   ]) {
     assert.ok(ids.includes(id), `missing encoding "${id}"`);
   }
@@ -89,21 +86,17 @@ test("kinds + params are drawn from the allowed sets", () => {
   }
 });
 
-test("normal is the arity-3 paramless remap; extended* need the HDR surface", () => {
+test("normal is the arity-3 paramless remap and every curve owns its channel transform", () => {
   const normal = getDisplayOperation("normal");
   assert.ok(normal);
   assert.equal(normal!.kind, "remap");
   assert.deepEqual(normal!.arities, [3]);
   assert.deepEqual(normal!.params, []);
 
-  for (const id of ["extended", "extended-clamp", "extended-reinhard", "extended-aces"]) {
-    assert.equal(getDisplayOperation(id)!.needsHdrSurface, true, `${id} should need the HDR surface`);
+  for (const operation of listDisplayOperationsByKind("curve")) {
+    assert.ok(operation.channel, `${operation.id} must define a per-channel implementation`);
+    assert.ok(operation.params.includes("peak"), `${operation.id} must declare peak`);
   }
-  // Peak is declared exactly by the peak-parameterized curves.
-  for (const id of ["extended-clamp", "extended-reinhard", "extended-aces"]) {
-    assert.ok(getDisplayOperation(id)!.params.includes("peak"), `${id} should declare peak`);
-  }
-  assert.ok(!getDisplayOperation("extended")!.params.includes("peak"), "raw extended has no peak");
 });
 
 test("cpu twins return finite triples across HDR + signed inputs", () => {

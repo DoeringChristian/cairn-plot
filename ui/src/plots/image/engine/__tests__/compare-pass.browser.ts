@@ -413,10 +413,10 @@ async function runAll(device: Device): Promise<boolean> {
   ok = (await runComposeEqualsSinglePane(device, "unify/aces", { exposureEV: 0, displayOperationId: "aces", isScalar: false, hdrOut: false }, false)) && ok;
   ok = (await runComposeEqualsSinglePane(device, "unify/srgb+decode", { exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true }, false)) && ok;
   if (device.capabilities.hdr) {
-    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp@EV1/hdrOut", { exposureEV: 1, displayOperationId: "extended-clamp", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
-    ok = (await runComposeEqualsSinglePane(device, "unify/extended-reinhard/hdrOut", { exposureEV: 0, displayOperationId: "extended-reinhard", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp@EV1/hdrOut", { exposureEV: 1, displayOperationId: "linear", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-reinhard/hdrOut", { exposureEV: 0, displayOperationId: "reinhard", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
     // §B on the compose path: a u8-style operand decoded to linear, extended out.
-    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp+decode@EV1/hdrOut", { exposureEV: 1, displayOperationId: "extended-clamp", isScalar: false, hdrOut: true, peak: 4, srgbDecode: true }, true)) && ok;
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp+decode@EV1/hdrOut", { exposureEV: 1, displayOperationId: "linear", isScalar: false, hdrOut: true, peak: 4, srgbDecode: true }, true)) && ok;
   }
   for (const k of ["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]) {
     ok = (await runDiffCase(device, k)) && ok;

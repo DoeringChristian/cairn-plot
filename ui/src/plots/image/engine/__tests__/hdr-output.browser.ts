@@ -18,13 +18,13 @@
  * "aces"` — a tone-map curve that (by design) compresses into `[0,1]`, so it
  * never exercises a value SURVIVING past 1.0; `hdrOut:true` there only proves
  * the output-ENCODE stage is skipped, not that HDR range is preserved. This
- * harness renders the SAME hdrOut:true path with `operator: "extended"` (the
+ * harness renders the SAME hdrOut:true path with `operator: "linear"` (the
  * pure-identity operator `renderers/GpuImagePane.tsx`'s `useHdr` branch
  * actually selects — see `image/tonemap.ts`'s doc comment on that entry) and
  * asserts a pixel that started at 4.0 comes back >1.0, unclamped.
  *
  * CASES:
- *   1. HDR path: `operator:"extended"`, `hdrOut:true`, target `rgba16float`.
+ *   1. HDR path: `operator:"linear"`, `hdrOut:true`, target `rgba16float`.
  *      A pixel of (4,4,4,1) survives readback ABOVE 1.0 (extended brightness,
  *      NOT clamped) but TRANSFER-ENCODED — extendedSrgbOetf(4)≈1.8248, NOT the
  *      raw 4.0. This is the display-profile fix: a float16 srgb/display-p3
@@ -68,13 +68,13 @@ function buildBrightSrcTexture(device: Device): Texture {
 
 const UV_FULL = { x: 0, y: 0, w: 1, h: 1 };
 
-/** Case 1 — HDR path: renders to a real rgba16float target with operator:"extended" + hdrOut:true.
+/** Case 1 — HDR path: renders to a real rgba16float target with operator:"linear" + hdrOut:true.
  *  Post-fix: the (4,4,4) source reads back ENCODED — extendedSrgbOetf(4)≈1.8248,
  *  still >1.0 (extended brightness preserved) but NOT the raw 4.0. */
 async function runHdrCase(device: Device): Promise<boolean> {
   const src = buildBrightSrcTexture(device);
   const target = device.createTexture(1, 1, "rgba16float");
-  const params: ImageParams = { exposureEV: 0, displayOperationId: "extended", isScalar: false, hdrOut: true, uv: UV_FULL };
+  const params: ImageParams = { exposureEV: 0, displayOperationId: "linear", isScalar: false, hdrOut: true, uv: UV_FULL };
   renderImage(device, target, src, params);
   const out = await device.readback(target);
   src.destroy();
@@ -126,7 +126,7 @@ async function runSdrCase(device: Device): Promise<boolean> {
 
 /** Case 3 (§B UNIFIED) — an 8-bit SDR SOURCE through the FULL unified pipeline:
  *  a u8 255-white pixel, sRGB-DECODED to scene-linear (srgbDecode:true), at EV+1,
- *  operator "extended-clamp" (peak 4), hdrOut:true, target rgba16float. Proves an
+ *  operator "linear" (peak 4), hdrOut:true, target rgba16float. Proves an
  *  8-bit source genuinely EXCEEDS SDR white on an HDR display ("unified no matter
  *  what the input data was"): 255 → srgbEotf(1.0)=1.0 linear → EV+1 → 2.0 linear
  *  (below the P=4 ceiling) → extendedSrgbOetf(2.0)≈1.353 (encoded, ABOVE 1.0). */
@@ -136,7 +136,7 @@ async function runSdrExtendedCase(device: Device): Promise<boolean> {
   const target = device.createTexture(1, 1, "rgba16float");
   const params: ImageParams = {
     exposureEV: 1,
-    displayOperationId: "extended-clamp",
+    displayOperationId: "linear",
     isScalar: false,
     hdrOut: true,
     srgbDecode: true,

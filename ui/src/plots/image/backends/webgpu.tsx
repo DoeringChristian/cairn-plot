@@ -421,7 +421,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const useHdrRef = useRef(false);
   // The SAME `useHdr` decision, mirrored into STATE so the toolbar TONEMAP menu
   // re-renders once acquisition resolves it: the menu offers "Extended (HDR)"
-  // and its effective default IS "extended" only when the true-HDR surface
+  // while the selected display operation remains unchanged when the surface
   // engaged. The ref (above) stays the render effect's source of truth (settled
   // before the first pass); this state drives the UI. Stable per pane instance —
   // set exactly once when acquisition resolves the HDR-out gate.
@@ -1477,7 +1477,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       const compositeParams: ImageParams = {
         exposureEV: baseExposure + displayEV,
         offset: baseOffset + displayOffset,
-        displayOperationId: rt.operator,
+        displayOperationId: rt.displayOperationId,
         gamma: rt.gamma,
         isScalar: false,
         hdrOut: rt.hdrOut,
@@ -1677,7 +1677,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ? {
             exposureEV: baseExposure + displayEV,
             offset: baseOffset + displayOffset,
-            displayOperationId: rt.operator,
+            displayOperationId: rt.displayOperationId,
             gamma: rt.gamma,
             isScalar: false,
             hdrOut: rt.hdrOut,

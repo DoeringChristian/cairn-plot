@@ -181,8 +181,6 @@ export interface DisplayOperation {
   /** Channel arities this encoding supports (runtime state; arity gating is
    *  Phase 3). `normal`: [3]; curves: [1,2,3,4]; luts: [1]. */
   arities: number[];
-  /** Requires the pane's real HDR (extended) surface — the `extended*` curves. */
-  needsHdrSurface?: boolean;
   /** Param MANIFEST — which named params this encoding reads (slider gating). */
   params: ParamName[];
   /** LUT family binds a 256×1 texture (Phase 2). */
@@ -260,6 +258,12 @@ export interface DisplayOperation {
    * adjusted rgb), for the first `k` channels. Returns the display triple.
    */
   cpu(v: readonly number[], k: number, p: EncodeParams): [number, number, number];
+  /** Per-channel implementation for curve operations. The pipeline owns channel
+   * packing; the operation owns the scalar transform. */
+  channel?: {
+    wgsl: string;
+    cpu(value: number, params: EncodeParams): number;
+  };
 }
 
 /** Runtime default for displaying comparison fields. It belongs to display
@@ -274,7 +278,7 @@ export const DEFAULT_COMPARISON_DISPLAY_OPERATION_ID = "linear" as const;
 export const DEFAULT_ENCODE_PARAMS: EncodeParams = {
   exposure: 0,
   offset: 0,
-  peak: 4,
+  peak: 1,
   gamma: 2.2,
   norm: "linear",
 };

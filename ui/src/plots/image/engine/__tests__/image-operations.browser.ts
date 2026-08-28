@@ -235,7 +235,7 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
       // SDR: `srgb` = clamp01 then the sRGB OETF (output-encode) — an over-range
       // operand clamps. HDR: `extended` = identity operator (no clamp) then the
       // EXTENDED (unclamped) encode, so an over-range composite survives.
-      displayOperationId: hdrOut ? "extended" : "srgb",
+      displayOperationId: hdrOut ? "linear" : "srgb",
       isScalar: false,
       srcB: texB,
       imageOperationId: imageOperationId(opId),

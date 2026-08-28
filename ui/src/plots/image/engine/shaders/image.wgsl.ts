@@ -30,7 +30,7 @@
  *
  *   logical binding 2 (`u_bind2: vec4<f32>`, native binding 2*3+2=8):
  *     .x = exposureEV        (f32, EV stops)
- *     .y = operator           (f32, rounded to int: 0=linear,1=srgb,2=reinhard,3=aces,4=extended,5=extended-reinhard,6=extended-aces,7=extended-clamp,8=gamma,9=normal)
+ *     .y = display operation id (f32; assigned by the display-operation registry)
  *     .z = gamma               (f32; <=0 means "unset" -> sRGB OETF encode; the
  *                               renderer packs it per operator via resolveEncodeGamma:
  *                               gamma-op -> γ, linear-op -> 1 (identity), else 0/unset)
@@ -47,8 +47,7 @@
  *     = offset (f32, TEV display offset — added to the scene value AFTER
  *       exposure and BEFORE colormap/tonemap/encode; default 0 = identity)
  *   logical binding 7 (`u_bind7: f32`, native binding 7*3+2=23):
- *     = peak (f32, PEAK white ×SDR white for the peak-parameterized extended
- *       operators `extended-reinhard`(5)/`extended-aces`(6)/`extended-clamp`(7);
+ *     = peak (f32, PEAK white ×SDR white for peak-aware display operations;
  *       default 4, ignored by the others)
  *   logical binding 8 (`u_bind8: f32`, native binding 8*3+2=26):
  *     = srgbDecode (f32, 0/1 — sRGB-DECODE the sampled source to linear BEFORE
@@ -199,8 +198,7 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // so an image with no offset renders bit-for-bit as before.
 @group(0) @binding(20) var<uniform> u_bind6: f32;
 // Logical binding 7 (uniform f32: PEAK white, ×SDR white — for the peak-
-// parameterized extended operators extended-reinhard(5)/extended-aces(6)/
-// extended-clamp(7)) -> native binding 7*3+2 = 23. Defaults to 0 when the caller
+// peak-aware display operations) -> native binding 7*3+2 = 23. Defaults to 0 when the caller
 // omits it (zero-filled); the engine
 // always writes EXTENDED_TONEMAP_PEAK_DEFAULT (4), and the roll-off curves guard
 // peak<=0 anyway.
@@ -343,12 +341,11 @@ fn sampleBilinearB(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
 // re-encode) — see the isScalar short-circuit in fs_main.
 ${LUT_FAMILY_WGSL}
 
-// The curve helper fns (reinhardCurve/acesCurve/extended*Curve) + the
+// The display-operation helper functions and
 // operatorId-dispatched applyOperator are ASSEMBLED from the display-operation
 // registry (image/encodings) — the single source of truth shared with the CPU
 // twins (image/tonemap.ts) and the compose path (kernels/prelude.wgsl.ts). Ids:
-// 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended, 5=extended-reinhard,
-// 6=extended-aces, 7=extended-clamp, 8=gamma, 9=normal (remaps:true → the
+// Numeric ids are assigned by the registry (remaps:true → the
 // single-image path includes the normal remap; compose passes remaps:false).
 // linear/srgb/gamma are the default clamp (no explicit branch); the display
 // transfer lives in outputEncodeF, selected per operator by the gamma uniform.

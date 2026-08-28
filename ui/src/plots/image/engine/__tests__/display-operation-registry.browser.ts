@@ -12,9 +12,9 @@
  * the readback equals the encoding's own `cpu()` twin threaded through the shared
  * exposure + output-encode stages — the same functions the CPU renderer uses.
  * So `cpu` and `wgsl` (which live on ONE registry object) are checked to agree,
- * across the whole set, by construction. Non-HDR encodings render to an
- * `rgba8unorm` target (byte-exact within 1/255); the `extended*` encodings need
- * the HDR surface, so they render to an `rgba32float` target (float, looser eps).
+ * across the whole set, by construction. Every curve/remap is exercised with
+ * the same operation id on both an `rgba8unorm` SDR target and an `rgba32float`
+ * HDR target. Surface selection is not operation selection.
  */
 import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { renderImage, type ImageParams } from "../image-engine";
@@ -96,9 +96,8 @@ function expectedRGB(px: number[], enc: DisplayOperation, gamma: number | undefi
   return [outputEncode(toned[0], gamma), outputEncode(toned[1], gamma), outputEncode(toned[2], gamma)];
 }
 
-async function runEncodingCase(device: Device, enc: DisplayOperation): Promise<boolean> {
+async function runEncodingCase(device: Device, enc: DisplayOperation, hdrOut: boolean): Promise<boolean> {
   const pixels = enc.kind === "remap" ? SIGNED_PIXELS : GRADIENT_PIXELS;
-  const hdrOut = !!enc.needsHdrSurface;
   const gamma = resolveEncodeGamma(enc.id, TONEMAP_GAMMA_DEFAULT);
   const params: ImageParams = {
     exposureEV: EV,
@@ -557,8 +556,13 @@ async function main(): Promise<void> {
         if (!(await runTurboCase(device, enc))) allOk = false;
         continue;
       }
-      const ok = enc.kind === "lut" ? await runLutCase(device, enc) : await runEncodingCase(device, enc);
-      if (!ok) allOk = false;
+      if (enc.kind === "lut") {
+        if (!(await runLutCase(device, enc))) allOk = false;
+      } else {
+        for (const hdrOut of [false, true]) {
+          if (!(await runEncodingCase(device, enc, hdrOut))) allOk = false;
+        }
+      }
       // Phase 4: every lut also runs the norm/bounds variants (cairnDataIndex).
       if (enc.kind === "lut") {
         for (const { variant, params } of LUT_NORM_VARIANTS) {

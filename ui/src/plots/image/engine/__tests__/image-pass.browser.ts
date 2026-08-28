@@ -575,14 +575,14 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   {
     // ENCODE PROOF (the display-profile fix): under hdrOut the render-target must
     // hold TRANSFER-ENCODED values (extended sRGB OETF), NOT raw scene-linear. A
-    // single 4.0 pixel with operator "extended" (identity): the render-target
+    // single 4.0 pixel with operator "linear" (identity): the render-target
     // reads back extendedSrgbOetf(4)≈1.8248 (encoded, still >1 = extended
     // brightness) — DISTINCT from the raw 4.0. runHdrOutCase already asserts the
     // value equals computeExpectedRGB (now the extended encode); here we ALSO
     // assert it is NOT the raw-linear value.
     const caseLabel = `${label}/hdrOut/encode-proof`;
     const BRIGHT: number[][] = [[4, 4, 4, 1]];
-    const encParams: ImageParams = { exposureEV: 0, displayOperationId: "extended", isScalar: false, hdrOut: true, uv: uvFull };
+    const encParams: ImageParams = { exposureEV: 0, displayOperationId: "linear", isScalar: false, hdrOut: true, uv: uvFull };
     const encoded = await runHdrOutCase(device, `${caseLabel}/encoded`, BRIGHT, encParams);
     results.set(`${caseLabel}/encoded`, encoded);
     if (encoded.out instanceof Float32Array) {
@@ -600,7 +600,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   // (HDR), so extended-reinhard/-aces produce >1 display-linear light; for
   // extended-clamp (managed linear) every gradient value is < 6, so this pins
   // the GPU identity region (operatorId=7 routed correctly, y=x below P).
-  for (const op of ["extended-clamp", "extended-reinhard", "extended-aces"]) {
+  for (const op of ["linear", "reinhard", "aces"]) {
     const caseLabel = `${label}/hdrOut/${op}/peak=6`;
     const params: ImageParams = {
       exposureEV: 0,
@@ -622,7 +622,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/hdrOut/extended-clamp/peak=2-ceiling`;
     const params: ImageParams = {
       exposureEV: 0,
-      displayOperationId: "extended-clamp",
+      displayOperationId: "linear",
       isScalar: false,
       hdrOut: true,
       peak: 2,
@@ -638,7 +638,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/extended-aces-sdr-preview/peak=4`;
     const params: ImageParams = {
       exposureEV: 0,
-      displayOperationId: "extended-aces",
+      displayOperationId: "aces",
       isScalar: false,
       hdrOut: false,
       peak: 4,

@@ -14,8 +14,7 @@
  *   3. [scalar]:  rgb = colormapLUT(rgb.r)                 (GPU-only stage;
  *      no existing CPU renderer applies a colormap at this pipeline point —
  *      see image.wgsl.ts's doc comment)
- *   4. operator:  rgb = TONEMAP_OPERATORS[operator](rgb)   (HDR [0,∞) -> [0,1]
- *      for every operator EXCEPT `"extended"`, which is a pure identity —
+ *   4. display operation: map the selected channels to display-linear RGB;
  *      see `image/tonemap.ts`'s doc comment on that entry — so values above
  *      1.0 survive this stage on purpose when paired with `hdrOut:true` and
  *      a real HDR (`rgba16float`/`toneMapping:'extended'`) target.)

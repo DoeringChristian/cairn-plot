@@ -47,7 +47,7 @@ const sorted = (xs: readonly string[]): string[] => [...xs].sort();
  *  curves are not menu operators. Mirrors `SDR_TONEMAP_OPERATORS`
  *  in `image/tonemap.ts`, but computed here straight from the registry. */
 const registryTonemapOperators = (): string[] => [
-  ...listDisplayOperationsByKind("curve").filter((e) => !e.needsHdrSurface),
+  ...listDisplayOperationsByKind("curve"),
   ...listDisplayOperationsByKind("remap"),
 ].map((e) => e.id);
 

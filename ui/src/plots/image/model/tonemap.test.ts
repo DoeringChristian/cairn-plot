@@ -40,20 +40,14 @@ import {
   getDisplayOperation,
   listDisplayOperations,
   DEFAULT_ENCODE_PARAMS,
-  extendedClampScalar as extendedClampCurve,
-  extendedReinhardScalar as extendedReinhardCurve,
-  extendedAcesScalar as extendedAcesCurve,
 } from "./display-operations/index.ts";
 
 /** The plain SDR (non-HDR-surface), non-lut curve operators as `(rgb)=>rgb` —
  *  the CPU triple path's operator table, resolved from the registry (was
- *  `image/tonemap.ts`'s `TONEMAP_OPERATORS`). Keyed on `needsHdrSurface`, NOT
- *  on "declares peak": every curve now declares `peak` in its manifest (each
- *  respects the ceiling on an HDR surface — the slider gates off the manifest),
- *  while only the extended-* entries require an HDR surface. */
+ *  `image/tonemap.ts`'s `TONEMAP_OPERATORS`). Every curve is surface-independent. */
 const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
   listDisplayOperations()
-    .filter((e) => e.kind !== "lut" && !e.needsHdrSurface)
+    .filter((e) => e.kind !== "lut")
     .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => e.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS)]),
 );
 /** Resolve an operator name to its non-peak CPU curve fn, srgb fallback. */
@@ -62,6 +56,8 @@ const getTonemapOperator = (name: string | undefined | null): ((rgb: RgbTriple) 
 /** Peak-aware operator dispatch (extended-* read `peak`; the rest ignore it). */
 const applyTonemapOperatorTriple = (rgb: RgbTriple, operator: string, peak: number): RgbTriple =>
   (getDisplayOperation(operator) ?? getDisplayOperation("srgb")!).cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
+const curveValue = (id: "linear" | "reinhard" | "aces", value: number, peak: number): number =>
+  getDisplayOperation(id)!.channel!.cpu(value, { ...DEFAULT_ENCODE_PARAMS, peak });
 
 const approx = (a: number, b: number, eps = 1e-9) =>
   assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);
@@ -162,66 +158,51 @@ test("resolveEffectiveTonemap: UNIFIED — canonical operator passes through; su
   assert.equal(resolveEffectiveTonemap(null, false), "srgb");
 });
 
-test("extended·Linear is a pure pass-through; SDR operators clamp HDR into [0,1]", () => {
-  // The "SDR preview on an HDR display" semantics: switching from extended to an
-  // SDR operator (e.g. aces) on an HDR-engaged pane clamps values into range.
-  // (`extended` is an HDR-surface entry, so it lives outside the SDR table —
-  // resolve it straight from the registry.)
-  const hi: RgbTriple = [8, 8, 8];
-  const extendedOp = (rgb: RgbTriple): RgbTriple =>
-    getDisplayOperation("extended")!.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
-  assert.deepEqual(extendedOp(hi), [8, 8, 8]); // unclamped, past 1.0
-  const [ar, ag, ab] = TONEMAP_OPERATORS.aces!(hi);
-  assert.ok(ar <= 1 && ag <= 1 && ab <= 1, "aces clamps to SDR range");
-  const [lr] = TONEMAP_OPERATORS.linear!(hi);
-  assert.equal(lr, 1, "linear clamps to 1");
-});
-
-test("extendedReinhardCurve: monotone, ≈x for x≪1, →P asymptote", () => {
+test("reinhard operation: monotone, ≈x for x≪1, →P asymptote", () => {
   const P = 4; // explicit peak — a curve-SHAPE test, independent of the default
-  approx(extendedReinhardCurve(0, P), 0);
+  approx(curveValue("reinhard", 0, P), 0);
   // Identity-like at low x (slope exactly 1 at 0).
-  approx(extendedReinhardCurve(0.001, P), 0.001, 5e-6);
-  approx(extendedReinhardCurve(0.01, P), 0.01, 5e-4);
+  approx(curveValue("reinhard", 0.001, P), 0.001, 5e-6);
+  approx(curveValue("reinhard", 0.01, P), 0.01, 5e-4);
   // Monotone increasing across the HDR range.
   let prev = -1;
   for (let x = 0; x <= 32; x += 0.25) {
-    const y = extendedReinhardCurve(x, P);
+    const y = curveValue("reinhard", x, P);
     assert.ok(y > prev, `extended-reinhard not monotone at ${x}`);
     prev = y;
   }
   // Negative input pre-clamps to 0.
-  approx(extendedReinhardCurve(-3, P), 0);
+  approx(curveValue("reinhard", -3, P), 0);
   // Exact formula spot-checks: y = x/(1 + x/P). At x=P: P/2. Approaches P for
   // large x and never exceeds it (the extended-output ceiling).
-  approx(extendedReinhardCurve(4, 4), 2);
-  approx(extendedReinhardCurve(1e6, P), P, 1e-3);
-  assert.ok(extendedReinhardCurve(1e9, P) < P);
+  approx(curveValue("reinhard", 4, 4), 2);
+  approx(curveValue("reinhard", 1e6, P), P, 1e-3);
+  assert.ok(curveValue("reinhard", 1e9, P) < P);
   // Midrange stays NEAR identity (the SDR white-point form dipped x=1 to 0.53
   // at P=4 — the bug this formula replaces): x=1 → 1/(1+1/4) = 0.8.
-  approx(extendedReinhardCurve(1, 4), 0.8);
+  approx(curveValue("reinhard", 1, 4), 0.8);
 });
 
-test("extendedAcesCurve: P·aces(x/P) — P=1 ≡ narkowicz, monotone, →P asymptote", () => {
+test("aces operation: P·aces(x/P) — P=1 ≡ narkowicz, monotone, →P asymptote", () => {
   const P = 4; // explicit peak — a curve-SHAPE test, independent of the default
-  approx(extendedAcesCurve(0, P), 0);
+  approx(curveValue("aces", 0, P), 0);
   // Peak-parameterized as the CANONICAL curve scaled to P: y = P·aces(x/P).
   // Spot-check the closed form directly.
   for (const x of [0.1, 0.5, 1, 2, 8]) {
-    approx(extendedAcesCurve(x, P), P * acesFit(x / P), 1e-12);
+    approx(curveValue("aces", x, P), P * acesFit(x / P), 1e-12);
   }
   // Monotone increasing.
   let prev = -1;
   for (let x = 0; x <= 64; x += 0.5) {
-    const y = extendedAcesCurve(x, P);
+    const y = curveValue("aces", x, P);
     assert.ok(y >= prev - 1e-12, `extended-aces not monotone at ${x}`);
     prev = y;
   }
   // Never exceeds the peak, and saturates to exactly P for very bright inputs.
-  assert.ok(extendedAcesCurve(1000, P) <= P + 1e-9);
-  approx(extendedAcesCurve(1000, P), P, 1e-6);
+  assert.ok(curveValue("aces", 1000, P) <= P + 1e-9);
+  approx(curveValue("aces", 1000, P), P, 1e-6);
   // Peak scales: a larger P raises the asymptote proportionally.
-  approx(extendedAcesCurve(1000, 8), 8, 1e-6);
+  approx(curveValue("aces", 1000, 8), 8, 1e-6);
 });
 
 // Narkowicz 2015 ACES fit reference (matches acesCurve in tonemap.ts) — used to
@@ -242,12 +223,12 @@ function acesFit(x: number): number {
 test("INVARIANT: SDR operator ≡ extended curve at P=1 (only difference is the clip point P)", () => {
   for (let x = -0.5; x <= 8; x += 0.13) {
     // Linear = clamp(x,0,P): SDR linear (clamp01) === extended-clamp at P=1.
-    assert.equal(TONEMAP_OPERATORS.linear!([x, x, x] as RgbTriple)[0], extendedClampCurve(x, 1));
+    assert.equal(TONEMAP_OPERATORS.linear!([x, x, x] as RgbTriple)[0], curveValue("linear", x, 1));
     // Reinhard = x/(1+x/P): SDR reinhard === extended-reinhard at P=1.
-    approx(TONEMAP_OPERATORS.reinhard!([x, x, x] as RgbTriple)[0], extendedReinhardCurve(x, 1), 1e-12);
+    approx(TONEMAP_OPERATORS.reinhard!([x, x, x] as RgbTriple)[0], curveValue("reinhard", x, 1), 1e-12);
     // ACES = P·aces(x/P): SDR aces === extended-aces at P=1 (the FIX — the old
     // S=0.14/0.03 input scaling broke this).
-    approx(TONEMAP_OPERATORS.aces!([x, x, x] as RgbTriple)[0], extendedAcesCurve(x, 1), 1e-12);
+    approx(TONEMAP_OPERATORS.aces!([x, x, x] as RgbTriple)[0], curveValue("aces", x, 1), 1e-12);
   }
 });
 
@@ -305,46 +286,40 @@ test("SDR_DISPLAY_TRANSFER_OPERATORS: the 8-bit pane's menu subset (sRGB · Gamm
   for (const op of SDR_DISPLAY_TRANSFER_OPERATORS) assert.ok(SDR_TONEMAP_OPERATORS.includes(op));
 });
 
-test("extendedClampCurve: identity below P (exact), hard ceiling at/above P (exact), monotone", () => {
+test("linear operation: identity below P, hard ceiling at/above P, monotone", () => {
   const P = 4; // explicit peak — a curve-SHAPE test, independent of the default
   // EXACT identity for 0 <= x <= P (no curvature, no float drift — plain min).
-  approx(extendedClampCurve(0, P), 0);
-  assert.equal(extendedClampCurve(0.001, P), 0.001);
-  assert.equal(extendedClampCurve(1, P), 1);
-  assert.equal(extendedClampCurve(2.5, P), 2.5);
-  assert.equal(extendedClampCurve(P, P), P); // at the ceiling: y = P exactly
+  approx(curveValue("linear", 0, P), 0);
+  assert.equal(curveValue("linear", 0.001, P), 0.001);
+  assert.equal(curveValue("linear", 1, P), 1);
+  assert.equal(curveValue("linear", 2.5, P), 2.5);
+  assert.equal(curveValue("linear", P, P), P); // at the ceiling: y = P exactly
   // EXACT hard ceiling at/above P.
-  assert.equal(extendedClampCurve(P, P), 4);
-  assert.equal(extendedClampCurve(5, P), 4);
-  assert.equal(extendedClampCurve(1e9, P), 4);
+  assert.equal(curveValue("linear", P, P), 4);
+  assert.equal(curveValue("linear", 5, P), 4);
+  assert.equal(curveValue("linear", 1e9, P), 4);
   // Negative input pre-clamps to 0.
-  assert.equal(extendedClampCurve(-3, P), 0);
+  assert.equal(curveValue("linear", -3, P), 0);
   // Monotone non-decreasing across the HDR range (flat once past P).
   let prev = -1;
   for (let x = 0; x <= 32; x += 0.25) {
-    const y = extendedClampCurve(x, P);
+    const y = curveValue("linear", x, P);
     assert.ok(y >= prev, `extended-clamp not monotone at ${x}`);
     prev = y;
   }
   // Peak scales the ceiling: a larger P raises the clip point proportionally.
-  assert.equal(extendedClampCurve(6, 8), 6); // below 8 → identity
-  assert.equal(extendedClampCurve(10, 8), 8); // above 8 → clamped to 8
+  assert.equal(curveValue("linear", 6, 8), 6); // below 8 → identity
+  assert.equal(curveValue("linear", 10, 8), 8); // above 8 → clamped to 8
 });
 
-test("applyTonemapOperatorTriple dispatches SDR + extended(peak) operators", () => {
+test("applyTonemapOperatorTriple dispatches one peak-aware operation per authored id", () => {
   const hi: RgbTriple = [2, 2, 2];
-  // SDR / pass-through operators ignore peak and match TONEMAP_OPERATORS.
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "aces", 4), TONEMAP_OPERATORS.aces!(hi));
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended", 4), [2, 2, 2]);
-  // Managed clamp is identity below P (2 < 4 → passes through unchanged).
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended-clamp", 4), [2, 2, 2]);
-  // ...and hard-clips above P.
-  assert.deepEqual(applyTonemapOperatorTriple([8, 8, 8], "extended-clamp", 4), [4, 4, 4]);
-  // Extended roll-off operators apply the peak curve per channel.
-  const r = extendedReinhardCurve(2, 4);
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended-reinhard", 4), [r, r, r]);
-  const a = extendedAcesCurve(2, 4);
-  assert.deepEqual(applyTonemapOperatorTriple(hi, "extended-aces", 4), [a, a, a]);
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "linear", 4), [2, 2, 2]);
+  assert.deepEqual(applyTonemapOperatorTriple([8, 8, 8], "linear", 4), [4, 4, 4]);
+  const r = curveValue("reinhard", 2, 4);
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "reinhard", 4), [r, r, r]);
+  const a = curveValue("aces", 2, 4);
+  assert.deepEqual(applyTonemapOperatorTriple(hi, "aces", 4), [a, a, a]);
 });
 
 test("applyExposure scales by 2**ev", () => {
@@ -450,46 +425,22 @@ test("resolveDisplayOperator accepts only canonical operators", () => {
   assert.equal(resolveDisplayOperator(null), "srgb");
 });
 
-test("resolveRenderTonemap: NON-HDR surface / P<=1 → the plain SDR operator (the degrade rule)", () => {
-  // The degrade rule IS "force P=1, no extended encode": the render params are
-  // exactly the legacy SDR operator's, for every operator and any peak.
-  for (const peak of [4, 1, 0.5]) {
-    const engaged = false;
-    assert.deepEqual(resolveRenderTonemap("linear", peak, engaged, 2.2), { operator: "linear", hdrOut: false, peak: 1, gamma: 1 });
-    assert.deepEqual(resolveRenderTonemap("srgb", peak, engaged, 2.2), { operator: "srgb", hdrOut: false, peak: 1, gamma: undefined });
-    assert.deepEqual(resolveRenderTonemap("gamma", peak, engaged, 2.2), { operator: "gamma", hdrOut: false, peak: 1, gamma: 2.2 });
-    assert.deepEqual(resolveRenderTonemap("reinhard", peak, engaged, 2.2), { operator: "reinhard", hdrOut: false, peak: 1, gamma: undefined });
-    assert.deepEqual(resolveRenderTonemap("aces", peak, engaged, 2.2), { operator: "aces", hdrOut: false, peak: 1, gamma: undefined });
+test("resolveRenderTonemap preserves the operation id independently of the surface", () => {
+  for (const op of ["linear", "srgb", "gamma", "reinhard", "aces"]) {
+    assert.equal(resolveRenderTonemap(op, 4, false, 2.2).displayOperationId, op);
+    assert.equal(resolveRenderTonemap(op, 4, true, 2.2).displayOperationId, op);
   }
-  // On an ENGAGED surface, P=1 also collapses to the SDR path (identical output).
-  assert.deepEqual(resolveRenderTonemap("srgb", 1, true, 2.2), { operator: "srgb", hdrOut: false, peak: 1, gamma: undefined });
-  assert.deepEqual(resolveRenderTonemap("gamma", 1, true, 1.8), { operator: "gamma", hdrOut: false, peak: 1, gamma: 1.8 });
+  assert.deepEqual(resolveRenderTonemap("srgb", 4, false, 2.2), { displayOperationId: "srgb", hdrOut: false, peak: 4, gamma: undefined });
+  assert.deepEqual(resolveRenderTonemap("srgb", 4, true, 2.2), { displayOperationId: "srgb", hdrOut: true, peak: 4, gamma: undefined });
 });
 
-test("resolveRenderTonemap: ENGAGED HDR surface, finite P>1 → the peak-parameterized extended operator", () => {
-  // linear/srgb/gamma share the CLAMP range-map (extended-clamp); the encode γ
-  // is what differs (identity / sRGB / power).
-  assert.deepEqual(resolveRenderTonemap("linear", 4, true, 2.2), { operator: "extended-clamp", hdrOut: true, peak: 4, gamma: 1 });
-  assert.deepEqual(resolveRenderTonemap("srgb", 4, true, 2.2), { operator: "extended-clamp", hdrOut: true, peak: 4, gamma: undefined });
-  assert.deepEqual(resolveRenderTonemap("gamma", 4, true, 2.2), { operator: "extended-clamp", hdrOut: true, peak: 4, gamma: 2.2 });
-  assert.deepEqual(resolveRenderTonemap("gamma", 6, true, 1.8), { operator: "extended-clamp", hdrOut: true, peak: 6, gamma: 1.8 });
-  assert.deepEqual(resolveRenderTonemap("reinhard", 4, true, 2.2), { operator: "extended-reinhard", hdrOut: true, peak: 4, gamma: undefined });
-  assert.deepEqual(resolveRenderTonemap("aces", 8, true, 2.2), { operator: "extended-aces", hdrOut: true, peak: 8, gamma: undefined });
-});
-
-test("resolveRenderTonemap: P=∞ (unbounded) → raw browser-clipped extended (aces clamps to MAX)", () => {
+test("resolveRenderTonemap makes the peak GPU-safe without changing operations", () => {
   const inf = EXTENDED_TONEMAP_PEAK_UNBOUNDED;
-  // Linear/sRGB/Gamma → raw `extended` (no in-shader ceiling; the browser clips).
-  assert.deepEqual(resolveRenderTonemap("linear", inf, true, 2.2), { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: 1 });
-  assert.deepEqual(resolveRenderTonemap("srgb", inf, true, 2.2), { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: undefined });
-  assert.deepEqual(resolveRenderTonemap("gamma", inf, true, 2.2), { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: 2.2 });
-  // Reinhard degenerates to pass-through at ∞ → raw `extended` (sRGB-encoded).
-  assert.deepEqual(resolveRenderTonemap("reinhard", inf, true, 2.2), { operator: "extended", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: undefined });
-  // ACES has no meaningful ∞ (P·aces(x/P) → 0); its ceiling CLAMPS to the max.
-  assert.deepEqual(resolveRenderTonemap("aces", inf, true, 2.2), { operator: "extended-aces", hdrOut: true, peak: EXTENDED_TONEMAP_PEAK_MAX, gamma: undefined });
-  // A non-finite peak (NaN) is also treated as unbounded, never leaked to the GPU.
-  const nan = resolveRenderTonemap("linear", Number.NaN, true, 2.2);
-  assert.ok(Number.isFinite(nan.peak), "peak handed to the GPU is always finite");
+  for (const op of ["linear", "srgb", "gamma", "reinhard", "aces"]) {
+    const resolved = resolveRenderTonemap(op, inf, true, 2.2);
+    assert.equal(resolved.displayOperationId, op);
+    assert.equal(resolved.peak, EXTENDED_TONEMAP_PEAK_MAX);
+  }
 });
 
 test("UNIFIED INVARIANT: P=1 render == the legacy SDR curve+encode, per operator (byte-for-byte)", () => {
@@ -499,10 +450,10 @@ test("UNIFIED INVARIANT: P=1 render == the legacy SDR curve+encode, per operator
   const encodeOf = (v: number, g: number | undefined) => outputEncode(v, g);
   for (const op of ["linear", "srgb", "gamma", "reinhard", "aces"]) {
     const rt = resolveRenderTonemap(op, 1, true, 2.2);
-    assert.equal(rt.hdrOut, false);
+    assert.equal(rt.hdrOut, true);
     assert.equal(rt.peak, 1);
     for (let x = -0.25; x <= 6; x += 0.37) {
-      const uni = encodeOf(applyTonemapOperatorTriple([x, x, x], rt.operator, rt.peak)[0], rt.gamma);
+      const uni = encodeOf(applyTonemapOperatorTriple([x, x, x], rt.displayOperationId, rt.peak)[0], rt.gamma);
       const legacy = outputEncode(TONEMAP_OPERATORS[op]!([x, x, x] as RgbTriple)[0], resolveEncodeGamma(op, 2.2));
       approx(uni, legacy, 1e-12);
     }
@@ -513,14 +464,14 @@ test("UNIFIED goldens: HDR Gamma is UNCLAMPED (above-white survives), P>1 clips 
   // Gamma on an engaged HDR pane, x=4 below the P=8 ceiling: the value survives
   // above 1.0, gamma-corrected. extended-clamp(4, 8)=4 → extendedGammaEncode(4, 2.2).
   const rt = resolveRenderTonemap("gamma", 8, true, 2.2);
-  const ranged = applyTonemapOperatorTriple([4, 4, 4], rt.operator, rt.peak)[0]; // extended-clamp(4,8)=4
+  const ranged = applyTonemapOperatorTriple([4, 4, 4], rt.displayOperationId, rt.peak)[0]; // extended-clamp(4,8)=4
   approx(ranged, 4, 1e-12);
   const display = extendedOutputEncode(ranged, rt.gamma);
   approx(display, Math.pow(4, 1 / 2.2), 1e-12); // ≈ 1.877776 — ABOVE 1.0 (extended)
   assert.ok(display > 1.0, "HDR Gamma preserves extended brightness (above-white survives)");
   // At a LOWER ceiling P=2, the same x=4 hard-clips to 2 first: 2^(1/2.2).
   const rt2 = resolveRenderTonemap("gamma", 2, true, 2.2);
-  const ranged2 = applyTonemapOperatorTriple([4, 4, 4], rt2.operator, rt2.peak)[0]; // extended-clamp(4,2)=2
+  const ranged2 = applyTonemapOperatorTriple([4, 4, 4], rt2.displayOperationId, rt2.peak)[0]; // extended-clamp(4,2)=2
   approx(ranged2, 2, 1e-12);
   approx(extendedOutputEncode(ranged2, rt2.gamma), Math.pow(2, 1 / 2.2), 1e-12);
 });
@@ -553,7 +504,7 @@ test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap",
   const hdrDefault = resolveEffectiveTonemap(undefined, true); // "srgb"
   assert.equal(hdrDefault, "srgb");
   assert.deepEqual(resolveRenderTonemap(hdrDefault, EXTENDED_TONEMAP_PEAK_DEFAULT, true, 2.2), {
-    operator: "extended-clamp",
+    displayOperationId: "srgb",
     hdrOut: true,
     peak: EXTENDED_TONEMAP_PEAK_DEFAULT,
     gamma: undefined,
@@ -561,7 +512,7 @@ test("UNIFIED default matrix: resolveEffectiveTonemap ∘ resolveRenderTonemap",
   const sdrDefault = resolveEffectiveTonemap(undefined, false); // "srgb"
   assert.equal(sdrDefault, "srgb");
   assert.deepEqual(resolveRenderTonemap(sdrDefault, 1, false, 2.2), {
-    operator: "srgb",
+    displayOperationId: "srgb",
     hdrOut: false,
     peak: 1,
     gamma: undefined,

@@ -16,10 +16,7 @@
 import { listDisplayOperations } from "./registry.ts";
 import { CURVE_HELPER_FNS_WGSL, DEFAULT_CLAMP_WGSL } from "./curves.ts";
 
-/** The curve helper fns (`reinhardCurve`/`acesCurve`/`extended*Curve`) — emit
- *  ONCE, before `buildApplyOperatorWGSL`, so entry `wgsl` expressions can call
- *  them. Exported under this name for the shader modules that want the helpers
- *  and dispatch as separate strings. */
+/** Shared numerical helpers used by operation WGSL expressions. */
 export const CURVE_HELPERS_WGSL = CURVE_HELPER_FNS_WGSL;
 
 export interface ApplyOperatorOptions {

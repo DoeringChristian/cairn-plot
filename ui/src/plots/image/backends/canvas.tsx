@@ -216,17 +216,14 @@ export function tonemapToImageData(
   // than kept half — the GPU path keeps the bits; only this fallback pays.
   const src = widenFloatPixels(hdr.pixels);
   // Resolve the operator CURVE straight from the registry (the single source of
-  // truth). The CPU triple path applies only the PLAIN SDR curves — exposure is
-  // folded in below and the HDR-surface entries (extended-*) never reach this
-  // fallback — so an HDR-surface or LUT id falls back to the srgb clamp, exactly
-  // as the former `getTonemapOperator` lookup did. (Keyed on `needsHdrSurface`,
-  // not "declares peak" — every curve's manifest now declares peak.)
+  // truth). Every curve works on this SDR surface; the output conversion below
+  // performs the surface-specific clamp.
   const curveEnc = getDisplayOperation(tonemap);
   const opEnc =
-    curveEnc && curveEnc.kind !== "lut" && !curveEnc.needsHdrSurface
+    curveEnc && curveEnc.kind !== "lut"
       ? curveEnc
       : getDisplayOperation(DEFAULT_TONEMAP)!;
-  const op = (rgb: RgbTriple): RgbTriple => opEnc.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
+  const op = (rgb: RgbTriple): RgbTriple => opEnc.cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak: 1 });
   const out = new Uint8ClampedArray(w * h * 4);
 
   for (let i = 0; i < w * h; i++) {
@@ -1088,7 +1085,7 @@ function CpuHdrImagePane(
   // pane, this pane KNOWS its channel arity (`hdr.shape`), so it gates by arity:
   // luts@k=1, `normal`@k=3, curves always. The default curve resolves from the
   // descriptor `tonemap=` coerced to an SDR operator (the CPU pane tone-maps to
-  // an 8-bit ImageData — "extended" is never offered); a colormap `colormap=`
+  // an 8-bit ImageData); a colormap `colormap=`
   // wins the seed for a scalar source. HOME restores the authored seed.
   const propColormap: Colormap | null =
     (props as unknown as { colormap?: Colormap }).colormap ?? null;
