@@ -1,7 +1,7 @@
 /**
  * `useImageView` — the controlled image viewport (`{zoom,pan}`) as a
  * PURE PROJECTION of the viewport's settings entry (NOSTACK model: view
- * transforms are settings — `ViewportSettings.view` — and ride the same
+ * transforms are settings — `PlotSettings.view` — and ride the same
  * registry + group fan-out as every display key).
  *
  * There is deliberately NO component-local mirror, no bus, no echo guard, no
@@ -18,11 +18,11 @@
  */
 import { useCallback, useState } from "react";
 import type { Viewport as ImageViewport } from "../../host/hooks/use-image-viewport";
-import type { ViewportSettings } from "./viewport-settings";
+import type { PlotSettings } from "./viewport-settings";
 
 export function useImageView(
-  settings: Readonly<ViewportSettings> | null | undefined,
-  set: ((patch: Partial<ViewportSettings>) => void) | undefined,
+  settings: Readonly<PlotSettings> | null | undefined,
+  set: ((patch: Partial<PlotSettings>) => void) | undefined,
   seed: ImageViewport,
 ): [ImageViewport, (v: ImageViewport) => void] {
   // Storeless fallback only — inert (and unread) while a store is present.

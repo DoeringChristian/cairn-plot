@@ -1,4 +1,4 @@
-import type { ViewportSettings } from "../settings/viewport-settings.ts";
+import type { PlotSettings } from "../settings/viewport-settings.ts";
 import {
   clonePlotSession,
   emptyPlotSession,
@@ -17,9 +17,9 @@ export interface PlotSessionController {
   restoreSession(input: unknown): void;
   subscribe(listener: (session: PlotSession) => void): () => void;
   setTopology(topology: PlotSessionTopology): void;
-  registerViewport(id: string, replace: (settings: ViewportSettings) => void, initial: ViewportSettings): () => void;
-  recordViewport(id: string, settings: ViewportSettings): void;
-  seedViewport(id: string, settings: ViewportSettings): void;
+  registerViewport(id: string, replace: (settings: PlotSettings) => void, initial: PlotSettings): () => void;
+  recordViewport(id: string, settings: PlotSettings): void;
+  seedViewport(id: string, settings: PlotSettings): void;
   registerGrid(id: string, replace: (state: GridSessionState) => void, initial: GridSessionState): () => void;
   recordGrid(id: string, state: GridSessionState): void;
   destroy(): void;
@@ -36,7 +36,7 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
   let destroyed = false;
   let notificationQueued = false;
   const listeners = new Set<(value: PlotSession) => void>();
-  const viewports = new Map<string, (settings: ViewportSettings) => void>();
+  const viewports = new Map<string, (settings: PlotSettings) => void>();
   const grids = new Map<string, (state: GridSessionState) => void>();
 
   const live = () => {

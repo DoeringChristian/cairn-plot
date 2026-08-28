@@ -7,7 +7,7 @@
  * because `GpuComparePane` never subscribed to the shared SETTINGS bus at all.
  * The fix wires `GpuComparePane` onto the SAME settings-sync path the image
  * panes use (`useViewportSettings` + `viewport-settings` bus + the
- * broadened `ViewportSettings` payload). This harness proves it end-to-end.
+ * broadened `PlotSettings` payload). This harness proves it end-to-end.
  *
  * It mounts TWO independent `PlotApp` roots (the gallery shape — two separate
  * mounts, NOT one `cp.Grid`), each a single engine-backed compare pane, selects

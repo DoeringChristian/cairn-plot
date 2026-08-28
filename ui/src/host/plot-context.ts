@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 
 import type { DataSource } from "../resources/data/data-source.ts";
-import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../state/settings/viewport-settings.ts";
 import type { SharedProps } from "./descriptor-resolver.ts";
 
 /** Host data shared by every node in one authored plot tree. */
@@ -21,10 +21,10 @@ export function useSharedPlot(): SharedPlotCtx {
 
 /** Viewport-owned settings exposed to the content mounted in that viewport. */
 export interface PaneSyncCtx {
-  syncedSettings?: ViewportSettings | null;
-  viewportDefaults?: ViewportSettings | null;
-  setSyncedSettings?: (patch: ViewportSettings) => void;
-  resetSyncedSettings?: (settings: ViewportSettings) => void;
+  syncedSettings?: PlotSettings | null;
+  viewportDefaults?: PlotSettings | null;
+  setSyncedSettings?: (patch: PlotSettings) => void;
+  resetSyncedSettings?: (settings: PlotSettings) => void;
 }
 
 export const PaneSyncContext = createContext<PaneSyncCtx | null>(null);

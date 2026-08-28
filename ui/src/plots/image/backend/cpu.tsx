@@ -97,7 +97,7 @@ import {
 import ImagePaneShell, { type EnlargeControl } from "../components/ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import { useViewportSettings } from "../../../state/settings/use-viewport-settings";
-import type { ViewportSettings } from "../../../state/settings/viewport-settings";
+import type { PlotSettings } from "../../../state/settings/viewport-settings";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-encoding";
 import {
   computeDataIndex,
@@ -386,9 +386,9 @@ function CpuSdrImagePane(
     toolbar?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
-    syncedSettings?: ViewportSettings;
+    syncedSettings?: PlotSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
-    setSyncedSettings?: (patch: ViewportSettings) => void;
+    setSyncedSettings?: (patch: PlotSettings) => void;
     /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;
@@ -1038,9 +1038,9 @@ function CpuHdrImagePane(
     toolbar?: boolean;
     /** The viewport's effective settings from its store (group > local merge),
      *  driven down by the store owner (see `ImageBackendProps.syncedSettings`). */
-    syncedSettings?: ViewportSettings;
+    syncedSettings?: PlotSettings;
     /** The store's ONE write path (see `ImageBackendProps.setSyncedSettings`). */
-    setSyncedSettings?: (patch: ViewportSettings) => void;
+    setSyncedSettings?: (patch: PlotSettings) => void;
     /** LOCAL apply (initialization writes — see `ImageBackendProps`). */
     /** Controlled fullscreen state (see `ImageBackendProps.enlargeControl`). */
     enlargeControl?: EnlargeControl;

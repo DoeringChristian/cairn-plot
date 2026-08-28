@@ -13,7 +13,7 @@ test("the public host drives the production plot tree without exposing viewports
   assert.match(host, /<PlotSurface/);
   assert.match(surface, /SharedPlotContext\.Provider/);
   assert.match(surface, /PlotNodeView/);
-  assert.doesNotMatch(host + surface + api, /PlotController|ViewportSettings|RendererRegistry/);
+  assert.doesNotMatch(host + surface + api, /PlotController|PlotSettings|RendererRegistry/);
   assert.match(api, /PlotHost/);
   assert.match(api, /mountPlot/);
   assert.match(api, /DataSource/);

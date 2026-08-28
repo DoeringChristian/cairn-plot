@@ -16,9 +16,9 @@
  * (`viewport-settings.ts`): the three-addon and core IIFE chunks must share
  * one membership map.
  */
-import type { ViewportSettings } from "./viewport-settings.ts";
+import type { PlotSettings } from "./viewport-settings.ts";
 
-type PeerAccessor = () => ViewportSettings | null;
+type PeerAccessor = () => PlotSettings | null;
 
 const PEERS_KEY = "__cairnPlotSettingsPeers__";
 const peers: Map<string, Set<PeerAccessor>> = ((globalThis as unknown as Record<
@@ -49,7 +49,7 @@ export function registerSettingsPeer(groupId: string, get: PeerAccessor): () => 
 export function peekGroupSettings(
   groupId: string,
   exclude?: PeerAccessor,
-): ViewportSettings | null {
+): PlotSettings | null {
   for (const get of peers.get(groupId) ?? []) {
     if (get === exclude) continue;
     const s = get();

@@ -19,7 +19,7 @@
  * turning its container-local `plotRectRef` into client space before calling.
  */
 
-import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
 
 /** Wheel zoom factor per notch — identical to use-plot-gestures.ts:116. */
 export const WHEEL_FACTOR = 1.1;
@@ -554,7 +554,7 @@ export function pointInPolygon(
  * (Plotly matched-axes: data-space, not pixels).
  */
 export function resolveChartDomain(
-  settings: ViewportSettings | null | undefined,
+  settings: PlotSettings | null | undefined,
   home: ChartDomain,
 ): ChartDomain {
   const sx = settings?.["chart.domainX"];

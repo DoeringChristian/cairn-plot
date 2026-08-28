@@ -4,7 +4,7 @@ import {
   ChartViewportSyncProvider,
   type ChartViewportSyncTarget,
 } from "./chart/use-chart-viewport.ts";
-import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../state/settings/viewport-settings.ts";
 import type { ChartSettings } from "./chart-settings.ts";
 
 /** Connect a cell's chart-domain settings to the shared 2D chart controls. */
@@ -16,11 +16,11 @@ export function ChartSettingsBoundary({ settings, patch, children }: {
   const patchRef = useRef(patch);
   patchRef.current = patch;
   const stablePatch = useCallback(
-    (next: ViewportSettings) => patchRef.current(next as unknown as Partial<ChartSettings>),
+    (next: PlotSettings) => patchRef.current(next as unknown as Partial<ChartSettings>),
     [],
   );
   const sync = useMemo<ChartViewportSyncTarget | null>(
-    () => ({ settings: settings as ViewportSettings, set: stablePatch }),
+    () => ({ settings: settings as PlotSettings, set: stablePatch }),
     [settings, patch, stablePatch],
   );
   return <ChartViewportSyncProvider value={sync}>{children}</ChartViewportSyncProvider>;

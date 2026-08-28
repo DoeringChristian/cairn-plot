@@ -53,8 +53,8 @@ import {
 } from "../resources/resolution-cache";
 import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "../plots/image/model/channel-menu";
 import { applyChannelSlice } from "../plots/image/model/channel-slice";
-import { type ViewportSettings } from "../state/settings/viewport-settings";
-import { initialViewportSettings } from "../state/settings/viewport-initial-settings.ts";
+import { type PlotSettings } from "../state/settings/viewport-settings";
+import { initialViewportSettings } from "../settings/defaults.ts";
 import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
 import {
   PaneSyncContext,
@@ -451,7 +451,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         presentation={withoutSettingsPlumbing(mergedProps)}
         settings={settings}
         commands={{
-          patch: (patch) => paneSync?.setSyncedSettings?.(patch as ViewportSettings),
+          patch: (patch) => paneSync?.setSyncedSettings?.(patch as PlotSettings),
           reset: resetViewportSettings,
         }}
         invalidation="presentation"
@@ -797,10 +797,10 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
       presentation={presentation as Record<string, unknown>}
       settings={settings as import("../plots/contracts.ts").SettingsRecord}
       commands={{
-        patch: (patch) => paneSync?.setSyncedSettings?.(patch as ViewportSettings),
+        patch: (patch) => paneSync?.setSyncedSettings?.(patch as PlotSettings),
         reset: () => {
           (paneSync?.resetSyncedSettings ?? paneSync?.setSyncedSettings)?.(
-            planned.value!.definition.defaults() as ViewportSettings,
+            planned.value!.definition.defaults() as PlotSettings,
           );
         },
       }}

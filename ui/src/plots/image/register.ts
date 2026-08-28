@@ -8,7 +8,7 @@ import type {
   ImageBackendProps,
   RenderMode,
 } from "./backend/contracts.ts";
-import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
@@ -41,7 +41,7 @@ export type ImagePresentation = Omit<ImageBackendProps, ImageRuntimePlumbing> & 
   readonly renderMode?: RenderMode;
   readonly height?: number;
 };
-export type ImageSettings = ViewportSettings & SettingsRecord;
+export type ImageSettings = PlotSettings & SettingsRecord;
 
 /** Checked erasure boundary for resolved and legacy-inline image payloads. */
 export function imagePresentation(value: Record<string, unknown>): ImagePresentation {

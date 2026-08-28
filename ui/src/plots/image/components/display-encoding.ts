@@ -261,10 +261,10 @@ export interface PaneEncodingConfig {
    *  srgb/gamma/linear). Must return a curve id. */
   resolveDefaultCurve: (propTonemap: string | null | undefined) => string;
   /** The viewport's settings store (the node-level accumulated
-   *  `ViewportSettings`). When it holds an `encoding`, that id IS the pane's
+   *  `PlotSettings`). When it holds an `encoding`, that id IS the pane's
    *  encoding — derived by value every render, no local copy, no adoption
    *  effect. Applicability stays a render decision. */
-  settings?: import("../../../state/settings/viewport-settings").ViewportSettings | null;
+  settings?: import("../../../state/settings/viewport-settings").PlotSettings | null;
 }
 
 /** What a pane needs from the unified encoding state. */

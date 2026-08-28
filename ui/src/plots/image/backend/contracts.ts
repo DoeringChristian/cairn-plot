@@ -27,7 +27,7 @@ import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-vi
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import { floatPixelsFrom, type FloatPixels } from "../model/pixel-buffer.ts";
 import type { DeepFlattenController } from "../model/decoders.ts";
-import type { ViewportSettings } from "../../../state/settings/viewport-settings";
+import type { PlotSettings } from "../../../state/settings/viewport-settings";
 
 // ---------------------------------------------------------------------------
 // HDR data contract — a parsed float `.npy` (from `parseNpy`, via the `imghdr`
@@ -361,12 +361,12 @@ export interface ImageBackendProps {
    *  local copy) and writes changes back via {@link setSyncedSettings}. The pane
    *  itself is NEVER a bus subscriber. Absent = no store (a bare host mount);
    *  the pane falls back to its own local state / prop seeds. */
-  syncedSettings?: ViewportSettings;
+  syncedSettings?: PlotSettings;
   /** The ONE write path into the viewport's settings store (the GROUP store
    *  while selected — transient, gone on unselect; else the local store, which
    *  sticks). Every user gesture on a display control calls this; absent = no
    *  store. */
-  setSyncedSettings?: (patch: ViewportSettings) => void;
+  setSyncedSettings?: (patch: PlotSettings) => void;
   /** LOCAL apply (no fan-out) — the INITIALIZATION write path: the pane seeds
    *  MISSING settings keys from the first content it shows (single source of
    *  truth rule); init must never fan to group peers. */

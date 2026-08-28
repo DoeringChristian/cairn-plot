@@ -52,7 +52,7 @@ import {
   type SelectionSnapshot,
   type StageMode,
 } from "../state/selection/selection-store";
-import type { ViewportSettings } from "../state/settings/viewport-settings";
+import type { PlotSettings } from "../state/settings/viewport-settings";
 import { useViewportSettings } from "../state/settings/use-viewport-settings";
 import {
   imageCompatibleCount,
@@ -321,19 +321,19 @@ function StageCell({
    *  edits never touch the original panes (user ruling: stage viewports are
    *  independent). */
   stageSettingsGroupId: string;
-  initialSettings: ViewportSettings | null;
-  onSettingsChange: (type: "patch" | "replace", settings: ViewportSettings) => void;
+  initialSettings: PlotSettings | null;
+  onSettingsChange: (type: "patch" | "replace", settings: PlotSettings) => void;
 }) {
   const settings = useViewportSettings([{ id: stageSettingsGroupId }], initialSettings);
-  const patchSettings = useCallback((patch: ViewportSettings) => {
+  const patchSettings = useCallback((patch: PlotSettings) => {
     settings.set(patch);
     onSettingsChange("patch", patch);
   }, [settings.set, onSettingsChange]);
-  const replaceSettings = useCallback((next: ViewportSettings) => {
+  const replaceSettings = useCallback((next: PlotSettings) => {
     settings.replace(next);
     onSettingsChange("replace", next);
   }, [settings.replace, onSettingsChange]);
-  const applySettings = useCallback((patch: ViewportSettings) => {
+  const applySettings = useCallback((patch: PlotSettings) => {
     settings.setLocal(patch);
     onSettingsChange("patch", patch);
   }, [settings.setLocal, onSettingsChange]);
@@ -531,9 +531,9 @@ function SelectionStage({
     return sourceSettings ? { ...sourceSettings } : null;
   }, []);
   // This is only a remount checkpoint (normal ⇄ stacked), never the live owner.
-  const stageCheckpointRef = useRef<ViewportSettings | null>(initialStageSettings);
+  const stageCheckpointRef = useRef<PlotSettings | null>(initialStageSettings);
   const rememberStageSettings = useCallback(
-    (type: "patch" | "replace", next: ViewportSettings) => {
+    (type: "patch" | "replace", next: PlotSettings) => {
       stageCheckpointRef.current = type === "replace"
         ? { ...next }
         : { ...(stageCheckpointRef.current ?? {}), ...next };

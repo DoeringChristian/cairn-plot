@@ -2,7 +2,7 @@
  * 3D camera on the unified-viewport model — the LAST special case, folded
  * (user ruling 2026-08-26: one viewport concept, the image viewport's
  * methods). A 3D viewer is a viewport like any other: it OWNS a plain
- * `ViewportSettings` object, its camera pose is the `"scene3d.camera"` entry,
+ * `PlotSettings` object, its camera pose is the `"scene3d.camera"` entry,
  * writes go through the ONE set path (apply own + publish the same patch to
  * the group channel), peers dedupe by patch identity, and LATE JOIN is a peer
  * DEREF (`settings-peers.ts`) — no bus, no sourceId echo tokens, no stored
@@ -23,7 +23,7 @@
 import {
   publishSettingsPatch,
   subscribeSettingsPatches,
-  type ViewportSettings,
+  type PlotSettings,
 } from "../../../state/settings/viewport-settings.ts";
 import { peekGroupSettings, registerSettingsPeer } from "../../../state/settings/settings-peers.ts";
 
@@ -56,10 +56,10 @@ export function createCameraSettingsPeer(
 ): CameraSettingsPeer {
   // The viewport's OWN settings object (immutable-replace per patch) + the
   // patch-identity dedupe every applier in the model uses.
-  let box: ViewportSettings | null = null;
-  let lastApplied: ViewportSettings | null = null;
+  let box: PlotSettings | null = null;
+  let lastApplied: PlotSettings | null = null;
 
-  const absorb = (patch: ViewportSettings) => {
+  const absorb = (patch: PlotSettings) => {
     lastApplied = patch;
     box = { ...(box ?? {}), ...patch };
   };
@@ -75,7 +75,7 @@ export function createCameraSettingsPeer(
 
   return {
     set(pose) {
-      const patch: ViewportSettings = { "scene3d.camera": pose };
+      const patch: PlotSettings = { "scene3d.camera": pose };
       absorb(patch);
       publishSettingsPatch(groupId, patch);
     },

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import type { PlotNode } from "../../../../packages/spec/src/spec.ts";
-import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
 import { normalizeImageComparisonPresentation } from "./comparison-plan.ts";
 
 export type CompareViewMode = "split" | "diff";
@@ -23,9 +23,9 @@ export interface ImageComparisonControl {
  */
 export function useImageComparisonControl(
   node: PlotNode,
-  settings: ViewportSettings | null | undefined,
-  setSettings?: (patch: ViewportSettings) => void,
-  applySettings?: (patch: ViewportSettings) => void,
+  settings: PlotSettings | null | undefined,
+  setSettings?: (patch: PlotSettings) => void,
+  applySettings?: (patch: PlotSettings) => void,
 ): ImageComparisonControl {
   const comparison = node.kind === "compare" ? node : null;
   const props = (comparison?.props ?? {}) as Record<string, unknown>;
@@ -79,7 +79,7 @@ export function useImageComparisonControl(
   useEffect(() => {
     if (!comparison || !applyRef.current) return;
     const current = settingsRef.current ?? {};
-    const missing: ViewportSettings = {};
+    const missing: PlotSettings = {};
     if (!("compare.operation" in current)) {
       missing["compare.operation"] = seedMode === "split" ? "split" : seedKernel;
     }

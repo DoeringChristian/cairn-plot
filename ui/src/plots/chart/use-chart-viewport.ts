@@ -55,7 +55,7 @@ import {
   type PixelPoint,
   type PixelRect,
 } from "./chart-viewport-math";
-import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
+import type { PlotSettings } from "../../state/settings/viewport-settings.ts";
 import { useModifierKey } from "../../host/hooks/use-modifier-key";
 
 export type { ChartDomain } from "./chart-viewport-math";
@@ -64,7 +64,7 @@ export { resolveChartDomain } from "./chart-viewport-math";
 /**
  * The viewport's SETTINGS handle (unified-viewport model): the chart's domain
  * is the `"chart.domainX"`/`"chart.domainY"` entries of the ONE
- * {@link ViewportSettings} object its frame owns, and gestures write through
+ * {@link PlotSettings} object its frame owns, and gestures write through
  * the ONE `set` path (which fans out to the viewport's groups exactly like an
  * image colormap pick). Passed to {@link useChartViewport} either as the
  * `sync` arg (direct/testable) or — since the pure chart renderers don't
@@ -74,8 +74,8 @@ export { resolveChartDomain } from "./chart-viewport-math";
  * settings object absorbs peer patches and this hook is a pure projection.
  */
 export interface ChartViewportSyncTarget {
-  settings: ViewportSettings | null | undefined;
-  set: (patch: ViewportSettings) => void;
+  settings: PlotSettings | null | undefined;
+  set: (patch: PlotSettings) => void;
 }
 
 const ChartViewportSyncContext = createContext<ChartViewportSyncTarget | null>(null);

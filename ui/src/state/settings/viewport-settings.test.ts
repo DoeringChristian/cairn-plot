@@ -15,8 +15,8 @@ import {
   scopeSettingsPatch,
   subscribeSettingsPatches,
   subscribeSettingsChanges,
-  type SettingsKey,
-  type ViewportSettings,
+  type PlotSettingKey,
+  type PlotSettings,
 } from "./viewport-settings.ts";
 
 beforeEach(() => {
@@ -24,19 +24,19 @@ beforeEach(() => {
 });
 
 /** The frame's applier, verbatim in miniature: own object + identity dedupe. */
-function makeViewport(memberships: Array<{ id: string; keys?: readonly SettingsKey[] }>) {
+function makeViewport(memberships: Array<{ id: string; keys?: readonly PlotSettingKey[] }>) {
   const vp = {
-    settings: null as ViewportSettings | null,
+    settings: null as PlotSettings | null,
     applies: 0,
     unsubs: [] as Array<() => void>,
-    lastApplied: null as ViewportSettings | null,
-    apply(patch: ViewportSettings) {
+    lastApplied: null as PlotSettings | null,
+    apply(patch: PlotSettings) {
       if (vp.lastApplied === patch) return;
       vp.lastApplied = patch;
       vp.settings = { ...(vp.settings ?? {}), ...patch };
       vp.applies++;
     },
-    set(patch: ViewportSettings) {
+    set(patch: PlotSettings) {
       vp.apply(patch);
       for (const m of memberships) publishSettingsPatch(m.id, patch);
     },
@@ -126,7 +126,7 @@ test("unsubscribing the last member drops the channel (no leaks)", () => {
 });
 
 test("replacement is distinct from patch and clears absent settings", () => {
-  let settings: ViewportSettings = {
+  let settings: PlotSettings = {
     "image.encoding": "magma",
     "image.exposureEV": 2,
   };

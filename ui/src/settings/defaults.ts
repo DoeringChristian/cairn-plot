@@ -1,5 +1,5 @@
-import { resolveEffectiveTonemap, TONEMAP_GAMMA_DEFAULT } from "../../plots/image/model/tonemap.ts";
-import type { ViewportSettings } from "./viewport-settings.ts";
+import { resolveEffectiveTonemap, TONEMAP_GAMMA_DEFAULT } from "../plots/image/model/tonemap.ts";
+import type { PlotSettings } from "./schema.ts";
 
 interface InitialSettingsNode {
   kind: string;
@@ -17,10 +17,10 @@ interface InitialSettingsShared {
 export function initialViewportSettings(
   node: InitialSettingsNode,
   shared: InitialSettingsShared | undefined,
-): ViewportSettings {
+): PlotSettings {
   const props = node.props ?? {};
-  const authored = props.settings as ViewportSettings | undefined;
-  const settings: ViewportSettings = {
+  const authored = props.settings as PlotSettings | undefined;
+  const settings: PlotSettings = {
     "image.view": {
       zoom: typeof props.zoom === "number" ? props.zoom : 1,
       pan:

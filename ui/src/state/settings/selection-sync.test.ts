@@ -17,7 +17,7 @@ import {
   __resetSettingsChannelsForTest,
   publishSettingsPatch,
   subscribeSettingsPatches,
-  type ViewportSettings,
+  type PlotSettings,
 } from "./viewport-settings.ts";
 
 let n = 0;
@@ -29,19 +29,19 @@ beforeEach(() => {
 
 /** A pane modelled as the frame holds it: own object + membership from
  *  `paneSyncGroups` + a registry-style deref for peers. */
-function wirePane(store: SelectionStore, paneId: string, base: string, registry: Map<string, () => ViewportSettings | null>) {
+function wirePane(store: SelectionStore, paneId: string, base: string, registry: Map<string, () => PlotSettings | null>) {
   const groups = paneSyncGroups(store, paneId, base);
   const vp = {
     groups,
-    settings: null as ViewportSettings | null,
-    lastApplied: null as ViewportSettings | null,
+    settings: null as PlotSettings | null,
+    lastApplied: null as PlotSettings | null,
     off: () => {},
-    apply(patch: ViewportSettings) {
+    apply(patch: PlotSettings) {
       if (vp.lastApplied === patch) return;
       vp.lastApplied = patch;
       vp.settings = { ...(vp.settings ?? {}), ...patch };
     },
-    set(patch: ViewportSettings) {
+    set(patch: PlotSettings) {
       vp.apply(patch);
       if (groups) publishSettingsPatch(groups.settingsGroupId, patch);
     },
@@ -65,7 +65,7 @@ function wirePane(store: SelectionStore, paneId: string, base: string, registry:
 
 test("two SELECTED panes share settings + view; unselected third untouched; PERSISTS after deselect", () => {
   const base = freshBase();
-  const registry = new Map<string, () => ViewportSettings | null>();
+  const registry = new Map<string, () => PlotSettings | null>();
   const store = new SelectionStore();
   store.select("A", "replace");
   store.select("B", "toggle"); // {A, B} — A anchor
@@ -91,7 +91,7 @@ test("two SELECTED panes share settings + view; unselected third untouched; PERS
 
 test("anchor formation seed converges; a late-added member converges by peer deref", () => {
   const base = freshBase();
-  const registry = new Map<string, () => ViewportSettings | null>();
+  const registry = new Map<string, () => PlotSettings | null>();
   const store = new SelectionStore();
   store.select("A", "replace");
   store.select("B", "toggle");

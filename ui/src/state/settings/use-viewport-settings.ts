@@ -4,7 +4,7 @@
  * types + the stateless group channels).
  *
  * THE CONTRACT (user rulings 2026-08-26): a viewport OWNS a plain
- * {@link ViewportSettings} object (a `useRef` box in the frame that renders
+ * {@link PlotSettings} object (a `useRef` box in the frame that renders
  * the visible element — nothing global stores settings). Resolution at
  * render is one lookup: `explicit value > derived seed`. Groups are
  * stateless broadcast channels; membership IS the subscription:
@@ -33,8 +33,8 @@ import {
   publishSettingsReplacement,
   scopeSettingsPatch,
   subscribeSettingsChanges,
-  type ViewportSettings,
-  type SettingsKey,
+  type PlotSettings,
+  type PlotSettingKey,
 } from "./viewport-settings";
 import { registerSettingsPeer } from "./settings-peers.ts";
 
@@ -42,54 +42,54 @@ import { registerSettingsPeer } from "./settings-peers.ts";
  *  from the channel (authored grid view sync = `["view"]`). */
 export interface SettingsMembership {
   id: string;
-  keys?: readonly SettingsKey[];
+  keys?: readonly PlotSettingKey[];
 }
 
 /** What the owning frame gets. */
 export interface ViewportSettingsHandle {
   /** The viewport's explicitly-set settings, or `null` while untouched.
    *  Identity-stable until the next applied patch. */
-  settings: ViewportSettings | null;
+  settings: PlotSettings | null;
   /** THE write path: apply to this viewport + publish to its groups. */
-  set: (patch: ViewportSettings) => void;
+  set: (patch: PlotSettings) => void;
   /** HOME: replace this viewport's settings with the active content defaults,
    *  then publish those values to linked peers. */
-  replace: (settings: ViewportSettings) => void;
+  replace: (settings: PlotSettings) => void;
   /** Apply locally only (no publish). */
-  setLocal: (patch: ViewportSettings) => void;
+  setLocal: (patch: PlotSettings) => void;
   /** Replace locally without publishing or reporting a user change (session restore). */
-  replaceLocal: (settings: ViewportSettings) => void;
+  replaceLocal: (settings: PlotSettings) => void;
   /** Live accessors for the pane registry (peer reads / external writes). */
-  get: () => ViewportSettings | null;
+  get: () => PlotSettings | null;
   /** Apply as if received from a group (external-write seam). */
-  apply: (patch: ViewportSettings) => void;
+  apply: (patch: PlotSettings) => void;
 }
 
 export function useViewportSettings(
   memberships?: readonly SettingsMembership[],
-  initialSettings: ViewportSettings | null = null,
-  onChange?: (settings: ViewportSettings) => void,
+  initialSettings: PlotSettings | null = null,
+  onChange?: (settings: PlotSettings) => void,
 ): ViewportSettingsHandle {
   // The owner materializes authored/default settings BEFORE its renderer mounts.
   // This is deliberately a useRef initializer: later descriptor/source changes
   // (notably a stacked tab flip) cannot reseed the viewport.
-  const box = useRef<ViewportSettings | null>(initialSettings);
+  const box = useRef<PlotSettings | null>(initialSettings);
   const [, bump] = useReducer((c: number) => c + 1, 0);
   // Patch-identity dedupe: `set` applies the patch directly AND publishes the
   // same object; the writer's own (unscoped) subscription then skips it.
-  const lastAppliedRef = useRef<ViewportSettings | null>(null);
+  const lastAppliedRef = useRef<PlotSettings | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
   const getBox = useCallback(() => box.current, []);
-  const applyPatch = useCallback((patch: ViewportSettings) => {
+  const applyPatch = useCallback((patch: PlotSettings) => {
     if (lastAppliedRef.current === patch) return;
     lastAppliedRef.current = patch;
     box.current = { ...(box.current ?? {}), ...patch };
     bump();
     onChangeRef.current?.(box.current);
   }, []);
-  const applyReplacement = useCallback((settings: ViewportSettings) => {
+  const applyReplacement = useCallback((settings: PlotSettings) => {
     if (lastAppliedRef.current === settings) return;
     lastAppliedRef.current = settings;
     box.current = { ...settings };
@@ -131,14 +131,14 @@ export function useViewportSettings(
   }, [membershipsKey, applyPatch, applyReplacement]);
 
   const set = useCallback(
-    (patch: ViewportSettings) => {
+    (patch: PlotSettings) => {
       applyPatch(patch);
       for (const m of membershipsRef.current ?? []) publishSettingsPatch(m.id, patch);
     },
     [applyPatch],
   );
   const replace = useCallback(
-    (settings: ViewportSettings) => {
+    (settings: PlotSettings) => {
       lastAppliedRef.current = settings;
       box.current = { ...settings };
       bump();
@@ -148,7 +148,7 @@ export function useViewportSettings(
     [],
   );
   const setLocal = applyPatch;
-  const replaceLocal = useCallback((settings: ViewportSettings) => {
+  const replaceLocal = useCallback((settings: PlotSettings) => {
     lastAppliedRef.current = settings;
     box.current = { ...settings };
     bump();
@@ -172,8 +172,8 @@ export function useViewportSettings(
 export function useSeedGroupOnFormation(
   groupId: string | null | undefined,
   isAnchor: boolean,
-  set: ((patch: ViewportSettings) => void) | undefined,
-  snapshot: () => ViewportSettings,
+  set: ((patch: PlotSettings) => void) | undefined,
+  snapshot: () => PlotSettings,
 ): void {
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;

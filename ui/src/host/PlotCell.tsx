@@ -34,8 +34,8 @@ import {
 } from "../layout/grid-uniform-aspect.tsx";
 import { ChartFillContext } from "./standalone-helpers.tsx";
 import { useViewportSettings } from "../state/settings/use-viewport-settings.ts";
-import { initialViewportSettings } from "../state/settings/viewport-initial-settings.ts";
-import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
+import { initialViewportSettings } from "../settings/defaults.ts";
+import type { PlotSettings } from "../state/settings/viewport-settings.ts";
 import { PaneSyncContext, useSharedPlot, type PaneSyncCtx } from "./plot-context.ts";
 import { usePlotSessionController } from "../state/session/session-context.ts";
 
@@ -76,7 +76,7 @@ export function PlotCell({
 
   const initialSettingsRef = useRef<{
     captured: boolean;
-    value: ViewportSettings | null;
+    value: PlotSettings | null;
   }>({ captured: false, value: null });
   if (!initialSettingsRef.current.captured && node.kind !== "grid") {
     initialSettingsRef.current = {
@@ -91,7 +91,7 @@ export function PlotCell({
   const selected = snapshot.selected;
 
   const groups = selectable ? paneSyncGroups(store, paneId, GLOBAL_SELECTION_BASE) : null;
-  const recordSessionSettings = useCallback((settings: ViewportSettings) => {
+  const recordSessionSettings = useCallback((settings: PlotSettings) => {
     sessionController?.recordViewport(sessionId, settings);
   }, [sessionController, sessionId]);
   const vst = useViewportSettings(

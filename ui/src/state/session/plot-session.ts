@@ -1,4 +1,4 @@
-import type { ViewportSettings } from "../settings/viewport-settings.ts";
+import type { PlotSettings } from "../settings/viewport-settings.ts";
 
 export const PLOT_SESSION_VERSION = 1 as const;
 
@@ -9,7 +9,7 @@ export interface GridSessionState {
 
 export interface PlotSession {
   version: typeof PLOT_SESSION_VERSION;
-  viewports: Record<string, { settings: ViewportSettings }>;
+  viewports: Record<string, { settings: PlotSettings }>;
   grids: Record<string, GridSessionState>;
 }
 
@@ -43,7 +43,7 @@ function jsonValue(value: unknown, at: string): void {
 }
 
 /** Translate the one pre-session compare representation accepted as input. */
-function normalizeSettings(input: unknown, at: string): ViewportSettings {
+function normalizeSettings(input: unknown, at: string): PlotSettings {
   const source = record(input, at);
   jsonValue(source, at);
   const settings = { ...source } as Record<string, unknown>;
@@ -56,7 +56,7 @@ function normalizeSettings(input: unknown, at: string): ViewportSettings {
   }
   delete settings["compare.mode"];
   delete settings["compare.kernel"];
-  return settings as ViewportSettings;
+  return settings as PlotSettings;
 }
 
 export function parsePlotSession(input: unknown): PlotSession {

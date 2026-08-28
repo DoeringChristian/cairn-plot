@@ -6,7 +6,7 @@
  * ## The model (in the user's words)
  * "A viewport simply stores a settings instance, that gets synced over the
  * group bus." Concretely:
- * - Each VIEWPORT OWNS a plain {@link ViewportSettings} object, held in a
+ * - Each VIEWPORT OWNS a plain {@link PlotSettings} object, held in a
  *   box (`useRef`) by the frame that renders it (`useViewportSettings` in
  *   renderers/use-viewport-settings.ts). Patches REPLACE the object
  *   (`{...prev, ...patch}`) so identity checks stay valid. Nothing global
@@ -30,12 +30,8 @@
  * carries none of the mixed-vintage-registry hazards the stored registry had.
  */
 
-/** An image viewport's VIEW transform — zoom/pan, a settings value like any
- *  other (an ATOMIC object: zoom and pan move together in one gesture). */
-export type ViewportView = {
-  zoom: number;
-  pan: { x: number; y: number };
-};
+import type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
+export type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
 
 /**
  * THE SETTINGS TYPE (unified-viewport ruling, 2026-08-26): one flat,
@@ -62,64 +58,12 @@ export type ViewportView = {
  * `"panel.info": null` = back-to-auto; `"image.colorRange": null` = bounds
  * skin off. Values that must move together are OBJECTS (view, colorRange).
  */
-export interface ViewportSettings {
-  /** The unified DISPLAY-ENCODING id (a curve/remap operator id or a colormap
-   *  LUT id) — the ONE display-look key. */
-  "image.encoding"?: string;
-  "image.tonemapGamma"?: number;
-  "image.peak"?: number;
-  "image.exposureEV"?: number;
-  "image.offset"?: number;
-  /** Multi-channel REDUCE for k>1 colormap sources (`luminance`/`mean`). */
-  "image.reduce"?: string;
-  /** DATA-encoding BOUNDS (the min/max colorRange skin) — ATOMIC pair;
-   *  `null` = the bounds affine disengaged (exposure/offset skin). */
-  "image.colorRange"?: { min: number; max: number } | null;
-  /** The viewport's zoom/pan. Absent = the pane's own HOME/fit view. */
-  "image.view"?: ViewportView;
-  /** EXR channel-strip selection ({part, layer} or null = the node default).
-   *  Synced BY NAME so a group flips every pane to the same part/layer. */
-  "image.channelSelect"?: { part?: number | string; layer?: string | string[] } | null;
-  /** Semantic comparison operation: `split`, `signed`, `absolute`, `flip`, … .
-   *  GPU kernel selection is a renderer implementation detail. */
-  "compare.operation"?: string;
-  /** Read-only migration inputs for old saved workspaces. New code never writes
-   *  these split representations. */
-  "compare.mode"?: string;
-  "compare.kernel"?: string;
-  /** Split-divider position in [0,1]. */
-  "compare.split"?: number;
-  /** INFO-PANEL visibility: true/false = explicit choice; ABSENT = auto;
-   *  `null` = explicit back-to-auto (HOME). */
-  "panel.info"?: boolean | null;
-  /** A 2D chart's data-space window, ONE KEY PER AXIS (Plotly matched-axes
-   *  semantics: peers adopt the RANGES, not a pixel transform; separate keys
-   *  so the flat per-key merge lets an axis move alone). `null` = that axis
-   *  follows its own live home/autoscale (the mask convention); a box-zoom
-   *  writes both keys in one atomic patch. */
-  "chart.domainX"?: [number, number] | null;
-  "chart.domainY"?: [number, number] | null;
-  /** Scalar series promoted onto their own y axes. Cell-owned so stack swaps,
-   *  HOME, selection sync, and persistence use the same settings path. */
-  "chart.promotedSeries"?: Record<string, { min: number; max: number }>;
-  /** A 3D viewer's camera pose — ATOMIC (position/target/zoom move together
-   *  in one orbit gesture). */
-  "scene3d.camera"?: {
-    position: [number, number, number];
-    target: [number, number, number];
-    zoom: number;
-  };
-}
-
-/** Keys a channel SUBSCRIPTION may be scoped to. */
-export type SettingsKey = keyof ViewportSettings;
-
 /** Restrict `patch` to `keys` (undefined = the whole patch). Returns null when
  *  nothing survives, so scoped subscribers can skip empty applies. */
 export function scopeSettingsPatch(
-  patch: ViewportSettings,
-  keys: readonly SettingsKey[] | undefined,
-): ViewportSettings | null {
+  patch: PlotSettings,
+  keys: readonly PlotSettingKey[] | undefined,
+): PlotSettings | null {
   if (!keys) return patch;
   const out: Record<string, unknown> = {};
   let any = false;
@@ -129,15 +73,15 @@ export function scopeSettingsPatch(
       any = true;
     }
   }
-  return any ? (out as ViewportSettings) : null;
+  return any ? (out as PlotSettings) : null;
 }
 
 export type SettingsChange =
-  | { type: "patch"; settings: ViewportSettings }
-  | { type: "replace"; settings: ViewportSettings };
+  | { type: "patch"; settings: PlotSettings }
+  | { type: "replace"; settings: PlotSettings };
 
 type ChangeListener = (change: SettingsChange) => void;
-type PatchListener = (patch: ViewportSettings) => void;
+type PatchListener = (patch: PlotSettings) => void;
 
 // CROSS-BUNDLE stateless channel map (see module doc).
 const CHANNELS_KEY = "__cairnPlotSettingsChannels__";
@@ -149,7 +93,7 @@ const channels: Map<string, Set<ChangeListener>> = ((globalThis as unknown as Re
 /** Broadcast `patch` to every subscriber of `groupId` (including, by design,
  *  the publisher's own subscription if it has one — appliers dedupe by patch
  *  object identity). Stateless: nothing is remembered. */
-export function publishSettingsPatch(groupId: string, patch: ViewportSettings): void {
+export function publishSettingsPatch(groupId: string, patch: PlotSettings): void {
   const subs = channels.get(groupId);
   if (subs) for (const cb of [...subs]) cb({ type: "patch", settings: patch });
 }
@@ -158,7 +102,7 @@ export function publishSettingsPatch(groupId: string, patch: ViewportSettings): 
  * values absent from `settings`; HOME relies on this distinction. */
 export function publishSettingsReplacement(
   groupId: string,
-  settings: ViewportSettings,
+  settings: PlotSettings,
 ): void {
   const subs = channels.get(groupId);
   if (subs) for (const cb of [...subs]) cb({ type: "replace", settings });
