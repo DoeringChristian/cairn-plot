@@ -15,8 +15,8 @@
  * than `plot-renderers`, so importing this module does NOT drag the 2D
  * renderers into the addon bundle.
  */
-import Figure from "./renderer/Figure";
-import type { FigureInteractionSettings } from "./renderer/Figure";
+import Figure from "./backends/plotly/Figure";
+import type { FigureInteractionSettings } from "./backends/plotly/Figure";
 import type { PlotlyFigureLike } from "../types.ts";
 import { ChartBox } from "../../host/standalone-helpers";
 import type { SettingsRecord } from "../contracts.ts";

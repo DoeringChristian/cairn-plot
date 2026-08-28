@@ -2,7 +2,7 @@ import VolumeViewer, {
   type VolumeBackground,
   type VolumeQuality,
   type VolumeRenderMode,
-} from "../renderers/VolumeViewer";
+} from "../backends/three/VolumeViewer";
 import type { Scene3DCameraMode, Scene3DSyncOptions } from "../runtime/use-scene3d";
 import type { PropertyMeta } from "../model/properties";
 import { LabelChip, ContentCaption } from "../../../primitives/components/index";

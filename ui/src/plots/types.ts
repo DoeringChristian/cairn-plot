@@ -61,7 +61,7 @@ export type DiffMode =
 // `ColormapName` is the canonical colormap registry's key set — derived from
 // `colormaps/lut.ts`'s `COLORMAP_STOPS` (single source of truth) and re-exported
 // here (type-only, erased at build — no runtime dependency on lut.ts) so the
-// many renderer/viewport importers can keep importing it from `../types`.
+// plot backends can keep importing it from `../types`.
 // `Colormap` adds the image-only `"none"` raw/grayscale passthrough on top.
 export type { ColormapName } from "../settings/colormaps/lut";
 import type { ColormapName } from "../settings/colormaps/lut";

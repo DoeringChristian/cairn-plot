@@ -3,7 +3,7 @@ import MeshViewer, {
   type MeshBackground,
   type MeshColorMode,
   type MeshShading,
-} from "../renderers/MeshViewer";
+} from "../backends/three/MeshViewer";
 import type { Scene3DCameraMode, Scene3DSyncOptions } from "../runtime/use-scene3d";
 import {
   resolveActiveProperty,

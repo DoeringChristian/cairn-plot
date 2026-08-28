@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 
 import type { JsonValue } from "../../../../packages/spec/src/json.ts";
 import type { DataSource } from "../../resources/data/data-source.ts";
-import type { ColumnType, TableData } from "./renderer/Table.tsx";
+import type { ColumnType, TableData } from "./backends/dom/Table.tsx";
 import type { CellComparison } from "./diff.ts";
 import type { SettingsRecord } from "../contracts.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";

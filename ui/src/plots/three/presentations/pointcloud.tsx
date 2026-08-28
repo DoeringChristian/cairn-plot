@@ -4,7 +4,7 @@ import PointCloudViewer, {
   type PointCloudChannels,
   type PointColorMode,
   type PointSizeMode,
-} from "../renderers/PointCloudViewer";
+} from "../backends/three/PointCloudViewer";
 import type { Scene3DCameraMode, Scene3DSyncOptions } from "../runtime/use-scene3d";
 import type { PropertyMap, PropertyMeta } from "../model/properties";
 import { LabelChip, ContentCaption } from "../../../primitives/components/index";

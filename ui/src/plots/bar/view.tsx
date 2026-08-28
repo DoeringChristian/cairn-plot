@@ -1,4 +1,4 @@
-import BarChart, { type BarChartProps } from "./renderer/BarChart.tsx";
+import BarChart, { type BarChartProps } from "./backends/svg/BarChart.tsx";
 import { ChartBox } from "../../host/standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
 import type { ChartSettings } from "../chart-settings.ts";

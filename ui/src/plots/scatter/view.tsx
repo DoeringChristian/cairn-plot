@@ -1,4 +1,4 @@
-import ScatterPlot from "./renderer/ScatterPlot.tsx";
+import ScatterPlot from "./backends/svg/ScatterPlot.tsx";
 import { ChartBox } from "../../host/standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
 import type { ChartSettings } from "../chart-settings.ts";

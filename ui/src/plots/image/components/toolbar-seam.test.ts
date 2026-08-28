@@ -2,7 +2,7 @@
  * Contract guard for the `toolbar` HOST SEAM shared by all three image panes.
  *
  * The feature: a host (cairn) hides the pane's `PlotToolbar` (`toolbar={false}`)
- * while settings continue to flow through the viewport store. No DOM/renderer is
+ * while settings continue to flow through the cell store. No DOM/backend is
  * configured in this package (JSX can't be imported under
  * `--experimental-strip-types` — see ref-badge.test.ts), so this asserts the
  * contract at the SOURCE level. It also guards the two invariants that make the

@@ -32,7 +32,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import PlotLegend, { type LegendItem } from "../PlotLegend";
-import { CustomLegend } from "../../../plots/scalar/renderer/support/scalar-legend";
+import { CustomLegend } from "../../../plots/scalar/backends/svg/support/scalar-legend";
 import { useSeriesVisibility } from "../../../host/hooks/use-series-visibility";
 import { createHarness } from "../../../testing/harness";
 

@@ -3,7 +3,7 @@ import BoxesViewer, {
   resolveBoxesColorMode,
   type BoxesBackground,
   type BoxesColorMode,
-} from "../renderers/BoxesViewer";
+} from "../backends/three/BoxesViewer";
 import type { Scene3DCameraMode, Scene3DSyncOptions } from "../runtime/use-scene3d";
 import {
   resolveActiveProperty,

@@ -1,15 +1,15 @@
-export { default as ScatterPlot, type ScatterPlotProps } from "../../scatter/renderer/ScatterPlot";
+export { default as ScatterPlot, type ScatterPlotProps } from "../../scatter/backends/svg/ScatterPlot";
 export {
   default as BarChart,
   type BarChartProps,
   type BarDatum,
   type BarCompareMode,
-} from "../../bar/renderer/BarChart";
+} from "../../bar/backends/svg/BarChart";
 export {
   default as ParallelCoords,
   type ParallelCoordsProps,
-} from "../../parallel/renderer/ParallelCoords";
-export { default as ScalarPlot, type ScalarPlotProps } from "../../scalar/renderer/ScalarPlot";
+} from "../../parallel/backends/svg/ParallelCoords";
+export { default as ScalarPlot, type ScalarPlotProps } from "../../scalar/backends/svg/ScalarPlot";
 // The CPU image backend + the shared backend contract. `CpuImagePane` and the
 // WebGPU `GpuImagePane` (addon-loaded via the runtime registry seam) are the
 // two interchangeable backends behind `ImageBackendProps` — see
@@ -33,11 +33,11 @@ export {
   type HdrData,
   type RenderMode,
 } from "../backends/contracts";
-export { default as Heatmap, type HeatmapProps } from "../../heatmap/renderer/Heatmap";
+export { default as Heatmap, type HeatmapProps } from "../../heatmap/backends/svg/Heatmap";
 export {
   default as HistogramPlot,
   type HistogramPlotProps,
-} from "../../histogram/renderer/HistogramPlot";
+} from "../../histogram/backends/svg/HistogramPlot";
 export {
   default as ImageOverlay,
   type ImageOverlayProps,
@@ -51,15 +51,15 @@ export {
   type PointSizeMode,
   type PointCloudBackground,
   type PointCloudBounds,
-} from "../../three/renderers/PointCloudViewer";
+} from "../../three/backends/three/PointCloudViewer";
 export {
   default as Table,
   type TableProps,
   type TableData,
   type TableColumn,
   type ColumnType,
-} from "../../table/renderer/Table";
+} from "../../table/backends/dom/Table";
 // NOTE: `Figure` is intentionally NOT re-exported from this barrel — see the
-// comment in `../index.ts`. Import it directly from "../../figure/renderer/Figure" (or
-// "../plots/figure/renderer/Figure" from app code) so its Plotly
+// comment in `../index.ts`. Import it directly from "../../figure/backends/plotly/Figure" (or
+// "../plots/figure/backends/plotly/Figure" from app code) so its Plotly
 // dependency stays out of the eagerly-bundled reexport graph.

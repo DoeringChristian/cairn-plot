@@ -1,4 +1,4 @@
-import ParallelCoords from "./renderer/ParallelCoords.tsx";
+import ParallelCoords from "./backends/svg/ParallelCoords.tsx";
 import { ChartBox } from "../../host/standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import type { ParallelPresentation } from "./register.ts";
