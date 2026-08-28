@@ -10,12 +10,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getImageOperation, listImageOperations, listMultipassImageOperations } from "./operations/index.ts";
+import { getImageOperation, listImageOperations } from "../definition/image-operations.ts";
+import { getWebGpuImageOperation, WEBGPU_IMAGE_OPERATIONS } from "../webgpu/image-operations.ts";
 
 test("every multipass operation declares scalar display output", () => {
-  const operations = listMultipassImageOperations();
+  const operations = WEBGPU_IMAGE_OPERATIONS.filter((operation) => operation.kind === "multipass");
   assert.ok(operations.length >= 4, "expected the multipass FLIP/SSIM implementations");
-  for (const operation of operations) assert.equal(operation.outputArity, 1, `${operation.id} must be scalar`);
+  for (const operation of operations) assert.equal(operation.definition.output.arity, 1, `${operation.definition.id} must be scalar`);
 });
 
 test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
@@ -29,19 +30,19 @@ test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
     "relative_squared",
   ];
   for (const id of scalar) {
-    assert.equal(getImageOperation(id)?.outputArity, 1, `${id} must be scalar`);
+    assert.equal(getImageOperation(id)?.output.arity, 1, `${id} must be scalar`);
   }
   for (const id of perChannel) {
     const operation = getImageOperation(id);
-    assert.ok(operation?.implementation.kind === "inline", `${id} must be an inline image operation`);
-    assert.equal(operation.outputArity, 1, `${id} exposes scalar display gating while retaining channel values`);
+    assert.equal(getWebGpuImageOperation(id)?.kind, "inline", `${id} must be an inline WebGPU image operation`);
+    assert.equal(operation?.output.arity, 1, `${id} exposes scalar display gating while retaining channel values`);
   }
 });
 
 test("pointwise differences and multipass metrics share the image-operation registry", () => {
-  const pointwise = listImageOperations().filter(
-    (operation) => operation.implementation.kind === "inline" && operation.inputCount === 2 && operation.outputArity === 1,
+  const pointwise = listImageOperations().filter((operation) =>
+    getWebGpuImageOperation(operation.id)?.kind === "inline" && operation.inputs === 2 && operation.output.arity === 1,
   );
   assert.equal(pointwise.length, 6);
-  for (const operation of pointwise) assert.equal(operation.implementation.kind, "inline");
+  for (const operation of pointwise) assert.equal(getWebGpuImageOperation(operation.id)?.kind, "inline");
 });

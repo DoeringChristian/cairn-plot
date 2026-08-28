@@ -29,7 +29,8 @@ import { renderImage, computeMetrics, type ImageParams } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
 import { prepareDisplayOperation } from "../prepare-display-operation.ts";
-import { getImageOperation, isInlineImageOperation, imageOperationId, type ImageOperationCpuContext } from "../../../model/operations/index";
+import { getCpuImageOperation, type CpuImageOperationContext } from "../../../cpu/image-operations.ts";
+import { getWebGpuImageOperation, imageOperationId } from "../../image-operations.ts";
 import { evaluateDisplayOperation, getDisplayOperation, DEFAULT_ENCODE_PARAMS } from "../../../model/display-operations/index";
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../../model/tonemap";
 import { colormapFloatLUT } from "../../../../../settings/colormaps/lut";
@@ -71,9 +72,9 @@ function buildTex(device: Device, rows: number[][]): Texture {
  * within 1/255.
  */
 async function runDiffOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
-  const op = getImageOperation(opId);
-  if (!op || !isInlineImageOperation(op)) {
-    report(false, `[${opId}] not a registered direct image operation`);
+  const op = getCpuImageOperation(opId);
+  if (!op || getWebGpuImageOperation(opId)?.kind !== "inline") {
+    report(false, `[${opId}] is not implemented as an inline operation by both backends`);
     return false;
   }
   const enc = getDisplayOperation(displayOperationId);
@@ -111,7 +112,7 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
   let ok = true;
   for (let i = 0; i < PAIRS.length; i++) {
     // CONTENT twin: the op's per-channel raw diff (the readout source of truth).
-    const content = op.implementation.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const content = op.evaluate([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     // DISPLAY twin: the op's defaultEncoding cpu (reduce → colormap/analytic).
     let exp: RgbTriple;
     if (enc.category === "curve" || enc.category === "remap" || enc.implementation.kind === "analytic") {
@@ -195,8 +196,8 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
  * two-registry composition the diff case uses.
  */
 async function runCompositorOpCase(device: Device, opId: "split", param: number): Promise<boolean> {
-  const op = getImageOperation(opId);
-  if (!op || !isInlineImageOperation(op)) {
+  const op = getCpuImageOperation(opId);
+  if (!op || getWebGpuImageOperation(opId)?.kind !== "inline") {
     report(false, `[${opId}] not a registered direct image operation`);
     return false;
   }
@@ -220,8 +221,8 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
   ];
   const N = rowsA.length;
   const twin = (i: number, c: number): number => {
-    const ctx: ImageOperationCpuContext = { uv: [(i + 0.5) / N, 0.5], param };
-    return op.implementation.cpu([rowsA[i]!, rowsB[i]!], 3, ctx)[c]!;
+    const ctx: CpuImageOperationContext = { uv: [(i + 0.5) / N, 0.5], parameter: param };
+    return op.evaluate([rowsA[i]!, rowsB[i]!], 3, ctx)[c]!;
   };
 
   let ok = true;
@@ -291,8 +292,8 @@ function buildUpload(rows: number[][]): SourceUpload {
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
  */
 async function runPoolDirectOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
-  const op = getImageOperation(opId);
-  if (!op || !isInlineImageOperation(op)) {
+  const op = getCpuImageOperation(opId);
+  if (!op || getWebGpuImageOperation(opId)?.kind !== "inline") {
     report(false, `[pool:${opId}] not a registered direct image operation`);
     return false;
   }
@@ -341,7 +342,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
   }
   let ok = true;
   for (let i = 0; i < PAIRS.length; i++) {
-    const content = op.implementation.cpu([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const content = op.evaluate([PAIRS[i]!.a, PAIRS[i]!.b], 3);
     let exp: RgbTriple;
     if (enc.category === "curve" || enc.category === "remap" || enc.implementation.kind === "analytic") {
       const lin = evaluateDisplayOperation(enc, content, 3, encParams);

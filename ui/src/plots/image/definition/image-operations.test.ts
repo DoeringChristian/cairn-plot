@@ -1,0 +1,45 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { CPU_IMAGE_OPERATIONS, getCpuImageOperation } from "../cpu/image-operations.ts";
+import { buildImageOperationWGSL, getWebGpuImageOperation, WEBGPU_IMAGE_OPERATIONS } from "../webgpu/image-operations.ts";
+import { IMAGE_OPERATIONS } from "./image-operations.ts";
+
+const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
+
+test("semantic image operations have unique backend-neutral definitions", () => {
+  const ids = IMAGE_OPERATIONS.map(({ id }) => id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.deepEqual(ids, ["identity", ...POINTWISE, "split", "flip", "hdr-flip", "flip-ldr-forced", "ssim"]);
+  for (const operation of IMAGE_OPERATIONS) {
+    assert.equal("implementation" in operation, false);
+  }
+});
+
+test("WebGPU implements every declared image operation", () => {
+  assert.deepEqual(
+    WEBGPU_IMAGE_OPERATIONS.map(({ definition }) => definition.id),
+    IMAGE_OPERATIONS.map(({ id }) => id),
+  );
+});
+
+test("CPU implements the pointwise subset and reports unsupported multipass operations", () => {
+  assert.deepEqual(CPU_IMAGE_OPERATIONS.map(({ definition }) => definition.id), ["identity", ...POINTWISE, "split"]);
+  for (const id of ["flip", "hdr-flip", "flip-ldr-forced", "ssim"]) assert.equal(getCpuImageOperation(id), undefined);
+});
+
+test("CPU pointwise implementations retain comparison math", () => {
+  const a = [0.8, 0.5, 0.2];
+  const b = [0.3, 0.6, 0.2];
+  assert.deepEqual(getCpuImageOperation("signed")!.evaluate([a, b], 3), [0.5, -0.09999999999999998, 0]);
+  assert.deepEqual(getCpuImageOperation("absolute")!.evaluate([a, b], 3), [0.5, 0.09999999999999998, 0]);
+});
+
+test("WebGPU JIT dispatch contains only inline backend implementations", () => {
+  const wgsl = buildImageOperationWGSL();
+  for (const operation of WEBGPU_IMAGE_OPERATIONS) {
+    if (operation.kind === "inline" && operation.definition.id !== "identity") {
+      assert.ok(wgsl.includes(operation.expression), operation.definition.id);
+    }
+  }
+  for (const id of ["flip", "hdr-flip", "ssim"]) assert.equal(getWebGpuImageOperation(id)?.kind, "multipass");
+});

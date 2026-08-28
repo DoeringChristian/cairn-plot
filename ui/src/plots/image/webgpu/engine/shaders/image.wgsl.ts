@@ -161,7 +161,7 @@
  * exact-texel semantics, no filterable-float sampler.
  */
 import { buildDisplayOperationWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, type DisplayOperation } from "../../../model/display-operations/index.ts";
-import { buildImageOperationWGSL } from "../../../model/operations/index.ts";
+import { buildImageOperationWGSL } from "../../image-operations.ts";
 
 export function buildImageWGSL(displayOperation: DisplayOperation): string {
 return `

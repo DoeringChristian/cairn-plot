@@ -62,7 +62,8 @@ import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
 // imports are safe here: this file only ships in the gpu-image addon bundle,
 // never `core.iife.js`.
-import { imageOperationId, getImageOperation, getMultipassImageOperation } from "../model/operations/index";
+import { getImageOperation } from "../definition/image-operations.ts";
+import { imageOperationId, getWebGpuMultipassOperation } from "./image-operations.ts";
 import {
   resolveComparisonOperationId,
   listComparisonOperationOptions,
@@ -1888,7 +1889,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       diffResultDimsRef.current = null;
       return;
     }
-    const operation = getMultipassImageOperation(resolvedOperationId);
+    const operation = getWebGpuMultipassOperation(resolvedOperationId);
     if (!operation) {
       // Direct op: no result readback — the cpu twin drives the readout.
       diffSamplesRef.current = null;
