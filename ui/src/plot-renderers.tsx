@@ -186,9 +186,16 @@ function ScalarPlotStandalone(p: P) {
       "chart.domainY": next.yMin == null || next.yMax == null ? null : [next.yMin, next.yMax],
     });
   }, [setScalarSettings]);
-  const [promoted, setPromoted] = useState<Record<string, PromotedSeriesConfig>>(
+  const [localPromoted, setLocalPromoted] = useState<Record<string, PromotedSeriesConfig>>(
     p.promotedSeries ?? {},
   );
+  const promoted = setScalarSettings
+    ? scalarSettings?.["chart.promotedSeries"] ?? {}
+    : localPromoted;
+  const setPromoted = useCallback((next: Record<string, PromotedSeriesConfig>) => {
+    if (setScalarSettings) setScalarSettings({ "chart.promotedSeries": next });
+    else setLocalPromoted(next);
+  }, [setScalarSettings]);
   const {
     height,
     viewport: _v,

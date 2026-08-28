@@ -1,5 +1,5 @@
 import type { JsonValue } from "../../../../packages/spec/src/json.ts";
-import type { AxisScale, Series } from "../../lib/cairn-plot/types.ts";
+import type { AxisScale, PromotedSeriesConfig, Series } from "../../lib/cairn-plot/types.ts";
 import type { AxisSource } from "../../lib/cairn-plot/transforms/x-axis.ts";
 import type { SettingsRecord } from "../contracts.ts";
 
@@ -19,6 +19,7 @@ export interface ScalarPresentation {
 export type ScalarSettings = SettingsRecord & {
   "chart.domainX"?: [number, number] | null;
   "chart.domainY"?: [number, number] | null;
+  "chart.promotedSeries"?: Record<string, PromotedSeriesConfig>;
 };
 
 function isSeries(value: unknown): value is Series {
@@ -42,9 +43,24 @@ export function projectScalarSettings(settings: Readonly<SettingsRecord>): Scala
   const projected: ScalarSettings = {};
   const x = settings["chart.domainX"];
   const y = settings["chart.domainY"];
+  const promoted = settings["chart.promotedSeries"];
   if (x === null || isDomain(x)) projected["chart.domainX"] = x;
   if (y === null || isDomain(y)) projected["chart.domainY"] = y;
+  if (isPromotedSeries(promoted)) {
+    projected["chart.promotedSeries"] = promoted as unknown as Record<string, PromotedSeriesConfig>;
+  }
   return projected;
+}
+
+function isPromotedSeries(
+  value: JsonValue | undefined,
+): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value).every((entry) =>
+    entry !== null && typeof entry === "object" && !Array.isArray(entry) &&
+    typeof entry.min === "number" && Number.isFinite(entry.min) &&
+    typeof entry.max === "number" && Number.isFinite(entry.max)
+  );
 }
 
 function isDomain(value: JsonValue | undefined): value is [number, number] {

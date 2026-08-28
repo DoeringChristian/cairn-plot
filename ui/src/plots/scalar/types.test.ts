@@ -16,10 +16,12 @@ test("scalar settings projection keeps only valid chart domains", () => {
   assert.deepEqual(projectScalarSettings({
     "chart.domainX": [1, 2],
     "chart.domainY": null,
+    "chart.promotedSeries": { loss: { min: 0, max: 4 } },
     "image.encoding": "magma",
   }), {
     "chart.domainX": [1, 2],
     "chart.domainY": null,
+    "chart.promotedSeries": { loss: { min: 0, max: 4 } },
   });
   assert.deepEqual(projectScalarSettings({ "chart.domainX": [1, Number.NaN] }), {});
 });

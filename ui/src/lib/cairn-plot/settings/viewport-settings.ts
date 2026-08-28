@@ -99,6 +99,9 @@ export interface ViewportSettings {
    *  writes both keys in one atomic patch. */
   "chart.domainX"?: [number, number] | null;
   "chart.domainY"?: [number, number] | null;
+  /** Scalar series promoted onto their own y axes. Cell-owned so stack swaps,
+   *  HOME, selection sync, and persistence use the same settings path. */
+  "chart.promotedSeries"?: Record<string, { min: number; max: number }>;
   /** A 3D viewer's camera pose — ATOMIC (position/target/zoom move together
    *  in one orbit gesture). */
   "scene3d.camera"?: {

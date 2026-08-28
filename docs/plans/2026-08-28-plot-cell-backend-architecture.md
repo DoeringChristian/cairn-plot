@@ -62,6 +62,9 @@ Status: accepted design; implementation in progress
 - [x] Replace scalar's type-erased presentation/settings bags with concrete
   `ScalarPresentation` and `ScalarSettings` contracts, checked resolved-series
   validation, and key-scoped chart-domain projection.
+- [x] Move scalar promoted-axis state into the cell settings object as
+  `chart.promotedSeries`; hosted scalar renderers no longer keep an independent
+  promoted-series store across stack swaps, HOME, sync, or persistence.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry
