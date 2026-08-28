@@ -1,6 +1,6 @@
 # Plot cell, plot definition, backend, and engine architecture
 
-Status: implemented
+Status: implementation in progress
 
 ## Implementation progress
 
@@ -98,8 +98,9 @@ Status: implemented
 - [x] Extract image CPU/WebGPU capability selection and fallback policy into
   the image plot boundary. The reusable WebGPU facade remains plot-agnostic;
   image backend policy no longer lives in the central registration module.
-- [x] Colocate the image surface host with the image plot. The core renderer
-  entry point is now a small composition root containing registration only.
+- [ ] Move the remaining retained image surface orchestration out of
+  `host/PlotNodeView.tsx` and behind an image-owned host adapter. Generic leaf
+  resolution and preloading already route exclusively through plot definitions.
 - [x] Replace flattened React prop bags with one typed view contract carrying
   semantic presentation, readonly effective settings, and the cell command
   port as separate fields. Core plot views no longer infer settings ownership
@@ -410,10 +411,10 @@ checks, and Python descriptor/report tests before the next slice begins.
 
 ## Completion status
 
-All ten migration steps are complete. The former `ui/src/lib/cairn-plot`
-namespace no longer exists: source ownership is expressed by the top-level
+The ten migration steps are functionally complete. One final ownership cleanup
+remains: moving retained image orchestration behind an image-owned host adapter.
+The former `ui/src/lib/cairn-plot` namespace no longer exists: source ownership is expressed by the top-level
 `public`, `host`, `layout`, `state`, `plots`, `backends`, `engines`, `resources`,
-`settings`, `primitives`, `testing`, and `integration` directories. Core runtime
-code has no dependency on the Cairn dashboard compatibility seam. Cairn's
-standalone plot entry consumes `public/`; legacy dashboard composition is
-contained behind `integration/cairn-card.ts` rather than arbitrary legacy paths.
+`settings`, `primitives`, and `testing` directories. Cairn consumes only the
+supported browser API in `public/`; cairn-plot contains no Cairn-specific
+adapter or compatibility directory.

@@ -1,9 +1,8 @@
-# cairn-plot public API (0.1)
+# cairn-plot public API
 
-This is the defined, supported surface for cairn-plot 0.1. Everything not listed
-here is internal and may change without notice. Backwards-compatibility shims and
-deprecated aliases were removed in the 0.1 cleanup (see
-`docs/api-cleanup-inventory.md`).
+This is the defined, supported surface for cairn-plot. Everything not listed
+here is internal and may change without notice. This development API is a clean
+cut: old descriptor aliases are not accepted.
 
 There are two surfaces:
 - **Python** (`cairn_plot`) — the authoring API you import in a notebook/script.
@@ -225,6 +224,50 @@ Addons cannot `import` from core; they attach at runtime via the registry seam.
 | `__cairnPlotFigureLoaded` / `__cairnPlotThreeLoaded` / `__cairnPlotGpuImageLoaded` | Include-once guards per addon. |
 | `__cairnPlotRenderMode` (`"cpu"\|"gpu"\|"auto"`) | Settable override for the image backend selection. |
 | `__cairnPlotUseGpuImage` (`boolean`) | Escape hatch to force off the WebGPU image backend. |
+
+### Public browser host
+
+React hosts provide an authored specification and a data source. The
+specification deliberately has no version field and exposes no cells, surfaces,
+backend handles, or cache state.
+
+```tsx
+import { PlotHost, createEndpointDataSource } from "cairn-plot";
+
+const spec = {
+  root: {
+    kind: "grid",
+    initialLayout: "stack",
+    children: [
+      {
+        kind: "plot",
+        type: "image",
+        data: { kind: "image", hash: "prediction" },
+        settings: { "image.encoding": "turbo" },
+      },
+      {
+        kind: "plot",
+        type: "image",
+        data: { kind: "image", hash: "reference" },
+      },
+    ],
+  },
+};
+
+const dataSource = createEndpointDataSource(artifactUrl);
+<PlotHost spec={spec} dataSource={dataSource} />;
+```
+
+The imperative API mounts the same host and adds lifecycle plus optional runtime
+session import/export:
+
+```ts
+const plot = mountPlot(element, { spec, dataSource, persistence: false });
+plot.update({ spec: nextSpec });
+const session = plot.getSession();
+plot.restoreSession(session);
+plot.destroy();
+```
 
 ### Descriptor contract
 A plot is mounted from a **tree** descriptor — `{ root: PlotNode, mode?, endpoint? }`

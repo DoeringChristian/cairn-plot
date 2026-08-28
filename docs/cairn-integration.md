@@ -29,10 +29,8 @@ decoding, resources and concrete renderers.
 
 Cairn's standalone plot/report surface must not import cell settings stores,
 renderer components, registries, camera synchronization or comparison internals.
-The older dashboard cards that still compose low-level renderers use the single
-explicit `ui/src/integration/cairn-card.ts` compatibility seam; core runtime code
-never imports that seam. New host integrations must use the public API, and the
-compatibility seam must not grow new runtime ownership. The supported browser exports are
+There is no Cairn-specific compatibility layer inside cairn-plot. Host
+integrations use the public API. The supported browser exports are
 `PlotHost`, `mountPlot`, `createEndpointDataSource`, `DataSource`, the recursive
 specification types, `PlotSession`, and `SessionPersistence`. Cairn may hydrate a
 runtime session explicitly with `initialSession`/`restoreSession`, or

@@ -53,8 +53,8 @@ The supported browser API is `ui/src/public`:
 ```
 
 The imperative `mountPlot` function mounts the same React host; it is not a
-second runtime. Renderer registration, viewport stores, selection, stage and
-resource machinery remain private.
+second runtime. Plot registration, cell settings, selection, stage and resource
+machinery remain private.
 
 ## Repository packages
 
