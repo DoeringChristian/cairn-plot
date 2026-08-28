@@ -81,7 +81,11 @@ import {
 import { PlotCell } from "./host/PlotCell.tsx";
 import { ReactBackendOutlet } from "./host/react-backend.ts";
 import { getReactPlotType } from "./plots/react-registry.ts";
-import { comparisonRenderer } from "./plots/registry.ts";
+import {
+  comparisonRenderer,
+  planComparison,
+  resolveComparison,
+} from "./plots/registry.ts";
 import type { RenderEnvironment } from "./backends/contracts.ts";
 import {
   planRegisteredImageComparison as synthDiffLeafOf,
@@ -646,14 +650,21 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
             run: () => resolveDataProps(child.data, source),
           });
         } else if (child.kind === "compare") {
-          // Comparison preparation belongs to its installed plot host. The
-          // transitional production host below currently implements image.
-          if (comparisonRenderer(child) !== "image") continue;
-          const synth = synthDiffLeafOf(child);
-          entries.push({
-            key: resolutionKey(source, synth.leaf, "|diffpair"),
-            run: () => resolveRegisteredImageComparison(child, source),
-          });
+          if (comparisonRenderer(child) === "image") {
+            const synth = synthDiffLeafOf(child);
+            entries.push({
+              key: resolutionKey(source, synth.leaf, "|diffpair"),
+              run: () => resolveRegisteredImageComparison(child, source),
+            });
+          } else {
+            entries.push({
+              key: resolutionKey(source, child, "|comparison"),
+              run: () => resolveComparison(child, {
+                source,
+                signal: new AbortController().signal,
+              }),
+            });
+          }
         }
       }
       prefetchResolved(entries);
@@ -838,10 +849,62 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
       );
     case "compare":
       if (comparisonRenderer(node) === "image") return <ImageCompatibleView node={node} />;
-      return <Message text={`comparison host for ${JSON.stringify(comparisonRenderer(node))} is not installed`} error />;
+      return <GenericComparisonView node={node} />;
     default:
       return <Message text={`unknown node kind "${(node as PlotNode).kind}"`} error />;
   }
+}
+
+/** Capability-backed host for comparisons that do not require image continuity. */
+function GenericComparisonView({ node }: { node: CompareNode }) {
+  const { source } = useSharedPlot();
+  const paneSync = useContext(PaneSyncContext);
+  const key = resolutionKey(source, node, "|comparison");
+  useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
+  const planned = useMemo(() => {
+    try {
+      return { value: planComparison(node), error: null };
+    } catch (error) {
+      return { value: null, error: error instanceof Error ? error.message : String(error) };
+    }
+  }, [node]);
+  useEffect(() => {
+    if (!planned.value || peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
+    void resolveCached(key, () => resolveComparison(node, {
+      source,
+      signal: new AbortController().signal,
+    })).catch(() => {});
+  }, [key, node, planned.value, source]);
+  const presentation = peekResolved<unknown>(key);
+  useEffect(() => {
+    if (presentation === undefined) return;
+    const lease = acquireResolved(key);
+    return () => lease?.release();
+  }, [key, presentation]);
+  const error = planned.error ?? peekResolveError(key);
+  if (error) return <Message text={error} error />;
+  if (presentation === undefined) return <Message text="Loading…" />;
+  if (!planned.value) return <Message text="invalid comparison" error />;
+  const registered = getReactPlotType(planned.value.renderer);
+  if (!registered) {
+    return <Message text={`comparison host for ${JSON.stringify(planned.value.renderer)} is not installed`} error />;
+  }
+  if (presentation === null || typeof presentation !== "object" || Array.isArray(presentation)) {
+    return <Message text={`comparison ${JSON.stringify(planned.value.renderer)} returned an invalid presentation`} error />;
+  }
+  const settings = {
+    ...planned.value.definition.defaults(),
+    ...(paneSync?.syncedSettings ?? {}),
+  };
+  return (
+    <ReactBackendOutlet
+      backends={registered.backends}
+      environment={browserRenderEnvironment()}
+      presentation={presentation as Record<string, unknown>}
+      settings={settings as import("./plots/contracts.ts").SettingsRecord}
+      invalidation="presentation"
+    />
+  );
 }
 
 /**

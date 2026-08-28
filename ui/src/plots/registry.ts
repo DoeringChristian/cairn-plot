@@ -2,6 +2,7 @@ import type { CompareNode } from "../../../packages/spec/src/spec.ts";
 import type {
   ComparisonCapability,
   RegisteredPlotDefinition,
+  ResolveContext,
 } from "./contracts.ts";
 import { claimPlotKind, releasePlotKinds } from "./kind-ownership.ts";
 
@@ -65,6 +66,15 @@ export function planComparison(node: CompareNode): PlannedComparison {
     capability,
     plan: capability.plan(node),
   };
+}
+
+/** Resolve the semantic presentation selected by a comparison capability. */
+export function resolveComparison(
+  node: CompareNode,
+  context: ResolveContext,
+): Promise<unknown> {
+  const planned = planComparison(node);
+  return planned.capability.resolve(planned.plan, context);
 }
 
 /** Subscribe to registrations so lazy addon hosts can retry resolution. */

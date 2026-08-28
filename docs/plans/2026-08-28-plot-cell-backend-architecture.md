@@ -47,6 +47,10 @@ Status: accepted design; implementation in progress
 - [x] Isolate image comparison controls and lowering behind image comparison
   dispatch. Generic layout no longer runs image hooks or interprets comparison
   operands; uninstalled comparison hosts fail explicitly.
+- [x] Add a generic comparison outlet for non-image plot definitions. It
+  resolves through the capability, consumes the cell settings, selects the
+  definition's backend, leases the global cache entry, and supports adjacent
+  stack preloading without changes to layout.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 

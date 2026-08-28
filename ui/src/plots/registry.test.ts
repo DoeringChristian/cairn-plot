@@ -10,6 +10,7 @@ import {
   planComparison,
   registerPlotType,
   requirePlotType,
+  resolveComparison,
 } from "./registry.ts";
 
 type InlineSpec = Extract<DataSpec, { kind: "inline" }>;
@@ -120,4 +121,13 @@ test("comparison planning reports missing and rejected capabilities", () => {
   clearPlotTypesForTest();
   registerPlotType(comparableDefinition(false));
   assert.throws(() => planComparison(comparisonNode), /operands do not align/);
+});
+
+test("comparison resolution runs through the selected capability", async () => {
+  clearPlotTypesForTest();
+  registerPlotType(comparableDefinition());
+  assert.equal(await resolveComparison(comparisonNode, {
+    source: { artifactUrl: () => null, bytes: async () => new ArrayBuffer(0) },
+    signal: new AbortController().signal,
+  }), 0);
 });
