@@ -220,7 +220,7 @@ function isOrangeFrame(r: PaneRenderRecord, settled: Set<string>): boolean {
 }
 
 function probeEl(container: HTMLElement): HTMLElement | null {
-  return container.querySelector("[data-gpu-image-viewport]");
+  return container.querySelector("[data-gpu-image-surface]");
 }
 
 /** Classify one present's SOURCE binding (the 9368ee2 oracle). Returns null if

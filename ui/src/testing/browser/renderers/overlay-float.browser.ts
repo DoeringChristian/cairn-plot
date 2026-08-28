@@ -118,7 +118,7 @@ function overlayBoxCount(container: HTMLElement): number {
 /** Diagnostics for why an overlay may not be drawing (layer/svg/sizing). */
 function overlayDiag(container: HTMLElement): string {
   const layer = container.querySelector("[data-image-overlay]") as HTMLElement | null;
-  const wrap = container.querySelector("[data-gpu-image-viewport]") as HTMLElement | null;
+  const wrap = container.querySelector("[data-gpu-image-surface]") as HTMLElement | null;
   const canvas = container.querySelector("canvas") as HTMLElement | null;
   const paneKind = container.querySelector("[data-gpu-image-pane]")
     ? "gpu"

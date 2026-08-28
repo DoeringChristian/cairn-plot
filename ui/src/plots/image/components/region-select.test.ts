@@ -170,7 +170,7 @@ test("overlay pixel-center mapping is identical to region-select's texelToScreen
 
 /** The compare split shader's OWN placement of a sampled source's texel center,
  *  derived independently of `computeFit` — from the normalized uv window
- *  (`viewportToUvRect`) + the box fraction the fragment maps to. Ground truth. */
+ *  (`viewToUvRect`) + the box fraction the fragment maps to. Ground truth. */
 function viewportUvRect(
   zoom: number,
   pan: { x: number; y: number },

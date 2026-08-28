@@ -7,7 +7,7 @@ import { rebinHistograms, type HistogramData } from "../../transforms/histogram"
 import Tooltip from "../../../primitives/components/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../../../primitives/components/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../../../primitives/components/tooltip-position";
-import { useChartViewport, type PlotRect } from "../../chart/use-chart-viewport";
+import { useChartView, type PlotRect } from "../../chart/use-chart-view";
 import { useChartController } from "../../image/components/use-chart-controller";
 import PlotToolbar from "../../../primitives/components/PlotToolbar";
 import Heatmap from "../../heatmap/renderer/Heatmap";
@@ -89,14 +89,14 @@ function HistogramBars({
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
 
-  const viewport = useChartViewport({
+  const view = useChartView({
     containerRef,
     plotRectRef,
     home,
     minSpan: binWidth ? { x: binWidth } : undefined,
   });
-  const { domain, containerProps, dragRect } = viewport;
-  const controller = useChartController({ viewport, rootRef: containerRef });
+  const { domain, containerProps, dragRect } = view;
+  const controller = useChartController({ view, rootRef: containerRef });
 
   const [xMin, xMax] = domain.xDomain;
   const [yLo, yHi] = domain.yDomain;

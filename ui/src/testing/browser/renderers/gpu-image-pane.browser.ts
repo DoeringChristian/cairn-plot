@@ -75,7 +75,7 @@ import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/backend/gpu";
 import { hdrSource, type HdrData } from "../../../plots/image/backend/contracts";
 import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../../plots/image/engine/pool";
-import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-viewport";
+import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 declare global {
@@ -140,17 +140,17 @@ async function runSingleCase(): Promise<boolean> {
   container.style.height = "320px";
   document.body.appendChild(container);
 
-  let latestViewport: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
+  let latestViewport: ImageViewState = { zoom: 1, pan: { x: 0, y: 0 } };
   const hdr = buildHdr();
   const exposureEV = 0.5;
   const operator = "aces";
   const root = createRoot(container);
 
   function Harness() {
-    const [viewport, setViewport] = React.useState<ImageViewport>(latestViewport);
-    const onViewportChange = (v: ImageViewport) => {
+    const [viewport, setView] = React.useState<ImageViewState>(latestViewport);
+    const onViewChange = (v: ImageViewState) => {
       latestViewport = v;
-      setViewport(v);
+      setView(v);
     };
     return h(
       "div",
@@ -161,8 +161,8 @@ async function runSingleCase(): Promise<boolean> {
         exposure: exposureEV,
         zoom: viewport.zoom,
         pan: viewport.pan,
-        onViewportChange,
-        resetSettings: () => onViewportChange({ zoom: 1, pan: { x: 0, y: 0 } }),
+        onViewChange,
+        resetSettings: () => onViewChange({ zoom: 1, pan: { x: 0, y: 0 } }),
         label: "gpu-image-pane-test",
       }),
     );
@@ -204,12 +204,12 @@ async function runSingleCase(): Promise<boolean> {
   ok = ok && gotNonBlank;
 
   // --- Interaction: alt+wheel zooms, plain wheel does not ---
-  const viewportEl = container.querySelector("[data-gpu-image-viewport]") as HTMLElement;
+  const viewportEl = container.querySelector("[data-gpu-image-surface]") as HTMLElement;
   const rect = viewportEl.getBoundingClientRect();
   const cx = rect.left + rect.width / 2;
   const cy = rect.top + rect.height / 2;
 
-  // `useImageViewport`'s Alt-gate reads `useModifierKey()`, which tracks REAL
+  // `useImageGestures`'s Alt-gate reads `useModifierKey()`, which tracks REAL
   // window `keydown`/`keyup` events for Alt/Control/Meta — NOT a WheelEvent's
   // own `altKey` property (that property is only consulted for parity with
   // how a browser reports the wheel event itself; the gate's state comes

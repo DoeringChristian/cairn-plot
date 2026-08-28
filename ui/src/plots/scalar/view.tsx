@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 
 import ScalarPlot from "./renderer/ScalarPlot.tsx";
-import type { PromotedSeriesConfig, Viewport } from "../types.ts";
+import type { PromotedSeriesConfig, ChartViewState } from "../types.ts";
 import { ChartBox } from "../../host/standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import type { ScalarPresentation, ScalarSettings } from "./types.ts";
@@ -11,13 +11,13 @@ export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlo
   const patch = commands.patch;
   const domainX = settings["chart.domainX"];
   const domainY = settings["chart.domainY"];
-  const viewport: Viewport = {
+  const view: ChartViewState = {
     xMin: domainX?.[0] ?? null,
     xMax: domainX?.[1] ?? null,
     yMin: domainY?.[0] ?? null,
     yMax: domainY?.[1] ?? null,
   };
-  const setViewport = useCallback((next: Viewport) => patch({
+  const setView = useCallback((next: ChartViewState) => patch({
     "chart.domainX": next.xMin == null || next.xMax == null ? null : [next.xMin, next.xMax],
     "chart.domainY": next.yMin == null || next.yMax == null ? null : [next.yMin, next.yMax],
   }), [patch]);
@@ -43,8 +43,8 @@ export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlo
       xRange={xRange ? [...xRange] : [null, null]}
       yRange={yRange ? [...yRange] : [null, null]}
       {...rest}
-      viewport={viewport}
-      onViewportChange={setViewport}
+      view={view}
+      onViewChange={setView}
       promotedSeries={settings["chart.promotedSeries"] ?? {}}
       onPromotedSeriesChange={setPromoted}
     />

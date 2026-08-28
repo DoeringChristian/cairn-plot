@@ -21,11 +21,11 @@ import { colorbarReservedRight } from "../../../primitives/components/colorbar-l
 import Tooltip from "../../../primitives/components/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../../../primitives/components/tooltip-position";
 import {
-  useChartViewport,
+  useChartView,
   type PlotRect,
   type SelectionGeometry,
-} from "../../chart/use-chart-viewport";
-import { pointInPolygon, pointInRect } from "../../chart/chart-viewport-math";
+} from "../../chart/use-chart-view";
+import { pointInPolygon, pointInRect } from "../../chart/chart-view-math";
 import { useChartController } from "../../image/components/use-chart-controller";
 import PlotToolbar from "../../../primitives/components/PlotToolbar";
 
@@ -92,10 +92,10 @@ export default function ScatterPlot({
     () => ({ ids: selection, clear: clearSelection }),
     [selection, clearSelection],
   );
-  // The viewport hook fires `onSelect` on release, but it can't see this
+  // The view hook fires `onSelect` on release, but it can't see this
   // render's `toX`/`toY` (defined below). It dispatches through this ref, which
   // we repoint at the live hit-tester each render — so a selection always maps
-  // through the CURRENT viewport transform.
+  // through the CURRENT view transform.
   const selectRef = useRef<(g: SelectionGeometry) => void>(() => {});
 
   const { xDomain, yDomain, colorDomain } = useMemo(() => {
@@ -176,7 +176,7 @@ export default function ScatterPlot({
 
   // The scatter HOME domain is the ~5%-padded data extent (in mapped log/linear
   // space) — points never touch the frame in the home position. The live
-  // viewport (zoom/pan) starts here and is owned by useChartViewport.
+  // view (zoom/pan) starts here and is owned by useChartView.
   const homeX = paddedDomain(
     xLog ? logSafe(xDomain.min) : xDomain.min,
     xLog ? logSafe(xDomain.max) : xDomain.max,
@@ -190,20 +190,20 @@ export default function ScatterPlot({
     [homeX[0], homeX[1], homeY[0], homeY[1]],
   );
 
-  // Publish the plot inset (container-local px) every render so the viewport
+  // Publish the plot inset (container-local px) every render so the view
   // hook can hit-test wheel/pointer gestures against it.
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: pad.left, y: pad.top, width: plotW, height: plotH };
 
-  const viewport = useChartViewport({
+  const view = useChartView({
     containerRef,
     plotRectRef,
     home,
     onSelect: (g) => selectRef.current(g),
   });
-  const { domain, containerProps, dragRect, dragPath, wasDragRef } = viewport;
+  const { domain, containerProps, dragRect, dragPath, wasDragRef } = view;
   const controller = useChartController({
-    viewport,
+    view,
     rootRef: containerRef,
     selectable: true,
     selection: controllerSelection,
@@ -214,7 +214,7 @@ export default function ScatterPlot({
   const xRange = xMax - xMin || 1;
   const yRange = yMax - yMin || 1;
 
-  // toX/toY map raw data through the LIVE viewport domain (mapped space).
+  // toX/toY map raw data through the LIVE view domain (mapped space).
   const toX = (v: number) => {
     const mapped = xLog ? logSafe(v) : v;
     return pad.left + ((mapped - xMin) / xRange) * plotW;

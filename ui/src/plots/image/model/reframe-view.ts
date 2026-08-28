@@ -1,17 +1,17 @@
 /**
  * Center-preserving viewport reframe for image panes (React-free math, so it is
- * unit-testable without a DOM). Consumed by `hooks/use-image-viewport.ts`'s
+ * unit-testable without a DOM). Consumed by `hooks/use-image-gestures.ts`'s
  * `useReframeViewportOnResize`, which observes the pane box and applies this on
  * every genuine size change (enlarge enter/exit, window/container resize).
  */
-import type { Viewport } from "../../../host/hooks/use-image-viewport";
+import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { screenPerTexel } from "../components/region-select.ts";
 
 /**
  * Center-preserving reframe when a pane's container box changes size.
  *
- * ## Convention (verified against `use-image-viewport.ts`'s wheel handler +
- * `GpuImagePane`'s `viewportToUvRect`)
+ * ## Convention (verified against `use-image-gestures.ts`'s wheel handler +
+ * `GpuImagePane`'s `viewToUvRect`)
  * The user transform is `screen = world*zoom + pan`, with `pan` in CSS px and
  * the origin at the container's TOP-LEFT (`cx = clientX - rect.left` in the
  * wheel handler is measured from that origin; the render applies
@@ -37,13 +37,13 @@ import { screenPerTexel } from "../components/region-select.ts";
  * HOME (`zoom==1, pan=={0,0}`) is returned UNCHANGED so an untouched pane simply
  * re-fits to the new box (home fills the container) rather than being pinned.
  */
-export function reframeViewportForResize(
-  vp: Viewport,
+export function reframeViewForResize(
+  vp: ImageViewState,
   oldBox: { width: number; height: number },
   newBox: { width: number; height: number },
   naturalWidth?: number,
   naturalHeight?: number,
-): Viewport {
+): ImageViewState {
   const { zoom, pan } = vp;
   if (oldBox.width <= 0 || oldBox.height <= 0 || newBox.width <= 0 || newBox.height <= 0) {
     return vp;

@@ -48,8 +48,8 @@ import { createRoot } from "react-dom/client";
 // interactively in a foreground browser.
 import CpuImagePane from "../../../plots/image/backend/cpu";
 import { hdrSource, type HdrData } from "../../../plots/image/backend/contracts";
-import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-viewport";
-import { reframeViewportForResize } from "../../../plots/image/model/reframe";
+import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
+import { reframeViewForResize } from "../../../plots/image/model/reframe-view";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const h = React.createElement;
@@ -141,19 +141,19 @@ async function run(): Promise<boolean> {
   const scroller = (document.scrollingElement as HTMLElement | null) ?? document.body;
   const prevScrollerOverflow = scroller.style.overflow;
 
-  let latestViewport: ImageViewport = { zoom: 1, pan: { x: 0, y: 0 } };
+  let latestViewport: ImageViewState = { zoom: 1, pan: { x: 0, y: 0 } };
   // Externally-driven viewport setter (registered by the Harness) so the Bug 5
   // resize test can put the pane into a KNOWN zoomed/panned state. Seeded with a
   // no-op so it is always callable.
-  const vpControl: { set: (v: ImageViewport) => void } = { set: () => {} };
+  const vpControl: { set: (v: ImageViewState) => void } = { set: () => {} };
   const hdr = buildHdr();
   const root = createRoot(container);
 
   function Harness() {
-    const [viewport, setViewport] = React.useState<ImageViewport>(latestViewport);
-    vpControl.set = (v: ImageViewport) => {
+    const [viewport, setView] = React.useState<ImageViewState>(latestViewport);
+    vpControl.set = (v: ImageViewState) => {
       latestViewport = v;
-      setViewport(v);
+      setView(v);
     };
     return h(CpuImagePane, {
       source: hdrSource(hdr),
@@ -161,9 +161,9 @@ async function run(): Promise<boolean> {
       exposure: 0.5,
       zoom: viewport.zoom,
       pan: viewport.pan,
-      onViewportChange: (v: ImageViewport) => {
+      onViewChange: (v: ImageViewState) => {
         latestViewport = v;
-        setViewport(v);
+        setView(v);
       },
       label: "enlarge-test",
     });
@@ -200,7 +200,7 @@ async function run(): Promise<boolean> {
     const NW = 4, NH = 4; // buildHdr() is a 4×4 source
     const homeScale = (w: number, hgt: number) => Math.min(w / NW, hgt / NH);
     const vpBox = () =>
-      (container.querySelector("[data-cpu-image-viewport]") as HTMLElement).getBoundingClientRect();
+      (container.querySelector("[data-cpu-image-surface]") as HTMLElement).getBoundingClientRect();
     const near = (a: number, b: number, eps: number) => Math.abs(a - b) <= eps;
 
     // Put the pane into a zoomed + panned state and let React commit.
@@ -220,7 +220,7 @@ async function run(): Promise<boolean> {
     );
     await sleep(60);
     const newBox = vpBox();
-    const expect = reframeViewportForResize(oldVp, { width: oldBox.width, height: oldBox.height }, { width: newBox.width, height: newBox.height }, NW, NH);
+    const expect = reframeViewForResize(oldVp, { width: oldBox.width, height: oldBox.height }, { width: newBox.width, height: newBox.height }, NW, NH);
     const newP = latestViewport.zoom * homeScale(newBox.width, newBox.height);
     const centerHeld =
       grew &&
@@ -247,7 +247,7 @@ async function run(): Promise<boolean> {
     );
     await sleep(60);
     const backBox = vpBox();
-    const expectBack = reframeViewportForResize(midVp, { width: midBox.width, height: midBox.height }, { width: backBox.width, height: backBox.height }, NW, NH);
+    const expectBack = reframeViewForResize(midVp, { width: midBox.width, height: midBox.height }, { width: backBox.width, height: backBox.height }, NW, NH);
     const backP = latestViewport.zoom * homeScale(backBox.width, backBox.height);
     const centerHeld2 =
       shrank &&

@@ -140,7 +140,7 @@ interface FlipProbe {
 }
 
 function probeEl(container: HTMLElement): (HTMLElement & { __cairnImageDiffProbe?: FlipProbe }) | null {
-  return container.querySelector("[data-gpu-image-viewport]") as never;
+  return container.querySelector("[data-gpu-image-surface]") as never;
 }
 
 let uploadCount = 0;

@@ -52,7 +52,7 @@ import { createRoot } from "react-dom/client";
 // it — reading the SAME per-side geometry seams (now on `__cairnImageDiffProbe`).
 import GpuImagePane from "../../backend/gpu";
 import { urlSource, type CompareSource } from "../../backend/contracts";
-import type { Viewport as ImageViewport } from "../../../../host/hooks/use-image-viewport";
+import type { ImageViewState } from "../../../../host/hooks/use-image-gestures";
 import { isDeviceLostError } from "../../engine/webgpu/device";
 import { createHarness, sleep, waitFor } from "../../../../testing/harness";
 
@@ -171,7 +171,7 @@ interface Handle {
   container: HTMLDivElement;
   canvas: () => HTMLCanvasElement | null;
   probe: () => SplitNumbersProbe | null;
-  setViewport: (v: ImageViewport) => void;
+  setView: (v: ImageViewState) => void;
   setSplit: (p: number) => void;
   unmount: () => void;
 }
@@ -184,13 +184,13 @@ function mount(id: string, wCss: number, hCss: number, imageUrl: string, baselin
   container.style.background = "#222";
   document.body.appendChild(container);
 
-  let setViewportFn: (v: ImageViewport) => void = () => {};
+  let setViewFn: (v: ImageViewState) => void = () => {};
   let setSplitFn: (p: number) => void = () => {};
 
   function Harness() {
-    const [viewport, setViewport] = React.useState<ImageViewport>({ zoom: 1, pan: { x: 0, y: 0 } });
+    const [viewport, setView] = React.useState<ImageViewState>({ zoom: 1, pan: { x: 0, y: 0 } });
     const [split, setSplit] = React.useState(0.5);
-    setViewportFn = setViewport;
+    setViewFn = setView;
     setSplitFn = setSplit;
     // Slot convention: source = REFERENCE (baselineUrl, side "a" / LEFT of the
     // divider), compareSource.b = FOREGROUND (imageUrl, side "b" / RIGHT).
@@ -208,7 +208,7 @@ function mount(id: string, wCss: number, hCss: number, imageUrl: string, baselin
       compareSource,
       zoom: viewport.zoom,
       pan: viewport.pan,
-      onViewportChange: setViewport,
+      onViewChange: setView,
       label: "split-numbers",
     });
   }
@@ -231,7 +231,7 @@ function mount(id: string, wCss: number, hCss: number, imageUrl: string, baselin
         "canvas[data-gpu-image-canvas], canvas[data-gpu-compare-canvas]",
       ) as HTMLCanvasElement | null,
     probe: findProbe,
-    setViewport: (v) => setViewportFn(v),
+    setView: (v) => setViewFn(v),
     setSplit: (p) => setSplitFn(p),
     unmount: () => {
       root.unmount();
@@ -280,7 +280,7 @@ async function runMismatchCase(): Promise<boolean> {
   const canvas = H.canvas()!;
   // Zoom in so ~1 texel is ≥30px (nearest filtering → solid sentinel blocks).
   const zoom = 5;
-  H.setViewport({ zoom, pan: centerZoomPan(paneW, paneH, zoom) });
+  H.setView({ zoom, pan: centerZoomPan(paneW, paneH, zoom) });
   const dimsReady = await waitFor(() => {
     const p = H.probe();
     return !!p && !!p.srcDims && p.srcDims.a.w === 64 && p.srcDims.b.w === 100;
@@ -385,7 +385,7 @@ async function runLargeCase(): Promise<boolean> {
   }
   const canvas = H.canvas()!;
   const zoom = 40; // deep zoom so a single texel is many px
-  H.setViewport({ zoom, pan: centerZoomPan(paneW, paneH, zoom) });
+  H.setView({ zoom, pan: centerZoomPan(paneW, paneH, zoom) });
   const ready = await waitFor(() => {
     const p = H.probe();
     return !!p && !!p.srcDims && p.srcDims.a.w === 1100 && p.srcDims.b.w === 1200;

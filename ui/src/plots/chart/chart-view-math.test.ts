@@ -4,7 +4,7 @@
  * with TypeScript type-stripping:
  *
  *   node --experimental-strip-types --test \
- *     src/lib/cairn-plot/viewport/chart-viewport-math.test.ts
+ *     src/lib/cairn-plot/viewport/chart-view-math.test.ts
  *
  * These functions are DOM-free pure math, so this is sufficient coverage.
  */
@@ -34,7 +34,7 @@ import {
   type ChartDomain,
   type ClientRect,
   type PixelPoint,
-} from "./chart-viewport-math.ts";
+} from "./chart-view-math.ts";
 
 const D = (x0: number, x1: number, y0: number, y1: number): ChartDomain => ({
   xDomain: [x0, x1],
@@ -412,7 +412,7 @@ test("pinchZoomDomain: moving the midpoint pans the domain", () => {
 });
 
 // ── resolveChartDomain: the settings→domain projection (unified-viewport) ──
-import { resolveChartDomain } from "./chart-viewport-math.ts";
+import { resolveChartDomain } from "./chart-view-math.ts";
 
 const HOME: ChartDomain = { xDomain: [0, 10], yDomain: [0, 1] };
 

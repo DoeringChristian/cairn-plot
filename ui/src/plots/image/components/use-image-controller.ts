@@ -1,6 +1,6 @@
 /**
  * `renderers/use-image-controller.ts` — the image-pane adapter that projects an
- * image viewer's `{zoom, pan}` viewport (owned by `hooks/use-image-viewport.ts`
+ * image viewer's `{zoom, pan}` viewport (owned by `hooks/use-image-gestures.ts`
  * and lifted into the pane's props) onto the renderer-agnostic
  * {@link PlotController} facade the `<PlotToolbar>` drives. One per pane
  * instance (`GpuImagePane`, `GpuComparePane`).
@@ -10,7 +10,7 @@
  * pins its drag mode to `"pan"` (`setDragMode` is a no-op — dragging always
  * pans). It reuses the SAME viewport handlers the wheel/pointer path already
  * uses (no new viewport math): `zoomIn`/`zoomOut` reproduce
- * `use-image-viewport`'s zoom-to-cursor formula with the cursor pinned to the
+ * `use-image-gestures`'s zoom-to-cursor formula with the cursor pinned to the
  * pane center and clamp by the same `adaptiveMaxZoom` cap; `autoscale`/`reset`
  * both return to the fit-to-view "home" (`{zoom:1, pan:{0,0}}`, the same target
  * the pane's double-click reset uses).
@@ -37,7 +37,7 @@ import type {
   ToPNGOptions,
 } from "../../../primitives/controls/types";
 import type { ToolbarConfig, ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig";
-import { adaptiveMaxZoom, type Viewport } from "../../../host/hooks/use-image-viewport";
+import { adaptiveMaxZoom, type ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import { getEncoding, listEncodingsByKind } from "../model/encodings/index";
@@ -51,7 +51,7 @@ const encodingLabel = (id: string): string => getEncoding(id)?.label ?? id;
 /** Per-button click factor for the toolbar's +/- zoom (coarser than the
  *  1.1 wheel step so a single click makes a visible jump). */
 const ZOOM_STEP = 1.3;
-/** Mirror of `use-image-viewport`'s `DEFAULT_MIN_ZOOM`/`DEFAULT_MAX_ZOOM` (not
+/** Mirror of `use-image-gestures`'s `DEFAULT_MIN_ZOOM`/`DEFAULT_MAX_ZOOM` (not
  *  exported there) — the clamp when a natural size / live box isn't available
  *  for the adaptive cap. */
 const DEFAULT_MIN_ZOOM = 0.25;
@@ -156,7 +156,7 @@ export interface UseImageControllerArgs {
   pan: { x: number; y: number };
   /** Full-replace viewport setter — the same callback the wheel/pointer path
    *  drives. When absent, zoom/reset are inert (read-only pane). */
-  onViewportChange?: (v: Viewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
   /** Image natural pixel size — enables the adaptive max-zoom cap (zoom until
    *  one source texel fills the viewport), matching the wheel path. */
   naturalWidth?: number;
@@ -184,7 +184,7 @@ export function useImageController({
   canvasRef,
   zoom,
   pan,
-  onViewportChange,
+  onViewChange,
   naturalWidth,
   naturalHeight,
   minZoom = DEFAULT_MIN_ZOOM,
@@ -193,12 +193,12 @@ export function useImageController({
   onReset,
   extraModified = false,
 }: UseImageControllerArgs): PlotController {
-  // Zoom toward the pane center, reusing `use-image-viewport`'s exact
+  // Zoom toward the pane center, reusing `use-image-gestures`'s exact
   // zoom-to-cursor formula with the cursor pinned to the box center — NO new
   // viewport math. Clamp by the same `adaptiveMaxZoom` cap the wheel path uses.
   const applyZoom = useCallback(
     (factor: number) => {
-      if (!onViewportChange) return;
+      if (!onViewChange) return;
       const rect = rootRef.current?.getBoundingClientRect();
       const boxW = rect?.width ?? 0;
       const boxH = rect?.height ?? 0;
@@ -212,9 +212,9 @@ export function useImageController({
       const cy = boxH / 2;
       const newPanX = cx - ((cx - pan.x) / zoom) * nextZoom;
       const newPanY = cy - ((cy - pan.y) / zoom) * nextZoom;
-      onViewportChange({ zoom: nextZoom, pan: { x: newPanX, y: newPanY } });
+      onViewChange({ zoom: nextZoom, pan: { x: newPanX, y: newPanY } });
     },
-    [onViewportChange, rootRef, naturalWidth, naturalHeight, maxZoom, minZoom, zoom, pan.x, pan.y],
+    [onViewChange, rootRef, naturalWidth, naturalHeight, maxZoom, minZoom, zoom, pan.x, pan.y],
   );
 
   const zoomIn = useCallback(() => applyZoom(ZOOM_STEP), [applyZoom]);

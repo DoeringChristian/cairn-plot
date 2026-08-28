@@ -548,7 +548,7 @@ export function pointInPolygon(
 
 /**
  * Resolve a chart's domain from its viewport's settings entries (PURE — the
- * unit-testable core of the settings projection in `use-chart-viewport.ts`).
+ * unit-testable core of the settings projection in `use-chart-view.ts`).
  * Per axis: `undefined` = untouched and `null` = explicit home/autoscale —
  * both follow the LIVE home axis; a concrete range is adopted directly
  * (Plotly matched-axes: data-space, not pixels).

@@ -7,7 +7,7 @@ import { barChartPads } from "./bar-layout";
 import { useContainerSize } from "../../../host/hooks/use-container-size";
 import Tooltip from "../../../primitives/components/Tooltip";
 import { pointerAnchor, type TooltipAnchor } from "../../../primitives/components/tooltip-position";
-import { useChartViewport, type PlotRect } from "../../chart/use-chart-viewport";
+import { useChartView, type PlotRect } from "../../chart/use-chart-view";
 import { useChartController } from "../../image/components/use-chart-controller";
 import { useSeriesVisibility } from "../../../host/hooks/use-series-visibility";
 import PlotToolbar from "../../../primitives/components/PlotToolbar";
@@ -193,7 +193,7 @@ export default function BarChart({
   const plotH = h - pad.top - pad.bottom;
 
   // HOME value-domain (mapped space); the row (y) axis is categorical, so the
-  // viewport is x-only (`constrainTo:'x'`) — zoom/pan the value axis, never the
+  // view is x-only (`constrainTo:'x'`) — zoom/pan the value axis, never the
   // rows. yDomain is a dummy the hook leaves untouched.
   const dMinHome = logX ? logSafe(domain.min) : domain.min;
   const dMaxHome = logX ? logSafe(domain.max) : domain.max;
@@ -208,19 +208,19 @@ export default function BarChart({
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: pad.left, y: pad.top, width: plotW, height: plotH };
 
-  const chartVp = useChartViewport({
+  const chartVp = useChartView({
     containerRef,
     plotRectRef,
     home,
     constrainTo: "x",
   });
   const {
-    domain: viewport,
+    domain: view,
     containerProps,
     dragRect,
     wasDragRef,
   } = chartVp;
-  const controller = useChartController({ viewport: chartVp, rootRef: containerRef });
+  const controller = useChartController({ view: chartVp, rootRef: containerRef });
 
   // S6 interactive legend: click a chip to hide/show that run's bar,
   // double-click to isolate it. A hidden bar is simply not drawn (its row slot
@@ -228,7 +228,7 @@ export default function BarChart({
   const barIds = useMemo(() => bars.map((b) => b.id), [bars]);
   const visibility = useSeriesVisibility(barIds);
 
-  const [dMin, dMax] = viewport.xDomain;
+  const [dMin, dMax] = view.xDomain;
   const range = dMax - dMin || 1;
   const toX = (v: number) => {
     const mapped = logX ? logSafe(Math.max(v, 1e-10)) : v;

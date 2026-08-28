@@ -215,10 +215,10 @@ export function PlotCell({
         : null,
     [groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.replace],
   );
-  const ownsViewport = node.kind !== "grid";
+  const ownsViewState = node.kind !== "grid";
   const localSync = useMemo<CellSettingsContextValue | null>(
     () =>
-      ownsViewport
+      ownsViewState
         ? {
             syncedSettings: vst.settings,
             cellDefaults: initialSettingsRef.current.value,
@@ -226,7 +226,7 @@ export function PlotCell({
             resetSyncedSettings: vst.replace,
           }
         : null,
-    [ownsViewport, vst.settings, vst.set, vst.replace],
+    [ownsViewState, vst.settings, vst.set, vst.replace],
   );
 
   return (

@@ -46,7 +46,7 @@ import type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
  *                   joins this namespace when 3D enters the vocabulary).
  *   - `panel.*`   — pane chrome (info panel).
  *   - `chart.*`   — 2D chart data-space window (matched-axes sync), NATIVE:
- *     `use-chart-viewport.ts` projects the frame-owned settings object, the
+ *     `use-chart-view.ts` projects the frame-owned settings object, the
  *     image pattern exactly.
  *   - `scene3d.*` — 3D camera pose, NATIVE: each 3D viewer owns a settings
  *     object and joins its group as a peer (`three/camera-settings.ts`);

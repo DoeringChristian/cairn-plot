@@ -1,5 +1,5 @@
 /**
- * `useChartViewport` — the single, Plotly-style zoom/pan state machine shared by
+ * `useChartView` — the single, Plotly-style zoom/pan state machine shared by
  * every 2D cairn-plot chart renderer (ScatterPlot / HistogramPlot / BarChart /
  * Heatmap). It mirrors ScalarPlot's Recharts gesture machine
  * (`renderers/scalar/use-plot-gestures.ts`) exactly — wheel-zoom to cursor,
@@ -12,7 +12,7 @@
  * `plotRectRef` (the plot inset in container-local px), (2) rebuild its
  * `toX`/`toY` from the returned `domain`, and (3) spread `containerProps` +
  * draw the `dragRect` overlay. All the pointer math lives in
- * `chart-viewport-math.ts`.
+ * `chart-view-math.ts`.
  *
  * Self-contained per the project's self-contained-components rule: a bare
  * mount holds its own view state; inside a frame the domain is a PURE
@@ -54,40 +54,40 @@ import {
   type MinSpan,
   type PixelPoint,
   type PixelRect,
-} from "./chart-viewport-math";
+} from "./chart-view-math";
 import type { PlotSettings } from "../../settings/schema.ts";
 import { useModifierKey } from "../../host/hooks/use-modifier-key";
 
-export type { ChartDomain } from "./chart-viewport-math";
-export { resolveChartDomain } from "./chart-viewport-math";
+export type { ChartDomain } from "./chart-view-math";
+export { resolveChartDomain } from "./chart-view-math";
 
 /**
  * The viewport's SETTINGS handle (unified-viewport model): the chart's domain
  * is the `"chart.domainX"`/`"chart.domainY"` entries of the ONE
  * {@link PlotSettings} object its frame owns, and gestures write through
  * the ONE `set` path (which fans out to the viewport's groups exactly like an
- * image colormap pick). Passed to {@link useChartViewport} either as the
+ * image colormap pick). Passed to {@link useChartView} either as the
  * `sync` arg (direct/testable) or — since the pure chart renderers don't
- * forward sync props — through {@link ChartViewportSyncProvider} (mirrors how
+ * forward sync props — through {@link ChartViewSyncProvider} (mirrors how
  * the image path threads `syncedSettings` into `useImageView`).
  * There is NO subscription, echo guard, or late-join cache here: the frame's
  * settings object absorbs peer patches and this hook is a pure projection.
  */
-export interface ChartViewportSyncTarget {
+export interface ChartViewSyncTarget {
   settings: PlotSettings | null | undefined;
   set: (patch: PlotSettings) => void;
 }
 
-const ChartViewportSyncContext = createContext<ChartViewportSyncTarget | null>(null);
+const ChartViewSyncContext = createContext<ChartViewSyncTarget | null>(null);
 
 /**
- * Opts every {@link useChartViewport} in the subtree into the given sync group.
+ * Opts every {@link useChartView} in the subtree into the given sync group.
  * The standalone chart adapters (`plot-renderers.tsx`) wrap their pure renderer
  * in this when a grid enables `shared.sync.view`, so the shared hook picks
  * the group up from context without any renderer-component plumbing. An explicit
  * `sync` arg still wins over context (see the hook body).
  */
-export const ChartViewportSyncProvider = ChartViewportSyncContext.Provider;
+export const ChartViewSyncProvider = ChartViewSyncContext.Provider;
 
 // The internal drag vocabulary. `"box"` (box-zoom) is deliberately kept as the
 // internal token — the toolbar's PUBLIC name `"zoom"` is translated to `"box"`
@@ -100,7 +100,7 @@ export const ChartViewportSyncProvider = ChartViewportSyncContext.Provider;
 export type ChartDragMode = "box" | "pan" | "select" | "lasso";
 
 /**
- * A completed selection gesture, emitted through {@link UseChartViewportArgs.onSelect}
+ * A completed selection gesture, emitted through {@link UseChartViewArgs.onSelect}
  * on release. Both variants are expressed in the renderer's CONTAINER-LOCAL px
  * space (origin = container top-left) — the same space as `dragRect`/`dragPath`
  * and a renderer's `toX`/`toY` outputs — so the renderer can hit-test directly
@@ -147,7 +147,7 @@ export const CHART_CAPABILITIES: ChartCapabilities = {
  * Imperative controller surface. Named to match the future `PlotController`
  * (S5 toolbar) 1:1 so wiring a toolbar needs zero rework here.
  */
-export interface ChartViewportActions {
+export interface ChartViewActions {
   zoomIn: () => void;
   zoomOut: () => void;
   autoscale: () => void;
@@ -157,7 +157,7 @@ export interface ChartViewportActions {
   zoomTo: (domain: ChartDomain) => void;
 }
 
-export interface UseChartViewportArgs {
+export interface UseChartViewArgs {
   /** The element that receives pointer/wheel gestures (the renderer's root). */
   containerRef: RefObject<HTMLElement | null>;
   /** The plot inset in container-local px, rewritten each render. */
@@ -186,13 +186,13 @@ export interface UseChartViewportArgs {
    *  nothing (so a chart that doesn't opt in never selects). */
   onSelect?: (geometry: SelectionGeometry) => void;
   /** Live view-sync group. When set (directly, or inherited from
-   *  {@link ChartViewportSyncProvider}), every viewport COMMIT publishes the
+   *  {@link ChartViewSyncProvider}), every viewport COMMIT publishes the
    *  new domain to the group and peers' commits are applied here — Plotly
    *  matched-axes behaviour across a grid. A direct arg wins over context. */
-  sync?: ChartViewportSyncTarget;
+  sync?: ChartViewSyncTarget;
 }
 
-export interface ChartViewportResult {
+export interface ChartViewResult {
   /** The live viewport (mapped space): `value ?? internal ?? home`. */
   domain: ChartDomain;
   /** Spread onto the renderer's root element. */
@@ -217,7 +217,7 @@ export interface ChartViewportResult {
    *  should early-return when this is set (suppresses the click that ends a
    *  drag), then it self-clears. Mirrors use-plot-gestures.ts:68. */
   wasDragRef: MutableRefObject<boolean>;
-  actions: ChartViewportActions;
+  actions: ChartViewActions;
   capabilities: ChartCapabilities;
 }
 
@@ -310,7 +310,7 @@ function gutterFromFrac(axis: "x" | "y", grabFrac: number): GutterDrag {
   return { axis, sub: "scale", grabFrac: f, anchorFrac: f < 1 / 3 ? 1 : 0 };
 }
 
-export function useChartViewport({
+export function useChartView({
   containerRef,
   plotRectRef,
   home,
@@ -323,14 +323,14 @@ export function useChartViewport({
   lockAspect,
   onSelect,
   sync,
-}: UseChartViewportArgs): ChartViewportResult {
+}: UseChartViewArgs): ChartViewResult {
   // Resolve the sync target: an explicit `sync` arg wins, else inherit the
   // group a standalone adapter opted this subtree into via context. Kept in a
   // ref so the stable `commit`/`reset` callbacks publish to the current group
   // without re-identifying when it changes.
-  const contextSync = useContext(ChartViewportSyncContext);
+  const contextSync = useContext(ChartViewSyncContext);
   const syncTarget = sync ?? contextSync ?? null;
-  const storeRef = useRef<ChartViewportSyncTarget | null>(syncTarget);
+  const storeRef = useRef<ChartViewSyncTarget | null>(syncTarget);
   storeRef.current = syncTarget;
   // `null` internal ⇒ "follow home" (auto-reframe on new data). A committed
   // gesture sets it; reset clears it back to null.
@@ -857,7 +857,7 @@ export function useChartViewport({
     if (!dragRef.current) setHoverCursor((prev) => (prev === null ? prev : null));
   }, []);
 
-  const actions: ChartViewportActions = useMemo(() => {
+  const actions: ChartViewActions = useMemo(() => {
     const zoomBy = (factor: number) => {
       const d = domainRef.current;
       const cx = (d.xDomain[0] + d.xDomain[1]) / 2;

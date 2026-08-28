@@ -1,12 +1,12 @@
 /**
  * `renderers/use-chart-controller.ts` — the SVG-chart adapter that projects a
- * `useChartViewport` return value onto the renderer-agnostic {@link PlotController}
+ * `useChartView` return value onto the renderer-agnostic {@link PlotController}
  * facade the `<PlotToolbar>` (S1) drives. One per chart instance
  * (Scatter/Histogram/Bar/Heatmap). ScalarPlot and ParallelCoords get their own
  * adapters in later slices.
  *
  * S0 SKELETON — no behavior change, not mounted anywhere yet (S1 mounts it):
- *  - zoomIn/zoomOut/autoscale/reset  → the viewport hook's `actions` 1:1.
+ *  - zoomIn/zoomOut/autoscale/reset  → the view hook's `actions` 1:1.
  *  - setDragMode(public "zoom")      → translate "zoom"→"box", call the hook.
  *  - dragMode getter                 → translate internal "box"→"zoom".
  *  - hoverMode / spikelines          → local state, VISUALLY INERT until S4.
@@ -18,7 +18,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { RefObject } from "react";
 import { plotToPng } from "../../../primitives/components/plot-to-png";
-import type { ChartDragMode, ChartViewportResult } from "../../chart/use-chart-viewport";
+import type { ChartDragMode, ChartViewResult } from "../../chart/use-chart-view";
 import type {
   ControllerCapabilities,
   DragMode,
@@ -28,8 +28,8 @@ import type {
 } from "../../../primitives/controls/types";
 
 export interface UseChartControllerArgs {
-  /** The renderer's `useChartViewport` result (state machine + actions). */
-  viewport: ChartViewportResult;
+  /** The renderer's `useChartView` result (state machine + actions). */
+  view: ChartViewResult;
   /** The renderer's root element — the default `toPNG` export target. */
   rootRef: RefObject<HTMLElement | null>;
   /** Optional client-side PNG exporter; when absent, `toPNG` rasterizes
@@ -55,7 +55,7 @@ function toInternalDragMode(m: DragMode): ChartDragMode {
 }
 
 export function useChartController({
-  viewport,
+  view,
   rootRef,
   toPNG: toPNGImpl,
   selectable = false,
@@ -68,7 +68,7 @@ export function useChartController({
   const [hoverMode, setHoverModeState] = useState<HoverMode>("closest");
   const [spikelines, setSpikelines] = useState<boolean>(false);
 
-  const { actions, capabilities: vp, isModified } = viewport;
+  const { actions, capabilities: vp, isModified } = view;
 
   const setDragMode = useCallback(
     (m: DragMode) => {
@@ -101,7 +101,7 @@ export function useChartController({
 
   const capabilities: ControllerCapabilities = useMemo(
     () => ({
-      // From the viewport hook:
+      // From the view hook:
       zoom: vp.zoom,
       pan: vp.pan,
       boxZoom: vp.boxZoom,

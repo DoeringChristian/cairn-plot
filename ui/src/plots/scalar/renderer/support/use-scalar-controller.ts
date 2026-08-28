@@ -1,18 +1,18 @@
 /**
  * `renderers/scalar/use-scalar-controller.ts` — the ScalarPlot adapter that
- * projects its `Viewport {xMin,xMax,yMin,yMax}` + `onViewportChange` interaction
+ * projects its `ChartViewState {xMin,xMax,yMin,yMax}` + `onViewChange` interaction
  * substrate onto the renderer-agnostic {@link PlotController} facade the
  * `<PlotToolbar>` drives.
  *
  * ScalarPlot uses a DIFFERENT substrate from the SVG charts (which layer
- * `useChartViewport` + `use-chart-controller.ts`): a numeric-or-null Viewport
+ * `useChartView` + `use-chart-controller.ts`): a numeric-or-null ChartViewState
  * prop plus the `usePlotGestures` pointer state machine. This adapter bridges
  * that gap:
  *  - dragMode ("zoom" = box-zoom / "pan") is LOCAL state; ScalarPlot threads it
  *    into `usePlotGestures` as `baseDragMode` so a plain drag honors the toggle
  *    (Alt-drag always pans — the modifier wins).
  *  - zoomIn/zoomOut rescale the current effective x&y span around its center.
- *  - autoscale AND reset both emit the all-null "home" sentinel (Viewport bounds
+ *  - autoscale AND reset both emit the all-null "home" sentinel (ChartViewState bounds
  *    of null mean "follow the autoscaled data extent").
  *  - toPNG reuses the shared self-contained `plotToPng` over the chart root
  *    (which contains the Recharts <svg>).
@@ -29,16 +29,16 @@ import type {
   PlotController,
   ToPNGOptions,
 } from "../../../../primitives/controls/types";
-import type { Viewport } from "../../../types";
+import type { ChartViewState } from "../../../types";
 
 export interface UseScalarControllerArgs {
-  /** The live Scalar viewport (numeric bounds, or null where still auto). */
-  viewport: Viewport;
-  /** Commits a new viewport (numeric bounds to zoom/pan, all-null to go home). */
-  onViewportChange: (v: Viewport) => void;
+  /** The live Scalar view (numeric bounds, or null where still auto). */
+  view: ChartViewState;
+  /** Commits a new view (numeric bounds to zoom/pan, all-null to go home). */
+  onViewChange: (v: ChartViewState) => void;
   /** The chart root (ScalarPlot's `chartBoxRef`) — the PNG export target. */
   rootRef: RefObject<HTMLElement | null>;
-  /** The chart's full data extent, used to seed a zoom span when the viewport
+  /** The chart's full data extent, used to seed a zoom span when the view
    *  is still auto (null bounds). */
   dataBounds?: { x: [number, number]; y: [number, number] };
 }
@@ -48,8 +48,8 @@ const ZOOM_IN_FACTOR = 0.8;
 const ZOOM_OUT_FACTOR = 1.25;
 
 export function useScalarController({
-  viewport,
-  onViewportChange,
+  view,
+  onViewChange,
   rootRef,
   dataBounds,
 }: UseScalarControllerArgs): PlotController {
@@ -66,15 +66,15 @@ export function useScalarController({
   const setHoverMode = useCallback((m: HoverMode) => setHoverModeState(m), []);
   const toggleSpikelines = useCallback(() => setSpikelines((v) => !v), []);
 
-  // Current effective view bounds: prefer the live viewport, falling back
+  // Current effective view bounds: prefer the live view, falling back
   // per-axis to the data extent wherever a bound is still auto (null). Returns
   // null when neither source yields a finite rectangle (nothing to zoom).
   const zoomBy = useCallback(
     (factor: number) => {
-      const x0 = viewport.xMin ?? dataBounds?.x[0];
-      const x1 = viewport.xMax ?? dataBounds?.x[1];
-      const y0 = viewport.yMin ?? dataBounds?.y[0];
-      const y1 = viewport.yMax ?? dataBounds?.y[1];
+      const x0 = view.xMin ?? dataBounds?.x[0];
+      const x1 = view.xMax ?? dataBounds?.x[1];
+      const y0 = view.yMin ?? dataBounds?.y[0];
+      const y1 = view.yMax ?? dataBounds?.y[1];
       if (
         x0 == null || x1 == null || y0 == null || y1 == null ||
         !Number.isFinite(x0) || !Number.isFinite(x1) ||
@@ -86,14 +86,14 @@ export function useScalarController({
       const cy = (y0 + y1) / 2;
       const hx = ((x1 - x0) * factor) / 2;
       const hy = ((y1 - y0) * factor) / 2;
-      onViewportChange({
+      onViewChange({
         xMin: cx - hx,
         xMax: cx + hx,
         yMin: cy - hy,
         yMax: cy + hy,
       });
     },
-    [viewport, dataBounds, onViewportChange],
+    [view, dataBounds, onViewChange],
   );
 
   const zoomIn = useCallback(() => zoomBy(ZOOM_IN_FACTOR), [zoomBy]);
@@ -101,8 +101,8 @@ export function useScalarController({
 
   // Autoscale and reset are the same "home" op: drop all bounds to auto.
   const home = useCallback(
-    () => onViewportChange({ xMin: null, xMax: null, yMin: null, yMax: null }),
-    [onViewportChange],
+    () => onViewChange({ xMin: null, xMax: null, yMin: null, yMax: null }),
+    [onViewChange],
   );
 
   const toPNG = useCallback(
@@ -118,10 +118,10 @@ export function useScalarController({
 
   // Any non-null bound means the view has been zoomed/panned off its home.
   const isModified =
-    viewport.xMin != null ||
-    viewport.xMax != null ||
-    viewport.yMin != null ||
-    viewport.yMax != null;
+    view.xMin != null ||
+    view.xMax != null ||
+    view.yMin != null ||
+    view.yMax != null;
 
   const capabilities: ControllerCapabilities = useMemo(
     () => ({

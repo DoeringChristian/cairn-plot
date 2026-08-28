@@ -9,7 +9,7 @@ import { Axis, PlotFrame, type AxisTick } from "../../../primitives/components/A
 import PlotColorbar from "../../../primitives/components/PlotColorbar";
 import { colorbarReservedRight } from "../../../primitives/components/colorbar-layout";
 import { anchorFromRect, type TooltipAnchor } from "../../../primitives/components/tooltip-position";
-import { useChartViewport, type PlotRect } from "../../chart/use-chart-viewport";
+import { useChartView, type PlotRect } from "../../chart/use-chart-view";
 import { useChartController } from "../../image/components/use-chart-controller";
 import PlotToolbar from "../../../primitives/components/PlotToolbar";
 
@@ -32,7 +32,7 @@ export interface HeatmapProps {
   yTickLabel?: (i: number) => string;
   /** Tooltip body for a hovered cell; falls back to a default value readout. */
   tooltipContent?: (cell: { x: number; y: number; value: number }) => ReactNode;
-  /** Keep cells square by locking the viewport aspect ratio (opt-in). */
+  /** Keep cells square by locking the view aspect ratio (opt-in). */
   lockAspect?: boolean;
   className?: string;
 }
@@ -138,7 +138,7 @@ export default function Heatmap({
   const plotW = Math.max(0, w - PAD.left - padRight);
   const plotH = Math.max(0, h - PAD.top - PAD.bottom);
 
-  // Continuous cell-index viewport. x ∈ [0, cols] (columns, 0 = left edge),
+  // Continuous cell-index view. x ∈ [0, cols] (columns, 0 = left edge),
   // y ∈ [0, rows] in VIEW space (0 = top of the painted canvas — the axis-flip
   // for originTop happens at the label/hover boundary, below). No padding: the
   // home view is exactly the full grid. Zoom = re-CSS-positioning the pixelated
@@ -153,7 +153,7 @@ export default function Heatmap({
   const plotRectRef = useRef<PlotRect | null>(null);
   plotRectRef.current = { x: PAD.left, y: PAD.top, width: plotW, height: plotH };
 
-  const viewport = useChartViewport({
+  const view = useChartView({
     containerRef,
     plotRectRef,
     home,
@@ -164,8 +164,8 @@ export default function Heatmap({
     },
     lockAspect,
   });
-  const { domain, containerProps, dragRect } = viewport;
-  const controller = useChartController({ viewport, rootRef: containerRef });
+  const { domain, containerProps, dragRect } = view;
+  const controller = useChartController({ view, rootRef: containerRef });
 
   const [xLo, xHi] = domain.xDomain;
   const [yLo, yHi] = domain.yDomain;
@@ -304,7 +304,7 @@ export default function Heatmap({
 
 /**
  * Up to ~6 roughly-even integer cell indices whose cell-center (i + 0.5) falls
- * within the live [lo, hi] view span. As the viewport zooms in, `lo`/`hi`
+ * within the live [lo, hi] view span. As the view zooms in, `lo`/`hi`
  * tighten and the returned indices densify over the visible range; when zoomed
  * out to the full grid this reduces to evenly-spaced ticks across all `n` cells.
  */

@@ -6,7 +6,7 @@
  * `PlotController` is the single imperative facade a `<PlotToolbar>` (S1) talks
  * to. Every renderer publishes one via an adapter hook
  * (`renderers/use-chart-controller.ts` for the SVG charts, plus Scalar/PC
- * variants). It is a superset of `useChartViewport`'s `ChartViewportActions`
+ * variants). It is a superset of `useChartView`'s `ChartViewActions`
  * and speaks the PUBLIC drag vocabulary (`"zoom"` — the toolbar's name for the
  * hook-internal `"box"`), so slices can layer on hover/spikelines/axis-scale/
  * selection without reworking the viewport hook.
@@ -43,7 +43,7 @@ export interface ToPNGOptions {
 
 /**
  * What a given renderer's controller can actually do. A superset of
- * `viewport/use-chart-viewport.ts`'s `ChartCapabilities`, so a toolbar can
+ * `viewport/use-chart-view.ts`'s `ChartCapabilities`, so a toolbar can
  * capability-gate every group honestly. Not-yet-implemented features are simply
  * reported `false` by the adapter until their slice lands.
  */

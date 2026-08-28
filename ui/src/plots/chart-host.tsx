@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useRef, type ReactNode } from "react";
 
 import {
-  ChartViewportSyncProvider,
-  type ChartViewportSyncTarget,
-} from "./chart/use-chart-viewport.ts";
+  ChartViewSyncProvider,
+  type ChartViewSyncTarget,
+} from "./chart/use-chart-view.ts";
 import type { PlotSettings } from "../settings/schema.ts";
 import type { ChartSettings } from "./chart-settings.ts";
 
@@ -19,9 +19,9 @@ export function ChartSettingsBoundary({ settings, patch, children }: {
     (next: PlotSettings) => patchRef.current(next as unknown as Partial<ChartSettings>),
     [],
   );
-  const sync = useMemo<ChartViewportSyncTarget | null>(
+  const sync = useMemo<ChartViewSyncTarget | null>(
     () => ({ settings: settings as PlotSettings, set: stablePatch }),
     [settings, patch, stablePatch],
   );
-  return <ChartViewportSyncProvider value={sync}>{children}</ChartViewportSyncProvider>;
+  return <ChartViewSyncProvider value={sync}>{children}</ChartViewSyncProvider>;
 }

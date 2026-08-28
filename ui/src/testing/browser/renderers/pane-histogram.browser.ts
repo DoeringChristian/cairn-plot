@@ -177,7 +177,7 @@ async function run(): Promise<boolean> {
 
   // --- 5. REACTS to a cursor sample ----------------------------------------
   const viewport = document.querySelector<HTMLElement>(
-    "[data-gpu-image-viewport], [data-cpu-image-viewport]",
+    "[data-gpu-image-surface], [data-cpu-image-surface]",
   )!;
   const vpRect = viewport.getBoundingClientRect();
   // Two different image points → two different per-pixel read-outs (the R/G

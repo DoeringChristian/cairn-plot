@@ -21,7 +21,7 @@
  *
  * ## Shared plumbing — the shared `ImagePaneShell`
  * Both branches render through `renderers/ImagePaneShell.tsx` (the ONE frame
- * all three image panes share): it owns the `useImageViewport` zoom/pan
+ * all three image panes share): it owns the `useImageGestures` zoom/pan
  * (modifier-gated wheel zoom-to-cursor + drag pan), the TEV `PixelValueOverlay`
  * mount + notation state, the double-click viewport reset, and the
  * `PlotToolbar` + `useImageController` wiring (notation leading button
@@ -411,7 +411,7 @@ function CpuSdrImagePane(
     processing = DEFAULT_PROCESSING,
     zoom: zoomProp = 1,
     pan: panProp = { x: 0, y: 0 },
-    onViewportChange,
+    onViewChange,
     onNaturalSize,
     label,
     isDraggable = false,
@@ -935,13 +935,13 @@ function CpuSdrImagePane(
   return (
     <ImagePaneShell
       paneAttrs={{ "data-cpu-image-pane": "" }}
-      viewportAttrs={{ "data-cpu-image-viewport": "" }}
+      surfaceAttrs={{ "data-cpu-image-surface": "" }}
       toolbar={toolbar}
       paneRef={paneRef}
       wrapperRef={wrapperRef}
       zoom={zoomProp}
       pan={panProp}
-      onViewportChange={onViewportChange}
+      onViewChange={onViewChange}
       naturalDims={naturalDims}
       checkerboard="pane"
       wrapperClassName="relative w-full h-full"
@@ -1060,7 +1060,7 @@ function CpuHdrImagePane(
     interpolation = "auto",
     zoom = 1,
     pan = { x: 0, y: 0 },
-    onViewportChange,
+    onViewChange,
     pixelValueNotation = "decimal",
     overlay,
     overlaySettings,
@@ -1320,13 +1320,13 @@ function CpuHdrImagePane(
   return (
     <ImagePaneShell
       paneAttrs={{ "data-cpu-image-pane": "" }}
-      viewportAttrs={{ "data-cpu-image-viewport": "" }}
+      surfaceAttrs={{ "data-cpu-image-surface": "" }}
       toolbar={toolbar}
       paneRef={paneRef}
       wrapperRef={wrapperRef}
       zoom={zoom}
       pan={pan}
-      onViewportChange={onViewportChange}
+      onViewChange={onViewChange}
       naturalDims={dims}
       checkerboard="pane"
       wrapperClassName="relative w-full h-full"

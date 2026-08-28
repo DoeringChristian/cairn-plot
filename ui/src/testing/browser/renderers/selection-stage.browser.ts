@@ -510,7 +510,7 @@ async function run(): Promise<boolean> {
   //     (the group the stage previously dropped while keeping only settings). ====
   {
     const cells = stageCells();
-    const vpA = cells[0]?.querySelector<HTMLElement>("[data-cpu-image-viewport]") ?? null;
+    const vpA = cells[0]?.querySelector<HTMLElement>("[data-cpu-image-surface]") ?? null;
     const wrapA = cells[0] ? zoomWrapper(cells[0]) : null;
     const wrapB = cells[1] ? zoomWrapper(cells[1]) : null;
     if (vpA && wrapA && wrapB) {

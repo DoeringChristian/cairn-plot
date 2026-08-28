@@ -14,7 +14,7 @@ import type { ImagePresentation, ImageSettings } from "./register.ts";
 export function ImagePlotView({ presentation: p, settings, commands }: ReactPlotViewProps<ImagePresentation, ImageSettings>) {
   const fill = useContext(ChartFillContext);
   const gridUniform = useContext(GridUniformAspectContext);
-  const [viewport, onViewportChange] = useImageView(
+  const [view, onViewChange] = useImageView(
     settings,
     commands.patch,
     { zoom: p.zoom ?? 1, pan: p.pan ?? { x: 0, y: 0 } },
@@ -48,9 +48,9 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     overlay={p.overlay}
     overlaySettings={p.overlaySettings}
     pixelValueNotation={p.pixelValueNotation}
-    zoom={viewport.zoom}
-    pan={viewport.pan}
-    onViewportChange={onViewportChange}
+    zoom={view.zoom}
+    pan={view.pan}
+    onViewChange={onViewChange}
     syncedSettings={settings}
     setSyncedSettings={(patch) => commands.patch({ ...patch } as ImageSettings)}
     resetSettings={commands.reset}

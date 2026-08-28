@@ -210,9 +210,9 @@ function mountUnifiedDiff(container: HTMLElement, opId: string, encoding: Colorm
       h(OwnedDiff),
     ),
   );
-  // The probe rides `paneRef.current` = the VIEWPORT box (`data-gpu-image-viewport`).
+  // The probe rides `paneRef.current` = the VIEWPORT box (`data-gpu-image-surface`).
   const paneEl = () =>
-    container.querySelector("[data-gpu-image-viewport]") as (HTMLElement & { __cairnImageDiffProbe?: DiffProbe }) | null;
+    container.querySelector("[data-gpu-image-surface]") as (HTMLElement & { __cairnImageDiffProbe?: DiffProbe }) | null;
   return waitFor(() => !!paneEl()?.__cairnImageDiffProbe?.canvas, 8000, 40).then(() => {
     if (!paneEl()?.__cairnImageDiffProbe) {
       const cpu = !!container.querySelector("[data-cpu-image-pane]");

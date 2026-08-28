@@ -194,7 +194,7 @@ export interface PixelValueOverlayProps {
   /**
    * The currently-DISPLAYED portion of the source image, as a `[0,1]`-normalized
    * `{x,y,w,h}` window over `[naturalWidth, naturalHeight]` — top-down, same
-   * convention as `renderers/GpuImagePane.tsx`'s `viewportToUvRect()` BEFORE
+   * convention as `renderers/GpuImagePane.tsx`'s `viewToUvRect()` BEFORE
    * any backend-specific display flip. Default `{x:0,y:0,w:1,h:1}` (the whole
    * image, matching every prior caller's behaviour exactly).
    *

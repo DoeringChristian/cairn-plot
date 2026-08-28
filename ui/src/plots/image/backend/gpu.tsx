@@ -37,7 +37,7 @@
  *
  * ## Zoom/pan -> uvRect
  * `ImagePaneShell` owns the CSS-px zoom/pan state (Alt-gated wheel-zoom-to-cursor
- * + pointer-drag pan) and the double-click reset; `viewportToUvRect` converts it
+ * + pointer-drag pan) and the double-click reset; `viewToUvRect` converts it
  * into the source-space `[x,y,w,h]` window `renderImage` samples (GPU-side pan/
  * zoom, not a CSS transform), using the same object-contain fit math the pixel
  * overlay computes from the live rect.
@@ -87,7 +87,7 @@ import ImageOverlay from "../components/ImageOverlay";
 import PixelValueOverlay, {
   PIXEL_VALUE_MIN_SCREEN_PX,
 } from "../../../primitives/components/PixelValueOverlay";
-import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-viewport";
+import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { useDevicePixelRatio } from "../../../host/hooks/use-device-pixel-ratio";
 import {
   acquirePane,
@@ -257,7 +257,7 @@ async function decodedSourceToUpload(src: DecodedSource): Promise<SourceUpload |
 }
 
 /**
- * Converts the CSS-px `{zoom,pan}` viewport (owned by `useImageViewport`)
+ * Converts the CSS-px `{zoom,pan}` viewport (owned by `useImageGestures`)
  * into the source-space `uv` window `renderImage` samples — for a render
  * target that spans the FULL PANE/canvas (Q24 fix). `paneBox` here MUST be
  * the same box the canvas's own CSS size is measured against (the render
@@ -281,7 +281,7 @@ async function decodedSourceToUpload(src: DecodedSource): Promise<SourceUpload |
  * (letterboxed, centered, checkerboard in the margins via Q18's existing
  * OOB -> transparent path); `zoom`/`pan` then transform the WHOLE viewport
  * (`translate(pan) scale(zoom)`, origin `(0,0)` of the pane — the SAME
- * convention `useImageViewport`'s wheel-zoom-to-cursor math already assumes,
+ * convention `useImageGestures`'s wheel-zoom-to-cursor math already assumes,
  * since `cx = clientX - paneRect.left` there is measured against that same
  * origin), so the user can zoom toward / pan into the checkerboard margins
  * exactly like a standard image viewer (TEV) — never confined to the image's
@@ -302,8 +302,8 @@ async function decodedSourceToUpload(src: DecodedSource): Promise<SourceUpload |
  * whole-viewport transform (origin `(0,0)`) gives `w = paneBox.w/(z*dispW)`,
  * `x = -imgLeft/dispW - pan.x/(z*dispW)`.
  */
-export function viewportToUvRect(
-  viewport: ImageViewport,
+export function viewToUvRect(
+  viewport: ImageViewState,
   paneBox: { width: number; height: number },
   naturalW: number,
   naturalH: number,
@@ -533,7 +533,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
-  const onViewportChange = props.onViewportChange;
+  const onViewChange = props.onViewChange;
   // Host seam: `toolbar={false}` hides the PlotToolbar (the shell then renders
   // the free-floating pixel-notation toggle only), so a host can drive the view
   // from its own menu via the controlled props below. Default true.
@@ -1431,14 +1431,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     const measureEl = wrapEl ?? paneEl;
     const wrapBox = measureEl ? measureEl.getBoundingClientRect() : null;
     if (!wrapBox || wrapBox.width <= 0 || wrapBox.height <= 0) return false;
-    const rawUv = viewportToUvRect({ zoom, pan }, wrapBox, naturalDims.w, naturalDims.h);
+    const rawUv = viewToUvRect({ zoom, pan }, wrapBox, naturalDims.w, naturalDims.h);
     setOverlayWindow((prev) =>
       prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
     );
 
     // The canvas backing store / WebGPU surface span the FULL content box ×
     // devicePixelRatio; the image is placed as a quad inside that viewport by
-    // `viewportToUvRect` (letterboxed at rest, pannable/zoomable into the
+    // `viewToUvRect` (letterboxed at rest, pannable/zoomable into the
     // margins). The CSS layout box is `w-full h-full` of the wrapper, so only
     // the device-pixel backing store is computed here; letterbox + checkerboard
     // in any empty region is the shader's OOB→transparent path.
@@ -2269,7 +2269,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }
 
   // The image quad is placed inside the FULL-viewport canvas by
-  // `viewportToUvRect` (letterboxed at rest, filling/pannable at any zoom); the
+  // `viewToUvRect` (letterboxed at rest, filling/pannable at any zoom); the
   // canvas is always `w-full h-full` of the shell's wrapper (no inline size /
   // object-fit — only its device-pixel backing store is set imperatively, in
   // the render-pass effect above). The checkerboard lives on that padding-free
@@ -2292,13 +2292,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   return (
     <ImagePaneShell
       paneAttrs={{ "data-gpu-image-pane": "", "data-gpu-backend-ready": paneReady }}
-      viewportAttrs={{ "data-gpu-image-viewport": "" }}
+      surfaceAttrs={{ "data-gpu-image-surface": "" }}
       toolbar={toolbar}
       paneRef={paneRef}
       wrapperRef={imgWrapperRef}
       zoom={zoom}
       pan={pan}
-      onViewportChange={onViewportChange}
+      onViewChange={onViewChange}
       naturalDims={naturalDims}
       checkerboard="wrapper"
       wrapperClassName="relative w-full h-full flex items-center justify-center"

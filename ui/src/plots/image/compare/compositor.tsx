@@ -16,7 +16,7 @@ import type {
   ImageProcessing,
   Interpolation,
 } from "../../types";
-import { useImageViewport, type Viewport as ImageViewport } from "../../../host/hooks/use-image-viewport";
+import { useImageGestures, type ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../components/ImageOverlay";
 import CpuImagePane, { tonemapToImageData } from "../backend/cpu";
@@ -58,7 +58,7 @@ import type {
  * the CPU `MediaComparePane`/`ImagePane` diff path — the required fallback
  * (probe pending, host opted out, or WebGPU unavailable). Same gate
  * `plot-renderers.tsx`'s `resolveImageRenderer` uses, so cross-type compare
- * consumers (`ImageViewportPane` / `OffscreenComparePanes`) render the SAME
+ * consumers (`ImageViewStatePane` / `OffscreenComparePanes`) render the SAME
  * unified pane a descriptor image-compare leaf does.
  */
 function resolveGpuImagePane(): ImageBackend | null {
@@ -117,7 +117,7 @@ export interface MediaComparePaneProps {
 
   zoom: number;
   pan: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
 
   processing?: ImageProcessing;
   interpolation?: Interpolation;
@@ -141,7 +141,7 @@ export interface MediaComparePaneProps {
 /**
  * Compare pane that stacks two images (prediction over baseline/reference) and
  * reveals them via a draggable split (clipPath). Self-contained: zoom/pan
- * interaction runs through `useImageViewport`; the gamma filter comes from the
+ * interaction runs through `useImageGestures`; the gamma filter comes from the
  * shared `useGammaFilter` helper.
  */
 export function MediaComparePane({
@@ -152,7 +152,7 @@ export function MediaComparePane({
   onSplitPositionChange,
   zoom,
   pan,
-  onViewportChange,
+  onViewChange,
   processing = DEFAULT_PROCESSING,
   interpolation = "auto",
   label = "",
@@ -256,11 +256,11 @@ export function MediaComparePane({
   const transformStr = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
   const imgRendering = interpolation === "auto" ? undefined : interpolation;
 
-  const { containerProps: viewportProps, modifierActive } = useImageViewport({
+  const { containerProps: viewportProps, modifierActive } = useImageGestures({
     containerRef: paneRef,
     zoom,
     pan,
-    onViewportChange,
+    onViewChange,
   });
 
   // Split ("slide") mode: Left/Right arrow snaps the divider hard to one edge,
@@ -572,7 +572,7 @@ function CpuFloatComparePane({
   onSplitPositionChange,
   zoom,
   pan,
-  onViewportChange,
+  onViewChange,
   processing,
   interpolation,
   label,
@@ -596,7 +596,7 @@ function CpuFloatComparePane({
   | "onSplitPositionChange"
   | "zoom"
   | "pan"
-  | "onViewportChange"
+  | "onViewChange"
   | "processing"
   | "interpolation"
   | "label"
@@ -632,7 +632,7 @@ function CpuFloatComparePane({
           processing={processing}
           zoom={zoom}
           pan={pan}
-          onViewportChange={onViewportChange}
+          onViewChange={onViewChange}
           label={foregroundLabel ?? label}
           pixelValueNotation={pixelValueNotation}
         />
@@ -653,7 +653,7 @@ function CpuFloatComparePane({
         onSplitPositionChange={onSplitPositionChange}
         zoom={zoom}
         pan={pan}
-        onViewportChange={onViewportChange}
+        onViewChange={onViewChange}
         processing={processing}
         interpolation={interpolation}
         label={label}
@@ -720,7 +720,7 @@ export interface CompositeMediaPaneProps {
 
   zoom: number;
   pan: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
 
   /** Used only when the effective mode is "split". */
   splitPosition?: number;
@@ -752,7 +752,7 @@ export interface CompositeMediaPaneProps {
   /** Host seam — hide the composited-pane toolbar (`GpuComparePane`'s shell
    *  toolbar / the diff CPU fallback's) when `false`, so a host can drive the
    *  compare view from its own menu. Default `true`. Threaded from `cp.Compare(
-   *  toolbar=False)` via `CompareView` / the `ImageViewport` module. */
+   *  toolbar=False)` via `CompareView` / the `ImageViewState` module. */
   toolbar?: boolean;
 }
 
@@ -778,7 +778,7 @@ export function CompositeMediaPane({
   tonemap_gamma,
   zoom,
   pan,
-  onViewportChange,
+  onViewChange,
   splitPosition,
   onSplitPositionChange,
   settingsSyncGroupId,
@@ -899,7 +899,7 @@ export function CompositeMediaPane({
         showAxes={showAxes ?? false}
         zoom={zoom}
         pan={pan}
-        onViewportChange={onViewportChange}
+        onViewChange={onViewChange}
         onNaturalSize={onNaturalSize}
         interpolation={interpolation}
         label={label}
@@ -930,7 +930,7 @@ export function CompositeMediaPane({
         onSplitPositionChange={onSplitPositionChange}
         zoom={zoom}
         pan={pan}
-        onViewportChange={onViewportChange}
+        onViewChange={onViewChange}
         processing={processing}
         interpolation={interpolation}
         label={label}
@@ -955,7 +955,7 @@ export function CompositeMediaPane({
         onSplitPositionChange={onSplitPositionChange}
         zoom={zoom}
         pan={pan}
-        onViewportChange={onViewportChange}
+        onViewChange={onViewChange}
         processing={processing}
         interpolation={interpolation}
         label={label}
@@ -985,7 +985,7 @@ export function CompositeMediaPane({
           onSplitPositionChange={onSplitPositionChange}
           zoom={zoom}
           pan={pan}
-          onViewportChange={onViewportChange}
+          onViewChange={onViewChange}
           processing={processing}
           interpolation={interpolation}
           label={label}
@@ -1021,7 +1021,7 @@ export function CompositeMediaPane({
       processing={processing}
       zoom={zoom}
       pan={pan}
-      onViewportChange={onViewportChange}
+      onViewChange={onViewChange}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
       onNaturalSize={onNaturalSize}

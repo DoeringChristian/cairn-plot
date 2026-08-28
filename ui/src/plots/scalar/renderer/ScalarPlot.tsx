@@ -16,7 +16,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { AxisScale, PromotedSeriesConfig, Series, Viewport } from "../../types";
+import type { AxisScale, PromotedSeriesConfig, Series, ChartViewState } from "../../types";
 import type { AxisSource } from "../../transforms/x-axis";
 import { resolveAxisDomain } from "../../transforms/domain";
 import { mergeToRows } from "../../transforms/merge-rows";
@@ -40,8 +40,8 @@ export interface ScalarPlotProps {
   yScale: AxisScale;
   xRange: [number | null, number | null];
   yRange: [number | null, number | null];
-  viewport: Viewport;
-  onViewportChange: (v: Viewport) => void;
+  view: ChartViewState;
+  onViewChange: (v: ChartViewState) => void;
   promotedSeries: Record<string, PromotedSeriesConfig>;
   onPromotedSeriesChange: (
     p: Record<string, PromotedSeriesConfig>,
@@ -61,8 +61,8 @@ export default function ScalarPlot({
   yScale,
   xRange,
   yRange,
-  viewport,
-  onViewportChange,
+  view,
+  onViewChange,
   promotedSeries,
   onPromotedSeriesChange,
   lineType = "linear",
@@ -80,10 +80,10 @@ export default function ScalarPlot({
   const visibility = useSeriesVisibility(seriesKeys);
 
   const xDomain = resolveAxisDomain(
-    xRange[0], xRange[1], viewport.xMin, viewport.xMax, xScale,
+    xRange[0], xRange[1], view.xMin, view.xMax, xScale,
   );
   const yDomain = resolveAxisDomain(
-    yRange[0], yRange[1], viewport.yMin, viewport.yMax, yScale,
+    yRange[0], yRange[1], view.yMin, view.yMax, yScale,
   );
 
   const dataXs = useMemo(() => {
@@ -127,8 +127,8 @@ export default function ScalarPlot({
 
   // Edge padding for the HOME position only: when a domain is fully auto
   // (both ends are the "dataMin"/"dataMax"/"auto" sentinels — no explicit
-  // range and no zoom/pan viewport), pass a ~5%-padded numeric domain so the
-  // line doesn't touch the frame. An explicit range or a viewport (numbers)
+  // range and no zoom/pan view), pass a ~5%-padded numeric domain so the
+  // line doesn't touch the frame. An explicit range or a view (numbers)
   // passes through untouched. Log domains aren't padded (linear padding could
   // push a bound ≤ 0).
   const padAutoDomain = (
@@ -200,9 +200,9 @@ export default function ScalarPlot({
   const altDown = useModifierKey();
 
   // ── Toolbar controller ──
-  // Bridge the Viewport substrate onto the renderer-agnostic PlotController the
+  // Bridge the ChartViewState substrate onto the renderer-agnostic PlotController the
   // <PlotToolbar> drives. `dataBounds` (the full data extent) seeds zoomIn/Out
-  // when the viewport is still auto; `dragMode` feeds the gesture base mode.
+  // when the view is still auto; `dragMode` feeds the gesture base mode.
   const dataBounds = useMemo(
     () => ({
       x: [dataXs[0], dataXs[1]] as [number, number],
@@ -211,8 +211,8 @@ export default function ScalarPlot({
     [dataXs, dataYs],
   );
   const controller = useScalarController({
-    viewport,
-    onViewportChange,
+    view,
+    onViewChange,
     rootRef: chartBoxRef,
     dataBounds,
   });
@@ -231,7 +231,7 @@ export default function ScalarPlot({
     plotOffsetRef,
     effectiveRef,
     promotedRef,
-    onViewportChange,
+    onViewChange,
     onPromotedSeriesChange,
     baseDragMode: controller.dragMode === "pan" ? "pan" : "zoom",
   });

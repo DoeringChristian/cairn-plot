@@ -25,7 +25,7 @@ type ImageRuntimePlumbing =
   | "syncedSettings"
   | "setSyncedSettings"
   | "resetSettings"
-  | "onViewportChange";
+  | "onViewChange";
 
 /** Semantic image input. Cell-owned settings and commands are deliberately absent. */
 export type ImagePresentation = Omit<ImageBackendProps, ImageRuntimePlumbing> & {

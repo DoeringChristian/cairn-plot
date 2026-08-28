@@ -8,7 +8,7 @@
  *   - `renderers/GpuImagePane.tsx`  — WebGPU engine, zoom via a sampled uvRect;
  *     also owns the split/diff compositor (content-op unification, Phase
  *     4 — the standalone `media-compare/GpuComparePane.tsx` it replaced is gone).
- * Everything AROUND the pixels — the pane root, the `useImageViewport`
+ * Everything AROUND the pixels — the pane root, the `useImageGestures`
  * wheel/drag/dblclick wiring, the `PlotToolbar` + `useImageController` adapter
  * (with the pixel-notation leading button), the `PixelValueOverlay` mount +
  * notation/active state, the `PixelAxes` + `ImageOverlay` mounts, the
@@ -20,7 +20,7 @@
  * ## The contract (what a pane supplies, and why each knob exists)
  * Identity / DOM (test selectors + tailwind `group` hover depend on these, so
  * they stay per-pane):
- *   - `paneAttrs` / `viewportAttrs` — the `data-*` markers spread onto the root
+ *   - `paneAttrs` / `surfaceAttrs` — the `data-*` markers spread onto the root
  *     and the viewport box (`data-cpu-image-pane`, `data-gpu-image-pane` +
  *     `data-gpu-backend-ready`, `data-gpu-compare-pane` + `data-gpu-compare-ready`,
  *     and the matching `…-viewport` attrs). Boolean-valued attrs (the `…-ready`
@@ -34,7 +34,7 @@
  *     overlay is active (below). See docs/API.md "Host-controlled panes".
  *
  * Refs — the pane OWNS `paneRef` (the padded viewport box, measured by the GPU
- * render passes for uvRect/backing-store sizing, and by `useImageViewport` /
+ * render passes for uvRect/backing-store sizing, and by `useImageGestures` /
  * `useImageController`) and `wrapperRef` (the padding-free content box PixelAxes
  * measures). The shell only ATTACHES them, so a pane's own effects keep reading
  * their live rects unchanged.
@@ -101,10 +101,10 @@ import PixelValueOverlay, {
 } from "../../../primitives/components/PixelValueOverlay";
 import PlotToolbar from "../../../primitives/components/PlotToolbar";
 import {
-  useImageViewport,
+  useImageGestures,
   useReframeViewportOnResize,
-  type Viewport as ImageViewport,
-} from "../../../host/hooks/use-image-viewport";
+  type ImageViewState,
+} from "../../../host/hooks/use-image-gestures";
 import {
   useImageController,
   IMAGE_TOOLBAR_CONFIG,
@@ -180,7 +180,7 @@ export interface ImagePaneShellProps {
   /** `data-*` markers for the root element. */
   paneAttrs: PaneDataAttrs;
   /** `data-*` markers for the viewport (pointer/wheel) element. */
-  viewportAttrs: PaneDataAttrs;
+  surfaceAttrs: PaneDataAttrs;
   /** Render the `PlotToolbar` (and add the `group` hover class). The OFFICIAL
    *  host seam: `false` hides the toolbar (host-driven view) — the shell then
    *  renders only the floating `PixelNotationToggle` while the TEV overlay is
@@ -197,7 +197,7 @@ export interface ImagePaneShellProps {
   // --- viewport ------------------------------------------------------------
   zoom: number;
   pan: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
   /** Source pixel size — enables the adaptive max-zoom cap + gates overlays. */
   naturalDims: { w: number; h: number } | null;
 
@@ -318,13 +318,13 @@ export interface ImagePaneShellProps {
 
 export default function ImagePaneShell({
   paneAttrs,
-  viewportAttrs,
+  surfaceAttrs,
   toolbar,
   paneRef,
   wrapperRef,
   zoom,
   pan,
-  onViewportChange,
+  onViewChange,
   naturalDims,
   checkerboard,
   wrapperClassName,
@@ -503,11 +503,11 @@ export default function ImagePaneShell({
     [enlarged, enlargeIntercept],
   );
 
-  const { containerProps: viewportProps } = useImageViewport({
+  const { containerProps: viewportProps } = useImageGestures({
     containerRef: paneRef,
     zoom,
     pan,
-    onViewportChange,
+    onViewChange,
     // Q29: adaptive max-zoom — zoom until one source texel fills the viewport
     // (same cap the +/- buttons use).
     naturalWidth: naturalDims?.w,
@@ -522,14 +522,14 @@ export default function ImagePaneShell({
     containerRef: paneRef,
     zoom,
     pan,
-    onViewportChange,
+    onViewChange,
     naturalWidth: naturalDims?.w,
     naturalHeight: naturalDims?.h,
   });
 
   // HOME / double-click is one owner command. Zoom, pan, exposure, encoding,
   // compare operation, and every other viewport setting reset together.
-  const resetViewport = useCallback(() => onReset?.(), [onReset]);
+  const resetView = useCallback(() => onReset?.(), [onReset]);
 
   // PlotToolbar controller (zoom/pan/reset/screenshot). Runs unconditionally
   // (rules-of-hooks); only the toolbar's RENDER is gated on `toolbar`.
@@ -538,11 +538,11 @@ export default function ImagePaneShell({
     canvasRef: exportCanvasRef,
     zoom,
     pan,
-    onViewportChange,
+    onViewChange,
     naturalWidth: naturalDims?.w,
     naturalHeight: naturalDims?.h,
     requestRender,
-    onReset: resetViewport,
+    onReset: resetView,
     // A dialed EXPOSURE/OFFSET slider counts as "modified": HOME resets the
     // sliders too (onReset above), so the button must read enabled whenever
     // either slider is off 0 — even at home zoom/pan.
@@ -704,8 +704,8 @@ export default function ImagePaneShell({
         onPointerUp={viewportProps.onPointerUp}
         onPointerCancel={viewportProps.onPointerCancel}
         onPointerLeave={() => setHistCursor((prev) => (prev === null ? prev : null))}
-        onDoubleClick={resetViewport}
-        {...viewportAttrs}
+        onDoubleClick={resetView}
+        {...surfaceAttrs}
       >
         <div ref={wrapperRef} className={wrapClass} style={wrapperStyle}>
           {surface}

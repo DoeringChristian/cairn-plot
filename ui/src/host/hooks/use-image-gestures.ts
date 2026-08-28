@@ -5,12 +5,12 @@ import {
   pinchZoomScale,
   pointerDistance,
   pointerMidpoint,
-} from "../../plots/chart/chart-viewport-math";
-import { reframeViewportForResize } from "../../plots/image/model/reframe";
+} from "../../plots/chart/chart-view-math";
+import { reframeViewForResize } from "../../plots/image/model/reframe-view";
 
-export { reframeViewportForResize };
+export { reframeViewForResize };
 
-export interface Viewport {
+export interface ImageViewState {
   zoom: number;
   pan: { x: number; y: number };
 }
@@ -59,13 +59,13 @@ export function adaptiveMaxZoom(
  * pointer-capture panning. Self-contained — the wheel listener is attached
  * natively (non-passive) to `containerRef` so it can `preventDefault`.
  *
- * The `onViewportChange` callback is full-replace (both `zoom` and `pan`).
+ * The `onViewChange` callback is full-replace (both `zoom` and `pan`).
  */
-export function useImageViewport(args: {
+export function useImageGestures(args: {
   containerRef: React.RefObject<HTMLElement | null>;
   zoom: number;
   pan: { x: number; y: number };
-  onViewportChange?: (v: Viewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
   minZoom?: number;
   maxZoom?: number;
   /** Q29: when the image's natural pixel size is known, the max zoom becomes
@@ -86,7 +86,7 @@ export function useImageViewport(args: {
     containerRef,
     zoom,
     pan,
-    onViewportChange,
+    onViewChange,
     minZoom = DEFAULT_MIN_ZOOM,
     maxZoom = DEFAULT_MAX_ZOOM,
     naturalWidth,
@@ -101,18 +101,18 @@ export function useImageViewport(args: {
   altDownRef.current = modifierActive;
 
   // Latest viewport + callback, read imperatively from event handlers.
-  const viewportRef = useRef({ zoom, pan });
-  viewportRef.current = { zoom, pan };
+  const viewRef = useRef({ zoom, pan });
+  viewRef.current = { zoom, pan };
 
-  const onViewportChangeRef = useRef(onViewportChange);
-  onViewportChangeRef.current = onViewportChange;
+  const onViewChangeRef = useRef(onViewChange);
+  onViewChangeRef.current = onViewChange;
 
   // -----------------------------------------------------------------------
   // Wheel zoom (local — zoom to cursor position)
   // -----------------------------------------------------------------------
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !onViewportChange) return;
+    if (!el || !onViewChange) return;
     const handler = (e: WheelEvent) => {
       // A wheel with `ctrlKey` is the browser's trackpad-PINCH signature (it
       // arrives with NO keydown, so `altDownRef` never opens); a real ctrl/alt/
@@ -125,7 +125,7 @@ export function useImageViewport(args: {
       // multiplies the scale directly (`> 1` = zoom in), matching this hook's
       // `zoom *= factor` model.
       const factor = wheelZoomFactor(e.deltaY);
-      const s = viewportRef.current;
+      const s = viewRef.current;
       const rect = el.getBoundingClientRect();
       // Q29: cap zoom by the FINAL resolution (one texel fills the viewport),
       // not a fixed multiple — falls back to `maxZoom` when natural size is
@@ -140,14 +140,14 @@ export function useImageViewport(args: {
       const cy = e.clientY - rect.top;
       const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
       const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
-      onViewportChangeRef.current?.({
+      onViewChangeRef.current?.({
         zoom: nextZoom,
         pan: { x: newPanX, y: newPanY },
       });
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-  }, [containerRef, !!onViewportChange, minZoom, maxZoom, naturalWidth, naturalHeight]);
+  }, [containerRef, !!onViewChange, minZoom, maxZoom, naturalWidth, naturalHeight]);
 
   // -----------------------------------------------------------------------
   // Pointer pan + two-finger pinch (local)
@@ -207,8 +207,8 @@ export function useImageViewport(args: {
       idB,
       startDist: pointerDistance(a, b),
       startMid: pointerMidpoint(a, b),
-      startZoom: viewportRef.current.zoom,
-      startPan: { ...viewportRef.current.pan },
+      startZoom: viewRef.current.zoom,
+      startPan: { ...viewRef.current.pan },
     };
   }, []);
 
@@ -220,14 +220,14 @@ export function useImageViewport(args: {
       pointerId,
       startX: p.x,
       startY: p.y,
-      panX: viewportRef.current.pan.x,
-      panY: viewportRef.current.pan.y,
+      panX: viewRef.current.pan.x,
+      panY: viewRef.current.pan.y,
     };
   }, []);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (!onViewportChangeRef.current) return;
+      if (!onViewChangeRef.current) return;
       const isTouch = e.pointerType === "touch";
       // Mouse/pen only pan while a modifier is held (unchanged); touch always
       // engages (one finger pans, two pinch).
@@ -270,14 +270,14 @@ export function useImageViewport(args: {
           minZoom,
           effMaxZoom(el),
         );
-        onViewportChangeRef.current?.(next);
+        onViewChangeRef.current?.(next);
         return;
       }
 
       const s = dragStateRef.current;
       if (!s || s.pointerId !== e.pointerId || !tracked) return;
-      onViewportChangeRef.current?.({
-        zoom: viewportRef.current.zoom,
+      onViewChangeRef.current?.({
+        zoom: viewRef.current.zoom,
         pan: { x: s.panX + (tracked.x - s.startX), y: s.panY + (tracked.y - s.startY) },
       });
     },
@@ -307,7 +307,7 @@ export function useImageViewport(args: {
   // always available and doesn't affect the cursor. `touchAction: "none"` is set
   // on the viewport surface (a bounded element, never the page) so the browser
   // never hijacks a one-finger pan or two-finger pinch into scroll/page-zoom.
-  const canPan = modifierActive && !!onViewportChange;
+  const canPan = modifierActive && !!onViewChange;
 
   return {
     containerProps: {
@@ -317,7 +317,7 @@ export function useImageViewport(args: {
       onPointerCancel: onPointerUp,
       style: {
         cursor: canPan ? "move" : undefined,
-        touchAction: onViewportChange ? "none" : undefined,
+        touchAction: onViewChange ? "none" : undefined,
       },
     },
     modifierActive,
@@ -326,7 +326,7 @@ export function useImageViewport(args: {
 
 /**
  * Observes `containerRef`'s box and, on a genuine size change, applies the
- * center-preserving `reframeViewportForResize` via `onViewportChange` — so a
+ * center-preserving `reframeViewForResize` via `onViewChange` — so a
  * zoomed/panned view keeps its centered texel (and its on-screen texel size)
  * across enlarge enter/exit and ordinary window/container resizes, instead of
  * jumping (the top-left-anchored-pan bug). The first observation only seeds the
@@ -337,14 +337,14 @@ export function useReframeViewportOnResize(args: {
   containerRef: React.RefObject<HTMLElement | null>;
   zoom: number;
   pan: { x: number; y: number };
-  onViewportChange?: (v: Viewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
   naturalWidth?: number;
   naturalHeight?: number;
 }): void {
-  const { containerRef, zoom, pan, onViewportChange, naturalWidth, naturalHeight } = args;
+  const { containerRef, zoom, pan, onViewChange, naturalWidth, naturalHeight } = args;
   // Latest inputs read imperatively from the observer (never re-subscribes).
-  const latest = useRef({ zoom, pan, onViewportChange, naturalWidth, naturalHeight });
-  latest.current = { zoom, pan, onViewportChange, naturalWidth, naturalHeight };
+  const latest = useRef({ zoom, pan, onViewChange, naturalWidth, naturalHeight });
+  latest.current = { zoom, pan, onViewChange, naturalWidth, naturalHeight };
   const lastBoxRef = useRef<{ width: number; height: number } | null>(null);
   // The natural dims the current baseline box belongs to — see the SOURCE-SWAP
   // gate below.
@@ -370,7 +370,7 @@ export function useReframeViewportOnResize(args: {
         return;
       }
       lastBoxRef.current = newBox;
-      const { onViewportChange: cb, zoom: z, pan: p, naturalWidth: nw, naturalHeight: nh } = latest.current;
+      const { onViewChange: cb, zoom: z, pan: p, naturalWidth: nw, naturalHeight: nh } = latest.current;
       // SOURCE-SWAP gate: this reframe exists for "SAME image, container
       // resized" (keep the centered texel + its on-screen size). When the
       // natural dims changed along with the box — a stacked viewport flipping
@@ -392,7 +392,7 @@ export function useReframeViewportOnResize(args: {
       lastDimsRef.current = { nw, nh };
       if (dimsChanged) return;
       if (!cb) return;
-      const next = reframeViewportForResize({ zoom: z, pan: p }, oldBox, newBox, nw, nh);
+      const next = reframeViewForResize({ zoom: z, pan: p }, oldBox, newBox, nw, nh);
       if (next.zoom !== z || next.pan.x !== p.x || next.pan.y !== p.y) cb(next);
     });
     ro.observe(el);

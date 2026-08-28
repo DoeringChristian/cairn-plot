@@ -23,7 +23,7 @@ import type {
   ImageProcessing,
   Interpolation,
 } from "../../types";
-import type { Viewport as ImageViewport } from "../../../host/hooks/use-image-viewport";
+import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import { floatPixelsFrom, type FloatPixels } from "../model/pixel-buffer.ts";
 import type { DeepFlattenController } from "../model/decoders.ts";
@@ -103,7 +103,7 @@ export interface HdrImageProps {
   overlaySettings?: ImageOverlaySettings;
   zoom?: number;
   pan?: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
   pixelValueNotation?: PixelValueNotation;
   /** Host seam (§ "Host-controlled panes", docs/API.md): render WITHOUT the
    *  `PlotToolbar` chrome when `false`, so a host can drive the view from its own
@@ -172,7 +172,7 @@ export interface SdrImageProps {
   processing?: ImageProcessing;
   zoom?: number;
   pan?: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
   onNaturalSize?: (w: number, h: number) => void;
   label: string;
   isDraggable?: boolean;
@@ -402,7 +402,7 @@ export interface ImageBackendProps {
   label?: string;
   zoom?: number;
   pan?: { x: number; y: number };
-  onViewportChange?: (v: ImageViewport) => void;
+  onViewChange?: (v: ImageViewState) => void;
   pixelValueNotation?: PixelValueNotation;
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`). */
   toolbar?: boolean;
@@ -520,7 +520,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
       overlaySettings: p.overlaySettings,
       zoom: p.zoom,
       pan: p.pan,
-      onViewportChange: p.onViewportChange,
+      onViewChange: p.onViewChange,
       pixelValueNotation: p.pixelValueNotation,
       toolbar: p.toolbar,
       channelMenu: p.channelMenu,
@@ -546,7 +546,7 @@ export function useLegacyImageProps(p: ImageBackendProps): LegacyImageProps {
     processing: p.processing,
     zoom: p.zoom,
     pan: p.pan,
-    onViewportChange: p.onViewportChange,
+    onViewChange: p.onViewChange,
     onNaturalSize: p.onNaturalSize,
     label: p.label ?? "",
     isDraggable: p.isDraggable,

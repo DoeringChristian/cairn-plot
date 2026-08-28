@@ -10,14 +10,14 @@ import { AXIS } from "../../../public/theme";
 import Tooltip from "../../../primitives/components/Tooltip";
 import { TickText, AxisTitle } from "../../../primitives/components/Axis";
 import { pointerAnchor, type TooltipAnchor } from "../../../primitives/components/tooltip-position";
-import type { ChartCapabilities } from "../../chart/use-chart-viewport";
+import type { ChartCapabilities } from "../../chart/use-chart-view";
 import PlotToolbar from "../../../primitives/components/PlotToolbar";
 import type { PlotController, ToPNGOptions } from "../../../primitives/controls/types";
 import { plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 
 /**
  * Parallel-coordinates deliberately opts OUT of the shared chart-zoom (no
- * `useChartViewport`). Each of the N vertical axes is an independent 1D scale,
+ * `useChartView`). Each of the N vertical axes is an independent 1D scale,
  * so a single shared 2D box-zoom/pan domain is undefined here — Plotly handles
  * exploration on this plot via per-axis brushing (range selection along one
  * axis), not a global viewport. Until per-axis brushing lands, this renderer

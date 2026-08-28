@@ -41,7 +41,7 @@ export interface ParallelRow {
 
 export type AxisScale = "linear" | "log";
 
-export interface Viewport {
+export interface ChartViewState {
   xMin: number | null;
   xMax: number | null;
   yMin: number | null;

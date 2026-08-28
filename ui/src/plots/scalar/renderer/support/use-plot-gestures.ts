@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
-import type { PromotedSeriesConfig, Viewport } from "../../../types";
+import type { PromotedSeriesConfig, ChartViewState } from "../../../types";
 import { useModifierKey } from "../../../../host/hooks/use-modifier-key";
 import {
   boxZoomAxis,
@@ -37,7 +37,7 @@ import {
   pointerMidpoint,
   wheelZoomFactor,
   type ClientRect,
-} from "../../../chart/chart-viewport-math";
+} from "../../../chart/chart-view-math";
 
 export interface PlotOffset {
   top: number;
@@ -61,7 +61,7 @@ interface UsePlotGesturesArgs {
   plotOffsetRef: MutableRefObject<PlotOffset | null>;
   effectiveRef: MutableRefObject<{ x: [number, number]; y: [number, number] }>;
   promotedRef: MutableRefObject<Record<string, PromotedSeriesConfig>>;
-  onViewportChange: (v: Viewport) => void;
+  onViewChange: (v: ChartViewState) => void;
   onPromotedSeriesChange: (p: Record<string, PromotedSeriesConfig>) => void;
   /** Base gesture for a plain (no-modifier) drag. `"zoom"` (the default,
    *  preserving prior behavior) box-zooms; `"pan"` pans. An Alt/Ctrl/Meta drag
@@ -75,7 +75,7 @@ export function usePlotGestures({
   plotOffsetRef,
   effectiveRef,
   promotedRef,
-  onViewportChange,
+  onViewChange,
   onPromotedSeriesChange,
   baseDragMode = "zoom",
 }: UsePlotGesturesArgs) {
@@ -114,7 +114,7 @@ export function usePlotGestures({
 
   const [selection, setSelection] = useState<Selection | null>(null);
 
-  // ── Touch: two-finger pinch-zoom (mirrors useChartViewport) ──
+  // ── Touch: two-finger pinch-zoom (mirrors useChartView) ──
   // Active touch pointers (id → client px) + the pinch snapshot. A pinch
   // supersedes the single-pointer drag; a plain one-finger touch drag is forced
   // to PAN (box-zoom is unusable one-finger on a touchscreen).
@@ -132,7 +132,7 @@ export function usePlotGestures({
   // ── Wheel zoom (centers on cursor) ──
   // Gated on either a trackpad PINCH (`e.ctrlKey` — the browser's pinch
   // signature, no keydown) or a held Alt/Ctrl/Meta (via useModifierKey, matching
-  // useChartViewport + the image viewport). A plain wheel does nothing and never
+  // useChartView + the image viewport). A plain wheel does nothing and never
   // calls preventDefault, so it bubbles and scrolls the page normally.
   // WheelEvent.altKey is unreliable during scroll on some platforms, so the
   // keyboard-tracked modifier state backs the (real) ctrl/alt/meta+wheel path.
@@ -168,7 +168,7 @@ export function usePlotGestures({
       const fy = (plotBottom - e.clientY) / Math.max(1, plotBottom - plotTop);
       const ax = x[0] + fx * (x[1] - x[0]);
       const ay = y[0] + fy * (y[1] - y[0]);
-      onViewportChange({
+      onViewChange({
         xMin: ax - (ax - x[0]) * factor,
         xMax: ax + (x[1] - ax) * factor,
         yMin: ay - (ay - y[0]) * factor,
@@ -177,8 +177,8 @@ export function usePlotGestures({
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-    // refs are stable; only onViewportChange is a reactive dependency.
-  }, [chartBoxRef, plotOffsetRef, effectiveRef, onViewportChange]);
+    // refs are stable; only onViewChange is a reactive dependency.
+  }, [chartBoxRef, plotOffsetRef, effectiveRef, onViewChange]);
 
   // ── Promoted right-axis strip drag (pan/scale) ──
   const onAxisStripPointerDown = useCallback(
@@ -304,7 +304,7 @@ export function usePlotGestures({
             pinch.rectClient,
             "both",
           );
-          onViewportChange({
+          onViewChange({
             xMin: next.xDomain[0],
             xMax: next.xDomain[1],
             yMin: next.yDomain[0],
@@ -352,7 +352,7 @@ export function usePlotGestures({
         const [y0, y1] = s.startYDomain;
         const dxData = (dxPx / s.plotW) * (x1 - x0);
         const dyData = (dyPx / s.plotH) * (y1 - y0);
-        onViewportChange({
+        onViewChange({
           xMin: x0 - dxData,
           xMax: x1 - dxData,
           yMin: y0 + dyData,
@@ -371,7 +371,7 @@ export function usePlotGestures({
         const startLocalX = s.startClientX - rect2.left;
         const startLocalY = s.startClientY - rect2.top;
         // FEATURE A: a thin drag snaps to a full-width (Y-only) / full-height
-        // (X-only) 1D band, mirroring useChartViewport's constrained box-zoom.
+        // (X-only) 1D band, mirroring useChartView's constrained box-zoom.
         const axis = boxZoomAxis("both", wPx, hPx);
         const plotLeftLocal = s.plotLeft - rect2.left;
         const plotTopLocal = s.plotTop - rect2.top;
@@ -394,7 +394,7 @@ export function usePlotGestures({
         }
       }
     },
-    [chartBoxRef, promotedRef, onViewportChange, onPromotedSeriesChange],
+    [chartBoxRef, promotedRef, onViewChange, onPromotedSeriesChange],
   );
 
   const onChartPointerUp = useCallback(
@@ -452,14 +452,14 @@ export function usePlotGestures({
             Number.isFinite(yMinNew) && Number.isFinite(yMaxNew) &&
             xMaxNew > xMinNew && yMaxNew > yMinNew
           ) {
-            onViewportChange({ xMin: xMinNew, xMax: xMaxNew, yMin: yMinNew, yMax: yMaxNew });
+            onViewChange({ xMin: xMinNew, xMax: xMaxNew, yMin: yMinNew, yMax: yMaxNew });
           }
         }
         setSelection(null);
       }
       plotDragRef.current = null;
     },
-    [onViewportChange],
+    [onViewChange],
   );
 
   // ── Double-click: reset the viewport to autoscale (home) ──
@@ -469,8 +469,8 @@ export function usePlotGestures({
     plotDragRef.current = null;
     rightAxisDragRef.current = null;
     setSelection(null);
-    onViewportChange({ xMin: null, xMax: null, yMin: null, yMax: null });
-  }, [onViewportChange]);
+    onViewChange({ xMin: null, xMax: null, yMin: null, yMax: null });
+  }, [onViewChange]);
 
   // For the container's onLostPointerCapture: abort any in-flight gesture.
   const clearDrag = useCallback(() => {

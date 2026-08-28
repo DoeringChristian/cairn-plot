@@ -14,14 +14,14 @@
 // `w-full` is ALWAYS present — every state centers identically.
 // ---------------------------------------------------------------------------
 
-export type ViewportPlaceholderVariant = "empty" | "loading" | "error";
+export type PanePlaceholderVariant = "empty" | "loading" | "error";
 
 const BASE = "flex h-full w-full items-center justify-center";
 
 /** The exact class contract per variant. Exported so the contract can be
  *  asserted without a DOM (see `viewport-dedup.test.ts`) and so it is the ONE
  *  source of truth for the placeholder styling. */
-export const VIEWPORT_PLACEHOLDER_CLASS: Record<ViewportPlaceholderVariant, string> = {
+export const PANE_PLACEHOLDER_CLASS: Record<PanePlaceholderVariant, string> = {
   empty: `${BASE} text-sm text-fg-muted`,
   loading: `${BASE} text-sm text-fg-muted motion-safe:animate-pulse`,
   error: `${BASE} rounded bg-bg p-4 text-center text-sm text-fg-muted`,
@@ -31,8 +31,8 @@ export default function PanePlaceholder({
   variant,
   children,
 }: {
-  variant: ViewportPlaceholderVariant;
+  variant: PanePlaceholderVariant;
   children: React.ReactNode;
 }) {
-  return <div className={VIEWPORT_PLACEHOLDER_CLASS[variant]}>{children}</div>;
+  return <div className={PANE_PLACEHOLDER_CLASS[variant]}>{children}</div>;
 }
