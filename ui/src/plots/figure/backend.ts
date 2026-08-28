@@ -1,6 +1,6 @@
 import { createElement, type ComponentType } from "react";
 
-import type { ReactBackendProps, ReactPlotBackend } from "../react-backend.ts";
+import type { ReactBackendProps, ReactPlotBackend } from "../../backends/react.ts";
 import type { SettingsRecord } from "../contracts.ts";
 import type { FigurePresentation } from "./view.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";

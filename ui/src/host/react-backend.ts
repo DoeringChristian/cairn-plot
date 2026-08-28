@@ -15,17 +15,17 @@ import {
   selectReactBackend,
   type ReactBackendSelection,
   type ReactPlotBackend,
-} from "../plots/react-backend.ts";
+} from "../backends/react.ts";
 
 export {
   advanceReactBackendSelection,
   selectReactBackend,
-} from "../plots/react-backend.ts";
+} from "../backends/react.ts";
 export type {
   ReactBackendProps,
   ReactBackendSelection,
   ReactPlotBackend,
-} from "../plots/react-backend.ts";
+} from "../backends/react.ts";
 
 export interface ReactBackendOutletProps<TPresentation, TSettings> {
   readonly backends: readonly ReactPlotBackend<TPresentation, TSettings>[];

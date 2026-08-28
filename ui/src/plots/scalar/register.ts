@@ -1,7 +1,7 @@
 import { createElement, type ComponentType } from "react";
 
 import type { DataSource } from "../../resources/data/data-source.ts";
-import type { ReactBackendProps, ReactPlotBackend } from "../react-backend.ts";
+import type { ReactBackendProps, ReactPlotBackend } from "../../backends/react.ts";
 import { definePlot } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";

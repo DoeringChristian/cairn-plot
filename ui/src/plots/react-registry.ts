@@ -1,6 +1,6 @@
 import type { RegisteredPlotDefinition, SettingsRecord } from "./contracts.ts";
 import { registerPlotType } from "./registry.ts";
-import type { ReactPlotBackend } from "./react-backend.ts";
+import type { ReactPlotBackend } from "../backends/react.ts";
 
 export interface RegisteredReactPlotType {
   readonly definition: RegisteredPlotDefinition;
