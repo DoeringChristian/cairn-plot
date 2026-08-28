@@ -21,8 +21,8 @@ import type { Viewport as ImageViewport } from "../hooks/use-image-viewport";
 import type { ViewportSettings } from "./viewport-settings";
 
 export function useImageView(
-  settings: ViewportSettings | null | undefined,
-  set: ((patch: ViewportSettings) => void) | undefined,
+  settings: Readonly<ViewportSettings> | null | undefined,
+  set: ((patch: Partial<ViewportSettings>) => void) | undefined,
   seed: ImageViewport,
 ): [ImageViewport, (v: ImageViewport) => void] {
   // Storeless fallback only — inert (and unread) while a store is present.

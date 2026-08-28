@@ -1,9 +1,10 @@
-import type { ScatterPoint } from "../../lib/cairn-plot/types.ts";
+import type { ColormapName, ScatterPoint } from "../../lib/cairn-plot/types.ts";
 import type { ComponentType } from "react";
 
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface ScatterPresentation {
   readonly points: readonly ScatterPoint[];
@@ -12,7 +13,7 @@ export interface ScatterPresentation {
   readonly colorLabel?: string;
   readonly xLog?: boolean;
   readonly yLog?: boolean;
-  readonly colormap?: string;
+  readonly colormap?: ColormapName;
   readonly height?: number;
 }
 
@@ -32,7 +33,7 @@ function isScatterPoint(value: unknown): value is ScatterPoint {
 }
 
 export function ensureScatterPlotType(
-  View: ComponentType<Record<string, unknown>>,
+  View: ComponentType<ReactPlotViewProps<ScatterPresentation, ChartSettings>>,
   resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<ScatterPresentation, ChartSettings>({

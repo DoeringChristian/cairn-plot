@@ -4,6 +4,7 @@ import type { BarCompareMode, BarDatum } from "../../lib/cairn-plot/renderers/Ba
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface BarPresentation {
   readonly bars: readonly BarDatum[];
@@ -31,7 +32,7 @@ function isBarDatum(value: unknown): value is BarDatum {
 }
 
 export function ensureBarPlotType(
-  View: ComponentType<Record<string, unknown>>,
+  View: ComponentType<ReactPlotViewProps<BarPresentation, ChartSettings>>,
   resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<BarPresentation, ChartSettings>({

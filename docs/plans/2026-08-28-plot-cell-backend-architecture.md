@@ -100,6 +100,10 @@ Status: accepted design; implementation in progress
   image backend policy no longer lives in the central registration module.
 - [x] Colocate the image surface host with the image plot. The core renderer
   entry point is now a small composition root containing registration only.
+- [x] Replace flattened React prop bags with one typed view contract carrying
+  semantic presentation, readonly effective settings, and the cell command
+  port as separate fields. Core plot views no longer infer settings ownership
+  from renderer-shaped props.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

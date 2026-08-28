@@ -1,15 +1,16 @@
 import ParallelCoords from "../../lib/cairn-plot/renderers/ParallelCoords.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
-import type { PlotViewProps } from "../view-props.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
+import type { ParallelPresentation } from "./register.ts";
 
-export function ParallelPlotView(p: PlotViewProps) {
-  const { height, ...rest } = p;
+export function ParallelPlotView({ presentation: p }: ReactPlotViewProps<ParallelPresentation, Record<string, never>>) {
+  const { height, columns, rows, columnDomains, ...rest } = p;
   return <ChartBox height={height}>
     <ParallelCoords
-      columns={p.columns ?? []}
-      rows={p.rows ?? []}
-      columnDomains={p.columnDomains ?? []}
       {...rest}
+      columns={[...columns]}
+      rows={[...rows]}
+      columnDomains={[...columnDomains]}
     />
   </ChartBox>;
 }

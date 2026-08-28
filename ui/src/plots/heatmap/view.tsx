@@ -1,13 +1,15 @@
 import Heatmap from "../../lib/cairn-plot/renderers/Heatmap.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
-import type { PlotViewProps } from "../view-props.ts";
+import type { ChartSettings } from "../chart-settings.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
+import type { HeatmapPresentation } from "./register.ts";
 
-export function HeatmapPlotView(p: PlotViewProps) {
-  const { height, ...rest } = p;
+export function HeatmapPlotView({ presentation: p, settings, commands }: ReactPlotViewProps<HeatmapPresentation, ChartSettings>) {
+  const { height, matrix, ...rest } = p;
   return <ChartBox height={height}>
-    <ChartSettingsBoundary settings={p.syncedSettings} patch={p.setSyncedSettings}>
-      <Heatmap matrix={p.matrix ?? []} colormap={p.colormap ?? "turbo"} {...rest} />
+    <ChartSettingsBoundary settings={settings} patch={commands.patch}>
+      <Heatmap {...rest} matrix={matrix.map((row) => [...row])} colormap={p.colormap ?? "turbo"} />
     </ChartSettingsBoundary>
   </ChartBox>;
 }

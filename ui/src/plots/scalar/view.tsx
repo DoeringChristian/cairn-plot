@@ -3,13 +3,12 @@ import { useCallback } from "react";
 import ScalarPlot from "../../lib/cairn-plot/renderers/ScalarPlot.tsx";
 import type { PromotedSeriesConfig, Viewport } from "../../lib/cairn-plot/types.ts";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
-import type { PlotViewProps } from "../view-props.ts";
-import type { ScalarSettings } from "./types.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
+import type { ScalarPresentation, ScalarSettings } from "./types.ts";
 
 /** Controlled scalar backend view. Its durable interaction state belongs to the cell. */
-export function ScalarPlotView(p: PlotViewProps) {
-  const settings = p.syncedSettings as ScalarSettings;
-  const patch = p.setSyncedSettings as (patch: ScalarSettings) => void;
+export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlotViewProps<ScalarPresentation, ScalarSettings>) {
+  const patch = commands.patch;
   const domainX = settings["chart.domainX"];
   const domainY = settings["chart.domainY"];
   const viewport: Viewport = {
@@ -27,21 +26,22 @@ export function ScalarPlotView(p: PlotViewProps) {
   }, [patch]);
   const {
     height,
-    viewport: _viewport,
-    promotedSeries: _promoted,
-    syncedSettings: _settings,
-    setSyncedSettings: _patch,
-    resetViewportSettings: _reset,
+    series,
+    xAxis,
+    xScale,
+    yScale,
+    xRange,
+    yRange,
     ...rest
   } = p;
   return <ChartBox height={height}>
     <ScalarPlot
-      series={p.series ?? []}
-      xAxis={p.xAxis ?? "step"}
-      xScale={p.xScale ?? "linear"}
-      yScale={p.yScale ?? "linear"}
-      xRange={p.xRange ?? [null, null]}
-      yRange={p.yRange ?? [null, null]}
+      series={[...(series ?? [])]}
+      xAxis={xAxis ?? "step"}
+      xScale={xScale ?? "linear"}
+      yScale={yScale ?? "linear"}
+      xRange={xRange ? [...xRange] : [null, null]}
+      yRange={yRange ? [...yRange] : [null, null]}
       {...rest}
       viewport={viewport}
       onViewportChange={setViewport}

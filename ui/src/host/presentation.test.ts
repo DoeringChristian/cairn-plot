@@ -18,9 +18,16 @@ test("typed backend presentations cannot carry settings plumbing", () => {
 
 test("image backend receives settings and commands explicitly and cannot initialize on mount", () => {
   const register = readFileSync(new URL("../plots/image/register.ts", import.meta.url), "utf8");
-  assert.match(register, /syncedSettings:\s*input\.settings/);
-  assert.match(register, /setSyncedSettings:\s*input\.commands\.patch/);
-  assert.match(register, /resetViewportSettings:\s*input\.commands\.reset/);
+  assert.match(register, /presentation:\s*input\.presentation/);
+  assert.match(register, /settings:\s*input\.settings/);
+  assert.match(register, /commands:\s*input\.commands/);
+  assert.doesNotMatch(register, /syncedSettings:\s*input/);
+
+  const adapter = readFileSync(new URL("../plots/inline-register.ts", import.meta.url), "utf8");
+  assert.match(adapter, /ReactPlotViewProps<TPresentation, TSettings>/);
+  assert.match(adapter, /presentation:\s*input\.presentation/);
+  assert.match(adapter, /settings:\s*input\.settings/);
+  assert.match(adapter, /commands:\s*input\.commands/);
 
   for (const relative of [
     "../lib/cairn-plot/renderers/GpuImagePane.tsx",

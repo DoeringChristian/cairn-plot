@@ -4,6 +4,7 @@ import type { ColormapName } from "../../lib/cairn-plot/types.ts";
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 
 interface HistogramSeries {
   readonly step: number;
@@ -57,7 +58,7 @@ function isNumberArray(value: unknown): value is number[] {
 }
 
 export function ensureHistogramPlotType(
-  View: ComponentType<Record<string, unknown>>,
+  View: ComponentType<ReactPlotViewProps<HistogramPresentation, ChartSettings>>,
   resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<HistogramPresentation, ChartSettings>({

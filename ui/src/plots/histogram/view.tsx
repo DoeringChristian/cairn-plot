@@ -2,12 +2,14 @@ import type { ComponentProps } from "react";
 import HistogramPlot from "../../lib/cairn-plot/renderers/HistogramPlot.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
-import type { PlotViewProps } from "../view-props.ts";
+import type { ChartSettings } from "../chart-settings.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
+import type { HistogramPresentation } from "./register.ts";
 
-export function HistogramPlotView(p: PlotViewProps) {
+export function HistogramPlotView({ presentation: p, settings, commands }: ReactPlotViewProps<HistogramPresentation, ChartSettings>) {
   const { height, ...rest } = p;
   return <ChartBox height={height}>
-    <ChartSettingsBoundary settings={p.syncedSettings} patch={p.setSyncedSettings}>
+    <ChartSettingsBoundary settings={settings} patch={commands.patch}>
       <HistogramPlot {...(rest as ComponentProps<typeof HistogramPlot>)} />
     </ChartSettingsBoundary>
   </ChartBox>;

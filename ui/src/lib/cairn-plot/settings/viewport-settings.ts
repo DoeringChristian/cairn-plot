@@ -32,10 +32,10 @@
 
 /** An image viewport's VIEW transform — zoom/pan, a settings value like any
  *  other (an ATOMIC object: zoom and pan move together in one gesture). */
-export interface ViewportView {
+export type ViewportView = {
   zoom: number;
   pan: { x: number; y: number };
-}
+};
 
 /**
  * THE SETTINGS TYPE (unified-viewport ruling, 2026-08-26): one flat,

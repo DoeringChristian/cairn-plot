@@ -5,6 +5,7 @@ import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backe
 import { definePlot } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 import {
   overlayScalarPresentations,
   planScalarComparison,
@@ -21,7 +22,7 @@ import {
 
 /** Register scalar resolution, overlay comparison, and its current React backend. */
 export function ensureScalarPlotType(
-  View: ComponentType<Record<string, unknown>>,
+  View: ComponentType<ReactPlotViewProps<ScalarPresentation, ScalarSettings>>,
   resolve: (spec: ScalarSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   if (getPlotType("scalar")) return;
@@ -33,10 +34,9 @@ export function ensureScalarPlotType(
     canReuse: () => true,
     component({ input }: ReactBackendProps<ScalarPresentation, ScalarSettings>) {
       return createElement(View, {
-        ...input.presentation,
-        syncedSettings: input.settings,
-        setSyncedSettings: input.commands.patch,
-        resetViewportSettings: input.commands.reset,
+        presentation: input.presentation,
+        settings: input.settings,
+        commands: input.commands,
       });
     },
   };

@@ -2,17 +2,20 @@ import { createElement, type ComponentType } from "react";
 
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
+import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 import {
   planImageComparison,
   type ImageComparisonPlan,
 } from "./comparison-plan.ts";
 
 type ImageSpec = Extract<DataSpec, { kind: "inline" | "image" | "imghdr" | "url" }>;
-type ImagePresentation = Record<string, unknown>;
+export type ImagePresentation = Record<string, any>;
+export type ImageSettings = ViewportSettings & SettingsRecord;
 
 function validateImageData(value: DataSpec): ImageSpec {
   if (value.kind === "inline" || value.kind === "image" || value.kind === "imghdr" || value.kind === "url") {
@@ -23,29 +26,28 @@ function validateImageData(value: DataSpec): ImageSpec {
 
 /** Register the existing proven ImageView as the first typed production kind. */
 export function ensureImagePlotType(
-  View: ComponentType<Record<string, unknown>>,
+  View: ComponentType<ReactPlotViewProps<ImagePresentation, ImageSettings>>,
   resolve: (spec: ImageSpec, source: DataSource) => Promise<ImagePresentation>,
 ): void {
   if (getPlotType("image")) return;
-  const backend: ReactPlotBackend<ImagePresentation, SettingsRecord> = {
+  const backend: ReactPlotBackend<ImagePresentation, ImageSettings> = {
     id: "image-react",
     family: "image",
     technology: "canvas2d",
     supports: () => ({ supported: true, priority: 1 }),
     canReuse: () => true,
-    component({ input }: ReactBackendProps<ImagePresentation, SettingsRecord>) {
+    component({ input }: ReactBackendProps<ImagePresentation, ImageSettings>) {
       return createElement(View, {
-        ...input.presentation,
-        syncedSettings: input.settings,
-        setSyncedSettings: input.commands.patch,
-        resetViewportSettings: input.commands.reset,
+        presentation: input.presentation,
+        settings: input.settings,
+        commands: input.commands,
       });
     },
   };
   const definition = definePlot<
     ImageSpec,
     ImagePresentation,
-    SettingsRecord,
+    ImageSettings,
     ImagePresentation,
     ImageComparisonPlan
   >({
@@ -53,7 +55,7 @@ export function ensureImagePlotType(
     data: { validate: validateImageData },
     settings: {
       defaults: () => ({}),
-      project: (settings) => ({ ...settings }),
+      project: (settings) => ({ ...settings }) as ImageSettings,
     },
     resolve: (spec, context) => resolve(spec, context.source),
     present: (content) => content,

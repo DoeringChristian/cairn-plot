@@ -132,7 +132,7 @@ test("CpuImagePane HDR: base offset is additive with the runtime OFF slider", ()
 });
 
 test("ImageStandalone forwards the viewport-owned HOME command", () => {
-  assert.match(standalone, /resetViewportSettings=\{p\.resetViewportSettings\}/);
+  assert.match(standalone, /resetViewportSettings=\{commands\.reset\}/);
 });
 
 test("image renderers do not own sync membership or anchor adoption", () => {

@@ -6,12 +6,13 @@ import type { ReactBackendProps, ReactPlotBackend } from "../host/react-backend.
 import { definePlot, type SettingsRecord, type SettingsSchema } from "./contracts.ts";
 import { getPlotType } from "./registry.ts";
 import { registerReactPlotType } from "./react-registry.ts";
+import type { ReactPlotViewProps } from "./react-view.ts";
 
 export type InlineSpec = Extract<DataSpec, { kind: "inline" }>;
 
 export interface InlinePlotRegistration<TPresentation, TSettings extends SettingsRecord> {
   readonly kind: string;
-  readonly View: ComponentType<Record<string, unknown>>;
+  readonly View: ComponentType<ReactPlotViewProps<TPresentation, TSettings>>;
   readonly settings: SettingsSchema<TSettings>;
   readonly parse: (value: Record<string, unknown>) => TPresentation;
   readonly resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>;
@@ -30,10 +31,9 @@ export function ensureInlinePlotType<TPresentation, TSettings extends SettingsRe
     canReuse: () => true,
     component({ input }: ReactBackendProps<TPresentation, TSettings>) {
       return createElement(registration.View, {
-        ...(input.presentation as object),
-        syncedSettings: input.settings,
-        setSyncedSettings: input.commands.patch,
-        resetViewportSettings: input.commands.reset,
+        presentation: input.presentation,
+        settings: input.settings,
+        commands: input.commands,
       });
     },
   };

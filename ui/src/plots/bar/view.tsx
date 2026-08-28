@@ -1,13 +1,15 @@
-import BarChart from "../../lib/cairn-plot/renderers/BarChart.tsx";
+import BarChart, { type BarChartProps } from "../../lib/cairn-plot/renderers/BarChart.tsx";
 import { ChartBox } from "../../plot-standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
-import type { PlotViewProps } from "../view-props.ts";
+import type { ChartSettings } from "../chart-settings.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
+import type { BarPresentation } from "./register.ts";
 
-export function BarPlotView(p: PlotViewProps) {
+export function BarPlotView({ presentation: p, settings, commands }: ReactPlotViewProps<BarPresentation, ChartSettings>) {
   const { height, ...rest } = p;
   return <ChartBox height={height}>
-    <ChartSettingsBoundary settings={p.syncedSettings} patch={p.setSyncedSettings}>
-      <BarChart bars={p.bars ?? []} {...rest} />
+    <ChartSettingsBoundary settings={settings} patch={commands.patch}>
+      <BarChart {...(rest as BarChartProps)} bars={[...p.bars]} />
     </ChartSettingsBoundary>
   </ChartBox>;
 }

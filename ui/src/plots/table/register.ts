@@ -3,14 +3,17 @@ import type { ComponentType } from "react";
 import type { JsonValue } from "../../../../packages/spec/src/json.ts";
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
 import type { ColumnType, TableData } from "../../lib/cairn-plot/renderers/Table.tsx";
+import type { CellComparison } from "../../lib/cairn-plot/table-diff.ts";
 import type { SettingsRecord } from "../contracts.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface TablePresentation {
   readonly table: TableData;
   readonly rowsPerPage?: number;
   readonly hiddenColumns?: readonly string[];
   readonly invertDiff?: boolean;
+  readonly diffStatuses?: readonly (readonly CellComparison[])[];
   readonly height?: number;
 }
 
@@ -65,7 +68,7 @@ function isSort(value: JsonValue | undefined): value is { column: string; direct
 }
 
 export function ensureTablePlotType(
-  View: ComponentType<Record<string, unknown>>,
+  View: ComponentType<ReactPlotViewProps<TablePresentation, TableSettings>>,
   resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<TablePresentation, TableSettings>({

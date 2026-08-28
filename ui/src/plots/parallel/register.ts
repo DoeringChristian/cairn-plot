@@ -1,8 +1,9 @@
 import type { ComponentType } from "react";
 
-import type { ParallelColumn, ParallelRow } from "../../lib/cairn-plot/types.ts";
+import type { ColormapName, ParallelColumn, ParallelRow } from "../../lib/cairn-plot/types.ts";
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
 import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 
 interface ParallelDomain {
   readonly min: number;
@@ -14,7 +15,7 @@ export interface ParallelPresentation {
   readonly columns: readonly ParallelColumn[];
   readonly rows: readonly ParallelRow[];
   readonly columnDomains: readonly ParallelDomain[];
-  readonly colormap?: string;
+  readonly colormap?: ColormapName;
   readonly className?: string;
   readonly height?: number;
 }
@@ -62,7 +63,7 @@ function isParallelDomain(value: unknown): value is ParallelDomain {
 }
 
 export function ensureParallelPlotType(
-  View: ComponentType<Record<string, unknown>>,
+  View: ComponentType<ReactPlotViewProps<ParallelPresentation, ParallelSettings>>,
   resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<ParallelPresentation, ParallelSettings>({

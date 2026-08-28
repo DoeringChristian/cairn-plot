@@ -6,16 +6,17 @@ import { GridCellReporter, GridUniformAspectContext, finitePositive } from "../.
 import { resolveRenderMode, shapeDims } from "../../lib/cairn-plot/renderers/image-backend.ts";
 import { useImageView } from "../../lib/cairn-plot/settings/use-image-view.ts";
 import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "../../plot-standalone-helpers.tsx";
-import type { PlotViewProps } from "../view-props.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 import { useImageBackend } from "./backend-select.ts";
+import type { ImagePresentation, ImageSettings } from "./register.ts";
 
 /** Image surface host: framing, source compatibility, settings projection, backend selection. */
-export function ImagePlotView(p: PlotViewProps) {
+export function ImagePlotView({ presentation: p, settings, commands }: ReactPlotViewProps<ImagePresentation, ImageSettings>) {
   const fill = useContext(ChartFillContext);
   const gridUniform = useContext(GridUniformAspectContext);
   const [viewport, onViewportChange] = useImageView(
-    p.syncedSettings,
-    p.setSyncedSettings,
+    settings,
+    commands.patch,
     { zoom: p.zoom ?? 1, pan: p.pan ?? { x: 0, y: 0 } },
   );
   const Pane = useImageBackend(resolveRenderMode(p.renderMode));
@@ -50,9 +51,9 @@ export function ImagePlotView(p: PlotViewProps) {
     zoom={viewport.zoom}
     pan={viewport.pan}
     onViewportChange={onViewportChange}
-    syncedSettings={p.syncedSettings}
-    setSyncedSettings={p.setSyncedSettings}
-    resetViewportSettings={p.resetViewportSettings}
+    syncedSettings={settings}
+    setSyncedSettings={(patch) => commands.patch({ ...patch } as ImageSettings)}
+    resetViewportSettings={commands.reset}
     channelMenu={p.channelMenu}
     channelModified={p.channelModified}
     onChannelReset={p.onChannelReset}
