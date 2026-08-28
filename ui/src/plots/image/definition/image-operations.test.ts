@@ -38,11 +38,11 @@ test("WebGPU JIT compiles one inline backend implementation at a time", () => {
   for (const operation of WEBGPU_IMAGE_OPERATIONS) {
     if (operation.kind === "inline") {
       const wgsl = buildImageOperationWGSL(operation);
-      assert.ok(wgsl.includes(operation.expression), operation.definition.id);
+      assert.ok(wgsl.includes(operation.wgsl.trim()), operation.definition.id);
       assert.doesNotMatch(wgsl, /opId|IMAGE_OPERATION_ID/);
       for (const other of WEBGPU_IMAGE_OPERATIONS) {
         if (other.kind === "inline" && other !== operation) {
-          assert.ok(!wgsl.includes(`return ${other.expression};`), `${operation.definition.id} contains ${other.definition.id}`);
+          assert.ok(!wgsl.includes(other.wgsl.trim()), `${operation.definition.id} contains ${other.definition.id}`);
         }
       }
     }

@@ -144,8 +144,16 @@ export function computeDiff(
   computeCount++;
 
   if (operation.kind === "inline") {
+    if (operation.scope !== "pointwise") {
+      throw new Error(`computeDiff: image operation "${operationId}" is not pointwise`);
+    }
     const result = device.createTexture(width, height, RESULT_FORMAT);
-    const pipeline = getPipeline(device, `pw:${definition.id}`, pointwiseShader(`fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> { return ${operation.expression}; }`), RESULT_FORMAT);
+    const pipeline = getPipeline(
+      device,
+      `pw:${definition.id}`,
+      pointwiseShader(`fn kernel(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {\n${operation.wgsl.trim()}\n}`),
+      RESULT_FORMAT,
+    );
     const uMap = new Float32Array([map.offsetA.x, map.offsetA.y, map.offsetB.x, map.offsetB.y]);
     const uRes = new Float32Array([width, height, fitFill, 0]);
     let bg: BindGroup | undefined;
