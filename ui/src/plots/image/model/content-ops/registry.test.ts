@@ -10,7 +10,7 @@
  * the dynamic-output-arity resolution, the pointwise `cpu` twins' diff math, and
  * the direct/cached discrimination + dispatch-id assignment (identity → 0). The
  * GPU↔CPU byte parity of the WGSL twins is proven by the `content-ops` /
- * `encoding-registry` GPU harnesses; this is the cheap shape gate that runs in
+ * `display-operation-registry` GPU harnesses; this is the cheap shape gate that runs in
  * plain Node.
  */
 import { test } from "node:test";

@@ -72,7 +72,7 @@ import {
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
 } from "../../model/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index";
+import { getDisplayOperation, DEFAULT_ENCODE_PARAMS } from "../../model/display-operations/index";
 import { buildLUT, COLORMAP_STOPS } from "../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
@@ -162,7 +162,7 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
   // the operator CURVE straight from the registry (the CPU source of truth) — the
   // extended roll-off operators (extended-reinhard/-aces) read `peak`; the rest
   // ignore it. An unknown operator falls back to the srgb clamp.
-  const opEnc = getEncoding(params.displayOperationId)!;
+  const opEnc = getDisplayOperation(params.displayOperationId)!;
   const toned = opEnc.cpu(rgb, 3, {
     ...DEFAULT_ENCODE_PARAMS,
     peak: params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,

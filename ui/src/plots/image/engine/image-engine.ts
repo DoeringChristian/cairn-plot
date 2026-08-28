@@ -37,10 +37,10 @@ import { imageWGSL } from "./shaders/image.wgsl.ts";
 import { compareSplitWGSL, compareBlendWGSL } from "./shaders/compare.wgsl.ts";
 import { computeCompareMapping, type CompareMapping } from "./compare-align";
 import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../model/tonemap";
-// The operatorId uniform values are GENERATED from the display-encoding registry
+// The operatorId uniform values are GENERATED from the display-operation registry
 // (image/encodings) — the SAME source the shader's assembled `applyOperator`
 // dispatch keys on, so the CPU packing here and the GPU dispatch can never drift.
-import { OPERATOR_ID, NORM_ID, REDUCE_ID, type NormMode, type ReduceMode } from "../model/encodings/index.ts";
+import { OPERATOR_ID, NORM_ID, REDUCE_ID, type NormMode, type ReduceMode } from "../model/display-operations/index.ts";
 
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
@@ -109,8 +109,8 @@ export interface ImageParams {
    * in-range values) while an `hdrOut` surface lets `idx>1` SURVIVE — the directive's
    * "none colormap on a single channel supports HDR natively". No LUT is bound/read.
    * Mutually exclusive with `analytic`. Ignored when `isScalar` is false; the encode
-   * transfer is {@link scalarTransferGamma}. Unset = false. */
-  scalarTransfer?: boolean;
+   * transfer is {@link linearScalarGamma}. Unset = false. */
+  linearScalar?: boolean;
   /**
    * TURBO false-color (the tev-exact follow-up) — on the `isScalar` path, index
    * the bound `colormap` (the turbo table) at tev's FIXED log2 mapping
@@ -119,15 +119,15 @@ export interface ImageParams {
    * are ignored under it (turbo bakes its own index); `reduce` still applies
    * (default `mean`, tev's RGB average) and exposure/offset apply BEFORE the log2.
    * Requires `colormap` to be the turbo table. Mutually exclusive with
-   * `analytic`/`scalarTransfer`. Ignored when `isScalar` is false. Unset = false. */
+   * `analytic`/`linearScalar`. Ignored when `isScalar` is false. Unset = false. */
   turbo?: boolean;
-  /** Scalar-transfer output encoding (only read when {@link scalarTransfer}): `0`/unset →
+  /** Linear scalar output encoding (only read when {@link linearScalar}): `0`/unset →
    *  the sRGB OETF (matching the default `srgb` transfer), `1` → linear identity
    *  encode, `γ` → the `1/γ` power curve (the `gamma` transfer). This is the CURVE's
    *  own encode-gamma (`resolveEncodeGamma`); it is a SEPARATE slot from the power-
    *  NORM exponent (which still rides `gamma`/`u_bind2.z`), so a scalar image can
    *  carry both a display transfer and a power norm without collision. */
-  scalarTransferGamma?: number;
+  linearScalarGamma?: number;
   /** When true, run the EXTENDED output-encode (unclamped, origin-mirrored sRGB
    *  OETF / power curve) and write the transfer-encoded float to `target` — the
    *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
@@ -323,13 +323,13 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // u_bind10.z = SCALAR-MODE enum (scalar/LUT path only): 0 = LUT sample, 1 =
   // ANALYTIC signed color (tev red-green), 2 = scalar Linear transfer
   // encoding), 3 = TURBO false-color (tev-exact: the bound turbo table sampled at
-  // the FIXED log2 index, bypassing the norm path). u_bind10.w = scalar-transfer
+  // the FIXED log2 index, bypassing the norm path). u_bind10.w = linear scalar
   // encode-gamma (0 = sRGB OETF, >0 = 1/γ power curve) — a separate slot from the
   // power-norm exponent (which rides gamma/u_bind2.z). Both default to 0.
-  const scalarMode = params.analytic ? 1 : params.scalarTransfer ? 2 : params.turbo ? 3 : 0;
-  const scalarTransferGamma =
-    typeof params.scalarTransferGamma === "number" && params.scalarTransferGamma > 0 ? params.scalarTransferGamma : 0;
-  const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, scalarTransferGamma]);
+  const scalarMode = params.analytic ? 1 : params.linearScalar ? 2 : params.turbo ? 3 : 0;
+  const linearScalarGamma =
+    typeof params.linearScalarGamma === "number" && params.linearScalarGamma > 0 ? params.linearScalarGamma : 0;
+  const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, linearScalarGamma]);
 
   // u_bind12 = CONTENT-op dispatch id (0 = identity passthrough, the default).
   const contentOpIdVec = new Float32Array([params.contentOpId ?? 0]);

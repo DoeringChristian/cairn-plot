@@ -4,7 +4,7 @@
  *     src/plots/image/model/content-ops/registry-drift.test.ts
  *
  * The content-op registry (`image/content-ops`) is the SINGLE SOURCE OF TRUTH for
- * the CONTENT stage. Unlike the display-encoding drift guard (which pins TS↔Python
+ * the CONTENT stage. Unlike the display-operation drift guard (which pins TS↔Python
  * enum echoes), content ops have no cross-language mirror — the surface that could
  * DRIFT is the GPU shader, which must ASSEMBLE its content function from the
  * registry rather than hand-inline the source-sample-to-content path. This test
@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 import { buildContentOpWGSL, getImageOperation, listInlineImageOperations, CONTENT_OP_ID } from "./index.ts";
 import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
 import { IMAGE_OPERATIONS } from "./ops.ts";
-import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../encodings/index.ts";
+import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../display-operations/index.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
   const assembled = buildContentOpWGSL();

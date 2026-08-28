@@ -100,8 +100,8 @@ test("GpuImagePane: encoding is initialized into the viewport settings store", (
   assert.doesNotMatch(gpu, /toolbar === false \|\| disableStackShared/);
 });
 
-test("display-encoding: one immutable bootstrap seed, then the viewport store", () => {
-  const de = read("plots/image/components/display-encoding.ts");
+test("display-operation: one immutable bootstrap seed, then the viewport store", () => {
+  const de = read("plots/image/components/display-operation.ts");
   assert.match(
     de,
     /const storeId = config\.settings\?\.\["image\.encoding"\]/,

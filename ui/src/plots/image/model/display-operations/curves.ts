@@ -10,7 +10,7 @@
  * exported `extended*Curve`s), so this migration is behavior-identical — pinned
  * by `image/tonemap.test.ts` (CPU) and the GPU↔TS parity harnesses.
  */
-import { registerEncoding, clamp01, type DisplayOperation } from "./registry.ts";
+import { registerDisplayOperation, clamp01, type DisplayOperation } from "./registry.ts";
 
 // ---------------------------------------------------------------------------
 // Scalar curve math — the SINGLE source of truth. `image/tonemap.ts` re-exports
@@ -256,5 +256,5 @@ let registered = false;
 export function registerCurveEncodings(): void {
   if (registered) return;
   registered = true;
-  for (const e of CURVE_ENCODINGS) registerEncoding(e);
+  for (const e of CURVE_ENCODINGS) registerDisplayOperation(e);
 }

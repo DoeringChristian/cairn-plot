@@ -98,19 +98,19 @@ import ImagePaneShell, { type EnlargeControl } from "../components/ImagePaneShel
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import type { PlotSettings } from "../../../settings/schema.ts";
-import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-encoding";
+import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-operation";
 import {
   computeDataIndex,
   reduceToScalar,
   defaultReduceMode,
-  getEncoding,
+  getDisplayOperation,
   signedAnalyticColor,
   turboDataIndex,
   DEFAULT_ENCODE_PARAMS,
   type EncodeParams,
   type NormMode,
   type ReduceMode,
-} from "../model/encodings/index";
+} from "../model/display-operations/index";
 import { getImageOperation, isInlineImageOperation, type InlineImageOperation } from "../model/content-ops/index";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
@@ -181,7 +181,7 @@ export function tonemapToImageData(
   // TURBO false-color (the tev-exact follow-up) indexes the bound turbo table at
   // tev's FIXED log2 mapping (`turboDataIndex`) instead of `computeDataIndex`, and
   // defaults `reduce` to MEAN (tev averages RGB) regardless of k.
-  const turboCmap = colormap != null && !!getEncoding(colormap)?.turbo;
+  const turboCmap = colormap != null && !!getDisplayOperation(colormap)?.turbo;
   const reduceMode: ReduceMode = reduce ?? (turboCmap ? "mean" : defaultReduceMode(c));
   // COLORMAP (LUT family, CPU twin — Phase 2/4): when a colormap is active the
   // SCALAR channel (channel 0) indexes the colormap LUT and the DISPLAY color is
@@ -195,7 +195,7 @@ export function tonemapToImageData(
   // UNCLAMPED) → SHARED output-encode (like a curve), NOT a baked-sRGB LUT sample.
   // This CPU fallback writes an 8-bit ImageData, so |v|>1 clamps here (the extended
   // >1 survival is the GPU/HDR-surface path); |v|<=1 matches the GPU exactly.
-  const analyticCmap = colormap != null && !!getEncoding(colormap)?.analytic;
+  const analyticCmap = colormap != null && !!getDisplayOperation(colormap)?.analytic;
   const cmapLut = colormap != null && !analyticCmap ? getColormapLUT(colormap as never) : null;
   // TURBO bakes its own FIXED index (`turboDataIndex`), bypassing the norm/bounds
   // path — so its params (norm/bounds) are inert on this branch.
@@ -221,11 +221,11 @@ export function tonemapToImageData(
   // fallback — so an HDR-surface or LUT id falls back to the srgb clamp, exactly
   // as the former `getTonemapOperator` lookup did. (Keyed on `needsHdrSurface`,
   // not "declares peak" — every curve's manifest now declares peak.)
-  const curveEnc = getEncoding(tonemap);
+  const curveEnc = getDisplayOperation(tonemap);
   const opEnc =
     curveEnc && curveEnc.kind !== "lut" && !curveEnc.needsHdrSurface
       ? curveEnc
-      : getEncoding(DEFAULT_TONEMAP)!;
+      : getDisplayOperation(DEFAULT_TONEMAP)!;
   const op = (rgb: RgbTriple): RgbTriple => opEnc.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
   const out = new Uint8ClampedArray(w * h * 4);
 
@@ -970,7 +970,7 @@ function CpuSdrImagePane(
       leadingMenus={[
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
-        displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
+        displayToolbarButton({ value: enc.displayOperationId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
       // γ slider — gated by the active encoding's manifest (only the Gamma curve
       // declares γ; a colormap LUT / other transfers do not).
@@ -997,7 +997,7 @@ function CpuSdrImagePane(
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
-        enc.encodingModified ||
+        enc.displayOperationModified ||
         gammaModified ||
         !!props.channelModified
       }
@@ -1084,7 +1084,7 @@ function CpuHdrImagePane(
 
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
   // tone-map + colormap overrides — selecting a colormap LUT deactivates the
-  // curve and vice-versa STRUCTURALLY (`display-encoding.ts`). Like the GPU float
+  // curve and vice-versa STRUCTURALLY (`display-operation.ts`). Like the GPU float
   // pane, this pane KNOWS its channel arity (`hdr.shape`), so it gates by arity:
   // luts@k=1, `normal`@k=3, curves always. The default curve resolves from the
   // descriptor `tonemap=` coerced to an SDR operator (the CPU pane tone-maps to
@@ -1361,7 +1361,7 @@ function CpuHdrImagePane(
       leadingMenus={[
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
-        displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
+        displayToolbarButton({ value: enc.displayOperationId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
       // SECOND-ROW segmented controls (controls-row-separation directive): the
       // multi-channel REDUCE (lut + k>1) picker sits in the second toolbar row
@@ -1453,7 +1453,7 @@ function CpuHdrImagePane(
       }}
       extraModified={
         deepFlatten.isModified ||
-        enc.encodingModified ||
+        enc.displayOperationModified ||
         gammaModified ||
         effectiveReduce !== reduceDefault ||
         boundsModified ||

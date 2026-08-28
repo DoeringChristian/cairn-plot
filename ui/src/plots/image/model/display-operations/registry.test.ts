@@ -1,19 +1,19 @@
 /**
  * Registry SHAPE tests (pure, DOM/GPU-free) — run under Node's built-in runner:
- *   node --experimental-strip-types --test src/plots/image/model/encodings/registry.test.ts
+ *   node --experimental-strip-types --test src/plots/image/model/display-operations/registry.test.ts
  *
  * Guards the invariants the GPU/CPU consumers rely on: ids + operatorIds unique,
  * arities sane, params drawn from the allowed manifest, `normal` is the arity-3
  * paramless remap, and every `cpu` twin returns FINITE triples across a spread of
  * inputs (incl. HDR + negatives). The GPU↔CPU byte parity itself is proven by the
- * `encoding-registry.browser.ts` harness (needs WebGPU); this is the cheap shape
+ * `display-operation-registry.browser.ts` harness (needs WebGPU); this is the cheap shape
  * gate that runs in plain Node.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  listEncodings,
-  getEncoding,
+  listDisplayOperations,
+  getDisplayOperation,
   OPERATOR_ID,
   DEFAULT_ENCODE_PARAMS,
   computeDataIndex,
@@ -38,7 +38,7 @@ const ALLOWED_PARAMS: ParamName[] = ["exposure", "offset", "peak", "gamma", "min
 const ALLOWED_KINDS = new Set(["curve", "lut", "remap"]);
 
 test("registry is non-empty and includes the 10 migrated operators", () => {
-  const ids = listEncodings().map((e) => e.id);
+  const ids = listDisplayOperations().map((e) => e.id);
   for (const id of [
     "linear",
     "srgb",
@@ -56,13 +56,13 @@ test("registry is non-empty and includes the 10 migrated operators", () => {
 });
 
 test("ids are unique", () => {
-  const ids = listEncodings().map((e) => e.id);
+  const ids = listDisplayOperations().map((e) => e.id);
   assert.equal(new Set(ids).size, ids.length, "duplicate encoding id");
 });
 
 test("operatorIds are unique integers and match OPERATOR_ID", () => {
   const seen = new Set<number>();
-  for (const e of listEncodings()) {
+  for (const e of listDisplayOperations()) {
     assert.ok(Number.isInteger(e.operatorId), `${e.id} operatorId not an integer`);
     assert.ok(!seen.has(e.operatorId), `duplicate operatorId ${e.operatorId} (${e.id})`);
     seen.add(e.operatorId);
@@ -71,7 +71,7 @@ test("operatorIds are unique integers and match OPERATOR_ID", () => {
 });
 
 test("arities are non-empty, positive integers", () => {
-  for (const e of listEncodings()) {
+  for (const e of listDisplayOperations()) {
     assert.ok(e.arities.length > 0, `${e.id} has empty arities`);
     for (const k of e.arities) {
       assert.ok(Number.isInteger(k) && k >= 1 && k <= 4, `${e.id} bad arity ${k}`);
@@ -80,7 +80,7 @@ test("arities are non-empty, positive integers", () => {
 });
 
 test("kinds + params are drawn from the allowed sets", () => {
-  for (const e of listEncodings()) {
+  for (const e of listDisplayOperations()) {
     assert.ok(ALLOWED_KINDS.has(e.kind), `${e.id} bad kind ${e.kind}`);
     for (const p of e.params) {
       assert.ok(ALLOWED_PARAMS.includes(p), `${e.id} declares unknown param ${p}`);
@@ -90,20 +90,20 @@ test("kinds + params are drawn from the allowed sets", () => {
 });
 
 test("normal is the arity-3 paramless remap; extended* need the HDR surface", () => {
-  const normal = getEncoding("normal");
+  const normal = getDisplayOperation("normal");
   assert.ok(normal);
   assert.equal(normal!.kind, "remap");
   assert.deepEqual(normal!.arities, [3]);
   assert.deepEqual(normal!.params, []);
 
   for (const id of ["extended", "extended-clamp", "extended-reinhard", "extended-aces"]) {
-    assert.equal(getEncoding(id)!.needsHdrSurface, true, `${id} should need the HDR surface`);
+    assert.equal(getDisplayOperation(id)!.needsHdrSurface, true, `${id} should need the HDR surface`);
   }
   // Peak is declared exactly by the peak-parameterized curves.
   for (const id of ["extended-clamp", "extended-reinhard", "extended-aces"]) {
-    assert.ok(getEncoding(id)!.params.includes("peak"), `${id} should declare peak`);
+    assert.ok(getDisplayOperation(id)!.params.includes("peak"), `${id} should declare peak`);
   }
-  assert.ok(!getEncoding("extended")!.params.includes("peak"), "raw extended has no peak");
+  assert.ok(!getDisplayOperation("extended")!.params.includes("peak"), "raw extended has no peak");
 });
 
 test("cpu twins return finite triples across HDR + signed inputs", () => {
@@ -116,7 +116,7 @@ test("cpu twins return finite triples across HDR + signed inputs", () => {
     [16, 8, 4],
   ];
   const peaks = [1, 4, 6, 16];
-  for (const e of listEncodings()) {
+  for (const e of listDisplayOperations()) {
     for (const v of inputs) {
       for (const peak of peaks) {
         const p: EncodeParams = { ...DEFAULT_ENCODE_PARAMS, peak };
@@ -131,7 +131,7 @@ test("cpu twins return finite triples across HDR + signed inputs", () => {
 });
 
 test("wgsl curve expression is a non-empty string for every entry", () => {
-  for (const e of listEncodings()) {
+  for (const e of listDisplayOperations()) {
     assert.equal(typeof e.wgsl, "string");
     assert.ok(e.wgsl.trim().length > 0, `${e.id} has empty wgsl`);
   }
@@ -141,7 +141,7 @@ test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+red
   // Table-backed NORM luts only (the ANALYTIC entries are computed — no
   // needsLut/lutName; TURBO is table-backed but bakes its own log2 index, so it
   // declares no norm/min/max — both tested separately below).
-  const luts = listEncodings().filter((e) => e.kind === "lut" && !e.analytic && !e.turbo);
+  const luts = listDisplayOperations().filter((e) => e.kind === "lut" && !e.analytic && !e.turbo);
   assert.ok(luts.length >= 3, "expected the migrated colormap LUT entries");
   // Includes the canonical colormaps.
   const ids = luts.map((e) => e.id);
@@ -164,7 +164,7 @@ test("lut entries: kind lut, arity [1,2,3,4], needsLut, lutName, sensitivity+red
 });
 
 test("lut cpu twins return finite display triples in [0,1] across the scalar range", () => {
-  const luts = listEncodings().filter((e) => e.kind === "lut" && !e.analytic);
+  const luts = listDisplayOperations().filter((e) => e.kind === "lut" && !e.analytic);
   const scalars = [-0.5, 0, 0.25, 0.5, 0.75, 1, 1.5];
   for (const e of luts) {
     for (const s of scalars) {
@@ -183,7 +183,7 @@ test("lut cpu twins return finite display triples in [0,1] across the scalar ran
 // ---------------------------------------------------------------------------
 
 test("red-green is an ANALYTIC lut: kind lut, no needsLut/lutName, exposure/offset/reduce params", () => {
-  const rg = getEncoding("red-green");
+  const rg = getDisplayOperation("red-green");
   assert.ok(rg, "red-green missing from the registry");
   assert.equal(rg!.kind, "lut", "red-green stays in the COLORMAPS section");
   assert.equal(rg!.analytic, true, "red-green must be analytic (computed, no LUT bind)");
@@ -207,7 +207,7 @@ test("SIGNED_ANALYTIC_AMPLITUDE is 2 (tev POS_NEG) and signedAnalyticColor match
 });
 
 test("red-green cpu twin: reduces multi-channel then applies the analytic color (UNCLAMPED, linear)", () => {
-  const rg = getEncoding("red-green")!;
+  const rg = getDisplayOperation("red-green")!;
   // k=1: channel 0 straight through.
   assert.deepEqual(rg.cpu([-0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS), [1, 0, 0]);
   assert.deepEqual(rg.cpu([0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS), [0, 1, 0]);
@@ -223,7 +223,7 @@ test("red-green cpu twin: reduces multi-channel then applies the analytic color 
 // ---------------------------------------------------------------------------
 
 test("turbo is a table-backed lut with the BAKED log2 index: needsLut, lutName, no norm/min/max, turbo flag", () => {
-  const t = getEncoding("turbo");
+  const t = getDisplayOperation("turbo");
   assert.ok(t, "turbo missing from the registry");
   assert.equal(t!.kind, "lut", "turbo stays in the COLORMAPS section");
   assert.equal(t!.turbo, true, "turbo must set the turbo flag (scalar-mode 3)");
@@ -255,7 +255,7 @@ test("turboDataIndex is tev's FIXED log2 mapping (2⁻⁵ offset, ten stops)", (
 });
 
 test("turbo cpu twin: reduce (mean default) then the BAKED log2 index into the turbo table", () => {
-  const t = getEncoding("turbo")!;
+  const t = getDisplayOperation("turbo")!;
   // k=1: channel 0 straight through the log2 index.
   const out1 = t.cpu([1.0], 1, DEFAULT_ENCODE_PARAMS);
   assert.equal(out1.length, 3);
@@ -345,42 +345,42 @@ test("SINGLE-APPLICATION invariant: bounds skin ignores exposure/offset (never c
 });
 
 // ---------------------------------------------------------------------------
-// GRAY NONE (the plain-grayscale "none" DATA encoding — HDR-native follow-up).
+// LINEAR SCALAR (the linear scalar DATA encoding — HDR-native follow-up).
 // A single-channel "none" scalar is DATA: its color is the SCENE-LINEAR gray
 // vec3(idx) where `idx` is the SAME computeDataIndex the LUT path computes, run
 // through the shared output-encode (so SDR clamps, an HDR surface keeps >1). No
 // registry entry (it's the absence of a colormap), so its CPU twin IS
 // computeDataIndex + a gray broadcast — these pin that convention (the shape the
-// `encoding-registry` browser harness's gray-none case + the GpuImagePane
-// scalar-transfer routing + the WGSL `scalarMode==2` branch all agree on).
+// `display-operation-registry` browser harness's linear scalar case + the GpuImagePane
+// linear scalar routing + the WGSL `scalarMode==2` branch all agree on).
 // ---------------------------------------------------------------------------
 
-/** The gray-none CPU twin: scalar → data index → SCENE-LINEAR gray triple
+/** The linear scalar CPU twin: scalar → data index → SCENE-LINEAR gray triple
  *  (pre-output-encode, exactly what the WGSL `scalarMode==2` branch feeds the
  *  shared output-encode). */
-function scalarTransferColor(scalar: number, p: EncodeParams): [number, number, number] {
+function linearScalarColor(scalar: number, p: EncodeParams): [number, number, number] {
   const idx = computeDataIndex(scalar, p);
   return [idx, idx, idx];
 }
 
-test("gray-none convention: linear norm + no bounds passes the RAW scalar UNCLAMPED (HDR-native)", () => {
+test("linear scalar convention: linear norm + no bounds passes the RAW scalar UNCLAMPED (HDR-native)", () => {
   const p: EncodeParams = { ...DEFAULT_ENCODE_PARAMS }; // linear, no bounds
   // The over-range value survives as-is (the shared output-encode — extended on an
   // HDR surface — decides the range, NOT this stage). This is the whole point of
   // the follow-up: a scalar > 1 is NOT clamped here.
-  assert.deepEqual(scalarTransferColor(1.5, p), [1.5, 1.5, 1.5], "1.5 rides through unclamped as gray");
-  assert.deepEqual(scalarTransferColor(0.3, p), [0.3, 0.3, 0.3], "in-range value is plain gray");
-  assert.deepEqual(scalarTransferColor(-0.2, p), [-0.2, -0.2, -0.2], "negatives ride through too");
+  assert.deepEqual(linearScalarColor(1.5, p), [1.5, 1.5, 1.5], "1.5 rides through unclamped as gray");
+  assert.deepEqual(linearScalarColor(0.3, p), [0.3, 0.3, 0.3], "in-range value is plain gray");
+  assert.deepEqual(linearScalarColor(-0.2, p), [-0.2, -0.2, -0.2], "negatives ride through too");
 });
 
-test("gray-none convention: bounds / log / power map the index to [0,1] (explicit normalize)", () => {
+test("linear scalar convention: bounds / log / power map the index to [0,1] (explicit normalize)", () => {
   // Bounds: the over-range scalar normalizes to the ramp (LUT/clamp semantics).
-  assert.deepEqual(scalarTransferColor(6, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [1, 1, 1], "max → 1");
-  assert.deepEqual(scalarTransferColor(4, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [0.5, 0.5, 0.5], "midpoint → 0.5");
+  assert.deepEqual(linearScalarColor(6, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [1, 1, 1], "max → 1");
+  assert.deepEqual(linearScalarColor(4, { ...DEFAULT_ENCODE_PARAMS, min: 2, max: 6 }), [0.5, 0.5, 0.5], "midpoint → 0.5");
   // Power norm reshapes the index (clamp01(t)^gamma).
-  assert.deepEqual(scalarTransferColor(0.5, { ...DEFAULT_ENCODE_PARAMS, norm: "power", gamma: 2 }), [0.25, 0.25, 0.25], "0.5^2");
+  assert.deepEqual(linearScalarColor(0.5, { ...DEFAULT_ENCODE_PARAMS, norm: "power", gamma: 2 }), [0.25, 0.25, 0.25], "0.5^2");
   // Log floors non-positive to the ramp bottom.
-  assert.deepEqual(scalarTransferColor(0, { ...DEFAULT_ENCODE_PARAMS, norm: "log" }), [0, 0, 0], "0 floors to 0");
+  assert.deepEqual(linearScalarColor(0, { ...DEFAULT_ENCODE_PARAMS, norm: "log" }), [0, 0, 0], "0 floors to 0");
 });
 
 // ---------------------------------------------------------------------------
@@ -444,7 +444,7 @@ test("reduceToScalar mean: average over the color channels (alpha ignored)", () 
 });
 
 test("lut cpu twin reduces multi-channel input before the LUT (k=1 unchanged)", () => {
-  const magmaEnc = getEncoding("magma")!;
+  const magmaEnc = getDisplayOperation("magma")!;
   // At k=1 the multi-channel path is inert: cpu([s],1) === cpu([s, junk],1).
   const a = magmaEnc.cpu([0.5], 1, DEFAULT_ENCODE_PARAMS);
   const b = magmaEnc.cpu([0.5, 9, 9], 1, DEFAULT_ENCODE_PARAMS);

@@ -27,13 +27,13 @@ import {
   type RgbTriple,
 } from "../../model/tonemap";
 import {
-  listEncodings,
+  listDisplayOperations,
   computeDataIndex,
   DEFAULT_ENCODE_PARAMS,
   type DisplayOperation,
   type EncodeParams,
   type NormMode,
-} from "../../model/encodings/index";
+} from "../../model/display-operations/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../webgpu/device-contract";
@@ -461,13 +461,13 @@ async function runAnalyticCase(device: Device, enc: DisplayOperation): Promise<b
   return ok;
 }
 
-/** GRAY NONE (the plain-grayscale "none" DATA encoding — HDR-native follow-up).
+/** LINEAR SCALAR (the linear scalar DATA encoding — HDR-native follow-up).
  *  The scalar (channel 0) maps through the SAME `computeDataIndex` the LUT path
  *  uses, but the color is the SCENE-LINEAR gray `vec3(idx)` run through the SHARED
  *  output-encode (NOT a baked-sRGB LUT). Renders BOTH surfaces per norm variant:
  *  SDR (`rgba8unorm`, byte-exact) where an over-range `idx>1` CLAMPS, and HDR
  *  (`rgba32float`, float eps) where it SURVIVES past 1 — the directive's ">1 on the
- *  HDR path" case. The default `srgb` transfer (`scalarTransferGamma` 0 → sRGB OETF) is
+ *  HDR path" case. The default `srgb` transfer (`linearScalarGamma` 0 → sRGB OETF) is
  *  exercised; `linear` norm passes the raw value UNCLAMPED, `log` maps to [0,1]. */
 async function runGrayNoneCase(device: Device, norm: NormMode): Promise<boolean> {
   let ok = true;
@@ -476,8 +476,8 @@ async function runGrayNoneCase(device: Device, norm: NormMode): Promise<boolean>
       exposureEV: EV,
       displayOperationId: "linear", // moot: scalar transfer owns the mapping
       isScalar: true,
-      scalarTransfer: true,
-      scalarTransferGamma: 0, // sRGB OETF transfer (the default `srgb` curve)
+      linearScalar: true,
+      linearScalarGamma: 0, // sRGB OETF transfer (the default `srgb` curve)
       norm,
       reduce: "mean",
       channelCount: 1,
@@ -497,32 +497,32 @@ async function runGrayNoneCase(device: Device, norm: NormMode): Promise<boolean>
       const idx = computeDataIndex(applyExposure(SCALAR_PIXELS[i]![0]!, EV), { ...DEFAULT_ENCODE_PARAMS, norm });
       if (hdrOut) {
         if (!(out instanceof Float32Array)) {
-          report(false, `[gray-none/${norm}-hdr] expected Float32Array readback`);
+          report(false, `[linear scalar/${norm}-hdr] expected Float32Array readback`);
           return false;
         }
         const exp = extendedOutputEncode(idx, undefined);
         for (let c = 0; c < 3; c++) {
           if (Math.abs(out[i * 4 + c]! - exp) > 0.01) {
             ok = false;
-            report(false, `[gray-none/${norm}-hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${out[i * 4 + c]!.toFixed(4)}`);
+            report(false, `[linear scalar/${norm}-hdr] px[${i}].ch[${c}] expected=${exp.toFixed(4)} actual=${out[i * 4 + c]!.toFixed(4)}`);
           }
         }
       } else {
         if (!(out instanceof Uint8Array)) {
-          report(false, `[gray-none/${norm}-sdr] expected Uint8Array readback`);
+          report(false, `[linear scalar/${norm}-sdr] expected Uint8Array readback`);
           return false;
         }
         const eb = byteOf(outputEncode(idx, undefined));
         for (let c = 0; c < 3; c++) {
           if (Math.abs(out[i * 4 + c]! - eb) > 1) {
             ok = false;
-            report(false, `[gray-none/${norm}-sdr] px[${i}].ch[${c}] expected=${eb} actual=${out[i * 4 + c]}`);
+            report(false, `[linear scalar/${norm}-sdr] px[${i}].ch[${c}] expected=${eb} actual=${out[i * 4 + c]}`);
           }
         }
       }
     }
   }
-  report(ok, `[scalar-transfer/${norm}] GPU Linear scalar transfer === cpu twin (SDR clamps, HDR survives >1)`);
+  report(ok, `[linear scalar/${norm}] GPU Linear scalar transfer === cpu twin (SDR clamps, HDR survives >1)`);
   return ok;
 }
 
@@ -539,7 +539,7 @@ async function main(): Promise<void> {
   try {
     const device = await getSharedWebGpuDevice();
     report(true, `device.backend = ${device.backend}`);
-    const encodings = listEncodings();
+    const encodings = listDisplayOperations();
     report(true, `iterating ${encodings.length} registry encoding(s)`);
     let allOk = true;
     for (const enc of encodings) {
@@ -572,7 +572,7 @@ async function main(): Promise<void> {
         }
       }
     }
-    // GRAY NONE (the plain-grayscale "none" DATA encoding) — not a registry entry
+    // LINEAR SCALAR (the linear scalar DATA encoding) — not a registry entry
     // (a scalar with no colormap), so it runs as a dedicated SDR+HDR case per norm.
     for (const norm of ["linear", "log"] as NormMode[]) {
       if (!(await runGrayNoneCase(device, norm))) allOk = false;

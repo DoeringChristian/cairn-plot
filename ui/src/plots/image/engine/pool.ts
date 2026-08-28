@@ -97,7 +97,7 @@ function displayFingerprint(params: ImageParams): {
   colormapSig?: number;
   contentParam?: number;
 } {
-  const scalarMode = params.analytic ? 1 : params.scalarTransfer ? 2 : params.turbo ? 3 : 0;
+  const scalarMode = params.analytic ? 1 : params.linearScalar ? 2 : params.turbo ? 3 : 0;
   const lut = params.isScalar ? params.colormap : undefined;
   let colormapSig: number | undefined;
   if (lut && lut.length >= 1024) {
@@ -264,7 +264,7 @@ export interface PaneHandle {
    * {@link setSource}, `b` = {@link setSourceB}), then blits it through
    * `displayParams` — the result texture is bound as the PRIMARY source and shown
    * via IDENTITY content (the result already IS the scalar error) + the
-   * `isScalar` colormap the display-encoding registry supplies. The diff-engine's
+   * `isScalar` colormap the display-operation registry supplies. The diff-engine's
    * per-device content-keyed cache OWNS the returned entry's texture — the caller
    * must NOT destroy it — and a zoom / exposure / colormap change only re-blits
    * (cache hit), never recomputes. Returns the cache entry (so the caller can read

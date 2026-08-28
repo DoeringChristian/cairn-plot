@@ -1,9 +1,9 @@
 /**
  * REGISTRY ⟷ CONTRACT ⟷ PYTHON drift guard (Phase 5) — pure Node, no GPU/DOM:
  *   node --experimental-strip-types --test \
- *     src/plots/image/model/encodings/registry-drift.test.ts
+ *     src/plots/image/model/display-operations/registry-drift.test.ts
  *
- * The display-encoding registry (`image/encodings`) is the SINGLE SOURCE OF TRUTH
+ * The display-operation registry (`image/encodings`) is the SINGLE SOURCE OF TRUTH
  * for the colormap + tone-map operator ID sets. Two hand-maintained surfaces echo
  * those sets across the language boundary:
  *   - the cross-face contract `schema/cairn-plot-contracts.json` (`colormaps` +
@@ -32,10 +32,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { listEncodings, listEncodingsByKind } from "./index.ts";
+import { listDisplayOperations, listDisplayOperationsByKind } from "./index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// ui/src/plots/image/model/encodings/ → repo root is six levels up.
+// ui/src/plots/image/model/display-operations/ → repo root is six levels up.
 const repoRoot = resolve(here, "../../../../../..");
 const contractPath = resolve(repoRoot, "schema/cairn-plot-contracts.json");
 const componentsPath = resolve(repoRoot, "packages/python/src/cairn_plot/components.py");
@@ -47,12 +47,12 @@ const sorted = (xs: readonly string[]): string[] => [...xs].sort();
  *  curves are not menu operators. Mirrors `SDR_TONEMAP_OPERATORS`
  *  in `image/tonemap.ts`, but computed here straight from the registry. */
 const registryTonemapOperators = (): string[] => [
-  ...listEncodingsByKind("curve").filter((e) => !e.needsHdrSurface),
-  ...listEncodingsByKind("remap"),
+  ...listDisplayOperationsByKind("curve").filter((e) => !e.needsHdrSurface),
+  ...listDisplayOperationsByKind("remap"),
 ].map((e) => e.id);
 
 /** The colormap ID set the registry defines: every `kind:"lut"` entry. */
-const registryColormaps = (): string[] => listEncodingsByKind("lut").map((e) => e.id);
+const registryColormaps = (): string[] => listDisplayOperationsByKind("lut").map((e) => e.id);
 
 /** Extract a Python module-level tuple of string literals, e.g.
  *  `_COLORMAPS = ("viridis", "plasma", ...)`. `#` line comments are stripped
@@ -88,8 +88,8 @@ test("registry colormaps === Python _COLORMAPS", () => {
 });
 
 test("every registry lut id is a real, unique encoding", () => {
-  const luts = listEncodingsByKind("lut");
+  const luts = listDisplayOperationsByKind("lut");
   assert.ok(luts.length > 0, "no lut encodings registered");
-  const all = new Set(listEncodings().map((e) => e.id));
+  const all = new Set(listDisplayOperations().map((e) => e.id));
   for (const id of registryColormaps()) assert.ok(all.has(id), `lut ${id} not in registry`);
 });

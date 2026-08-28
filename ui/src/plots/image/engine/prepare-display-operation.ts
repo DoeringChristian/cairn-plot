@@ -1,21 +1,21 @@
 import { colormapFloatLUT } from "../../../settings/colormaps/lut.ts";
 import type { Colormap } from "../../types.ts";
-import { defaultReduceMode, getEncoding, type ReduceMode } from "../model/encodings/index.ts";
+import { defaultReduceMode, getDisplayOperation, type ReduceMode } from "../model/display-operations/index.ts";
 import type { ImageParams } from "./image-engine.ts";
 
 /** The image engine's private binding for one registered display operation.
  * Callers select an operation by id; whether it needs auxiliary LUT data or an
  * analytic shader branch is resolved here and never becomes host policy. */
-export type PreparedDisplayBinding = Pick<
+export type PreparedDisplayOperation = Pick<
   ImageParams,
   "displayOperationId" | "isScalar" | "analytic" | "turbo" | "colormap" | "hdrOut"
 >;
 
-export function prepareDisplayBinding(
+export function prepareDisplayOperation(
   id: string,
   options: { hdrSurface: boolean },
-): PreparedDisplayBinding {
-  const operation = getEncoding(id);
+): PreparedDisplayOperation {
+  const operation = getDisplayOperation(id);
   if (!operation) throw new Error(`unknown display operation ${JSON.stringify(id)}`);
 
   if (operation.kind !== "lut") {
@@ -40,7 +40,7 @@ export function prepareDisplayBinding(
 
 /** Operation-owned default for reducing a multi-channel field before display. */
 export function defaultReduceForDisplayOperation(id: string, channels: number): ReduceMode {
-  const operation = getEncoding(id);
+  const operation = getDisplayOperation(id);
   if (!operation) throw new Error(`unknown display operation ${JSON.stringify(id)}`);
   return operation.turbo ? "mean" : defaultReduceMode(channels);
 }

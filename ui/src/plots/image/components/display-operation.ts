@@ -1,7 +1,7 @@
 /**
- * `renderers/display-encoding.ts` — the ONE unified DISPLAY-ENCODING menu +
- * viewport encoding projection (Phase 3 of the display-encoding registry;
- * `docs/plans/2026-08-18-display-encoding-registry.md`).
+ * `renderers/display-operation.ts` — the ONE unified DISPLAY-ENCODING menu +
+ * viewport encoding projection (Phase 3 of the display-operation registry;
+ * `docs/plans/2026-08-18-display-operation-registry.md`).
  *
  * An image pane's colormap and tone-map menus were TWO controls answering ONE
  * question — "how do the selected channels become RGB". This module collapses
@@ -11,7 +11,7 @@
  * and vice-versa structurally. Mutable state remains in the surface settings
  * store.
  *
- * ## Arity gating (`resolveDisplayEncodingIds`)
+ * ## Arity gating (`resolveDisplayOperationIds`)
  *   - `mode:"arity"` (the FLOAT/HDR path, which KNOWS its channel count from the
  *     source shape / channel selector): luts at every k∈[1,4] (a k>1 sample is
  *     REDUCED to a scalar before the LUT — the multi-channel-colormap follow-up,
@@ -30,7 +30,7 @@
  */
 import { useCallback, useMemo, useRef } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../../../primitives/controls/ToolbarConfig";
-import { getEncoding, listEncodingsByKind, type ReduceMode } from "../model/encodings/index.ts";
+import { getDisplayOperation, listDisplayOperationsByKind, type ReduceMode } from "../model/display-operations/index.ts";
 
 /** The DATA-encoding multi-channel REDUCE options, in order (the multi-channel-
  *  colormap follow-up). Shown ONLY while a colormap LUT is active AND the source
@@ -64,7 +64,7 @@ export function reduceSegment(
 
 /** The encoding ids offered in each menu SECTION, resolved for the current
  *  arity/surface. `all` is the flat union (membership = "supported here"). */
-export interface DisplayEncodingIds {
+export interface DisplayOperationIds {
   /** Light tone-map curves (linear / srgb / gamma / reinhard / aces …). */
   curveIds: string[];
   /** Data colormap LUTs (viridis / magma / …). */
@@ -77,7 +77,7 @@ export interface DisplayEncodingIds {
 
 /** Every registered colormap LUT id, in registry (== menu) order. */
 function allLutIds(): string[] {
-  return listEncodingsByKind("lut").map((e) => e.id);
+  return listDisplayOperationsByKind("lut").map((e) => e.id);
 }
 
 /** The colormap LUT ids whose declared `arities` include `arity`. Colormaps now
@@ -85,7 +85,7 @@ function allLutIds(): string[] {
  *  the multi-channel follow-up), so this is the full set at any 1..4 arity and
  *  empty beyond it. */
 function lutIdsForArity(arity: number): string[] {
-  return listEncodingsByKind("lut")
+  return listDisplayOperationsByKind("lut")
     .filter((e) => e.arities.includes(arity))
     .map((e) => e.id);
 }
@@ -96,14 +96,14 @@ function lutIdsForArity(arity: number): string[] {
  * (it may include `"normal"`); curves and the `normal` remap are split into
  * their sections here.
  */
-export function resolveDisplayEncodingIds(opts: {
+export function resolveDisplayOperationIds(opts: {
   mode: "sdr" | "arity";
   arity: number;
   curveSet: readonly string[];
-}): DisplayEncodingIds {
+}): DisplayOperationIds {
   const { mode, arity, curveSet } = opts;
-  const curveIds = curveSet.filter((id) => getEncoding(id)?.kind === "curve");
-  const hasNormal = curveSet.some((id) => getEncoding(id)?.kind === "remap");
+  const curveIds = curveSet.filter((id) => getDisplayOperation(id)?.kind === "curve");
+  const hasNormal = curveSet.some((id) => getDisplayOperation(id)?.kind === "remap");
   let lutIds: string[];
   let remapIds: string[];
   if (mode === "sdr") {
@@ -134,7 +134,7 @@ function header(id: string, label: string): ToolbarMenuOption {
  */
 export function displayToolbarButton(args: {
   value: string;
-  ids: DisplayEncodingIds;
+  ids: DisplayOperationIds;
   onSelect: (id: string) => void;
 }): ToolbarButtonSpec {
   const { value, ids, onSelect } = args;
@@ -147,7 +147,7 @@ export function displayToolbarButton(args: {
   const options: ToolbarMenuOption[] = [];
   for (const s of sections) {
     if (showHeaders) options.push(header(s.label, s.label));
-    for (const id of s.ids) options.push({ id, label: getEncoding(id)?.label ?? id });
+    for (const id of s.ids) options.push({ id, label: getDisplayOperation(id)?.label ?? id });
   }
   return {
     id: "display",
@@ -158,7 +158,7 @@ export function displayToolbarButton(args: {
 
 /** Config for {@link usePaneEncoding}. */
 export interface PaneEncodingConfig {
-  /** Surface mode (see `resolveDisplayEncodingIds`). */
+  /** Surface mode (see `resolveDisplayOperationIds`). */
   mode: "sdr" | "arity";
   /** Current source channel arity (used in `mode:"arity"`). */
   arity: number;
@@ -183,7 +183,7 @@ export interface PaneEncodingConfig {
 /** What a pane needs from the unified encoding state. */
 export interface PaneEncoding {
   /** The active encoding id (the ONE source of truth). */
-  encodingId: string;
+  displayOperationId: string;
   /** `true` when the active encoding is a colormap LUT. */
   isLut: boolean;
   /** Derived LUT id when the active operation uses one. */
@@ -192,9 +192,9 @@ export interface PaneEncoding {
    *  default curve when a LUT is active). */
   curveId: string;
   /** The section ids offered at the current arity/surface (feeds the menu). */
-  ids: DisplayEncodingIds;
+  ids: DisplayOperationIds;
   /** `true` when the encoding differs from the authored seed at this arity. */
-  encodingModified: boolean;
+  displayOperationModified: boolean;
   /** Whether the ACTIVE encoding declares a given param (drives slider gating). */
   hasParam: (name: string) => boolean;
 }
@@ -209,12 +209,12 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const propColormap = config.propColormap;
 
   const idsFor = useCallback(
-    (a: number): DisplayEncodingIds => resolveDisplayEncodingIds({ mode, arity: a, curveSet }),
+    (a: number): DisplayOperationIds => resolveDisplayOperationIds({ mode, arity: a, curveSet }),
     [mode, curveSet],
   );
 
   const pickDefaultCurve = useCallback(
-    (avail: DisplayEncodingIds): string => {
+    (avail: DisplayOperationIds): string => {
       const d = resolveDefaultCurve(propTonemap);
       if (avail.curveIds.includes(d)) return d;
       return avail.curveIds[0] ?? avail.remapIds[0] ?? "srgb";
@@ -240,26 +240,26 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   // the first render before the owner's initialization effect fills the store.
   const storeId = config.settings?.["image.encoding"];
   const rawEncodingId = storeId ?? initialSeedRef.current;
-  const encodingId = rawEncodingId;
+  const displayOperationId = rawEncodingId;
 
   const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
-  const activeEncoding = getEncoding(encodingId);
+  const activeEncoding = getDisplayOperation(displayOperationId);
   const isLut = activeEncoding?.kind === "lut";
-  const curveId = isLut ? pickDefaultCurve(ids) : encodingId;
-  const colormap = isLut ? encodingId : null;
-  const encodingModified = encodingId !== seedFor(arity);
+  const curveId = isLut ? pickDefaultCurve(ids) : displayOperationId;
+  const colormap = isLut ? displayOperationId : null;
+  const displayOperationModified = displayOperationId !== seedFor(arity);
   const hasParam = useCallback(
-    (name: string) => !!getEncoding(encodingId)?.params.includes(name as never),
-    [encodingId],
+    (name: string) => !!getDisplayOperation(displayOperationId)?.params.includes(name as never),
+    [displayOperationId],
   );
 
   return {
-    encodingId,
+    displayOperationId,
     isLut,
     colormap,
     curveId,
     ids,
-    encodingModified,
+    displayOperationModified,
     hasParam,
   };
 }

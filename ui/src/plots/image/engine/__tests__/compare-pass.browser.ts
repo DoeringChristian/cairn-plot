@@ -25,7 +25,7 @@ import { renderCompose, renderImage, computeMetrics, type CompareParams, type Im
 import { computeDiff, displayRangeForOperation, renderDiffDisplay } from "../diff-engine";
 import { getImageOperation } from "../../model/content-ops/index.ts";
 import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/encodings/index";
+import { getDisplayOperation, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/display-operations/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/index";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
@@ -44,7 +44,7 @@ function processSide(px: number[], params: CompareParams): RgbTriple {
   // Apply the operator CURVE straight from the registry (the CPU source of truth
   // the GPU `applyOperator` mirrors); compose only uses the plain SDR curves, so
   // an unknown operator falls back to the srgb clamp.
-  const opEnc = getEncoding(params.displayOperationId)!;
+  const opEnc = getDisplayOperation(params.displayOperationId)!;
   const toned = opEnc.cpu(exposed, 3, DEFAULT_ENCODE_PARAMS);
   return [outputEncode(toned[0], params.gamma), outputEncode(toned[1], params.gamma), outputEncode(toned[2], params.gamma)];
 }
@@ -285,9 +285,9 @@ async function runDiffDisplayAnalyticCase(device: Device, hdrOut: boolean): Prom
   return allOk;
 }
 
-// ---- diff DISPLAY GRAY NONE (HDR-native) parity (scalar-none follow-up) -------
+// ---- diff DISPLAY LINEAR SCALAR (HDR-native) parity (scalar-none follow-up) -------
 // The diff `None` (no false-color, raw per-channel) is the compare-pane twin of the
-// single-image gray-none path. On an HDR target the FOLDED value now rides the
+// single-image linear scalar path. On an HDR target the FOLDED value now rides the
 // SHARED extended output-encode (so |v|>1 survives) instead of writing raw-clamped;
 // on SDR it stays byte-identical (covered by runDiffCase). Prove the GPU HDR path
 // === the CPU twin (extendedOutputEncode of the folded value).
@@ -431,7 +431,7 @@ async function runAll(device: Device): Promise<boolean> {
   ok = (await runDiffDisplayAnalyticCase(device, false)) && ok;
   if (device.capabilities.hdr) {
     ok = (await runDiffDisplayAnalyticCase(device, true)) && ok;
-    // Diff-display GRAY NONE HDR-native (the scalar-none follow-up): raw diff rides
+    // Diff-display LINEAR SCALAR HDR-native (the scalar-none follow-up): raw diff rides
     // the extended output-encode so over-range survives (SDR covered by runDiffCase).
     ok = (await runDiffDisplayGrayNoneHdrCase(device)) && ok;
   }

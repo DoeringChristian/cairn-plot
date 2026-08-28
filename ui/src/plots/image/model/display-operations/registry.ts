@@ -3,17 +3,13 @@
  * "how do the selected channels become RGB". An `encoding` is a rival,
  * mutually-exclusive answer to that question: a light-curve tone-map operator
  * (aces / reinhard / srgb / …), a data LUT (colormaps — Phase 2), or a remap
- * (normal map). See `docs/plans/2026-08-18-display-encoding-registry.md`.
+ * (normal map). See `docs/plans/2026-08-18-display-operation-registry.md`.
  *
- * ## The house pattern (mirrors `engine/kernels`)
- * This is the encoding twin of `engine/kernels/kernel-registry.ts`: a
- * CORE-SAFE registry that holds, per encoding, the metadata + a WGSL curve
- * snippet (a string) + a CPU twin (pure math). It pulls NO GPU code — exactly
- * like `kernel-registry.ts` holds WGSL `source` strings + `listDiffMenuModes`
- * without importing the device. The GPU-side consumers (`engine/shaders/
+ * The core-safe registry holds operation metadata, a WGSL implementation, and
+ * a pure CPU twin. It imports no device code. GPU consumers (`engine/shaders/
  * image.wgsl.ts`, `engine/kernels/prelude.wgsl.ts`, `engine/image-engine.ts`)
  * ASSEMBLE their operator dispatch from this registry's WGSL (`./wgsl.ts`),
- * mirroring how `diff-engine.ts` composes a kernel's `source` into a pipeline.
+ * while CPU consumers call the same registered operation directly.
  *
  * ## Phase 1 scope (behavior-identical)
  * Only the ~10 existing tone-map operators are migrated (curves + the `normal`
@@ -136,7 +132,7 @@ export const NORM_ID: Record<NormMode, number> = { linear: 0, log: 1, power: 2 }
  *  - `lut`:   a data colormap (Phase 2) — binds a 256×1 texture.
  *  - `remap`: a pure structural remap (the normal map `(x+1)/2`) — declares
  *             nothing, arity 3 only. */
-export type EncodingKind = "curve" | "lut" | "remap";
+export type DisplayOperationKind = "curve" | "lut" | "remap";
 
 /**
  * The named params an encoding's curve reads at render time. Phase-1 curves read
@@ -173,7 +169,7 @@ export interface EncodeParams {
   reduce?: ReduceMode;
 }
 
-/** A single display encoding — the CPU twin (`cpu`) and its WGSL twin (`wgsl`)
+/** A single display operation — the CPU twin (`cpu`) and its WGSL twin (`wgsl`)
  *  live on ONE object so the parity harness is mechanical (iterate + compare). */
 export interface DisplayOperation {
   /** Stable id (== the descriptor `tonemap=`/encoding token). */
@@ -181,7 +177,7 @@ export interface DisplayOperation {
   /** Menu label. */
   label: string;
   /** Structural family / menu section. */
-  kind: EncodingKind;
+  kind: DisplayOperationKind;
   /** Channel arities this encoding supports (runtime state; arity gating is
    *  Phase 3). `normal`: [3]; curves: [1,2,3,4]; luts: [1]. */
   arities: number[];
@@ -389,26 +385,26 @@ export function signedAnalyticColor(scalar: number): [number, number, number] {
 
 const REGISTRY = new Map<string, DisplayOperation>();
 
-export function registerEncoding(encoding: DisplayOperation): void {
-  if (REGISTRY.has(encoding.id)) {
-    throw new Error(`registerEncoding: duplicate encoding id "${encoding.id}"`);
+export function registerDisplayOperation(operation: DisplayOperation): void {
+  if (REGISTRY.has(operation.id)) {
+    throw new Error(`registerDisplayOperation: duplicate operation id "${operation.id}"`);
   }
-  REGISTRY.set(encoding.id, encoding);
+  REGISTRY.set(operation.id, operation);
 }
 
-export function getEncoding(id: string | undefined | null): DisplayOperation | undefined {
+export function getDisplayOperation(id: string | undefined | null): DisplayOperation | undefined {
   if (!id) return undefined;
   return REGISTRY.get(id);
 }
 
-/** All registered encodings, in registration order. */
-export function listEncodings(): DisplayOperation[] {
+/** All registered display operations, in registration order. */
+export function listDisplayOperations(): DisplayOperation[] {
   return Array.from(REGISTRY.values());
 }
 
-/** Encodings of a given kind (menu section), in registration order. */
-export function listEncodingsByKind(kind: EncodingKind): DisplayOperation[] {
-  return listEncodings().filter((e) => e.kind === kind);
+/** Display operations of a given kind (menu section), in registration order. */
+export function listDisplayOperationsByKind(kind: DisplayOperationKind): DisplayOperation[] {
+  return listDisplayOperations().filter((e) => e.kind === kind);
 }
 
 // Re-export the shared clamp so entry modules import it from one place.

@@ -13,7 +13,7 @@
  * (each entry's `wgsl` expression inlined into its `operatorId` branch), plus the
  * shared curve helper fns — reproducing the pre-registry `applyOperator` exactly.
  */
-import { listEncodings } from "./registry.ts";
+import { listDisplayOperations } from "./registry.ts";
 import { CURVE_HELPER_FNS_WGSL, DEFAULT_CLAMP_WGSL } from "./curves.ts";
 
 /** The curve helper fns (`reinhardCurve`/`acesCurve`/`extended*Curve`) — emit
@@ -39,7 +39,7 @@ export interface ApplyOperatorOptions {
  * behavior. Requires {@link CURVE_HELPERS_WGSL} earlier in the module.
  */
 export function buildApplyOperatorWGSL(opts: ApplyOperatorOptions): string {
-  const entries = listEncodings()
+  const entries = listDisplayOperations()
     .filter((e) => e.kind !== "lut") // curves + remaps only (Phase 1)
     .filter((e) => opts.remaps || e.kind !== "remap")
     .filter((e) => e.wgsl.trim() !== DEFAULT_CLAMP_WGSL) // default-clamp entries fall through

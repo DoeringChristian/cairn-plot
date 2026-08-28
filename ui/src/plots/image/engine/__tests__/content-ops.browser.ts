@@ -9,12 +9,12 @@
  * WHAT IT PROVES. The Phase-2 content-op unification renders a DIFF through the
  * SAME image pipeline as a single image: the shader samples TWO source slots and
  * `cairnContent(a, b, opId)` produces the raw per-channel error, which the DISPLAY
- * stage (the display-encoding registry) then encodes. This harness drives that
+ * stage (the display-operation registry) then encodes. This harness drives that
  * exact GPU path (`renderImage` with `srcB` + `contentOpId` + the op's
  * defaultEncoding) for every DIRECT diff op and asserts the readback equals the
  * COMPOSED CPU twin — `displayEncoding.cpu(contentOp.cpu([a],[b]), 3, params)` —
  * i.e. the content-op `cpu` twin (the diff pixel-value readout's source of truth)
- * threaded through the same display-encoding `cpu` the single-image LUT/analytic
+ * threaded through the same display-operation `cpu` the single-image LUT/analytic
  * path uses. So the unified pane's diff render === the two registries' twins, by
  * construction, across the whole direct-op set.
  *
@@ -29,11 +29,11 @@ import { renderImage, computeMetrics, type ImageParams } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
 import { getImageOperation, isInlineImageOperation, contentOpId, type ImageOperationCpuContext } from "../../model/content-ops/index";
-import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index";
+import { getDisplayOperation, DEFAULT_ENCODE_PARAMS } from "../../model/display-operations/index";
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../settings/colormaps/lut";
-import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../../model/encodings/index.ts";
+import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../../model/display-operations/index.ts";
 import type { Device, Texture } from "../webgpu/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
@@ -70,15 +70,15 @@ function buildTex(device: Device, rows: number[][]): Texture {
  * average) over the 3 diff channels. SDR target, nearest filter, EV 0 → byte-exact
  * within 1/255.
  */
-async function runDiffOpCase(device: Device, opId: string, encodingId: string): Promise<boolean> {
+async function runDiffOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
   const op = getImageOperation(opId);
   if (!op || !isInlineImageOperation(op)) {
     report(false, `[${opId}] not a registered direct content op`);
     return false;
   }
-  const enc = getEncoding(encodingId);
+  const enc = getDisplayOperation(displayOperationId);
   if (!enc) {
-    report(false, `[${opId}/${encodingId}] encoding is not registered`);
+    report(false, `[${opId}/${displayOperationId}] encoding is not registered`);
     return false;
   }
   const analytic = enc.analytic === true;
@@ -141,7 +141,7 @@ async function runDiffOpCase(device: Device, opId: string, encodingId: string): 
       }
     }
   }
-  report(ok, `[${opId}/${encodingId}] GPU cairnContent + display === composed cpu twin`);
+  report(ok, `[${opId}/${displayOperationId}] GPU cairnContent + display === composed cpu twin`);
   return ok;
 }
 
@@ -149,7 +149,7 @@ async function runDiffOpCase(device: Device, opId: string, encodingId: string): 
  *  source unchanged (turbo of the raw scalar) — the second slot never leaks in. */
 async function runIdentityInertCase(device: Device): Promise<boolean> {
   const scalars = [[0.0, 0, 0, 1], [0.25, 0, 0, 1], [0.5, 0, 0, 1], [1.0, 0, 0, 1]];
-  const enc = getEncoding("turbo")!;
+  const enc = getDisplayOperation("turbo")!;
   const texA = buildTex(device, scalars);
   const target = device.createTexture(scalars.length, 1, "rgba8unorm");
   // No srcB → placeholder; contentOpId 0 (identity) ignores it.
@@ -297,15 +297,15 @@ function buildUpload(rows: number[][]): SourceUpload {
  * `renderImage(srcB,…)` path. Proves the pool retains + uploads the second slot
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
  */
-async function runPoolDirectOpCase(device: Device, opId: string, encodingId: string): Promise<boolean> {
+async function runPoolDirectOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
   const op = getImageOperation(opId);
   if (!op || !isInlineImageOperation(op)) {
     report(false, `[pool:${opId}] not a registered direct content op`);
     return false;
   }
-  const enc = getEncoding(encodingId);
+  const enc = getDisplayOperation(displayOperationId);
   if (!enc) {
-    report(false, `[pool:${opId}/${encodingId}] encoding is not registered`);
+    report(false, `[pool:${opId}/${displayOperationId}] encoding is not registered`);
     return false;
   }
   const analytic = enc.analytic === true;
@@ -581,9 +581,9 @@ const DIRECT_DIFF_OPS = ["absolute", "signed", "squared", "relative_absolute", "
 /** Operation and display encoding are independent axes. Exercise every operation
  * with the shared default, plus the analytic encoding supported by signed data. */
 const DIRECT_DIFF_CASES = [
-  ...DIRECT_DIFF_OPS.map((opId) => ({ opId, encodingId: DEFAULT_COMPARISON_DISPLAY_OPERATION_ID })),
-  { opId: "signed", encodingId: "red-green" },
-  { opId: "relative_signed", encodingId: "red-green" },
+  ...DIRECT_DIFF_OPS.map((opId) => ({ opId, displayOperationId: DEFAULT_COMPARISON_DISPLAY_OPERATION_ID })),
+  { opId: "signed", displayOperationId: "red-green" },
+  { opId: "relative_signed", displayOperationId: "red-green" },
 ];
 
 async function main(): Promise<void> {
@@ -592,16 +592,16 @@ async function main(): Promise<void> {
     report(true, `device.backend = ${device.backend}`);
     let allOk = true;
     if (!(await runIdentityInertCase(device))) allOk = false;
-    for (const { opId, encodingId } of DIRECT_DIFF_CASES) {
-      if (!(await runDiffOpCase(device, opId, encodingId))) allOk = false;
+    for (const { opId, displayOperationId } of DIRECT_DIFF_CASES) {
+      if (!(await runDiffOpCase(device, opId, displayOperationId))) allOk = false;
     }
     report(allOk, `all ${DIRECT_DIFF_CASES.length} direct diff/encoding cases: GPU cairnContent + display === composed cpu twin`);
     // Phase 3 — COMPOSITOR op (split): light composite === composed cpu twin.
     if (!(await runCompositorOpCase(device, "split", 0.5))) allOk = false;
     report(allOk, `compositor op (split): GPU composite === composed cpu twin (SDR + HDR)`);
     // Phase 2b — POOL wiring: the second source slot + the cached-op render path.
-    for (const { opId, encodingId } of DIRECT_DIFF_CASES) {
-      if (!(await runPoolDirectOpCase(device, opId, encodingId))) allOk = false;
+    for (const { opId, displayOperationId } of DIRECT_DIFF_CASES) {
+      if (!(await runPoolDirectOpCase(device, opId, displayOperationId))) allOk = false;
     }
     if (!(await runPoolCachedOpCase(device))) allOk = false;
     if (!(await runPoolChromeCase(device))) allOk = false;

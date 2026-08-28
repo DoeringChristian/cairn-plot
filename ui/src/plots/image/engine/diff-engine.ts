@@ -35,7 +35,7 @@ import {
 } from "../model/content-ops/index.ts";
 import type { ImageOperationBuildContext, ImageOperationDisplayRange } from "./operation-pass.ts";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl.ts";
-import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../model/encodings/index.ts";
+import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../model/display-operations/index.ts";
 import { makeCpuMapSampler } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
 import { type DiffCmapMode } from "./diff-cmap-mode";
@@ -575,8 +575,8 @@ ${OUTPUT_ENCODE_WGSL}
     let dataIdx = cairnDataIndex(avg, i32(round(u_norm.x)), u_norm.y, u_norm.z, u_norm.w > 0.5, u_expo.z);
     outColor = cairnLutColor(lut, dataIdx, cmapModeId, filterLinear);
   } else {
-    // GRAY NONE (raw per-channel diff, no false-color) — the compare-pane twin of
-    // the single-image gray-none path. On an HDR target the FOLDED value v (pre-
+    // LINEAR SCALAR (raw per-channel diff, no false-color) — the compare-pane twin of
+    // the single-image linear scalar path. On an HDR target the FOLDED value v (pre-
     // clamp) rides the SHARED extended output-encode so over-range (|v|>1) error
     // SURVIVES; on SDR it stays the legacy raw-clamped code value (disp), byte-
     // identical to before (the SDR diff-none has never sRGB-encoded — it shows the

@@ -1,6 +1,6 @@
 /**
  * The NON-registry display pipeline layer for the image panes (cairn-plot HDR-A).
- * After the display-encoding registry landed (Phases 1–5), the OPERATOR CURVES
+ * After the display-operation registry landed (Phases 1–5), the OPERATOR CURVES
  * live in `image/encodings` — the single source of truth shared with the GPU
  * shaders. What stays HERE is everything that is NOT an operator curve:
  *
@@ -17,7 +17,7 @@
  *   - The menu operator SET (`SDR_TONEMAP_OPERATORS`), DERIVED from the registry.
  *
  * The pipeline per pixel is still EXPOSURE → CURVE (registry) → OUTPUT-ENCODE; a
- * caller applies the curve via `getEncoding(id).cpu(rgb, 3, params)`.
+ * caller applies the curve via `getDisplayOperation(id).cpu(rgb, 3, params)`.
  *
  * WHY EXPOSURE + OUTPUT-ENCODE ARE SEPARATE STAGES (not folded into the curve):
  * "sRGB" and "gamma" are output *transfer functions*, so every operator curve
@@ -27,7 +27,7 @@
  */
 
 import { clamp01 } from "../../../primitives/util/clamp.ts";
-// The operator CURVE math lives in the display-encoding registry
+// The operator CURVE math lives in the display-operation registry
 // (image/encodings) — the single source of truth shared with the GPU shaders
 // (assembled WGSL) and the parity harness. After Phase 5, `tonemap.ts` no longer
 // re-exports the curve math: what remains here is the NON-registry render layer
@@ -35,7 +35,7 @@ import { clamp01 } from "../../../primitives/util/clamp.ts";
 // the gamma/peak UI config, and the UNIFIED render-translation `resolve*` +
 // alias tables). It reads the registry only to DERIVE the menu operator SET so
 // that set can't drift from the entries.
-import { listEncodingsByKind } from "./encodings/index.ts";
+import { listDisplayOperationsByKind } from "./display-operations/index.ts";
 
 export type RgbTriple = [number, number, number];
 
@@ -79,7 +79,7 @@ export const EXTENDED_TONEMAP_PEAK_STEP = 0.5;
 
 // The peak-parameterized curve MATH (extendedClamp/Reinhard/Aces scalars) and
 // the per-operator CPU dispatch now live entirely in the registry
-// (`image/encodings`); callers apply a curve via `getEncoding(id).cpu(...)`.
+// (`image/encodings`); callers apply a curve via `getDisplayOperation(id).cpu(...)`.
 // tonemap.ts no longer wraps them — see the module doc.
 
 /** The default operator when none / an unknown key is supplied. */
@@ -88,15 +88,15 @@ export const DEFAULT_TONEMAP: TonemapOperator = "srgb";
 /**
  * The user-selectable SDR tone-map operators — the ONE unified operator menu
  * (Linear · sRGB · Gamma · Reinhard · ACES · Normal map). DERIVED from the
- * display-encoding registry so it can never drift from the entries: the non-HDR
+ * display-operation registry so it can never drift from the entries: the non-HDR
  * `kind:"curve"` operators (the `extended*` HDR-out curves declare
  * `needsHdrSurface` and are excluded — the PEAK slider is the HDR mode now, not a
  * second menu group) followed by the `kind:"remap"` entries (the `normal` map).
  * Registration order yields the historical menu order.
  */
 export const SDR_TONEMAP_OPERATORS: readonly TonemapOperator[] = [
-  ...listEncodingsByKind("curve").filter((e) => !e.needsHdrSurface),
-  ...listEncodingsByKind("remap"),
+  ...listDisplayOperationsByKind("curve").filter((e) => !e.needsHdrSurface),
+  ...listDisplayOperationsByKind("remap"),
 ].map((e) => e.id as TonemapOperator);
 
 /**
@@ -119,8 +119,8 @@ export const SDR_DISPLAY_TRANSFER_OPERATORS: readonly TonemapOperator[] = [
 
 // The name→CPU-curve resolver and the peak-aware triple dispatch were removed in
 // Phase 5: callers apply a curve straight from the registry via
-// `getEncoding(id).cpu(rgb, 3, params)` (the single source of truth the GPU
-// `applyOperator` mirrors), with `getEncoding(DEFAULT_TONEMAP)` as the fallback.
+// `getDisplayOperation(id).cpu(rgb, 3, params)` (the single source of truth the GPU
+// `applyOperator` mirrors), with `getDisplayOperation(DEFAULT_TONEMAP)` as the fallback.
 
 /**
  * Resolve a public display operator. Invalid input falls back to

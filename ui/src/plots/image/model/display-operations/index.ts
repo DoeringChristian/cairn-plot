@@ -8,10 +8,10 @@
  */
 import { registerCurveEncodings } from "./curves.ts";
 import { registerLutEncodings } from "./luts.ts";
-import { listEncodings } from "./registry.ts";
+import { listDisplayOperations } from "./registry.ts";
 
 // Curves first (operatorIds 0–9), then the colormap LUT family (10+) — the
-// registration order `listEncodingsByKind` returns, so the colormap menu order
+// registration order `listDisplayOperationsByKind` returns, so the colormap menu order
 // matches `COLORMAP_NAMES`.
 registerCurveEncodings();
 registerLutEncodings();
@@ -23,7 +23,7 @@ registerLutEncodings();
  * — also assembled from the registry — and the CPU packing can never drift).
  */
 export const OPERATOR_ID: Record<string, number> = Object.fromEntries(
-  listEncodings().map((e) => [e.id, e.operatorId]),
+  listDisplayOperations().map((e) => [e.id, e.operatorId]),
 );
 
 export * from "./registry.ts";

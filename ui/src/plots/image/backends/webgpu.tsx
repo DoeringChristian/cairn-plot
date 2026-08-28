@@ -67,13 +67,13 @@ import {
   resolveDiffKernelId,
   listDiffMenuModes,
 } from "../engine/kernels/index";
-import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../model/encodings/index.ts";
+import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../model/display-operations/index.ts";
 import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { formatSsim } from "../engine/ssim-metric";
 import type { DiffMetrics } from "../engine/image-engine";
 import type { DiffCacheEntry } from "../engine/diff-engine";
-import { defaultReduceForDisplayOperation, prepareDisplayBinding } from "../engine/prepare-display-operation.ts";
+import { defaultReduceForDisplayOperation, prepareDisplayOperation } from "../engine/prepare-display-operation.ts";
 import { compareCaptions } from "../compare/compare-captions";
 import { buildCompareModeMenu } from "../compare/compare-mode-menu";
 import SplitDivider from "../compare/SplitDivider";
@@ -121,8 +121,8 @@ import {
   displayToolbarButton,
   reduceSegment,
   usePaneEncoding,
-} from "../components/display-encoding";
-import { type ReduceMode } from "../model/encodings/index";
+} from "../components/display-operation";
+import { type ReduceMode } from "../model/display-operations/index";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
@@ -162,7 +162,7 @@ const NULL_HDR: HdrData = { pixels: floatValues(new Float32Array(0)), shape: [0,
 /** The IDENTITY-TRANSFER curves — the ones whose tone-map "operator" is a pure
  *  clamp, the display transfer living entirely in the output-encode stage. A
  *  single-channel "none" source on one of these renders through the gray DATA path
- *  (`scalarTransferActive`) so the scalar rides the shared (extended) output-encode
+ *  (`linearScalarActive`) so the scalar rides the shared (extended) output-encode
  *  unclamped on an HDR surface, byte-identically to the curve on SDR. Real tone-
  *  mappers (reinhard/aces) compress highlights and stay on the curve path. */
 const SCALAR_TRANSFER_OPERATIONS: ReadonlySet<string> = new Set(["linear", "srgb", "gamma"]);
@@ -565,7 +565,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `compareSource.colormap` when the
   // descriptor specifies one — is the SEED/HOME target the encoding hook uses
   // while a diff is visible. Computed HERE, above `enc`, so the hook can seed from
-  // it. The choice lives in `enc.encodingId`, so a diff-colormap pick, a slot flip
+  // it. The choice lives in `enc.displayOperationId`, so a diff-colormap pick, a slot flip
   // to the scalar image, and HOME all read/write ONE store — one viewport, one
   // setting.) Declared unconditionally (rules-of-hooks); inert when `!diffMode`.
   // -----------------------------------------------------------------------
@@ -624,7 +624,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
   // colormap + tonemap overrides — selecting a LUT deactivates the curve and
-  // vice-versa STRUCTURALLY (`display-encoding.ts`). The float pane gates the
+  // vice-versa STRUCTURALLY (`display-operation.ts`). The float pane gates the
   // menu by its real channel arity (luts@k=1, `normal`@k=3); the 8-bit pane has
   // no channel-count signal (`mode:"sdr"`) so offers the full applicable set.
   // Both drive the unified 5-curve set (Linear · sRGB · Gamma · Reinhard · ACES
@@ -672,10 +672,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // engaged HDR surface keeps >1. So a scalar with one of the IDENTITY-TRANSFER
   // curves (linear/srgb/gamma — the ones whose "operator" is a pure clamp, the
   // transfer living entirely in output-encode) renders through the gray DATA path
-  // (isScalar + `scalarTransfer`) instead of the peak-clamping curve path, and honors the
+  // (isScalar + `linearScalar`) instead of the peak-clamping curve path, and honors the
   // NORM/BOUNDS pickers. Real tone-mappers (reinhard/aces) stay on the curve path —
   // they compress highlights (a LIGHT concept), so a scalar keeps them selectable.
-  const scalarTransferActive =
+  const linearScalarActive =
     hdrMode && sourceArity === 1 && hdrColormap == null && SCALAR_TRANSFER_OPERATIONS.has(effectiveTonemap);
 
   // PEAK white (×SDR white) — the UNIFIED HDR MODE control. On an engaged HDR
@@ -747,7 +747,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // averages RGB) regardless of k, unlike the k-based `defaultReduceMode`
   // (luminance for k≥3). REDUCE resolves at RENDER: store value > the derived
   // default (no descriptor prop).
-  const reduceDefault: ReduceMode = defaultReduceForDisplayOperation(enc.encodingId, sourceArity);
+  const reduceDefault: ReduceMode = defaultReduceForDisplayOperation(enc.displayOperationId, sourceArity);
   const effectiveReduce = (synced?.["image.reduce"] as ReduceMode | undefined) ?? reduceDefault;
   // BOUNDS resolve at RENDER: store pair > descriptor colorRange. Memoized so
   // the derived array is identity-stable per input change.
@@ -766,10 +766,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (colorBounds?.[0] ?? null) !== (boundsSeedVal?.[0] ?? null) ||
     (colorBounds?.[1] ?? null) !== (boundsSeedVal?.[1] ?? null);
   // The bounds skin is engaged iff a DATA encoding is active (a lut that declares
-  // min/max, OR the gray-none data path) AND a finite colorRange seeds it (min<max).
+  // min/max, OR the linear scalar data path) AND a finite colorRange seeds it (min<max).
   // Light curves (reinhard/aces on a scalar, RGB curves) never use bounds.
   const boundsEngaged =
-    ((enc.isLut && enc.hasParam("min")) || scalarTransferActive) &&
+    ((enc.isLut && enc.hasParam("min")) || linearScalarActive) &&
     !!colorBounds &&
     Number.isFinite(colorBounds[0]) &&
     Number.isFinite(colorBounds[1]);
@@ -788,7 +788,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // Image and comparison fields use the exact same selected display operation.
   // The field operation determines the values; display selection never changes
   // their arity or interpretation.
-  const effectiveDiffEncoding = enc.encodingId;
+  const effectiveDiffEncoding = enc.displayOperationId;
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
@@ -1507,7 +1507,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // Renders `source − compareSource.b` through the pool: a DIRECT pointwise op
     // inline (`render({contentOpId})`, the pool injects `srcB`); a CACHED metric
     // (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. The DISPLAY reuses the pane's
-    // display-encoding machinery: analytic red-green (signed), turbo-log2
+    // display-operation machinery: analytic red-green (signed), turbo-log2
     // (magnitude), a plain LUT (magma/…) or raw per-channel error ("none"). Proven
     // byte-identical to the composed cpu twin by content-ops.browser.ts.
     if (diffMode) {
@@ -1516,7 +1516,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       if (!refDims) return false;
       const kernelId = getImageOperation(resolvedKernelId) ? resolvedKernelId : "absolute";
       const displayEncoding = effectiveDiffEncoding;
-      const display = prepareDisplayBinding(displayEncoding, { hdrSurface: useHdrRef.current });
+      const display = prepareDisplayOperation(displayEncoding, { hdrSurface: useHdrRef.current });
       // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
       // colormap sensitivity, the resolved encoding face. `gamma` is LEFT UNSET so
       // the analytic branch encodes via sRGB OETF (a gamma of 1 would flip it to an
@@ -1595,7 +1595,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // short-circuits the tone-map operator + output-encode in the shader (the LUT
     // holds display sRGB), so operator/gamma/hdrOut are moot; the LUT table comes
     // from the prepared display-operation binding, the same path comparisons use.
-    const preparedDisplay = prepareDisplayBinding(enc.encodingId, { hdrSurface: rt.hdrOut });
+    const preparedDisplay = prepareDisplayOperation(enc.displayOperationId, { hdrSurface: rt.hdrOut });
     const hdrColormapActive = hdrMode && hdrColormap != null;
     // ANALYTIC colormap (tev-style signed red-green): computed color, no LUT bind.
     // Unlike the LUT branch (which bakes display sRGB → hdrOut:false), the analytic
@@ -1645,14 +1645,14 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           uv,
           filter,
         }
-      : scalarTransferActive
+      : linearScalarActive
       ? {
           // Scalar Linear display operation. Same shape
           // as the float-LUT branch (scalar → cairnDataIndex) but the color is the
           // SCENE-LINEAR gray vec3(idx) through the SHARED output-encode (NOT a
           // baked-sRGB LUT), so `hdrOut` is the pane's REAL surface (rt.hdrOut) and
           // idx>1 survives on HDR. `gamma` (the power-NORM exponent slot) is 1 now
-          // that the norm picker is removed (effective norm linear); `scalarTransferGamma`
+          // that the norm picker is removed (effective norm linear); `linearScalarGamma`
           // is the curve's OWN encode transfer (sRGB / identity / 1/γ). EV/OFF are the
           // sensitivity skin (neutralized when bounds engage, single-apply).
           exposureEV: cmapExposure,
@@ -1660,8 +1660,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           displayOperationId: "linear",
           gamma: 1,
           isScalar: true,
-          scalarTransfer: true,
-          scalarTransferGamma: resolveEncodeGamma(effectiveTonemap, tonemapGamma) ?? 0,
+          linearScalar: true,
+          linearScalarGamma: resolveEncodeGamma(effectiveTonemap, tonemapGamma) ?? 0,
           hdrOut: rt.hdrOut,
           peak: rt.peak,
           srgbDecode: false,
@@ -1947,7 +1947,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       },
       // The ONE derived encoding id this pane publishes on the shared bus — a
       // migrated compare-settings-sync harness asserts a peer follows it.
-      get encodingId() {
+      get displayOperationId() {
         return effectiveDiffEncoding;
       },
       get effectiveTonemap() {
@@ -2033,8 +2033,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       | null;
     if (!el) return;
     el.__cairnImagePaneProbe = {
-      get encodingId() {
-        return enc.encodingId;
+      get displayOperationId() {
+        return enc.displayOperationId;
       },
       get colormap() {
         return enc.colormap;
@@ -2051,7 +2051,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
     };
-  }, [enc.encodingId, enc.colormap, peak, changePeak, changeEncoding, enc]);
+  }, [enc.displayOperationId, enc.colormap, peak, changePeak, changeEncoding, enc]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the
@@ -2151,17 +2151,17 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // SPLIT composite LIGHT — the SAME unified image DISPLAY menu (curves;
       // luts gated off at k=3) as a plain image, so the composite is displayed
       // exactly as an image would be.
-      return [modeMenu, displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding })];
+      return [modeMenu, displayToolbarButton({ value: enc.displayOperationId, ids: enc.ids, onSelect: changeEncoding })];
     }
     // A comparison field uses the exact same display-operation menu and command
     // path as an ordinary image field.
     const displayMenu = displayToolbarButton({
-      value: enc.encodingId,
+      value: enc.displayOperationId,
       ids: enc.ids,
       onSelect: changeDiffEncoding,
     });
     return [modeMenu, displayMenu];
-  }, [hasCompare, compositorMode, compareOpMode, diffKernel, enc.encodingId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffEncoding]);
+  }, [hasCompare, compositorMode, compareOpMode, diffKernel, enc.displayOperationId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffEncoding]);
 
   // Captions (same DOM / selectors as `GpuComparePane`): diff → ONE bottom-left
   // "<metric> · <fg> compared to <ref>"; split/blend → REFERENCE bottom-left +
@@ -2393,7 +2393,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           : [
               // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
               ...(props.channelMenu ? [props.channelMenu] : []),
-              displayToolbarButton({ value: enc.encodingId, ids: enc.ids, onSelect: changeEncoding }),
+              displayToolbarButton({ value: enc.displayOperationId, ids: enc.ids, onSelect: changeEncoding }),
             ]
       }
       // SECOND-ROW segmented controls (controls-row-separation directive): the
@@ -2437,10 +2437,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // paramless `normal` remap and colormap LUTs have no peak). γ rides the
       // active encoding's manifest (only the Gamma curve declares it).
       extraSliders={diffMode ? [] : [
-        // PEAK is the CURVE family's HDR ceiling — hidden for the gray-none DATA
+        // PEAK is the CURVE family's HDR ceiling — hidden for the linear scalar DATA
         // path (a scalar as data has no tone-map ceiling; its raw value rides the
         // output-encode unclamped), the `normal` remap, and colormap LUTs.
-        ...((hdrMode || sdrPlain) && hdrEngaged && activeRespectsPeak && !scalarTransferActive
+        ...((hdrMode || sdrPlain) && hdrEngaged && activeRespectsPeak && !linearScalarActive
           ? [
               {
                 id: "peak",
@@ -2522,9 +2522,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         props.onChannelReset?.(); // channel override folds into HOME
       }}
       extraModified={
-        // `enc.encodingModified` covers BOTH the image encoding AND (in diff mode) the
+        // `enc.displayOperationModified` covers BOTH the image encoding AND (in diff mode) the
         // diff colormap — they are one store now.
-        enc.encodingModified ||
+        enc.displayOperationModified ||
         peakModified ||
         gammaModified ||
         effectiveReduce !== reduceDefault ||

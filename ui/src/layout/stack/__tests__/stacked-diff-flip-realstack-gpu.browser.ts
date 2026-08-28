@@ -359,7 +359,7 @@ interface DiffProbe {
   home: () => void;
 }
 interface ImgProbe {
-  encodingId: string;
+  displayOperationId: string;
   colormap: string;
   peak: number;
   changeEncoding: (id: string) => void;
@@ -750,7 +750,7 @@ async function main(): Promise<void> {
     // ============ PHASE E — AUTHORED-COLORMAP ENCODING GENERATION ============
     // A stacked [magma-scalar image, plain image] grid: flipping to the authored-
     // magma slot must never paint a frame with NO colormap bound (the encoding
-    // reseed landing a commit late = raw gray-none for one frame). The render log
+    // reseed landing a commit late = raw linear scalar for one frame). The render log
     // directly asserts that every scalar-slot frame has a colormap bound.
     {
       const host = document.createElement("div");
@@ -783,7 +783,7 @@ async function main(): Promise<void> {
       const magmaPresents = scalarPresents.length;
       note(`PHASE E magma-scalar flip storm: ${log.length} presents, magma-slot image presents=${magmaPresents}, encoding-gen mismatches=${encMiss}`);
       report(magmaPresents >= 5, `PHASE E exercised the authored-magma scalar slot (${magmaPresents} presents)`);
-      report(encMiss === 0, `PHASE E: ZERO encoding-generation mismatches — authored magma never drops to gray-none on a flip (${encMiss})`);
+      report(encMiss === 0, `PHASE E: ZERO encoding-generation mismatches — authored magma never drops to linear scalar on a flip (${encMiss})`);
       if (encMiss !== 0 || magmaPresents < 5) allOk = false;
     }
 
@@ -864,39 +864,39 @@ async function main(): Promise<void> {
       host.querySelector<HTMLElement>("[data-cairn-grid-root]")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
       await waitFor(() => activeIdx(hostId) === 0 && !!imgProbe(hostId), 4000, 30);
       await sleep(150);
-      const seed0 = imgProbe(hostId)?.encodingId ?? "?";
+      const seed0 = imgProbe(hostId)?.displayOperationId ?? "?";
       key("2");
       await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(200);
-      const slot1Shared = imgProbe(hostId)?.encodingId ?? "?";
+      const slot1Shared = imgProbe(hostId)?.displayOperationId ?? "?";
       imgProbe(hostId)!.changeEncoding("turbo"); // a pick on slot1
-      await waitFor(() => imgProbe(hostId)?.encodingId === "turbo", 4000, 30);
+      await waitFor(() => imgProbe(hostId)?.displayOperationId === "turbo", 4000, 30);
       key("1");
       await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(200);
-      const slot0AfterPick = imgProbe(hostId)?.encodingId ?? "?";
+      const slot0AfterPick = imgProbe(hostId)?.displayOperationId ?? "?";
       key("2");
       await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(150);
-      const slot1Back = imgProbe(hostId)?.encodingId ?? "?";
+      const slot1Back = imgProbe(hostId)?.displayOperationId ?? "?";
       // HOME on slot0 → the stack adopts slot0's authored defaults (magma).
       key("1");
       await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(150);
       imgProbe(hostId)!.home();
       await sleep(250);
-      const slot0Home = imgProbe(hostId)?.encodingId ?? "?";
+      const slot0Home = imgProbe(hostId)?.displayOperationId ?? "?";
       key("2");
       await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(150);
-      const slot1AfterHome = imgProbe(hostId)?.encodingId ?? "?";
+      const slot1AfterHome = imgProbe(hostId)?.displayOperationId ?? "?";
       // EXIT stacked → grid layout: each pane reverts to its OWN authored defaults.
       clickGridMode(hostId, "grid");
       await waitFor(() => allImgProbes(hostId).length >= 2, 8000, 30);
       await sleep(250);
       const probes = allImgProbes(hostId);
-      const exit0 = probes[0]?.encodingId ?? "?";
-      const exit1 = probes[1]?.encodingId ?? "?";
+      const exit0 = probes[0]?.displayOperationId ?? "?";
+      const exit1 = probes[1]?.displayOperationId ?? "?";
       root.unmount();
       host.remove();
       (window as unknown as { __cairnDisableStackShared?: boolean }).__cairnDisableStackShared = false;
@@ -996,8 +996,8 @@ async function main(): Promise<void> {
       await waitFor(() => allImgProbes(hostId).length >= 2, 12000, 30);
       await sleep(200);
       const p = () => allImgProbes(hostId);
-      const seed0 = p()[0]?.encodingId ?? "?";
-      const seed1 = p()[1]?.encodingId ?? "?";
+      const seed0 = p()[0]?.displayOperationId ?? "?";
+      const seed1 = p()[1]?.displayOperationId ?? "?";
       // Form the page-wide selection: slot0 first ⇒ anchor. The anchor seeds the
       // group, so slot1 adopts slot0's magma on join (expected mirror behaviour).
       const ids = framePaneIds(hostId);
@@ -1007,20 +1007,20 @@ async function main(): Promise<void> {
       await sleep(300);
       // A pick on the anchor mirrors to the peer.
       p()[0]!.changeEncoding("turbo");
-      await waitFor(() => p()[1]?.encodingId === "turbo", 4000, 30);
-      const syncedPeer = p()[1]?.encodingId ?? "?";
+      await waitFor(() => p()[1]?.displayOperationId === "turbo", 4000, 30);
+      const syncedPeer = p()[1]?.displayOperationId ?? "?";
       // HOME the NON-ANCHOR peer (slot1): local — back to slot1's OWN authored default.
       p()[1]!.home();
       await sleep(250);
-      const homePeer1 = p()[1]?.encodingId ?? "?";
-      const homePeerKept0 = p()[0]?.encodingId ?? "?";
+      const homePeer1 = p()[1]?.displayOperationId ?? "?";
+      const homePeerKept0 = p()[0]?.displayOperationId ?? "?";
       // Re-sync, then HOME the ANCHOR (slot0): also local — back to slot0's magma.
       p()[0]!.changeEncoding("turbo");
-      await waitFor(() => p()[1]?.encodingId === "turbo", 4000, 30);
+      await waitFor(() => p()[1]?.displayOperationId === "turbo", 4000, 30);
       p()[0]!.home();
       await sleep(250);
-      const homeAnchor0 = p()[0]?.encodingId ?? "?";
-      const homeAnchorKept1 = p()[1]?.encodingId ?? "?";
+      const homeAnchor0 = p()[0]?.displayOperationId ?? "?";
+      const homeAnchorKept1 = p()[1]?.displayOperationId ?? "?";
       root.unmount();
       host.remove();
       __resetGlobalSelectionStoreForTest();

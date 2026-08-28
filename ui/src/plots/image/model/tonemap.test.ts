@@ -31,19 +31,19 @@ import {
   extendedOutputEncode,
   type RgbTriple,
 } from "./tonemap.ts";
-// The operator CURVE math now lives in the display-encoding registry (Phase 5).
+// The operator CURVE math now lives in the display-operation registry (Phase 5).
 // The peak-parameterized scalar curves are imported under their historical names;
 // the former `TONEMAP_OPERATORS` table + `getTonemapOperator` / peak-aware triple
 // dispatch are reconstructed here as thin REGISTRY ADAPTERS so these goldens keep
-// pinning the exact same math the panes/shaders run via `getEncoding(id).cpu`.
+// pinning the exact same math the panes/shaders run via `getDisplayOperation(id).cpu`.
 import {
-  getEncoding,
-  listEncodings,
+  getDisplayOperation,
+  listDisplayOperations,
   DEFAULT_ENCODE_PARAMS,
   extendedClampScalar as extendedClampCurve,
   extendedReinhardScalar as extendedReinhardCurve,
   extendedAcesScalar as extendedAcesCurve,
-} from "./encodings/index.ts";
+} from "./display-operations/index.ts";
 
 /** The plain SDR (non-HDR-surface), non-lut curve operators as `(rgb)=>rgb` —
  *  the CPU triple path's operator table, resolved from the registry (was
@@ -52,7 +52,7 @@ import {
  *  respects the ceiling on an HDR surface — the slider gates off the manifest),
  *  while only the extended-* entries require an HDR surface. */
 const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
-  listEncodings()
+  listDisplayOperations()
     .filter((e) => e.kind !== "lut" && !e.needsHdrSurface)
     .map((e) => [e.id, (rgb: RgbTriple): RgbTriple => e.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS)]),
 );
@@ -61,7 +61,7 @@ const getTonemapOperator = (name: string | undefined | null): ((rgb: RgbTriple) 
   (name && TONEMAP_OPERATORS[name]) || TONEMAP_OPERATORS.srgb!;
 /** Peak-aware operator dispatch (extended-* read `peak`; the rest ignore it). */
 const applyTonemapOperatorTriple = (rgb: RgbTriple, operator: string, peak: number): RgbTriple =>
-  (getEncoding(operator) ?? getEncoding("srgb")!).cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
+  (getDisplayOperation(operator) ?? getDisplayOperation("srgb")!).cpu(rgb, 3, { ...DEFAULT_ENCODE_PARAMS, peak });
 
 const approx = (a: number, b: number, eps = 1e-9) =>
   assert.ok(Math.abs(a - b) <= eps, `${a} !~= ${b}`);
@@ -169,7 +169,7 @@ test("extended·Linear is a pure pass-through; SDR operators clamp HDR into [0,1
   // resolve it straight from the registry.)
   const hi: RgbTriple = [8, 8, 8];
   const extendedOp = (rgb: RgbTriple): RgbTriple =>
-    getEncoding("extended")!.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
+    getDisplayOperation("extended")!.cpu(rgb, 3, DEFAULT_ENCODE_PARAMS);
   assert.deepEqual(extendedOp(hi), [8, 8, 8]); // unclamped, past 1.0
   const [ar, ag, ab] = TONEMAP_OPERATORS.aces!(hi);
   assert.ok(ar <= 1 && ag <= 1 && ab <= 1, "aces clamps to SDR range");

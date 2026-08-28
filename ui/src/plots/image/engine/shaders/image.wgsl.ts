@@ -161,7 +161,7 @@
  * the linear path (`sampleLutLinearF`) — both need only `textureLoad`'s
  * exact-texel semantics, no filterable-float sampler.
  */
-import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL } from "../../model/encodings/index.ts";
+import { buildTonemapCurvesWGSL, LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL } from "../../model/display-operations/index.ts";
 import { buildContentOpWGSL } from "../../model/content-ops/index.ts";
 
 export const imageWGSL = `
@@ -225,7 +225,7 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // feeds cairnReduceScalar (the ℝᵏ→scalar collapse) BEFORE cairnDataIndex. .z is a
 // scalar-MODE enum: 0 = LUT sample (table colormap), 1 = ANALYTIC signed-color
 // (tev red-green: cairnSignedAnalyticColor + shared output-encode, no LUT bind),
-// 2 = GRAY NONE (the plain-grayscale "none" DATA encoding: cairnDataIndex → scene-
+// 2 = LINEAR SCALAR (the linear scalar DATA encoding: cairnDataIndex → scene-
 // linear gray vec3 → shared output-encode; HDR-native, no LUT bind), 3 = TURBO
 // false-color (tev-exact: the bound turbo table sampled at cairnTurboDataIndex —
 // the FIXED log2 index BAKED into the encoding, bypassing cairnDataIndex's norm).
@@ -344,7 +344,7 @@ fn sampleBilinearB(uv: vec2<f32>, dims: vec2<f32>) -> vec4<f32> {
 ${LUT_FAMILY_WGSL}
 
 // The curve helper fns (reinhardCurve/acesCurve/extended*Curve) + the
-// operatorId-dispatched applyOperator are ASSEMBLED from the display-encoding
+// operatorId-dispatched applyOperator are ASSEMBLED from the display-operation
 // registry (image/encodings) — the single source of truth shared with the CPU
 // twins (image/tonemap.ts) and the compose path (kernels/prelude.wgsl.ts). Ids:
 // 0=linear, 1=srgb, 2=reinhard, 3=aces, 4=extended, 5=extended-reinhard,
@@ -482,7 +482,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let channelCount = i32(round(u_bind10.y));
     // u_bind10.z is a SCALAR-MODE enum, not a bare flag: 0 = LUT sample (table
     // colormap), 1 = ANALYTIC (computed signed color, tev red-green), 2 = GRAY
-    // NONE (the plain-grayscale "none" data encoding — scalar → data index →
+    // NONE (the linear scalar data encoding — scalar → data index →
     // scene-linear gray → shared output-encode, HDR-native), 3 = TURBO false-color
     // (tev-exact: the bound turbo table sampled at cairnTurboDataIndex, the FIXED
     // log2 index baked into the encoding). Kept an enum (not flags) so a fresh
@@ -523,7 +523,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     var idx = cairnDataIndex(scalar, normMode, u_bind9.y, u_bind9.z, boundsActive, gamma);
     if (scalarMode == 3) { idx = cairnTurboDataIndex(scalar); }
     if (scalarMode == 2) {
-      // GRAY NONE (the plain-grayscale "none" DATA encoding). A single-channel
+      // LINEAR SCALAR (the linear scalar DATA encoding). A single-channel
       // scalar is DATA, not light: it carries the SAME data index the LUT path
       // computes (cairnDataIndex — linear norm + no bounds = the RAW value passed
       // through UNCLAMPED; log/power/bounds map it to [0,1]), but its color is the

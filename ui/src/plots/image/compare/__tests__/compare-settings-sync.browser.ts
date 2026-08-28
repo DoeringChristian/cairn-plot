@@ -59,7 +59,7 @@ interface CompareSyncProbe {
   // Unified DISPLAY-encoding state (the compare-pane-on-DISPLAY follow-up): the
   // ONE derived encoding id. (The DATA-encoding norm getter/changeNorm were removed
   // with the norm picker — norm-UI-removal follow-up.)
-  encodingId: string;
+  displayOperationId: string;
   changeCompareMode: (m: "split" | "diff") => void;
   changeDiffKernel: (id: string) => void;
   changeColormap: (id: string) => void;
@@ -146,7 +146,7 @@ function frames(): HTMLElement[] {
 }
 /** The compare/diff probe within a pane frame — `__cairnImageDiffProbe`, exposed
  *  by the unified `GpuImagePane` in diff mode. It drives the compare surface
- *  (compareMode/diffKernel/colormap/encodingId/changeCompareMode/changeDiffKernel/
+ *  (compareMode/diffKernel/colormap/displayOperationId/changeCompareMode/changeDiffKernel/
  *  changeColormap/home) whichever lowering is live across a mode switch. */
 function probeOf(frame: HTMLElement | undefined): CompareSyncProbe | undefined {
   if (!frame) return undefined;
@@ -250,13 +250,13 @@ async function run(): Promise<boolean> {
   ok = ok && cmapOk;
   // The unified `encoding` key follows too (in diff+colormap the active encoding
   // IS the lut) — the compare-pane-on-DISPLAY follow-up carries ONE encoding id.
-  const encOk = await waitFor(() => B().encodingId === "magma", 8000, 25);
-  report(encOk, `ENCODING sync: B's derived encoding follows to magma (B.encodingId=${B().encodingId})`);
+  const encOk = await waitFor(() => B().displayOperationId === "magma", 8000, 25);
+  report(encOk, `ENCODING sync: B's derived encoding follows to magma (B.displayOperationId=${B().displayOperationId})`);
   ok = ok && encOk;
 
   // (The NORM sync step was removed — the norm Lin·Log·Pow picker is gone,
   // norm-UI-removal follow-up. The ENGINE norm parity cases live in the
-  // encoding-registry / compare-pass harnesses and stay.)
+  // display-operation-registry / compare-pass harnesses and stay.)
 
   // --- 5. back to split, then TONEMAP: srgb → aces (tonemap is split/blend) --
   A().changeCompareMode("split");

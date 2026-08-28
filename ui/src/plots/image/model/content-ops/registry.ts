@@ -2,10 +2,10 @@
  * CONTENT-OP REGISTRY — the single source of truth for the CONTENT stage of a
  * pane's frame `display_encode(operation(uv))`. An ImageOperation produces the k-channel
  * value at each texel from 1–2 source SLOTS; the DISPLAY stage (the
- * display-encoding registry — curves / LUTs / reduce / gray-none / output-encode)
+ * display-operation registry — curves / LUTs / reduce / linear scalar / output-encode)
  * then maps that content → RGB, UNCHANGED downstream. See
  * `docs/plans/2026-08-20-content-op-unification.md` (the authoritative design)
- * and `docs/plans/2026-08-18-display-encoding-registry.md` (the house pattern
+ * and `docs/plans/2026-08-18-display-operation-registry.md` (the house pattern
  * this registry mirrors).
  *
  * ## The house pattern (mirrors `image/encodings` + `engine/kernels`)

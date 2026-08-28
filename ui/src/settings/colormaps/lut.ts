@@ -146,7 +146,7 @@ export const COLORMAP_NAMES = Object.keys(COLORMAP_STOPS) as ColormapName[];
 /** Human labels for the colormap menu, keyed by name. `Record<ColormapName,…>`
  *  is exhaustive, so adding a colormap to `COLORMAP_STOPS` without a label here
  *  is a COMPILE error — labels can't silently fall out of sync with the set.
- *  Exported so the display-encoding LUT entries (`image/encodings/luts.ts`) label
+ *  Exported so the display-operation LUT entries (`image/encodings/luts.ts`) label
  *  themselves from the SAME map — the registry can't drift from the menu. */
 export const COLORMAP_LABELS: Record<ColormapName, string> = {
   plasma: "Plasma",

@@ -16,7 +16,7 @@
  * `cpu` mirrors the GPU family for the FLOAT-image path (cmap-mode `linear`, the
  * sequential full ramp): clamp the (exposure/offset-adjusted) scalar to `[0,1]`,
  * round to a LUT row, read the DISPLAY (sRGB) color — the exact bytes the GPU
- * family samples and writes to the surface unchanged. The `encoding-registry`
+ * family samples and writes to the surface unchanged. The `display-operation-registry`
  * parity harness renders a scalar float image through the image pass with each
  * colormap's table bound and compares to this twin.
  *
@@ -28,7 +28,7 @@
  * the `cpu` twin threads the scalar through `computeDataIndex` before the LUT.
  */
 import {
-  registerEncoding,
+  registerDisplayOperation,
   clamp01,
   computeDataIndex,
   reduceToScalar,
@@ -127,7 +127,7 @@ function analyticCpu(): DisplayOperation["cpu"] {
 }
 
 /** The colormaps as registry encodings, in `COLORMAP_NAMES` (canonical) order so
- *  `listEncodingsByKind("lut")` matches the colormap menu order. `red-green` is
+ *  `listDisplayOperationsByKind("lut")` matches the colormap menu order. `red-green` is
  *  the ANALYTIC entry (computed, no LUT bind); the rest are table-backed LUTs. */
 export const LUT_ENCODINGS: DisplayOperation[] = COLORMAP_NAMES.map((name, i) =>
   TURBO_LUT_IDS.has(name)
@@ -192,5 +192,5 @@ let registered = false;
 export function registerLutEncodings(): void {
   if (registered) return;
   registered = true;
-  for (const e of LUT_ENCODINGS) registerEncoding(e);
+  for (const e of LUT_ENCODINGS) registerDisplayOperation(e);
 }

@@ -40,13 +40,13 @@ import type { ToolbarConfig, ToolbarButtonSpec } from "../../../primitives/contr
 import { adaptiveMaxZoom, type ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
-import { getEncoding } from "../model/encodings/index";
+import { getDisplayOperation } from "../model/display-operations/index";
 import { SDR_DISPLAY_TRANSFER_OPERATORS } from "../model/tonemap";
 
 /** The registry label for an encoding id, falling back to the id itself. Both the
  *  tone-map and display-transfer menus source their labels from here so they can
  *  never drift from the registry entries (the label lives on the entry). */
-const encodingLabel = (id: string): string => getEncoding(id)?.label ?? id;
+const encodingLabel = (id: string): string => getDisplayOperation(id)?.label ?? id;
 
 /** Per-button click factor for the toolbar's +/- zoom (coarser than the
  *  1.1 wheel step so a single click makes a visible jump). */

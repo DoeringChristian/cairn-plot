@@ -1,7 +1,7 @@
 /**
  * Shared WGSL prelude for the diff-kernel registry (spec §registry). Written
  * once, composed (string-concatenated) with each kernel's own source to form a
- * single shader module per kernel — see `kernel-registry.ts` /
+ * single shader module per multipass image operation — see `operation-pass.ts` /
  * `../diff-engine.ts`. Split into named fragments so each kernel/pass includes
  * only what it needs; there is NO runtime mode branching anywhere in here.
  *
@@ -20,7 +20,7 @@
  *     passed as uniforms), so no filter-coefficient buffer plumbing is needed.
  */
 
-import { buildTonemapCurvesWGSL } from "../../model/encodings/index.ts";
+import { buildTonemapCurvesWGSL } from "../../model/display-operations/index.ts";
 
 export const VERTEX_WGSL = `
 struct VSOut {
@@ -164,7 +164,7 @@ fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
 }
 
 // The curve helper fns + operatorId-dispatched applyOperator are ASSEMBLED from
-// the display-encoding registry (image/encodings) — the SAME source the
+// the display-operation registry (image/encodings) — the SAME source the
 // single-image shader (image.wgsl.ts) and the CPU twins (image/tonemap.ts) use,
 // so the compose path tone-maps byte-identically. remaps:false reproduces the
 // pre-registry compose behavior exactly: operatorId 9 (normal) has NO branch
