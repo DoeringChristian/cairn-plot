@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { claimPlotKind } from "../kind-ownership.ts";
 import { clearPlotTypesForTest, planComparison, requirePlotType } from "../registry.ts";
 import { clearReactPlotTypesForTest, getReactPlotType } from "../react-registry.ts";
 import { ensureImagePlotType, imagePresentation } from "./register.ts";
@@ -37,8 +36,6 @@ test("image is exclusively owned by the typed plot registry", () => {
       a: { kind: "image", hash: "a" },
       b: { kind: "npz", hash: "mesh", objectType: "mesh", meta: {} },
     }), /does not accept data kind/);
-  assert.throws(() => claimPlotKind("image", "legacy-renderer"), /already owned by definition/);
-
   const expanded = expandImageComparison({
     kind: "compare",
     renderer: "image",

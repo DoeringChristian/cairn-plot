@@ -7,7 +7,7 @@
  *
  * It bundles `three` (~600K) + the 3D standalone adapters, then registers them
  * into the already-installed core bootstrap via
- * `window.__cairnPlotRegisterRenderer(name, …)`. `react` + `react/jsx-runtime`
+ * `window.__cairnPlotRegisterBackends(name, …)`. `react` + `react/jsx-runtime`
  * are EXTERNAL and mapped to core's `window.__cairnPlotReact` /
  * `__cairnPlotJsxRuntime`, so the addon reuses core's single React copy
  * (required for hooks — see `plot-core-main.tsx` / the figure addon). This is

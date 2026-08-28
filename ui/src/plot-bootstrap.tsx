@@ -22,7 +22,7 @@
  * `SharedPlotContext` (see plot-node.tsx). The former flat single-renderer body
  * lives on there as `LeafView`.
  */
-import React, { useEffect, useRef, type ComponentType } from "react";
+import React, { useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import {
   createEndpointDataSource,
@@ -36,7 +36,7 @@ import {
 } from "./lib/cairn-plot";
 import { useEmitAutoHeight } from "./lib/cairn-plot/hooks/use-emit-auto-height";
 import { type PlotDescriptor } from "./plot-descriptor";
-import { registerRenderer, getRenderer } from "./plot-registry";
+import { getReactPlotType } from "./plots/react-registry.ts";
 import { PlotSurface } from "./plot-surface.tsx";
 import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
 import { registerReactPlotBackends } from "./plots/react-registry.ts";
@@ -56,12 +56,11 @@ declare global {
      * addon IIFE (which cannot `import` from core) can add its renderer by name
      * at runtime. GENERIC: figure today, three.js 3D in Phase D — same hook.
      */
-    __cairnPlotRegisterRenderer?: (name: string, component: ComponentType<any>) => void;
     /** Addon → core seam for typed plot backends. Definitions remain in core. */
     __cairnPlotRegisterBackends?: (kind: string, backends: readonly unknown[]) => void;
     /**
      * Whether a renderer name is registered — the read companion to
-     * `__cairnPlotRegisterRenderer`. The JS builder's 3D gate consults it to tell
+     * the typed backend registry. The JS builder's 3D gate consults it to tell
      * "three.js addon loaded" from "missing" without importing the registry
      * module (keeps the builder DOM/`.tsx`-free).
      */
@@ -266,14 +265,13 @@ export function installCairnPlotBootstrap(): void {
   window.__cairnPlotBootstrap = mountOne;
   // Expose the addon → core seam BEFORE marking the bundle loaded, so an addon
   // IIFE (emitted after core) can always find it (O2 / generic for Phase D).
-  window.__cairnPlotRegisterRenderer = registerRenderer;
   window.__cairnPlotRegisterBackends = (kind, backends) => {
     registerReactPlotBackends(
       kind,
       backends as Parameters<typeof registerReactPlotBackends>[1],
     );
   };
-  window.__cairnPlotHasRenderer = (name: string) => getRenderer(name) !== undefined;
+  window.__cairnPlotHasRenderer = (name: string) => !!getReactPlotType(name)?.backends.length;
   // Install the JS builder surface (`window.cairnPlot`) + its mount runtime, so
   // an HTML page can author plots entirely in JavaScript the moment core loads.
   installCairnPlotApi();

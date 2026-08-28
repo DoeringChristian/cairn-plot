@@ -10,7 +10,6 @@
  * `*Standalone` adapters in the registry).
  */
 import React, {
-  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -32,7 +31,6 @@ import {
   type PlotLeafNode,
   type PlotNode,
 } from "./plot-descriptor";
-import { getRenderer, onRegister } from "./plot-registry";
 import { stackLabelFor } from "./layout/stack/StackedView";
 import { InStackedGridContext } from "./layout/stack/stack-context";
 import FullscreenOverlayShell, { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
@@ -393,20 +391,18 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // surface a bounded "unknown renderer" error.
   const typedRegistration = getReactPlotType(node.renderer);
   const rendererMissing = status === "ready" &&
-    (!typedRegistration || typedRegistration.backends.length === 0) &&
-    !getRenderer(node.renderer);
+    (!typedRegistration || typedRegistration.backends.length === 0);
   useEffect(() => {
-    if (status !== "ready" || getReactPlotType(node.renderer)?.backends.length || getRenderer(node.renderer)) return;
+    if (status !== "ready" || getReactPlotType(node.renderer)?.backends.length) return;
     const name = node.renderer;
     let settled = false;
     const registered = () => {
-      if (!settled && (getReactPlotType(name)?.backends.length || getRenderer(name))) {
+      if (!settled && getReactPlotType(name)?.backends.length) {
         settled = true;
         setRendererError(null); // renderer arrived → clear any prior timeout error
         bumpRegistry((n) => n + 1);
       }
     };
-    const unsubLegacy = onRegister(registered);
     const unsubTyped = onRegisterReactPlotType(registered);
     const timer = setTimeout(() => {
       if (!settled) {
@@ -416,7 +412,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     }, RENDERER_WAIT_MS);
     return () => {
       settled = true;
-      unsubLegacy();
       unsubTyped();
       clearTimeout(timer);
     };
@@ -446,7 +441,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   if (status === "error") {
     return placeholderInShell(<Message text={`Plot error: ${errorMsg ?? "unknown"}`} error />);
   }
-  const Renderer = getRenderer(node.renderer);
   const registered = getReactPlotType(node.renderer);
   if (registered?.backends.length) {
     const settings = registered.definition.projectSettings(
@@ -466,13 +460,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       />
     );
   }
-  return Renderer ? (
-    <Suspense fallback={<Message text="Loading renderer…" />}>
-      <Renderer {...mergedProps} />
-    </Suspense>
-  ) : (
-    <Message text="Loading renderer…" />
-  );
+  return <Message text="Loading renderer…" />;
 }
 
 

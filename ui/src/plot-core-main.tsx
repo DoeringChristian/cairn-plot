@@ -15,8 +15,8 @@
  *     dispatcher would be null at render time → "Invalid hook call". The addon
  *     builds mark `react` + `react/jsx-runtime` as external mapped to these
  *     globals (see `vite.plot-figure.config.ts`).
- *  2. Expose `window.__cairnPlotRegisterRenderer` (done inside
- *     `installCairnPlotBootstrap`) so addons register by name at runtime.
+ *  2. Expose the typed backend registration hook (inside
+ *     `installCairnPlotBootstrap`) so addons install implementations at runtime.
  *
  * The globals are set BEFORE any addon can run (Python emits the addon
  * `<script>` after this core `<script>`, and IIFE execution is synchronous).

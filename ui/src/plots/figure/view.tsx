@@ -15,10 +15,16 @@
  * than `plot-renderers`, so importing this module does NOT drag the 2D
  * renderers into the addon bundle.
  */
-import Figure from "./lib/cairn-plot/renderers/Figure";
-import { ChartBox } from "./plot-standalone-helpers";
+import Figure from "../../lib/cairn-plot/renderers/Figure";
+import type { FigureInteractionSettings } from "../../lib/cairn-plot/renderers/Figure";
+import type { PlotlyFigureLike } from "../../lib/cairn-plot/types.ts";
+import { ChartBox } from "../../plot-standalone-helpers";
 
-type P = Record<string, any>;
+export interface FigurePresentation extends Record<string, unknown> {
+  readonly figure?: PlotlyFigureLike;
+  readonly settings?: Partial<FigureInteractionSettings>;
+  readonly height?: number;
+}
 
 const DEFAULT_FIGURE_SETTINGS = {
   displayModeBar: true,
@@ -28,7 +34,7 @@ const DEFAULT_FIGURE_SETTINGS = {
   showLegend: true,
 };
 
-export function FigureStandalone(p: P) {
+export function FigureStandalone(p: FigurePresentation) {
   const { height, figure, settings, ...rest } = p;
   return (
     <ChartBox height={height}>

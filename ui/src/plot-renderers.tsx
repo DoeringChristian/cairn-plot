@@ -17,6 +17,7 @@ import { ScatterPlotView } from "./plots/scatter/view.tsx";
 import { ensureTablePlotType } from "./plots/table/register.ts";
 import { TablePlotView } from "./plots/table/view.tsx";
 import { ensureThreePlotTypes } from "./plots/three/register.ts";
+import { ensureFigurePlotType } from "./plots/figure/register.ts";
 
 export function registerCoreRenderers(): void {
   ensureImagePlotType(ImagePlotView, resolveDataProps);
@@ -28,4 +29,5 @@ export function registerCoreRenderers(): void {
   ensureParallelPlotType(ParallelPlotView, resolveDataProps);
   ensureTablePlotType(TablePlotView, resolveDataProps);
   ensureThreePlotTypes(resolveDataProps);
+  ensureFigurePlotType(resolveDataProps);
 }
