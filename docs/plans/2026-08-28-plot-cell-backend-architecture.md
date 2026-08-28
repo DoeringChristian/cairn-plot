@@ -82,6 +82,10 @@ Status: accepted design; implementation in progress
   make the table renderer controlled and migrate table presentation validation.
   With every core plot definition migrated, delete the empty legacy core
   renderer map and registration loop. The old registry remains addon-only.
+- [x] Move core chart/table React host adapters beside their plot definitions
+  and extract their shared chart-settings boundary. The central compatibility
+  renderer module no longer imports or implements scatter, bar, histogram,
+  heatmap, parallel-coordinate, or table hosts.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

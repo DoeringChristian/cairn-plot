@@ -29,23 +29,15 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
-  type ReactNode,
 } from "react";
 import ScalarPlot from "./lib/cairn-plot/renderers/ScalarPlot";
-import ScatterPlot from "./lib/cairn-plot/renderers/ScatterPlot";
-import ParallelCoords from "./lib/cairn-plot/renderers/ParallelCoords";
-import BarChart from "./lib/cairn-plot/renderers/BarChart";
-import HistogramPlot from "./lib/cairn-plot/renderers/HistogramPlot";
 import { ensureBarPlotType } from "./plots/bar/register";
 import { ensureHistogramPlotType } from "./plots/histogram/register";
 import { ensureHeatmapPlotType } from "./plots/heatmap/register";
 import { ensureParallelPlotType } from "./plots/parallel/register";
-import { ensureTablePlotType, type TableSettings } from "./plots/table/register";
-import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
+import { ensureTablePlotType } from "./plots/table/register";
 import CpuImagePane from "./lib/cairn-plot/renderers/CpuImagePane";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
 import {
@@ -60,13 +52,8 @@ import {
   type RenderMode,
 } from "./lib/cairn-plot/renderers/image-backend";
 import { warnGpuUnavailable } from "./lib/cairn-plot/primitives/capability-notice";
-import Table from "./lib/cairn-plot/renderers/Table";
 import type { Viewport, PromotedSeriesConfig } from "./lib/cairn-plot/types";
 import { useImageView } from "./lib/cairn-plot/settings/use-image-view";
-import {
-  ChartViewportSyncProvider,
-  type ChartViewportSyncTarget,
-} from "./lib/cairn-plot/chart/use-chart-viewport";
 import type { ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings.ts";
 import { ChartBox, ChartFillContext, DEFAULT_CHART_HEIGHT } from "./plot-standalone-helpers";
 import { ContentAspectFrame } from "./lib/cairn-plot/renderers/ContentAspectFrame";
@@ -78,6 +65,12 @@ import {
 import { ensureImagePlotType } from "./plots/image/register.ts";
 import { ensureScalarPlotType } from "./plots/scalar/register.ts";
 import { ensureScatterPlotType } from "./plots/scatter/register.ts";
+import { BarPlotView } from "./plots/bar/view.tsx";
+import { HeatmapPlotView } from "./plots/heatmap/view.tsx";
+import { HistogramPlotView } from "./plots/histogram/view.tsx";
+import { ParallelPlotView } from "./plots/parallel/view.tsx";
+import { ScatterPlotView } from "./plots/scatter/view.tsx";
+import { TablePlotView } from "./plots/table/view.tsx";
 import { resolveDataProps } from "./plot-descriptor.ts";
 
 /** Loose prop bag — resolved data props + descriptor config, unified. */
@@ -228,93 +221,6 @@ function ScalarPlotStandalone(p: P) {
   );
 }
 
-/**
- * Hands the FRAME's settings handle to every `useChartViewport` in the
- * subtree (unified-viewport model): the chart's domain lives in the frame's
- * ONE `ViewportSettings` object (`chart.domainX`/`chart.domainY`), gestures
- * write through the frame's `set` (fanning to the viewport's groups exactly
- * like an image pick), and peer patches arrive because the frame absorbs
- * them — no bus, no echo guard, no per-instance source id. A leaf without a
- * frame handle (bare standalone mount) is a transparent pass-through: the
- * hook keeps its own local state.
- */
-function ChartSyncBoundary({
-  settings,
-  set,
-  children,
-}: {
-  settings: ViewportSettings | null | undefined;
-  set: ((patch: ViewportSettings) => void) | undefined;
-  children: ReactNode;
-}) {
-  const setRef = useRef(set);
-  setRef.current = set;
-  const stableSet = useCallback((patch: ViewportSettings) => setRef.current?.(patch), []);
-  const sync = useMemo<ChartViewportSyncTarget | null>(
-    () => (set ? { settings, set: stableSet } : null),
-    [settings, set, stableSet],
-  );
-  return <ChartViewportSyncProvider value={sync}>{children}</ChartViewportSyncProvider>;
-}
-
-function ScatterPlotStandalone(p: P) {
-  const { height, ...rest } = p;
-  return (
-    <ChartBox height={height}>
-      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
-        <ScatterPlot points={p.points ?? []} {...rest} />
-      </ChartSyncBoundary>
-    </ChartBox>
-  );
-}
-
-function ParallelCoordsStandalone(p: P) {
-  const { height, ...rest } = p;
-  return (
-    <ChartBox height={height}>
-      <ParallelCoords
-        columns={p.columns ?? []}
-        rows={p.rows ?? []}
-        columnDomains={p.columnDomains ?? []}
-        {...rest}
-      />
-    </ChartBox>
-  );
-}
-
-function BarChartStandalone(p: P) {
-  const { height, ...rest } = p;
-  return (
-    <ChartBox height={height}>
-      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
-        <BarChart bars={p.bars ?? []} {...rest} />
-      </ChartSyncBoundary>
-    </ChartBox>
-  );
-}
-
-function HistogramStandalone(p: P) {
-  const { height, ...rest } = p;
-  return (
-    <ChartBox height={height}>
-      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
-        <HistogramPlot {...(rest as React.ComponentProps<typeof HistogramPlot>)} />
-      </ChartSyncBoundary>
-    </ChartBox>
-  );
-}
-
-function HeatmapStandalone(p: P) {
-  const { height, ...rest } = p;
-  return (
-    <ChartBox height={height}>
-      <ChartSyncBoundary settings={p.syncedSettings} set={p.setSyncedSettings}>
-        <Heatmap matrix={p.matrix ?? []} colormap={p.colormap ?? "turbo"} {...rest} />
-      </ChartSyncBoundary>
-    </ChartBox>
-  );
-}
-
 // `useImageView` (the pane viewport ↔ selection-group sync hook) now
 // lives in `renderers/use-image-view.ts` so both this module's
 // `ImageStandalone` and `plot-node.tsx`'s `CompareView` drive it from ONE
@@ -432,38 +338,14 @@ export function ImageStandalone(p: P) {
   );
 }
 
-function TableStandalone(p: P) {
-  const settings = (p.syncedSettings ?? {}) as TableSettings;
-  const patch = p.setSyncedSettings as ((patch: TableSettings) => void) | undefined;
-  return (
-    <Table
-      table={p.table ?? { columns: [], data: [] }}
-      rowsPerPage={p.rowsPerPage ?? 20}
-      hiddenColumns={p.hiddenColumns ?? []}
-      diffStatuses={p.diffStatuses}
-      invertDiff={p.invertDiff}
-      state={{
-        sort: settings["table.sort"] ?? null,
-        filter: settings["table.filter"] ?? "",
-        page: settings["table.page"] ?? 0,
-      }}
-      onStateChange={(state) => patch?.({
-        "table.sort": state.sort,
-        "table.filter": state.filter,
-        "table.page": state.page,
-      })}
-    />
-  );
-}
-
 /** Seed the typed runtime registry with every always-present core plot. */
 export function registerCoreRenderers(): void {
   ensureImagePlotType(ImageStandalone, resolveDataProps);
   ensureScalarPlotType(ScalarPlotStandalone, resolveDataProps);
-  ensureScatterPlotType(ScatterPlotStandalone, resolveDataProps);
-  ensureBarPlotType(BarChartStandalone, resolveDataProps);
-  ensureHistogramPlotType(HistogramStandalone, resolveDataProps);
-  ensureHeatmapPlotType(HeatmapStandalone, resolveDataProps);
-  ensureParallelPlotType(ParallelCoordsStandalone, resolveDataProps);
-  ensureTablePlotType(TableStandalone, resolveDataProps);
+  ensureScatterPlotType(ScatterPlotView, resolveDataProps);
+  ensureBarPlotType(BarPlotView, resolveDataProps);
+  ensureHistogramPlotType(HistogramPlotView, resolveDataProps);
+  ensureHeatmapPlotType(HeatmapPlotView, resolveDataProps);
+  ensureParallelPlotType(ParallelPlotView, resolveDataProps);
+  ensureTablePlotType(TablePlotView, resolveDataProps);
 }
