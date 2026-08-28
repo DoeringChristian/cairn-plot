@@ -57,10 +57,10 @@ const CONSUMERS = [
   "media-compare/compositor.tsx",
   "renderers/GpuImagePane.tsx",
   "renderers/CpuImagePane.tsx",
-  "host/mesh-viewport.tsx",
-  "host/pointcloud-viewport.tsx",
-  "host/boxes-viewport.tsx",
-  "host/volume-viewport.tsx",
+  "../../plots/three/viewports/mesh.tsx",
+  "../../plots/three/viewports/pointcloud.tsx",
+  "../../plots/three/viewports/boxes.tsx",
+  "../../plots/three/viewports/volume.tsx",
 ];
 
 test("every compare pane renders the shared RefBadge (no divergent REF chip)", () => {

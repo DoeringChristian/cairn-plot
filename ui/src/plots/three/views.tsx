@@ -19,10 +19,10 @@
  * (resolved through each viewport's `resolve*ViewConfig`), with any field
  * overridable via the descriptor's `props`.
  */
-import { PointCloudSingleView, type PointCloudViewportItem } from "../../lib/cairn-plot/host/pointcloud-viewport";
-import { MeshSingleView, type MeshViewportItem } from "../../lib/cairn-plot/host/mesh-viewport";
-import { VolumeSingleView, type VolumeViewportItem } from "../../lib/cairn-plot/host/volume-viewport";
-import { BoxesSingleView, type BoxesViewportItem } from "../../lib/cairn-plot/host/boxes-viewport";
+import { PointCloudSingleView, type PointCloudViewportItem } from "../../plots/three/viewports/pointcloud";
+import { MeshSingleView, type MeshViewportItem } from "../../plots/three/viewports/mesh";
+import { VolumeSingleView, type VolumeViewportItem } from "../../plots/three/viewports/volume";
+import { BoxesSingleView, type BoxesViewportItem } from "../../plots/three/viewports/boxes";
 import { ChartBox } from "../../plot-standalone-helpers";
 
 /** The standalone default view config for a point cloud. `colorMode:"auto"`

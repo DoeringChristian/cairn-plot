@@ -29,10 +29,10 @@ const LIB = join(HERE, ".."); // src/lib/cairn-plot
 const read = (rel: string) => readFileSync(join(LIB, rel), "utf8");
 
 const VIEWPORTS = [
-  "host/mesh-viewport.tsx",
-  "host/pointcloud-viewport.tsx",
-  "host/boxes-viewport.tsx",
-  "host/volume-viewport.tsx",
+  "../../plots/three/viewports/mesh.tsx",
+  "../../plots/three/viewports/pointcloud.tsx",
+  "../../plots/three/viewports/boxes.tsx",
+  "../../plots/three/viewports/volume.tsx",
 ];
 
 test("ViewportCaption: single-owner caption class contract", () => {
