@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { useContainerSize } from "../../host/hooks/use-container-size";
+import { useContainerSize } from "../../../host/hooks/use-container-size";
 import {
   createCameraSettingsPeer,
   type CameraSettingsPeer,
   type CameraState,
 } from "./camera-settings";
-import { poolAcquire, poolRelease, poolTouch } from "./context-pool";
-import { recordContextLossEvent } from "../../plots/image/engine/test-hooks";
+import { poolAcquire, poolRelease, poolTouch } from "../../../engines/three/context-pool";
+import { recordContextLossEvent } from "../../image/engine/test-hooks";
 
 /**
  * How long (ms) a viewer sits idle — no orbit/zoom, no data/color/size

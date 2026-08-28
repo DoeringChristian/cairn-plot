@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "./use-scene3d";
-import { Scene3DCanvas } from "./Scene3DCanvas";
-import { valuesToColors, packRgbColors } from "./value-colors";
+import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "../runtime/use-scene3d";
+import { Scene3DCanvas } from "../runtime/Scene3DCanvas";
+import { valuesToColors, packRgbColors } from "../model/value-colors";
 
 export type MeshColorMode = "solid" | "vertex-colors" | "face-colors" | "values";
 export type MeshShading = "flat" | "smooth";

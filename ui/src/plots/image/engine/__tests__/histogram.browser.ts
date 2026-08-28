@@ -21,7 +21,7 @@
  *      zMin/zMax; an all-non-finite-Z CSR yields null.
  */
 import { getSharedDevice } from "../device";
-import type { Device, Texture, DeepGpuCsrSpec } from "../types";
+import type { Device, Texture, DeepGpuCsrSpec } from "../../../../engines/webgpu/types";
 import {
   computeTevHistograms,
   resolveHistogramSeries,

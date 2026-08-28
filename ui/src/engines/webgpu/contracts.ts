@@ -2,7 +2,7 @@ import type {
   Capabilities,
   Device,
   Surface,
-} from "../../plots/image/engine/types.ts";
+} from "./types.ts";
 import type { WebGpuRhi } from "./rhi.ts";
 
 export interface WebGpuSurfaceOptions {

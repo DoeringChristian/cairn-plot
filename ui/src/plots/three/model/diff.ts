@@ -19,7 +19,7 @@
  */
 
 import { valuesToColors } from "./value-colors";
-import type { ColormapName } from "../../plots/types";
+import type { ColormapName } from "../../types";
 
 /** The two native-diff-mode colormaps every 3D type's diff modes offer. */
 export type DiffColormap = Extract<ColormapName, "red-green" | "turbo">;

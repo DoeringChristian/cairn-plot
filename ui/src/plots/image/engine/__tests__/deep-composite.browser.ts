@@ -36,7 +36,7 @@
  */
 import { getSharedDevice } from "../device";
 import { loadExrDecoder } from "../../model/decoders/wasm-inline/wasm-exr-inline";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const TRUNKS_URL = "https://raw.githubusercontent.com/AcademySoftwareFoundation/openexr-images/main/v2/Stereo/Trunks.exr";

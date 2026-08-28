@@ -54,7 +54,7 @@
 import { getSharedDevice } from "../device";
 import { renderImage, type ImageParams } from "../image-engine";
 import { extendedSrgbOetf, srgbEotf } from "../../model/tonemap";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "HDR OUTPUT", resultFlag: "__hdrOutputTestResult" });

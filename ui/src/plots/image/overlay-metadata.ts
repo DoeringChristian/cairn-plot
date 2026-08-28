@@ -1,5 +1,5 @@
 /** Parse Cairn-compatible image annotation metadata without host dependencies. */
-import type { ImageOverlayData, OverlayMask } from "../../plots/types";
+import type { ImageOverlayData, OverlayMask } from "../types";
 
 export function parseOverlay(
   raw: string | null | undefined,

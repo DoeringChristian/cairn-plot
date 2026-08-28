@@ -27,7 +27,7 @@ import { getDiffKernel } from "../kernels/index";
 import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/encodings/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/index";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "COMPARE PASS", resultFlag: "__comparePassTestResult" });

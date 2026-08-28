@@ -18,7 +18,7 @@
  * and the toolbar menu use (e.g. `absolute` → `abs`); `id` is the internal
  * kernel id also carried by the descriptor's `diffSubmode`.
  */
-import type { BindGroupEntry } from "../types";
+import type { BindGroupEntry } from "../../../../engines/webgpu/types";
 
 /** How the display blit maps a raw result value → [0,1] before the colormap. */
 export type DisplayRange = "unit" | "signed" | "relative";

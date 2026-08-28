@@ -51,7 +51,7 @@ export {
   type PointSizeMode,
   type PointCloudBackground,
   type PointCloudBounds,
-} from "../../../engines/three/PointCloudViewer";
+} from "../../three/renderers/PointCloudViewer";
 export {
   default as Table,
   type TableProps,

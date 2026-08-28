@@ -2,10 +2,10 @@ import VolumeViewer, {
   type VolumeBackground,
   type VolumeQuality,
   type VolumeRenderMode,
-} from "../../../engines/three/VolumeViewer";
-import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../../../engines/three/use-scene3d";
-import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../../../engines/three/diff";
-import type { PropertyMeta } from "../../../engines/three/properties";
+} from "../renderers/VolumeViewer";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../runtime/use-scene3d";
+import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../model/diff";
+import type { PropertyMeta } from "../model/properties";
 import { LabelChip, RefBadge, ViewportCaption } from "../../../primitives/components/index";
 import ViewportPlaceholder from "../../../integration/cairn-card/ViewportPlaceholder";
 import type { ColormapName } from "../../types";

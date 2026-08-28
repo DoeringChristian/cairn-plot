@@ -36,7 +36,7 @@ import {
 } from "../../model/encodings/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../settings/colormaps/lut";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "ENCODING REGISTRY" });

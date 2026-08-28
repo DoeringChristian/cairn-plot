@@ -1,7 +1,7 @@
-import type { ColormapName } from "../../plots/types";
-import { getColormapLUT } from "../../settings/colormaps/index";
-import { lutRow, normToT } from "../../settings/colormaps/lut-sample";
-import { SERIES_COLORS } from "../../plots/types";
+import type { ColormapName } from "../../types";
+import { getColormapLUT } from "../../../settings/colormaps/index";
+import { lutRow, normToT } from "../../../settings/colormaps/lut-sample";
+import { SERIES_COLORS } from "../../types";
 
 /** Options shared by the strided color helpers below. */
 export interface StridedColorOptions {

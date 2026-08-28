@@ -3,8 +3,8 @@ import MeshViewer, {
   type MeshBackground,
   type MeshColorMode,
   type MeshShading,
-} from "../../../engines/three/MeshViewer";
-import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../../../engines/three/use-scene3d";
+} from "../renderers/MeshViewer";
+import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../runtime/use-scene3d";
 import {
   computeDelta,
   computeDisplacementMagnitude,
@@ -12,12 +12,12 @@ import {
   diffDomain,
   unionDiffDomain,
   type DiffColormap,
-} from "../../../engines/three/diff";
+} from "../model/diff";
 import {
   resolveActiveProperty,
   type PropertyMap,
   type PropertyMeta,
-} from "../../../engines/three/properties";
+} from "../model/properties";
 import { LabelChip, RefBadge, ViewportCaption } from "../../../primitives/components/index";
 import ViewportPlaceholder from "../../../integration/cairn-card/ViewportPlaceholder";
 import type { ColormapName } from "../../types";

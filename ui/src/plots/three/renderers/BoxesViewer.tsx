@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "./use-scene3d";
-import { Scene3DCanvas } from "./Scene3DCanvas";
-import { valuesToColors } from "./value-colors";
+import { useScene3D, type Scene3DCameraMode, type Scene3DSyncOptions } from "../runtime/use-scene3d";
+import { Scene3DCanvas } from "../runtime/Scene3DCanvas";
+import { valuesToColors } from "../model/value-colors";
 
 export type BoxesColorMode = "depth" | "value" | "solid";
 export type BoxesBackground = "dark" | "light";

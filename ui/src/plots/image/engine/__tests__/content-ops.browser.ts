@@ -34,7 +34,7 @@ import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../settings/colormaps/lut";
 import { DEFAULT_DIFF_COLORMAP } from "../kernels/index";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "CONTENT OPS" });

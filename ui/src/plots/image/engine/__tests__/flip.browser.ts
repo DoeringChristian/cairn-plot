@@ -22,7 +22,7 @@
 import { getSharedDevice } from "../device";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { flipLDR } from "../kernels/flip-reference";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "FLIP", resultFlag: "__flipTestResult" });

@@ -18,7 +18,7 @@ import {
   getReduceProgram,
 } from "../reduce/registry";
 import { meanSsimFromErrorMap } from "../ssim-metric";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "REDUCE" });

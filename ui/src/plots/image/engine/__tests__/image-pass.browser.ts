@@ -74,7 +74,7 @@ import {
 } from "../../model/tonemap";
 import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index";
 import { buildLUT, COLORMAP_STOPS } from "../../../../settings/colormaps/lut";
-import type { Device, Texture } from "../types";
+import type { Device, Texture } from "../../../../engines/webgpu/types";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "IMAGE PASS", resultFlag: "__imagePassTestResult" });

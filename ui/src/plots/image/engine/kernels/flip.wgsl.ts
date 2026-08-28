@@ -29,7 +29,7 @@
 import { VERTEX_WGSL, FLIP_COLOR_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
 import { FLIP_CMAX } from "./flip-reference.ts";
 import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
-import type { BindGroupEntry } from "../types";
+import type { BindGroupEntry } from "../../../../engines/webgpu/types";
 
 const GW = 0.082;
 

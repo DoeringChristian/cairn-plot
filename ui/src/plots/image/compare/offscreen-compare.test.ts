@@ -55,7 +55,7 @@ test("OffscreenComparePanes stays app-agnostic", () => {
   // concrete app viewer or api client. The reusable Three engine is allowed.
   assert.doesNotMatch(offscreen, /@cairn-plot\//, "no self-referential package import");
   assert.doesNotMatch(offscreen, /components\/|api\//, "no app-layer import");
-  assert.match(offscreen, /engines\/three/, "camera machinery comes from the Three engine");
+  assert.match(offscreen, /three\/runtime/, "camera behavior comes from the Three plot runtime");
   assert.match(offscreen, /render:\s*\(/, "the live side is a caller-supplied render callback");
 });
 

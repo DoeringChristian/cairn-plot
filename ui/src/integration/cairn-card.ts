@@ -24,7 +24,7 @@ export type {
   BindGroup,
   Surface,
   Device,
-} from "../plots/image/engine/types";
+} from "../engines/webgpu/types";
 
 // Types
 export type {

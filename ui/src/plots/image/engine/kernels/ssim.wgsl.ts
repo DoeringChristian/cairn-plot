@@ -40,7 +40,7 @@
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
 import { SSIM_K1, SSIM_K2, SSIM_L, SSIM_SIGMA, SSIM_RADIUS } from "./ssim-reference.ts";
 import type { MultipassKernel, KernelPass, KernelBuildCtx } from "./kernel-registry";
-import type { BindGroupEntry } from "../types";
+import type { BindGroupEntry } from "../../../../engines/webgpu/types";
 
 // Shared luminance front-end (matches ssim-reference.ts's ssimLuminance).
 const LUMA_WGSL = `

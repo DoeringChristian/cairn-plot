@@ -1,4 +1,4 @@
-import type { Device } from "../../plots/image/engine/types.ts";
+import type { Device } from "./types.ts";
 import {
   getSharedWebGpuDevice,
   resetSharedWebGpuDevice,

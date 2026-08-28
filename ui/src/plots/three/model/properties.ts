@@ -10,7 +10,7 @@
  * canonicalized here to a single property named "value".
  */
 
-import type { NpyArray } from "../../resources/transforms/parse-npy";
+import type { NpyArray } from "../../../resources/transforms/parse-npy";
 
 export interface PropertyMeta {
   name: string;

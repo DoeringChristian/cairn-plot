@@ -69,7 +69,7 @@ import type {
   TexHistogramSpec,
   TexHistogramResult,
   DeepDepthHistogramResult,
-} from "./types";
+} from "../../../engines/webgpu/types";
 import {
   forceEngineFailRequested,
   recordPaneRender,

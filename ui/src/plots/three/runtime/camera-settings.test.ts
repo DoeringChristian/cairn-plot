@@ -7,8 +7,8 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createCameraSettingsPeer, type CameraState } from "./camera-settings.ts";
-import { __resetSettingsChannelsForTest } from "../../state/settings/viewport-settings.ts";
-import { __resetSettingsPeersForTest, peekGroupSettings } from "../../state/settings/settings-peers.ts";
+import { __resetSettingsChannelsForTest } from "../../../state/settings/viewport-settings.ts";
+import { __resetSettingsPeersForTest, peekGroupSettings } from "../../../state/settings/settings-peers.ts";
 
 let n = 0;
 const freshGroup = () => `cam-group-${n++}`;
@@ -68,7 +68,7 @@ test("seed() into an untouched group is a no-op (default pose kept)", () => {
 
 test("non-camera patches ride inert (mixed-kind group): absorbed, camera untouched", async () => {
   const g = freshGroup();
-  const { publishSettingsPatch } = await import("../../state/settings/viewport-settings.ts");
+  const { publishSettingsPatch } = await import("../../../state/settings/viewport-settings.ts");
   const seen: CameraState[] = [];
   const a = createCameraSettingsPeer(g, (s) => seen.push(s));
   publishSettingsPatch(g, { "image.encoding": "magma" });
