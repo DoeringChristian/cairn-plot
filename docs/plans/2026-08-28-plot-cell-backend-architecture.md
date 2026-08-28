@@ -73,6 +73,8 @@ Status: accepted design; implementation in progress
   validates its datum contract; histogram validates and normalizes its
   bars/heatmap presentation during resolution instead of branching with an
   untyped fallback in the React host.
+- [x] Migrate heatmap from the legacy renderer map with numeric, rectangular
+  matrix validation and the shared chart-domain settings projection.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry
