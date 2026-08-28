@@ -1,0 +1,120 @@
+import type { CompareNode, PlotLeafNode, SharedProps } from "../../../../packages/spec/src/spec.ts";
+import {
+  channelToolbarButton,
+  treeHasSelectableChannels,
+  type ChannelMenuTree,
+  type ChannelSelection,
+} from "../../lib/cairn-plot/image/channel-menu.ts";
+import { syntheticChannelTree } from "../../lib/cairn-plot/image/channel-slice.ts";
+import type {
+  CompareAlign,
+  CompareFit,
+  CompareSource,
+  DecodedSource,
+} from "../../lib/cairn-plot/renderers/image-backend.ts";
+import type { ViewportSettings } from "../../lib/cairn-plot/settings/viewport-settings.ts";
+import type { CompareViewMode } from "./use-comparison-control.ts";
+
+export interface ImageComparisonHostInput {
+  readonly node: CompareNode;
+  readonly mode: CompareViewMode;
+  readonly diffKernel: string;
+  readonly colormap: CompareSource["colormap"];
+  readonly viewportDefaults: ViewportSettings;
+  readonly splitPosition: number;
+  readonly align?: CompareAlign;
+  readonly fit?: CompareFit;
+  readonly referenceLabel?: string;
+  readonly foregroundLabel?: string;
+  readonly inStackedGrid: boolean;
+  readonly inOverlay: boolean;
+  readonly onDiffKernelChange: (id: string) => void;
+  readonly onCompareModeChange: (mode: CompareViewMode) => void;
+  readonly onSplitPositionChange: (position: number) => void;
+  readonly compareModified: boolean;
+}
+
+/** Lower a resolved image comparison into the retained image backend contract. */
+export function composeImageComparisonPresentation(args: {
+  readonly leaf: PlotLeafNode;
+  readonly resolved: Readonly<Record<string, unknown>>;
+  readonly comparison: ImageComparisonHostInput;
+  readonly enlargeControl: { enlarged: boolean; setEnlarged(value: boolean): void };
+}): Record<string, unknown> {
+  const { leaf, resolved, comparison, enlargeControl } = args;
+  if (resolved.__diffB === undefined) return {};
+  const compareSource: CompareSource = {
+    b: resolved.__diffB as DecodedSource,
+    opId: comparison.diffKernel,
+    mode: comparison.mode,
+    colormap: comparison.colormap,
+    align: comparison.align,
+    fit: comparison.fit,
+    contentKeyA: resolved.__diffContentKeyA as string,
+    contentKeyB: resolved.__diffContentKeyB as string,
+    referenceLabel: comparison.referenceLabel,
+    foregroundLabel: comparison.foregroundLabel,
+    splitPosition: comparison.splitPosition,
+    inStackedGrid: comparison.inStackedGrid,
+    inOverlay: comparison.inOverlay,
+    onDiffKernelChange: comparison.onDiffKernelChange,
+    onCompareModeChange: comparison.onCompareModeChange,
+    onSplitPositionChange: comparison.onSplitPositionChange,
+    compareModified: comparison.compareModified,
+  };
+  return {
+    ...(leaf.props ?? {}),
+    source: resolved.source,
+    compareSource,
+    enlargeControl,
+    ...(resolved.__diffOverlay ? { overlay: resolved.__diffOverlay } : {}),
+  };
+}
+
+export function composeSingleImagePresentation(args: {
+  readonly leaf: PlotLeafNode;
+  readonly resolved: Readonly<Record<string, unknown>>;
+  readonly shared?: SharedProps;
+  readonly channelSelection: ChannelSelection | null;
+  readonly baseChannelTree?: ChannelMenuTree;
+  readonly selectChannels: (selection: ChannelSelection) => void;
+  readonly enlargeControl: { enlarged: boolean; setEnlarged(value: boolean): void };
+  readonly inStackedGrid: boolean;
+}): { presentation: Record<string, unknown>; baseChannelTree?: ChannelMenuTree } {
+  const hostProps: Record<string, unknown> = {};
+  if (args.shared?.colormap != null) hostProps.colormap = args.shared.colormap;
+  if (args.shared?.colorRange != null) hostProps.colorRange = args.shared.colorRange;
+  const described = args.resolved.exrTree as ChannelMenuTree | undefined;
+  const resolvedTree =
+    (described && treeHasSelectableChannels(described) ? described : undefined) ??
+    (syntheticChannelTree(args.resolved.source as never) as ChannelMenuTree | null) ??
+    undefined;
+  const baseChannelTree = args.channelSelection == null && resolvedTree
+    ? resolvedTree
+    : args.baseChannelTree;
+  const channelTree = resolvedTree ?? (args.channelSelection != null ? baseChannelTree : undefined);
+  if (channelTree) {
+    const effectiveSelection: ChannelSelection = args.channelSelection ??
+      (args.leaf.data.kind === "image"
+        ? { part: args.leaf.data.part, layer: args.leaf.data.layer }
+        : {});
+    const menu = channelToolbarButton(channelTree, effectiveSelection, (selection) => {
+      args.selectChannels(selection ?? {});
+    });
+    if (menu) {
+      hostProps.channelMenu = menu;
+      hostProps.channelModified = args.channelSelection != null;
+      hostProps.onChannelReset = () => args.selectChannels({});
+    }
+  }
+  hostProps.enlargeControl = args.enlargeControl;
+  return {
+    presentation: {
+      ...hostProps,
+      ...(args.leaf.props ?? {}),
+      ...args.resolved,
+      inStackedGrid: args.inStackedGrid,
+    },
+    baseChannelTree,
+  };
+}

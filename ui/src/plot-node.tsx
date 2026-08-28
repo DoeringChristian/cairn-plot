@@ -24,12 +24,7 @@ import {
   Colorbar,
   type ColormapName,
 } from "./lib/cairn-plot";
-import type {
-  CompareSource,
-  DecodedSource,
-  CompareAlign,
-  CompareFit,
-} from "./lib/cairn-plot/renderers/image-backend";
+import type { CompareSource } from "./lib/cairn-plot/renderers/image-backend";
 import {
   resolveDataProps,
   type CompareNode,
@@ -60,16 +55,8 @@ import {
   subscribeResolveCache,
   resolveCacheVersion,
 } from "./lib/cairn-plot/resolve-cache";
-import {
-  channelToolbarButton,
-  treeHasSelectableChannels,
-  type ChannelSelection,
-  type ChannelMenuTree,
-} from "./lib/cairn-plot/image/channel-menu";
-import {
-  applyChannelSlice,
-  syntheticChannelTree,
-} from "./lib/cairn-plot/image/channel-slice";
+import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "./lib/cairn-plot/image/channel-menu";
+import { applyChannelSlice } from "./lib/cairn-plot/image/channel-slice";
 import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
 import { initialViewportSettings } from "./lib/cairn-plot/settings/viewport-initial-settings.ts";
 import { GridLayout, type GridLayoutState } from "./layout/GridLayout.tsx";
@@ -95,8 +82,12 @@ import {
 } from "./plots/image/comparison-plan.ts";
 import {
   useImageComparisonControl,
-  type CompareViewMode,
 } from "./plots/image/use-comparison-control.ts";
+import {
+  composeImageComparisonPresentation,
+  composeSingleImagePresentation,
+  type ImageComparisonHostInput,
+} from "./plots/image/host-presentation.ts";
 import { usePlotSessionController } from "./state/session/session-context.ts";
 import { getGlobalSelectionStore } from "./lib/cairn-plot/selection/selection-store.ts";
 import { getRegisteredPane } from "./plot-selection-pane-registry.ts";
@@ -377,78 +368,26 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     // `node.props` carries the synth leaf's view controls
     // (interpolation/showAxes/toolbar/pixelValueNotation).
     if (diffSpec) {
-      const dp = dataProps;
-      // `dp` is a RESOLVED diff pair, so `__diffB` (the foreground operand) is always
-      // present — `status` already forced loading otherwise (`diffOperandMissing`), so
-      // this memo never builds a `compareSource` with an undefined `b`. Defensive:
-      // if it were somehow missing, return benign props (not rendered — status loading).
-      if (dp.__diffB === undefined) return {};
-      const compareSource: CompareSource = {
-        b: dp.__diffB as DecodedSource,
-        opId: diffSpec.diffKernel,
-        mode: diffSpec.mode,
-        colormap: diffSpec.colormap,
-        align: diffSpec.align,
-        fit: diffSpec.fit,
-        contentKeyA: dp.__diffContentKeyA as string,
-        contentKeyB: dp.__diffContentKeyB as string,
-        referenceLabel: diffSpec.referenceLabel,
-        foregroundLabel: diffSpec.foregroundLabel,
-        splitPosition: diffSpec.splitPosition,
-        inStackedGrid: diffSpec.inStackedGrid,
-        inOverlay: diffSpec.inOverlay,
-        onDiffKernelChange: diffSpec.onDiffKernelChange,
-        onCompareModeChange: diffSpec.onCompareModeChange,
-        onSplitPositionChange: diffSpec.onSplitPositionChange,
-        compareModified: diffSpec.compareModified,
-      };
-      return {
-        ...(node.props ?? {}),
-        source: dp.source,
-        compareSource,
+      return composeImageComparisonPresentation({
+        leaf: node,
+        resolved: dataProps,
+        comparison: diffSpec,
         enlargeControl,
-        ...(dp.__diffOverlay ? { overlay: dp.__diffOverlay } : {}),
-      };
+      });
     }
-    const sharedProps: Record<string, unknown> = {};
-    if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
-    if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
-    // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
-    // selection state) and handed to the pane as a standard ToolbarButtonSpec —
-    // the pane renders it with its other leading menus and folds the override
-    // into HOME (reset clears back to the authored selection).
-    // The channel tree is FORMAT-AGNOSTIC: EXRs carry their described tree;
-    // any other multi-channel source gets a synthesized R/G/B/A tree — after
-    // decode the file type has no bearing on what a channel selection means.
-    const described = dataProps.exrTree as ChannelMenuTree | undefined;
-    // A deep-only described tree offers nothing to select — fall back to the
-    // synthetic RGBA tree over the FLATTENED pixels (format-agnostic slice).
-    const resolvedTree =
-      (described && treeHasSelectableChannels(described) ? described : undefined) ??
-      (syntheticChannelTree(dataProps.source as never) as ChannelMenuTree | null) ??
-      undefined;
-    // A SLICED resolve (a single channel picked) can carry NO selectable tree
-    // (the sliced source is k=1), which would drop the CHANNELS menu and make
-    // the pick irreversible. Remember the last UNSLICED tree and offer it while
-    // a selection is active, so the channel choice stays changeable.
-    if (chSel == null && resolvedTree) baseChannelTreeRef.current = resolvedTree;
-    const exrTree = resolvedTree ?? (chSel != null ? baseChannelTreeRef.current : undefined);
-    if (exrTree && (node.data.kind === "image" || node.data.kind === "imghdr" || node.data.kind === "inline" || node.data.kind === "url")) {
-      const effSel: ChannelSelection =
-        chSel ??
-        (node.data.kind === "image"
-          ? { part: node.data.part, layer: node.data.layer }
-          : {});
-      const menu = channelToolbarButton(exrTree, effSel, (sel) => selectChannels(sel ?? {}));
-      if (menu) {
-        sharedProps.channelMenu = menu;
-        sharedProps.channelModified = chSel != null;
-        sharedProps.onChannelReset = () => selectChannels({});
-      }
-    }
-    sharedProps.enlargeControl = enlargeControl;
-    return { ...sharedProps, ...(node.props ?? {}), ...dataProps, inStackedGrid };
-  }, [dataProps, shared, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, inStackedGrid, enlargeControl]);
+    const composed = composeSingleImagePresentation({
+      leaf: node,
+      resolved: dataProps,
+      shared,
+      channelSelection: chSel,
+      baseChannelTree: baseChannelTreeRef.current,
+      selectChannels,
+      enlargeControl,
+      inStackedGrid,
+    });
+    baseChannelTreeRef.current = composed.baseChannelTree;
+    return composed.presentation;
+  }, [dataProps, shared, node, chSel, selectChannels, diffSpec, inStackedGrid, enlargeControl]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -539,43 +478,7 @@ function browserRenderEnvironment(): RenderEnvironment {
   };
 }
 
-/** The LIVE compare settings + resolved foreground operand a compare node hands
- *  `LeafView` (Phase 3: EVERY mode — diff AND split — lowers here, so the
- *  whole compare family renders through the ONE unified pane). The reference
- *  operand IS the synthesized leaf's `node.data` (resolved through the leaf's own
- *  cache); this carries everything else. */
-interface DiffLeafSpec {
-  /** Durable comparison used to resolve through its registered capability. */
-  node: CompareNode;
-  /** The compare MODE (`diff` | `split`) — lifted state. Diff renders the
-   *  scalar-error kernel; split renders the LIGHT slide compositor. */
-  mode: CompareViewMode;
-  /** The diff KERNEL (a menu token) — always a real kernel, seeds the pane's diff
-   *  face even while `mode` is a compositor mode. */
-  diffKernel: string;
-  /** Authored colormap override (`"none"` follows the kernel default). */
-  colormap: CompareSource["colormap"];
-  /** Authored/default settings of the currently visible compare content. */
-  viewportDefaults: ViewportSettings;
-  /** Split-divider position (`mode:"split"`) — lifted control state. */
-  splitPosition: number;
-  align?: CompareAlign;
-  fit?: CompareFit;
-  referenceLabel?: string;
-  foregroundLabel?: string;
-  /** True when this compare is inside a STACKED grid / FULLSCREEN overlay —
-   *  threaded to the addon-bundled pane's `useSplitFlipKeys` (its own context read
-   *  would miss across the bundle boundary). */
-  inStackedGrid: boolean;
-  inOverlay: boolean;
-  /** Pane MODE / divider callbacks → the lifted control (keeps routing +
-   *  the reused-instance control state coherent). */
-  onDiffKernelChange: (id: string) => void;
-  onCompareModeChange: (mode: CompareViewMode) => void;
-  onSplitPositionChange: (p: number) => void;
-  /** True when the hoisted compare control differs from the descriptor (HOME dot). */
-  compareModified: boolean;
-}
+type DiffLeafSpec = ImageComparisonHostInput;
 
 /** The lifted compare view-mode state a compare node's `NodeDispatch` owns and
  *  threads to the unified pane via `compareSource` — hoisted so it survives the
