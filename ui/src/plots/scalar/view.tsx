@@ -2,7 +2,7 @@ import { useCallback } from "react";
 
 import ScalarPlot from "./renderer/ScalarPlot.tsx";
 import type { PromotedSeriesConfig, Viewport } from "../types.ts";
-import { ChartBox } from "../../plot-standalone-helpers.tsx";
+import { ChartBox } from "../../host/standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import type { ScalarPresentation, ScalarSettings } from "./types.ts";
 

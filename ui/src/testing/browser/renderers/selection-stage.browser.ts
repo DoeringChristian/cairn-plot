@@ -24,15 +24,15 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor } from "../../../plot-descriptor";
+import { PlotApp } from "../../../host/bootstrap";
+import { registerCoreRenderers } from "../../../plots/register-core";
+import type { PlotDescriptor } from "../../../host/descriptor-resolver";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
 } from "../../../state/selection/selection-store";
-import { __resetSelectionOverlayHostForTest } from "../../../plot-selection-stage";
-import { __resetSelectionRegistryForTest } from "../../../plot-selection-pane-registry";
+import { __resetSelectionOverlayHostForTest } from "../../../host/SelectionStage";
+import { __resetSelectionRegistryForTest } from "../../../state/selection/pane-registry";
 import { createHarness, sleep, waitFor } from "../../harness";
 
 const { report, setOverallStatus } = createHarness({ title: "SELECTION STAGE" });

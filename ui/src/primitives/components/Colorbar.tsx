@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { ColormapName } from "../../plots/types";
-import { getColormapLUT } from "../../settings/colormaps";
+import { getColormapLUT } from "../../settings/colormaps/index";
 import { formatNum } from "../format";
 
 // Historical hardcoded tick tables (byte range / signed-diff range), kept

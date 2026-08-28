@@ -8,7 +8,7 @@
 //     naming the error map, where <metric> is the active diff kernel's display
 //     name. Missing side captions fall back to "image"/"reference".
 // ---------------------------------------------------------------------------
-import { listDiffMenuModes } from "../engine/kernels";
+import { listDiffMenuModes } from "../engine/kernels/index";
 
 export interface CompareCaptions {
   /** Bottom-LEFT chip: the reference caption (slide) OR the whole diff

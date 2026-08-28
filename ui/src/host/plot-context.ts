@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 
 import type { DataSource } from "../resources/data/data-sources.ts";
 import type { ViewportSettings } from "../state/settings/viewport-settings.ts";
-import type { SharedProps } from "../plot-descriptor.ts";
+import type { SharedProps } from "./descriptor-resolver.ts";
 
 /** Host data shared by every node in one authored plot tree. */
 export interface SharedPlotCtx {

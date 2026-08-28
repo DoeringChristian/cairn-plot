@@ -54,7 +54,7 @@ export { SERIES_COLORS, overlayClassColor } from "../plots/types";
 export { DEFAULT_OVERLAY_SETTINGS } from "../plots/types";
 
 // Colormaps
-export { COLORMAP_NAMES, COLORMAP_OPTIONS, DIVERGING_COLORMAPS, getColormapLUT } from "../settings/colormaps";
+export { COLORMAP_NAMES, COLORMAP_OPTIONS, DIVERGING_COLORMAPS, getColormapLUT } from "../settings/colormaps/index";
 
 // npy/npz parsing + histogram transforms
 export {
@@ -62,14 +62,14 @@ export {
   parseNpz,
   computeHistogram,
   rebinHistograms,
-} from "../resources/transforms";
-export type { NpyArray, HistogramData } from "../resources/transforms";
+} from "../resources/transforms/index";
+export type { NpyArray, HistogramData } from "../resources/transforms/index";
 
 // Image processing
-export { getRenderMode, setRenderMode } from "../plots/image/model";
-export type { RenderMode } from "../plots/image/model";
+export { getRenderMode, setRenderMode } from "../plots/image/model/index";
+export type { RenderMode } from "../plots/image/model/index";
 // Content-addressing under live/redirecting query URLs (final post-redirect URL).
-export { resolveFinalUrl } from "../plots/image/model";
+export { resolveFinalUrl } from "../plots/image/model/index";
 
 // Multi-format image decoder registry (browser-native + raw npy/npz; EXR
 // deferred). The DataSpec-resolution seam (`plot-descriptor.ts`) routes
@@ -84,8 +84,8 @@ export {
   decodedU8ToDataUrl,
   isRawBufferFormat,
   isBrowserNativeFormat,
-} from "../plots/image/model";
-export type { DecodedImage, ImageSource, ImageFormat, ImageDecoder } from "../plots/image/model";
+} from "../plots/image/model/index";
+export type { DecodedImage, ImageSource, ImageFormat, ImageDecoder } from "../plots/image/model/index";
 
 // HDR tone-mapping display pipeline (curves live in image/encodings; the shared
 // exposure/output-encode stages + defaults live in image/tonemap.ts)
@@ -94,8 +94,8 @@ export {
   applyExposure,
   srgbOetf,
   outputEncode,
-} from "../plots/image/model";
-export type { TonemapOperator, RgbTriple } from "../plots/image/model";
+} from "../plots/image/model/index";
+export type { TonemapOperator, RgbTriple } from "../plots/image/model/index";
 
 // Transforms
 export {
@@ -105,13 +105,13 @@ export {
   filterOutliers,
   checkFigureMergeable,
   mergeFigures,
-} from "../resources/transforms";
+} from "../resources/transforms/index";
 export type {
   AxisSource,
   ParetoDirection,
   FigureMergeabilityResult,
   FigureMergeEntry,
-} from "../resources/transforms";
+} from "../resources/transforms/index";
 
 // Formatting
 export { formatNum } from "../primitives/format";
@@ -120,20 +120,20 @@ export { formatNum } from "../primitives/format";
 export { useContainerSize } from "../host/hooks/use-container-size";
 
 // Primitives
-export { Colorbar } from "../primitives/components";
-export { ColormapSwatch } from "../primitives/components";
-export { LabelChip } from "../primitives/components";
+export { Colorbar } from "../primitives/components/index";
+export { ColormapSwatch } from "../primitives/components/index";
+export { LabelChip } from "../primitives/components/index";
 
 // Renderers
-export { ScatterPlot } from "../plots/image/components";
+export { ScatterPlot } from "../plots/image/components/index";
 export {
   BarChart,
   type BarChartProps,
   type BarDatum,
   type BarCompareMode,
-} from "../plots/image/components";
-export { ParallelCoords } from "../plots/image/components";
-export { ScalarPlot } from "../plots/image/components";
+} from "../plots/image/components/index";
+export { ParallelCoords } from "../plots/image/components/index";
+export { ScalarPlot } from "../plots/image/components/index";
 // Image backends: the CPU pane + the interchangeable-backend contract
 // (`GpuImagePane` is addon-loaded via the runtime registry seam, not re-exported
 // here). `tonemapToImageData` is the pure HDR-float → `ImageData` tone-mapper.
@@ -146,7 +146,7 @@ export {
   hdrSource,
   urlSource,
   resolveRenderMode,
-} from "../plots/image/components";
+} from "../plots/image/components/index";
 export type {
   CpuImagePaneProps,
   ImageBackend,
@@ -159,11 +159,11 @@ export type {
   SdrImageProps,
   HdrData,
   RenderMode as ImageBackendRenderMode,
-} from "../plots/image/components";
-export { Heatmap } from "../plots/image/components";
-export { HistogramPlot } from "../plots/image/components";
-export { ImageOverlay } from "../plots/image/components";
-export { PointCloudViewer, resolveColorMode } from "../plots/image/components";
+} from "../plots/image/components/index";
+export { Heatmap } from "../plots/image/components/index";
+export { HistogramPlot } from "../plots/image/components/index";
+export { ImageOverlay } from "../plots/image/components/index";
+export { PointCloudViewer, resolveColorMode } from "../plots/image/components/index";
 export type {
   PointCloudViewerProps,
   PointCloudChannels,
@@ -171,13 +171,13 @@ export type {
   PointSizeMode,
   PointCloudBackground,
   PointCloudBounds,
-} from "../plots/image/components";
-export { Table } from "../plots/image/components";
-export type { TableProps, TableData, TableColumn, ColumnType } from "../plots/image/components";
+} from "../plots/image/components/index";
+export { Table } from "../plots/image/components/index";
+export type { TableProps, TableData, TableColumn, ColumnType } from "../plots/image/components/index";
 // NOTE: `Figure` (and its Plotly dependency) is intentionally NOT re-exported
-// from this barrel, or from "../plots/image/components" — many eagerly-bundled cards
+// from this barrel, or from "../plots/image/components/index" — many eagerly-bundled cards
 // (ScalarPlotCard, HistogramCard, TensorCard, VisualContentCard,
-// viewport-registry) statically import from "../integration/cairn-card" /
+// viewport-registry) statically import from "./cairn-card" /
 // "../plots/image/components", and plotly.js-dist-min is a large
 // non-tree-shakeable (UMD-style) bundle: merely being *reachable* through a
 // re-export chain pulls its full ~5MB into the eager main chunk even when
@@ -224,7 +224,7 @@ export {
   useOffscreenSnapshot,
   CrossTypeForeignFrame,
   hasForeignFrameBridge,
-} from "../plots/image/compare";
+} from "../plots/image/compare/index";
 export type {
   MediaCompareModeKind,
   MediaCompareMode,
@@ -253,7 +253,7 @@ export type {
   ForeignFrameLoaders,
   OffscreenComparePanesProps,
   ComparePaneSource,
-} from "../plots/image/compare";
+} from "../plots/image/compare/index";
 
 // Viewport — the pluggable-rendering contract behind VisualContentCard
 // (see viewport/types.ts).

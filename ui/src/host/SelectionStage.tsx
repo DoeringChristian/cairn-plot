@@ -40,52 +40,52 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { PlotNodeView } from "./plot-node";
-import { PaneSyncContext, SharedPlotContext } from "./host/plot-context.ts";
-import { ChartFillContext } from "./plot-standalone-helpers";
-import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./plot-descriptor";
-import type { DataSource } from "./resources/data/data-sources";
+import { PlotNodeView } from "./PlotNodeView";
+import { PaneSyncContext, SharedPlotContext } from "./plot-context.ts";
+import { ChartFillContext } from "./standalone-helpers";
+import type { CompareNode, DataSpec, PlotNode, SharedProps } from "./descriptor-resolver";
+import type { DataSource } from "../resources/data/data-sources";
 import {
   getGlobalSelectionStore,
   REFERENCE_COLOR,
   REFERENCE_COLOR_RGB,
   type SelectionSnapshot,
   type StageMode,
-} from "./state/selection/selection-store";
-import type { ViewportSettings } from "./state/settings/viewport-settings";
-import { useViewportSettings } from "./state/settings/use-viewport-settings";
+} from "../state/selection/selection-store";
+import type { ViewportSettings } from "../state/settings/viewport-settings";
+import { useViewportSettings } from "../state/settings/use-viewport-settings";
 import {
   imageCompatibleCount,
   planCompareGrid,
   type SelEntry,
-} from "./state/selection/compare-grid";
+} from "../state/selection/compare-grid";
 import {
   packContentGrid,
   DEFAULT_STAGE_GAP,
   type Rect,
-} from "./state/selection/pack-grid";
+} from "../state/selection/pack-grid";
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
   useUniformGridAspect,
   useReportCellAspect,
-} from "./layout/grid-uniform-aspect";
-import { ReportNaturalSizeContext } from "./plots/image/components/natural-size-report";
+} from "../layout/grid-uniform-aspect";
+import { ReportNaturalSizeContext } from "../plots/image/components/natural-size-report";
 import {
   useStackKeyboard,
   StackTabStrip,
   GridModeToggle,
   stackLabelFor,
-} from "./layout/stack/StackedView";
-import { InStackedGridContext } from "./layout/stack/stack-context";
-import FullscreenOverlayShell from "./primitives/components/FullscreenOverlayShell";
-import { useOriginTheme } from "./primitives/components/themed-portal";
+} from "../layout/stack/StackedView";
+import { InStackedGridContext } from "../layout/stack/stack-context";
+import FullscreenOverlayShell from "../primitives/components/FullscreenOverlayShell";
+import { useOriginTheme } from "../primitives/components/themed-portal";
 import {
   getRegisteredPane,
   getSelectionRegistryVersion,
   subscribeSelectionRegistry,
   type RegisteredPane,
-} from "./plot-selection-pane-registry";
+} from "../state/selection/pane-registry";
 
 // ---------------------------------------------------------------------------
 // Store bindings.

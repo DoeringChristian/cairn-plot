@@ -23,8 +23,8 @@
  */
 import React from "react";
 import * as JsxRuntime from "react/jsx-runtime";
-import { installCairnPlotBootstrap } from "./plot-bootstrap";
-import { registerCoreRenderers } from "./plot-renderers";
+import { installCairnPlotBootstrap } from "./host/bootstrap";
+import { registerCoreRenderers } from "./plots/register-core";
 import "./public/theme/plot.css";
 
 declare global {

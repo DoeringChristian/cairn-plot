@@ -43,9 +43,9 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor } from "../../../plot-descriptor";
+import { PlotApp } from "../../../host/bootstrap";
+import { registerCoreRenderers } from "../../../plots/register-core";
+import type { PlotDescriptor } from "../../../host/descriptor-resolver";
 import { getSharedDevice } from "../../../plots/image/engine/device";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import {
@@ -64,7 +64,7 @@ import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
 } from "../../../state/selection/selection-store";
-import { getRegisteredPane } from "../../../plot-selection-pane-registry";
+import { getRegisteredPane } from "../../../state/selection/pane-registry";
 import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "REALSTACK GPU" });

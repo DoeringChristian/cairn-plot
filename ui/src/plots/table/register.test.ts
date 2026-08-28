@@ -45,6 +45,6 @@ test("table owns validated presentation and interaction settings", async () => {
     "table.page": -1,
   }), {});
 
-  const source = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../register-core.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /CORE_RENDERERS/);
 });

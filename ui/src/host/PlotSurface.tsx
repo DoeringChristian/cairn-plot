@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef } from "react";
 
-import type { PlotDescriptor } from "../../packages/spec/src/spec.ts";
-import type { DataSource } from "./resources/data/data-sources.ts";
-import { useEmitAutoHeight } from "./host/hooks/use-emit-auto-height.ts";
-import { PlotNodeView } from "./plot-node.tsx";
-import { SharedPlotContext } from "./host/plot-context.ts";
-import { acquireSelectionOverlayHost } from "./plot-selection-stage.tsx";
-import { createPlotSessionController, type PlotSessionController } from "./state/session/PlotSessionController.ts";
-import { PlotSessionContext } from "./state/session/session-context.ts";
-import { compileSessionTopology } from "./state/session/session-topology.ts";
-import type { PlotSession } from "./state/session/plot-session.ts";
-import { connectSessionPersistence, type SessionPersistence } from "./state/session/session-persistence.ts";
+import type { PlotDescriptor } from "../../../packages/spec/src/spec.ts";
+import type { DataSource } from "../resources/data/data-sources.ts";
+import { useEmitAutoHeight } from "./hooks/use-emit-auto-height.ts";
+import { PlotNodeView } from "./PlotNodeView.tsx";
+import { SharedPlotContext } from "./plot-context.ts";
+import { acquireSelectionOverlayHost } from "./SelectionStage.tsx";
+import { createPlotSessionController, type PlotSessionController } from "../state/session/PlotSessionController.ts";
+import { PlotSessionContext } from "../state/session/session-context.ts";
+import { compileSessionTopology } from "../state/session/session-topology.ts";
+import type { PlotSession } from "../state/session/plot-session.ts";
+import { connectSessionPersistence, type SessionPersistence } from "../state/session/session-persistence.ts";
 
 export interface PlotSurfaceProps {
   descriptor: PlotDescriptor;

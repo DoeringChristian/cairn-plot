@@ -37,9 +37,9 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../../plot-renderers";
-import type { PlotDescriptor } from "../../../../plot-descriptor";
+import { PlotApp } from "../../../../host/bootstrap";
+import { registerCoreRenderers } from "../../../register-core";
+import type { PlotDescriptor } from "../../../../host/descriptor-resolver";
 import { InFullscreenOverlayContext } from "../../../../primitives/components/FullscreenOverlayShell";
 import {
   getGlobalSelectionStore,

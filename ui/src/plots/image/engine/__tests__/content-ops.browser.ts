@@ -33,7 +33,7 @@ import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index"
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
 import type { ColormapName } from "../../../../settings/colormaps/lut";
-import { DEFAULT_DIFF_COLORMAP } from "../kernels";
+import { DEFAULT_DIFF_COLORMAP } from "../kernels/index";
 import type { Device, Texture } from "../types";
 import { createHarness } from "../../../../testing/harness";
 

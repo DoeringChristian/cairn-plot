@@ -1,5 +1,5 @@
-import type { PlotSurfaceProps } from "../plot-surface.tsx";
-import { PlotSurface } from "../plot-surface.tsx";
+import type { PlotSurfaceProps } from "../host/PlotSurface.tsx";
+import { PlotSurface } from "../host/PlotSurface.tsx";
 import { ensurePublicRenderers } from "./renderers.tsx";
 
 ensurePublicRenderers();

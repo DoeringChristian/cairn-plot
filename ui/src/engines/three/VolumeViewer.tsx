@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { useScene3D, type Scene3DBounds, type Scene3DCameraMode, type Scene3DSyncOptions } from "./use-scene3d";
 import { Scene3DCanvas } from "./Scene3DCanvas";
-import { getColormapLUT } from "../../settings/colormaps";
+import { getColormapLUT } from "../../settings/colormaps/index";
 import type { ColormapName } from "../../plots/types";
 import PaneUnavailable from "../../primitives/components/PaneUnavailable";
 

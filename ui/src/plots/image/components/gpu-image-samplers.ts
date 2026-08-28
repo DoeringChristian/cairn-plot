@@ -24,7 +24,7 @@
 import { useCallback } from "react";
 import { floatPixelReader } from "../model/pixel-buffer.ts";
 import { getContentOp, isDirectContentOp } from "../model/content-ops/index";
-import { getDiffKernel } from "../engine/kernels";
+import { getDiffKernel } from "../engine/kernels/index";
 import {
   buildChannelSample,
   type PixelSample,

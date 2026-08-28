@@ -13,7 +13,7 @@ import type { Device, Texture } from "./types.ts";
 // Type-only imports — fully erased by the type stripper, so they do NOT pull the
 // `./kernels` value barrel (which is a directory import Node's strip-only mode
 // rejects) into this module's runtime graph.
-import type { DisplayRange } from "./kernels";
+import type { DisplayRange } from "./kernels/index";
 import type { DiffMetrics } from "./image-engine";
 
 export interface DiffCacheEntry {

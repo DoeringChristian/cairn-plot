@@ -8,7 +8,7 @@
  * stay free of React and can be ESM-imported cheaply. When the core bundle is
  * not present, `.mount()`/`.toElement()` throw a clear, actionable error.
  */
-import type { PlotDescriptor, PlotNode } from "../../plot-descriptor.ts";
+import type { PlotDescriptor, PlotNode } from "../../host/descriptor-resolver.ts";
 import type { PlotStore } from "../../resources/data/local-store.ts";
 import type { RuntimeStoreEntry } from "../../resources/data/runtime-store.ts";
 

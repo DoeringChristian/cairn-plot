@@ -28,7 +28,7 @@ test("histogram validates and normalizes its discriminated presentation", async 
     data: { kind: "inline", props: { view: "heatmap", perStep: [] } },
   }, context), /perStep data and a colormap/);
 
-  const source = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../register-core.tsx", import.meta.url), "utf8");
   const coreMap = source.match(/CORE_RENDERERS[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ?? "";
   assert.doesNotMatch(coreMap, /\bhistogram\s*:/);
 });

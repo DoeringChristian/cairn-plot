@@ -23,7 +23,7 @@ import { PointCloudSingleView, type PointCloudViewportItem } from "./viewports/p
 import { MeshSingleView, type MeshViewportItem } from "./viewports/mesh";
 import { VolumeSingleView, type VolumeViewportItem } from "./viewports/volume";
 import { BoxesSingleView, type BoxesViewportItem } from "./viewports/boxes";
-import { ChartBox } from "../../plot-standalone-helpers";
+import { ChartBox } from "../../host/standalone-helpers";
 import type { SettingsRecord } from "../contracts.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 

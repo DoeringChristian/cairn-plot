@@ -7,7 +7,7 @@ const read = (relative: string) =>
 
 test("the public host drives the production plot tree without exposing viewports", () => {
   const host = read("PlotHost.tsx");
-  const surface = read("../plot-surface.tsx");
+  const surface = read("../host/PlotSurface.tsx");
   const api = read("index.ts");
 
   assert.match(host, /<PlotSurface/);

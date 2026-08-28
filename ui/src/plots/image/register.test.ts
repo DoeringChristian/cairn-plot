@@ -51,7 +51,7 @@ test("image is exclusively owned by the typed plot registry", () => {
   assert.equal(expanded?.children.length, 2);
   assert.ok(expanded?.children.every((child) => child.kind === "compare"));
 
-  const legacySource = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");
+  const legacySource = readFileSync(new URL("../register-core.tsx", import.meta.url), "utf8");
   const coreMap = legacySource.match(/CORE_RENDERERS[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ?? "";
   assert.doesNotMatch(coreMap, /\bimage\s*:/, "image must not remain in CORE_RENDERERS");
 });

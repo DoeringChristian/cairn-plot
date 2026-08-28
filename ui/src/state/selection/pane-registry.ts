@@ -16,8 +16,8 @@
  * only WRITES the registry; the stage READS it. Framework-light (a plain Map +
  * a version tick for `useSyncExternalStore`).
  */
-import type { DataSource } from "./resources/data/data-sources";
-import type { PlotNode, SharedProps } from "./plot-descriptor";
+import type { DataSource } from "../../resources/data/data-sources";
+import type { PlotNode, SharedProps } from "../../host/descriptor-resolver";
 
 /** Renderer names whose panes can take part in an image comparison. Charts
  *  (scalar/scatter/bar/…) and 3D (pointcloud/mesh/…) cannot; `compare` panes
@@ -48,8 +48,8 @@ export interface RegisteredPane {
    *  frame's live box, for peer reads (formation converge, stage
    *  copy-on-create, harness/Host-API seams) and external writes. */
   readonly settings?: {
-    get: () => import("./state/settings/viewport-settings").ViewportSettings | null;
-    set: (patch: import("./state/settings/viewport-settings").ViewportSettings) => void;
+    get: () => import("../settings/viewport-settings").ViewportSettings | null;
+    set: (patch: import("../settings/viewport-settings").ViewportSettings) => void;
   };
 }
 

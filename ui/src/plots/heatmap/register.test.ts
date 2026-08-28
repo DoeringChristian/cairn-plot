@@ -28,7 +28,7 @@ test("heatmap is a typed inline plot with a rectangular numeric matrix", async (
     data: { kind: "inline", props: { matrix: [[1], [2, 3]] } },
   }, context), /equal length/);
 
-  const source = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../register-core.tsx", import.meta.url), "utf8");
   const coreMap = source.match(/CORE_RENDERERS[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ?? "";
   assert.doesNotMatch(coreMap, /\bheatmap\s*:/);
 });

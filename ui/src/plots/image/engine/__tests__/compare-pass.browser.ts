@@ -23,10 +23,10 @@
 import { getSharedDevice } from "../device";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, renderDiffDisplay } from "../diff-engine";
-import { getDiffKernel } from "../kernels";
+import { getDiffKernel } from "../kernels/index";
 import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/encodings";
-import { colormapFloatLUT } from "../../../../settings/colormaps";
+import { getEncoding, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/encodings/index";
+import { colormapFloatLUT } from "../../../../settings/colormaps/index";
 import type { Device, Texture } from "../types";
 import { createHarness } from "../../../../testing/harness";
 

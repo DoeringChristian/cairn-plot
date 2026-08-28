@@ -29,7 +29,7 @@ import PixelValueOverlay, {
   type PixelSample,
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
-import { loadImageData } from "../model";
+import { loadImageData } from "../model/index";
 import RefBadge from "../../../primitives/components/RefBadge";
 import LabelChip from "../../../primitives/components/LabelChip";
 import { useSplitFlipKeys } from "./use-split-flip-keys";

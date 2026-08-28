@@ -1,5 +1,5 @@
 import type { ColormapName } from "../../plots/types";
-import { getColormapLUT } from "../../settings/colormaps";
+import { getColormapLUT } from "../../settings/colormaps/index";
 
 export default function ColormapSwatch({
   colormap,

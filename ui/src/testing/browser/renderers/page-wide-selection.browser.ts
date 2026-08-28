@@ -27,9 +27,9 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor, PlotNode } from "../../../plot-descriptor";
+import { PlotApp } from "../../../host/bootstrap";
+import { registerCoreRenderers } from "../../../plots/register-core";
+import type { PlotDescriptor, PlotNode } from "../../../host/descriptor-resolver";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,

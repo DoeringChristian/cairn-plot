@@ -52,9 +52,9 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../../types";
-import { applyColormap, colormapFloatLUT } from "../../../settings/colormaps";
+import { applyColormap, colormapFloatLUT } from "../../../settings/colormaps/index";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
-import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../model";
+import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../model/index";
 import { HALF_ONE } from "../model/half";
 import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
 // DIFF capability: the pane samples a second source slot (`compareSource.b` via
@@ -68,7 +68,7 @@ import {
   resolveDiffKernelId,
   DEFAULT_DIFF_COLORMAP,
   listDiffMenuModes,
-} from "../engine/kernels";
+} from "../engine/kernels/index";
 import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { formatSsim } from "../engine/ssim-metric";
@@ -125,7 +125,7 @@ import {
   compareDisplayToolbarButton,
   deriveCompareEncodingId,
 } from "../components/display-encoding";
-import { getEncoding, defaultReduceMode, type ReduceMode } from "../model/encodings";
+import { getEncoding, defaultReduceMode, type ReduceMode } from "../model/encodings/index";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,

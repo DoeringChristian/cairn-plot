@@ -21,9 +21,9 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../plot-renderers";
-import type { PlotDescriptor } from "../../../plot-descriptor";
+import { PlotApp } from "../../../host/bootstrap";
+import { registerCoreRenderers } from "../../../plots/register-core";
+import type { PlotDescriptor } from "../../../host/descriptor-resolver";
 import { registerRuntimeEntries } from "../../../resources/data/runtime-store";
 import { createHarness, sleep, waitFor } from "../../harness";
 

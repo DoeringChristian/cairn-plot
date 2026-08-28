@@ -40,7 +40,7 @@ import type { ToolbarConfig, ToolbarButtonSpec } from "../../../primitives/contr
 import { adaptiveMaxZoom, type Viewport } from "../../../host/hooks/use-image-viewport";
 import { canvasToPng, plotToPng, type PlotToPngOptions } from "../../../primitives/components/plot-to-png";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
-import { getEncoding, listEncodingsByKind } from "../model/encodings";
+import { getEncoding, listEncodingsByKind } from "../model/encodings/index";
 import { SDR_DISPLAY_TRANSFER_OPERATORS } from "../model/tonemap";
 
 /** The registry label for an encoding id, falling back to the id itself. Both the

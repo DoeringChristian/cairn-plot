@@ -64,8 +64,8 @@ import {
   getRenderMode,
   getCachedImageData,
   setCachedImageData,
-} from "../model";
-import { applyColormap, getColormapLUT } from "../../../settings/colormaps";
+} from "../model/index";
+import { applyColormap, getColormapLUT } from "../../../settings/colormaps/index";
 import { sampleLutByte } from "../../../settings/colormaps/lut-sample";
 import { clamp01 } from "../../../primitives/util/clamp";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
@@ -109,8 +109,8 @@ import {
   type EncodeParams,
   type NormMode,
   type ReduceMode,
-} from "../model/encodings";
-import { getContentOp, isDirectContentOp, type DirectContentOp } from "../model/content-ops";
+} from "../model/encodings/index";
+import { getContentOp, isDirectContentOp, type DirectContentOp } from "../model/content-ops/index";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isHdrProps,

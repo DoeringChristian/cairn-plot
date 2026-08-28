@@ -15,8 +15,8 @@
  * still serving every renderer from one page.
  */
 import React from "react";
-import { installCairnPlotBootstrap } from "./plot-bootstrap";
-import { registerCoreRenderers } from "./plot-renderers";
+import { installCairnPlotBootstrap } from "./host/bootstrap";
+import { registerCoreRenderers } from "./plots/register-core";
 import { figureBackend } from "./plots/figure/backend.ts";
 import type { FigurePresentation } from "./plots/figure/view.tsx";
 import type { SettingsRecord } from "./plots/contracts.ts";

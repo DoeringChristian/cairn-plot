@@ -24,21 +24,21 @@ import {
   fetchVolumeArray,
   fetchBoxesArrays,
   type DataSource,
-} from "./resources/data/data-sources";
-import { parseOverlay } from "./resources/data/parse-overlay";
-import { parseNpy } from "./resources/transforms";
+} from "../resources/data/data-sources";
+import { parseOverlay } from "../resources/data/parse-overlay";
+import { parseNpy } from "../resources/transforms/index";
 import {
   decodeImage,
   decodedU8ToDataUrl,
   isRawBufferFormat,
   sniffFormat,
   resolveFinalUrl,
-} from "./plots/image/model";
-import { fetchImageBytes } from "./resources/fetch-image";
-import { floatPixelsFrom, floatValues } from "./plots/image/model/pixel-buffer.ts";
-import { describeExr } from "./plots/image/model/decoders/exr-describe";
-import { groupChannels, type ChannelGroup } from "./plots/image/model/channel-groups";
-import type { DataSpec } from "../../packages/spec/src/spec.ts";
+} from "../plots/image/model/index";
+import { fetchImageBytes } from "../resources/fetch-image";
+import { floatPixelsFrom, floatValues } from "../plots/image/model/pixel-buffer.ts";
+import { describeExr } from "../plots/image/model/decoders/exr-describe";
+import { groupChannels, type ChannelGroup } from "../plots/image/model/channel-groups";
+import type { DataSpec } from "../../../packages/spec/src/spec.ts";
 export type {
   CompareNode,
   DataSpec,
@@ -47,7 +47,7 @@ export type {
   PlotLeafNode,
   PlotNode,
   SharedProps,
-} from "../../packages/spec/src/spec.ts";
+} from "../../../packages/spec/src/spec.ts";
 
 /** The parts × channel-groups tree of an EXR source, attached to a resolved
  *  image leaf's props (`exrTree`) so the pane can render the CHANNEL STRIP
@@ -293,7 +293,7 @@ export async function resolveDataProps(
  * controller threaded through), `u8` → a uint8 source carrying a PNG data URL
  * (the byte-exact `<img>` / SDR-surface path).
  */
-function decodedToSource(decoded: import("./plots/image/model").DecodedImage) {
+function decodedToSource(decoded: import("../plots/image/model/index").DecodedImage) {
   if (decoded.kind === "f32") {
     const shape =
       decoded.channels === 1

@@ -8,7 +8,7 @@ import React, {
   useSyncExternalStore,
 } from "react";
 
-import type { PlotNode } from "../plot-descriptor.ts";
+import type { PlotNode } from "./descriptor-resolver.ts";
 import {
   getGlobalSelectionStore,
   nextSelectionPaneId,
@@ -27,12 +27,12 @@ import {
   isImageCompatibleNode,
   registerSelectionPane,
   unregisterSelectionPane,
-} from "../plot-selection-pane-registry.ts";
+} from "../state/selection/pane-registry.ts";
 import {
   GridUniformAspectContext,
   DEFAULT_GRID_CELL_ASPECT,
 } from "../layout/grid-uniform-aspect.tsx";
-import { ChartFillContext } from "../plot-standalone-helpers.tsx";
+import { ChartFillContext } from "./standalone-helpers.tsx";
 import { useViewportSettings } from "../state/settings/use-viewport-settings.ts";
 import { initialViewportSettings } from "../state/settings/viewport-initial-settings.ts";
 import type { ViewportSettings } from "../state/settings/viewport-settings.ts";

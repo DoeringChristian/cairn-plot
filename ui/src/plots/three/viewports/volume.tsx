@@ -6,7 +6,7 @@ import VolumeViewer, {
 import { usePairedSideBySideSync, type Scene3DCameraMode, type Scene3DSyncOptions } from "../../../engines/three/use-scene3d";
 import { absArray, computeDelta, diffDomain, unionDiffDomain, type DiffColormap } from "../../../engines/three/diff";
 import type { PropertyMeta } from "../../../engines/three/properties";
-import { LabelChip, RefBadge, ViewportCaption } from "../../../primitives/components";
+import { LabelChip, RefBadge, ViewportCaption } from "../../../primitives/components/index";
 import ViewportPlaceholder from "../../../integration/cairn-card/ViewportPlaceholder";
 import type { ColormapName } from "../../types";
 import type { MediaCompareModeKind } from "../../image/compare/mode";

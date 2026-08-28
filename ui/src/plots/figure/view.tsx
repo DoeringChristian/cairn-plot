@@ -18,7 +18,7 @@
 import Figure from "./renderer/Figure";
 import type { FigureInteractionSettings } from "./renderer/Figure";
 import type { PlotlyFigureLike } from "../types.ts";
-import { ChartBox } from "../../plot-standalone-helpers";
+import { ChartBox } from "../../host/standalone-helpers";
 import type { SettingsRecord } from "../contracts.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 

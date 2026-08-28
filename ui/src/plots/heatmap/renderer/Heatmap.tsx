@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ColormapName } from "../../types";
-import { getColormapLUT } from "../../../settings/colormaps";
+import { getColormapLUT } from "../../../settings/colormaps/index";
 import { lutRow, normToT } from "../../../settings/colormaps/lut-sample";
 import { useContainerSize } from "../../../host/hooks/use-container-size";
 import { formatNum } from "../../../primitives/format";

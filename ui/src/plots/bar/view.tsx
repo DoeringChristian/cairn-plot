@@ -1,5 +1,5 @@
 import BarChart, { type BarChartProps } from "./renderer/BarChart.tsx";
-import { ChartBox } from "../../plot-standalone-helpers.tsx";
+import { ChartBox } from "../../host/standalone-helpers.tsx";
 import { ChartSettingsBoundary } from "../chart-host.tsx";
 import type { ChartSettings } from "../chart-settings.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";

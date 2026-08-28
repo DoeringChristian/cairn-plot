@@ -27,23 +27,23 @@ import ReactDOM from "react-dom/client";
 import {
   createEndpointDataSource,
   type DataSource,
-} from "./resources/data/data-sources";
+} from "../resources/data/data-sources";
 import {
   createLocalDataSource,
   loadPlotStoreFromDom,
   registerPlotStore,
   type PlotStore,
-} from "./resources/data/local-store";
+} from "../resources/data/local-store";
 import {
   registerRuntimeEntries,
   type RuntimeStoreEntry,
-} from "./resources/data/runtime-store";
-import { useEmitAutoHeight } from "./host/hooks/use-emit-auto-height";
-import { type PlotDescriptor } from "./plot-descriptor";
-import { getReactPlotType } from "./plots/react-registry.ts";
-import { PlotSurface } from "./plot-surface.tsx";
-import { createCairnPlot, type CairnPlot, type Mounter } from "./public/builder";
-import { registerReactPlotBackends } from "./plots/react-registry.ts";
+} from "../resources/data/runtime-store";
+import { useEmitAutoHeight } from "./hooks/use-emit-auto-height";
+import { type PlotDescriptor } from "./descriptor-resolver";
+import { getReactPlotType } from "../plots/react-registry.ts";
+import { PlotSurface } from "./PlotSurface.tsx";
+import { createCairnPlot, type CairnPlot, type Mounter } from "../public/builder/index";
+import { registerReactPlotBackends } from "../plots/react-registry.ts";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
 const DESCRIPTOR_MIME = "application/cairn-plot+json";

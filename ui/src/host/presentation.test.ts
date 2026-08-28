@@ -41,7 +41,7 @@ test("image backend receives settings and commands explicitly and cannot initial
 });
 
 test("leaf presentation assembly does not manufacture settings props", () => {
-  const host = readFileSync(new URL("../plot-node.tsx", import.meta.url), "utf8");
+  const host = readFileSync(new URL("./PlotNodeView.tsx", import.meta.url), "utf8");
   const mergeStart = host.indexOf("const mergedProps = useMemo");
   const mergeEnd = host.indexOf("// Wait-for-registration", mergeStart);
   const merge = host.slice(mergeStart, mergeEnd);

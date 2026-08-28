@@ -19,28 +19,28 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Colorbar } from "./primitives/components";
-import type { ColormapName } from "./plots/types";
-import type { CompareSource } from "./plots/image/backend/contracts";
+import { Colorbar } from "../primitives/components/index";
+import type { ColormapName } from "../plots/types";
+import type { CompareSource } from "../plots/image/backend/contracts";
 import {
   resolveDataProps,
   type CompareNode,
   type GridNode,
   type PlotLeafNode,
   type PlotNode,
-} from "./plot-descriptor";
-import { stackLabelFor } from "./layout/stack/StackedView";
-import { InStackedGridContext } from "./layout/stack/stack-context";
-import FullscreenOverlayShell, { InFullscreenOverlayContext } from "./primitives/components/FullscreenOverlayShell";
+} from "./descriptor-resolver";
+import { stackLabelFor } from "../layout/stack/StackedView";
+import { InStackedGridContext } from "../layout/stack/stack-context";
+import FullscreenOverlayShell, { InFullscreenOverlayContext } from "../primitives/components/FullscreenOverlayShell";
 import {
   ChartFillContext,
   DEFAULT_CHART_HEIGHT,
-} from "./plot-standalone-helpers";
+} from "./standalone-helpers";
 import {
   isEagerMount,
   LAZY_ROOT_MARGIN,
   type EagerMountSignals,
-} from "./host/lazy-mount";
+} from "./lazy-mount";
 import {
   resolutionKey,
   acquireResolved,
@@ -50,48 +50,48 @@ import {
   prefetchResolved,
   subscribeResolveCache,
   resolveCacheVersion,
-} from "./resources/resolution-cache";
-import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "./plots/image/model/channel-menu";
-import { applyChannelSlice } from "./plots/image/model/channel-slice";
-import { type ViewportSettings } from "./state/settings/viewport-settings";
-import { initialViewportSettings } from "./state/settings/viewport-initial-settings.ts";
-import { GridLayout, type GridLayoutState } from "./layout/GridLayout.tsx";
+} from "../resources/resolution-cache";
+import { treeHasSelectableChannels, type ChannelSelection, type ChannelMenuTree } from "../plots/image/model/channel-menu";
+import { applyChannelSlice } from "../plots/image/model/channel-slice";
+import { type ViewportSettings } from "../state/settings/viewport-settings";
+import { initialViewportSettings } from "../state/settings/viewport-initial-settings.ts";
+import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
 import {
   PaneSyncContext,
   SharedPlotContext,
   useSharedPlot,
-} from "./host/plot-context.ts";
-import { PlotCell } from "./host/PlotCell.tsx";
-import { ReactBackendOutlet } from "./host/react-backend.ts";
-import { withoutSettingsPlumbing } from "./host/presentation.ts";
-import { getReactPlotType, onRegisterReactPlotType } from "./plots/react-registry.ts";
+} from "./plot-context.ts";
+import { PlotCell } from "./PlotCell.tsx";
+import { ReactBackendOutlet } from "./react-backend.ts";
+import { withoutSettingsPlumbing } from "./presentation.ts";
+import { getReactPlotType, onRegisterReactPlotType } from "../plots/react-registry.ts";
 import {
   comparisonRenderer,
   planComparison,
   resolveComparison,
-} from "./plots/registry.ts";
-import type { RenderEnvironment } from "./backends/contracts.ts";
+} from "../plots/registry.ts";
+import type { RenderEnvironment } from "../backends/contracts.ts";
 import {
   planRegisteredImageComparison as synthDiffLeafOf,
   resolveRegisteredImageComparison,
   expandImageComparison,
-} from "./plots/image/comparison-plan.ts";
+} from "../plots/image/comparison-plan.ts";
 import {
   useImageComparisonControl,
-} from "./plots/image/use-comparison-control.ts";
+} from "../plots/image/use-comparison-control.ts";
 import {
   composeImageComparisonPresentation,
   composeSingleImagePresentation,
   type ImageComparisonHostInput,
-} from "./plots/image/host-presentation.ts";
-import { usePlotSessionController } from "./state/session/session-context.ts";
-import { getGlobalSelectionStore } from "./state/selection/selection-store.ts";
-import { getRegisteredPane } from "./plot-selection-pane-registry.ts";
+} from "../plots/image/host-presentation.ts";
+import { usePlotSessionController } from "../state/session/session-context.ts";
+import { getGlobalSelectionStore } from "../state/selection/selection-store.ts";
+import { getRegisteredPane } from "../state/selection/pane-registry.ts";
 
 // Compatibility exports for existing standalone/stage imports. The host owns
 // these contracts; plot-node only consumes and re-exports them.
-export { PaneSyncContext, SharedPlotContext } from "./host/plot-context.ts";
-export type { PaneSyncCtx, SharedPlotCtx } from "./host/plot-context.ts";
+export { PaneSyncContext, SharedPlotContext } from "./plot-context.ts";
+export type { PaneSyncCtx, SharedPlotCtx } from "./plot-context.ts";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -442,7 +442,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const registered = getReactPlotType(node.renderer);
   if (registered?.backends.length) {
     const settings = registered.definition.projectSettings(
-      (paneSync?.syncedSettings ?? {}) as import("./plots/contracts.ts").SettingsRecord,
+      (paneSync?.syncedSettings ?? {}) as import("../plots/contracts.ts").SettingsRecord,
     );
     return (
       <ReactBackendOutlet
@@ -795,7 +795,7 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
       backends={registered.backends}
       environment={browserRenderEnvironment()}
       presentation={presentation as Record<string, unknown>}
-      settings={settings as import("./plots/contracts.ts").SettingsRecord}
+      settings={settings as import("../plots/contracts.ts").SettingsRecord}
       commands={{
         patch: (patch) => paneSync?.setSyncedSettings?.(patch as ViewportSettings),
         reset: () => {

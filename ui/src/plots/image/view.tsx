@@ -5,7 +5,7 @@ import { ContentAspectFrame } from "../../layout/ContentAspectFrame.tsx";
 import { GridCellReporter, GridUniformAspectContext, finitePositive } from "../../layout/grid-uniform-aspect.tsx";
 import { resolveRenderMode, shapeDims } from "./backend/contracts.ts";
 import { useImageView } from "../../state/settings/use-image-view.ts";
-import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "../../plot-standalone-helpers.tsx";
+import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "../../host/standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import { useImageBackend } from "./backend-select.ts";
 import type { ImagePresentation, ImageSettings } from "./register.ts";

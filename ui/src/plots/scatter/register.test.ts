@@ -34,7 +34,7 @@ test("scatter is a typed inline plot with chart-only settings", async () => {
     signal: new AbortController().signal,
   }), /typed points array/);
 
-  const legacySource = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");
+  const legacySource = readFileSync(new URL("../register-core.tsx", import.meta.url), "utf8");
   const coreMap = legacySource.match(/CORE_RENDERERS[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ?? "";
   assert.doesNotMatch(coreMap, /\bscatter\s*:/);
 });

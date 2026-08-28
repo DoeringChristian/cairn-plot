@@ -18,7 +18,7 @@ import {
   type PropertyMap,
   type PropertyMeta,
 } from "../../../engines/three/properties";
-import { LabelChip, RefBadge, ViewportCaption } from "../../../primitives/components";
+import { LabelChip, RefBadge, ViewportCaption } from "../../../primitives/components/index";
 import ViewportPlaceholder from "../../../integration/cairn-card/ViewportPlaceholder";
 import type { ColormapName } from "../../types";
 import type { MediaCompareModeKind } from "../../image/compare/mode";

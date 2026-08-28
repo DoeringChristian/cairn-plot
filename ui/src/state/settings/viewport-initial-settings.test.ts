@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { initialViewportSettings } from "./viewport-initial-settings.ts";
-import type { CompareNode } from "../../plot-descriptor.ts";
+import type { CompareNode } from "../../host/descriptor-resolver.ts";
 
 const compare = (colormap: string, kernel: string): CompareNode => ({
   kind: "compare",

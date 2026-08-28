@@ -72,7 +72,7 @@ import {
   EXTENDED_TONEMAP_PEAK_DEFAULT,
   type RgbTriple,
 } from "../../model/tonemap";
-import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings";
+import { getEncoding, DEFAULT_ENCODE_PARAMS } from "../../model/encodings/index";
 import { buildLUT, COLORMAP_STOPS } from "../../../../settings/colormaps/lut";
 import type { Device, Texture } from "../types";
 import { createHarness } from "../../../../testing/harness";

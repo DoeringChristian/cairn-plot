@@ -28,7 +28,7 @@ test("bar is a typed inline plot with chart-only settings", async () => {
     data: { kind: "inline", props: { bars: [{ id: "bad", value: "2" }] } },
   }, context), /typed bars array/);
 
-  const source = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../register-core.tsx", import.meta.url), "utf8");
   const coreMap = source.match(/CORE_RENDERERS[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ?? "";
   assert.doesNotMatch(coreMap, /\bbar\s*:/);
 });

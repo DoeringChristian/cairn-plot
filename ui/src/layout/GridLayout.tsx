@@ -11,7 +11,7 @@ import {
   useStackKeyboard,
 } from "./stack/StackedView.tsx";
 import { InStackedGridContext } from "./stack/stack-context.ts";
-import { ChartFillContext } from "../plot-standalone-helpers.tsx";
+import { ChartFillContext } from "../host/standalone-helpers.tsx";
 import { adjacentStackIndices } from "./stack-preload.ts";
 
 export type GridMode = "normal" | "stacked";
