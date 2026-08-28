@@ -5,7 +5,7 @@ import type { ComparisonRequest } from "../contracts.ts";
 import { overlayScalarPresentations, planScalarComparison } from "./comparison.ts";
 
 const request: ComparisonRequest = {
-  renderer: "scalar",
+  type: "scalar",
   presentation: "overlay",
   operands: [
     { kind: "inline", props: { series: [] } },

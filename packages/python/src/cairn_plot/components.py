@@ -399,7 +399,7 @@ class Line(Component):
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
-            "renderer": "scalar",
+            "type": "scalar",
             "data": {"kind": "inline", "props": self._inline},
         }
 
@@ -449,7 +449,7 @@ class Scatter(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "plot",
-            "renderer": "scatter",
+            "type": "scatter",
             "data": {"kind": "inline", "props": self._inline},
         }
         if self._config:
@@ -489,7 +489,7 @@ class Bar(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "plot",
-            "renderer": "bar",
+            "type": "bar",
             "data": {"kind": "inline", "props": self._inline},
         }
         if self._config:
@@ -544,7 +544,7 @@ class Histogram(Component):
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
-            "renderer": "histogram",
+            "type": "histogram",
             "props": self._config,
             "data": {"kind": "inline", "props": self._inline},
         }
@@ -610,7 +610,7 @@ class Heatmap(Component):
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
-            "renderer": "heatmap",
+            "type": "heatmap",
             "props": self._config,
             "data": {"kind": "inline", "props": self._inline},
         }
@@ -644,7 +644,7 @@ class ParallelCoordinates(Component):
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
-            "renderer": "parallel",
+            "type": "parallel",
             "props": self._config,
             "data": {"kind": "inline", "props": self._inline},
         }
@@ -677,7 +677,7 @@ class Figure(Component):
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
-            "renderer": "figure",
+            "type": "figure",
             "data": {"kind": "inline", "props": self._inline},
         }
 
@@ -707,7 +707,7 @@ class Table(Component):
     def to_node(self) -> dict[str, Any]:
         return {
             "kind": "plot",
-            "renderer": "table",
+            "type": "table",
             "data": {"kind": "inline", "props": self._inline},
         }
 
@@ -1266,7 +1266,7 @@ class Image(Component):
             if self._exr_channels is not None:
                 data["layer"] = self._exr_channels
         node: dict[str, Any] = {
-            "kind": "plot", "renderer": self._renderer, "data": data
+            "kind": "plot", "type": self._renderer, "data": data
         }
         # Merge the host-seam `toolbar:false` (only when disabled) onto whatever
         # display props the routed pipeline built.
@@ -1393,7 +1393,7 @@ class PointCloud(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "plot",
-            "renderer": "pointcloud",
+            "type": "pointcloud",
             "data": self._data,
         }
         if self._props:
@@ -1535,7 +1535,7 @@ class Mesh(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "plot",
-            "renderer": "mesh",
+            "type": "mesh",
             "data": self._data,
         }
         if self._props:
@@ -1651,7 +1651,7 @@ class Volume(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "plot",
-            "renderer": "volume",
+            "type": "volume",
             "data": self._data,
         }
         if self._props:
@@ -1764,7 +1764,7 @@ class Boxes(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "plot",
-            "renderer": "boxes3d",
+            "type": "boxes3d",
             "data": self._data,
         }
         if self._props:
@@ -2036,7 +2036,7 @@ class Compare(Component):
     def to_node(self) -> dict[str, Any]:
         node: dict[str, Any] = {
             "kind": "compare",
-            "renderer": "image",
+            "type": "image",
             "presentation": "difference" if self._internal_mode == "diff" else "split",
             "operands": [self._a._leaf_dataspec(), self._b._leaf_dataspec()],
             "strategy": "reference",

@@ -18,13 +18,13 @@ test("histogram validates and normalizes its discriminated presentation", async 
   };
   const content = await definition.resolve({
     kind: "plot",
-    renderer: "histogram",
+    type: "histogram",
     data: { kind: "inline", props: { counts: [1, 2], edges: [0, 1, 2] } },
   }, context);
   assert.equal((definition.present(content) as { view: string }).view, "bars");
   await assert.rejects(() => definition.resolve({
     kind: "plot",
-    renderer: "histogram",
+    type: "histogram",
     data: { kind: "inline", props: { view: "heatmap", perStep: [] } },
   }, context), /perStep data and a colormap/);
 

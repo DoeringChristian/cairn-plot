@@ -14,7 +14,7 @@ test("scalar definition registers overlay comparison through the typed registry"
   assert.deepEqual(definition.comparison?.presentations.map(({ id }) => id), ["overlay"]);
   const node = {
     kind: "compare" as const,
-    renderer: "scalar",
+    type: "scalar",
     presentation: "overlay",
     operands: [
       { kind: "inline" as const, props: { series: [] } },
@@ -23,7 +23,7 @@ test("scalar definition registers overlay comparison through the typed registry"
     strategy: "all" as const,
   };
   const request = {
-    renderer: "scalar",
+    type: "scalar",
     operands: node.operands,
     strategy: "all" as const,
     presentation: "overlay",

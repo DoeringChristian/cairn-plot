@@ -66,7 +66,7 @@ function imageDescriptor(label: string, color: string): PlotSpec {
     mode: "local",
     root: {
       kind: "plot",
-      renderer: "image",
+      type: "image",
       data: { kind: "url", src: makeImageUrl(color) },
       props: { label, toolbar: true },
     },
@@ -77,7 +77,7 @@ function imageDescriptor(label: string, color: string): PlotSpec {
 function gridCell(label: string, color: string): PlotNode {
   return {
     kind: "plot",
-    renderer: "image",
+    type: "image",
     data: { kind: "url", src: makeImageUrl(color) },
     props: { label, toolbar: false },
   } as unknown as PlotNode;

@@ -18,13 +18,13 @@ test("heatmap is a typed inline plot with a rectangular numeric matrix", async (
   };
   const content = await definition.resolve({
     kind: "plot",
-    renderer: "heatmap",
+    type: "heatmap",
     data: { kind: "inline", props: { matrix: [[1, 2], [3, 4]] } },
   }, context);
   assert.equal((definition.present(content) as { matrix: unknown[] }).matrix.length, 2);
   await assert.rejects(() => definition.resolve({
     kind: "plot",
-    renderer: "heatmap",
+    type: "heatmap",
     data: { kind: "inline", props: { matrix: [[1], [2, 3]] } },
   }, context), /equal length/);
 

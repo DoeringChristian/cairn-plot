@@ -73,37 +73,33 @@ class HtmlElement(Element):
 
 def _node_has_figure(node: Any) -> bool:
     """Recursively: does this ``PlotNode`` dict (leaf/grid/compare) contain a
-    ``figure`` renderer? Only ``plot`` leaves carry a renderer; ``compare`` frames
-    are images, never figures."""
+    ``figure`` plot type?"""
     if not isinstance(node, dict):
         return False
     if node.get("kind") == "plot":
-        return node.get("renderer") == "figure"
+        return node.get("type") == "figure"
     if node.get("kind") == "grid":
         return any(_node_has_figure(c) for c in node.get("children", []))
     return False
 
 
-# The three.js renderer names (the 3D types the `three` addon carries).
-_THREE_RENDERERS = frozenset({"mesh", "volume", "pointcloud", "boxes3d"})
+# The plot types carried by the Three addon.
+_THREE_TYPES = frozenset({"mesh", "volume", "pointcloud", "boxes3d"})
 
 
 def _node_has_three(node: Any) -> bool:
-    """Recursively: does this ``PlotNode`` dict contain a three.js 3D renderer?
-    ``plot`` leaves carry a ``renderer``; ``grid`` recurses its children;
-    ``compare`` frames are ``DataSpec``s — a 3D compare (G3c) carries ``npz``
-    frames, so check ``a``/``b`` kinds (forward-looking; harmless today)."""
+    """Recursively: does this ``PlotNode`` use a Three-backed plot type?"""
     if not isinstance(node, dict):
         return False
     kind = node.get("kind")
     if kind == "plot":
-        return node.get("renderer") in _THREE_RENDERERS
+        return node.get("type") in _THREE_TYPES
     if kind == "grid":
         return any(_node_has_three(c) for c in node.get("children", []))
     if kind == "compare":
         return any(
-            isinstance(node.get(f), dict) and node[f].get("kind") == "npz"
-            for f in ("a", "b")
+            isinstance(operand, dict) and operand.get("kind") == "npz"
+            for operand in node.get("operands", [])
         )
     return False
 
@@ -156,37 +152,32 @@ class PlotElement(Element):
             return spec.model_dump(exclude_none=True, mode="json")
         return dict(spec)
 
-    def _renderer_name(self) -> str:
+    def _plot_type_name(self) -> str:
         try:
-            return str(self._descriptor_dict().get("renderer", ""))
+            root = self._descriptor_dict().get("root", {})
+            return str(root.get("type", "")) if isinstance(root, dict) else ""
         except Exception:  # noqa: BLE001 - never break the display path
             return ""
 
     def _descriptor_has_figure(self) -> bool:
-        """Whether the descriptor carries a ``figure`` renderer ANYWHERE — a flat
-        leaf (``renderer=="figure"``) OR a ``figure`` leaf nested in the recursive
-        ``root`` tree (grid/compare). Gates the Plotly figure addon so a tree that
+        """Whether the spec carries a ``figure`` plot anywhere. Gates the Plotly
+        figure addon so a tree that
         contains a figure still inlines Plotly, while a scalar/table/image tree
         never does."""
         try:
             desc = self._descriptor_dict()
         except Exception:  # noqa: BLE001 - never break the display path
             return False
-        if desc.get("renderer") == "figure":
-            return True
         root = desc.get("root")
         return _node_has_figure(root) if isinstance(root, dict) else False
 
     def _descriptor_has_three(self) -> bool:
-        """Whether the descriptor carries a three.js 3D renderer ANYWHERE — a
-        flat leaf OR a 3D leaf nested in the recursive ``root`` tree. Gates the
+        """Whether the spec carries a Three-backed plot anywhere. Gates the
         three.js addon so a 2D/table/image tree never inlines three."""
         try:
             desc = self._descriptor_dict()
         except Exception:  # noqa: BLE001 - never break the display path
             return False
-        if desc.get("renderer") in _THREE_RENDERERS:
-            return True
         root = desc.get("root")
         return _node_has_three(root) if isinstance(root, dict) else False
 
@@ -283,5 +274,5 @@ class PlotElement(Element):
             )
 
     def __repr__(self) -> str:
-        renderer = self._descriptor_dict().get("renderer", "?") if self.spec else "?"
-        return f"<cairn.plot.{self._label} (renderer={renderer!r}, mode={self._bundle})>"
+        plot_type = self._plot_type_name() if self.spec else "?"
+        return f"<cairn.plot.{self._label} (type={plot_type!r}, mode={self._bundle})>"

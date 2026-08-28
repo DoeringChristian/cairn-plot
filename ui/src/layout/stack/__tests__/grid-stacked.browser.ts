@@ -20,7 +20,7 @@ function floatLeaf(w: number, h: number, label: string): unknown {
   for (let i = 0; i < data.length; i++) data[i] = ((i % 97) / 97) * 0.8;
   return {
     kind: "plot",
-    renderer: "image",
+    type: "image",
     data: { kind: "inline", props: { source: { dtype: "float", data, shape: [h, w, 3], precision: "f32" } } },
     props: { toolbar: true, label },
   };
@@ -76,7 +76,7 @@ function imageDiffGrid(mode: "normal" | "stacked"): PlotSpec {
       gap: 8,
       mode,
       children: [
-        { kind: "plot", renderer: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
+        { kind: "plot", type: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
         diffUrlChild("#c0392b", "#2980b9", "Diff"),
       ],
     },
@@ -97,7 +97,7 @@ function mixedGrid(mode: "normal" | "stacked"): PlotSpec {
       gap: 8,
       mode,
       children: [
-        { kind: "plot", renderer: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
+        { kind: "plot", type: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
         compareUrlChild("#c0392b", "#2980b9", "Compare"),
       ],
     },

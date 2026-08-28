@@ -54,7 +54,7 @@ function descriptor(): PlotSpec {
     mode: "local",
     root: {
       kind: "plot",
-      renderer: "image",
+      type: "image",
       data: { kind: "imghdr", hash: "runtime:rgb", meta: {} },
       props: { toolbar: true, label: "enlarge-channel" },
     },

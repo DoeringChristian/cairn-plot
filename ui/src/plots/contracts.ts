@@ -33,9 +33,9 @@ export interface ComparisonStrategyDefinition {
   readonly requiresReference: boolean;
 }
 
-/** Normalized comparison intent. Plot definitions never inspect legacy a/b. */
+/** Normalized comparison intent. */
 export interface ComparisonRequest {
-  readonly renderer: string;
+  readonly type: string;
   readonly operands: readonly DataSpec[];
   readonly strategy: "reference" | "all";
   readonly referenceIndex?: number;

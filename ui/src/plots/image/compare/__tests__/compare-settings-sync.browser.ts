@@ -100,7 +100,7 @@ function compareDescriptor(fg: string, ref: string): PlotSpec {
     mode: "local",
     root: {
       kind: "compare",
-      renderer: "image",
+      type: "image",
       presentation: "split",
       operands: [
         { kind: "url", src: makeImageUrl(ref) },

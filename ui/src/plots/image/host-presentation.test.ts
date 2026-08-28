@@ -5,7 +5,7 @@ import { composeImageComparisonPresentation } from "./host-presentation.ts";
 
 const leaf = {
   kind: "plot" as const,
-  renderer: "image",
+  type: "image",
   data: { kind: "image" as const, hash: "reference" },
 };
 

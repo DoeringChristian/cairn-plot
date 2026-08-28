@@ -65,7 +65,7 @@ export function planImageComparison(
         presentation: request.presentation as ImageComparisonPresentation,
         reference,
         foreground,
-        leaf: { kind: "plot" as const, renderer: "image", data: reference, props: leafProps },
+        leaf: { kind: "plot" as const, type: "image", data: reference, props: leafProps },
         align: props.align as CompareAlign | undefined,
         fit: props.fit as CompareFit | undefined,
         referenceLabel: labelAt(referenceIndex),
@@ -79,9 +79,9 @@ export function planImageComparison(
 /** Checked adapter while the production host has only an image comparison UI. */
 export function planRegisteredImageComparison(node: CompareNode): ImageComparisonPlan {
   const planned = planComparison(node);
-  if (planned.renderer !== "image") {
+  if (planned.type !== "image") {
     throw new Error(
-      `cairn-plot: comparison host for ${JSON.stringify(planned.renderer)} is not installed`,
+      `cairn-plot: comparison host for ${JSON.stringify(planned.type)} is not installed`,
     );
   }
   if (planned.plan.outputs.length !== 1) {
@@ -97,9 +97,9 @@ export async function resolveRegisteredImageComparison(
   signal: AbortSignal = new AbortController().signal,
 ): Promise<Record<string, unknown>> {
   const planned = planComparison(node);
-  if (planned.renderer !== "image") {
+  if (planned.type !== "image") {
     throw new Error(
-      `cairn-plot: comparison host for ${JSON.stringify(planned.renderer)} is not installed`,
+      `cairn-plot: comparison host for ${JSON.stringify(planned.type)} is not installed`,
     );
   }
   if (planned.plan.outputs.length !== 1) {
@@ -115,7 +115,7 @@ export function expandImageComparison(node: CompareNode): GridNode | null {
   const cached = expandedNodes.get(node);
   if (cached !== undefined) return cached;
   const planned = planComparison(node);
-  if (planned.renderer !== "image" || planned.plan.outputs.length <= 1) {
+  if (planned.type !== "image" || planned.plan.outputs.length <= 1) {
     expandedNodes.set(node, null);
     return null;
   }
@@ -123,7 +123,7 @@ export function expandImageComparison(node: CompareNode): GridNode | null {
     const plan = output.plan as ImageComparisonPlan;
     return {
       kind: "compare" as const,
-      renderer: "image",
+      type: "image",
       operands: [plan.reference, plan.foreground],
       strategy: "reference" as const,
       referenceIndex: 0,

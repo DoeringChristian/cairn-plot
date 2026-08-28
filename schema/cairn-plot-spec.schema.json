@@ -46,7 +46,7 @@
           "type": "string",
           "const": "plot"
         },
-        "renderer": {
+        "type": {
           "type": "string"
         },
         "props": {
@@ -58,7 +58,7 @@
       },
       "required": [
         "kind",
-        "renderer",
+        "type",
         "data"
       ],
       "additionalProperties": false
@@ -366,7 +366,7 @@
           "type": "string",
           "const": "compare"
         },
-        "renderer": {
+        "type": {
           "type": "string",
           "description": "Plot definition that owns comparison semantics."
         },
@@ -398,7 +398,7 @@
       },
       "required": [
         "kind",
-        "renderer",
+        "type",
         "presentation",
         "operands",
         "strategy"

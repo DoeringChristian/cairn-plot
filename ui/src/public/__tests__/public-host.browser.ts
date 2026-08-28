@@ -21,7 +21,7 @@ function imageUrl(color: string): string {
 const descriptor: PlotSpec = {
   root: {
     kind: "plot",
-    renderer: "image",
+    type: "image",
     data: { kind: "image", hash: "same-hash" },
     props: { renderMode: "cpu", toolbar: false },
   },
@@ -42,7 +42,7 @@ async function run() {
   check(document.querySelectorAll("[data-cairn-selection-overlay-host]").length === 1, "one overlay host is acquired");
 
   mounted.restoreSession({
-    version: 1,
+    version: 2,
     cells: { "cell:root": { settings: { "panel.info": false } } },
     grids: {},
   });
@@ -53,7 +53,7 @@ async function run() {
   let sessionNotifications = 0;
   const unsubscribe = mounted.subscribeSession(() => sessionNotifications++);
   mounted.restoreSession({
-    version: 1,
+    version: 2,
     cells: { "cell:root": { settings: { "panel.info": true } } },
     grids: {},
   });

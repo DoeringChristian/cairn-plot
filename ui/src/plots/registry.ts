@@ -29,12 +29,12 @@ export function requirePlotType(kind: string): RegisteredPlotDefinition {
   return definition;
 }
 
-export function comparisonRenderer(node: CompareNode): string {
-  return node.renderer;
+export function comparisonType(node: CompareNode): string {
+  return node.type;
 }
 
 export interface PlannedComparison {
-  readonly renderer: string;
+  readonly type: string;
   readonly definition: RegisteredPlotDefinition;
   readonly capability: ComparisonCapability<unknown, unknown>;
   readonly request: ComparisonRequest;
@@ -43,7 +43,7 @@ export interface PlannedComparison {
 
 function normalizeComparison(
   node: CompareNode,
-  renderer: string,
+  type: string,
 ): ComparisonRequest {
   const operands = node.operands;
   if (operands.length < 2) {
@@ -58,7 +58,7 @@ function normalizeComparison(
   }
   const presentation = node.presentation;
   const props = { ...(node.props ?? {}) };
-  return { renderer, operands, strategy, referenceIndex, presentation, props };
+  return { type, operands, strategy, referenceIndex, presentation, props };
 }
 
 /**
@@ -68,24 +68,24 @@ function normalizeComparison(
 export function planComparison(node: CompareNode): PlannedComparison {
   const cached = comparisonPlans.get(node);
   if (cached) return cached;
-  const renderer = comparisonRenderer(node);
-  const definition = requirePlotType(renderer);
+  const type = comparisonType(node);
+  const definition = requirePlotType(type);
   const capability = definition.comparison;
   if (!capability) {
     throw new Error(
-      `cairn-plot: plot type ${JSON.stringify(renderer)} does not support comparison`,
+      `cairn-plot: plot type ${JSON.stringify(type)} does not support comparison`,
     );
   }
-  const request = normalizeComparison(node, renderer);
+  const request = normalizeComparison(node, type);
   const acceptance = capability.accepts(request);
   if (!acceptance.accepted) {
     const suffix = acceptance.reason ? `: ${acceptance.reason}` : "";
     throw new Error(
-      `cairn-plot: plot type ${JSON.stringify(renderer)} rejected comparison${suffix}`,
+      `cairn-plot: plot type ${JSON.stringify(type)} rejected comparison${suffix}`,
     );
   }
   const planned = {
-    renderer,
+    type,
     definition,
     capability,
     request,

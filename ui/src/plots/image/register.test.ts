@@ -26,7 +26,7 @@ test("image is exclusively owned by the typed plot registry", () => {
   assert.deepEqual(comparison.presentations.map((entry) => entry.id), ["split", "difference"]);
   assert.equal(planComparison({
     kind: "compare",
-    renderer: "image",
+    type: "image",
     presentation: "split",
     operands: [
       { kind: "image", hash: "a" },
@@ -36,7 +36,7 @@ test("image is exclusively owned by the typed plot registry", () => {
   }).plan.outputs.length, 1);
   assert.throws(() => planComparison({
       kind: "compare",
-      renderer: "image",
+      type: "image",
       presentation: "split",
       operands: [
         { kind: "image", hash: "a" },
@@ -46,7 +46,7 @@ test("image is exclusively owned by the typed plot registry", () => {
     }), /does not accept data kind/);
   const expanded = expandImageComparison({
     kind: "compare",
-    renderer: "image",
+    type: "image",
     operands: [
       { kind: "image", hash: "a" },
       { kind: "image", hash: "reference" },

@@ -66,7 +66,7 @@ import { ReactBackendOutlet } from "./react-backend.ts";
 import { withoutSettingsPlumbing } from "./presentation.ts";
 import { getReactPlotType, onRegisterReactPlotType } from "../plots/react-registry.ts";
 import {
-  comparisonRenderer,
+  comparisonType,
   planComparison,
   resolveComparison,
 } from "../plots/registry.ts";
@@ -263,7 +263,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       };
     }
     void resolveCached(key, async () => {
-      const registered = getReactPlotType(node.renderer);
+      const registered = getReactPlotType(node.type);
       const dp = registered
         ? registered.definition.present(await registered.definition.resolve(
             { ...node, data: effectiveData },
@@ -387,12 +387,12 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
-  const typedRegistration = getReactPlotType(node.renderer);
+  const typedRegistration = getReactPlotType(node.type);
   const rendererMissing = status === "ready" &&
     (!typedRegistration || typedRegistration.backends.length === 0);
   useEffect(() => {
-    if (status !== "ready" || getReactPlotType(node.renderer)?.backends.length) return;
-    const name = node.renderer;
+    if (status !== "ready" || getReactPlotType(node.type)?.backends.length) return;
+    const name = node.type;
     let settled = false;
     const registered = () => {
       if (!settled && getReactPlotType(name)?.backends.length) {
@@ -413,7 +413,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       unsubTyped();
       clearTimeout(timer);
     };
-  }, [status, rendererMissing, node.renderer]);
+  }, [status, rendererMissing, node.type]);
 
   // While ENLARGED, the loading/error placeholder renders INSIDE the fullscreen
   // overlay chrome (same backdrop/✕/Escape seam), so a slow re-resolve (an EXR
@@ -439,7 +439,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   if (status === "error") {
     return placeholderInShell(<Message text={`Plot error: ${errorMsg ?? "unknown"}`} error />);
   }
-  const registered = getReactPlotType(node.renderer);
+  const registered = getReactPlotType(node.type);
   if (registered?.backends.length) {
     const settings = registered.definition.projectSettings(
       (paneSync?.syncedSettings ?? {}) as import("../plots/contracts.ts").SettingsRecord,
@@ -544,7 +544,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
             run: () => resolveDataProps(child.data, source),
           });
         } else if (child.kind === "compare") {
-          if (comparisonRenderer(child) === "image") {
+          if (comparisonType(child) === "image") {
             const synth = synthDiffLeafOf(child);
             entries.push({
               key: resolutionKey(source, synth.leaf, "|diffpair"),
@@ -735,14 +735,14 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
       // Grids are cheap layout — only their leaf/compare descendants gate.
       return <GridView node={node} path={path} />;
     case "plot":
-      if (node.renderer === "image") return <ImageCompatibleView node={node} />;
+      if (node.type === "image") return <ImageCompatibleView node={node} />;
       return (
         <LazyGate reservedHeight={reservedHeightOf(node.props)}>
           <LeafView node={node} />
         </LazyGate>
       );
     case "compare":
-      if (comparisonRenderer(node) === "image") return <ImageCompatibleView node={node} />;
+      if (comparisonType(node) === "image") return <ImageCompatibleView node={node} />;
       return <GenericComparisonView node={node} />;
     default:
       return <Message text={`unknown node kind "${(node as PlotNode).kind}"`} error />;
@@ -779,12 +779,12 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
   if (error) return <Message text={error} error />;
   if (presentation === undefined) return <Message text="Loading…" />;
   if (!planned.value) return <Message text="invalid comparison" error />;
-  const registered = getReactPlotType(planned.value.renderer);
+  const registered = getReactPlotType(planned.value.type);
   if (!registered) {
-    return <Message text={`comparison host for ${JSON.stringify(planned.value.renderer)} is not installed`} error />;
+    return <Message text={`comparison host for ${JSON.stringify(planned.value.type)} is not installed`} error />;
   }
   if (presentation === null || typeof presentation !== "object" || Array.isArray(presentation)) {
-    return <Message text={`comparison ${JSON.stringify(planned.value.renderer)} returned an invalid presentation`} error />;
+    return <Message text={`comparison ${JSON.stringify(planned.value.type)} returned an invalid presentation`} error />;
   }
   const settings = {
     ...planned.value.definition.defaults(),
@@ -871,7 +871,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
  * without replacing the cell.
  */
 export function PlotNodeView({ node, path = "root" }: { node: PlotNode; path?: string }) {
-  if (node.kind === "compare" && comparisonRenderer(node) === "image") {
+  if (node.kind === "compare" && comparisonType(node) === "image") {
     try {
       const expanded = expandImageComparison(node);
       if (expanded) {

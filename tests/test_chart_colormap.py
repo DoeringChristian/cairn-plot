@@ -16,7 +16,7 @@ from cairn_plot.components import _COLORMAPS
 
 def test_scatter_accepts_plasma():
     node = cp.Scatter([0, 1, 2], [0, 1, 4], color=[0.1, 0.5, 0.9], colormap="plasma").to_node()
-    assert node["renderer"] == "scatter"
+    assert node["type"] == "scatter"
     assert node["props"]["colormap"] == "plasma"
 
 
@@ -33,7 +33,7 @@ def test_scatter_rejects_unknown_colormap():
 def test_parallel_coordinates_accepts_plasma():
     dims = {"a": [1, 2, 3], "b": [4, 5, 6]}
     node = cp.ParallelCoordinates(dims, colormap="plasma").to_node()
-    assert node["renderer"] == "parallel"
+    assert node["type"] == "parallel"
     assert node["props"]["colormap"] == "plasma"
 
 

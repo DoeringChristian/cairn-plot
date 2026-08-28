@@ -12,7 +12,7 @@ export type PlotNode = PlotLeafNode | GridNode | CompareNode;
 
 export interface PlotLeafNode {
   kind: "plot";
-  renderer: string;
+  type: string;
   props?: Record<string, JsonValue>;
   data: DataSpec;
 }
@@ -38,7 +38,7 @@ export interface GridNode {
 export interface CompareNode {
   kind: "compare";
   /** Plot definition that owns comparison semantics. */
-  renderer: string;
+  type: string;
   /** Plot-defined presentation (`overlay`, `difference`, …). */
   presentation: string;
   /** Ordered comparison inputs. */

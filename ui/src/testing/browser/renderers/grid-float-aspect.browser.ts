@@ -53,7 +53,7 @@ function floatSource(w: number, h: number): Record<string, unknown> {
 function floatLeaf(w: number, h: number): unknown {
   return {
     kind: "plot",
-    renderer: "image",
+    type: "image",
     data: { kind: "inline", props: { source: floatSource(w, h) } },
     props: { toolbar: true },
   };

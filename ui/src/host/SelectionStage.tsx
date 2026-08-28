@@ -246,7 +246,7 @@ function buildCompareCells(
     // "reference" so the left side stays identifiable.
     const node: CompareNode = cached ?? {
       kind: "compare",
-      renderer: "image",
+      type: "image",
       presentation: "split",
       operands: [fgSpec, refSpec],
       strategy: "reference",

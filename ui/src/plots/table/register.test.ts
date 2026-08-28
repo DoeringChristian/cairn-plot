@@ -21,12 +21,12 @@ test("table owns validated presentation and interaction settings", async () => {
     data: [[1], [2]],
   };
   const content = await definition.resolve({
-    kind: "plot", renderer: "table", data: { kind: "inline", props: { table } },
+    kind: "plot", type: "table", data: { kind: "inline", props: { table } },
   }, context);
   assert.equal((definition.present(content) as { table: { data: unknown[] } }).table.data.length, 2);
   await assert.rejects(() => definition.resolve({
     kind: "plot",
-    renderer: "table",
+    type: "table",
     data: { kind: "inline", props: { table: { ...table, data: [[1, 2]] } } },
   }, context), /match the column count/);
 

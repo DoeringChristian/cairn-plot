@@ -145,10 +145,10 @@ DataSpec = Annotated[
 
 
 class PlotLeafSpec(_Strict):
-    """`PlotNode{kind:"plot"}` — one renderer + its data (the former flat body)."""
+    """`PlotNode{kind:"plot"}` — one plot type and its data."""
 
     kind: Literal["plot"]
-    renderer: str
+    type: str
     props: Optional[dict[str, Any]] = None
     data: DataSpec
 
@@ -189,7 +189,7 @@ class CompareSpec(_Strict):
     """A plot-defined comparison of an ordered operand set."""
 
     kind: Literal["compare"]
-    renderer: str
+    type: str
     presentation: str
     operands: list[DataSpec]
     strategy: Literal["reference", "all"]

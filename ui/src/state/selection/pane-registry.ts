@@ -28,7 +28,7 @@ const IMAGE_RENDERERS: ReadonlySet<string> = new Set(["image", "imagehdr"]);
  *  3D or chart leaf returns false, so the compare stage ignores it. */
 export function isImageCompatibleNode(node: PlotNode): boolean {
   if (node.kind === "compare") return true;
-  if (node.kind === "plot") return IMAGE_RENDERERS.has(node.renderer);
+  if (node.kind === "plot") return IMAGE_RENDERERS.has(node.type);
   return false;
 }
 

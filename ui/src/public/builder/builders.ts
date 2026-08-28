@@ -182,10 +182,10 @@ export interface CairnPlot {
   registerRuntime(entries: Runtime): void;
 }
 
-function leaf(renderer: string, data: DataSpec, props?: Opts): PlotNode {
-  const node: PlotNode = { kind: "plot", renderer, data };
+function leaf(type: string, data: DataSpec, props?: Opts): PlotNode {
+  const node: PlotNode = { kind: "plot", type, data };
   if (props && Object.keys(props).length) {
-    node.props = jsonRecord(props, `${renderer}.props`);
+    node.props = jsonRecord(props, `${type}.props`);
   }
   return node;
 }
@@ -386,7 +386,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       if (opts.props && typeof opts.props === "object") Object.assign(built, opts.props);
       const node: PlotNode = {
         kind: "compare",
-        renderer: "image",
+        type: "image",
         presentation,
         operands: [A.data, B.data],
         strategy: "reference",

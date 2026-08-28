@@ -18,13 +18,13 @@ test("bar is a typed inline plot with chart-only settings", async () => {
   };
   const content = await definition.resolve({
     kind: "plot",
-    renderer: "bar",
+    type: "bar",
     data: { kind: "inline", props: { bars: [{ id: "r", label: "run", value: 2 }] } },
   }, context);
   assert.equal((definition.present(content) as { bars: unknown[] }).bars.length, 1);
   await assert.rejects(() => definition.resolve({
     kind: "plot",
-    renderer: "bar",
+    type: "bar",
     data: { kind: "inline", props: { bars: [{ id: "bad", value: "2" }] } },
   }, context), /typed bars array/);
 

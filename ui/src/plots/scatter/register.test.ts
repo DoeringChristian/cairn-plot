@@ -15,7 +15,7 @@ test("scatter is a typed inline plot with chart-only settings", async () => {
   assert.deepEqual(definition.defaults(), {});
   const content = await definition.resolve({
     kind: "plot",
-    renderer: "scatter",
+    type: "scatter",
     data: {
       kind: "inline",
       props: { points: [{ id: "p", x: 1, y: 2, color: null }] },
@@ -27,7 +27,7 @@ test("scatter is a typed inline plot with chart-only settings", async () => {
   assert.equal((definition.present(content) as { points: unknown[] }).points.length, 1);
   await assert.rejects(() => definition.resolve({
     kind: "plot",
-    renderer: "scatter",
+    type: "scatter",
     data: { kind: "inline", props: { points: [{ id: "bad" }] } },
   }, {
     source: { artifactUrl: () => null, bytes: async () => new ArrayBuffer(0) },

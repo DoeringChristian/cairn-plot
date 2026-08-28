@@ -64,7 +64,7 @@ function imageDiffGrid(): PlotSpec {
       gap: 8,
       mode: "stacked",
       children: [
-        { kind: "plot", renderer: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
+        { kind: "plot", type: "image", data: { kind: "url", src: imgUrl("#888") }, props: { toolbar: true, label: "Image" } },
         {
           kind: "compare",
           mode: "diff",

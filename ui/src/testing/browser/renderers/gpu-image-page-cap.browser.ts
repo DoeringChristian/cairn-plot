@@ -34,7 +34,7 @@ function tallFloatDescriptor(w: number, h: number): PlotSpec {
     mode: "local",
     root: {
       kind: "plot",
-      renderer: "image",
+      type: "image",
       data: { kind: "inline", props: { source: { dtype: "float", pixels: floatValues(data), shape: [h, w, 3] } } },
       props: { toolbar: true },
     },

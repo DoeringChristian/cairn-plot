@@ -23,12 +23,12 @@ test("parallel validates aligned typed columns, rows, and domains", async () => 
     columnDomains: [{ min: 0, max: 2, isNumeric: true }],
   };
   const content = await definition.resolve({
-    kind: "plot", renderer: "parallel", data: { kind: "inline", props: base },
+    kind: "plot", type: "parallel", data: { kind: "inline", props: base },
   }, context);
   assert.equal((definition.present(content) as { rows: unknown[] }).rows.length, 1);
   await assert.rejects(() => definition.resolve({
     kind: "plot",
-    renderer: "parallel",
+    type: "parallel",
     data: { kind: "inline", props: { ...base, columnDomains: [] } },
   }, context), /match the column count/);
 

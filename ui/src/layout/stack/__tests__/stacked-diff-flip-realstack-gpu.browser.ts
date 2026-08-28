@@ -120,7 +120,7 @@ function registerFloatData(): void {
 const imghdr = (hash: string) => ({ kind: "imghdr" as const, hash, meta: {} });
 const imageLeaf = (hash: string, label: string) => ({
   kind: "plot" as const,
-  renderer: "image",
+  type: "image",
   data: imghdr(hash),
   props: { toolbar: true, label },
 });
@@ -161,7 +161,7 @@ function stackedGrid(): PlotSpec {
 // to slot 0 must NEVER paint a frame without magma (the encoding-generation lag).
 const magmaScalarLeaf = (label: string) => ({
   kind: "plot" as const,
-  renderer: "image",
+  type: "image",
   data: imghdr("runtime:scalar"),
   props: { toolbar: true, label, colormap: "magma" },
 });
@@ -196,7 +196,7 @@ function singleCompareGrid(mode: "diff" | "split"): PlotSpec {
 // A plain SCALAR float image (k=1) with NO authored colormap (its default curve).
 const scalarPlainLeaf = (label: string) => ({
   kind: "plot" as const,
-  renderer: "image",
+  type: "image",
   data: imghdr("runtime:scalar"),
   props: { toolbar: true, label },
 });
@@ -221,7 +221,7 @@ function stackedTwoScalarGrid(): PlotSpec {
 // authored peak.
 const peakScalarLeaf = (label: string, peak: number) => ({
   kind: "plot" as const,
-  renderer: "image",
+  type: "image",
   data: imghdr("runtime:scalar"),
   props: { toolbar: true, label, peak },
 });

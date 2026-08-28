@@ -42,7 +42,7 @@ function imageDescriptor(w: number, h: number, color: string): PlotSpec {
     mode: "local",
     root: {
       kind: "plot",
-      renderer: "image",
+      type: "image",
       data: { kind: "url", src: makeImageUrl(w, h, color) },
       props: { toolbar: true },
     },

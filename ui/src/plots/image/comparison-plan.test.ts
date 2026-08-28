@@ -8,7 +8,7 @@ const image = (hash: string) => ({ kind: "image" as const, hash });
 
 test("image comparison planning owns baseline ordering and presentation", () => {
   const request: ComparisonRequest = {
-    renderer: "image",
+    type: "image",
     operands: [image("a"), image("b")],
     strategy: "reference",
     referenceIndex: 1,
@@ -26,7 +26,7 @@ test("image comparison planning owns baseline ordering and presentation", () => 
 
 test("image reference comparison plans one output per non-reference operand", () => {
   const result = planImageComparison({
-    renderer: "image",
+    type: "image",
     operands: [image("a"), image("b"), image("c")],
     strategy: "reference",
     referenceIndex: 1,

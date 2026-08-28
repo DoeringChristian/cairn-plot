@@ -66,7 +66,7 @@ function comparableDefinition(accepted = true) {
 
 const comparisonNode = {
   kind: "compare" as const,
-  renderer: "test",
+  type: "test",
   presentation: "overlay",
   operands: [
     { kind: "inline" as const, props: { value: 1 } },
@@ -82,7 +82,7 @@ test("plot registry contains type erasure at one checked adapter", async () => {
   assert.deepEqual(registered.defaults(), { value: 1 });
   assert.deepEqual(registered.projectSettings({ value: 4, ignored: true }), { value: 4 });
   const content = await registered.resolve(
-    { kind: "plot", renderer: "test", data: { kind: "inline", props: { value: 4 } } },
+    { kind: "plot", type: "test", data: { kind: "inline", props: { value: 4 } } },
     {
       source: {
         artifactUrl: () => null,
@@ -113,7 +113,7 @@ test("comparison planning is selected by the authored plot kind", () => {
   clearPlotTypesForTest();
   registerPlotType(comparableDefinition());
   const planned = planComparison(comparisonNode);
-  assert.equal(planned.renderer, "test");
+  assert.equal(planned.type, "test");
   assert.deepEqual(planned.plan, {
     outputs: [{ plan: { operation: "overlay" }, operandIndices: [0, 1] }],
     layout: "single",
