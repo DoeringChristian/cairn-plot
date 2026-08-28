@@ -7,7 +7,7 @@ import type {
 import type {
   CompareAlign,
   CompareFit,
-} from "./backend/contracts.ts";
+} from "./backends/contracts.ts";
 import type { DataSource } from "../../resources/data/data-source.ts";
 import type { ComparisonPlan, ComparisonRequest } from "../contracts.ts";
 import { planComparison } from "../registry.ts";

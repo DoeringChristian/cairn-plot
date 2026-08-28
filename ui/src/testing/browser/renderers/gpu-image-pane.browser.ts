@@ -72,8 +72,8 @@
 import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
-import GpuImagePane from "../../../plots/image/backend/gpu";
-import { hdrSource, type HdrData } from "../../../plots/image/backend/contracts";
+import GpuImagePane from "../../../plots/image/backends/webgpu";
+import { hdrSource, type HdrData } from "../../../plots/image/backends/contracts";
 import { getLiveSwapchainCount, isCanvasLive, MAX_LIVE_SWAPCHAINS } from "../../../plots/image/engine/pool";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { createHarness, sleep, waitFor } from "../../harness";

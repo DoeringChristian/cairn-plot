@@ -106,7 +106,7 @@ import type { ImageParams } from "../engine/image-engine";
 // bundle (`vite.plot-gpu-image.config.ts`), never `core.iife.js` — the
 // core-bundle guard is about core staying free of the ENGINE, not about the
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
-import CpuImagePane from "./cpu";
+import CpuImagePane from "./canvas";
 import ImagePaneShell from "../components/ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import {

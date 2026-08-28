@@ -258,7 +258,7 @@ addon installs a backend.
 See [Authoring plot types](plot-type-authoring.md) for the internal extension
 contract and invariants.
 
-### Image-backend contract (`ui/src/plots/image/backend/contracts.ts`)
+### Image-backend contract (`ui/src/plots/image/backends/contracts.ts`)
 
 The interchangeable CPU and WebGPU image backends consume the same semantic
 image presentation and the same cell-owned settings. Backend selection changes

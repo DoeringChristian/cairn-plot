@@ -34,8 +34,8 @@
 import { floatValues } from "../../../plots/image/model/pixel-buffer.ts";
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import GpuImagePane from "../../../plots/image/backend/gpu";
-import { urlSource, hdrSource, type HdrData } from "../../../plots/image/backend/contracts";
+import GpuImagePane from "../../../plots/image/backends/webgpu";
+import { urlSource, hdrSource, type HdrData } from "../../../plots/image/backends/contracts";
 import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import {
   startPaneRenderLog,

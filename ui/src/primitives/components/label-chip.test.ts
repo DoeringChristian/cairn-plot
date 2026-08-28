@@ -50,7 +50,7 @@ test("LabelChip: both corners + draggable + accessible grip contract", () => {
 // Every compare pane must render the SHARED chip and NOT hard-code its own
 // inline label chip. The grip icon + drag-grip class are the tells of the old
 // inline copies, so their absence outside LabelChip is the re-divergence guard.
-const CONSUMERS = ["plots/image/compare/compositor.tsx", "plots/image/backend/gpu.tsx"];
+const CONSUMERS = ["plots/image/compare/compositor.tsx", "plots/image/backends/webgpu.tsx"];
 
 test("every compare pane routes its label through the shared LabelChip", () => {
   for (const rel of CONSUMERS) {
@@ -75,7 +75,7 @@ test("every compare pane routes its label through the shared LabelChip", () => {
 // derived `metricsBottomClass`, never an independent `bottom-7 : bottom-1` re-test.
 // (Post content-op unification, Phase 4, this rides the unified `GpuImagePane`.)
 test("the unified pane folds the metrics offset into the shared caption-stack flag", () => {
-  const src = read("plots/image/backend/gpu.tsx");
+  const src = read("plots/image/backends/webgpu.tsx");
   // The bottom-right caption chip presence and the metrics offset both key off
   // `compareCaps.right` (the one foreground-caption value).
   assert.match(

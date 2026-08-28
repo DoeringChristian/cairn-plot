@@ -25,7 +25,7 @@
  * undefined`, `hasDeep:false`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { HdrData } from "../backend/contracts";
+import type { HdrData } from "../backends/contracts";
 import { floatPixelsFrom } from "../model/pixel-buffer.ts";
 import type { ToolbarSliderSpec } from "../../../primitives/controls/ToolbarConfig";
 import { useResettableState } from "../../../host/hooks/use-resettable-state";

@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import GpuImagePane from "../backend/gpu";
+import GpuImagePane from "../backends/webgpu";
 import {
   ensureGpuImageProbe,
   gpuImageGateState,
@@ -19,7 +19,7 @@ import type {
 import { useImageGestures, type ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { useGammaFilter, GammaFilterSvg } from "./post-processing";
 import ImageOverlay from "../components/ImageOverlay";
-import CpuImagePane, { tonemapToImageData } from "../backend/cpu";
+import CpuImagePane, { tonemapToImageData } from "../backends/canvas";
 import { DEFAULT_TONEMAP } from "../model/tonemap";
 import { DIFF_MODE_LABELS } from "../model/diff";
 import PixelValueOverlay, {
@@ -39,7 +39,7 @@ import SplitDivider from "./SplitDivider";
 import type { MediaCompareModeKind } from "./mode";
 import type { CompareAlign, CompareFit } from "../engine/compare-align";
 import { alignFrameSourcesForDiff } from "./cross-type-align";
-import { resolveRenderMode, urlSource } from "../backend/contracts";
+import { resolveRenderMode, urlSource } from "../backends/contracts";
 import {
   useSeedGroupOnFormation,
   useCellSettings,
@@ -50,7 +50,7 @@ import type {
   DecodedSource,
   FloatSource,
   ImageBackend,
-} from "../backend/contracts";
+} from "../backends/contracts";
 
 /**
  * Resolve the UNIFIED engine image pane (`GpuImagePane`, statically in core

@@ -7,7 +7,7 @@ import type {
   DecodedSource,
   ImageBackendProps,
   RenderMode,
-} from "./backend/contracts.ts";
+} from "./backends/contracts.ts";
 import type { PlotSettings } from "../../settings/schema.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../backends/react.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";

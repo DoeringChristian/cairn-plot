@@ -14,7 +14,7 @@ export { default as ScalarPlot, type ScalarPlotProps } from "../../scalar/render
 // WebGPU `GpuImagePane` (addon-loaded via the runtime registry seam) are the
 // two interchangeable backends behind `ImageBackendProps` — see
 // `image-backend.ts`'s module doc.
-export { default as CpuImagePane, tonemapToImageData } from "../backend/cpu";
+export { default as CpuImagePane, tonemapToImageData } from "../backends/canvas";
 export {
   isHdrProps,
   isFloatSource,
@@ -32,7 +32,7 @@ export {
   type SdrImageProps,
   type HdrData,
   type RenderMode,
-} from "../backend/contracts";
+} from "../backends/contracts";
 export { default as Heatmap, type HeatmapProps } from "../../heatmap/renderer/Heatmap";
 export {
   default as HistogramPlot,

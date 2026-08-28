@@ -21,7 +21,7 @@ import React, {
 } from "react";
 import { Colorbar } from "../primitives/components/index";
 import type { ColormapName } from "../plots/types";
-import type { CompareSource } from "../plots/image/backend/contracts";
+import type { CompareSource } from "../plots/image/backends/contracts";
 import {
   resolveDataProps,
   type CompareNode,

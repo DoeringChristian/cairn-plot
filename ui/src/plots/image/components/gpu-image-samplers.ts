@@ -30,7 +30,7 @@ import {
   type PixelSample,
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
-import { shapeDims, type HdrData, type DecodedSource } from "../backend/contracts";
+import { shapeDims, type HdrData, type DecodedSource } from "../backends/contracts";
 
 /** A retained decoded uint8 RGBA buffer (a source or the reference operand). */
 interface U8Buffer {

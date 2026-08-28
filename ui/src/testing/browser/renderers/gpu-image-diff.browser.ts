@@ -35,8 +35,8 @@
 import React from "react";
 import { isDeviceLostError } from "../../../plots/image/engine/webgpu/device";
 import { createRoot } from "react-dom/client";
-import GpuImagePane from "../../../plots/image/backend/gpu";
-import { urlSource } from "../../../plots/image/backend/contracts";
+import GpuImagePane from "../../../plots/image/backends/webgpu";
+import { urlSource } from "../../../plots/image/backends/contracts";
 import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import { createHarness, waitFor } from "../../harness";
 import type { PlotSettings } from "../../../settings/schema.ts";
