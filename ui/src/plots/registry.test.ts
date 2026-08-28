@@ -6,6 +6,7 @@ import type { PlotBackend } from "../backends/contracts.ts";
 import { definePlot, type SettingsRecord } from "./contracts.ts";
 import {
   clearPlotTypesForTest,
+  onPlotTypeRegister,
   registerPlotType,
   requirePlotType,
 } from "./registry.ts";
@@ -48,7 +49,13 @@ test("plot registry contains type erasure at one checked adapter", async () => {
   assert.deepEqual(registered.defaults(), { value: 1 });
   const content = await registered.resolve(
     { kind: "plot", renderer: "test", data: { kind: "inline", props: { value: 4 } } },
-    { source: {}, signal: new AbortController().signal },
+    {
+      source: {
+        artifactUrl: () => null,
+        bytes: async () => new ArrayBuffer(0),
+      },
+      signal: new AbortController().signal,
+    },
   );
   assert.equal(registered.present(content), 4);
 });
@@ -59,3 +66,11 @@ test("duplicate plot kinds fail instead of silently replacing behavior", () => {
   assert.throws(() => registerPlotType(testDefinition()), /duplicate plot type/);
 });
 
+test("registration subscriptions support lazy plot definitions", () => {
+  clearPlotTypesForTest();
+  let notifications = 0;
+  const unsubscribe = onPlotTypeRegister(() => notifications++);
+  registerPlotType(testDefinition());
+  unsubscribe();
+  assert.equal(notifications, 1);
+});

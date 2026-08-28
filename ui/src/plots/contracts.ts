@@ -1,11 +1,12 @@
 import type { JsonValue } from "../../../packages/spec/src/json.ts";
 import type { DataSpec, PlotLeafNode, PlotNode } from "../../../packages/spec/src/spec.ts";
 import type { PlotBackend } from "../backends/contracts.ts";
+import type { DataSource } from "../lib/cairn-plot/store/data-sources.ts";
 
 export type SettingsRecord = Record<string, JsonValue>;
 
 export interface ResolveContext {
-  readonly source: object;
+  readonly source: DataSource;
   readonly signal: AbortSignal;
 }
 
@@ -104,4 +105,3 @@ export function definePlot<
       | undefined,
   };
 }
-
