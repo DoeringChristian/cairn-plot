@@ -17,9 +17,9 @@ import {
   YAxis,
 } from "recharts";
 import type { AxisScale, PromotedSeriesConfig, Series, Viewport } from "../../types";
-import type { AxisSource } from "../../../resources/transforms/x-axis";
-import { resolveAxisDomain } from "../../../resources/transforms/domain";
-import { mergeToRows } from "../../../resources/transforms/merge-rows";
+import type { AxisSource } from "../../transforms/x-axis";
+import { resolveAxisDomain } from "../../transforms/domain";
+import { mergeToRows } from "../../transforms/merge-rows";
 import { formatXTick } from "../../../primitives/format";
 import { AXIS, GRID, paddedDomain } from "../../../public/theme";
 import { useModifierKey } from "../../../host/hooks/use-modifier-key";

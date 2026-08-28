@@ -41,12 +41,12 @@ import type { DataSource } from "../resources/data/data-source.ts";
 // `parse-npz` (the `DecompressionStream` inflate path) is loaded LAZILY at its
 // call sites below — again matching `image/decoders.ts` — so the eager module
 // graph (and this file's own float-decode unit test) stays clean.
-import { parseNpy } from "../resources/transforms/parse-npy.ts";
-import type { parseNpz as ParseNpzFn } from "../resources/transforms/parse-npz.ts";
+import { parseNpy } from "./transforms/parse-npy.ts";
+import type { parseNpz as ParseNpzFn } from "./transforms/parse-npz.ts";
 
 /** Lazily load the `.npz` parser (see the import note above). */
 async function loadParseNpz(): Promise<typeof ParseNpzFn> {
-  return (await import("../resources/transforms/parse-npz.ts")).parseNpz;
+  return (await import("./transforms/parse-npz.ts")).parseNpz;
 }
 import type { PropertyMap } from "./three/model/properties.ts";
 import { extractProperties } from "./three/model/properties.ts";

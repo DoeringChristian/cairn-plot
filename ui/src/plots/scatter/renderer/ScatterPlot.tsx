@@ -8,8 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { SERIES_COLORS, type ScatterPoint, type ColormapName } from "../../types";
-import type { ParetoDirection } from "../../../resources/transforms/pareto";
-import { computeParetoFront } from "../../../resources/transforms/pareto";
+import type { ParetoDirection } from "../../transforms/pareto";
+import { computeParetoFront } from "../../transforms/pareto";
 import { getColormapLUT } from "../../../settings/colormaps/lut";
 import { lutRow, normToT } from "../../../settings/colormaps/lut-sample";
 import { useContainerSize } from "../../../host/hooks/use-container-size";

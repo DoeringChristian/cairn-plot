@@ -3,7 +3,7 @@ import type { ColormapName } from "../../types";
 import { useContainerSize } from "../../../host/hooks/use-container-size";
 import { formatNum } from "../../../primitives/format";
 import { niceTicks, paddedDomain } from "../../../public/theme";
-import { rebinHistograms, type HistogramData } from "../../../resources/transforms/histogram";
+import { rebinHistograms, type HistogramData } from "../../transforms/histogram";
 import Tooltip from "../../../primitives/components/Tooltip";
 import { Axis, PlotFrame, type AxisTick } from "../../../primitives/components/Axis";
 import { anchorFromRect, type TooltipAnchor } from "../../../primitives/components/tooltip-position";

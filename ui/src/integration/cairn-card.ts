@@ -62,8 +62,8 @@ export {
   parseNpz,
   computeHistogram,
   rebinHistograms,
-} from "../resources/transforms/index";
-export type { NpyArray, HistogramData } from "../resources/transforms/index";
+} from "../plots/transforms/index";
+export type { NpyArray, HistogramData } from "../plots/transforms/index";
 
 // Image processing
 export { getRenderMode, setRenderMode } from "../plots/image/model/index";
@@ -105,13 +105,13 @@ export {
   filterOutliers,
   checkFigureMergeable,
   mergeFigures,
-} from "../resources/transforms/index";
+} from "../plots/transforms/index";
 export type {
   AxisSource,
   ParetoDirection,
   FigureMergeabilityResult,
   FigureMergeEntry,
-} from "../resources/transforms/index";
+} from "../plots/transforms/index";
 
 // Formatting
 export { formatNum } from "../primitives/format";

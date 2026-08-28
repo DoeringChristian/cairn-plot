@@ -24,7 +24,7 @@ import {
   isBrowserNativeFormat,
   type ImageFormat,
 } from "./decoders.ts";
-import { parseNpy } from "../../../resources/transforms/parse-npy.ts";
+import { parseNpy } from "../../transforms/parse-npy.ts";
 
 // ---------------------------------------------------------------------------
 // A minimal PFM (Portable Float Map) encoder for building test buffers.

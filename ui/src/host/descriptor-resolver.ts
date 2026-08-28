@@ -26,7 +26,7 @@ import {
 } from "../plots/artifact-resolvers";
 import type { DataSource } from "../resources/data/data-source";
 import { parseOverlay } from "../plots/image/overlay-metadata";
-import { parseNpy } from "../resources/transforms/index";
+import { parseNpy } from "../plots/transforms/index";
 import {
   decodeImage,
   decodedU8ToDataUrl,

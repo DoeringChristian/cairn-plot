@@ -1,6 +1,6 @@
 import type { JsonValue } from "../../../../packages/spec/src/json.ts";
 import type { AxisScale, PromotedSeriesConfig, Series } from "../types.ts";
-import type { AxisSource } from "../../resources/transforms/x-axis.ts";
+import type { AxisSource } from "../transforms/x-axis.ts";
 import type { SettingsRecord } from "../contracts.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
 

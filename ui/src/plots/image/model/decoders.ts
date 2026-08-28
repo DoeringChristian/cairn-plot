@@ -44,7 +44,7 @@
 // and the node-test import — stays DOM-free. `.ts` extensions are required for
 // Node's resolver and accepted by tsc (`allowImportingTsExtensions`) + the vite
 // bundler.
-import { parseNpy, type NpyArray } from "../../../resources/transforms/parse-npy.ts";
+import { parseNpy, type NpyArray } from "../../transforms/parse-npy.ts";
 // The EXR slot is the worker-backed dispatcher (`decoders/exr-decode.ts`): it
 // runs the FULL vendored decoder (PIZ/PXR24/B44/DWA/… — see
 // `decoders/vendor/PROVENANCE.md`) OFF the main thread in a persistent inline
@@ -389,7 +389,7 @@ async function decodeNpy(src: ImageSource): Promise<DecodedImage> {
 
 async function decodeNpz(src: ImageSource): Promise<DecodedImage> {
   const bytes = requireBytes(src, "npz");
-  const { parseNpz } = await import("../../../resources/transforms/parse-npz.ts");
+  const { parseNpz } = await import("../../transforms/parse-npz.ts");
   const members = await parseNpz(bytes);
   const keys = Object.keys(members);
   if (keys.length === 0) throw new Error("cairn-plot decodeImage: empty .npz archive");

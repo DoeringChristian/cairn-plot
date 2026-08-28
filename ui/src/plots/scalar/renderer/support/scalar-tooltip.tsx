@@ -1,7 +1,7 @@
 // Internal satellite of ScalarPlot. Exported for ScalarPlot's use only —
 // intentionally NOT re-exported from the public cairn-plot barrels.
 
-import type { AxisSource } from "../../../../resources/transforms/x-axis";
+import type { AxisSource } from "../../../transforms/x-axis";
 import { formatNum, formatXTick } from "../../../../primitives/format";
 import { TOOLTIP_CHROME_CLASS } from "../../../../primitives/components/Tooltip";
 import type { LegendSeries } from "./scalar-legend";

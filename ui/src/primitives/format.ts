@@ -1,4 +1,4 @@
-import type { AxisSource } from "../resources/transforms/x-axis";
+import type { AxisSource } from "../plots/transforms/x-axis";
 
 /** Tuning for {@link formatNum}. Both default to the historical chart behaviour. */
 export interface FormatNumOptions {

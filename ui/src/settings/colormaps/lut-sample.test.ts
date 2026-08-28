@@ -15,7 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { lutRow, sampleLutByte, normToT } from "./lut-sample.ts";
-import { normalizeScalar, normalizeValue } from "../../resources/transforms/normalize.ts";
+import { normalizeScalar, normalizeValue } from "../../plots/transforms/normalize.ts";
 import { buildLUT } from "./lut.ts";
 
 // --- lutRow: the single clamp+round+degenerate point ----------------------
