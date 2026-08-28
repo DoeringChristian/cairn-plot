@@ -6,7 +6,7 @@ import {
   subscribeGpuImageGate,
 } from "../renderers/gpu-image-gate";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
-import { InStackedGridContext } from "../stack/stack-context";
+import { InStackedGridContext } from "../../../layout/stack/stack-context";
 import { usePublishNaturalSize } from "../renderers/natural-size-report";
 import type {
   Colormap,

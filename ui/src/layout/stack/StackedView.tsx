@@ -14,7 +14,7 @@
 import { useContext, useEffect, useRef } from "react";
 import type { ReactNode, RefObject } from "react";
 import { stackKeyAction, applyStackAction, stackTabBadge } from "./stack-keys";
-import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
+import { InFullscreenOverlayContext } from "../../lib/cairn-plot/primitives/FullscreenOverlayShell";
 
 /**
  * Window keydown → stack navigation, scoped to `rootRef` (hovered/focused inline,

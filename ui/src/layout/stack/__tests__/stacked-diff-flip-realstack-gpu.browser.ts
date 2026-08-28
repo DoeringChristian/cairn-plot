@@ -43,11 +43,11 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { PlotApp } from "../../../../plot-bootstrap";
-import { registerCoreRenderers } from "../../../../plot-renderers";
-import type { PlotDescriptor } from "../../../../plot-descriptor";
-import { getSharedDevice } from "../../../../plots/image/engine/device";
-import { registerRuntimeEntries } from "../../store/runtime-store";
+import { PlotApp } from "../../../plot-bootstrap";
+import { registerCoreRenderers } from "../../../plot-renderers";
+import type { PlotDescriptor } from "../../../plot-descriptor";
+import { getSharedDevice } from "../../../plots/image/engine/device";
+import { registerRuntimeEntries } from "../../../lib/cairn-plot/store/runtime-store";
 import {
   startPaneRenderLog,
   stopPaneRenderLog,
@@ -59,13 +59,13 @@ import {
   isEncodingGenerationMismatch,
   type PaneRenderRecord,
   type PaintPhaseRecord,
-} from "../../../../plots/image/engine/test-hooks";
+} from "../../../plots/image/engine/test-hooks";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,
-} from "../../../../state/selection/selection-store";
-import { getRegisteredPane } from "../../../../plot-selection-pane-registry";
-import { createHarness, sleep, waitFor } from "../../testing/harness";
+} from "../../../state/selection/selection-store";
+import { getRegisteredPane } from "../../../plot-selection-pane-registry";
+import { createHarness, sleep, waitFor } from "../../../lib/cairn-plot/testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "REALSTACK GPU" });
 

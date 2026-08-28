@@ -33,8 +33,8 @@ import {
   type PlotNode,
 } from "./plot-descriptor";
 import { getRenderer, onRegister } from "./plot-registry";
-import { stackLabelFor } from "./lib/cairn-plot/stack/StackedView";
-import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
+import { stackLabelFor } from "./layout/stack/StackedView";
+import { InStackedGridContext } from "./layout/stack/stack-context";
 import FullscreenOverlayShell, { InFullscreenOverlayContext } from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import {
   ChartFillContext,

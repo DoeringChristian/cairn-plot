@@ -29,7 +29,7 @@
 import { useContext, useEffect } from "react";
 import type { RefObject } from "react";
 import { InFullscreenOverlayContext } from "../primitives/FullscreenOverlayShell";
-import { InStackedGridContext } from "../stack/stack-context";
+import { InStackedGridContext } from "../../../layout/stack/stack-context";
 
 export function useSplitFlipKeys(
   paneRef: RefObject<HTMLElement | null>,

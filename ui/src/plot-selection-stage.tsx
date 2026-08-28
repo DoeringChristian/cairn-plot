@@ -76,8 +76,8 @@ import {
   StackTabStrip,
   GridModeToggle,
   stackLabelFor,
-} from "./lib/cairn-plot/stack/StackedView";
-import { InStackedGridContext } from "./lib/cairn-plot/stack/stack-context";
+} from "./layout/stack/StackedView";
+import { InStackedGridContext } from "./layout/stack/stack-context";
 import FullscreenOverlayShell from "./lib/cairn-plot/primitives/FullscreenOverlayShell";
 import { useOriginTheme } from "./lib/cairn-plot/primitives/themed-portal";
 import {

@@ -9,8 +9,8 @@ import {
   GridModeToggle,
   StackTabStrip,
   useStackKeyboard,
-} from "../lib/cairn-plot/stack/StackedView.tsx";
-import { InStackedGridContext } from "../lib/cairn-plot/stack/stack-context.ts";
+} from "../layout/stack/StackedView.tsx";
+import { InStackedGridContext } from "../layout/stack/stack-context.ts";
 import { ChartFillContext } from "../plot-standalone-helpers.tsx";
 import { adjacentStackIndices } from "./stack-preload.ts";
 

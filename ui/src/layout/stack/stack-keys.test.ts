@@ -1,6 +1,6 @@
 /**
  * Unit tests for the stacked-grid key mapping (`stack-keys.ts`).
- *   node --experimental-strip-types --test src/lib/cairn-plot/stack/stack-keys.test.ts
+ *   node --experimental-strip-types --test src/layout/stack/stack-keys.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
