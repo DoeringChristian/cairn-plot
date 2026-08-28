@@ -15,6 +15,21 @@ test("image is exclusively owned by the typed plot registry", () => {
   ensureImagePlotType(View, async () => ({}));
   assert.equal(requirePlotType("image").kind, "image");
   assert.ok(getReactPlotType("image"));
+  const comparison = requirePlotType("image").comparison;
+  assert.ok(comparison, "image definition owns comparison semantics");
+  assert.deepEqual(comparison.presentations.map((entry) => entry.id), ["split", "difference"]);
+  assert.equal(comparison.accepts({
+    kind: "compare",
+    mode: "split",
+    a: { kind: "image", hash: "a" },
+    b: { kind: "url", src: "data:image/png;base64," },
+  }).accepted, true);
+  assert.equal(comparison.accepts({
+    kind: "compare",
+    mode: "split",
+    a: { kind: "image", hash: "a" },
+    b: { kind: "npz", hash: "mesh", objectType: "mesh", meta: {} },
+  }).accepted, false);
   assert.throws(() => claimPlotKind("image", "legacy-renderer"), /already owned by definition/);
 
   const legacySource = readFileSync(new URL("../../plot-renderers.tsx", import.meta.url), "utf8");

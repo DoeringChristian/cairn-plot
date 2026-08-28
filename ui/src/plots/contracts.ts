@@ -1,5 +1,5 @@
 import type { JsonValue } from "../../../packages/spec/src/json.ts";
-import type { DataSpec, PlotLeafNode, PlotNode } from "../../../packages/spec/src/spec.ts";
+import type { CompareNode, DataSpec, PlotLeafNode } from "../../../packages/spec/src/spec.ts";
 import type { PlotBackend } from "../backends/contracts.ts";
 import type { DataSource } from "../lib/cairn-plot/store/data-sources.ts";
 
@@ -31,26 +31,14 @@ export interface ComparisonAcceptance {
   readonly reason?: string;
 }
 
-export interface ComparisonRequest {
-  readonly presentation: string;
-  readonly settings: Readonly<SettingsRecord>;
-}
-
 export interface ComparisonCapability<
-  TSpec extends DataSpec,
-  TContent,
+  TPlan,
   TPresentation,
 > {
   readonly presentations: readonly ComparisonPresentationDefinition[];
-  accepts(operands: readonly PlotNode[]): ComparisonAcceptance;
-  resolve(
-    operands: readonly TSpec[],
-    context: ResolveContext,
-  ): Promise<readonly TContent[]>;
-  compose(
-    contents: readonly TContent[],
-    request: ComparisonRequest,
-  ): TPresentation;
+  accepts(node: CompareNode): ComparisonAcceptance;
+  plan(node: CompareNode): TPlan;
+  resolve(plan: TPlan, context: ResolveContext): Promise<TPresentation>;
 }
 
 /** Strongly typed authoring unit for one internally maintained plot kind. */
@@ -59,6 +47,7 @@ export interface PlotDefinition<
   TContent,
   TSettings extends SettingsRecord,
   TPresentation,
+  TComparisonPlan = never,
 > {
   readonly kind: string;
   readonly data: DataSchema<TSpec>;
@@ -68,7 +57,7 @@ export interface PlotDefinition<
   resolve(spec: TSpec, context: ResolveContext): Promise<TContent>;
   present(content: TContent): TPresentation;
 
-  readonly comparison?: ComparisonCapability<TSpec, TContent, TPresentation>;
+  readonly comparison?: ComparisonCapability<TComparisonPlan, TPresentation>;
 }
 
 /** The sole type-erased boundary used by the heterogeneous host registry. */
@@ -79,7 +68,7 @@ export interface RegisteredPlotDefinition {
   resolve(node: PlotLeafNode, context: ResolveContext): Promise<unknown>;
   present(content: unknown): unknown;
   readonly backends: readonly PlotBackend<unknown, SettingsRecord>[];
-  readonly comparison?: ComparisonCapability<DataSpec, unknown, unknown>;
+  readonly comparison?: ComparisonCapability<unknown, unknown>;
 }
 
 /** Erase a checked definition once; concrete plot and backend code stays typed. */
@@ -88,8 +77,9 @@ export function definePlot<
   TContent,
   TSettings extends SettingsRecord,
   TPresentation,
+  TComparisonPlan = never,
 >(
-  definition: PlotDefinition<TSpec, TContent, TSettings, TPresentation>,
+  definition: PlotDefinition<TSpec, TContent, TSettings, TPresentation, TComparisonPlan>,
 ): RegisteredPlotDefinition {
   return {
     kind: definition.kind,
@@ -101,7 +91,7 @@ export function definePlot<
     // crossed the definition's schema and are paired by this same adapter.
     backends: definition.backends as unknown as readonly PlotBackend<unknown, SettingsRecord>[],
     comparison: definition.comparison as unknown as
-      | ComparisonCapability<DataSpec, unknown, unknown>
+      | ComparisonCapability<unknown, unknown>
       | undefined,
   };
 }

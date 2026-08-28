@@ -38,6 +38,9 @@ Status: accepted design; implementation in progress
 - [x] Move image comparison operation/divider control out of the host. It is a
   projection of the cell's single settings object, with no renderer-local state
   and no colormap changes when switching comparison operations.
+- [x] Make comparison an explicit typed plot-definition capability with
+  `accepts`, `plan`, `resolve`, and declared presentations. Register the image
+  implementation through it so later scalar/mesh definitions use the same seam.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 

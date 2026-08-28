@@ -6,6 +6,10 @@ import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backe
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";
+import {
+  planImageComparison,
+  type ImageComparisonPlan,
+} from "./comparison-plan.ts";
 
 type ImageSpec = Extract<DataSpec, { kind: "inline" | "image" | "imghdr" | "url" }>;
 type ImagePresentation = Record<string, unknown>;
@@ -33,7 +37,13 @@ export function ensureImagePlotType(
       return createElement(View, input.presentation);
     },
   };
-  const definition = definePlot<ImageSpec, ImagePresentation, SettingsRecord, ImagePresentation>({
+  const definition = definePlot<
+    ImageSpec,
+    ImagePresentation,
+    SettingsRecord,
+    ImagePresentation,
+    ImageComparisonPlan
+  >({
     kind: "image",
     data: { validate: validateImageData },
     settings: {
@@ -42,6 +52,29 @@ export function ensureImagePlotType(
     },
     resolve: (spec, context) => resolve(spec, context.source),
     present: (content) => content,
+    comparison: {
+      presentations: [
+        { id: "split", label: "Split", minOperands: 2, maxOperands: 2 },
+        { id: "difference", label: "Difference", minOperands: 2, maxOperands: 2 },
+      ],
+      accepts(node) {
+        try {
+          validateImageData(node.a);
+          validateImageData(node.b);
+          return { accepted: true };
+        } catch (error) {
+          return {
+            accepted: false,
+            reason: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+      plan: planImageComparison,
+      async resolve(plan, context) {
+        const { resolveImageComparisonPair } = await import("./comparison-resolve.ts");
+        return resolveImageComparisonPair(plan.reference, plan.foreground, context.source);
+      },
+    },
     // The current adapter is same-root React. Imperative image backends can be
     // added after renderer internals no longer depend on React lifecycle.
     backends: [],
