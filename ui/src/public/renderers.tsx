@@ -16,18 +16,18 @@ export function ensurePublicRenderers(): void {
   );
   registerRenderer(
     "pointcloud",
-    lazy(() => import("../plot-three-renderers.tsx").then((module) => ({ default: module.PointCloudStandalone }))),
+    lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.PointCloudStandalone }))),
   );
   registerRenderer(
     "mesh",
-    lazy(() => import("../plot-three-renderers.tsx").then((module) => ({ default: module.MeshStandalone }))),
+    lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.MeshStandalone }))),
   );
   registerRenderer(
     "volume",
-    lazy(() => import("../plot-three-renderers.tsx").then((module) => ({ default: module.VolumeStandalone }))),
+    lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.VolumeStandalone }))),
   );
   registerRenderer(
     "boxes3d",
-    lazy(() => import("../plot-three-renderers.tsx").then((module) => ({ default: module.BoxesStandalone }))),
+    lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.BoxesStandalone }))),
   );
 }

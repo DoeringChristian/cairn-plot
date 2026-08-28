@@ -22,7 +22,7 @@ import {
   MeshStandalone,
   VolumeStandalone,
   BoxesStandalone,
-} from "./plot-three-renderers";
+} from "./plots/three/views";
 
 if (!window.__cairnPlotThreeLoaded) {
   if (typeof window.__cairnPlotRegisterRenderer === "function") {

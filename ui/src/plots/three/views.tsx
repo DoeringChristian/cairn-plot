@@ -19,13 +19,11 @@
  * (resolved through each viewport's `resolve*ViewConfig`), with any field
  * overridable via the descriptor's `props`.
  */
-import { PointCloudSingleView } from "./lib/cairn-plot/host/pointcloud-viewport";
-import { MeshSingleView } from "./lib/cairn-plot/host/mesh-viewport";
-import { VolumeSingleView } from "./lib/cairn-plot/host/volume-viewport";
-import { BoxesSingleView } from "./lib/cairn-plot/host/boxes-viewport";
-import { ChartBox } from "./plot-standalone-helpers";
-
-type P = Record<string, any>;
+import { PointCloudSingleView, type PointCloudViewportItem } from "../../lib/cairn-plot/host/pointcloud-viewport";
+import { MeshSingleView, type MeshViewportItem } from "../../lib/cairn-plot/host/mesh-viewport";
+import { VolumeSingleView, type VolumeViewportItem } from "../../lib/cairn-plot/host/volume-viewport";
+import { BoxesSingleView, type BoxesViewportItem } from "../../lib/cairn-plot/host/boxes-viewport";
+import { ChartBox } from "../../plot-standalone-helpers";
 
 /** The standalone default view config for a point cloud. `colorMode:"auto"`
  *  lets the viewer pick rgb / category / height from the channels; the dark
@@ -50,7 +48,11 @@ const DEFAULT_POINTCLOUD_VIEW = {
   cameraMode: "orbital" as const,
 };
 
-export function PointCloudStandalone(p: P) {
+export function PointCloudStandalone(p: Partial<typeof DEFAULT_POINTCLOUD_VIEW> & {
+  readonly height?: number;
+  readonly item?: PointCloudViewportItem | null;
+  readonly label?: string;
+}) {
   const { height, item, ...rest } = p;
   const view = {
     ...DEFAULT_POINTCLOUD_VIEW,
@@ -92,7 +94,11 @@ const DEFAULT_MESH_VIEW = {
   cameraMode: "orbital" as const,
 };
 
-export function MeshStandalone(p: P) {
+export function MeshStandalone(p: Partial<typeof DEFAULT_MESH_VIEW> & {
+  readonly height?: number;
+  readonly item?: MeshViewportItem | null;
+  readonly label?: string;
+}) {
   const { height, item, ...rest } = p;
   const view = {
     ...DEFAULT_MESH_VIEW,
@@ -135,7 +141,11 @@ const DEFAULT_VOLUME_VIEW = {
   cameraMode: "orbital" as const,
 };
 
-export function VolumeStandalone(p: P) {
+export function VolumeStandalone(p: Partial<typeof DEFAULT_VOLUME_VIEW> & {
+  readonly height?: number;
+  readonly item?: VolumeViewportItem | null;
+  readonly label?: string;
+}) {
   const { height, item, ...rest } = p;
   const view = {
     ...DEFAULT_VOLUME_VIEW,
@@ -175,7 +185,13 @@ const DEFAULT_BOXES_VIEW = {
   cameraMode: "orbital" as const,
 };
 
-export function BoxesStandalone(p: P) {
+export function BoxesStandalone(p: Partial<typeof DEFAULT_BOXES_VIEW> & {
+  readonly height?: number;
+  readonly item?: BoxesViewportItem | null;
+  readonly label?: string;
+  readonly depthMin?: number;
+  readonly depthMax?: number;
+}) {
   const { height, item, ...rest } = p;
   const view = {
     ...DEFAULT_BOXES_VIEW,
