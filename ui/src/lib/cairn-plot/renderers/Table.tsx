@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { diffCellClassName, type CellComparison } from "../table-diff";
 import { columnAlignClasses } from "./table-align";
 
@@ -15,6 +15,12 @@ export interface TableData {
   truncated?: boolean;
 }
 
+export interface TableViewState {
+  readonly sort: { readonly column: string; readonly direction: "asc" | "desc" } | null;
+  readonly filter: string;
+  readonly page: number;
+}
+
 export interface TableProps {
   table: TableData;
   rowsPerPage: number;
@@ -23,6 +29,8 @@ export interface TableProps {
   diffStatuses?: CellComparison[][];
   invertDiff?: boolean;
   className?: string;
+  state: TableViewState;
+  onStateChange: (state: TableViewState) => void;
 }
 
 /** Render a cell value; numbers get mono alignment via the caller. */
@@ -41,10 +49,10 @@ export default function Table({
   hiddenColumns,
   diffStatuses,
   invertDiff = false,
+  state,
+  onStateChange,
 }: TableProps) {
-  const [sort, setSort] = useState<{ col: number; dir: "asc" | "desc" } | null>(null);
-  const [filter, setFilter] = useState("");
-  const [page, setPage] = useState(0);
+  const { sort, filter, page } = state;
 
   const columns = table.columns ?? [];
   const rows = table.data ?? [];
@@ -69,7 +77,9 @@ export default function Table({
 
   const sorted = useMemo(() => {
     if (!sort) return filtered;
-    const { col, dir } = sort;
+    const col = columns.findIndex((column) => column.name === sort.column);
+    if (col < 0) return filtered;
+    const dir = sort.direction;
     const numeric = columns[col]?.type === "number";
     const factor = dir === "asc" ? 1 : -1;
     const copy = filtered.slice();
@@ -122,8 +132,9 @@ export default function Table({
   const pageCount = Math.max(1, Math.ceil(sorted.length / perPage));
   // Clamp page when the underlying data shrinks (filter/sort/step change).
   useEffect(() => {
-    setPage((p) => Math.min(p, pageCount - 1));
-  }, [pageCount]);
+    const clamped = Math.min(page, pageCount - 1);
+    if (clamped !== page) onStateChange({ ...state, page: clamped });
+  }, [onStateChange, page, pageCount, state]);
   const safePage = Math.min(page, pageCount - 1);
   const pageRowIdxs = useMemo(
     () => sorted.slice(safePage * perPage, safePage * perPage + perPage),
@@ -131,11 +142,13 @@ export default function Table({
   );
 
   const toggleSort = (col: number) => {
-    setSort((prev) => {
-      if (!prev || prev.col !== col) return { col, dir: "asc" };
-      if (prev.dir === "asc") return { col, dir: "desc" };
-      return null; // third click clears sort
-    });
+    const column = columns[col]!.name;
+    const next = !sort || sort.column !== column
+      ? { column, direction: "asc" as const }
+      : sort.direction === "asc"
+        ? { column, direction: "desc" as const }
+        : null;
+    onStateChange({ ...state, sort: next, page: 0 });
   };
 
   if (columns.length === 0) {
@@ -151,8 +164,7 @@ export default function Table({
           placeholder="Filter rows…"
           value={filter}
           onChange={(e) => {
-            setFilter(e.target.value);
-            setPage(0);
+            onStateChange({ ...state, filter: e.target.value, page: 0 });
           }}
         />
         <span className="mono shrink-0 text-xs text-fg-subtle">
@@ -180,8 +192,8 @@ export default function Table({
             <tr>
               {visibleCols.map((c) => {
                 const col = columns[c]!;
-                const active = sort?.col === c;
-                const arrow = active ? (sort!.dir === "asc" ? "▲" : "▼") : "";
+                const active = sort?.column === col.name;
+                const arrow = active ? (sort!.direction === "asc" ? "▲" : "▼") : "";
                 // Header alignment mirrors the body cells (numeric → right) so a
                 // column's title sits directly above its values.
                 const a = columnAlignClasses(col.type);
@@ -277,7 +289,7 @@ export default function Table({
             type="button"
             className="rounded px-2 py-0.5 hover:bg-bg-hover disabled:opacity-40"
             disabled={safePage <= 0}
-            onClick={() => setPage(safePage - 1)}
+            onClick={() => onStateChange({ ...state, page: safePage - 1 })}
           >
             {"← prev"}
           </button>
@@ -288,7 +300,7 @@ export default function Table({
             type="button"
             className="rounded px-2 py-0.5 hover:bg-bg-hover disabled:opacity-40"
             disabled={safePage >= pageCount - 1}
-            onClick={() => setPage(safePage + 1)}
+            onClick={() => onStateChange({ ...state, page: safePage + 1 })}
           >
             {"next →"}
           </button>

@@ -78,6 +78,10 @@ Status: accepted design; implementation in progress
 - [x] Migrate parallel coordinates with aligned column/row/domain validation
   and an explicit empty settings schema. Hover remains transient and selection
   remains host-owned; nonexistent 2D viewport settings are not invented.
+- [x] Move table filter, column-name sort, and page into typed cell settings;
+  make the table renderer controlled and migrate table presentation validation.
+  With every core plot definition migrated, delete the empty legacy core
+  renderer map and registration loop. The old registry remains addon-only.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

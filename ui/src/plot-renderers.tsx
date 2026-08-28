@@ -1,7 +1,7 @@
 /**
- * `CORE_RENDERERS` — the standalone plot bundle's ALWAYS-present `renderer`
- * name → component table (design spec §4): the 2D charts + single-image +
- * table. It imports the SAME pure `lib/cairn-plot` renderers the viewer app
+ * The standalone plot bundle's always-present plot definitions cover the 2D
+ * charts, single-image, and table renderers. It imports the SAME pure
+ * `lib/cairn-plot` renderers the viewer app
  * uses, so a Python-emitted plot is pixel-identical to the same renderer in
  * the app (consistency by construction).
  *
@@ -33,7 +33,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ComponentType,
   type ReactNode,
 } from "react";
 import ScalarPlot from "./lib/cairn-plot/renderers/ScalarPlot";
@@ -45,6 +44,7 @@ import { ensureBarPlotType } from "./plots/bar/register";
 import { ensureHistogramPlotType } from "./plots/histogram/register";
 import { ensureHeatmapPlotType } from "./plots/heatmap/register";
 import { ensureParallelPlotType } from "./plots/parallel/register";
+import { ensureTablePlotType, type TableSettings } from "./plots/table/register";
 import Heatmap from "./lib/cairn-plot/renderers/Heatmap";
 import CpuImagePane from "./lib/cairn-plot/renderers/CpuImagePane";
 import GpuImagePane from "./lib/cairn-plot/renderers/GpuImagePane";
@@ -75,7 +75,6 @@ import {
   GridCellReporter,
   finitePositive,
 } from "./lib/cairn-plot/renderers/grid-uniform-aspect";
-import { registerRenderer } from "./plot-registry";
 import { ensureImagePlotType } from "./plots/image/register.ts";
 import { ensureScalarPlotType } from "./plots/scalar/register.ts";
 import { ensureScatterPlotType } from "./plots/scatter/register.ts";
@@ -434,6 +433,8 @@ export function ImageStandalone(p: P) {
 }
 
 function TableStandalone(p: P) {
+  const settings = (p.syncedSettings ?? {}) as TableSettings;
+  const patch = p.setSyncedSettings as ((patch: TableSettings) => void) | undefined;
   return (
     <Table
       table={p.table ?? { columns: [], data: [] }}
@@ -441,21 +442,21 @@ function TableStandalone(p: P) {
       hiddenColumns={p.hiddenColumns ?? []}
       diffStatuses={p.diffStatuses}
       invertDiff={p.invertDiff}
+      state={{
+        sort: settings["table.sort"] ?? null,
+        filter: settings["table.filter"] ?? "",
+        page: settings["table.page"] ?? 0,
+      }}
+      onStateChange={(state) => patch?.({
+        "table.sort": state.sort,
+        "table.filter": state.filter,
+        "table.page": state.page,
+      })}
     />
   );
 }
 
-/**
- * The core renderer registry. Names match the design spec §7 "clean 2D +
- * single-image" set (`scalar, scatter, parallel, bar, histogram, heatmap,
- * image`) plus `table`. `figure` (Plotly) and 3D (three.js) are ADDONS
- * registered at runtime — deliberately absent so they stay out of core.
- */
-export const CORE_RENDERERS: Record<string, ComponentType<any>> = {
-  table: TableStandalone,
-};
-
-/** Seed the runtime registry with the always-present core renderers. */
+/** Seed the typed runtime registry with every always-present core plot. */
 export function registerCoreRenderers(): void {
   ensureImagePlotType(ImageStandalone, resolveDataProps);
   ensureScalarPlotType(ScalarPlotStandalone, resolveDataProps);
@@ -464,7 +465,5 @@ export function registerCoreRenderers(): void {
   ensureHistogramPlotType(HistogramStandalone, resolveDataProps);
   ensureHeatmapPlotType(HeatmapStandalone, resolveDataProps);
   ensureParallelPlotType(ParallelCoordsStandalone, resolveDataProps);
-  for (const [name, component] of Object.entries(CORE_RENDERERS)) {
-    registerRenderer(name, component);
-  }
+  ensureTablePlotType(TableStandalone, resolveDataProps);
 }
