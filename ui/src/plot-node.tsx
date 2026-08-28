@@ -81,6 +81,7 @@ import {
 import { PlotCell } from "./host/PlotCell.tsx";
 import { ReactBackendOutlet } from "./host/react-backend.ts";
 import { getReactPlotType } from "./plots/react-registry.ts";
+import { comparisonRenderer } from "./plots/registry.ts";
 import type { RenderEnvironment } from "./backends/contracts.ts";
 import {
   planRegisteredImageComparison as synthDiffLeafOf,
@@ -645,6 +646,9 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
             run: () => resolveDataProps(child.data, source),
           });
         } else if (child.kind === "compare") {
+          // Comparison preparation belongs to its installed plot host. The
+          // transitional production host below currently implements image.
+          if (comparisonRenderer(child) !== "image") continue;
           const synth = synthDiffLeafOf(child);
           entries.push({
             key: resolutionKey(source, synth.leaf, "|diffpair"),
@@ -821,66 +825,79 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
  * `compareSource`; the pane's MODE menu lifts changes back through the callbacks.
  */
 function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }) {
+  switch (node.kind) {
+    case "grid":
+      // Grids are cheap layout — only their leaf/compare descendants gate.
+      return <GridView node={node} path={path} />;
+    case "plot":
+      if (node.renderer === "image") return <ImageCompatibleView node={node} />;
+      return (
+        <LazyGate reservedHeight={reservedHeightOf(node.props)}>
+          <LeafView node={node} />
+        </LazyGate>
+      );
+    case "compare":
+      if (comparisonRenderer(node) === "image") return <ImageCompatibleView node={node} />;
+      return <Message text={`comparison host for ${JSON.stringify(comparisonRenderer(node))} is not installed`} error />;
+    default:
+      return <Message text={`unknown node kind "${(node as PlotNode).kind}"`} error />;
+  }
+}
+
+/**
+ * One stable React boundary for ordinary images and image comparisons. A stack
+ * flip between them therefore updates the retained LeafView/surface in place.
+ */
+function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
   const { shared } = useSharedPlot();
   const paneSync = useContext(PaneSyncContext);
-  // In a stacked grid / fullscreen overlay — read on the CORE side (the addon
-  // bundle's context identity differs) and threaded to the pane so
-  // `useSplitFlipKeys` scopes its arrow aliases correctly.
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
-  // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
   const control = useImageComparisonControl(
     node,
     paneSync?.syncedSettings,
     paneSync?.setSyncedSettings,
     paneSync?.applySyncedSettings,
   );
-  // Static synth-leaf derivation (memoized on the node object) — only meaningful
-  // for a compare node; computed unconditionally to keep hook order stable.
-  const synth = node.kind === "compare" ? synthDiffLeafOf(node) : null;
-
-  switch (node.kind) {
-    case "grid":
-      // Grids are cheap layout — only their leaf/compare descendants gate.
-      return <GridView node={node} path={path} />;
-    case "plot":
-      return (
-        <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-          <LeafView node={node} />
-        </LazyGate>
-      );
-    case "compare": {
-      if (!synth) return <Message text="invalid compare node" error />;
-      const diffSpec: DiffLeafSpec = {
-        node,
-        mode: control.viewMode,
-        diffKernel: control.diffKernel,
-        colormap: ((paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
-          (node.props?.colormap as CompareSource["colormap"]) ??
-          (shared?.colormap as CompareSource["colormap"]) ??
-          "none") as CompareSource["colormap"],
-        splitPosition: control.splitPos,
-        align: synth.align,
-        fit: synth.fit,
-        referenceLabel: synth.referenceLabel,
-        foregroundLabel: synth.foregroundLabel,
-        inStackedGrid,
-        inOverlay,
-        onDiffKernelChange: control.setDiffKernel,
-        onCompareModeChange: control.setViewMode,
-        onSplitPositionChange: control.setSplitPos,
-        viewportDefaults: initialViewportSettings(node, shared) ?? {},
-        compareModified: control.modified,
-      };
-      return (
-        <LazyGate reservedHeight={reservedHeightOf(node.props)}>
-          <LeafView node={synth.leaf} diffSpec={diffSpec} />
-        </LazyGate>
-      );
-    }
-    default:
-      return <Message text={`unknown node kind "${(node as PlotNode).kind}"`} error />;
+  if (node.kind === "plot") {
+    return (
+      <LazyGate reservedHeight={reservedHeightOf(node.props)}>
+        <LeafView node={node} />
+      </LazyGate>
+    );
   }
+  let synth;
+  try {
+    synth = synthDiffLeafOf(node);
+  } catch (error) {
+    return <Message text={error instanceof Error ? error.message : String(error)} error />;
+  }
+  const diffSpec: DiffLeafSpec = {
+    node,
+    mode: control.viewMode,
+    diffKernel: control.diffKernel,
+    colormap: ((paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
+      (node.props?.colormap as CompareSource["colormap"]) ??
+      (shared?.colormap as CompareSource["colormap"]) ??
+      "none") as CompareSource["colormap"],
+    splitPosition: control.splitPos,
+    align: synth.align,
+    fit: synth.fit,
+    referenceLabel: synth.referenceLabel,
+    foregroundLabel: synth.foregroundLabel,
+    inStackedGrid,
+    inOverlay,
+    onDiffKernelChange: control.setDiffKernel,
+    onCompareModeChange: control.setViewMode,
+    onSplitPositionChange: control.setSplitPos,
+    viewportDefaults: initialViewportSettings(node, shared) ?? {},
+    compareModified: control.modified,
+  };
+  return (
+    <LazyGate reservedHeight={reservedHeightOf(node.props)}>
+      <LeafView node={synth.leaf} diffSpec={diffSpec} />
+    </LazyGate>
+  );
 }
 
 /**

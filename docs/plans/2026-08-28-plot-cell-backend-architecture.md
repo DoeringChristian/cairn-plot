@@ -41,6 +41,12 @@ Status: accepted design; implementation in progress
 - [x] Make comparison an explicit typed plot-definition capability with
   `accepts`, `plan`, `resolve`, and declared presentations. Register the image
   implementation through it so later scalar/mesh definitions use the same seam.
+- [x] Add a backward-compatible comparison owner to the durable spec (omission
+  means `image`) and route acceptance, planning, resolution, and adjacent stack
+  preparation through the selected plot capability.
+- [x] Isolate image comparison controls and lowering behind image comparison
+  dispatch. Generic layout no longer runs image hooks or interprets comparison
+  operands; uninstalled comparison hosts fail explicitly.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
