@@ -96,7 +96,7 @@ import {
   type PaneHandle,
   type SourceUpload,
 } from "../engine/pool";
-import { getSharedDevice } from "../engine/device";
+import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import { isPaintPhaseLogActive, recordPaintPhase } from "../engine/test-hooks";
 import type { ImageParams } from "../engine/image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
@@ -1006,7 +1006,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // given pane instance — the two prop shapes never swap mid-life, per
     // this file's module doc) rather than a dep, matching this effect's
     // existing run-once-on-mount contract.
-    getSharedDevice()
+    getSharedWebGpuDevice()
       .then((device) => {
         if (cancelled) return;
         // Two INDEPENDENT signals decide true-HDR output, and we DIAGNOSE which
@@ -2106,7 +2106,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         renderPass();
         const surface = getCanvasSurfaceForTest(canvas);
         if (!surface) return null;
-        const device = await getSharedDevice();
+        const device = await getSharedWebGpuDevice();
         const data = await device.readback(surface);
         return { data, width: canvas.width, height: canvas.height };
       },

@@ -41,7 +41,7 @@
  * re-`createSurface`-ing the SAME canvas on restore is a safe idempotent
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
-import { getSharedDevice } from "./device";
+import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
 import { renderImage, computeMetrics, type ImageParams, type DiffMetrics } from "./image-engine";
 // Phase 2b: the CACHED-op render path (FLIP / HDR-FLIP / SSIM) runs the diff
 // engine's content-keyed compute + cache from INSIDE the pool (the pool owns the
@@ -1188,7 +1188,7 @@ export async function acquirePane(
   canvas: HTMLCanvasElement,
   opts?: { hdr?: boolean },
 ): Promise<PaneHandle> {
-  const device = await getSharedDevice();
+  const device = await getSharedWebGpuDevice();
   const entry: PaneEntry = {
     paneId: ++paneIdCounter,
     canvas,

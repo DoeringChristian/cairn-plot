@@ -23,6 +23,8 @@ Status: accepted design; implementation in progress
   evictable and retry silently after background failure.
 - [x] Implement versioned branch-retaining grid/stack sessions, imperative
   import/export/subscription, and opt-in external persistence.
+- [x] Move shared WebGPU device acquisition/lifetime behind a reusable,
+  plot-agnostic provider while retaining a compatibility export for old tests.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
