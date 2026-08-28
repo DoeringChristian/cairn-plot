@@ -7,6 +7,7 @@ import { eraseReactPlotBackend, registerReactPlotBackends } from "../plots/react
 import type { ThreePlotKind, ThreePresentation } from "../plots/three/register.ts";
 import { figureBackend } from "../plots/figure/backend.ts";
 import type { FigurePresentation } from "../plots/figure/view.tsx";
+import type { ReactPlotViewProps } from "../plots/react-view.ts";
 
 let registered = false;
 
@@ -16,25 +17,28 @@ export function ensurePublicRenderers(): void {
   registered = true;
   registerCoreRenderers();
   const FigureView = lazy(() =>
-    import("../plots/figure/view.tsx").then((module) => ({ default: module.FigureStandalone }))
-  ) as ComponentType<FigurePresentation>;
+    import("../plots/figure/view.tsx").then((module) => ({ default: module.FigurePlotView }))
+  ) as ComponentType<ReactPlotViewProps<FigurePresentation, SettingsRecord>>;
   registerReactPlotBackends("figure", [eraseReactPlotBackend(figureBackend(FigureView))]);
   const views = {
-    pointcloud: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.PointCloudStandalone }))),
-    mesh: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.MeshStandalone }))),
-    volume: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.VolumeStandalone }))),
-    boxes3d: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.BoxesStandalone }))),
+    pointcloud: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.PointCloudPlotView }))),
+    mesh: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.MeshPlotView }))),
+    volume: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.VolumePlotView }))),
+    boxes3d: lazy(() => import("../plots/three/views.tsx").then((module) => ({ default: module.BoxesPlotView }))),
   };
   for (const kind of Object.keys(views) as ThreePlotKind[]) {
     registerReactPlotBackends(kind, [
-      eraseReactPlotBackend(lazyThreeBackend(kind, views[kind] as unknown as ComponentType<ThreePresentation>)),
+      eraseReactPlotBackend(lazyThreeBackend(
+        kind,
+        views[kind] as unknown as ComponentType<ReactPlotViewProps<ThreePresentation, SettingsRecord>>,
+      )),
     ]);
   }
 }
 
 function lazyThreeBackend(
   kind: ThreePlotKind,
-  View: ComponentType<ThreePresentation>,
+  View: ComponentType<ReactPlotViewProps<ThreePresentation, SettingsRecord>>,
 ): ReactPlotBackend<ThreePresentation, SettingsRecord> {
   return {
     id: `${kind}-three-lazy`,
@@ -43,7 +47,11 @@ function lazyThreeBackend(
     supports: () => ({ supported: true, priority: 1 }),
     canReuse: () => true,
     component({ input }: ReactBackendProps<ThreePresentation, SettingsRecord>) {
-      return createElement(View, input.presentation);
+      return createElement(View, {
+        presentation: input.presentation,
+        settings: input.settings,
+        commands: input.commands,
+      });
     },
   };
 }

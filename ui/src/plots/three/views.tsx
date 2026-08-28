@@ -24,6 +24,8 @@ import { MeshSingleView, type MeshViewportItem } from "../../plots/three/viewpor
 import { VolumeSingleView, type VolumeViewportItem } from "../../plots/three/viewports/volume";
 import { BoxesSingleView, type BoxesViewportItem } from "../../plots/three/viewports/boxes";
 import { ChartBox } from "../../plot-standalone-helpers";
+import type { SettingsRecord } from "../contracts.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 
 /** The standalone default view config for a point cloud. `colorMode:"auto"`
  *  lets the viewer pick rgb / category / height from the channels; the dark
@@ -217,3 +219,21 @@ export function BoxesStandalone(p: Partial<typeof DEFAULT_BOXES_VIEW> & {
 }
 
 export default PointCloudStandalone;
+
+export type PointCloudPresentation = Parameters<typeof PointCloudStandalone>[0];
+export type MeshPresentation = Parameters<typeof MeshStandalone>[0];
+export type VolumePresentation = Parameters<typeof VolumeStandalone>[0];
+export type BoxesPresentation = Parameters<typeof BoxesStandalone>[0];
+
+export function PointCloudPlotView({ presentation }: ReactPlotViewProps<PointCloudPresentation, SettingsRecord>) {
+  return <PointCloudStandalone {...presentation} />;
+}
+export function MeshPlotView({ presentation }: ReactPlotViewProps<MeshPresentation, SettingsRecord>) {
+  return <MeshStandalone {...presentation} />;
+}
+export function VolumePlotView({ presentation }: ReactPlotViewProps<VolumePresentation, SettingsRecord>) {
+  return <VolumeStandalone {...presentation} />;
+}
+export function BoxesPlotView({ presentation }: ReactPlotViewProps<BoxesPresentation, SettingsRecord>) {
+  return <BoxesStandalone {...presentation} />;
+}

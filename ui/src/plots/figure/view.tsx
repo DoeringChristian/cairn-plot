@@ -19,6 +19,8 @@ import Figure from "../../lib/cairn-plot/renderers/Figure";
 import type { FigureInteractionSettings } from "../../lib/cairn-plot/renderers/Figure";
 import type { PlotlyFigureLike } from "../../lib/cairn-plot/types.ts";
 import { ChartBox } from "../../plot-standalone-helpers";
+import type { SettingsRecord } from "../contracts.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface FigurePresentation extends Record<string, unknown> {
   readonly figure?: PlotlyFigureLike;
@@ -46,6 +48,11 @@ export function FigureStandalone(p: FigurePresentation) {
       />
     </ChartBox>
   );
+}
+
+/** Typed plot view; Plotly remains an implementation detail of this addon. */
+export function FigurePlotView({ presentation }: ReactPlotViewProps<FigurePresentation, SettingsRecord>) {
+  return <FigureStandalone {...presentation} />;
 }
 
 export default FigureStandalone;

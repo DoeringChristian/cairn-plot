@@ -19,6 +19,8 @@ import { installCairnPlotBootstrap } from "./plot-bootstrap";
 import { registerCoreRenderers } from "./plot-renderers";
 import { figureBackend } from "./plots/figure/backend.ts";
 import type { FigurePresentation } from "./plots/figure/view.tsx";
+import type { SettingsRecord } from "./plots/contracts.ts";
+import type { ReactPlotViewProps } from "./plots/react-view.ts";
 import { eraseReactPlotBackend, registerReactPlotBackends } from "./plots/react-registry.ts";
 import "./lib/cairn-plot/styles/plot.css";
 
@@ -27,6 +29,6 @@ registerCoreRenderers();
 
 // Plotly `figure` stays in a lazy chunk for the server build (code-split).
 const LazyFigure = React.lazy(() =>
-  import("./plots/figure/view").then((m) => ({ default: m.FigureStandalone })),
-) as React.ComponentType<FigurePresentation>;
+  import("./plots/figure/view").then((m) => ({ default: m.FigurePlotView })),
+) as React.ComponentType<ReactPlotViewProps<FigurePresentation, SettingsRecord>>;
 registerReactPlotBackends("figure", [eraseReactPlotBackend(figureBackend(LazyFigure))]);

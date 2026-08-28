@@ -3,16 +3,17 @@ import { createElement, type ComponentType } from "react";
 import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
 import type { SettingsRecord } from "../contracts.ts";
 import type { ThreePlotKind, ThreePresentation } from "./register.ts";
+import type { ReactPlotViewProps } from "../react-view.ts";
 import {
-  BoxesStandalone,
-  MeshStandalone,
-  PointCloudStandalone,
-  VolumeStandalone,
+  BoxesPlotView,
+  MeshPlotView,
+  PointCloudPlotView,
+  VolumePlotView,
 } from "./views.tsx";
 
 function backend(
   kind: ThreePlotKind,
-  View: ComponentType<ThreePresentation>,
+  View: ComponentType<ReactPlotViewProps<ThreePresentation, SettingsRecord>>,
 ): ReactPlotBackend<ThreePresentation, SettingsRecord> {
   return {
     id: `${kind}-three`,
@@ -21,16 +22,20 @@ function backend(
     supports: () => ({ supported: true, priority: 1 }),
     canReuse: () => true,
     component({ input }: ReactBackendProps<ThreePresentation, SettingsRecord>) {
-      return createElement(View, input.presentation);
+      return createElement(View, {
+        presentation: input.presentation,
+        settings: input.settings,
+        commands: input.commands,
+      });
     },
   };
 }
 
 export function threePlotBackends(): Readonly<Record<ThreePlotKind, ReactPlotBackend<ThreePresentation, SettingsRecord>>> {
   return {
-    pointcloud: backend("pointcloud", PointCloudStandalone as unknown as ComponentType<ThreePresentation>),
-    mesh: backend("mesh", MeshStandalone as unknown as ComponentType<ThreePresentation>),
-    volume: backend("volume", VolumeStandalone as unknown as ComponentType<ThreePresentation>),
-    boxes3d: backend("boxes3d", BoxesStandalone as unknown as ComponentType<ThreePresentation>),
+    pointcloud: backend("pointcloud", PointCloudPlotView as unknown as ComponentType<ReactPlotViewProps<ThreePresentation, SettingsRecord>>),
+    mesh: backend("mesh", MeshPlotView as unknown as ComponentType<ReactPlotViewProps<ThreePresentation, SettingsRecord>>),
+    volume: backend("volume", VolumePlotView as unknown as ComponentType<ReactPlotViewProps<ThreePresentation, SettingsRecord>>),
+    boxes3d: backend("boxes3d", BoxesPlotView as unknown as ComponentType<ReactPlotViewProps<ThreePresentation, SettingsRecord>>),
   };
 }

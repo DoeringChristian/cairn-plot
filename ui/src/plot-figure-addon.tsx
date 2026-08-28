@@ -21,11 +21,11 @@
  * figure-specific beyond the name and the imported component.
  */
 import { figureBackend } from "./plots/figure/backend.ts";
-import { FigureStandalone } from "./plots/figure/view.tsx";
+import { FigurePlotView } from "./plots/figure/view.tsx";
 
 if (!window.__cairnPlotFigureLoaded) {
   if (typeof window.__cairnPlotRegisterBackends === "function") {
-    window.__cairnPlotRegisterBackends("figure", [figureBackend(FigureStandalone)]);
+    window.__cairnPlotRegisterBackends("figure", [figureBackend(FigurePlotView)]);
     window.__cairnPlotFigureLoaded = true;
   } else {
     // Core must run first (Python emits it before this addon). If it somehow
