@@ -52,7 +52,6 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../../types";
-import { colormapFloatLUT } from "../../../settings/colormaps/index";
 import { applyColormap } from "../model/apply-colormap.ts";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../model/index";
@@ -75,7 +74,7 @@ import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
 import { formatSsim } from "../engine/ssim-metric";
 import type { DiffMetrics } from "../engine/image-engine";
 import type { DiffCacheEntry } from "../engine/diff-engine";
-import { prepareDisplayBinding } from "../engine/prepare-display-operation.ts";
+import { defaultReduceForDisplayOperation, prepareDisplayBinding } from "../engine/prepare-display-operation.ts";
 import { compareCaptions } from "../compare/compare-captions";
 import { buildCompareModeMenu } from "../compare/compare-mode-menu";
 import SplitDivider from "../compare/SplitDivider";
@@ -124,7 +123,7 @@ import {
   reduceSegment,
   usePaneEncoding,
 } from "../components/display-encoding";
-import { getEncoding, defaultReduceMode, type ReduceMode } from "../model/encodings/index";
+import { type ReduceMode } from "../model/encodings/index";
 import {
   resolveEffectiveTonemap,
   resolveRenderTonemap,
@@ -167,7 +166,7 @@ const NULL_HDR: HdrData = { pixels: floatValues(new Float32Array(0)), shape: [0,
  *  (`scalarTransferActive`) so the scalar rides the shared (extended) output-encode
  *  unclamped on an HDR surface, byte-identically to the curve on SDR. Real tone-
  *  mappers (reinhard/aces) compress highlights and stay on the curve path. */
-const NONE_GRAY_CURVES: ReadonlySet<string> = new Set(["linear", "srgb", "gamma"]);
+const SCALAR_TRANSFER_OPERATIONS: ReadonlySet<string> = new Set(["linear", "srgb", "gamma"]);
 import { reportCapabilityLimit } from "../../../primitives/components/capability-notice";
 
 /** Expand the raw HDR buffer into an RGBA source upload — NO exposure/tonemap/
@@ -678,7 +677,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // NORM/BOUNDS pickers. Real tone-mappers (reinhard/aces) stay on the curve path —
   // they compress highlights (a LIGHT concept), so a scalar keeps them selectable.
   const scalarTransferActive =
-    hdrMode && sourceArity === 1 && hdrColormap == null && NONE_GRAY_CURVES.has(effectiveTonemap);
+    hdrMode && sourceArity === 1 && hdrColormap == null && SCALAR_TRANSFER_OPERATIONS.has(effectiveTonemap);
 
   // PEAK white (×SDR white) — the UNIFIED HDR MODE control. On an engaged HDR
   // surface it is ALWAYS shown and every operator respects it as its ceiling `P`
@@ -749,8 +748,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // averages RGB) regardless of k, unlike the k-based `defaultReduceMode`
   // (luminance for k≥3). REDUCE resolves at RENDER: store value > the derived
   // default (no descriptor prop).
-  const activeIsTurbo = !!getEncoding(enc.encodingId)?.turbo;
-  const reduceDefault: ReduceMode = activeIsTurbo ? "mean" : defaultReduceMode(sourceArity);
+  const reduceDefault: ReduceMode = defaultReduceForDisplayOperation(enc.encodingId, sourceArity);
   const effectiveReduce = (synced?.["image.reduce"] as ReduceMode | undefined) ?? reduceDefault;
   // BOUNDS resolve at RENDER: store pair > descriptor colorRange. Memoized so
   // the derived array is identity-stable per input change.
@@ -1597,7 +1595,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // → exposure/offset SENSITIVITY → LUT (cmap-mode linear). `isScalar`
     // short-circuits the tone-map operator + output-encode in the shader (the LUT
     // holds display sRGB), so operator/gamma/hdrOut are moot; the LUT table comes
-    // from the shared `colormapFloatLUT`, the SAME the diff blit binds.
+    // from the prepared display-operation binding, the same path comparisons use.
+    const preparedDisplay = prepareDisplayBinding(enc.encodingId, { hdrSurface: rt.hdrOut });
     const hdrColormapActive = hdrMode && hdrColormap != null;
     // ANALYTIC colormap (tev-style signed red-green): computed color, no LUT bind.
     // Unlike the LUT branch (which bakes display sRGB → hdrOut:false), the analytic
@@ -1605,7 +1604,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // pane's real hdrOut (`rt.hdrOut`) — |v|>1 error survives on the engaged HDR
     // surface, |v|<=1 renders identically on SDR. Exposure/offset SCALE the
     // amplitude (no bounds/norm skin on the analytic entry). See DisplayEncoding.
-    const analyticColormapActive = hdrColormapActive && !!getEncoding(hdrColormap)?.analytic;
+    const analyticColormapActive = hdrColormapActive && preparedDisplay.analytic === true;
     // Phase 4 DATA-encoding skins (float LUT path only): when the min/max BOUNDS
     // skin is engaged (`boundsEngaged`, seeded from `colorRange`), it is the SOLE
     // affine — EV/OFF are held NEUTRAL so the two skins never double-apply
@@ -1617,11 +1616,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       ? {
           exposureEV: baseExposure + displayEV,
           offset: baseOffset + displayOffset,
-          operator: "linear",
-          isScalar: true,
-          analytic: true,
+          ...preparedDisplay,
           // No colormap bound, no norm/bounds; gamma unset → sRGB OETF encode.
-          hdrOut: rt.hdrOut,
           peak: rt.peak,
           srgbDecode: false,
           reduce: effectiveReduce,
@@ -1633,17 +1629,13 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       ? {
           exposureEV: cmapExposure,
           offset: cmapOffset,
-          operator: "linear",
+          ...preparedDisplay,
           gamma: 1,
-          isScalar: true,
-          colormap: colormapFloatLUT(hdrColormap),
-          hdrOut: false,
           peak: rt.peak,
           srgbDecode: false,
           // TURBO bakes its own FIXED log2 index (scalar-mode 3). The user-facing
           // norm picker was removed (effective norm is linear = cairnDataIndex
           // identity), so the LUT index is the plain sensitivity-adjusted scalar.
-          ...(activeIsTurbo ? { turbo: true } : {}),
           // Multi-channel follow-up: a k>1 source is REDUCED to a scalar
           // (luminance/mean) before the LUT; k=1 leaves channel 0 untouched.
           reduce: effectiveReduce,

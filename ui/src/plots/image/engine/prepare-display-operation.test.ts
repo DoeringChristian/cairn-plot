@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { prepareDisplayBinding } from "./prepare-display-operation.ts";
+import { defaultReduceForDisplayOperation, prepareDisplayBinding } from "./prepare-display-operation.ts";
 
 test("all display operations prepare through one engine seam", () => {
   const linear = prepareDisplayBinding("linear", { hdrSurface: true });
@@ -16,6 +16,11 @@ test("all display operations prepare through one engine seam", () => {
   assert.equal(analytic.analytic, true);
   assert.equal(analytic.hdrOut, true);
   assert.equal(analytic.colormap, undefined);
+});
+
+test("display operations own their reduction default", () => {
+  assert.equal(defaultReduceForDisplayOperation("turbo", 3), "mean");
+  assert.equal(defaultReduceForDisplayOperation("magma", 3), "luminance");
 });
 
 test("an unknown display operation fails at the preparation boundary", () => {

@@ -1,6 +1,6 @@
 import { colormapFloatLUT } from "../../../settings/colormaps/lut.ts";
 import type { Colormap } from "../../types.ts";
-import { getEncoding } from "../model/encodings/index.ts";
+import { defaultReduceMode, getEncoding, type ReduceMode } from "../model/encodings/index.ts";
 import type { ImageParams } from "./image-engine.ts";
 
 /** The image engine's private binding for one registered display operation.
@@ -36,4 +36,11 @@ export function prepareDisplayBinding(
       ? { colormap: colormapFloatLUT((operation.lutName ?? operation.id) as Colormap) }
       : {}),
   };
+}
+
+/** Operation-owned default for reducing a multi-channel field before display. */
+export function defaultReduceForDisplayOperation(id: string, channels: number): ReduceMode {
+  const operation = getEncoding(id);
+  if (!operation) throw new Error(`unknown display operation ${JSON.stringify(id)}`);
+  return operation.turbo ? "mean" : defaultReduceMode(channels);
 }
