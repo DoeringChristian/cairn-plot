@@ -164,24 +164,24 @@ export interface ImageParams {
    */
   filter?: "nearest" | "linear";
   /**
-   * SECOND source slot `b` (the reference/baseline of an arity-2 diff CONTENT op)
+   * SECOND source slot `b` (the reference/baseline of an arity-2 diff IMAGE operation)
    * — sampled at the same source UV as `src` and fed to `cairnContent(a, b, opId)`.
-   * Only read when {@link contentOpId} selects a `direct` diff op; for the
+   * Only read when {@link imageOperationId} selects a `direct` diff op; for the
    * single-image (identity) path it is omitted and a 1x1 placeholder is bound
    * (WebGPU requires every declared binding to have a resource). See
-   * `image/content-ops` + `image.wgsl.ts`'s t_bind11.
+   * `image/operations` + `image.wgsl.ts`'s t_bind11.
    */
   srcB?: Texture;
   /**
-   * CONTENT-op dispatch id (`image/content-ops`' `CONTENT_OP_ID`): 0 = IDENTITY
+   * CONTENT-op dispatch id (`image/operations`' `IMAGE_OPERATION_ID`): 0 = IDENTITY
    * (passthrough of `src`; the default, so omitting it renders bit-for-bit as
    * before), 1.. = the direct pointwise diff ops (signed/absolute/…). Packed into
    * the u_bind12 uniform. Cached metrics (FLIP/SSIM) are NOT dispatched here —
    * they render into a result texture bound as `src` + identity. Unset = 0.
    */
-  contentOpId?: number;
+  imageOperationId?: number;
   /**
-   * COMPOSITOR param (Phase 3) — the per-frame scalar the split/blend content ops
+   * COMPOSITOR param (Phase 3) — the per-frame scalar the split/blend image operations
    * read from `u_bind13.x`: the split DIVIDER position (`[0,1]` dest-space, the
    * reference is shown where `uv.x < contentParam`) or the blend ALPHA
    * (`mix(reference, foreground, contentParam)`). Only the compositor ops read it;
@@ -207,7 +207,7 @@ export interface ImageParams {
    * TEST-ONLY oracle tag (never read by the shader / render path). Set true by the
    * pane whenever a COMPARE is intended (`hasCompare`), so the pool's render-log
    * oracle can flag a PIPELINE MISMATCH: a plain identity/image-pipeline present
-   * (`mode:"image"`, no `contentOpId`) that fires while the pane is semantically in
+   * (`mode:"image"`, no `imageOperationId`) that fires while the pane is semantically in
    * compare mode — i.e. a raw blit of the REFERENCE primary that slipped onto the
    * visible surface before the diff result. Costs one boolean copy; unused in
    * production (only the render log reads it, and only when a harness armed it).
@@ -332,7 +332,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const reduceVec = new Float32Array([reduceId, channelCount, scalarMode, linearScalarGamma]);
 
   // u_bind12 = CONTENT-op dispatch id (0 = identity passthrough, the default).
-  const contentOpIdVec = new Float32Array([params.contentOpId ?? 0]);
+  const imageOperationIdVec = new Float32Array([params.imageOperationId ?? 0]);
   // u_bind13 = COMPOSITOR param (split divider position / blend alpha) in .x;
   // .yzw reserved. Default 0 — the diff/identity ops ignore it.
   const contentParamVec = new Float32Array([params.contentParam ?? 0, 0, 0, 0]);
@@ -367,7 +367,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
       { binding: 9, resource: { uniform: normVec } },
       { binding: 10, resource: { uniform: reduceVec } },
       { binding: 11, resource: srcB },
-      { binding: 12, resource: { uniform: contentOpIdVec } },
+      { binding: 12, resource: { uniform: imageOperationIdVec } },
       { binding: 13, resource: { uniform: contentParamVec } },
       { binding: 14, resource: { uniform: displayAdjustVec } },
     ]);

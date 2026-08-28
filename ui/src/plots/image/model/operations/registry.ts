@@ -1,5 +1,5 @@
 /**
- * CONTENT-OP REGISTRY — the single source of truth for the CONTENT stage of a
+ * IMAGE-OPERATION REGISTRY — the single source of truth for the CONTENT stage of a
  * pane's frame `display_encode(operation(uv))`. An ImageOperation produces the k-channel
  * value at each texel from 1–2 source SLOTS; the DISPLAY stage (the
  * display-operation registry — curves / LUTs / reduce / linear scalar / output-encode)
@@ -40,7 +40,7 @@
  */
 
 /**
- * Render class of a content op:
+ * Render class of a image operation:
  *  - `direct`: inlined into the display shader — a few ALU ops on 1–2 sampled
  *    texels, per frame (no cache; divider drag is free). Its
  *    an inline implementation's WGSL is an expression over the sampled slots.
@@ -75,8 +75,11 @@ export type OutputRange = "R+" | "R" | "light";
  */
 export type OutputArity = number | "source";
 
+/** Whether an operation result is streamed or retained in the page-wide LRU. */
+export type FieldCachePolicy = "never" | "global-lru";
+
 /**
- * Named parameters a content op may DECLARE it reads (its toolbar-row manifest,
+ * Named parameters a image operation may DECLARE it reads (its toolbar-row manifest,
  * UI-gating only). Phase 1/2 diff ops declare NONE. The Phase-3 COMPOSITOR op
  * declares `split` (the divider position) — the single per-frame scalar it reads
  * from the compositor param uniform (`u_bind13.x`), driven live (divider drag)
@@ -124,7 +127,7 @@ export interface ImageOperation {
   inputCount: 1 | 2;
   /** Expensive field operations opt into the global result cache. Cheap
    * pointwise operations use the same pipeline with no cached intermediate. */
-  cachePolicy: import("../../pipeline/contracts.ts").FieldCachePolicy;
+  cachePolicy: FieldCachePolicy;
   /** k fed to the DISPLAY stage's arity gating — a fixed number, or `"source"`
    *  (passthrough = source channel count). See {@link OutputArity} +
    *  {@link resolveOutputArity}. */
@@ -162,7 +165,7 @@ export function isMultipassImageOperation(op: ImageOperation): op is MultipassIm
 }
 
 /**
- * Resolve a content op's DYNAMIC output arity against a concrete source arity:
+ * Resolve a image operation's DYNAMIC output arity against a concrete source arity:
  * the `"source"` passthrough marker → `sourceArity`; a fixed number → itself.
  * ONE predicate so the panes + the DISPLAY-stage arity gating agree on the k the
  * content produces.
@@ -185,12 +188,12 @@ export function getImageOperation(id: string | undefined | null): ImageOperation
   return REGISTRY.get(id);
 }
 
-/** All registered content ops, in registration order. */
+/** All registered image operations, in registration order. */
 export function listImageOperations(): ImageOperation[] {
   return Array.from(REGISTRY.values());
 }
 
-/** The `direct` content ops only, in registration order — the set the display
+/** The `direct` image operations only, in registration order — the set the display
  *  shader assembles into `cairnContent`'s opId dispatch (`./wgsl.ts`). */
 export function listInlineImageOperations(): InlineImageOperation[] {
   return listImageOperations().filter(isInlineImageOperation);

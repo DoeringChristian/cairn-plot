@@ -9,7 +9,7 @@ const leaf = {
   data: { kind: "image" as const, hash: "reference" },
 };
 
-test("comparison composition changes content operation without choosing an encoding", () => {
+test("comparison composition changes image operationeration without choosing an encoding", () => {
   const resolved = {
     source: { dtype: "uint8" as const, url: "reference.png" },
     __diffB: { dtype: "uint8" as const, url: "foreground.png" },

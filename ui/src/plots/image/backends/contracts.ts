@@ -253,7 +253,7 @@ export type DecodedSource = FloatSource | Uint8Source;
 // {@link ImageBackendProps} turns the GPU image pane into a COMPARE pane over two
 // operands: the primary `source` is the REFERENCE (slot `a`) and `compareSource.b`
 // is the FOREGROUND (slot `b`) — the pane uploads `b` via the pool's second source
-// slot (`setSourceB`) and renders a compare CONTENT op (`image/content-ops`)
+// slot (`setSourceB`) and renders a compare IMAGE operation (`image/operations`)
 // instead of the single-image identity. The `opId` selects the mode:
 //   - DIFF (Phase 2c): a pointwise DIRECT op (signed/absolute/…) samples both
 //     slots inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) runs through

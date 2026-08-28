@@ -20,7 +20,7 @@ const authoredScalarMagma: PaneRenderRecord = {
   mode: "image",
   sourceKey: "img:a",
   sourceBKey: undefined,
-  contentOpId: 0,
+  imageOperationId: 0,
   hasSrcB: false,
   isScalar: true,
   hasColormap: true,
@@ -52,7 +52,7 @@ const identityWhileCompareIntended: PaneRenderRecord = {
   mode: "image",
   sourceKey: "A:ref",
   sourceBKey: undefined,
-  contentOpId: 0,
+  imageOperationId: 0,
   hasSrcB: false,
   isScalar: false,
   compareIntended: true,
@@ -65,8 +65,8 @@ test("pipeline-mismatch oracle: an identity present while a compare is intended 
 test("pipeline-mismatch oracle exempts legit compare presents + plain images", () => {
   // A cached-diff present (the correct diff pipeline) — never a mismatch.
   assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, mode: "cached-diff" }), false);
-  // A direct-op diff (contentOpId set, b bound) — the correct diff pipeline.
-  assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, contentOpId: 3, hasSrcB: true }), false);
+  // A direct-op diff (imageOperationId set, b bound) — the correct diff pipeline.
+  assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, imageOperationId: 3, hasSrcB: true }), false);
   // A plain image with no compare intended (a genuine single-image pane).
   assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, compareIntended: false }), false);
   assert.equal(isPipelineMismatch({ ...identityWhileCompareIntended, compareIntended: undefined }), false);
@@ -76,7 +76,7 @@ test("oracle exempts already-excluded classes (cached-diff, direct op, non-scala
   // A cached diff (its scalar magma is legitimate) — different mode.
   assert.equal(isOrangeSuspect({ ...lightCollapsedThroughColormap, mode: "cached-diff" }), false);
   // A direct diff/compositor op sampling slot b.
-  assert.equal(isOrangeSuspect({ ...lightCollapsedThroughColormap, contentOpId: 3, hasSrcB: true }), false);
+  assert.equal(isOrangeSuspect({ ...lightCollapsedThroughColormap, imageOperationId: 3, hasSrcB: true }), false);
   // A plain light image (no colormap bound).
   assert.equal(isOrangeSuspect({ ...lightCollapsedThroughColormap, isScalar: false, hasColormap: false }), false);
   // Missing channelCount is not treated as the multi-channel class.
@@ -89,7 +89,7 @@ function rec(slotKey: string): PaneRenderRecord {
     mode: "image",
     sourceKey: slotKey,
     sourceBKey: undefined,
-    contentOpId: 0,
+    imageOperationId: 0,
     hasSrcB: false,
     isScalar: true,
     hasColormap: true,

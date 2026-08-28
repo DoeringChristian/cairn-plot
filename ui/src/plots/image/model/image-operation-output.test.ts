@@ -1,16 +1,16 @@
 /**
- * Node test: EVERY registered diff kernel declares a valid result `output`
- * arity, and the FLIP family is `"scalar"` while the six pointwise diffs are
- * `"per-channel"`. This arity is what the diff-mode TEV overlay reads to decide
- * how many numbers to print — a FLIP kernel produces ONE metric per pixel, so
+ * Every registered comparison operation declares its display arity. The FLIP
+ * family produces one scalar metric while pointwise operations retain channel
+ * values but expose scalar display gating. The TEV overlay uses this to decide
+ * how many numbers to print — FLIP must print one metric per pixel, so
  * printing three channel-tinted numbers (the reported bug) is wrong.
  *
  *   node --experimental-strip-types --test \
- *     src/plots/image/engine/kernels/kernel-arity.test.ts
+ *     src/plots/image/model/image-operation-output.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getImageOperation, listImageOperations, listMultipassImageOperations } from "../../model/content-ops/index.ts";
+import { getImageOperation, listImageOperations, listMultipassImageOperations } from "./operations/index.ts";
 
 test("every multipass operation declares scalar display output", () => {
   const operations = listMultipassImageOperations();

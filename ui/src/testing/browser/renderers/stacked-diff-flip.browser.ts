@@ -13,7 +13,7 @@
  * READBACK NOTE. The "paints non-blank" + "identical settled content" assertions
  * read the ENGINE-LEVEL surface via the probe's `readbackSurface()` seam — a
  * fresh `renderPass()` then `device.readback()` of the POOL-OWNED surface (the
- * deterministic path `content-ops.browser.ts` uses). We do NOT sample the
+ * deterministic path `image-operations.browser.ts` uses). We do NOT sample the
  * composited canvas via `createImageBitmap`: an in-DOM WebGPU swapchain rotates
  * its back-buffer on present, so `createImageBitmap` reads BLANK on some builds
  * (CI Chromium hits this where local SwiftShader does not). A canvas-bitmap read
@@ -298,7 +298,7 @@ async function main(): Promise<void> {
       // Loud SKIP — the software (SwiftShader) backend lost the device/instance
       // mid-readback (Dawn teardown artifact on direct-mounted panes; the diff
       // CONTENT proofs still run on CI via the realstack-gpu fingerprints and on
-      // capable adapters here). Same handling as content-ops/backend-readback.
+      // capable adapters here). Same handling as operations/backend-readback.
       report(
         true,
         `SKIPPED — device lost/destroyed mid-readback (software-backend teardown ` +

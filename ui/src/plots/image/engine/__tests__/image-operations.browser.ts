@@ -1,5 +1,5 @@
 /**
- * CONTENT-OP GPU↔CPU parity harness (Phase 2 — the diff CONTENT ops).
+ * IMAGE-OPERATION GPU↔CPU parity harness (Phase 2 — the diff IMAGE operations).
  *
  * jsdom has no WebGPU, so — like every `*.browser.ts` harness here — this is a
  * browser page driven headlessly by `scripts/test-harness.mjs` (it lives under
@@ -10,7 +10,7 @@
  * SAME image pipeline as a single image: the shader samples TWO source slots and
  * `cairnContent(a, b, opId)` produces the raw per-channel error, which the DISPLAY
  * stage (the display-operation registry) then encodes. This harness drives that
- * exact GPU path (`renderImage` with `srcB` + `contentOpId` + the op's
+ * exact GPU path (`renderImage` with `srcB` + `imageOperationId` + the op's
  * defaultEncoding) for every DIRECT diff op and asserts the readback equals the
  * COMPOSED CPU twin — `displayEncoding.cpu(contentOp.cpu([a],[b]), 3, params)` —
  * i.e. the content-op `cpu` twin (the diff pixel-value readout's source of truth)
@@ -28,7 +28,7 @@ import { isDeviceLostError } from "../webgpu/device";
 import { renderImage, computeMetrics, type ImageParams } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
-import { getImageOperation, isInlineImageOperation, contentOpId, type ImageOperationCpuContext } from "../../model/content-ops/index";
+import { getImageOperation, isInlineImageOperation, imageOperationId, type ImageOperationCpuContext } from "../../model/operations/index";
 import { getDisplayOperation, DEFAULT_ENCODE_PARAMS } from "../../model/display-operations/index";
 import { outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { colormapFloatLUT } from "../../../../settings/colormaps/lut";
@@ -73,7 +73,7 @@ function buildTex(device: Device, rows: number[][]): Texture {
 async function runDiffOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
   const op = getImageOperation(opId);
   if (!op || !isInlineImageOperation(op)) {
-    report(false, `[${opId}] not a registered direct content op`);
+    report(false, `[${opId}] not a registered direct image operation`);
     return false;
   }
   const enc = getDisplayOperation(displayOperationId);
@@ -93,7 +93,7 @@ async function runDiffOpCase(device: Device, opId: string, displayOperationId: s
     displayOperationId: "linear", // moot: scalar display mapping owns this path
     isScalar: true,
     srcB: texB,
-    contentOpId: contentOpId(opId),
+    imageOperationId: imageOperationId(opId),
     reduce: "mean",
     channelCount: 3,
     hdrOut: false,
@@ -152,14 +152,14 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
   const enc = getDisplayOperation("turbo")!;
   const texA = buildTex(device, scalars);
   const target = device.createTexture(scalars.length, 1, "rgba8unorm");
-  // No srcB → placeholder; contentOpId 0 (identity) ignores it.
+  // No srcB → placeholder; imageOperationId 0 (identity) ignores it.
   const params: ImageParams = {
     exposureEV: 0,
     displayOperationId: "linear",
     isScalar: true,
     turbo: true,
     colormap: colormapFloatLUT("turbo"),
-    contentOpId: 0,
+    imageOperationId: 0,
     reduce: "mean",
     channelCount: 1,
     hdrOut: false,
@@ -204,7 +204,7 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
 async function runCompositorOpCase(device: Device, opId: "split", param: number): Promise<boolean> {
   const op = getImageOperation(opId);
   if (!op || !isInlineImageOperation(op)) {
-    report(false, `[${opId}] not a registered direct content op`);
+    report(false, `[${opId}] not a registered direct image operation`);
     return false;
   }
   // Reference (a) / foreground (b) rows, incl. an OVER-RANGE operand (2.0) that
@@ -244,7 +244,7 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
       displayOperationId: hdrOut ? "extended" : "srgb",
       isScalar: false,
       srcB: texB,
-      contentOpId: contentOpId(opId),
+      imageOperationId: imageOperationId(opId),
       contentParam: param,
       hdrOut,
       srgbDecode: false, // scene-linear float operands
@@ -292,7 +292,7 @@ function buildUpload(rows: number[][]): SourceUpload {
 
 /**
  * STAGE A (pool second slot): drive the SAME direct diff op through the POOL —
- * `setSource(a)` + `setSourceB(b)` + `render({contentOpId})` — and assert the
+ * `setSource(a)` + `setSourceB(b)` + `render({imageOperationId})` — and assert the
  * SURFACE readback equals the composed CPU twin, byte-for-byte with the direct
  * `renderImage(srcB,…)` path. Proves the pool retains + uploads the second slot
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
@@ -300,7 +300,7 @@ function buildUpload(rows: number[][]): SourceUpload {
 async function runPoolDirectOpCase(device: Device, opId: string, displayOperationId: string): Promise<boolean> {
   const op = getImageOperation(opId);
   if (!op || !isInlineImageOperation(op)) {
-    report(false, `[pool:${opId}] not a registered direct content op`);
+    report(false, `[pool:${opId}] not a registered direct image operation`);
     return false;
   }
   const enc = getDisplayOperation(displayOperationId);
@@ -322,7 +322,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
     displayOperationId: "linear",
     isScalar: true,
     // NB: NO `srcB` here — the pool supplies it from `setSourceB`.
-    contentOpId: contentOpId(opId),
+    imageOperationId: imageOperationId(opId),
     reduce: "mean",
     channelCount: 3,
     hdrOut: false,
@@ -369,7 +369,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, displayOperatio
       }
     }
   }
-  report(ok, `[pool:${opId}] setSource + setSourceB + render(contentOpId) surface === composed cpu twin`);
+  report(ok, `[pool:${opId}] setSource + setSourceB + render(imageOperationId) surface === composed cpu twin`);
   return ok;
 }
 

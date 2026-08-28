@@ -312,7 +312,7 @@ function sideBySideThreeDiffGrid(): PlotSpec {
 function isImageOrange(r: PaneRenderRecord): boolean {
   return (
     r.mode === "image" &&
-    !r.contentOpId &&
+    !r.imageOperationId &&
     !r.hasSrcB &&
     r.isScalar === true &&
     r.hasColormap === true
@@ -323,7 +323,7 @@ function fullSig(r: PaneRenderRecord): string {
     mode: r.mode,
     a: r.sourceKey ?? null,
     b: r.sourceBKey ?? null,
-    op: r.contentOpId ?? 0,
+    op: r.imageOperationId ?? 0,
     isScalar: !!r.isScalar,
     scalarMode: r.scalarMode ?? 0,
     hasColormap: !!r.hasColormap,
@@ -429,8 +429,8 @@ async function main(): Promise<void> {
       startPaneRenderLog();
       const settled = await waitFor(() => {
         const log = getPaneRenderLog();
-        const img = log.some((r) => r.mode === "image" && !r.contentOpId && !r.hasSrcB);
-        const diff = log.some((r) => r.mode === "cached-diff" || !!r.contentOpId);
+        const img = log.some((r) => r.mode === "image" && !r.imageOperationId && !r.hasSrcB);
+        const diff = log.some((r) => r.mode === "cached-diff" || !!r.imageOperationId);
         return img && diff;
       }, 12000, 30);
       const bootPresents = getPaneRenderLog().length;
@@ -464,7 +464,7 @@ async function main(): Promise<void> {
       const log = getPaneRenderLog();
       stopPaneRenderLog();
 
-      const imagePresents = log.filter((r) => r.mode === "image" && !r.contentOpId && !r.hasSrcB);
+      const imagePresents = log.filter((r) => r.mode === "image" && !r.imageOperationId && !r.hasSrcB);
       const orange = imagePresents.filter(isImageOrange);
       const sigs = new Set<string>(imagePresents.map(fullSig));
 
@@ -598,7 +598,7 @@ async function main(): Promise<void> {
       await raf();
       const log = getPaneRenderLog();
       stopPaneRenderLog();
-      const img = log.filter((r) => r.mode === "image" && !r.contentOpId && !r.hasSrcB);
+      const img = log.filter((r) => r.mode === "image" && !r.imageOperationId && !r.hasSrcB);
       return { orange: img.filter(isImageOrange).length, total: img.length };
     };
 

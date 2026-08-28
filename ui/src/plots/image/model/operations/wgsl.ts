@@ -2,24 +2,24 @@
  * GPU-side ASSEMBLY of the content-op registry into WGSL — the content twin of
  * `image/encodings/wgsl.ts`. Pure string building (CORE-SAFE, no device); the
  * image shader (`engine/shaders/image.wgsl.ts`) interpolates the result and
- * calls `cairnContent(sampledA, sampledB, contentOpId)` so the CONTENT stage is
+ * calls `cairnContent(sampledA, sampledB, imageOperationId)` so the CONTENT stage is
  * consumed THROUGH the registry.
  */
 import { getImageOperation, isInlineImageOperation, listInlineImageOperations } from "./registry.ts";
 
 /**
- * The GPU dispatch id of each `direct` content op — the value the engine packs
- * into the `contentOpId` uniform and the shader's `cairnContent` dispatch keys
+ * The GPU dispatch id of each `direct` image operation — the value the engine packs
+ * into the `imageOperationId` uniform and the shader's `cairnContent` dispatch keys
  * on. Assigned by registration order of the `direct` ops (identity FIRST → 0), so
  * the zero-filled uniform default is IDENTITY (the passthrough) and a pane that
  * sets no op renders bit-for-bit as before. Mirrors `image/encodings`' generated
  * `OPERATOR_ID`. Cached ops are NOT in this map (they render into a result
  * texture the display samples, not an inline dispatch).
  *
- * Computed LAZILY + memoized (like {@link buildContentOpWGSL}) rather than as an
+ * Computed LAZILY + memoized (like {@link buildImageOperationWGSL}) rather than as an
  * eager module-level constant: `export *` from the registry barrel evaluates this
  * module during the ESM dependency phase — BEFORE the barrel's body runs
- * `registerContentOps()` — so eagerly reading the registry here would see it
+ * `registerImageOperations()` — so eagerly reading the registry here would see it
  * empty. First access (always after the barrel finished registering) is safe.
  */
 let ID_MAP: Record<string, number> | undefined;
@@ -30,7 +30,7 @@ function contentOpDispatchIds(): Record<string, number> {
     map[op.id] = i;
   });
   if (map["identity"] !== 0) {
-    throw new Error(`content-ops: identity must dispatch to id 0 (the zero-filled default), got ${map["identity"]}`);
+    throw new Error(`operations: identity must dispatch to id 0 (the zero-filled default), got ${map["identity"]}`);
   }
   ID_MAP = map;
   return map;
@@ -39,7 +39,7 @@ function contentOpDispatchIds(): Record<string, number> {
 /** The dispatch-id map (a fresh snapshot per call is unnecessary — it is memoized;
  *  callers must not mutate it). Named as a getter-style export so downstream code
  *  + tests read the SAME assignment the shader dispatch uses. */
-export const CONTENT_OP_ID: Record<string, number> = new Proxy(
+export const IMAGE_OPERATION_ID: Record<string, number> = new Proxy(
   {},
   {
     get: (_t, prop: string) => contentOpDispatchIds()[prop],
@@ -55,7 +55,7 @@ export const CONTENT_OP_ID: Record<string, number> = new Proxy(
 
 /** The dispatch id for a content-op id (0 = identity for an unknown/undefined id,
  *  matching the shader's fallthrough). */
-export function contentOpId(id: string | undefined | null): number {
+export function imageOperationId(id: string | undefined | null): number {
   if (!id) return 0;
   return contentOpDispatchIds()[id] ?? 0;
 }
@@ -77,15 +77,15 @@ export function contentOpId(id: string | undefined | null): number {
  * `param`, so the single-image path is unaffected by the (placeholder) second slot
  * and the (zero) param.
  */
-export function buildContentOpWGSL(): string {
+export function buildImageOperationWGSL(): string {
   const direct = listInlineImageOperations();
   const identity = getImageOperation("identity");
   if (!identity || !isInlineImageOperation(identity)) {
-    throw new Error("buildContentOpWGSL: the 'identity' content op is not registered as a direct op");
+    throw new Error("buildImageOperationWGSL: the 'identity' image operation is not registered as a direct op");
   }
   const branches = direct
     .filter((op) => op.id !== "identity")
-    .map((op) => `  if (opId == ${CONTENT_OP_ID[op.id]}) { return ${op.implementation.wgsl}; }`)
+    .map((op) => `  if (opId == ${IMAGE_OPERATION_ID[op.id]}) { return ${op.implementation.wgsl}; }`)
     .join("\n");
   return `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>, opId: i32) -> vec4<f32> {
 ${branches}

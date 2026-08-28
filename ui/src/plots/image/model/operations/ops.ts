@@ -1,5 +1,5 @@
 /**
- * The built-in content ops. Mirrors `image/encodings/curves.ts`: each `direct` op
+ * The built-in image operations. Mirrors `image/encodings/curves.ts`: each `direct` op
  * carries BOTH its WGSL snippet and its `cpu` twin on one object, so the GPU
  * shader assembly and the CPU pane are the SAME declaration; each `cached` op
  * carries the `engine/kernels` kernel id it delegates to.
@@ -166,7 +166,7 @@ const relativeSquared = pointwise(
 // `GpuComparePane`'s `select(colorB, colorA, uv.x < split)` for a hard split
 // (select-then-display == display-then-select). The `cpu` twin mirrors the
 // composite (over the SAME uv/param) so the GPU render === the composed twin
-// (content-ops harness), for both SDR + HDR surfaces.
+// (operations harness), for both SDR + HDR surfaces.
 
 /** Build a compositor `direct` op: id, label, the `split` param name, the WGSL
  *  composite EXPRESSION (over `a`,`b`,`uv`,`param`), and the per-texel CPU twin

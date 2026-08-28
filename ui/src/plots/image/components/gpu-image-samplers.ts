@@ -23,7 +23,7 @@
  */
 import { useCallback } from "react";
 import { floatPixelReader } from "../model/pixel-buffer.ts";
-import { getImageOperation, getMultipassImageOperation, isInlineImageOperation } from "../model/content-ops/index";
+import { getImageOperation, getMultipassImageOperation, isInlineImageOperation } from "../model/operations/index";
 import {
   buildChannelSample,
   type PixelSample,

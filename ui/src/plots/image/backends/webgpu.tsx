@@ -12,7 +12,7 @@
  * surface, two stages. The CONTENT stage produces the k-channel value per texel
  * from 1–2 source slots:
  *   - a plain IMAGE (single source; SDR `imageUrl` or float `hdr`),
- *   - a DIFF (`source` vs `compareSource.b` through a diff content op — a direct
+ *   - a DIFF (`source` vs `compareSource.b` through a diff image operation — a direct
  *     pointwise op inline, or a cached FLIP/HDR-FLIP/SSIM metric), or
  *   - a split/blend COMPOSITOR (a light composite of the two operands).
  * `compareSource` selects diff/compositor; its absence is the plain-image path.
@@ -58,11 +58,11 @@ import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedI
 import { HALF_ONE } from "../model/half";
 import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
 // DIFF capability: the pane samples a second source slot (`compareSource.b` via
-// the pool's `setSourceB`) and renders a diff CONTENT op — a DIRECT pointwise op
+// the pool's `setSourceB`) and renders a diff IMAGE operation — a DIRECT pointwise op
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
 // imports are safe here: this file only ships in the gpu-image addon bundle,
 // never `core.iife.js`.
-import { contentOpId, getImageOperation, getMultipassImageOperation } from "../model/content-ops/index";
+import { imageOperationId, getImageOperation, getMultipassImageOperation } from "../model/operations/index";
 import {
   resolveComparisonOperationId,
   listComparisonOperationOptions,
@@ -1222,7 +1222,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // matching the diff-engine's `texA − texB` — the caller assigns operands to pick
   // the sign (reference→`source`, foreground→`b` for GpuComparePane parity).
   // Cleared to the single-image path when `!diffMode`. Async (a uint8 ref decodes
-  // a URL). Byte-parity is proven at the engine level by content-ops.browser.ts.
+  // a URL). Byte-parity is proven at the engine level by image-operations.browser.ts.
   // -----------------------------------------------------------------------
   // LAYOUT effect (paint-atomic flips): the resident SYNCHRONOUS fast-path (upload
   // cache hit → `apply`) must stamp `appliedBIdRef` + `refDims` BEFORE paint so a
@@ -1457,7 +1457,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // ---- COMPOSITOR path (split, Phase 3) -------------------------------
     // Renders a LIGHT composite of the two operands (slot a = reference =
     // `source`, slot b = foreground = `compareSource.b`) through the SAME unified
-    // image pipeline: `render({contentOpId: split, contentParam})`, the pool
+    // image pipeline: `render({imageOperationId: split, contentParam})`, the pool
     // injects `srcB`, and `cairnContent` composites by the fragment uv against the
     // compositor param. The composite is ordinary scene light → the DISPLAY stage
     // (operator × peak × surface, output-encode) runs EXACTLY as a plain image
@@ -1489,7 +1489,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         srgbDecode: !hdrMode,
         uv,
         filter,
-        contentOpId: contentOpId(compareOpMode!),
+        imageOperationId: imageOperationId(compareOpMode!),
         contentParam: splitPosition,
       };
       try {
@@ -1505,11 +1505,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
 
     // ---- DIFF path (content-op unification, Phase 2c) --------------------
     // Renders `source − compareSource.b` through the pool: a DIRECT pointwise op
-    // inline (`render({contentOpId})`, the pool injects `srcB`); a CACHED metric
+    // inline (`render({imageOperationId})`, the pool injects `srcB`); a CACHED metric
     // (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. The DISPLAY reuses the pane's
     // display-operation machinery: analytic red-green (signed), turbo-log2
     // (magnitude), a plain LUT (magma/…) or raw per-channel error ("none"). Proven
-    // byte-identical to the composed cpu twin by content-ops.browser.ts.
+    // byte-identical to the composed cpu twin by image-operations.browser.ts.
     if (diffMode) {
       // Wait for the reference slot to upload (else a direct op would sample the
       // 1×1 placeholder). The render effect re-fires on `refUploadVersion`.
@@ -1520,7 +1520,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
       // colormap sensitivity, the resolved encoding face. `gamma` is LEFT UNSET so
       // the analytic branch encodes via sRGB OETF (a gamma of 1 would flip it to an
-      // identity encode — the content-ops.browser twin uses `outputEncode(_, undefined)`).
+      // identity encode — the image-operations.browser twin uses `outputEncode(_, undefined)`).
       const diffDisplay: ImageParams = {
         exposureEV: displayEV,
         offset: displayOffset,
@@ -1536,7 +1536,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       };
       try {
         // ONE kernel-agnostic call: the POOL picks the execution strategy from
-        // the kernel's own declaration (pointwise → per-frame content op;
+        // the kernel's own declaration (pointwise → per-frame image operation;
         // multipass → content-keyed cached compute) and the KERNEL derives its
         // compute params from the generic source facts. The pane never sees
         // kernel kinds, param derivations, or cache keys.

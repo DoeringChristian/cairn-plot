@@ -111,7 +111,7 @@ import {
   type NormMode,
   type ReduceMode,
 } from "../model/display-operations/index";
-import { getImageOperation, isInlineImageOperation, type InlineImageOperation } from "../model/content-ops/index";
+import { getImageOperation, isInlineImageOperation, type InlineImageOperation } from "../model/operations/index";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isHdrProps,
@@ -146,7 +146,7 @@ const DEFAULT_PROCESSING: ImageProcessing = {
  *  as before. */
 const _identityOp = getImageOperation("identity");
 if (!_identityOp || !isInlineImageOperation(_identityOp)) {
-  throw new Error("CpuImagePane: the 'identity' content op must be registered as a direct op");
+  throw new Error("CpuImagePane: the 'identity' image operation must be registered as a direct op");
 }
 const IDENTITY_CONTENT: InlineImageOperation = _identityOp;
 

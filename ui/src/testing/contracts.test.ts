@@ -38,7 +38,7 @@ import {
   listComparisonOperationPublicNames,
   resolveComparisonOperationId,
 } from "../plots/image/model/comparison-operations.ts";
-import { getImageOperation } from "../plots/image/model/content-ops/index.ts";
+import { getImageOperation } from "../plots/image/model/operations/index.ts";
 import {
   COMPARE_VIEW_MODES,
   COMPARE_ALIGNS,

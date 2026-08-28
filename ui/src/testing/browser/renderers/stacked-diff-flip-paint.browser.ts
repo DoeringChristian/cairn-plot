@@ -130,8 +130,8 @@ async function settledPresentsKind(
   const ok = await waitFor(() =>
     getPaneRenderLog().some((r) =>
       want === "diff"
-        ? r.mode === "cached-diff" || !!r.contentOpId
-        : r.mode === "image" && r.sourceKey === undefined && !r.contentOpId,
+        ? r.mode === "cached-diff" || !!r.imageOperationId
+        : r.mode === "image" && r.sourceKey === undefined && !r.imageOperationId,
     ), 8000, 40);
   stopPaneRenderLog();
   return ok;

@@ -32,7 +32,7 @@ import {
   isMultipassImageOperation,
   resolveImageOperationParams,
   type MultipassImageOperation,
-} from "../model/content-ops/index.ts";
+} from "../model/operations/index.ts";
 import type { ImageOperationBuildContext, ImageOperationDisplayRange } from "./operation-pass.ts";
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./kernels/prelude.wgsl.ts";
 import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID, type NormMode } from "../model/display-operations/index.ts";

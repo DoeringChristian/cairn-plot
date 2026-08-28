@@ -23,7 +23,7 @@
 import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { renderCompose, renderImage, computeMetrics, type CompareParams, type ImageParams } from "../image-engine";
 import { computeDiff, displayRangeForOperation, renderDiffDisplay } from "../diff-engine";
-import { getImageOperation } from "../../model/content-ops/index.ts";
+import { getImageOperation } from "../../model/operations/index.ts";
 import { applyExposure, outputEncode, extendedOutputEncode, type RgbTriple } from "../../model/tonemap";
 import { getDisplayOperation, DEFAULT_ENCODE_PARAMS, computeDataIndex, signedAnalyticColor, type NormMode } from "../../model/display-operations/index";
 import { colormapFloatLUT } from "../../../../settings/colormaps/index";

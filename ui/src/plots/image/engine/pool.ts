@@ -57,7 +57,7 @@ import {
   type DiffCacheEntry,
 } from "./diff-engine";
 import type { CompareMapping } from "./compare-align";
-import { contentOpId, getMultipassImageOperation } from "../model/content-ops/index";
+import { imageOperationId, getMultipassImageOperation } from "../model/operations/index";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
 import type {
   Device,
@@ -188,13 +188,13 @@ export interface PaneHandle {
   setSource(src: SourceUpload, contentKey?: string): void;
   /**
    * Set (or clear) the SECOND source buffer `b` — the reference/baseline operand
-   * of an arity-2 diff CONTENT op (`image/content-ops`). Retained by the pool
+   * of an arity-2 diff IMAGE operation (`image/operations`). Retained by the pool
    * exactly like {@link setSource}'s primary buffer, so park/restore cycles don't
    * need the caller to re-supply it: uploaded immediately when live, deferred to
    * the next `render()`/`restore()` when parked. Pass `null` to drop it (back to
    * the single-image path). INDEPENDENT of {@link setSource} — the primary `a`
    * slot is untouched. Once set, {@link render}'s `params` are bound with this
-   * texture as `srcB`, so a `params.contentOpId` selecting a `direct` diff op
+   * texture as `srcB`, so a `params.imageOperationId` selecting a `direct` diff op
    * (signed/absolute/…) samples both slots; the single-image (identity) path is
    * unaffected when `b` is null (a 1x1 placeholder is bound and opId 0 ignores it).
    *
@@ -299,7 +299,7 @@ export interface PaneHandle {
   /**
    * Render THIS FRAME's diff for `operationId` — the ONE kernel-agnostic entry
    * point. The POOL picks the execution strategy from the kernel's own
-   * declaration: POINTWISE → the per-frame content op evaluated inside the
+   * declaration: POINTWISE → the per-frame image operation evaluated inside the
    * normal render pass (the pool injects `srcB`); MULTIPASS → the content-keyed
    * cached compute ({@link renderDiffCached}), with the KERNEL deriving its
    * compute params from the generic source facts in `ctx`, displayed as
@@ -722,7 +722,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
     activateEntry(entry);
     if (!entry.surface || !entry.srcTexture) return false;
     // Bind the pool-owned SECOND source slot `b` (arity-2 direct diff ops) when
-    // present — the caller sets `params.contentOpId`; the pool supplies the
+    // present — the caller sets `params.imageOperationId`; the pool supplies the
     // physical texture. Absent → the single-image path (renderImage binds a 1x1
     // placeholder, and opId 0 / identity ignores it), byte-identical to before.
     const p = entry.srcTextureB ? { ...params, srcB: entry.srcTextureB } : params;
@@ -735,7 +735,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
         mode: "image",
         sourceKey: entry.sourceKey,
         sourceBKey: entry.sourceBKey,
-        contentOpId: params.contentOpId,
+        imageOperationId: params.imageOperationId,
         hasSrcB: entry.srcTextureB != null,
         isScalar: params.isScalar,
         compareIntended: params.compareIntended,
@@ -796,7 +796,7 @@ function attemptRenderDiffCached(
       mapping,
     );
     // The cached RESULT is the scalar error — displayed via IDENTITY content
-    // (`displayParams.contentOpId` unset/0, no `srcB`) + the isScalar colormap.
+    // (`displayParams.imageOperationId` unset/0, no `srcB`) + the isScalar colormap.
     // Bind it as the PRIMARY source; `srcTextureB` is intentionally NOT injected
     // (the display is single-source over the result).
     renderImage(entry.device, entry.surface, cacheEntry.texture, displayParams);
@@ -808,7 +808,7 @@ function attemptRenderDiffCached(
         mode: "cached-diff",
         sourceKey: entry.sourceKey,
         sourceBKey: entry.sourceBKey,
-        contentOpId: displayParams.contentOpId,
+        imageOperationId: displayParams.imageOperationId,
         hasSrcB: entry.srcTextureB != null,
         isScalar: displayParams.isScalar,
         ...displayFingerprint(displayParams),
@@ -1110,9 +1110,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       // DIRECT pointwise op, evaluated per frame: the pool injects `srcB`;
       // `cairnContent(a,b,opId)`. Op id 0 = IDENTITY (an unregistered or
       // transiently mis-resolved kernel) — the identity-op floor holds.
-      const opId = contentOpId(operationId);
+      const opId = imageOperationId(operationId);
       if (opId === 0) return "hold";
-      return attemptRender(entry, { ...display, contentOpId: opId }) ? { entry: null } : "failed";
+      return attemptRender(entry, { ...display, imageOperationId: opId }) ? { entry: null } : "failed";
     },
     isDiffContentResident(
       operationId: string,
@@ -1121,7 +1121,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       mapping?: CompareMapping,
     ): boolean {
       const operation = getMultipassImageOperation(operationId);
-      if (!operation) return contentOpId(operationId) !== 0;
+      if (!operation) return imageOperationId(operationId) !== 0;
       if (entry.disposed || !entry.source || !entry.sourceB) return false;
       return hasDiff(
         entry.device,

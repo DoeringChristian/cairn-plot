@@ -12,7 +12,7 @@
  *      carries BOTH red-dominant (negative error) AND green-dominant (positive
  *      error) pixels, the analytic red-green map. The EXACT per-byte equivalence to
  *      the diff engine (and thus to GpuComparePane's diff blit for signed→red-green)
- *      is pinned separately by `engine/__tests__/content-ops.browser.ts` (unified
+ *      is pinned separately by `engine/__tests__/image-operations.browser.ts` (unified
  *      GPU path === the composed cpu twin === `ensureDiff`+`renderImage`); this
  *      proves the PANE wires that engine through `compareSource`.
  *   2. FLIP → magma: a cached FLIP diff renders a non-degenerate magma map.
@@ -23,7 +23,7 @@
  * READBACK NOTE. Content assertions read the ENGINE-LEVEL surface via the probe's
  * `readbackSurface()` seam — a fresh synchronous `renderPass()` then
  * `device.readback()` of the POOL-OWNED surface (the same deterministic path
- * `engine/__tests__/content-ops.browser.ts` and `GpuComparePane.readbackSurface`
+ * `engine/__tests__/image-operations.browser.ts` and `GpuComparePane.readbackSurface`
  * use). We do NOT sample the composited canvas via `createImageBitmap(canvas)`:
  * an in-DOM WebGPU swapchain rotates to a fresh back-buffer once a frame
  * composites, so `createImageBitmap` reads a BLANK texture on some builds (CI's
@@ -346,7 +346,7 @@ async function main(): Promise<void> {
       // Loud SKIP — the software (SwiftShader) backend lost the device/instance
       // mid-readback (Dawn teardown artifact on direct-mounted panes; the diff
       // CONTENT proofs still run on CI via the realstack-gpu fingerprints and on
-      // capable adapters here). Same handling as content-ops/backend-readback.
+      // capable adapters here). Same handling as operations/backend-readback.
       report(
         true,
         `SKIPPED — device lost/destroyed mid-readback (software-backend teardown ` +

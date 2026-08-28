@@ -2,14 +2,14 @@
  * Content-op registry SHAPE + twin tests (pure, DOM/GPU-free) — run under Node's
  * built-in runner:
  *   node --experimental-strip-types --test \
- *     src/plots/image/model/content-ops/registry.test.ts
+ *     src/plots/image/model/operations/registry.test.ts
  *
  * Guards the Phase-2 invariants the GPU/CPU consumers rely on: the registered op
  * set (identity + six pointwise diffs + three cached metrics), each op's declared
  * shape (source arity / render class / output arity / range / default encoding),
  * the dynamic-output-arity resolution, the pointwise `cpu` twins' diff math, and
  * the direct/cached discrimination + dispatch-id assignment (identity → 0). The
- * GPU↔CPU byte parity of the WGSL twins is proven by the `content-ops` /
+ * GPU↔CPU byte parity of the WGSL twins is proven by the `operations` /
  * `display-operation-registry` GPU harnesses; this is the cheap shape gate that runs in
  * plain Node.
  */
@@ -21,8 +21,8 @@ import {
   getImageOperation,
   resolveOutputArity,
   isInlineImageOperation,
-  contentOpId,
-  CONTENT_OP_ID,
+  imageOperationId,
+  IMAGE_OPERATION_ID,
 } from "./index.ts";
 
 const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
@@ -120,14 +120,14 @@ test("resolveOutputArity: identity is a passthrough, diffs are fixed scalar", ()
 test("dispatch ids: identity is 0, direct ops are contiguous, cached ops are unmapped", () => {
   const direct = listInlineImageOperations().map((o) => o.id);
   assert.deepEqual(direct, ["identity", ...POINTWISE, ...COMPOSITOR], "direct set == identity + pointwise + compositor");
-  assert.equal(CONTENT_OP_ID["identity"], 0, "identity must dispatch to 0 (zero-filled default)");
-  assert.equal(contentOpId("identity"), 0);
-  assert.equal(contentOpId(undefined), 0, "unknown/undefined → identity fallthrough");
+  assert.equal(IMAGE_OPERATION_ID["identity"], 0, "identity must dispatch to 0 (zero-filled default)");
+  assert.equal(imageOperationId("identity"), 0);
+  assert.equal(imageOperationId(undefined), 0, "unknown/undefined → identity fallthrough");
   // Contiguous 0..N over the direct ops; every direct id has a distinct id.
-  const ids = direct.map((d) => CONTENT_OP_ID[d]!);
+  const ids = direct.map((d) => IMAGE_OPERATION_ID[d]!);
   assert.deepEqual([...ids].sort((a, b) => a - b), direct.map((_, i) => i));
   // Cached ops carry NO dispatch id (they render into a result texture).
-  for (const c of CACHED) assert.equal(CONTENT_OP_ID[c], undefined, `${c} is not inline-dispatched`);
+  for (const c of CACHED) assert.equal(IMAGE_OPERATION_ID[c], undefined, `${c} is not inline-dispatched`);
 });
 
 test("identity cpu twin is a passthrough of source slot A", () => {

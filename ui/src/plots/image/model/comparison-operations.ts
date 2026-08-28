@@ -1,7 +1,7 @@
 /** Public comparison-operation selection and source-dependent resolution.
  * Implementations themselves live in the image-operation registry; this module
  * only defines the menu projection and maps public selections to concrete ids. */
-import { getImageOperation, listImageOperations, listMultipassImageOperations } from "./content-ops/index.ts";
+import { getImageOperation, listImageOperations, listMultipassImageOperations } from "./operations/index.ts";
 
 /**
  * A selectable diff MODE for the compare toolbar menu. Unlike raw

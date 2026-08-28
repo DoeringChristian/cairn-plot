@@ -6,7 +6,7 @@
  * ## The invariant this module owns
  *
  *   A frame is presentable only when its entire input set — both source slots,
- *   the content op, and the display encoding — is derived from a SINGLE React
+ *   the image operation, and the display encoding — is derived from a SINGLE React
  *   commit. Otherwise hold the previous frame (WebGPU keeps the last present)
  *   until the lagging input catches up.
  *

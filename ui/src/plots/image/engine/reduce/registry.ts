@@ -2,7 +2,7 @@
  * GPU REDUCTION FAMILY — the single source of truth for reducing a per-pixel
  * quantity over a texture region down to a handful of scalars on the GPU,
  * mirroring the house registry/family pattern (`engine/kernels`,
- * `image/content-ops`): ONE shared harness, DECLARED entries, no per-use
+ * `image/operations`): ONE shared harness, DECLARED entries, no per-use
  * pipelines. CORE-SAFE — it holds only WGSL strings + pure CPU twins + metadata
  * and imports NO GPU code (exactly like the content-op / encoding registries),
  * so it loads under Node's `--experimental-strip-types` test runner
