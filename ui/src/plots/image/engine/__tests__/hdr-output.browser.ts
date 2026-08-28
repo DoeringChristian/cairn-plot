@@ -74,7 +74,7 @@ const UV_FULL = { x: 0, y: 0, w: 1, h: 1 };
 async function runHdrCase(device: Device): Promise<boolean> {
   const src = buildBrightSrcTexture(device);
   const target = device.createTexture(1, 1, "rgba16float");
-  const params: ImageParams = { exposureEV: 0, operator: "extended", isScalar: false, hdrOut: true, uv: UV_FULL };
+  const params: ImageParams = { exposureEV: 0, displayOperationId: "extended", isScalar: false, hdrOut: true, uv: UV_FULL };
   renderImage(device, target, src, params);
   const out = await device.readback(target);
   src.destroy();
@@ -103,7 +103,7 @@ async function runHdrCase(device: Device): Promise<boolean> {
 async function runSdrCase(device: Device): Promise<boolean> {
   const src = buildBrightSrcTexture(device);
   const target = device.createTexture(1, 1, "rgba8unorm");
-  const params: ImageParams = { exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, uv: UV_FULL };
+  const params: ImageParams = { exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, uv: UV_FULL };
   renderImage(device, target, src, params);
   const out = await device.readback(target);
   src.destroy();
@@ -136,7 +136,7 @@ async function runSdrExtendedCase(device: Device): Promise<boolean> {
   const target = device.createTexture(1, 1, "rgba16float");
   const params: ImageParams = {
     exposureEV: 1,
-    operator: "extended-clamp",
+    displayOperationId: "extended-clamp",
     isScalar: false,
     hdrOut: true,
     srgbDecode: true,

@@ -42,18 +42,6 @@ import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../model/tonemap";
 // dispatch keys on, so the CPU packing here and the GPU dispatch can never drift.
 import { OPERATOR_ID, NORM_ID, REDUCE_ID, type NormMode, type ReduceMode } from "../model/encodings/index.ts";
 
-export type ImageOperator =
-  | "linear"
-  | "srgb"
-  | "gamma"
-  | "reinhard"
-  | "aces"
-  | "normal"
-  | "extended"
-  | "extended-reinhard"
-  | "extended-aces"
-  | "extended-clamp";
-
 export interface ImageParams {
   /** Exposure in EV stops, applied in scene-linear space: v * 2**ev. */
   exposureEV: number;
@@ -61,8 +49,9 @@ export interface ImageParams {
    *  the colormap / tone-map / output-encode stages. Unset = 0 (identity), so
    *  omitting it renders bit-for-bit as before. */
   offset?: number;
-  /** Tone-map operator name — matches `TONEMAP_OPERATORS` in image/tonemap.ts. */
-  operator: ImageOperator;
+  /** Registered display operation id. The registry is the sole authority; the
+   * engine has no parallel closed union of operation names. */
+  displayOperationId: string;
   /** Output-encode gamma override. Unset/<=0 = sRGB OETF (matches outputEncode's `undefined` case). */
   gamma?: number;
   /** 256x4 (RGBA-float, [0,1]) colormap LUT, flattened row-major. Required iff `isScalar`. */
@@ -295,7 +284,8 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);
 
   const gamma = typeof params.gamma === "number" && params.gamma > 0 ? params.gamma : 0;
-  const operatorId = OPERATOR_ID[params.operator] ?? OPERATOR_ID.srgb;
+  const operatorId = OPERATOR_ID[params.displayOperationId];
+  if (operatorId === undefined) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
 
   // Field order MUST match image.wgsl.ts / image.glsl.ts's u_bind2/u_bind3/u_bind4 doc comments.
   const paramsVec = new Float32Array([params.exposureEV, operatorId, gamma, params.isScalar ? 1 : 0]);
@@ -464,7 +454,8 @@ export function renderCompose(
   const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);
 
   const gamma = typeof params.gamma === "number" && params.gamma > 0 ? params.gamma : 0;
-  const operatorId = OPERATOR_ID[params.operator] ?? OPERATOR_ID.srgb;
+  const operatorId = OPERATOR_ID[params.displayOperationId];
+  if (operatorId === undefined) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
 
   // u_img: exposureEV, operatorId, gamma, isScalar.
   const imgVec = new Float32Array([params.exposureEV, operatorId, gamma, params.isScalar ? 1 : 0]);

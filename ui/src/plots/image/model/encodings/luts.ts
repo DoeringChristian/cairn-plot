@@ -36,7 +36,7 @@ import {
   signedAnalyticColor,
   turboDataIndex,
   DEFAULT_ENCODE_PARAMS,
-  type DisplayEncoding,
+  type DisplayOperation,
 } from "./registry.ts";
 import { COLORMAP_NAMES, COLORMAP_LABELS, getColormapLUT } from "../../../../settings/colormaps/lut.ts";
 import { sampleLutByte } from "../../../../settings/colormaps/lut-sample.ts";
@@ -74,7 +74,7 @@ const TURBO_WGSL_REF = "cairnLutColor(lut, cairnTurboDataIndex(scalar), /*cmapMo
  *  unchanged, so with DEFAULT params (norm `linear`, no bounds) the scalar passes
  *  straight through — byte-identical to the pre-follow-up behavior. `reduce`
  *  defaults to the k-based mode ({@link defaultReduceMode}) when unset. */
-function lutCpu(name: string): DisplayEncoding["cpu"] {
+function lutCpu(name: string): DisplayOperation["cpu"] {
   return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
     const scalar = reduceToScalar(v, k, p.reduce ?? defaultReduceMode(k));
     const idx = computeDataIndex(scalar, p);
@@ -89,7 +89,7 @@ function lutCpu(name: string): DisplayEncoding["cpu"] {
  *  descriptors / back-compat aliases / sync keys keep working; `analytic:true`
  *  (not `needsLut`) routes the GPU to `cairnSignedAnalyticColor` + the shared
  *  output-encode (surviving >1 on the HDR surface) instead of a texture sample —
- *  see {@link DisplayEncoding.analytic}. Declares exposure/offset (sensitivity =
+ *  see {@link DisplayOperation.analytic}. Declares exposure/offset (sensitivity =
  *  amplitude scaling) + reduce (k>1 collapse), NOT norm/min/max (an unbounded
  *  signed map has no log/power or normalize-to-[0,1] skin). */
 const ANALYTIC_LUT_IDS = new Set<string>(["red-green"]);
@@ -106,7 +106,7 @@ const TURBO_LUT_IDS = new Set<string>(["turbo"]);
  *  tev's FIXED log2 index → the DISPLAY (sRGB) turbo color in `[0,1]`. The k>1
  *  sample is collapsed to a scalar first; the turbo entry defaults `reduce` to
  *  `mean` (tev's RGB average), NOT the k-based {@link defaultReduceMode}. */
-function turboCpu(): DisplayEncoding["cpu"] {
+function turboCpu(): DisplayOperation["cpu"] {
   return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
     const scalar = reduceToScalar(v, k, p.reduce ?? "mean");
     const idx = turboDataIndex(scalar);
@@ -119,7 +119,7 @@ function turboCpu(): DisplayEncoding["cpu"] {
  *  scalar → the SCENE-LINEAR analytic color (UNCLAMPED, pre-output-encode — the
  *  caller runs it through outputEncode/extendedOutputEncode, exactly like a
  *  curve). At k=1 `reduceToScalar` returns `v[0]`; k>1 collapses per `reduce`. */
-function analyticCpu(): DisplayEncoding["cpu"] {
+function analyticCpu(): DisplayOperation["cpu"] {
   return (v, k, p = DEFAULT_ENCODE_PARAMS) => {
     const scalar = reduceToScalar(v, k, p.reduce ?? defaultReduceMode(k));
     return signedAnalyticColor(scalar);
@@ -129,7 +129,7 @@ function analyticCpu(): DisplayEncoding["cpu"] {
 /** The colormaps as registry encodings, in `COLORMAP_NAMES` (canonical) order so
  *  `listEncodingsByKind("lut")` matches the colormap menu order. `red-green` is
  *  the ANALYTIC entry (computed, no LUT bind); the rest are table-backed LUTs. */
-export const LUT_ENCODINGS: DisplayEncoding[] = COLORMAP_NAMES.map((name, i) =>
+export const LUT_ENCODINGS: DisplayOperation[] = COLORMAP_NAMES.map((name, i) =>
   TURBO_LUT_IDS.has(name)
     ? {
         id: name,

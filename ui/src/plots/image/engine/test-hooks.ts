@@ -68,7 +68,7 @@ export interface PaneRenderRecord {
   // (or vice-versa). All read straight off the `params` the pool actually
   // presented with, so it is the ground truth of the encode combination — no
   // pixel readback. Each is a separate uniform field written per `renderImage`.
-  /** `params.operator` (tone-map operator). */
+  /** Registered display-operation id. */
   operator?: string;
   /** `params.hdrOut`. */
   hdrOut?: boolean;

@@ -4,7 +4,7 @@ import { defaultReduceForDisplayOperation, prepareDisplayBinding } from "./prepa
 
 test("all display operations prepare through one engine seam", () => {
   const linear = prepareDisplayBinding("linear", { hdrSurface: true });
-  assert.deepEqual(linear, { operator: "linear", isScalar: false, hdrOut: true });
+  assert.deepEqual(linear, { displayOperationId: "linear", isScalar: false, hdrOut: true });
 
   const magma = prepareDisplayBinding("magma", { hdrSurface: true });
   assert.equal(magma.isScalar, true);

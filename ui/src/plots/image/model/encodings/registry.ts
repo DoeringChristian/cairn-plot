@@ -175,7 +175,7 @@ export interface EncodeParams {
 
 /** A single display encoding — the CPU twin (`cpu`) and its WGSL twin (`wgsl`)
  *  live on ONE object so the parity harness is mechanical (iterate + compare). */
-export interface DisplayEncoding {
+export interface DisplayOperation {
   /** Stable id (== the descriptor `tonemap=`/encoding token). */
   id: string;
   /** Menu label. */
@@ -373,7 +373,7 @@ export const SIGNED_ANALYTIC_AMPLITUDE = 2;
  * → RED, a POSITIVE value (image > reference) → GREEN, blue always 0, amplitude
  * `SIGNED_ANALYTIC_AMPLITUDE * |v|`. Returns SCENE-LINEAR color, UNCLAMPED (values
  * past 1 are legitimate over-range error) — the caller runs it through the shared
- * output-encode stage (see {@link DisplayEncoding.analytic}). The input is the
+ * output-encode stage (see {@link DisplayOperation.analytic}). The input is the
  * already-reduced, exposure/offset-adjusted signed scalar (the k>1 collapse ran in
  * the `cpu` twin / `cairnReduceScalar` before this).
  */
@@ -383,27 +383,27 @@ export function signedAnalyticColor(scalar: number): [number, number, number] {
   return [SIGNED_ANALYTIC_AMPLITUDE * neg, SIGNED_ANALYTIC_AMPLITUDE * pos, 0];
 }
 
-const REGISTRY = new Map<string, DisplayEncoding>();
+const REGISTRY = new Map<string, DisplayOperation>();
 
-export function registerEncoding(encoding: DisplayEncoding): void {
+export function registerEncoding(encoding: DisplayOperation): void {
   if (REGISTRY.has(encoding.id)) {
     throw new Error(`registerEncoding: duplicate encoding id "${encoding.id}"`);
   }
   REGISTRY.set(encoding.id, encoding);
 }
 
-export function getEncoding(id: string | undefined | null): DisplayEncoding | undefined {
+export function getEncoding(id: string | undefined | null): DisplayOperation | undefined {
   if (!id) return undefined;
   return REGISTRY.get(id);
 }
 
 /** All registered encodings, in registration order. */
-export function listEncodings(): DisplayEncoding[] {
+export function listEncodings(): DisplayOperation[] {
   return Array.from(REGISTRY.values());
 }
 
 /** Encodings of a given kind (menu section), in registration order. */
-export function listEncodingsByKind(kind: EncodingKind): DisplayEncoding[] {
+export function listEncodingsByKind(kind: EncodingKind): DisplayOperation[] {
   return listEncodings().filter((e) => e.kind === kind);
 }
 

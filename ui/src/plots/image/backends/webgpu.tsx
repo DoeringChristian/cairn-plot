@@ -1478,7 +1478,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       const compositeParams: ImageParams = {
         exposureEV: baseExposure + displayEV,
         offset: baseOffset + displayOffset,
-        operator: rt.operator as ImageParams["operator"],
+        displayOperationId: rt.operator,
         gamma: rt.gamma,
         isScalar: false,
         hdrOut: rt.hdrOut,
@@ -1603,7 +1603,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // color is SCENE-LINEAR and rides the SHARED output-encode, so it takes the
     // pane's real hdrOut (`rt.hdrOut`) — |v|>1 error survives on the engaged HDR
     // surface, |v|<=1 renders identically on SDR. Exposure/offset SCALE the
-    // amplitude (no bounds/norm skin on the analytic entry). See DisplayEncoding.
+    // amplitude (no bounds/norm skin on the analytic entry). See DisplayOperation.
     const analyticColormapActive = hdrColormapActive && preparedDisplay.analytic === true;
     // Phase 4 DATA-encoding skins (float LUT path only): when the min/max BOUNDS
     // skin is engaged (`boundsEngaged`, seeded from `colorRange`), it is the SOLE
@@ -1658,7 +1658,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
           // sensitivity skin (neutralized when bounds engage, single-apply).
           exposureEV: cmapExposure,
           offset: cmapOffset,
-          operator: "linear",
+          displayOperationId: "linear",
           gamma: 1,
           isScalar: true,
           scalarTransfer: true,
@@ -1678,7 +1678,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         ? {
             exposureEV: baseExposure + displayEV,
             offset: baseOffset + displayOffset,
-            operator: rt.operator as ImageParams["operator"],
+            displayOperationId: rt.operator,
             gamma: rt.gamma,
             isScalar: false,
             hdrOut: rt.hdrOut,
@@ -1692,7 +1692,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         : {
             exposureEV: 0,
             offset: 0,
-            operator: "linear",
+            displayOperationId: "linear",
             gamma: 1,
             isScalar: false,
             hdrOut: false,

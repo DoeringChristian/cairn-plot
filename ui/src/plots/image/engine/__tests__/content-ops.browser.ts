@@ -25,7 +25,7 @@
  */
 import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
 import { isDeviceLostError } from "../webgpu/device";
-import { renderImage, computeMetrics, type ImageParams, type ImageOperator } from "../image-engine";
+import { renderImage, computeMetrics, type ImageParams } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
 import { getImageOperation, isInlineImageOperation, contentOpId, type ImageOperationCpuContext } from "../../model/content-ops/index";
@@ -90,7 +90,7 @@ async function runDiffOpCase(device: Device, opId: string, encodingId: string): 
 
   const params: ImageParams = {
     exposureEV: 0,
-    operator: "linear" as ImageOperator, // moot: isScalar short-circuits it
+    displayOperationId: "linear", // moot: scalar display mapping owns this path
     isScalar: true,
     srcB: texB,
     contentOpId: contentOpId(opId),
@@ -155,7 +155,7 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
   // No srcB → placeholder; contentOpId 0 (identity) ignores it.
   const params: ImageParams = {
     exposureEV: 0,
-    operator: "linear" as ImageOperator,
+    displayOperationId: "linear",
     isScalar: true,
     turbo: true,
     colormap: colormapFloatLUT("turbo"),
@@ -241,7 +241,7 @@ async function runCompositorOpCase(device: Device, opId: "split", param: number)
       // SDR: `srgb` = clamp01 then the sRGB OETF (output-encode) — an over-range
       // operand clamps. HDR: `extended` = identity operator (no clamp) then the
       // EXTENDED (unclamped) encode, so an over-range composite survives.
-      operator: (hdrOut ? "extended" : "srgb") as ImageOperator,
+      displayOperationId: hdrOut ? "extended" : "srgb",
       isScalar: false,
       srcB: texB,
       contentOpId: contentOpId(opId),
@@ -319,7 +319,7 @@ async function runPoolDirectOpCase(device: Device, opId: string, encodingId: str
   handle.resize(PAIRS.length, 1);
   const params: ImageParams = {
     exposureEV: 0,
-    operator: "linear" as ImageOperator,
+    displayOperationId: "linear",
     isScalar: true,
     // NB: NO `srcB` here — the pool supplies it from `setSourceB`.
     contentOpId: contentOpId(opId),
@@ -402,7 +402,7 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
   const magma = colormapFloatLUT("magma");
   const displayParams: ImageParams = {
     exposureEV: 0,
-    operator: "linear" as ImageOperator,
+    displayOperationId: "linear",
     isScalar: true,
     colormap: magma,
     reduce: "mean",
@@ -535,7 +535,7 @@ async function runPoolChromeCase(device: Device): Promise<boolean> {
     undefined,
     {
       exposureEV: 0,
-      operator: "linear" as ImageOperator,
+      displayOperationId: "linear",
       isScalar: true,
       colormap: magma,
       reduce: "mean",

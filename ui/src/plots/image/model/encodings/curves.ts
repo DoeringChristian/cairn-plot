@@ -10,7 +10,7 @@
  * exported `extended*Curve`s), so this migration is behavior-identical — pinned
  * by `image/tonemap.test.ts` (CPU) and the GPU↔TS parity harnesses.
  */
-import { registerEncoding, clamp01, type DisplayEncoding } from "./registry.ts";
+import { registerEncoding, clamp01, type DisplayOperation } from "./registry.ts";
 
 // ---------------------------------------------------------------------------
 // Scalar curve math — the SINGLE source of truth. `image/tonemap.ts` re-exports
@@ -90,7 +90,7 @@ const CURVE_ARITIES = [1, 2, 3, 4];
 /** Build the CPU triple by applying a per-channel scalar curve to v[0..2]. */
 function perChannel(
   fn: (x: number) => number,
-): DisplayEncoding["cpu"] {
+): DisplayOperation["cpu"] {
   return (v) => [fn(v[0] ?? 0), fn(v[1] ?? 0), fn(v[2] ?? 0)];
 }
 
@@ -101,7 +101,7 @@ function perChannel(
 // entries) comes out in its historical key order.
 // ---------------------------------------------------------------------------
 
-const linear: DisplayEncoding = {
+const linear: DisplayOperation = {
   id: "linear",
   label: "Linear",
   kind: "curve",
@@ -113,7 +113,7 @@ const linear: DisplayEncoding = {
   cpu: (v) => [clamp01(v[0] ?? 0), clamp01(v[1] ?? 0), clamp01(v[2] ?? 0)],
 };
 
-const srgb: DisplayEncoding = {
+const srgb: DisplayOperation = {
   id: "srgb",
   label: "sRGB",
   kind: "curve",
@@ -126,7 +126,7 @@ const srgb: DisplayEncoding = {
   cpu: (v) => [clamp01(v[0] ?? 0), clamp01(v[1] ?? 0), clamp01(v[2] ?? 0)],
 };
 
-const gamma: DisplayEncoding = {
+const gamma: DisplayOperation = {
   id: "gamma",
   label: "Gamma",
   kind: "curve",
@@ -139,7 +139,7 @@ const gamma: DisplayEncoding = {
   cpu: (v) => [clamp01(v[0] ?? 0), clamp01(v[1] ?? 0), clamp01(v[2] ?? 0)],
 };
 
-const reinhard: DisplayEncoding = {
+const reinhard: DisplayOperation = {
   id: "reinhard",
   label: "Reinhard",
   kind: "curve",
@@ -150,7 +150,7 @@ const reinhard: DisplayEncoding = {
   cpu: perChannel(reinhardScalar),
 };
 
-const aces: DisplayEncoding = {
+const aces: DisplayOperation = {
   id: "aces",
   label: "ACES",
   kind: "curve",
@@ -161,7 +161,7 @@ const aces: DisplayEncoding = {
   cpu: perChannel(acesScalar),
 };
 
-const normal: DisplayEncoding = {
+const normal: DisplayOperation = {
   id: "normal",
   label: "Normal map",
   // The remap `(x+1)/2` IS the whole mapping — declares NOTHING, arity 3 only.
@@ -173,7 +173,7 @@ const normal: DisplayEncoding = {
   cpu: (v) => [clamp01(((v[0] ?? 0) + 1) / 2), clamp01(((v[1] ?? 0) + 1) / 2), clamp01(((v[2] ?? 0) + 1) / 2)],
 };
 
-const extended: DisplayEncoding = {
+const extended: DisplayOperation = {
   id: "extended",
   label: "Extended · Linear",
   kind: "curve",
@@ -189,7 +189,7 @@ const extended: DisplayEncoding = {
   cpu: (v) => [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0],
 };
 
-const extendedClamp: DisplayEncoding = {
+const extendedClamp: DisplayOperation = {
   id: "extended-clamp",
   label: "Extended · Linear (managed)",
   kind: "curve",
@@ -205,7 +205,7 @@ const extendedClamp: DisplayEncoding = {
   ],
 };
 
-const extendedReinhard: DisplayEncoding = {
+const extendedReinhard: DisplayOperation = {
   id: "extended-reinhard",
   label: "Extended · Reinhard",
   kind: "curve",
@@ -221,7 +221,7 @@ const extendedReinhard: DisplayEncoding = {
   ],
 };
 
-const extendedAces: DisplayEncoding = {
+const extendedAces: DisplayOperation = {
   id: "extended-aces",
   label: "Extended · ACES",
   kind: "curve",
@@ -239,7 +239,7 @@ const extendedAces: DisplayEncoding = {
 
 /** Registration order → chosen so the non-peak subset yields `TONEMAP_OPERATORS`'
  *  historical key order (linear, srgb, gamma, reinhard, aces, normal, extended). */
-export const CURVE_ENCODINGS: DisplayEncoding[] = [
+export const CURVE_ENCODINGS: DisplayOperation[] = [
   linear,
   srgb,
   gamma,

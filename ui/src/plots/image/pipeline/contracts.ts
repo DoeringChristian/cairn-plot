@@ -9,14 +9,6 @@ export interface ImageFieldDescriptor {
 
 export type FieldCachePolicy = "never" | "global-lru";
 
-/** Image field -> three display channels. Linear, ACES, Turbo and LUT-backed
- * mappings all implement this same contract; auxiliary resources are private to
- * their backend implementation. */
-export interface ImageDisplayOperationDeclaration {
-  readonly id: string;
-  readonly supportedChannels: readonly number[];
-}
-
 /** Backend-private compiled work. A display operation may produce any number of
  * passes and leases without exposing whether it uses a LUT or analytic code. */
 export interface PreparedKernelSequence<TPass = unknown, TLease = unknown> {

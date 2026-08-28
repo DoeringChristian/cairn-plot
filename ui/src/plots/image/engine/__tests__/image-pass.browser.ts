@@ -62,7 +62,7 @@
  * the command above whenever this harness or its imports change.
  */
 import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
-import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
+import { renderImage, type ImageParams } from "../image-engine";
 import {
   applyExposure,
   outputEncode,
@@ -162,7 +162,7 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
   // the operator CURVE straight from the registry (the CPU source of truth) — the
   // extended roll-off operators (extended-reinhard/-aces) read `peak`; the rest
   // ignore it. An unknown operator falls back to the srgb clamp.
-  const opEnc = getEncoding(params.operator) ?? getEncoding("srgb")!;
+  const opEnc = getEncoding(params.displayOperationId)!;
   const toned = opEnc.cpu(rgb, 3, {
     ...DEFAULT_ENCODE_PARAMS,
     peak: params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,
@@ -305,16 +305,16 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
 
   report(true, `[${label}] device.backend = ${device.backend}`);
 
-  const operators: ImageOperator[] = ["linear", "srgb", "reinhard", "aces"];
+  const operators = ["linear", "srgb", "reinhard", "aces"];
   for (const op of operators) {
     const caseLabel = `${label}/operator=${op}`;
-    const params: ImageParams = { exposureEV: 0, operator: op, isScalar: false, hdrOut: false, uv: uvFull };
+    const params: ImageParams = { exposureEV: 0, displayOperationId: op, isScalar: false, hdrOut: false, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GRADIENT_PIXELS, params, undefined));
   }
 
   {
     const caseLabel = `${label}/nonzero-EV`;
-    const params: ImageParams = { exposureEV: 1.5, operator: "srgb", isScalar: false, hdrOut: false, uv: uvFull };
+    const params: ImageParams = { exposureEV: 1.5, displayOperationId: "srgb", isScalar: false, hdrOut: false, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GRADIENT_PIXELS, params, undefined));
   }
 
@@ -327,7 +327,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/scalar+colormap`;
     const params: ImageParams = {
       exposureEV: 0,
-      operator: "linear",
+      displayOperationId: "linear",
       isScalar: true,
       hdrOut: false,
       uv: uvFull,
@@ -346,7 +346,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/lut-rounding-boundary`;
     const params: ImageParams = {
       exposureEV: 0,
-      operator: "linear",
+      displayOperationId: "linear",
       isScalar: true,
       hdrOut: false,
       uv: uvFull,
@@ -380,7 +380,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const target = device.createTexture(3, 1, "rgba8unorm");
     renderImage(device, target, src, {
       exposureEV: 0,
-      operator: "linear",
+      displayOperationId: "linear",
       isScalar: true,
       hdrOut: false,
       uv: uvFull,
@@ -406,7 +406,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
 
   {
     const caseLabel = `${label}/gamma-override`;
-    const params: ImageParams = { exposureEV: 0, operator: "aces", gamma: 2.2, isScalar: false, hdrOut: false, uv: uvFull };
+    const params: ImageParams = { exposureEV: 0, displayOperationId: "aces", gamma: 2.2, isScalar: false, hdrOut: false, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GRADIENT_PIXELS, params, undefined));
   }
 
@@ -423,7 +423,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   ];
   for (const g of [2.2, 1.8]) {
     const caseLabel = `${label}/operator=gamma/γ=${g}`;
-    const params: ImageParams = { exposureEV: 0, operator: "gamma", gamma: g, isScalar: false, hdrOut: false, uv: uvFull };
+    const params: ImageParams = { exposureEV: 0, displayOperationId: "gamma", gamma: g, isScalar: false, hdrOut: false, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GAMMA_PIXELS, params, undefined));
   }
 
@@ -432,7 +432,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // gamma-1 look, DISTINCT from "srgb" (which sRGB-encodes). Verifies the
     // renderer's operator→encode mapping (resolveEncodeGamma linear→1).
     const caseLabel = `${label}/operator=linear-identity`;
-    const params: ImageParams = { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv: uvFull };
+    const params: ImageParams = { exposureEV: 0, displayOperationId: "linear", gamma: 1, isScalar: false, hdrOut: false, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, GAMMA_PIXELS, params, undefined));
   }
 
@@ -449,14 +449,14 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // sRGB transfer on an 8-bit source = decode then re-encode = IDENTITY
     // round-trip (recovers the input sRGB code, within 1/255).
     const caseLabel = `${label}/srgbDecode/operator=srgb-roundtrip`;
-    const params: ImageParams = { exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull };
+    const params: ImageParams = { exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
   }
   {
     // Gamma transfer on an 8-bit source: sRGB-DECODE → pow(x, 1/γ). CPU/GPU
     // parity through the same srgbEotf + outputEncode.
     const caseLabel = `${label}/srgbDecode/operator=gamma/γ=2.2`;
-    const params: ImageParams = { exposureEV: 0, operator: "gamma", gamma: 2.2, isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull };
+    const params: ImageParams = { exposureEV: 0, displayOperationId: "gamma", gamma: 2.2, isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
   }
 
@@ -474,7 +474,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   {
     const caseLabel = `${label}/processing/brightness`;
     const params: ImageParams = {
-      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
       brightness: 0.5, // brightness(1.5): 0.735→1.10 clamps to 1.0 on both sides
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
@@ -482,7 +482,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   {
     const caseLabel = `${label}/processing/contrast`;
     const params: ImageParams = {
-      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
       contrast: 0.5, // contrast(1.5): 0.0→-0.25 clamps to 0 on both sides
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
@@ -490,7 +490,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   {
     const caseLabel = `${label}/processing/flipSign`;
     const params: ImageParams = {
-      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
       flipSign: true, // invert(1): out = 1 - in
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
@@ -500,7 +500,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // (brightness → contrast → invert) — pins the STAGE ORDER, not just each knob.
     const caseLabel = `${label}/processing/combined`;
     const params: ImageParams = {
-      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
       brightness: 0.2, contrast: 0.3, flipSign: true,
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
@@ -512,7 +512,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // same applyDisplayAdjust over the LUT reference.
     const caseLabel = `${label}/processing/scalar-colormap-brightness`;
     const params: ImageParams = {
-      exposureEV: 0, operator: "linear", isScalar: true, hdrOut: false, uv: uvFull,
+      exposureEV: 0, displayOperationId: "linear", isScalar: true, hdrOut: false, uv: uvFull,
       filter: "nearest", colormap: VIRIDIS_FLOAT_LUT, brightness: 0.25,
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SCALAR_PIXELS, params, VIRIDIS_FLOAT_LUT));
@@ -523,7 +523,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // stage is a true no-op when unset, so no existing case shifts.
     const caseLabel = `${label}/processing/identity-is-noop`;
     const params: ImageParams = {
-      exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
+      exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true, uv: uvFull,
       brightness: 0, contrast: 0, flipSign: false,
     };
     results.set(caseLabel, await runByteCaseAsync(device, caseLabel, SRGB_CODE_PIXELS, params, undefined));
@@ -536,7 +536,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/uv-window`;
     const params: ImageParams = {
       exposureEV: 0,
-      operator: "linear",
+      displayOperationId: "linear",
       isScalar: false,
       hdrOut: false,
       uv: { x: 0.5, y: 0, w: 0.25, h: 1 },
@@ -567,7 +567,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
 
   {
     const caseLabel = `${label}/hdrOut`;
-    const params: ImageParams = { exposureEV: 0.5, operator: "aces", isScalar: false, hdrOut: true, uv: uvFull };
+    const params: ImageParams = { exposureEV: 0.5, displayOperationId: "aces", isScalar: false, hdrOut: true, uv: uvFull };
     const r = await runHdrOutCase(device, caseLabel, GRADIENT_PIXELS, params);
     results.set(caseLabel, r);
   }
@@ -582,7 +582,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // assert it is NOT the raw-linear value.
     const caseLabel = `${label}/hdrOut/encode-proof`;
     const BRIGHT: number[][] = [[4, 4, 4, 1]];
-    const encParams: ImageParams = { exposureEV: 0, operator: "extended", isScalar: false, hdrOut: true, uv: uvFull };
+    const encParams: ImageParams = { exposureEV: 0, displayOperationId: "extended", isScalar: false, hdrOut: true, uv: uvFull };
     const encoded = await runHdrOutCase(device, `${caseLabel}/encoded`, BRIGHT, encParams);
     results.set(`${caseLabel}/encoded`, encoded);
     if (encoded.out instanceof Float32Array) {
@@ -600,11 +600,11 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   // (HDR), so extended-reinhard/-aces produce >1 display-linear light; for
   // extended-clamp (managed linear) every gradient value is < 6, so this pins
   // the GPU identity region (operatorId=7 routed correctly, y=x below P).
-  for (const op of ["extended-clamp", "extended-reinhard", "extended-aces"] as ImageOperator[]) {
+  for (const op of ["extended-clamp", "extended-reinhard", "extended-aces"]) {
     const caseLabel = `${label}/hdrOut/${op}/peak=6`;
     const params: ImageParams = {
       exposureEV: 0,
-      operator: op,
+      displayOperationId: op,
       isScalar: false,
       hdrOut: true,
       peak: 6,
@@ -622,7 +622,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/hdrOut/extended-clamp/peak=2-ceiling`;
     const params: ImageParams = {
       exposureEV: 0,
-      operator: "extended-clamp",
+      displayOperationId: "extended-clamp",
       isScalar: false,
       hdrOut: true,
       peak: 2,
@@ -638,7 +638,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     const caseLabel = `${label}/extended-aces-sdr-preview/peak=4`;
     const params: ImageParams = {
       exposureEV: 0,
-      operator: "extended-aces",
+      displayOperationId: "extended-aces",
       isScalar: false,
       hdrOut: false,
       peak: 4,
@@ -671,7 +671,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
     // (texel 1 samples the negative half but its OWN fragment uv lands at
     // 0.25/0.75 of the window which maps inside [0,1) — see per-fragment
     // math below).
-    const params: ImageParams = { exposureEV: 0, operator: "linear", isScalar: false, hdrOut: false, uv: { x: -1, y: 0, w: 2, h: 1 } };
+    const params: ImageParams = { exposureEV: 0, displayOperationId: "linear", isScalar: false, hdrOut: false, uv: { x: -1, y: 0, w: 2, h: 1 } };
     renderImage(device, target, src, params);
     const out = await device.readback(target);
     src.destroy();
@@ -735,7 +735,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
       // readback as ~127/255 unchanged — isolating the SAMPLING behavior
       // this case tests from the (unrelated, already-covered-elsewhere)
       // output-encode curve.
-      const params: ImageParams = { exposureEV: 0, operator: "linear", gamma: 1, isScalar: false, hdrOut: false, uv, filter };
+      const params: ImageParams = { exposureEV: 0, displayOperationId: "linear", gamma: 1, isScalar: false, hdrOut: false, uv, filter };
       renderImage(device, target, src, params);
       const out = await device.readback(target);
       target.destroy();

@@ -8,7 +8,7 @@ import type { ImageParams } from "./image-engine.ts";
  * analytic shader branch is resolved here and never becomes host policy. */
 export type PreparedDisplayBinding = Pick<
   ImageParams,
-  "operator" | "isScalar" | "analytic" | "turbo" | "colormap" | "hdrOut"
+  "displayOperationId" | "isScalar" | "analytic" | "turbo" | "colormap" | "hdrOut"
 >;
 
 export function prepareDisplayBinding(
@@ -20,14 +20,14 @@ export function prepareDisplayBinding(
 
   if (operation.kind !== "lut") {
     return {
-      operator: id as ImageParams["operator"],
+      displayOperationId: id,
       isScalar: false,
       hdrOut: options.hdrSurface,
     };
   }
 
   return {
-    operator: "linear",
+    displayOperationId: "linear",
     isScalar: true,
     hdrOut: operation.analytic ? options.hdrSurface : false,
     ...(operation.analytic ? { analytic: true } : {}),

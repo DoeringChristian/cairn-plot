@@ -108,7 +108,7 @@ function displayFingerprint(params: ImageParams): {
       lut[1020] * 11 + lut[1021] * 13 + lut[1022] * 17; // top RGB
   }
   return {
-    operator: params.operator,
+    operator: params.displayOperationId,
     hdrOut: params.hdrOut,
     reduce: params.reduce,
     channelCount: params.channelCount,

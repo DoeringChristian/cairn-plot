@@ -44,7 +44,7 @@ function processSide(px: number[], params: CompareParams): RgbTriple {
   // Apply the operator CURVE straight from the registry (the CPU source of truth
   // the GPU `applyOperator` mirrors); compose only uses the plain SDR curves, so
   // an unknown operator falls back to the srgb clamp.
-  const opEnc = getEncoding(params.operator) ?? getEncoding("srgb")!;
+  const opEnc = getEncoding(params.displayOperationId)!;
   const toned = opEnc.cpu(exposed, 3, DEFAULT_ENCODE_PARAMS);
   return [outputEncode(toned[0], params.gamma), outputEncode(toned[1], params.gamma), outputEncode(toned[2], params.gamma)];
 }
@@ -88,7 +88,7 @@ const uvXOfCol = (i: number): number => (i + 0.5) / WIDTH;
 const uvFull = { x: 0, y: 0, w: 1, h: 1 };
 const BASE: Omit<CompareParams, "mode" | "split" | "alpha"> = {
   exposureEV: 0,
-  operator: "srgb",
+  displayOperationId: "srgb",
   isScalar: false,
   hdrOut: false,
   uv: uvFull,
@@ -408,15 +408,15 @@ async function runAll(device: Device): Promise<boolean> {
     ok = (await runComposeCase(device, `blend@${alpha}`, { ...BASE, mode: "blend", split: 0.5, alpha })) && ok;
   }
   // §A: the compose pass tone-maps identically to the single-image pass.
-  ok = (await runComposeEqualsSinglePane(device, "unify/srgb", { exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false }, false)) && ok;
-  ok = (await runComposeEqualsSinglePane(device, "unify/reinhard@EV1", { exposureEV: 1, operator: "reinhard", isScalar: false, hdrOut: false }, false)) && ok;
-  ok = (await runComposeEqualsSinglePane(device, "unify/aces", { exposureEV: 0, operator: "aces", isScalar: false, hdrOut: false }, false)) && ok;
-  ok = (await runComposeEqualsSinglePane(device, "unify/srgb+decode", { exposureEV: 0, operator: "srgb", isScalar: false, hdrOut: false, srgbDecode: true }, false)) && ok;
+  ok = (await runComposeEqualsSinglePane(device, "unify/srgb", { exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false }, false)) && ok;
+  ok = (await runComposeEqualsSinglePane(device, "unify/reinhard@EV1", { exposureEV: 1, displayOperationId: "reinhard", isScalar: false, hdrOut: false }, false)) && ok;
+  ok = (await runComposeEqualsSinglePane(device, "unify/aces", { exposureEV: 0, displayOperationId: "aces", isScalar: false, hdrOut: false }, false)) && ok;
+  ok = (await runComposeEqualsSinglePane(device, "unify/srgb+decode", { exposureEV: 0, displayOperationId: "srgb", isScalar: false, hdrOut: false, srgbDecode: true }, false)) && ok;
   if (device.capabilities.hdr) {
-    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp@EV1/hdrOut", { exposureEV: 1, operator: "extended-clamp", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
-    ok = (await runComposeEqualsSinglePane(device, "unify/extended-reinhard/hdrOut", { exposureEV: 0, operator: "extended-reinhard", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp@EV1/hdrOut", { exposureEV: 1, displayOperationId: "extended-clamp", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-reinhard/hdrOut", { exposureEV: 0, displayOperationId: "extended-reinhard", isScalar: false, hdrOut: true, peak: 4 }, true)) && ok;
     // §B on the compose path: a u8-style operand decoded to linear, extended out.
-    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp+decode@EV1/hdrOut", { exposureEV: 1, operator: "extended-clamp", isScalar: false, hdrOut: true, peak: 4, srgbDecode: true }, true)) && ok;
+    ok = (await runComposeEqualsSinglePane(device, "unify/extended-clamp+decode@EV1/hdrOut", { exposureEV: 1, displayOperationId: "extended-clamp", isScalar: false, hdrOut: true, peak: 4, srgbDecode: true }, true)) && ok;
   }
   for (const k of ["signed", "absolute", "squared", "relative_signed", "relative_absolute", "relative_squared"]) {
     ok = (await runDiffCase(device, k)) && ok;

@@ -17,7 +17,7 @@
  * the HDR surface, so they render to an `rgba32float` target (float, looser eps).
  */
 import { getSharedWebGpuDevice } from "../webgpu/device-provider.ts";
-import { renderImage, type ImageParams, type ImageOperator } from "../image-engine";
+import { renderImage, type ImageParams } from "../image-engine";
 import {
   applyExposure,
   outputEncode,
@@ -30,7 +30,7 @@ import {
   listEncodings,
   computeDataIndex,
   DEFAULT_ENCODE_PARAMS,
-  type DisplayEncoding,
+  type DisplayOperation,
   type EncodeParams,
   type NormMode,
 } from "../../model/encodings/index";
@@ -87,7 +87,7 @@ const uvFull = { x: 0, y: 0, w: 1, h: 1 };
 
 /** The CPU reference for one pixel: exposure → registry cpu twin → output-encode,
  *  using the SAME `resolveEncodeGamma` mapping the renderer packs. */
-function expectedRGB(px: number[], enc: DisplayEncoding, gamma: number | undefined, hdrOut: boolean): RgbTriple {
+function expectedRGB(px: number[], enc: DisplayOperation, gamma: number | undefined, hdrOut: boolean): RgbTriple {
   const exposed: RgbTriple = [applyExposure(px[0]!, EV), applyExposure(px[1]!, EV), applyExposure(px[2]!, EV)];
   const toned = enc.cpu(exposed, 3, { ...DEFAULT_ENCODE_PARAMS, peak: HARNESS_PEAK });
   if (hdrOut) {
@@ -96,13 +96,13 @@ function expectedRGB(px: number[], enc: DisplayEncoding, gamma: number | undefin
   return [outputEncode(toned[0], gamma), outputEncode(toned[1], gamma), outputEncode(toned[2], gamma)];
 }
 
-async function runEncodingCase(device: Device, enc: DisplayEncoding): Promise<boolean> {
+async function runEncodingCase(device: Device, enc: DisplayOperation): Promise<boolean> {
   const pixels = enc.kind === "remap" ? SIGNED_PIXELS : GRADIENT_PIXELS;
   const hdrOut = !!enc.needsHdrSurface;
   const gamma = resolveEncodeGamma(enc.id, TONEMAP_GAMMA_DEFAULT);
   const params: ImageParams = {
     exposureEV: EV,
-    operator: enc.id as ImageOperator,
+    displayOperationId: enc.id,
     isScalar: false,
     hdrOut,
     peak: HARNESS_PEAK,
@@ -164,11 +164,11 @@ async function runEncodingCase(device: Device, enc: DisplayEncoding): Promise<bo
  * covers task #86's float-image colormap AND proves each colormap's GPU sample
  * agrees with its CPU twin across the whole registered set.
  */
-async function runLutCase(device: Device, enc: DisplayEncoding): Promise<boolean> {
+async function runLutCase(device: Device, enc: DisplayOperation): Promise<boolean> {
   const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
   const params: ImageParams = {
     exposureEV: EV,
-    operator: "linear" as ImageOperator, // moot: isScalar short-circuits the operator
+    displayOperationId: "linear", // moot: scalar display mapping owns this path
     isScalar: true,
     colormap: lut,
     hdrOut: false,
@@ -216,14 +216,14 @@ async function runLutCase(device: Device, enc: DisplayEncoding): Promise<boolean
  */
 async function runLutNormCase(
   device: Device,
-  enc: DisplayEncoding,
+  enc: DisplayOperation,
   variant: string,
   encParams: EncodeParams,
 ): Promise<boolean> {
   const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
   const params: ImageParams = {
     exposureEV: EV,
-    operator: "linear" as ImageOperator,
+    displayOperationId: "linear",
     isScalar: true,
     colormap: lut,
     hdrOut: false,
@@ -280,13 +280,13 @@ const MULTI_PIXELS: number[][] = [
  */
 async function runLutReduceCase(
   device: Device,
-  enc: DisplayEncoding,
+  enc: DisplayOperation,
   mode: "luminance" | "mean",
 ): Promise<boolean> {
   const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
   const params: ImageParams = {
     exposureEV: EV,
-    operator: "linear" as ImageOperator,
+    displayOperationId: "linear",
     isScalar: true,
     colormap: lut,
     hdrOut: false,
@@ -344,11 +344,11 @@ const TURBO_PIXELS: number[][] = [
  * twin (reduce → turboDataIndex → turbo table). Nearest filter + EV 0 → byte-exact
  * (within 1/255). Covers a `>1` sample landing in the hot half of the ramp.
  */
-async function runTurboCase(device: Device, enc: DisplayEncoding): Promise<boolean> {
+async function runTurboCase(device: Device, enc: DisplayOperation): Promise<boolean> {
   const lut = colormapFloatLUT((enc.lutName ?? enc.id) as ColormapName);
   const params: ImageParams = {
     exposureEV: EV,
-    operator: "linear" as ImageOperator, // moot: isScalar+turbo short-circuits it
+    displayOperationId: "linear", // moot: Turbo owns the display mapping
     isScalar: true,
     turbo: true,
     colormap: lut,
@@ -406,12 +406,12 @@ const ANALYTIC_PIXELS: number[][] = [
  * `2.0` amplitude CLAMPS, and HDR (`rgba32float`, float eps) where it SURVIVES
  * past 1 — the directive's ">1 amplitude on the HDR path" case.
  */
-async function runAnalyticCase(device: Device, enc: DisplayEncoding): Promise<boolean> {
+async function runAnalyticCase(device: Device, enc: DisplayOperation): Promise<boolean> {
   let ok = true;
   for (const hdrOut of [false, true]) {
     const params: ImageParams = {
       exposureEV: EV,
-      operator: "linear" as ImageOperator, // moot: isScalar+analytic short-circuits it
+      displayOperationId: "linear", // moot: analytic mapping owns this path
       isScalar: true,
       analytic: true,
       hdrOut,
@@ -474,7 +474,7 @@ async function runGrayNoneCase(device: Device, norm: NormMode): Promise<boolean>
   for (const hdrOut of [false, true]) {
     const params: ImageParams = {
       exposureEV: EV,
-      operator: "linear" as ImageOperator, // moot: scalar transfer owns the mapping
+      displayOperationId: "linear", // moot: scalar transfer owns the mapping
       isScalar: true,
       scalarTransfer: true,
       scalarTransferGamma: 0, // sRGB OETF transfer (the default `srgb` curve)
