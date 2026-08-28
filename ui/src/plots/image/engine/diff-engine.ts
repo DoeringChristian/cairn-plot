@@ -2,15 +2,15 @@
  * Diff engine (spec §cached): the cached, kernel-driven diff-compute + display
  * flow that replaces `renderCompare`'s runtime diff branch.
  *
- *   computeDiff(device, texA, texB, kernelId, params)
+ *   computeDiff(device, texA, texB, operationId, params)
  *     → runs the kernel (pointwise = one fullscreen pass; multi-pass = its
  *       pass graph over pooled rgba16float intermediates) into a RESULT texture
  *       (rgba16float, `min(A,B)` resolution, RAW values — colormap applied only
  *       at display).
  *
- *   ensureDiff(device, texA, texB, kernelId, params, contentKeyA, contentKeyB)
+ *   ensureDiff(device, texA, texB, operationId, params, contentKeyA, contentKeyB)
  *     → the same, but memoized in a content-keyed LRU (VRAM budget). The key is
- *       (contentKeyA, contentKeyB, kernelId, paramsHash) — the pane's SOURCE
+ *       (contentKeyA, contentKeyB, operationId, paramsHash) — the pane's SOURCE
  *       content identity, NOT texture object identity — so viewport / exposure
  *       / colormap changes NEVER recompute (they only re-run the display blit).
  *
@@ -108,7 +108,7 @@ export function getDiffComputeCount(): number {
 }
 
 /**
- * Runs `kernelId` over `texA`/`texB` into a fresh rgba16float RESULT texture
+ * Runs `operationId` over `texA`/`texB` into a fresh rgba16float RESULT texture
  * (`min(A,B)` resolution, raw values). Caller owns the returned texture. This
  * is the un-cached primitive; use `ensureDiff` for the pane path.
  */
@@ -116,12 +116,12 @@ export function computeDiff(
   device: Device,
   texA: Texture,
   texB: Texture,
-  kernelId: string,
+  operationId: string,
   params?: Record<string, number>,
   mapping?: CompareMapping,
 ): Texture {
-  const operation = getImageOperation(kernelId);
-  if (!operation) throw new Error(`computeDiff: unknown image operation "${kernelId}"`);
+  const operation = getImageOperation(operationId);
+  if (!operation) throw new Error(`computeDiff: unknown image operation "${operationId}"`);
   // The RESULT grid + per-source sample mapping. Absent ⇒ legacy top-left crop
   // (result = min(A,B), zero offsets) — identical to the prior behavior.
   const map =
@@ -162,7 +162,7 @@ export function computeDiff(
     params: resolved,
     sourceMap: { fill: map.fit === "fill", offsetA: map.offsetA, offsetB: map.offsetB },
   };
-  if (operation.implementation.kind !== "multipass") throw new Error(`computeDiff: operation "${kernelId}" has no multipass implementation`);
+  if (operation.implementation.kind !== "multipass") throw new Error(`computeDiff: operation "${operationId}" has no multipass implementation`);
   const graph = operation.implementation.buildPasses(ctx);
   const textures = new Map<string, Texture>([
     ["srcA", texA],
@@ -218,21 +218,21 @@ function paramsHash(operation: MultipassImageOperation, params?: Record<string, 
 export function diffCacheKey(
   contentKeyA: string,
   contentKeyB: string,
-  kernelId: string,
+  operationId: string,
   params?: Record<string, number>,
   mapping?: CompareMapping,
 ): string {
-  const operation = getMultipassImageOperation(kernelId);
+  const operation = getMultipassImageOperation(operationId);
   const ph = operation ? paramsHash(operation, params) : "";
   // align/fit change the RESULT grid + sampling, so they must key the cache —
   // otherwise a re-diff at a new alignment would return a stale texture.
   const mk = mapping ? mappingKey(mapping) : "";
-  return `${contentKeyA}|${contentKeyB}|${kernelId}|${ph}|${mk}`;
+  return `${contentKeyA}|${contentKeyB}|${operationId}|${ph}|${mk}`;
 }
 
 /**
  * NON-mutating residency peek: is the diff RESULT for (contentKeyA, contentKeyB,
- * kernelId, params, mapping) already cached on `device`? Derives the SAME key
+ * operationId, params, mapping) already cached on `device`? Derives the SAME key
  * `ensureDiff` would (including the default `mapping` from the operand dims when
  * omitted), then probes the cache without computing, uploading, or bumping LRU.
  * The pane's paint-atomic flip path calls this to decide whether a CACHED diff
@@ -244,7 +244,7 @@ export function hasDiff(
   device: Device,
   dimsA: { w: number; h: number },
   dimsB: { w: number; h: number },
-  kernelId: string,
+  operationId: string,
   params: Record<string, number> | undefined,
   contentKeyA: string,
   contentKeyB: string,
@@ -252,12 +252,12 @@ export function hasDiff(
 ): boolean {
   const map =
     mapping ?? computeCompareMapping({ w: dimsA.w, h: dimsA.h }, { w: dimsB.w, h: dimsB.h }, "top-left", "crop", "b");
-  const key = diffCacheKey(contentKeyA, contentKeyB, kernelId, params, map);
+  const key = diffCacheKey(contentKeyA, contentKeyB, operationId, params, map);
   return cacheFor(device).has(key);
 }
 
 /**
- * Returns the cached diff RESULT for (contentKeyA, contentKeyB, kernelId,
+ * Returns the cached diff RESULT for (contentKeyA, contentKeyB, operationId,
  * params), computing + caching it on a miss. The cache OWNS the returned
  * texture — callers must NOT destroy it. Recomputation happens only when the
  * key changes; viewport/exposure/colormap never touch this path.
@@ -266,23 +266,23 @@ export function ensureDiff(
   device: Device,
   texA: Texture,
   texB: Texture,
-  kernelId: string,
+  operationId: string,
   params: Record<string, number> | undefined,
   contentKeyA: string,
   contentKeyB: string,
   mapping?: CompareMapping,
 ): DiffCacheEntry {
-  const operation = getMultipassImageOperation(kernelId);
-  if (!operation) throw new Error(`ensureDiff: image operation "${kernelId}" is not multipass`);
+  const operation = getMultipassImageOperation(operationId);
+  if (!operation) throw new Error(`ensureDiff: image operation "${operationId}" is not multipass`);
   const cache = cacheFor(device);
   const map =
     mapping ??
     computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
-  const key = diffCacheKey(contentKeyA, contentKeyB, kernelId, params, map);
+  const key = diffCacheKey(contentKeyA, contentKeyB, operationId, params, map);
   const hit = cache.get(key);
   if (hit) return hit;
 
-  const texture = computeDiff(device, texA, texB, kernelId, params, map);
+  const texture = computeDiff(device, texA, texB, operationId, params, map);
   const width = map.result.w;
   const height = map.result.h;
   const entry: DiffCacheEntry = {

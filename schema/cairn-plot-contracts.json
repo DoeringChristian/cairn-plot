@@ -20,7 +20,7 @@
     "gamma",
     "linear"
   ],
-  "compareKernelPublicNames": [
+  "comparisonOperationPublicNames": [
     "signed",
     "abs",
     "square",
@@ -31,8 +31,8 @@
     "flip_ldr",
     "ssim"
   ],
-  "$comment_compareKernelModes": "The public `cp.Compare(mode=)` diff-name -> descriptor `diffSubmode` mapping, hand-mirrored by Python `_COMPARE_KERNEL_MODES` (components.py) and TS `COMPARE_KERNEL_MODES` (builder/validate.ts). Its KEYS == `compareKernelPublicNames` (both guards assert this). Its VALUES are the `diffSubmode` tokens the descriptor carries; contracts.test.ts additionally asserts every value resolves through `resolveDiffKernelId` + the kernel registry (`getDiffKernel`) for both u8 and float sources, so a registry kernel-id rename can no longer drift the tables silently (audit M6). Note `flip`/`flip_ldr` are MENU TOKENS, not kernel ids: they auto-dispatch client-side to `flip`/`hdr-flip`/`flip-ldr-forced`.",
-  "compareKernelModes": {
+  "$comment_comparisonOperationModes": "The public `cp.Compare(mode=)` diff-name -> descriptor `operation` mapping, hand-mirrored by Python `_COMPARE_OPERATION_MODES` (components.py) and TS `COMPARE_KERNEL_MODES` (builder/validate.ts). Its KEYS == `comparisonOperationPublicNames` (both guards assert this). Its VALUES are the `operation` tokens the descriptor carries; contracts.test.ts additionally asserts every value resolves through `resolveDiffKernelId` + the kernel registry (`getDiffKernel`) for both u8 and float sources, so a registry kernel-id rename can no longer drift the tables silently (audit M6). Note `flip`/`flip_ldr` are MENU TOKENS, not kernel ids: they auto-dispatch client-side to `flip`/`hdr-flip`/`flip-ldr-forced`.",
+  "comparisonOperationModes": {
     "signed": "signed",
     "abs": "absolute",
     "square": "squared",

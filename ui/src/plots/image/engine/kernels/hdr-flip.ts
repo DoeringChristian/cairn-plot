@@ -9,7 +9,7 @@
  * ## Inputs
  * Two LINEAR-RGB float sources (rgba16/32float) — HDR imagery (cp.Image hdr
  * arrays / f32-decoded EXR urls). Auto-dispatched under the public `flip` mode
- * when the compare sources are float (`kernels/index.ts` `resolveDiffKernelId`).
+ * when the compare sources are float (`model/comparison-operations.ts`).
  *
  * ## Pass graph (per exposure, all intermediates rgba16float, source resolution)
  * The exposure RANGE + COUNT are precomputed on the CPU from the reference

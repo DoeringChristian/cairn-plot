@@ -912,7 +912,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
   const diffSpec: DiffLeafSpec = {
     node,
     mode: control.viewMode,
-    diffKernel: control.diffKernel,
+    comparisonOperationId: control.comparisonOperationId,
     colormap: (paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
       (defaultSettingsForNode(node, shared)["image.encoding"] as CompareSource["colormap"] | undefined),
     splitPosition: control.splitPos,
@@ -922,7 +922,7 @@ function ImageCompatibleView({ node }: { node: PlotLeafNode | CompareNode }) {
     foregroundLabel: synth.foregroundLabel,
     inStackedGrid,
     inOverlay,
-    onDiffKernelChange: control.setDiffKernel,
+    onComparisonOperationChange: control.setComparisonOperation,
     onCompareModeChange: control.setViewMode,
     onSplitPositionChange: control.setSplitPos,
     cellDefaults: defaultSettingsForNode(node, shared),

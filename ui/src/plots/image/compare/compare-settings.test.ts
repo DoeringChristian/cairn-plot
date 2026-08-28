@@ -74,47 +74,47 @@ const ENGINE_KERNELS = [
   { value: "ssim", label: "SSIM" },
 ] as const;
 
-test("enumerate: no engine kernels → the core+native list is unchanged", () => {
+test("enumerate: no engine operations → the core+native list is unchanged", () => {
   const withoutExtras = enumerateCompareModeOptions({ nativeModes: [], topologyOk: true });
   const withEmpty = enumerateCompareModeOptions({ nativeModes: [], topologyOk: true }, {});
   assert.deepEqual(withEmpty, withoutExtras);
-  assert.ok(withEmpty.every((o) => !o.kernel));
+  assert.ok(withEmpty.every((o) => !o.operation));
 });
 
-test("enumerate: engine kernels append after core+native, GPU-enabled by default", () => {
+test("enumerate: engine operations append after core+native, GPU-enabled by default", () => {
   const opts = enumerateCompareModeOptions(
     { nativeModes: [], topologyOk: true },
     { engineKernels: ENGINE_KERNELS },
   );
   assert.equal(opts.length, 3 + ENGINE_KERNELS.length);
-  const kernels = opts.filter((o) => o.kernel);
-  assert.equal(kernels.length, ENGINE_KERNELS.length);
+  const operations = opts.filter((o) => o.operation);
+  assert.equal(operations.length, ENGINE_KERNELS.length);
   // Kernels trail the three core kinds and are enabled (GPU assumed available).
   assert.deepEqual(opts.slice(3).map((o) => o.value), ["absolute", "hdr-flip", "ssim"]);
-  assert.ok(kernels.every((o) => o.kernel && !o.native && !o.disabled));
+  assert.ok(operations.every((o) => o.operation && !o.native && !o.disabled));
 });
 
-test("enumerate: engine kernels are DISABLED when the GPU is unavailable", () => {
+test("enumerate: engine operations are DISABLED when the GPU is unavailable", () => {
   const opts = enumerateCompareModeOptions(
     { nativeModes: [], topologyOk: true },
     { engineKernels: ENGINE_KERNELS, gpuAvailable: false },
   );
-  const kernels = opts.filter((o) => o.kernel);
-  assert.ok(kernels.every((o) => o.disabled), "engine kernels gated off without WebGPU");
+  const operations = opts.filter((o) => o.operation);
+  assert.ok(operations.every((o) => o.disabled), "engine operations gated off without WebGPU");
   // Core kinds stay enabled regardless of GPU.
-  assert.ok(opts.filter((o) => !o.kernel).every((o) => !o.disabled));
+  assert.ok(opts.filter((o) => !o.operation).every((o) => !o.disabled));
 });
 
-test("enumerate: core, native, and engine kernels coexist in order", () => {
+test("enumerate: core, native, and engine operations coexist in order", () => {
   const nativeModes = [{ value: "diff-geometry", label: "Diff (geometry)" }] as const;
   const opts = enumerateCompareModeOptions(
     { nativeModes, topologyOk: true },
     { engineKernels: ENGINE_KERNELS },
   );
   assert.equal(opts.length, 3 + 1 + ENGINE_KERNELS.length);
-  assert.ok(opts.slice(0, 3).every((o) => !o.native && !o.kernel));
+  assert.ok(opts.slice(0, 3).every((o) => !o.native && !o.operation));
   assert.equal(opts[3]!.native, true);
-  assert.ok(opts.slice(4).every((o) => o.kernel));
+  assert.ok(opts.slice(4).every((o) => o.operation));
 });
 
 test("DEFAULT_MEDIA_COMPARE_SETTINGS carries neutral compare baselines", () => {

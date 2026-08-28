@@ -74,7 +74,7 @@ async function run(): Promise<boolean> {
   const baseProps = {
     imageUrl: null as string | null,
     baselineUrl: null as string | null,
-    diffSubmode: "absolute" as DiffMode,
+    operation: "absolute" as DiffMode,
     interpolation: "auto" as const,
     zoom: 1,
     pan: { x: 0, y: 0 },
@@ -93,7 +93,7 @@ async function run(): Promise<boolean> {
   // 3. UINT8 diff + ENGINE kernel (ssim) → slide + "This diff needs WebGPU".
   mount("m3", {
     mode: "diff",
-    diffSubmode: "ssim" as DiffMode,
+    operation: "ssim" as DiffMode,
     imageUrl: urlSide("#c0392b"),
     baselineUrl: urlSide("#2980b9"),
   });

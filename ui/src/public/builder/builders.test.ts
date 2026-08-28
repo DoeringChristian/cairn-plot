@@ -24,7 +24,7 @@ import {
   CHART_COLORMAPS,
   IMAGE_COLORMAPS,
   TONEMAP_OPERATORS,
-  COMPARE_KERNEL_MODES,
+  COMPARE_OPERATION_MODES,
 } from "./validate.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -167,7 +167,7 @@ test("builder colormap/tonemap/kernel sets match the contract", () => {
   assert.deepEqual(sorted(CHART_COLORMAPS), sorted(contract.colormaps));
   assert.deepEqual(sorted(IMAGE_COLORMAPS), sorted(contract.colormaps));
   assert.deepEqual(sorted(TONEMAP_OPERATORS), sorted(contract.tonemapOperators));
-  assert.deepEqual(sorted(Object.keys(COMPARE_KERNEL_MODES)), sorted(contract.compareKernelPublicNames));
+  assert.deepEqual(sorted(Object.keys(COMPARE_OPERATION_MODES)), sorted(contract.comparisonOperationPublicNames));
 });
 
 test("JS builder names mirror the contract's shared builder list", () => {

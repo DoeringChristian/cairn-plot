@@ -1,5 +1,5 @@
 /**
- * Display-encoding registry bootstrap (mirrors `engine/kernels/index.ts`).
+ * Display-encoding registry bootstrap (mirrors `model/comparison-operations.ts`).
  * Importing this module has the SIDE EFFECT of registering every built-in
  * encoding — `image/tonemap.ts`, `engine/image-engine.ts`, and the shader
  * modules import it for that. Re-exports the registry API + the GPU WGSL

@@ -18,7 +18,7 @@ import type { CompareViewMode } from "./use-comparison-control.ts";
 export interface ImageComparisonHostInput {
   readonly node: CompareNode;
   readonly mode: CompareViewMode;
-  readonly diffKernel: string;
+  readonly comparisonOperationId: string;
   readonly colormap: CompareSource["colormap"];
   readonly cellDefaults: PlotSettings;
   readonly splitPosition: number;
@@ -28,7 +28,7 @@ export interface ImageComparisonHostInput {
   readonly foregroundLabel?: string;
   readonly inStackedGrid: boolean;
   readonly inOverlay: boolean;
-  readonly onDiffKernelChange: (id: string) => void;
+  readonly onComparisonOperationChange: (id: string) => void;
   readonly onCompareModeChange: (mode: CompareViewMode) => void;
   readonly onSplitPositionChange: (position: number) => void;
   readonly compareModified: boolean;
@@ -45,7 +45,7 @@ export function composeImageComparisonPresentation(args: {
   if (resolved.__diffB === undefined) return {};
   const compareSource: CompareSource = {
     b: resolved.__diffB as DecodedSource,
-    opId: comparison.diffKernel,
+    opId: comparison.comparisonOperationId,
     mode: comparison.mode,
     colormap: comparison.colormap,
     align: comparison.align,
@@ -57,7 +57,7 @@ export function composeImageComparisonPresentation(args: {
     splitPosition: comparison.splitPosition,
     inStackedGrid: comparison.inStackedGrid,
     inOverlay: comparison.inOverlay,
-    onDiffKernelChange: comparison.onDiffKernelChange,
+    onComparisonOperationChange: comparison.onComparisonOperationChange,
     onCompareModeChange: comparison.onCompareModeChange,
     onSplitPositionChange: comparison.onSplitPositionChange,
     compareModified: comparison.compareModified,

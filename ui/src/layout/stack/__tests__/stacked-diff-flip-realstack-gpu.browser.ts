@@ -287,7 +287,7 @@ function sideBySideTwoDiffGrid(): PlotSpec {
 // magma, absolute → turbo) — the served report's exact `FLIP vs SSIM vs absolute`
 // grid. Drives PHASE L: under the settings-model simplification (ruling 3) a
 // page-wide 3-diff multi-select MIRRORS the first viewport's kernel to the others
-// on formation — the diff-face `settingsSnapshot` carries `diffKernel` by value
+// on formation — the diff-face `settingsSnapshot` carries `comparisonOperationId` by value
 // and every receiver adopts it. This phase pins that at THREE distinct kernels.
 function sideBySideThreeDiffGrid(): PlotSpec {
   return {
@@ -352,10 +352,10 @@ const activeIdx = (hostId: string): number => {
 interface DiffProbe {
   compareMode: "diff" | "split" | "blend";
   colormap: string;
-  diffKernel: string;
+  comparisonOperationId: string;
   changeCompareMode: (m: "diff" | "split" | "blend") => void;
   changeColormap: (id: string) => void;
-  changeDiffKernel: (id: string) => void;
+  changeComparisonOperation: (id: string) => void;
   home: () => void;
 }
 interface ImgProbe {
@@ -1092,16 +1092,16 @@ async function main(): Promise<void> {
       key("2");
       await waitFor(() => activeIdx(hostId) === 1 && !!diffProbe(hostId), 4000, 30);
       await sleep(150);
-      diffProbe(hostId)!.changeDiffKernel("squared");
-      await waitFor(() => diffProbe(hostId)?.diffKernel === "squared", 4000, 30);
-      const picked = diffProbe(hostId)?.diffKernel ?? "?";
+      diffProbe(hostId)!.changeComparisonOperation("squared");
+      await waitFor(() => diffProbe(hostId)?.comparisonOperationId === "squared", 4000, 30);
+      const picked = diffProbe(hostId)?.comparisonOperationId ?? "?";
       key("1"); // flip to the image slot
       await waitFor(() => activeIdx(hostId) === 0, 4000, 30);
       await sleep(150);
       key("2"); // back to the diff
       await waitFor(() => activeIdx(hostId) === 1, 4000, 30);
       await sleep(200);
-      const afterFlip = diffProbe(hostId)?.diffKernel ?? "?";
+      const afterFlip = diffProbe(hostId)?.comparisonOperationId ?? "?";
       root.unmount();
       host.remove();
       note(`PHASE I kernel: picked=${picked} afterFlip=${afterFlip}`);
@@ -1208,18 +1208,18 @@ async function main(): Promise<void> {
       await waitFor(() => allDiffProbes(hostId).length >= 2, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);
-      const seed0 = d()[0]?.diffKernel ?? "?";
-      const seed1 = d()[1]?.diffKernel ?? "?";
+      const seed0 = d()[0]?.comparisonOperationId ?? "?";
+      const seed1 = d()[1]?.comparisonOperationId ?? "?";
       const ids = framePaneIds(hostId);
       const store = getGlobalSelectionStore();
       store.select(ids[0], "replace"); // slot0 anchor
       store.select(ids[1], "toggle"); // + slot1 → ONE group
       await sleep(350); // let the anchor seed + joiner adopt run
-      const afterSelect0 = d()[0]?.diffKernel ?? "?"; // anchor stays flip
-      const afterSelect1 = d()[1]?.diffKernel ?? "?"; // adopts the anchor's flip (ruling 3)
-      d()[0]!.changeDiffKernel("squared"); // explicit pick on the anchor
-      await waitFor(() => d()[1]?.diffKernel === "squared", 4000, 30).catch(() => {});
-      const mirrored1 = d()[1]?.diffKernel ?? "?";
+      const afterSelect0 = d()[0]?.comparisonOperationId ?? "?"; // anchor stays flip
+      const afterSelect1 = d()[1]?.comparisonOperationId ?? "?"; // adopts the anchor's flip (ruling 3)
+      d()[0]!.changeComparisonOperation("squared"); // explicit pick on the anchor
+      await waitFor(() => d()[1]?.comparisonOperationId === "squared", 4000, 30).catch(() => {});
+      const mirrored1 = d()[1]?.comparisonOperationId ?? "?";
       root.unmount();
       host.remove();
       __resetGlobalSelectionStoreForTest();
@@ -1241,14 +1241,14 @@ async function main(): Promise<void> {
     // formation, and every joiner adopts them BY VALUE — so a 3-diff multi-select
     // collapses the two non-anchor kernels (ssim, absolute) onto the anchor's flip.
     // This phase pins that by (a) capturing every bus patch on formation and
-    // asserting the anchor SEED CARRIES `diffKernel`, and (b) asserting the three
+    // asserting the anchor SEED CARRIES `comparisonOperationId`, and (b) asserting the three
     // kernels all become the anchor's; an explicit pick then mirrors likewise.
     interface LResult {
       seeds: string[]; // [flip, ssim, absolute]
       afterSelect: string[]; // all adopt the anchor's flip → [flip, flip, flip]
-      seedPatchHadKernel: boolean; // the anchor seed on formation now CARRIES diffKernel
+      seedPatchHadKernel: boolean; // the anchor seed on formation now CARRIES comparisonOperationId
       formationPatchCount: number; // how many patches rode the bus on formation
-      pickPatchHadKernel: boolean; // an explicit pick DOES publish {diffKernel}
+      pickPatchHadKernel: boolean; // an explicit pick DOES publish {comparisonOperationId}
       mirrored: string[]; // both peers after anchor picks "squared" → [squared, squared]
     }
     const runL = async (hostId: string): Promise<LResult> => {
@@ -1262,7 +1262,7 @@ async function main(): Promise<void> {
       await waitFor(() => allDiffProbes(hostId).length >= 3, 12000, 30);
       await sleep(250);
       const d = () => allDiffProbes(hostId);
-      const seeds = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
+      const seeds = [d()[0]?.comparisonOperationId ?? "?", d()[1]?.comparisonOperationId ?? "?", d()[2]?.comparisonOperationId ?? "?"];
       // NOSTACK: patches no longer ride an EventTarget bus (subscribers re-read
       // their own registry entry), so the former dispatchEvent capture is
       // retired. The seed-carries-kernel proof is now the REGISTRY OBSERVABLE:
@@ -1280,13 +1280,13 @@ async function main(): Promise<void> {
       };
       const seedPatchHadKernel = entryKernel(ids[1]) === seeds[0] && entryKernel(ids[2]) === seeds[0];
       const formationPatchCount = [ids[1], ids[2]].filter((id) => entryKernel(id) !== undefined).length;
-      const afterSelect = [d()[0]?.diffKernel ?? "?", d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
-      // Now a DEDICATED pick on the anchor: it MUST land {diffKernel} in both
+      const afterSelect = [d()[0]?.comparisonOperationId ?? "?", d()[1]?.comparisonOperationId ?? "?", d()[2]?.comparisonOperationId ?? "?"];
+      // Now a DEDICATED pick on the anchor: it MUST land {comparisonOperationId} in both
       // peers' OWN entries and MIRROR to their probes (live fan-out).
-      d()[0]!.changeDiffKernel("squared");
-      await waitFor(() => d()[1]?.diffKernel === "squared" && d()[2]?.diffKernel === "squared", 4000, 30).catch(() => {});
+      d()[0]!.changeComparisonOperation("squared");
+      await waitFor(() => d()[1]?.comparisonOperationId === "squared" && d()[2]?.comparisonOperationId === "squared", 4000, 30).catch(() => {});
       const pickPatchHadKernel = entryKernel(ids[1]) === "squared" && entryKernel(ids[2]) === "squared";
-      const mirrored = [d()[1]?.diffKernel ?? "?", d()[2]?.diffKernel ?? "?"];
+      const mirrored = [d()[1]?.comparisonOperationId ?? "?", d()[2]?.comparisonOperationId ?? "?"];
       root.unmount();
       host.remove();
       __resetGlobalSelectionStoreForTest();

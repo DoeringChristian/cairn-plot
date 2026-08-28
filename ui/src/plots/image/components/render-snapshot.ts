@@ -41,7 +41,7 @@ export interface RenderSnapshot {
   /** Source identity this frame expects in slot B, or null when there is no operand. */
   bId: string | null;
   /** Resolved diff kernel id (diff mode), else "". */
-  kernelId: string;
+  operationId: string;
   /** Compositor param (split position); 0 otherwise. */
   contentParam: number;
   /** Flip detector — sources ⊗ op ⊗ mode, excluding viewport/exposure. */
@@ -65,7 +65,7 @@ export interface RenderSnapshotInput {
   /** Whether a `compareSource.b` operand is present. */
   hasBOperand: boolean;
   /** The concrete diff kernel id (float sources auto-dispatch flip -> hdr-flip). */
-  resolvedKernelId: string;
+  resolvedOperationId: string;
   /** The active compositor mode ("split"), or null. */
   compareOpMode: "split" | null;
   splitPosition: number;
@@ -94,7 +94,7 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
     contentKeyA,
     contentKeyB,
     hasBOperand,
-    resolvedKernelId,
+    resolvedOperationId,
     compareOpMode,
     splitPosition,
     paneReady,
@@ -123,9 +123,9 @@ export function buildRenderSnapshot(inp: RenderSnapshotInput): RenderSnapshot {
     mode,
     primaryId,
     bId,
-    kernelId: diffMode ? resolvedKernelId : "",
+    operationId: diffMode ? resolvedOperationId : "",
     contentParam: compositorMode ? splitPosition : 0,
-    contentKey: `${primaryId}|${bId}|${diffMode ? resolvedKernelId : ""}|${compositorMode ? compareOpMode : ""}`,
+    contentKey: `${primaryId}|${bId}|${diffMode ? resolvedOperationId : ""}|${compositorMode ? compareOpMode : ""}`,
     sourcesApplied,
     resident:
       sourcesApplied &&

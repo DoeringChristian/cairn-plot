@@ -47,7 +47,7 @@ export interface OffscreenComparePanesProps {
   mode: Extract<MediaCompareModeKind, "split" | "diff">;
   primary: ComparePaneSource;
   reference: ComparePaneSource;
-  diffSubmode: DiffMode;
+  operation: DiffMode;
   colormap: Colormap;
   splitPosition: number;
   onSplitPositionChange: (p: number) => void;
@@ -176,7 +176,7 @@ export function OffscreenComparePanes({
   mode,
   primary,
   reference,
-  diffSubmode,
+  operation,
   colormap,
   splitPosition,
   onSplitPositionChange,
@@ -226,7 +226,7 @@ export function OffscreenComparePanes({
         imageUrl={primaryUrl}
         baselineUrl={referenceUrl}
         alignForDiff={alignForDiff}
-        diffSubmode={diffSubmode}
+        operation={operation}
         colormap={colormap}
         interpolation="auto"
         zoom={1}

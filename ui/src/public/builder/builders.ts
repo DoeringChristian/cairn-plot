@@ -29,7 +29,7 @@ import {
   checkImageColormap,
   checkPixelValueNotation,
   checkTonemap,
-  COMPARE_KERNEL_MODES,
+  COMPARE_OPERATION_MODES,
 } from "./validate.ts";
 
 type Opts = Record<string, unknown>;
@@ -221,7 +221,7 @@ function takeImageSettings(props: Opts): Opts {
     delete props.pan;
   }
   take("splitPosition", "compare.split");
-  take("diffSubmode", "compare.operation");
+  take("operation", "compare.operation");
   if (props.settings && typeof props.settings === "object") {
     Object.assign(settings, props.settings);
     delete props.settings;
@@ -406,18 +406,18 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       const align = checkAlign(String(opts.align ?? "top-left"));
       const fit = checkFit(String(opts.fit ?? "crop"));
       let presentation: "split" | "difference";
-      let diffKernel: string | null = null;
+      let comparisonOperationId: string | null = null;
       if (mode === "split") presentation = "split";
       else {
         presentation = "difference";
-        diffKernel = COMPARE_KERNEL_MODES[mode]!;
+        comparisonOperationId = COMPARE_OPERATION_MODES[mode]!;
       }
       // The first operand is the reference; the second is the prediction.
       const A = compareSide(a);
       const B = compareSide(b);
       const built = imageDisplayProps(opts);
       if (opts.splitPosition != null) built.splitPosition = num(opts.splitPosition);
-      if (diffKernel != null) built.diffSubmode = diffKernel;
+      if (comparisonOperationId != null) built.operation = comparisonOperationId;
       if (align !== "top-left") built.align = align;
       if (fit !== "crop") built.fit = fit;
       // Host seam: `toolbar:false` only when explicitly disabled (mirrors Python

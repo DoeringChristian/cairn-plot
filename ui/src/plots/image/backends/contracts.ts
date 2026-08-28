@@ -291,7 +291,7 @@ export interface CompareSource {
   /** The DIFF kernel — a menu selection token (a pointwise id, `"flip"`,
    *  `"flip_ldr"`, `"ssim"`). SEEDS the pane's diff-kernel state (always a real
    *  kernel, even while {@link mode} is a compositor mode — so switching INTO diff
-   *  restores it). Resolved to a concrete kernel id by `resolveDiffKernelId`. */
+   *  restores it). Resolved to a concrete kernel id by `resolveComparisonOperationId`. */
   opId: string;
   /** The COMPARE mode: `"diff"` (the scalar-error diff of {@link opId}, the
    *  default when absent) OR the Phase-3 compositor mode `"split"` (a LIGHT
@@ -329,7 +329,7 @@ export interface CompareSource {
   foregroundLabel?: string;
   /** Fired when the pane's diff MODE changes via its own MODE menu — lets an owner
    *  (`CompareView`) keep its lifted mode/kernel state coherent (Phase 2c routing). */
-  onDiffKernelChange?: (kernelId: string) => void;
+  onComparisonOperationChange?: (operationId: string) => void;
   /** Fired when the pane's MODE menu switches mode (slide ↔ diff) — the
    *  owner lifts it (`CompareView`'s `viewMode`). Phase 3: split now ALSO
    *  renders on THIS unified pane, so a mode switch is an OP switch on the reused

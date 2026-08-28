@@ -125,11 +125,11 @@ _COMPARE_NODE_MODES = ("split", "diff")
 
 # The PUBLIC flat `cp.Compare(mode=...)` enum (diff-kernels spec). View modes +
 # the diff-kernel short names; each kernel short name maps to a registry kernel
-# id (== the descriptor `diffSubmode`, mirrored by the TS `listDiffKernels()`
+# id (== the descriptor `operation`, mirrored by the TS `listDiffKernels()`
 # `publicName`s). `"split"` is the single view mode (== the internal mode) and
 # the default.
 _COMPARE_VIEW_MODES = {"split"}
-_COMPARE_KERNEL_MODES = {
+_COMPARE_OPERATION_MODES = {
     "signed": "signed",
     "abs": "absolute",
     "square": "squared",
@@ -146,7 +146,7 @@ _COMPARE_KERNEL_MODES = {
     # ERROR field 1 - SSIM. GPU-only kernel (like FLIP); registry drop-in.
     "ssim": "ssim",
 }
-_COMPARE_PUBLIC_MODES = ("split", *_COMPARE_KERNEL_MODES.keys())
+_COMPARE_PUBLIC_MODES = ("split", *_COMPARE_OPERATION_MODES.keys())
 
 # Mismatched-size operand handling for `cp.Compare(align=..., fit=...)` (diff
 # modes): `align` = where the smaller extent sits within the larger before the
@@ -241,7 +241,7 @@ def _take_image_settings(props: dict[str, Any]) -> dict[str, Any]:
         "exposure": "image.exposureEV",
         "offset": "image.offset",
         "splitPosition": "compare.split",
-        "diffSubmode": "compare.operation",
+        "operation": "compare.operation",
     }
     for prop, key in mapping.items():
         if prop in props:
@@ -1952,7 +1952,7 @@ class Compare(Component):
     * View composition: ``"split"`` (draggable divider — the DEFAULT).
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
       ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
-      a ``compare`` node with ``mode="diff"`` and the kernel id as ``diffSubmode``
+      a ``compare`` node with ``mode="diff"`` and the kernel id as ``operation``
       (the pane's initial diff kernel).
 
     ``"flip"`` is perceptual FLIP (Andersson et al.): the UI auto-dispatches
@@ -2019,11 +2019,11 @@ class Compare(Component):
         self._align = align
         self._fit = fit
         # Lower the flat public mode → internal descriptor mode (+ diff kernel).
-        diff_kernel: str | None = None
+        comparison_operation: str | None = None
         if mode == "split":
             internal_mode = "split"
         else:
-            internal_mode, diff_kernel = "diff", _COMPARE_KERNEL_MODES[mode]
+            internal_mode, comparison_operation = "diff", _COMPARE_OPERATION_MODES[mode]
         self._internal_mode = internal_mode
 
         # Typed kwargs → the compare node's `props` (interpolation/colormap/diff
@@ -2037,10 +2037,10 @@ class Compare(Component):
         )
         if split_position is not None:
             built["splitPosition"] = float(split_position)
-        if diff_kernel is not None:
-            # Carried as `diffSubmode` (the kernel id) — the pane initializes its
+        if comparison_operation is not None:
+            # Carried as `operation` (the kernel id) — the pane initializes its
             # diff kernel from this; the toolbar menu (next track) preselects it.
-            built["diffSubmode"] = diff_kernel
+            built["operation"] = comparison_operation
         if align != "top-left":
             built["align"] = align
         if fit != "crop":

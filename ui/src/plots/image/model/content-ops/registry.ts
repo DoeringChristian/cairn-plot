@@ -31,7 +31,7 @@
  *    builds a result texture through the diff-engine's content-keyed cache, which
  *    the unified pane then binds as a single source + identity display. A
  *    neighborhood metric like FLIP/SSIM has no pure per-texel `(a,b)→value` twin,
- *    so a `cached` op carries `kernelId` (+ the kernel's own CPU reference drives
+ *    so a `cached` op carries `operationId` (+ the kernel's own CPU reference drives
  *    readout via the result readback) instead of `wgsl`/`cpu`.
  *
  * Every implementation uses one ImageOperation interface. Inline operations

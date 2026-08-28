@@ -49,7 +49,7 @@ export interface PixelSamplerInputs {
   /** Active LUT id, or null when a curve display operation is active. */
   sdrColormap: string | null;
   /** The concrete diff kernel id (float sources auto-dispatch flip -> hdr-flip). */
-  resolvedKernelId: string;
+  resolvedOperationId: string;
   /** Retained primary buffers (mutually exclusive by `hdrMode`). */
   hdrDataRef: Cell<HdrData | null>;
   sdrImageDataRef: Cell<ImageData | null>;
@@ -76,7 +76,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
     hdrMode,
     naturalDims,
     sdrColormap,
-    resolvedKernelId,
+    resolvedOperationId,
     hdrDataRef,
     sdrImageDataRef,
     refFloatRef,
@@ -114,7 +114,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
 
   const sampleDiffPixel = useCallback(
     (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
-      const operation = getMultipassImageOperation(resolvedKernelId);
+      const operation = getMultipassImageOperation(resolvedOperationId);
       // CACHED metric — the result readback (min-cropped resolution).
       if (operation) {
         const arr = diffSamplesRef.current;
@@ -128,7 +128,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
         return buildChannelSample(values, "unit", notation);
       }
       // DIRECT op — the cpu twin over the two source pixels.
-      const op = getImageOperation(resolvedKernelId);
+      const op = getImageOperation(resolvedOperationId);
       if (!op || !isInlineImageOperation(op)) return null;
       // Slot A = the primary `source` (normalized to the GPU's textureLoad).
       const readA = (): number[] | null => {
@@ -166,7 +166,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
       if (!a || !b) return null;
       return buildChannelSample(op.implementation.cpu([a, b], 3), "unit", notation);
     },
-    [resolvedKernelId, hdrMode, naturalDims, hdrDataRef, sdrImageDataRef, refFloatRef, refU8Ref, diffSamplesRef, diffResultDimsRef],
+    [resolvedOperationId, hdrMode, naturalDims, hdrDataRef, sdrImageDataRef, refFloatRef, refU8Ref, diffSamplesRef, diffResultDimsRef],
   );
 
   const sampleForeground = useCallback(

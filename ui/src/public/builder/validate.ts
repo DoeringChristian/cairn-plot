@@ -26,9 +26,9 @@ export const IMAGE_COLORMAPS: readonly string[] = COLORMAP_NAMES;
 export const TONEMAP_OPERATORS: readonly string[] = SDR_TONEMAP_OPERATORS;
 
 /** Public `compare(mode=)` diff-kernel short names → the registry kernel id
- *  carried as the descriptor `diffSubmode` (mirrors Python
- *  `_COMPARE_KERNEL_MODES`). */
-export const COMPARE_KERNEL_MODES: Readonly<Record<string, string>> = {
+ *  carried as the descriptor `operation` (mirrors Python
+ *  `_COMPARE_OPERATION_MODES`). */
+export const COMPARE_OPERATION_MODES: Readonly<Record<string, string>> = {
   signed: "signed",
   abs: "absolute",
   square: "squared",
@@ -46,7 +46,7 @@ export const COMPARE_VIEW_MODES: readonly string[] = ["split"];
 /** The full public `compare(mode=)` enum (mirrors Python `_COMPARE_PUBLIC_MODES`). */
 export const COMPARE_PUBLIC_MODES: readonly string[] = [
   ...COMPARE_VIEW_MODES,
-  ...Object.keys(COMPARE_KERNEL_MODES),
+  ...Object.keys(COMPARE_OPERATION_MODES),
 ];
 
 export const COMPARE_ALIGNS: readonly string[] = [

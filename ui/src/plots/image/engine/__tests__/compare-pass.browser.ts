@@ -132,15 +132,15 @@ async function runSwapGuardCase(device: Device, label: string, params: ComparePa
 // ---- diff (cached kernel path) --------------------------------------------
 /** RAW diff (matches the pointwise kernels), then displayRange map (no
  *  colormap). `a` = reference/baseline. */
-function expectedDiffPixel(pxRef: number[], pxFg: number[], kernelId: string): RgbTriple {
-  const range = displayRangeForOperation(getImageOperation(kernelId)!.outputRange);
+function expectedDiffPixel(pxRef: number[], pxFg: number[], operationId: string): RgbTriple {
+  const range = displayRangeForOperation(getImageOperation(operationId)!.outputRange);
   const out: number[] = [];
   for (let c = 0; c < 3; c++) {
     const a = pxRef[c]!;
     const b = pxFg[c]!;
     const denom = Math.max(a, 1 / 255);
     let raw: number;
-    switch (kernelId) {
+    switch (operationId) {
       case "signed": raw = a - b; break;
       case "absolute": raw = Math.abs(a - b); break;
       case "squared": raw = (a - b) * (a - b); break;
@@ -155,12 +155,12 @@ function expectedDiffPixel(pxRef: number[], pxFg: number[], kernelId: string): R
   return out as unknown as RgbTriple;
 }
 
-async function runDiffCase(device: Device, kernelId: string): Promise<boolean> {
+async function runDiffCase(device: Device, operationId: string): Promise<boolean> {
   const texRef = buildRowTexture(device, PIXELS_REF);
   const texFg = buildRowTexture(device, PIXELS_FG);
-  const result = computeDiff(device, texRef, texFg, kernelId);
+  const result = computeDiff(device, texRef, texFg, operationId);
   const target = device.createTexture(WIDTH, 1, "rgba8unorm");
-  const range = displayRangeForOperation(getImageOperation(kernelId)!.outputRange);
+  const range = displayRangeForOperation(getImageOperation(operationId)!.outputRange);
   renderDiffDisplay(device, target, result, range, { uv: uvFull });
   const out = await device.readback(target);
   texRef.destroy();
@@ -168,21 +168,21 @@ async function runDiffCase(device: Device, kernelId: string): Promise<boolean> {
   result.destroy();
   target.destroy();
   if (!(out instanceof Uint8Array)) {
-    report(false, `[diff/${kernelId}] readback should be Uint8Array`);
+    report(false, `[diff/${operationId}] readback should be Uint8Array`);
     return false;
   }
   let allOk = true;
   for (let i = 0; i < WIDTH; i++) {
-    const expected = expectedDiffPixel(PIXELS_REF[i]!, PIXELS_FG[i]!, kernelId);
+    const expected = expectedDiffPixel(PIXELS_REF[i]!, PIXELS_FG[i]!, operationId);
     for (let c = 0; c < 3; c++) {
       const diff = Math.abs(out[i * 4 + c]! - byteOf(expected[c]!));
       if (diff > 2) {
         allOk = false;
-        report(false, `[diff/${kernelId}] px[${i}].ch[${c}] expected=${byteOf(expected[c]!)} actual=${out[i * 4 + c]}`);
+        report(false, `[diff/${operationId}] px[${i}].ch[${c}] expected=${byteOf(expected[c]!)} actual=${out[i * 4 + c]}`);
       }
     }
   }
-  report(allOk, `[diff/${kernelId}] all pixels within 2/255 of raw-diff reference`);
+  report(allOk, `[diff/${operationId}] all pixels within 2/255 of raw-diff reference`);
   return allOk;
 }
 
@@ -201,10 +201,10 @@ function lutNearest(t: number): [number, number, number] {
   return [MAGMA_LUT[row * 4]!, MAGMA_LUT[row * 4 + 1]!, MAGMA_LUT[row * 4 + 2]!];
 }
 async function runDiffDisplayNormCase(device: Device, norm: NormMode, gamma: number): Promise<boolean> {
-  const kernelId = "absolute"; // unit displayRange → disp = clamp01(raw)
+  const operationId = "absolute"; // unit displayRange → disp = clamp01(raw)
   const texRef = buildRowTexture(device, PIXELS_REF);
   const texFg = buildRowTexture(device, PIXELS_FG);
-  const result = computeDiff(device, texRef, texFg, kernelId);
+  const result = computeDiff(device, texRef, texFg, operationId);
   const target = device.createTexture(WIDTH, 1, "rgba8unorm");
   renderDiffDisplay(device, target, result, "unit", {
     uv: uvFull,
@@ -250,10 +250,10 @@ async function runDiffDisplayNormCase(device: Device, norm: NormMode, gamma: num
 // (signedAnalyticColor + outputEncode/extendedOutputEncode) on BOTH surfaces: SDR
 // (clamps) and HDR (|v|>1 survives — row 3's mean error 0.53 → green 1.07).
 async function runDiffDisplayAnalyticCase(device: Device, hdrOut: boolean): Promise<boolean> {
-  const kernelId = "signed"; // result stores raw a-b per channel (signed range)
+  const operationId = "signed"; // result stores raw a-b per channel (signed range)
   const texRef = buildRowTexture(device, PIXELS_REF);
   const texFg = buildRowTexture(device, PIXELS_FG);
-  const result = computeDiff(device, texRef, texFg, kernelId);
+  const result = computeDiff(device, texRef, texFg, operationId);
   const target = device.createTexture(WIDTH, 1, hdrOut ? "rgba16float" : "rgba8unorm");
   renderDiffDisplay(device, target, result, "signed", {
     uv: uvFull,

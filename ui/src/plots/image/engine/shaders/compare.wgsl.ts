@@ -8,7 +8,7 @@
  * was DELETED: diff is now a cached kernel result texture blitted by
  * `../diff-engine.ts`'s `renderDiffDisplay`, and split/blend became TWO
  * switch-free specialized pipelines built here by source composition from the
- * shared prelude (`../kernels/prelude.wgsl.ts`). There is no `mode`/`diffSubmode`
+ * shared prelude (`../kernels/prelude.wgsl.ts`). There is no `mode`/`operation`
  * uniform anywhere anymore.
  *
  * Both shaders run each source texel through the SAME per-side pipeline

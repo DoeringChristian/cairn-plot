@@ -4,7 +4,7 @@ Verifies the public flat surface (`prediction`, `reference`, `mode=...`,
 `colormap=...`) lowers to the internal `compare` descriptor node the pane
 consumes, including the new `flip` perceptual kernel. `flip` is the additive
 value this track lands; the pane initializes its diff kernel from the
-descriptor's `diffSubmode`.
+descriptor's `operation`.
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def test_side_mode_rejected():
         ("ssim", "ssim"),
     ],
 )
-def test_diff_kernel_modes(mode, kernel_id):
+def test_comparison_operation_modes(mode, kernel_id):
     node = cp.Compare(_img(), _img(), mode=mode, colormap="turbo").to_node()
     assert node["kind"] == "compare"
     assert node["presentation"] == "difference"

@@ -259,7 +259,7 @@ export interface PaneHandle {
   render(params: ImageParams): boolean;
   /**
    * CACHED-op render path (FLIP / HDR-FLIP / SSIM). Ensures the content-keyed diff
-   * RESULT texture for (`contentKeys.a`, `contentKeys.b`, `kernelId`,
+   * RESULT texture for (`contentKeys.a`, `contentKeys.b`, `operationId`,
    * `computeParams`, `mapping`) over this pane's TWO live source slots (`a` =
    * {@link setSource}, `b` = {@link setSourceB}), then blits it through
    * `displayParams` — the result texture is bound as the PRIMARY source and shown
@@ -274,7 +274,7 @@ export interface PaneHandle {
    * `null` otherwise).
    */
   renderDiffCached(
-    kernelId: string,
+    operationId: string,
     contentKeys: { a: string; b: string },
     computeParams: Record<string, number> | undefined,
     displayParams: ImageParams,
@@ -291,13 +291,13 @@ export interface PaneHandle {
    * post-paint hold path. Never uploads, computes, or perturbs LRU.
    */
   isDiffResultCached(
-    kernelId: string,
+    operationId: string,
     contentKeys: { a: string; b: string },
     computeParams: Record<string, number> | undefined,
     mapping?: CompareMapping,
   ): boolean;
   /**
-   * Render THIS FRAME's diff for `kernelId` — the ONE kernel-agnostic entry
+   * Render THIS FRAME's diff for `operationId` — the ONE kernel-agnostic entry
    * point. The POOL picks the execution strategy from the kernel's own
    * declaration: POINTWISE → the per-frame content op evaluated inside the
    * normal render pass (the pool injects `srcB`); MULTIPASS → the content-keyed
@@ -313,7 +313,7 @@ export interface PaneHandle {
    *   - `"failed"` — hard GPU failure (fall back to the legacy pane).
    */
   renderDiff(
-    kernelId: string,
+    operationId: string,
     contentKeys: { a: string; b: string },
     ctx: ImageOperationComputeContext,
     display: ImageParams,
@@ -328,7 +328,7 @@ export interface PaneHandle {
    * the cache LRU.
    */
   isDiffContentResident(
-    kernelId: string,
+    operationId: string,
     contentKeys: { a: string; b: string },
     ctx: ImageOperationComputeContext,
     mapping?: CompareMapping,
@@ -768,7 +768,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
  */
 function attemptRenderDiffCached(
   entry: PaneEntry,
-  kernelId: string,
+  operationId: string,
   contentKeys: { a: string; b: string },
   computeParams: Record<string, number> | undefined,
   displayParams: ImageParams,
@@ -789,7 +789,7 @@ function attemptRenderDiffCached(
       entry.device,
       entry.srcTexture,
       entry.srcTextureB,
-      kernelId,
+      operationId,
       computeParams,
       contentKeys.a,
       contentKeys.b,
@@ -1057,16 +1057,16 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       return attemptRender(entry, params);
     },
     renderDiffCached(
-      kernelId: string,
+      operationId: string,
       contentKeys: { a: string; b: string },
       computeParams: Record<string, number> | undefined,
       displayParams: ImageParams,
       mapping?: CompareMapping,
     ): DiffCacheEntry | null {
-      return attemptRenderDiffCached(entry, kernelId, contentKeys, computeParams, displayParams, mapping);
+      return attemptRenderDiffCached(entry, operationId, contentKeys, computeParams, displayParams, mapping);
     },
     isDiffResultCached(
-      kernelId: string,
+      operationId: string,
       contentKeys: { a: string; b: string },
       computeParams: Record<string, number> | undefined,
       mapping?: CompareMapping,
@@ -1079,7 +1079,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         entry.device,
         { w: entry.source.width, h: entry.source.height },
         { w: entry.sourceB.width, h: entry.sourceB.height },
-        kernelId,
+        operationId,
         computeParams,
         contentKeys.a,
         contentKeys.b,
@@ -1087,19 +1087,19 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       );
     },
     renderDiff(
-      kernelId: string,
+      operationId: string,
       contentKeys: { a: string; b: string },
       ctx: ImageOperationComputeContext,
       display: ImageParams,
       mapping?: CompareMapping,
     ): { entry: DiffCacheEntry | null } | "hold" | "failed" {
-      const operation = getMultipassImageOperation(kernelId);
+      const operation = getMultipassImageOperation(operationId);
       if (operation) {
         // CACHED metric: computed once, content-keyed; the RESULT (a scalar
         // error) is displayed via IDENTITY content + the isScalar colormap.
         const cached = attemptRenderDiffCached(
           entry,
-          kernelId,
+          operationId,
           contentKeys,
           operation.implementation.computeParams?.(ctx),
           { ...display, channelCount: 1, isScalar: true, norm: "linear" },
@@ -1110,24 +1110,24 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       // DIRECT pointwise op, evaluated per frame: the pool injects `srcB`;
       // `cairnContent(a,b,opId)`. Op id 0 = IDENTITY (an unregistered or
       // transiently mis-resolved kernel) — the identity-op floor holds.
-      const opId = contentOpId(kernelId);
+      const opId = contentOpId(operationId);
       if (opId === 0) return "hold";
       return attemptRender(entry, { ...display, contentOpId: opId }) ? { entry: null } : "failed";
     },
     isDiffContentResident(
-      kernelId: string,
+      operationId: string,
       contentKeys: { a: string; b: string },
       ctx: ImageOperationComputeContext,
       mapping?: CompareMapping,
     ): boolean {
-      const operation = getMultipassImageOperation(kernelId);
-      if (!operation) return contentOpId(kernelId) !== 0;
+      const operation = getMultipassImageOperation(operationId);
+      if (!operation) return contentOpId(operationId) !== 0;
       if (entry.disposed || !entry.source || !entry.sourceB) return false;
       return hasDiff(
         entry.device,
         { w: entry.source.width, h: entry.source.height },
         { w: entry.sourceB.width, h: entry.sourceB.height },
-        kernelId,
+        operationId,
         operation.implementation.computeParams?.(ctx),
         contentKeys.a,
         contentKeys.b,

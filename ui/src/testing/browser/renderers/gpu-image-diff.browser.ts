@@ -47,12 +47,12 @@ const h = React.createElement;
 interface DiffProbe {
   canvas: HTMLCanvasElement | null;
   requestRender: () => void;
-  readonly diffKernel: string;
-  readonly resolvedKernelId: string;
+  readonly comparisonOperationId: string;
+  readonly resolvedOperationId: string;
   readonly colormap: string;
   readonly metrics: { mse: number; psnr: number; mae: number } | null;
   readonly ssimText: string;
-  changeDiffKernel: (id: string) => void;
+  changeComparisonOperation: (id: string) => void;
   changeDiffColormap: (id: string) => void;
   home: () => void;
   // Engine-level readback of the pool-owned surface (fresh renderPass + device
@@ -307,21 +307,21 @@ async function main(): Promise<void> {
 
     // ---- Case 3b: MODE menu switches kernels (no re-decode) --------------
     const before = await readSurfaceBytes(probe);
-    probe().changeDiffKernel("absolute");
-    await waitFor(() => probe().resolvedKernelId === "absolute", 3000, 40);
+    probe().changeComparisonOperation("absolute");
+    await waitFor(() => probe().resolvedOperationId === "absolute", 3000, 40);
     // Poll for the switched frame to render rather than sleeping a fixed
     // amount — the absolute-kernel frame lands later on slow software adapters.
     const after = before ? await paintedUntilChanged(probe, before) : await readSurfaceBytes(probe);
     const switched =
-      probe().resolvedKernelId === "absolute" && !!before && !!after && sameFrac(before, after) < 0.98;
+      probe().resolvedOperationId === "absolute" && !!before && !!after && sameFrac(before, after) < 0.98;
     if (!switched) allOk = false;
-    report(switched, `[case3b] MODE menu switch signed→absolute changed the surface (kernel now "${probe().resolvedKernelId}")`);
+    report(switched, `[case3b] MODE menu switch signed→absolute changed the surface (kernel now "${probe().resolvedOperationId}")`);
 
     // ---- Case 4: HOME resets the kernel back to the default --------------
     probe().home();
-    const homeOk = await waitFor(() => probe().diffKernel === "signed", 3000, 40);
+    const homeOk = await waitFor(() => probe().comparisonOperationId === "signed", 3000, 40);
     if (!homeOk) allOk = false;
-    report(homeOk, `[case4] HOME reset kernel back to "${probe().diffKernel}"`);
+    report(homeOk, `[case4] HOME reset kernel back to "${probe().comparisonOperationId}"`);
 
     // ---- Case 2: FLIP → magma non-degenerate -----------------------------
     const cFlip = document.createElement("div");

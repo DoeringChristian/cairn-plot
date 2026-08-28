@@ -8,8 +8,8 @@ export type CompareViewMode = "split" | "diff";
 export interface ImageComparisonControl {
   viewMode: CompareViewMode;
   setViewMode(mode: CompareViewMode): void;
-  diffKernel: string;
-  setDiffKernel(id: string): void;
+  comparisonOperationId: string;
+  setComparisonOperation(id: string): void;
   splitPos: number;
   setSplitPos(position: number): void;
   modified: boolean;
@@ -32,36 +32,36 @@ export function useImageComparisonControl(
     ? "diff"
     : "split";
   const descriptorKernel =
-    (props.diffSubmode as string | undefined) ?? "absolute";
+    (props.operation as string | undefined) ?? "absolute";
   const descriptorSplit = (props.splitPosition as number | undefined) ?? 0.5;
 
   const seed = useRef<{
     mode: CompareViewMode;
-    kernel: string;
+    operation: string;
     split: number;
   } | null>(null);
   if (comparison && seed.current === null) {
     seed.current = {
       mode: descriptorMode,
-      kernel: descriptorKernel,
+      operation: descriptorKernel,
       split: descriptorSplit,
     };
   }
   const seedMode = seed.current?.mode ?? descriptorMode;
-  const seedKernel = seed.current?.kernel ?? descriptorKernel;
+  const seedKernel = seed.current?.operation ?? descriptorKernel;
   const seedSplit = seed.current?.split ?? descriptorSplit;
 
   const operation = settings?.["compare.operation"] ??
     (seedMode === "split" ? "split" : seedKernel);
   const viewMode: CompareViewMode = operation === "split" ? "split" : "diff";
-  const diffKernel = operation === "split" ? seedKernel : operation;
+  const comparisonOperationId = operation === "split" ? seedKernel : operation;
   const splitPos = settings?.["compare.split"] ?? seedSplit;
 
   const setViewMode = useCallback((mode: CompareViewMode) => {
-    setSettings?.({ "compare.operation": mode === "split" ? "split" : diffKernel });
-  }, [setSettings, diffKernel]);
-  const setDiffKernel = useCallback((kernel: string) => {
-    setSettings?.({ "compare.operation": kernel });
+    setSettings?.({ "compare.operation": mode === "split" ? "split" : comparisonOperationId });
+  }, [setSettings, comparisonOperationId]);
+  const setComparisonOperation = useCallback((operation: string) => {
+    setSettings?.({ "compare.operation": operation });
   }, [setSettings]);
   const setSplitPos = useCallback((position: number) => {
     setSettings?.({ "compare.split": position });
@@ -85,13 +85,13 @@ export function useImageComparisonControl(
   return {
     viewMode,
     setViewMode,
-    diffKernel,
-    setDiffKernel,
+    comparisonOperationId,
+    setComparisonOperation,
     splitPos,
     setSplitPos,
     modified:
       viewMode !== descriptorMode ||
-      diffKernel !== descriptorKernel ||
+      comparisonOperationId !== descriptorKernel ||
       splitPos !== descriptorSplit,
   };
 }

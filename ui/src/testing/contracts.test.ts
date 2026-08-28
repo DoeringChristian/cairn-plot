@@ -6,12 +6,12 @@
  *   - colormaps                → `colormaps/lut.ts`'s `COLORMAP_NAMES`
  *                                (derived from the `COLORMAP_STOPS` registry)
  *   - tonemapOperators         → `image/tonemap.ts`'s SDR + HDR group arrays
- *   - compareKernelPublicNames → `engine/kernels/index.ts`'s
- *                                `listDiffKernelPublicNames()`
+ *   - comparisonOperationPublicNames → `model/comparison-operations.ts`'s
+ *                                `listComparisonOperationPublicNames()`
  *   - compareViewModes/Aligns/Fits, pixelValueNotations
  *                              → `builder/validate.ts` (audit M5)
- *   - compareKernelModes       → `builder/validate.ts`'s `COMPARE_KERNEL_MODES`
- *                                mapping; every emitted `diffSubmode` VALUE is
+ *   - comparisonOperationModes       → `builder/validate.ts`'s `COMPARE_OPERATION_MODES`
+ *                                mapping; every emitted `operation` VALUE is
  *                                additionally resolved through the kernel
  *                                registry so a kernel-id rename can't drift the
  *                                hand-mirrored tables (audit M6)
@@ -35,16 +35,16 @@ import {
   SDR_DISPLAY_TRANSFER_OPERATORS,
 } from "../plots/image/model/tonemap.ts";
 import {
-  listDiffKernelPublicNames,
-  resolveDiffKernelId,
-} from "../plots/image/engine/kernels/index.ts";
+  listComparisonOperationPublicNames,
+  resolveComparisonOperationId,
+} from "../plots/image/model/comparison-operations.ts";
 import { getImageOperation } from "../plots/image/model/content-ops/index.ts";
 import {
   COMPARE_VIEW_MODES,
   COMPARE_ALIGNS,
   COMPARE_FITS,
   PIXEL_VALUE_NOTATIONS,
-  COMPARE_KERNEL_MODES,
+  COMPARE_OPERATION_MODES,
 } from "../public/builder/validate.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,8 +53,8 @@ const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
   colormaps: string[];
   tonemapOperators: string[];
   displayTransfers: string[];
-  compareKernelPublicNames: string[];
-  compareKernelModes: Record<string, string>;
+  comparisonOperationPublicNames: string[];
+  comparisonOperationModes: Record<string, string>;
   compareViewModes: string[];
   compareAligns: string[];
   compareFits: string[];
@@ -76,10 +76,10 @@ test("displayTransfers: SDR_DISPLAY_TRANSFER_OPERATORS matches the contract", ()
   assert.deepEqual(sorted(SDR_DISPLAY_TRANSFER_OPERATORS), sorted(contract.displayTransfers));
 });
 
-test("compareKernelPublicNames: listDiffKernelPublicNames() matches the contract", () => {
+test("comparisonOperationPublicNames: listComparisonOperationPublicNames() matches the contract", () => {
   assert.deepEqual(
-    sorted(listDiffKernelPublicNames()),
-    sorted(contract.compareKernelPublicNames),
+    sorted(listComparisonOperationPublicNames()),
+    sorted(contract.comparisonOperationPublicNames),
   );
 });
 
@@ -101,31 +101,31 @@ test("pixelValueNotations: PIXEL_VALUE_NOTATIONS matches the contract", () => {
   assert.deepEqual(sorted(PIXEL_VALUE_NOTATIONS), sorted(contract.pixelValueNotations));
 });
 
-// --- audit M6: the public-mode → diffSubmode mapping, guarded by VALUE -------
+// --- audit M6: the public-mode → operation mapping, guarded by VALUE -------
 
-test("compareKernelModes: COMPARE_KERNEL_MODES matches the contract mapping", () => {
-  // Full key→value equality (not just keys): pins the TS `diffSubmode` table.
-  assert.deepEqual({ ...COMPARE_KERNEL_MODES }, contract.compareKernelModes);
+test("comparisonOperationModes: COMPARE_OPERATION_MODES matches the contract mapping", () => {
+  // Full key→value equality (not just keys): pins the TS `operation` table.
+  assert.deepEqual({ ...COMPARE_OPERATION_MODES }, contract.comparisonOperationModes);
 });
 
-test("compareKernelModes: keys equal compareKernelPublicNames (internal consistency)", () => {
+test("comparisonOperationModes: keys equal comparisonOperationPublicNames (internal consistency)", () => {
   assert.deepEqual(
-    sorted(Object.keys(contract.compareKernelModes)),
-    sorted(contract.compareKernelPublicNames),
+    sorted(Object.keys(contract.comparisonOperationModes)),
+    sorted(contract.comparisonOperationPublicNames),
   );
 });
 
-test("compareKernelModes: every emitted diffSubmode resolves to a registered kernel", () => {
+test("comparisonOperationModes: every emitted operation resolves to a registered kernel", () => {
   // The derivation guard M6 asks for: a kernel-id rename in the registry that
   // isn't mirrored into the tables makes at least one value fail to resolve.
   // `flip`/`flip_ldr` are menu tokens auto-dispatched per source dtype, so check
   // both u8 (false) and float (true) resolutions.
-  for (const [publicName, submode] of Object.entries(contract.compareKernelModes)) {
+  for (const [publicName, submode] of Object.entries(contract.comparisonOperationModes)) {
     for (const sourcesAreFloat of [false, true]) {
-      const kernelId = resolveDiffKernelId(submode, sourcesAreFloat);
+      const operationId = resolveComparisonOperationId(submode, sourcesAreFloat);
       assert.ok(
-        getImageOperation(kernelId),
-        `diffSubmode ${JSON.stringify(submode)} (mode ${publicName}, float=${sourcesAreFloat}) → operation id ${JSON.stringify(kernelId)} is not registered`,
+        getImageOperation(operationId),
+        `operation ${JSON.stringify(submode)} (mode ${publicName}, float=${sourcesAreFloat}) → operation id ${JSON.stringify(operationId)} is not registered`,
       );
     }
   }

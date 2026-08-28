@@ -683,17 +683,17 @@ export interface CompositeMediaPaneProps {
   isReferencePane?: boolean;
 
   /** Used only when the effective mode is "diff". */
-  diffSubmode: DiffMode;
+  operation: DiffMode;
   /** Initial diff KERNEL id (engine compare pane) — seeds `GpuComparePane`'s
-   *  view-local kernel selection; falls back to `diffSubmode` when unset. */
-  diffKernel?: string;
+   *  view-local kernel selection; falls back to `operation` when unset. */
+  comparisonOperationId?: string;
   /** Mismatched-size diff operand handling (engine compare pane, diff modes):
    *  `align` = overlap anchor (default "top-left"); `fit` = "crop" (default) |
    *  "fill". Ignored in split. */
   align?: CompareAlign;
   fit?: CompareFit;
   /** Fired when the engine pane's diff kernel changes (menu). */
-  onDiffKernelChange?: (kernelId: string) => void;
+  onComparisonOperationChange?: (operationId: string) => void;
   /** Fired when the engine pane's compare mode changes (split/diff menu).
    *  Lets `CompareView` keep its lifted view-mode state in sync. */
   onCompareModeChange?: (mode: "split" | "diff") => void;
@@ -763,11 +763,11 @@ export function CompositeMediaPane({
   imageFloat,
   baselineFloat,
   isReferencePane,
-  diffSubmode,
-  diffKernel,
+  operation,
+  comparisonOperationId,
   align,
   fit,
-  onDiffKernelChange,
+  onComparisonOperationChange,
   onCompareModeChange,
   colormap,
   interpolation,
@@ -869,7 +869,7 @@ export function CompositeMediaPane({
     const contentKeyB = imageFloat?.contentKey ?? imageUrl ?? "diff:b";
     const compareSource: CompareSource = {
       b: foregroundSource,
-      opId: diffKernel ?? diffSubmode,
+      opId: comparisonOperationId ?? operation,
       mode: effectiveMode as "split" | "diff",
       colormap,
       splitPosition: splitPosition ?? 0.5,
@@ -881,7 +881,7 @@ export function CompositeMediaPane({
       foregroundLabel,
       inStackedGrid,
       inOverlay,
-      onDiffKernelChange,
+      onComparisonOperationChange,
       onCompareModeChange,
       onSplitPositionChange,
     };
@@ -974,7 +974,7 @@ export function CompositeMediaPane({
   // isn't available. `computeDiff` (the CPU path below) only does the pointwise
   // DiffModes, so fall back to a SLIDE of the two images + a small notice rather
   // than a broken/blank diff.
-  if (effectiveMode === "diff" && isEngineOnlyDiff(diffSubmode)) {
+  if (effectiveMode === "diff" && isEngineOnlyDiff(operation)) {
     return (
       <div className="relative h-full w-full">
         <MediaComparePane
@@ -1011,7 +1011,7 @@ export function CompositeMediaPane({
       source={urlSource(imageUrl)}
       baselineUrl={baselineUrl}
       isBaseline={isReferencePane}
-      diffMode={effectiveMode === "diff" ? diffSubmode : "none"}
+      diffMode={effectiveMode === "diff" ? operation : "none"}
       interpolation={interpolation}
       colormap={colormap}
       tonemap={tonemap}
@@ -1029,7 +1029,7 @@ export function CompositeMediaPane({
         // diff → the "<metric> · <fg> compared to <ref>" caption (bottom-left);
         // normal (single image) → the foreground caption. Falls back to `label`.
         (effectiveMode === "diff"
-          ? compareCaptions({ mode: "diff", diffKernel: diffSubmode, referenceLabel, foregroundLabel }).left
+          ? compareCaptions({ mode: "diff", comparisonOperationId: operation, referenceLabel, foregroundLabel }).left
           : foregroundLabel) ?? label
       }
       overlay={overlay}

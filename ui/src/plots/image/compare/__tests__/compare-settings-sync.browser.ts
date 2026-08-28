@@ -53,7 +53,7 @@ import { createHarness, sleep, waitFor } from "../../../../testing/harness";
 interface CompareSyncProbe {
   compareMode: string;
   colormap: string;
-  diffKernel: string;
+  comparisonOperationId: string;
   splitPosition: number;
   effectiveTonemap: string;
   // Unified DISPLAY-encoding state (the compare-pane-on-DISPLAY follow-up): the
@@ -61,7 +61,7 @@ interface CompareSyncProbe {
   // with the norm picker — norm-UI-removal follow-up.)
   displayOperationId: string;
   changeCompareMode: (m: "split" | "diff") => void;
-  changeDiffKernel: (id: string) => void;
+  changeComparisonOperation: (id: string) => void;
   changeColormap: (id: string) => void;
   changeTonemap: (id: string) => void;
   changeSplit: (p: number) => void;
@@ -146,7 +146,7 @@ function frames(): HTMLElement[] {
 }
 /** The compare/diff probe within a pane frame — `__cairnImageDiffProbe`, exposed
  *  by the unified `GpuImagePane` in diff mode. It drives the compare surface
- *  (compareMode/diffKernel/colormap/displayOperationId/changeCompareMode/changeDiffKernel/
+ *  (compareMode/comparisonOperationId/colormap/displayOperationId/changeCompareMode/changeComparisonOperation/
  *  changeColormap/home) whichever lowering is live across a mode switch. */
 function probeOf(frame: HTMLElement | undefined): CompareSyncProbe | undefined {
   if (!frame) return undefined;
@@ -238,9 +238,9 @@ async function run(): Promise<boolean> {
   ok = ok && modeDiff;
 
   // --- 3. diff KERNEL: absolute → squared ----------------------------------
-  A().changeDiffKernel("squared");
-  const kernelOk = await waitFor(() => B().diffKernel === "squared", 8000, 25);
-  report(kernelOk, `KERNEL sync: A→squared, B follows (B.diffKernel=${B().diffKernel})`);
+  A().changeComparisonOperation("squared");
+  const kernelOk = await waitFor(() => B().comparisonOperationId === "squared", 8000, 25);
+  report(kernelOk, `KERNEL sync: A→squared, B follows (B.comparisonOperationId=${B().comparisonOperationId})`);
   ok = ok && kernelOk;
 
   // --- 4. COLORMAP: none → magma (colormap menu is live in diff mode) -----
@@ -425,18 +425,18 @@ async function run(): Promise<boolean> {
   // through the owner, so a bare synchronous follow-up can race the echo).
   A().home(); // clear the override left by the earlier COLORMAP sync step
   const homeColormap = "srgb"; // authored split/light display default
-  await waitFor(() => A().colormap === homeColormap && A().diffKernel === "absolute", 8000, 25);
+  await waitFor(() => A().colormap === homeColormap && A().comparisonOperationId === "absolute", 8000, 25);
   A().changeCompareMode("diff");
   await waitFor(() => A().compareMode === "diff", 8000, 25);
   // (a) Switching to signed leaves the colormap untouched.
-  A().changeDiffKernel("signed");
-  await waitFor(() => A().diffKernel === "signed", 8000, 25);
+  A().changeComparisonOperation("signed");
+  await waitFor(() => A().comparisonOperationId === "signed", 8000, 25);
   const defSigned = A().colormap === homeColormap;
   report(defSigned, `INVARIANT: signed operation leaves colormap=${A().colormap} (expected ${homeColormap})`);
   ok = ok && defSigned;
   // (b) Switching back to absolute still leaves it untouched.
-  A().changeDiffKernel("absolute");
-  await waitFor(() => A().diffKernel === "absolute", 8000, 25);
+  A().changeComparisonOperation("absolute");
+  await waitFor(() => A().comparisonOperationId === "absolute", 8000, 25);
   const defAbs = A().colormap === homeColormap;
   report(defAbs, `INVARIANT: absolute operation leaves colormap=${A().colormap} (expected ${homeColormap})`);
   ok = ok && defAbs;
@@ -446,17 +446,17 @@ async function run(): Promise<boolean> {
   report(picked, `OVERRIDE: user picks magma (A.colormap=${A().colormap})`);
   ok = ok && picked;
   // (d) An explicit choice survives a kernel switch.
-  A().changeDiffKernel("signed");
-  const followed = await waitFor(() => A().diffKernel === "signed" && A().colormap === "magma", 8000, 25);
+  A().changeComparisonOperation("signed");
+  const followed = await waitFor(() => A().comparisonOperationId === "signed" && A().colormap === "magma", 8000, 25);
   report(followed, `SWITCH: kernel→signed preserves magma (A.colormap=${A().colormap})`);
   ok = ok && followed;
   // (e) HOME replaces the cell settings with the active authored/default values.
   A().home();
   const homeReset = await waitFor(
-    () => A().colormap === homeColormap && A().colormap !== "magma" && A().diffKernel === "absolute", 8000, 25);
+    () => A().colormap === homeColormap && A().colormap !== "magma" && A().comparisonOperationId === "absolute", 8000, 25);
   report(
     homeReset,
-    `HOME: override cleared → active default (A.colormap=${A().colormap}, kernel=${A().diffKernel})`,
+    `HOME: override cleared → active default (A.colormap=${A().colormap}, kernel=${A().comparisonOperationId})`,
   );
   ok = ok && homeReset;
 

@@ -26,7 +26,7 @@ test("comparison composition changes content operation without choosing an encod
     splitPosition: 0.5,
     inStackedGrid: true,
     inOverlay: false,
-    onDiffKernelChange: () => {},
+    onComparisonOperationChange: () => {},
     onCompareModeChange: () => {},
     onSplitPositionChange: () => {},
     compareModified: false,
@@ -34,13 +34,13 @@ test("comparison composition changes content operation without choosing an encod
   const split = composeImageComparisonPresentation({
     leaf,
     resolved,
-    comparison: { ...base, mode: "split", diffKernel: "absolute" },
+    comparison: { ...base, mode: "split", comparisonOperationId: "absolute" },
     enlargeControl: { enlarged: false, setEnlarged: () => {} },
   });
   const difference = composeImageComparisonPresentation({
     leaf,
     resolved,
-    comparison: { ...base, mode: "diff", diffKernel: "signed" },
+    comparison: { ...base, mode: "diff", comparisonOperationId: "signed" },
     enlargeControl: { enlarged: false, setEnlarged: () => {} },
   });
   assert.equal((split.compareSource as { colormap: string }).colormap, "turbo");

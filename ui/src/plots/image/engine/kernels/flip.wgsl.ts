@@ -304,7 +304,7 @@ export const flipProgram: MultipassImageOperationProgram = {
  * Identical to LDR-FLIP except the front-end reads LINEAR float and clamps to
  * [0,1] (the default srgb tone-map operator) instead of sRGB-decoding — see
  * `YCXCZ_LINEAR_CLAMP_SHADER`. On u8 sources the public `flip_ldr` resolves to
- * the plain `flip` kernel instead (auto-dispatch, `kernels/index.ts`), so this
+ * the plain `flip` operation instead (`model/comparison-operations.ts`), so this
  * kernel only ever runs on float sources.
  */
 export const flipLdrForcedProgram: MultipassImageOperationProgram = {

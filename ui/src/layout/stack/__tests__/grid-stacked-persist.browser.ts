@@ -21,9 +21,9 @@ import { createHarness, waitFor } from "../../../testing/harness";
 
 interface CompareProbe {
   compareMode: string;
-  diffKernel: string;
+  comparisonOperationId: string;
   changeCompareMode: (m: "split" | "blend" | "diff") => void;
-  changeDiffKernel: (id: string) => void;
+  changeComparisonOperation: (id: string) => void;
 }
 
 const { report, setOverallStatus } = createHarness({ title: "GRID-STACKED-PERSIST", colors: { pass: "#6f6", fail: "#f66" } });
@@ -129,9 +129,9 @@ async function run(): Promise<boolean> {
 
   // Set diff + squared while on tab 0.
   probe()!.changeCompareMode("diff");
-  probe()!.changeDiffKernel("squared");
-  const t0diff = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared", 8000, 25);
-  report(t0diff, `set diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.diffKernel})`);
+  probe()!.changeComparisonOperation("squared");
+  const t0diff = await waitFor(() => probe()?.compareMode === "diff" && probe()?.comparisonOperationId === "squared", 8000, 25);
+  report(t0diff, `set diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.comparisonOperationId})`);
   ok = ok && t0diff;
 
   // Tag the pane's canvases NOW (after diff, so the count is settled) to prove the
@@ -147,8 +147,8 @@ async function run(): Promise<boolean> {
   tabs()[1].click();
   const flipped = await waitFor(() => activeIdx() === 1, 8000, 25);
   report(flipped, `flip → active tab is 1 (got ${activeIdx()})`);
-  const stillDiff1 = await waitFor(() => probe()?.compareMode === "diff" && probe()?.diffKernel === "squared", 8000, 25);
-  report(stillDiff1, `after flip, STILL diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.diffKernel})`);
+  const stillDiff1 = await waitFor(() => probe()?.compareMode === "diff" && probe()?.comparisonOperationId === "squared", 8000, 25);
+  report(stillDiff1, `after flip, STILL diff/squared (mode=${probe()?.compareMode}, kernel=${probe()?.comparisonOperationId})`);
 
   // The renderer INSTANCE was reused — every previously-tagged canvas still in the
   // DOM (no remount, no park/restore → no flicker).

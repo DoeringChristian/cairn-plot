@@ -83,7 +83,7 @@ test("identity and split remain ordinary image operations", () => {
 test("cached ops are NOT inlined into the content dispatch (they render a result texture)", () => {
   const assembled = buildContentOpWGSL();
   for (const id of ["flip", "hdr-flip", "ssim"]) {
-    // No dispatch id → no branch. (kernelId strings never appear in the shader.)
+    // No dispatch id → no branch. (operationId strings never appear in the shader.)
     assert.equal(CONTENT_OP_ID[id], undefined);
     assert.ok(!assembled.includes(`"${id}"`));
   }

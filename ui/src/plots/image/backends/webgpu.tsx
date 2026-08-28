@@ -64,9 +64,9 @@ import { floatValues, widenFloatPixels } from "../model/pixel-buffer.ts";
 // never `core.iife.js`.
 import { contentOpId, getImageOperation, getMultipassImageOperation } from "../model/content-ops/index";
 import {
-  resolveDiffKernelId,
-  listDiffMenuModes,
-} from "../engine/kernels/index";
+  resolveComparisonOperationId,
+  listComparisonOperationOptions,
+} from "../model/comparison-operations";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../model/display-operations/index.ts";
 import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
 import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
@@ -576,41 +576,41 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   })();
   // The diff KERNEL (which error metric) is a per-VIEWPORT content-op choice OWNED
   // by the hoisted `useCompareControl` (descriptor path) — surfaced here as
-  // `compareSource.opId` and mutated via `compareSource.onDiffKernelChange`. When
+  // `compareSource.opId` and mutated via `compareSource.onComparisonOperationChange`. When
   // that owner is present the pane DERIVES the kernel straight from `opId` (ONE
   // authoritative store — no parallel pane-local seed/reseed to hand-sync; M2). The
   // owner also carries the viewport settings subscription, so remote operation
   // patches flow through it, not a second copy here. A cross-type consumer with NO owner (the live-3D snapshot
-  // compare, `OffscreenComparePanes`, which threads no `onDiffKernelChange`) keeps a
+  // compare, `OffscreenComparePanes`, which threads no `onComparisonOperationChange`) keeps a
   // local fallback store so its own MODE menu still functions.
-  const hasKernelOwner = !!compareSource?.onDiffKernelChange;
+  const hasKernelOwner = !!compareSource?.onComparisonOperationChange;
   const initialKernelSeedRef = useRef<string | null>(null);
   if (initialKernelSeedRef.current == null && compareSource) {
     initialKernelSeedRef.current = compareSource.opId ?? "absolute";
   }
   // Kernel state has the same ownership rule as encoding: node controller when
   // present, otherwise the viewport store with an immutable bootstrap seed.
-  const diffKernel = hasKernelOwner
+  const comparisonOperationId = hasKernelOwner
     ? (compareSource!.opId ?? "absolute")
     : ((synced?.["compare.operation"] !== "split" ? synced?.["compare.operation"] : undefined) ?? initialKernelSeedRef.current ?? "absolute");
-  const setDiffKernel = useCallback(
+  const setComparisonOperation = useCallback(
     (id: string) => {
       // ONE write path: route to the owner when present (it re-derives `opId` back
       // into this pane). No owner ⇒ ONE settings-store write (the render lookup
-      // reads `synced.diffKernel` first; a local-only write would stay shadowed
+      // reads `synced.comparisonOperationId` first; a local-only write would stay shadowed
       // by a store value — the HOME-can't-reset-the-kernel bug). Every pane has
       // a store (own fallback on bare mounts), so no local cell is written.
-      if (compareSource?.onDiffKernelChange) compareSource.onDiffKernelChange(id);
+      if (compareSource?.onComparisonOperationChange) compareSource.onComparisonOperationChange(id);
       else setSynced({ "compare.operation": id });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compareSource?.onDiffKernelChange, setSynced],
+    [compareSource?.onComparisonOperationChange, setSynced],
   );
   // Cheap pure derivations: the concrete kernel id (float sources auto-dispatch
   // flip→hdr-flip) and the diff's shared default colormap.
   const sourcesAreFloat =
     backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
-  const resolvedKernelId = diffMode ? resolveDiffKernelId(diffKernel, !!sourcesAreFloat) : diffKernel;
+  const resolvedOperationId = diffMode ? resolveComparisonOperationId(comparisonOperationId, !!sourcesAreFloat) : comparisonOperationId;
   const diffDefaultEncoding = diffSeedColormap ?? DEFAULT_COMPARISON_DISPLAY_OPERATION_ID;
   // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
   // the INITIALLY-VISIBLE face's defaults — diff → authored/shared default colormap,
@@ -806,8 +806,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // adoption, and fan-out belong to the viewport owner above this component.
   //
   // NO-OWNER cross-type kernel (the live-3D snapshot compare `OffscreenComparePanes`
-  // threads no `onDiffKernelChange`, so its kernel has no node-level owner): mirror
-  // `synced.diffKernel` into the local fallback store here. When an owner IS present
+  // threads no `onComparisonOperationChange`, so its kernel has no node-level owner): mirror
+  // `synced.comparisonOperationId` into the local fallback store here. When an owner IS present
   // (the descriptor / stage path) the kernel mirrors through `useCompareControl` at
   // the node, so the pane must NOT also drive it (that owner re-derives `opId`).
   // The ONE write path into the viewport's settings entry (NOSTACK): fans out
@@ -850,9 +850,9 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   );
   // DIFF gesture sites: a kernel / colormap pick is one store write (+ the
   // kernel routes through its owner); peers follow via the store.
-  const changeDiffKernel = useCallback(
-    (id: string) => setDiffKernel(id),
-    [setDiffKernel],
+  const changeComparisonOperation = useCallback(
+    (id: string) => setComparisonOperation(id),
+    [setComparisonOperation],
   );
   const changeDiffEncoding = useCallback(
     (id: string) => publishSettings({ "image.encoding": id }),
@@ -867,10 +867,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     (mode: "split" | "diff") => {
       const commit = compareSource?.onCompareModeChange ??
         ((next: "split" | "diff") =>
-          publishSettings({ "compare.operation": next === "diff" ? diffKernel : next }));
+          publishSettings({ "compare.operation": next === "diff" ? comparisonOperationId : next }));
       commit(mode);
     },
-    [compareSource?.onCompareModeChange, publishSettings, diffKernel],
+    [compareSource?.onCompareModeChange, publishSettings, comparisonOperationId],
   );
   // COMPOSITOR param publish sites (Phase 3): the divider / flip keys both LIFT
   // the value to the owner (so the reused-instance control state survives) AND
@@ -1369,7 +1369,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     contentKeyA,
     contentKeyB,
     hasBOperand: !!compareSource?.b,
-    resolvedKernelId,
+    resolvedOperationId,
     compareOpMode,
     splitPosition,
     paneReady,
@@ -1385,7 +1385,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // than recomputing multi-pass on the paint critical path).
     isDiffContentResident: () =>
       !!paneHandleRef.current?.isDiffContentResident(
-        resolvedKernelId,
+        resolvedOperationId,
         { a: contentKeyA, b: contentKeyB },
         { hdrExposures },
         diffMapping ?? undefined,
@@ -1514,7 +1514,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       // Wait for the reference slot to upload (else a direct op would sample the
       // 1×1 placeholder). The render effect re-fires on `refUploadVersion`.
       if (!refDims) return false;
-      const kernelId = getImageOperation(resolvedKernelId) ? resolvedKernelId : "absolute";
+      const operationId = getImageOperation(resolvedOperationId) ? resolvedOperationId : "absolute";
       const displayEncoding = effectiveDiffEncoding;
       const display = prepareDisplayOperation(displayEncoding, { hdrSurface: useHdrRef.current });
       // Scalar-error display params: reduce MEAN (tev averages RGB), EV/OFF as
@@ -1541,7 +1541,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         // compute params from the generic source facts. The pane never sees
         // kernel kinds, param derivations, or cache keys.
         const result = handle.renderDiff(
-          kernelId,
+          operationId,
           { a: contentKeyA, b: contentKeyB },
           { hdrExposures },
           diffDisplay,
@@ -1730,7 +1730,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr,
     // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
     // change, or the hdr-flip exposures resolve.
-    diffMode, refDims, refUploadVersion, resolvedKernelId, effectiveDiffEncoding, diffMapping, hdrExposures, contentKeyA, contentKeyB,
+    diffMode, refDims, refUploadVersion, resolvedOperationId, effectiveDiffEncoding, diffMapping, hdrExposures, contentKeyA, contentKeyB,
     // COMPOSITOR deps: re-render on a divider drag / mode change
     // (only the compositor param uniform changes — no recompile).
     compositorMode, compareOpMode, splitPosition,
@@ -1855,7 +1855,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       cancelled = true;
     };
-  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, diffKernel, diffMapping]);
+  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, comparisonOperationId, diffMapping]);
 
   useEffect(() => {
     if (!hasCompare || !paneReady || !refDims) {
@@ -1888,7 +1888,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       diffResultDimsRef.current = null;
       return;
     }
-    const operation = getMultipassImageOperation(resolvedKernelId);
+    const operation = getMultipassImageOperation(resolvedOperationId);
     if (!operation) {
       // Direct op: no result readback — the cpu twin drives the readout.
       diffSamplesRef.current = null;
@@ -1916,7 +1916,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       cancelled = true;
     };
-  }, [diffMode, paneReady, resolvedKernelId, uploadVersion, refUploadVersion, diffMapping]);
+  }, [diffMode, paneReady, resolvedOperationId, uploadVersion, refUploadVersion, diffMapping]);
 
   // Test seam (browser harness only): expose the live diff seams on the pane
   // element so a headless harness can drive kernel/colormap switching + HOME and
@@ -1936,11 +1936,11 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       get compareMode() {
         return (diffMode ? "diff" : compareOpMode) as "split" | "diff";
       },
-      get diffKernel() {
-        return diffKernel;
+      get comparisonOperationId() {
+        return comparisonOperationId;
       },
-      get resolvedKernelId() {
-        return resolvedKernelId;
+      get resolvedOperationId() {
+        return resolvedOperationId;
       },
       get colormap() {
         return effectiveDiffEncoding;
@@ -2005,7 +2005,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         return { data, width: canvas.width, height: canvas.height };
       },
       changeCompareMode,
-      changeDiffKernel,
+      changeComparisonOperation,
       changeDiffColormap: changeDiffEncoding,
       // The compare display curve (light compositor tonemap) — the unified encoding
       // set; mirrors `GpuComparePane.changeTonemap` for the settings-sync harness.
@@ -2021,7 +2021,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, diffKernel, resolvedKernelId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeDiffKernel, changeDiffEncoding, changeEncoding, setDiffKernel, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2064,7 +2064,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     hdrMode,
     naturalDims,
     sdrColormap,
-    resolvedKernelId,
+    resolvedOperationId,
     hdrDataRef,
     sdrImageDataRef,
     refFloatRef,
@@ -2139,12 +2139,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // — no remount, since [image, split, diff] all key `plot:image`).
     const modeMenu = buildCompareModeMenu({
       mode: compositorMode ? compareOpMode! : "diff",
-      kernel: diffKernel,
-      kernelOptions: listDiffMenuModes().map((k) => ({ id: k.id, label: k.label })),
+      operation: comparisonOperationId,
+      kernelOptions: listComparisonOperationOptions().map((k) => ({ id: k.id, label: k.label })),
       onSplit: () => changeCompareMode("split"),
-      onKernel: (id) => {
+      onOperation: (id) => {
         if (compositorMode) changeCompareMode("diff");
-        changeDiffKernel(id);
+        changeComparisonOperation(id);
       },
     });
     if (compositorMode) {
@@ -2161,7 +2161,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
       onSelect: changeDiffEncoding,
     });
     return [modeMenu, displayMenu];
-  }, [hasCompare, compositorMode, compareOpMode, diffKernel, enc.displayOperationId, enc.ids, changeEncoding, changeCompareMode, changeDiffKernel, changeDiffEncoding]);
+  }, [hasCompare, compositorMode, compareOpMode, comparisonOperationId, enc.displayOperationId, enc.ids, changeEncoding, changeCompareMode, changeComparisonOperation, changeDiffEncoding]);
 
   // Captions (same DOM / selectors as `GpuComparePane`): diff → ONE bottom-left
   // "<metric> · <fg> compared to <ref>"; split/blend → REFERENCE bottom-left +
@@ -2171,7 +2171,7 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   const compareCaps = hasCompare
     ? compareCaptions({
         mode: diffMode ? "diff" : compareOpMode!,
-        diffKernel,
+        comparisonOperationId,
         referenceLabel: compareSource?.referenceLabel,
         foregroundLabel: compareSource?.foregroundLabel,
       })

@@ -8,7 +8,7 @@
 //     naming the error map, where <metric> is the active diff kernel's display
 //     name. Missing side captions fall back to "image"/"reference".
 // ---------------------------------------------------------------------------
-import { listDiffMenuModes } from "../engine/kernels/index";
+import { listComparisonOperationOptions } from "../model/comparison-operations";
 
 export interface CompareCaptions {
   /** Bottom-LEFT chip: the reference caption (slide) OR the whole diff
@@ -20,20 +20,20 @@ export interface CompareCaptions {
 
 /** The active diff kernel's human display name (the metric named in the diff
  *  caption), falling back to the raw id. */
-export function diffMetricName(diffKernel: string | undefined): string {
-  if (!diffKernel) return "";
-  return listDiffMenuModes().find((k) => k.id === diffKernel)?.label ?? diffKernel;
+export function diffMetricName(comparisonOperationId: string | undefined): string {
+  if (!comparisonOperationId) return "";
+  return listComparisonOperationOptions().find((k) => k.id === comparisonOperationId)?.label ?? comparisonOperationId;
 }
 
 export function compareCaptions(opts: {
   mode: string;
-  diffKernel?: string;
+  comparisonOperationId?: string;
   referenceLabel?: string;
   foregroundLabel?: string;
 }): CompareCaptions {
-  const { mode, diffKernel, referenceLabel, foregroundLabel } = opts;
+  const { mode, comparisonOperationId, referenceLabel, foregroundLabel } = opts;
   if (mode === "diff") {
-    const metric = diffMetricName(diffKernel);
+    const metric = diffMetricName(comparisonOperationId);
     const fg = foregroundLabel || "image";
     const ref = referenceLabel || "reference";
     const prefix = metric ? `${metric} · ` : "";
