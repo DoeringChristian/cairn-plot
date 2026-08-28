@@ -20,8 +20,28 @@ import {
   decodedFloatToCompareSource,
   isFloatCandidateArtifact,
   resolveImageViewportItemsAsync,
+  createEndpointDataSource,
   type DataSource,
 } from "./data-sources.ts";
+
+test("createEndpointDataSource uses the host fetch implementation", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const payload = new Uint8Array([1, 2, 3]);
+  const source = createEndpointDataSource(
+    (hash) => `/artifacts/${hash}`,
+    {
+      requestInit: { headers: { Authorization: "Bearer test" } },
+      fetch: async (input, init) => {
+        calls.push({ url: String(input), init });
+        return new Response(payload);
+      },
+    },
+  );
+
+  assert.deepEqual(new Uint8Array(await source.bytes("abc")), payload);
+  assert.equal(calls[0]?.url, "/artifacts/abc");
+  assert.deepEqual(calls[0]?.init, { headers: { Authorization: "Bearer test" } });
+});
 
 // ---------------------------------------------------------------------------
 // A minimal `.npy` v1.0 encoder (float32) for building test buffers, mirroring

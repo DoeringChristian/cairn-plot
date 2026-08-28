@@ -68,7 +68,7 @@ function flattenNested(arr: unknown[]): { data: Float32Array; shape: number[] } 
   return { data: out, shape };
 }
 
-function floatMeta(shape: number[], data: Float32Array | Uint16Array): Record<string, unknown> {
+function floatMeta(shape: number[], data: Float32Array | Uint16Array): Record<string, import("../../../../../packages/spec/src/json.ts").JsonValue> {
   const channels = shape.length === 2 ? 1 : shape[2] ?? 1;
   let vmin = Infinity;
   let vmax = -Infinity;

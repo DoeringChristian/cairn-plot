@@ -1,23 +1,16 @@
-// Engine types (RHI interface — consumed by the WebGPU backend)
-export * from "../../../../packages/spec/src/index.ts";
-export * from "../../../../packages/runtime/src/index.ts";
-export {
-  createSettingsRegistry,
-  defaultSettingsRegistry,
-  resolveSettings,
-} from "../../../../packages/spec/src/settings.ts";
+// Durable descriptor types. Viewports and renderer machinery are internal.
 export type {
-  Invalidation,
-  SettingDefinition,
-  SettingsRegistry,
-} from "../../../../packages/spec/src/settings.ts";
-export {
-  PlotProvider,
-  usePlotChanges,
-  usePlotController,
-  usePlotSession,
-  usePlotSpec,
-} from "../../../../packages/react/src/index.ts";
+  CompareNode,
+  DataSpec,
+  GridNode,
+  PlotDescriptor,
+  PlotLeafNode,
+  PlotNode,
+  PlotSpec,
+  SharedProps,
+} from "../../../../packages/spec/src/index.ts";
+
+// Engine types (RHI interface — consumed by the WebGPU backend)
 
 export type {
   Backend,
@@ -192,8 +185,7 @@ export type { TableProps, TableData, TableColumn, ColumnType } from "./renderers
 // (only reached by the lazy FigureInteractiveCard) to keep it in its own
 // async chunk.
 
-// Controls — the renderer-agnostic PlotController facade + toolbar config
-// (2D Plotly-parity, S0 foundation; see controls/types.ts).
+// Controls — the renderer-local toolbar facade.
 export type {
   DragMode,
   HoverMode,

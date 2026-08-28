@@ -1,43 +1,65 @@
 import type { JsonValue } from "./json.ts";
 
-export type PaneId = string;
-export type SettingKey = string;
-export type SettingsPatch = Record<SettingKey, JsonValue>;
+/** JSON-safe data consumed by a renderer. */
+export type DataSpec =
+  | { kind: "inline"; props: Record<string, JsonValue> }
+  | { kind: "image"; hash: string | null; referenceHash?: string | null; metadata?: string | null; format?: string; url?: string; part?: number | string; layer?: string | string[] }
+  | { kind: "npz"; hash: string | null; objectType: "pointcloud" | "mesh" | "volume" | "boxes3d"; meta: Record<string, JsonValue> }
+  | { kind: "imghdr"; hash: string | null; meta: Record<string, JsonValue> }
+  | { kind: "url"; src: string; referenceSrc?: string | null; metadata?: string | null };
 
-/** Durable, authored reference. Bytes and decoded resources never live here. */
-export interface SourceSpec {
-  kind: string;
-  [key: string]: JsonValue;
+export type PlotNode = PlotLeafNode | GridNode | CompareNode;
+
+export interface PlotLeafNode {
+  kind: "plot";
+  renderer: string;
+  props?: Record<string, JsonValue>;
+  data: DataSpec;
 }
 
-export interface PaneSpec {
-  id: PaneId;
-  kind: string;
-  sources: SourceSpec[];
-  settings?: SettingsPatch;
+export interface GridNode {
+  kind: "grid";
+  children: PlotNode[];
+  cols?: number;
+  colWidths?: Array<number | string>;
+  rowHeights?: Array<number | string>;
+  gap?: number | string;
+  shared?: SharedProps;
+  /**
+   * `normal` creates one internal viewport per child. `stacked` creates one
+   * internal viewport whose children are content slots. Switching slots never
+   * replaces that viewport's settings.
+   */
+  mode?: "normal" | "stacked";
+}
+
+export interface CompareNode {
+  kind: "compare";
+  mode: "split" | "diff";
+  a: DataSpec;
+  b: DataSpec;
+  baselineIndex?: 0 | 1;
+  diffSubmode?: string;
+  align?: "top-left" | "center" | "top-right" | "bottom-left" | "bottom-right";
+  fit?: "crop" | "fill";
   props?: Record<string, JsonValue>;
 }
 
-export type LayoutSpec =
-  | { kind: "pane"; pane: PaneId }
-  | {
-      kind: "grid";
-      children: LayoutSpec[];
-      columns?: number;
-      gap?: number | string;
-      mode?: "normal" | "stacked";
-    };
-
-export interface LinkSpec {
-  id: string;
-  panes: PaneId[];
-  keys: string[];
+export interface SharedProps {
+  colormap?: string;
+  colorRange?: [number, number];
+  colorbar?: boolean;
+  reference?: DataSpec;
+  sync?: { viewport?: boolean; camera?: boolean };
 }
 
-/** Authored truth: deliberately excludes selection, mounts and resources. */
-export interface PlotSpec {
-  version: 1;
-  layout: LayoutSpec;
-  panes: Record<PaneId, PaneSpec>;
-  links?: LinkSpec[];
+/** The one durable recursive plot specification shared by Python and JS. */
+export interface PlotDescriptor {
+  root: PlotNode;
+  /** Standalone bootstrap transport metadata; PlotHost always receives DataSource explicitly. */
+  mode?: "local" | "endpoint";
+  endpoint?: string;
 }
+
+/** Public spelling. Kept aliased to avoid a second wire format. */
+export type PlotSpec = PlotDescriptor;

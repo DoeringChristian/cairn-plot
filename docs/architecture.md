@@ -1,52 +1,49 @@
 # Architecture
 
-Cairn Plot is migrating from a React-owned renderer tree to a small headless
-runtime with plugin renderers. The compatibility app remains operational during
-the migration; new ownership follows these boundaries.
-
-## Three lifetimes
-
-- `PlotSpec` is authored, durable and JSON-safe. It contains layout, panes,
-  source references, authored settings and named links.
-- `PlotSession` contains interactive overrides, selection and transient stage
-  state. HOME removes overrides, revealing authored settings again.
-- `PlotRuntime` contains mounted renderers, decoded resources, signals and
-  imperative handles. None of it can enter `PlotSpec` by construction.
-
-## Packages
-
-- `packages/spec`: JSON model, settings definitions and effective projection.
-- `packages/runtime`: commands, controller, signals, resource ownership and
-  renderer contracts. It imports no React or concrete renderer.
-- `packages/render-core`: framework-free imperative host and core renderers.
-- `packages/render-gpu`: WebGPU image/compare renderer implementation.
-- `packages/render-three`: Three.js renderer implementation.
-- `packages/react`: lifecycle and subscription bindings over the same
-  controller used by the imperative host.
-- `packages/python`: Python authoring distribution and bundled standalone
-  assets. Its public wire models remain compatible during the TypeScript cut.
-- `apps/standalone`: standalone browser app and temporary legacy descriptor
-  adapter.
-- `apps/playground`: visual fixtures and browser acceptance scenarios.
-
-The enforced dependency direction is:
+Cairn Plot has one production path:
 
 ```text
-spec <- runtime <- render-core/render-gpu/render-three <- react/apps
+recursive PlotDescriptor -> PlotHost -> internal viewports -> renderers
 ```
 
-Concrete renderers never enter the headless runtime. React never owns a second
-state model.
+## Durable specification
 
-## Compatibility deletion gates
+`packages/spec` contains the one JSON-safe recursive descriptor shared by the
+Python builders, JavaScript builders, standalone reports and browser host. It
+does not contain viewport ids, mounted state, decoded data, selections or GPU
+resources. A stacked grid describes several content children; the host
+interprets them as slots of one internal viewport.
 
-1. Add an explicit pane key to the Python and TypeScript descriptor schema;
-   replace the standalone adapter's path-derived ids.
-2. Adapt the existing image renderer as the first plugin and route all its
-   settings writes through `PlotController`.
-3. Convert compare, chart and Three renderers independently.
-4. Move standalone entry files under `apps/standalone` and switch Cairn to the
-   package exports.
-5. Delete `useViewportSettings`, settings channels/peers and the recursive
-   legacy renderer dispatch only after saved-descriptor and browser fixtures
-   pass through the new runtime.
+## Internal viewports
+
+A viewport is private cairn-plot machinery. A normal grid creates one viewport
+per child. A stacked grid creates one viewport and switches its content slot.
+Only the viewport owns mutable visual settings. Renderers consume those settings
+and publish intent through the viewport callback; they do not keep fallback
+copies.
+
+Settings updates have two explicit forms: patch and replace. HOME replaces the
+current viewport settings with the active content defaults. Selection and
+authored links propagate through the same settings channels.
+
+## Browser host
+
+The supported browser API is `ui/src/public`:
+
+```tsx
+<PlotHost descriptor={descriptor} dataSource={dataSource} />
+```
+
+The imperative `mountPlot` function mounts the same React host; it is not a
+second runtime. Renderer registration, viewport stores, selection, stage and
+resource machinery remain private.
+
+## Repository packages
+
+- `packages/spec`: canonical recursive wire types.
+- `packages/python`: Python authoring, reports and bundled browser assets.
+- `ui`: the single browser implementation and public host.
+
+The former controller/plugin/React package experiment was removed because it
+did not drive production and duplicated the descriptor, settings and renderer
+models.

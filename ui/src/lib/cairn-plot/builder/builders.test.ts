@@ -139,6 +139,19 @@ test("every builder emits a schema-conformant descriptor", () => {
   }
 });
 
+test("builder rejects non-JSON values at the durable descriptor boundary", () => {
+  assert.throws(
+    () => cp.table([{ value: 1n }]),
+    /not JSON-serializable/,
+  );
+  const cyclic: unknown[] = [];
+  cyclic.push(cyclic);
+  assert.throws(
+    () => cp.table([{ value: cyclic }]),
+    /contains a cycle/,
+  );
+});
+
 test("builder colormap/tonemap/kernel sets match the contract", () => {
   const sorted = (xs: readonly string[]) => [...xs].sort();
   assert.deepEqual(sorted(CHART_COLORMAPS), sorted(contract.colormaps));

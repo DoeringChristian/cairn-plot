@@ -283,9 +283,8 @@ function HeatmapStandalone(p: P) {
 // wheel-zoom (modifier-gated) + drag-pan are CONTROLLED — they need a
 // `zoom`/`pan` value plus an `onViewportChange` callback to persist the gesture.
 // Standalone has no settings store, so the adapter holds the state itself,
-// seeded from any descriptor-provided `zoom`/`pan`. `p.viewportSyncGroupId`
-// (threaded from a grid's `shared.sync.viewport` — see `plot-node.tsx`) links
-// this viewport to every other synced pane in the same grid.
+// seeded from descriptor-provided `zoom`/`pan`. Grid linking is handled by the
+// owning frame's key-scoped settings membership, not by this adapter.
 function ImageStandalone(p: P) {
   // DEFAULT framing: size the pane's box to the image's CONTENT aspect within the
   // available space. `ChartFillContext` (set by a grid with `rowHeights`, or the

@@ -506,7 +506,7 @@ async function run(): Promise<boolean> {
 
   // === VIEWPORT SYNC — the fix for "viewports not synced in multi-enlarge".
   //     Drive a REAL ctrl+wheel zoom on cell A's viewport and assert cell B zooms
-  //     to the SAME transform: the stage cells now share ONE viewportSyncGroupId
+  //     to the SAME transform: the stage cells share one settings membership
   //     (the group the stage previously dropped while keeping only settings). ====
   {
     const cells = stageCells();

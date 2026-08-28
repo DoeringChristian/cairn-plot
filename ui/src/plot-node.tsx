@@ -93,7 +93,7 @@ import {
   type EagerMountSignals,
 } from "./lib/cairn-plot/lazy-mount";
 import {
-  sourceKey,
+  resolutionKey,
   peekResolved,
   peekResolveError,
   resolveCached,
@@ -113,7 +113,7 @@ import {
 } from "./lib/cairn-plot/image/channel-slice";
 import { type ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
 import { useViewportSettings } from "./lib/cairn-plot/settings/use-viewport-settings";
-import { initialViewportSettings } from "./viewport-initial-settings.ts";
+import { initialViewportSettings } from "./lib/cairn-plot/settings/viewport-initial-settings.ts";
 
 /**
  * How long a `LeafView` waits for a not-yet-registered renderer (an addon
@@ -145,7 +145,7 @@ const VIEW_TRANSFORM_KEYS = [
 export interface SharedPlotCtx {
   source: DataSource;
   shared?: SharedProps;
-  viewportSyncGroupId?: string | null;
+  viewSettingsGroupId?: string | null;
 }
 export const SharedPlotContext = createContext<SharedPlotCtx | null>(null);
 
@@ -171,13 +171,12 @@ function useSharedPlot(): SharedPlotCtx {
 // ---------------------------------------------------------------------------
 
 /** Per-pane overrides the enclosing `PaneSelectionFrame` hands its leaf: the
- *  selection-derived viewport/settings sync group ids + which pane is the group
+ *  selection-derived settings group + which pane is the group
  *  anchor. `undefined` on a field means "no override" (the leaf falls back to
- *  the grid-wide static `viewportSyncGroupId`). Only populated while this pane
+ *  the grid-wide view-scoped settings membership). Only populated while this pane
  *  is part of a ≥2 selection. Consumed by `LeafView` (image leaves) and
  *  `CompareView` (compare panes). */
 interface PaneSyncCtx {
-  viewportSyncGroupId?: string;
   /** The viewport's EFFECTIVE settings — the `group > local` merge from the ONE
    *  store hook per viewport (`useViewportSettings`, run by the context PROVIDER —
    *  `PaneSelectionFrame` / the enlarge `StageCell`). The provider is the single
@@ -235,7 +234,7 @@ if (typeof window !== "undefined") {
 // BELOW the leaf's own props (leaf props win).
 // ---------------------------------------------------------------------------
 function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafSpec }) {
-  const { source, shared, viewportSyncGroupId } = useSharedPlot();
+  const { source, shared } = useSharedPlot();
   // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
   const paneSync = useContext(PaneSyncContext);
   // True inside a STACKED viewport — threaded to the pane so it treats its display
@@ -310,7 +309,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   const selKey = chSel ? `|${chSel.part ?? ""}|${selLayerKey}` : "";
   // The resolve-cache key: the diff pair (reference + foreground, decoded once)
   // when in diff mode; the single-image (+ channel override) key otherwise.
-  const resolveKey = isDiff ? sourceKey(node) + "|diffpair" : sourceKey(node) + selKey;
+  const resolveKey = resolutionKey(source, node, isDiff ? "|diffpair" : selKey);
 
   // SUBSCRIBABLE RESOLVE (the flip-commit model). The async-resolved DATA props are
   // NOT held in a component `state` cell — they are read PURELY from the resolve-cache
@@ -406,7 +405,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
   // key, so the flip-commit ruling ("a cold flip renders loading, never a
   // hold of the previous slot's frame" — the stale-diff guarantee) is
   // untouched, as is the first mount (no previous payload to hold).
-  const baseKey = isDiff ? sourceKey(node) + "|diffpair" : sourceKey(node);
+  const baseKey = resolutionKey(source, node, isDiff ? "|diffpair" : "");
   const lastReadyRef = useRef<{ base: string; dataProps: Record<string, unknown> } | null>(null);
   const held =
     resolvedNow === undefined && cacheError === undefined && lastReadyRef.current?.base === baseKey
@@ -446,8 +445,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       // if it were somehow missing, return benign props (not rendered — status loading).
       if (dp.__diffB === undefined) return {};
       const dsync: Record<string, unknown> = {};
-      const vpg = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
-      if (vpg) dsync.viewportSyncGroupId = vpg;
       if (paneSync?.syncedSettings) dsync.syncedSettings = paneSync.syncedSettings;
       if (paneSync?.setSyncedSettings) dsync.setSyncedSettings = paneSync.setSyncedSettings;
       if (paneSync?.applySyncedSettings) dsync.applySyncedSettings = paneSync.applySyncedSettings;
@@ -483,8 +480,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     const sharedProps: Record<string, unknown> = {};
     if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
     if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
-    const vpGroup = paneSync?.viewportSyncGroupId ?? viewportSyncGroupId;
-    if (vpGroup) sharedProps.viewportSyncGroupId = vpGroup;
     if (paneSync?.syncedSettings) sharedProps.syncedSettings = paneSync.syncedSettings;
     if (paneSync?.setSyncedSettings) sharedProps.setSyncedSettings = paneSync.setSyncedSettings;
     if (paneSync?.applySyncedSettings) sharedProps.applySyncedSettings = paneSync.applySyncedSettings;
@@ -524,7 +519,7 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
     }
     sharedProps.enlargeControl = enlargeControl;
     return { ...sharedProps, ...(node.props ?? {}), ...dataProps, inStackedGrid };
-  }, [dataProps, shared, viewportSyncGroupId, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, inStackedGrid, enlargeControl]);
+  }, [dataProps, shared, paneSync, node.props, chSel, selectChannels, node.data, diffSpec, inStackedGrid, enlargeControl]);
 
   // Wait-for-registration: re-render the instant the renderer arrives, else
   // surface a bounded "unknown renderer" error.
@@ -853,13 +848,13 @@ function synthDiffLeafOf(node: CompareNode): SynthDiffLeaf {
     const baseIdx = node.baselineIndex ?? 0;
     const refData = baseIdx === 0 ? node.a : node.b;
     const fgData = baseIdx === 0 ? node.b : node.a;
-    const props = (node.props ?? {}) as Record<string, unknown>;
+    const props = node.props ?? {};
     const labelA = typeof props.labelA === "string" ? props.labelA : undefined;
     const labelB = typeof props.labelB === "string" ? props.labelB : undefined;
     const legacyLabel = typeof props.label === "string" ? props.label : undefined;
     const referenceLabel = baseIdx === 0 ? labelA : labelB;
     const foregroundLabel = (baseIdx === 0 ? labelB : labelA) ?? legacyLabel;
-    const leafProps: Record<string, unknown> = {
+    const leafProps: NonNullable<PlotLeafNode["props"]> = {
       interpolation: (props.interpolation as string | undefined) ?? "auto",
       showAxes: (props.showAxes as boolean | undefined) ?? false,
     };
@@ -941,9 +936,9 @@ function PaneSelectionFrame({
   const store = getGlobalSelectionStore();
   // The shared source/shared block this pane resolves against — captured into
   // the registry so the stage can render a FRESH leaf under the same context.
-  // `viewportSyncGroupId` = the AUTHORED grid `sync.viewport` group (null
+  // `viewSettingsGroupId` = the AUTHORED grid `sync.viewport` group (null
   // unless the enclosing grid opted in) — a view-scoped settings membership.
-  const { source, shared, viewportSyncGroupId: gridViewGroupId } = useSharedPlot();
+  const { source, shared, viewSettingsGroupId: gridViewGroupId } = useSharedPlot();
   // A process-unique, render-stable id for this pane instance.
   const [paneId] = useState(nextSelectionPaneId);
   // The frame's own element — the theme ORIGIN the body-portaled stage/action
@@ -1151,7 +1146,6 @@ function PaneSelectionFrame({
     () =>
       groups
         ? {
-            viewportSyncGroupId: groups.viewportGroupId,
             syncedSettings: vst.settings,
             viewportDefaults: initialSettingsRef.current.value,
             setSyncedSettings: vst.set,
@@ -1159,7 +1153,7 @@ function PaneSelectionFrame({
             applySyncedSettings: vst.setLocal,
           }
         : null,
-    [groups?.viewportGroupId, groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.setLocal],
+    [groups?.settingsGroupId, groups?.isAnchor, vst.settings, vst.set, vst.replace, vst.setLocal],
   );
   // A settings owner corresponds to a render surface, not to every layout
   // frame. Grid nodes are containers and must not provide one shared store to
@@ -1176,7 +1170,7 @@ function PaneSelectionFrame({
             applySyncedSettings: vst.setLocal,
           }
         : null,
-    [ownsViewport, vst.settings, vst.set, vst.setLocal],
+    [ownsViewport, vst.settings, vst.set, vst.replace, vst.setLocal],
   );
 
   return (
@@ -1197,25 +1191,6 @@ function PaneSelectionFrame({
       </PaneSyncContext.Provider>
     </div>
   );
-}
-
-/** The renderer identity of a grid child — a HOMOGENEOUS stacked viewport shows
- *  the ACTIVE child through ONE reused renderer (source-swap), which only works
- *  when every child lowers to the same component. Phase 3: a compare node in ANY
- *  mode (diff AND split/blend) lowers to the SAME `image` leaf family (`LeafView`
- *  + `GpuImagePane` with `compareSource`), so EVERY image-compatible child shares
- *  the image leaf's key — `[image, diff]`, `[image, split]`, `[diff, blend]` …
- *  are all homogeneous and flip with no remount/flicker (the last cross-kind
- *  remount — the 341c577 `mixedImageStack` mount-swap — is retired). */
-function stackKindKey(node: PlotNode): string {
-  if (node.kind === "plot") return `plot:${node.renderer}`;
-  if (node.kind === "compare") return "plot:image";
-  return node.kind; // "grid", …
-}
-function homogeneousStack(children: PlotNode[]): boolean {
-  if (children.length < 2) return false;
-  const k0 = stackKindKey(children[0]!);
-  return children.every((c) => stackKindKey(c) === k0);
 }
 
 function GridView({ node }: { node: GridNode }) {
@@ -1241,13 +1216,10 @@ function GridView({ node }: { node: GridNode }) {
 
   // VIEW MODE: `normal` (uniform CSS grid) vs `stacked` (one child at a time +
   // a keyboard-driven tab strip). Seeded from `node.mode`; a live toggle flips
-  // it. Stacking is offered for a HOMOGENEOUS ≥2 grid — Phase 3 makes EVERY
-  // image-compatible grid (image leaves + compare panes, any mode) homogeneous
-  // (all key `plot:image`), so the active child ALWAYS shows through ONE reused
-  // renderer (source-swap fast path — no mount-swap, no sync groups). Non-image
-  // mixes (a chart next to an image, a nested grid) still aren't stackable (the
-  // ▭ toggle is hidden).
-  const canStack = homogeneousStack(children);
+  // it. Every grid with at least two children can stack. A heterogeneous slot
+  // may replace renderer machinery, but the enclosing viewport/settings owner
+  // remains the same; renderer identity is not viewport identity.
+  const canStack = children.length >= 2;
   const [mode, setMode] = useState<"normal" | "stacked">(node.mode === "stacked" ? "stacked" : "normal");
   const [active, setActive] = useState(0);
   const effectiveMode = canStack ? mode : "normal";
@@ -1285,7 +1257,7 @@ function GridView({ node }: { node: GridNode }) {
   // (never inherited from a parent grid — same "no accidental cross-grid
   // link" scoping `useCameraSync` documents) and only when this node actually
   // re-seeds the context below (`node.shared && node.shared !== parentShared`).
-  const viewportSyncGroupId = node.shared?.sync?.viewport ? `plot-grid-viewport-${localId}` : null;
+  const viewSettingsGroupId = node.shared?.sync?.viewport ? `plot-grid-view-${localId}` : null;
 
   // GridView is LAYOUT ONLY — selection lives page-wide in each child's own
   // `PaneSelectionFrame` (wrapped by `PlotNodeView`), obtained from the ONE
@@ -1338,11 +1310,9 @@ function GridView({ node }: { node: GridNode }) {
           marginInline: "auto",
         }
       : {};
-  // Phase 3: EVERY stackable grid is now HOMOGENEOUS (image leaves + compare
-  // panes all key `plot:image`), so the active child ALWAYS shows through ONE
-  // reused renderer instance — zoom/pan + display settings + compare mode are
-  // shared BY CONSTRUCTION, no sync-group + PaneSyncContext plumbing needed (the
-  // 341c577 mixed-stack mount-swap machinery is retired).
+  // The enclosing frame is the viewport owner. Homogeneous slots reuse their
+  // renderer; heterogeneous slots may remount renderer machinery, while the
+  // viewport settings object remains stable across the tab change.
   const activeChild = children[clampedActive];
   const stackedPane = activeChild ? (
     <InStackedGridContext.Provider value={true}>
@@ -1374,7 +1344,10 @@ function GridView({ node }: { node: GridNode }) {
     const entries: Array<{ key: string; run: () => Promise<unknown> }> = [];
     for (const c of children) {
       if (c.kind === "plot") {
-        entries.push({ key: sourceKey(c), run: () => resolveDataProps(c.data, source) });
+        entries.push({
+          key: resolutionKey(source, c),
+          run: () => resolveDataProps(c.data, source),
+        });
       } else if (c.kind === "compare") {
         // Warm the DIFF PAIR under the SAME `|diffpair` key `LeafView` resolves it
         // by (the memoized synth leaf's `sourceKey` — stable across renders/flips),
@@ -1384,7 +1357,7 @@ function GridView({ node }: { node: GridNode }) {
         // diff flip hit the async hold path — a prime source of the reported flash.
         const synth = synthDiffLeafOf(c);
         entries.push({
-          key: sourceKey(synth.leaf) + "|diffpair",
+          key: resolutionKey(source, synth.leaf, "|diffpair"),
           run: () => resolveDiffPair(synth.leaf.data, synth.fgData, source),
         });
       }
@@ -1424,7 +1397,7 @@ function GridView({ node }: { node: GridNode }) {
 
   const body =
     node.shared && node.shared !== parentShared ? (
-      <SharedPlotContext.Provider value={{ source, shared, viewportSyncGroupId }}>
+      <SharedPlotContext.Provider value={{ source, shared, viewSettingsGroupId }}>
         {grid}
       </SharedPlotContext.Provider>
     ) : (
@@ -1718,12 +1691,10 @@ function NodeDispatch({ node }: { node: PlotNode }) {
         fgData: synth.fgData,
         mode: control.viewMode,
         diffKernel: control.diffKernel,
-        colormap:
-          (inStackedGrid
-            ? ((paneSync?.viewportDefaults?.["image.encoding"] as CompareSource["colormap"] | undefined) ?? "none")
-            : ((node.props?.colormap as CompareSource["colormap"]) ??
-              (shared?.colormap as CompareSource["colormap"]) ??
-              "none")) as CompareSource["colormap"],
+        colormap: ((paneSync?.syncedSettings?.["image.encoding"] as CompareSource["colormap"] | undefined) ??
+          (node.props?.colormap as CompareSource["colormap"]) ??
+          (shared?.colormap as CompareSource["colormap"]) ??
+          "none") as CompareSource["colormap"],
         splitPosition: control.splitPos,
         align: synth.align,
         fit: synth.fit,

@@ -7,6 +7,7 @@
  * `./data`) — so a JS-authored plot is identical to its Python twin.
  */
 import type { DataSpec, PlotNode } from "../../../plot-descriptor.ts";
+import type { JsonValue } from "../../../../../packages/spec/src/json.ts";
 import type { RuntimeStoreEntry } from "../store/runtime-store.ts";
 import { makeHandle, type Mounter, type PlotHandle } from "./handle.ts";
 import { shapeImageData, type ShapedImage } from "./data.ts";
@@ -33,6 +34,36 @@ import {
 
 type Opts = Record<string, unknown>;
 type Runtime = Array<[string, RuntimeStoreEntry]>;
+
+function assertJsonValue(value: unknown, path: string, seen: Set<object>): asserts value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return;
+    throw new TypeError(`cairnPlot: ${path} must be finite JSON data`);
+  }
+  if (typeof value !== "object") {
+    throw new TypeError(`cairnPlot: ${path} is not JSON-serializable`);
+  }
+  if (seen.has(value)) throw new TypeError(`cairnPlot: ${path} contains a cycle`);
+  seen.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, seen));
+    seen.delete(value);
+    return;
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new TypeError(`cairnPlot: ${path} must contain only plain JSON objects`);
+  }
+  for (const [key, item] of Object.entries(value)) {
+    assertJsonValue(item, `${path}.${key}`, seen);
+  }
+  seen.delete(value);
+}
+
+function jsonRecord(value: object, path: string): Record<string, JsonValue> {
+  assertJsonValue(value, path, new Set());
+  return value as Record<string, JsonValue>;
+}
 
 // Back-compat: `slide` (the old public name for `split`) and the removed
 // `blend` compare view mode alias to `split`. Warn once per session per alias
@@ -165,8 +196,15 @@ export interface CairnPlot {
 
 function leaf(renderer: string, data: DataSpec, props?: Opts): PlotNode {
   const node: PlotNode = { kind: "plot", renderer, data };
-  if (props && Object.keys(props).length) (node as { props?: Opts }).props = props;
+  if (props && Object.keys(props).length) {
+    node.props = jsonRecord(props, `${renderer}.props`);
+  }
   return node;
+}
+
+/** Builder shapers produce plain JSON objects; this is their wire boundary. */
+function inline(props: object): DataSpec {
+  return { kind: "inline", props: jsonRecord(props, "inline.props") };
 }
 
 /** Pull the image/url/imghdr `DataSpec` + runtime out of a handle OR shape a
@@ -219,7 +257,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
   return {
     line(y, x, opts = {}) {
       const series = lineSeriesList(y, { x, label: opts.label as string | undefined });
-      return handle(leaf("scalar", { kind: "inline", props: { series } }));
+      return handle(leaf("scalar", inline({ series })));
     },
 
     scatter(xs, ys, opts = {}) {
@@ -230,7 +268,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       if (opts.colorLabel != null) cfg.colorLabel = opts.colorLabel;
       if (opts.xLog) cfg.xLog = true;
       if (opts.yLog) cfg.yLog = true;
-      return handle(leaf("scatter", { kind: "inline", props: { points } }, cfg));
+      return handle(leaf("scatter", inline({ points }), cfg));
     },
 
     bar(values, opts = {}) {
@@ -238,7 +276,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       const cfg: Opts = {};
       if (opts.valueLabel != null) cfg.valueLabel = opts.valueLabel;
       if (opts.logX) cfg.logX = true;
-      return handle(leaf("bar", { kind: "inline", props: { bars } }, cfg));
+      return handle(leaf("bar", inline({ bars }), cfg));
     },
 
     histogram(x, opts = {}) {
@@ -255,7 +293,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       }
       const cfg: Opts = { view: "bars" };
       if (o.logY) cfg.logY = true;
-      return handle(leaf("histogram", { kind: "inline", props: { counts, edges } }, cfg));
+      return handle(leaf("histogram", inline({ counts, edges }), cfg));
     },
 
     heatmap(z, opts = {}) {
@@ -268,13 +306,13 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       if (opts.xLabel != null) cfg.xLabel = opts.xLabel;
       if (opts.yLabel != null) cfg.yLabel = opts.yLabel;
       if (opts.valueLabel != null) cfg.valueLabel = opts.valueLabel;
-      return handle(leaf("heatmap", { kind: "inline", props: { matrix } }, cfg));
+      return handle(leaf("heatmap", inline({ matrix }), cfg));
     },
 
     parallelCoordinates(dimensions, opts = {}) {
       const { columns, rows, columnDomains } = parallelFromDimensions(dimensions);
       const cfg: Opts = { colormap: checkChartColormap(String(opts.colormap ?? "turbo")) };
-      return handle(leaf("parallel", { kind: "inline", props: { columns, rows, columnDomains } }, cfg));
+      return handle(leaf("parallel", inline({ columns, rows, columnDomains }), cfg));
     },
 
     image(data, opts = {}) {
@@ -329,7 +367,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
 
     table(rows) {
       const table = tableData(rows);
-      const node = leaf("table", { kind: "inline", props: { table } });
+      const node = leaf("table", inline({ table }));
       // The Table renderer benefits from a default height box standalone.
       (node as { props?: Opts }).props = { height: 200 };
       return handle(node);

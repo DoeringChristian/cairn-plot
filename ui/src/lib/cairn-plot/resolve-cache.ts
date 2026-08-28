@@ -32,6 +32,11 @@ export function sourceKey(obj: object): string {
   return id;
 }
 
+/** Cache namespace for authored content resolved through a particular source. */
+export function resolutionKey(source: object, node: object, suffix = ""): string {
+  return `${sourceKey(source)}|${sourceKey(node)}${suffix}`;
+}
+
 interface Entry<T> {
   data?: T;
   error?: string;

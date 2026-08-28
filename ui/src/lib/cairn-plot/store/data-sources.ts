@@ -96,11 +96,15 @@ export interface DataSource {
  * only) `DataSource` — behavior-identical to the pre-extraction inline
  * `api.artifactUrl(...)` / `fetch(api.artifactUrl(...))` call sites.
  */
-export function createEndpointDataSource(artifactUrl: (hash: string) => string): DataSource {
+export function createEndpointDataSource(
+  artifactUrl: (hash: string) => string,
+  options: { fetch?: typeof fetch; requestInit?: RequestInit } = {},
+): DataSource {
+  const fetchArtifact = options.fetch ?? fetch;
   return {
     artifactUrl,
     async bytes(hash: string): Promise<ArrayBuffer> {
-      const res = await fetch(artifactUrl(hash));
+      const res = await fetchArtifact(artifactUrl(hash), options.requestInit);
       if (!res.ok) {
         throw new Error(`failed to fetch artifact ${hash} (${res.status})`);
       }

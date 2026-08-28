@@ -189,17 +189,15 @@ async function run(): Promise<boolean> {
   report(bothSel, "shift-click B selects BOTH A and B across separate mounts");
   ok = ok && bothSel;
 
-  // --- 3. probe: A and B share ONE viewport + ONE settings sync group -------
+  // --- 3. probe: A and B share ONE viewport-settings group -----------------
   const gA = paneSyncGroups(store, idA, GLOBAL_SELECTION_BASE);
   const gB = paneSyncGroups(store, idB, GLOBAL_SELECTION_BASE);
   const gC = paneSyncGroups(store, idC, GLOBAL_SELECTION_BASE);
-  const sharedVp = !!gA && !!gB && gA.viewportGroupId === gB.viewportGroupId;
   const sharedSt = !!gA && !!gB && gA.settingsGroupId === gB.settingsGroupId;
-  report(sharedVp, `A and B share ONE viewport sync group (${gA?.viewportGroupId})`);
-  report(sharedSt, `A and B share ONE settings sync group (${gA?.settingsGroupId})`);
+  report(sharedSt, `A and B share ONE viewport-settings group (${gA?.settingsGroupId})`);
   report(gC === null, "the unselected third pane C is in NO sync group");
   report(gA?.isAnchor === true && gB?.isAnchor === false, "A (first-selected) is the group anchor, B is not");
-  ok = ok && sharedVp && sharedSt && gC === null && gA?.isAnchor === true && gB?.isAnchor === false;
+  ok = ok && sharedSt && gC === null && gA?.isAnchor === true && gB?.isAnchor === false;
 
   // --- 4. plain click C → single-select resets to just C --------------------
   clickPane(fc);

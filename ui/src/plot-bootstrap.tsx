@@ -37,10 +37,7 @@ import {
 import { useEmitAutoHeight } from "./lib/cairn-plot/hooks/use-emit-auto-height";
 import { type PlotDescriptor } from "./plot-descriptor";
 import { registerRenderer, getRenderer } from "./plot-registry";
-import { PlotNodeView, SharedPlotContext } from "./plot-node";
-import { PlotProvider } from "../../packages/react/src/PlotProvider";
-import { plotSpecFromDescriptor } from "../../apps/standalone/src/descriptor-adapter";
-import { ensureSelectionOverlayHost } from "./plot-selection-stage";
+import { PlotSurface } from "./plot-surface.tsx";
 import { createCairnPlot, type CairnPlot, type Mounter } from "./lib/cairn-plot/builder";
 
 const DESCRIPTOR_SCRIPT_ID = "__cairn_plot_descriptor__";
@@ -177,13 +174,6 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
   const containerRef = useRef<HTMLDivElement>(null);
   useEmitAutoHeight(containerRef);
 
-  // Ensure the ONE page-wide selection overlay host (the floating action bar +
-  // the enlarge/compare fullscreen stage) is mounted. Idempotent + page-global,
-  // so a gallery of many independent `PlotApp` roots still gets exactly one.
-  useEffect(() => {
-    ensureSelectionOverlayHost();
-  }, []);
-
   const [state, setState] = React.useState<
     | { status: "loading" }
     | { status: "error"; message: string }
@@ -194,7 +184,10 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
   });
 
   useEffect(() => {
-    if (given) return; // already resolved synchronously above
+    if (given) {
+      setState({ status: "ready", descriptor: given, source: dataSourceFor(given) });
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -224,16 +217,7 @@ export function PlotApp({ descriptor: given }: { descriptor?: PlotDescriptor }) 
   } else if (state.status === "error") {
     body = <Message text={`Plot error: ${state.message}`} error />;
   } else {
-    const spec = plotSpecFromDescriptor(state.descriptor);
-    body = (
-      <PlotProvider spec={spec}>
-        <SharedPlotContext.Provider
-          value={{ source: state.source, shared: undefined }}
-        >
-          <PlotNodeView node={state.descriptor.root} />
-        </SharedPlotContext.Provider>
-      </PlotProvider>
-    );
+    body = <PlotSurface descriptor={state.descriptor} dataSource={state.source} className="" autoHeight={false} />;
   }
 
   return (

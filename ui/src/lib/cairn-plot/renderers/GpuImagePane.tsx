@@ -933,15 +933,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // DIFF gesture sites: a kernel / colormap pick is one store write (+ the
   // kernel routes through its owner); peers follow via the store.
   const changeDiffKernel = useCallback(
-    (id: string) => {
-      setDiffKernel(id);
-      // A diff-mode change changes computation only. Display encoding is an
-      // independent viewport setting and therefore remains untouched.
-      publishSettings({
-        "compare.operation": id,
-      });
-    },
-    [setDiffKernel, publishSettings],
+    (id: string) => setDiffKernel(id),
+    [setDiffKernel],
   );
   const changeDiffColormap = useCallback(
     (id: Colormap) => {
@@ -961,11 +954,12 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `GpuImagePane` can't apply it itself). Mirrors `GpuComparePane.changeCompareMode`.
   const changeCompareMode = useCallback(
     (mode: "split" | "diff") => {
-      compareSource?.onCompareModeChange?.(mode);
-      publishSettings({ "compare.operation": mode === "diff" ? diffKernel : mode });
+      const commit = compareSource?.onCompareModeChange ??
+        ((next: "split" | "diff") =>
+          publishSettings({ "compare.operation": next === "diff" ? diffKernel : next }));
+      commit(mode);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compareSource?.onCompareModeChange, publishSettings],
+    [compareSource?.onCompareModeChange, publishSettings, diffKernel],
   );
   // COMPOSITOR param publish sites (Phase 3): the divider / flip keys both LIFT
   // the value to the owner (so the reused-instance control state survives) AND
@@ -974,10 +968,10 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
   // `GpuComparePane.changeSplit`. NO recompile — only the compositor param uniform.
   const changeSplit = useCallback(
     (p: number) => {
-      compareSource?.onSplitPositionChange?.(p);
-      publishSettings({ "compare.split": p });
+      const commit = compareSource?.onSplitPositionChange ??
+        ((next: number) => publishSettings({ "compare.split": next }));
+      commit(p);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onSplitPositionChange, publishSettings],
   );
   // SPLIT flip keys ([ / ] always; ←/→/h/l when not in a stacked grid) — ported

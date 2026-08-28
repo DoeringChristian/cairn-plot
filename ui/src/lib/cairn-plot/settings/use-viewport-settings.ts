@@ -30,8 +30,9 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
   publishSettingsPatch,
+  publishSettingsReplacement,
   scopeSettingsPatch,
-  subscribeSettingsPatches,
+  subscribeSettingsChanges,
   type ViewportSettings,
   type SettingsKey,
 } from "./viewport-settings";
@@ -82,6 +83,12 @@ export function useViewportSettings(
     box.current = { ...(box.current ?? {}), ...patch };
     bump();
   }, []);
+  const applyReplacement = useCallback((settings: ViewportSettings) => {
+    if (lastAppliedRef.current === settings) return;
+    lastAppliedRef.current = settings;
+    box.current = { ...settings };
+    bump();
+  }, []);
 
   // Memberships: subscribe each channel; scoped members apply only their keys.
   const membershipsKey = (memberships ?? [])
@@ -91,9 +98,21 @@ export function useViewportSettings(
   membershipsRef.current = memberships;
   useEffect(() => {
     const unsubs = (membershipsRef.current ?? []).flatMap((m) => [
-      subscribeSettingsPatches(m.id, (patch) => {
-        const scoped = scopeSettingsPatch(patch, m.keys);
-        if (scoped) applyPatch(scoped);
+      subscribeSettingsChanges(m.id, (change) => {
+        const scoped = scopeSettingsPatch(change.settings, m.keys);
+        if (!scoped) return;
+        if (change.type === "patch") {
+          applyPatch(scoped);
+          return;
+        }
+        if (!m.keys) {
+          applyReplacement(scoped);
+          return;
+        }
+        const next = { ...(box.current ?? {}) };
+        for (const key of m.keys) delete next[key];
+        Object.assign(next, scoped);
+        applyReplacement(next);
       }),
       // Membership also REGISTERS this viewport as a peer, so late joiners of
       // any kind converge by deref (`peekGroupSettings`) — the one converge
@@ -102,7 +121,7 @@ export function useViewportSettings(
     ]);
     return () => unsubs.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [membershipsKey, applyPatch]);
+  }, [membershipsKey, applyPatch, applyReplacement]);
 
   const set = useCallback(
     (patch: ViewportSettings) => {
@@ -116,7 +135,7 @@ export function useViewportSettings(
       lastAppliedRef.current = settings;
       box.current = { ...settings };
       bump();
-      for (const m of membershipsRef.current ?? []) publishSettingsPatch(m.id, settings);
+      for (const m of membershipsRef.current ?? []) publishSettingsReplacement(m.id, settings);
     },
     [],
   );

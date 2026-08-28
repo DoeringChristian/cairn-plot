@@ -3,12 +3,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   sourceKey,
+  resolutionKey,
   peekResolved,
   peekResolveError,
   resolveCached,
   prefetchResolved,
   __resetResolveCacheForTest,
 } from "./resolve-cache.ts";
+
+test("resolution keys include DataSource identity", () => {
+  const node = {};
+  const firstSource = {};
+  const secondSource = {};
+  assert.equal(resolutionKey(firstSource, node), resolutionKey(firstSource, node));
+  assert.notEqual(resolutionKey(firstSource, node), resolutionKey(secondSource, node));
+});
 
 test("sourceKey is stable per object and distinct across objects", () => {
   const a = {};

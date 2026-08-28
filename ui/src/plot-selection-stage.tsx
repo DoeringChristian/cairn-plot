@@ -31,9 +31,7 @@
  */
 import {
   useCallback,
-  useReducer,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -53,11 +51,8 @@ import {
   type SelectionSnapshot,
   type StageMode,
 } from "./lib/cairn-plot/selection/selection-store";
-import {
-  publishSettingsPatch,
-  subscribeSettingsPatches,
-  type ViewportSettings,
-} from "./lib/cairn-plot/settings/viewport-settings";
+import type { ViewportSettings } from "./lib/cairn-plot/settings/viewport-settings";
+import { useViewportSettings } from "./lib/cairn-plot/settings/use-viewport-settings";
 import {
   imageCompatibleCount,
   planCompareGrid,
@@ -288,11 +283,9 @@ function StageCell({
   fill,
   clickPicksRef,
   onPickReference,
-  viewportSyncGroupId,
   stageSettingsGroupId,
-  cellSettings,
-  onCellSettings,
-  onCellSettingsLocal,
+  initialSettings,
+  onSettingsChange,
 }: {
   spec: StageCellSpec;
   /** The packed rect for this cell (content-aspect, centrally clustered). While
@@ -311,12 +304,6 @@ function StageCell({
   clickPicksRef: boolean;
   /** Re-designate THIS cell as the reference. */
   onPickReference: () => void;
-  /** Shared VIEWPORT-sync group so zoom/pan on ONE cell broadcasts to every cell
-   *  in the stage — the same mechanism the page-wide selection uses (via
-   *  `PaneSyncContext.viewportSyncGroupId`). Omitting this was the "duplication":
-   *  the stage rebuilt the sync context but dropped the viewport group, so only
-   *  display settings synced, not zoom/pan. */
-  viewportSyncGroupId: string;
   /** The stage's per-open settings GROUP (NOSTACK): every cell is a NEW,
    *  INDEPENDENT viewport whose entry is seeded by COPY-ON-CREATE from its
    *  source pane's entry (the sources are group-synced, so cells open
@@ -325,11 +312,22 @@ function StageCell({
    *  edits never touch the original panes (user ruling: stage viewports are
    *  independent). */
   stageSettingsGroupId: string;
-  /** The cell's live settings object (stage-owned) + the stage publisher. */
-  cellSettings: ViewportSettings | null;
-  onCellSettings: (patch: ViewportSettings) => void;
-  onCellSettingsLocal: (patch: ViewportSettings) => void;
+  initialSettings: ViewportSettings | null;
+  onSettingsChange: (type: "patch" | "replace", settings: ViewportSettings) => void;
 }) {
+  const settings = useViewportSettings([{ id: stageSettingsGroupId }], initialSettings);
+  const patchSettings = useCallback((patch: ViewportSettings) => {
+    settings.set(patch);
+    onSettingsChange("patch", patch);
+  }, [settings.set, onSettingsChange]);
+  const replaceSettings = useCallback((next: ViewportSettings) => {
+    settings.replace(next);
+    onSettingsChange("replace", next);
+  }, [settings.replace, onSettingsChange]);
+  const applySettings = useCallback((patch: ViewportSettings) => {
+    settings.setLocal(patch);
+    onSettingsChange("patch", patch);
+  }, [settings.setLocal, onSettingsChange]);
   // Re-pick gesture (stationary press, never a control press, never a drag).
   // ENLARGE: anywhere on the cell. COMPARE: only when the press started on the
   // pane's FOREGROUND caption chip (`data-cairn-compare-caption="foreground"`,
@@ -396,19 +394,14 @@ function StageCell({
   // pane's own content aspect flows up via `GridUniformAspectContext` (a
   // `GridCellReporter` inside `ImageStandalone`, since the stage provides that
   // context) — the SAME path `cp.Grid` uses.
-  // THIS cell's settings are OWNED BY THE STAGE (see SelectionStage): the
-  // cell receives its live object + the stage-channel publisher as props —
-  // remounts (stacked tab flips, reference re-picks) re-attach to the same
-  // persistent object, and a publish reaches every cell (hidden ones too).
   const paneSync = useMemo(
     () => ({
-      viewportSyncGroupId,
-      settingsSyncGroupId: stageSettingsGroupId,
-      syncedSettings: cellSettings,
-      setSyncedSettings: onCellSettings,
-      applySyncedSettings: onCellSettingsLocal,
+      syncedSettings: settings.settings,
+      setSyncedSettings: patchSettings,
+      resetSyncedSettings: replaceSettings,
+      applySyncedSettings: applySettings,
     }),
-    [viewportSyncGroupId, stageSettingsGroupId, cellSettings, onCellSettings, onCellSettingsLocal],
+    [settings.settings, patchSettings, replaceSettings, applySettings],
   );
 
   // GENERAL per-cell aspect bridge: forward whatever this cell's pane publishes on
@@ -520,55 +513,25 @@ function SelectionStage({
 
   const cells = built.cells;
 
-  // STAGE SYNC LAYERS. Viewport (zoom/pan): a stage-own group — stable across
-  // ref re-picks / cell rebuilds within one open stage — so a zoom on one cell
-  // broadcasts to every other cell without touching the grid panes underneath.
-  // Settings: the cells read THROUGH the live selection's per-episode group
-  // (they open showing exactly the settings the user synced on the selection)
-  // while their edits land in a FRESH per-open stage layer stacked on top —
-  // synced stage-wide, discarded on close, never written into the selection
-  // group (user ruling: stage edits are transient). The per-open counter — not
-  // `useId`, which can repeat across remounts at the same tree position —
-  // guarantees a closed stage's edits can never haunt the next open.
-  const viewportSyncGroupId = useId();
+  // A fresh channel links the stage's independently-owned render surfaces.
+  // Settings are transient to this stage and never write into source panes.
   const [stageSettingsGroupId] = useState(() => `cp-stage-st-${++stageOpenSeq}`);
-
-  // STAGE-OWNED CELL SETTINGS (the object model): the stage — the creator of
-  // its cells' viewports — owns ONE plain settings object per cell for the
-  // whole open, seeded by COPY from the source pane's live settings (deref
-  // via the pane registry) the first time each cell appears. ONE stage-channel
-  // subscription applies every published patch to ALL cell objects — mounted
-  // or not — so a stacked stage's edit reaches hidden siblings and tab flips
-  // re-attach to consistent, persistent state. Cells publish; the stage
-  // applies; originals are never touched (independence ruling).
-  const cellSettingsRef = useRef(new Map<string, ViewportSettings | null>());
-  const [, bumpCellSettings] = useReducer((c: number) => c + 1, 0);
-  for (const cell of cells) {
-    if (!cellSettingsRef.current.has(cell.key)) {
-      const src = getRegisteredPane(cell.reprPaneId)?.settings?.get() ?? null;
-      cellSettingsRef.current.set(cell.key, src ? { ...src } : null);
-    }
-  }
-  useEffect(
-    () =>
-      subscribeSettingsPatches(stageSettingsGroupId, (patch) => {
-        for (const [key, prev] of cellSettingsRef.current) {
-          cellSettingsRef.current.set(key, { ...(prev ?? {}), ...patch });
-        }
-        bumpCellSettings();
-      }),
-    [stageSettingsGroupId],
-  );
-  const publishCellSettings = useCallback(
-    (patch: ViewportSettings) => publishSettingsPatch(stageSettingsGroupId, patch),
-    [stageSettingsGroupId],
-  );
-  // LOCAL apply for ONE cell (initialization writes — never fanned).
-  const applyCellSettings = useCallback((cellKey: string, patch: ViewportSettings) => {
-    const prev = cellSettingsRef.current.get(cellKey) ?? null;
-    cellSettingsRef.current.set(cellKey, { ...(prev ?? {}), ...patch });
-    bumpCellSettings();
+  const initialStageSettings = useMemo(() => {
+    const sourceSettings = cells[0]
+      ? getRegisteredPane(cells[0].reprPaneId)?.settings?.get()
+      : null;
+    return sourceSettings ? { ...sourceSettings } : null;
   }, []);
+  // This is only a remount checkpoint (normal ⇄ stacked), never the live owner.
+  const stageCheckpointRef = useRef<ViewportSettings | null>(initialStageSettings);
+  const rememberStageSettings = useCallback(
+    (type: "patch" | "replace", next: ViewportSettings) => {
+      stageCheckpointRef.current = type === "replace"
+        ? { ...next }
+        : { ...(stageCheckpointRef.current ?? {}), ...next };
+    },
+    [],
+  );
 
   // --- UNIFORM CONTENT-ASPECT PACKING ----------------------------------------
   // The stage is a UNIFORM grid, driven by the SAME size-computation mechanism as
@@ -702,11 +665,9 @@ function SelectionStage({
                       fill
                       clickPicksRef={mode === "enlarge"}
                       onPickReference={() => store.setReference(cells[stackActiveClamped]!.reprPaneId)}
-                      viewportSyncGroupId={viewportSyncGroupId}
                       stageSettingsGroupId={stageSettingsGroupId}
-                      cellSettings={cellSettingsRef.current.get(cells[stackActiveClamped]!.key) ?? null}
-                      onCellSettings={publishCellSettings}
-                      onCellSettingsLocal={(patch) => applyCellSettings(cells[stackActiveClamped]!.key, patch)}
+                      initialSettings={stageCheckpointRef.current}
+                      onSettingsChange={rememberStageSettings}
                     />
                   </div>
                 </InStackedGridContext.Provider>
@@ -718,11 +679,9 @@ function SelectionStage({
                     rect={pack.rects[i]}
                     clickPicksRef={mode === "enlarge"}
                     onPickReference={() => store.setReference(spec.reprPaneId)}
-                    viewportSyncGroupId={viewportSyncGroupId}
                     stageSettingsGroupId={stageSettingsGroupId}
-                    cellSettings={cellSettingsRef.current.get(spec.key) ?? null}
-                    onCellSettings={publishCellSettings}
-                    onCellSettingsLocal={(patch) => applyCellSettings(spec.key, patch)}
+                    initialSettings={stageCheckpointRef.current}
+                    onSettingsChange={rememberStageSettings}
                   />
                 ))
               )}
@@ -991,6 +950,7 @@ function SelectionOverlayRoot() {
 
 let hostRoot: Root | null = null;
 let hostEl: HTMLElement | null = null;
+let hostUsers = 0;
 
 /**
  * Mount the ONE page-wide selection overlay host (action bar + stage) on
@@ -1007,8 +967,32 @@ export function ensureSelectionOverlayHost(): void {
   hostRoot.render(<SelectionOverlayRoot />);
 }
 
+/** Acquire the page-wide overlay for one public host and release on unmount. */
+export function acquireSelectionOverlayHost(): () => void {
+  hostUsers += 1;
+  ensureSelectionOverlayHost();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    hostUsers = Math.max(0, hostUsers - 1);
+    if (hostUsers !== 0) return;
+    // A host can disappear during another React root's commit (and StrictMode
+    // intentionally performs a release/reacquire cycle). Defer singleton
+    // teardown until that commit completes and cancel it if another host joins.
+    queueMicrotask(() => {
+      if (hostUsers !== 0) return;
+      hostRoot?.unmount();
+      hostRoot = null;
+      hostEl?.remove();
+      hostEl = null;
+    });
+  };
+}
+
 /** Tests only — tear the host down + clear the registry. */
 export function __resetSelectionOverlayHostForTest(): void {
+  hostUsers = 0;
   if (hostRoot) {
     hostRoot.unmount();
     hostRoot = null;

@@ -195,6 +195,10 @@ async function bundleAll(harnesses) {
         target: "es2022",
         outfile,
         logLevel: "silent",
+        // Some public package sources live beside ui/, so normal ancestor
+        // lookup does not reach ui/node_modules. Keep one dependency install
+        // authoritative instead of requiring duplicate package installs.
+        nodePaths: [join(UI_ROOT, "node_modules")],
         // Harnesses that import React components (`*.tsx`, e.g. the pane
         // harnesses) need the automatic JSX runtime: the project's root
         // tsconfig.json is a references-only stub esbuild does not resolve

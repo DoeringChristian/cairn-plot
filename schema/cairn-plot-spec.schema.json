@@ -6,8 +6,7 @@
       "type": "object",
       "properties": {
         "root": {
-          "$ref": "#/definitions/PlotNode",
-          "description": "The root node of the plot tree (leaf, grid, or compare)."
+          "$ref": "#/definitions/PlotNode"
         },
         "mode": {
           "type": "string",
@@ -15,17 +14,17 @@
             "local",
             "endpoint"
           ],
-          "description": "Which `DataSource` the bootstrap builds for `data` resolution across the whole tree. Optional — omitted (or \"local\") means the self-contained LOCAL store; kept optional so it stays in lockstep with the Python `PlotDescriptorSpec` default (`mode=\"local\"`)."
+          "description": "Standalone bootstrap transport metadata; PlotHost always receives DataSource explicitly."
         },
         "endpoint": {
-          "type": "string",
-          "description": "ENDPOINT only: absolute base URL of the repo server (no trailing slash), used to build `${endpoint}/api/artifacts/${hash}`."
+          "type": "string"
         }
       },
       "required": [
         "root"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "The one durable recursive plot specification shared by Python and JS."
     },
     "PlotNode": {
       "anyOf": [
@@ -48,16 +47,13 @@
           "const": "plot"
         },
         "renderer": {
-          "type": "string",
-          "description": "Key into the renderer registry (e.g. \"scalar\", \"image\", \"table\", \"figure\")."
+          "type": "string"
         },
         "props": {
-          "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E",
-          "description": "The renderer's non-data config props."
+          "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
         },
         "data": {
-          "$ref": "#/definitions/DataSpec",
-          "description": "How to produce the renderer's DATA props."
+          "$ref": "#/definitions/DataSpec"
         }
       },
       "required": [
@@ -65,12 +61,40 @@
         "renderer",
         "data"
       ],
-      "additionalProperties": false,
-      "description": "A single renderer + its data — the former flat descriptor body."
+      "additionalProperties": false
     },
-    "Record<string,unknown>": {
+    "Record<string,JsonValue>": {
       "type": "object",
-      "additionalProperties": {}
+      "additionalProperties": {
+        "$ref": "#/definitions/JsonValue"
+      }
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/JsonPrimitive"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/JsonValue"
+          }
+        }
+      ]
+    },
+    "JsonPrimitive": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
     },
     "DataSpec": {
       "anyOf": [
@@ -82,7 +106,7 @@
               "const": "inline"
             },
             "props": {
-              "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+              "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
             }
           },
           "required": [
@@ -117,19 +141,16 @@
               ]
             },
             "format": {
-              "type": "string",
-              "description": "OPTIONAL format hint for the image blob (a MIME type or extension token, e.g. `\"png\"`, `\"avif\"`, `\"npy\"`). Drives the multi-format DECODER seam (`resolveDataProps`): when it names a RAW-buffer format (`npy`/`npz`), the bytes are fetched and normalized through `decodeImage` — float buffers → the `hdr` prop shape, uint8 buffers → an `imageUrl` data URL. Absent (or a browser-native format like png/jpeg/webp/avif/gif) keeps the byte-identical URL fast path — the browser decodes it via `<img>`."
+              "type": "string"
             },
             "url": {
-              "type": "string",
-              "description": "OPTIONAL direct URL to the image blob (additive to `hash`). When present, `resolveDataProps` FETCHES the bytes from this URL and normalizes them through `decodeImage` (sniffed by MIME/URL-ext/magic) — the same shaping as the `format?` path: float buffers → the `hdr` prop shape, uint8/native buffers → an `imageUrl` PNG data URL. This is the CLIENT-DECODE path that lets a URL serve formats the browser can't `<img>`-decode (`exr`/`npy`/…), with the image referenced by URL instead of embedded in the HTML. (For a plain browser-native URL a bare-`str` `kind:\"url\"` passthrough is lighter; this field opts into the fetch+decode path.) NOTE: a cross-origin fetch is CORS-gated — the serving endpoint must allow the page's origin."
+              "type": "string"
             },
             "part": {
               "type": [
                 "number",
                 "string"
-              ],
-              "description": "EXR PART selection (multi-part files): index or part name. Only honoured on the client-decode paths (`url` / raw-buffer `format`) for `.exr` sources; other formats ignore it. Default: part 0."
+              ]
             },
             "layer": {
               "anyOf": [
@@ -142,8 +163,7 @@
                     "type": "string"
                   }
                 }
-              ],
-              "description": "EXR channel selection: a channel-GROUP name (\"diffuse\"; \"\" = the base color layer) or a FULL channel name (\"diffuse.G\", \"Z\") for a single- channel scalar view (rendered via the colormap path). Grouping follows the OpenEXR dot-prefix convention — see `lib/cairn-plot/image/ channel-groups.ts`. An ARBITRARY LIST of up to 3 full channel names packs them into the R,G,B slots in order (the RenderDoc-style combo). Default: the first group (base color when present)."
+              ]
             }
           },
           "required": [
@@ -175,7 +195,7 @@
               ]
             },
             "meta": {
-              "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+              "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
             }
           },
           "required": [
@@ -200,7 +220,7 @@
               ]
             },
             "meta": {
-              "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+              "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
             }
           },
           "required": [
@@ -240,7 +260,7 @@
           "additionalProperties": false
         }
       ],
-      "description": "How the renderer's DATA props are produced.\n\n - `inline`: the data-contract props are plain JSON, carried directly in the    descriptor (2D contracts — Series[]/points[]/matrix/counts+edges/table/    figure). The bootstrap merges `props` straight onto the renderer. No    `DataSource` needed.  - `image`: a content-addressed image artifact (+ optional baseline +    overlay metadata). Resolved via `resolveImageViewportItems` against the    active `DataSource` (LOCAL `data:` URL or ENDPOINT `/api/artifacts/…`),    yielding `{ imageUrl, baselineUrl, overlay }` for `ImagePane`.  - `npz`: a content-addressed 3D binary artifact (`.npy`/`.npz`) for the    three.js renderers (G3). `objectType` selects which 3D type the bytes    belong to (`pointcloud` is the only one wired in G3a; the others land in    G3b). `hash` keys the LOCAL store / ENDPOINT artifact; `meta` is the    Python-baked artifact metadata (channels/bounds/n_points/…) carried inline    so the renderer needs a SINGLE bytes fetch, no second metadata round trip."
+      "description": "JSON-safe data consumed by a renderer."
     },
     "GridNode": {
       "type": "object",
@@ -291,15 +311,14 @@
             "normal",
             "stacked"
           ],
-          "description": "View mode. `\"normal\"` (default) is the uniform CSS grid; `\"stacked\"` shows ONE child at a time with a keyboard-driven tab strip to flip between them. A live toggle on the grid lets the viewer switch either way."
+          "description": "`normal` creates one internal viewport per child. `stacked` creates one internal viewport whose children are content slots. Switching slots never replaces that viewport's settings."
         }
       },
       "required": [
         "kind",
         "children"
       ],
-      "additionalProperties": false,
-      "description": "Children laid out in a CSS grid. `colWidths`/`rowHeights` entries: number → `Nfr`, string → verbatim CSS (\"25%\", \"120px\")."
+      "additionalProperties": false
     },
     "SharedProps": {
       "type": "object",
@@ -334,8 +353,7 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false,
-      "description": "Properties shared across a grid's cells (colormap/range/colorbar/reference, plus opt-in viewport/camera sync)."
+      "additionalProperties": false
     },
     "CompareNode": {
       "type": "object",
@@ -362,8 +380,7 @@
           "enum": [
             0,
             1
-          ],
-          "description": "Which frame is the reference/baseline (0 = `a`, 1 = `b`). Default 0."
+          ]
         },
         "diffSubmode": {
           "type": "string"
@@ -376,19 +393,17 @@
             "top-right",
             "bottom-left",
             "bottom-right"
-          ],
-          "description": "Alignment anchor for mismatched-size operands in diff modes: where the smaller extent sits within the larger before the overlap crop. Ignored under `fit:\"fill\"`. Default \"top-left\"."
+          ]
         },
         "fit": {
           "type": "string",
           "enum": [
             "crop",
             "fill"
-          ],
-          "description": "Mismatched-size handling in diff modes: \"crop\" (min-crop overlap, default) or \"fill\" (rescale both operands to a common grid = the primary/foreground resolution)."
+          ]
         },
         "props": {
-          "$ref": "#/definitions/Record%3Cstring%2Cunknown%3E"
+          "$ref": "#/definitions/Record%3Cstring%2CJsonValue%3E"
         }
       },
       "required": [
@@ -397,8 +412,7 @@
         "a",
         "b"
       ],
-      "additionalProperties": false,
-      "description": "Two DataSpec frames composited into one pane (split/diff). `split`/`diff` composite them through the shared compositor / GPU compare pane. A legacy `\"blend\"` (removed view mode) is tolerated on read and aliases to `\"split\"` (see `normalizeCompareViewMode` in `plot-node.tsx`)."
+      "additionalProperties": false
     }
   }
 }

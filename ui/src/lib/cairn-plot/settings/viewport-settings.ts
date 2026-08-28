@@ -129,13 +129,18 @@ export function scopeSettingsPatch(
   return any ? (out as ViewportSettings) : null;
 }
 
+export type SettingsChange =
+  | { type: "patch"; settings: ViewportSettings }
+  | { type: "replace"; settings: ViewportSettings };
+
+type ChangeListener = (change: SettingsChange) => void;
 type PatchListener = (patch: ViewportSettings) => void;
 
 // CROSS-BUNDLE stateless channel map (see module doc).
 const CHANNELS_KEY = "__cairnPlotSettingsChannels__";
-const channels: Map<string, Set<PatchListener>> = ((globalThis as unknown as Record<
+const channels: Map<string, Set<ChangeListener>> = ((globalThis as unknown as Record<
   string,
-  Map<string, Set<PatchListener>> | undefined
+  Map<string, Set<ChangeListener>> | undefined
 >)[CHANNELS_KEY] ??= new Map());
 
 /** Broadcast `patch` to every subscriber of `groupId` (including, by design,
@@ -143,12 +148,23 @@ const channels: Map<string, Set<PatchListener>> = ((globalThis as unknown as Rec
  *  object identity). Stateless: nothing is remembered. */
 export function publishSettingsPatch(groupId: string, patch: ViewportSettings): void {
   const subs = channels.get(groupId);
-  if (subs) for (const cb of [...subs]) cb(patch);
+  if (subs) for (const cb of [...subs]) cb({ type: "patch", settings: patch });
 }
 
-/** Subscribe to `groupId`'s patches. Returns unsubscribe. Membership IS the
- *  subscription — there is no separate join/leave. */
-export function subscribeSettingsPatches(groupId: string, cb: PatchListener): () => void {
+/** Broadcast a complete settings replacement. Unlike a patch, receivers remove
+ * values absent from `settings`; HOME relies on this distinction. */
+export function publishSettingsReplacement(
+  groupId: string,
+  settings: ViewportSettings,
+): void {
+  const subs = channels.get(groupId);
+  if (subs) for (const cb of [...subs]) cb({ type: "replace", settings });
+}
+
+export function subscribeSettingsChanges(
+  groupId: string,
+  cb: ChangeListener,
+): () => void {
   let subs = channels.get(groupId);
   if (!subs) {
     subs = new Set();
@@ -159,6 +175,12 @@ export function subscribeSettingsPatches(groupId: string, cb: PatchListener): ()
     subs!.delete(cb);
     if (subs!.size === 0) channels.delete(groupId);
   };
+}
+
+/** Subscribe to `groupId`'s patches. Returns unsubscribe. Membership IS the
+ *  subscription — there is no separate join/leave. */
+export function subscribeSettingsPatches(groupId: string, cb: PatchListener): () => void {
+  return subscribeSettingsChanges(groupId, (change) => cb(change.settings));
 }
 
 /** TESTS ONLY: drop every channel (a reset page has no subscribers). */

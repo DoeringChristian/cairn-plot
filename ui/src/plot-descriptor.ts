@@ -36,6 +36,16 @@ import { fetchImageBytes } from "./lib/cairn-plot/fetch-image";
 import { floatPixelsFrom, floatValues } from "./lib/cairn-plot/image/pixel-buffer.ts";
 import { describeExr } from "./lib/cairn-plot/image/decoders/exr-describe";
 import { groupChannels, type ChannelGroup } from "./lib/cairn-plot/image/channel-groups";
+import type { DataSpec } from "../../packages/spec/src/spec.ts";
+export type {
+  CompareNode,
+  DataSpec,
+  GridNode,
+  PlotDescriptor,
+  PlotLeafNode,
+  PlotNode,
+  SharedProps,
+} from "../../packages/spec/src/spec.ts";
 
 /** The parts × channel-groups tree of an EXR source, attached to a resolved
  *  image leaf's props (`exrTree`) so the pane can render the CHANNEL STRIP
@@ -67,183 +77,7 @@ function tryExrTree(bytes: ArrayBuffer): ExrTree | null {
   }
 }
 
-/**
- * How the renderer's DATA props are produced.
- *
- *  - `inline`: the data-contract props are plain JSON, carried directly in the
- *    descriptor (2D contracts — Series[]/points[]/matrix/counts+edges/table/
- *    figure). The bootstrap merges `props` straight onto the renderer. No
- *    `DataSource` needed.
- *  - `image`: a content-addressed image artifact (+ optional baseline +
- *    overlay metadata). Resolved via `resolveImageViewportItems` against the
- *    active `DataSource` (LOCAL `data:` URL or ENDPOINT `/api/artifacts/…`),
- *    yielding `{ imageUrl, baselineUrl, overlay }` for `ImagePane`.
- *  - `npz`: a content-addressed 3D binary artifact (`.npy`/`.npz`) for the
- *    three.js renderers (G3). `objectType` selects which 3D type the bytes
- *    belong to (`pointcloud` is the only one wired in G3a; the others land in
- *    G3b). `hash` keys the LOCAL store / ENDPOINT artifact; `meta` is the
- *    Python-baked artifact metadata (channels/bounds/n_points/…) carried inline
- *    so the renderer needs a SINGLE bytes fetch, no second metadata round trip.
- */
-export type DataSpec =
-  | { kind: "inline"; props: Record<string, unknown> }
-  | {
-      kind: "image";
-      hash: string | null;
-      referenceHash?: string | null;
-      metadata?: string | null;
-      /**
-       * OPTIONAL format hint for the image blob (a MIME type or extension token,
-       * e.g. `"png"`, `"avif"`, `"npy"`). Drives the multi-format DECODER seam
-       * (`resolveDataProps`): when it names a RAW-buffer format (`npy`/`npz`),
-       * the bytes are fetched and normalized through `decodeImage` — float
-       * buffers → the `hdr` prop shape, uint8 buffers → an `imageUrl` data URL.
-       * Absent (or a browser-native format like png/jpeg/webp/avif/gif) keeps
-       * the byte-identical URL fast path — the browser decodes it via `<img>`.
-       */
-      format?: string;
-      /**
-       * OPTIONAL direct URL to the image blob (additive to `hash`). When present,
-       * `resolveDataProps` FETCHES the bytes from this URL and normalizes them
-       * through `decodeImage` (sniffed by MIME/URL-ext/magic) — the same shaping
-       * as the `format?` path: float buffers → the `hdr` prop shape, uint8/native
-       * buffers → an `imageUrl` PNG data URL. This is the CLIENT-DECODE path that
-       * lets a URL serve formats the browser can't `<img>`-decode (`exr`/`npy`/…),
-       * with the image referenced by URL instead of embedded in the HTML. (For a
-       * plain browser-native URL a bare-`str` `kind:"url"` passthrough is lighter;
-       * this field opts into the fetch+decode path.) NOTE: a cross-origin fetch
-       * is CORS-gated — the serving endpoint must allow the page's origin.
-       */
-      url?: string;
-      /**
-       * EXR PART selection (multi-part files): index or part name. Only honoured
-       * on the client-decode paths (`url` / raw-buffer `format`) for `.exr`
-       * sources; other formats ignore it. Default: part 0.
-       */
-      part?: number | string;
-      /**
-       * EXR channel selection: a channel-GROUP name ("diffuse"; "" = the base
-       * color layer) or a FULL channel name ("diffuse.G", "Z") for a single-
-       * channel scalar view (rendered via the colormap path). Grouping follows
-       * the OpenEXR dot-prefix convention — see `lib/cairn-plot/image/
-       * channel-groups.ts`. An ARBITRARY LIST of up to 3 full channel
-       * names packs them into the R,G,B slots in order (the RenderDoc-style
-       * combo). Default: the first group (base color when present).
-       */
-      layer?: string | string[];
-    }
-  | {
-      kind: "npz";
-      hash: string | null;
-      objectType: "pointcloud" | "mesh" | "volume" | "boxes3d";
-      meta: Record<string, unknown>;
-    }
-  | {
-      // A true float-HDR image artifact (HDR-A). The bytes are a float `.npy`
-      // (float32/float64) with shape `[H,W]` (grayscale), `[H,W,1|3|4]`; parsed
-      // by `parseNpy` and tone-mapped client-side by the `"imagehdr"` renderer
-      // (`HdrImagePane`) — NOT min-max-normalized to 8-bit at ingest like the
-      // `image` path. `hash` keys the LOCAL store / ENDPOINT artifact
-      // (required-but-nullable, matching `image`/`npz`). `meta` is informational
-      // provenance (`{shape,dtype,channels,vmin,vmax}`) baked by Python — the
-      // renderer reads shape from the npy header itself, so `meta` is for
-      // tooling parity with `npz`, not required for rendering.
-      kind: "imghdr";
-      hash: string | null;
-      meta: Record<string, unknown>;
-    }
-  | {
-      // `url`: a raw URL passed through verbatim (the 3rd data-provenance mode
-      // beside inline/image). Source-agnostic like `image`, but the URL is used
-      // as-is — no `DataSource` hash lookup. `src` is the foreground image URL,
-      // `referenceSrc` an optional baseline, `metadata` optional overlay JSON.
-      kind: "url";
-      src: string;
-      referenceSrc?: string | null;
-      metadata?: string | null;
-    };
-
-// ---------------------------------------------------------------------------
-// G1: the descriptor is a recursive TREE. A `PlotNode` is a leaf (`plot`), a
-// `grid` (children laid out in CSS grid), or a `compare` (two frames composited
-// into one pane). `mode`/`endpoint` are hoisted to the root `PlotDescriptor`
-// wrapper — they bind the whole tree to ONE `DataSource`.
-// ---------------------------------------------------------------------------
-
-export type PlotNode = PlotLeafNode | GridNode | CompareNode;
-
-/** A single renderer + its data — the former flat descriptor body. */
-export interface PlotLeafNode {
-  kind: "plot";
-  /** Key into the renderer registry (e.g. "scalar", "image", "table", "figure"). */
-  renderer: string;
-  /** The renderer's non-data config props. */
-  props?: Record<string, unknown>;
-  /** How to produce the renderer's DATA props. */
-  data: DataSpec;
-}
-
-/** Children laid out in a CSS grid. `colWidths`/`rowHeights` entries:
- *  number → `Nfr`, string → verbatim CSS ("25%", "120px"). */
-export interface GridNode {
-  kind: "grid";
-  children: PlotNode[];
-  cols?: number;
-  colWidths?: Array<number | string>;
-  rowHeights?: Array<number | string>;
-  gap?: number | string;
-  shared?: SharedProps;
-  /** View mode. `"normal"` (default) is the uniform CSS grid; `"stacked"` shows
-   *  ONE child at a time with a keyboard-driven tab strip to flip between them.
-   *  A live toggle on the grid lets the viewer switch either way. */
-  mode?: "normal" | "stacked";
-}
-
-/** Two DataSpec frames composited into one pane (split/diff).
- *  `split`/`diff` composite them through the shared compositor / GPU compare
- *  pane. A legacy `"blend"` (removed view mode) is tolerated on read and aliases
- *  to `"split"` (see `normalizeCompareViewMode` in `plot-node.tsx`). */
-export interface CompareNode {
-  kind: "compare";
-  mode: "split" | "diff";
-  a: DataSpec;
-  b: DataSpec;
-  /** Which frame is the reference/baseline (0 = `a`, 1 = `b`). Default 0. */
-  baselineIndex?: 0 | 1;
-  diffSubmode?: string;
-  /** Alignment anchor for mismatched-size operands in diff modes: where the
-   *  smaller extent sits within the larger before the overlap crop. Ignored
-   *  under `fit:"fill"`. Default "top-left". */
-  align?: "top-left" | "center" | "top-right" | "bottom-left" | "bottom-right";
-  /** Mismatched-size handling in diff modes: "crop" (min-crop overlap, default)
-   *  or "fill" (rescale both operands to a common grid = the primary/foreground
-   *  resolution). */
-  fit?: "crop" | "fill";
-  props?: Record<string, unknown>;
-}
-
-/** Properties shared across a grid's cells (colormap/range/colorbar/reference,
- *  plus opt-in viewport/camera sync). */
-export interface SharedProps {
-  colormap?: string;
-  colorRange?: [number, number];
-  colorbar?: boolean;
-  reference?: DataSpec;
-  sync?: { viewport?: boolean; camera?: boolean };
-}
-
-export interface PlotDescriptor {
-  /** The root node of the plot tree (leaf, grid, or compare). */
-  root: PlotNode;
-  /** Which `DataSource` the bootstrap builds for `data` resolution across the
-   *  whole tree. Optional — omitted (or "local") means the self-contained LOCAL
-   *  store; kept optional so it stays in lockstep with the Python
-   *  `PlotDescriptorSpec` default (`mode="local"`). */
-  mode?: "local" | "endpoint";
-  /** ENDPOINT only: absolute base URL of the repo server (no trailing slash),
-   *  used to build `${endpoint}/api/artifacts/${hash}`. */
-  endpoint?: string;
-}
+/** The durable recursive descriptor types live in packages/spec. */
 
 /**
  * Resolve a descriptor's `DataSpec` → the renderer's DATA props, using the

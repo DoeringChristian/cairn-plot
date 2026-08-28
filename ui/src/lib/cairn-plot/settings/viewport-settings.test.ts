@@ -11,8 +11,10 @@ import assert from "node:assert/strict";
 import {
   __resetSettingsChannelsForTest,
   publishSettingsPatch,
+  publishSettingsReplacement,
   scopeSettingsPatch,
   subscribeSettingsPatches,
+  subscribeSettingsChanges,
   type SettingsKey,
   type ViewportSettings,
 } from "./viewport-settings.ts";
@@ -121,4 +123,19 @@ test("unsubscribing the last member drops the channel (no leaks)", () => {
   // Publishing to a dead channel is a no-op (nothing throws, nothing applies).
   publishSettingsPatch("gone", { encoding: "x" });
   assert.equal(a.settings, null);
+});
+
+test("replacement is distinct from patch and clears absent settings", () => {
+  let settings: ViewportSettings = {
+    "image.encoding": "magma",
+    "image.exposureEV": 2,
+  };
+  const off = subscribeSettingsChanges("replace", (change) => {
+    settings = change.type === "replace"
+      ? { ...change.settings }
+      : { ...settings, ...change.settings };
+  });
+  publishSettingsReplacement("replace", { "image.encoding": "turbo" });
+  assert.deepEqual(settings, { "image.encoding": "turbo" });
+  off();
 });

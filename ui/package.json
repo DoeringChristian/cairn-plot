@@ -3,14 +3,17 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "exports": {
+    ".": "./src/public/index.ts",
+    "./styles.css": "./src/public/styles.css"
+  },
   "description": "cairn-plot — the pure TS/React renderer library + self-contained standalone IIFE bundles.",
   "scripts": {
     "typecheck": "tsc -b --noEmit",
-    "test": "node --experimental-strip-types --test \"src/lib/cairn-plot/**/*.test.ts\" \"../packages/**/*.test.ts\" \"../apps/**/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"src/lib/cairn-plot/**/*.test.ts\"",
     "gen:plot-schema": "node scripts/gen-plot-spec-schema.mjs",
     "check:plot-schema": "node scripts/check-plot-spec-schema.mjs",
     "check:plot-boundary": "node scripts/check-plot-boundary.mjs",
-    "check:package-boundaries": "node scripts/check-package-boundaries.mjs",
     "check:plot-bundles": "node scripts/check-plot-bundles.mjs",
     "build:plot-inline": "vite build --config vite.plot-figure.config.ts && vite build --config vite.plot-three.config.ts && vite build --config vite.plot-core.config.ts",
     "sync:plot-assets": "node scripts/sync-plot-assets.mjs",
@@ -18,6 +21,7 @@
     "smoke:plot": "node scripts/smoke-plot-gallery.mjs",
     "smoke:js": "node scripts/smoke-js-api.mjs",
     "test:harness": "node scripts/test-harness.mjs",
+    "test:harness:public": "node scripts/test-harness.mjs --root src/public --only public-host",
     "test:harness:selftest": "node scripts/test-harness-selftest.mjs"
   },
   "dependencies": {

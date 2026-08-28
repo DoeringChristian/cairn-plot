@@ -1,6 +1,6 @@
 // Phase C (cairn-plot Python library): generate
 // docs/schemas/cairn-plot-spec.schema.json from the authoritative TS type
-// `PlotDescriptor` in src/plot-descriptor.ts via ts-json-schema-generator. TS
+// `PlotDescriptor` in packages/spec/src/spec.ts via ts-json-schema-generator. TS
 // is the single source of truth; this schema is a derived artifact (committed
 // so the Python side + CI can read it without a TS toolchain). It mirrors
 // gen-card-spec-schema.mjs exactly. Run: `npm run gen:plot-schema`. The
@@ -23,14 +23,14 @@ const repoRoot = resolve(uiRoot, "..");
 const OUT = resolve(repoRoot, "schema/cairn-plot-spec.schema.json");
 
 const config = {
-  path: resolve(uiRoot, "src/plot-descriptor.ts"),
+  path: resolve(repoRoot, "packages/spec/src/spec.ts"),
   tsconfig: resolve(uiRoot, "tsconfig.app.json"),
   // `PlotDescriptor` is the descriptor contract the Python `PlotSpec` mirrors.
   type: "PlotDescriptor",
   expose: "all",
   topRef: true,
   jsDoc: "extended",
-  // plot-descriptor.ts references DOM-free types only; skip the whole-program
+  // packages/spec contains DOM-free types only; skip the whole-program
   // type check (the UI's own typecheck already gates correctness) so this
   // stays fast and independent of unrelated app type errors.
   skipTypeCheck: true,

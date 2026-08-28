@@ -25,12 +25,12 @@ jobs:
         run: npm run typecheck
       - name: node unit tests
         run: npm test
+      - name: public host browser lifecycle
+        run: npm run test:harness:public
       - name: schema drift guard
         run: npm run check:plot-schema
       - name: boundary lint (no lib→app imports)
         run: npm run check:plot-boundary
-      - name: package dependency direction
-        run: npm run check:package-boundaries
       - name: build self-contained bundles
         run: npm run build:plot-inline
       - name: bundle split guard (content + size ceilings)

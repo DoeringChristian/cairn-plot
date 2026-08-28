@@ -17,8 +17,9 @@
 import { useEffect, type RefObject } from "react";
 
 /** Post the current content height to the host so it can size the iframe. */
-export function useEmitAutoHeight(ref: RefObject<HTMLElement | null>): void {
+export function useEmitAutoHeight(ref: RefObject<HTMLElement | null>, enabled = true): void {
   useEffect(() => {
+    if (!enabled) return;
     const el = ref.current;
     if (!el) return;
     const post = () => {
@@ -35,5 +36,5 @@ export function useEmitAutoHeight(ref: RefObject<HTMLElement | null>): void {
     ro.observe(el);
     post();
     return () => ro.disconnect();
-  }, [ref]);
+  }, [ref, enabled]);
 }
