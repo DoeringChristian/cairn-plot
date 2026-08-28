@@ -83,7 +83,7 @@ import { ReactBackendOutlet } from "./host/react-backend.ts";
 import { getReactPlotType } from "./plots/react-registry.ts";
 import type { RenderEnvironment } from "./backends/contracts.ts";
 import {
-  planImageComparison as synthDiffLeafOf,
+  planRegisteredImageComparison as synthDiffLeafOf,
 } from "./plots/image/comparison-plan.ts";
 import { resolveImageComparisonPair as resolveDiffPair } from "./plots/image/comparison-resolve.ts";
 import {

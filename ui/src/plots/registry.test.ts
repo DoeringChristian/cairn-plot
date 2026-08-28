@@ -7,6 +7,7 @@ import { definePlot, type SettingsRecord } from "./contracts.ts";
 import {
   clearPlotTypesForTest,
   onPlotTypeRegister,
+  planComparison,
   registerPlotType,
   requirePlotType,
 } from "./registry.ts";
@@ -42,6 +43,29 @@ function testDefinition() {
   });
 }
 
+function comparableDefinition(accepted = true) {
+  const definition = testDefinition();
+  return {
+    ...definition,
+    comparison: {
+      presentations: [{ id: "overlay", label: "Overlay", minOperands: 2, maxOperands: 2 }],
+      accepts: () => accepted
+        ? { accepted: true }
+        : { accepted: false, reason: "operands do not align" },
+      plan: () => ({ operation: "overlay" }),
+      resolve: async () => 0,
+    },
+  };
+}
+
+const comparisonNode = {
+  kind: "compare" as const,
+  renderer: "test",
+  mode: "split" as const,
+  a: { kind: "inline" as const, props: { value: 1 } },
+  b: { kind: "inline" as const, props: { value: 2 } },
+};
+
 test("plot registry contains type erasure at one checked adapter", async () => {
   clearPlotTypesForTest();
   registerPlotType(testDefinition());
@@ -73,4 +97,27 @@ test("registration subscriptions support lazy plot definitions", () => {
   registerPlotType(testDefinition());
   unsubscribe();
   assert.equal(notifications, 1);
+});
+
+test("comparison planning is selected by the authored plot kind", () => {
+  clearPlotTypesForTest();
+  registerPlotType(comparableDefinition());
+  const planned = planComparison(comparisonNode);
+  assert.equal(planned.renderer, "test");
+  assert.deepEqual(planned.plan, { operation: "overlay" });
+});
+
+test("legacy comparisons select the image plot kind", () => {
+  clearPlotTypesForTest();
+  registerPlotType({ ...comparableDefinition(), kind: "image" });
+  assert.equal(planComparison({ ...comparisonNode, renderer: undefined }).renderer, "image");
+});
+
+test("comparison planning reports missing and rejected capabilities", () => {
+  clearPlotTypesForTest();
+  registerPlotType(testDefinition());
+  assert.throws(() => planComparison(comparisonNode), /does not support comparison/);
+  clearPlotTypesForTest();
+  registerPlotType(comparableDefinition(false));
+  assert.throws(() => planComparison(comparisonNode), /operands do not align/);
 });

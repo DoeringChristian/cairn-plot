@@ -7,6 +7,7 @@ import type {
   CompareAlign,
   CompareFit,
 } from "../../lib/cairn-plot/renderers/image-backend.ts";
+import { planComparison } from "../registry.ts";
 
 export type ImageComparisonPresentation = "split" | "difference";
 
@@ -79,4 +80,15 @@ export function planImageComparison(node: CompareNode): ImageComparisonPlan {
   };
   plans.set(node, plan);
   return plan;
+}
+
+/** Checked adapter while the production host has only an image comparison UI. */
+export function planRegisteredImageComparison(node: CompareNode): ImageComparisonPlan {
+  const planned = planComparison(node);
+  if (planned.renderer !== "image") {
+    throw new Error(
+      `cairn-plot: comparison host for ${JSON.stringify(planned.renderer)} is not installed`,
+    );
+  }
+  return planned.plan as ImageComparisonPlan;
 }
