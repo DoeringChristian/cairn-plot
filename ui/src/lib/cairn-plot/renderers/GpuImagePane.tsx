@@ -96,7 +96,7 @@ import {
   type PaneHandle,
   type SourceUpload,
 } from "../engine/pool";
-import { getSharedWebGpuDevice } from "../../../engines/webgpu/device-provider.ts";
+import { webGpuEngine } from "../../../engines/webgpu/facade.ts";
 import { isPaintPhaseLogActive, recordPaintPhase } from "../engine/test-hooks";
 import type { ImageParams } from "../engine/image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
@@ -1006,8 +1006,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
     // given pane instance — the two prop shapes never swap mid-life, per
     // this file's module doc) rather than a dep, matching this effect's
     // existing run-once-on-mount contract.
-    getSharedWebGpuDevice()
-      .then((device) => {
+    webGpuEngine.acquire()
+      .then(({ device }) => {
         if (cancelled) return;
         // Two INDEPENDENT signals decide true-HDR output, and we DIAGNOSE which
         // one is missing so the notice can show the right message + hint:
@@ -2106,8 +2106,8 @@ export default function GpuImagePane(backendProps: ImageBackendProps) {
         renderPass();
         const surface = getCanvasSurfaceForTest(canvas);
         if (!surface) return null;
-        const device = await getSharedWebGpuDevice();
-        const data = await device.readback(surface);
+        const engine = await webGpuEngine.acquire();
+        const data = await engine.readSurface(surface);
         return { data, width: canvas.width, height: canvas.height };
       },
       changeCompareMode,

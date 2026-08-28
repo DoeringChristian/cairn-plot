@@ -25,6 +25,9 @@ Status: accepted design; implementation in progress
   import/export/subscription, and opt-in external persistence.
 - [x] Move shared WebGPU device acquisition/lifetime behind a reusable,
   plot-agnostic provider while retaining a compatibility export for old tests.
+- [x] Introduce the WebGPU engine facade for capability discovery, shared
+  acquisition, surface creation, readback, and recovery; route the production
+  image pool through its acquired context.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
