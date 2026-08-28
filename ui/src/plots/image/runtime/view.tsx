@@ -1,6 +1,5 @@
 import { useContext } from "react";
 
-import { floatPixelsFrom } from "./pixel-buffer.ts";
 import { ContentAspectFrame } from "../../../layout/ContentAspectFrame.tsx";
 import { GridCellReporter, GridUniformAspectContext, finitePositive } from "../../../layout/grid-uniform-aspect.tsx";
 import { resolveRenderMode, shapeDims } from "./contracts.ts";
@@ -26,18 +25,10 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
   const [view, onViewChange] = useImageView(
     settings,
     commands.patch,
-    { zoom: p.zoom ?? 1, pan: p.pan ?? { x: 0, y: 0 } },
+    { zoom: 1, pan: { x: 0, y: 0 } },
   );
   const Pane = useImageBackend(resolveRenderMode());
-  const source = p.source ?? (p.hdr
-    ? {
-        dtype: "float" as const,
-        pixels: floatPixelsFrom(p.hdr.data, p.hdr.precision),
-        shape: p.hdr.shape,
-        numpyDtype: p.hdr.dtype,
-        deep: p.hdr.deep,
-      }
-    : { dtype: "uint8" as const, url: p.imageUrl ?? null });
+  const source = p.source;
   const selectedComparisonOperation = p.comparison
     ? settings["compare.operation"] ??
       (p.comparison.presentation === "split" ? "split" : p.comparison.defaultOperation)
@@ -85,12 +76,6 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     baselineUrl={p.baselineUrl ?? null}
     diffMode={p.diffMode ?? "none"}
     interpolation={p.interpolation ?? "auto"}
-    colormap={p.colormap}
-    tonemap={p.tonemap}
-    exposure={p.exposure}
-    offset={p.offset}
-    peak={p.peak}
-    gamma={p.gamma}
     processing={p.processing}
     showAxes={p.showAxes ?? false}
     label={p.label ?? ""}

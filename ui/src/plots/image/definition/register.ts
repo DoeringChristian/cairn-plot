@@ -13,9 +13,13 @@ import {
   planImageComparison,
   type ImageComparisonPlan,
 } from "./comparison-plan.ts";
-import { resolveDisplayOperator, TONEMAP_GAMMA_DEFAULT } from "../runtime/tonemap.ts";
+import {
+  EXTENDED_TONEMAP_PEAK_DEFAULT,
+  resolveDisplayOperator,
+  TONEMAP_GAMMA_DEFAULT,
+} from "../runtime/tonemap.ts";
 
-type ImageSpec = Extract<DataSpec, { kind: "inline" | "image" | "imghdr" | "url" }>;
+type ImageSpec = Extract<DataSpec, { kind: "image" | "imghdr" | "url" }>;
 export type { ImagePresentation } from "../runtime/presentation.ts";
 export type ImageSettings = PlotSettings & SettingsRecord;
 
@@ -25,9 +29,11 @@ export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSet
     "image.view": { zoom: 1, pan: { x: 0, y: 0 } },
     "image.encoding": resolveDisplayOperator(undefined),
     "image.tonemapGamma": TONEMAP_GAMMA_DEFAULT,
+    "image.peak": EXTENDED_TONEMAP_PEAK_DEFAULT,
     "image.exposureEV": 0,
     "image.offset": 0,
     "image.colorRange": null,
+    "image.channelSelect": null,
     "panel.info": null,
     ...(node.kind === "compare"
       ? {
@@ -38,19 +44,19 @@ export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSet
   };
 }
 
-/** Checked erasure boundary for resolved and legacy-inline image payloads. */
+/** Checked erasure boundary for resolved image content. */
 export function imagePresentation(value: Record<string, unknown>): ImagePresentation {
   const source = value.source;
   const hasSource = source !== null && typeof source === "object" &&
     ((source as { dtype?: unknown }).dtype === "float" || (source as { dtype?: unknown }).dtype === "uint8");
-  if (!hasSource && value.hdr == null && value.imageUrl == null) {
+  if (!hasSource) {
     throw new Error("cairn-plot: image presentation requires a decoded source");
   }
   return value as unknown as ImagePresentation;
 }
 
 function validateImageData(value: DataSpec): ImageSpec {
-  if (value.kind === "inline" || value.kind === "image" || value.kind === "imghdr" || value.kind === "url") {
+  if (value.kind === "image" || value.kind === "imghdr" || value.kind === "url") {
     return value;
   }
   throw new Error(`cairn-plot: image plot does not accept data kind ${JSON.stringify(value.kind)}`);
@@ -78,7 +84,7 @@ export function ensureImagePlotType(
   };
   const definition = definePlot<
     ImageSpec,
-    ImagePresentation,
+    Record<string, unknown>,
     ImageSettings,
     ImagePresentation,
     ImageComparisonPlan
