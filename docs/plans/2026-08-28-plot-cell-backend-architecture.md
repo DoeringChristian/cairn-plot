@@ -93,7 +93,8 @@ Status: accepted design; implementation in progress
   `applySyncedSettings` path. Typed presentations are stripped of settings
   plumbing; the image backend receives readonly settings plus patch/reset only
   through `BackendInput`. Renderer defaults remain projections until a user
-  command writes an override, so stack flips cannot write settings.
+  command writes an override, so stack flips cannot write settings. Leaf
+  presentation assembly no longer manufactures those runtime props either.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

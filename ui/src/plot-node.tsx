@@ -383,10 +383,6 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
       // this memo never builds a `compareSource` with an undefined `b`. Defensive:
       // if it were somehow missing, return benign props (not rendered — status loading).
       if (dp.__diffB === undefined) return {};
-      const dsync: Record<string, unknown> = {};
-      if (paneSync?.syncedSettings) dsync.syncedSettings = paneSync.syncedSettings;
-      if (paneSync?.setSyncedSettings) dsync.setSyncedSettings = paneSync.setSyncedSettings;
-      dsync.resetViewportSettings = resetViewportSettings;
       const compareSource: CompareSource = {
         b: dp.__diffB as DecodedSource,
         opId: diffSpec.diffKernel,
@@ -412,15 +408,11 @@ function LeafView({ node, diffSpec }: { node: PlotLeafNode; diffSpec?: DiffLeafS
         compareSource,
         enlargeControl,
         ...(dp.__diffOverlay ? { overlay: dp.__diffOverlay } : {}),
-        ...dsync,
       };
     }
     const sharedProps: Record<string, unknown> = {};
     if (shared?.colormap != null) sharedProps.colormap = shared.colormap;
     if (shared?.colorRange != null) sharedProps.colorRange = shared.colorRange;
-    if (paneSync?.syncedSettings) sharedProps.syncedSettings = paneSync.syncedSettings;
-    if (paneSync?.setSyncedSettings) sharedProps.setSyncedSettings = paneSync.setSyncedSettings;
-    sharedProps.resetViewportSettings = resetViewportSettings;
     // CHANNELS toolbar menu (EXR part/layer): built here (the owner of the
     // selection state) and handed to the pane as a standard ToolbarButtonSpec —
     // the pane renders it with its other leading menus and folds the override
