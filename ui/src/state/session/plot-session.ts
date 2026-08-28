@@ -1,14 +1,11 @@
 import type { PlotSettings } from "../../settings/schema.ts";
 
-export const PLOT_SESSION_VERSION = 2 as const;
-
 export interface GridSessionState {
   mode: "normal" | "stacked";
   activeSlot: number;
 }
 
 export interface PlotSession {
-  version: typeof PLOT_SESSION_VERSION;
   cells: Record<string, { settings: PlotSettings }>;
   grids: Record<string, GridSessionState>;
 }
@@ -18,7 +15,7 @@ export class PlotSessionError extends Error {
 }
 
 export function emptyPlotSession(): PlotSession {
-  return { version: PLOT_SESSION_VERSION, cells: {}, grids: {} };
+  return { cells: {}, grids: {} };
 }
 
 function record(value: unknown, at: string): Record<string, unknown> {
@@ -50,10 +47,6 @@ function parseSettings(input: unknown, at: string): PlotSettings {
 
 export function parsePlotSession(input: unknown): PlotSession {
   const root = record(input, "session");
-  if (!Number.isInteger(root.version)) throw new PlotSessionError("session.version must be an integer");
-  if (root.version !== PLOT_SESSION_VERSION) {
-    throw new PlotSessionError(`unsupported plot session version ${String(root.version)}`);
-  }
   const cells = record(root.cells, "session.cells");
   const grids = record(root.grids, "session.grids");
   const parsed = emptyPlotSession();

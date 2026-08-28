@@ -12,7 +12,7 @@ test("persistence restores before allowing session writes", async () => {
   const connection = connectSessionPersistence(controller, {
     async load() {
       await gate;
-      return { version: 2, cells: { a: { settings: { "image.encoding": "magma" } } }, grids: {} };
+      return { cells: { a: { settings: { "image.encoding": "magma" } } }, grids: {} };
     },
     save(session) { saves.push(session); },
   });

@@ -42,7 +42,6 @@ async function run() {
   check(document.querySelectorAll("[data-cairn-selection-overlay-host]").length === 1, "one overlay host is acquired");
 
   mounted.restoreSession({
-    version: 2,
     cells: { "cell:root": { settings: { "panel.info": false } } },
     grids: {},
   });
@@ -53,7 +52,6 @@ async function run() {
   let sessionNotifications = 0;
   const unsubscribe = mounted.subscribeSession(() => sessionNotifications++);
   mounted.restoreSession({
-    version: 2,
     cells: { "cell:root": { settings: { "panel.info": true } } },
     grids: {},
   });

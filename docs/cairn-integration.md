@@ -35,7 +35,7 @@ never imports that seam. New host integrations must use the public API, and the
 compatibility seam must not grow new runtime ownership. The supported browser exports are
 `PlotHost`, `mountPlot`, `createEndpointDataSource`, `DataSource`, the recursive
 descriptor types, `PlotSession`, and `SessionPersistence`. Cairn may hydrate a
-versioned runtime session explicitly with `initialSession`/`restoreSession`, or
+runtime session explicitly with `initialSession`/`restoreSession`, or
 inject a persistence adapter. Persistence is disabled by default and can be
 made explicit with `persistence={false}`; this never disables the in-memory
 session or manual import/export.

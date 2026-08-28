@@ -6,7 +6,6 @@ import { emptyPlotSession, parsePlotSession, PlotSessionError } from "./plot-ses
 
 test("plot sessions round-trip canonical cell settings", () => {
   const parsed = parsePlotSession({
-    version: 2,
     cells: { a: { settings: { "compare.operation": "signed-error" } } },
     grids: { g: { mode: "stacked", activeSlot: 2 } },
   });
@@ -14,9 +13,9 @@ test("plot sessions round-trip canonical cell settings", () => {
   assert.deepEqual(parsePlotSession(parsed), parsed);
 });
 
-test("plot sessions reject future versions and non-finite values", () => {
-  assert.throws(() => parsePlotSession({ version: 3, cells: {}, grids: {} }), PlotSessionError);
-  assert.throws(() => parsePlotSession({ version: 2, cells: { a: { settings: { x: Infinity } } }, grids: {} }), PlotSessionError);
+test("plot sessions reject malformed and non-finite values", () => {
+  assert.throws(() => parsePlotSession({ cells: {}, grids: [] }), PlotSessionError);
+  assert.throws(() => parsePlotSession({ cells: { a: { settings: { x: Infinity } } }, grids: {} }), PlotSessionError);
 });
 
 test("controller retains unmounted topology records and prunes stale paths", () => {
@@ -37,7 +36,7 @@ test("restore updates live bindings and notifications are coalesced", async () =
   controller.subscribe(() => notifications++);
   controller.recordCell("cell:root", { "image.encoding": "magma" });
   controller.recordCell("cell:root", { "image.encoding": "turbo" });
-  controller.restoreSession({ version: 2, cells: { "cell:root": { settings: { "image.encoding": "gray" } } }, grids: {} });
+  controller.restoreSession({ cells: { "cell:root": { settings: { "image.encoding": "gray" } } }, grids: {} });
   assert.deepEqual(applied, { "image.encoding": "gray" });
   await Promise.resolve();
   assert.equal(notifications, 1);

@@ -21,7 +21,7 @@ Status: implemented
 - [x] Replace the legacy unbounded resolution storage with the lease-aware
   runtime cache; visible leaves pin leases while adjacent preloads stay
   evictable and retry silently after background failure.
-- [x] Implement versioned branch-retaining grid/stack sessions, imperative
+- [x] Implement branch-retaining grid/stack sessions, imperative
   import/export/subscription, and opt-in external persistence.
 - [x] Move shared WebGPU device acquisition/lifetime behind a reusable,
   plot-agnostic provider while retaining a compatibility export for old tests.
@@ -386,7 +386,7 @@ interface SessionPersistence {
 }
 ```
 
-Sessions are versioned and migrated on restore. Persistence writes are
+Sessions are structurally validated on restore. Persistence writes are
 serialized, collapse to the latest pending snapshot, and never overwrite saved
 state while an asynchronous load is pending.
 
@@ -402,7 +402,7 @@ state while an asynchronous load is pending.
    with browser identity and paint-atomic tests.
 7. Move comparison composition into plot capabilities, starting with image and
    scalar overlay.
-8. Add the public controller, versioned session, and optional persistence.
+8. Add the public controller, session import/export, and optional persistence.
 9. Extract the current WebGPU device/resource/scheduling machinery behind an
    engine facade, then decompose reusable passes incrementally.
 10. Mechanically flatten `lib/cairn-plot` into the target directories, enforcing
