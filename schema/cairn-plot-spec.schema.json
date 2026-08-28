@@ -370,12 +370,17 @@
           "type": "string",
           "description": "Plot definition that owns comparison semantics. Omission means `image`."
         },
+        "presentation": {
+          "type": "string",
+          "description": "Plot-defined presentation (`overlay`, `difference`, …)."
+        },
         "mode": {
           "type": "string",
           "enum": [
             "split",
             "diff"
-          ]
+          ],
+          "description": "Legacy image spelling. New descriptors should use `presentation`."
         },
         "a": {
           "$ref": "#/definitions/DataSpec"
@@ -416,7 +421,6 @@
       },
       "required": [
         "kind",
-        "mode",
         "a",
         "b"
       ],

@@ -39,7 +39,10 @@ export interface CompareNode {
   kind: "compare";
   /** Plot definition that owns comparison semantics. Omission means `image`. */
   renderer?: string;
-  mode: "split" | "diff";
+  /** Plot-defined presentation (`overlay`, `difference`, …). */
+  presentation?: string;
+  /** Legacy image spelling. New descriptors should use `presentation`. */
+  mode?: "split" | "diff";
   a: DataSpec;
   b: DataSpec;
   baselineIndex?: 0 | 1;

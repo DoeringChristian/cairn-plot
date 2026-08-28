@@ -192,7 +192,9 @@ class CompareSpec(_Strict):
     # Plot definition that owns comparison semantics. Omission preserves the
     # original wire format and means ``"image"``.
     renderer: Optional[str] = None
-    mode: Literal["split", "diff"]
+    presentation: Optional[str] = None
+    # Legacy image spelling. New comparison kinds use ``presentation``.
+    mode: Optional[Literal["split", "diff"]] = None
     a: DataSpec
     b: DataSpec
     baselineIndex: Optional[Literal[0, 1]] = None

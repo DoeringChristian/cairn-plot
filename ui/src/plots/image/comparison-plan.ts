@@ -69,7 +69,7 @@ export function planImageComparison(node: CompareNode): ImageComparisonPlan {
   if (typeof props.height === "number") leafProps.height = props.height;
 
   plan = {
-    presentation: normalizeImageComparisonPresentation(node.mode),
+    presentation: normalizeImageComparisonPresentation(node.presentation ?? node.mode),
     reference,
     foreground,
     fgData: foreground,

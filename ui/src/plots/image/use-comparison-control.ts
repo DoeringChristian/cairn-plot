@@ -30,7 +30,7 @@ export function useImageComparisonControl(
   const comparison = node.kind === "compare" ? node : null;
   const props = (comparison?.props ?? {}) as Record<string, unknown>;
   const descriptorMode: CompareViewMode = comparison &&
-    normalizeImageComparisonPresentation(comparison.mode) === "difference"
+    normalizeImageComparisonPresentation(comparison.presentation ?? comparison.mode) === "difference"
     ? "diff"
     : "split";
   const descriptorKernel =
