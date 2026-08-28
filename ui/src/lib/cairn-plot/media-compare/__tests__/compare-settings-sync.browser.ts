@@ -41,7 +41,6 @@ import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
 import { InFullscreenOverlayContext } from "../../primitives/FullscreenOverlayShell";
-import { DEFAULT_DIFF_COLORMAP } from "../../engine/kernels";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,
@@ -413,24 +412,28 @@ async function run(): Promise<boolean> {
   // construction. That path (single pane, diff persists across a flip, instance
   // reused) is covered by `stack/grid-stacked-persist`.
 
-  // --- 9. ONE DIFF COLORMAP DEFAULT ------------------------------------
-  // Kernel selection changes computation only; colormap selection is independent.
+  // --- 9. OPERATION/COLORMAP INDEPENDENCE ------------------------------
+  // Operation selection changes computation only; it never changes the cell's
+  // display encoding. HOME restores the active authored/default settings.
   // Single-pane (pane A) — the exact directive steps. Each control change is
   // AWAITED to settle (home resets kernel+mode through echo setters that round-trip
   // through the owner, so a bare synchronous follow-up can race the echo).
   A().home(); // clear the override left by the earlier COLORMAP sync step
-  await waitFor(() => A().colormap === DEFAULT_DIFF_COLORMAP, 8000, 25);
+  const homeColormap = "srgb"; // authored split/light display default
+  await waitFor(() => A().colormap === homeColormap && A().diffKernel === "absolute", 8000, 25);
   A().changeCompareMode("diff");
   await waitFor(() => A().compareMode === "diff", 8000, 25);
-  // (a) Switching to signed keeps the shared default.
+  // (a) Switching to signed leaves the colormap untouched.
   A().changeDiffKernel("signed");
-  const defSigned = await waitFor(() => A().diffKernel === "signed" && A().colormap === DEFAULT_DIFF_COLORMAP, 8000, 25);
-  report(defSigned, `DEFAULT: signed kernel keeps shared colormap (A.colormap=${A().colormap})`);
+  await waitFor(() => A().diffKernel === "signed", 8000, 25);
+  const defSigned = A().colormap === homeColormap;
+  report(defSigned, `INVARIANT: signed operation leaves colormap=${A().colormap} (expected ${homeColormap})`);
   ok = ok && defSigned;
-  // (b) Switching back to absolute keeps the same default.
+  // (b) Switching back to absolute still leaves it untouched.
   A().changeDiffKernel("absolute");
-  const defAbs = await waitFor(() => A().diffKernel === "absolute" && A().colormap === DEFAULT_DIFF_COLORMAP, 8000, 25);
-  report(defAbs, `DEFAULT: absolute kernel keeps shared colormap (A.colormap=${A().colormap})`);
+  await waitFor(() => A().diffKernel === "absolute", 8000, 25);
+  const defAbs = A().colormap === homeColormap;
+  report(defAbs, `INVARIANT: absolute operation leaves colormap=${A().colormap} (expected ${homeColormap})`);
   ok = ok && defAbs;
   // (c) the user PICKS magma explicitly → an override.
   A().changeColormap("magma");
@@ -442,13 +445,13 @@ async function run(): Promise<boolean> {
   const followed = await waitFor(() => A().diffKernel === "signed" && A().colormap === "magma", 8000, 25);
   report(followed, `SWITCH: kernel→signed preserves magma (A.colormap=${A().colormap})`);
   ok = ok && followed;
-  // (e) HOME clears the override → back to the shared default colormap.
+  // (e) HOME replaces the cell settings with the active authored/default values.
   A().home();
   const homeReset = await waitFor(
-    () => A().colormap === DEFAULT_DIFF_COLORMAP && A().colormap !== "magma", 8000, 25);
+    () => A().colormap === homeColormap && A().colormap !== "magma" && A().diffKernel === "absolute", 8000, 25);
   report(
     homeReset,
-    `HOME: override cleared → shared default (A.colormap=${A().colormap}, kernel=${A().diffKernel})`,
+    `HOME: override cleared → active default (A.colormap=${A().colormap}, kernel=${A().diffKernel})`,
   );
   ok = ok && homeReset;
 

@@ -83,10 +83,13 @@ import { ReactBackendOutlet } from "./host/react-backend.ts";
 import { getReactPlotType } from "./plots/react-registry.ts";
 import type { RenderEnvironment } from "./backends/contracts.ts";
 import {
-  normalizeImageComparisonPresentation,
   planImageComparison as synthDiffLeafOf,
 } from "./plots/image/comparison-plan.ts";
 import { resolveImageComparisonPair as resolveDiffPair } from "./plots/image/comparison-resolve.ts";
+import {
+  useImageComparisonControl,
+  type CompareViewMode,
+} from "./plots/image/use-comparison-control.ts";
 import { usePlotSessionController } from "./state/session/session-context.ts";
 import { getGlobalSelectionStore } from "./lib/cairn-plot/selection/selection-store.ts";
 import { getRegisteredPane } from "./plot-selection-pane-registry.ts";
@@ -533,8 +536,6 @@ function browserRenderEnvironment(): RenderEnvironment {
   };
 }
 
-type CompareViewMode = "split" | "diff";
-
 /** The LIVE compare settings + resolved foreground operand a compare node hands
  *  `LeafView` (Phase 3: EVERY mode — diff AND split — lowers here, so the
  *  whole compare family renders through the ONE unified pane). The reference
@@ -576,17 +577,6 @@ interface DiffLeafSpec {
 /** The lifted compare view-mode state a compare node's `NodeDispatch` owns and
  *  threads to the unified pane via `compareSource` — hoisted so it survives the
  *  mode-switch op-swap and the stacked flip (the reused-instance control state). */
-interface CompareControl {
-  viewMode: CompareViewMode;
-  setViewMode: (m: CompareViewMode) => void;
-  diffKernel: string;
-  setDiffKernel: (id: string) => void;
-  splitPos: number;
-  setSplitPos: (p: number) => void;
-  /** True when any of mode/kernel/split differs from the descriptor. */
-  modified: boolean;
-}
-
 /** Bind an authored grid to the renderer-agnostic layout shell. */
 function GridView({ node, path }: { node: GridNode; path: string }) {
   const { source, shared: parentShared } = useSharedPlot();
@@ -820,120 +810,6 @@ function reservedHeightOf(props: Record<string, unknown> | undefined): number | 
   return typeof h === "number" ? h : undefined;
 }
 
-/**
- * The lifted compare view-mode state (Phase 2c). Held HERE — inside the pane's
- * `PlotCell`, so it can read the pane's own sync identity — and called
- * UNCONDITIONALLY for every node (inert for non-compare, rules-of-hooks safe),
- * so a stacked `NodeDispatch` reused across an image↔diff flip keeps ONE mode
- * state that survives the flip. The mode/kernel/split are seeded from the
- * descriptor and updated from two sources: the panes' menu callbacks
- * (`setViewMode`/…) AND the group's `syncedSettings` handed down from the ONE
- * node-level bus receiver (`PlotCell`/stage) — so mode still syncs
- * across a page-wide selection even when the mounted pane is a DIFF `GpuImagePane`
- * (which can't itself apply a `compareMode` patch — that's a routing decision
- * above the pane). Never PUBLISHES (the panes already publish these keys) and
- * NEVER subscribes to the bus (the receiver is the single subscriber). Absent a
- * group (a homogeneous stack) `syncedSettings` is null and the ONE reused instance
- * shares settings by construction.
- */
-function useCompareControl(
-  node: PlotNode,
-  syncedSettings: ViewportSettings | null | undefined,
-  setSettings?: (patch: ViewportSettings) => void,
-  applySettings?: (patch: ViewportSettings) => void,
-): CompareControl {
-  const cmp = node.kind === "compare" ? node : null;
-  const props = (cmp?.props ?? {}) as Record<string, unknown>;
-  // `normalizeCompareViewMode` folds the removed `"blend"` (and legacy `"side"`)
-  // into `"split"` so an old baked descriptor still lowers.
-  const descriptorMode: CompareViewMode = cmp
-    ? normalizeImageComparisonPresentation(cmp.mode as string) === "difference" ? "diff" : "split"
-    : "split";
-  const descriptorKernel =
-    (props.diffSubmode as string | undefined) ?? (cmp?.diffSubmode as string | undefined) ?? "absolute";
-  const descriptorSplit = (props.splitPosition as number | undefined) ?? 0.5;
-
-  // Commands write the viewport store. There is no component-local compare
-  // settings fallback, including for non-selectable panes.
-  const setSplitPos = useCallback(
-    (p: number) => setSettings?.({ "compare.split": p }),
-    [setSettings],
-  );
-
-  // FROZEN compare seeds (single-viewport rule — the compare twin of
-  // usePaneEncoding's `initialEncSeedRef`): a stacked viewport's slots carry
-  // DIFFERENT authored mode/kernel/split, but the viewport's settings must not
-  // change on a tab flip — so the seed term is captured ONCE, from the FIRST
-  // compare content this instance shows, and held. The live descriptor values
-  // remain what HOME adopts (focused-slot ruling) and what `modified`
-  // compares against.
-  const compareSeedRef = useRef<{ mode: CompareViewMode; kernel: string; split: number } | null>(null);
-  if (cmp && compareSeedRef.current === null) {
-    compareSeedRef.current = { mode: descriptorMode, kernel: descriptorKernel, split: descriptorSplit };
-  }
-  const seedMode = compareSeedRef.current?.mode ?? descriptorMode;
-  const seedKernel = compareSeedRef.current?.kernel ?? descriptorKernel;
-  const seedSplit = compareSeedRef.current?.split ?? descriptorSplit;
-
-  // ONE precedence, derived every render (no adoption effects): settings store >
-  // frozen bootstrap seed. Every change publishes to the store (the panes
-  // publish mode/kernel/split; HOME publishes the focused slot's descriptor
-  // defaults), so the store is the single source of truth and propagates down.
-  const syncOperation = syncedSettings?.["compare.operation"];
-  // Compatibility only: old workspaces stored one semantic choice as two keys.
-  const legacyMode = syncedSettings?.["compare.mode"];
-  const legacyKernel = syncedSettings?.["compare.kernel"];
-  const syncSplit = syncedSettings?.["compare.split"];
-  const operation = syncOperation ??
-    (legacyMode === "diff" ? (legacyKernel ?? seedKernel) : legacyMode) ??
-    (seedMode === "split" ? "split" : seedKernel);
-  const viewMode: CompareViewMode = operation === "split" ? "split" : "diff";
-  const diffKernel = operation === "split" ? seedKernel : operation;
-  const splitPos = syncSplit !== undefined ? syncSplit : seedSplit;
-
-  const setViewMode = useCallback(
-    (m: CompareViewMode) => setSettings?.({ "compare.operation": m === "split" ? "split" : diffKernel }),
-    [setSettings, diffKernel],
-  );
-  const setDiffKernel = useCallback(
-    (k: string) => setSettings?.({ "compare.operation": k }),
-    [setSettings],
-  );
-
-  // INITIALIZATION (single-source-of-truth ruling): the compare keys are
-  // OWNED here, so THIS is where they are written into the viewport's
-  // settings — once, from the frozen first-compare seed, LOCAL (no fan-out).
-  // After this, every read above resolves from the settings object; the
-  // seed fallbacks only cover the pre-init frames (and equal what init
-  // writes). Idempotent: only missing keys are written.
-  const applyRef = useRef(applySettings);
-  applyRef.current = applySettings;
-  const syncedRefInit = useRef(syncedSettings);
-  syncedRefInit.current = syncedSettings;
-  useEffect(() => {
-    if (!cmp || !applyRef.current) return;
-    const cur = (syncedRefInit.current ?? {}) as Record<string, unknown>;
-    const missing: ViewportSettings = {};
-    if (!("compare.operation" in cur)) {
-      missing["compare.operation"] = seedMode === "split" ? "split" : seedKernel;
-    }
-    if (!("compare.split" in cur)) missing["compare.split"] = seedSplit;
-    if (Object.keys(missing).length > 0) applyRef.current(missing);
-  });
-
-  const modified =
-    viewMode !== descriptorMode || diffKernel !== descriptorKernel || splitPos !== descriptorSplit;
-
-  return {
-    viewMode,
-    setViewMode,
-    diffKernel,
-    setDiffKernel,
-    splitPos,
-    setSplitPos,
-    modified,
-  };
-}
 
 /**
  * Dispatch on `node.kind`, INSIDE the pane's `PlotCell` (so it can read
@@ -954,7 +830,7 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
   const inStackedGrid = useContext(InStackedGridContext);
   const inOverlay = useContext(InFullscreenOverlayContext);
   // The mode hook runs for EVERY node (rules-of-hooks); inert for non-compare.
-  const control = useCompareControl(
+  const control = useImageComparisonControl(
     node,
     paneSync?.syncedSettings,
     paneSync?.setSyncedSettings,

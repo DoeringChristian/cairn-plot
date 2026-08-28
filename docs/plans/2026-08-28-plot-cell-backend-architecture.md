@@ -35,6 +35,9 @@ Status: accepted design; implementation in progress
 - [x] Move image comparison planning and operand resolution out of the recursive
   host into `plots/image`, including baseline ordering, labels, stable leaf
   identity, redirect/content keys, float precision, and comparison packing.
+- [x] Move image comparison operation/divider control out of the host. It is a
+  projection of the cell's single settings object, with no renderer-local state
+  and no colormap changes when switching comparison operations.
 - [ ] Extract the reusable WebGPU facade and progressively flatten the remaining
   `lib/cairn-plot` tree.
 
