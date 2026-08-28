@@ -9,7 +9,7 @@ import type {
   RenderMode,
 } from "./backend/contracts.ts";
 import type { ViewportSettings } from "../../state/settings/viewport-settings.ts";
-import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
+import type { ReactBackendProps, ReactPlotBackend } from "../react-backend.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";

@@ -1,7 +1,7 @@
 import { createElement, lazy, type ComponentType } from "react";
 
 import { registerCoreRenderers } from "../plots/register-core.tsx";
-import type { ReactBackendProps, ReactPlotBackend } from "../host/react-backend.ts";
+import type { ReactBackendProps, ReactPlotBackend } from "../plots/react-backend.ts";
 import type { SettingsRecord } from "../plots/contracts.ts";
 import { eraseReactPlotBackend, registerReactPlotBackends } from "../plots/react-registry.ts";
 import type { ThreePlotKind, ThreePresentation } from "../plots/three/register.ts";
