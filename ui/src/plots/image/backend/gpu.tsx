@@ -52,7 +52,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../../types";
-import { applyColormap, colormapFloatLUT } from "../../../settings/colormaps/index";
+import { colormapFloatLUT } from "../../../settings/colormaps/index";
+import { applyColormap } from "../model/apply-colormap.ts";
 import { resolveColormapMode } from "../engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../model/index";
 import { HALF_ONE } from "../model/half";

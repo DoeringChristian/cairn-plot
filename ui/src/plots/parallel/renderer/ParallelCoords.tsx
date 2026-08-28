@@ -1,6 +1,6 @@
 import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import type { ParallelColumn, ParallelRow, ColormapName } from "../../types";
-import { normalizeValue } from "../../transforms/normalize";
+import { normalizeValue } from "../../../primitives/util/normalize";
 import { colormapColor } from "../../../settings/colormaps/sample";
 import { lutRow } from "../../../settings/colormaps/lut-sample";
 import { getColormapLUT } from "../../../settings/colormaps/lut";

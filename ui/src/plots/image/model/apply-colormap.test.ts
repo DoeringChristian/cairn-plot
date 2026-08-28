@@ -5,7 +5,7 @@
  * shim (node has no `ImageData` global).
  *
  *   node --experimental-strip-types --test \
- *     src/settings/colormaps/apply.test.ts
+ *     src/plots/image/model/apply-colormap.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -29,8 +29,8 @@ class FakeImageData {
 }
 (globalThis as { ImageData?: unknown }).ImageData = FakeImageData;
 
-const { applyColormap } = await import("./apply.ts");
-const { getColormapLUT } = await import("./lut.ts");
+const { applyColormap } = await import("./apply-colormap.ts");
+const { getColormapLUT } = await import("../../../settings/colormaps/lut.ts");
 
 function px(gray: number): InstanceType<typeof FakeImageData> {
   return new FakeImageData(new Uint8ClampedArray([gray, gray, gray, 255]), 1, 1);

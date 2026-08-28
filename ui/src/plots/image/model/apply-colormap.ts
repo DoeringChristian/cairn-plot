@@ -1,6 +1,6 @@
-import type { ColormapName } from "../../plots/types";
-import { getColormapLUT } from "./lut.ts";
-import { applyExposureOffset } from "../../plots/image/model/tonemap.ts";
+import type { ColormapName } from "../../../settings/colormaps/lut.ts";
+import { getColormapLUT } from "../../../settings/colormaps/lut.ts";
+import { applyExposureOffset } from "./tonemap.ts";
 
 /**
  * Apply a colormap LUT to an ImageData.

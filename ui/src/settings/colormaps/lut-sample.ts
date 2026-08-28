@@ -16,7 +16,7 @@
  * no-per-point-allocation property; `sampleLutByte` is the convenience triple
  * reader for the handful of non-hot callers.
  */
-import { normalizeScalar } from "../../plots/transforms/normalize.ts";
+import { normalizeScalar } from "../../primitives/util/normalize.ts";
 
 /**
  * Map a normalized position `t` to a colormap LUT row in `[0, 255]`.

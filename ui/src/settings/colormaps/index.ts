@@ -10,4 +10,3 @@ export {
   colormapFloatLUT,
   aliasColormap,
 } from "./lut";
-export { applyColormap } from "./apply";

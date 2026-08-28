@@ -65,7 +65,8 @@ import {
   getCachedImageData,
   setCachedImageData,
 } from "../model/index";
-import { applyColormap, getColormapLUT } from "../../../settings/colormaps/index";
+import { getColormapLUT } from "../../../settings/colormaps/index";
+import { applyColormap } from "../model/apply-colormap.ts";
 import { sampleLutByte } from "../../../settings/colormaps/lut-sample";
 import { clamp01 } from "../../../primitives/util/clamp";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);

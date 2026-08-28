@@ -6,7 +6,7 @@
  * extraction left `normalizeValue`'s behaviour unchanged.
  *
  *   node --experimental-strip-types --test \
- *     src/resources/transforms/normalize.test.ts
+ *     src/primitives/util/normalize.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -4,7 +4,7 @@ export { emaSmooth } from "./smooth";
 export { filterOutliers } from "./outlier";
 export { mergeToRows } from "./merge-rows";
 export { computeParetoFront, type ParetoDirection } from "./pareto";
-export { normalizeValue } from "./normalize";
+export { normalizeValue } from "../../primitives/util/normalize";
 export { resolveAxisDomain } from "./domain";
 export { parseNpy, type NpyArray } from "./parse-npy";
 export { parseNpz } from "./parse-npz";

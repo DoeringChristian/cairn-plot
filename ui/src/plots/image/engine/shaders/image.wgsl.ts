@@ -147,7 +147,7 @@
  * NEAREST entry and the byte-exact parity cases are unaffected. This is a
  * new GPU-only pipeline stage (no
  * existing CPU renderer applies a colormap at this point in the pipeline;
- * `colormaps/apply.ts`'s `applyColormap` operates on already-8-bit,
+ * `model/apply-colormap.ts`'s `applyColormap` operates on already-8-bit,
  * already-tone-mapped diff visualizations, a different use case), so its
  * "source of truth" is this shader + the matching JS reference the test
  * harness computes the SAME way, not an existing CPU renderer.

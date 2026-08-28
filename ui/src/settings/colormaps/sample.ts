@@ -5,7 +5,7 @@
  * (Scatter, ParallelCoords) so every renderer offers every colormap.
  * `t` is clamped to [0, 1].
  */
-import type { ColormapName } from "../../plots/types";
+import type { ColormapName } from "./lut.ts";
 import { getColormapLUT } from "./lut.ts";
 import { sampleLutByte } from "./lut-sample.ts";
 
