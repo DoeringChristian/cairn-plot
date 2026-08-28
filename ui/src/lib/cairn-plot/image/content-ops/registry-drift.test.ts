@@ -15,10 +15,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildContentOpWGSL, getContentOp, listDirectContentOps, CONTENT_OP_ID } from "./index.ts";
-import { imageWGSL } from "../../engine/shaders/image.wgsl.ts";
+import { imageWGSL } from "../../../../plots/image/engine/shaders/image.wgsl.ts";
 import { CONTENT_OPS } from "./ops.ts";
 import type { CachedContentOp } from "./registry.ts";
-import { DEFAULT_DIFF_COLORMAP, getDiffKernel } from "../../engine/kernels/index.ts";
+import { DEFAULT_DIFF_COLORMAP, getDiffKernel } from "../../../../plots/image/engine/kernels/index.ts";
 
 test("the image shader interpolates the registry-assembled content function", () => {
   const assembled = buildContentOpWGSL();

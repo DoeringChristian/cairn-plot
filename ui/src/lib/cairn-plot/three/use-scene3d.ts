@@ -8,7 +8,7 @@ import {
   type CameraState,
 } from "./camera-settings";
 import { poolAcquire, poolRelease, poolTouch } from "./context-pool";
-import { recordContextLossEvent } from "../engine/test-hooks";
+import { recordContextLossEvent } from "../../../plots/image/engine/test-hooks";
 
 /**
  * How long (ms) a viewer sits idle — no orbit/zoom, no data/color/size

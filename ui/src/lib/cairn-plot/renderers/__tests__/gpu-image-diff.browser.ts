@@ -33,11 +33,11 @@
  * the composited view.
  */
 import React from "react";
-import { isDeviceLostError } from "../../engine/webgpu/device";
+import { isDeviceLostError } from "../../../../plots/image/engine/webgpu/device";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
 import { urlSource } from "../image-backend";
-import { getSharedDevice } from "../../engine/device";
+import { getSharedDevice } from "../../../../plots/image/engine/device";
 import { createHarness, waitFor } from "../../testing/harness";
 import type { ViewportSettings } from "../../settings/viewport-settings.ts";
 import type { Colormap } from "../../types.ts";

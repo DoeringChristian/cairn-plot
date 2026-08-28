@@ -21,7 +21,7 @@
  * probe entirely. The failure path carries the addon's capability triage
  * (secure-context vs genuinely unsupported) unchanged.
  */
-import { getSharedDevice } from "../engine/device";
+import { getSharedDevice } from "../../../plots/image/engine/device";
 import {
   noWebgpuKind,
   reportCapabilityLimit,

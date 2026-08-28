@@ -70,7 +70,7 @@ import { sampleLutByte } from "../colormaps/lut-sample";
 import { clamp01 } from "../util/clamp";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
-import { resolveColormapMode } from "../engine/diff-cmap-mode";
+import { resolveColormapMode } from "../../../plots/image/engine/diff-cmap-mode";
 import { floatPixelReader, widenFloatPixels } from "../image/pixel-buffer.ts";
 import {
   toSdrTonemap,

@@ -39,7 +39,7 @@ import {
   listDiffKernelPublicNames,
   resolveDiffKernelId,
   getDiffKernel,
-} from "./engine/kernels/index.ts";
+} from "../../plots/image/engine/kernels/index.ts";
 import {
   COMPARE_VIEW_MODES,
   COMPARE_ALIGNS,

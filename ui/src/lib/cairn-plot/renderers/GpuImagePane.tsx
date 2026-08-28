@@ -53,7 +53,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../types";
 import { applyColormap, colormapFloatLUT } from "../colormaps";
-import { resolveColormapMode } from "../engine/diff-cmap-mode";
+import { resolveColormapMode } from "../../../plots/image/engine/diff-cmap-mode";
 import { loadImageData, getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../image";
 import { HALF_ONE } from "../image/half";
 import { floatValues, widenFloatPixels } from "../image/pixel-buffer.ts";
@@ -68,12 +68,12 @@ import {
   resolveDiffKernelId,
   DEFAULT_DIFF_COLORMAP,
   listDiffMenuModes,
-} from "../engine/kernels";
-import { computeCompareMapping, type CompareMapping } from "../engine/compare-align";
-import { computeHdrFlipExposures } from "../engine/kernels/hdr-flip-reference";
-import { formatSsim } from "../engine/ssim-metric";
-import type { DiffMetrics } from "../engine/image-engine";
-import type { DiffCacheEntry } from "../engine/diff-engine";
+} from "../../../plots/image/engine/kernels";
+import { computeCompareMapping, type CompareMapping } from "../../../plots/image/engine/compare-align";
+import { computeHdrFlipExposures } from "../../../plots/image/engine/kernels/hdr-flip-reference";
+import { formatSsim } from "../../../plots/image/engine/ssim-metric";
+import type { DiffMetrics } from "../../../plots/image/engine/image-engine";
+import type { DiffCacheEntry } from "../../../plots/image/engine/diff-engine";
 import { compareCaptions } from "../media-compare/compare-captions";
 import { buildCompareModeMenu } from "../media-compare/compare-mode-menu";
 import SplitDivider from "../media-compare/SplitDivider";
@@ -95,10 +95,10 @@ import {
   MAX_RETAINED_SOURCE_TEXTURES as POOL_MAX_RETAINED_SOURCE_TEXTURES,
   type PaneHandle,
   type SourceUpload,
-} from "../engine/pool";
+} from "../../../plots/image/engine/pool";
 import { webGpuEngine } from "../../../engines/webgpu/facade.ts";
-import { isPaintPhaseLogActive, recordPaintPhase } from "../engine/test-hooks";
-import type { ImageParams } from "../engine/image-engine";
+import { isPaintPhaseLogActive, recordPaintPhase } from "../../../plots/image/engine/test-hooks";
+import type { ImageParams } from "../../../plots/image/engine/image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
 // when the engine fails to activate/render (see `engineFailed` state below).
 // Safe to import here: this file only ever ships inside the gpu-image ADDON

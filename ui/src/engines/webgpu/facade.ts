@@ -1,4 +1,4 @@
-import type { Device } from "../../lib/cairn-plot/engine/types.ts";
+import type { Device } from "../../plots/image/engine/types.ts";
 import {
   getSharedWebGpuDevice,
   resetSharedWebGpuDevice,

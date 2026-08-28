@@ -22,7 +22,7 @@
  *    multi-pass kernel; all diff ops use the same display default.
  */
 import { registerContentOp, type ContentOp, type DirectContentOp, type CachedContentOp } from "./registry.ts";
-import { DEFAULT_DIFF_COLORMAP } from "../../engine/kernels/index.ts";
+import { DEFAULT_DIFF_COLORMAP } from "../../../../plots/image/engine/kernels/index.ts";
 
 /**
  * IDENTITY — the single-source passthrough. This is "where the source sample

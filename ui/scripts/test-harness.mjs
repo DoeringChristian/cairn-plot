@@ -4,7 +4,7 @@
  * Headless WebGPU parity-harness runner for cairn-plot.
  *
  * WHAT IT GUARDS. The `*.browser.ts` harnesses under
- * `src/lib/cairn-plot/engine/__tests__/` are WebGPU↔TS *parity proofs*: each
+ * `src/plots/image/engine/__tests__/` are WebGPU↔TS *parity proofs*: each
  * renders on the GPU (WGSL) and asserts the readback equals what the CPU/TS
  * source of truth computes — tonemap curves (image-pass), HDR-out activation
  * (hdr-output), FLIP/SSIM perceptual metrics, deep-EXR compositing, backend

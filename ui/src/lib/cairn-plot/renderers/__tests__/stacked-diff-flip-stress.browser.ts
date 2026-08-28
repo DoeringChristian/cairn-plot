@@ -36,7 +36,7 @@ import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
 import { urlSource, hdrSource, type HdrData } from "../image-backend";
-import { getSharedDevice } from "../../engine/device";
+import { getSharedDevice } from "../../../../plots/image/engine/device";
 import {
   startPaneRenderLog,
   stopPaneRenderLog,
@@ -45,7 +45,7 @@ import {
   getHueAnomalies,
   getDeepColorStats,
   type PaneRenderRecord,
-} from "../../engine/test-hooks";
+} from "../../../../plots/image/engine/test-hooks";
 import { createHarness, sleep, waitFor } from "../../testing/harness";
 
 const h = React.createElement;

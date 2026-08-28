@@ -24,7 +24,7 @@ export type {
   BindGroup,
   Surface,
   Device,
-} from "./engine/types";
+} from "../../plots/image/engine/types";
 
 // Types
 export type {

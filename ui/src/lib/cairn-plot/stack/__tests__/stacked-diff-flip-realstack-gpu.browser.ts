@@ -46,7 +46,7 @@ import { createElement } from "react";
 import { PlotApp } from "../../../../plot-bootstrap";
 import { registerCoreRenderers } from "../../../../plot-renderers";
 import type { PlotDescriptor } from "../../../../plot-descriptor";
-import { getSharedDevice } from "../../engine/device";
+import { getSharedDevice } from "../../../../plots/image/engine/device";
 import { registerRuntimeEntries } from "../../store/runtime-store";
 import {
   startPaneRenderLog,
@@ -59,7 +59,7 @@ import {
   isEncodingGenerationMismatch,
   type PaneRenderRecord,
   type PaintPhaseRecord,
-} from "../../engine/test-hooks";
+} from "../../../../plots/image/engine/test-hooks";
 import {
   getGlobalSelectionStore,
   __resetGlobalSelectionStoreForTest,

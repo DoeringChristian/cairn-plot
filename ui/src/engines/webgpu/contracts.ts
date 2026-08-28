@@ -2,7 +2,7 @@ import type {
   Capabilities,
   Device,
   Surface,
-} from "../../lib/cairn-plot/engine/types.ts";
+} from "../../plots/image/engine/types.ts";
 import type { WebGpuRhi } from "./rhi.ts";
 
 export interface WebGpuSurfaceOptions {

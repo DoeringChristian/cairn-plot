@@ -20,12 +20,12 @@
  * is kept ONLY as an advisory NOTE (never a FAIL) for local eyes.
  */
 import React from "react";
-import { isDeviceLostError } from "../../engine/webgpu/device";
+import { isDeviceLostError } from "../../../../plots/image/engine/webgpu/device";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../GpuImagePane";
 import { urlSource } from "../image-backend";
-import { getSharedDevice } from "../../engine/device";
-import { getDiffComputeCount } from "../../engine/diff-engine";
+import { getSharedDevice } from "../../../../plots/image/engine/device";
+import { getDiffComputeCount } from "../../../../plots/image/engine/diff-engine";
 import { createHarness, waitFor } from "../../testing/harness";
 
 const h = React.createElement;

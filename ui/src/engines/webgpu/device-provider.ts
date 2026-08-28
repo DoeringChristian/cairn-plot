@@ -1,4 +1,4 @@
-import type { Device } from "../../lib/cairn-plot/engine/types.ts";
+import type { Device } from "../../plots/image/engine/types.ts";
 
 export interface DisposableDevice { destroy(): void }
 
@@ -30,7 +30,7 @@ async function createPageDevice(): Promise<Device> {
       "cairn-plot WebGPU engine: navigator.gpu is unavailable; select a different plot backend",
     );
   }
-  const { createWebGPUDevice } = await import("../../lib/cairn-plot/engine/webgpu/device.ts");
+  const { createWebGPUDevice } = await import("../../plots/image/engine/webgpu/device.ts");
   return createWebGPUDevice();
 }
 
