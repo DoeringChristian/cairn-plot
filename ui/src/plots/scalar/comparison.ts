@@ -1,8 +1,10 @@
 import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
 import type { ComparisonPlan, ComparisonRequest } from "../contracts.ts";
+import type { Series } from "../../lib/cairn-plot/types.ts";
+import type { ScalarPresentation } from "./types.ts";
 
 export type ScalarSpec = Extract<DataSpec, { kind: "inline" }>;
-export type ScalarPresentation = Record<string, unknown>;
+export type { ScalarPresentation } from "./types.ts";
 
 export interface ScalarComparisonPlan {
   readonly operands: readonly ScalarSpec[];
@@ -45,15 +47,12 @@ export function planScalarComparison(
   };
 }
 
-function prefixedSeries(value: ScalarPresentation, prefix: string, side: string): unknown[] {
-  const series = Array.isArray(value.series) ? value.series : [];
-  return series.map((entry, index) => {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
-    const record = entry as Record<string, unknown>;
-    const key = typeof record.key === "string" ? record.key : String(index);
-    const label = typeof record.label === "string" ? record.label : key;
-    return { ...record, key: `${side}:${key}`, label: `${prefix} · ${label}` };
-  });
+function prefixedSeries(value: ScalarPresentation, prefix: string, side: string): Series[] {
+  return value.series.map((series) => ({
+    ...series,
+    key: `${side}:${series.key}`,
+    label: `${prefix} · ${series.label}`,
+  }));
 }
 
 /** Overlay both operands as uniquely keyed series in one scalar presentation. */
@@ -61,7 +60,8 @@ export function overlayScalarPresentations(
   plan: ScalarComparisonPlan,
   presentations: readonly ScalarPresentation[],
 ): ScalarPresentation {
-  const first = presentations[0] ?? {};
+  const first = presentations[0];
+  if (!first) throw new Error("cairn-plot: scalar comparison resolved no operands");
   return {
     ...first,
     series: presentations.flatMap((presentation, index) =>

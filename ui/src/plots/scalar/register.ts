@@ -2,7 +2,7 @@ import { createElement, type ComponentType } from "react";
 
 import type { DataSource } from "../../lib/cairn-plot/store/data-sources.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../host/react-backend.ts";
-import { definePlot, type SettingsRecord } from "../contracts.ts";
+import { definePlot } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";
 import {
@@ -13,20 +13,25 @@ import {
   type ScalarPresentation,
   type ScalarSpec,
 } from "./comparison.ts";
+import {
+  projectScalarSettings,
+  scalarPresentation,
+  type ScalarSettings,
+} from "./types.ts";
 
 /** Register scalar resolution, overlay comparison, and its current React backend. */
 export function ensureScalarPlotType(
   View: ComponentType<Record<string, unknown>>,
-  resolve: (spec: ScalarSpec, source: DataSource) => Promise<ScalarPresentation>,
+  resolve: (spec: ScalarSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   if (getPlotType("scalar")) return;
-  const backend: ReactPlotBackend<ScalarPresentation, SettingsRecord> = {
+  const backend: ReactPlotBackend<ScalarPresentation, ScalarSettings> = {
     id: "scalar-react",
     family: "scalar",
     technology: "dom",
     supports: () => ({ supported: true, priority: 1 }),
     canReuse: () => true,
-    component({ input }: ReactBackendProps<ScalarPresentation, SettingsRecord>) {
+    component({ input }: ReactBackendProps<ScalarPresentation, ScalarSettings>) {
       return createElement(View, {
         ...input.presentation,
         syncedSettings: input.settings,
@@ -38,7 +43,7 @@ export function ensureScalarPlotType(
   const definition = definePlot<
     ScalarSpec,
     ScalarPresentation,
-    SettingsRecord,
+    ScalarSettings,
     ScalarPresentation,
     ScalarComparisonPlan
   >({
@@ -46,9 +51,9 @@ export function ensureScalarPlotType(
     data: { validate: validateScalarData },
     settings: {
       defaults: () => ({}),
-      project: (settings) => ({ ...settings }),
+      project: projectScalarSettings,
     },
-    resolve: (spec, context) => resolve(spec, context.source),
+    resolve: async (spec, context) => scalarPresentation(await resolve(spec, context.source)),
     present: (content) => content,
     comparison: {
       presentations: [{ id: "overlay", label: "Overlay", minOperands: 2 }],
@@ -65,7 +70,7 @@ export function ensureScalarPlotType(
       plan: planScalarComparison,
       async resolve(plan, context) {
         const presentations = await Promise.all(
-          plan.operands.map((operand) => resolve(operand, context.source)),
+          plan.operands.map(async (operand) => scalarPresentation(await resolve(operand, context.source))),
         );
         return overlayScalarPresentations(plan, presentations);
       },

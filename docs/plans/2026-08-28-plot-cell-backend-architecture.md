@@ -59,6 +59,9 @@ Status: accepted design; implementation in progress
   implement its `overlay` comparison by combining uniquely keyed series into
   one scalar backend presentation. Scalar zoom/pan now projects through the
   cell's `chart.domainX`/`chart.domainY` settings when hosted.
+- [x] Replace scalar's type-erased presentation/settings bags with concrete
+  `ScalarPresentation` and `ScalarSettings` contracts, checked resolved-series
+  validation, and key-scoped chart-domain projection.
 - [x] Generalize comparison authoring and capability planning to ordered
   `operands`, plot-declared `reference`/`all` strategies, optional reference,
   and one-or-many planned outputs. Normalize legacy `a`/`b` at the registry

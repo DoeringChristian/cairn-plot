@@ -10,12 +10,21 @@ export interface RegisteredReactPlotType {
 const registrations = new Map<string, RegisteredReactPlotType>();
 
 /** Register semantic definition and same-root host backends as one ownership act. */
-export function registerReactPlotType(registration: RegisteredReactPlotType): void {
+export function registerReactPlotType<
+  TPresentation,
+  TSettings extends SettingsRecord,
+>(registration: {
+  readonly definition: RegisteredPlotDefinition;
+  readonly backends: readonly ReactPlotBackend<TPresentation, TSettings>[];
+}): void {
   if (registrations.has(registration.definition.kind)) {
     throw new Error(`cairn-plot: duplicate React plot type ${JSON.stringify(registration.definition.kind)}`);
   }
   registerPlotType(registration.definition);
-  registrations.set(registration.definition.kind, registration);
+  registrations.set(
+    registration.definition.kind,
+    registration as unknown as RegisteredReactPlotType,
+  );
 }
 
 export function getReactPlotType(kind: string): RegisteredReactPlotType | undefined {

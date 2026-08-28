@@ -20,14 +20,14 @@ test("scalar comparison overlays uniquely keyed, labelled series", () => {
   const result = overlayScalarPresentations(
     plan,
     [
-      { series: [{ key: "loss", label: "Loss", points: [] }], xAxis: "step" },
-      { series: [{ key: "loss", label: "Loss", points: [] }] },
+      { series: [{ key: "loss", label: "Loss", color: "#fff", points: [] }], xAxis: "step" },
+      { series: [{ key: "loss", label: "Loss", color: "#000", points: [] }] },
     ],
   );
   assert.equal(result.xAxis, "step");
   assert.deepEqual(result.series, [
-    { key: "0:loss", label: "train · Loss", points: [] },
-    { key: "1:loss", label: "validation · Loss", points: [] },
+    { key: "0:loss", label: "train · Loss", color: "#fff", points: [] },
+    { key: "1:loss", label: "validation · Loss", color: "#000", points: [] },
   ]);
 });
 

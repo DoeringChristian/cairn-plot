@@ -159,7 +159,7 @@ function resolveImageRenderer(mode: RenderMode): ImageBackend {
   return gate === "ready" ? GpuImagePane : CpuImagePane;
 }
 
-// --- ScalarPlot: owns viewport + promotedSeries interactive state ----------
+// --- ScalarPlot: cell-owned viewport + local promoted-series presentation --
 function ScalarPlotStandalone(p: P) {
   const [localViewport, setLocalViewport] = useState<Viewport>(
     p.viewport ?? { xMin: null, xMax: null, yMin: null, yMax: null },
