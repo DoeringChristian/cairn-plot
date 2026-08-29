@@ -450,8 +450,8 @@ def build_report() -> cp.Report:
         "tone-maps + runs LDR-FLIP at each exposure, and takes the per-pixel "
         "maximum — so it catches errors that would clip out of the display range "
         "at one exposure. Switch the control to **SDR** to evaluate one "
-        "display-mapped image. The **EXP** control caps the automatically derived "
-        "HDR exposure count; HOME restores the complete automatic sweep. "
+        "display-mapped image. HDR always uses the complete exposure sweep "
+        "derived from the reference luminance range. "
         "(FLIP comparison is GPU-only.)"
     )
     hdr_ref = _hdr_image()

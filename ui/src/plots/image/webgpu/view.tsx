@@ -621,7 +621,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // Cheap pure derivations: FLIP's concrete backend implementation follows its
   // explicit HDR/SDR setting. Source storage has already been normalized away.
   const flipMode: FlipMode = synced?.["compare.flipMode"] ?? "hdr";
-  const flipMaxExposures = synced?.["compare.flipMaxExposures"] ?? null;
   const resolvedOperationId = diffMode
     ? resolveComparisonOperationId(comparisonOperationId, flipMode)
     : comparisonOperationId;
@@ -870,10 +869,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   );
   const changeFlipMode = useCallback(
     (mode: FlipMode) => publishSettings({ "compare.flipMode": mode }),
-    [publishSettings],
-  );
-  const changeFlipMaxExposures = useCallback(
-    (count: number) => publishSettings({ "compare.flipMaxExposures": Math.max(2, Math.round(count)) }),
     [publishSettings],
   );
   const changeDiffEncoding = useCallback(
@@ -1342,17 +1337,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return computeHdrFlipExposures(scene.pixels, scene.width, scene.height, 4);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diffMode, comparisonOperationId, backendProps.source, uploadVersion]);
-  const hdrExposures = useMemo(() => {
-    if (!automaticHdrExposures) return null;
-    if (flipMaxExposures == null || !Number.isFinite(flipMaxExposures)) return automaticHdrExposures;
-    return {
-      ...automaticHdrExposures,
-      numExposures: Math.min(
-        automaticHdrExposures.numExposures,
-        Math.max(2, Math.round(flipMaxExposures)),
-      ),
-    };
-  }, [automaticHdrExposures, flipMaxExposures]);
+  const hdrExposures = automaticHdrExposures;
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +
@@ -2472,21 +2457,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // active encoding is a CURVE (every curve respects `P` as its ceiling; the
       // paramless `normal` remap and colormap LUTs have no peak). γ rides the
       // active encoding's manifest (only the Gamma curve declares it).
-      extraSliders={diffMode
-        ? comparisonOperationId === "flip" && flipMode === "hdr" && automaticHdrExposures
-          ? [{
-              id: "flip-max-exposures",
-              label: "EXP",
-              title: "Maximum HDR-FLIP exposure samples. HOME restores the complete automatically derived exposure sweep.",
-              min: 2,
-              max: Math.max(2, automaticHdrExposures.numExposures),
-              step: 1,
-              value: hdrExposures?.numExposures ?? automaticHdrExposures.numExposures,
-              onChange: changeFlipMaxExposures,
-              format: (value: number) => String(Math.round(value)),
-            }]
-          : []
-        : [
+      extraSliders={diffMode ? [] : [
         // PEAK is the CURVE family's HDR ceiling — hidden for the linear scalar DATA
         // path (a scalar as data has no tone-map ceiling; its raw value rides the
         // output-encode unclamped), the `normal` remap, and colormap LUTs.

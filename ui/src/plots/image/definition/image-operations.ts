@@ -5,7 +5,6 @@ export type ImageOperationParameter =
   | "split"
   | "ppd"
   | "flip-mode"
-  | "max-exposures"
   | "exposure-min"
   | "exposure-max";
 
@@ -40,7 +39,7 @@ export const IMAGE_OPERATIONS: readonly ImageOperationDefinition[] = [
   pointwise("relative_signed", "Relative Signed", "rel_signed", "signed"),
   pointwise("relative_squared", "Relative Squared", "rel_square", "nonnegative"),
   { id: "split", label: "Split", inputs: 2, output: { arity: 3, domain: "light" }, cache: "never", parameters: ["split"] },
-  { id: "flip", label: "FLIP", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "flip-mode", "max-exposures"] },
+  { id: "flip", label: "FLIP", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "flip-mode"] },
   { id: "hdr-flip", label: "HDR-FLIP", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "exposure-min", "exposure-max"] },
   { id: "flip-sdr", label: "FLIP SDR implementation", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd"] },
   { id: "ssim", label: "SSIM", publicName: "ssim", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: [] },
