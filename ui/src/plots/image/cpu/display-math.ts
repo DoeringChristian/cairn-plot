@@ -37,7 +37,7 @@ export function computeDataIndex(value: number, parameters: DisplayParameters): 
 }
 
 export function turboDataIndex(value: number): number {
-  return clamp01((Math.log2(Math.max(value, 0.03125)) + 5) / 10);
+  return clamp01(Math.log2(value + 0.03125) / 10 + 0.5);
 }
 
 export function signedAnalyticColor(value: number): [number, number, number] {

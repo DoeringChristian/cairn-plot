@@ -66,7 +66,7 @@ const turbo: WebGpuDisplayOperation = {
   ]),
     index: {
       wgsl: `
-        return clamp((log2(max(value, 0.03125)) + 5.0) / 10.0, 0.0, 1.0);
+        return clamp(log2(value + 0.03125) / 10.0 + 0.5, 0.0, 1.0);
       `,
     },
   },

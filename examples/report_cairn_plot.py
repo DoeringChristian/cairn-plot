@@ -301,11 +301,9 @@ def build_report() -> cp.Report:
         ]
     )
     rep.md(
-        "### All 6 diff submodes — stack-first grid\n\n"
-        "This grid starts in **stack** layout, exercising one shared settings "
-        "store and retained image surface; use the header toggle to show the "
-        "six comparisons as a grid. Grid order is **signed · absolute · squared**, "
-        "then **relative_signed · relative_absolute · relative_squared**. "
+        "### All 6 diff submodes\n\n"
+        "Grid order is **signed · absolute · squared**, then "
+        "**relative_signed · relative_absolute · relative_squared**. "
         "Diverging errors use the red-blue map; magnitude errors use "
         "turbo / red-green."
     )
@@ -333,8 +331,7 @@ def build_report() -> cp.Report:
                     cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_square", colormap="red-green",
                 ),
             ],
-        ],
-        initial_layout="stack",
+        ]
     )
 
     # ── perceptual diff — FLIP ───────────────────────────────────────────────
@@ -365,19 +362,17 @@ def build_report() -> cp.Report:
     rep.grid(
         [
             [
-                # No authored colormap → each diff shows its KERNEL DEFAULT (flip/ssim
-                # → magma, abs → turbo). The colormap is the viewport's ONE display
-                # encoding, so double-click (HOME) on a pane resets it to that pane's
-                # visible-diff default (magma/turbo per kernel); a multi-select colormap
-                # pick mirrors across selected panes and is kept until HOME.
                 cp.Compare(
                     cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
+                    colormap="turbo",
                 ),
                 cp.Compare(
                     cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="ssim",
+                    colormap="turbo",
                 ),
                 cp.Compare(
                     cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="abs",
+                    colormap="turbo",
                 ),
             ]
         ]
