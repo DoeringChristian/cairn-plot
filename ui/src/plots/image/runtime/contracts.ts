@@ -1,18 +1,8 @@
-/**
- * `renderers/image-backend.ts` — the ONE place the interchangeable image
- * BACKEND contract lives.
+/** Shared input contract consumed by both image backends.
  *
- * cairn-plot ships two interchangeable image-rendering backends that accept the
- * EXACT SAME props and are chosen upstream by a render mode:
- *   - `renderers/CpuImagePane.tsx` — the 2D-canvas / CSS-transform CPU backend
- *     (unifies the former `ImagePane` SDR pane + `HdrImagePane` float-HDR pane).
- *   - `renderers/GpuImagePane.tsx` — the WebGPU engine backend.
- * Both are `(props: ImageBackendInput) => JSX.Element` and are picked per mount
- * by `plot-renderers.tsx`'s `resolveImageRenderer(mode)` (the "backends used
- * upstream" seam). This module holds the shared prop union, the `isFloatSurfaceProps`
- * discriminant, and the user-settable render-mode resolution so BOTH backends
- * (and the seam) import them from one spot with no import cycle onto either
- * pane component.
+ * The generic host selects a complete backend object; the image adapter then
+ * projects one semantic presentation and settings command port into this
+ * render-surface input. Neither backend owns settings or selection policy.
  */
 import { useMemo } from "react";
 import type {

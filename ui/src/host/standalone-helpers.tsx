@@ -1,13 +1,10 @@
 /**
- * Tiny standalone-render helpers shared by BOTH the core renderer wrappers
- * (`plot-renderers.tsx`) and the Plotly `figure` addon wrapper
- * (`plot-figure-renderer.tsx`).
+ * Tiny standalone-render helpers shared by core plot backends and the optional
+ * Plotly figure backend.
  *
  * It is deliberately dependency-light (React + a `<style>` string only): the
- * figure addon imports `ChartBox` from here, and pulling in `plot-renderers`
- * would drag the 2D renderers (recharts et al.) into the addon IIFE, defeating
- * the "addon = Plotly + Figure ONLY" goal. Keep this module free of any
- * renderer imports.
+ * Keep this module free of concrete backend imports so optional bundles do not
+ * acquire core chart implementations accidentally.
  */
 import React from "react";
 import { ChartFillContext } from "../layout/chart-fill.ts";

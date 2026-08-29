@@ -59,10 +59,9 @@ import type {
  * Resolve the UNIFIED engine image pane (`GpuImagePane`, statically in core
  * since the addon fold) — only once the device gate confirms it. `null` keeps
  * the CPU `MediaComparePane`/`ImagePane` diff path — the required fallback
- * (probe pending, host opted out, or WebGPU unavailable). Same gate
- * `plot-renderers.tsx`'s `resolveImageRenderer` uses, so cross-type compare
- * consumers (`ImageViewStatePane` / `OffscreenComparePanes`) render the SAME
- * unified pane a descriptor image-compare leaf does.
+ * (probe pending, host opted out, or WebGPU unavailable). It consumes the same
+ * backend availability signal as the generic host, so offscreen cross-type
+ * comparison and descriptor-driven image comparison agree on availability.
  */
 function resolveGpuImagePane(): ImageBackendView | null {
   if (typeof window === "undefined") return null;

@@ -482,7 +482,7 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
     boxes: () => threeGate("boxes"),
 
     registerRuntime(entries) {
-      // Lazy import to avoid pulling the viewport barrel into every builder call.
+      // Lazy import keeps the mount implementation out of descriptor-only use.
       void import("../../resources/data/runtime-store.ts").then((m) => m.registerRuntimeEntries(entries));
     },
   };

@@ -89,10 +89,8 @@ export {
 } from "../runtime/compare-compositor";
 export type { ResolvedFloatImage } from "../definition/content.ts";
 
-// NB: `GpuComparePane` is DELETED (content-op unification, Phase 4). Every
-// image-compare now renders on the unified `GpuImagePane` via `compareSource`
-// (`renderers/image-backend.ts`); `compositor.tsx` resolves it through the
-// `__cairnPlotGpuImagePane` seam the gpu-image addon injects.
+// Image comparisons render through the same image backend input as ordinary
+// images. The compositor exports below remain for offscreen/cross-type capture.
 
 export {
   migrateLegacyMode,
