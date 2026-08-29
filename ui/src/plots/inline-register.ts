@@ -50,7 +50,6 @@ export function ensureInlinePlotType<TPresentation, TSettings extends SettingsRe
     settings: registration.settings,
     resolve: async (spec) => registration.parse({ ...spec.props }),
     present: (content) => content,
-    backends: [],
   });
   registerReactPlotType({ definition, backends: [backend] });
 }

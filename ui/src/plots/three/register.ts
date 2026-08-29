@@ -63,7 +63,6 @@ export function ensureThreePlotTypes(): void {
           return { item: { arrays, meta: spec.meta } };
         },
         present: threePresentation,
-        backends: [],
       }),
       backends: [],
     });

@@ -2,7 +2,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DataSpec } from "../../../packages/spec/src/spec.ts";
-import type { PlotBackend } from "../backends/contracts.ts";
 import { definePlot, type SettingsRecord } from "./contracts.ts";
 import {
   clearPlotTypesForTest,
@@ -15,15 +14,6 @@ import {
 
 type InlineSpec = Extract<DataSpec, { kind: "inline" }>;
 type TestSettings = SettingsRecord & { value: number };
-
-const backend: PlotBackend<number, TestSettings> = {
-  id: "test",
-  family: "test",
-  technology: "dom",
-  supports: () => ({ supported: true }),
-  canReuse: () => true,
-  mount: () => ({ update() {}, destroy() {} }),
-};
 
 function testDefinition() {
   return definePlot<InlineSpec, number, TestSettings, number>({
@@ -40,7 +30,6 @@ function testDefinition() {
     },
     resolve: async (spec) => Number(spec.props.value ?? 0),
     present: (content) => content,
-    backends: [backend],
   });
 }
 

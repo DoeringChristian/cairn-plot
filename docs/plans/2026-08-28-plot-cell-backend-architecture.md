@@ -132,7 +132,7 @@ The implementation has no public or first-class `Viewport` object. Its concrete
 runtime boundary is a persistent `PlotCell`:
 
 ```text
-PlotSpec -> layout -> PlotCell -> SurfaceHost -> plot backend -> engine
+PlotSpec -> layout -> PlotCell -> BackendOutlet -> plot backend -> engine
 ```
 
 A cell owns one settings store and one or more retained backend surfaces. A
@@ -160,11 +160,11 @@ slots.
 ```text
 ui/src/
   public/       supported browser API and session persistence seam
-  host/         PlotSurface, PlotCell, SurfaceHost, backend lifecycle
+  host/         PlotSurface, PlotCell, BackendOutlet, backend lifecycle
   layout/       grid, stack, compare placement and sizing
   state/        settings stores, links, selection, commands, sessions
   plots/        plot definitions and their concrete backends
-  backends/     shared imperative backend contracts only
+  backends/     shared same-root backend contracts only
   engines/      reusable WebGPU and Three machinery
   resources/    data sources, resolution, global caches, leases
   settings/     schemas, defaults, validation, generated controls
@@ -398,7 +398,7 @@ state while an asynchronous load is pending.
 2. Add the global lease-aware LRU cache and scheduling seams with unit tests.
 3. Extract grid, stack, and persistent `PlotCell` ownership from
    `plot-node.tsx` without changing behavior.
-4. Wrap existing renderers in imperative backend adapters; do not rewrite them.
+4. Wrap existing renderers in same-root backend adapters; do not rewrite them.
 5. Move image resolution and presentation composition into the image definition.
 6. Make single/split/difference presentations reuse one image family instance,
    with browser identity and paint-atomic tests.

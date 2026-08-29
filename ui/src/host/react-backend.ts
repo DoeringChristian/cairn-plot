@@ -1,6 +1,9 @@
 import {
   createElement,
+  useEffect,
+  useMemo,
   useRef,
+  useSyncExternalStore,
   type ReactElement,
 } from "react";
 
@@ -49,6 +52,16 @@ export function ReactBackendOutlet<TPresentation, TSettings>({
   commands,
   invalidation,
 }: ReactBackendOutletProps<TPresentation, TSettings>): ReactElement {
+  const subscribeSupport = useMemo(() => (listener: () => void) => {
+    const cleanups = backends.map((backend) => backend.subscribeSupport?.(listener)).filter(Boolean) as Array<() => void>;
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [backends]);
+  const supportSnapshot = useMemo(() => () =>
+    backends.map((backend) => backend.supportSnapshot?.() ?? 0).join("|"), [backends]);
+  useSyncExternalStore(subscribeSupport, supportSnapshot, supportSnapshot);
+  useEffect(() => {
+    for (const backend of backends) backend.prepare?.();
+  }, [backends]);
   const selected = selectReactBackend(backends, presentation, environment);
   const selectionRef = useRef<ReactBackendSelection<TPresentation, TSettings>>();
   const next = advanceReactBackendSelection(selectionRef.current, selected, presentation);

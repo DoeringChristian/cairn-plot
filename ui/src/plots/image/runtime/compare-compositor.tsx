@@ -4,7 +4,7 @@ import {
   ensureGpuImageProbe,
   gpuImageGateState,
   subscribeGpuImageGate,
-} from "./gpu-image-gate";
+} from "../webgpu/availability";
 import { InFullscreenOverlayContext } from "../../../primitives/components/FullscreenOverlayShell";
 import { InStackedGridContext } from "../../../layout/stack/stack-context";
 import { usePublishNaturalSize } from "../../../layout/natural-size";

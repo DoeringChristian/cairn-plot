@@ -21,7 +21,6 @@ export function ensureFigurePlotType(): void {
       settings: { defaults: () => ({}), project: () => ({}) },
       resolve: async (spec) => ({ ...spec.props }),
       present: (content) => content,
-      backends: [],
     }),
     backends: [],
   });

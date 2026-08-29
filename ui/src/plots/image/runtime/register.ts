@@ -7,7 +7,6 @@ import type { ReactBackendProps, ReactPlotBackend } from "../../../backends/reac
 import { definePlot, type SettingsRecord } from "../../contracts.ts";
 import { getPlotType } from "../../registry.ts";
 import { registerReactPlotType } from "../../react-registry.ts";
-import type { ReactPlotViewProps } from "../../react-view.ts";
 import {
   planImageComparison,
   type ImageComparisonPlan,
@@ -18,6 +17,9 @@ import {
   TONEMAP_GAMMA_DEFAULT,
 } from "../runtime/tonemap.ts";
 import { resolveImageData } from "../resources/resolve-data.ts";
+import type { ImageBackend } from "../backend.ts";
+import type { ImageBackendView } from "./contracts.ts";
+import type { ImagePlotViewProps } from "./view.tsx";
 
 type ImageSpec = Extract<DataSpec, { kind: "image" | "imghdr" | "url" }>;
 export type { ImagePresentation } from "../runtime/presentation.ts";
@@ -64,23 +66,34 @@ function validateImageData(value: DataSpec): ImageSpec {
 
 /** Register the existing proven ImageView as the first typed production kind. */
 export function ensureImagePlotType(
-  View: ComponentType<ReactPlotViewProps<ImagePresentation, ImageSettings>>,
+  View: ComponentType<ImagePlotViewProps>,
+  imageBackends: readonly ImageBackend<ImageBackendView>[],
 ): void {
   if (getPlotType("image")) return;
-  const backend: ReactPlotBackend<ImagePresentation, ImageSettings> = {
-    id: "image-react",
-    family: "image",
-    technology: "canvas2d",
-    supports: () => ({ supported: true, priority: 1 }),
-    canReuse: () => true,
-    component({ input }: ReactBackendProps<ImagePresentation, ImageSettings>) {
-      return createElement(View, {
-        presentation: input.presentation,
-        settings: input.settings,
-        commands: input.commands,
-      });
-    },
-  };
+  const cpu = imageBackends.find(({ id }) => id === "cpu");
+  const backends: ReactPlotBackend<ImagePresentation, ImageSettings>[] = imageBackends.map(
+    (imageBackend) => ({
+      id: `image-${imageBackend.id}`,
+      family: "image",
+      technology: imageBackend.technology,
+      prepare: imageBackend.prepare,
+      subscribeSupport: imageBackend.subscribeSupport,
+      supportSnapshot: imageBackend.supportSnapshot,
+      supports(_presentation, environment) {
+        return imageBackend.supports(environment);
+      },
+      canReuse: () => true,
+      component({ input }: ReactBackendProps<ImagePresentation, ImageSettings>) {
+        return createElement(View, {
+          presentation: input.presentation,
+          settings: input.settings,
+          commands: input.commands,
+          backend: imageBackend,
+          failureFallback: imageBackend.id === "webgpu" ? cpu : undefined,
+        });
+      },
+    }),
+  );
   const definition = definePlot<
     ImageSpec,
     Record<string, unknown>,
@@ -124,9 +137,6 @@ export function ensureImagePlotType(
         return imagePresentation(await resolveImageComparisonPair(plan.reference, plan.foreground, context.source));
       },
     },
-    // The current adapter is same-root React. Imperative image backends can be
-    // added after renderer internals no longer depend on React lifecycle.
-    backends: [],
   });
-  registerReactPlotType({ definition, backends: [backend] });
+  registerReactPlotType({ definition, backends });
 }

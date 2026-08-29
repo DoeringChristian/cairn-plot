@@ -84,7 +84,7 @@ The image plot is the reference implementation of the split:
 ```text
 plots/image/
   definition/  fields, settings, operation manifests, comparison capability
-  runtime/     host adapter, settings projection, backend selection
+  runtime/     host adapter and settings/presentation projection
   resources/   decode, resolution, and cache helpers
   cpu/         CPU and Canvas implementations of image/display operations
   webgpu/      WebGPU implementations, shaders, pipelines, and retained surfaces

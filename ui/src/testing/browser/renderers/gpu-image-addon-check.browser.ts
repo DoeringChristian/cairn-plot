@@ -20,7 +20,7 @@ import {
   gpuImageGateState,
   subscribeGpuImageGate,
   __resetGpuImageGateForTest,
-} from "../../../plots/image/runtime/gpu-image-gate";
+} from "../../../plots/image/webgpu/availability";
 import { createHarness, waitFor } from "../../harness";
 
 declare global {

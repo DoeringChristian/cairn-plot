@@ -7,6 +7,8 @@ import { ensureHistogramPlotType } from "./histogram/register.ts";
 import { HistogramPlotView } from "./histogram/view.tsx";
 import { ensureImagePlotType } from "./image/runtime/register.ts";
 import { ImagePlotView } from "./image/runtime/view.tsx";
+import { cpuImageBackend } from "./image/cpu/backend.ts";
+import { webGpuImageBackend } from "./image/webgpu/backend.ts";
 import { ensureParallelPlotType } from "./parallel/register.ts";
 import { ParallelPlotView } from "./parallel/view.tsx";
 import { ensureScalarPlotType } from "./scalar/register.ts";
@@ -19,7 +21,7 @@ import { ensureThreePlotTypes } from "./three/register.ts";
 import { ensureFigurePlotType } from "./figure/register.ts";
 
 export function registerCoreRenderers(): void {
-  ensureImagePlotType(ImagePlotView);
+  ensureImagePlotType(ImagePlotView, [webGpuImageBackend, cpuImageBackend]);
   ensureScalarPlotType(ScalarPlotView);
   ensureScatterPlotType(ScatterPlotView);
   ensureBarPlotType(BarPlotView);

@@ -73,7 +73,6 @@ export function ensureScalarPlotType(
         return overlayScalarPresentations(plan, presentations);
       },
     },
-    backends: [],
   });
   registerReactPlotType({ definition, backends: [backend] });
 }

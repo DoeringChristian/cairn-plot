@@ -6,8 +6,24 @@ import { clearPlotTypesForTest, planComparison, requirePlotType } from "../../re
 import { clearReactPlotTypesForTest, getReactPlotType } from "../../react-registry.ts";
 import { ensureImagePlotType, imagePresentation } from "./register.ts";
 import { expandImageComparison } from "./comparison-plan.ts";
+import type { ImagePlotViewProps } from "./view.tsx";
+import type { ImageBackend } from "../backend.ts";
+import type { ImageBackendView } from "./contracts.ts";
 
-const View = () => null;
+const View = (_props: ImagePlotViewProps) => null;
+const backend: ImageBackend<ImageBackendView> = {
+  id: "test",
+  technology: "canvas2d",
+  priority: 1,
+  View: (() => null) as ImageBackendView,
+  supports: () => ({ supported: true, priority: 1 }),
+  capabilities: {
+    imageOperations: [],
+    displayOperations: [],
+    supportsImageOperation: () => false,
+    supportsDisplayOperation: () => false,
+  },
+};
 
 test("image presentation validates its typed decoded-source boundary", () => {
   const source = { dtype: "uint8" as const, url: "data:image/png;base64," };
@@ -18,7 +34,7 @@ test("image presentation validates its typed decoded-source boundary", () => {
 test("image is exclusively owned by the typed plot registry", () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureImagePlotType(View);
+  ensureImagePlotType(View, [backend]);
   assert.equal(requirePlotType("image").kind, "image");
   assert.ok(getReactPlotType("image"));
   const comparison = requirePlotType("image").comparison;

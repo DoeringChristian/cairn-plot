@@ -3,8 +3,8 @@
  * keyboard-driven tab strip, plus a live normal⇄stacked toggle on the grid.
  * Verifies: the toggle exists (the reported "no such button"); stacked shows one
  * pane + N tabs; arrows / hjkl / number / letter switch the active tab; clicking
- * the toggle flips modes; a single-child grid has no toggle. CPU float panes —
- * no WebGPU needed.
+ * the toggle flips modes; a single-child grid has no toggle. Browser-native
+ * image sources keep this lifecycle test independent of WebGPU.
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
@@ -15,13 +15,11 @@ import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "GRID-STACKED" });
 
-function floatLeaf(w: number, h: number, label: string): unknown {
-  const data = new Float32Array(h * w * 3);
-  for (let i = 0; i < data.length; i++) data[i] = ((i % 97) / 97) * 0.8;
+function imageLeaf(w: number, h: number, label: string): unknown {
   return {
     kind: "plot",
     type: "image",
-    data: { kind: "inline", props: { source: { dtype: "float", data, shape: [h, w, 3], precision: "f32" } } },
+    data: { kind: "url", src: imgUrl("#888", w, h) },
     props: { toolbar: true, label },
   };
 }
@@ -29,10 +27,10 @@ function floatLeaf(w: number, h: number, label: string): unknown {
 // rasterizes/blends them with a CSS `translate(pan) scale(zoom)` transform (the
 // same transform an image leaf uses), so a MIXED stack's camera is observable
 // on both cell types without WebGPU.
-function imgUrl(color: string): string {
+function imgUrl(color: string, width = 16, height = 16): string {
   const c = document.createElement("canvas");
-  c.width = 16;
-  c.height = 16;
+  c.width = width;
+  c.height = height;
   const ctx = c.getContext("2d")!;
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, 16, 16);
@@ -124,7 +122,7 @@ function stackedGrid(labels: string[], initialLayout: "grid" | "stack"): PlotSpe
       cols: labels.length,
       gap: 8,
       initialLayout,
-      children: labels.map((l, i) => floatLeaf(...(dims[i % dims.length] as [number, number]), l)),
+      children: labels.map((l, i) => imageLeaf(...(dims[i % dims.length] as [number, number]), l)),
     },
   } as unknown as PlotSpec;
 }

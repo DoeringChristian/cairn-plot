@@ -1,6 +1,5 @@
 import type { JsonValue } from "../../../packages/spec/src/json.ts";
 import type { CompareNode, DataSpec, PlotLeafNode } from "../../../packages/spec/src/spec.ts";
-import type { PlotBackend } from "../backends/contracts.ts";
 import type { DataSource } from "../resources/data/data-source.ts";
 
 export type SettingsRecord = Record<string, JsonValue>;
@@ -82,8 +81,6 @@ export interface PlotDefinition<
   readonly kind: string;
   readonly data: DataSchema<TSpec>;
   readonly settings: SettingsSchema<TSettings>;
-  readonly backends: readonly PlotBackend<TPresentation, TSettings>[];
-
   resolve(spec: TSpec, context: ResolveContext): Promise<TContent>;
   present(content: TContent): TPresentation;
 
@@ -98,7 +95,6 @@ export interface RegisteredPlotDefinition {
   projectSettings(settings: Readonly<SettingsRecord>): SettingsRecord;
   resolve(node: PlotLeafNode, context: ResolveContext): Promise<unknown>;
   present(content: unknown): unknown;
-  readonly backends: readonly PlotBackend<unknown, SettingsRecord>[];
   readonly comparison?: ComparisonCapability<unknown, unknown>;
 }
 
@@ -119,9 +115,6 @@ export function definePlot<
     projectSettings: (settings) => definition.settings.project(settings),
     resolve: (node, context) => definition.resolve(definition.data.validate(node.data), context),
     present: (content) => definition.present(content as TContent),
-    // Type erasure is deliberately contained here. Runtime values have already
-    // crossed the definition's schema and are paired by this same adapter.
-    backends: definition.backends as unknown as readonly PlotBackend<unknown, SettingsRecord>[],
     comparison: definition.comparison as unknown as
       | ComparisonCapability<unknown, unknown>
       | undefined,

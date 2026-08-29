@@ -46,8 +46,9 @@ test("each concrete backend exports one complete backend object", () => {
     assert.match(source, /View:/);
     assert.match(source, /capabilities:/);
   }
-  const selector = readFileSync(new URL("./backend-select.ts", import.meta.url), "utf8");
-  assert.match(selector, /cpuImageBackend/);
-  assert.match(selector, /webGpuImageBackend/);
-  assert.doesNotMatch(selector, /CpuImagePane|GpuImagePane|_IMAGE_BACKEND_CAPABILITIES/);
+  const compositionRoot = readFileSync(new URL("../../register-core.tsx", import.meta.url), "utf8");
+  assert.match(compositionRoot, /ensureImagePlotType\(ImagePlotView, \[webGpuImageBackend, cpuImageBackend\]\)/);
+  const view = readFileSync(new URL("./view.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(view, /useImageBackend|resolveRenderMode/,
+    "the image view consumes the backend selected by the generic host");
 });

@@ -17,6 +17,11 @@ export interface ReactPlotBackend<TPresentation, TSettings> {
   readonly family: string;
   readonly technology: BackendTechnology;
   readonly component: ComponentType<ReactBackendProps<TPresentation, TSettings>>;
+  /** Start asynchronous capability discovery without mounting a surface. */
+  prepare?(): void;
+  /** Optional support-state signal; lets the host re-run backend selection. */
+  subscribeSupport?(listener: () => void): () => void;
+  supportSnapshot?(): string | number;
   supports(
     presentation: TPresentation,
     environment: RenderEnvironment,

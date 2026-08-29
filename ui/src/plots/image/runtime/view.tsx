@@ -2,21 +2,35 @@ import { useContext, useState } from "react";
 
 import { ContentAspectFrame } from "../../../layout/ContentAspectFrame.tsx";
 import { GridCellReporter, GridUniformAspectContext, finitePositive } from "../../../layout/grid-uniform-aspect.tsx";
-import { resolveRenderMode, shapeDims } from "./contracts.ts";
+import { shapeDims } from "./contracts.ts";
 import { useImageView } from "../../../state/settings/use-image-view.ts";
 import { ChartFillContext, DEFAULT_CHART_HEIGHT } from "../../../host/standalone-helpers.tsx";
 import { InStackedGridContext } from "../../../layout/stack/stack-context.ts";
 import { InFullscreenOverlayContext } from "../../../primitives/components/FullscreenOverlayShell.tsx";
 import type { ReactPlotViewProps } from "../../react-view.ts";
-import { useImageBackend } from "./backend-select.ts";
 import type { ImagePresentation, ImageSettings } from "../runtime/register.ts";
+import type { ImageBackend } from "../backend.ts";
+import type { ImageBackendView } from "./contracts.ts";
 import type { Colormap } from "../../types.ts";
 import type { ImageComparisonInput } from "./contracts.ts";
 import { channelToolbarButton, type ChannelSelection } from "../components/channel-menu.ts";
 import { ImageHostRuntimeContext } from "./host-context.ts";
 
-/** Image surface host: framing, source compatibility, settings projection, backend selection. */
-export function ImagePlotView({ presentation: p, settings, commands }: ReactPlotViewProps<ImagePresentation, ImageSettings>) {
+/** Thin image adapter: framing and projection into the host-selected backend. */
+export interface ImagePlotViewProps extends ReactPlotViewProps<ImagePresentation, ImageSettings> {
+  /** Selected by the generic plot host, never by image settings or content. */
+  readonly backend: ImageBackend<ImageBackendView>;
+  /** Technology failure fallback; operation choices never trigger this path. */
+  readonly failureFallback?: ImageBackend<ImageBackendView>;
+}
+
+export function ImagePlotView({
+  presentation: p,
+  settings,
+  commands,
+  backend,
+  failureFallback,
+}: ImagePlotViewProps) {
   const fill = useContext(ChartFillContext);
   const gridUniform = useContext(GridUniformAspectContext);
   const inStack = useContext(InStackedGridContext);
@@ -28,8 +42,8 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     { zoom: 1, pan: { x: 0, y: 0 } },
   );
   const [webGpuFailed, setWebGpuFailed] = useState(false);
-  const backend = useImageBackend(webGpuFailed ? "cpu" : resolveRenderMode());
-  const Pane = backend.View;
+  const activeBackend = webGpuFailed && failureFallback ? failureFallback : backend;
+  const Pane = activeBackend.View;
   const source = p.source;
   const selectedComparisonOperation = p.comparison
     ? settings["compare.operation"] ??
@@ -95,7 +109,7 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     onChannelReset={() => commands.patch({ "image.channelSelect": null })}
     enlargeControl={hostRuntime.enlargeControl}
     inStackedGrid={inStack}
-    onBackendFailure={backend.id === "webgpu" ? () => setWebGpuFailed(true) : undefined}
+    onBackendFailure={failureFallback ? () => setWebGpuFailed(true) : undefined}
   />;
   const dims = source.dtype === "float" && source.shape.length >= 2 ? shapeDims(source.shape) : null;
   const knownAspect = dims ? finitePositive(dims.w / dims.h) : null;
