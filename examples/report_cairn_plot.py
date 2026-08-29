@@ -432,18 +432,19 @@ def build_report() -> cp.Report:
             "reference error map beside the live GPU kernel.)*"
         )
 
-    # ── perceptual diff — HDR-FLIP (auto-dispatch on float sources) ───────────
+    # ── perceptual diff — one FLIP mode, runtime HDR/SDR control ──────────────
     rep.md(
-        "### HDR-FLIP — same `mode=\"flip\"`, float/HDR sources\n\n"
-        "The **same** `mode=\"flip\"` on **float/HDR** sources (`cp.Image` of a "
-        "true-float array) auto-dispatches to **HDR-FLIP** (Andersson et al. "
-        "2021): it derives an exposure range from the reference's luminance, "
+        "### FLIP — runtime HDR · SDR evaluation\n\n"
+        "There is one authored operation: `mode=\"flip\"`. On **float/HDR** "
+        "sources (`cp.Image` of a true-float array), its toolbar exposes an "
+        "**HDR · SDR** control and defaults to **HDR-FLIP** (Andersson et al. "
+        "2021). HDR evaluation derives an exposure range from the reference's luminance, "
         "tone-maps + runs LDR-FLIP at each exposure, and takes the per-pixel "
         "maximum — so it catches errors that would clip out of the display range "
-        "at any single exposure (e.g. differences buried inside a blown-out "
-        "highlight). `mode=\"flip_ldr\"` (right) forces the plain tone-mapped LDR "
-        "comparison instead, clipping highlights to the display range before "
-        "FLIP. (HDR compare is GPU-only — it needs the WebGPU engine.)"
+        "at one exposure. Switch the control to **SDR** to evaluate one "
+        "display-mapped image. The **EXP** control caps the automatically derived "
+        "HDR exposure count; HOME restores the complete automatic sweep. "
+        "(FLIP comparison is GPU-only.)"
     )
     hdr_ref = _hdr_image()
     _rng = np.random.default_rng(7)
@@ -456,19 +457,13 @@ def build_report() -> cp.Report:
     _xs = np.linspace(-1, 1, hdr_ref.shape[1])[None, :]
     hdr_pred[..., 0] += (3.0 * np.exp(-(_xs**2 + _ys**2) / 0.02)).astype(np.float32)
     hdr_pred = np.clip(hdr_pred, 0.0, None).astype(np.float32)
-    rep.grid(
-        [
-            [
-                cp.Compare(
-                    cp.Image(hdr_pred, label="prediction"), cp.Image(hdr_ref, label="reference"), mode="flip",
-                    colormap="turbo",
-                ),
-                cp.Compare(
-                    cp.Image(hdr_pred, label="prediction"), cp.Image(hdr_ref, label="reference"), mode="flip_ldr",
-                    colormap="turbo",
-                ),
-            ]
-        ]
+    rep.add(
+        cp.Compare(
+            cp.Image(hdr_pred, label="prediction"),
+            cp.Image(hdr_ref, label="reference"),
+            mode="flip",
+            colormap="turbo",
+        )
     )
 
     # ── synced images + synced charts ────────────────────────────────────────

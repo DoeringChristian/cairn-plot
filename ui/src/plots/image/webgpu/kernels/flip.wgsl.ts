@@ -17,12 +17,12 @@
  * uniforms (see `prelude.wgsl.ts`'s SEPARABLE_CONV_NOTE). `displayRange:"unit"`
  * — the output is already in [0,1].
  *
- * ## LDR-FLIP + forced-LDR
+ * ## LDR-FLIP + float-source SDR evaluation
  * `flipKernel` assumes sRGB/display-encoded LDR inputs (u8 sources). For FLOAT
  * (HDR) sources the public `flip` mode auto-dispatches to HDR-FLIP
- * (`hdr-flip.ts`) instead; `flipLdrForcedKernel` (public `flip_ldr`) forces the
- * LDR comparison on float sources by clamping the linear values to the display
- * range first (see `YCXCZ_LINEAR_CLAMP_SHADER`). This file also exports the
+ * (`hdr-flip.ts`) by default. The SDR runtime setting selects
+ * `flipLdrForcedProgram`, which clamps linear values to the display range first
+ * (see `YCXCZ_LINEAR_CLAMP_SHADER`). This file also exports the
  * shared LDR pass pieces (`LAB_SHADER`, `COMBINE_SHADER`, filter constants,
  * `buildLdrFlipPasses`) that HDR-FLIP reuses per exposure.
  */
@@ -300,12 +300,11 @@ export const flipProgram: MultipassImageOperationProgram = {
 };
 
 /**
- * Forced-LDR FLIP for FLOAT sources (`flip_ldr` on HDR sources; spec addendum).
+ * SDR FLIP evaluation for FLOAT sources.
  * Identical to LDR-FLIP except the front-end reads LINEAR float and clamps to
  * [0,1] (the default srgb tone-map operator) instead of sRGB-decoding — see
- * `YCXCZ_LINEAR_CLAMP_SHADER`. On u8 sources the public `flip_ldr` resolves to
- * the plain `flip` operation instead (`model/comparison-operations.ts`), so this
- * kernel only ever runs on float sources.
+ * `YCXCZ_LINEAR_CLAMP_SHADER`. U8 sources use the plain `flip` operation, so
+ * this program only ever runs on float sources.
  */
 export const flipLdrForcedProgram: MultipassImageOperationProgram = {
   params: { ppd: 67 },

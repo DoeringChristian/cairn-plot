@@ -9,7 +9,7 @@ const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relati
 test("semantic image operations have unique backend-neutral definitions", () => {
   const ids = IMAGE_OPERATIONS.map(({ id }) => id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(ids, ["identity", ...POINTWISE, "split", "flip", "hdr-flip", "flip-ldr-forced", "ssim"]);
+  assert.deepEqual(ids, ["identity", ...POINTWISE, "split", "flip", "hdr-flip", "flip-sdr-float", "ssim"]);
   for (const operation of IMAGE_OPERATIONS) {
     assert.equal("implementation" in operation, false);
   }
@@ -36,7 +36,7 @@ test("pointwise image operations preserve RGB while scalar fields expand to gray
 
 test("CPU implements the pointwise subset and reports unsupported multipass operations", () => {
   assert.deepEqual(IMAGE_OPERATION_EVALUATORS.map(({ definition }) => definition.id), ["identity", ...POINTWISE, "split"]);
-  for (const id of ["flip", "hdr-flip", "flip-ldr-forced", "ssim"]) assert.equal(getImageOperationEvaluator(id), undefined);
+  for (const id of ["flip", "hdr-flip", "flip-sdr-float", "ssim"]) assert.equal(getImageOperationEvaluator(id), undefined);
 });
 
 test("CPU pointwise implementations retain comparison math", () => {

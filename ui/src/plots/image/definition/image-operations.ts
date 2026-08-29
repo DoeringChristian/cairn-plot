@@ -42,7 +42,7 @@ export const IMAGE_OPERATIONS: readonly ImageOperationDefinition[] = [
   { id: "split", label: "Split", inputs: 2, output: { arity: 3, domain: "light" }, cache: "never", parameters: ["split"] },
   { id: "flip", label: "FLIP (perceptual)", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "flip-mode", "max-exposures"] },
   { id: "hdr-flip", label: "HDR-FLIP", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "exposure-min", "exposure-max"] },
-  { id: "flip-ldr-forced", label: "FLIP (LDR forced)", publicName: "flip_ldr", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd"] },
+  { id: "flip-sdr-float", label: "FLIP SDR implementation", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd"] },
   { id: "ssim", label: "SSIM", publicName: "ssim", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: [] },
 ];
 

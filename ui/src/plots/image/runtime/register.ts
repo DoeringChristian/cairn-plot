@@ -40,8 +40,6 @@ export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSet
     ...(node.kind === "compare"
       ? {
           "compare.operation": node.presentation === "difference" ? "absolute" : "split",
-          "compare.flipMode": "hdr",
-          "compare.flipMaxExposures": null,
           "compare.split": 0.5,
         }
       : {}),

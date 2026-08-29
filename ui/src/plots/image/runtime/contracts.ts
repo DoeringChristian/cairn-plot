@@ -250,8 +250,8 @@ export interface ImageComparisonInput {
    *  convention (diff + compositor): `a` = reference (texA), `b` = foreground
    *  (texB), so `diff = a − b` and split shows the reference left of the divider. */
   b: ImageSource;
-  /** The DIFF kernel — a menu selection token (a pointwise id, `"flip"`,
-   *  `"flip_ldr"`, `"ssim"`). SEEDS the pane's diff-kernel state (always a real
+  /** The DIFF kernel — a menu selection token (a pointwise id, `"flip"`, or
+   *  `"ssim"`). SEEDS the pane's diff-kernel state (always a real
    *  kernel, even while {@link mode} is a compositor mode — so switching INTO diff
    *  restores it). Resolved to a concrete kernel id by `resolveComparisonOperationId`. */
   operationId: string;

@@ -34,7 +34,7 @@ export function listComparisonOperationOptions(): ComparisonOperationOption[] {
  * whether the compare sources are FLOAT (HDR: imghdr arrays / f32 EXR) into the
  * concrete registered kernel id to run.
  *   - `flip` + HDR → `hdr-flip` for float sources
- *   - `flip` + SDR → `flip-ldr-forced` for float sources
+ *   - `flip` + SDR → `flip-sdr-float` for float sources
  *   - `flip` on u8 → `flip` (the mode toggle is immaterial)
  *   - any pointwise id → itself.
  */
@@ -47,7 +47,7 @@ export function resolveComparisonOperationId(
 ): string {
   if (selection === "flip") {
     if (!sourcesAreFloat) return "flip";
-    return flipMode === "hdr" ? "hdr-flip" : "flip-ldr-forced";
+    return flipMode === "hdr" ? "hdr-flip" : "flip-sdr-float";
   }
   return selection;
 }
@@ -74,7 +74,7 @@ export function operationIdForPublicName(publicName: string): string | undefined
  * The user-facing `flip` token remains stable. The backend implementation id is
  * resolved from source representation and `compare.flipMode` at render time.
  */
-const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr", "flip_ldr"]);
+const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr"]);
 
 /**
  * The flat PUBLIC compare-mode name list (the `cp.Compare(mode=)` diff enum),
