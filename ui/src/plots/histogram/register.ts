@@ -1,9 +1,8 @@
 import type { ComponentType } from "react";
 
 import type { ColormapName } from "../types.ts";
-import type { DataSource } from "../../resources/data/data-source.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
-import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import { ensureInlinePlotType, } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 
 interface HistogramSeries {
@@ -59,12 +58,10 @@ function isNumberArray(value: unknown): value is number[] {
 
 export function ensureHistogramPlotType(
   View: ComponentType<ReactPlotViewProps<HistogramPresentation, ChartSettings>>,
-  resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<HistogramPresentation, ChartSettings>({
     kind: "histogram",
     View,
-    resolve,
     parse: histogramPresentation,
     settings: { defaults: () => ({}), project: projectChartSettings },
   });

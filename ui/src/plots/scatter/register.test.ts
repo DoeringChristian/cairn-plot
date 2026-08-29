@@ -9,7 +9,7 @@ import { ensureScatterPlotType } from "./register.ts";
 test("scatter is a typed inline plot with chart-only settings", async () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureScatterPlotType(() => null, async (spec) => spec.props);
+  ensureScatterPlotType(() => null);
   const definition = requirePlotType("scatter");
   assert.ok(getReactPlotType("scatter"));
   assert.deepEqual(definition.defaults(), {});

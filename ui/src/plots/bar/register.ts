@@ -1,9 +1,8 @@
 import type { ComponentType } from "react";
 
 import type { BarCompareMode, BarDatum } from "./backends/svg/BarChart.tsx";
-import type { DataSource } from "../../resources/data/data-source.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
-import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import { ensureInlinePlotType, } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface BarPresentation {
@@ -33,12 +32,10 @@ function isBarDatum(value: unknown): value is BarDatum {
 
 export function ensureBarPlotType(
   View: ComponentType<ReactPlotViewProps<BarPresentation, ChartSettings>>,
-  resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<BarPresentation, ChartSettings>({
     kind: "bar",
     View,
-    resolve,
     parse: barPresentation,
     settings: { defaults: () => ({}), project: projectChartSettings },
   });

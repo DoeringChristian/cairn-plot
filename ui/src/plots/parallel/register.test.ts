@@ -9,7 +9,7 @@ import { ensureParallelPlotType } from "./register.ts";
 test("parallel validates aligned typed columns, rows, and domains", async () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureParallelPlotType(() => null, async (spec) => spec.props);
+  ensureParallelPlotType(() => null);
   const definition = requirePlotType("parallel");
   assert.ok(getReactPlotType("parallel"));
   assert.deepEqual(definition.defaults(), {});

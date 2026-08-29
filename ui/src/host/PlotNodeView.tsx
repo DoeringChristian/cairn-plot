@@ -25,7 +25,7 @@ import {
   type GridNode,
   type PlotLeafNode,
   type PlotNode,
-} from "../resources/resolve-data";
+} from "../../../packages/spec/src/spec.ts";
 import { stackLabelFor } from "../layout/stack/StackedView";
 import {
   ChartFillContext,

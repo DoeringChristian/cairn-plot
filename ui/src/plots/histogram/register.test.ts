@@ -9,7 +9,7 @@ import { ensureHistogramPlotType } from "./register.ts";
 test("histogram validates and normalizes its discriminated presentation", async () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureHistogramPlotType(() => null, async (spec) => spec.props);
+  ensureHistogramPlotType(() => null);
   const definition = requirePlotType("histogram");
   assert.ok(getReactPlotType("histogram"));
   const context = {

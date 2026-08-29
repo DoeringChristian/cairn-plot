@@ -1,7 +1,6 @@
 import { createElement, type ComponentType } from "react";
 
 import type { CompareNode, DataSpec, PlotLeafNode } from "../../../../../packages/spec/src/spec.ts";
-import type { DataSource } from "../../../resources/data/data-source.ts";
 import type { ImagePresentation } from "../runtime/presentation.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../../backends/react.ts";
@@ -18,6 +17,7 @@ import {
   resolveDisplayOperator,
   TONEMAP_GAMMA_DEFAULT,
 } from "../runtime/tonemap.ts";
+import { resolveImageData } from "../resources/resolve-data.ts";
 
 type ImageSpec = Extract<DataSpec, { kind: "image" | "imghdr" | "url" }>;
 export type { ImagePresentation } from "../runtime/presentation.ts";
@@ -65,7 +65,6 @@ function validateImageData(value: DataSpec): ImageSpec {
 /** Register the existing proven ImageView as the first typed production kind. */
 export function ensureImagePlotType(
   View: ComponentType<ReactPlotViewProps<ImagePresentation, ImageSettings>>,
-  resolve: (spec: ImageSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   if (getPlotType("image")) return;
   const backend: ReactPlotBackend<ImagePresentation, ImageSettings> = {
@@ -95,7 +94,7 @@ export function ensureImagePlotType(
       defaults: defaultImageSettings,
       project: (settings) => ({ ...settings }) as ImageSettings,
     },
-    resolve: (spec, context) => resolve(spec, context.source),
+    resolve: (spec, context) => resolveImageData(spec, context.source),
     present: imagePresentation,
     comparison: {
       presentations: [

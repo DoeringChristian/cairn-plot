@@ -17,7 +17,7 @@
  * a version tick for `useSyncExternalStore`).
  */
 import type { DataSource } from "../../resources/data/data-source";
-import type { PlotNode, SharedProps } from "../../resources/resolve-data";
+import type { PlotNode, SharedProps } from "../../../../packages/spec/src/spec.ts";
 
 /** Renderer names whose panes can take part in an image comparison. Charts
  *  (scalar/scatter/bar/…) and 3D (pointcloud/mesh/…) cannot; `compare` panes

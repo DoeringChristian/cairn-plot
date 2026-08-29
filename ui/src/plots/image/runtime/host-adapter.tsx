@@ -17,7 +17,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { CompareNode, PlotLeafNode } from "../../../resources/resolve-data.ts";
+import type { CompareNode, PlotLeafNode } from "../../../../../packages/spec/src/spec.ts";
 import FullscreenOverlayShell from "../../../primitives/components/FullscreenOverlayShell.tsx";
 import {
   resolutionKey,
@@ -129,7 +129,7 @@ export function ImageHostAdapter({
   // `[image, diff]` stack is homogeneous — no remount on a flip). When present,
   // BOTH operands resolve through the compare resolver (`node.data` = reference =
   // `source`; `diffSpec.fgData` = foreground = `compareSource.b`) instead of the
-  // single-image `resolveDataProps`, and a `compareSource` is threaded to the
+  // single-image resolver, and a `compareSource` is threaded to the
   // image renderer. The channel strip / exr tree / shared-colormap merge below
   // are single-image concerns and are inert on this path.
   const isDiff = !!diffSpec;

@@ -8,7 +8,7 @@ import { ensureScalarPlotType } from "./register.ts";
 test("scalar definition registers overlay comparison through the typed registry", async () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureScalarPlotType(() => null, async (spec) => spec.props);
+  ensureScalarPlotType(() => null);
   const definition = requirePlotType("scalar");
   assert.ok(getReactPlotType("scalar"));
   assert.deepEqual(definition.comparison?.presentations.map(({ id }) => id), ["overlay"]);

@@ -1,5 +1,4 @@
 /** Composition root for the always-present typed plot definitions. */
-import { resolveDataProps } from "../resources/resolve-data.ts";
 import { ensureBarPlotType } from "./bar/register.ts";
 import { BarPlotView } from "./bar/view.tsx";
 import { ensureHeatmapPlotType } from "./heatmap/register.ts";
@@ -20,14 +19,14 @@ import { ensureThreePlotTypes } from "./three/register.ts";
 import { ensureFigurePlotType } from "./figure/register.ts";
 
 export function registerCoreRenderers(): void {
-  ensureImagePlotType(ImagePlotView, resolveDataProps);
-  ensureScalarPlotType(ScalarPlotView, resolveDataProps);
-  ensureScatterPlotType(ScatterPlotView, resolveDataProps);
-  ensureBarPlotType(BarPlotView, resolveDataProps);
-  ensureHistogramPlotType(HistogramPlotView, resolveDataProps);
-  ensureHeatmapPlotType(HeatmapPlotView, resolveDataProps);
-  ensureParallelPlotType(ParallelPlotView, resolveDataProps);
-  ensureTablePlotType(TablePlotView, resolveDataProps);
-  ensureThreePlotTypes(resolveDataProps);
-  ensureFigurePlotType(resolveDataProps);
+  ensureImagePlotType(ImagePlotView);
+  ensureScalarPlotType(ScalarPlotView);
+  ensureScatterPlotType(ScatterPlotView);
+  ensureBarPlotType(BarPlotView);
+  ensureHistogramPlotType(HistogramPlotView);
+  ensureHeatmapPlotType(HeatmapPlotView);
+  ensureParallelPlotType(ParallelPlotView);
+  ensureTablePlotType(TablePlotView);
+  ensureThreePlotTypes();
+  ensureFigurePlotType();
 }

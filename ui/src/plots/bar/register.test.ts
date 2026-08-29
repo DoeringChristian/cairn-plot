@@ -9,7 +9,7 @@ import { ensureBarPlotType } from "./register.ts";
 test("bar is a typed inline plot with chart-only settings", async () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureBarPlotType(() => null, async (spec) => spec.props);
+  ensureBarPlotType(() => null);
   const definition = requirePlotType("bar");
   assert.ok(getReactPlotType("bar"));
   const context = {

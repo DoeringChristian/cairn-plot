@@ -13,7 +13,7 @@
  *
  * Each pure `*SingleView` (offline-safe: only ResizeObserver/rAF/WebGL2, no app
  * deps) receives an already-resolved `{arrays, meta}` item from the descriptor's
- * `npz` DataSpec (`resolveDataProps` → `p.item`), supplies a default standalone
+ * `npz` DataSpec (the Three definition resolves it to `p.item`), supplies a default standalone
  * view config, and mounts. `sync={null}` — a standalone plot has no camera-sync
  * group. The default view configs mirror the app cards' `default*Settings()`
  * (resolved through each viewport's `resolve*ViewConfig`), with any field

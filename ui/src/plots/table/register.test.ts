@@ -9,7 +9,7 @@ import { ensureTablePlotType, projectTableSettings } from "./register.ts";
 test("table owns validated presentation and interaction settings", async () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureTablePlotType(() => null, async (spec) => spec.props);
+  ensureTablePlotType(() => null);
   const definition = requirePlotType("table");
   assert.ok(getReactPlotType("table"));
   const context = {

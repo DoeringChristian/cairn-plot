@@ -8,7 +8,7 @@ import { ensureThreePlotTypes } from "./register.ts";
 test("3D kinds own typed definitions before the optional backend addon loads", () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureThreePlotTypes(async () => ({ item: {} }));
+  ensureThreePlotTypes();
   for (const kind of ["pointcloud", "mesh", "volume", "boxes3d"] as const) {
     const definition = requirePlotType(kind);
     assert.equal(definition.kind, kind);

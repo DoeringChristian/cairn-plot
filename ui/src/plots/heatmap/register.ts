@@ -1,9 +1,8 @@
 import type { ComponentType } from "react";
 
 import type { ColormapName } from "../types.ts";
-import type { DataSource } from "../../resources/data/data-source.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
-import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import { ensureInlinePlotType, } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface HeatmapPresentation {
@@ -38,12 +37,10 @@ function isNumberArray(value: unknown): value is number[] {
 
 export function ensureHeatmapPlotType(
   View: ComponentType<ReactPlotViewProps<HeatmapPresentation, ChartSettings>>,
-  resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<HeatmapPresentation, ChartSettings>({
     kind: "heatmap",
     View,
-    resolve,
     parse: heatmapPresentation,
     settings: { defaults: () => ({}), project: projectChartSettings },
   });

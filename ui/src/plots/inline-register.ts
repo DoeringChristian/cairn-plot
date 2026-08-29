@@ -1,7 +1,6 @@
 import { createElement, type ComponentType } from "react";
 
 import type { DataSpec } from "../../../packages/spec/src/spec.ts";
-import type { DataSource } from "../resources/data/data-source.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../backends/react.ts";
 import { definePlot, type SettingsRecord, type SettingsSchema } from "./contracts.ts";
 import { getPlotType } from "./registry.ts";
@@ -15,7 +14,6 @@ export interface InlinePlotRegistration<TPresentation, TSettings extends Setting
   readonly View: ComponentType<ReactPlotViewProps<TPresentation, TSettings>>;
   readonly settings: SettingsSchema<TSettings>;
   readonly parse: (value: Record<string, unknown>) => TPresentation;
-  readonly resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>;
 }
 
 /** Shared adapter for typed native plots whose durable source is inline JSON. */
@@ -50,8 +48,7 @@ export function ensureInlinePlotType<TPresentation, TSettings extends SettingsRe
       },
     },
     settings: registration.settings,
-    resolve: async (spec, context) =>
-      registration.parse(await registration.resolve(spec, context.source)),
+    resolve: async (spec) => registration.parse({ ...spec.props }),
     present: (content) => content,
     backends: [],
   });

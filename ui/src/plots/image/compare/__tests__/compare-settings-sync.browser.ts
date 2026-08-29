@@ -39,7 +39,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../register-core";
-import type { PlotSpec } from "../../../../resources/resolve-data";
+import type { PlotSpec } from "../../../../../../packages/spec/src/spec.ts";
 import { InFullscreenOverlayContext } from "../../../../primitives/components/FullscreenOverlayShell";
 import {
   getGlobalSelectionStore,

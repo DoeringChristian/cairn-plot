@@ -1,39 +1,26 @@
-/** Resource resolution shared by plot definitions. The durable specification
- * lives in `packages/spec`; this module only turns its data references into
- * decoded content through the injected `DataSource`.
+/** Image-owned resource resolution. Turns image data references into decoded
+ * image content through the injected `DataSource`; no universal dispatcher
+ * needs to know about image formats.
  */
 import {
   resolveImageArtifacts,
-  fetchPointCloudArrays,
-  fetchMeshArrays,
-  fetchVolumeArray,
-  fetchBoxesArrays,
-} from "../plots/artifact-resolvers";
-import type { DataSource } from "./data/data-source";
-import { parseOverlay } from "../plots/image/resources/overlay-metadata";
-import { parseNpy } from "../plots/transforms/index";
+} from "../../artifact-resolvers.ts";
+import type { DataSource } from "../../../resources/data/data-source.ts";
+import { parseOverlay } from "./overlay-metadata.ts";
+import { parseNpy } from "../../transforms/parse-npy.ts";
 import {
   decodeImage,
   decodedU8ToDataUrl,
   isRawBufferFormat,
   sniffFormat,
   type DecodedImage,
-} from "../plots/image/resources/decoders.ts";
-import { resolveFinalUrl } from "../plots/image/resources/final-url.ts";
-import { fetchImageBytes } from "./fetch-image";
-import { floatPixelsFrom, floatValues } from "../plots/image/runtime/pixel-buffer.ts";
-import { describeExr } from "../plots/image/resources/decoders/exr-describe";
-import { groupChannels, type ChannelGroup } from "../plots/image/definition/channel-groups";
-import type { DataSpec } from "../../../packages/spec/src/spec.ts";
-export type {
-  CompareNode,
-  DataSpec,
-  GridNode,
-  PlotSpec,
-  PlotLeafNode,
-  PlotNode,
-  SharedProps,
-} from "../../../packages/spec/src/spec.ts";
+} from "./decoders.ts";
+import { resolveFinalUrl } from "./final-url.ts";
+import { fetchImageBytes } from "../../../resources/fetch-image.ts";
+import { floatPixelsFrom, floatValues } from "../runtime/pixel-buffer.ts";
+import { describeExr } from "./decoders/exr-describe.ts";
+import { groupChannels, type ChannelGroup } from "../definition/channel-groups.ts";
+import type { DataSpec } from "../../../../../packages/spec/src/spec.ts";
 
 /** The parts × channel-groups tree of an EXR source, attached to a resolved
  *  image leaf's props (`exrTree`) so the pane can render the CHANNEL STRIP
@@ -73,13 +60,11 @@ function tryExrTree(bytes: ArrayBuffer): ExrTree | null {
  * every branch below is source-agnostic (it only calls `source.artifactUrl` /
  * `source.bytes`), so the same code path serves both modes.
  */
-export async function resolveDataProps(
-  data: DataSpec,
+export async function resolveImageData(
+  data: Extract<DataSpec, { kind: "image" | "url" | "imghdr" }>,
   source: DataSource,
 ): Promise<Record<string, unknown>> {
   switch (data.kind) {
-    case "inline":
-      return { ...data.props };
     case "image": {
       // Direct-URL CLIENT-DECODE seam. When `url` is set, fetch the bytes from
       // that URL and normalize through `decodeImage` (sniffed by the response
@@ -196,42 +181,6 @@ export async function resolveDataProps(
         baselineUrl,
         overlay: parseOverlay(data.metadata) ?? undefined,
       };
-    }
-    case "npz": {
-      // 3D binary artifact (G3). Dispatch on `objectType` — G3a wired
-      // `pointcloud`, G3b adds `mesh`/`volume`/`boxes3d`. Each fetch core
-      // (source-agnostic: LOCAL store bytes or ENDPOINT fetch) parses the
-      // `.npy`/`.npz` into its typed arrays; bundle them with the inline
-      // `meta` into the `{arrays, meta}` `item` the matching 3D standalone
-      // consumes. NOTE: this path pulls NO three.js into core — the parsers
-      // are pure; three lives only in the standalone renderers (the three
-      // addon bundle).
-      if (!data.hash) {
-        throw new Error("npz DataSpec has no hash to resolve.");
-      }
-      switch (data.objectType) {
-        case "pointcloud": {
-          const arrays = await fetchPointCloudArrays(data.hash, source);
-          return { item: { arrays, meta: data.meta } };
-        }
-        case "mesh": {
-          const arrays = await fetchMeshArrays(data.hash, source);
-          return { item: { arrays, meta: data.meta } };
-        }
-        case "volume": {
-          // The volume renderer's `arrays` is `{ data: Float32Array }`.
-          const data32 = await fetchVolumeArray(data.hash, source);
-          return { item: { arrays: { data: data32 }, meta: data.meta } };
-        }
-        case "boxes3d": {
-          const arrays = await fetchBoxesArrays(data.hash, source);
-          return { item: { arrays, meta: data.meta } };
-        }
-        default: {
-          const _exhaustive: never = data.objectType;
-          throw new Error(`npz objectType "${_exhaustive}" is not supported.`);
-        }
-      }
     }
     case "imghdr": {
       // Float-HDR image (HDR-A). Fetch the float `.npy` bytes (source-agnostic:

@@ -57,6 +57,9 @@ const IMAGE_DEFINITION = join(IMAGE_ROOT, "definition");
 const IMAGE_CPU = join(IMAGE_ROOT, "cpu");
 const IMAGE_WEBGPU = join(IMAGE_ROOT, "webgpu");
 const IMAGE_RUNTIME = join(IMAGE_ROOT, "runtime");
+const INFRASTRUCTURE_ROOTS = ["backends", "engines", "resources"].map((name) => join(SRC, name));
+const APPLICATION_LAYER_ROOTS = ["host", "layout", "plots", "public", "state"]
+  .map((name) => join(SRC, name));
 
 // --- surface enumeration -------------------------------------------------
 function walk(dir) {
@@ -175,16 +178,25 @@ for (const f of surface) {
         });
       }
       const production = !/\.(?:test|browser)\.[jt]sx?$/.test(f) && !f.includes("/__tests__/");
-      if (!production || !inside(f, IMAGE_ROOT) || !inside(resolved, IMAGE_ROOT)) continue;
+      if (!production) continue;
 
       let reason = null;
-      if (inside(f, IMAGE_DEFINITION) && !inside(resolved, IMAGE_DEFINITION)) {
+      if (
+        INFRASTRUCTURE_ROOTS.some((root) => inside(f, root)) &&
+        APPLICATION_LAYER_ROOTS.some((root) => inside(resolved, root))
+      ) {
+        reason = "shared backends, engines, and resources must not import higher application layers";
+      } else if (
+        inside(f, IMAGE_ROOT) && inside(resolved, IMAGE_ROOT) &&
+        inside(f, IMAGE_DEFINITION) && !inside(resolved, IMAGE_DEFINITION)
+      ) {
         reason = "image definitions must not depend on runtime, UI, resources, or backends";
-      } else if (inside(f, IMAGE_CPU) && inside(resolved, IMAGE_WEBGPU)) {
+      } else if (inside(f, IMAGE_ROOT) && inside(resolved, IMAGE_ROOT) && inside(f, IMAGE_CPU) && inside(resolved, IMAGE_WEBGPU)) {
         reason = "the CPU backend must not import the WebGPU backend";
-      } else if (inside(f, IMAGE_WEBGPU) && inside(resolved, IMAGE_CPU)) {
+      } else if (inside(f, IMAGE_ROOT) && inside(resolved, IMAGE_ROOT) && inside(f, IMAGE_WEBGPU) && inside(resolved, IMAGE_CPU)) {
         reason = "the WebGPU backend must not import the CPU backend";
       } else if (
+        inside(f, IMAGE_ROOT) && inside(resolved, IMAGE_ROOT) &&
         !inside(f, IMAGE_RUNTIME) &&
         !inside(f, IMAGE_CPU) &&
         !inside(f, IMAGE_WEBGPU) &&
@@ -207,7 +219,7 @@ for (const f of surface) {
 
 if (violations.length === 0 && layerViolations.length === 0) {
   console.log(
-    `check:plot-boundary OK — ${surfaceReal.size} surface files; app and image-backend boundaries are clean.`,
+    `check:plot-boundary OK — ${surfaceReal.size} surface files; application, infrastructure, and image-backend boundaries are clean.`,
   );
   process.exit(0);
 }

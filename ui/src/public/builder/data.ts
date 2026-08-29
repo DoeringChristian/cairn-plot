@@ -17,7 +17,7 @@
  */
 import { mintRuntimeHash, type RuntimeStoreEntry } from "../../resources/data/runtime-store.ts";
 import { isBrowserNativeFormat, sniffFormat } from "../../plots/image/resources/decoders.ts";
-import type { DataSpec } from "../../resources/resolve-data.ts";
+import type { DataSpec } from "../../../../packages/spec/src/spec.ts";
 
 export interface ShapedImage {
   data: DataSpec;

@@ -3,6 +3,12 @@ import type { DataSource } from "../../resources/data/data-source.ts";
 import { definePlot, type SettingsRecord } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
 import { registerReactPlotType } from "../react-registry.ts";
+import {
+  fetchBoxesArrays,
+  fetchMeshArrays,
+  fetchPointCloudArrays,
+  fetchVolumeArray,
+} from "../artifact-resolvers.ts";
 
 export type ThreePlotKind = "pointcloud" | "mesh" | "volume" | "boxes3d";
 type NpzSpec = Extract<DataSpec, { kind: "npz" }>;
@@ -25,10 +31,18 @@ function threePresentation(value: Record<string, unknown>): ThreePresentation {
   return value as ThreePresentation;
 }
 
+async function resolveThreeArrays(spec: NpzSpec, source: DataSource) {
+  if (!spec.hash) throw new Error("npz DataSpec has no hash to resolve");
+  switch (spec.objectType) {
+    case "pointcloud": return fetchPointCloudArrays(spec.hash, source);
+    case "mesh": return fetchMeshArrays(spec.hash, source);
+    case "volume": return { data: await fetchVolumeArray(spec.hash, source) };
+    case "boxes3d": return fetchBoxesArrays(spec.hash, source);
+  }
+}
+
 /** Core-owned semantic definitions; the optional addon installs their backends. */
-export function ensureThreePlotTypes(
-  resolve: (spec: NpzSpec, source: DataSource) => Promise<Record<string, unknown>>,
-): void {
+export function ensureThreePlotTypes(): void {
   for (const kind of ["pointcloud", "mesh", "volume", "boxes3d"] as const) {
     if (getPlotType(kind)) continue;
     registerReactPlotType({
@@ -44,7 +58,10 @@ export function ensureThreePlotTypes(
             return projected;
           },
         },
-        resolve: (spec, context) => resolve(spec, context.source),
+        resolve: async (spec, context) => {
+          const arrays = await resolveThreeArrays(spec, context.source);
+          return { item: { arrays, meta: spec.meta } };
+        },
         present: threePresentation,
         backends: [],
       }),

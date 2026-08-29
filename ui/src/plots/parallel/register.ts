@@ -1,8 +1,7 @@
 import type { ComponentType } from "react";
 
 import type { ColormapName, ParallelColumn, ParallelRow } from "../types.ts";
-import type { DataSource } from "../../resources/data/data-source.ts";
-import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import { ensureInlinePlotType, } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 
 interface ParallelDomain {
@@ -64,12 +63,10 @@ function isParallelDomain(value: unknown): value is ParallelDomain {
 
 export function ensureParallelPlotType(
   View: ComponentType<ReactPlotViewProps<ParallelPresentation, ParallelSettings>>,
-  resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<ParallelPresentation, ParallelSettings>({
     kind: "parallel",
     View,
-    resolve,
     parse: parallelPresentation,
     settings: { defaults: () => ({}), project: () => ({}) },
   });

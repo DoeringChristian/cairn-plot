@@ -9,7 +9,7 @@ import { ensureHeatmapPlotType } from "./register.ts";
 test("heatmap is a typed inline plot with a rectangular numeric matrix", async () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureHeatmapPlotType(() => null, async (spec) => spec.props);
+  ensureHeatmapPlotType(() => null);
   const definition = requirePlotType("heatmap");
   assert.ok(getReactPlotType("heatmap"));
   const context = {

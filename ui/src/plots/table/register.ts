@@ -1,11 +1,10 @@
 import type { ComponentType } from "react";
 
 import type { JsonValue } from "../../../../packages/spec/src/json.ts";
-import type { DataSource } from "../../resources/data/data-source.ts";
 import type { ColumnType, TableData } from "./backends/dom/Table.tsx";
 import type { CellComparison } from "./diff.ts";
 import type { SettingsRecord } from "../contracts.ts";
-import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import { ensureInlinePlotType, } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface TablePresentation {
@@ -69,12 +68,10 @@ function isSort(value: JsonValue | undefined): value is { column: string; direct
 
 export function ensureTablePlotType(
   View: ComponentType<ReactPlotViewProps<TablePresentation, TableSettings>>,
-  resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<TablePresentation, TableSettings>({
     kind: "table",
     View,
-    resolve,
     parse: tablePresentation,
     settings: { defaults: () => ({}), project: projectTableSettings },
   });

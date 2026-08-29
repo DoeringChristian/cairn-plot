@@ -1,6 +1,5 @@
 import { createElement, type ComponentType } from "react";
 
-import type { DataSource } from "../../resources/data/data-source.ts";
 import type { ReactBackendProps, ReactPlotBackend } from "../../backends/react.ts";
 import { definePlot } from "../contracts.ts";
 import { getPlotType } from "../registry.ts";
@@ -23,7 +22,6 @@ import {
 /** Register scalar resolution, overlay comparison, and its current React backend. */
 export function ensureScalarPlotType(
   View: ComponentType<ReactPlotViewProps<ScalarPresentation, ScalarSettings>>,
-  resolve: (spec: ScalarSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   if (getPlotType("scalar")) return;
   const backend: ReactPlotBackend<ScalarPresentation, ScalarSettings> = {
@@ -53,7 +51,7 @@ export function ensureScalarPlotType(
       defaults: () => ({}),
       project: projectScalarSettings,
     },
-    resolve: async (spec, context) => scalarPresentation(await resolve(spec, context.source)),
+    resolve: async (spec) => scalarPresentation({ ...spec.props }),
     present: (content) => content,
     comparison: {
       presentations: [{ id: "overlay", label: "Overlay", minOperands: 2 }],
@@ -68,9 +66,9 @@ export function ensureScalarPlotType(
         }
       },
       plan: planScalarComparison,
-      async resolve(plan, context) {
+      async resolve(plan) {
         const presentations = await Promise.all(
-          plan.operands.map(async (operand) => scalarPresentation(await resolve(operand, context.source))),
+          plan.operands.map(async (operand) => scalarPresentation({ ...operand.props })),
         );
         return overlayScalarPresentations(plan, presentations);
       },

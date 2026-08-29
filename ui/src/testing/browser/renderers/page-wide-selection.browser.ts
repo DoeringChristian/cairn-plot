@@ -29,7 +29,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../../plots/register-core";
-import type { PlotSpec, PlotNode } from "../../../resources/resolve-data";
+import type { PlotSpec, PlotNode } from "../../../../../packages/spec/src/spec.ts";
 import {
   getGlobalSelectionStore,
   paneSyncGroups,

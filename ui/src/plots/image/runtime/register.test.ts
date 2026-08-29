@@ -18,7 +18,7 @@ test("image presentation validates its typed decoded-source boundary", () => {
 test("image is exclusively owned by the typed plot registry", () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  ensureImagePlotType(View, async () => ({}));
+  ensureImagePlotType(View);
   assert.equal(requirePlotType("image").kind, "image");
   assert.ok(getReactPlotType("image"));
   const comparison = requirePlotType("image").comparison;

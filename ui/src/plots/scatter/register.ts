@@ -1,9 +1,8 @@
 import type { ColormapName, ScatterPoint } from "../types.ts";
 import type { ComponentType } from "react";
 
-import type { DataSource } from "../../resources/data/data-source.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
-import { ensureInlinePlotType, type InlineSpec } from "../inline-register.ts";
+import { ensureInlinePlotType, } from "../inline-register.ts";
 import type { ReactPlotViewProps } from "../react-view.ts";
 
 export interface ScatterPresentation {
@@ -34,12 +33,10 @@ function isScatterPoint(value: unknown): value is ScatterPoint {
 
 export function ensureScatterPlotType(
   View: ComponentType<ReactPlotViewProps<ScatterPresentation, ChartSettings>>,
-  resolve: (spec: InlineSpec, source: DataSource) => Promise<Record<string, unknown>>,
 ): void {
   ensureInlinePlotType<ScatterPresentation, ChartSettings>({
     kind: "scatter",
     View,
-    resolve,
     parse: scatterPresentation,
     settings: { defaults: () => ({}), project: projectChartSettings },
   });
