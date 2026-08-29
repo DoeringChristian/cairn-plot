@@ -70,7 +70,7 @@ test("enumerate: native modes are disabled when topology mismatches; core stay e
 
 const ENGINE_KERNELS = [
   { value: "absolute", label: "Absolute" },
-  { value: "hdr-flip", label: "FLIP (perceptual)" },
+  { value: "hdr-flip", label: "FLIP" },
   { value: "ssim", label: "SSIM" },
 ] as const;
 

@@ -5,7 +5,7 @@ import { getImageOperation, listImageOperations } from "./image-operations.ts";
 
 /**
  * A selectable diff MODE for the compare toolbar menu. Unlike raw
- * `listComparisonOperations()`, the FLIP family collapses to a single "FLIP (perceptual)"
+ * `listComparisonOperations()`, the FLIP family collapses to a single "FLIP"
  * entry (public `flip`); HDR-FLIP/forced-LDR are backend implementations and
  * are never shown directly. `id` is
  * the selection token the pane stores (== the descriptor `operation` /
@@ -22,7 +22,8 @@ export function listComparisonOperationOptions(): ComparisonOperationOption[] {
       out.push({ id: operation.id, label: operation.label });
     }
   }
-  out.push({ id: "flip", label: "FLIP (perceptual)" });
+  const flip = getImageOperation("flip");
+  if (flip) out.push({ id: flip.id, label: flip.label });
   // SSIM is a plain 1:1 mode (no LDR/HDR collapse), so surface it directly.
   const ssim = getImageOperation("ssim");
   if (ssim) out.push({ id: ssim.id, label: ssim.label });
