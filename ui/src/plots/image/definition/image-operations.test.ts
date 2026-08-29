@@ -22,6 +22,20 @@ test("WebGPU implements every declared image operation", () => {
   );
 });
 
+test("one-channel image-operation fields are expanded to gray RGB for every display operation", () => {
+  const absolute = getWebGpuImageOperation("absolute");
+  assert.equal(absolute?.kind, "inline");
+  if (absolute?.kind !== "inline") return;
+  const shader = buildImageOperationWGSL(absolute);
+  assert.match(shader, /let scalar = \(field\.r \+ field\.g \+ field\.b\) \/ 3\.0/);
+  assert.match(shader, /vec4<f32>\(scalar, scalar, scalar, field\.a\)/);
+
+  const identity = getWebGpuImageOperation("identity");
+  assert.equal(identity?.kind, "inline");
+  if (identity?.kind !== "inline") return;
+  assert.doesNotMatch(buildImageOperationWGSL(identity), /let scalar =/);
+});
+
 test("CPU implements the pointwise subset and reports unsupported multipass operations", () => {
   assert.deepEqual(CPU_IMAGE_OPERATIONS.map(({ definition }) => definition.id), ["identity", ...POINTWISE, "split"]);
   for (const id of ["flip", "hdr-flip", "flip-ldr-forced", "ssim"]) assert.equal(getCpuImageOperation(id), undefined);

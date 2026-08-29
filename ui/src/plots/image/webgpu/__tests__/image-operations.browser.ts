@@ -129,17 +129,21 @@ async function runDiffOpCase(device: Device, operationId: string, displayOperati
   let ok = true;
   for (let i = 0; i < PAIRS.length; i++) {
     // CONTENT twin: the op's per-channel raw diff (the readout source of truth).
-    const content = op.evaluate([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const rawContent = op.evaluate([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const content = op.definition.output.arity === 1
+      ? [(rawContent[0]! + rawContent[1]! + rawContent[2]!) / 3]
+      : rawContent;
+    const fieldChannels = op.definition.output.arity === 1 ? 1 : 3;
     // DISPLAY twin: the op's defaultEncoding cpu (reduce → colormap/analytic).
     let exp: RgbTriple;
     if (enc.category === "curve" || enc.category === "remap" || enc.implementation.kind === "analytic") {
       // red-green analytic cpu returns SCENE-LINEAR; thread the SAME sRGB
       // output-encode the GPU analytic branch applies.
-      const lin = evaluateDisplayOperation(enc, content, 3, encParams);
+      const lin = evaluateDisplayOperation(enc, content, fieldChannels, encParams);
       exp = [outputEncode(lin[0], undefined), outputEncode(lin[1], undefined), outputEncode(lin[2], undefined)];
     } else {
       // turbo table cpu returns DISPLAY-sRGB directly (LUT holds encoded colors).
-      exp = evaluateDisplayOperation(enc, content, 3, encParams);
+      exp = evaluateDisplayOperation(enc, content, fieldChannels, encParams);
     }
     for (let c = 0; c < 3; c++) {
       const eb = byteOf(exp[c]!);
@@ -358,13 +362,17 @@ async function runPoolDirectOpCase(device: Device, operationId: string, displayO
   }
   let ok = true;
   for (let i = 0; i < PAIRS.length; i++) {
-    const content = op.evaluate([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const rawContent = op.evaluate([PAIRS[i]!.a, PAIRS[i]!.b], 3);
+    const content = op.definition.output.arity === 1
+      ? [(rawContent[0]! + rawContent[1]! + rawContent[2]!) / 3]
+      : rawContent;
+    const fieldChannels = op.definition.output.arity === 1 ? 1 : 3;
     let exp: RgbTriple;
     if (enc.category === "curve" || enc.category === "remap" || enc.implementation.kind === "analytic") {
-      const lin = evaluateDisplayOperation(enc, content, 3, encParams);
+      const lin = evaluateDisplayOperation(enc, content, fieldChannels, encParams);
       exp = [outputEncode(lin[0], undefined), outputEncode(lin[1], undefined), outputEncode(lin[2], undefined)];
     } else {
-      exp = evaluateDisplayOperation(enc, content, 3, encParams);
+      exp = evaluateDisplayOperation(enc, content, fieldChannels, encParams);
     }
     for (let c = 0; c < 3; c++) {
       const eb = byteOf(exp[c]!);

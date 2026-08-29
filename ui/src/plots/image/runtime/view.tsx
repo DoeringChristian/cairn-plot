@@ -27,7 +27,8 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     commands.patch,
     { zoom: 1, pan: { x: 0, y: 0 } },
   );
-  const Pane = useImageBackend(resolveRenderMode());
+  const backend = useImageBackend(resolveRenderMode());
+  const Pane = backend.View;
   const source = p.source;
   const selectedComparisonOperation = p.comparison
     ? settings["compare.operation"] ??

@@ -27,7 +27,8 @@ const perChannel = (
   definition: getDisplayOperation(id)!,
   kind: "curve",
   evaluate(values, _channels, parameters) {
-    return [0, 1, 2].map((channel) => transform(values[channel] ?? 0, parameters)) as Rgb;
+    const scalar = _channels <= 1 ? values[0] ?? 0 : undefined;
+    return [0, 1, 2].map((channel) => transform(scalar ?? values[channel] ?? 0, parameters)) as Rgb;
   },
 });
 

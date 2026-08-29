@@ -84,7 +84,16 @@ export function requireWebGpuInlineOperation(
 export function buildImageOperationWGSL(
   operation: Extract<WebGpuImageOperation, { kind: "inline" }>,
 ): string {
-  return `fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>) -> vec4<f32> {
+  const scalarOutput = operation.definition.output.arity === 1;
+  return `fn cairnRawContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>) -> vec4<f32> {
 ${operation.wgsl.trim()}
+}
+fn cairnContent(a: vec4<f32>, b: vec4<f32>, uv: vec2<f32>, param: vec4<f32>) -> vec4<f32> {
+  let field = cairnRawContent(a, b, uv, param);
+${scalarOutput
+    ? `  // A semantic one-channel field is represented as gray RGB at the display boundary.
+  let scalar = (field.r + field.g + field.b) / 3.0;
+  return vec4<f32>(scalar, scalar, scalar, field.a);`
+    : "  return field;"}
 }`;
 }
