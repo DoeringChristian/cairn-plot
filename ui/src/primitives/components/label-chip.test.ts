@@ -50,7 +50,7 @@ test("LabelChip: both corners + draggable + accessible grip contract", () => {
 // Every compare pane must render the SHARED chip and NOT hard-code its own
 // inline label chip. The grip icon + drag-grip class are the tells of the old
 // inline copies, so their absence outside LabelChip is the re-divergence guard.
-const CONSUMERS = ["plots/image/compare/compositor.tsx", "plots/image/webgpu/view.tsx"];
+const CONSUMERS = ["plots/image/runtime/compare-compositor.tsx", "plots/image/webgpu/view.tsx"];
 
 test("every compare pane routes its label through the shared LabelChip", () => {
   for (const rel of CONSUMERS) {

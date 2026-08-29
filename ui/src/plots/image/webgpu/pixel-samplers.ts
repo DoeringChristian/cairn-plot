@@ -24,7 +24,7 @@
 import { useCallback } from "react";
 import { floatPixelReader } from "../runtime/pixel-buffer.ts";
 import { getImageOperation } from "../definition/image-operations.ts";
-import { getCpuImageOperation } from "../cpu/image-operations.ts";
+import { getImageOperationEvaluator } from "../resources/image-operation-evaluator.ts";
 import {
   buildChannelSample,
   type PixelSample,
@@ -130,7 +130,7 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
         return buildChannelSample(values, "unit", notation);
       }
       // DIRECT op — the cpu twin over the two source pixels.
-      const op = getCpuImageOperation(resolvedOperationId);
+      const op = getImageOperationEvaluator(resolvedOperationId);
       if (!op) return null;
       // Slot A = the primary `source` (normalized to the GPU's textureLoad).
       const readA = (): number[] | null => {

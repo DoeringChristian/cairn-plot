@@ -52,6 +52,11 @@ const INTERNAL_ROOTS = [
 const REPO_ROOT = resolve(UI_ROOT, "..");
 const PACKAGES = join(REPO_ROOT, "packages");
 const APPS = join(REPO_ROOT, "apps");
+const IMAGE_ROOT = join(SRC, "plots", "image");
+const IMAGE_DEFINITION = join(IMAGE_ROOT, "definition");
+const IMAGE_CPU = join(IMAGE_ROOT, "cpu");
+const IMAGE_WEBGPU = join(IMAGE_ROOT, "webgpu");
+const IMAGE_RUNTIME = join(IMAGE_ROOT, "runtime");
 
 // --- surface enumeration -------------------------------------------------
 function walk(dir) {
@@ -144,6 +149,8 @@ function resolveSpec(fromFile, spec) {
 }
 
 const violations = [];
+const layerViolations = [];
+const inside = (file, directory) => file === directory || file.startsWith(directory + "/");
 for (const f of surface) {
   if (!PARSE_EXT.has(extname(f))) continue;
   const raw = readFileSync(f, "utf8");
@@ -167,24 +174,56 @@ for (const f of surface) {
           target: relative(REPO_ROOT, resolved),
         });
       }
+      const production = !/\.(?:test|browser)\.[jt]sx?$/.test(f) && !f.includes("/__tests__/");
+      if (!production || !inside(f, IMAGE_ROOT) || !inside(resolved, IMAGE_ROOT)) continue;
+
+      let reason = null;
+      if (inside(f, IMAGE_DEFINITION) && !inside(resolved, IMAGE_DEFINITION)) {
+        reason = "image definitions must not depend on runtime, UI, resources, or backends";
+      } else if (inside(f, IMAGE_CPU) && inside(resolved, IMAGE_WEBGPU)) {
+        reason = "the CPU backend must not import the WebGPU backend";
+      } else if (inside(f, IMAGE_WEBGPU) && inside(resolved, IMAGE_CPU)) {
+        reason = "the WebGPU backend must not import the CPU backend";
+      } else if (
+        !inside(f, IMAGE_RUNTIME) &&
+        !inside(f, IMAGE_CPU) &&
+        !inside(f, IMAGE_WEBGPU) &&
+        (inside(resolved, IMAGE_CPU) || inside(resolved, IMAGE_WEBGPU))
+      ) {
+        reason = "only image runtime may compose concrete backends";
+      }
+      if (reason) {
+        layerViolations.push({
+          file: relative(REPO_ROOT, f),
+          line: lineOf(src, m.index),
+          spec,
+          target: relative(REPO_ROOT, resolved),
+          reason,
+        });
+      }
     }
   }
 }
 
-if (violations.length === 0) {
+if (violations.length === 0 && layerViolations.length === 0) {
   console.log(
-    `check:plot-boundary OK — ${surfaceReal.size} surface files, no app-reaching imports.`,
+    `check:plot-boundary OK — ${surfaceReal.size} surface files; app and image-backend boundaries are clean.`,
   );
   process.exit(0);
 }
 
 console.error(
-  `check:plot-boundary FAILED — ${violations.length} app-reaching import(s) in the cairn-plot surface:\n`,
+  `check:plot-boundary FAILED — ${violations.length} app-reaching and ${layerViolations.length} image-layer violation(s):\n`,
 );
 for (const v of violations.sort((a, b) =>
   (a.file + a.line).localeCompare(b.file + b.line),
 )) {
   console.error(`  ${v.file}:${v.line}  '${v.spec}'  ->  ${v.target}`);
+}
+for (const v of layerViolations.sort((a, b) =>
+  (a.file + a.line).localeCompare(b.file + b.line),
+)) {
+  console.error(`  ${v.file}:${v.line}  '${v.spec}'  ->  ${v.target}\n    ${v.reason}`);
 }
 console.error(
   `\nThe cairn-plot library must not import app code. Move the shared code into` +

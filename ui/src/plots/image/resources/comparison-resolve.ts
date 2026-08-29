@@ -4,7 +4,7 @@ import {
   resolveImageArtifacts,
 } from "../../artifact-resolvers.ts";
 import type { DataSource } from "../../../resources/data/data-source.ts";
-import type { ImageSource, ResolvedFloatImage } from "./content.ts";
+import type { ImageSource, ResolvedFloatImage } from "../definition/content.ts";
 import { parseOverlay } from "./overlay-metadata.ts";
 import { parseNpy } from "../../transforms/parse-npy.ts";
 import { resolveFinalUrl } from "../resources/final-url.ts";

@@ -19,7 +19,7 @@
  * the re-resolve; deep parts are skipped (P4 territory).
  */
 import type { ToolbarButtonSpec, ToolbarMenuOption } from "../../../primitives/controls/ToolbarConfig";
-import type { ChannelGroup } from "./channel-groups";
+import type { ChannelGroup } from "../definition/channel-groups";
 
 /** True when the tree yields a USABLE menu (≥2 selectable entries). Deep-only
  *  trees don't (deep parts skip decode-time selection), and neither do

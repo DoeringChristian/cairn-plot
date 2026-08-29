@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useState } from "react";
 
 import { ContentAspectFrame } from "../../../layout/ContentAspectFrame.tsx";
 import { GridCellReporter, GridUniformAspectContext, finitePositive } from "../../../layout/grid-uniform-aspect.tsx";
@@ -9,10 +9,10 @@ import { InStackedGridContext } from "../../../layout/stack/stack-context.ts";
 import { InFullscreenOverlayContext } from "../../../primitives/components/FullscreenOverlayShell.tsx";
 import type { ReactPlotViewProps } from "../../react-view.ts";
 import { useImageBackend } from "./backend-select.ts";
-import type { ImagePresentation, ImageSettings } from "../definition/register.ts";
+import type { ImagePresentation, ImageSettings } from "../runtime/register.ts";
 import type { Colormap } from "../../types.ts";
 import type { ImageComparisonInput } from "./contracts.ts";
-import { channelToolbarButton, type ChannelSelection } from "../definition/channel-menu.ts";
+import { channelToolbarButton, type ChannelSelection } from "../components/channel-menu.ts";
 import { ImageHostRuntimeContext } from "./host-context.ts";
 
 /** Image surface host: framing, source compatibility, settings projection, backend selection. */
@@ -27,7 +27,8 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     commands.patch,
     { zoom: 1, pan: { x: 0, y: 0 } },
   );
-  const backend = useImageBackend(resolveRenderMode());
+  const [webGpuFailed, setWebGpuFailed] = useState(false);
+  const backend = useImageBackend(webGpuFailed ? "cpu" : resolveRenderMode());
   const Pane = backend.View;
   const source = p.source;
   const selectedComparisonOperation = p.comparison
@@ -94,6 +95,7 @@ export function ImagePlotView({ presentation: p, settings, commands }: ReactPlot
     onChannelReset={() => commands.patch({ "image.channelSelect": null })}
     enlargeControl={hostRuntime.enlargeControl}
     inStackedGrid={inStack}
+    onBackendFailure={backend.id === "webgpu" ? () => setWebGpuFailed(true) : undefined}
   />;
   const dims = source.dtype === "float" && source.shape.length >= 2 ? shapeDims(source.shape) : null;
   const knownAspect = dims ? finitePositive(dims.w / dims.h) : null;

@@ -1,3 +1,11 @@
+import type { ContextLossEvent } from "../../../engines/context-loss-diagnostics.ts";
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
 /**
  * Fault-injection test hook (browser harness only) — a `?forceEngineFail`
  * URL-param convention (`URLSearchParams` check, "current page URL, read
@@ -147,19 +155,6 @@ export interface DeepColorSample {
   t: number;
 }
 
-/** A context/device-loss event captured while the user-facing log is armed —
- *  timestamped so a repro can correlate a graphics-context loss with the exact
- *  flip that triggered a flash. */
-export interface ContextLossEvent {
-  /** "webgpu-device-lost" (the 2D image/diff pane's own device) |
-   *  "three-webgl-context-lost" / "three-webgl-context-restored" (a 3D viewer). */
-  kind: string;
-  /** `performance.now()` (or `Date.now()`) at the event. */
-  t: number;
-  /** Optional structured detail (device-lost reason/message, viewer id, …). */
-  detail?: unknown;
-}
-
 let paneRenderLog: PaneRenderRecord[] | null = null;
 
 /** Begin (or reset) capturing per-present records. */
@@ -294,7 +289,6 @@ export function recordPaintPhase(record: PaintPhaseRecord): void {
 const USER_CAPTURE_MAX_RECORDS = 5000;
 const USER_CAPTURE_MAX_SUSPECTS = 500;
 const USER_CAPTURE_MAX_HUE_ANOMALIES = 500;
-const USER_CAPTURE_MAX_CONTEXT_EVENTS = 500;
 let userCaptureArmed = false;
 let orangeSuspects: PaneRenderRecord[] = [];
 
@@ -507,27 +501,6 @@ export function recordDeepColorSample(
 // (rare) loss/restore events themselves and gated on `userCaptureArmed`, so it
 // is zero-cost in production and near-zero even when armed.
 // ---------------------------------------------------------------------------
-let contextLossEvents: ContextLossEvent[] = [];
-
-function nowMs(): number {
-  try {
-    if (typeof performance !== "undefined" && typeof performance.now === "function") return performance.now();
-  } catch {
-    /* ignore */
-  }
-  return Date.now();
-}
-
-/** Record a context/device-loss event (no-op unless the user log is armed). */
-export function recordContextLossEvent(kind: string, detail?: unknown): void {
-  if (!userCaptureArmed) return;
-  if (contextLossEvents.length >= USER_CAPTURE_MAX_CONTEXT_EVENTS) return;
-  const ev: ContextLossEvent = { kind, t: nowMs(), detail };
-  contextLossEvents.push(ev);
-  // eslint-disable-next-line no-console
-  console.warn(`cairn-plot paneRenderLog: CONTEXT-LOSS event [${kind}] @ ${ev.t.toFixed(0)}ms — captured on window.__cairnContextLossEvents.`, ev);
-}
-
 /** Arm the user-facing capture if the flag is set. Idempotent; safe to call more
  *  than once. Installs the `window.__cairnPaneRenderLog*` accessors and starts a
  *  bounded log. Returns whether capture is now armed. */
@@ -554,7 +527,7 @@ export function armPaneRenderLogFromFlag(): boolean {
   // sees EVERY instance's records in one place, regardless of arm order.
   orangeSuspects = w.__cairnPaneRenderLogSuspects ?? [];
   hueAnomalies = w.__cairnPaneRenderLogHueAnomalies ?? [];
-  contextLossEvents = w.__cairnContextLossEvents ?? [];
+  const contextLossEvents = w.__cairnContextLossEvents ?? [];
   w.__cairnPaneRenderLogSuspects = orangeSuspects;
   w.__cairnPaneRenderLogHueAnomalies = hueAnomalies;
   w.__cairnContextLossEvents = contextLossEvents;

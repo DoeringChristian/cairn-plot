@@ -4,8 +4,8 @@
  * shared `ImageBackendInput` union (`renderers/image-backend.ts`) and are chosen
  * upstream by the render mode (`resolveRenderMode` — cpu | gpu | auto). It wraps
  * `engine/image-engine.ts`'s `renderImage()` + `engine/pool.ts`'s many-panes
- * resource pool. On any hard GPU-init/render failure it self-heals to
- * `CpuImagePane` (see `engineFailed`), so a pane never blanks.
+ * resource pool. Hard failures are reported to the owning runtime, which owns
+ * fallback policy; this backend never imports or mounts another backend.
  *
  * ## One component, three content modes
  * The pane renders `display_encode(content(uv))` — one persistent WebGPU
@@ -52,7 +52,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Colormap } from "../../types";
-import { applyColormap } from "../cpu/apply-colormap.ts";
+import { applyColormap } from "../resources/apply-colormap.ts";
 import { resolveColormapMode } from "../runtime/diff-colormap";
 import { loadImageData } from "../resources/load-image-data.ts";
 import { getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../resources/cache.ts";
@@ -109,7 +109,6 @@ import type { ImageParams } from "./image-engine";
 // bundle (`vite.plot-gpu-image.config.ts`), never `core.iife.js` — the
 // core-bundle guard is about core staying free of the ENGINE, not about the
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
-import CpuImagePane from "../cpu/view";
 import ImagePaneShell from "../components/ImagePaneShell";
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import {
@@ -142,7 +141,7 @@ import {
   type DisplayCurveId,
 } from "../runtime/tonemap";
 import { useDeepFlatten } from "../components/use-deep-flatten";
-import { usePixelSamplers } from "../components/gpu-image-samplers";
+import { usePixelSamplers } from "./pixel-samplers";
 import { buildRenderSnapshot } from "../components/render-snapshot";
 import {
   isFloatSurfaceProps,
@@ -439,6 +438,9 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // render body. A pane never blanks: either the GPU canvas paints, or the
   // legacy pane does.
   const [engineFailed, setEngineFailed] = useState(false);
+  useEffect(() => {
+    if (engineFailed) backendProps.onBackendFailure?.();
+  }, [engineFailed, backendProps.onBackendFailure]);
   const [paneReady, setPaneReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
@@ -2219,19 +2221,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const overlaySettings = props.overlaySettings;
   const isDraggable = hdrMode ? false : ((props as Uint8SurfaceProps).isDraggable ?? false);
   const onDragStart = hdrMode ? undefined : (props as Uint8SurfaceProps).onDragStart;
-
-  // C1 fix (whole-branch review) — engine bailout: the GPU backend self-heals
-  // to the CPU backend (`CpuImagePane`) on any activation/render hard
-  // failure. Both backends accept the SAME `ImageBackendInput` union (see
-  // `renderers/image-backend.ts`), so the props forward verbatim and the
-  // image still renders — never a blank card. Placed after every hook above
-  // runs unconditionally (rules-of-hooks) but before this component paints
-  // its own GPU canvas.
-  if (engineFailed) {
-    // Forward the UNIFIED props verbatim — CpuImagePane accepts the same
-    // `ImageBackendInput` and reconstructs its own internal representation.
-    return <CpuImagePane {...backendProps} />;
-  }
 
   // The image quad is placed inside the FULL-viewport canvas by
   // `viewToUvRect` (letterboxed at rest, filling/pannable at any zoom); the

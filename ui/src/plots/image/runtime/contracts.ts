@@ -397,6 +397,9 @@ export interface ImageBackendInput {
    *  leaving stacked mode (this pane unmounts) discards the shared settings. Absent ⇒
    *  a standalone pane / normal grid cell (each keeps its own authored defaults). */
   inStackedGrid?: boolean;
+  /** Report an unrecoverable backend failure to the owning runtime. Backends do
+   * not import or mount one another; fallback policy lives above this seam. */
+  onBackendFailure?: (error?: unknown) => void;
 }
 
 /**

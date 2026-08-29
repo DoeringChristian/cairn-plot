@@ -16,7 +16,7 @@
  *    payloads alike); uint8 URLs are re-encoded through a canvas. Runs inside
  *    the leaf's cached resolve, so every selection caches like any decode.
  */
-import type { ChannelGroup } from "./channel-groups";
+import type { ChannelGroup } from "../definition/channel-groups";
 import { floatValues, halfBits, type FloatPixels } from "../runtime/pixel-buffer.ts";
 
 const RGBA = ["R", "G", "B", "A"] as const;

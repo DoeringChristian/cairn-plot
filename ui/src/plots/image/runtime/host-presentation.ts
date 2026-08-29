@@ -3,14 +3,14 @@ import {
   treeHasSelectableChannels,
   type ChannelMenuTree,
   type ChannelSelection,
-} from "./channel-menu.ts";
-import { syntheticChannelTree } from "./channel-slice.ts";
+} from "../components/channel-menu.ts";
+import { syntheticChannelTree } from "../resources/channel-slice.ts";
 import type {
   ImageCompareAlign,
   ImageCompareFit,
   ImageComparisonContent,
   ImageSource,
-} from "./content.ts";
+} from "../definition/content.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 
 export interface ImageComparisonHostInput {

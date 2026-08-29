@@ -32,8 +32,8 @@ import {
   treeHasSelectableChannels,
   type ChannelMenuTree,
   type ChannelSelection,
-} from "../definition/channel-menu.ts";
-import { applyChannelSlice } from "../definition/channel-slice.ts";
+} from "../components/channel-menu.ts";
+import { applyChannelSlice } from "../resources/channel-slice.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { defaultSettingsForNode } from "../../settings.ts";
 import { CellSettingsContext, useSharedPlot } from "../../../host/plot-context.ts";
@@ -47,12 +47,12 @@ import type { RenderEnvironment } from "../../../backends/contracts.ts";
 import {
   planRegisteredImageComparison,
   resolveRegisteredImageComparison,
-} from "../definition/comparison-plan.ts";
+} from "../runtime/comparison-plan.ts";
 import {
   composeImageComparisonPresentation,
   composeSingleImagePresentation,
   type ImageComparisonHostInput,
-} from "../definition/host-presentation.ts";
+} from "../runtime/host-presentation.ts";
 import { ImageHostRuntimeContext } from "./host-context.ts";
 
 /**

@@ -17,7 +17,7 @@ test("typed backend presentations cannot carry settings plumbing", () => {
 });
 
 test("image backend receives settings and commands explicitly and cannot initialize on mount", () => {
-  const register = readFileSync(new URL("../plots/image/definition/register.ts", import.meta.url), "utf8");
+  const register = readFileSync(new URL("../plots/image/runtime/register.ts", import.meta.url), "utf8");
   assert.match(register, /presentation:\s*input\.presentation/);
   assert.match(register, /settings:\s*input\.settings/);
   assert.match(register, /commands:\s*input\.commands/);

@@ -66,7 +66,7 @@ import {
 import { computeDiff } from "./diff.ts";
 import { webglRenderDiffToCanvas } from "./webgl-diff.ts";
 import { getColormapLUT } from "../../../settings/colormaps/index";
-import { applyColormap } from "../cpu/apply-colormap.ts";
+import { applyColormap } from "../resources/apply-colormap.ts";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
 import { resolveColormapMode } from "../runtime/diff-colormap";
@@ -100,7 +100,7 @@ import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../compone
 import { getDisplayOperation, type ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_DISPLAY_PARAMETERS, defaultReduceMode, type DisplayParameters, type NormMode } from "../runtime/display-settings.ts";
 import { getCpuDisplayOperation } from "./display-operations.ts";
-import { getCpuImageOperation, type CpuImageOperation } from "./image-operations.ts";
+import { getImageOperationEvaluator, type ImageOperationEvaluator } from "../resources/image-operation-evaluator.ts";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isFloatSurfaceProps,
@@ -133,11 +133,11 @@ const DEFAULT_PROCESSING: ImageProcessing = {
  *  declaration the GPU shader's `cairnContent` assembles from. Identity returns
  *  the sampled source channels unchanged, so the pixel pipeline is byte-for-byte
  *  as before. */
-const _identityOp = getCpuImageOperation("identity");
+const _identityOp = getImageOperationEvaluator("identity");
 if (!_identityOp) {
   throw new Error("CpuImagePane: the CPU backend must implement the identity image operation");
 }
-const IDENTITY_CONTENT: CpuImageOperation = _identityOp;
+const IDENTITY_CONTENT: ImageOperationEvaluator = _identityOp;
 
 /**
  * Tone-map the float HDR buffer into an 8-bit RGBA `ImageData`. Pure — no DOM

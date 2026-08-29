@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { Scene3DSyncOptions } from "../../three/runtime/use-scene3d";
 import { createCameraSettingsPeer, type CameraState } from "../../three/runtime/camera-settings";
-import { CrossTypeCompositeMediaPane } from "./compositor";
+import { CrossTypeCompositeMediaPane } from "../runtime/compare-compositor";
 import type { MediaCompareModeKind } from "./mode";
 import type { FrameSource } from "../../../backends/frame-source";
 import type { Colormap, DiffMode } from "../../types";

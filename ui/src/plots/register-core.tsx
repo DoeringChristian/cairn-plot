@@ -6,7 +6,7 @@ import { ensureHeatmapPlotType } from "./heatmap/register.ts";
 import { HeatmapPlotView } from "./heatmap/view.tsx";
 import { ensureHistogramPlotType } from "./histogram/register.ts";
 import { HistogramPlotView } from "./histogram/view.tsx";
-import { ensureImagePlotType } from "./image/definition/register.ts";
+import { ensureImagePlotType } from "./image/runtime/register.ts";
 import { ImagePlotView } from "./image/runtime/view.tsx";
 import { ensureParallelPlotType } from "./parallel/register.ts";
 import { ParallelPlotView } from "./parallel/view.tsx";

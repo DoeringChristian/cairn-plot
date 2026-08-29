@@ -7,7 +7,7 @@ import {
   ensureGpuImageProbe,
   gpuImageGateState,
   subscribeGpuImageGate,
-} from "../components/gpu-image-gate.ts";
+} from "./gpu-image-gate.ts";
 import type { ImageBackendView, RenderMode } from "./contracts.ts";
 import type { ImageBackendCapabilities } from "./backend-capabilities.ts";
 import { CPU_IMAGE_BACKEND_CAPABILITIES } from "../cpu/capabilities.ts";

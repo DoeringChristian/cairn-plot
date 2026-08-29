@@ -25,7 +25,7 @@ const SRC = join(HERE, "../../..");
 const read = (rel: string) => readFileSync(join(SRC, rel), "utf8");
 
 const shell = read("plots/image/components/ImagePaneShell.tsx");
-const compositor = read("plots/image/compare/compositor.tsx");
+const compositor = read("plots/image/runtime/compare-compositor.tsx");
 const overlay = read("primitives/components/PixelValueOverlay.tsx");
 
 // The pane roots: `ImagePaneShell` (every single-image + GPU-compare pane) and

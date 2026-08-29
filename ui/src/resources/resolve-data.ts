@@ -10,7 +10,7 @@ import {
   fetchBoxesArrays,
 } from "../plots/artifact-resolvers";
 import type { DataSource } from "./data/data-source";
-import { parseOverlay } from "../plots/image/definition/overlay-metadata";
+import { parseOverlay } from "../plots/image/resources/overlay-metadata";
 import { parseNpy } from "../plots/transforms/index";
 import {
   decodeImage,

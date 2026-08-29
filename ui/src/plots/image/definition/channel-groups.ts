@@ -17,7 +17,9 @@
  * Pure + framework-free: unit-tested in node, consumed by the strip UI, the
  * decode selector and `cp.Layers` expansion alike.
  */
-import type { ExrChannelDesc } from "../resources/decoders/exr-describe";
+interface NamedChannel {
+  readonly name: string;
+}
 
 export interface ChannelGroup {
   /** Group name — the layer prefix ("" = the default/base layer), or the FULL
@@ -41,7 +43,7 @@ function splitName(full: string): { prefix: string; suffix: string } {
 }
 
 /** Group a part's channels. Accepts either full descriptors or bare names. */
-export function groupChannels(channels: ReadonlyArray<ExrChannelDesc | string>): ChannelGroup[] {
+export function groupChannels(channels: ReadonlyArray<NamedChannel | string>): ChannelGroup[] {
   const names = channels.map((c) => (typeof c === "string" ? c : c.name));
   // Bucket by layer prefix, preserving first-appearance order.
   const buckets = new Map<string, string[]>();

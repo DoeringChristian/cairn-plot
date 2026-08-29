@@ -37,7 +37,8 @@ import {
   TEV_HISTOGRAM_BINS,
   type TevBinMapping,
 } from "../../definition/histogram-binning";
-import { cpuDeepDepthWeights, DEPTH_WEIGHT_FIXED_SCALE } from "../histogram/compute";
+import { DEPTH_WEIGHT_FIXED_SCALE } from "../histogram/compute";
+import { deepDepthWeights } from "../../resources/deep-depth-weights";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "HISTOGRAM-GPU" });
@@ -337,7 +338,7 @@ async function runDeepCases(device: Device): Promise<boolean> {
   ok = ok && rangeOk;
   report(rangeOk, `[deep] z-range GPU [${gpu.zMin}, ${gpu.zMax}] == CPU [${zMin}, ${zMax}]`);
   const mapping = tevBinMapping(zMin, zMax, TEV_HISTOGRAM_BINS);
-  const cpuW = cpuDeepDepthWeights(zs, colors, mapping, tevBinOfValue, DEPTH_WEIGHT_FIXED_SCALE);
+  const cpuW = deepDepthWeights(zs, colors, mapping, tevBinOfValue, DEPTH_WEIGHT_FIXED_SCALE);
   let diffBins = 0;
   let maxDelta = 0;
   for (let i = 0; i < TEV_HISTOGRAM_BINS; i++) {

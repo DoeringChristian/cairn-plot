@@ -121,7 +121,7 @@ export function ensureImagePlotType(
       },
       plan: planImageComparison,
       async resolve(plan, context) {
-        const { resolveImageComparisonPair } = await import("./comparison-resolve.ts");
+      const { resolveImageComparisonPair } = await import("../resources/comparison-resolve.ts");
         return imagePresentation(await resolveImageComparisonPair(plan.reference, plan.foreground, context.source));
       },
     },

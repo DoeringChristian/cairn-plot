@@ -49,14 +49,14 @@
  * mapping, accumulating its ALPHA as a FIXED-POINT u32
  * (`round(clamp(alpha, 0, ..) * `{@link DEPTH_WEIGHT_FIXED_SCALE}`)`) —
  * WGSL has no float atomics. The host de-quantizes (÷ scale). The pure CPU
- * twin ({@link cpuDeepDepthWeights}) is the parity reference AND the
- * production fallback for CPU panes (un-quantized there — exact).
+ * The shared CPU implementation lives above the backend boundary in
+ * `resources/deep-depth-weights.ts`; this module contains only WebGPU shader
+ * construction and GPU-result folding.
  */
 import {
   emptyChannelStats,
   symmetricLog2,
   type ChannelStats,
-  type TevBinMapping,
 } from "../../definition/histogram-binning.ts";
 
 /** Max texel channels the GPU path handles (an RGBA texel) — sources with more
@@ -535,32 +535,6 @@ export function foldDeepDepthStatsPartials(
  * like the GPU. Binning through `binOf` (the caller passes `tevBinOfValue`
  * over its mapping) so the CPU/GPU bin expression stays single-sourced.
  */
-export function cpuDeepDepthWeights(
-  zs: ArrayLike<number>,
-  colors: ArrayLike<number>,
-  mapping: TevBinMapping,
-  binOf: (m: TevBinMapping, v: number) => number,
-  quantize?: number,
-): Float64Array {
-  const weights = new Float64Array(mapping.bins);
-  for (let i = 0; i < zs.length; i++) {
-    const z = zs[i]!;
-    if (!Number.isFinite(z)) continue;
-    let w = colors[i * 4 + 3] ?? 0;
-    if (Number.isNaN(w)) continue;
-    w = Math.min(Math.max(w, 0), DEPTH_WEIGHT_MAX);
-    if (quantize) {
-      const fixed = Math.round(w * quantize);
-      if (fixed === 0) continue;
-      w = fixed / quantize;
-    }
-    if (w <= 0) continue;
-    const bi = binOf(mapping, z);
-    if (bi >= 0) weights[bi]! += w;
-  }
-  return weights;
-}
-
 /** Re-export the symlog the WGSL literals are generated from — the compile-time
  *  coupling the parity tests assert against. */
 export { symmetricLog2 };

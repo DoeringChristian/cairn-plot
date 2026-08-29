@@ -1,16 +1,16 @@
 import { getImageOperation, type ImageOperationDefinition } from "../definition/index.ts";
 
-export interface CpuImageOperationContext {
+export interface ImageOperationEvaluationContext {
   readonly uv: readonly [number, number];
   readonly parameter: number;
 }
 
-export interface CpuImageOperation {
+export interface ImageOperationEvaluator {
   readonly definition: ImageOperationDefinition;
   evaluate(
     sources: readonly (readonly number[])[],
     channels: number,
-    context?: CpuImageOperationContext,
+    context?: ImageOperationEvaluationContext,
   ): number[];
 }
 
@@ -18,7 +18,7 @@ const RELATIVE_EPSILON = 1 / 255;
 const rgb = (value: readonly number[] | undefined): [number, number, number] =>
   [value?.[0] ?? 0, value?.[1] ?? 0, value?.[2] ?? 0];
 
-function pointwise(id: string, evaluate: (a: number, b: number) => number): CpuImageOperation {
+function pointwise(id: string, evaluate: (a: number, b: number) => number): ImageOperationEvaluator {
   return {
     definition: getImageOperation(id)!,
     evaluate(sources) {
@@ -29,7 +29,7 @@ function pointwise(id: string, evaluate: (a: number, b: number) => number): CpuI
   };
 }
 
-export const CPU_IMAGE_OPERATIONS: readonly CpuImageOperation[] = [
+export const IMAGE_OPERATION_EVALUATORS: readonly ImageOperationEvaluator[] = [
   { definition: getImageOperation("identity")!, evaluate: (sources) => [...(sources[0] ?? [])] },
   pointwise("absolute", (a, b) => Math.abs(a - b)),
   pointwise("signed", (a, b) => a - b),
@@ -45,7 +45,7 @@ export const CPU_IMAGE_OPERATIONS: readonly CpuImageOperation[] = [
   },
 ];
 
-const implementations = new Map(CPU_IMAGE_OPERATIONS.map((operation) => [operation.definition.id, operation]));
-export function getCpuImageOperation(id: string): CpuImageOperation | undefined {
+const implementations = new Map(IMAGE_OPERATION_EVALUATORS.map((operation) => [operation.definition.id, operation]));
+export function getImageOperationEvaluator(id: string): ImageOperationEvaluator | undefined {
   return implementations.get(id);
 }

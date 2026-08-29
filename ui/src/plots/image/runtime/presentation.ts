@@ -7,7 +7,7 @@ import type {
   Interpolation,
 } from "../../types.ts";
 import type { ImageComparisonContent, ImageSource } from "../definition/content.ts";
-import type { ChannelMenuTree, ChannelSelection } from "../definition/channel-menu.ts";
+import type { ChannelMenuTree, ChannelSelection } from "../components/channel-menu.ts";
 
 /**
  * Resolved input presented by the host to the image runtime.

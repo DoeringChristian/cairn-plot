@@ -17,12 +17,12 @@ import {
   assembleDeepDepthStatsWGSL,
   assembleHistogramBinWGSL,
   assembleHistogramStatsWGSL,
-  cpuDeepDepthWeights,
   deepParamsData,
   foldDeepDepthStatsPartials,
   foldHistogramStatsPartials,
   histParamsData,
 } from "./compute.ts";
+import { deepDepthWeights } from "../../resources/deep-depth-weights.ts";
 import { tevBinMapping, tevBinOfValue } from "../../definition/histogram-binning.ts";
 
 const FLT_BIG = 3.402823e38;
@@ -111,7 +111,7 @@ test("cpuDeepDepthWeights bins alpha weights, skipping/clamping bad samples", ()
     0, 0, 0, -3,
     0, 0, 0, 0.25,
   ];
-  const w = cpuDeepDepthWeights(zs, colors, mapping, tevBinOfValue);
+  const w = deepDepthWeights(zs, colors, mapping, tevBinOfValue);
   const total = [...w].reduce((a, b) => a + b, 0);
   assert.ok(Math.abs(total - 1.75) < 1e-12); // 1 + 0.5 + 0.25 (NaN z + clamped alpha dropped)
   assert.equal(w[tevBinOfValue(mapping, 0)]! >= 1, true);
@@ -124,7 +124,7 @@ test("cpuDeepDepthWeights quantize mirrors the GPU fixed-point accumulation", ()
   // 0.001 sits in the bottom symlog bin, 0.9 in the top one.
   const zs = [0.001, 0.001, 0.9];
   const colors = [0, 0, 0, 0.001, 0, 0, 0, 0.4, 0, 0, 0, 0.7];
-  const q = cpuDeepDepthWeights(zs, colors, mapping, tevBinOfValue, DEPTH_WEIGHT_FIXED_SCALE);
+  const q = deepDepthWeights(zs, colors, mapping, tevBinOfValue, DEPTH_WEIGHT_FIXED_SCALE);
   // 0.001·256 rounds to 0 → dropped; 0.4·256 = 102.4 → 102/256; 0.7·256 = 179.2 → 179/256.
   const bin0 = tevBinOfValue(mapping, 0.001);
   const bin1 = tevBinOfValue(mapping, 0.9);

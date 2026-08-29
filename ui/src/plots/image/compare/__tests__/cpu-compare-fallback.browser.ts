@@ -18,7 +18,7 @@
 import { floatValues } from "../../runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
-import { CompositeMediaPane } from "../compositor";
+import { CompositeMediaPane } from "../../runtime/compare-compositor";
 import type { ResolvedFloatImage } from "../../definition/content.ts";
 import type { DiffMode } from "../../../types";
 import { createHarness, waitFor } from "../../../../testing/harness";

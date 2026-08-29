@@ -1,7 +1,7 @@
 /**
  * Regression pin — the compare operands' F16-PIPELINE tag must survive packing.
  *
- * `plots/image/definition/comparison-resolve.ts`'s `decodedSource` converts a resolved compare frame
+ * `plots/image/resources/comparison-resolve.ts`'s `decodedSource` converts a resolved compare frame
  * (`ResolvedFloatImage`) into the `ImageSource` the unified pane uploads. A
  * `"f16-bits"` payload is a `Uint16Array` of raw IEEE-754 binary16 BIT
  * PATTERNS; dropping the `precision` tag makes `decodedSourceToUpload` take
@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const comparisonResolve = readFileSync(
-  join(HERE, "..", "..", "..", "plots", "image", "definition", "comparison-resolve.ts"),
+  join(HERE, "..", "resources", "comparison-resolve.ts"),
   "utf8",
 );
 

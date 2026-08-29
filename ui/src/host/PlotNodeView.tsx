@@ -68,7 +68,7 @@ import {
   planRegisteredImageComparison as synthDiffLeafOf,
   resolveRegisteredImageComparison,
   expandImageComparison,
-} from "../plots/image/definition/comparison-plan.ts";
+} from "../plots/image/runtime/comparison-plan.ts";
 import { ImageNodeHost } from "../plots/image/runtime/host-adapter.tsx";
 import { usePlotSessionController } from "../state/session/session-context.ts";
 import { getGlobalSelectionStore } from "../state/selection/selection-store.ts";

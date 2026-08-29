@@ -24,21 +24,11 @@
  * `rgba16float` upload; see `./half.ts`).
  */
 import { f16BitsToFloat32, halfToFloat } from "./half.ts";
+import type { FloatPixels } from "../definition/content.ts";
+
+export type { FloatPixels } from "../definition/content.ts";
 
 /** A float pixel payload whose representation travels WITH the bytes. */
-export type FloatPixels =
-  | {
-      /** Directly-readable float VALUES (f32 or f64 storage). */
-      readonly kind: "values";
-      readonly values: Float32Array | Float64Array;
-    }
-  | {
-      /** Raw IEEE-754 binary16 BIT PATTERNS (widen on read; upload as
-       *  `rgba16float`). */
-      readonly kind: "f16-bits";
-      readonly bits: Uint16Array;
-    };
-
 /** Wrap directly-readable float values. */
 export function floatValues(values: Float32Array | Float64Array): FloatPixels {
   return { kind: "values", values };

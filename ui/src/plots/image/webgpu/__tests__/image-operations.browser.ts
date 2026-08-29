@@ -29,7 +29,7 @@ import { renderImage, computeMetrics, type ImageParams } from "../image-engine";
 import { acquirePane, releasePane, getCanvasSurfaceForTest, type SourceUpload } from "../pool";
 import { ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
 import { prepareDisplayOperation } from "../prepare-display-operation.ts";
-import { getCpuImageOperation, type CpuImageOperationContext } from "../../cpu/image-operations.ts";
+import { getImageOperationEvaluator, type ImageOperationEvaluationContext } from "../../resources/image-operation-evaluator.ts";
 import { getWebGpuImageOperation } from "../image-operations.ts";
 import { evaluateDisplayOperation as evaluateCpuDisplayOperation, getCpuDisplayOperation, type CpuDisplayOperation } from "../../cpu/display-operations.ts";
 import { getWebGpuDisplayOperation } from "../display.ts";
@@ -89,7 +89,7 @@ function buildTex(device: Device, rows: number[][]): Texture {
  * within 1/255.
  */
 async function runDiffOpCase(device: Device, operationId: string, displayOperationId: string): Promise<boolean> {
-  const op = getCpuImageOperation(operationId);
+  const op = getImageOperationEvaluator(operationId);
   if (!op || getWebGpuImageOperation(operationId)?.kind !== "inline") {
     report(false, `[${operationId}] is not implemented as an inline operation by both backends`);
     return false;
@@ -216,7 +216,7 @@ async function runIdentityInertCase(device: Device): Promise<boolean> {
  * two-registry composition the diff case uses.
  */
 async function runCompositorOpCase(device: Device, operationId: "split", param: number): Promise<boolean> {
-  const op = getCpuImageOperation(operationId);
+  const op = getImageOperationEvaluator(operationId);
   if (!op || getWebGpuImageOperation(operationId)?.kind !== "inline") {
     report(false, `[${operationId}] not a registered direct image operation`);
     return false;
@@ -241,7 +241,7 @@ async function runCompositorOpCase(device: Device, operationId: "split", param: 
   ];
   const N = rowsA.length;
   const twin = (i: number, c: number): number => {
-    const ctx: CpuImageOperationContext = { uv: [(i + 0.5) / N, 0.5], parameter: param };
+    const ctx: ImageOperationEvaluationContext = { uv: [(i + 0.5) / N, 0.5], parameter: param };
     return op.evaluate([rowsA[i]!, rowsB[i]!], 3, ctx)[c]!;
   };
 
@@ -312,7 +312,7 @@ function buildUpload(rows: number[][]): SourceUpload {
  * and injects it as `params.srcB` (the pane never touches the GPU texture).
  */
 async function runPoolDirectOpCase(device: Device, operationId: string, displayOperationId: string): Promise<boolean> {
-  const op = getCpuImageOperation(operationId);
+  const op = getImageOperationEvaluator(operationId);
   if (!op || getWebGpuImageOperation(operationId)?.kind !== "inline") {
     report(false, `[pool:${operationId}] not a registered direct image operation`);
     return false;

@@ -45,6 +45,13 @@
 // Node's resolver and accepted by tsc (`allowImportingTsExtensions`) + the vite
 // bundler.
 import { parseNpy, type NpyArray } from "../../transforms/parse-npy.ts";
+import type { DeepFlattenController } from "../definition/content.ts";
+
+export type {
+  DeepFlattenController,
+  DeepGpuCsrData,
+  DeepZRangeData,
+} from "../definition/content.ts";
 // The EXR slot is the worker-backed dispatcher (`decoders/exr-decode.ts`): it
 // runs the FULL vendored decoder (PIZ/PXR24/B44/DWA/… — see
 // `decoders/vendor/PROVENANCE.md`) OFF the main thread in a persistent inline
@@ -111,45 +118,6 @@ export type DecodedImage =
  * `wasm/openexr/src/binding.cpp`. The buffer {@link flatten} returns has the
  * SAME width/height/channels/precision as the initial decode.
  */
-export interface DeepFlattenController {
-  /** Nearest sample Z (front of the volume). */
-  readonly zMin: number;
-  /** Farthest sample Z (full composite). */
-  readonly zMax: number;
-  /** Re-flatten including only samples in the Z window [`zNear`, `zFar`]
-   *  (CPU/wasm path — the coalesced fallback for non-WebGPU / CPU-backed panes).
-   *  `zNear = -Infinity` = single far cutoff. */
-  flatten(zNear: number, zFar: number): Promise<Float32Array | Uint16Array>;
-  /** Export the Z-sorted samples for GPU upload (the real-time GPU depth-
-   *  composite path). One round-trip; the GPU then owns the data. */
-  getGpuCsr(): Promise<DeepGpuCsrData>;
-  /** Z range of the samples inside an image-pixel rect (region-select → depth
-   *  window). `count === 0` ⇒ the region held no samples (caller no-ops). */
-  zRangeInRect(x0: number, y0: number, x1: number, y1: number): Promise<DeepZRangeData>;
-  /** Release the retained wasm-side handle (idempotent). Call on pane unmount. */
-  dispose(): void;
-}
-
-/** Z range of samples in an image-pixel rect (region-select). */
-export interface DeepZRangeData {
-  readonly zMin: number;
-  readonly zMax: number;
-  readonly count: number;
-}
-
-/** Z-sorted deep samples for GPU upload (see `wasm/openexr` `DeepGpuCsr`). */
-export interface DeepGpuCsrData {
-  readonly width: number;
-  readonly height: number;
-  readonly total: number;
-  /** pixels+1 prefix sums. */
-  readonly offsets: Uint32Array;
-  /** 4·total premultiplied RGBA (one vec4 per sample). */
-  readonly colors: Float32Array;
-  /** total per-sample Z, ascending within each pixel. */
-  readonly zs: Float32Array;
-}
-
 /** A decodable image source: a `url`, raw `bytes`, or both, plus format hints. */
 export interface ImageSource {
   /** Fetchable URL (browser-native formats decode straight from this). */

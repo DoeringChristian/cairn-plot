@@ -4,7 +4,7 @@ import {
   ensureGpuImageProbe,
   gpuImageGateState,
   subscribeGpuImageGate,
-} from "../components/gpu-image-gate";
+} from "./gpu-image-gate";
 import { InFullscreenOverlayContext } from "../../../primitives/components/FullscreenOverlayShell";
 import { InStackedGridContext } from "../../../layout/stack/stack-context";
 import { usePublishNaturalSize } from "../../../layout/natural-size";
@@ -17,10 +17,10 @@ import type {
   Interpolation,
 } from "../../types";
 import { useImageGestures, type ImageViewState } from "../../../host/hooks/use-image-gestures";
-import { useGammaFilter, GammaFilterSvg } from "./post-processing";
+import { useGammaFilter, GammaFilterSvg } from "../compare/post-processing";
 import ImageOverlay from "../components/ImageOverlay";
 import CpuImagePane, { tonemapToImageData } from "../cpu/view";
-import { DEFAULT_DISPLAY_OPERATION_ID } from "../runtime/tonemap";
+import { DEFAULT_DISPLAY_OPERATION_ID } from "./tonemap";
 import { DIFF_MODE_LABELS } from "../cpu/diff.ts";
 import PixelValueOverlay, {
   CHANNEL_COLORS,
@@ -32,14 +32,14 @@ import PixelValueOverlay, {
 import { loadImageData } from "../resources/load-image-data.ts";
 import RefBadge from "../../../primitives/components/RefBadge";
 import LabelChip from "../../../primitives/components/LabelChip";
-import { useSplitFlipKeys } from "./use-split-flip-keys";
-import { compareCaptions } from "./compare-captions";
+import { useSplitFlipKeys } from "../compare/use-split-flip-keys";
+import { compareCaptions } from "../compare/compare-captions";
 import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
-import SplitDivider from "./SplitDivider";
-import type { MediaCompareModeKind } from "./mode";
-import type { ImageCompareAlign, ImageCompareFit } from "../runtime/compare-align";
-import { alignFrameSourcesForDiff } from "./cross-type-align";
-import { resolveRenderMode, urlSource } from "../runtime/contracts";
+import SplitDivider from "../compare/SplitDivider";
+import type { MediaCompareModeKind } from "../compare/mode";
+import type { ImageCompareAlign, ImageCompareFit } from "./compare-align";
+import { alignFrameSourcesForDiff } from "../compare/cross-type-align";
+import { resolveRenderMode, urlSource } from "./contracts";
 import {
   useSeedGroupOnFormation,
   useCellSettings,
@@ -48,7 +48,7 @@ import {
 import type {
   ImageComparisonInput,
   ImageBackendView,
-} from "../runtime/contracts";
+} from "./contracts";
 import type {
   FloatImageSource,
   ImageSource,

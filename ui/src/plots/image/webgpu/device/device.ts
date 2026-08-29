@@ -122,7 +122,7 @@ import {
   configureSDRSurface,
   type SurfaceConfigResult,
 } from "../../../../engines/webgpu/surface.ts";
-import { recordContextLossEvent } from "../test-hooks";
+import { recordContextLossEvent } from "../../../../engines/context-loss-diagnostics.ts";
 import {
   REDUCE_WORKGROUP_SIZE,
   assembleReduceWGSL,

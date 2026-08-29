@@ -28,7 +28,7 @@
  * per-pixel-under-cursor deep readout.
  */
 import type { DeepGpuCsrData } from "../resources/decoders.ts";
-import { cpuDeepDepthWeights } from "../webgpu/histogram/compute.ts";
+import { deepDepthWeights } from "../resources/deep-depth-weights.ts";
 import {
   emptyChannelStats,
   foldChannelStat,
@@ -492,7 +492,7 @@ export function depthHistogramFromWeights(
 
 /**
  * CPU depth histogram over a deep CSR: finite-Z range, then per-sample
- * alpha-weighted binning ({@link cpuDeepDepthWeights} — the GPU kernel's pure
+ * alpha-weighted binning ({@link deepDepthWeights} — shared backend-neutral math
  * twin, un-quantized here). Returns `null` when the CSR holds no finite-Z
  * sample.
  */
@@ -510,7 +510,7 @@ export function computeDepthHistogramCpu(
   }
   if (!(zMin <= zMax)) return null;
   const mapping = tevBinMapping(zMin, zMax, bins);
-  const weights = cpuDeepDepthWeights(csr.zs, csr.colors, mapping, tevBinOfValue);
+  const weights = deepDepthWeights(csr.zs, csr.colors, mapping, tevBinOfValue);
   return depthHistogramFromWeights(zMin, zMax, weights, bins);
 }
 

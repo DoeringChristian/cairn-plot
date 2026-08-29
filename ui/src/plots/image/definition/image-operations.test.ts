@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CPU_IMAGE_OPERATIONS, getCpuImageOperation } from "../cpu/image-operations.ts";
+import { IMAGE_OPERATION_EVALUATORS, getImageOperationEvaluator } from "../resources/image-operation-evaluator.ts";
 import { buildImageOperationWGSL, getWebGpuImageOperation, WEBGPU_IMAGE_OPERATIONS } from "../webgpu/image-operations.ts";
 import { IMAGE_OPERATIONS } from "./image-operations.ts";
 
@@ -37,15 +37,15 @@ test("one-channel image-operation fields are expanded to gray RGB for every disp
 });
 
 test("CPU implements the pointwise subset and reports unsupported multipass operations", () => {
-  assert.deepEqual(CPU_IMAGE_OPERATIONS.map(({ definition }) => definition.id), ["identity", ...POINTWISE, "split"]);
-  for (const id of ["flip", "hdr-flip", "flip-ldr-forced", "ssim"]) assert.equal(getCpuImageOperation(id), undefined);
+  assert.deepEqual(IMAGE_OPERATION_EVALUATORS.map(({ definition }) => definition.id), ["identity", ...POINTWISE, "split"]);
+  for (const id of ["flip", "hdr-flip", "flip-ldr-forced", "ssim"]) assert.equal(getImageOperationEvaluator(id), undefined);
 });
 
 test("CPU pointwise implementations retain comparison math", () => {
   const a = [0.8, 0.5, 0.2];
   const b = [0.3, 0.6, 0.2];
-  assert.deepEqual(getCpuImageOperation("signed")!.evaluate([a, b], 3), [0.5, -0.09999999999999998, 0]);
-  assert.deepEqual(getCpuImageOperation("absolute")!.evaluate([a, b], 3), [0.5, 0.09999999999999998, 0]);
+  assert.deepEqual(getImageOperationEvaluator("signed")!.evaluate([a, b], 3), [0.5, -0.09999999999999998, 0]);
+  assert.deepEqual(getImageOperationEvaluator("absolute")!.evaluate([a, b], 3), [0.5, 0.09999999999999998, 0]);
 });
 
 test("WebGPU JIT compiles one inline backend implementation at a time", () => {
