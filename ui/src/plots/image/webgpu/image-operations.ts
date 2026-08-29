@@ -56,7 +56,7 @@ export const WEBGPU_IMAGE_OPERATIONS: readonly WebGpuImageOperation[] = [
   `, "compositor"),
   multipass("flip", flipProgram),
   multipass("hdr-flip", hdrFlipProgram),
-  multipass("flip-sdr-float", flipLdrForcedProgram),
+  multipass("flip-sdr", flipLdrForcedProgram),
   multipass("ssim", ssimProgram),
 ];
 

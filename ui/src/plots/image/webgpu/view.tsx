@@ -58,6 +58,7 @@ import { loadImageData } from "../resources/load-image-data.ts";
 import { getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../resources/cache.ts";
 import { HALF_ONE } from "../runtime/half";
 import { floatValues, widenFloatPixels } from "../runtime/pixel-buffer.ts";
+import { imageDataToSceneField } from "../resources/scene-field.ts";
 // DIFF capability: the pane samples a second source slot (`compareSource.b` via
 // the pool's `setSourceB`) and renders a diff IMAGE operation — a DIRECT pointwise op
 // inline, or a CACHED metric (FLIP/HDR-FLIP/SSIM) via `renderDiffCached`. Engine
@@ -252,7 +253,12 @@ async function decodedSourceToUpload(src: ImageSource): Promise<SourceUpload | n
   if (!src.url) return null;
   const d = await loadImageData(src.url);
   if (!d) return null;
-  return { data: d.data, width: d.width, height: d.height, format: "rgba8unorm" };
+  return sceneFieldUpload(d);
+}
+
+function sceneFieldUpload(image: ImageData): SourceUpload {
+  const field = imageDataToSceneField(image);
+  return { data: field.pixels, width: field.width, height: field.height, format: "rgba32float" };
 }
 
 /**
@@ -612,14 +618,12 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onComparisonOperationChange, setSynced],
   );
-  // Cheap pure derivations: the concrete kernel id (float sources auto-dispatch
-  // flip→hdr-flip) and the diff's shared default colormap.
-  const sourcesAreFloat =
-    backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
+  // Cheap pure derivations: FLIP's concrete backend implementation follows its
+  // explicit HDR/SDR setting. Source storage has already been normalized away.
   const flipMode: FlipMode = synced?.["compare.flipMode"] ?? "hdr";
   const flipMaxExposures = synced?.["compare.flipMaxExposures"] ?? null;
   const resolvedOperationId = diffMode
-    ? resolveComparisonOperationId(comparisonOperationId, !!sourcesAreFloat, flipMode)
+    ? resolveComparisonOperationId(comparisonOperationId, flipMode)
     : comparisonOperationId;
   const diffDefaultEncoding = diffSeedColormap ?? DEFAULT_COMPARISON_DISPLAY_OPERATION_ID;
   // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
@@ -1157,12 +1161,14 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     const primaryKey = hasCompare ? contentKeyA : undefined;
     const applySdr = (raw: ImageData, display: ImageData, p2: Uint8SurfaceProps) => {
       sdrImageDataRef.current = raw; // TEV overlay reads the RAW source, like ImagePane.
-      const upload: SourceUpload = {
-        data: display.data,
-        width: display.width,
-        height: display.height,
-        format: "rgba8unorm",
-      };
+      const upload: SourceUpload = hasCompare
+        ? sceneFieldUpload(raw)
+        : {
+            data: display.data,
+            width: display.width,
+            height: display.height,
+            format: "rgba8unorm",
+          };
       paneHandleRef.current?.setSource(upload, primaryKey);
       // Coherency guard: record which primary content the pool now holds — mirrors
       // `expectedPrimaryId` in renderPass (compare → `A:<keyA>`, else `img:<url>`).
@@ -1325,14 +1331,17 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // zoom/pan). The reference is the diff-engine's `texA` operand = the pane's
   // `source` here. Only needed for the `hdr-flip` kernel.
   const automaticHdrExposures = useMemo(() => {
-    if (!diffMode || !sourcesAreFloat) return null;
-    const ref = backendProps.source.dtype === "float" ? backendProps.source : null;
-    if (!ref) return null;
-    const { h, w, c } = shapeDims(ref.shape);
-    const refData = widenFloatPixels(ref.pixels);
-    return computeHdrFlipExposures(refData, w, h, c);
+    if (!diffMode || comparisonOperationId !== "flip") return null;
+    if (backendProps.source.dtype === "float") {
+      const { h, w, c } = shapeDims(backendProps.source.shape);
+      return computeHdrFlipExposures(widenFloatPixels(backendProps.source.pixels), w, h, c);
+    }
+    const raw = sdrImageDataRef.current;
+    if (!raw) return null;
+    const scene = imageDataToSceneField(raw);
+    return computeHdrFlipExposures(scene.pixels, scene.width, scene.height, 4);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diffMode, sourcesAreFloat, backendProps.source]);
+  }, [diffMode, comparisonOperationId, backendProps.source, uploadVersion]);
   const hdrExposures = useMemo(() => {
     if (!automaticHdrExposures) return null;
     if (flipMaxExposures == null || !Number.isFinite(flipMaxExposures)) return automaticHdrExposures;
@@ -1511,11 +1520,9 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         isScalar: false,
         hdrOut: rt.hdrOut,
         peak: rt.peak,
-        // sRGB-DECODE an 8-bit operand to scene-linear (like the single-image
-        // light path); a float operand is already scene-linear. Same-dtype
-        // operands (the common case) share this flag; a mixed-dtype pair follows
-        // the PRIMARY (documented limitation vs GpuComparePane's per-side decode).
-        srgbDecode: !hdrMode,
+        // Comparison uploads are normalized to scene-linear rgba32float before
+        // reaching the backend, irrespective of their source storage format.
+        srgbDecode: false,
         uv,
         filter,
         imageOperation: compareOpMode!,
@@ -2418,7 +2425,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // channel (the reduction is moot for a scalar). (The norm Lin·Log·Pow picker
       // was REMOVED — norm-UI-removal follow-up.)
       rowSegments={[
-        ...(diffMode && comparisonOperationId === "flip" && sourcesAreFloat
+        ...(diffMode && comparisonOperationId === "flip"
           ? [{
               id: "flip-mode",
               label: "FLIP",
@@ -2466,7 +2473,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // paramless `normal` remap and colormap LUTs have no peak). γ rides the
       // active encoding's manifest (only the Gamma curve declares it).
       extraSliders={diffMode
-        ? comparisonOperationId === "flip" && sourcesAreFloat && flipMode === "hdr" && automaticHdrExposures
+        ? comparisonOperationId === "flip" && flipMode === "hdr" && automaticHdrExposures
           ? [{
               id: "flip-max-exposures",
               label: "EXP",

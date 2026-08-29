@@ -13,8 +13,8 @@
  * compare align/fit source-map (`mapSample`: aligned integer texel per source
  * under crop, bilinear rescale under fill) — exactly like the pointwise and FLIP
  * front-ends. Every later pass runs over RESULT-resolution intermediates.
- *   momA  : srcA/srcB (sRGB, mapped) -> luminance Ya,Yb -> vec4(Ya, Yb, Ya^2, Yb^2).
- *   momB  : srcA/srcB (sRGB, mapped) -> luminance Ya,Yb -> vec4(Ya*Yb, 0, 0, 0).
+ *   momA  : scene-linear srcA/srcB -> luminance Ya,Yb -> vec4(Ya, Yb, Ya^2, Yb^2).
+ *   momB  : scene-linear srcA/srcB -> luminance Ya,Yb -> vec4(Ya*Yb, 0, 0, 0).
  *   blurHA/blurVA : separable 11-tap Gaussian (sigma=1.5, reflect) of momA ->
  *                   (ux, uy, E[x^2], E[y^2]).
  *   blurHB/blurVB : same separable Gaussian of momB -> (E[xy], .., .., ..).
@@ -31,10 +31,8 @@
  * valid sample, so the in-shader weight sum == the full-kernel sum).
  *
  * ## LDR / HDR handling
- * Sources are treated as sRGB-encoded display values; the luminance front-end
- * sRGB-decodes then takes Rec.709 luminance and CLAMPS to [0,1] — the same
- * "clip highlights to the display range" choice FLIP's forced-LDR path makes for
- * float sources (`flip.wgsl.ts` `YCXCZ_LINEAR_CLAMP_SHADER`). SSIM's dynamic
+ * Sources arrive as scene-linear floats from the comparison resource boundary.
+ * The front-end takes Rec.709 luminance and CLAMPS to [0,1]. SSIM's dynamic
  * range L is therefore 1, consistent with `data_range=1`.
  */
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
@@ -46,14 +44,9 @@ import type {
 } from "../operation-pass.ts";
 import type { BindGroupEntry } from "../device/device-contract";
 
-// Shared luminance front-end (matches ssim-reference.ts's ssimLuminance).
+// Shared scene-linear luminance front-end.
 const LUMA_WGSL = `
-fn ssim_srgb2linear(c: f32) -> f32 {
-  if (c <= 0.04045) { return c / 12.92; }
-  return pow((c + 0.055) / 1.055, 2.4);
-}
-fn ssim_luma(srgb: vec3<f32>) -> f32 {
-  let lin = vec3<f32>(ssim_srgb2linear(srgb.r), ssim_srgb2linear(srgb.g), ssim_srgb2linear(srgb.b));
+fn ssim_luma(lin: vec3<f32>) -> f32 {
   return clamp(dot(lin, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
 }
 `;

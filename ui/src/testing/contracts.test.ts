@@ -118,13 +118,12 @@ test("comparisonOperationModes: keys equal comparisonOperationPublicNames (inter
 test("comparisonOperationModes: every emitted operation resolves to a registered kernel", () => {
   // The derivation guard M6 asks for: a kernel-id rename in the registry that
   // isn't mirrored into the tables makes at least one value fail to resolve.
-  // `flip` is a menu token resolved per source dtype, so check both u8 and float.
   for (const [publicName, submode] of Object.entries(contract.comparisonOperationModes)) {
-    for (const sourcesAreFloat of [false, true]) {
-      const operationId = resolveComparisonOperationId(submode, sourcesAreFloat);
+    for (const flipMode of ["hdr", "sdr"] as const) {
+      const operationId = resolveComparisonOperationId(submode, flipMode);
       assert.ok(
         getImageOperation(operationId),
-        `operation ${JSON.stringify(submode)} (mode ${publicName}, float=${sourcesAreFloat}) → operation id ${JSON.stringify(operationId)} is not registered`,
+        `operation ${JSON.stringify(submode)} (mode ${publicName}, FLIP=${flipMode}) → operation id ${JSON.stringify(operationId)} is not registered`,
       );
     }
   }

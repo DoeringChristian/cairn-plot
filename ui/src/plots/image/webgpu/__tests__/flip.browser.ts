@@ -22,6 +22,7 @@
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
 import { flipLDR } from "../kernels/flip-reference";
+import { srgbEotf } from "../../runtime/tonemap";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";
 
@@ -56,6 +57,10 @@ function uploadRGBA(device: Device, rgb: Float32Array, w: number, h: number): Te
   return tex;
 }
 
+function uploadSceneRGBA(device: Device, srgb: Float32Array, w: number, h: number): Texture {
+  return uploadRGBA(device, Float32Array.from(srgb, srgbEotf), w, h);
+}
+
 const PPD = 67;
 const TOL = 3e-2; // GPU (rgba16float intermediates) vs CPU (f64) reference
 
@@ -83,6 +88,24 @@ async function runFlipCase(device: Device, w: number, h: number, seed: number): 
   }
   const ok = worst <= TOL;
   report(ok, `[flip ${w}x${h}] worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL}) meanGPU=${(sum / (w * h)).toFixed(4)}`);
+  return ok;
+}
+
+async function runNormalizedSdrFlipCase(device: Device, w: number, h: number, seed: number): Promise<boolean> {
+  const { ref, test } = makePair(w, h, seed);
+  const texRef = uploadSceneRGBA(device, ref, w, h);
+  const texTest = uploadSceneRGBA(device, test, w, h);
+  const result = computeDiff(device, texRef, texTest, "flip-sdr", { ppd: PPD });
+  const gpu = await device.readback(result);
+  texRef.destroy();
+  texTest.destroy();
+  result.destroy();
+  if (!(gpu instanceof Float32Array)) return false;
+  const cpu = flipLDR(ref, test, w, h, PPD);
+  let worst = 0;
+  for (let i = 0; i < w * h; i++) worst = Math.max(worst, Math.abs(gpu[i * 4]! - cpu[i]!));
+  const ok = worst <= TOL;
+  report(ok, `[flip SDR scene-field ${w}x${h}] worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL})`);
   return ok;
 }
 
@@ -123,6 +146,7 @@ async function main(): Promise<void> {
     ok = (await runFlipCase(device, 12, 12, 1)) && ok;
     ok = (await runFlipCase(device, 16, 16, 7)) && ok;
     ok = (await runFlipCase(device, 20, 14, 42)) && ok;
+    ok = (await runNormalizedSdrFlipCase(device, 16, 16, 17)) && ok;
     ok = (await runCacheContract(device)) && ok;
     setOverallStatus(ok);
   } catch (err) {

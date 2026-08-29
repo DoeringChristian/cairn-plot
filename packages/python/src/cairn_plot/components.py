@@ -239,6 +239,8 @@ def _take_image_settings(props: dict[str, Any]) -> dict[str, Any]:
         "offset": "image.offset",
         "splitPosition": "compare.split",
         "operation": "compare.operation",
+        "flipMode": "compare.flipMode",
+        "flipMaxExposures": "compare.flipMaxExposures",
     }
     for prop, key in mapping.items():
         if prop in props:
@@ -1983,6 +1985,8 @@ class Compare(Component):
         align: str = "top-left",
         fit: str = "crop",
         split_position: float | None = None,
+        flip_mode: str | None = None,
+        flip_max_exposures: int | None = None,
         colormap: str | None = None,
         exposure: float | None = None,
         gamma: float | None = None,
@@ -2003,6 +2007,19 @@ class Compare(Component):
                 f"cp.Compare(mode=...) must be one of {_COMPARE_PUBLIC_MODES!r}, "
                 f"got {mode!r}"
             )
+        if flip_mode is not None and flip_mode not in ("hdr", "sdr"):
+            raise ValueError(
+                f"cp.Compare(flip_mode=...) must be 'hdr' or 'sdr', got {flip_mode!r}"
+            )
+        if flip_mode is not None and mode != "flip":
+            raise ValueError("cp.Compare(flip_mode=...) is only valid with mode='flip'")
+        if flip_max_exposures is not None:
+            if mode != "flip":
+                raise ValueError(
+                    "cp.Compare(flip_max_exposures=...) is only valid with mode='flip'"
+                )
+            if flip_max_exposures < 2:
+                raise ValueError("cp.Compare(flip_max_exposures=...) must be at least 2")
         if align not in _COMPARE_ALIGNS:
             raise ValueError(
                 f"cp.Compare(align=...) must be one of {_COMPARE_ALIGNS!r}, got {align!r}"
@@ -2032,6 +2049,10 @@ class Compare(Component):
         )
         if split_position is not None:
             built["splitPosition"] = float(split_position)
+        if flip_mode is not None:
+            built["flipMode"] = flip_mode
+        if flip_max_exposures is not None:
+            built["flipMaxExposures"] = int(flip_max_exposures)
         if comparison_operation is not None:
             # Carried as `operation` (the kernel id) — the pane initializes its
             # diff kernel from this; the toolbar menu (next track) preselects it.

@@ -1,4 +1,4 @@
-/** Public comparison-operation selection and source-dependent resolution.
+/** Public comparison-operation selection and runtime-mode resolution.
  * Implementations themselves live in the image-operation registry; this module
  * only defines the menu projection and maps public selections to concrete ids. */
 import { getImageOperation, listImageOperations } from "./image-operations.ts";
@@ -31,24 +31,21 @@ export function listComparisonOperationOptions(): ComparisonOperationOption[] {
 }
 
 /**
- * Auto-dispatch (spec addendum DECISION): resolve a menu selection token +
- * whether the compare sources are FLOAT (HDR: imghdr arrays / f32 EXR) into the
- * concrete registered kernel id to run.
- *   - `flip` + HDR → `hdr-flip` for float sources
- *   - `flip` + SDR → `flip-sdr-float` for float sources
- *   - `flip` on u8 → `flip` (the mode toggle is immaterial)
+ * Resolve a menu selection token and the FLIP evaluation setting into the
+ * concrete backend implementation. Operands are already scene-linear floats;
+ * their original storage representation is deliberately absent here.
+ *   - `flip` + HDR → `hdr-flip`
+ *   - `flip` + SDR → `flip-sdr`
  *   - any pointwise id → itself.
  */
 export type FlipMode = "hdr" | "sdr";
 
 export function resolveComparisonOperationId(
   selection: string,
-  sourcesAreFloat: boolean,
   flipMode: FlipMode = "hdr",
 ): string {
   if (selection === "flip") {
-    if (!sourcesAreFloat) return "flip";
-    return flipMode === "hdr" ? "hdr-flip" : "flip-sdr-float";
+    return flipMode === "hdr" ? "hdr-flip" : "flip-sdr";
   }
   return selection;
 }
@@ -67,7 +64,7 @@ export function operationIdForPublicName(publicName: string): string | undefined
  * Auto-dispatch-only kernel public names — reached ONLY by `resolveComparisonOperationId`
  * under a user-facing mode, never offered as a `cp.Compare(mode=)` value or a
  * menu entry. `hdr-flip` (`flip_hdr`) is dispatched from the public `flip` mode
- * on FLOAT sources; users never name it directly. Excluded from
+ * for HDR evaluation; users never name it directly. Excluded from
  * {@link listComparisonOperationPublicNames} so that list == the PUBLIC compare-mode set
  * (== Python `_COMPARE_OPERATION_MODES` keys == `schema/cairn-plot-contracts.json`'s
  * `comparisonOperationPublicNames`).

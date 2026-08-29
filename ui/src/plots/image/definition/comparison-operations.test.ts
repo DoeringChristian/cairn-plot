@@ -12,10 +12,8 @@ test("FLIP is one public comparison operation", () => {
   assert.equal(ids.includes("hdr-flip"), false);
 });
 
-test("FLIP mode selects an internal implementation only for float sources", () => {
-  assert.equal(resolveComparisonOperationId("flip", true), "hdr-flip");
-  assert.equal(resolveComparisonOperationId("flip", true, "hdr"), "hdr-flip");
-  assert.equal(resolveComparisonOperationId("flip", true, "sdr"), "flip-sdr-float");
-  assert.equal(resolveComparisonOperationId("flip", false, "hdr"), "flip");
-  assert.equal(resolveComparisonOperationId("flip", false, "sdr"), "flip");
+test("FLIP mode selects an implementation without source-storage branching", () => {
+  assert.equal(resolveComparisonOperationId("flip"), "hdr-flip");
+  assert.equal(resolveComparisonOperationId("flip", "hdr"), "hdr-flip");
+  assert.equal(resolveComparisonOperationId("flip", "sdr"), "flip-sdr");
 });

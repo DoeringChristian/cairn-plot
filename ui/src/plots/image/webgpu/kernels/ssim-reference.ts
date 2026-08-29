@@ -145,6 +145,32 @@ export function ssim(
   );
 }
 
+/** Compute SSIM from the canonical scene-linear RGB field consumed by image
+ * operations. This is the runtime/backend reference; {@link ssim} remains the
+ * encoded-sRGB fixture adapter used to validate the storage conversion. */
+export function ssimScene(
+  reference: ArrayLike<number>,
+  comparison: ArrayLike<number>,
+  W: number,
+  H: number,
+): SsimResult {
+  return ssimFromLuminance(
+    sceneLumaPlane(reference, W, H),
+    sceneLumaPlane(comparison, W, H),
+    W,
+    H,
+  );
+}
+
+export function sceneLumaPlane(rgb: ArrayLike<number>, W: number, H: number): Float64Array {
+  const out = new Float64Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const y = SSIM_LUM[0] * rgb[i * 3]! + SSIM_LUM[1] * rgb[i * 3 + 1]! + SSIM_LUM[2] * rgb[i * 3 + 2]!;
+    out[i] = Math.min(1, Math.max(0, y));
+  }
+  return out;
+}
+
 /** sRGB interleaved RGB -> luminance plane (length W*H). */
 export function lumaPlane(srgb: ArrayLike<number>, W: number, H: number): Float64Array {
   const N = W * H;

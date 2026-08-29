@@ -22,7 +22,8 @@
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
-import { ssim } from "../kernels/ssim-reference";
+import { ssimScene } from "../kernels/ssim-reference";
+import { srgbEotf } from "../../runtime/tonemap";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
 import { computeCompareMapping, type ImageCompareAlign, type ImageCompareFit } from "../../runtime/compare-align";
 import type { Device, Texture } from "../device/device-contract";
@@ -115,13 +116,17 @@ function uploadRGBA(device: Device, rgb: Float32Array, w: number, h: number): Te
   const tex = device.createTexture(w, h, "rgba32float");
   const data = new Float32Array(w * h * 4);
   for (let i = 0; i < w * h; i++) {
-    data[i * 4] = rgb[i * 3]!;
-    data[i * 4 + 1] = rgb[i * 3 + 1]!;
-    data[i * 4 + 2] = rgb[i * 3 + 2]!;
+    data[i * 4] = srgbEotf(rgb[i * 3]!);
+    data[i * 4 + 1] = srgbEotf(rgb[i * 3 + 1]!);
+    data[i * 4 + 2] = srgbEotf(rgb[i * 3 + 2]!);
     data[i * 4 + 3] = 1;
   }
   tex.write(data);
   return tex;
+}
+
+function toScene(rgb: Float32Array): Float32Array {
+  return Float32Array.from(rgb, srgbEotf);
 }
 
 const TOL = 2e-2; // GPU (rgba16float intermediates) vs CPU (f64) reference
@@ -155,7 +160,7 @@ async function runSsimCase(device: Device, w: number, h: number, seed: number): 
     report(false, `[ssim ${w}x${h}] readback should be Float32Array`);
     return false;
   }
-  const cpu = ssim(ref, test, w, h);
+  const cpu = ssimScene(toScene(ref), toScene(test), w, h);
   let worst = 0;
   let cpuSsimSum = 0;
   for (let i = 0; i < w * h; i++) {
@@ -199,7 +204,7 @@ async function runScalarCase(device: Device, w: number, h: number, seed: number)
 
   // (2) perturbed → matches the CPU reference mean over the full region.
   const scalar = await ensureSsimScalar(device, texRef, texTest, `ref#${seed}`, `test#${seed}`);
-  const cpu = ssim(ref, test, w, h);
+  const cpu = ssimScene(toScene(ref), toScene(test), w, h);
   let cpuSum = 0;
   for (let i = 0; i < w * h; i++) cpuSum += cpu.ssim[i]!;
   const cpuMean = cpuSum / (w * h);
@@ -243,9 +248,9 @@ async function runMismatchCase(
   }
   const { w: rw, h: rh } = map.result;
   const fill = map.fit === "fill";
-  const mappedA = mapSourceToResult(a, aw, ah, rw, rh, map.offsetA.x, map.offsetA.y, fill);
-  const mappedB = mapSourceToResult(b, bw, bh, rw, rh, map.offsetB.x, map.offsetB.y, fill);
-  const cpu = ssim(mappedA, mappedB, rw, rh);
+  const mappedA = mapSourceToResult(toScene(a), aw, ah, rw, rh, map.offsetA.x, map.offsetA.y, fill);
+  const mappedB = mapSourceToResult(toScene(b), bw, bh, rw, rh, map.offsetB.x, map.offsetB.y, fill);
+  const cpu = ssimScene(mappedA, mappedB, rw, rh);
   let worst = 0;
   let cpuSsimSum = 0;
   for (let i = 0; i < rw * rh; i++) {

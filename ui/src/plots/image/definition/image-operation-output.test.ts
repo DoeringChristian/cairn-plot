@@ -20,7 +20,7 @@ test("every multipass operation declares scalar display output", () => {
 });
 
 test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
-  const scalar = ["flip", "flip-sdr-float", "hdr-flip", "ssim"];
+  const scalar = ["flip", "flip-sdr", "hdr-flip", "ssim"];
   const perChannel = [
     "signed",
     "absolute",

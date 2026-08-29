@@ -222,6 +222,8 @@ function takeImageSettings(props: Opts): Opts {
   }
   take("splitPosition", "compare.split");
   take("operation", "compare.operation");
+  take("flipMode", "compare.flipMode");
+  take("flipMaxExposures", "compare.flipMaxExposures");
   if (props.settings && typeof props.settings === "object") {
     Object.assign(settings, props.settings);
     delete props.settings;
@@ -418,6 +420,20 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
       const built = imageDisplayProps(opts);
       if (opts.splitPosition != null) built.splitPosition = num(opts.splitPosition);
       if (comparisonOperationId != null) built.operation = comparisonOperationId;
+      if (opts.flipMode != null) {
+        if (mode !== "flip") throw new Error("cairnPlot.compare: flipMode requires mode:'flip'");
+        const flipMode = String(opts.flipMode);
+        if (flipMode !== "hdr" && flipMode !== "sdr") {
+          throw new Error("cairnPlot.compare: flipMode must be 'hdr' or 'sdr'");
+        }
+        built.flipMode = flipMode;
+      }
+      if (opts.flipMaxExposures != null) {
+        if (mode !== "flip") throw new Error("cairnPlot.compare: flipMaxExposures requires mode:'flip'");
+        const count = Math.round(num(opts.flipMaxExposures));
+        if (count < 2) throw new Error("cairnPlot.compare: flipMaxExposures must be at least 2");
+        built.flipMaxExposures = count;
+      }
       if (align !== "top-left") built.align = align;
       if (fit !== "crop") built.fit = fit;
       // Host seam: `toolbar:false` only when explicitly disabled (mirrors Python
