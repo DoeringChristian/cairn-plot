@@ -1,7 +1,7 @@
 /**
  * Every registered comparison operation declares its display arity. The FLIP
- * family produces one scalar metric while pointwise operations retain channel
- * values but expose scalar display gating. The TEV overlay uses this to decide
+ * family produces one scalar metric while pointwise operations retain source
+ * channel arity. The TEV overlay uses this to decide
  * how many numbers to print — FLIP must print one metric per pixel, so
  * printing three channel-tinted numbers (the reported bug) is wrong.
  *
@@ -35,13 +35,13 @@ test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
   for (const id of perChannel) {
     const operation = getImageOperation(id);
     assert.equal(getWebGpuImageOperation(id)?.kind, "inline", `${id} must be an inline WebGPU image operation`);
-    assert.equal(operation?.output.arity, 1, `${id} exposes scalar display gating while retaining channel values`);
+    assert.equal(operation?.output.arity, "source", `${id} must retain source channel arity`);
   }
 });
 
 test("pointwise differences and multipass metrics share the image-operation registry", () => {
   const pointwise = listImageOperations().filter((operation) =>
-    getWebGpuImageOperation(operation.id)?.kind === "inline" && operation.inputs === 2 && operation.output.arity === 1,
+    getWebGpuImageOperation(operation.id)?.kind === "inline" && operation.inputs === 2 && operation.output.arity === "source",
   );
   assert.equal(pointwise.length, 6);
   for (const operation of pointwise) assert.equal(getWebGpuImageOperation(operation.id)?.kind, "inline");

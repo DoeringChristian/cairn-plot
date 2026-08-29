@@ -18,7 +18,7 @@ export interface ComparisonOperationOption {
 export function listComparisonOperationOptions(): ComparisonOperationOption[] {
   const out: ComparisonOperationOption[] = [];
   for (const operation of listImageOperations()) {
-    if (operation.cache === "never" && operation.inputs === 2 && operation.output.arity === 1 && operation.id !== "split") {
+    if (operation.cache === "never" && operation.inputs === 2 && operation.id !== "split") {
       out.push({ id: operation.id, label: operation.label });
     }
   }
@@ -82,7 +82,7 @@ const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr"]);
  */
 export function listComparisonOperationPublicNames(): string[] {
   const pointwise = listImageOperations()
-    .filter((operation) => operation.cache === "never" && operation.inputs === 2 && operation.output.arity === 1 && operation.id !== "split")
+    .filter((operation) => operation.cache === "never" && operation.inputs === 2 && operation.id !== "split")
     .flatMap((operation) => operation.publicName ? [operation.publicName] : []);
   return [...pointwise, ...listImageOperations().filter((operation) => operation.cache === "global-lru")
     .flatMap((operation) => operation.publicName ? [operation.publicName] : [])

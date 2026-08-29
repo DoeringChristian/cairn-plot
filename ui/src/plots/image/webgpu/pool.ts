@@ -1102,7 +1102,10 @@ function makeHandle(entry: PaneEntry): PaneHandle {
           operationId,
           contentKeys,
           operation.program.computeParams?.(ctx),
-          { ...display, channelCount: 1, isScalar: true, norm: "linear" },
+          // Multipass metrics already write their scalar result as gray RGB.
+          // Preserve the selected display operation: curves process that RGB
+          // normally, while colormaps opt into scalar reduction themselves.
+          { ...display, channelCount: 1, norm: "linear" },
           mapping,
         );
         return cached ? { entry: cached } : "failed";

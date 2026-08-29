@@ -455,6 +455,17 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
   // Second render with the SAME keys must be a cache hit (no recompute).
   handle.renderDiffCached("flip", { a: "pool:a", b: "pool:b" }, undefined, displayParams);
   const after = getDiffComputeCount();
+  // A scalar metric with a CURVE display is ordinary gray RGB, not the scalar
+  // LUT path. This is the regression where FLIP+sRGB sampled the placeholder LUT.
+  const srgbDisplay: ImageParams = {
+    exposureEV: 0,
+    ...prepareDisplayOperation("srgb", { hdrSurface: false }),
+    channelCount: 1,
+    uv: uvFull,
+    filter: "nearest",
+  };
+  handle.renderDiff("flip", { a: "pool:a", b: "pool:b" }, {}, srgbDisplay);
+  const srgbOut = await device.readback(poolSurface);
   releasePane(handle);
   canvas.remove();
   texA.destroy();
@@ -467,6 +478,10 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
   }
   if (!(refOut instanceof Uint8Array) || !(poolOut instanceof Uint8Array)) {
     report(false, `[pool:flip] expected Uint8Array readbacks`);
+    return false;
+  }
+  if (!(srgbOut instanceof Uint8Array)) {
+    report(false, `[pool:flip/srgb] expected Uint8Array readback`);
     return false;
   }
   // The first renderDiffCached computes flip ONCE (miss); the second is a HIT.
@@ -489,6 +504,13 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
   if (!nonZero) {
     ok = false;
     report(false, `[pool:flip] pool surface readback is all-zero (degenerate diff display)`);
+  }
+  for (let i = 0; i < srgbOut.length; i += 4) {
+    if (srgbOut[i] !== srgbOut[i + 1] || srgbOut[i] !== srgbOut[i + 2]) {
+      ok = false;
+      report(false, `[pool:flip/srgb] pixel ${i / 4} is not gray: ${srgbOut[i]},${srgbOut[i + 1]},${srgbOut[i + 2]}`);
+      break;
+    }
   }
   report(ok, `[pool:flip] renderDiffCached === ensureDiff + renderImage(result, magma); repeat = cache hit`);
   return ok;
@@ -596,6 +618,7 @@ const DIRECT_DIFF_OPS = ["absolute", "signed", "squared", "relative_absolute", "
  * with the shared default, plus the analytic encoding supported by signed data. */
 const DIRECT_DIFF_CASES = [
   ...DIRECT_DIFF_OPS.map((operationId) => ({ operationId, displayOperationId: DEFAULT_COMPARISON_DISPLAY_OPERATION_ID })),
+  { operationId: "signed", displayOperationId: "srgb" },
   { operationId: "signed", displayOperationId: "red-green" },
   { operationId: "relative_signed", displayOperationId: "red-green" },
 ];

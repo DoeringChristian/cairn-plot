@@ -22,13 +22,11 @@ test("WebGPU implements every declared image operation", () => {
   );
 });
 
-test("one-channel image-operation fields are expanded to gray RGB for every display operation", () => {
+test("pointwise image operations preserve RGB while scalar fields expand to gray", () => {
   const absolute = getWebGpuImageOperation("absolute");
   assert.equal(absolute?.kind, "inline");
   if (absolute?.kind !== "inline") return;
-  const shader = buildImageOperationWGSL(absolute);
-  assert.match(shader, /let scalar = \(field\.r \+ field\.g \+ field\.b\) \/ 3\.0/);
-  assert.match(shader, /vec4<f32>\(scalar, scalar, scalar, field\.a\)/);
+  assert.doesNotMatch(buildImageOperationWGSL(absolute), /let scalar =/);
 
   const identity = getWebGpuImageOperation("identity");
   assert.equal(identity?.kind, "inline");

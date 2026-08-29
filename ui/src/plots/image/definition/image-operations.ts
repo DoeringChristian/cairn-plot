@@ -20,7 +20,7 @@ const pointwise = (
   domain: "signed" | "nonnegative",
 ): ImageOperationDefinition => ({
   id, label, publicName, inputs: 2,
-  output: { arity: 1, domain },
+  output: { arity: "source", domain },
   cache: "never",
   parameters: [],
 });
