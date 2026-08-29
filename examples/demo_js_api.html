@@ -10,9 +10,8 @@
       in JavaScript below — no Python, no server. It loads the committed offline
       bundles relative to this file:
 
-        - core.iife.js      the always-present renderers + `window.cairnPlot`
-        - gpu-image.iife.js  the WebGPU/WebGL2 image + compare engine (for the
-                             image + abs-diff panes)
+        - core.iife.js      all core renderers, including WebGPU images, plus
+                            `window.cairnPlot`
 
       Open it straight from disk (file://) or serve the repo root. The smoke gate
       `ui/scripts/smoke-js-api.mjs` renders this exact file headlessly.
@@ -66,7 +65,6 @@
     </section>
 
     <script src="../ui/dist/plot-inline/core.iife.js"></script>
-    <script src="../ui/dist/plot-inline/gpu-image.iife.js"></script>
     <script>
       const cp = window.cairnPlot;
 

@@ -8,7 +8,7 @@
  * mode, then mounts a standalone float image via `PlotApp` so it goes through
  * `ImageStandalone` → `ContentAspectFrame` (the capped frame). Needs WebGPU.
  */
-import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
+import { registerRuntimeEntries } from "../../../resources/data/runtime-store.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
@@ -30,15 +30,18 @@ function tallFloatDescriptor(w: number, h: number): PlotSpec {
       data[b + 2] = 1 - v;
     }
   }
+  registerRuntimeEntries({
+    "runtime:page-cap": { kind: "float", data, shape: [h, w, 3], dtype: "<f4", precision: "f32" },
+  });
   return {
     mode: "local",
     root: {
       kind: "plot",
       type: "image",
-      data: { kind: "inline", props: { source: { dtype: "float", pixels: floatValues(data), shape: [h, w, 3] } } },
+      data: { kind: "imghdr", hash: "runtime:page-cap", meta: {} },
       props: { toolbar: true },
     },
-  } as unknown as PlotSpec;
+  };
 }
 
 async function run(): Promise<boolean> {

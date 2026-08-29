@@ -19,8 +19,8 @@
         cairnPlot.image(data, opts)  and  cairnPlot.compare(a, b, opts)
 
       It loads the committed offline bundles relative to this file:
-        - core.iife.js       the renderers + `window.cairnPlot`
-        - gpu-image.iife.js  the WebGPU/WebGL2 image + compare engine
+        - core.iife.js       the renderers (including WebGPU images) +
+                             `window.cairnPlot`
       Build them first (`cd ui && npm run build:plot-inline`) then open this file
       straight from disk (file://). The GitHub Pages build inlines the bundles
       into ONE self-contained file (see ui/scripts/inline-html.mjs).
@@ -244,7 +244,6 @@
     </main>
 
     <script src="../ui/dist/plot-inline/core.iife.js"></script>
-    <script src="../ui/dist/plot-inline/gpu-image.iife.js"></script>
     <script>
       (function () {
         "use strict";

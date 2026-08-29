@@ -25,7 +25,7 @@
  *      selection ring matches the viewport ("ring larger than viewport" fix).
  * CPU backend forced — `CpuImagePane` tone-maps float on the CPU, no WebGPU.
  */
-import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
+import { registerRuntimeEntries } from "../../../resources/data/runtime-store.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { PlotApp } from "../../../host/bootstrap";
@@ -42,19 +42,14 @@ function near(a: number, b: number, tol: number): boolean {
 
 /** A wide float source: [H, W, 3], W/H = aspect. Row-major zeros (content value
  *  is irrelevant — only the SHAPE drives the framing under test). */
-function floatSource(w: number, h: number): Record<string, unknown> {
-  return {
-    dtype: "float",
-    pixels: floatValues(new Float32Array(h * w * 3)),
-    shape: [h, w, 3],
-    numpyDtype: "<f4",
-  };
-}
-function floatLeaf(w: number, h: number): unknown {
+function floatLeaf(w: number, h: number, hash: string): PlotSpec["root"] {
+  registerRuntimeEntries({
+    [hash]: { kind: "float", data: new Float32Array(h * w * 3), shape: [h, w, 3], dtype: "<f4", precision: "f32" },
+  });
   return {
     kind: "plot",
     type: "image",
-    data: { kind: "inline", props: { source: floatSource(w, h) } },
+    data: { kind: "imghdr", hash, meta: {} },
     props: { toolbar: true },
   };
 }
@@ -86,9 +81,9 @@ function gridDescriptor(sizes: Array<[number, number]>): PlotSpec {
       kind: "grid",
       cols: sizes.length,
       gap: 8,
-      children: sizes.map(([w, h]) => floatLeaf(w, h)),
+      children: sizes.map(([w, h], index) => floatLeaf(w, h, `runtime:grid-aspect:${w}x${h}:${index}`)),
     },
-  } as unknown as PlotSpec;
+  };
 }
 
 async function run(): Promise<boolean> {
