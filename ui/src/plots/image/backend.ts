@@ -1,14 +1,19 @@
-import type { DisplayOperationDefinition } from "../definition/display-operations.ts";
-import type { ImageOperationDefinition } from "../definition/image-operations.ts";
+import type { DisplayOperationDefinition } from "./definition/display-operations.ts";
+import type { ImageOperationDefinition } from "./definition/image-operations.ts";
 
-/** Backend coverage is independent in the two pipeline stages. Every supported
- * image-operation output can flow through every supported display operation;
- * one-channel fields are expanded to gray RGB at the display boundary. */
+/** Executable semantic coverage advertised by an image backend. */
 export interface ImageBackendCapabilities {
   readonly imageOperations: readonly ImageOperationDefinition[];
   readonly displayOperations: readonly DisplayOperationDefinition[];
   supportsImageOperation(id: string): boolean;
   supportsDisplayOperation(id: string): boolean;
+}
+
+/** A complete image backend definition. The runtime only selects these objects. */
+export interface ImageBackend<TView> {
+  readonly id: string;
+  readonly View: TView;
+  readonly capabilities: ImageBackendCapabilities;
 }
 
 export function defineImageBackendCapabilities(options: {
@@ -24,4 +29,3 @@ export function defineImageBackendCapabilities(options: {
     supportsDisplayOperation: (id: string) => displayIds.has(id),
   });
 }
-
