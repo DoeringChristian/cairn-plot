@@ -136,12 +136,9 @@ _COMPARE_OPERATION_MODES = {
     "rel_signed": "relative_signed",
     "rel_abs": "relative_absolute",
     "rel_square": "relative_squared",
-    # `flip` is perceptual FLIP: LDR-FLIP on u8 sources, HDR-FLIP on float/HDR
-    # sources (auto-dispatch in the UI). `flip_ldr` forces the tone-mapped-first
-    # LDR comparison even on float sources (clips highlights to the display range
-    # before FLIP); on u8 sources it is identical to `flip`.
+    # `flip` is one public operation. Its SDR/HDR evaluation is selected through
+    # the runtime setting exposed by the image backend, not a second compare mode.
     "flip": "flip",
-    "flip_ldr": "flip_ldr",
     # `ssim` is structural similarity (Wang et al. 2004); the diff map shows the
     # ERROR field 1 - SSIM. GPU-only kernel (like FLIP); registry drop-in.
     "ssim": "ssim",
@@ -1951,15 +1948,13 @@ class Compare(Component):
 
     * View composition: ``"split"`` (draggable divider — the DEFAULT).
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
-      ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_ldr"`` — each lowers to
+      ``"rel_abs"``, ``"rel_square"``, ``"flip"`` — each lowers to
       a ``compare`` node with ``mode="diff"`` and the kernel id as ``operation``
       (the pane's initial diff kernel).
 
-    ``"flip"`` is perceptual FLIP (Andersson et al.): the UI auto-dispatches
-    LDR-FLIP for u8 sources and HDR-FLIP (multi-exposure, per Andersson et al.
-    2021) for float/HDR sources — no separate mode needed. ``"flip_ldr"`` forces
-    the LDR comparison on float sources (tone-maps to the display range first,
-    clipping highlights) and is identical to ``"flip"`` on u8 sources.
+    ``"flip"`` is perceptual FLIP (Andersson et al.). Float/HDR comparisons
+    default to the multi-exposure evaluation; the viewer offers an SDR/HDR
+    control without exposing a second comparison mode.
 
     ``reference`` is always the baseline (``baselineIndex=0``; the ``REF`` chip);
     ``diff = prediction vs reference``. ALL modes require both operands be

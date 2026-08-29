@@ -1,7 +1,13 @@
 import type { ImageFieldSchema } from "./fields.ts";
 
 export type ImageOperationCachePolicy = "never" | "global-lru";
-export type ImageOperationParameter = "split" | "ppd" | "exposure-min" | "exposure-max";
+export type ImageOperationParameter =
+  | "split"
+  | "ppd"
+  | "flip-mode"
+  | "max-exposures"
+  | "exposure-min"
+  | "exposure-max";
 
 export interface ImageOperationDefinition {
   readonly id: string;
@@ -34,7 +40,7 @@ export const IMAGE_OPERATIONS: readonly ImageOperationDefinition[] = [
   pointwise("relative_signed", "Relative Signed", "rel_signed", "signed"),
   pointwise("relative_squared", "Relative Squared", "rel_square", "nonnegative"),
   { id: "split", label: "Split", inputs: 2, output: { arity: 3, domain: "light" }, cache: "never", parameters: ["split"] },
-  { id: "flip", label: "FLIP (perceptual)", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd"] },
+  { id: "flip", label: "FLIP (perceptual)", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "flip-mode", "max-exposures"] },
   { id: "hdr-flip", label: "HDR-FLIP", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "exposure-min", "exposure-max"] },
   { id: "flip-ldr-forced", label: "FLIP (LDR forced)", publicName: "flip_ldr", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd"] },
   { id: "ssim", label: "SSIM", publicName: "ssim", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: [] },

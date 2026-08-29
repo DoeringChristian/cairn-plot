@@ -61,7 +61,6 @@ def test_side_mode_rejected():
         ("rel_abs", "relative_absolute"),
         ("rel_square", "relative_squared"),
         ("flip", "flip"),
-        ("flip_ldr", "flip_ldr"),
         ("ssim", "ssim"),
     ],
 )
@@ -80,12 +79,9 @@ def test_flip_is_accepted_and_orientation():
     assert node["referenceIndex"] == 0
 
 
-def test_flip_ldr_forced_mode_accepted():
-    # `flip_ldr` forces the LDR-FLIP comparison (tone-map-first on float sources).
-    node = cp.Compare(_img(), _img(), mode="flip_ldr").to_node()
-    assert node["presentation"] == "difference"
-    assert node["settings"]["compare.operation"] == "flip_ldr"
-    assert node["referenceIndex"] == 0
+def test_flip_ldr_is_not_a_separate_public_mode():
+    with pytest.raises(ValueError):
+        cp.Compare(_img(), _img(), mode="flip_ldr")
 
 
 def test_ssim_mode_accepted():

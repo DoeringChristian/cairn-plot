@@ -9,6 +9,8 @@ export type ImageSettingKey =
   | "image.colorRange"
   | "image.channelSelect"
   | "compare.operation"
+  | "compare.flipMode"
+  | "compare.flipMaxExposures"
   | "compare.split"
   | "panel.info";
 
@@ -31,6 +33,8 @@ export const IMAGE_SETTINGS: readonly ImageSettingDefinition[] = [
   { key: "image.colorRange", label: "Range", control: "slider" },
   { key: "image.channelSelect", label: "Channels", control: "choice" },
   { key: "compare.operation", label: "Comparison", control: "choice" },
+  { key: "compare.flipMode", label: "FLIP range", control: "choice" },
+  { key: "compare.flipMaxExposures", label: "FLIP exposure limit", control: "slider" },
   { key: "compare.split", label: "Split", control: "slider" },
   { key: "panel.info", label: "Information", control: "toggle" },
 ];

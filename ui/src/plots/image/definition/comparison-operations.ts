@@ -6,8 +6,8 @@ import { getImageOperation, listImageOperations } from "./image-operations.ts";
 /**
  * A selectable diff MODE for the compare toolbar menu. Unlike raw
  * `listComparisonOperations()`, the FLIP family collapses to a single "FLIP (perceptual)"
- * entry (public `flip`, auto-dispatched LDR/HDR by source type) plus "FLIP (LDR
- * forced)" (`flip_ldr`); HDR-FLIP/forced-LDR are never shown directly. `id` is
+ * entry (public `flip`); HDR-FLIP/forced-LDR are backend implementations and
+ * are never shown directly. `id` is
  * the selection token the pane stores (== the descriptor `operation` /
  * Python `mode`); resolve it to a concrete kernel id with `resolveComparisonOperationId`.
  */
@@ -23,7 +23,6 @@ export function listComparisonOperationOptions(): ComparisonOperationOption[] {
     }
   }
   out.push({ id: "flip", label: "FLIP (perceptual)" });
-  out.push({ id: "flip_ldr", label: "FLIP (LDR forced)" });
   // SSIM is a plain 1:1 mode (no LDR/HDR collapse), so surface it directly.
   const ssim = getImageOperation("ssim");
   if (ssim) out.push({ id: ssim.id, label: ssim.label });
@@ -34,14 +33,21 @@ export function listComparisonOperationOptions(): ComparisonOperationOption[] {
  * Auto-dispatch (spec addendum DECISION): resolve a menu selection token +
  * whether the compare sources are FLOAT (HDR: imghdr arrays / f32 EXR) into the
  * concrete registered kernel id to run.
- *   - `flip`     → `hdr-flip` (float) | `flip` (u8)
- *   - `flip_ldr` → `flip-ldr-forced` (float: tone-map-first) | `flip` (u8)
+ *   - `flip` + HDR → `hdr-flip` for float sources
+ *   - `flip` + SDR → `flip-ldr-forced` for float sources
+ *   - `flip` on u8 → `flip` (the mode toggle is immaterial)
  *   - any pointwise id → itself.
  */
-export function resolveComparisonOperationId(selection: string, sourcesAreFloat: boolean): string {
-  if (selection === "flip") return sourcesAreFloat ? "hdr-flip" : "flip";
-  if (selection === "flip_ldr" || selection === "flip-ldr-forced") {
-    return sourcesAreFloat ? "flip-ldr-forced" : "flip";
+export type FlipMode = "hdr" | "sdr";
+
+export function resolveComparisonOperationId(
+  selection: string,
+  sourcesAreFloat: boolean,
+  flipMode: FlipMode = "hdr",
+): string {
+  if (selection === "flip") {
+    if (!sourcesAreFloat) return "flip";
+    return flipMode === "hdr" ? "hdr-flip" : "flip-ldr-forced";
   }
   return selection;
 }
@@ -65,14 +71,10 @@ export function operationIdForPublicName(publicName: string): string | undefined
  * (== Python `_COMPARE_OPERATION_MODES` keys == `schema/cairn-plot-contracts.json`'s
  * `comparisonOperationPublicNames`).
  *
- * NAMESPACE NOTE (menu token vs kernel id): the user-facing tokens (`flip`,
- * `flip_ldr`, `abs`, …) are a DIFFERENT namespace from the internal kernel ids
- * (`flip`, `flip-ldr-forced`, `absolute`, …). `flip_ldr` (menu token) resolves
- * to the `flip-ldr-forced` kernel id CLIENT-SIDE via `resolveComparisonOperationId` on
- * float sources (and to plain `flip` on u8). Python's `_COMPARE_OPERATION_MODES`
- * maps each public token → the descriptor `operation` it carries.
+ * The user-facing `flip` token remains stable. The backend implementation id is
+ * resolved from source representation and `compare.flipMode` at render time.
  */
-const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr"]);
+const AUTO_DISPATCH_ONLY_PUBLIC_NAMES = new Set<string>(["flip_hdr", "flip_ldr"]);
 
 /**
  * The flat PUBLIC compare-mode name list (the `cp.Compare(mode=)` diff enum),

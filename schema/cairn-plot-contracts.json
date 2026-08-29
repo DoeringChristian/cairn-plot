@@ -28,10 +28,9 @@
     "rel_abs",
     "rel_square",
     "flip",
-    "flip_ldr",
     "ssim"
   ],
-  "$comment_comparisonOperationModes": "The public `cp.Compare(mode=)` diff-name -> descriptor `operation` mapping, hand-mirrored by Python `_COMPARE_OPERATION_MODES` (components.py) and TS `COMPARE_KERNEL_MODES` (builder/validate.ts). Its KEYS == `comparisonOperationPublicNames` (both guards assert this). Its VALUES are the `operation` tokens the descriptor carries; contracts.test.ts additionally asserts every value resolves through `resolveDiffKernelId` + the kernel registry (`getDiffKernel`) for both u8 and float sources, so a registry kernel-id rename can no longer drift the tables silently (audit M6). Note `flip`/`flip_ldr` are MENU TOKENS, not kernel ids: they auto-dispatch client-side to `flip`/`hdr-flip`/`flip-ldr-forced`.",
+  "$comment_comparisonOperationModes": "The public `cp.Compare(mode=)` diff-name -> descriptor `operation` mapping, hand-mirrored by Python `_COMPARE_OPERATION_MODES` (components.py) and TS `COMPARE_KERNEL_MODES` (builder/validate.ts). FLIP is one public operation; its SDR/HDR backend implementation is selected by the runtime compare.flipMode setting.",
   "comparisonOperationModes": {
     "signed": "signed",
     "abs": "absolute",
@@ -40,7 +39,6 @@
     "rel_abs": "relative_absolute",
     "rel_square": "relative_squared",
     "flip": "flip",
-    "flip_ldr": "flip_ldr",
     "ssim": "ssim"
   },
   "$comment_compareEnums": "Compare view-compositions + mismatched-size operand handling (audit M5): `compareViewModes` = `cp.Compare(mode=)` non-diff views; `compareAligns`/`compareFits` = `cp.Compare(align=, fit=)`. Python `_COMPARE_VIEW_MODES`/`_COMPARE_ALIGNS`/`_COMPARE_FITS` (components.py) <-> TS `COMPARE_VIEW_MODES`/`COMPARE_ALIGNS`/`COMPARE_FITS` (builder/validate.ts).",

@@ -10,6 +10,8 @@ export interface PlotSettings {
   "image.view"?: { zoom: number; pan: { x: number; y: number } };
   "image.channelSelect"?: { part?: number | string; layer?: string | string[] } | null;
   "compare.operation"?: string;
+  "compare.flipMode"?: "hdr" | "sdr";
+  "compare.flipMaxExposures"?: number | null;
   "compare.split"?: number;
   "panel.info"?: boolean | null;
   "chart.domainX"?: [number, number] | null;

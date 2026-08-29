@@ -36,7 +36,6 @@ export const COMPARE_OPERATION_MODES: Readonly<Record<string, string>> = {
   rel_abs: "relative_absolute",
   rel_square: "relative_squared",
   flip: "flip",
-  flip_ldr: "flip_ldr",
   ssim: "ssim",
 };
 

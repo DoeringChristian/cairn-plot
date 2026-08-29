@@ -68,6 +68,7 @@ import { getWebGpuMultipassOperation } from "./image-operations.ts";
 import {
   resolveComparisonOperationId,
   listComparisonOperationOptions,
+  type FlipMode,
 } from "../definition/comparison-operations";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
@@ -615,7 +616,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // flip→hdr-flip) and the diff's shared default colormap.
   const sourcesAreFloat =
     backendProps.source.dtype === "float" || compareSource?.b.dtype === "float";
-  const resolvedOperationId = diffMode ? resolveComparisonOperationId(comparisonOperationId, !!sourcesAreFloat) : comparisonOperationId;
+  const flipMode: FlipMode = synced?.["compare.flipMode"] ?? "hdr";
+  const flipMaxExposures = synced?.["compare.flipMaxExposures"] ?? null;
+  const resolvedOperationId = diffMode
+    ? resolveComparisonOperationId(comparisonOperationId, !!sourcesAreFloat, flipMode)
+    : comparisonOperationId;
   const diffDefaultEncoding = diffSeedColormap ?? DEFAULT_COMPARISON_DISPLAY_OPERATION_ID;
   // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
   // the INITIALLY-VISIBLE face's defaults — diff → authored/shared default colormap,
@@ -858,6 +863,14 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const changeComparisonOperation = useCallback(
     (id: string) => setComparisonOperation(id),
     [setComparisonOperation],
+  );
+  const changeFlipMode = useCallback(
+    (mode: FlipMode) => publishSettings({ "compare.flipMode": mode }),
+    [publishSettings],
+  );
+  const changeFlipMaxExposures = useCallback(
+    (count: number) => publishSettings({ "compare.flipMaxExposures": Math.max(2, Math.round(count)) }),
+    [publishSettings],
   );
   const changeDiffEncoding = useCallback(
     (id: string) => publishSettings({ "image.encoding": id }),
@@ -1311,7 +1324,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // luminance (deterministic → folds into the diff-cache key, never a recompute on
   // zoom/pan). The reference is the diff-engine's `texA` operand = the pane's
   // `source` here. Only needed for the `hdr-flip` kernel.
-  const hdrExposures = useMemo(() => {
+  const automaticHdrExposures = useMemo(() => {
     if (!diffMode || !sourcesAreFloat) return null;
     const ref = backendProps.source.dtype === "float" ? backendProps.source : null;
     if (!ref) return null;
@@ -1320,6 +1333,17 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return computeHdrFlipExposures(refData, w, h, c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diffMode, sourcesAreFloat, backendProps.source]);
+  const hdrExposures = useMemo(() => {
+    if (!automaticHdrExposures) return null;
+    if (flipMaxExposures == null || !Number.isFinite(flipMaxExposures)) return automaticHdrExposures;
+    return {
+      ...automaticHdrExposures,
+      numExposures: Math.min(
+        automaticHdrExposures.numExposures,
+        Math.max(2, Math.round(flipMaxExposures)),
+      ),
+    };
+  }, [automaticHdrExposures, flipMaxExposures]);
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +
@@ -2394,6 +2418,19 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // channel (the reduction is moot for a scalar). (The norm Lin·Log·Pow picker
       // was REMOVED — norm-UI-removal follow-up.)
       rowSegments={[
+        ...(diffMode && comparisonOperationId === "flip" && sourcesAreFloat
+          ? [{
+              id: "flip-mode",
+              label: "FLIP",
+              title: "FLIP exposure evaluation: HDR sweeps the reference-derived exposure range; SDR evaluates one display-mapped image",
+              options: [
+                { id: "hdr", label: "HDR" },
+                { id: "sdr", label: "SDR" },
+              ],
+              value: flipMode,
+              onSelect: (id: string) => changeFlipMode(id as FlipMode),
+            }]
+          : []),
         // The diff error is a k=1 scalar (reduce mean) — no reduce picker in diff mode.
         ...(!diffMode && enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
@@ -2428,7 +2465,21 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // active encoding is a CURVE (every curve respects `P` as its ceiling; the
       // paramless `normal` remap and colormap LUTs have no peak). γ rides the
       // active encoding's manifest (only the Gamma curve declares it).
-      extraSliders={diffMode ? [] : [
+      extraSliders={diffMode
+        ? comparisonOperationId === "flip" && sourcesAreFloat && flipMode === "hdr" && automaticHdrExposures
+          ? [{
+              id: "flip-max-exposures",
+              label: "EXP",
+              title: "Maximum HDR-FLIP exposure samples. HOME restores the complete automatically derived exposure sweep.",
+              min: 2,
+              max: Math.max(2, automaticHdrExposures.numExposures),
+              step: 1,
+              value: hdrExposures?.numExposures ?? automaticHdrExposures.numExposures,
+              onChange: changeFlipMaxExposures,
+              format: (value: number) => String(Math.round(value)),
+            }]
+          : []
+        : [
         // PEAK is the CURVE family's HDR ceiling — hidden for the linear scalar DATA
         // path (a scalar as data has no tone-map ceiling; its raw value rides the
         // output-encode unclamped), the `normal` remap, and colormap LUTs.
