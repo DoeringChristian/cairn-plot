@@ -269,12 +269,56 @@ function buildColormapTexture(device: Device, colormap: Float32Array | undefined
   return tex;
 }
 
+interface SharedDisplayTextures {
+  readonly placeholder: Texture;
+  readonly luts: WeakMap<Float32Array, Texture>;
+}
+
+const sharedDisplayTextures = new WeakMap<Device, SharedDisplayTextures>();
+
+function displayTexturesFor(device: Device): SharedDisplayTextures {
+  let shared = sharedDisplayTextures.get(device);
+  if (!shared) {
+    shared = { placeholder: buildColormapTexture(device, undefined), luts: new WeakMap() };
+    sharedDisplayTextures.set(device, shared);
+  }
+  return shared;
+}
+
+function retainedColormapTexture(device: Device, colormap: Float32Array | undefined): Texture {
+  const shared = displayTexturesFor(device);
+  if (!colormap) return shared.placeholder;
+  let texture = shared.luts.get(colormap);
+  if (!texture) {
+    texture = buildColormapTexture(device, colormap);
+    shared.luts.set(colormap, texture);
+  }
+  return texture;
+}
+
+interface RetainedImageBinding {
+  readonly pipeline: RenderPipeline;
+  readonly source: Texture;
+  readonly lut: Texture;
+  readonly sourceB: Texture;
+  readonly bindGroup: BindGroup;
+}
+
+const retainedImageBindings = new WeakMap<object, RetainedImageBinding>();
+
+/** Release the retained display binding owned by a surface or offscreen target. */
+export function releaseImageRenderState(target: Surface | Texture): void {
+  const retained = retainedImageBindings.get(target as object);
+  retained?.bindGroup.destroy?.();
+  retainedImageBindings.delete(target as object);
+}
+
 /**
  * Runs the IMAGE render pass: samples `src` through the exposure/colormap/
  * tone-map/output-encode pipeline (see module doc comment) and writes the
- * result to `target`. Allocates (and frees) a per-call colormap texture and
- * bind group — Task 6+ may cache these for a real per-frame render loop;
- * Task 5's scope is correctness/parity, not a hot-path allocation budget.
+ * result to `target`. Structural resources are retained per target. Parameter
+ * changes such as exposure update existing uniform buffers and submit one draw;
+ * they do not recreate LUT textures, placeholder textures, or bind groups.
  */
 export function renderImage(device: Device, target: Surface | Texture, src: Texture, params: ImageParams): void {
   const targetFormat = targetFormatOf(target);
@@ -282,7 +326,7 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   if (!displayOperation) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
   const imageOperation = requireWebGpuInlineOperation(params.imageOperation);
   const pipeline = getImagePipeline(device, targetFormat, displayOperation, imageOperation);
-  const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);
+  const lut = retainedColormapTexture(device, params.isScalar ? params.colormap : undefined);
 
   const gamma = typeof params.gamma === "number" && params.gamma > 0 ? params.gamma : 0;
   // Field order MUST match image.wgsl.ts / image.glsl.ts's u_bind2/u_bind3/u_bind4 doc comments.
@@ -344,33 +388,64 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   // Logical binding 11 = the SECOND source slot `b` (arity-2 diff ops). Bind the
   // caller's srcB, or a 1x1 placeholder for the single-image path — WebGPU
   // requires every declared texture binding to have a resource, and the IDENTITY
-  // op ignores it. A placeholder is allocated (+ freed) only when srcB is absent.
-  const placeholderB = params.srcB ? undefined : buildColormapTexture(device, undefined);
-  const srcB = params.srcB ?? (placeholderB as Texture);
+  // op ignores it. The placeholder is shared once per device.
+  const srcB = params.srcB ?? displayTexturesFor(device).placeholder;
 
-  let bindGroup: BindGroup | undefined;
+  const uniformValues: ReadonlyArray<readonly [number, ArrayBufferView]> = [
+    [2, paramsVec],
+    [3, uvRect],
+    [4, hdrFlag],
+    [5, filterFlag],
+    [6, offsetVec],
+    [7, peakVec],
+    [8, srgbDecodeVec],
+    [9, normVec],
+    [10, reduceVec],
+    [13, contentParamVec],
+    [14, displayAdjustVec],
+  ];
+
+  const createBinding = (): BindGroup => device.createBindGroup(pipeline, [
+    { binding: 0, resource: src },
+    { binding: 1, resource: lut },
+    ...uniformValues.map(([binding, uniform]) => ({ binding, resource: { uniform } })),
+    { binding: 11, resource: srcB },
+  ]);
+
+  // Offscreen texture targets are caller-owned and have no lifecycle callback.
+  // Keep those bindings one-shot; canvas surfaces are owned by the pane pool and
+  // explicitly released from parkEntry(), so they can safely retain hot state.
+  if (!("canvas" in target)) {
+    const bindGroup = createBinding();
+    try {
+      device.renderFullscreen(target, pipeline, bindGroup);
+    } finally {
+      bindGroup.destroy?.();
+    }
+    return;
+  }
+
+  let retained = retainedImageBindings.get(target as object);
   try {
-    bindGroup = device.createBindGroup(pipeline, [
-      { binding: 0, resource: src },
-      { binding: 1, resource: lut },
-      { binding: 2, resource: { uniform: paramsVec } },
-      { binding: 3, resource: { uniform: uvRect } },
-      { binding: 4, resource: { uniform: hdrFlag } },
-      { binding: 5, resource: { uniform: filterFlag } },
-      { binding: 6, resource: { uniform: offsetVec } },
-      { binding: 7, resource: { uniform: peakVec } },
-      { binding: 8, resource: { uniform: srgbDecodeVec } },
-      { binding: 9, resource: { uniform: normVec } },
-      { binding: 10, resource: { uniform: reduceVec } },
-      { binding: 11, resource: srcB },
-      { binding: 13, resource: { uniform: contentParamVec } },
-      { binding: 14, resource: { uniform: displayAdjustVec } },
-    ]);
-    device.renderFullscreen(target, pipeline, bindGroup);
-  } finally {
-    bindGroup?.destroy?.();
-    lut.destroy();
-    placeholderB?.destroy();
+    if (
+      !retained ||
+      retained.pipeline !== pipeline ||
+      retained.source !== src ||
+      retained.lut !== lut ||
+      retained.sourceB !== srcB ||
+      typeof retained.bindGroup.updateUniform !== "function"
+    ) {
+      retained?.bindGroup.destroy?.();
+      const bindGroup = createBinding();
+      retained = { pipeline, source: src, lut, sourceB: srcB, bindGroup };
+      retainedImageBindings.set(target as object, retained);
+    } else {
+      for (const [binding, value] of uniformValues) retained.bindGroup.updateUniform!(binding, value);
+    }
+    device.renderFullscreen(target, pipeline, retained.bindGroup);
+  } catch (error) {
+    releaseImageRenderState(target);
+    throw error;
   }
 }
 

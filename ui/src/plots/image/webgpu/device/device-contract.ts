@@ -15,15 +15,17 @@ export interface RenderPipeline { readonly _p: unknown; }
 export interface ComputePipeline { readonly _c: unknown; }
 export interface BindGroupEntry { binding: number; resource: Texture | Sampler | { uniform: ArrayBufferView }; }
 /**
- * `destroy?()` is optional because a bind group implementation MAY own no
- * GPU resources of its own. WebGPU bind groups (`engine/webgpu/device.ts`'s
- * `WGPUBindGroup`) DO allocate owned `GPUBuffer`s per `createBindGroup()`
- * call (one per declared uniform binding) and MUST implement `destroy()` to
- * release them — callers that rebuild bind groups per frame (a real render
- * loop) must call `bindGroup.destroy?.()` once a bind group is no longer
- * needed, or those buffers leak until `Device.destroy()`.
+ * `destroy?()` is optional because a bind group implementation MAY own no GPU
+ * resources. WebGPU bind groups own one updateable buffer per declared uniform;
+ * retained render passes update those buffers in place and destroy the binding
+ * when their surface is parked or disposed.
  */
-export interface BindGroup { readonly _b: unknown; destroy?(): void; }
+export interface BindGroup {
+  readonly _b: unknown;
+  /** Update an existing uniform buffer without rebuilding the bind group. */
+  updateUniform?(binding: number, value: ArrayBufferView): void;
+  destroy?(): void;
+}
 /**
  * GPU-resident deep-EXR samples (storage buffers) for the depth-composite pass.
  * Created once from a {@link DeepGpuCsrSpec} (uploaded offsets/colors/zs), then

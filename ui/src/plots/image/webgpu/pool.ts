@@ -43,7 +43,13 @@
  */
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import type { ImageWebGpuRuntime } from "./device/runtime.ts";
-import { renderImage, computeMetrics, type ImageParams, type DiffMetrics } from "./image-engine";
+import {
+  renderImage,
+  releaseImageRenderState,
+  computeMetrics,
+  type ImageParams,
+  type DiffMetrics,
+} from "./image-engine";
 // Phase 2b: the CACHED-op render path (FLIP / HDR-FLIP / SSIM) runs the diff
 // engine's content-keyed compute + cache from INSIDE the pool (the pool owns the
 // two source textures a cached op reduces). Safe to import here: `pool.ts` is
@@ -561,6 +567,7 @@ function parkEntry(entry: PaneEntry): void {
     entry.deepSampleTex.destroy();
     entry.deepSampleTex = null;
   }
+  if (entry.surface) releaseImageRenderState(entry.surface);
   entry.surface = null;
   entry.parked = true;
 }

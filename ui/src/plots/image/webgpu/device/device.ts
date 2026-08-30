@@ -549,24 +549,35 @@ class WGPUDeepSampleBuffers implements DeepSampleBuffers {
 }
 
 /**
- * Owns the `GPUBuffer`(s) `createBindGroup` allocates for `{uniform}`
- * bindings (both the default zero-fill buffers and the caller-supplied-value
- * buffers — see module doc comment's `createBindGroup` section). `destroy()`
- * releases them; callers that rebuild bind groups per frame (a real render
- * loop, Task 6+) MUST call this once a bind group is no longer needed, or
- * these buffers leak until `Device.destroy()`. Idempotent — a second
- * `destroy()` call is a no-op, matching `WGPUTexture`/`Device`'s convention.
+ * Owns one updateable `GPUBuffer` per declared uniform. `destroy()` releases
+ * them when the retained render pass is replaced or its surface is parked.
  */
 class WGPUBindGroup implements BindGroup {
   readonly _b: unknown;
   readonly gpuBindGroup: GPUBindGroup;
   private readonly ownedBuffers: GPUBuffer[];
+  private readonly uniformBuffers: ReadonlyMap<number, GPUBuffer>;
+  private readonly queue: GPUQueue;
   private destroyed = false;
 
-  constructor(gpuBindGroup: GPUBindGroup, ownedBuffers: GPUBuffer[]) {
+  constructor(
+    gpuBindGroup: GPUBindGroup,
+    ownedBuffers: GPUBuffer[],
+    uniformBuffers: ReadonlyMap<number, GPUBuffer>,
+    queue: GPUQueue,
+  ) {
     this.gpuBindGroup = gpuBindGroup;
     this.ownedBuffers = ownedBuffers;
+    this.uniformBuffers = uniformBuffers;
+    this.queue = queue;
     this._b = gpuBindGroup;
+  }
+
+  updateUniform(binding: number, value: ArrayBufferView): void {
+    if (this.destroyed) throw new Error("cannot update a destroyed bind group");
+    const buffer = this.uniformBuffers.get(binding);
+    if (!buffer) return;
+    this.queue.writeBuffer(buffer, 0, value.buffer as ArrayBuffer, value.byteOffset, value.byteLength);
   }
 
   destroy(): void {
@@ -1012,14 +1023,10 @@ export async function createWebGPUDevice(): Promise<Device> {
     createBindGroup(pipeline, entries) {
       const p = pipeline as WGPURenderPipeline;
       const resolved = new Map<number, GPUBindGroupEntry>();
-      // Every `GPUBuffer` allocated below (defaults AND caller-value
-      // buffers) is owned by the returned `WGPUBindGroup` and freed by its
-      // `destroy()` — see that class's doc comment. `createBindGroup` itself
-      // never reuses a buffer across calls (each call gets its own set), so
-      // callers driving a per-frame render loop must destroy the bind group
-      // once done with it to avoid leaking one `GPUBuffer` per uniform
-      // binding per frame.
+      // Every uniform buffer is owned by the returned WGPUBindGroup. A retained
+      // pass updates it through updateUniform(); replacement/teardown destroys it.
       const ownedBuffers: GPUBuffer[] = [];
+      const uniformBuffers = new Map<number, GPUBuffer>();
 
       // 1. Seed every binding the shader actually declares with a default
       //    resource (zero-filled uniform buffer / shared nearest sampler —
@@ -1031,6 +1038,7 @@ export async function createWebGPUDevice(): Promise<Device> {
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
           });
           ownedBuffers.push(buffer);
+          uniformBuffers.set((native - KIND_OFFSET.uniform) / 3, buffer);
           resolved.set(native, { binding: native, resource: { buffer } });
         } else if (info.kind === "sampler") {
           resolved.set(native, { binding: native, resource: getDefaultSampler() });
@@ -1059,17 +1067,13 @@ export async function createWebGPUDevice(): Promise<Device> {
           const info = p.bindings.get(native);
           if (info && info.kind === "uniform") {
             const view = (resource as { uniform: ArrayBufferView }).uniform;
-            const buffer = gpuDevice.createBuffer({
-              size: Math.max(info.sizeBytes, view.byteLength),
-              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            });
+            const buffer = uniformBuffers.get(entry.binding)!;
+            if (view.byteLength > info.sizeBytes) {
+              throw new Error(
+                `uniform binding ${entry.binding} is ${info.sizeBytes} bytes, got ${view.byteLength}`,
+              );
+            }
             gpuDevice.queue.writeBuffer(buffer, 0, view.buffer as ArrayBuffer, view.byteOffset, view.byteLength);
-            // The default buffer allocated for this native binding in step 1
-            // is now unreferenced by `resolved` (about to be overwritten
-            // below) but was already pushed to `ownedBuffers` — it still
-            // gets destroyed alongside the replacement, just one call early.
-            ownedBuffers.push(buffer);
-            resolved.set(native, { binding: native, resource: { buffer } });
           }
         }
       }
@@ -1078,7 +1082,7 @@ export async function createWebGPUDevice(): Promise<Device> {
         layout: p.bindGroupLayout,
         entries: Array.from(resolved.values()),
       });
-      return new WGPUBindGroup(gpuBindGroup, ownedBuffers);
+      return new WGPUBindGroup(gpuBindGroup, ownedBuffers, uniformBuffers, gpuDevice.queue);
     },
 
     createSurface(canvas, opts) {

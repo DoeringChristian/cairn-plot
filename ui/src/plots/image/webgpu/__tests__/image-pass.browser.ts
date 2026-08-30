@@ -62,7 +62,7 @@
  * the command above whenever this harness or its imports change.
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
-import { renderImage, type ImageParams } from "../image-engine";
+import { releaseImageRenderState, renderImage, type ImageParams } from "../image-engine";
 import {
   applyExposure,
   outputEncode,
@@ -756,6 +756,58 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
       results.set(`${caseLabel}/${filter}`, { label: caseLabel, ok, out });
     }
     src.destroy();
+  }
+
+  // Interactive hot path: once a canvas-surface display binding is warm, an
+  // exposure-only update must write uniforms and draw without allocating any
+  // texture/bind group or compiling another pipeline.
+  {
+    const caseLabel = `${label}/exposure-retains-display-resources`;
+    const canvas = document.createElement("canvas");
+    const surface = device.createSurface(canvas, { hdr: false });
+    surface.configure(8, 8);
+    const src = buildSrcTexture(device, [[0.25, 0.25, 0.25, 1]]);
+    const params: ImageParams = {
+      exposureEV: 0,
+      displayOperationId: "turbo",
+      colormap: VIRIDIS_FLOAT_LUT,
+      isScalar: true,
+      hdrOut: false,
+      uv: { x: 0, y: 0, w: 1, h: 1 },
+    };
+    const originalTexture = device.createTexture;
+    const originalPipeline = device.createRenderPipeline;
+    const originalBindGroup = device.createBindGroup;
+    let textures = 0;
+    let pipelines = 0;
+    let bindGroups = 0;
+    device.createTexture = (...args) => {
+      textures++;
+      return originalTexture.call(device, ...args);
+    };
+    device.createRenderPipeline = (...args) => {
+      pipelines++;
+      return originalPipeline.call(device, ...args);
+    };
+    device.createBindGroup = (...args) => {
+      bindGroups++;
+      return originalBindGroup.call(device, ...args);
+    };
+    let ok = false;
+    try {
+      renderImage(device, surface, src, params);
+      const warm = { textures, pipelines, bindGroups };
+      renderImage(device, surface, src, { ...params, exposureEV: 1.5 });
+      ok = textures === warm.textures && pipelines === warm.pipelines && bindGroups === warm.bindGroups;
+      report(ok, `[${caseLabel}] exposure update allocations textures=${textures - warm.textures}, pipelines=${pipelines - warm.pipelines}, bindGroups=${bindGroups - warm.bindGroups}`);
+    } finally {
+      device.createTexture = originalTexture;
+      device.createRenderPipeline = originalPipeline;
+      device.createBindGroup = originalBindGroup;
+      releaseImageRenderState(surface);
+      src.destroy();
+    }
+    results.set(caseLabel, { label: caseLabel, ok, out: null });
   }
 
   return results;
