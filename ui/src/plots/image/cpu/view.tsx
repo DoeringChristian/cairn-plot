@@ -679,12 +679,12 @@ function CpuSdrImagePane(
       const r = vd.data[i]!;
       const g = vd.data[i + 1]!;
       const b = vd.data[i + 2]!;
-      // A false-colored (colormap) pixel prints one untinted line — its display
-      // value IS a single scalar. An RGB pixel ALWAYS prints three channel-tinted
-      // lines, even when the channels happen to be equal (a bright/gray pixel is
-      // still RGB — do NOT collapse it to one value on value equality).
+      const a = vd.data[i + 3]!;
+      // A false-colored (colormap) pixel prints one untinted scalar line, plus
+      // alpha when the source carries transparency. An RGB pixel ALWAYS prints
+      // channel-tinted RGBA lines, even when RGB happens to be gray.
       const single = colormap != null;
-      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notation);
+      return buildChannelSample(single ? [r, a] : [r, g, b, a], "uint8", notation);
     },
     [colormap],
   );
@@ -1228,12 +1228,14 @@ function CpuHdrImagePane(
       // F16 pipeline: widen the touched samples lazily (single pixel) — the
       // self-describing buffer's reader hoists the representation branch.
       const readV = floatPixelReader(hdr.pixels);
-      // A colormapped scalar prints ONE value (its false-color display is a
-      // single scalar), like the SDR colormap pane.
+      // A colormapped scalar prints one value plus alpha for RGBA sources, like
+      // the SDR colormap pane. Plain multi-channel images print RGBA.
       const values =
-        c === 1 || colormap != null
+        c === 1
           ? [readV(base)]
-          : [readV(base), readV(base + 1), readV(base + 2)];
+          : colormap != null
+            ? [readV(base), ...(c >= 4 ? [readV(base + 3)] : [])]
+            : [readV(base), readV(base + 1), readV(base + 2), ...(c >= 4 ? [readV(base + 3)] : [])];
       return buildChannelSample(values, "unit", notation);
     },
     [hdr, dims, colormap],

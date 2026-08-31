@@ -65,7 +65,7 @@ export { PIXEL_VALUE_MIN_SCREEN_PX };
  * supplies the edge that keeps them legible on bright pixels — even when a
  * channel's tint matches the underlying pixel (e.g. a red digit over a red one).
  */
-export const CHANNEL_COLORS = ["#ff5a5a", "#39d353", "#5b9bff"] as const;
+export const CHANNEL_COLORS = ["#ff5a5a", "#39d353", "#5b9bff", "#ffffff"] as const;
 
 /**
  * Fixed fill for a single-value (grayscale / colormapped / scalar-metric) line —
@@ -145,12 +145,13 @@ export interface PixelSample {
 
 /**
  * Build a {@link PixelSample} from one pixel's channel values, the ONE place the
- * "1 value = a single untinted line, 3 values = three CHANNEL_COLORS-tinted
- * lines" convention lives. Every pane sampler (CPU SDR/HDR, GPU compare u8/float/
- * diff) formats through here so int↔decimal + channel-tinting stay identical.
+ * "1 value = a single untinted line, N values = N CHANNEL_COLORS-tinted lines"
+ * convention lives. Every pane sampler (CPU SDR/HDR, GPU compare u8/float/diff)
+ * formats through here so int↔decimal + channel-tinting stay identical.
  *
  *  - `values.length === 1` → one line, no `colors` (fixed neutral fill).
- *  - otherwise → one line per value, each tinted by its `CHANNEL_COLORS` slot.
+ *  - otherwise → one line per value, each tinted by its `CHANNEL_COLORS` slot
+ *    (RGBA uses the fourth, neutral-white alpha entry).
  */
 export function buildChannelSample(
   values: number[],

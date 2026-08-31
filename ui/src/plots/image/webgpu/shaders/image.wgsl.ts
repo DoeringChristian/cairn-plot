@@ -364,6 +364,11 @@ fn cairnDisplayAdjust(c: vec3<f32>) -> vec3<f32> {
   return v;
 }
 
+fn premulOut(rgb: vec3<f32>, alpha: f32) -> vec4<f32> {
+  let a = clamp(alpha, 0.0, 1.0);
+  return vec4<f32>(rgb * a, a);
+}
+
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let srcDims = vec2<f32>(textureDimensions(t_bind0));
@@ -415,6 +420,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // it stays put under source zoom/pan exactly like GpuComparePane. The diff /
   // identity ops ignore both, so this is inert for every non-compositor op.
   let content = cairnContent(sampled, sampledB, uv, u_bind13);
+  let contentAlpha = content.a;
 
   // 0) [SDR display-transfer path] sRGB-DECODE the sampled 8-bit source to
   //    linear light so exposure/offset + the chosen transfer operate on linear
@@ -475,14 +481,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           extendedOutputEncodeF(lin.g, gamma, hasG),
           extendedOutputEncodeF(lin.b, gamma, hasG),
         );
-        return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
+        return premulOut(cairnDisplayAdjust(enc), contentAlpha);
       }
       let enc = vec3<f32>(
         outputEncodeF(lin.r, gamma, hasG),
         outputEncodeF(lin.g, gamma, hasG),
         outputEncodeF(lin.b, gamma, hasG),
       );
-      return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
+      return premulOut(cairnDisplayAdjust(enc), contentAlpha);
     }
     let normMode = i32(round(u_bind9.x));
     let boundsActive = u_bind9.w > 0.5;
@@ -504,12 +510,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       let hasGe = ge > 0.0;
       if (hdrOut) {
         let e = extendedOutputEncodeF(idx, ge, hasGe);
-        return vec4<f32>(cairnDisplayAdjust(vec3<f32>(e, e, e)), 1.0);
+        return premulOut(cairnDisplayAdjust(vec3<f32>(e, e, e)), contentAlpha);
       }
       let e = outputEncodeF(idx, ge, hasGe);
-      return vec4<f32>(cairnDisplayAdjust(vec3<f32>(e, e, e)), 1.0);
+      return premulOut(cairnDisplayAdjust(vec3<f32>(e, e, e)), contentAlpha);
     }
-    return vec4<f32>(cairnDisplayAdjust(cairnLutColor(t_bind1, idx, 0, filterLinear)), 1.0);
+    return premulOut(cairnDisplayAdjust(cairnLutColor(t_bind1, idx, 0, filterLinear)), contentAlpha);
   }
 
   // 3) tone-map operator: HDR [0,inf) -> display-linear [0,1] (or [0,peak] for
@@ -530,14 +536,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       extendedOutputEncodeF(rgb.g, gamma, hasGamma),
       extendedOutputEncodeF(rgb.b, gamma, hasGamma),
     );
-    return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
+    return premulOut(cairnDisplayAdjust(enc), contentAlpha);
   }
   let enc = vec3<f32>(
     outputEncodeF(rgb.r, gamma, hasGamma),
     outputEncodeF(rgb.g, gamma, hasGamma),
     outputEncodeF(rgb.b, gamma, hasGamma),
   );
-  return vec4<f32>(cairnDisplayAdjust(enc), 1.0);
+  return premulOut(cairnDisplayAdjust(enc), contentAlpha);
 }
 `;
 }

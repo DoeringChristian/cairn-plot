@@ -713,6 +713,47 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   }
 
   // ---------------------------------------------------------------------
+  // Source alpha survives the display pipeline. The render target is configured
+  // for premultiplied-alpha presentation, so RGB must be multiplied by alpha
+  // while the alpha channel itself remains the source coverage value.
+  // ---------------------------------------------------------------------
+  {
+    const caseLabel = `${label}/source-alpha-premultiplied`;
+    const pixels = [
+      [1.0, 0.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0, 0.5],
+      [0.0, 0.0, 1.0, 1.0],
+    ];
+    const src = buildSrcTexture(device, pixels);
+    const target = device.createTexture(3, 1, "rgba8unorm");
+    const params: ImageParams = { exposureEV: 0, displayOperationId: "linear", isScalar: false, hdrOut: false, uv: uvFull };
+    renderImage(device, target, src, params);
+    const out = await device.readback(target);
+    src.destroy();
+    target.destroy();
+    let ok = out instanceof Uint8Array;
+    if (out instanceof Uint8Array) {
+      const expected = [
+        [0, 0, 0, 0],
+        [0, 128, 0, 128],
+        [0, 0, 255, 255],
+      ];
+      for (let i = 0; i < expected.length; i++) {
+        for (let c = 0; c < 4; c++) {
+          const diff = Math.abs(out[i * 4 + c]! - expected[i]![c]!);
+          const chOk = diff <= 1;
+          if (!chOk) ok = false;
+          report(chOk, `[${caseLabel}] pixel[${i}].rgba[${c}] expected=${expected[i]![c]} actual=${out[i * 4 + c]} diff=${diff}`);
+        }
+      }
+    } else {
+      report(false, `[${caseLabel}] readback() should return Uint8Array, got ${(out as { constructor: { name: string } }).constructor.name}`);
+    }
+    report(ok, `[${caseLabel}] source alpha is preserved and RGB is premultiplied`);
+    results.set(caseLabel, { label: caseLabel, ok, out: out instanceof Uint8Array ? out : null });
+  }
+
+  // ---------------------------------------------------------------------
   // Q20: filter:"nearest" vs filter:"linear" produce DIFFERENT results at a
   // non-texel-aligned sample point over a sharp black/white step, and
   // "linear" produces a blended midtone while "nearest" produces a pure

@@ -96,7 +96,9 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
         const c = hdr.shape.length === 2 ? 1 : (hdr.shape[2] ?? 1);
         const base = (py * dims.w + px) * c;
         const readV = floatPixelReader(hdr.pixels);
-        const values = c === 1 ? [readV(base)] : [readV(base), readV(base + 1), readV(base + 2)];
+        const values = c === 1
+          ? [readV(base)]
+          : [readV(base), readV(base + 1), readV(base + 2), ...(c >= 4 ? [readV(base + 3)] : [])];
         return buildChannelSample(values, "unit", notation);
       }
       const vd = sdrImageDataRef.current;
@@ -105,11 +107,12 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
       const r = vd.data[i]!;
       const g = vd.data[i + 1]!;
       const b = vd.data[i + 2]!;
-      // A false-colored (colormap) pixel prints one untinted scalar line; an RGB
-      // pixel ALWAYS prints three channel lines, even when the channels are equal
-      // (a gray pixel is still RGB — never collapse on value equality).
+      const a = vd.data[i + 3]!;
+      // A false-colored (colormap) pixel prints one untinted scalar line, plus
+      // alpha when the source carries transparency. An RGB pixel ALWAYS prints
+      // channel-tinted RGBA lines, even when RGB happens to be gray.
       const single = sdrColormap != null;
-      return buildChannelSample(single ? [r] : [r, g, b], "uint8", notation);
+      return buildChannelSample(single ? [r, a] : [r, g, b, a], "uint8", notation);
     },
     [hdrMode, naturalDims, sdrColormap, hdrDataRef, sdrImageDataRef],
   );
@@ -179,13 +182,15 @@ export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
         if (px < 0 || py < 0 || px >= w || py >= h) return null;
         const b0 = (py * w + px) * c;
         const rd = floatPixelReader(fl.pixels);
-        const values = c === 1 ? [rd(b0)] : [rd(b0), rd(b0 + 1), rd(b0 + 2)];
+        const values = c === 1
+          ? [rd(b0)]
+          : [rd(b0), rd(b0 + 1), rd(b0 + 2), ...(c >= 4 ? [rd(b0 + 3)] : [])];
         return buildChannelSample(values, "unit", notation);
       }
       const u8 = refU8Ref.current;
       if (!u8 || px < 0 || py < 0 || px >= u8.width || py >= u8.height) return null;
       const i = (py * u8.width + px) * 4;
-      return buildChannelSample([u8.data[i]!, u8.data[i + 1]!, u8.data[i + 2]!], "uint8", notation);
+      return buildChannelSample([u8.data[i]!, u8.data[i + 1]!, u8.data[i + 2]!, u8.data[i + 3]!], "uint8", notation);
     },
     [refFloatRef, refU8Ref],
   );
