@@ -2,8 +2,8 @@
  * `channel-menu.ts` — the CHANNELS toolbar menu for EXR panes: the standard
  * `ToolbarButtonSpec` dropdown (same chrome as the colormap/tonemap menus)
  * listing every selectable part × channel group, plus each color group's
- * arbitrary non-empty sub-groups up to RGB display arity (indented) for
- * single-channel isolation and custom mixes such as RGB-from-RGBA or R+B.
+ * channels as direct checkable toggles. Users create arbitrary sub-groups by
+ * toggling channels in-place instead of picking from a combinatorial list.
  *
  * IN THE TOOLBAR by design (not a tev-style always-visible strip): the usual
  * case is that the report already authored the channels to show — the menu is
@@ -45,7 +45,8 @@ export interface ChannelSelection {
 
 interface MenuEntry {
   option: ToolbarMenuOption;
-  selection: ChannelSelection | null; // null = the default view (no selector)
+  selection?: ChannelSelection | null; // null = the default view (no selector)
+  action?: () => void;
 }
 
 function shortLabel(group: ChannelGroup): string {
@@ -62,33 +63,9 @@ function splitChannelName(full: string): { prefix: string; suffix: string } {
     : { prefix: full.slice(0, dot), suffix: full.slice(dot + 1) };
 }
 
-function subgroupLabel(group: ChannelGroup, channels: readonly string[]): string {
-  const suffixes = channels.map(splitChannelName);
-  const samePrefix = suffixes.every((x) => x.prefix === group.name);
-  const labels = samePrefix ? suffixes.map((x) => x.suffix) : channels;
-  return labels.length >= 3 && labels.every((x) => x.length === 1) ? labels.join("") : labels.join("+");
-}
-
-function channelCombinations(channels: readonly string[]): string[][] {
-  const out: string[][] = [];
-  const max = Math.min(3, channels.length);
-  const visit = (start: number, size: number, picked: string[]) => {
-    if (picked.length === size) {
-      out.push([...picked]);
-      return;
-    }
-    for (let i = start; i < channels.length; i++) {
-      picked.push(channels[i]!);
-      visit(i + 1, size, picked);
-      picked.pop();
-    }
-  };
-  for (let size = max; size >= 1; size--) {
-    // The full group already has its own row; only synthesize true sub-groups.
-    if (size === channels.length) continue;
-    visit(0, size, []);
-  }
-  return out;
+function channelLabel(group: ChannelGroup, full: string): string {
+  const { prefix, suffix } = splitChannelName(full);
+  return prefix === group.name ? suffix : full;
 }
 
 /** Resolve a selection's part to its tree index (name or index; default 0). */
@@ -118,12 +95,10 @@ function buildEntries(tree: ChannelMenuTree): MenuEntry[] {
         selection: isDefaultGroup && group.name === "" ? null : { ...partSel, layer: group.name },
       });
       if (group.kind === "color" && group.channels.length > 1) {
-        for (const combo of channelCombinations(group.channels)) {
-          const layer = combo.length === 1 ? combo[0]! : combo;
-          const idLayer = Array.isArray(layer) ? `combo:${layer.join("+")}` : layer;
+        for (const full of group.channels) {
           entries.push({
-            option: { id: `p${part.index}|${idLayer}`, label: ` · ${subgroupLabel(group, combo)}` },
-            selection: { ...partSel, layer },
+            option: { id: `p${part.index}|toggle:${full}`, label: ` ${channelLabel(group, full)}` },
+            selection: { ...partSel, layer: full },
           });
         }
       }
@@ -151,24 +126,56 @@ export function channelToolbarButton(
   const curPartIdx = partIndexOf(tree, selection.part);
   const curLayer = selection.layer;
   let value = entries[0]!.option.id;
-  // An authored arbitrary combo may or may not correspond to one of the
-  // menu-synthesized sub-groups. Prefer the real row; otherwise show it
-  // verbatim on the face via a synthetic no-op entry.
-  if (Array.isArray(curLayer)) {
-    const comboId = `p${curPartIdx}|combo:${curLayer.join("+")}`;
-    if (byId.has(comboId)) {
-      value = comboId;
-    } else {
-      const comboOpt: MenuEntry = {
-        option: { id: "__combo", label: curLayer.join(" | ") },
-        selection: { part: selection.part, layer: curLayer },
-      };
-      entries.unshift(comboOpt);
-      byId.set("__combo", comboOpt);
-      value = "__combo";
+  const partOfEntry = (partIndex: number) => tree.parts.find((p) => p.index === partIndex);
+  const partSelection = (partIndex: number): Pick<ChannelSelection, "part"> =>
+    partIndex !== 0 ? { part: partOfEntry(partIndex)?.name || partIndex } : {};
+  const selectedChannelsFor = (partIndex: number, group: ChannelGroup): string[] => {
+    if (partIndex !== curPartIdx) return [];
+    if (Array.isArray(curLayer)) return group.channels.filter((c) => curLayer.includes(c));
+    if (curLayer == null || curLayer === group.name) return [...group.channels];
+    return group.channels.includes(curLayer) ? [curLayer] : [];
+  };
+  const selectionForSubset = (partIndex: number, group: ChannelGroup, channels: string[]): ChannelSelection | null => {
+    const partSel = partSelection(partIndex);
+    if (channels.length === group.channels.length) {
+      const isDefaultGroup = partIndex === 0 && group === tree.parts[0]?.groups[0] && group.name === "";
+      return isDefaultGroup ? null : { ...partSel, layer: group.name };
     }
+    return { ...partSel, layer: channels.length === 1 ? channels[0]! : channels };
+  };
+
+  for (const part of tree.parts.filter((p) => !p.deep)) {
+    for (const group of part.groups) {
+      if (group.kind !== "color" || group.channels.length <= 1) continue;
+      const selected = selectedChannelsFor(part.index, group);
+      for (const full of group.channels) {
+        const entry = byId.get(`p${part.index}|toggle:${full}`);
+        if (!entry) continue;
+        const checked = selected.includes(full);
+        entry.option.checked = checked;
+        entry.action = () => {
+          const base = part.index === curPartIdx && selected.length > 0 ? selected : [];
+          const nextSet = new Set(base);
+          if (nextSet.has(full)) nextSet.delete(full);
+          else nextSet.add(full);
+          if (nextSet.size === 0) return; // keep at least one visible channel
+          const next = group.channels.filter((c) => nextSet.has(c));
+          onSelect(selectionForSubset(part.index, group, next));
+        };
+      }
+    }
+  }
+
+  if (Array.isArray(curLayer)) {
+    const comboOpt: MenuEntry = {
+      option: { id: "__combo", label: curLayer.map((c) => channelLabel({ name: "", kind: "color", channels: curLayer }, c)).join("") },
+      selection: { part: selection.part, layer: curLayer },
+    };
+    entries.unshift(comboOpt);
+    byId.set("__combo", comboOpt);
+    value = "__combo";
   } else if (curLayer != null) {
-    const direct = byId.get(`p${curPartIdx}|${curLayer}`);
+    const direct = byId.get(`p${curPartIdx}|${curLayer}`) ?? byId.get(`p${curPartIdx}|toggle:${curLayer}`);
     if (direct) value = direct.option.id;
   } else {
     const part = tree.parts.find((p) => p.index === curPartIdx);
@@ -178,13 +185,16 @@ export function channelToolbarButton(
 
   return {
     id: "channels",
-    title: "Channels — EXR part / channel-group / single-channel selection",
+    title: "Channels — select a group, or toggle channels to build an arbitrary subset",
     menu: {
       options: entries.map((e) => e.option),
       value,
+      closeOnSelect: false,
       onSelect: (id: string) => {
         const entry = byId.get(id);
-        if (entry) onSelect(entry.selection);
+        if (!entry) return;
+        if (entry.action) entry.action();
+        else onSelect(entry.selection ?? null);
       },
     },
   };

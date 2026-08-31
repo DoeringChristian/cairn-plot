@@ -11,6 +11,9 @@
 export interface ToolbarMenuOption {
   id: string;
   label: string;
+  /** Optional CHECKED marker for menu rows that behave like a direct multi-pick
+   *  list. Purely presentational; the owning menu still handles `onSelect`. */
+  checked?: boolean;
   /** A non-interactive SECTION HEADER row (not selectable, skipped in keyboard
    *  nav / the `onSelect` path). Lets a flat menu emulate grouped sections — the
    *  unified DISPLAY encoding menu uses it for CURVES / COLORMAPS / REMAPS
@@ -34,6 +37,9 @@ export interface ToolbarMenuSpec {
   value: string;
   /** Called with the chosen option id when the user picks one. */
   onSelect(id: string): void;
+  /** Whether picking an option closes the menu. Default true. Set false for
+   *  direct-toggle menus such as arbitrary image-channel subset selection. */
+  closeOnSelect?: boolean;
 }
 
 /**

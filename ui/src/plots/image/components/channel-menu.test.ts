@@ -13,25 +13,30 @@ const rgbaTree: ChannelMenuTree = {
   ],
 };
 
-test("channel menu offers arbitrary RGB-display sub-groups for RGBA sources", () => {
+test("channel menu exposes direct channel toggles instead of enumerating combinations", () => {
   let picked: ChannelSelection | null | undefined;
   const button = channelToolbarButton(rgbaTree, {}, (sel) => { picked = sel; });
   assert.ok(button?.menu);
-  const labels = button.menu.options.map((o) => o.label.trim());
+  assert.equal(button.menu.closeOnSelect, false);
 
-  assert.ok(labels.some((label) => label.endsWith("RGB")));
-  assert.ok(labels.some((label) => label.endsWith("R+B")));
-  assert.ok(labels.some((label) => label.endsWith("G+A")));
-  assert.ok(labels.some((label) => label.endsWith("A")));
+  const options = button.menu.options;
+  const labels = options.map((o) => o.label.trim());
+  assert.deepEqual(labels, ["RGBA", "R", "G", "B", "A"]);
+  assert.equal(options.find((o) => o.id === "p0|toggle:A")?.checked, true);
 
-  button.menu.onSelect("p0|combo:R+B");
-  assert.deepEqual(picked, { layer: ["R", "B"] });
-
-  button.menu.onSelect("p0|combo:R+G+B");
+  // Directly unchecking A from an RGBA image yields the desired RGB subset.
+  button.menu.onSelect("p0|toggle:A");
   assert.deepEqual(picked, { layer: ["R", "G", "B"] });
 });
 
-test("channel menu highlights a generated combo instead of synthetic fallback", () => {
-  const button = channelToolbarButton(rgbaTree, { layer: ["R", "G", "B"] }, () => {});
-  assert.equal(button?.menu?.value, "p0|combo:R+G+B");
+test("channel menu toggles within an authored arbitrary subset", () => {
+  let picked: ChannelSelection | null | undefined;
+  const button = channelToolbarButton(rgbaTree, { layer: ["R", "B"] }, (sel) => { picked = sel; });
+  assert.ok(button?.menu);
+  assert.equal(button.menu.value, "__combo");
+  assert.equal(button.menu.options.find((o) => o.id === "p0|toggle:R")?.checked, true);
+  assert.equal(button.menu.options.find((o) => o.id === "p0|toggle:G")?.checked, false);
+
+  button.menu.onSelect("p0|toggle:G");
+  assert.deepEqual(picked, { layer: ["R", "G", "B"] });
 });

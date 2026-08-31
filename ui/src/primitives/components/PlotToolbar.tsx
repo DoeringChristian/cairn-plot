@@ -397,7 +397,7 @@ function ToolbarMenu({
   title: string;
   menu: ToolbarMenuSpec;
 }) {
-  const { options, value, onSelect } = menu;
+  const { options, value, onSelect, closeOnSelect = true } = menu;
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -425,9 +425,9 @@ function ToolbarMenu({
       // Never "select" a section-header row (defensive — nav already skips them).
       if (options.find((o) => o.id === id)?.header) return;
       onSelect(id);
-      setOpen(false);
+      if (closeOnSelect) setOpen(false);
     },
-    [onSelect, options],
+    [closeOnSelect, onSelect, options],
   );
 
   // Close on outside-click / Escape while open (self-contained — no parent
@@ -540,8 +540,9 @@ function ToolbarMenu({
               }
               const isSelected = opt.id === value;
               const isHi = i === highlight;
+              const checked = opt.checked === true;
               return (
-                <li key={opt.id} role="option" aria-selected={isSelected}>
+                <li key={opt.id} role="option" aria-selected={isSelected || checked}>
                   <button
                     type="button"
                     onClick={(e) => {
@@ -552,9 +553,14 @@ function ToolbarMenu({
                     className={[
                       "block w-full text-left px-2 py-1 text-[11px] whitespace-nowrap",
                       isHi ? "bg-bg-hover" : "",
-                      isSelected ? "text-accent font-medium" : "text-fg",
+                      isSelected || checked ? "text-accent font-medium" : "text-fg",
                     ].join(" ")}
                   >
+                    {opt.checked != null ? (
+                      <span aria-hidden="true" className="inline-block w-3">
+                        {checked ? "✓" : ""}
+                      </span>
+                    ) : null}
                     {opt.label}
                   </button>
                 </li>
