@@ -2,7 +2,8 @@
  * `channel-menu.ts` — the CHANNELS toolbar menu for EXR panes: the standard
  * `ToolbarButtonSpec` dropdown (same chrome as the colormap/tonemap menus)
  * listing every selectable part × channel group, plus each color group's
- * individual channels (indented) for single-channel isolation.
+ * arbitrary non-empty sub-groups up to RGB display arity (indented) for
+ * single-channel isolation and custom mixes such as RGB-from-RGBA or R+B.
  *
  * IN THE TOOLBAR by design (not a tev-style always-visible strip): the usual
  * case is that the report already authored the channels to show — the menu is
@@ -54,6 +55,42 @@ function shortLabel(group: ChannelGroup): string {
   return group.name;
 }
 
+function splitChannelName(full: string): { prefix: string; suffix: string } {
+  const dot = full.lastIndexOf(".");
+  return dot < 0
+    ? { prefix: "", suffix: full }
+    : { prefix: full.slice(0, dot), suffix: full.slice(dot + 1) };
+}
+
+function subgroupLabel(group: ChannelGroup, channels: readonly string[]): string {
+  const suffixes = channels.map(splitChannelName);
+  const samePrefix = suffixes.every((x) => x.prefix === group.name);
+  const labels = samePrefix ? suffixes.map((x) => x.suffix) : channels;
+  return labels.length >= 3 && labels.every((x) => x.length === 1) ? labels.join("") : labels.join("+");
+}
+
+function channelCombinations(channels: readonly string[]): string[][] {
+  const out: string[][] = [];
+  const max = Math.min(3, channels.length);
+  const visit = (start: number, size: number, picked: string[]) => {
+    if (picked.length === size) {
+      out.push([...picked]);
+      return;
+    }
+    for (let i = start; i < channels.length; i++) {
+      picked.push(channels[i]!);
+      visit(i + 1, size, picked);
+      picked.pop();
+    }
+  };
+  for (let size = max; size >= 1; size--) {
+    // The full group already has its own row; only synthesize true sub-groups.
+    if (size === channels.length) continue;
+    visit(0, size, []);
+  }
+  return out;
+}
+
 /** Resolve a selection's part to its tree index (name or index; default 0). */
 function partIndexOf(tree: ChannelMenuTree, part: number | string | undefined): number {
   if (part == null) return 0;
@@ -81,10 +118,12 @@ function buildEntries(tree: ChannelMenuTree): MenuEntry[] {
         selection: isDefaultGroup && group.name === "" ? null : { ...partSel, layer: group.name },
       });
       if (group.kind === "color" && group.channels.length > 1) {
-        for (const full of group.channels) {
+        for (const combo of channelCombinations(group.channels)) {
+          const layer = combo.length === 1 ? combo[0]! : combo;
+          const idLayer = Array.isArray(layer) ? `combo:${layer.join("+")}` : layer;
           entries.push({
-            option: { id: `p${part.index}|${full}`, label: ` · ${full}` },
-            selection: { ...partSel, layer: full },
+            option: { id: `p${part.index}|${idLayer}`, label: ` · ${subgroupLabel(group, combo)}` },
+            selection: { ...partSel, layer },
           });
         }
       }
@@ -112,16 +151,22 @@ export function channelToolbarButton(
   const curPartIdx = partIndexOf(tree, selection.part);
   const curLayer = selection.layer;
   let value = entries[0]!.option.id;
-  // An ARBITRARY COMBO (authored `channels=[...]`) has no group entry — show it
-  // verbatim on the face via a synthetic option (picking it is a no-op keep).
+  // An authored arbitrary combo may or may not correspond to one of the
+  // menu-synthesized sub-groups. Prefer the real row; otherwise show it
+  // verbatim on the face via a synthetic no-op entry.
   if (Array.isArray(curLayer)) {
-    const comboOpt: MenuEntry = {
-      option: { id: "__combo", label: curLayer.join(" | ") },
-      selection: { part: selection.part, layer: curLayer },
-    };
-    entries.unshift(comboOpt);
-    byId.set("__combo", comboOpt);
-    value = "__combo";
+    const comboId = `p${curPartIdx}|combo:${curLayer.join("+")}`;
+    if (byId.has(comboId)) {
+      value = comboId;
+    } else {
+      const comboOpt: MenuEntry = {
+        option: { id: "__combo", label: curLayer.join(" | ") },
+        selection: { part: selection.part, layer: curLayer },
+      };
+      entries.unshift(comboOpt);
+      byId.set("__combo", comboOpt);
+      value = "__combo";
+    }
   } else if (curLayer != null) {
     const direct = byId.get(`p${curPartIdx}|${curLayer}`);
     if (direct) value = direct.option.id;
