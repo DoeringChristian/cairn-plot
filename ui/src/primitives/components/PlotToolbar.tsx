@@ -794,7 +794,7 @@ function OverflowMenuGroup({
   menu: ToolbarMenuSpec;
   onClose: () => void;
 }) {
-  const { options, value, onSelect } = menu;
+  const { options, value, onSelect, closeOnSelect = true } = menu;
   const [expanded, setExpanded] = useState(false);
   const selectedIndex = selectedMenuIndex(options, value);
   const faceLabel = options[selectedIndex]?.label ?? "";
@@ -840,25 +840,26 @@ function OverflowMenuGroup({
             );
           }
           const isSelected = opt.id === value;
+          const checked = opt.checked === true;
           return (
             <button
               key={opt.id}
               type="button"
               role="menuitemradio"
-              aria-checked={isSelected}
+              aria-checked={isSelected || checked}
               data-menu-option=""
               onClick={(e) => {
                 e.stopPropagation();
                 onSelect(opt.id);
-                onClose();
+                if (closeOnSelect) onClose();
               }}
               className={[
                 "flex w-full items-center gap-1.5 py-1 pl-3 pr-2 text-left text-[11px]",
-                isSelected ? "text-accent font-medium bg-bg-hover/40" : "text-fg hover:bg-bg-hover",
+                isSelected || checked ? "text-accent font-medium bg-bg-hover/40" : "text-fg hover:bg-bg-hover",
               ].join(" ")}
             >
               <span aria-hidden="true" className="w-3 text-center text-accent">
-                {isSelected ? "✓" : ""}
+                {isSelected || checked ? "✓" : ""}
               </span>
               <span>{opt.label}</span>
             </button>

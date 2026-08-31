@@ -29,11 +29,12 @@ test("channel menu exposes direct channel toggles instead of enumerating combina
   assert.deepEqual(picked, { layer: ["R", "G", "B"] });
 });
 
-test("channel menu toggles within an authored arbitrary subset", () => {
+test("channel menu highlights an authored arbitrary subset in-place", () => {
   let picked: ChannelSelection | null | undefined;
   const button = channelToolbarButton(rgbaTree, { layer: ["R", "B"] }, (sel) => { picked = sel; });
   assert.ok(button?.menu);
-  assert.equal(button.menu.value, "__combo");
+  assert.equal(button.menu.value, "__subset");
+  assert.deepEqual(button.menu.options.map((o) => o.label.trim()), ["RGBA", "R", "G", "B", "A"]);
   assert.equal(button.menu.options.find((o) => o.id === "p0|toggle:R")?.checked, true);
   assert.equal(button.menu.options.find((o) => o.id === "p0|toggle:G")?.checked, false);
 

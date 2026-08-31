@@ -167,13 +167,7 @@ export function channelToolbarButton(
   }
 
   if (Array.isArray(curLayer)) {
-    const comboOpt: MenuEntry = {
-      option: { id: "__combo", label: curLayer.map((c) => channelLabel({ name: "", kind: "color", channels: curLayer }, c)).join("") },
-      selection: { part: selection.part, layer: curLayer },
-    };
-    entries.unshift(comboOpt);
-    byId.set("__combo", comboOpt);
-    value = "__combo";
+    value = "__subset";
   } else if (curLayer != null) {
     const direct = byId.get(`p${curPartIdx}|${curLayer}`) ?? byId.get(`p${curPartIdx}|toggle:${curLayer}`);
     if (direct) value = direct.option.id;
