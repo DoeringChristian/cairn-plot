@@ -1,5 +1,5 @@
 /**
- * `image/decoders/exr-wasm.ts` — the WASM-first EXR decode core (P4 Phase B).
+ * `image/decoders/exr-wasm.ts` — the WASM-first EXR decode core.
  *
  * Wraps the Rust/WASM OpenEXR decoder (the `exr` crate, compiled to WASM and
  * embedded as inline base64 in `wasm-inline/`) and layers the TS full decoder
@@ -68,8 +68,8 @@ export async function decodeExrPreferWasm(
   select?: ExrSelection,
 ): Promise<F32Image> {
   // PART/LAYER selection routes straight to the full TS decoder: the wasm
-  // binding decodes whole-image only (moving selection into the wasm module is
-  // the planned follow-up — see docs/plans/2026-08-18-exr-parts-channels-deep.md).
+  // binding decodes whole-image only; selected part/layer decoding stays on the
+  // full TypeScript decoder path.
   if (hasExrSelection(select)) return decodeExrBuffer(buffer, select);
   try {
     const { decode_exr } = await loadDecoder();

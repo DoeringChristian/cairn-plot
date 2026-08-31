@@ -102,9 +102,8 @@ def build_report() -> cp.Report:
         "data mode) and mounts from a single inlined renderer bundle, so this "
         "whole page is **self-contained**: no cairn server, no repo, no CDN, no "
         "webfonts. This report is itself built with `cp.Report` — the same "
-        "`.md` / `.html` / `.add` / `.grid` builders documented in the "
-        "[report API spec](docs/superpowers/specs/2026-07-17-cairn-plot-report-api.md) "
-        "— which is the point: the gallery is the dogfood."
+        "`.md` / `.html` / `.add` / `.grid` builders documented in "
+        "`docs/API.md` — which is the point: the gallery is the dogfood."
     )
     rep.html(_BANNER_HTML)
 
@@ -378,66 +377,124 @@ def build_report() -> cp.Report:
         ]
     )
 
+    # Build the HDR pair before the validation section so the page can show both
+    # the official HDR-FLIP reference map and the live client-side HDR kernel.
+    hdr_ref = _hdr_image()
+    _rng = np.random.default_rng(7)
+    # A shifted + noisy prediction, plus a highlight-localized error inside the
+    # bright core (only revealed when HDR-FLIP sweeps the core's exposure in).
+    hdr_pred = hdr_ref * (
+        1.0 + 0.12 * (_rng.random(hdr_ref.shape).astype(np.float32) - 0.5)
+    )
+    _ys = np.linspace(-1, 1, hdr_ref.shape[0])[:, None]
+    _xs = np.linspace(-1, 1, hdr_ref.shape[1])[None, :]
+    hdr_pred[..., 0] += (3.0 * np.exp(-(_xs**2 + _ys**2) / 0.02)).astype(np.float32)
+    hdr_pred = np.clip(hdr_pred, 0.0, None).astype(np.float32)
+
     # ── ground truth: the OFFICIAL flip-evaluator beside our GPU kernel ──────
     # (https://github.com/NVlabs/flip — the compiled reference implementation.)
     # Optional dependency: the section is skipped with a note when absent.
     try:
         import flip_evaluator as _flip
 
+        def _raw_flip_field(result: np.ndarray) -> np.ndarray:
+            field = np.asarray(result, dtype=np.float32)
+            if field.ndim == 3:  # (H,W,1) → (H,W) scalar field
+                field = field[..., 0]
+            return np.ascontiguousarray(field)
+
         # `applyMagma=False` → the RAW scalar error field (H,W,1) in [0,1], NOT
         # the tool's magma-colored RGB. Baking the raw values (not a pre-colored
         # PNG) lets THIS page's DISPLAY menu apply cairn-plot's own bit-exact
         # magma/turbo onto the official data — so the colorscheme can be compared
         # independently of the error magnitudes.
-        _official_raw, _official_mean, _ = _flip.evaluate(
+        _official_ldr_raw, _official_ldr_mean, _ = _flip.evaluate(
             flip_ref.astype(np.float32) / 255.0,
             flip_pred.astype(np.float32) / 255.0,
             "LDR",
+            inputsRGB=True,
             applyMagma=False,
         )
-        _official_err = np.asarray(_official_raw, dtype=np.float32)
-        if _official_err.ndim == 3:  # (H,W,1) → (H,W) scalar field
-            _official_err = _official_err[..., 0]
-        _official_err = np.ascontiguousarray(_official_err)
+        _official_ldr_err = _raw_flip_field(_official_ldr_raw)
+
+        # Same pixel pair as the SDR validation, but routed through the HDR-FLIP
+        # reference. `flip-evaluator` forces HDR inputs to linear RGB, so these
+        # normalized SDR values are intentionally interpreted as linear floats.
+        _sdr_as_hdr_ref = flip_ref.astype(np.float32) / 255.0
+        _sdr_as_hdr_pred = flip_pred.astype(np.float32) / 255.0
+        _official_hdr_on_sdr_raw, _official_hdr_on_sdr_mean, _official_hdr_on_sdr_params = _flip.evaluate(
+            _sdr_as_hdr_ref,
+            _sdr_as_hdr_pred,
+            "HDR",
+            applyMagma=False,
+        )
+        _official_hdr_on_sdr_err = _raw_flip_field(_official_hdr_on_sdr_raw)
+
+        # This is the HDR-FLIP Python reference path from `flip-evaluator`: true
+        # linear HDR floats, dynamicRangeString="HDR", and applyMagma=False so
+        # the report colors the raw HDR-FLIP error field.
+        _official_hdr_raw, _official_hdr_mean, _official_hdr_params = _flip.evaluate(
+            hdr_ref.astype(np.float32),
+            hdr_pred.astype(np.float32),
+            "HDR",
+            applyMagma=False,
+        )
+        _official_hdr_err = _raw_flip_field(_official_hdr_raw)
         rep.md(
             "### Validation — official `flip-evaluator` vs our client-side kernel\n\n"
-            "Left: the **raw** FLIP error field computed OFFLINE by NVIDIA's "
+            "First: the **raw** LDR-FLIP error field computed OFFLINE by NVIDIA's "
             "compiled reference implementation ([NVlabs/flip](https://github.com/NVlabs/flip), "
-            f"`flip-evaluator`, `applyMagma=False`), **mean FLIP = {_official_mean:.4f}** — "
+            f"`flip-evaluator`, `applyMagma=False`), **mean FLIP = {_official_ldr_mean:.4f}** — "
             "baked as a raw float scalar field and colored by OUR bit-exact magma "
-            "LUT (the same 256-entry table FLIP itself ships). Middle: the SAME "
-            "pair diffed live using `mode=\"flip\", flip_mode=\"sdr\"`, which "
-            "is the like-for-like NVIDIA LDR validation. Right: the same pair "
-            "using the default `flip_mode=\"hdr\"` exposure sweep. All panes apply "
-            "the same colorscheme to "
-            "independently computed error data — flip between them (stacked "
-            "layout) to eyeball kernel agreement; switch either DISPLAY menu to "
-            "Linear or sRGB for grayscale views of the raw fields. The SDR kernel "
-            "is verified against this "
-            "reference to ≤3.6e-3 per pixel in the test suite."
+            "LUT (the same 256-entry table FLIP itself ships). Second: the SAME "
+            "LDR pair diffed live using `mode=\"flip\", flip_mode=\"sdr\"`, which "
+            "is the like-for-like NVIDIA LDR validation. Third/Fourth: the **same "
+            "SDR image pair** normalized to floats and sent through HDR-FLIP — "
+            f"official Python reference mean = {_official_hdr_on_sdr_mean:.4f} "
+            f"over {_official_hdr_on_sdr_params.get('numExposures', 'auto')} exposures, beside the "
+            "live client `flip_mode=\"hdr\"` result. Fifth/Sixth: the true-HDR float "
+            f"pair, official mean HDR-FLIP = {_official_hdr_mean:.4f} over "
+            f"{_official_hdr_params.get('numExposures', 'auto')} exposures, beside the live HDR kernel. "
+            "All panes apply the same colorscheme to independently computed error "
+            "data — flip between them (stacked layout) to eyeball kernel agreement; "
+            "switch either DISPLAY menu to Linear or sRGB for grayscale views of the "
+            "raw fields. The SDR kernel is verified against the LDR reference to "
+            "≤3.6e-3 per pixel in the test suite."
         )
         rep.grid(
             [
-                [
-                    cp.Image(_official_err, label="official FLIP (raw error)", colormap="magma"),
-                    cp.Compare(
-                        cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
-                        flip_mode="sdr",
-                        colormap="magma",
-                    ),
-                    cp.Compare(
-                        cp.Image(flip_pred, label="prediction"), cp.Image(flip_ref, label="reference"), mode="flip",
-                        flip_mode="hdr",
-                        colormap="magma",
-                    ),
-                ]
-            ]
+                cp.Image(_official_ldr_err, label="official LDR-FLIP on SDR pair", colormap="magma"),
+                cp.Compare(
+                    cp.Image(flip_pred, label="SDR prediction"),
+                    cp.Image(flip_ref, label="SDR reference"),
+                    mode="flip",
+                    flip_mode="sdr",
+                    colormap="magma",
+                ),
+                cp.Image(_official_hdr_on_sdr_err, label="official HDR-FLIP on SDR pair", colormap="magma"),
+                cp.Compare(
+                    cp.Image(_sdr_as_hdr_pred, label="SDR-as-HDR prediction"),
+                    cp.Image(_sdr_as_hdr_ref, label="SDR-as-HDR reference"),
+                    mode="flip",
+                    flip_mode="hdr",
+                    colormap="magma",
+                ),
+                cp.Image(_official_hdr_err, label="official HDR-FLIP on HDR pair", colormap="magma"),
+                cp.Compare(
+                    cp.Image(hdr_pred, label="HDR prediction"),
+                    cp.Image(hdr_ref, label="HDR reference"),
+                    mode="flip",
+                    flip_mode="hdr",
+                    colormap="magma",
+                ),
+            ],
+            initial_layout="stack",
         )
     except ImportError:
         rep.md(
             "### Validation — official `flip-evaluator` vs our client-side kernel\n\n"
             "*(skipped: `pip install flip-evaluator` to bake the official NVIDIA "
-            "reference error map beside the live GPU kernel.)*"
+            "LDR-FLIP and HDR-FLIP reference error maps beside the live GPU kernels.)*"
         )
 
     # ── perceptual diff — one FLIP mode, runtime HDR/SDR control ──────────────
@@ -454,17 +511,6 @@ def build_report() -> cp.Report:
         "derived from the reference luminance range. "
         "(FLIP comparison is GPU-only.)"
     )
-    hdr_ref = _hdr_image()
-    _rng = np.random.default_rng(7)
-    # A shifted + noisy prediction, plus a highlight-localized error inside the
-    # bright core (only revealed when HDR-FLIP sweeps the core's exposure in).
-    hdr_pred = hdr_ref * (
-        1.0 + 0.12 * (_rng.random(hdr_ref.shape).astype(np.float32) - 0.5)
-    )
-    _ys = np.linspace(-1, 1, hdr_ref.shape[0])[:, None]
-    _xs = np.linspace(-1, 1, hdr_ref.shape[1])[None, :]
-    hdr_pred[..., 0] += (3.0 * np.exp(-(_xs**2 + _ys**2) / 0.02)).astype(np.float32)
-    hdr_pred = np.clip(hdr_pred, 0.0, None).astype(np.float32)
     rep.add(
         cp.Compare(
             cp.Image(hdr_pred, label="prediction"),

@@ -1,4 +1,4 @@
-// Phase C drift-check: regenerate the plot-spec JSON Schema from the TS source
+// Drift-check: regenerate the plot-spec JSON Schema from the TS source
 // and fail if it differs from the committed
 // docs/schemas/cairn-plot-spec.schema.json. This keeps TS `PlotSpec` and
 // the committed schema (and therefore the Python `PlotSpec` pydantic model

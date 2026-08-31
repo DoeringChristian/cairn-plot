@@ -1,7 +1,6 @@
 /**
  * `controls/types.ts` — the renderer-agnostic control surface for cairn-plot's
- * 2D charts (Plotly-modebar parity, see the design plan
- * `docs/superpowers/specs/2026-07-16-cairn-plot-2d-plotly-parity.md`, §B.1).
+ * 2D charts with Plotly-modebar-inspired controls.
  *
  * `PlotController` is the single imperative facade a `<PlotToolbar>` (S1) talks
  * to. Every renderer publishes one via an adapter hook
@@ -11,7 +10,8 @@
  * hook-internal `"box"`), so slices can layer on hover/spikelines/axis-scale/
  * selection without reworking the viewport hook.
  *
- * S0 introduces the TYPES only; behavior lands in later slices.
+ * This file contains shared control types only; behavior lives in renderer
+ * adapters and toolbar components.
  */
 
 /** Public drag vocabulary (Plotly's `dragmode`). The viewport hook's internal

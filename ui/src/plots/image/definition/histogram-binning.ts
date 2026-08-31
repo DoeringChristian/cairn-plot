@@ -1,7 +1,6 @@
 /**
  * `image/histogram-binning.ts` — the PURE tev-parity histogram math (the port
- * of Tom94/tev's `ImageCanvas` canvas-statistics binning; see
- * `docs/superpowers/specs/2026-08-25-image-info-panel-design.md`).
+ * of Tom94/tev's `ImageCanvas` canvas-statistics binning.
  *
  * ONE source of truth for the value→bin mapping, bin edges, display
  * normalization and per-channel stats — used by BOTH the CPU reader loop

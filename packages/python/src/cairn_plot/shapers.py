@@ -50,8 +50,8 @@ def _check_data_mode(data_mode: str) -> None:
 
 
 def _content_hash(data: bytes) -> str:
-    """A content-address for baked bytes — matches the store-key convention
-    (design spec §5/R6): the artifact's own hash when known, else this."""
+    """A content-address for baked bytes — the artifact's own hash when known,
+    else this."""
     return "sha256:" + _hashlib.sha256(data).hexdigest()
 
 
@@ -121,7 +121,7 @@ def _endpoint_server_of(source: Any) -> str:
 
 
 def _scalar_series_from_ref(ref: Any) -> dict[str, Any]:
-    """A `run[tag]` scalar sequence → one `Series` (design spec §1 ScalarPlot):
+    """A `run[tag]` scalar sequence → one `Series`:
     `{key,label,color,points:[{x,y,wallTime?}]}` from `Run.sequence`."""
     seq = ref.run.sequence(ref.tag)
     points: list[dict[str, Any]] = []

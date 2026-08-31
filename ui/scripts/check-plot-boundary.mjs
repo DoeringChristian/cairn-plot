@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 /**
- * Boundary lint for the extractable cairn-plot TS surface (prep for the
- * cairn-plot repo extraction — see docs/superpowers/specs/
- * 2026-07-19-cairn-plot-repo-extraction-prep.md, workstream P-A).
+ * Boundary lint for the extractable cairn-plot TS surface.
  *
  * RULE: the cairn-plot library + its standalone entry/bootstrap files must NOT
  * import app code. The APP importing the library is fine (that becomes the
@@ -12,7 +10,7 @@
  * would break the clean `git filter-repo` split, so we fail CI on it here,
  * next to the other plot guards (`check:plot-schema`, `check:plot-assets`).
  *
- * The surface (kept in sync with the spec's P-A list):
+ * The surface:
  *   - src/{public,host,layout,plots,...}/**    (the library)
  *   - src/plot-*.ts / src/plot-*.tsx           (standalone entries/bootstrap)
  *   - vite.plot-*.config.ts                    (standalone build configs)

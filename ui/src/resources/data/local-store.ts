@@ -1,5 +1,5 @@
 /**
- * The LOCAL content-addressed blob store (design spec §5).
+ * The LOCAL content-addressed blob store.
  *
  * A page-level registry — `window.__cairnPlotStore` — keyed by content hash
  * to `{ mime, b64 }`, so multiple plots on ONE page (e.g. several notebook
@@ -13,8 +13,8 @@
  * inlined directly in the plot descriptor, not here.
  *
  * This module is the ONE definition of the store shape + LOCAL `DataSource`,
- * shared by the plot bootstrap (`plot-main.tsx`) and Phase C's Python-emitted
- * pages (which emit the inline `<script>` that seeds `window.__cairnPlotStore`
+ * shared by the plot bootstrap (`plot-main.tsx`) and Python-emitted pages
+ * (which emit the inline `<script>` that seeds `window.__cairnPlotStore`
  * and then rely on this reader). The Python emitter and this reader MUST agree
  * on the shape below.
  */
@@ -52,7 +52,7 @@ declare global {
 }
 
 /** The DOM id of the inline `<script application/cairn-plot-store+json>` blob
- *  a Python-emitted page carries (design spec §5). */
+ *  a Python-emitted page carries. */
 export const PLOT_STORE_SCRIPT_ID = "__cairn_plot_store__";
 
 /**
@@ -114,7 +114,7 @@ async function inflateEntry(entry: PlotStoreEntry): Promise<ArrayBuffer> {
 }
 
 /**
- * The LOCAL `DataSource` (design spec §5) — resolves a content hash against
+ * The LOCAL `DataSource` — resolves a content hash against
  * the page-level `window.__cairnPlotStore` with NO network:
  *  - `artifactUrl(hash)` = `data:${mime};base64,${b64}` (an `<img src>` /
  *    fetch target that inlines the bytes);

@@ -1,8 +1,7 @@
 /**
  * ImageInfoPanel — the pane's INFO PANEL: a small, self-contained sectioned
  * overlay pinned to the TOP-RIGHT of an image pane, BELOW the toolbar seam
- * (formerly `ImageHistogramOverlay`; see
- * `docs/superpowers/specs/2026-08-25-image-info-panel-design.md`).
+ * (formerly `ImageHistogramOverlay`).
  *
  * Sections (top → bottom):
  *   - per-channel STATS row (min / mean / max — tev's footer numbers);

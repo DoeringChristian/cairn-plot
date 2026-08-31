@@ -240,8 +240,7 @@ export interface Scene3DHandle {
  * idle period and transparently re-acquires a fresh context on the next
  * interaction/render request, keeping the browser's total live-WebGL-context
  * count bounded regardless of how many 3D cards/panes are open. See
- * `context-pool.ts` for the pool's own doc comment and the WS-3DR2 report
- * (`docs/superpowers/sdd/ws-3DR2-report.md`) for the full design rationale.
+ * `context-pool.ts` for the pool's own doc comment.
  *
  * This is a behavior-preserving extraction of `PointCloudViewer`'s inline
  * scene lifecycle — every future 3D renderer (mesh/boxes/volume) should

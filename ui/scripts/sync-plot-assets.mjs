@@ -4,10 +4,10 @@
  * Sync the built cairn-plot renderer bundles into the cairn-plot PACKAGE data.
  *
  * The Vite build writes the self-contained IIFE bundles + design-token CSS to
- * `cairn/ui/dist/plot-inline/` (committed for the app). The standalone
- * `cairn-plot` Python distribution ships those exact files as PACKAGE DATA at
- * `packages/cairn-plot/src/cairn_plot/_assets/plot-inline/` so an installed
- * wheel renders offline with no repo checkout (packaging spec §5). This script
+ * `ui/dist/plot-inline/`. The standalone `cairn-plot` Python distribution
+ * ships those exact files as package data at
+ * `packages/python/src/cairn_plot/_assets/plot-inline/` so an installed wheel
+ * renders offline with no repo checkout. This script
  * is the one-way copy dist → package-data, and its `--check` mode is the CI
  * identity guard (exit 1 on drift), replacing the "commit dist" convention for
  * the plot bundle.

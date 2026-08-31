@@ -4,7 +4,7 @@
  * (HDR, compute, float16 all `true`). A reduced/SDR WebGL2 backend used to
  * exist as a fallback for when `navigator.gpu` is unavailable; it was
  * removed in favor of a clean WebGPU-or-legacy-CPU-pane boundary — see
- * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`. When WebGPU is
+ * Shared WebGPU device/RHI lifecycle. When WebGPU is
  * unavailable, `engine/device.ts`'s `getSharedDevice()` rejects and callers
  * fall back to the legacy CPU/2D-canvas pane, not another GPU backend.
  *

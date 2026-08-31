@@ -3,7 +3,7 @@
 ``import cairn.plot as cp`` then compose capitalized objects —
 :class:`Line`, :class:`Figure`, :class:`Table`, :class:`Image`,
 :class:`Compare`, :class:`Grid` — into a recursive tree that renders
-self-contained in any notebook (design spec §5–§7 / plan G2).
+self-contained in any notebook.
 
 Each object is a :class:`Component`. A component knows how to lower itself to
 ONE ``PlotNode`` dict (:meth:`Component.to_node`) — a leaf ``plot``, a ``grid``,
@@ -32,7 +32,7 @@ from typing import Any, Sequence
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# DataRef seam (packaging spec §4 / P2-M1).
+# DataRef seam.
 #
 # The pure plot components must not import cairn's reader (``cairn.sdk.reader``
 # pulls in run/wal/local/transport/server). A ``run[tag]`` handle is instead
@@ -62,7 +62,7 @@ def _is_data_ref(obj: Any) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Resolver seam (packaging spec §4 / P2-M2).
+# Resolver seam.
 #
 # A handful of data paths need cairn's tracking handlers (raw table + 3D array
 # serialization). ``cairn_plot`` imports NEITHER handlers nor the reader;
@@ -269,7 +269,7 @@ def _take_image_settings(props: dict[str, Any]) -> dict[str, Any]:
 
 
 class Component:
-    """Base for composable ``cairn.plot`` objects (design spec §6 / plan G2.1).
+    """Base for composable ``cairn.plot`` objects.
 
     Subclasses implement :meth:`to_node` (lower to one ``PlotNode`` dict) and,
     when they bake binary data, :meth:`_collect_store`. Everything else — the
@@ -1828,7 +1828,7 @@ def _as_component(obj: Any) -> Component:
 
 
 class Grid(Component):
-    """Subplots in a CSS grid (plan G2.3).
+    """Subplots in a CSS grid.
 
     ``children`` is either a 1-D list ``[a, b, c]`` (auto-flow into one row of
     ``cols`` columns, default ``len(children)``) OR a 2-D nested list

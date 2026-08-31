@@ -147,6 +147,9 @@ npm run sync:plot-assets      # copy into packages/python/src/cairn_plot/_assets
 
 ## Development
 
+See [`docs/design.md`](docs/design.md) for the overarching implementation design
+and [`docs/API.md`](docs/API.md) for the supported public API.
+
 ```bash
 # Python
 uv venv && uv pip install -e ".[dev]"

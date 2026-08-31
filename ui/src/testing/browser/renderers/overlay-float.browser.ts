@@ -1,7 +1,7 @@
 /**
  * `GpuImagePane` DETECTION OVERLAY on the FLOAT (HDR) surface — the LIVE browser
- * proof for the M7 fix (duplication audit, `docs/plans/2026-08-21-duplication-
- * audit.md`). jsdom has no WebGPU, so — like every `*.browser.ts` harness under
+ * proof for the float-overlay regression fix. jsdom has no WebGPU, so — like
+ * every `*.browser.ts` harness under
  * `renderers/__tests__/` — this mounts live React panes; it self-drives (no
  * external pointer/keyboard) and finalizes `#status`, so it opts into the DEFAULT
  * `test:harness` set via `data-cairn-harness="self-driving"`.

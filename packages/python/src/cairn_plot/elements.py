@@ -8,13 +8,11 @@ Contains:
 
 * :class:`Element` — the shared display-protocol base (``_repr_html_`` /
   ``_repr_mimebundle_``) every standalone-renderable cairn Python object
-  implements, per ``docs/superpowers/specs/2026-07-07-notebook-python-and-
-  embed.md`` §5/§11.
+  implements.
 * :class:`HtmlElement` — a self-contained HTML snapshot (a Plotly
   ``fig.to_html()``, a rendered table, …). No server round trip, ever.
 * :class:`PlotElement` — the plots-only display object that mounts a PURE
-  ``cairn-plot`` renderer (WS-PLOT / design spec §6): the default return of
-  the ``cairn.plot.*`` builders.
+  ``cairn-plot`` renderer: the default return of the ``cairn.plot.*`` builders.
 
 The **server-backed** :class:`~cairn.sdk.elements.CardElement` stays in
 :mod:`cairn.sdk.elements` (it needs ``cairn.config`` + server discovery), which
@@ -105,12 +103,12 @@ def _node_has_three(node: Any) -> bool:
 
 
 class PlotElement(Element):
-    """A plots-only display object that mounts a PURE ``cairn-plot`` renderer
-    (WS-PLOT / design spec §6) — the default return of the ``cairn.plot.*``
-    builders, replacing the ``/embed/card`` iframe (``CardElement``).
+    """A plots-only display object that mounts a PURE ``cairn-plot`` renderer —
+    the default return of the ``cairn.plot.*`` builders, replacing the
+    ``/embed/card`` iframe (``CardElement``).
 
     It emits, plotly-``include_plotlyjs``-style, three include-once-guarded
-    pieces per page (design spec §5–§7):
+    pieces per page:
 
       1. the **renderer bundle** — the self-contained IIFE + design-token CSS
          inlined ONCE (LOCAL default, ``bundle="inline"``, offline), guarded by

@@ -7,7 +7,7 @@
  * a unit test, it's a browser page driven via claude-in-chrome.
  *
  * The engine is WebGPU-ONLY (the WebGL2 backend was removed — see
- * `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`); there is no
+ * shared WebGPU device lifecycle); there is no
  * `?forceWebGL2` mode to exercise anymore. Assertions run on a plain page
  * load:
  *   1. `getSharedWebGpuDevice()` called twice (back to back, before either

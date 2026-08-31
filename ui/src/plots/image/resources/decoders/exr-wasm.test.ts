@@ -1,5 +1,5 @@
 /**
- * Tests for the WASM-first EXR decode core (`exr-wasm.ts`, P4 Phase B). Runs
+ * Tests for the WASM-first EXR decode core (`exr-wasm.ts`). Runs
  * under Node's built-in runner with type-stripping (no Worker/DOM needed — this
  * IS the testable core the browser Worker runs):
  *

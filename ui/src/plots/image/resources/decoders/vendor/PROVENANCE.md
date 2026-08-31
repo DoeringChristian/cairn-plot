@@ -5,7 +5,7 @@ common EXR compressions (NONE, RLE, ZIP(S), **PIZ**, **PXR24**, **B44/B44A**,
 **DWAA/DWAB**; plus tiled / multi-part / deep) with **no runtime npm dependency**
 and **no CDN** — everything ships inside the plot bundle. Rationale and the
 wasm-vs-JS trade-off are in
-`docs/superpowers/specs/2026-07-19-wasm-exr-decoder.md`.
+the in-repository EXR decoder provenance notes.
 
 ## Sources (all permissive licenses)
 

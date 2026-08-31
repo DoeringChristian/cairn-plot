@@ -1,5 +1,8 @@
 # Architecture
 
+This page is a compact architecture summary. See [Design](design.md) for the
+overarching repository design and ownership model.
+
 Cairn Plot has one production path:
 
 ```text

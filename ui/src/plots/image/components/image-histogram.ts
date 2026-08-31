@@ -280,9 +280,8 @@ export function computeHistograms(input: HistogramComputeInput): HistogramResult
 
 // ---------------------------------------------------------------------------
 // tev-parity histograms (the info-panel compute; see image/histogram-binning.ts
-// for the ported math and docs/superpowers/specs/2026-08-25-image-info-panel-
-// design.md for the design). Same reader/series inputs as computeHistograms,
-// but bins through the symmetric-log₂ mapping at 400 bins, returns tev display
+// for the ported math). Same reader/series inputs as computeHistograms, but
+// bins through the symmetric-log₂ mapping at 400 bins, returns tev display
 // NORMALIZED values (density + percentile cap), and folds per-CHANNEL
 // min/mean/max stats in the same strided pass.
 // ---------------------------------------------------------------------------

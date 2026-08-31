@@ -1,4 +1,4 @@
-"""cairn-plot bundle access + safe HTML/JSON serialization (Phase C).
+"""cairn-plot bundle access + safe HTML/JSON serialization.
 
 The Python emit (``PlotElement`` in ``elements.py``) ships the SAME pure
 ``cairn-plot`` renderers the viewer app uses — read from the committed Vite
@@ -42,7 +42,7 @@ from typing import Any
 def _resolve_inline_dir() -> Path:
     """The ``plot-inline`` asset dir the emit reads its IIFE bundles from.
 
-    Resolution order (packaging spec §5):
+    Resolution order:
 
     1. the package's OWN payload — ``cairn_plot/_assets/plot-inline`` shipped as
        package data (the canonical copy in an installed ``cairn-plot`` wheel);

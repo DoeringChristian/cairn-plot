@@ -1,7 +1,7 @@
 /**
  * WebGPU RHI readback harness (Tasks 2 and 3 of the WebGPU engine,
  * Sub-project 1; WebGL2 half removed when the WebGL2 backend was deleted —
- * see `docs/superpowers/specs/2026-07-16-webgpu-engine-design.md`).
+ * see the shared WebGPU device/RHI lifecycle).
  *
  * jsdom has no WebGPU, so this is NOT a unit test — it's a browser page,
  * driven via claude-in-chrome, that exercises `createWebGPUDevice()` end to

@@ -1,7 +1,6 @@
 /**
  * `renderers/display-operation.ts` — the ONE unified DISPLAY-ENCODING menu +
- * viewport encoding projection (Phase 3 of the display-operation registry;
- * `docs/plans/2026-08-18-display-operation-registry.md`).
+ * viewport encoding projection.
  *
  * An image pane's colormap and tone-map menus were TWO controls answering ONE
  * question — "how do the selected channels become RGB". This module collapses

@@ -28,8 +28,8 @@
  * decode to a `Float32Array` (`precision:"f32"`), preserving exact behavior for
  * every non-all-half EXR.
  *
- * See `docs/superpowers/specs/2026-07-19-client-image-decoders.md` for the full
- * layout notes (esp. the ZIP predictor+interleave post-filter).
+ * The ZIP predictor and interleave post-filter follow the OpenEXR scanline
+ * layout for the supported common case.
  */
 import type { DecodedImage, ImageSource } from "../decoders.ts";
 import { halfToFloat } from "../../runtime/half.ts";

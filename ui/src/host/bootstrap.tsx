@@ -1,10 +1,10 @@
 /**
- * The shared cairn-plot bootstrap (Phase B `PlotApp` + Phase C multi-mount).
+ * The shared cairn-plot bootstrap for standalone and multi-mount pages.
  *
- * Phase B's `plot-main.tsx` auto-mounted ONE page-level `#cairn-plot-root` from
- * a single inline spec — right for the server `/plot` route, but a
- * notebook page (Phase C) carries MANY plots, each in its own `<div>`, each
- * with its own spec. So the mount logic is factored here and exposed as
+ * `plot-main.tsx` can auto-mount ONE page-level `#cairn-plot-root` from a
+ * single inline spec — right for a hosted `/plot` route — while a notebook page
+ * carries MANY plots, each in its own `<div>`, each with its own spec. So the
+ * mount logic is factored here and exposed as
  * `window.__cairnPlotBootstrap(divId, descId)` (mount ONE div from the
  * spec in the `<script id=descId application/cairn-plot+json>` blob),
  * plus a tiny queue-drain so a Python-emitted page can enqueue mounts before
@@ -17,7 +17,7 @@
  *    IIFEs (`dist/plot-inline/core.iife.js` + optional addon IIFEs) Python
  *    inlines for the offline LOCAL default (no server, no external network).
  *
- * G1: the spec is a recursive TREE; `PlotApp` is now a thin root wrapper
+ * The spec is a recursive TREE; `PlotApp` is now a thin root wrapper
  * that builds one `DataSource` and renders `<PlotNodeView>` under a
  * `SharedPlotContext` (see plot-node.tsx). The former flat single-renderer body
  * lives on there as `LeafView`.
@@ -142,7 +142,7 @@ async function readPageDescriptor(): Promise<PlotSpec> {
     return (await res.json()) as PlotSpec;
   }
   if (params.get("sid")) {
-    throw new Error("?sid= spec loading is not available yet (Phase C).");
+    throw new Error("?sid= spec loading is not available yet.");
   }
   throw new Error(
     "No plot spec found (expected an inline " +

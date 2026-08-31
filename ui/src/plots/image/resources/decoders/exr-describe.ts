@@ -1,9 +1,8 @@
 /**
  * `exr-describe.ts` — HEADER-ONLY EXR metadata: the parts × channels tree,
- * WITHOUT decoding any pixels. This is the "metadata-first" seam of the
- * multi-part / multi-channel design (docs/plans/2026-08-18-exr-parts-channels-
- * deep.md): the UI channel strip, `cp.Layers` expansion and the decode
- * selector all consume this description; the pixel decode then happens per
+ * WITHOUT decoding any pixels. This is the metadata-first seam for
+ * multi-part / multi-channel EXR support: the UI channel strip and decode
+ * selector consume this description; the pixel decode then happens per
  * `{part, layer}` selection through the full decoder.
  *
  * Standalone by design (no dependency on the vendored three.js loader or the

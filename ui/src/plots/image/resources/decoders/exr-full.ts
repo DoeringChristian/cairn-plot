@@ -27,8 +27,7 @@ import { groupChannels, resolveGroup } from "../../definition/channel-groups.ts"
 const FLOAT_TYPE = 1015;
 const RGBA_FORMAT = 1023;
 
-/** Decode-time selection: which part and channel group/channel to decode.
- *  See docs/plans/2026-08-18-exr-parts-channels-deep.md. */
+/** Decode-time selection: which part and channel group/channel to decode. */
 export interface ExrSelection {
   /** Part index or part name. Default: part 0. */
   part?: number | string;

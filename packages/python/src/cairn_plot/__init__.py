@@ -62,7 +62,7 @@ __version__ = "0.1.0"
 
 
 # ---------------------------------------------------------------------------
-# Lowercase builders — each returns a ready ``PlotElement`` (design spec §11).
+# Lowercase builders — each returns a ready ``PlotElement``.
 # They are thin fronts over the capitalized composables, kept for parity with
 # the ``cairn.plot`` surface (``cp.image``/``cp.scalar``/…).
 # ---------------------------------------------------------------------------

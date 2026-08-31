@@ -1,6 +1,6 @@
 /**
  * WebGPU canvas surface configuration — SDR and the VALIDATED HDR recipe
- * from the Task-0 spike (`docs/superpowers/specs/2026-07-16-webgpu-hdr-spike.md`).
+ * from the renderer's HDR/WebGPU spike work.
  *
  * `configureHDRSurface`/`configureSDRSurface` are pure `context.configure(...)`
  * wrappers — they do NOT decide *whether* to request HDR (that's

@@ -1,4 +1,4 @@
-// Phase C (cairn-plot Python library): generate
+// Generate
 // docs/schemas/cairn-plot-spec.schema.json from the authoritative TS type
 // `PlotSpec` in packages/spec/src/spec.ts via ts-json-schema-generator. TS
 // is the single source of truth; this schema is a derived artifact (committed

@@ -1,7 +1,6 @@
 /**
  * `channel-groups.ts` — tev-style grouping of an EXR part's flat channel list
- * into the entries the CHANNEL STRIP shows and the decode selector addresses
- * (docs/plans/2026-08-18-exr-parts-channels-deep.md).
+ * into the entries the CHANNEL STRIP shows and the decode selector addresses.
  *
  * Convention (OpenEXR layer naming): a channel `diffuse.R` belongs to layer
  * (group) `diffuse` with suffix `R`; a bare `R` belongs to the DEFAULT group
