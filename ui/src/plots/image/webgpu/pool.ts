@@ -504,27 +504,69 @@ function untrack(entry: PaneEntry): void {
   if (i !== -1) live.splice(i, 1);
 }
 
+interface SharedSourceTexture {
+  texture: Texture;
+  refs: number;
+}
+
+// Artifact-backed sources are immutable. Share one uploaded texture across all
+// panes on the device instead of duplicating a global reference once per run.
+const sharedSourceTextures = new WeakMap<Device, Map<string, SharedSourceTexture>>();
+
+function sharedSources(device: Device): Map<string, SharedSourceTexture> {
+  let cache = sharedSourceTextures.get(device);
+  if (!cache) {
+    cache = new Map();
+    sharedSourceTextures.set(device, cache);
+  }
+  return cache;
+}
+
+function releaseSharedSource(device: Device, key: string): void {
+  const cache = sharedSources(device);
+  const shared = cache.get(key);
+  if (!shared) return;
+  shared.refs = Math.max(0, shared.refs - 1);
+  const zeroRefLimit = Math.max(32, getGpuSourceTextureRetentionLimit() * 2);
+  let zeroRefs = 0;
+  for (const value of cache.values()) if (value.refs === 0) zeroRefs++;
+  if (zeroRefs <= zeroRefLimit) return;
+  for (const [candidateKey, candidate] of cache) {
+    if (candidate.refs !== 0) continue;
+    cache.delete(candidateKey);
+    candidate.texture.destroy();
+    break;
+  }
+}
+
 /**
  * Upload `src` into a source texture, or REBIND an already-resident one when
- * `key` names a retained upload. When `key` is given, the returned texture is
- * owned by `entry.retained` (kept for flip-back); when absent, the caller owns
- * it exclusively (unkeyed, freed on replace). A keyed hit re-inserts the key as
- * most-recently-used; a keyed miss uploads, retains, and evicts the LRU.
+ * `key` names a retained upload. Keyed textures are shared device-wide and each
+ * pane's local LRU holds one reference; unkeyed textures remain pane-owned.
  */
 function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | undefined): Texture {
   if (key !== undefined) {
     const existing = entry.retained.get(key);
     if (existing) {
-      // Touch: move to most-recently-used (Map insertion order = LRU order).
       entry.retained.delete(key);
       entry.retained.set(key, existing);
       return existing;
     }
-    const tex = entry.device.createTexture(src.width, src.height, src.format);
-    tex.write(src.data);
-    entry.retained.set(key, tex);
+    const global = sharedSources(entry.device);
+    let shared = global.get(key);
+    if (shared) {
+      global.delete(key);
+      global.set(key, shared);
+      shared.refs++;
+    } else {
+      const texture = entry.device.createTexture(src.width, src.height, src.format);
+      texture.write(src.data);
+      shared = { texture, refs: 1 };
+      global.set(key, shared);
+    }
+    entry.retained.set(key, shared.texture);
     evictRetained(entry);
-    return tex;
+    return shared.texture;
   }
   const tex = entry.device.createTexture(src.width, src.height, src.format);
   tex.write(src.data);
@@ -543,9 +585,8 @@ function evictRetained(entry: PaneEntry): void {
       }
     }
     if (victimKey === undefined) break; // every retained texture is currently bound
-    const tex = entry.retained.get(victimKey)!;
     entry.retained.delete(victimKey);
-    tex.destroy();
+    releaseSharedSource(entry.device, victimKey);
   }
 }
 
@@ -570,9 +611,9 @@ function presentActiveDiff(entry: PaneEntry, next: DiffCacheEntry): void {
   entry.activeDiffEntry = next;
 }
 
-/** Destroy every retained texture and clear the map (park/dispose). */
+/** Release every retained shared texture and clear the pane-local LRU. */
 function clearRetained(entry: PaneEntry): void {
-  for (const tex of entry.retained.values()) tex.destroy();
+  for (const key of entry.retained.keys()) releaseSharedSource(entry.device, key);
   entry.retained.clear();
 }
 
