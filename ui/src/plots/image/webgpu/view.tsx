@@ -1370,7 +1370,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const hdrExposureH = hdrExposureDims?.h ?? 0;
   const hdrExposureC = hdrExposureDims?.c ?? 0;
   const automaticHdrExposures = useMemo(() => {
-    if (!diffMode || comparisonOperationId !== "flip") return null;
+    // Only HDR-FLIP needs an exposure sweep. Standard SDR FLIP previously ran
+    // this full-image scene-linear conversion + percentile scan in every pane
+    // merely because its public operation id is also "flip". That CPU work is
+    // outside the result cache and made hot SDR-FLIP swaps uniquely laggy.
+    if (!diffMode || resolvedOperationId !== "hdr-flip") return null;
     if (hdrExposurePixels) {
       return computeHdrFlipExposures(
         widenFloatPixels(hdrExposurePixels),
@@ -1383,7 +1387,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     if (!raw) return null;
     const scene = imageDataToSceneField(raw);
     return computeHdrFlipExposures(scene.pixels, scene.width, scene.height, 4);
-  }, [diffMode, comparisonOperationId, hdrExposurePixels, hdrExposureW, hdrExposureH, hdrExposureC, uploadVersion]);
+  }, [diffMode, resolvedOperationId, hdrExposurePixels, hdrExposureW, hdrExposureH, hdrExposureC, uploadVersion]);
   const hdrExposures = automaticHdrExposures;
 
   // -----------------------------------------------------------------------
