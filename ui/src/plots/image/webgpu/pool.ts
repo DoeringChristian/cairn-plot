@@ -67,7 +67,7 @@ import {
   type DiffCacheEntry,
 } from "./diff-engine";
 import { cacheFor } from "./diff-cache";
-import type { CompareMapping } from "../runtime/compare-align";
+import { mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { getWebGpuImageOperation, getWebGpuMultipassOperation } from "./image-operations.ts";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
 import type {
@@ -376,7 +376,7 @@ export interface PaneHandle {
    * self-managed textures). Returns `null` (not a rejected promise) when either
    * slot is unset / the handle is disposed / a hard GPU failure occurs.
    */
-  computeMetrics(mapping?: CompareMapping): Promise<DiffMetrics> | null;
+  computeMetrics(contentKeys?: { a: string; b: string }, mapping?: CompareMapping): Promise<DiffMetrics> | null;
   /**
    * Mean-SSIM scalar over the two live source slots — the diff metrics chip's SSIM
    * face. Runs `ensureSsimScalar` (the content+mapping-keyed cache) over the
@@ -872,12 +872,31 @@ function attemptRenderDiffCached(
  * throwing / rejecting into the caller's effect — the same never-throws contract
  * as `attemptRender`.
  */
-function attemptComputeMetrics(entry: PaneEntry, mapping?: CompareMapping): Promise<DiffMetrics> | null {
+const sourceMetricsCache = new WeakMap<Device, Map<string, Promise<DiffMetrics>>>();
+
+function attemptComputeMetrics(
+  entry: PaneEntry,
+  contentKeys?: { a: string; b: string },
+  mapping?: CompareMapping,
+): Promise<DiffMetrics> | null {
   if (entry.disposed || !entry.source || !entry.sourceB) return null;
   try {
     activateEntry(entry);
     if (!entry.srcTexture || !entry.srcTextureB) return null;
-    return computeMetrics(entry.device, entry.srcTexture, entry.srcTextureB, mapping);
+    if (!contentKeys) return computeMetrics(entry.device, entry.srcTexture, entry.srcTextureB, mapping);
+    let cache = sourceMetricsCache.get(entry.device);
+    if (!cache) {
+      cache = new Map();
+      sourceMetricsCache.set(entry.device, cache);
+    }
+    const key = `${contentKeys.a}\u0000${contentKeys.b}\u0000${mapping ? mappingKey(mapping) : "full"}`;
+    let pending = cache.get(key);
+    if (!pending) {
+      pending = computeMetrics(entry.device, entry.srcTexture, entry.srcTextureB, mapping);
+      cache.set(key, pending);
+      pending.catch(() => cache!.delete(key));
+    }
+    return pending;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane metrics compute failed", err);
@@ -1180,8 +1199,8 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     computeDepthHistogram(bins: number): Promise<DeepDepthHistogramResult | null> | null {
       return attemptComputeDepthHistogram(entry, bins);
     },
-    computeMetrics(mapping?: CompareMapping): Promise<DiffMetrics> | null {
-      return attemptComputeMetrics(entry, mapping);
+    computeMetrics(contentKeys?: { a: string; b: string }, mapping?: CompareMapping): Promise<DiffMetrics> | null {
+      return attemptComputeMetrics(entry, contentKeys, mapping);
     },
     computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null {
       return attemptComputeSsim(entry, contentKeys, mapping);

@@ -1890,7 +1890,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // Delay them until content settles so iteration scrubbing does not enqueue
     // an obsolete reduction/readback for every transient frame in every pane.
     const timer = window.setTimeout(() => {
-      const p = paneHandleRef.current?.computeMetrics(diffMapping ?? undefined);
+      const p = paneHandleRef.current?.computeMetrics(
+        { a: contentKeyA, b: contentKeyB },
+        diffMapping ?? undefined,
+      );
       p?.then((m) => {
         if (!cancelled) setDiffMetrics(m);
       }).catch(() => {
@@ -1901,7 +1904,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, comparisonOperationId, diffMapping]);
+  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, comparisonOperationId, contentKeyA, contentKeyB, diffMapping]);
 
   useEffect(() => {
     if (!hasCompare || !paneReady || !refDims) {
@@ -1909,20 +1912,26 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       return;
     }
     let cancelled = false;
-    setDiffSsim(null);
-    // SSIM is a multipass metric even while displaying a cheap pointwise error.
-    // Never compute it for intermediate slider frames; only the settled pair.
-    const timer = window.setTimeout(() => {
-      const p = paneHandleRef.current?.computeSsim({ a: contentKeyA, b: contentKeyB }, diffMapping ?? undefined);
+    const handle = paneHandleRef.current;
+    const keys = { a: contentKeyA, b: contentKeyB };
+    const hot = handle?.isDiffResultCached("ssim", keys, undefined, diffMapping ?? undefined) ?? false;
+    if (!hot) setDiffSsim(null);
+    const compute = () => {
+      const p = handle?.computeSsim(keys, diffMapping ?? undefined);
       p?.then((m) => {
         if (!cancelled) setDiffSsim(m);
       }).catch(() => {
         if (!cancelled) setDiffSsim(null);
       });
-    }, 250);
+    };
+    // A hot SSIM value resolves immediately. Only cold work waits for content
+    // to settle, so revisiting an iteration never flashes an artificial dash or
+    // pays the debounce latency.
+    const timer = hot ? null : window.setTimeout(compute, 250);
+    if (hot) compute();
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      if (timer != null) window.clearTimeout(timer);
     };
   }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping]);
 
