@@ -287,10 +287,11 @@ export function ensureDiff(
   texA: Texture,
   texB: Texture,
   operationId: string,
-  params: Record<string, number> | undefined,
+  params: Record<string, number> | (() => Record<string, number> | undefined) | undefined,
   contentKeyA: string,
   contentKeyB: string,
   mapping?: CompareMapping,
+  cacheParams?: Record<string, number>,
 ): DiffCacheEntry {
   const operation = getWebGpuMultipassOperation(operationId);
   if (!operation) throw new Error(`ensureDiff: image operation "${operationId}" is not multipass`);
@@ -298,7 +299,16 @@ export function ensureDiff(
   const map =
     mapping ??
     computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
-  const key = diffCacheKey(contentKeyA, contentKeyB, operationId, params, map);
+  // Automatic HDR exposure parameters are derived from `texA` and therefore do
+  // not belong in the map identity. A lazy factory lets us perform the lookup
+  // first and derive them only on a genuine miss.
+  const key = diffCacheKey(
+    contentKeyA,
+    contentKeyB,
+    operationId,
+    cacheParams ?? (typeof params === "function" ? undefined : params),
+    map,
+  );
   const hit = cache.get(key);
   if (hit) {
     recordDiffHit(operationId);
@@ -306,7 +316,8 @@ export function ensureDiff(
   }
   recordDiffMiss(operationId);
 
-  const texture = computeDiff(device, texA, texB, operationId, params, map);
+  const computeParams = typeof params === "function" ? params() : params;
+  const texture = computeDiff(device, texA, texB, operationId, computeParams, map);
   const width = map.result.w;
   const height = map.result.h;
   const entry: DiffCacheEntry = {

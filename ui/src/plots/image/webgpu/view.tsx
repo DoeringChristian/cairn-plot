@@ -57,7 +57,7 @@ import { resolveColormapMode } from "../runtime/diff-colormap";
 import { loadImageData } from "../resources/load-image-data.ts";
 import { getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../resources/cache.ts";
 import { HALF_ONE } from "../runtime/half";
-import { floatValues, widenFloatPixels } from "../runtime/pixel-buffer.ts";
+import { floatValues } from "../runtime/pixel-buffer.ts";
 import { imageDataToSceneField } from "../resources/scene-field.ts";
 // DIFF capability: the pane samples a second source slot (`compareSource.b` via
 // the pool's `setSourceB`) and renders a diff IMAGE operation — a DIRECT pointwise op
@@ -75,10 +75,6 @@ import type { ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation } from "./display.ts";
 import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
-import {
-  computeHdrFlipExposures,
-  type HdrExposureParams,
-} from "./kernels/hdr-flip-reference";
 import { formatSsim } from "./ssim-metric";
 import type { DiffCacheEntry } from "./diff-engine";
 import { defaultReduceForDisplayOperation, prepareDisplayOperation } from "./prepare-display-operation.ts";
@@ -244,27 +240,6 @@ function hdrToRGBAFloat32(hdr: FloatImageData): SourceUpload {
  *  `rgba8unorm`. Async because the uint8 path decodes a URL. Mirrors
  *  `GpuComparePane`'s `loadSide`, but yields the pool's `SourceUpload` shape. */
 const sharedComparisonUploads = new Map<string, SourceUpload>();
-const hdrExposureParamsByContent = new Map<string, HdrExposureParams>();
-
-function cachedHdrExposureParams(
-  contentKey: string,
-  compute: () => HdrExposureParams,
-): HdrExposureParams {
-  const cached = hdrExposureParamsByContent.get(contentKey);
-  if (cached) {
-    hdrExposureParamsByContent.delete(contentKey);
-    hdrExposureParamsByContent.set(contentKey, cached);
-    return cached;
-  }
-  const value = compute();
-  hdrExposureParamsByContent.set(contentKey, value);
-  while (hdrExposureParamsByContent.size > 512) {
-    const oldest = hdrExposureParamsByContent.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    hdrExposureParamsByContent.delete(oldest);
-  }
-  return value;
-}
 
 function cacheComparisonUpload(key: string, upload: SourceUpload): SourceUpload {
   if (sharedComparisonUploads.has(key)) sharedComparisonUploads.delete(key);
@@ -1379,42 +1354,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasCompare, naturalDims, refDims, compareSource?.align, compareSource?.fit]);
 
-  // HDR-FLIP exposure range — computed once per REFERENCE PIXEL BUFFER from its
-  // luminance (deterministic → folds into the diff-cache key). Depend on the
-  // actual pixels/shape, not the presentation wrapper: settings propagation can
-  // recreate `backendProps.source` while preserving its content, and exposure /
-  // offset / encoding must not rerun this full-image percentile scan either.
-  const hdrExposurePixels = backendProps.source.dtype === "float"
-    ? backendProps.source.pixels
-    : null;
-  const hdrExposureDims = backendProps.source.dtype === "float"
-    ? shapeDims(backendProps.source.shape)
-    : null;
-  const hdrExposureW = hdrExposureDims?.w ?? 0;
-  const hdrExposureH = hdrExposureDims?.h ?? 0;
-  const hdrExposureC = hdrExposureDims?.c ?? 0;
-  const automaticHdrExposures = useMemo(() => {
-    // Only HDR-FLIP needs an exposure sweep. Standard SDR FLIP previously ran
-    // this full-image scene-linear conversion + percentile scan in every pane
-    // merely because its public operation id is also "flip". That CPU work is
-    // outside the result cache and made hot SDR-FLIP swaps uniquely laggy.
-    if (!diffMode || resolvedOperationId !== "hdr-flip") return null;
-    if (hdrExposurePixels) {
-      return cachedHdrExposureParams(contentKeyA, () => computeHdrFlipExposures(
-        widenFloatPixels(hdrExposurePixels),
-        hdrExposureW,
-        hdrExposureH,
-        hdrExposureC,
-      ));
-    }
-    const raw = sdrImageDataRef.current;
-    if (!raw) return null;
-    return cachedHdrExposureParams(contentKeyA, () => {
-      const scene = imageDataToSceneField(raw);
-      return computeHdrFlipExposures(scene.pixels, scene.width, scene.height, 4);
-    });
-  }, [diffMode, resolvedOperationId, contentKeyA, hdrExposurePixels, hdrExposureW, hdrExposureH, hdrExposureC, uploadVersion]);
-  const hdrExposures = automaticHdrExposures;
+  // Automatic HDR exposure derivation belongs inside the diff-cache miss path.
+  // Keeping this null lets the pool key the final map by source identities and
+  // derive start/stop/count only after a miss. Explicit overrides can still be
+  // threaded here in the future and remain part of the key.
+  const hdrExposures = null;
 
   // -----------------------------------------------------------------------
   // Render pass — on demand: mount (via uploadVersion bump above) +

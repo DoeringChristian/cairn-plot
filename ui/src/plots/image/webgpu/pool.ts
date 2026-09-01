@@ -73,6 +73,7 @@ import { cacheFor } from "./diff-cache";
 import { recordCachedPresent, recordSourceRebind, recordSourceUpload } from "./perf-stats.ts";
 import { mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { getWebGpuImageOperation, getWebGpuMultipassOperation } from "./image-operations.ts";
+import { computeHdrFlipExposures } from "./kernels/hdr-flip-reference.ts";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
 import type {
   Device,
@@ -849,6 +850,28 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   }
 }
 
+const hdrExposureParamsBySource = new Map<string, Record<string, number>>();
+
+function automaticHdrFlipParams(entry: PaneEntry, contentKey: string): Record<string, number> {
+  const cached = hdrExposureParamsBySource.get(contentKey);
+  if (cached) {
+    hdrExposureParamsBySource.delete(contentKey);
+    hdrExposureParamsBySource.set(contentKey, cached);
+    return cached;
+  }
+  if (!entry.source) return { ppd: 67, startExposure: 0, stopExposure: 4, numExposures: 2 };
+  const values = entry.source.data as unknown as ArrayLike<number>;
+  const exposure = computeHdrFlipExposures(values, entry.source.width, entry.source.height, 4);
+  const params = { ppd: 67, ...exposure };
+  hdrExposureParamsBySource.set(contentKey, params);
+  while (hdrExposureParamsBySource.size > 512) {
+    const oldest = hdrExposureParamsBySource.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    hdrExposureParamsBySource.delete(oldest);
+  }
+  return params;
+}
+
 /**
  * Runs the CACHED-op render path for `entry` (see `PaneHandle.renderDiffCached`).
  * `activateEntry()` (which uploads BOTH source slots) + `ensureDiff()` (the
@@ -861,9 +884,10 @@ function attemptRenderDiffCached(
   entry: PaneEntry,
   operationId: string,
   contentKeys: { a: string; b: string },
-  computeParams: Record<string, number> | undefined,
+  computeParams: Record<string, number> | (() => Record<string, number> | undefined) | undefined,
   displayParams: ImageParams,
   mapping?: CompareMapping,
+  cacheParams?: Record<string, number>,
 ): DiffCacheEntry | null {
   if (entry.disposed || (!entry.source && !entry.deep) || !entry.sourceB) return null;
   try {
@@ -885,6 +909,7 @@ function attemptRenderDiffCached(
       contentKeys.a,
       contentKeys.b,
       mapping,
+      cacheParams,
     );
     presentActiveDiff(entry, cacheEntry);
     // The cached RESULT is the scalar error — displayed via IDENTITY content
@@ -1218,18 +1243,27 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     ): { entry: DiffCacheEntry | null } | "hold" | "failed" {
       const operation = getWebGpuMultipassOperation(operationId);
       if (operation) {
+        const automaticHdr = operationId === "hdr-flip" && !ctx.hdrExposures;
+        const computeParams = automaticHdr
+          ? () => automaticHdrFlipParams(entry, contentKeys.a)
+          : operation.program.computeParams?.(ctx);
+        // Automatic HDR exposures are a deterministic function of source A.
+        // Key the final map by the sources + an auto-mode marker, and compute
+        // the derived range only after ensureDiff has established a miss.
+        const cacheParams = automaticHdr ? { ppd: 67, automaticExposure: 1 } : undefined;
         // CACHED metric: computed once, content-keyed; the RESULT (a scalar
         // error) is displayed via IDENTITY content + the isScalar colormap.
         const cached = attemptRenderDiffCached(
           entry,
           operationId,
           contentKeys,
-          operation.program.computeParams?.(ctx),
+          computeParams,
           // Multipass metrics already write their scalar result as gray RGB.
           // Preserve the selected display operation: curves process that RGB
           // normally, while colormaps opt into scalar reduction themselves.
           { ...display, channelCount: 1, norm: "linear" },
           mapping,
+          cacheParams,
         );
         return cached ? { entry: cached } : "failed";
       }
@@ -1248,12 +1282,13 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       const operation = getWebGpuMultipassOperation(operationId);
       if (!operation) return getWebGpuImageOperation(operationId)?.kind === "inline";
       if (entry.disposed || !entry.source || !entry.sourceB) return false;
+      const automaticHdr = operationId === "hdr-flip" && !ctx.hdrExposures;
       return hasDiff(
         entry.device,
         { w: entry.source.width, h: entry.source.height },
         { w: entry.sourceB.width, h: entry.sourceB.height },
         operationId,
-        operation.program.computeParams?.(ctx),
+        automaticHdr ? { ppd: 67, automaticExposure: 1 } : operation.program.computeParams?.(ctx),
         contentKeys.a,
         contentKeys.b,
         mapping,
