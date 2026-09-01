@@ -41,7 +41,10 @@
  * re-`createSurface`-ing the SAME canvas on restore is a safe idempotent
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
-import { getGpuSourceTextureRetentionLimit } from "../../../resources/runtime-config.ts";
+import {
+  getGpuSourceTextureRetentionLimit,
+  getLiveGpuPaneLimit,
+} from "../../../resources/runtime-config.ts";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import type { ImageWebGpuRuntime } from "./device/runtime.ts";
 import {
@@ -604,7 +607,7 @@ function parkEntry(entry: PaneEntry): void {
  * unavoidable) — falls back to plain LRU across all live entries then.
  */
 function evictOverCap(except: PaneEntry): void {
-  while (live.length > MAX_LIVE_SWAPCHAINS) {
+  while (live.length > getLiveGpuPaneLimit()) {
     const victim = live.find((e) => e !== except && !e.visible) ?? live.find((e) => e !== except);
     if (!victim) break;
     parkEntry(victim);

@@ -1,7 +1,21 @@
 /** Process-wide resource-retention knobs for long-lived host applications. */
+let liveGpuPaneLimit = 12;
 let retainedSourceTextureLimit = 6;
 let gpuDiffCacheMaxEntries = 128;
 let gpuDiffCacheMaxBytes = 512 * 1024 * 1024;
+
+export function getLiveGpuPaneLimit(): number {
+  return liveGpuPaneLimit;
+}
+
+/** Configure how many simultaneously visible WebGPU panes may retain their
+ * surfaces and uploaded sources before the global pool starts parking panes. */
+export function setLiveGpuPaneLimit(limit: number): void {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error("cairn-plot: live GPU pane limit must be a positive integer");
+  }
+  liveGpuPaneLimit = limit;
+}
 
 /** Number of uploaded source textures retained per live WebGPU pane. */
 export function getGpuSourceTextureRetentionLimit(): number {
