@@ -73,6 +73,7 @@ import { ImageNodeHost } from "../plots/image/runtime/host-adapter.tsx";
 import { usePlotSessionController } from "../state/session/session-context.ts";
 import { getGlobalSelectionStore } from "../state/selection/selection-store.ts";
 import { getRegisteredPane } from "../state/selection/pane-registry.ts";
+import { gridSyncGroups } from "./grid-sync.ts";
 
 // Compatibility exports for existing standalone/stage imports. The host owns
 // these contracts; plot-node only consumes and re-exports them.
@@ -137,9 +138,10 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
   const children = node.children ?? [];
   const cols = node.cols ?? node.colWidths?.length ?? children.length ?? 1;
   const shared = node.shared ?? parentShared;
-  const viewSettingsGroupId = node.shared?.sync?.view
-    ? `plot-grid-view-${localId}`
-    : null;
+  const { viewSettingsGroupId, settingsGroupId } = gridSyncGroups(
+    node.shared?.sync,
+    localId,
+  );
   const sessionController = usePlotSessionController();
   const sessionId = `grid:${path}`;
   const [layoutState, setLayoutState] = useState<GridLayoutState>({
@@ -248,7 +250,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
     />
   );
   const body = node.shared && node.shared !== parentShared ? (
-    <SharedPlotContext.Provider value={{ source, shared, viewSettingsGroupId }}>
+    <SharedPlotContext.Provider value={{ source, shared, viewSettingsGroupId, settingsGroupId }}>
       {grid}
     </SharedPlotContext.Provider>
   ) : grid;

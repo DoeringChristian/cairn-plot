@@ -166,6 +166,7 @@ class SharedPropsSpec(_Strict):
 class _SyncSpec(_Strict):
     view: Optional[bool] = None
     camera: Optional[bool] = None
+    settings: Optional[bool] = None
 
 
 class GridSpec(_Strict):

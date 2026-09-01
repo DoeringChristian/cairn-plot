@@ -51,7 +51,7 @@ export interface SharedProps {
   settings?: Record<string, JsonValue>;
   colorbar?: boolean;
   reference?: DataSpec;
-  sync?: { view?: boolean; camera?: boolean };
+  sync?: { view?: boolean; camera?: boolean; settings?: boolean };
 }
 
 /** The one durable recursive plot specification shared by Python and JS. */

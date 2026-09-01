@@ -65,7 +65,12 @@ export function PlotCell({
   children: React.ReactNode;
 }) {
   const store = getGlobalSelectionStore();
-  const { source, shared, viewSettingsGroupId: gridViewGroupId } = useSharedPlot();
+  const {
+    source,
+    shared,
+    viewSettingsGroupId: gridViewGroupId,
+    settingsGroupId: gridSettingsGroupId,
+  } = useSharedPlot();
   const [paneId] = useState(nextSelectionPaneId);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const fill = useContext(ChartFillContext);
@@ -97,6 +102,7 @@ export function PlotCell({
   const vst = useCellSettings(
     [
       ...(groups?.settingsGroupId ? [{ id: groups.settingsGroupId }] : []),
+      ...(gridSettingsGroupId ? [{ id: gridSettingsGroupId }] : []),
       ...(gridViewGroupId ? [{ id: gridViewGroupId, keys: VIEW_TRANSFORM_KEYS }] : []),
     ],
     initialSettingsRef.current.value,

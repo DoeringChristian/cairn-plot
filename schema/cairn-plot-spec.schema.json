@@ -347,6 +347,9 @@
             },
             "camera": {
               "type": "boolean"
+            },
+            "settings": {
+              "type": "boolean"
             }
           },
           "additionalProperties": false

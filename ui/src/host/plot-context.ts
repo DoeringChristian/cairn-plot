@@ -9,6 +9,7 @@ export interface SharedPlotCtx {
   source: DataSource;
   shared?: SharedProps;
   viewSettingsGroupId?: string | null;
+  settingsGroupId?: string | null;
 }
 
 export const SharedPlotContext = createContext<SharedPlotCtx | null>(null);
