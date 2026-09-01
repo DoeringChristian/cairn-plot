@@ -77,7 +77,6 @@ import { getWebGpuDisplayOperation } from "./display.ts";
 import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
 import { computeHdrFlipExposures } from "./kernels/hdr-flip-reference";
 import { formatSsim } from "./ssim-metric";
-import type { DiffMetrics } from "./image-engine";
 import type { DiffCacheEntry } from "./diff-engine";
 import { defaultReduceForDisplayOperation, prepareDisplayOperation } from "./prepare-display-operation.ts";
 import { compareCaptions } from "../compare/compare-captions";
@@ -830,12 +829,17 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
-  const [diffMetrics, setDiffMetrics] = useState<DiffMetrics | null>(null);
-  const [, setDiffSsim] = useState<number | null>(null);
+  const [activeMapMean, setActiveMapMean] = useState<{ entry: DiffCacheEntry; value: number } | null>(null);
+  const [activeEntryVersion, setActiveEntryVersion] = useState(0);
   const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
   const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
   const [refUploadVersion, setRefUploadVersion] = useState(0);
   const diffEntryRef = useRef<DiffCacheEntry | null>(null);
+  const setDiffEntry = useCallback((entry: DiffCacheEntry | null) => {
+    if (diffEntryRef.current === entry) return;
+    diffEntryRef.current = entry;
+    setActiveEntryVersion((value) => value + 1);
+  }, []);
   const diffSamplesRef = useRef<Float32Array | null>(null);
   const diffResultDimsRef = useRef<{ w: number; h: number } | null>(null);
 
@@ -1346,17 +1350,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasCompare, naturalDims, refDims, compareSource?.align, compareSource?.fit]);
 
-  // Settled SSIM scalar values are content-addressed independently of the full
-  // SSIM error-map texture. Read them synchronously during render so a revisited
-  // iteration's label changes in the same commit as its cached texture; state is
-  // retained only to trigger the first cold result's render.
-  const displayedDiffSsim = hasCompare && diffMapping
-    ? (paneHandleRef.current?.peekSsimScalar(
-        { a: contentKeyA, b: contentKeyB },
-        diffMapping,
-      ) ?? null)
-    : null;
-
   // HDR-FLIP exposure range — computed once per REFERENCE PIXEL BUFFER from its
   // luminance (deterministic → folds into the diff-cache key). Depend on the
   // actual pixels/shape, not the presentation wrapper: settings propagation can
@@ -1621,10 +1614,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         // HOLD this present until a valid op resolves (see PaneHandle.renderDiff).
         if (result === "hold") return false;
         if (result === "failed") {
-          diffEntryRef.current = null;
+          setDiffEntry(null);
           setEngineFailed(true);
         } else {
-          diffEntryRef.current = result.entry;
+          setDiffEntry(result.entry);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -1910,70 +1903,25 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderId, uploadVersion, containerTick]);
 
-  // -----------------------------------------------------------------------
-  // DIFF metrics (MSE/PSNR/MAE) + mean-SSIM — source-data metrics computed over
-  // the two pool-owned slots (never on viewport/exposure/colormap). Ported from
-  // `GpuComparePane`, but run THROUGH the pool (`handle.computeMetrics` /
-  // `computeSsim`) since the pool owns the textures.
-  // -----------------------------------------------------------------------
+  // Only summarize the map that is actually displayed. The scalar is stored on
+  // the retained result entry, so a hot iteration reads it without recomputing.
+  // Pointwise maps stream directly and deliberately show no extra metric chip.
   useEffect(() => {
-    if (!hasCompare || !paneReady || !refDims) {
-      setDiffMetrics(null);
+    const entry = diffEntryRef.current;
+    if (!diffMode || !entry || !getWebGpuMultipassOperation(resolvedOperationId)) {
+      setActiveMapMean(null);
       return;
     }
     let cancelled = false;
-    // Metrics are presentation chrome, not part of the selected error image.
-    // Delay them until content settles so iteration scrubbing does not enqueue
-    // an obsolete reduction/readback for every transient frame in every pane.
-    const timer = window.setTimeout(() => {
-      const p = paneHandleRef.current?.computeMetrics(
-        { a: contentKeyA, b: contentKeyB },
-        diffMapping ?? undefined,
-      );
-      p?.then((m) => {
-        if (!cancelled) setDiffMetrics(m);
-      }).catch(() => {
-        if (!cancelled) setDiffMetrics(null);
-      });
-    }, 250);
+    paneHandleRef.current?.computeDiffResultMean(entry)?.then((mean) => {
+      if (!cancelled) setActiveMapMean({ entry, value: resolvedOperationId === "ssim" ? 1 - mean : mean });
+    }).catch(() => {
+      if (!cancelled) setActiveMapMean(null);
+    });
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
-  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, comparisonOperationId, contentKeyA, contentKeyB, diffMapping]);
-
-  useEffect(() => {
-    if (!hasCompare || !paneReady || !refDims) {
-      setDiffSsim(null);
-      return;
-    }
-    let cancelled = false;
-    const handle = paneHandleRef.current;
-    const keys = { a: contentKeyA, b: contentKeyB };
-    const hot = handle?.isSsimScalarCached(keys, diffMapping ?? undefined) ?? false;
-    if (!hot) setDiffSsim(null);
-    const compute = () => {
-      const p = handle?.computeSsim(
-        keys,
-        diffMapping ?? undefined,
-        resolvedOperationId === "ssim",
-      );
-      p?.then((m) => {
-        if (!cancelled) setDiffSsim(m);
-      }).catch(() => {
-        if (!cancelled) setDiffSsim(null);
-      });
-    };
-    // A hot SSIM value resolves immediately. Only cold work waits for content
-    // to settle, so revisiting an iteration never flashes an artificial dash or
-    // pays the debounce latency.
-    const timer = hot ? null : window.setTimeout(compute, 250);
-    if (hot) compute();
-    return () => {
-      cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
-    };
-  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping, resolvedOperationId]);
+  }, [diffMode, resolvedOperationId, activeEntryVersion]);
 
   // -----------------------------------------------------------------------
   // DIFF RESULT readback (TEV per-pixel metric values) — CACHED kernels only. A
@@ -2018,6 +1966,15 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     };
   }, [diffMode, paneReady, resolvedOperationId, uploadVersion, refUploadVersion, diffMapping]);
 
+  const displayedMapMean = activeMapMean?.entry === diffEntryRef.current ? activeMapMean.value : null;
+  const displayedMapMeanLabel = displayedMapMean == null
+    ? null
+    : resolvedOperationId === "ssim"
+      ? `SSIM ${formatSsim(displayedMapMean)}`
+      : resolvedOperationId === "flip" || resolvedOperationId === "flip-sdr" || resolvedOperationId === "hdr-flip"
+        ? `Mean FLIP ${displayedMapMean.toExponential(2)}`
+        : null;
+
   // Test seam (browser harness only): expose the live diff seams on the pane
   // element so a headless harness can drive kernel/colormap switching + HOME and
   // read the wired metric strings — mirrors `GpuComparePane`'s `__cairnCompareProbe`.
@@ -2054,10 +2011,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         return effectiveTonemap;
       },
       get metrics() {
-        return diffMetrics;
+        return displayedMapMean == null ? null : { mean: displayedMapMean };
       },
       get ssimText() {
-        return formatSsim(displayedDiffSsim);
+        return resolvedOperationId === "ssim" ? formatSsim(displayedMapMean) : "—";
       },
       // COMPOSITOR (split) seams — mirror `GpuComparePane`'s `__cairnCompareProbe`.
       get splitPosition() {
@@ -2121,7 +2078,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, displayedDiffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, displayedMapMean, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2287,14 +2244,12 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       {compareCaps.right ? (
         <LabelChip label={compareCaps.right} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
       ) : null}
-      {diffMetrics && (
+      {displayedMapMeanLabel && (
         <span
           className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}`}
           data-gpu-compare-metrics
         >
-          MSE {diffMetrics.mse.toExponential(2)} · PSNR{" "}
-          {Number.isFinite(diffMetrics.psnr) ? diffMetrics.psnr.toFixed(1) : "∞"} dB · MAE {diffMetrics.mae.toExponential(2)} ·
-          SSIM {formatSsim(displayedDiffSsim)}
+          {displayedMapMeanLabel}
         </span>
       )}
     </>

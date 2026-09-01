@@ -300,10 +300,10 @@ async function main(): Promise<void> {
       await noteCanvas("[case1]", probe);
     }
 
-    // ---- Case 3a: metrics chip present -----------------------------------
-    const chipPresent = await waitFor(() => !!cUnified.querySelector("[data-gpu-compare-metrics]"), 4000, 40);
-    if (!chipPresent) allOk = false;
-    report(chipPresent, `[case3a] metrics chip (data-gpu-compare-metrics) present + SSIM=${probe().ssimText}`);
+    // ---- Case 3a: direct fields do not launch unrelated metrics ----------
+    const directChipAbsent = !cUnified.querySelector("[data-gpu-compare-metrics]");
+    if (!directChipAbsent) allOk = false;
+    report(directChipAbsent, `[case3a] direct field shows no unrelated metric chip`);
 
     // ---- Case 3b: MODE menu switches kernels (no re-decode) --------------
     const before = await readSurfaceBytes(probe);
@@ -334,9 +334,10 @@ async function main(): Promise<void> {
     // a single early read would sample a degenerate (all-zero) frame.
     await waitFor(() => flipProbe().colormap === "magma", 4000, 40);
     const flipBytes = await paintedBytes(flipProbe);
-    const flipOk = flipProbe().colormap === "magma" && !!flipBytes && nonZero(flipBytes);
+    const flipMeanPresent = await waitFor(() => !!cFlip.querySelector("[data-gpu-compare-metrics]"), 4000, 40);
+    const flipOk = flipProbe().colormap === "magma" && !!flipBytes && nonZero(flipBytes) && flipMeanPresent;
     if (!flipOk) allOk = false;
-    report(flipOk, `[case2] FLIP diff renders non-degenerate (colormap="${flipProbe().colormap}")`);
+    report(flipOk, `[case2] FLIP renders non-degenerate with its cached mean (colormap="${flipProbe().colormap}")`);
     await noteCanvas("[case2]", flipProbe);
 
     report(allOk, `all GpuImagePane diff-capability cases`);

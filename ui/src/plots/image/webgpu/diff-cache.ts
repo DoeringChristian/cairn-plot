@@ -34,6 +34,9 @@ export interface DiffCacheEntry {
    */
   ssimMean?: number;
   ssimMeanPending?: Promise<number>;
+  /** Mean R-channel value of the displayed result map. */
+  resultMean?: number;
+  resultMeanPending?: Promise<number>;
   /**
    * Lazily-read-back RGBA-float samples of the diff RESULT texture (row-major at
    * result resolution, 4 floats/pixel, top-left origin — same coord convention

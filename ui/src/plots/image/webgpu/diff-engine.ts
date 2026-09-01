@@ -431,6 +431,24 @@ async function computeSsimScalar(
   }
 }
 
+export function ensureDiffResultMean(device: Device, entry: DiffCacheEntry): Promise<number> {
+  if (entry.resultMean !== undefined) return Promise.resolve(entry.resultMean);
+  if (!entry.resultMeanPending) {
+    entry.resultMeanPending = (device.reduceTextureChannelMean
+      ? device.reduceTextureChannelMean(entry.texture, 0, entry.width, entry.height)
+      : device.readback(entry.texture).then((pixels) => {
+          let sum = 0;
+          for (let i = 0; i < pixels.length; i += 4) sum += pixels[i] as number;
+          return sum / Math.max(1, entry.width * entry.height);
+        })
+    ).then((mean) => {
+      entry.resultMean = mean;
+      return mean;
+    });
+  }
+  return entry.resultMeanPending;
+}
+
 /**
  * Mean SSIM (`1 − mean(1−SSIM)`) from the cached `ssim` RESULT texture. Prefers
  * the GPU reduction (`Device.reduceTextureChannelMean` — the reduction family's

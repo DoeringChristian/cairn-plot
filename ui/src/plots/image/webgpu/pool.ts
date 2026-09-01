@@ -63,6 +63,7 @@ import {
   ensureDiff,
   hasDiff,
   ensureSsimScalar,
+  ensureDiffResultMean,
   hasSsimScalar,
   peekSsimScalar,
   ensureDiffResultReadback,
@@ -399,6 +400,7 @@ export interface PaneHandle {
    * the entry (never re-reads, never recomputes). Returns `null` on a disposed
    * handle.
    */
+  computeDiffResultMean(entry: DiffCacheEntry): Promise<number> | null;
   readDiffResult(entry: DiffCacheEntry): Promise<Float32Array> | null;
   /** Free this pane's live GPU resources (source texture), keeping the
    *  retained CPU source buffer. Safe to call on an already-parked or
@@ -1272,6 +1274,10 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       retainMap = true,
     ): Promise<number> | null {
       return attemptComputeSsim(entry, contentKeys, mapping, retainMap);
+    },
+    computeDiffResultMean(cacheEntry: DiffCacheEntry): Promise<number> | null {
+      if (entry.disposed) return null;
+      return ensureDiffResultMean(entry.device, cacheEntry);
     },
     readDiffResult(cacheEntry: DiffCacheEntry): Promise<Float32Array> | null {
       if (entry.disposed) return null;
