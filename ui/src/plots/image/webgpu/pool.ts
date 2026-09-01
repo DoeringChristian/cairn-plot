@@ -64,6 +64,7 @@ import {
   hasDiff,
   ensureSsimScalar,
   hasSsimScalar,
+  peekSsimScalar,
   ensureDiffResultReadback,
   type DiffCacheEntry,
 } from "./diff-engine";
@@ -385,6 +386,7 @@ export interface PaneHandle {
    * GPU failure occurs.
    */
   isSsimScalarCached(contentKeys: { a: string; b: string }, mapping?: CompareMapping): boolean;
+  peekSsimScalar(contentKeys: { a: string; b: string }, mapping?: CompareMapping): number | undefined;
   computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null;
   /**
    * Read back a cached diff RESULT (a {@link DiffCacheEntry} returned by
@@ -1206,6 +1208,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     isSsimScalarCached(contentKeys: { a: string; b: string }, mapping?: CompareMapping): boolean {
       return hasSsimScalar(entry.device, contentKeys.a, contentKeys.b, mapping);
+    },
+    peekSsimScalar(contentKeys: { a: string; b: string }, mapping?: CompareMapping): number | undefined {
+      return peekSsimScalar(entry.device, contentKeys.a, contentKeys.b, mapping);
     },
     computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null {
       return attemptComputeSsim(entry, contentKeys, mapping);

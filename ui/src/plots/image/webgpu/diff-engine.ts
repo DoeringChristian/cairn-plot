@@ -40,7 +40,11 @@ import { type DiffCmapMode } from "../runtime/diff-colormap";
 import { computeCompareMapping, mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { meanSsimFromErrorMap } from "./ssim-metric";
 import { ssimMeanFromLuminanceChunked, ssimLuminance, defaultYield, SSIM_CHUNK_ROWS } from "./kernels/ssim-reference";
-import { guardedSsimScalar, hasGuardedSsimScalar } from "./ssim-scalar-guard";
+import {
+  guardedSsimScalar,
+  hasGuardedSsimScalar,
+  peekGuardedSsimScalar,
+} from "./ssim-scalar-guard";
 
 export { resolveDiffCmapMode } from "../runtime/diff-colormap";
 export type { DiffCmapMode } from "../runtime/diff-colormap";
@@ -340,6 +344,15 @@ export { getSsimComputeCount } from "./ssim-scalar-guard";
 
 function ssimScalarCacheKey(contentKeyA: string, contentKeyB: string, mapping?: CompareMapping): string {
   return `${contentKeyA}|${contentKeyB}|${mapping ? mappingKey(mapping) : ""}`;
+}
+
+export function peekSsimScalar(
+  device: Device,
+  contentKeyA: string,
+  contentKeyB: string,
+  mapping?: CompareMapping,
+): number | undefined {
+  return peekGuardedSsimScalar(device, ssimScalarCacheKey(contentKeyA, contentKeyB, mapping));
 }
 
 export function hasSsimScalar(

@@ -21,6 +21,7 @@ import {
   guardedSsimScalar,
   getSsimComputeCount,
   hasGuardedSsimScalar,
+  peekGuardedSsimScalar,
 } from "./ssim-scalar-guard.ts";
 import { ssimMeanFromLuminanceChunked } from "./kernels/ssim-reference.ts";
 import type { Device } from "./device/device-contract";
@@ -45,11 +46,13 @@ test("guard: a burst of concurrent calls computes exactly ONCE and all share the
 
   const before = getSsimComputeCount();
   assert.equal(hasGuardedSsimScalar(device, "urlA|urlB|crop:800x800"), false);
+  assert.equal(peekGuardedSsimScalar(device, "urlA|urlB|crop:800x800"), undefined);
   const results = await Promise.all(
     Array.from({ length: 200 }, () => guardedSsimScalar(device, "urlA|urlB|crop:800x800", fn)),
   );
 
   assert.equal(hasGuardedSsimScalar(device, "urlA|urlB|crop:800x800"), true);
+  assert.equal(peekGuardedSsimScalar(device, "urlA|urlB|crop:800x800"), 0.372);
   assert.equal(state.runs, 1, `underlying compute must run once, ran ${state.runs}`);
   assert.equal(getSsimComputeCount() - before, 1, "compute counter moves exactly once for the burst");
   for (const v of results) assert.equal(v, 0.372);

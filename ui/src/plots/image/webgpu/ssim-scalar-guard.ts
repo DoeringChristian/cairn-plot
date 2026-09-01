@@ -23,7 +23,12 @@
  */
 import type { Device } from "./device/device-contract";
 
-const cache = new WeakMap<Device, Map<string, Promise<number>>>();
+interface CachedSsimScalar {
+  promise: Promise<number>;
+  value?: number;
+}
+
+const cache = new WeakMap<Device, Map<string, CachedSsimScalar>>();
 
 // Count of SSIM scalar computations actually STARTED (guard misses). The pane /
 // tests assert this moves exactly ONCE per content+mapping no matter how many
@@ -45,6 +50,11 @@ export function hasGuardedSsimScalar(device: Device, key: string): boolean {
   return cache.get(device)?.has(key) ?? false;
 }
 
+/** Synchronous settled-value read for render-time hot iteration swaps. */
+export function peekGuardedSsimScalar(device: Device, key: string): number | undefined {
+  return cache.get(device)?.get(key)?.value;
+}
+
 export function guardedSsimScalar(
   device: Device,
   key: string,
@@ -55,14 +65,19 @@ export function guardedSsimScalar(
     byKey = new Map();
     cache.set(device, byKey);
   }
-  const inflight = byKey.get(key);
-  if (inflight) return inflight;
+  const cached = byKey.get(key);
+  if (cached) return cached.promise;
 
   ssimComputeCount++;
-  const promise = compute().catch((err) => {
-    if (byKey!.get(key) === promise) byKey!.delete(key);
+  const entry = {} as CachedSsimScalar;
+  const promise = compute().then((value) => {
+    entry.value = value;
+    return value;
+  }).catch((err) => {
+    if (byKey!.get(key) === entry) byKey!.delete(key);
     throw err;
   });
-  byKey.set(key, promise);
+  entry.promise = promise;
+  byKey.set(key, entry);
   return promise;
 }

@@ -806,7 +806,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
   const [diffMetrics, setDiffMetrics] = useState<DiffMetrics | null>(null);
-  const [diffSsim, setDiffSsim] = useState<number | null>(null);
+  const [, setDiffSsim] = useState<number | null>(null);
   const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
   const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
   const [refUploadVersion, setRefUploadVersion] = useState(0);
@@ -1320,6 +1320,17 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasCompare, naturalDims, refDims, compareSource?.align, compareSource?.fit]);
+
+  // Settled SSIM scalar values are content-addressed independently of the full
+  // SSIM error-map texture. Read them synchronously during render so a revisited
+  // iteration's label changes in the same commit as its cached texture; state is
+  // retained only to trigger the first cold result's render.
+  const displayedDiffSsim = hasCompare && diffMapping
+    ? (paneHandleRef.current?.peekSsimScalar(
+        { a: contentKeyA, b: contentKeyB },
+        diffMapping,
+      ) ?? null)
+    : null;
 
   // HDR-FLIP exposure range — computed once per REFERENCE PIXEL BUFFER from its
   // luminance (deterministic → folds into the diff-cache key). Depend on the
@@ -2017,7 +2028,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         return diffMetrics;
       },
       get ssimText() {
-        return formatSsim(diffSsim);
+        return formatSsim(displayedDiffSsim);
       },
       // COMPOSITOR (split) seams — mirror `GpuComparePane`'s `__cairnCompareProbe`.
       get splitPosition() {
@@ -2081,7 +2092,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, diffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, displayedDiffSsim, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2254,7 +2265,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         >
           MSE {diffMetrics.mse.toExponential(2)} · PSNR{" "}
           {Number.isFinite(diffMetrics.psnr) ? diffMetrics.psnr.toFixed(1) : "∞"} dB · MAE {diffMetrics.mae.toExponential(2)} ·
-          SSIM {formatSsim(diffSsim)}
+          SSIM {formatSsim(displayedDiffSsim)}
         </span>
       )}
     </>
