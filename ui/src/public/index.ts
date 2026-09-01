@@ -2,6 +2,7 @@ export { PlotHost, type PlotHostProps } from "./PlotHost.tsx";
 export { mountPlot, type MountedPlot } from "./mountPlot.tsx";
 export { createEndpointDataSource } from "../resources/data/data-source.ts";
 export type { DataSource } from "../resources/data/data-source.ts";
+export { configureRuntime, type RuntimeConfiguration } from "./runtime.ts";
 export { setRuntimeCacheBudget } from "../resources/cache.ts";
 export {
   getWebGpuComparisonStats,
