@@ -679,59 +679,6 @@ export async function createWebGPUDevice(): Promise<Device> {
     return { width: tex.width, height: tex.height };
   }
 
-  interface SurfaceRenderJob {
-    target: Surface;
-    pipeline: WGPURenderPipeline;
-    bindGroup: WGPUBindGroup;
-  }
-  let surfaceRenderJobs = new Map<Surface, SurfaceRenderJob>();
-  let surfaceFlushQueued = false;
-  const encodeFullscreenPass = (
-    encoder: GPUCommandEncoder,
-    target: Surface | Texture,
-    pipeline: WGPURenderPipeline,
-    bindGroup: WGPUBindGroup,
-  ) => {
-    const view = targetView(target);
-    const { width, height } = targetSize(target);
-    const nativeFormat: GPUTextureFormat = isSurface(target)
-      ? (target as WGPUSurface).format
-      : gpuFormatFor((target as WGPUTexture).format);
-    const gpuPipeline = pipeline.pipelineFor(nativeFormat);
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view,
-        loadOp: "clear",
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
-        storeOp: "store",
-      }],
-    });
-    pass.setPipeline(gpuPipeline);
-    pass.setBindGroup(0, bindGroup.gpuBindGroup);
-    pass.setViewport(0, 0, width, height, 0, 1);
-    pass.draw(3);
-    pass.end();
-  };
-  const enqueueSurfaceRender = (job: SurfaceRenderJob) => {
-    // Latest render wins for a surface within the same turn. Besides dropping
-    // obsolete work, this avoids retaining a bind group that a subsequent
-    // source swap in the same commit has already replaced/destroyed.
-    surfaceRenderJobs.set(job.target, job);
-    if (surfaceFlushQueued) return;
-    surfaceFlushQueued = true;
-    queueMicrotask(() => {
-      surfaceFlushQueued = false;
-      const jobs = Array.from(surfaceRenderJobs.values());
-      surfaceRenderJobs = new Map();
-      if (!jobs.length || destroyed) return;
-      const encoder = gpuDevice.createCommandEncoder();
-      for (const queued of jobs) {
-        encodeFullscreenPass(encoder, queued.target, queued.pipeline, queued.bindGroup);
-      }
-      gpuDevice.queue.submit([encoder.finish()]);
-    });
-  };
-
   let destroyed = false;
 
   // Single per-device `lost` watcher: records the `GPUDeviceLostInfo` once, so
@@ -1151,17 +1098,35 @@ export async function createWebGPUDevice(): Promise<Device> {
     renderFullscreen(target, pipeline, bindGroup) {
       const p = pipeline as WGPURenderPipeline;
       const bg = bindGroup as WGPUBindGroup;
-      if (isSurface(target)) {
-        // A multi-run image card updates every canvas in one React commit.
-        // Encode those surface passes into ONE command buffer and submit once;
-        // one queue.submit per pane dominated otherwise-hot texture swaps.
-        enqueueSurfaceRender({ target, pipeline: p, bindGroup: bg });
-        return;
-      }
-      // Offscreen textures stay synchronous: callers may immediately enqueue a
-      // reduction/readback that must observe this draw before the next microtask.
+      const view = targetView(target);
+      const { width, height } = targetSize(target);
+      // The pipeline's fragment target format must EXACTLY match the actual
+      // attachment format or WebGPU raises a validation error and silently
+      // drops the draw — see `WGPURenderPipeline`'s doc comment. A `Surface`
+      // can be `bgra8unorm`-native even though `p.gpuPipeline`'s default
+      // format is always one of the four `TextureFormat`s (never
+      // `bgra8unorm`), so resolve the correct pipeline VARIANT for
+      // whatever `target` actually is.
+      const nativeFormat: GPUTextureFormat = isSurface(target)
+        ? (target as WGPUSurface).format
+        : gpuFormatFor((target as WGPUTexture).format);
+      const gpuPipeline = p.pipelineFor(nativeFormat);
       const encoder = gpuDevice.createCommandEncoder();
-      encodeFullscreenPass(encoder, target, p, bg);
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view,
+            loadOp: "clear",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            storeOp: "store",
+          },
+        ],
+      });
+      pass.setPipeline(gpuPipeline);
+      pass.setBindGroup(0, bg.gpuBindGroup);
+      pass.setViewport(0, 0, width, height, 0, 1);
+      pass.draw(3);
+      pass.end();
       gpuDevice.queue.submit([encoder.finish()]);
     },
 
