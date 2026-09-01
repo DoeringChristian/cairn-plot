@@ -4,6 +4,11 @@ export { createEndpointDataSource } from "../resources/data/data-source.ts";
 export type { DataSource } from "../resources/data/data-source.ts";
 export { setRuntimeCacheBudget } from "../resources/cache.ts";
 export {
+  getWebGpuComparisonStats,
+  resetWebGpuComparisonStats,
+  type WebGpuComparisonStats,
+} from "../plots/image/webgpu/perf-stats.ts";
+export {
   setGpuDiffCacheLimits,
   setGpuSourceTextureRetentionLimit,
   setLiveGpuPaneLimit,

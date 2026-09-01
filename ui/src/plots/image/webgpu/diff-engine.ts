@@ -36,6 +36,7 @@ import type { NormMode } from "../runtime/display-settings.ts";
 import { LUT_FAMILY_WGSL, OUTPUT_ENCODE_WGSL, NORM_ID } from "./display.ts";
 import { makeCpuMapSampler } from "./image-engine";
 import { cacheFor, type DiffCacheEntry } from "./diff-cache";
+import { recordDiffHit, recordDiffMiss } from "./perf-stats.ts";
 import { type DiffCmapMode } from "../runtime/diff-colormap";
 import { computeCompareMapping, mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { meanSsimFromErrorMap } from "./ssim-metric";
@@ -299,7 +300,11 @@ export function ensureDiff(
     computeCompareMapping({ w: texA.width, h: texA.height }, { w: texB.width, h: texB.height }, "top-left", "crop", "b");
   const key = diffCacheKey(contentKeyA, contentKeyB, operationId, params, map);
   const hit = cache.get(key);
-  if (hit) return hit;
+  if (hit) {
+    recordDiffHit(operationId);
+    return hit;
+  }
+  recordDiffMiss(operationId);
 
   const texture = computeDiff(device, texA, texB, operationId, params, map);
   const width = map.result.w;

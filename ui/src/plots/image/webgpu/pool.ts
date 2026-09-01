@@ -70,6 +70,7 @@ import {
   type DiffCacheEntry,
 } from "./diff-engine";
 import { cacheFor } from "./diff-cache";
+import { recordCachedPresent, recordSourceRebind, recordSourceUpload } from "./perf-stats.ts";
 import { mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { getWebGpuImageOperation, getWebGpuMultipassOperation } from "./image-operations.ts";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
@@ -554,6 +555,7 @@ function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | u
   if (key !== undefined) {
     const existing = entry.retained.get(key);
     if (existing) {
+      recordSourceRebind();
       entry.retained.delete(key);
       entry.retained.set(key, existing);
       return existing;
@@ -561,12 +563,14 @@ function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | u
     const global = sharedSources(entry.device);
     let shared = global.get(key);
     if (shared) {
+      recordSourceRebind();
       global.delete(key);
       global.set(key, shared);
       shared.refs++;
     } else {
       const texture = entry.device.createTexture(src.width, src.height, src.format);
       texture.write(src.data);
+      recordSourceUpload();
       shared = { texture, refs: 1 };
       global.set(key, shared);
     }
@@ -576,6 +580,7 @@ function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | u
   }
   const tex = entry.device.createTexture(src.width, src.height, src.format);
   tex.write(src.data);
+  recordSourceUpload();
   return tex;
 }
 
@@ -887,6 +892,7 @@ function attemptRenderDiffCached(
     // Bind it as the PRIMARY source; `srcTextureB` is intentionally NOT injected
     // (the display is single-source over the result).
     renderImage(entry.device, entry.surface, cacheEntry.texture, displayParams);
+    recordCachedPresent(operationId);
     // Present-coherency instrumentation (test-only; see attemptRender). A cached
     // diff blits the RESULT as the primary — the bound SOURCE keys still record
     // which operands the result was computed from (stale = an artefact).

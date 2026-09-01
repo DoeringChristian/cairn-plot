@@ -10,6 +10,7 @@
  * lives on `DEFAULT_MAX_ENTRIES` below.
  */
 import { getGpuDiffCacheLimits } from "../../../resources/runtime-config.ts";
+import { recordDiffEviction } from "./perf-stats.ts";
 import type { Device, Texture } from "./device/device-contract";
 // Type-only imports — fully erased by the type stripper, so they do NOT pull the
 // `./kernels` value barrel (which is a directory import Node's strip-only mode
@@ -187,6 +188,7 @@ export class DiffCache {
       if (this.map.size === 1) break;
       const [oldestKey, e] = victim;
       this.map.delete(oldestKey);
+      recordDiffEviction();
       this.totalBytes -= e.bytes;
       e.texture.destroy();
     }
