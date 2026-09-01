@@ -75,7 +75,10 @@ import type { ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation } from "./display.ts";
 import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
-import { computeHdrFlipExposures } from "./kernels/hdr-flip-reference";
+import {
+  computeHdrFlipExposures,
+  type HdrExposureParams,
+} from "./kernels/hdr-flip-reference";
 import { formatSsim } from "./ssim-metric";
 import type { DiffCacheEntry } from "./diff-engine";
 import { defaultReduceForDisplayOperation, prepareDisplayOperation } from "./prepare-display-operation.ts";
@@ -241,6 +244,27 @@ function hdrToRGBAFloat32(hdr: FloatImageData): SourceUpload {
  *  `rgba8unorm`. Async because the uint8 path decodes a URL. Mirrors
  *  `GpuComparePane`'s `loadSide`, but yields the pool's `SourceUpload` shape. */
 const sharedComparisonUploads = new Map<string, SourceUpload>();
+const hdrExposureParamsByContent = new Map<string, HdrExposureParams>();
+
+function cachedHdrExposureParams(
+  contentKey: string,
+  compute: () => HdrExposureParams,
+): HdrExposureParams {
+  const cached = hdrExposureParamsByContent.get(contentKey);
+  if (cached) {
+    hdrExposureParamsByContent.delete(contentKey);
+    hdrExposureParamsByContent.set(contentKey, cached);
+    return cached;
+  }
+  const value = compute();
+  hdrExposureParamsByContent.set(contentKey, value);
+  while (hdrExposureParamsByContent.size > 512) {
+    const oldest = hdrExposureParamsByContent.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    hdrExposureParamsByContent.delete(oldest);
+  }
+  return value;
+}
 
 function cacheComparisonUpload(key: string, upload: SourceUpload): SourceUpload {
   if (sharedComparisonUploads.has(key)) sharedComparisonUploads.delete(key);
@@ -1376,18 +1400,20 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // outside the result cache and made hot SDR-FLIP swaps uniquely laggy.
     if (!diffMode || resolvedOperationId !== "hdr-flip") return null;
     if (hdrExposurePixels) {
-      return computeHdrFlipExposures(
+      return cachedHdrExposureParams(contentKeyA, () => computeHdrFlipExposures(
         widenFloatPixels(hdrExposurePixels),
         hdrExposureW,
         hdrExposureH,
         hdrExposureC,
-      );
+      ));
     }
     const raw = sdrImageDataRef.current;
     if (!raw) return null;
-    const scene = imageDataToSceneField(raw);
-    return computeHdrFlipExposures(scene.pixels, scene.width, scene.height, 4);
-  }, [diffMode, resolvedOperationId, hdrExposurePixels, hdrExposureW, hdrExposureH, hdrExposureC, uploadVersion]);
+    return cachedHdrExposureParams(contentKeyA, () => {
+      const scene = imageDataToSceneField(raw);
+      return computeHdrFlipExposures(scene.pixels, scene.width, scene.height, 4);
+    });
+  }, [diffMode, resolvedOperationId, contentKeyA, hdrExposurePixels, hdrExposureW, hdrExposureH, hdrExposureC, uploadVersion]);
   const hdrExposures = automaticHdrExposures;
 
   // -----------------------------------------------------------------------
