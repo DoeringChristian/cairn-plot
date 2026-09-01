@@ -452,9 +452,13 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
     return false;
   }
   const poolOut = await device.readback(poolSurface);
-  // Second render with the SAME keys must be a cache hit (no recompute).
-  handle.renderDiffCached("flip", { a: "pool:a", b: "pool:b" }, undefined, displayParams);
-  const after = getDiffComputeCount();
+  // Presentation-only changes must be cache hits: exposure and offset recolor
+  // the existing scalar field rather than dispatching FLIP again.
+  handle.renderDiffCached("flip", { a: "pool:a", b: "pool:b" }, undefined, {
+    ...displayParams,
+    exposureEV: 1.25,
+    offset: 0.1,
+  });
   // A scalar metric with a CURVE display is ordinary gray RGB, not the scalar
   // LUT path. This is the regression where FLIP+sRGB sampled the placeholder LUT.
   const srgbDisplay: ImageParams = {
@@ -464,7 +468,10 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
     uv: uvFull,
     filter: "nearest",
   };
+  // Changing from the magma colormap to a tone/display curve is also only a
+  // blit of the cached field, never a metric dispatch.
   handle.renderDiff("flip", { a: "pool:a", b: "pool:b" }, {}, srgbDisplay);
+  const after = getDiffComputeCount();
   const srgbOut = await device.readback(poolSurface);
   releasePane(handle);
   canvas.remove();
@@ -484,11 +491,12 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
     report(false, `[pool:flip/srgb] expected Uint8Array readback`);
     return false;
   }
-  // The first renderDiffCached computes flip ONCE (miss); the second is a HIT.
-  const computedOnRepeat = after - (before + 1);
-  if (computedOnRepeat !== 0) {
+  // The first renderDiffCached computes FLIP ONCE (miss); all presentation-only
+  // exposure/offset/encoding changes above must remain hits.
+  const computedOnPresentationChanges = after - (before + 1);
+  if (computedOnPresentationChanges !== 0) {
     ok = false;
-    report(false, `[pool:flip] repeat renderDiffCached recomputed (compute delta on re-blit = ${computedOnRepeat}, want 0)`);
+    report(false, `[pool:flip] presentation update recomputed FLIP (compute delta = ${computedOnPresentationChanges}, want 0)`);
   }
   let nonZero = false;
   for (let i = 0; i < 16 * 4; i++) {
@@ -512,7 +520,7 @@ async function runPoolCachedOpCase(device: Device): Promise<boolean> {
       break;
     }
   }
-  report(ok, `[pool:flip] renderDiffCached === ensureDiff + renderImage(result, magma); repeat = cache hit`);
+  report(ok, `[pool:flip] exposure/offset/encoding changes re-blit cached FLIP with zero recompute`);
   return ok;
 }
 

@@ -63,6 +63,10 @@ export const DEFAULT_MAX_BYTES = 512 * 1024 * 1024; // 512 MB
 
 export class DiffCache {
   private readonly map = new Map<string, DiffCacheEntry>(); // insertion-order = LRU order
+  /** Entries currently presented by a live pane. They are not eviction
+   * candidates: evicting a visible result makes the next presentation-only
+   * update (exposure/offset/encoding) recompute the metric. */
+  private readonly pins = new Map<DiffCacheEntry, number>();
   private totalBytes = 0;
   // Explicit fields (NOT constructor parameter-properties) so this module stays
   // importable under Node's `--experimental-strip-types` strip-only mode, which
@@ -100,11 +104,38 @@ export class DiffCache {
     const existing = this.map.get(key);
     if (existing) {
       this.totalBytes -= existing.bytes;
+      this.pins.delete(existing);
       existing.texture.destroy();
       this.map.delete(key);
     }
     this.map.set(key, entry);
     this.totalBytes += entry.bytes;
+    // `ensureDiff` returns this entry to the presenting pane, which leases it
+    // immediately. Do not destroy the just-computed texture in the narrow gap
+    // before that lease is installed when all older entries are already pinned.
+    this.evict(entry);
+  }
+
+  /** Keep a result resident while a live pane presents it. This is a lease, not
+   * permanent cache state: the pool releases it when the pane changes content,
+   * switches away from a cached metric, parks, or disposes. */
+  retain(entry: DiffCacheEntry): void {
+    let resident = false;
+    for (const candidate of this.map.values()) {
+      if (candidate === entry) {
+        resident = true;
+        break;
+      }
+    }
+    if (!resident) return;
+    this.pins.set(entry, (this.pins.get(entry) ?? 0) + 1);
+  }
+
+  /** Release one live-pane lease and immediately enforce the memory budget. */
+  release(entry: DiffCacheEntry): void {
+    const count = this.pins.get(entry) ?? 0;
+    if (count <= 1) this.pins.delete(entry);
+    else this.pins.set(entry, count - 1);
     this.evict();
   }
 
@@ -131,14 +162,23 @@ export class DiffCache {
     this.evict();
   }
 
-  private evict(): void {
+  private evict(exclude?: DiffCacheEntry): void {
     while (this.map.size > this.maxEntries || this.totalBytes > this.maxBytes) {
-      const oldestKey = this.map.keys().next().value as string | undefined;
-      if (oldestKey === undefined) break;
-      const e = this.map.get(oldestKey)!;
+      // Oldest UNPINNED entry. A live pane's currently displayed result is part
+      // of the active working set, even when that set exceeds the soft budget.
+      // Destroying it would turn every display-slider event into a cache miss.
+      let victim: [string, DiffCacheEntry] | undefined;
+      for (const candidate of this.map) {
+        if (candidate[1] !== exclude && !this.pins.has(candidate[1])) {
+          victim = candidate;
+          break;
+        }
+      }
+      if (!victim) break;
       // Never evict the single entry that is over budget on its own — keep at
       // least one so the current view still has a result.
       if (this.map.size === 1) break;
+      const [oldestKey, e] = victim;
       this.map.delete(oldestKey);
       this.totalBytes -= e.bytes;
       e.texture.destroy();
@@ -148,6 +188,7 @@ export class DiffCache {
   clear(): void {
     for (const e of this.map.values()) e.texture.destroy();
     this.map.clear();
+    this.pins.clear();
     this.totalBytes = 0;
   }
 

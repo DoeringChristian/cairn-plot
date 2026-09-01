@@ -62,6 +62,7 @@ import {
   ensureDiffResultReadback,
   type DiffCacheEntry,
 } from "./diff-engine";
+import { cacheFor } from "./diff-cache";
 import type { CompareMapping } from "../runtime/compare-align";
 import { getWebGpuImageOperation, getWebGpuMultipassOperation } from "./image-operations.ts";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
@@ -440,6 +441,10 @@ interface PaneEntry {
    *  key (kept for instant flip-back). */
   sourceKey: string | undefined;
   sourceBKey: string | undefined;
+  /** Cached metric result currently presented by this pane. Its cache lease
+   * prevents a synchronized exposure/encoding update across a large grid from
+   * evicting each pane's live FLIP result and recomputing it on the next tick. */
+  activeDiffEntry: DiffCacheEntry | null;
   /** CONTENT-KEYED source-texture LRU (insertion-order = LRU order), capped at
    *  {@link MAX_RETAINED_SOURCE_TEXTURES}. Holds the keyed textures BOTH slots
    *  bind (a stacked pane's recently-shown slots), so a flip back to a resident
@@ -542,6 +547,21 @@ function releaseUnkeyedSlotTexture(tex: Texture | null, key: string | undefined)
   if (tex && key === undefined) tex.destroy();
 }
 
+function releaseActiveDiff(entry: PaneEntry): void {
+  if (!entry.activeDiffEntry) return;
+  cacheFor(entry.device).release(entry.activeDiffEntry);
+  entry.activeDiffEntry = null;
+}
+
+function presentActiveDiff(entry: PaneEntry, next: DiffCacheEntry): void {
+  if (entry.activeDiffEntry === next) return;
+  // Retain first so enforcing the budget while releasing the previous result
+  // cannot evict the result this pane is about to present.
+  cacheFor(entry.device).retain(next);
+  releaseActiveDiff(entry);
+  entry.activeDiffEntry = next;
+}
+
 /** Destroy every retained texture and clear the map (park/dispose). */
 function clearRetained(entry: PaneEntry): void {
   for (const tex of entry.retained.values()) tex.destroy();
@@ -552,6 +572,7 @@ function clearRetained(entry: PaneEntry): void {
 function parkEntry(entry: PaneEntry): void {
   if (entry.parked) return;
   untrack(entry);
+  releaseActiveDiff(entry);
   // Free the currently-bound slot textures IF unkeyed; keyed ones are owned by
   // `retained` and freed by `clearRetained` below (no double-destroy).
   releaseUnkeyedSlotTexture(entry.srcTexture, entry.sourceKey);
@@ -721,6 +742,9 @@ function averageSampleRgb(px: Uint8Array | Float32Array, hdr: boolean): { r: num
  */
 function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   if (entry.disposed || (!entry.source && !entry.deep)) return true;
+  // A direct/compositor/plain present supersedes a cached metric face. Release
+  // that lease; the cache may retain it opportunistically for a later flip-back.
+  releaseActiveDiff(entry);
   // MEASURE-THEN-RENDER: nothing to present until the container is measured (backing
   // size set via `resize()`). A no-op SUCCESS (not a failure) so the caller does NOT
   // fall back to the legacy pane; the first render after the first `resize()` paints.
@@ -802,6 +826,7 @@ function attemptRenderDiffCached(
       contentKeys.b,
       mapping,
     );
+    presentActiveDiff(entry, cacheEntry);
     // The cached RESULT is the scalar error — displayed via IDENTITY content
     // (`displayParams.imageOperation` unset/0, no `srcB`) + the isScalar colormap.
     // Bind it as the PRIMARY source; `srcTextureB` is intentionally NOT injected
@@ -969,6 +994,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     setSource(src: SourceUpload, contentKey?: string): void {
       if (entry.disposed) return;
+      if (entry.source !== src || entry.sourceKey !== contentKey) releaseActiveDiff(entry);
       entry.source = src;
       // A plain CPU source supersedes any prior DEEP composite source.
       entry.deep = null;
@@ -999,6 +1025,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     setSourceB(src: SourceUpload | null, contentKey?: string): void {
       if (entry.disposed) return;
+      if (entry.sourceB !== src || entry.sourceBKey !== (src ? contentKey : undefined)) releaseActiveDiff(entry);
       entry.sourceB = src;
       if (!entry.parked && entry.surface) {
         const prev = entry.srcTextureB;
@@ -1214,6 +1241,7 @@ export async function acquirePane(
     sourceKey: undefined,
     sourceBKey: undefined,
     retained: new Map(),
+    activeDiffEntry: null,
     deep: null,
     deepZNear: -Infinity,
     deepZFar: Infinity,

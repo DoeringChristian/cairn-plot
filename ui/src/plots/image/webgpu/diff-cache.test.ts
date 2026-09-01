@@ -75,3 +75,24 @@ test("LRU get() bumps recency so a re-rendered pane is not the eviction victim",
   assert.ok(cache.get("a"), "recently-touched entry survives");
   assert.equal(cache.get("b"), undefined, "least-recently-used evicted");
 });
+
+test("live pane leases keep FLIP results resident across presentation updates", () => {
+  const beforeDestroyed = destroyed;
+  const cache = new DiffCache(2, 2);
+  const visibleA = entry(2);
+  const visibleB = entry(2);
+  cache.set("flip:a", visibleA);
+  cache.retain(visibleA);
+  cache.set("flip:b", visibleB);
+  cache.retain(visibleB);
+
+  // The active working set may exceed the soft budget. Both currently-presented
+  // results must survive; otherwise the next exposure/encoding event recomputes.
+  assert.equal(cache.get("flip:a"), visibleA);
+  assert.equal(cache.get("flip:b"), visibleB);
+  assert.equal(destroyed, beforeDestroyed);
+
+  cache.release(visibleA);
+  assert.equal(cache.get("flip:a"), undefined, "released result becomes evictable");
+  assert.equal(cache.get("flip:b"), visibleB, "still-presented result remains resident");
+});

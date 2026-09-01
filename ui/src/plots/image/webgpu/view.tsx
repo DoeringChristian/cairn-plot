@@ -1321,22 +1321,35 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasCompare, naturalDims, refDims, compareSource?.align, compareSource?.fit]);
 
-  // HDR-FLIP exposure range — computed once per REFERENCE content from its
-  // luminance (deterministic → folds into the diff-cache key, never a recompute on
-  // zoom/pan). The reference is the diff-engine's `texA` operand = the pane's
-  // `source` here. Only needed for the `hdr-flip` kernel.
+  // HDR-FLIP exposure range — computed once per REFERENCE PIXEL BUFFER from its
+  // luminance (deterministic → folds into the diff-cache key). Depend on the
+  // actual pixels/shape, not the presentation wrapper: settings propagation can
+  // recreate `backendProps.source` while preserving its content, and exposure /
+  // offset / encoding must not rerun this full-image percentile scan either.
+  const hdrExposurePixels = backendProps.source.dtype === "float"
+    ? backendProps.source.pixels
+    : null;
+  const hdrExposureDims = backendProps.source.dtype === "float"
+    ? shapeDims(backendProps.source.shape)
+    : null;
+  const hdrExposureW = hdrExposureDims?.w ?? 0;
+  const hdrExposureH = hdrExposureDims?.h ?? 0;
+  const hdrExposureC = hdrExposureDims?.c ?? 0;
   const automaticHdrExposures = useMemo(() => {
     if (!diffMode || comparisonOperationId !== "flip") return null;
-    if (backendProps.source.dtype === "float") {
-      const { h, w, c } = shapeDims(backendProps.source.shape);
-      return computeHdrFlipExposures(widenFloatPixels(backendProps.source.pixels), w, h, c);
+    if (hdrExposurePixels) {
+      return computeHdrFlipExposures(
+        widenFloatPixels(hdrExposurePixels),
+        hdrExposureW,
+        hdrExposureH,
+        hdrExposureC,
+      );
     }
     const raw = sdrImageDataRef.current;
     if (!raw) return null;
     const scene = imageDataToSceneField(raw);
     return computeHdrFlipExposures(scene.pixels, scene.width, scene.height, 4);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diffMode, comparisonOperationId, backendProps.source, uploadVersion]);
+  }, [diffMode, comparisonOperationId, hdrExposurePixels, hdrExposureW, hdrExposureH, hdrExposureC, uploadVersion]);
   const hdrExposures = automaticHdrExposures;
 
   // -----------------------------------------------------------------------
@@ -1835,23 +1848,29 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
 
   // POST-PAINT render — the general path (pan/zoom/exposure/param changes,
   // park/restore/resize, and NON-resident flips whose async load resolves later and
-  // is correctly held until ready). Skips the render the pre-paint effect already
-  // submitted for this exact key (dedupe), and keeps the flip detector current for
-  // non-flip renders.
+  // is correctly held until ready). Coalesce rapid presentation updates to ONE
+  // submission per animation frame. This is especially important for synchronized
+  // grids: an exposure slider may publish many native input events before paint,
+  // but only the latest uniform state needs to blit the already-cached FLIP field.
+  // Skips the render the pre-paint effect already submitted for this exact key.
   useEffect(() => {
     lastContentIdentityRef.current = snapshot.contentKey;
     if (alreadyRendered()) return;
-    const submitted = renderPass();
-    if (submitted) markRendered();
-    if (submitted && isPaintPhaseLogActive())
-      recordPaintPhase({
-        phase: "post",
-        kind: snapshot.mode,
-        submitted,
-        resident: snapshot.resident,
-        epoch: contentEpoch,
-        t: performance.now(),
-      });
+    const frame = requestAnimationFrame(() => {
+      if (alreadyRendered()) return;
+      const submitted = renderPass();
+      if (submitted) markRendered();
+      if (submitted && isPaintPhaseLogActive())
+        recordPaintPhase({
+          phase: "post",
+          kind: snapshot.mode,
+          submitted,
+          resident: snapshot.resident,
+          epoch: contentEpoch,
+          t: performance.now(),
+        });
+    });
+    return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderId, uploadVersion, containerTick]);
 

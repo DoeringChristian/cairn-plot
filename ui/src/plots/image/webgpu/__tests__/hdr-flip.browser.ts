@@ -127,12 +127,13 @@ async function runCacheContract(device: Device): Promise<boolean> {
   const before = getDiffComputeCount();
   const e1 = ensureDiff(device, texRef, texTest, "hdr-flip", params, "ref#hdr", "test#hdr");
   const afterFirst = getDiffComputeCount();
-  for (const win of [
-    { x: 0, y: 0, w: 1, h: 1 },
-    { x: 0.25, y: 0.25, w: 0.5, h: 0.5 },
-    { x: 0.1, y: 0.1, w: 0.3, h: 0.3 },
-  ]) {
-    renderDiffDisplay(device, target, e1.texture, e1.displayRange, { uv: win });
+  const presentations = [
+    { uv: { x: 0, y: 0, w: 1, h: 1 }, exposureEV: 0, offset: 0 },
+    { uv: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, exposureEV: 1.5, offset: 0 },
+    { uv: { x: 0.1, y: 0.1, w: 0.3, h: 0.3 }, exposureEV: -0.5, offset: 0.1 },
+  ];
+  for (const presentation of presentations) {
+    renderDiffDisplay(device, target, e1.texture, e1.displayRange, presentation);
   }
   const e2 = ensureDiff(device, texRef, texTest, "hdr-flip", params, "ref#hdr", "test#hdr");
   const afterSecond = getDiffComputeCount();
@@ -142,7 +143,7 @@ async function runCacheContract(device: Device): Promise<boolean> {
   const computedOnce = afterFirst - before === 1;
   const noRecompute = afterSecond === afterFirst && e2 === e1;
   report(computedOnce, `[cache] first ensureDiff computed exactly once (delta=${afterFirst - before})`);
-  report(noRecompute, `[cache] re-display (zoom/pan) + re-ensure did NOT recompute (count stable at ${afterSecond})`);
+  report(noRecompute, `[cache] HDR-FLIP exposure/offset/viewport re-display did NOT recompute (count stable at ${afterSecond})`);
   return computedOnce && noRecompute;
 }
 

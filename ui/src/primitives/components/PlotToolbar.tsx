@@ -617,6 +617,28 @@ function ToolbarSlider({ spec }: { spec: ToolbarSliderSpec }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const onChangeRef = useRef(spec.onChange);
+  const changeFrameRef = useRef(0);
+  const pendingValueRef = useRef<number | null>(null);
+  onChangeRef.current = spec.onChange;
+
+  // Native range inputs can emit faster than the browser can paint. Publishing
+  // every intermediate value multiplies React/session work across synchronized
+  // compare panes even though only the last value in a frame is visible.
+  const queueChange = useCallback((value: number) => {
+    pendingValueRef.current = value;
+    if (changeFrameRef.current) return;
+    changeFrameRef.current = requestAnimationFrame(() => {
+      changeFrameRef.current = 0;
+      const pending = pendingValueRef.current;
+      pendingValueRef.current = null;
+      if (pending != null) onChangeRef.current(pending);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (changeFrameRef.current) cancelAnimationFrame(changeFrameRef.current);
+  }, []);
 
   const beginEdit = useCallback(() => {
     setDraft(sliderEntryDraft(spec.value));
@@ -700,7 +722,7 @@ function ToolbarSlider({ spec }: { spec: ToolbarSliderSpec }) {
             // The range element clamps only the VISUAL thumb to [min,max]; the
             // true (possibly out-of-range) value is shown by the read-out below.
             value={spec.value}
-            onChange={(e) => spec.onChange(Number(e.target.value))}
+            onChange={(e) => queueChange(Number(e.target.value))}
             onPointerDown={(e) => e.stopPropagation()}
             className="cairn-plot-toolbar-slider h-1 w-16 cursor-pointer accent-accent"
           />
