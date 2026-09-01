@@ -42,7 +42,7 @@ export type FlipMode = "hdr" | "sdr";
 
 export function resolveComparisonOperationId(
   selection: string,
-  flipMode: FlipMode = "hdr",
+  flipMode: FlipMode = "sdr",
 ): string {
   if (selection === "flip") {
     return flipMode === "hdr" ? "hdr-flip" : "flip-sdr";

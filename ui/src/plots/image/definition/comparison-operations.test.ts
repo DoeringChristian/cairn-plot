@@ -13,7 +13,7 @@ test("FLIP is one public comparison operation", () => {
 });
 
 test("FLIP mode selects an implementation without source-storage branching", () => {
-  assert.equal(resolveComparisonOperationId("flip"), "hdr-flip");
+  assert.equal(resolveComparisonOperationId("flip"), "flip-sdr");
   assert.equal(resolveComparisonOperationId("flip", "hdr"), "hdr-flip");
   assert.equal(resolveComparisonOperationId("flip", "sdr"), "flip-sdr");
 });

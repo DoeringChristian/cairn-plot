@@ -300,10 +300,10 @@ async function main(): Promise<void> {
       await noteCanvas("[case1]", probe);
     }
 
-    // ---- Case 3a: direct fields do not launch unrelated metrics ----------
-    const directChipAbsent = !cUnified.querySelector("[data-gpu-compare-metrics]");
-    if (!directChipAbsent) allOk = false;
-    report(directChipAbsent, `[case3a] direct field shows no unrelated metric chip`);
+    // ---- Case 3a: cheap source metrics remain available ------------------
+    const sourceMetricsPresent = await waitFor(() => !!cUnified.querySelector("[data-gpu-compare-metrics]"), 4000, 40);
+    if (!sourceMetricsPresent) allOk = false;
+    report(sourceMetricsPresent, `[case3a] direct field shows cached MSE/PSNR without unrelated SSIM`);
 
     // ---- Case 3b: MODE menu switches kernels (no re-decode) --------------
     const before = await readSurfaceBytes(probe);

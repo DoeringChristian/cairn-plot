@@ -103,7 +103,7 @@ import {
 } from "./pool";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import { isPaintPhaseLogActive, recordPaintPhase } from "./test-hooks";
-import type { ImageParams } from "./image-engine";
+import type { DiffMetrics, ImageParams } from "./image-engine";
 // C1 fix (whole-branch review) — the CPU image BACKEND, used as the fallback
 // when the engine fails to activate/render (see `engineFailed` state below).
 // Safe to import here: this file only ever ships inside the gpu-image ADDON
@@ -644,7 +644,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   );
   // Cheap pure derivations: FLIP's concrete backend implementation follows its
   // explicit HDR/SDR setting. Source storage has already been normalized away.
-  const flipMode: FlipMode = synced?.["compare.flipMode"] ?? "hdr";
+  // Standard SDR FLIP is the safe/default operation for browser-native images.
+  // HDR-FLIP is an explicit opt-in: its exposure sweep is substantially more
+  // expensive and can saturate the GPU during a many-pane iteration scrub.
+  const flipMode: FlipMode = synced?.["compare.flipMode"] ?? "sdr";
   const resolvedOperationId = diffMode
     ? resolveComparisonOperationId(comparisonOperationId, flipMode)
     : comparisonOperationId;
@@ -829,6 +832,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
 
   // Diff metrics chip (MSE/PSNR/MAE) + mean-SSIM + the RESULT-readback (cached-op
   // TEV numbers). Source-data metrics: recomputed only on a source/kernel change.
+  const [diffMetrics, setDiffMetrics] = useState<DiffMetrics | null>(null);
   const [activeMapMean, setActiveMapMean] = useState<{ entry: DiffCacheEntry; value: number } | null>(null);
   const [activeEntryVersion, setActiveEntryVersion] = useState(0);
   const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
@@ -1903,6 +1907,32 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderId, uploadVersion, containerTick]);
 
+  // MSE and PSNR are cheap source reductions and useful for every comparison.
+  // Keep them content-cached in the pool; a short settle window prevents native
+  // range events from launching reductions for iterations never painted.
+  useEffect(() => {
+    if (!hasCompare || !paneReady || !refDims) {
+      setDiffMetrics(null);
+      return;
+    }
+    setDiffMetrics(null);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      paneHandleRef.current?.computeMetrics(
+        { a: contentKeyA, b: contentKeyB },
+        diffMapping ?? undefined,
+      )?.then((metrics) => {
+        if (!cancelled) setDiffMetrics(metrics);
+      }).catch(() => {
+        if (!cancelled) setDiffMetrics(null);
+      });
+    }, 100);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [hasCompare, paneReady, refDims, contentKeyA, contentKeyB, diffMapping]);
+
   // Only summarize the map that is actually displayed. The scalar is stored on
   // the retained result entry, so a hot iteration reads it without recomputing.
   // Pointwise maps stream directly and deliberately show no extra metric chip.
@@ -1974,6 +2004,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       : resolvedOperationId === "flip" || resolvedOperationId === "flip-sdr" || resolvedOperationId === "hdr-flip"
         ? `Mean FLIP ${displayedMapMean.toExponential(2)}`
         : null;
+  const sourceMetricsLabel = diffMetrics
+    ? `MSE ${diffMetrics.mse.toExponential(2)} · PSNR ${Number.isFinite(diffMetrics.psnr) ? diffMetrics.psnr.toFixed(1) : "∞"} dB`
+    : null;
+  const displayedMetricsLabel = [sourceMetricsLabel, displayedMapMeanLabel].filter(Boolean).join(" · ") || null;
 
   // Test seam (browser harness only): expose the live diff seams on the pane
   // element so a headless harness can drive kernel/colormap switching + HOME and
@@ -2011,7 +2045,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         return effectiveTonemap;
       },
       get metrics() {
-        return displayedMapMean == null ? null : { mean: displayedMapMean };
+        return diffMetrics ? { ...diffMetrics, ...(displayedMapMean == null ? {} : { mean: displayedMapMean }) } : null;
       },
       get ssimText() {
         return resolvedOperationId === "ssim" ? formatSsim(displayedMapMean) : "—";
@@ -2078,7 +2112,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, displayedMapMean, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, displayedMapMean, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
@@ -2244,12 +2278,12 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       {compareCaps.right ? (
         <LabelChip label={compareCaps.right} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
       ) : null}
-      {displayedMapMeanLabel && (
+      {displayedMetricsLabel && (
         <span
           className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}`}
           data-gpu-compare-metrics
         >
-          {displayedMapMeanLabel}
+          {displayedMetricsLabel}
         </span>
       )}
     </>
