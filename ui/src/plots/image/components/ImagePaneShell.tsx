@@ -169,6 +169,8 @@ export type ImagePaneOverlaySpec =
       /** The GPU panes' displayed crop; CPU omits it (its element grows via
        *  the CSS transform, so `getBoundingClientRect` already encodes zoom). */
       readonly sourceWindow?: { x: number; y: number; w: number; h: number };
+      /** Optional owner notification used to lazily prepare expensive samples. */
+      readonly onActiveChange?: (active: boolean) => void;
     }
   | {
       /** Emit a bespoke overlay tree (compare's per-side overlays). */
@@ -670,7 +672,10 @@ export default function ImagePaneShell({
         sample={overlay.sample}
         notation={notation}
         version={overlay.version}
-        onActiveChange={setOverlayActive}
+        onActiveChange={(active) => {
+          setOverlayActive(active);
+          overlay.onActiveChange?.(active);
+        }}
       />
     ) : null;
 
