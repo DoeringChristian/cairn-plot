@@ -127,13 +127,6 @@ export const DEFAULT_OVERLAY_SETTINGS: ImageOverlaySettings = {
   hiddenClasses: [],
 };
 
-// ── Scalar plot config ──
-
-export interface PromotedSeriesConfig {
-  min: number;
-  max: number;
-}
-
 // ── Plotly figure types ──
 
 /**

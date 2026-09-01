@@ -20,6 +20,30 @@ test("resolution keys include DataSource identity", () => {
   assert.notEqual(resolutionKey(firstSource, node), resolutionKey(secondSource, node));
 });
 
+test("equivalent recreated descriptors reuse content-addressed resolution keys", () => {
+  const source = {};
+  const first = {
+    kind: "plot",
+    type: "image",
+    data: { kind: "image", hash: "abc", format: "npy" },
+    props: { label: "iteration 1" },
+  };
+  const recreated = {
+    kind: "plot",
+    type: "image",
+    data: { format: "npy", hash: "abc", kind: "image" },
+    props: { label: "renamed" },
+    settings: { "image.exposureEV": 2 },
+  };
+  const otherIteration = {
+    kind: "plot",
+    type: "image",
+    data: { kind: "image", hash: "def", format: "npy" },
+  };
+  assert.equal(resolutionKey(source, first), resolutionKey(source, recreated));
+  assert.notEqual(resolutionKey(source, first), resolutionKey(source, otherIteration));
+});
+
 test("sourceKey is stable per object and distinct across objects", () => {
   const a = {};
   const b = {};

@@ -29,6 +29,7 @@ import {
 } from "./cache.ts";
 
 const idMap = new WeakMap<object, string>();
+const contentIdMap = new WeakMap<object, string | null>();
 let counter = 0;
 
 /** A stable id for a descriptor node/object — same object ⇒ same id, forever. */
@@ -41,9 +42,38 @@ export function sourceKey(obj: object): string {
   return id;
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+    ).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** Content identity for durable plot descriptors. Presentation-only props and
+ * settings are deliberately excluded: changing exposure/labels must not decode
+ * again. Structurally equivalent descriptor objects therefore share the same
+ * prepared payload — essential for host-authored iteration sliders that recreate
+ * a leaf object when revisiting an already-seen artifact. */
+function descriptorContentId(node: object): string | null {
+  if (contentIdMap.has(node)) return contentIdMap.get(node) ?? null;
+  const record = node as Record<string, unknown>;
+  let key: string | null = null;
+  if (record.kind === "plot" && typeof record.type === "string" && record.data != null) {
+    key = `plot:${record.type}:${canonicalJson(record.data)}`;
+  } else if (record.kind === "compare" && typeof record.type === "string" && Array.isArray(record.operands)) {
+    key = `compare:${record.type}:${String(record.presentation ?? "")}:${String(record.strategy ?? "")}:${String(record.referenceIndex ?? "")}:${canonicalJson(record.operands)}`;
+  }
+  contentIdMap.set(node, key);
+  return key;
+}
+
 /** Cache namespace for authored content resolved through a particular source. */
 export function resolutionKey(source: object, node: object, suffix = ""): string {
-  return `${sourceKey(source)}|${sourceKey(node)}${suffix}`;
+  return `${sourceKey(source)}|${descriptorContentId(node) ?? sourceKey(node)}${suffix}`;
 }
 
 const errors = new Map<string, string>();

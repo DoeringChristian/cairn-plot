@@ -52,16 +52,12 @@ function PlainHarness() {
   return h(PlotLegend, { items: ITEMS, visibility: vis });
 }
 
-/** The scalar wrapper in visibility mode, with a live selection + promote log. */
+/** The scalar wrapper in visibility mode, with a live selection. */
 function ScalarHarness() {
   const vis = useSeriesVisibility(ITEMS.map((i) => i.key));
   const [selected] = useState<Set<string>>(() => new Set(["a"]));
   return h(CustomLegend, {
     series: ITEMS,
-    promoted: {},
-    onToggle: (k: string) => {
-      (window as unknown as { __promoteLog: string[] }).__promoteLog.push(k);
-    },
     onSelect: () => {},
     selectedKeys: selected,
     visibility: vis,
@@ -72,8 +68,6 @@ function ScalarHarness() {
 function LegacyHarness() {
   return h(CustomLegend, {
     series: ITEMS,
-    promoted: {},
-    onToggle: () => {},
     onSelect: (k: string) => {
       (window as unknown as { __selectLog: string[] }).__selectLog.push(k);
     },
@@ -81,7 +75,6 @@ function LegacyHarness() {
   });
 }
 
-(window as unknown as { __promoteLog: string[] }).__promoteLog = [];
 (window as unknown as { __selectLog: string[] }).__selectLog = [];
 
 const mount = (id: string, node: React.ReactElement) =>
@@ -154,7 +147,7 @@ async function main(): Promise<void> {
     chips = chipsIn(plain);
     gate(chips.every(pressed), "[plain] dblclick isolated series un-isolates (all visible)");
 
-    // (3) scalar wrapper: selection dim + swatch height + promote button
+    // (3) scalar wrapper: selection dim + swatch height, one shared Y axis
     const scalar = document.getElementById("scalar") as HTMLElement;
     let schips = chipsIn(scalar);
     const alpha = schips.find((b) => label(b) === "Alpha")!;
@@ -165,18 +158,11 @@ async function main(): Promise<void> {
     );
     gate(swatchH(alpha) === 3 && swatchH(beta) === 2, "[scalar] selected swatch 3px, others 2px");
 
-    const promoteBtns = Array.from(
+    const extraAxisButtons = Array.from(
       scalar.querySelectorAll<HTMLButtonElement>('button:not([aria-pressed])'),
     );
-    gate(promoteBtns.length === 3, `[scalar] one promote button per chip (got ${promoteBtns.length})`);
-    fireClick(promoteBtns[0]!);
-    await wait(20);
-    gate(
-      (window as unknown as { __promoteLog: string[] }).__promoteLog.length === 1 &&
-        schips.every(pressed),
-      "[scalar] promote button fires onToggle WITHOUT toggling visibility",
-    );
-    // scalar toggle still works
+    gate(extraAxisButtons.length === 0, "[scalar] no per-series Y-axis promotion controls");
+    // scalar visibility toggle still works
     fireClick(beta);
     await wait(40);
     schips = chipsIn(scalar);

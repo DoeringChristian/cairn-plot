@@ -1,5 +1,5 @@
-// Internal satellite of ScalarPlot: the wheel-zoom / pan / box-select / promoted
-// right-axis-drag pointer state machine. Split out of ScalarPlot.tsx verbatim.
+// Internal satellite of ScalarPlot: the wheel-zoom / pan / box-select pointer
+// state machine. Split out of ScalarPlot.tsx.
 //
 // GEOMETRY / COORDINATE SPACES
 // ----------------------------
@@ -27,7 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
-import type { PromotedSeriesConfig, ChartViewState } from "../../../../types";
+import type { ChartViewState } from "../../../../types";
 import { useModifierKey } from "../../../../../host/hooks/use-modifier-key";
 import {
   boxZoomAxis,
@@ -46,7 +46,6 @@ export interface PlotOffset {
   height: number;
 }
 
-type RightAxisDragMode = "pan" | "scale";
 type PlotDragMode = "pan" | "select";
 
 export interface Selection {
@@ -60,9 +59,7 @@ interface UsePlotGesturesArgs {
   chartBoxRef: RefObject<HTMLDivElement>;
   plotOffsetRef: MutableRefObject<PlotOffset | null>;
   effectiveRef: MutableRefObject<{ x: [number, number]; y: [number, number] }>;
-  promotedRef: MutableRefObject<Record<string, PromotedSeriesConfig>>;
   onViewChange: (v: ChartViewState) => void;
-  onPromotedSeriesChange: (p: Record<string, PromotedSeriesConfig>) => void;
   /** Base gesture for a plain (no-modifier) drag. `"zoom"` (the default,
    *  preserving prior behavior) box-zooms; `"pan"` pans. An Alt/Ctrl/Meta drag
    *  ALWAYS pans regardless — the modifier wins. Toolbar-driven via the scalar
@@ -74,9 +71,7 @@ export function usePlotGestures({
   chartBoxRef,
   plotOffsetRef,
   effectiveRef,
-  promotedRef,
   onViewChange,
-  onPromotedSeriesChange,
   baseDragMode = "zoom",
 }: UsePlotGesturesArgs) {
   // The base drag mode is read live (via a ref) inside the pointer-down
@@ -86,18 +81,6 @@ export function usePlotGestures({
   // `wasDragRef` distinguishes a drag from a click so the container's onClick
   // can suppress selection when a gesture just finished.
   const wasDragRef = useRef(false);
-
-  const rightAxisDragRef = useRef<{
-    key: string;
-    pointerId: number;
-    mode: RightAxisDragMode;
-    startY: number;
-    startMin: number;
-    startMax: number;
-    axisHeightPx: number;
-    axisTopPx: number;
-    anchorData: number;
-  } | null>(null);
 
   const plotDragRef = useRef<{
     pointerId: number;
@@ -179,43 +162,6 @@ export function usePlotGestures({
     return () => el.removeEventListener("wheel", handler);
     // refs are stable; only onViewChange is a reactive dependency.
   }, [chartBoxRef, plotOffsetRef, effectiveRef, onViewChange]);
-
-  // ── Promoted right-axis strip drag (pan/scale) ──
-  const onAxisStripPointerDown = useCallback(
-    (
-      key: string,
-      e: React.PointerEvent<SVGRectElement>,
-      axisHeightPx: number,
-      axisTopPx: number,
-    ) => {
-      const cfg = promotedRef.current[key];
-      if (!cfg) return;
-      e.stopPropagation();
-      e.preventDefault();
-      chartBoxRef.current?.setPointerCapture(e.pointerId);
-      const rect = (e.currentTarget as SVGRectElement)
-        .ownerSVGElement?.getBoundingClientRect();
-      const svgTop = rect?.top ?? 0;
-      const localY = e.clientY - svgTop;
-      const fracFromTop = Math.max(
-        0,
-        Math.min(1, (localY - axisTopPx) / Math.max(1, axisHeightPx)),
-      );
-      const anchorData = cfg.max - fracFromTop * (cfg.max - cfg.min);
-      rightAxisDragRef.current = {
-        key,
-        pointerId: e.pointerId,
-        mode: e.shiftKey ? "scale" : "pan",
-        startY: e.clientY,
-        startMin: cfg.min,
-        startMax: cfg.max,
-        axisHeightPx,
-        axisTopPx,
-        anchorData,
-      };
-    },
-    [chartBoxRef, promotedRef],
-  );
 
   // ── Plot-area pointer down (starts pan or box-select) ──
   const onChartPointerDown = useCallback(
@@ -314,30 +260,6 @@ export function usePlotGestures({
         return;
       }
 
-      const ax = rightAxisDragRef.current;
-      if (ax && ax.pointerId === e.pointerId) {
-        const dyPx = e.clientY - ax.startY;
-        if (ax.mode === "pan") {
-          const range = ax.startMax - ax.startMin;
-          const dyData = (dyPx / Math.max(1, ax.axisHeightPx)) * range;
-          onPromotedSeriesChange({
-            ...promotedRef.current,
-            [ax.key]: { min: ax.startMin + dyData, max: ax.startMax + dyData },
-          });
-        } else {
-          const factor = Math.exp(dyPx / Math.max(1, ax.axisHeightPx));
-          const newMin = ax.anchorData - (ax.anchorData - ax.startMin) * factor;
-          const newMax = ax.anchorData + (ax.startMax - ax.anchorData) * factor;
-          if (Number.isFinite(newMin) && Number.isFinite(newMax) && newMax > newMin) {
-            onPromotedSeriesChange({
-              ...promotedRef.current,
-              [ax.key]: { min: newMin, max: newMax },
-            });
-          }
-        }
-        return;
-      }
-
       const s = plotDragRef.current;
       if (!s || s.pointerId !== e.pointerId) return;
       const moved = Math.abs(e.clientX - s.startClientX) >= 3 || Math.abs(e.clientY - s.startClientY) >= 3;
@@ -394,7 +316,7 @@ export function usePlotGestures({
         }
       }
     },
-    [chartBoxRef, promotedRef, onViewChange, onPromotedSeriesChange],
+    [chartBoxRef, onViewChange],
   );
 
   const onChartPointerUp = useCallback(
@@ -407,14 +329,6 @@ export function usePlotGestures({
           pinchRef.current = null;
           wasDragRef.current = true; // suppress the click that ends a pinch
         }
-      }
-
-      const ax = rightAxisDragRef.current;
-      if (ax && ax.pointerId === e.pointerId) {
-        wasDragRef.current = true;
-        rightAxisDragRef.current = null;
-        try { (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId); } catch { /* ok */ }
-        return;
       }
 
       const s = plotDragRef.current;
@@ -467,7 +381,6 @@ export function usePlotGestures({
   // autoscaled data extent", matching the charts' dblclick-to-home reset.
   const onChartDoubleClick = useCallback(() => {
     plotDragRef.current = null;
-    rightAxisDragRef.current = null;
     setSelection(null);
     onViewChange({ xMin: null, xMax: null, yMin: null, yMax: null });
   }, [onViewChange]);
@@ -475,7 +388,6 @@ export function usePlotGestures({
   // For the container's onLostPointerCapture: abort any in-flight gesture.
   const clearDrag = useCallback(() => {
     plotDragRef.current = null;
-    rightAxisDragRef.current = null;
     pinchRef.current = null;
     touchPointersRef.current.clear();
     setSelection(null);
@@ -488,7 +400,6 @@ export function usePlotGestures({
     onChartPointerMove,
     onChartPointerUp,
     onChartDoubleClick,
-    onAxisStripPointerDown,
     clearDrag,
   };
 }

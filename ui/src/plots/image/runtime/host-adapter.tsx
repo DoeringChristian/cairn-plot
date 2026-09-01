@@ -272,8 +272,10 @@ export function ImageHostAdapter({
   // untouched, as is the first mount (no previous payload to hold).
   const baseKey = resolutionKey(source, node, isDiff ? "|diffpair" : "");
   const lastReadyRef = useRef<{ base: string; dataProps: Record<string, unknown> } | null>(null);
+  const holdSourceSwap = node.props?.holdPreviousWhileLoading === true && !diffSpec;
   const held =
-    resolvedNow === undefined && cacheError === undefined && lastReadyRef.current?.base === baseKey
+    resolvedNow === undefined && cacheError === undefined && lastReadyRef.current &&
+      (lastReadyRef.current.base === baseKey || holdSourceSwap)
       ? lastReadyRef.current.dataProps
       : undefined;
   const dataProps = resolvedNow ?? held;

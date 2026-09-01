@@ -1,5 +1,4 @@
-import type { JsonValue } from "../../../../packages/spec/src/json.ts";
-import type { AxisScale, PromotedSeriesConfig, Series } from "../types.ts";
+import type { AxisScale, Series } from "../types.ts";
 import type { AxisSource } from "../transforms/x-axis.ts";
 import type { SettingsRecord } from "../contracts.ts";
 import { projectChartSettings, type ChartSettings } from "../chart-settings.ts";
@@ -17,9 +16,7 @@ export interface ScalarPresentation {
   readonly height?: number;
 }
 
-export type ScalarSettings = ChartSettings & {
-  "chart.promotedSeries"?: Record<string, PromotedSeriesConfig>;
-};
+export type ScalarSettings = ChartSettings;
 
 function isSeries(value: unknown): value is Series {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -39,21 +36,5 @@ export function scalarPresentation(value: Record<string, unknown>): ScalarPresen
 }
 
 export function projectScalarSettings(settings: Readonly<SettingsRecord>): ScalarSettings {
-  const projected: ScalarSettings = projectChartSettings(settings);
-  const promoted = settings["chart.promotedSeries"];
-  if (isPromotedSeries(promoted)) {
-    projected["chart.promotedSeries"] = promoted as unknown as Record<string, PromotedSeriesConfig>;
-  }
-  return projected;
-}
-
-function isPromotedSeries(
-  value: JsonValue | undefined,
-): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  return Object.values(value).every((entry) =>
-    entry !== null && typeof entry === "object" && !Array.isArray(entry) &&
-    typeof entry.min === "number" && Number.isFinite(entry.min) &&
-    typeof entry.max === "number" && Number.isFinite(entry.max)
-  );
+  return projectChartSettings(settings);
 }

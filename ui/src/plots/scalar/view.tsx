@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 
 import ScalarPlot from "./backends/svg/ScalarPlot.tsx";
-import type { PromotedSeriesConfig, ChartViewState } from "../types.ts";
+import type { ChartViewState } from "../types.ts";
 import { ChartBox } from "../../host/standalone-helpers.tsx";
 import type { ReactPlotViewProps } from "../react-view.ts";
 import type { ScalarPresentation, ScalarSettings } from "./types.ts";
@@ -21,9 +21,6 @@ export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlo
     "chart.domainX": next.xMin == null || next.xMax == null ? null : [next.xMin, next.xMax],
     "chart.domainY": next.yMin == null || next.yMax == null ? null : [next.yMin, next.yMax],
   }), [patch]);
-  const setPromoted = useCallback((next: Record<string, PromotedSeriesConfig>) => {
-    patch({ "chart.promotedSeries": next } as unknown as ScalarSettings);
-  }, [patch]);
   const {
     height,
     series,
@@ -45,8 +42,6 @@ export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlo
       {...rest}
       view={view}
       onViewChange={setView}
-      promotedSeries={settings["chart.promotedSeries"] ?? {}}
-      onPromotedSeriesChange={setPromoted}
     />
   </ChartBox>;
 }

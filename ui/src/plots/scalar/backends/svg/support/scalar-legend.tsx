@@ -3,15 +3,13 @@
 //
 // The interactive (visibility) legend — swatch+label rows with click-toggle /
 // double-click-isolate — is the shared `PlotLegend` primitive. This wrapper
-// adds ScalarPlot's extras: the promote/demote trailing button, the
-// selection-aware dim, the selected-swatch emphasis, and the LEGACY
+// adds selection-aware dimming, selected-swatch emphasis, and the LEGACY
 // select-on-click mode kept for hosts that pass no `visibility`.
 
 import PlotLegend, {
   HIDDEN_OPACITY,
   type LegendItem,
 } from "../../../../../primitives/components/PlotLegend";
-import type { PromotedSeriesConfig } from "../../../../types";
 import type { SeriesVisibility } from "../../../../../host/hooks/use-series-visibility";
 
 export interface LegendSeries {
@@ -22,15 +20,11 @@ export interface LegendSeries {
 
 export function CustomLegend({
   series,
-  promoted,
-  onToggle,
   onSelect,
   selectedKeys,
   visibility,
 }: {
   series: LegendSeries[];
-  promoted: Record<string, PromotedSeriesConfig>;
-  onToggle: (key: string) => void;
   onSelect?: (seriesKey: string) => void;
   selectedKeys?: Set<string>;
   /**
@@ -44,23 +38,6 @@ export function CustomLegend({
 }) {
   const hasSel = selectedKeys != null && selectedKeys.size > 0;
 
-  // The promote/demote button trails every chip in both modes.
-  const promoteButton = (key: string) => {
-    const isPromoted = !!promoted[key];
-    return (
-      <button
-        type="button"
-        onClick={() => onToggle(key)}
-        className={`ml-1 inline-flex h-4 w-4 items-center justify-center rounded text-xs hover:bg-bg-hover ${
-          isPromoted ? "text-accent" : "text-fg-muted"
-        }`}
-        title={isPromoted ? "Demote (single Y axis)" : "Promote to own Y axis"}
-      >
-        <i className="fa-solid fa-arrows-up-down" aria-hidden="true" />
-      </button>
-    );
-  };
-
   // Interactive (visibility) mode → the shared PlotLegend primitive drives the
   // toggle/isolate interaction; the scalar-specific visuals ride the override
   // hooks. Opacity: hidden always wins (Plotly dim); otherwise fall back to the
@@ -71,7 +48,6 @@ export function CustomLegend({
       <PlotLegend
         items={series as LegendItem[]}
         visibility={visibility}
-        chipTrailing={(item) => promoteButton(item.key)}
         chipOpacity={(item, hidden) =>
           hidden
             ? HIDDEN_OPACITY
@@ -117,7 +93,6 @@ export function CustomLegend({
               />
               <span>{s.label}</span>
             </button>
-            {promoteButton(s.key)}
           </li>
         );
       })}

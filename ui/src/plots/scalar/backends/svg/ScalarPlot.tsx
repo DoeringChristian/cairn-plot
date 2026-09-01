@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useMemo,
   useRef,
   useState,
@@ -16,7 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { AxisScale, PromotedSeriesConfig, Series, ChartViewState } from "../../../types";
+import type { AxisScale, Series, ChartViewState } from "../../../types";
 import type { AxisSource } from "../../../transforms/x-axis";
 import { resolveAxisDomain } from "../../../transforms/domain";
 import { mergeToRows } from "../../../transforms/merge-rows";
@@ -31,7 +30,6 @@ import { usePlotGestures, type PlotOffset } from "./support/use-plot-gestures";
 import { useScalarController } from "./support/use-scalar-controller";
 
 const CHART_MARGIN = { top: 4, right: 8, left: 0, bottom: 4 } as const;
-const PROMOTED_AXIS_WIDTH = 35;
 
 export interface ScalarPlotProps {
   series: Series[];
@@ -42,10 +40,6 @@ export interface ScalarPlotProps {
   yRange: [number | null, number | null];
   view: ChartViewState;
   onViewChange: (v: ChartViewState) => void;
-  promotedSeries: Record<string, PromotedSeriesConfig>;
-  onPromotedSeriesChange: (
-    p: Record<string, PromotedSeriesConfig>,
-  ) => void;
   lineType?: "linear" | "monotone" | "step" | "stepBefore" | "stepAfter";
   showLegend?: boolean;
   tooltip?: { showContext?: boolean; showWallTime?: boolean };
@@ -63,8 +57,6 @@ export default function ScalarPlot({
   yRange,
   view,
   onViewChange,
-  promotedSeries,
-  onPromotedSeriesChange,
   lineType = "linear",
   showLegend = true,
   tooltip,
@@ -104,7 +96,6 @@ export default function ScalarPlot({
     let lo = Infinity;
     let hi = -Infinity;
     for (const s of series) {
-      if (promotedSeries[s.key]) continue;
       if (visibility.isHidden(s.key)) continue;
       for (const p of s.points) {
         if (p.y < lo) lo = p.y;
@@ -114,7 +105,7 @@ export default function ScalarPlot({
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1] as const;
     if (lo === hi) return [lo - 0.5, hi + 0.5] as const;
     return [lo, hi] as const;
-  }, [series, promotedSeries, visibility]);
+  }, [series, visibility]);
 
   const effectiveX: [number, number] = [
     typeof xDomain[0] === "number" ? xDomain[0] : dataXs[0],
@@ -142,48 +133,6 @@ export default function ScalarPlot({
   };
   const xDomainPadded = padAutoDomain(xDomain, dataXs, xScale);
   const yDomainPadded = padAutoDomain(yDomain, dataYs, yScale);
-
-  // ── Promoted axes ──
-  const promotedKeysOrdered = useMemo(
-    () => series.map((s) => s.key).filter((k) => promotedSeries[k]),
-    [series, promotedSeries],
-  );
-  const dynamicMargin = useMemo(() => ({ ...CHART_MARGIN }), []);
-
-  const promotedRef = useRef(promotedSeries);
-  promotedRef.current = promotedSeries;
-
-  const togglePromote = useCallback(
-    (key: string) => {
-      const existing = promotedRef.current[key];
-      if (existing) {
-        const next = { ...promotedRef.current };
-        delete next[key];
-        onPromotedSeriesChange(next);
-        return;
-      }
-      const s = series.find((x) => x.key === key);
-      if (!s || s.points.length === 0) {
-        onPromotedSeriesChange({
-          ...promotedRef.current,
-          [key]: { min: 0, max: 1 },
-        });
-        return;
-      }
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (const p of s.points) {
-        if (p.y < lo) lo = p.y;
-        if (p.y > hi) hi = p.y;
-      }
-      if (lo === hi) { lo -= 0.5; hi += 0.5; }
-      onPromotedSeriesChange({
-        ...promotedRef.current,
-        [key]: { min: lo, max: hi },
-      });
-    },
-    [series, onPromotedSeriesChange],
-  );
 
   // ── Refs shared with the gesture state machine ──
   // `plotOffsetRef` is written by the <Customized> component below with the
@@ -224,15 +173,12 @@ export default function ScalarPlot({
     onChartPointerMove,
     onChartPointerUp,
     onChartDoubleClick,
-    onAxisStripPointerDown,
     clearDrag,
   } = usePlotGestures({
     chartBoxRef,
     plotOffsetRef,
     effectiveRef,
-    promotedRef,
     onViewChange,
-    onPromotedSeriesChange,
     baseDragMode: controller.dragMode === "pan" ? "pan" : "zoom",
   });
 
@@ -263,7 +209,7 @@ export default function ScalarPlot({
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={data}
-          margin={dynamicMargin}
+          margin={CHART_MARGIN}
           onMouseMove={(state: any) => {
             if (state?.activePayload?.length) {
               const payload = state.activePayload as Array<{
@@ -283,10 +229,7 @@ export default function ScalarPlot({
                 let closestScreenDist = Infinity;
                 for (const p of payload) {
                   if (p.value == null) continue;
-                  const promoted = promotedRef.current[p.dataKey];
-                  const [yMin, yMax] = promoted
-                    ? [promoted.min, promoted.max]
-                    : effectiveRef.current.y;
+                  const [yMin, yMax] = effectiveRef.current.y;
                   const valueFrac =
                     1 - (p.value - yMin) / Math.max(1e-10, yMax - yMin);
                   const dist = Math.abs(valueFrac - fracFromTop);
@@ -334,28 +277,6 @@ export default function ScalarPlot({
             }}
             width={46}
           />
-          {promotedKeysOrdered.map((key) => {
-            const s = series.find((x) => x.key === key);
-            const color = s?.color ?? "var(--color-fg-muted, #656d76)";
-            const cfg = promotedSeries[key]!;
-            return (
-              <YAxis
-                key={key}
-                yAxisId={key}
-                orientation="right"
-                scale="linear"
-                domain={[cfg.min, cfg.max]}
-                allowDataOverflow
-                stroke={color}
-                tick={{
-                  fill: color,
-                  fontSize: AXIS.tickFontSize,
-                  fontFamily: AXIS.tickFontFamily,
-                }}
-                width={PROMOTED_AXIS_WIDTH}
-              />
-            );
-          })}
           {/* All tooltip chrome (rounded corners, bg, border, shadow, font)
               lives in CustomTooltip via the shared TOOLTIP_CHROME_CLASS, so no
               contentStyle/labelStyle override here (Recharts ignores them when
@@ -379,8 +300,6 @@ export default function ScalarPlot({
               content={
                 <CustomLegend
                   series={series}
-                  promoted={promotedSeries}
-                  onToggle={togglePromote}
                   onSelect={(key) => onSeriesClick?.(key)}
                   selectedKeys={selectedSeriesKeys}
                   visibility={visibility}
@@ -398,7 +317,6 @@ export default function ScalarPlot({
               ((selectedSeriesKeys?.size ?? 0) > 0 &&
                 !isSelected &&
                 !isHovered);
-            const axisId = promotedSeries[s.key] ? s.key : "__left__";
             return [
               s.rawPoints && (
                 <Line
@@ -411,7 +329,7 @@ export default function ScalarPlot({
                   dot={false}
                   isAnimationActive={false}
                   connectNulls
-                  yAxisId={axisId}
+                  yAxisId="__left__"
                   legendType="none"
                   tooltipType="none"
                 />
@@ -427,7 +345,7 @@ export default function ScalarPlot({
                 dot={false}
                 isAnimationActive={false}
                 connectNulls
-                yAxisId={axisId}
+                yAxisId="__left__"
               />,
             ];
           })}
@@ -451,34 +369,7 @@ export default function ScalarPlot({
                   width: o.width,
                   height: o.height,
                 };
-                if (promotedKeysOrdered.length === 0) return null;
-                const top = o.top ?? 0;
-                const height = o.height;
-                const plotRight = (o.left ?? 0) + o.width;
-                return (
-                  <g>
-                    {promotedKeysOrdered.map((key, i) => {
-                      const x = plotRight + i * PROMOTED_AXIS_WIDTH;
-                      return (
-                        <rect
-                          key={key}
-                          x={x}
-                          y={top - 5}
-                          width={PROMOTED_AXIS_WIDTH}
-                          height={height + 10}
-                          fill="transparent"
-                          style={{
-                            cursor: "ns-resize",
-                            touchAction: "none",
-                          }}
-                          onPointerDown={(e) =>
-                            onAxisStripPointerDown(key, e, height, top)
-                          }
-                        />
-                      );
-                    })}
-                  </g>
-                );
+                return null;
               }) as unknown as React.FunctionComponent
             }
           />

@@ -15,7 +15,6 @@ export interface PlotSettings {
   "panel.info"?: boolean | null;
   "chart.domainX"?: [number, number] | null;
   "chart.domainY"?: [number, number] | null;
-  "chart.promotedSeries"?: Record<string, { min: number; max: number }>;
   "scene3d.camera"?: {
     position: [number, number, number];
     target: [number, number, number];
