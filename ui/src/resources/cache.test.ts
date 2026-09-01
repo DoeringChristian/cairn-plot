@@ -41,6 +41,34 @@ test("least-recently-used unleased entries are evicted first", async () => {
   c.release();
 });
 
+test("raising the budget retains an already-decoded iteration sweep", async () => {
+  const cache = new RuntimeResourceCache({ budgetBytes: 20 });
+  const a = await cache.getOrCreate("step:0", async () => ({ value: "a", bytes: 10 }));
+  a.release();
+  const b = await cache.getOrCreate("step:1", async () => ({ value: "b", bytes: 10 }));
+  b.release();
+  cache.setBudgetBytes(40);
+  const c = await cache.getOrCreate("step:2", async () => ({ value: "c", bytes: 10 }));
+  c.release();
+  assert.equal(cache.has("step:0"), true);
+  assert.equal(cache.has("step:1"), true);
+  assert.equal(cache.has("step:2"), true);
+  assert.equal(cache.budgetBytes, 40);
+});
+
+test("lowering the budget immediately trims least-recently-used entries", async () => {
+  const cache = new RuntimeResourceCache({ budgetBytes: 30 });
+  for (const key of ["a", "b", "c"]) {
+    const lease = await cache.getOrCreate(key, async () => ({ value: key, bytes: 10 }));
+    lease.release();
+  }
+  cache.peek("a");
+  cache.setBudgetBytes(20);
+  assert.equal(cache.has("a"), true);
+  assert.equal(cache.has("b"), false);
+  assert.equal(cache.has("c"), true);
+});
+
 test("failed preload work is not cached and foreground work can retry", async () => {
   const cache = new RuntimeResourceCache({ budgetBytes: 100 });
   await assert.rejects(cache.getOrCreate("x", async () => {

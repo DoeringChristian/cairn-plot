@@ -29,7 +29,7 @@ interface PendingEntry<T> {
  * A budget is a soft target: visible resources are allowed to exceed it.
  */
 export class RuntimeResourceCache {
-  readonly budgetBytes: number;
+  private configuredBudgetBytes: number;
   private readonly entries = new Map<string, CacheEntry<unknown>>();
   private readonly pending = new Map<string, PendingEntry<unknown>>();
   private clock = 0;
@@ -39,7 +39,20 @@ export class RuntimeResourceCache {
     if (!Number.isFinite(options.budgetBytes) || options.budgetBytes < 0) {
       throw new Error("cairn-plot: cache budget must be a finite non-negative number");
     }
-    this.budgetBytes = options.budgetBytes;
+    this.configuredBudgetBytes = options.budgetBytes;
+  }
+
+  get budgetBytes(): number {
+    return this.configuredBudgetBytes;
+  }
+
+  /** Change the soft retention target and immediately trim unleased entries. */
+  setBudgetBytes(budgetBytes: number): void {
+    if (!Number.isFinite(budgetBytes) || budgetBytes < 0) {
+      throw new Error("cairn-plot: cache budget must be a finite non-negative number");
+    }
+    this.configuredBudgetBytes = budgetBytes;
+    this.evictToBudget();
   }
 
   get bytes(): number {
@@ -133,7 +146,7 @@ export class RuntimeResourceCache {
   }
 
   private evictToBudget(): void {
-    while (this.retainedBytes > this.budgetBytes) {
+    while (this.retainedBytes > this.configuredBudgetBytes) {
       let victimKey: string | undefined;
       let victim: CacheEntry<unknown> | undefined;
       for (const [key, entry] of this.entries) {
@@ -168,6 +181,13 @@ export const DEFAULT_RUNTIME_CACHE_BYTES = 512 * 1024 * 1024;
 export const globalResourceCache = new RuntimeResourceCache({
   budgetBytes: DEFAULT_RUNTIME_CACHE_BYTES,
 });
+
+/** Configure the page-wide decoded/prepared resource retention target.
+ * Hosts that provide long iteration sequences may opt into a larger budget.
+ * The target remains soft: visible leased resources are never evicted. */
+export function setRuntimeCacheBudget(budgetBytes: number): void {
+  globalResourceCache.setBudgetBytes(budgetBytes);
+}
 
 export interface DerivedCacheKey {
   readonly comparison: string;
