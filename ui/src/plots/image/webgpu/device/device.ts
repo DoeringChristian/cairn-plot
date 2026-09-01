@@ -1095,6 +1095,10 @@ export async function createWebGPUDevice(): Promise<Device> {
       return new WGPUSurface(canvas, context, result, reconfigure);
     },
 
+    submittedWorkDone() {
+      return gpuDevice.queue.onSubmittedWorkDone();
+    },
+
     renderFullscreen(target, pipeline, bindGroup) {
       const p = pipeline as WGPURenderPipeline;
       const bg = bindGroup as WGPUBindGroup;
