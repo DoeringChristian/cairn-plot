@@ -173,7 +173,8 @@ export function ImageHostAdapter({
   const selKey = chSel ? `|${chSel.part ?? ""}|${selLayerKey}` : "";
   // The resolve-cache key: the diff pair (reference + foreground, decoded once)
   // when in diff mode; the single-image (+ channel override) key otherwise.
-  const resolveKey = resolutionKey(source, node, isDiff ? "|diffpair" : selKey);
+  const resolutionNode = comparison?.node ?? node;
+  const resolveKey = resolutionKey(source, resolutionNode, isDiff ? "|diffpair" : selKey);
 
   // SUBSCRIBABLE RESOLVE (the flip-commit model). The async-resolved DATA props are
   // NOT held in a component `state` cell — they are read PURELY from the resolve-cache
@@ -270,7 +271,7 @@ export function ImageHostAdapter({
   // key, so the flip-commit ruling ("a cold flip renders loading, never a
   // hold of the previous slot's frame" — the stale-diff guarantee) is
   // untouched, as is the first mount (no previous payload to hold).
-  const baseKey = resolutionKey(source, node, isDiff ? "|diffpair" : "");
+  const baseKey = resolutionKey(source, resolutionNode, isDiff ? "|diffpair" : "");
   const lastReadyRef = useRef<{ base: string; dataProps: Record<string, unknown> } | null>(null);
   const holdSourceSwap = node.props?.holdPreviousWhileLoading === true && !diffSpec;
   const held =

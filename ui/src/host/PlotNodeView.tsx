@@ -65,7 +65,6 @@ import {
 } from "../plots/registry.ts";
 import type { RenderEnvironment } from "../backends/contracts.ts";
 import {
-  planRegisteredImageComparison as synthDiffLeafOf,
   resolveRegisteredImageComparison,
   expandImageComparison,
 } from "../plots/image/runtime/comparison-plan.ts";
@@ -211,9 +210,8 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
           });
         } else if (child.kind === "compare") {
           if (comparisonType(child) === "image") {
-            const synth = synthDiffLeafOf(child);
             entries.push({
-              key: resolutionKey(source, synth.leaf, "|diffpair"),
+              key: resolutionKey(source, child, "|diffpair"),
               run: () => resolveRegisteredImageComparison(child, source),
             });
           } else {
