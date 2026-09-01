@@ -241,19 +241,44 @@ function hdrToRGBAFloat32(hdr: FloatImageData): SourceUpload {
  *  (via {@link hdrToRGBAFloat32}), a uint8 source is `<img>`-decoded to
  *  `rgba8unorm`. Async because the uint8 path decodes a URL. Mirrors
  *  `GpuComparePane`'s `loadSide`, but yields the pool's `SourceUpload` shape. */
-async function decodedSourceToUpload(src: ImageSource): Promise<SourceUpload | null> {
+const sharedComparisonUploads = new Map<string, SourceUpload>();
+
+function cacheComparisonUpload(key: string, upload: SourceUpload): SourceUpload {
+  if (sharedComparisonUploads.has(key)) sharedComparisonUploads.delete(key);
+  sharedComparisonUploads.set(key, upload);
+  // This is only a lookup owner; pane-local upload caches retain the objects they
+  // actively use. Bound the global tail without invalidating those references.
+  while (sharedComparisonUploads.size > 512) {
+    const oldest = sharedComparisonUploads.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    sharedComparisonUploads.delete(oldest);
+  }
+  return upload;
+}
+
+async function decodedSourceToUpload(src: ImageSource, contentKey?: string): Promise<SourceUpload | null> {
+  if (contentKey) {
+    const cached = sharedComparisonUploads.get(contentKey);
+    if (cached) {
+      sharedComparisonUploads.delete(contentKey);
+      sharedComparisonUploads.set(contentKey, cached);
+      return cached;
+    }
+  }
+  let upload: SourceUpload | null;
   if (src.dtype === "float") {
-    return hdrToRGBAFloat32({
+    upload = hdrToRGBAFloat32({
       pixels: src.pixels,
       shape: src.shape,
       dtype: src.numpyDtype ?? "<f4",
       deep: src.deep,
     });
+  } else {
+    if (!src.url) return null;
+    const d = await loadImageData(src.url);
+    upload = d ? sceneFieldUpload(d) : null;
   }
-  if (!src.url) return null;
-  const d = await loadImageData(src.url);
-  if (!d) return null;
-  return sceneFieldUpload(d);
+  return upload && contentKey ? cacheComparisonUpload(contentKey, upload) : upload;
 }
 
 function sceneFieldUpload(image: ImageData): SourceUpload {
@@ -1157,7 +1182,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     const applySdr = (raw: ImageData, display: ImageData, p2: Uint8SurfaceProps) => {
       sdrImageDataRef.current = raw; // TEV overlay reads the RAW source, like ImagePane.
       const upload: SourceUpload = hasCompare
-        ? sceneFieldUpload(raw)
+        ? (sharedComparisonUploads.get(contentKeyA) ?? cacheComparisonUpload(contentKeyA, sceneFieldUpload(raw)))
         : {
             data: display.data,
             width: display.width,
@@ -1292,7 +1317,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       return;
     }
     let cancelled = false;
-    decodedSourceToUpload(b).then((upload) => {
+    decodedSourceToUpload(b, key).then((upload) => {
       if (cancelled || !upload) return;
       rememberUpload(key, upload, b);
       apply(upload);
