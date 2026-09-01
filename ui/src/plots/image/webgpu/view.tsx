@@ -1914,7 +1914,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     let cancelled = false;
     const handle = paneHandleRef.current;
     const keys = { a: contentKeyA, b: contentKeyB };
-    const hot = handle?.isDiffResultCached("ssim", keys, undefined, diffMapping ?? undefined) ?? false;
+    const hot = handle?.isSsimScalarCached(keys, diffMapping ?? undefined) ?? false;
     if (!hot) setDiffSsim(null);
     const compute = () => {
       const p = handle?.computeSsim(keys, diffMapping ?? undefined);

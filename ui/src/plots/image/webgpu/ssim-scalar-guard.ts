@@ -40,6 +40,11 @@ export function getSsimComputeCount(): number {
  * settled value; a burst of calls all share the single in-flight promise. On
  * rejection the entry is dropped so a later call can retry.
  */
+/** Non-mutating probe used to make revisited iteration values synchronous. */
+export function hasGuardedSsimScalar(device: Device, key: string): boolean {
+  return cache.get(device)?.has(key) ?? false;
+}
+
 export function guardedSsimScalar(
   device: Device,
   key: string,

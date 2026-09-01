@@ -63,6 +63,7 @@ import {
   ensureDiff,
   hasDiff,
   ensureSsimScalar,
+  hasSsimScalar,
   ensureDiffResultReadback,
   type DiffCacheEntry,
 } from "./diff-engine";
@@ -383,6 +384,7 @@ export interface PaneHandle {
    * pool-owned textures. Returns `null` when a slot is unset / disposed / a hard
    * GPU failure occurs.
    */
+  isSsimScalarCached(contentKeys: { a: string; b: string }, mapping?: CompareMapping): boolean;
   computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null;
   /**
    * Read back a cached diff RESULT (a {@link DiffCacheEntry} returned by
@@ -1201,6 +1203,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     computeMetrics(contentKeys?: { a: string; b: string }, mapping?: CompareMapping): Promise<DiffMetrics> | null {
       return attemptComputeMetrics(entry, contentKeys, mapping);
+    },
+    isSsimScalarCached(contentKeys: { a: string; b: string }, mapping?: CompareMapping): boolean {
+      return hasSsimScalar(entry.device, contentKeys.a, contentKeys.b, mapping);
     },
     computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null {
       return attemptComputeSsim(entry, contentKeys, mapping);
