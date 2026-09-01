@@ -41,6 +41,7 @@
  * re-`createSurface`-ing the SAME canvas on restore is a safe idempotent
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
+import { getGpuSourceTextureRetentionLimit } from "../../../resources/runtime-config.ts";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import type { ImageWebGpuRuntime } from "./device/runtime.ts";
 import {
@@ -526,7 +527,7 @@ function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | u
 /** Evict the LRU retained textures down to the cap, never destroying one that is
  *  the CURRENTLY-bound `srcTexture`/`srcTextureB` (skips to the next oldest). */
 function evictRetained(entry: PaneEntry): void {
-  while (entry.retained.size > MAX_RETAINED_SOURCE_TEXTURES) {
+  while (entry.retained.size > getGpuSourceTextureRetentionLimit()) {
     let victimKey: string | undefined;
     for (const [k, tex] of entry.retained) {
       if (tex !== entry.srcTexture && tex !== entry.srcTextureB) {

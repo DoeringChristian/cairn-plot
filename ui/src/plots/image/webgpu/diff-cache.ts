@@ -9,6 +9,7 @@
  * count and a byte budget; the reasoning for the (deliberately generous) caps
  * lives on `DEFAULT_MAX_ENTRIES` below.
  */
+import { getGpuDiffCacheLimits } from "../../../resources/runtime-config.ts";
 import type { Device, Texture } from "./device/device-contract";
 // Type-only imports — fully erased by the type stripper, so they do NOT pull the
 // `./kernels` value barrel (which is a directory import Node's strip-only mode
@@ -73,7 +74,10 @@ export class DiffCache {
   // `npm test` uses (parameter-properties emit runtime code and are rejected).
   private readonly maxEntries: number;
   private readonly maxBytes: number;
-  constructor(maxEntries = DEFAULT_MAX_ENTRIES, maxBytes = DEFAULT_MAX_BYTES) {
+  constructor(
+    maxEntries = getGpuDiffCacheLimits().maxEntries,
+    maxBytes = getGpuDiffCacheLimits().maxBytes,
+  ) {
     this.maxEntries = maxEntries;
     this.maxBytes = maxBytes;
   }

@@ -19,6 +19,8 @@ export interface PlotSessionController {
   setTopology(topology: PlotSessionTopology): void;
   registerCell(id: string, replace: (settings: PlotSettings) => void, initial: PlotSettings): () => void;
   recordCell(id: string, settings: PlotSettings): void;
+  /** Patch every currently-authored cell without reparsing/restoring the full session. */
+  patchCellSettings(patch: Partial<PlotSettings>): void;
   seedCell(id: string, settings: PlotSettings): void;
   registerGrid(id: string, replace: (state: GridSessionState) => void, initial: GridSessionState): () => void;
   recordGrid(id: string, state: GridSessionState): void;
@@ -89,6 +91,22 @@ export function createPlotSessionController(initial?: unknown): PlotSessionContr
     },
     recordCell(id, settings) {
       live(); session.cells[id] = { settings: { ...settings } }; notify();
+    },
+    patchCellSettings(patch) {
+      live();
+      const ids = topology?.cellIds ?? new Set(Object.keys(session.cells));
+      for (const id of ids) {
+        const saved = session.cells[id];
+        if (!saved) continue;
+        const next = { ...saved.settings };
+        for (const [key, value] of Object.entries(patch) as Array<[keyof PlotSettings, PlotSettings[keyof PlotSettings]]>) {
+          if (value === undefined) delete next[key];
+          else next[key] = value as never;
+        }
+        session.cells[id] = { settings: next };
+        cells.get(id)?.({ ...next });
+      }
+      notify();
     },
     seedCell(id, settings) {
       live();

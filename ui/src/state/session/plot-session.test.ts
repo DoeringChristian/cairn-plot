@@ -42,6 +42,25 @@ test("restore updates live bindings and notifications are coalesced", async () =
   assert.equal(notifications, 1);
 });
 
+test("live cell patches avoid full restore and update every authored pane", () => {
+  const controller = createPlotSessionController({
+    cells: {
+      a: { settings: { "image.exposureEV": 0, "compare.operation": "flip" } },
+      b: { settings: { "image.exposureEV": 0, "compare.operation": "flip" } },
+    },
+    grids: {},
+  });
+  controller.setTopology({ cellIds: new Set(["a", "b"]), grids: new Map() });
+  const applied: number[] = [];
+  controller.registerCell("a", (value) => applied.push(value["image.exposureEV"] ?? -1), {});
+  controller.registerCell("b", (value) => applied.push(value["image.exposureEV"] ?? -1), {});
+  applied.length = 0;
+  controller.patchCellSettings({ "image.exposureEV": 2 });
+  assert.deepEqual(applied, [2, 2]);
+  assert.equal(controller.getSession().cells.a.settings["compare.operation"], "flip");
+  assert.equal(controller.getSession().cells.b.settings["image.exposureEV"], 2);
+});
+
 test("cell seeding initializes once and retains the independent branch", () => {
   const controller = createPlotSessionController();
   controller.seedCell("stack:root", { "image.encoding": "magma" });

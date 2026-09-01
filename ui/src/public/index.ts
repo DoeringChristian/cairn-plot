@@ -3,6 +3,10 @@ export { mountPlot, type MountedPlot } from "./mountPlot.tsx";
 export { createEndpointDataSource } from "../resources/data/data-source.ts";
 export type { DataSource } from "../resources/data/data-source.ts";
 export { setRuntimeCacheBudget } from "../resources/cache.ts";
+export {
+  setGpuDiffCacheLimits,
+  setGpuSourceTextureRetentionLimit,
+} from "../resources/runtime-config.ts";
 export type { PlotSession } from "../state/session/plot-session.ts";
 export type { SessionPersistence } from "../state/session/session-persistence.ts";
 export type {

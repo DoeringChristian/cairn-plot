@@ -8,6 +8,8 @@ export interface MountedPlot {
   update(next: Partial<Pick<PlotHostProps, "spec" | "dataSource">>): void;
   getSession(): PlotSession;
   restoreSession(session: unknown): void;
+  /** Efficient live settings patch; avoids full-session parse/restore on sliders. */
+  patchSettings(patch: Record<string, unknown>): void;
   subscribeSession(listener: (session: PlotSession) => void): () => void;
   destroy(): void;
 }
@@ -28,6 +30,7 @@ export function mountPlot(element: HTMLElement, initial: PlotHostProps): Mounted
     },
     getSession: () => controller.getSession(),
     restoreSession: (session) => controller.restoreSession(session),
+    patchSettings: (patch) => controller.patchCellSettings(patch as never),
     subscribeSession: (listener) => controller.subscribe(listener),
     destroy() {
       if (destroyed) return;
