@@ -1886,14 +1886,20 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       return;
     }
     let cancelled = false;
-    const p = paneHandleRef.current?.computeMetrics(diffMapping ?? undefined);
-    p?.then((m) => {
-      if (!cancelled) setDiffMetrics(m);
-    }).catch(() => {
-      if (!cancelled) setDiffMetrics(null);
-    });
+    // Metrics are presentation chrome, not part of the selected error image.
+    // Delay them until content settles so iteration scrubbing does not enqueue
+    // an obsolete reduction/readback for every transient frame in every pane.
+    const timer = window.setTimeout(() => {
+      const p = paneHandleRef.current?.computeMetrics(diffMapping ?? undefined);
+      p?.then((m) => {
+        if (!cancelled) setDiffMetrics(m);
+      }).catch(() => {
+        if (!cancelled) setDiffMetrics(null);
+      });
+    }, 250);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, comparisonOperationId, diffMapping]);
 
@@ -1904,14 +1910,19 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     }
     let cancelled = false;
     setDiffSsim(null);
-    const p = paneHandleRef.current?.computeSsim({ a: contentKeyA, b: contentKeyB }, diffMapping ?? undefined);
-    p?.then((m) => {
-      if (!cancelled) setDiffSsim(m);
-    }).catch(() => {
-      if (!cancelled) setDiffSsim(null);
-    });
+    // SSIM is a multipass metric even while displaying a cheap pointwise error.
+    // Never compute it for intermediate slider frames; only the settled pair.
+    const timer = window.setTimeout(() => {
+      const p = paneHandleRef.current?.computeSsim({ a: contentKeyA, b: contentKeyB }, diffMapping ?? undefined);
+      p?.then((m) => {
+        if (!cancelled) setDiffSsim(m);
+      }).catch(() => {
+        if (!cancelled) setDiffSsim(null);
+      });
+    }, 250);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping]);
 
