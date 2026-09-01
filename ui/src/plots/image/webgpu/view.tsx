@@ -452,15 +452,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
   const [containerTick, setContainerTick] = useState(0);
-  useEffect(() => {
-    if (!paneReady) return;
-    return paneHandleRef.current?.subscribeDiffWork(() => {
-      // Retry exactly once when the currently submitted cold field completes;
-      // renderPass reads the latest props, so skipped intermediate iterations
-      // never enter the GPU queue.
-      setContainerTick((value) => value + 1);
-    });
-  }, [paneReady]);
   // The DISPLAYED uv window, for `PixelValueOverlay`'s
   // `sourceWindow` — see that prop's doc for why the GPU pane must supply
   // this explicitly (its canvas CSS box doesn't grow with zoom the way the

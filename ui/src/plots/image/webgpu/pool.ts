@@ -385,8 +385,6 @@ export interface PaneHandle {
    * pool-owned textures. Returns `null` when a slot is unset / disposed / a hard
    * GPU failure occurs.
    */
-  /** Subscribe to completion of a cold multipass field submission. */
-  subscribeDiffWork(listener: () => void): () => void;
   isSsimScalarCached(contentKeys: { a: string; b: string }, mapping?: CompareMapping): boolean;
   peekSsimScalar(contentKeys: { a: string; b: string }, mapping?: CompareMapping): number | undefined;
   computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null;
@@ -455,9 +453,6 @@ interface PaneEntry {
    * prevents a synchronized exposure/encoding update across a large grid from
    * evicting each pane's live FLIP result and recomputing it on the next tick. */
   activeDiffEntry: DiffCacheEntry | null;
-  /** At most one cold multipass submission may be outstanding per pane. */
-  diffWorkPending: Promise<void> | null;
-  diffWorkListeners: Set<() => void>;
   /** CONTENT-KEYED source-texture LRU (insertion-order = LRU order), capped at
    *  {@link MAX_RETAINED_SOURCE_TEXTURES}. Holds the keyed textures BOTH slots
    *  bind (a stacked pane's recently-shown slots), so a flip back to a resident
@@ -1161,43 +1156,19 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     ): { entry: DiffCacheEntry | null } | "hold" | "failed" {
       const operation = getWebGpuMultipassOperation(operationId);
       if (operation) {
-        const computeParams = operation.program.computeParams?.(ctx);
-        const resident = !!entry.source && !!entry.sourceB && hasDiff(
-          entry.device,
-          { w: entry.source.width, h: entry.source.height },
-          { w: entry.sourceB.width, h: entry.sourceB.height },
-          operationId,
-          computeParams,
-          contentKeys.a,
-          contentKeys.b,
-          mapping,
-        );
-        // Do not enqueue obsolete cold fields behind an already-running field.
-        // The completion listener re-renders the pane using its latest props, so
-        // an entire slider storm collapses to the newest requested iteration.
-        if (entry.diffWorkPending && !resident) return "hold";
         // CACHED metric: computed once, content-keyed; the RESULT (a scalar
         // error) is displayed via IDENTITY content + the isScalar colormap.
         const cached = attemptRenderDiffCached(
           entry,
           operationId,
           contentKeys,
-          computeParams,
+          operation.program.computeParams?.(ctx),
           // Multipass metrics already write their scalar result as gray RGB.
           // Preserve the selected display operation: curves process that RGB
           // normally, while colormaps opt into scalar reduction themselves.
           { ...display, channelCount: 1, norm: "linear" },
           mapping,
         );
-        if (cached?.ready === false && cached.completion && entry.diffWorkPending !== cached.completion) {
-          const completion = cached.completion;
-          entry.diffWorkPending = completion;
-          const notify = () => {
-            if (entry.diffWorkPending === completion) entry.diffWorkPending = null;
-            for (const listener of entry.diffWorkListeners) listener();
-          };
-          completion.then(notify, notify);
-        }
         return cached ? { entry: cached } : "failed";
       }
       // Direct operation: pipeline selection is keyed by the semantic id. An
@@ -1235,10 +1206,6 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     computeMetrics(contentKeys?: { a: string; b: string }, mapping?: CompareMapping): Promise<DiffMetrics> | null {
       return attemptComputeMetrics(entry, contentKeys, mapping);
     },
-    subscribeDiffWork(listener: () => void): () => void {
-      entry.diffWorkListeners.add(listener);
-      return () => entry.diffWorkListeners.delete(listener);
-    },
     isSsimScalarCached(contentKeys: { a: string; b: string }, mapping?: CompareMapping): boolean {
       return hasSsimScalar(entry.device, contentKeys.a, contentKeys.b, mapping);
     },
@@ -1272,8 +1239,6 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       entry.sourceKey = undefined;
       entry.sourceBKey = undefined;
       entry.deep = null;
-      entry.diffWorkListeners.clear();
-      entry.diffWorkPending = null;
       entry.disposed = true;
     },
   };
@@ -1310,8 +1275,6 @@ export async function acquirePane(
     sourceBKey: undefined,
     retained: new Map(),
     activeDiffEntry: null,
-    diffWorkPending: null,
-    diffWorkListeners: new Set(),
     deep: null,
     deepZNear: -Infinity,
     deepZFar: Infinity,

@@ -23,9 +23,6 @@ export interface DiffCacheEntry {
   height: number;
   displayRange: ImageDisplayRange;
   bytes: number;
-  /** False while the GPU commands that populate `texture` are still queued. */
-  ready?: boolean;
-  completion?: Promise<void>;
   /** Lazily-computed + cached MSE/PSNR/MAE over the SOURCES (kernel-independent). */
   scalars?: DiffMetrics;
   scalarsPending?: Promise<DiffMetrics>;
@@ -104,8 +101,7 @@ export class DiffCache {
    * recompute on the critical path).
    */
   has(key: string): boolean {
-    const entry = this.map.get(key);
-    return entry !== undefined && entry.ready !== false;
+    return this.map.has(key);
   }
 
   set(key: string, entry: DiffCacheEntry): void {

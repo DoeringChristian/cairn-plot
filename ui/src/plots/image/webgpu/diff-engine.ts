@@ -310,13 +310,7 @@ export function ensureDiff(
     height,
     displayRange: displayRangeForOperation(operation.definition.output.domain),
     bytes: width * height * 8, // rgba16float
-    ready: device.submittedWorkDone ? false : true,
   };
-  if (device.submittedWorkDone) {
-    entry.completion = device.submittedWorkDone().then(() => {
-      entry.ready = true;
-    });
-  }
   cache.set(key, entry);
   return entry;
 }

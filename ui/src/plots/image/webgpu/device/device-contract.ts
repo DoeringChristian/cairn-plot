@@ -106,8 +106,6 @@ export interface Device {
    */
   probeExtendedToneMapping?(): boolean;
   renderFullscreen(target: Surface | Texture, pipeline: RenderPipeline, bindGroup: BindGroup): void;
-  /** Resolves after all GPU work submitted before this call completes. */
-  submittedWorkDone?(): Promise<void>;
   /**
    * Upload Z-sorted deep samples to GPU storage buffers for the depth-composite
    * pass (the deep depth slider on GPU-backed panes). Optional/defensive on the

@@ -49,15 +49,6 @@ test("default entry cap holds a realistic multi-pane working set with no evictio
   for (let i = 0; i < N; i++) assert.ok(cache.get(`k${i}`), `entry k${i} still cached (survives re-render)`);
 });
 
-test("submitted fields become resident only after GPU completion", () => {
-  const cache = new DiffCache();
-  const pending = { ...entry(1024), ready: false };
-  cache.set("flip:pending", pending);
-  assert.equal(cache.has("flip:pending"), false, "queued GPU work is not a hot cache hit");
-  pending.ready = true;
-  assert.equal(cache.has("flip:pending"), true, "completed field becomes synchronously resident");
-});
-
 test("entry cap still evicts (LRU) once the working set exceeds it", () => {
   const cache = new DiffCache(4, DEFAULT_MAX_BYTES); // small cap to exercise eviction
   for (let i = 0; i < 6; i++) cache.set(`k${i}`, entry(1024));
