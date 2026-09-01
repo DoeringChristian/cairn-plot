@@ -90,17 +90,24 @@ async function run(): Promise<boolean> {
 
   // --- 3. pick a single channel — must STAY fullscreen ---------------------
   // Open the CHANNELS menu (the enlarged pane's toolbar) and click the
-  // single-channel "R" option (portaled listbox).
+  // direct channel toggles (portaled listbox). RGB starts fully checked; turn
+  // G and B off to author the single-channel R subset in-place.
   channelsBtn()!.click();
   const listbox = await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000, 30);
   report(listbox, "the CHANNELS menu opens a listbox");
   ok = ok && listbox;
   // The clickable element is the BUTTON inside each option li.
-  const rOption = Array.from(
+  const channelOption = (name: string) => Array.from(
     document.querySelectorAll<HTMLElement>('ul[role="listbox"] [role="option"] button'),
-  ).find((el) => /(^|\s|·)R$/.test((el.textContent ?? "").trim()));
-  report(!!rOption, `a single-channel R option exists (${rOption?.textContent?.trim() ?? "none"})`);
-  ok = ok && !!rOption;
+  ).find((el) => new RegExp(`(^|\\s|·)${name}$`).test((el.textContent ?? "").trim()));
+  const rOption = channelOption("R");
+  const gOption = channelOption("G");
+  const bOption = channelOption("B");
+  report(
+    !!rOption && !!gOption && !!bOption,
+    `direct R/G/B toggles exist (${[rOption, gOption, bOption].map((el) => el?.textContent?.trim() ?? "none").join(", ")})`,
+  );
+  ok = ok && !!rOption && !!gOption && !!bOption;
   // CHANNEL-PICK HOLD contract (user ruling: a pick must NEVER create a new
   // pane): the pending re-resolve holds the previous payload on the SAME pane
   // instance — no "Loading…" placeholder commit, no pane remount, and the
@@ -109,7 +116,9 @@ async function run(): Promise<boolean> {
     .__cairnLeafResolveStats;
   const placeholdersBefore = stats?.placeholderMounts ?? -1;
   const paneBefore = document.querySelector("[data-gpu-image-pane], [data-cpu-image-pane]");
-  rOption?.click();
+  gOption?.click();
+  await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000, 30);
+  channelOption("B")?.click();
 
   // Watch continuity for a settle window: the overlay and the SAME pane element
   // must be present on every tick (a placeholder swap would break both).
@@ -131,20 +140,17 @@ async function run(): Promise<boolean> {
   report(!overlayDropped, "the fullscreen overlay stays up CONTINUOUSLY (no flicker window)");
   ok = ok && placeholdersAfter === placeholdersBefore && !paneSwapped && !overlayDropped;
 
-  // PREMISE GUARD: the pick must actually have APPLIED (the first draft of
-  // this harness clicked the option <li> instead of its inner <button> and
-  // asserted vacuously). Reopen the menu: the "· R" option must be selected.
-  channelsBtn()!.click();
-  await waitFor(() => !!document.querySelector('ul[role="listbox"]'), 3000, 30);
+  // PREMISE GUARD: both picks must have applied. The persistent toggle menu
+  // remains open, and R alone is checked/selected.
   const selectedOpt = Array.from(
     document.querySelectorAll<HTMLElement>('ul[role="listbox"] [role="option"][aria-selected="true"]'),
   );
   const rApplied = selectedOpt.some((el) => /(^|\s|·)R$/.test((el.textContent ?? "").trim()));
   report(
-    rApplied,
-    `the R pick APPLIED (selected option: ${selectedOpt.map((e) => e.textContent?.trim()).join(", ") || "none"})`,
+    rApplied && selectedOpt.length === 1,
+    `the R-only subset APPLIED (selected option: ${selectedOpt.map((e) => e.textContent?.trim()).join(", ") || "none"})`,
   );
-  ok = ok && rApplied;
+  ok = ok && rApplied && selectedOpt.length === 1;
   // Close the menu by toggling its button (NOT Escape — the fullscreen shell
   // listens for Escape at capture and would close the overlay under us).
   channelsBtn()!.click();
