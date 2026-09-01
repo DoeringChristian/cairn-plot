@@ -146,6 +146,16 @@ def inline_core_css() -> str:
     return _CORE_CSS.read_text(encoding="utf-8")
 
 
+# Compatibility names from the pre-split bundle API. They intentionally point
+# at the core bundle; type-specific Plotly/three addons remain separate.
+def inline_bundle_js() -> str:
+    return inline_core_js()
+
+
+def inline_bundle_css() -> str:
+    return inline_core_css()
+
+
 @lru_cache(maxsize=1)
 def inline_figure_addon_js() -> str:
     """The self-contained **figure addon** IIFE JS (Plotly + Figure renderer;

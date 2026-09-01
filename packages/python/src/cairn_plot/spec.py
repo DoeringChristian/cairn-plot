@@ -36,6 +36,7 @@ __all__ = [
     "SharedPropsSpec",
     "PlotNode",
     "PlotSpec",
+    "PlotDescriptorSpec",
 ]
 
 
@@ -212,6 +213,11 @@ class PlotSpec(_Strict):
     root: PlotNode
     mode: Literal["local", "endpoint"] = "local"
     endpoint: Optional[str] = None
+
+
+# Backward-compatible name used by Cairn's card/report SDK. The flattened
+# descriptor is now simply PlotSpec; keep one model object rather than a shim.
+PlotDescriptorSpec = PlotSpec
 
 
 # Resolve the `GridSpec.children -> PlotNode` / `SharedPropsSpec.sync` forward
