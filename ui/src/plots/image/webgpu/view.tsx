@@ -1953,7 +1953,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     const hot = handle?.isSsimScalarCached(keys, diffMapping ?? undefined) ?? false;
     if (!hot) setDiffSsim(null);
     const compute = () => {
-      const p = handle?.computeSsim(keys, diffMapping ?? undefined);
+      const p = handle?.computeSsim(
+        keys,
+        diffMapping ?? undefined,
+        resolvedOperationId === "ssim",
+      );
       p?.then((m) => {
         if (!cancelled) setDiffSsim(m);
       }).catch(() => {
@@ -1969,7 +1973,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       cancelled = true;
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping]);
+  }, [hasCompare, paneReady, refDims, uploadVersion, refUploadVersion, contentKeyA, contentKeyB, diffMapping, resolvedOperationId]);
 
   // -----------------------------------------------------------------------
   // DIFF RESULT readback (TEV per-pixel metric values) — CACHED kernels only. A

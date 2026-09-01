@@ -371,9 +371,10 @@ export function ensureSsimScalar(
   contentKeyA: string,
   contentKeyB: string,
   mapping?: CompareMapping,
+  retainMap = true,
 ): Promise<number> {
   return guardedSsimScalar(device, ssimScalarCacheKey(contentKeyA, contentKeyB, mapping), () =>
-    computeSsimScalar(device, texA, texB, contentKeyA, contentKeyB, mapping),
+    computeSsimScalar(device, texA, texB, contentKeyA, contentKeyB, mapping, retainMap),
   );
 }
 
@@ -385,11 +386,33 @@ async function computeSsimScalar(
   contentKeyA: string,
   contentKeyB: string,
   mapping?: CompareMapping,
+  retainMap = true,
 ): Promise<number> {
+  let transientTexture: Texture | null = null;
   try {
-    // (a)/(b): the content+mapping cache key makes this ONE compute across the
-    // pane's lifetime; in diff+ssim it returns the very entry already displayed.
-    const entry = ensureDiff(device, texA, texB, "ssim", undefined, contentKeyA, contentKeyB, mapping);
+    const map = mapping ?? computeCompareMapping(
+      { w: texA.width, h: texA.height },
+      { w: texB.width, h: texB.height },
+      "top-left",
+      "crop",
+      "b",
+    );
+    // When SSIM itself is displayed, share its retained map with the label.
+    // Other operations need only the scalar: use a transient map so FLIP does
+    // not consume two full-resolution cache entries per run and iteration.
+    const entry: DiffCacheEntry = retainMap
+      ? ensureDiff(device, texA, texB, "ssim", undefined, contentKeyA, contentKeyB, map)
+      : (() => {
+          const texture = computeDiff(device, texA, texB, "ssim", undefined, map);
+          transientTexture = texture;
+          return {
+            texture,
+            width: map.result.w,
+            height: map.result.h,
+            displayRange: "unit" as const,
+            bytes: map.result.w * map.result.h * 8,
+          };
+        })();
     if (entry.ssimMean !== undefined) return entry.ssimMean;
     if (!entry.ssimMeanPending) {
       entry.ssimMeanPending = reduceSsimMean(device, entry).then((m) => {
@@ -403,6 +426,8 @@ async function computeSsimScalar(
     // CHUNKED so it never blocks the main thread synchronously — it yields
     // between scanline batches while the chip shows `SSIM —`.
     return ssimScalarReference(device, texA, texB, mapping);
+  } finally {
+    transientTexture?.destroy();
   }
 }
 

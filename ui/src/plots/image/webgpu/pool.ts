@@ -387,7 +387,11 @@ export interface PaneHandle {
    */
   isSsimScalarCached(contentKeys: { a: string; b: string }, mapping?: CompareMapping): boolean;
   peekSsimScalar(contentKeys: { a: string; b: string }, mapping?: CompareMapping): number | undefined;
-  computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null;
+  computeSsim(
+    contentKeys: { a: string; b: string },
+    mapping?: CompareMapping,
+    retainMap?: boolean,
+  ): Promise<number> | null;
   /**
    * Read back a cached diff RESULT (a {@link DiffCacheEntry} returned by
    * {@link renderDiffCached}) as the per-pixel metric values (RGBA f32, row-major,
@@ -1039,12 +1043,21 @@ function attemptComputeSsim(
   entry: PaneEntry,
   contentKeys: { a: string; b: string },
   mapping?: CompareMapping,
+  retainMap = true,
 ): Promise<number> | null {
   if (entry.disposed || !entry.source || !entry.sourceB) return null;
   try {
     activateEntry(entry);
     if (!entry.srcTexture || !entry.srcTextureB) return null;
-    return ensureSsimScalar(entry.device, entry.srcTexture, entry.srcTextureB, contentKeys.a, contentKeys.b, mapping);
+    return ensureSsimScalar(
+      entry.device,
+      entry.srcTexture,
+      entry.srcTextureB,
+      contentKeys.a,
+      contentKeys.b,
+      mapping,
+      retainMap,
+    );
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane SSIM compute failed", err);
@@ -1253,8 +1266,12 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     peekSsimScalar(contentKeys: { a: string; b: string }, mapping?: CompareMapping): number | undefined {
       return peekSsimScalar(entry.device, contentKeys.a, contentKeys.b, mapping);
     },
-    computeSsim(contentKeys: { a: string; b: string }, mapping?: CompareMapping): Promise<number> | null {
-      return attemptComputeSsim(entry, contentKeys, mapping);
+    computeSsim(
+      contentKeys: { a: string; b: string },
+      mapping?: CompareMapping,
+      retainMap = true,
+    ): Promise<number> | null {
+      return attemptComputeSsim(entry, contentKeys, mapping, retainMap);
     },
     readDiffResult(cacheEntry: DiffCacheEntry): Promise<Float32Array> | null {
       if (entry.disposed) return null;
