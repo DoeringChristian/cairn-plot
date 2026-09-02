@@ -14,6 +14,8 @@ export interface ImageOperationDefinition {
   readonly publicName?: string;
   readonly inputs: 1 | 2;
   readonly output: ImageFieldSchema;
+  /** Settings-layer recommendation; backends only consume concrete encoding. */
+  readonly defaultDisplayOperation?: string;
   readonly cache: ImageOperationCachePolicy;
   readonly parameters: readonly ImageOperationParameter[];
 }
@@ -26,6 +28,7 @@ const pointwise = (
 ): ImageOperationDefinition => ({
   id, label, publicName, inputs: 2,
   output: { arity: "source", domain },
+  defaultDisplayOperation: domain === "signed" ? "red-blue" : "magma",
   cache: "never",
   parameters: [],
 });
@@ -39,10 +42,10 @@ export const IMAGE_OPERATIONS: readonly ImageOperationDefinition[] = [
   pointwise("relative_signed", "Relative Signed", "rel_signed", "signed"),
   pointwise("relative_squared", "Relative Squared", "rel_square", "nonnegative"),
   { id: "split", label: "Split", inputs: 2, output: { arity: 3, domain: "light" }, cache: "never", parameters: ["split"] },
-  { id: "flip", label: "FLIP", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "flip-mode"] },
-  { id: "hdr-flip", label: "HDR-FLIP", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd", "exposure-min", "exposure-max"] },
-  { id: "flip-sdr", label: "FLIP SDR implementation", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: ["ppd"] },
-  { id: "ssim", label: "SSIM", publicName: "ssim", inputs: 2, output: { arity: 1, domain: "nonnegative" }, cache: "global-lru", parameters: [] },
+  { id: "flip", label: "FLIP", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd", "flip-mode"] },
+  { id: "hdr-flip", label: "HDR-FLIP", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd", "exposure-min", "exposure-max"] },
+  { id: "flip-sdr", label: "FLIP SDR implementation", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd"] },
+  { id: "ssim", label: "SSIM", publicName: "ssim", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: [] },
 ];
 
 const operations = new Map(IMAGE_OPERATIONS.map((operation) => [operation.id, operation]));

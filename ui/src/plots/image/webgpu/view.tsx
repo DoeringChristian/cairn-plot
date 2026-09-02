@@ -73,7 +73,6 @@ import {
 } from "../definition/comparison-operations";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
-import { comparisonOperationSettingsPatch } from "../runtime/operation-display-defaults.ts";
 import { getWebGpuDisplayOperation } from "./display.ts";
 import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
 import { formatSsim } from "./ssim-metric";
@@ -637,16 +636,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // by a store value — the HOME-can't-reset-the-kernel bug). Every pane has
       // a store (own fallback on bare mounts), so no local cell is written.
       if (compareSource?.onComparisonOperationChange) compareSource.onComparisonOperationChange(id);
-      else setSynced(comparisonOperationSettingsPatch({
-        previousOperation: comparisonOperationId,
-        nextOperation: id,
-        currentEncoding: synced?.["image.encoding"],
-        authoredSourceEncoding: propColormap ?? resolveDisplayOperator(propTonemap),
-        flipMode: synced?.["compare.flipMode"],
-      }));
+      else setSynced({ "compare.operation": id });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [compareSource?.onComparisonOperationChange, comparisonOperationId, propColormap, propTonemap, setSynced, synced],
+    [compareSource?.onComparisonOperationChange, setSynced],
   );
   // Cheap pure derivations: FLIP's concrete backend implementation follows its
   // explicit HDR/SDR setting. Source storage has already been normalized away.
@@ -923,16 +916,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const changeCompareMode = useCallback(
     (mode: "split" | "diff") => {
       const commit = compareSource?.onCompareModeChange ??
-        ((next: "split" | "diff") => publishSettings(comparisonOperationSettingsPatch({
-          previousOperation: diffMode ? comparisonOperationId : "split",
-          nextOperation: next === "diff" ? comparisonOperationId : next,
-          currentEncoding: synced?.["image.encoding"],
-          authoredSourceEncoding: propColormap ?? resolveDisplayOperator(propTonemap),
-          flipMode: synced?.["compare.flipMode"],
-        })));
+        ((next: "split" | "diff") =>
+          publishSettings({ "compare.operation": next === "diff" ? comparisonOperationId : next }));
       commit(mode);
     },
-    [compareSource?.onCompareModeChange, publishSettings, comparisonOperationId, diffMode, propColormap, propTonemap, synced],
+    [compareSource?.onCompareModeChange, publishSettings, comparisonOperationId],
   );
   // COMPOSITOR param publish sites (Phase 3): the divider / flip keys both LIFT
   // the value to the owner (so the reused-instance control state survives) AND

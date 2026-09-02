@@ -1,13 +1,10 @@
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { getImageOperation } from "../definition/image-operations.ts";
-import type { ImageFieldSchema } from "../definition/fields.ts";
 import { resolveComparisonOperationId, type FlipMode } from "../definition/comparison-operations.ts";
-import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "./display-settings.ts";
 import { resolveDisplayOperator } from "./tonemap.ts";
 
 export interface RecommendedImageEncodingOptions {
   operation?: string;
-  field?: ImageFieldSchema;
   authoredSourceEncoding?: string | null;
   flipMode?: FlipMode;
 }
@@ -15,25 +12,15 @@ export interface RecommendedImageEncodingOptions {
 /** Concrete display default for one source/comparison operation. */
 export function recommendedImageEncoding({
   operation,
-  field,
   authoredSourceEncoding,
   flipMode = "sdr",
 }: RecommendedImageEncodingOptions): string {
   const sourceDefault = authoredSourceEncoding ?? resolveDisplayOperator(undefined);
   if (!operation || operation === "split") return sourceDefault;
-  const resolvedField = field ?? getImageOperation(
+  const definition = getImageOperation(
     resolveComparisonOperationId(operation, flipMode),
-  )?.output ?? getImageOperation(operation)?.output;
-  switch (resolvedField?.domain) {
-    case "signed":
-      return "red-blue";
-    case "nonnegative":
-    case "unbounded":
-      return "magma";
-    case "light":
-    default:
-      return operation ? DEFAULT_COMPARISON_DISPLAY_OPERATION_ID : sourceDefault;
-  }
+  ) ?? getImageOperation(operation);
+  return definition?.defaultDisplayOperation ?? sourceDefault;
 }
 
 export interface ComparisonOperationSettingsPatchOptions {
