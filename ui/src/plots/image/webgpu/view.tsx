@@ -1969,7 +1969,16 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return () => {
       cancelled = true;
     };
-  }, [diffMode, diffOverlayActive, paneReady, resolvedOperationId, uploadVersion, refUploadVersion, diffMapping]);
+  }, [
+    diffMode,
+    diffOverlayActive,
+    paneReady,
+    resolvedOperationId,
+    activeEntryVersion,
+    uploadVersion,
+    refUploadVersion,
+    diffMapping,
+  ]);
 
   const displayedMapMean = activeMapMean?.entry === diffEntryRef.current ? activeMapMean.value : null;
   const displayedMapMeanLabel = displayedMapMean == null
