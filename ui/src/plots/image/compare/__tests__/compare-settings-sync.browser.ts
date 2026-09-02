@@ -417,9 +417,9 @@ async function run(): Promise<boolean> {
   // construction. That path (single pane, diff persists across a flip, instance
   // reused) is covered by `stack/grid-stacked-persist`.
 
-  // --- 9. OPERATION/COLORMAP INDEPENDENCE ------------------------------
-  // Operation selection changes computation only; it never changes the cell's
-  // display encoding. HOME restores the active authored/default settings.
+  // --- 9. OPERATION-AWARE ENCODING DEFAULTS -----------------------------
+  // Operation changes adopt the next semantic display default while the current
+  // encoding still equals the previous default. A custom encoding is preserved.
   // Single-pane (pane A) — the exact directive steps. Each control change is
   // AWAITED to settle (home resets kernel+mode through echo setters that round-trip
   // through the owner, so a bare synchronous follow-up can race the echo).
@@ -428,32 +428,40 @@ async function run(): Promise<boolean> {
   await waitFor(() => A().colormap === homeColormap && A().comparisonOperationId === "absolute", 8000, 25);
   A().changeCompareMode("diff");
   await waitFor(() => A().compareMode === "diff", 8000, 25);
-  // (a) Switching to signed leaves the colormap untouched.
+  // Entering absolute from Split adopts the magnitude-error default.
+  const defaultAbsolute = await waitFor(() => A().colormap === "magma", 8000, 25);
+  report(defaultAbsolute, `DEFAULT: split→absolute adopts magma (got ${A().colormap})`);
+  ok = ok && defaultAbsolute;
+  // (a) Switching to signed adopts the diverging default.
   A().changeComparisonOperation("signed");
-  await waitFor(() => A().comparisonOperationId === "signed", 8000, 25);
-  const defSigned = A().colormap === homeColormap;
-  report(defSigned, `INVARIANT: signed operation leaves colormap=${A().colormap} (expected ${homeColormap})`);
+  const defSigned = await waitFor(
+    () => A().comparisonOperationId === "signed" && A().colormap === "red-blue",
+    8000, 25,
+  );
+  report(defSigned, `DEFAULT: signed operation adopts red-blue (got ${A().colormap})`);
   ok = ok && defSigned;
-  // (b) Switching back to absolute still leaves it untouched.
+  // (b) Switching back to absolute restores the magnitude default.
   A().changeComparisonOperation("absolute");
-  await waitFor(() => A().comparisonOperationId === "absolute", 8000, 25);
-  const defAbs = A().colormap === homeColormap;
-  report(defAbs, `INVARIANT: absolute operation leaves colormap=${A().colormap} (expected ${homeColormap})`);
+  const defAbs = await waitFor(
+    () => A().comparisonOperationId === "absolute" && A().colormap === "magma",
+    8000, 25,
+  );
+  report(defAbs, `DEFAULT: absolute operation adopts magma (got ${A().colormap})`);
   ok = ok && defAbs;
-  // (c) the user PICKS magma explicitly → an override.
-  A().changeColormap("magma");
-  const picked = await waitFor(() => A().colormap === "magma", 8000, 25);
-  report(picked, `OVERRIDE: user picks magma (A.colormap=${A().colormap})`);
+  // (c) the user PICKS turbo explicitly → an override.
+  A().changeColormap("turbo");
+  const picked = await waitFor(() => A().colormap === "turbo", 8000, 25);
+  report(picked, `OVERRIDE: user picks turbo (A.colormap=${A().colormap})`);
   ok = ok && picked;
-  // (d) An explicit choice survives a kernel switch.
+  // (d) A custom choice survives a kernel switch.
   A().changeComparisonOperation("signed");
-  const followed = await waitFor(() => A().comparisonOperationId === "signed" && A().colormap === "magma", 8000, 25);
-  report(followed, `SWITCH: kernel→signed preserves magma (A.colormap=${A().colormap})`);
+  const followed = await waitFor(() => A().comparisonOperationId === "signed" && A().colormap === "turbo", 8000, 25);
+  report(followed, `SWITCH: kernel→signed preserves turbo (A.colormap=${A().colormap})`);
   ok = ok && followed;
   // (e) HOME replaces the cell settings with the active authored/default values.
   A().home();
   const homeReset = await waitFor(
-    () => A().colormap === homeColormap && A().colormap !== "magma" && A().comparisonOperationId === "absolute", 8000, 25);
+    () => A().colormap === homeColormap && A().colormap !== "turbo" && A().comparisonOperationId === "absolute", 8000, 25);
   report(
     homeReset,
     `HOME: override cleared → active default (A.colormap=${A().colormap}, kernel=${A().comparisonOperationId})`,

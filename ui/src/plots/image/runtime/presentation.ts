@@ -32,4 +32,6 @@ export interface ImagePresentation {
   readonly pixelValueNotation?: PixelValueNotation;
   readonly channelTree?: ChannelMenuTree;
   readonly authoredChannelSelection?: ChannelSelection;
+  /** Descriptor-authored source mapping used to recognize operation defaults. */
+  readonly authoredSourceEncoding?: string;
 }

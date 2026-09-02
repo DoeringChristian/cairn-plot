@@ -16,6 +16,12 @@ export {
 } from "../resources/runtime-config.ts";
 export type { PlotSession } from "../state/session/plot-session.ts";
 export type { SessionPersistence } from "../state/session/session-persistence.ts";
+export {
+  comparisonOperationSettingsPatch,
+  recommendedImageEncoding,
+  type ComparisonOperationSettingsPatchOptions,
+  type RecommendedImageEncodingOptions,
+} from "../plots/image/runtime/operation-display-defaults.ts";
 export type {
   CompareNode,
   DataSpec,

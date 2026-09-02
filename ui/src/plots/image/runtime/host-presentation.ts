@@ -12,6 +12,12 @@ import type {
   ImageSource,
 } from "../definition/content.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
+import { resolveDisplayOperator } from "./tonemap.ts";
+
+function authoredSourceEncoding(node: PlotLeafNode | CompareNode): string {
+  const value = node.settings?.["image.encoding"];
+  return typeof value === "string" ? value : resolveDisplayOperator(undefined);
+}
 
 export interface ImageComparisonHostInput {
   readonly node: CompareNode;
@@ -47,6 +53,7 @@ export function composeImageComparisonPresentation(args: {
     ...(leaf.props ?? {}),
     source: resolved.source,
     comparison: content,
+    authoredSourceEncoding: authoredSourceEncoding(comparison.node),
     ...(resolved.__diffOverlay ? { overlay: resolved.__diffOverlay } : {}),
   };
 }
@@ -81,6 +88,7 @@ export function composeSingleImagePresentation(args: {
       ...hostProps,
       ...(args.leaf.props ?? {}),
       ...args.resolved,
+      authoredSourceEncoding: authoredSourceEncoding(args.leaf),
     },
     baseChannelTree,
   };

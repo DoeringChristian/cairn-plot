@@ -11,10 +11,10 @@ import type { ReactPlotViewProps } from "../../react-view.ts";
 import type { ImagePresentation, ImageSettings } from "../runtime/register.ts";
 import type { ImageBackend } from "../backend.ts";
 import type { ImageBackendView } from "./contracts.ts";
-import type { Colormap } from "../../types.ts";
 import type { ImageComparisonInput } from "./contracts.ts";
 import { channelToolbarButton, type ChannelSelection } from "../components/channel-menu.ts";
 import { ImageHostRuntimeContext } from "./host-context.ts";
+import { comparisonOperationSettingsPatch } from "./operation-display-defaults.ts";
 
 /** Thin image adapter: framing and projection into the host-selected backend. */
 export interface ImagePlotViewProps extends ReactPlotViewProps<ImagePresentation, ImageSettings> {
@@ -57,7 +57,6 @@ export function ImagePlotView({
           : selectedComparisonOperation!,
         mode: selectedComparisonOperation === "split" ? "split" : "diff",
         splitPosition: settings["compare.split"] ?? p.comparison.defaultSplit,
-        colormap: settings["image.encoding"] as Colormap | undefined,
         align: p.comparison.align,
         fit: p.comparison.fit,
         contentKeyA: p.comparison.contentKeyA,
@@ -66,10 +65,20 @@ export function ImagePlotView({
         foregroundLabel: p.comparison.foregroundLabel,
         inStackedGrid: inStack,
         inOverlay,
-        onComparisonOperationChange: (operationId) => commands.patch({ "compare.operation": operationId }),
-        onCompareModeChange: (mode) => commands.patch({
-          "compare.operation": mode === "split" ? "split" : p.comparison!.defaultOperation,
-        }),
+        onComparisonOperationChange: (operationId) => commands.patch(comparisonOperationSettingsPatch({
+          previousOperation: selectedComparisonOperation,
+          nextOperation: operationId,
+          currentEncoding: settings["image.encoding"],
+          authoredSourceEncoding: p.authoredSourceEncoding,
+          flipMode: settings["compare.flipMode"],
+        })),
+        onCompareModeChange: (mode) => commands.patch(comparisonOperationSettingsPatch({
+          previousOperation: selectedComparisonOperation,
+          nextOperation: mode === "split" ? "split" : p.comparison!.defaultOperation,
+          currentEncoding: settings["image.encoding"],
+          authoredSourceEncoding: p.authoredSourceEncoding,
+          flipMode: settings["compare.flipMode"],
+        })),
         onSplitPositionChange: (position) => commands.patch({ "compare.split": position }),
         compareModified:
           selectedComparisonOperation !==

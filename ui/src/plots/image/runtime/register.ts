@@ -17,6 +17,7 @@ import {
   TONEMAP_GAMMA_DEFAULT,
 } from "../runtime/tonemap.ts";
 import { resolveImageData } from "../resources/resolve-data.ts";
+import { recommendedImageEncoding } from "./operation-display-defaults.ts";
 import type { ImageBackend } from "../backend.ts";
 import type { ImageBackendView } from "./contracts.ts";
 import type { ImagePlotViewProps } from "./view.tsx";
@@ -27,9 +28,20 @@ export type ImageSettings = PlotSettings & SettingsRecord;
 
 /** Image-owned HOME state. Authored node settings are merged by the host. */
 export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSettings {
+  const authoredOperation = typeof node.settings?.["compare.operation"] === "string"
+    ? node.settings["compare.operation"]
+    : node.kind === "compare"
+      ? node.presentation === "difference" ? "absolute" : "split"
+      : undefined;
+  const authoredSourceEncoding = typeof node.settings?.["image.encoding"] === "string"
+    ? node.settings["image.encoding"]
+    : resolveDisplayOperator(undefined);
   return {
     "image.view": { zoom: 1, pan: { x: 0, y: 0 } },
-    "image.encoding": resolveDisplayOperator(undefined),
+    "image.encoding": recommendedImageEncoding({
+      operation: authoredOperation,
+      authoredSourceEncoding,
+    }),
     "image.tonemapGamma": TONEMAP_GAMMA_DEFAULT,
     "image.peak": EXTENDED_TONEMAP_PEAK_DEFAULT,
     "image.exposureEV": 0,
@@ -39,7 +51,7 @@ export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSet
     "panel.info": null,
     ...(node.kind === "compare"
       ? {
-          "compare.operation": node.presentation === "difference" ? "absolute" : "split",
+          "compare.operation": authoredOperation!,
           "compare.split": 0.5,
         }
       : {}),

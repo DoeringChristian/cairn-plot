@@ -1121,10 +1121,10 @@ async function main(): Promise<void> {
     // reset it (the reported "no reset"). With the diff colormap merged into the
     // viewport's ONE display encoding, `enc.resetEncoding()` → the shared default.
     interface JResult {
-      seed0: string; // slot0 FLIP default (turbo)
-      seed1: string; // slot1 absolute default (turbo)
-      home1Solo: string; // PART A: HOME slot1 (absolute, unselected) → turbo
-      home0Solo: string; // PART A: HOME slot0 (FLIP, unselected) → turbo
+      seed0: string; // slot0 FLIP default (magma)
+      seed1: string; // slot1 absolute default (magma)
+      home1Solo: string; // PART A: HOME slot1 (absolute, unselected) → magma
+      home0Solo: string; // PART A: HOME slot0 (FLIP, unselected) → magma
       mirrored1: string; // PART B: after slot0 picks red-blue → peer (slot1) follows
       home0: string; // PART B: HOME slot0 (selected) → reset off the pick
       kept1: string; // PART B: slot1 UNTOUCHED by slot0's HOME (still red-blue)
@@ -1147,12 +1147,12 @@ async function main(): Promise<void> {
       await waitFor(() => d()[1]?.colormap === "red-blue", 4000, 30);
       d()[1]!.home();
       await sleep(250);
-      const home1Solo = d()[1]?.colormap ?? "?"; // → turbo (absolute default)
+      const home1Solo = d()[1]?.colormap ?? "?"; // → magma (absolute default)
       d()[0]!.changeColormap("red-blue"); // slot0 = FLIP
       await waitFor(() => d()[0]?.colormap === "red-blue", 4000, 30);
       d()[0]!.home();
       await sleep(250);
-      const home0Solo = d()[0]?.colormap ?? "?"; // → turbo (shared default)
+      const home0Solo = d()[0]?.colormap ?? "?"; // → magma (shared default)
       // -- PART B: multi-select MIRROR + GROUP HOME (user ruling — supersedes the
       // old local-HOME reg). Select both (slot0 anchor); a colormap pick mirrors
       // to the peer; HOME on slot0 publishes slot0's visible-diff DEFAULT to the
@@ -1176,13 +1176,13 @@ async function main(): Promise<void> {
       return { seed0, seed1, home1Solo, home0Solo, mirrored1, home0, kept1 };
     };
     const j = await runJ("jDiffGrid");
-    report(j.seed0 === "srgb" && j.seed1 === "srgb", `PHASE J setup: unauthored DIFF cells use the viewport image default (FLIP=${j.seed0}, absolute=${j.seed1})`);
-    report(j.home1Solo === "srgb", `PHASE J (scenario 1): HOME on the absolute diff restores its viewport default (${j.home1Solo})`);
-    report(j.home0Solo === "srgb", `PHASE J (scenario 1): HOME on the FLIP diff restores its viewport default (${j.home0Solo})`);
+    report(j.seed0 === "magma" && j.seed1 === "magma", `PHASE J setup: diff cells use operation-aware defaults (FLIP=${j.seed0}, absolute=${j.seed1})`);
+    report(j.home1Solo === "magma", `PHASE J (scenario 1): HOME on the absolute diff restores its viewport default (${j.home1Solo})`);
+    report(j.home0Solo === "magma", `PHASE J (scenario 1): HOME on the FLIP diff restores its viewport default (${j.home0Solo})`);
     report(j.mirrored1 === "red-blue", `PHASE J (scenario 1): multi-select mirrors a diff colormap pick between cells (peer→red-blue: ${j.mirrored1})`);
-    report(j.home0 === "srgb", `PHASE J (scenario 1): HOME on a multi-selected diff restores the clicked viewport default (${j.home0})`);
-    report(j.kept1 === "srgb", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts that default too (${j.kept1})`);
-    if (j.seed0 !== "srgb" || j.seed1 !== "srgb" || j.home1Solo !== "srgb" || j.home0Solo !== "srgb" || j.mirrored1 !== "red-blue" || j.home0 !== "srgb" || j.kept1 !== "srgb") allOk = false;
+    report(j.home0 === "magma", `PHASE J (scenario 1): HOME on a multi-selected diff restores the clicked viewport default (${j.home0})`);
+    report(j.kept1 === "magma", `PHASE J (scenario 1): HOME is a GROUP action — the neighbour adopts that default too (${j.kept1})`);
+    if (j.seed0 !== "magma" || j.seed1 !== "magma" || j.home1Solo !== "magma" || j.home0Solo !== "magma" || j.mirrored1 !== "red-blue" || j.home0 !== "magma" || j.kept1 !== "magma") allOk = false;
 
     // ============ PHASE K — MULTI-SELECT KERNEL: FORMATION MIRRORS THE FIRST ===
     // Two side-by-side DIFF cells with DISTINCT kernels (slot0 FLIP, slot1
