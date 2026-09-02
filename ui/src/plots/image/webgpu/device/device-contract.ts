@@ -179,6 +179,8 @@ export interface Device {
     bins: number,
   ): Promise<DeepDepthHistogramResult | null>;
   destroy(): void;
+  /** Register one lifecycle listener. The returned function unregisters it. */
+  onLost?(listener: (reason: unknown) => void): () => void;
   /**
    * True while this device's underlying GPU context is LOST and awaiting
    * (asynchronous) browser restoration. WebGPU's `createSurface` is always a

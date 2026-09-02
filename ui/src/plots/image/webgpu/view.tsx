@@ -1013,6 +1013,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         acquirePane(canvas, {
           hdr: useHdr,
           onAdmitted: () => setContainerTick((tick) => tick + 1),
+          onActivationFailure: () => setEngineFailed(true),
         })
           .then((handle) => {
             if (cancelled) {

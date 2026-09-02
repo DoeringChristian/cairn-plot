@@ -8,6 +8,7 @@ import {
   setOffscreenCpuReleaseMs,
 } from "../resources/runtime-config.ts";
 import { setExpandedUploadCacheBudget } from "../plots/image/webgpu/expanded-upload-cache.ts";
+import { applyRuntimePolicyHooks } from "../resources/runtime-policy-hooks.ts";
 
 export interface RuntimeConfiguration {
   /** Decoded artifact/preparation cache budget. */
@@ -32,26 +33,42 @@ export interface RuntimeConfiguration {
   };
 }
 
-/** Configure host-level resource policy through one validated public call. */
-export function configureRuntime(configuration: RuntimeConfiguration): void {
-  if (configuration == null || typeof configuration !== "object") {
+function finiteNonNegative(value: unknown, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`cairn-plot: ${label} must be a finite non-negative number`);
+  }
+}
+
+function safeInteger(value: unknown, label: string, positive: boolean): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < (positive ? 1 : 0)) {
+    throw new Error(
+      `cairn-plot: ${label} must be a ${positive ? "positive" : "non-negative"} safe integer`,
+    );
+  }
+}
+
+/** Validate the complete call before any process-wide setting/cache is mutated. */
+function validateConfiguration(configuration: RuntimeConfiguration): void {
+  if (configuration == null || typeof configuration !== "object" || Array.isArray(configuration)) {
     throw new Error("cairn-plot: runtime configuration must be an object");
   }
   if (configuration.decodedCacheBytes !== undefined) {
-    setRuntimeCacheBudget(configuration.decodedCacheBytes);
+    finiteNonNegative(configuration.decodedCacheBytes, "cache budget");
   }
   if (configuration.expandedUploadCacheBytes !== undefined) {
-    setExpandedUploadCacheByteLimit(configuration.expandedUploadCacheBytes);
-    setExpandedUploadCacheBudget(configuration.expandedUploadCacheBytes);
+    safeInteger(configuration.expandedUploadCacheBytes, "expanded CPU upload cache byte limit", false);
   }
   if (configuration.offscreenCpuReleaseMs !== undefined) {
-    setOffscreenCpuReleaseMs(configuration.offscreenCpuReleaseMs);
+    safeInteger(configuration.offscreenCpuReleaseMs, "offscreen CPU release timeout", false);
   }
   const gpu = configuration.gpu;
-  if (!gpu) return;
-  if (gpu.livePaneLimit !== undefined) setLiveGpuPaneLimit(gpu.livePaneLimit);
+  if (gpu === undefined) return;
+  if (gpu == null || typeof gpu !== "object" || Array.isArray(gpu)) {
+    throw new Error("cairn-plot: runtime gpu configuration must be an object");
+  }
+  if (gpu.livePaneLimit !== undefined) safeInteger(gpu.livePaneLimit, "live GPU pane limit", true);
   if (gpu.sourceTexturesPerPane !== undefined) {
-    setGpuSourceTextureRetentionLimit(gpu.sourceTexturesPerPane);
+    safeInteger(gpu.sourceTexturesPerPane, "GPU source texture retention limit", true);
   }
   const sourceLimitsSpecified =
     gpu.activeSourceBytes !== undefined ||
@@ -67,16 +84,52 @@ export function configureRuntime(configuration: RuntimeConfiguration): void {
         "cairn-plot: activeSourceBytes, sharedSourceBytes, and zeroRefSourceBytes must be configured together",
       );
     }
-    setGpuSourceTextureLimits({
-      activeBytes: gpu.activeSourceBytes,
-      sharedBytes: gpu.sharedSourceBytes,
-      zeroRefBytes: gpu.zeroRefSourceBytes,
-    });
+    safeInteger(gpu.activeSourceBytes, "active GPU source texture byte limit", true);
+    safeInteger(gpu.sharedSourceBytes, "shared GPU source texture byte limit", true);
+    safeInteger(gpu.zeroRefSourceBytes, "zero-ref GPU source texture byte limit", false);
   }
   if (gpu.diffEntries !== undefined || gpu.diffBytes !== undefined) {
     if (gpu.diffEntries === undefined || gpu.diffBytes === undefined) {
       throw new Error("cairn-plot: diffEntries and diffBytes must be configured together");
     }
-    setGpuDiffCacheLimits(gpu.diffEntries, gpu.diffBytes);
+    safeInteger(gpu.diffEntries, "GPU diff cache entry limit", true);
+    safeInteger(gpu.diffBytes, "GPU diff cache byte limit", true);
   }
+}
+
+/** Configure host-level resource policy through one atomic validated public call. */
+export function configureRuntime(configuration: RuntimeConfiguration): void {
+  validateConfiguration(configuration);
+  if (configuration.decodedCacheBytes !== undefined) {
+    setRuntimeCacheBudget(configuration.decodedCacheBytes);
+  }
+  if (configuration.expandedUploadCacheBytes !== undefined) {
+    setExpandedUploadCacheByteLimit(configuration.expandedUploadCacheBytes);
+    setExpandedUploadCacheBudget(configuration.expandedUploadCacheBytes);
+  }
+  if (configuration.offscreenCpuReleaseMs !== undefined) {
+    setOffscreenCpuReleaseMs(configuration.offscreenCpuReleaseMs);
+  }
+  const gpu = configuration.gpu;
+  if (gpu) {
+    if (gpu.livePaneLimit !== undefined) setLiveGpuPaneLimit(gpu.livePaneLimit);
+    if (gpu.sourceTexturesPerPane !== undefined) {
+      setGpuSourceTextureRetentionLimit(gpu.sourceTexturesPerPane);
+    }
+    if (
+      gpu.activeSourceBytes !== undefined &&
+      gpu.sharedSourceBytes !== undefined &&
+      gpu.zeroRefSourceBytes !== undefined
+    ) {
+      setGpuSourceTextureLimits({
+        activeBytes: gpu.activeSourceBytes,
+        sharedBytes: gpu.sharedSourceBytes,
+        zeroRefBytes: gpu.zeroRefSourceBytes,
+      });
+    }
+    if (gpu.diffEntries !== undefined && gpu.diffBytes !== undefined) {
+      setGpuDiffCacheLimits(gpu.diffEntries, gpu.diffBytes);
+    }
+  }
+  applyRuntimePolicyHooks();
 }

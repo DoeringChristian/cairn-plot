@@ -15,10 +15,10 @@
  * `MAX_LIVE_SWAPCHAINS`, tracked as an LRU, so a page with far more panes
  * than are ever on-screen at once (a big gallery) doesn't keep every pane's
  * source texture resident. A pane that scrolls off-screen is **parked**: its
- * `Surface`/`Texture` are freed while the CPU source buffer it was last given
- * via `setSource()` is RETAINED (owned by this pool entry, not by the
- * caller) so a scroll-back-into-view **restore** can re-upload without the
- * caller re-supplying the data. Admission is stable: when more panes are
+ * `Surface`/`Texture` are freed. Direct `setSource()` buffers remain pane-owned;
+ * reconstructible `setSourceLease()` buffers are released immediately after a
+ * successful upload (and while waiting), retaining only exact layout metadata
+ * plus the raw-source reacquire closure needed for restore. Admission is stable: when more panes are
  * intersection-visible than the count/byte budgets permit, excess panes enter
  * a FIFO waiting state and keep their last painted canvas. Their passive render
  * retries never displace another visible pane. An offscreen/disposed live pane
@@ -35,11 +35,13 @@
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
 import {
+  getGpuDiffCacheLimits,
   getGpuSourceTextureLimits,
   getGpuSourceTextureRetentionLimit,
   getLiveGpuPaneLimit,
   getOffscreenCpuReleaseMs,
 } from "../../../resources/runtime-config.ts";
+import { registerRuntimePolicyHook } from "../../../resources/runtime-policy-hooks.ts";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import type { ImageWebGpuRuntime } from "./device/runtime.ts";
 import {
@@ -64,7 +66,7 @@ import {
   ensureDiffResultReadback,
   type DiffCacheEntry,
 } from "./diff-engine";
-import { cacheFor } from "./diff-cache";
+import { cacheFor, clearCacheFor } from "./diff-cache";
 import { recordCachedPresent, recordSourceRebind, recordSourceUpload } from "./perf-stats.ts";
 import { textureByteLength, textureBytes } from "./texture-bytes.ts";
 import { mappingKey, type CompareMapping } from "../runtime/compare-align";
@@ -175,6 +177,12 @@ export interface SourceUploadLease {
   release(): void;
 }
 
+interface SourceLayout {
+  width: number;
+  height: number;
+  format: TextureFormat;
+}
+
 export interface PaneHandle {
   readonly canvas: HTMLCanvasElement;
   /** True while this pane's GPU resources are freed (parked). */
@@ -182,9 +190,10 @@ export interface PaneHandle {
   /** True when visible but stably waiting for count/byte admission. */
   readonly isWaiting: boolean;
   /**
-   * Replace the CPU source buffer. Retained by the pool so `park()`/restore
-   * cycles don't need the caller to re-supply it. If the pane is currently
-   * live, uploads immediately; if parked, the upload is deferred to the next
+   * Replace the CPU source buffer. Direct buffers are retained by the pool so
+   * `park()`/restore cycles don't need the caller to re-supply them; prefer
+   * `setSourceLease` for reconstructible expanded buffers. If the pane is
+   * currently live and admitted, uploads immediately; if parked, deferred to the next
    * `render()`/`restore()`.
    *
    * Q22 fix: this does NOT touch `canvas.width/height` or the surface's
@@ -206,8 +215,8 @@ export interface PaneHandle {
    * lifecycle-identical to before.
    */
   setSource(src: SourceUpload, contentKey?: string): void;
-  /** Transfer one cache lease to this pane. `reacquire` reconstructs/reacquires
-   * exact native upload data after delayed offscreen CPU release. */
+  /** Transfer one cache lease to this pane. The lease is released after upload
+   * or while waiting; `reacquire` provides exact native data for restoration. */
   setSourceLease(
     lease: SourceUploadLease,
     contentKey: string,
@@ -459,6 +468,7 @@ interface PaneEntry {
   surface: Surface | null;
   srcTexture: Texture | null;
   source: SourceUpload | null;
+  sourceLayout: SourceLayout | null;
   sourceLease: SourceUploadLease | null;
   sourceReacquire: (() => SourceUploadLease) | null;
   /** SECOND source slot `b` (the reference/baseline of an arity-2 diff CONTENT
@@ -467,6 +477,7 @@ interface PaneEntry {
    *  on restore. Null for the single-image path (the common case). See
    *  `PaneHandle.setSourceB`. */
   sourceB: SourceUpload | null;
+  sourceBLayout: SourceLayout | null;
   sourceBLease: SourceUploadLease | null;
   sourceBReacquire: (() => SourceUploadLease) | null;
   srcTextureB: Texture | null;
@@ -504,10 +515,14 @@ interface PaneEntry {
   parked: boolean;
   waiting: boolean;
   disposed: boolean;
+  failed: boolean;
   /** Last-reported IntersectionObserver visibility. */
   visible: boolean;
+  /** Page-visibility suspension, independent of intersection visibility. */
+  documentHidden: boolean;
   offscreenReleaseTimer: ReturnType<typeof setTimeout> | null;
   onAdmitted: (() => void) | undefined;
+  onActivationFailure: ((error: unknown) => void) | undefined;
   /**
    * The canvas backing-store / surface size (DEVICE pixels, i.e. already
    * display-css-size * dpr), as last requested via `PaneHandle.resize()`. 0 until
@@ -553,10 +568,11 @@ interface SharedSourceTexture {
 // Artifact-backed sources are immutable. Share one uploaded texture across all
 // panes on the device instead of duplicating a global reference once per run.
 const sharedSourceTextures = new WeakMap<Device, Map<string, SharedSourceTexture>>();
-const knownDevices = new Set<Device>();
+/** Strong only while a pane is registered; zero-pane devices are explicitly cleared. */
+const devicePaneCounts = new Map<Device, number>();
+const deviceLostUnsubscribers = new Map<Device, () => void>();
 
 function sharedSources(device: Device): Map<string, SharedSourceTexture> {
-  knownDevices.add(device);
   let cache = sharedSourceTextures.get(device);
   if (!cache) {
     cache = new Map();
@@ -568,6 +584,32 @@ function sharedSources(device: Device): Map<string, SharedSourceTexture> {
 function touchShared(cache: Map<string, SharedSourceTexture>, key: string, value: SharedSourceTexture): void {
   cache.delete(key);
   cache.set(key, value);
+}
+
+function registerDevice(device: Device): void {
+  const count = devicePaneCounts.get(device) ?? 0;
+  devicePaneCounts.set(device, count + 1);
+  if (count === 0 && device.onLost) {
+    deviceLostUnsubscribers.set(device, device.onLost((reason) => handleDeviceLoss(device, reason)));
+  }
+}
+
+function unregisterDevice(device: Device): void {
+  const count = devicePaneCounts.get(device) ?? 0;
+  if (count > 1) {
+    devicePaneCounts.set(device, count - 1);
+    return;
+  }
+  devicePaneCounts.delete(device);
+  deviceLostUnsubscribers.get(device)?.();
+  deviceLostUnsubscribers.delete(device);
+  const shared = sharedSourceTextures.get(device);
+  if (shared) {
+    for (const value of shared.values()) value.texture.destroy();
+    shared.clear();
+    sharedSourceTextures.delete(device);
+  }
+  clearCacheFor(device);
 }
 
 /** LRU-trim only zero-ref textures. Unique shared bytes are counted once and a
@@ -609,7 +651,7 @@ function releaseSharedSource(device: Device, key: string): void {
   trimSharedSources(device);
 }
 
-function retainedKey(key: string, src: SourceUpload): string {
+function retainedKey(key: string, src: SourceLayout): string {
   // Layout/transform identity is part of texture identity. This also makes a
   // stale caller key harmless if the decoded dimensions or native format move.
   return `${key}\u0000${src.width}x${src.height}:${src.format}`;
@@ -638,7 +680,12 @@ function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | u
       shared.refs++;
     } else {
       const texture = entry.device.createTexture(src.width, src.height, src.format);
-      texture.write(src.data);
+      try {
+        texture.write(src.data);
+      } catch (error) {
+        texture.destroy();
+        throw error;
+      }
       const bytes = textureByteLength(src.width, src.height, src.format);
       recordSourceUpload(bytes);
       shared = { texture, refs: 1, bytes };
@@ -649,7 +696,12 @@ function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | u
     return shared.texture;
   }
   const tex = entry.device.createTexture(src.width, src.height, src.format);
-  tex.write(src.data);
+  try {
+    tex.write(src.data);
+  } catch (error) {
+    tex.destroy();
+    throw error;
+  }
   recordSourceUpload(textureByteLength(src.width, src.height, src.format));
   return tex;
 }
@@ -705,9 +757,12 @@ function removeWaiter(entry: PaneEntry): void {
 }
 
 function enqueueWaiter(entry: PaneEntry): void {
-  if (entry.waiting) return;
+  if (entry.waiting || entry.failed || entry.disposed) return;
   entry.waiting = true;
   waiters.push(entry);
+  // Admission needs only exact layout metadata. Reconstructible expanded arrays
+  // must remain evictable while this pane waits.
+  releaseCpuUploadOwnership(entry);
   poolStats.admissionBlocks++;
 }
 
@@ -731,6 +786,22 @@ function reacquireCpuUploads(entry: PaneEntry): void {
   }
 }
 
+function layoutOf(src: SourceUpload): SourceLayout {
+  return { width: src.width, height: src.height, format: src.format };
+}
+
+function deepStorageByteLength(deep: DeepGpuCsrSpec): number {
+  return deep.offsets.byteLength + deep.colors.byteLength + deep.zs.byteLength;
+}
+
+function hasPrimarySource(entry: PaneEntry): boolean {
+  return !!entry.sourceLayout || !!entry.deep;
+}
+
+function hasSecondarySource(entry: PaneEntry): boolean {
+  return !!entry.sourceBLayout;
+}
+
 function cancelOffscreenRelease(entry: PaneEntry): void {
   if (entry.offscreenReleaseTimer !== null) clearTimeout(entry.offscreenReleaseTimer);
   entry.offscreenReleaseTimer = null;
@@ -745,7 +816,7 @@ function scheduleOffscreenRelease(entry: PaneEntry): void {
   }
   entry.offscreenReleaseTimer = setTimeout(() => {
     entry.offscreenReleaseTimer = null;
-    if (!entry.visible && !entry.disposed) releaseCpuUploadOwnership(entry);
+    if ((!entry.visible || entry.documentHidden) && !entry.disposed) releaseCpuUploadOwnership(entry);
   }, timeout);
 }
 
@@ -766,6 +837,7 @@ function activeSourceBytes(device?: Device): number {
         bytes += textureBytes(texture);
       }
     }
+    if (entry.deep) bytes += deepStorageByteLength(entry.deep);
   }
   return bytes;
 }
@@ -773,22 +845,86 @@ function activeSourceBytes(device?: Device): number {
 function prospectiveSourceBytes(entry: PaneEntry): number {
   const keys = new Set<string>();
   let bytes = 0;
-  const add = (src: SourceUpload | null, key: string | undefined) => {
-    if (!src) return;
+  const add = (layout: SourceLayout | null, key: string | undefined) => {
+    if (!layout) return;
     if (key === undefined) {
-      bytes += textureByteLength(src.width, src.height, src.format);
+      bytes += textureByteLength(layout.width, layout.height, layout.format);
       return;
     }
-    const k = retainedKey(key, src);
+    const k = retainedKey(key, layout);
     if (keys.has(k)) return;
     keys.add(k);
     const shared = sharedSources(entry.device).get(k);
-    if (!shared || shared.refs === 0) bytes += textureByteLength(src.width, src.height, src.format);
+    if (!shared || shared.refs === 0) bytes += textureByteLength(layout.width, layout.height, layout.format);
   };
-  if (entry.deep) bytes += textureByteLength(entry.deep.width, entry.deep.height, "rgba16float");
-  else add(entry.source, entry.sourceKey);
-  add(entry.sourceB, entry.sourceBKey);
+  if (entry.deep) {
+    bytes += textureByteLength(entry.deep.width, entry.deep.height, "rgba16float");
+    bytes += deepStorageByteLength(entry.deep);
+  } else add(entry.sourceLayout, entry.sourceKey);
+  add(entry.sourceBLayout, entry.sourceBKey);
   return bytes;
+}
+
+function projectedLiveMutationBytes(
+  entry: PaneEntry,
+  sourceLayout: SourceLayout | null,
+  sourceKey: string | undefined,
+  sourceBLayout: SourceLayout | null,
+  sourceBKey: string | undefined,
+  deep: DeepGpuCsrSpec | null,
+): number {
+  const seenTextures = new Set<Texture>();
+  const virtualKeys = new Set<string>();
+  let bytes = 0;
+  const addTexture = (texture: Texture) => {
+    if (seenTextures.has(texture)) return;
+    seenTextures.add(texture);
+    bytes += textureBytes(texture);
+  };
+  for (const candidate of live) {
+    if (candidate.device !== entry.device || candidate === entry) continue;
+    for (const texture of [candidate.srcTexture, candidate.srcTextureB]) if (texture) addTexture(texture);
+    for (const texture of candidate.retained.values()) addTexture(texture);
+    if (candidate.deep) bytes += deepStorageByteLength(candidate.deep);
+  }
+  // Retention remains part of this pane's active working set after a mutation.
+  for (const texture of entry.retained.values()) addTexture(texture);
+  const addLayout = (layout: SourceLayout | null, key: string | undefined) => {
+    if (!layout) return;
+    if (key === undefined) {
+      bytes += textureByteLength(layout.width, layout.height, layout.format);
+      return;
+    }
+    const cacheKey = retainedKey(key, layout);
+    if (virtualKeys.has(cacheKey)) return;
+    virtualKeys.add(cacheKey);
+    const texture = entry.retained.get(cacheKey) ?? sharedSources(entry.device).get(cacheKey)?.texture;
+    if (texture) addTexture(texture);
+    else bytes += textureByteLength(layout.width, layout.height, layout.format);
+  };
+  if (deep) {
+    bytes += textureByteLength(deep.width, deep.height, "rgba16float") + deepStorageByteLength(deep);
+  } else addLayout(sourceLayout, sourceKey);
+  addLayout(sourceBLayout, sourceBKey);
+  return bytes;
+}
+
+function canApplyLiveMutation(
+  entry: PaneEntry,
+  sourceLayout: SourceLayout | null,
+  sourceKey: string | undefined,
+  sourceBLayout: SourceLayout | null,
+  sourceBKey: string | undefined,
+  deep: DeepGpuCsrSpec | null,
+): boolean {
+  const limit = getGpuSourceTextureLimits().activeBytes;
+  while (projectedLiveMutationBytes(entry, sourceLayout, sourceKey, sourceBLayout, sourceBKey, deep) > limit) {
+    const victim = live.find((candidate) => candidate !== entry && !candidate.visible);
+    if (!victim) return false;
+    poolStats.evictions++;
+    parkEntry(victim, false);
+  }
+  return true;
 }
 
 function canAdmit(entry: PaneEntry): boolean {
@@ -827,8 +963,7 @@ function admitWaiters(): void {
       if (!entry.visible) continue;
       if (!canAdmit(entry)) break; // FIFO stability: don't let passive retries jump ahead.
       removeWaiter(entry);
-      activateEntry(entry);
-      queueMicrotask(() => entry.onAdmitted?.());
+      if (activateEntry(entry) && !entry.parked) queueMicrotask(() => entry.onAdmitted?.());
     }
   } finally {
     admittingWaiters = false;
@@ -860,9 +995,9 @@ function parkEntry(entry: PaneEntry, reconsiderWaiters = true): void {
   if (reconsiderWaiters) admitWaiters();
 }
 
-/** (Re-)acquire exact source resources if this pane can be stably admitted. */
-function activateEntry(entry: PaneEntry): void {
-  if (entry.disposed || documentHidden || !entry.visible) return;
+/** Unsafe activation body. Call only through {@link activateEntry}. */
+function activateEntryUnsafe(entry: PaneEntry): void {
+  if (entry.disposed || entry.failed || documentHidden || !entry.visible) return;
   if (forceEngineFailRequested()) {
     throw new Error("cairn-plot engine: forced pane activation failure (?forceEngineFail test hook)");
   }
@@ -871,12 +1006,14 @@ function activateEntry(entry: PaneEntry): void {
     return;
   }
   if (!entry.backingWidth || !entry.backingHeight) return;
-  reacquireCpuUploads(entry);
+  // Admission uses retained layout metadata only. Waiting panes do not pin the
+  // reconstructible expanded cache merely to ask whether they fit.
   if (!canAdmit(entry)) {
     enqueueWaiter(entry);
     return;
   }
   removeWaiter(entry);
+  reacquireCpuUploads(entry);
   const device = entry.device;
   entry.surface = entry.engine.createSurface(entry.canvas, { hdr: entry.hdr });
   entry.canvas.width = entry.backingWidth;
@@ -896,6 +1033,51 @@ function activateEntry(entry: PaneEntry): void {
   poolStats.restores++;
   poolStats.admissions++;
   touchMostRecentlyUsed(entry);
+  // GPU ownership is now sufficient. Drop reconstructible expanded arrays;
+  // raw decoded pixels/reacquire closures remain the restoration authority.
+  releaseCpuUploadOwnership(entry);
+}
+
+function failEntryActivation(entry: PaneEntry, error: unknown): void {
+  if (entry.disposed || entry.failed) return;
+  entry.parked = false; // force teardown after a partial unsafe activation
+  parkEntry(entry, false);
+  removeWaiter(entry);
+  releaseCpuUploadOwnership(entry);
+  entry.failed = true;
+  queueMicrotask(() => entry.onActivationFailure?.(error));
+  admitWaiters();
+}
+
+/** The sole exception-safe activation authority for render, restore and page visibility. */
+function activateEntry(entry: PaneEntry): boolean {
+  try {
+    activateEntryUnsafe(entry);
+    return !entry.failed;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("cairn-plot engine: pane activation failed, falling back to legacy pane", error);
+    failEntryActivation(entry, error);
+    return false;
+  }
+}
+
+function handleDeviceLoss(device: Device, reason: unknown): void {
+  for (const entry of panes) {
+    if (entry.device === device && !entry.disposed) failEntryActivation(entry, reason);
+  }
+  // Failed panes remain until their React owners dispose, but the dead device
+  // must not remain strongly registered and its opportunistic caches are useless.
+  devicePaneCounts.delete(device);
+  deviceLostUnsubscribers.get(device)?.();
+  deviceLostUnsubscribers.delete(device);
+  const shared = sharedSourceTextures.get(device);
+  if (shared) {
+    for (const value of shared.values()) value.texture.destroy();
+    shared.clear();
+    sharedSourceTextures.delete(device);
+  }
+  clearCacheFor(device);
 }
 
 const DEEP_SAMPLE_DIM = 8;
@@ -970,7 +1152,7 @@ function averageSampleRgb(px: Uint8Array | Float32Array, hdr: boolean): { r: num
  * which would otherwise unmount the caller's whole subtree.
  */
 function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
-  if (entry.disposed || (!entry.source && !entry.sourceReacquire && !entry.deep)) return true;
+  if (entry.disposed || entry.failed || !hasPrimarySource(entry)) return !entry.failed;
   // A direct/compositor/plain present supersedes a cached metric face. Release
   // that lease; the cache may retain it opportunistically for a later flip-back.
   releaseActiveDiff(entry);
@@ -979,7 +1161,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   // fall back to the legacy pane; the first render after the first `resize()` paints.
   if (!entry.backingWidth || !entry.backingHeight) return true;
   try {
-    activateEntry(entry);
+    if (!activateEntry(entry)) return false;
     if (entry.waiting || documentHidden || !entry.visible) return true;
     if (!entry.surface || !entry.srcTexture) return false;
     // Bind the pool-owned SECOND source slot `b` (arity-2 direct diff ops) when
@@ -1010,11 +1192,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane activation/render failed, falling back to legacy pane", err);
-    // Force a full teardown regardless of `parkEntry`'s early-return guard
-    // (`entry.parked` may still read `true` if the throw happened mid
-    // `activateEntry()`, before it flips to `false` — see that function).
-    entry.parked = false;
-    parkEntry(entry);
+    failEntryActivation(entry, err);
     return false;
   }
 }
@@ -1028,9 +1206,16 @@ function automaticHdrFlipParams(entry: PaneEntry, contentKey: string): Record<st
     hdrExposureParamsBySource.set(contentKey, cached);
     return cached;
   }
-  if (!entry.source) return { ppd: 67, startExposure: 0, stopExposure: 4, numExposures: 2 };
-  const values = entry.source.data as unknown as ArrayLike<number>;
-  const exposure = computeHdrFlipExposures(values, entry.source.width, entry.source.height, 4);
+  let temporary: SourceUploadLease | null = null;
+  const source = entry.source ?? (entry.sourceReacquire ? (temporary = entry.sourceReacquire()).upload : null);
+  if (!source) return { ppd: 67, startExposure: 0, stopExposure: 4, numExposures: 2 };
+  let exposure: ReturnType<typeof computeHdrFlipExposures>;
+  try {
+    const values = source.data as unknown as ArrayLike<number>;
+    exposure = computeHdrFlipExposures(values, source.width, source.height, 4);
+  } finally {
+    temporary?.release();
+  }
   const params = { ppd: 67, ...exposure };
   hdrExposureParamsBySource.set(contentKey, params);
   while (hdrExposureParamsBySource.size > 512) {
@@ -1059,12 +1244,12 @@ function attemptRenderDiffCached(
   cacheParams?: Record<string, number>,
 ): DiffCacheEntry | null {
   if (
-    entry.disposed ||
-    (!entry.source && !entry.sourceReacquire && !entry.deep) ||
-    (!entry.sourceB && !entry.sourceBReacquire)
+    entry.disposed || entry.failed ||
+    !hasPrimarySource(entry) ||
+    !hasSecondarySource(entry)
   ) return null;
   try {
-    activateEntry(entry);
+    if (!activateEntry(entry)) return null;
     if (entry.waiting) return null;
     // MEASURE-THEN-RENDER: unmeasured ⇒ `activateEntry` deferred (no surface). The
     // caller (GpuImagePane.renderPass) already holds pre-measure, so this is a
@@ -1115,8 +1300,7 @@ function attemptRenderDiffCached(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: cached-diff pane render failed, falling back to legacy pane", err);
-    entry.parked = false;
-    parkEntry(entry);
+    failEntryActivation(entry, err);
     return null;
   }
 }
@@ -1135,11 +1319,7 @@ function attemptComputeMetrics(
   contentKeys?: { a: string; b: string },
   mapping?: CompareMapping,
 ): Promise<DiffMetrics> | null {
-  if (
-    entry.disposed ||
-    (!entry.source && !entry.sourceReacquire) ||
-    (!entry.sourceB && !entry.sourceBReacquire)
-  ) return null;
+  if (entry.disposed || entry.failed || !entry.sourceLayout || !entry.sourceBLayout) return null;
   try {
     activateEntry(entry);
     if (entry.waiting || !entry.srcTexture || !entry.srcTextureB) return null;
@@ -1160,8 +1340,7 @@ function attemptComputeMetrics(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane metrics compute failed", err);
-    entry.parked = false;
-    parkEntry(entry);
+    failEntryActivation(entry, err);
     return null;
   }
 }
@@ -1187,7 +1366,7 @@ function attemptComputeHistogram(
   entry: PaneEntry,
   spec: TexHistogramSpec,
 ): Promise<TexHistogramResult> | null {
-  if (entry.disposed || (!entry.source && !entry.sourceReacquire) || entry.deep) return null;
+  if (entry.disposed || entry.failed || !entry.sourceLayout || entry.deep) return null;
   try {
     activateEntry(entry);
     const tex = entry.srcTexture;
@@ -1210,8 +1389,7 @@ function attemptComputeHistogram(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane histogram compute failed", err);
-    entry.parked = false;
-    parkEntry(entry);
+    failEntryActivation(entry, err);
     return null;
   }
 }
@@ -1243,8 +1421,7 @@ function attemptComputeDepthHistogram(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane depth-histogram compute failed", err);
-    entry.parked = false;
-    parkEntry(entry);
+    failEntryActivation(entry, err);
     return null;
   }
 }
@@ -1256,11 +1433,7 @@ function attemptComputeSsim(
   mapping?: CompareMapping,
   retainMap = true,
 ): Promise<number> | null {
-  if (
-    entry.disposed ||
-    (!entry.source && !entry.sourceReacquire) ||
-    (!entry.sourceB && !entry.sourceBReacquire)
-  ) return null;
+  if (entry.disposed || entry.failed || !entry.sourceLayout || !entry.sourceBLayout) return null;
   try {
     activateEntry(entry);
     if (entry.waiting || !entry.srcTexture || !entry.srcTextureB) return null;
@@ -1276,9 +1449,122 @@ function attemptComputeSsim(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn("cairn-plot engine: pane SSIM compute failed", err);
-    entry.parked = false;
-    parkEntry(entry);
+    failEntryActivation(entry, err);
     return null;
+  }
+}
+
+function replacePrimarySource(
+  entry: PaneEntry,
+  src: SourceUpload,
+  contentKey: string | undefined,
+  lease: SourceUploadLease | null,
+  reacquire: (() => SourceUploadLease) | null,
+): void {
+  if (entry.disposed || entry.failed) {
+    lease?.release();
+    return;
+  }
+  const nextLayout = layoutOf(src);
+  const changed = entry.sourceLayout?.width !== src.width || entry.sourceLayout?.height !== src.height ||
+    entry.sourceLayout?.format !== src.format || entry.sourceKey !== contentKey || entry.deep !== null ||
+    (contentKey === undefined && entry.source !== src);
+  if (changed) releaseActiveDiff(entry);
+
+  // A live replacement is admitted against the complete A+B working set before
+  // any texture upload. If it cannot fit, park the old GPU ownership (the canvas
+  // keeps its last paint), retain only reconstructible metadata, and join FIFO.
+  if (!entry.parked && entry.surface &&
+      !canApplyLiveMutation(entry, nextLayout, contentKey, entry.sourceBLayout, entry.sourceBKey, null)) {
+    // Tear down using the OLD keys/ownership before committing desired metadata.
+    parkEntry(entry, false);
+    entry.sourceLease?.release();
+    entry.source = reacquire ? null : src;
+    entry.sourceLayout = nextLayout;
+    entry.sourceLease = null;
+    entry.sourceReacquire = reacquire;
+    entry.sourceKey = contentKey;
+    entry.deep = null;
+    lease?.release();
+    enqueueWaiter(entry);
+    admitWaiters();
+    return;
+  }
+
+  try {
+    if (!entry.parked && entry.surface) {
+      const previous = entry.srcTexture;
+      const previousKey = entry.sourceKey;
+      const next = uploadOrBindSource(entry, src, contentKey);
+      if (previous && previous !== next) releaseUnkeyedSlotTexture(previous, previousKey);
+      if (entry.deepBuffers) {
+        entry.deepBuffers.destroy();
+        entry.deepBuffers = null;
+      }
+      entry.srcTexture = next;
+      evictRetained(entry);
+    }
+    entry.sourceLease?.release();
+    entry.source = reacquire ? null : src;
+    entry.sourceLayout = nextLayout;
+    entry.sourceLease = null;
+    entry.sourceReacquire = reacquire;
+    entry.sourceKey = contentKey;
+    entry.deep = null;
+    lease?.release();
+  } catch (error) {
+    lease?.release();
+    failEntryActivation(entry, error);
+  }
+}
+
+function replaceSecondarySource(
+  entry: PaneEntry,
+  src: SourceUpload | null,
+  contentKey: string | undefined,
+  lease: SourceUploadLease | null,
+  reacquire: (() => SourceUploadLease) | null,
+): void {
+  if (entry.disposed || entry.failed) {
+    lease?.release();
+    return;
+  }
+  const nextLayout = src ? layoutOf(src) : null;
+  const nextKey = src ? contentKey : undefined;
+  if (entry.sourceBLayout !== nextLayout || entry.sourceBKey !== nextKey) releaseActiveDiff(entry);
+  if (!entry.parked && entry.surface &&
+      !canApplyLiveMutation(entry, entry.sourceLayout, entry.sourceKey, nextLayout, nextKey, entry.deep)) {
+    parkEntry(entry, false);
+    entry.sourceBLease?.release();
+    entry.sourceB = reacquire ? null : src;
+    entry.sourceBLayout = nextLayout;
+    entry.sourceBLease = null;
+    entry.sourceBReacquire = reacquire;
+    entry.sourceBKey = nextKey;
+    lease?.release();
+    enqueueWaiter(entry);
+    admitWaiters();
+    return;
+  }
+  try {
+    if (!entry.parked && entry.surface) {
+      const previous = entry.srcTextureB;
+      const previousKey = entry.sourceBKey;
+      const next = src ? uploadOrBindSource(entry, src, nextKey) : null;
+      if (previous && previous !== next) releaseUnkeyedSlotTexture(previous, previousKey);
+      entry.srcTextureB = next;
+      evictRetained(entry);
+    }
+    entry.sourceBLease?.release();
+    entry.sourceB = reacquire ? null : src;
+    entry.sourceBLayout = nextLayout;
+    entry.sourceBLease = null;
+    entry.sourceBReacquire = reacquire;
+    entry.sourceBKey = nextKey;
+    lease?.release();
+  } catch (error) {
+    lease?.release();
+    failEntryActivation(entry, error);
   }
 }
 
@@ -1292,114 +1578,71 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       return entry.waiting;
     },
     setSource(src: SourceUpload, contentKey?: string): void {
-      if (entry.disposed) return;
-      entry.sourceLease?.release();
-      entry.sourceLease = null;
-      entry.sourceReacquire = null;
-      if (entry.source !== src || entry.sourceKey !== contentKey) releaseActiveDiff(entry);
-      entry.source = src;
-      // A plain CPU source supersedes any prior DEEP composite source.
-      entry.deep = null;
-      if (entry.deepBuffers) {
-        entry.deepBuffers.destroy();
-        entry.deepBuffers = null;
-      }
-      // Q22 fix: no canvas/surface sizing here — that's `resize()`'s job now,
-      // driven by the pane's ON-SCREEN display size, not this source
-      // texture's own resolution.
-      if (!entry.parked && entry.surface) {
-        const prev = entry.srcTexture;
-        const prevKey = entry.sourceKey;
-        // Content-keyed retention: a keyed hit rebinds the resident texture (no
-        // re-upload — the flip-back fast path); otherwise upload. The PREVIOUS
-        // texture is freed only if it was unkeyed — a keyed one stays in
-        // `retained` for its own flip-back (and may be `prev` itself on a
-        // same-key re-set, in which case `uploadOrBindSource` returns it).
-        const tex = uploadOrBindSource(entry, src, contentKey);
-        if (prev && prev !== tex) releaseUnkeyedSlotTexture(prev, prevKey);
-        entry.srcTexture = tex;
-        entry.sourceKey = contentKey;
-        evictRetained(entry);
-      } else {
-        // Parked: the new source is picked up by the next activateEntry();
-        // record its key so that upload re-seeds retention correctly.
-        entry.sourceKey = contentKey;
-      }
+      replacePrimarySource(entry, src, contentKey, null, null);
     },
     setSourceLease(lease: SourceUploadLease, contentKey: string, reacquire: () => SourceUploadLease): void {
-      handle.setSource(lease.upload, contentKey);
-      if (entry.disposed) {
-        lease.release();
-        return;
-      }
-      entry.sourceLease = lease;
-      entry.sourceReacquire = reacquire;
+      replacePrimarySource(entry, lease.upload, contentKey, lease, reacquire);
     },
     setSourceB(src: SourceUpload | null, contentKey?: string): void {
-      if (entry.disposed) return;
-      entry.sourceBLease?.release();
-      entry.sourceBLease = null;
-      entry.sourceBReacquire = null;
-      if (entry.sourceB !== src || entry.sourceBKey !== (src ? contentKey : undefined)) releaseActiveDiff(entry);
-      entry.sourceB = src;
-      if (!entry.parked && entry.surface) {
-        const prev = entry.srcTextureB;
-        const prevKey = entry.sourceBKey;
-        if (src) {
-          const tex = uploadOrBindSource(entry, src, contentKey);
-          if (prev && prev !== tex) releaseUnkeyedSlotTexture(prev, prevKey);
-          entry.srcTextureB = tex;
-          entry.sourceBKey = contentKey;
-          evictRetained(entry);
-        } else {
-          if (prev) releaseUnkeyedSlotTexture(prev, prevKey);
-          entry.srcTextureB = null;
-          entry.sourceBKey = undefined;
-        }
-      } else {
-        // Parked: picked up by the next activateEntry().
-        entry.sourceBKey = src ? contentKey : undefined;
-      }
+      replaceSecondarySource(entry, src, contentKey, null, null);
     },
     setSourceBLease(
       lease: SourceUploadLease | null,
       contentKey?: string,
       reacquire?: () => SourceUploadLease,
     ): void {
-      handle.setSourceB(lease?.upload ?? null, contentKey);
-      if (!lease) return;
-      if (entry.disposed) {
-        lease.release();
-        return;
-      }
-      entry.sourceBLease = lease;
-      entry.sourceBReacquire = reacquire ?? null;
+      replaceSecondarySource(entry, lease?.upload ?? null, contentKey, lease, lease ? reacquire ?? null : null);
     },
     releaseCpuUploads(): void {
       releaseCpuUploadOwnership(entry);
     },
     setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number): void {
-      if (entry.disposed) return;
-      entry.sourceLease?.release();
-      entry.sourceLease = null;
-      entry.sourceReacquire = null;
-      entry.deep = spec;
-      entry.deepZNear = zNear;
-      entry.deepZFar = zFar;
-      entry.source = null; // mutually exclusive with a CPU source
-      if (!entry.parked && entry.surface) {
-        // Rebuild the composite target + storage buffers, then composite once.
-        // A deep source is never a keyed (compare) source, but free the prior
-        // texture retention-safely regardless (keyed → owned by `retained`).
-        releaseUnkeyedSlotTexture(entry.srcTexture, entry.sourceKey);
+      if (entry.disposed || entry.failed) return;
+      if (!entry.parked && entry.surface &&
+          !canApplyLiveMutation(entry, null, undefined, entry.sourceBLayout, entry.sourceBKey, spec)) {
+        parkEntry(entry, false);
+        entry.sourceLease?.release();
+        entry.source = null;
+        entry.sourceLayout = null;
+        entry.sourceLease = null;
+        entry.sourceReacquire = null;
         entry.sourceKey = undefined;
-        if (entry.deepBuffers) entry.deepBuffers.destroy();
-        const tex = entry.device.createTexture(spec.width, spec.height, "rgba16float");
-        entry.srcTexture = tex;
-        entry.deepBuffers = entry.device.createDeepSampleBuffers!(spec);
-        entry.device.compositeDeep!(entry.deepBuffers, tex, zNear, zFar);
+        entry.deep = spec;
+        entry.deepZNear = zNear;
+        entry.deepZFar = zFar;
+        enqueueWaiter(entry);
+        admitWaiters();
+        return;
       }
-      // Parked: picked up by the next activateEntry().
+      try {
+        if (!entry.parked && entry.surface) {
+          const tex = entry.device.createTexture(spec.width, spec.height, "rgba16float");
+          let buffers: DeepSampleBuffers | null = null;
+          try {
+            buffers = entry.device.createDeepSampleBuffers!(spec);
+            entry.device.compositeDeep!(buffers, tex, zNear, zFar);
+          } catch (error) {
+            buffers?.destroy();
+            tex.destroy();
+            throw error;
+          }
+          releaseUnkeyedSlotTexture(entry.srcTexture, entry.sourceKey);
+          if (entry.deepBuffers) entry.deepBuffers.destroy();
+          entry.srcTexture = tex;
+          entry.deepBuffers = buffers;
+        }
+        entry.sourceLease?.release();
+        entry.source = null;
+        entry.sourceLayout = null;
+        entry.sourceLease = null;
+        entry.sourceReacquire = null;
+        entry.sourceKey = undefined;
+        entry.deep = spec;
+        entry.deepZNear = zNear;
+        entry.deepZFar = zFar;
+      } catch (error) {
+        failEntryActivation(entry, error);
+      }
     },
     setDeepWindow(zNear: number, zFar: number): void {
       if (entry.disposed) return;
@@ -1444,11 +1687,11 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       // Peek only — reads the retained operand DIMS (kept across park, unlike the
       // GPU textures) so no activation/upload happens, then probes the per-device
       // diff cache non-mutatingly. False when either operand is unset/disposed.
-      if (entry.disposed || !entry.source || !entry.sourceB) return false;
+      if (entry.disposed || !entry.sourceLayout || !entry.sourceBLayout) return false;
       return hasDiff(
         entry.device,
-        { w: entry.source.width, h: entry.source.height },
-        { w: entry.sourceB.width, h: entry.sourceB.height },
+        { w: entry.sourceLayout.width, h: entry.sourceLayout.height },
+        { w: entry.sourceBLayout.width, h: entry.sourceBLayout.height },
         operationId,
         computeParams,
         contentKeys.a,
@@ -1507,12 +1750,12 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     ): boolean {
       const operation = getWebGpuMultipassOperation(operationId);
       if (!operation) return getWebGpuImageOperation(operationId)?.kind === "inline";
-      if (entry.disposed || !entry.source || !entry.sourceB) return false;
+      if (entry.disposed || !entry.sourceLayout || !entry.sourceBLayout) return false;
       const automaticHdr = operationId === "hdr-flip" && !ctx.hdrExposures;
       return hasDiff(
         entry.device,
-        { w: entry.source.width, h: entry.source.height },
-        { w: entry.sourceB.width, h: entry.sourceB.height },
+        { w: entry.sourceLayout.width, h: entry.sourceLayout.height },
+        { w: entry.sourceBLayout.width, h: entry.sourceBLayout.height },
         operationId,
         automaticHdr ? { ppd: 67, automaticExposure: 1 } : operation.program.computeParams?.(ctx),
         contentKeys.a,
@@ -1556,18 +1799,19 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     restore(): void {
       if (
-        entry.disposed ||
-        (!entry.source && !entry.sourceReacquire && !entry.deep) ||
+        entry.disposed || entry.failed ||
+        !hasPrimarySource(entry) ||
         documentHidden ||
         !entry.visible
       ) return;
-      activateEntry(entry);
+      enqueueWaiter(entry);
+      admitWaiters();
     },
     setVisible(visible: boolean): void {
       if (entry.disposed || entry.visible === visible) return;
       entry.visible = visible;
       if (visible) {
-        cancelOffscreenRelease(entry);
+        if (!entry.documentHidden) cancelOffscreenRelease(entry);
         if (entry.waiting) admitWaiters();
       } else {
         removeWaiter(entry);
@@ -1582,7 +1826,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       parkEntry(entry, false); // frees srcTexture + srcTextureB + retained + deepBuffers
       releaseCpuUploadOwnership(entry);
       entry.source = null;
+      entry.sourceLayout = null;
       entry.sourceB = null;
+      entry.sourceBLayout = null;
       entry.sourceReacquire = null;
       entry.sourceBReacquire = null;
       entry.sourceKey = undefined;
@@ -1590,6 +1836,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       entry.deep = null;
       entry.disposed = true;
       panes.delete(entry);
+      unregisterDevice(entry.device);
       admitWaiters();
     },
   };
@@ -1608,7 +1855,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
  */
 export async function acquirePane(
   canvas: HTMLCanvasElement,
-  opts?: { hdr?: boolean; onAdmitted?: () => void },
+  opts?: { hdr?: boolean; onAdmitted?: () => void; onActivationFailure?: (error: unknown) => void },
 ): Promise<PaneHandle> {
   const engine = await imageWebGpuRuntime.acquire();
   const device = engine.device;
@@ -1621,9 +1868,11 @@ export async function acquirePane(
     surface: null,
     srcTexture: null,
     source: null,
+    sourceLayout: null,
     sourceLease: null,
     sourceReacquire: null,
     sourceB: null,
+    sourceBLayout: null,
     sourceBLease: null,
     sourceBReacquire: null,
     srcTextureB: null,
@@ -1639,13 +1888,17 @@ export async function acquirePane(
     parked: true,
     waiting: false,
     disposed: false,
+    failed: false,
     visible: true,
+    documentHidden,
     offscreenReleaseTimer: null,
     onAdmitted: opts?.onAdmitted,
+    onActivationFailure: opts?.onActivationFailure,
     backingWidth: 0,
     backingHeight: 0,
   };
   panes.add(entry);
+  registerDevice(device);
   return makeHandle(entry);
 }
 
@@ -1677,10 +1930,12 @@ export function getCanvasSurfaceForTest(canvas: HTMLCanvasElement): Surface | nu
 }
 
 export interface GpuPoolMemorySnapshot {
-  panes: { total: number; live: number; waiting: number; offscreen: number };
+  panes: { total: number; live: number; waiting: number; offscreen: number; documentHidden: number };
   sourceTextures: {
     activeEntries: number;
+    /** Logical source texture + deep CSR storage bytes (excludes driver/surface overhead). */
     activeBytes: number;
+    deepStorageBytes: number;
     sharedEntries: number;
     sharedBytes: number;
     zeroRefEntries: number;
@@ -1702,8 +1957,7 @@ export interface GpuPoolMemorySnapshot {
 }
 
 export function getGpuPoolMemorySnapshot(): GpuPoolMemorySnapshot {
-  const devices = new Set<Device>(knownDevices);
-  for (const pane of panes) devices.add(pane.device);
+  const devices = new Set<Device>(devicePaneCounts.keys());
   let sharedEntries = 0, sharedBytes = 0, zeroRefEntries = 0, zeroRefBytes = 0;
   let diffEntries = 0, diffBytes = 0, pinnedEntries = 0, pinnedRefs = 0;
   let readbackEntries = 0, readbackBytes = 0;
@@ -1729,8 +1983,10 @@ export function getGpuPoolMemorySnapshot(): GpuPoolMemorySnapshot {
   // Include live pane-owned (unkeyed/deep) textures without double-counting
   // device-shared textures already represented above.
   const allActiveBytes = activeSourceBytes();
+  let deepStorageBytes = 0;
   const activeTextures = new Set<Texture>();
   for (const entry of live) {
+    if (entry.deep) deepStorageBytes += deepStorageByteLength(entry.deep);
     if (entry.srcTexture) activeTextures.add(entry.srcTexture);
     if (entry.srcTextureB) activeTextures.add(entry.srcTextureB);
     for (const texture of entry.retained.values()) activeTextures.add(texture);
@@ -1742,10 +1998,12 @@ export function getGpuPoolMemorySnapshot(): GpuPoolMemorySnapshot {
       live: live.length,
       waiting: [...panes].filter((entry) => entry.waiting).length,
       offscreen: [...panes].filter((entry) => !entry.visible).length,
+      documentHidden: [...panes].filter((entry) => entry.documentHidden).length,
     },
     sourceTextures: {
       activeEntries: activeTextures.size,
       activeBytes: allActiveBytes,
+      deepStorageBytes,
       sharedEntries,
       sharedBytes,
       zeroRefEntries,
@@ -1767,6 +2025,41 @@ export function getGpuPoolMemorySnapshot(): GpuPoolMemorySnapshot {
   };
 }
 
+/** Immediately apply changed host budgets to existing reconstructible caches. */
+export function applyGpuResourcePolicy(): void {
+  const limits = getGpuSourceTextureLimits();
+  // Lowering the per-pane count can create zero-ref shared entries, so trim
+  // memberships before enforcing the device-wide shared byte budgets.
+  for (const entry of panes) evictRetained(entry);
+  for (const device of devicePaneCounts.keys()) {
+    trimSharedSources(device);
+    cacheFor(device).configure(
+      getGpuDiffCacheLimits().maxEntries,
+      getGpuDiffCacheLimits().maxBytes,
+    );
+    while (activeSourceBytes(device) > limits.activeBytes) {
+      const candidates = live.filter((entry) => entry.device === device);
+      if (candidates.length <= 1) break; // one exact oversize working set is soft-pinned
+      const victim = candidates[0]!;
+      parkEntry(victim, false);
+      if (victim.visible) enqueueWaiter(victim);
+    }
+  }
+  while (live.length > getLiveGpuPaneLimit()) {
+    const victim = live[0]!;
+    parkEntry(victim, false);
+    if (victim.visible) enqueueWaiter(victim);
+  }
+  admitWaiters();
+}
+
+/** Number of strongly registered devices; test-only lifecycle diagnostic. */
+export function getRegisteredGpuDeviceCountForTest(): number {
+  return devicePaneCounts.size;
+}
+
+registerRuntimePolicyHook(applyGpuResourcePolicy);
+
 /** Reset cumulative counters only; gauges and ownership remain untouched. */
 export function resetGpuPoolMemoryStats(): void {
   poolStats.parks = 0;
@@ -1776,25 +2069,39 @@ export function resetGpuPoolMemoryStats(): void {
   poolStats.evictions = 0;
 }
 
-// Exactly one module-level page-visibility coordinator. Hidden pages park every
-// pane. On return, only panes still reported intersection-visible compete for
-// admission; offscreen panes remain parked and keep their last painted canvas.
+function updateDocumentVisibility(hidden: boolean): void {
+  documentHidden = hidden;
+  if (documentHidden) {
+    for (const entry of panes) {
+      entry.documentHidden = true;
+      if (!entry.parked) {
+        parkEntry(entry, false);
+        if (entry.visible) enqueueWaiter(entry);
+      }
+      scheduleOffscreenRelease(entry);
+    }
+    return;
+  }
+  for (const entry of panes) {
+    entry.documentHidden = false;
+    if (entry.visible) cancelOffscreenRelease(entry);
+    else scheduleOffscreenRelease(entry);
+    if (entry.disposed || entry.failed || !entry.visible || !hasPrimarySource(entry)) continue;
+    enqueueWaiter(entry);
+  }
+  admitWaiters();
+}
+
+/** Test seam for deterministic page-visibility lifecycle coverage. */
+export function setDocumentHiddenForTest(hidden: boolean): void {
+  updateDocumentVisibility(hidden);
+}
+
+// Exactly one module-level page-visibility coordinator. Existing waiters keep
+// their FIFO position across suspension; previously-live panes join behind them.
+// Restoration is performed only by admitWaiters, never by direct activation.
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
-    documentHidden = document.visibilityState === "hidden";
-    if (documentHidden) {
-      for (const entry of [...live]) parkEntry(entry, false);
-      return;
-    }
-    for (const entry of panes) {
-      if (entry.disposed || !entry.visible) continue;
-      try {
-        activateEntry(entry);
-        if (!entry.parked) queueMicrotask(() => entry.onAdmitted?.());
-      } catch {
-        // The normal render path owns failure/fallback reporting.
-      }
-    }
-    admitWaiters();
+    updateDocumentVisibility(document.visibilityState === "hidden");
   });
 }

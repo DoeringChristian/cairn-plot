@@ -32,3 +32,15 @@ test("expanded upload cache evicts zero-ref LRU by bytes but never referenced da
   assert.deepEqual(cache.snapshot(), { bytes: 40, entries: 1, refs: 1, overBudget: false });
   b.release();
 });
+
+test("distinct reconstructible uploads trim immediately after leases release and budgets shrink", () => {
+  const cache = new ExpandedUploadCache(200);
+  const leases = ["a", "b", "c"].map((key) => cache.acquire(key, () => upload(40)));
+  for (const lease of leases) lease.release();
+  assert.deepEqual(cache.snapshot(), { bytes: 120, entries: 3, refs: 0, overBudget: false });
+  cache.setBudgetBytes(40);
+  assert.deepEqual(cache.snapshot(), { bytes: 40, entries: 1, refs: 0, overBudget: false });
+  const retained = cache.acquire("c", () => upload(40));
+  assert.equal(retained.upload.data.byteLength, 40, "newest distinct entry survives the trim");
+  retained.release();
+});

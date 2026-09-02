@@ -76,8 +76,8 @@ export class DiffCache {
   // Explicit fields (NOT constructor parameter-properties) so this module stays
   // importable under Node's `--experimental-strip-types` strip-only mode, which
   // `npm test` uses (parameter-properties emit runtime code and are rejected).
-  private readonly maxEntries: number;
-  private readonly maxBytes: number;
+  private maxEntries: number;
+  private maxBytes: number;
   constructor(
     maxEntries = getGpuDiffCacheLimits().maxEntries,
     maxBytes = getGpuDiffCacheLimits().maxBytes,
@@ -122,6 +122,13 @@ export class DiffCache {
     // immediately. Do not destroy the just-computed texture in the narrow gap
     // before that lease is installed when all older entries are already pinned.
     this.evict(entry);
+  }
+
+  /** Apply a runtime budget change and immediately trim every unpinned entry. */
+  configure(maxEntries: number, maxBytes: number): void {
+    this.maxEntries = maxEntries;
+    this.maxBytes = maxBytes;
+    this.evict();
   }
 
   /** Keep a result resident while a live pane presents it. This is a lease, not
@@ -244,4 +251,11 @@ export function cacheFor(device: Device): DiffCache {
     caches.set(device, c);
   }
   return c;
+}
+
+/** Explicit device-lifecycle cleanup; the WeakMap alone cannot destroy GPU resources. */
+export function clearCacheFor(device: Device): void {
+  const cache = caches.get(device);
+  cache?.clear();
+  caches.delete(device);
 }

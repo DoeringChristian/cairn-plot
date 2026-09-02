@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { configureRuntime } from "./runtime.ts";
+import { globalResourceCache } from "../resources/cache.ts";
+import { registerRuntimePolicyHook } from "../resources/runtime-policy-hooks.ts";
 import {
   getExpandedUploadCacheByteLimit,
   getGpuDiffCacheLimits,
@@ -55,4 +57,28 @@ test("configureRuntime validates byte budgets and timeouts", () => {
     sharedSourceBytes: 1,
     zeroRefSourceBytes: -1,
   } }), /non-negative/);
+});
+
+test("configureRuntime is atomic and invokes trim hooks only after full validation", () => {
+  configureRuntime({
+    decodedCacheBytes: 111,
+    expandedUploadCacheBytes: 222,
+    offscreenCpuReleaseMs: 333,
+    gpu: { livePaneLimit: 7, sourceTexturesPerPane: 5 },
+  });
+  let hookCalls = 0;
+  const unregister = registerRuntimePolicyHook(() => { hookCalls++; });
+  assert.throws(() => configureRuntime({
+    decodedCacheBytes: 999,
+    expandedUploadCacheBytes: 888,
+    offscreenCpuReleaseMs: 777,
+    gpu: { livePaneLimit: 6, diffEntries: 4 },
+  }), /configured together/);
+  unregister();
+  assert.equal(globalResourceCache.budgetBytes, 111);
+  assert.equal(getExpandedUploadCacheByteLimit(), 222);
+  assert.equal(getOffscreenCpuReleaseMs(), 333);
+  assert.equal(getLiveGpuPaneLimit(), 7);
+  assert.equal(getGpuSourceTextureRetentionLimit(), 5);
+  assert.equal(hookCalls, 0);
 });

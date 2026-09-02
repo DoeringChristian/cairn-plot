@@ -154,6 +154,7 @@ async function main(): Promise<void> {
     const firstCell = container.firstElementChild as HTMLElement | null;
     if (firstCell) {
       const refsBefore = getMemoryDiagnosticSnapshot().expandedCpuUploads.refs;
+      const uploadsUnpinned = refsBefore === 0;
       firstCell.style.display = "none";
       const promoted = await waitFor(() => {
         const now = getMemoryDiagnosticSnapshot();
@@ -168,27 +169,27 @@ async function main(): Promise<void> {
       }, 5_000, 25);
       if (releaseMs !== null) await sleep(releaseMs + 50);
       const afterCycle = getMemoryDiagnosticSnapshot();
-      const quickReturnCancelled = afterCycle.expandedCpuUploads.refs === refsBefore;
+      const quickReturnCancelled = afterCycle.expandedCpuUploads.refs === 0;
 
       let delayedRelease = true;
       if (releaseMs !== null) {
         firstCell.style.display = "none";
         await waitFor(() => getMemoryDiagnosticSnapshot().panes.offscreen === 1, 5_000, 25);
         await sleep(releaseMs + 50);
-        delayedRelease = getMemoryDiagnosticSnapshot().expandedCpuUploads.refs === refsBefore - 1;
+        delayedRelease = getMemoryDiagnosticSnapshot().expandedCpuUploads.refs === 0;
         firstCell.style.display = "";
         await waitFor(() => {
           const now = getMemoryDiagnosticSnapshot();
-          return now.panes.offscreen === 0 && now.expandedCpuUploads.refs === refsBefore;
+          return now.panes.offscreen === 0 && now.expandedCpuUploads.refs === 0;
         }, 5_000, 25);
       }
       const finalCycle = getMemoryDiagnosticSnapshot();
-      waiterPromotion = promoted && returnedWaiting && quickReturnCancelled && delayedRelease &&
+      waiterPromotion = uploadsUnpinned && promoted && returnedWaiting && quickReturnCancelled && delayedRelease &&
         finalCycle.uploads.count === stats.sourceUploads;
       report(
         waiterPromotion,
-        `BENCH: offscreen frees one slot; return waits stably; quick return cancels CPU release; ` +
-          `delayed release=${delayedRelease}; uploads remain ${finalCycle.uploads.count}`,
+        `BENCH: uploads stay unpinned; offscreen frees one slot; return waits stably; ` +
+          `hidden/offscreen refs stay released=${delayedRelease}; uploads remain ${finalCycle.uploads.count}`,
       );
     }
   }

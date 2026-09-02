@@ -76,6 +76,16 @@ test("LRU get() bumps recency so a re-rendered pane is not the eviction victim",
   assert.equal(cache.get("b"), undefined, "least-recently-used evicted");
 });
 
+test("runtime budget changes immediately trim existing unpinned diff entries", () => {
+  const cache = new DiffCache(10, 10);
+  cache.set("a", entry(2));
+  cache.set("b", entry(2));
+  cache.set("c", entry(2));
+  cache.configure(1, 2);
+  assert.equal(cache.size, 1);
+  assert.ok(cache.get("c"), "newest entry survives immediate trim");
+});
+
 test("live pane leases keep FLIP results resident across presentation updates", () => {
   const beforeDestroyed = destroyed;
   const cache = new DiffCache(2, 2);

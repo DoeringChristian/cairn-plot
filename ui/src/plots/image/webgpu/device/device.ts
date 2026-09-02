@@ -688,9 +688,11 @@ export async function createWebGPUDevice(): Promise<Device> {
   // per-frame readback callers). `gpuDevice.lost` resolves (never rejects) on
   // loss, including via `destroy()`.
   const lostRef: DeviceLostRef = {};
+  const lostListeners = new Set<(reason: unknown) => void>();
   gpuDevice.lost.then(
     (info) => {
       lostRef.info = info;
+      for (const listener of [...lostListeners]) listener(info);
       // Context-loss instrumentation (test-only; no-op unless the user-facing
       // paneRenderLog capture is armed). A WebGPU device loss means EVERY 2D
       // image/diff pane on the page is now on a dead device — surfaced with a
@@ -1493,6 +1495,12 @@ export async function createWebGPUDevice(): Promise<Device> {
       if (destroyed) return;
       gpuDevice.destroy();
       destroyed = true;
+    },
+
+    onLost(listener: (reason: unknown) => void) {
+      lostListeners.add(listener);
+      if (lostRef.info) queueMicrotask(() => listener(lostRef.info));
+      return () => lostListeners.delete(listener);
     },
 
     // WebGPU's `createSurface` is always a safe, idempotent re-configure

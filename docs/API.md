@@ -288,13 +288,21 @@ configureRuntime({
 });
 ```
 
-The three source byte limits and the two diff limits are configured as complete
-groups. Referenced resources are pinned, so budgets are soft when one exact
-working set is itself oversize. `getMemoryDiagnosticSnapshot()` reports live,
-waiting and offscreen panes; active/shared/zero-ref source textures; expanded CPU
-upload ownership; upload counters; and diff/readback occupancy.
-`resetMemoryDiagnosticStats()` resets cumulative counters only, never gauges or
-ownership.
+The entire call is validated before any setting changes. The three source byte
+limits and the two diff limits are configured as complete groups; reductions
+immediately trim evictable expanded-upload, shared-source, pane-retention, and
+diff-cache entries. Referenced GPU resources remain pinned, so budgets are soft
+when one exact working set is itself oversize. Reconstructible expanded CPU
+buffers are leased only while uploading/restoring—live and waiting panes retain
+raw decoded sources/reacquire closures, not full expanded arrays.
+
+`getMemoryDiagnosticSnapshot()` reports live, waiting, intersection-offscreen,
+and document-hidden panes; logical active source texture + deep-CSR storage bytes
+(excluding driver/surface overhead); shared/zero-ref source textures; expanded CPU
+upload cache occupancy and current lease refs; upload counters; and diff/readback
+occupancy. Device rows/caches are explicitly removed after their final pane is
+disposed or the device is lost. `resetMemoryDiagnosticStats()` resets cumulative
+counters only, never gauges or ownership.
 
 ### Descriptor contract
 A plot is mounted from a **tree** descriptor — `{ root: PlotNode, mode?, endpoint? }`
