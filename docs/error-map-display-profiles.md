@@ -132,7 +132,7 @@ Split + sRGB(default) → FLIP
 => FLIP + Magma
 
 FLIP + Magma(default) → signed
-=> signed + red-blue
+=> signed + red-green
 
 FLIP + Turbo(custom) → signed
 => signed + Turbo
@@ -343,7 +343,7 @@ presentation.
 1. Recommended encoding for every registered operation/domain.
 2. Complete defaults contain an applicable concrete encoding.
 3. Split/default sRGB → FLIP patches Magma.
-4. FLIP/default Magma → signed patches red-blue.
+4. FLIP/default Magma → signed patches red-green.
 5. Custom Turbo survives an operation transition.
 6. Explicit value equal to the old default follows the documented heuristic.
 7. Every operation-control surface uses the shared transition helper.

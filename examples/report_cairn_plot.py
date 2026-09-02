@@ -294,7 +294,7 @@ def build_report() -> cp.Report:
                     cp.Image(img_a, label="prediction"),
                     cp.Image(img_b, label="reference"),
                     mode="signed",
-                    colormap="red-blue",
+                    colormap="red-green",
                 ),
             ],
         ]
@@ -303,14 +303,14 @@ def build_report() -> cp.Report:
         "### All 6 diff submodes\n\n"
         "Grid order is **signed · absolute · squared**, then "
         "**relative_signed · relative_absolute · relative_squared**. "
-        "Diverging errors use the red-blue map; magnitude errors use "
+        "Diverging errors use the red-green map; magnitude errors use "
         "turbo / red-green."
     )
     rep.grid(
         [
             [
                 cp.Compare(
-                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-blue",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="signed", colormap="red-green",
                 ),
                 cp.Compare(
                     cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="abs", colormap="turbo",
@@ -321,7 +321,7 @@ def build_report() -> cp.Report:
             ],
             [
                 cp.Compare(
-                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_signed", colormap="red-blue",
+                    cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_signed", colormap="red-green",
                 ),
                 cp.Compare(
                     cp.Image(img_a, label="prediction"), cp.Image(img_b, label="reference"), mode="rel_abs", colormap="turbo",

@@ -36,6 +36,6 @@ test("comparison presentation selects an operation-aware encoding", () => {
   assert.equal(difference["compare.operation"], "absolute");
   assert.equal(split["image.encoding"], "srgb");
   assert.equal(difference["image.encoding"], "magma");
-  assert.equal(defaultImageSettings(compare("difference", "signed"))["image.encoding"], "red-blue");
+  assert.equal(defaultImageSettings(compare("difference", "signed"))["image.encoding"], "red-green");
   assert.equal(defaultImageSettings(compare("difference", "flip"))["image.encoding"], "magma");
 });

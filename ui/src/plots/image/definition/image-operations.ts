@@ -28,7 +28,7 @@ const pointwise = (
 ): ImageOperationDefinition => ({
   id, label, publicName, inputs: 2,
   output: { arity: "source", domain },
-  defaultDisplayOperation: domain === "signed" ? "red-blue" : "magma",
+  defaultDisplayOperation: domain === "signed" ? "red-green" : "magma",
   cache: "never",
   parameters: [],
 });
