@@ -20,9 +20,11 @@
  * successful upload (and while waiting), retaining only exact layout metadata
  * plus the raw-source reacquire closure needed for restore. Admission is stable: when more panes are
  * intersection-visible than the count/byte budgets permit, excess panes enter
- * a FIFO waiting state and keep their last painted canvas. Their passive render
- * retries never displace another visible pane. An offscreen/disposed live pane
- * frees a slot and admits the oldest visible waiter. `GpuImagePane` drives
+ * a FIFO waiting state and keep their last painted canvas. A pane that has not
+ * yet presented its current content generation may rotate an already-presented
+ * visible pane exactly until that first presentation succeeds; passive retries
+ * after presentation never displace another visible pane. An offscreen/disposed
+ * live pane frees a slot and admits the oldest eligible visible waiter. `GpuImagePane` drives
  * `park()`/`restore()`/`setVisible()` from its `IntersectionObserver`; after a
  * configurable offscreen delay reconstructible expanded CPU ownership is also
  * released (quick returns cancel it).
@@ -516,6 +518,11 @@ interface PaneEntry {
   waiting: boolean;
   disposed: boolean;
   failed: boolean;
+  /** Monotonic desired-content epoch. A successful surface submission records
+   * this epoch in `presentedGeneration`; source mutations advance it. */
+  contentGeneration: number;
+  /** Latest content epoch successfully submitted to this pane's surface. */
+  presentedGeneration: number;
   /** Last-reported IntersectionObserver visibility. */
   visible: boolean;
   /** Page-visibility suspension, independent of intersection visibility. */
@@ -546,6 +553,8 @@ const poolStats = {
   admissions: 0,
   admissionBlocks: 0,
   evictions: 0,
+  presentations: 0,
+  presentationRotations: 0,
 };
 
 function touchMostRecentlyUsed(entry: PaneEntry): void {
@@ -750,6 +759,14 @@ function clearRetained(entry: PaneEntry): void {
   entry.retained.clear();
 }
 
+function needsPresentation(entry: PaneEntry): boolean {
+  return entry.contentGeneration > entry.presentedGeneration;
+}
+
+function noteContentChange(entry: PaneEntry): void {
+  entry.contentGeneration++;
+}
+
 function removeWaiter(entry: PaneEntry): void {
   const index = waiters.indexOf(entry);
   if (index !== -1) waiters.splice(index, 1);
@@ -909,6 +926,25 @@ function projectedLiveMutationBytes(
   return bytes;
 }
 
+function isAdmissionVictim(candidate: PaneEntry, requester: PaneEntry, allowPresentationRotation: boolean): boolean {
+  if (candidate === requester) return false;
+  if (!candidate.visible) return true;
+  // A pane may rotate a visible peer only while it still owes the user one
+  // presentation of its current content generation. Never displace another
+  // presentation-needing pane: it is already making bounded forward progress.
+  return allowPresentationRotation && !needsPresentation(candidate);
+}
+
+function evictForAdmission(victim: PaneEntry, rotated: boolean): void {
+  poolStats.evictions++;
+  if (rotated) poolStats.presentationRotations++;
+  parkEntry(victim, false);
+  // A visible displaced pane keeps its last canvas frame. It remains a stable
+  // waiter and can fill a genuinely free slot later, but cannot evict its way
+  // back in because its current generation was already presented.
+  if (victim.visible && hasPrimarySource(victim)) enqueueWaiter(victim);
+}
+
 function canApplyLiveMutation(
   entry: PaneEntry,
   sourceLayout: SourceLayout | null,
@@ -918,50 +954,79 @@ function canApplyLiveMutation(
   deep: DeepGpuCsrSpec | null,
 ): boolean {
   const limit = getGpuSourceTextureLimits().activeBytes;
+  const mayRotate = needsPresentation(entry);
   while (projectedLiveMutationBytes(entry, sourceLayout, sourceKey, sourceBLayout, sourceBKey, deep) > limit) {
-    const victim = live.find((candidate) => candidate !== entry && !candidate.visible);
+    const victim = live.find((candidate) =>
+      candidate.device === entry.device && isAdmissionVictim(candidate, entry, mayRotate));
     if (!victim) return false;
-    poolStats.evictions++;
-    parkEntry(victim, false);
+    evictForAdmission(victim, victim.visible);
   }
   return true;
 }
 
-function canAdmit(entry: PaneEntry): boolean {
+function canAdmit(entry: PaneEntry, allowPresentationRotation = needsPresentation(entry)): boolean {
   // An offscreen pane never takes a slot. A hidden document restores nothing.
   if (!entry.visible || documentHidden) return false;
-  // First reclaim any lingering offscreen resources; visible panes are NEVER
-  // displaced by another pane's passive restore/render.
+  // Prefer same-device victims: doing so can satisfy both the global count cap
+  // and this device's byte cap with one bounded rotation.
   while (live.length >= getLiveGpuPaneLimit()) {
-    const victim = live.find((candidate) => !candidate.visible);
+    const candidates = live.filter((candidate) => isAdmissionVictim(candidate, entry, allowPresentationRotation));
+    const victim = candidates.find((candidate) => candidate.device === entry.device) ?? candidates[0];
     if (!victim) return false;
-    poolStats.evictions++;
-    parkEntry(victim, false);
+    evictForAdmission(victim, victim.visible);
   }
   const limit = getGpuSourceTextureLimits().activeBytes;
-  while (activeSourceBytes(entry.device) + prospectiveSourceBytes(entry) > limit && live.length > 0) {
-    const victim = live.find((candidate) => !candidate.visible);
+  while (activeSourceBytes(entry.device) + prospectiveSourceBytes(entry) > limit &&
+         live.some((candidate) => candidate.device === entry.device)) {
+    const victim = live.find((candidate) =>
+      candidate.device === entry.device && isAdmissionVictim(candidate, entry, allowPresentationRotation));
     if (!victim) return false;
-    poolStats.evictions++;
-    parkEntry(victim, false);
+    evictForAdmission(victim, victim.visible);
   }
-  // One oversize working set is pinned when nothing else is live. Diagnostics
-  // report the resulting over-budget state rather than destroying references.
+  // One oversize working set is pinned when nothing else is live on its device.
+  // Diagnostics report the soft over-budget state without downsampling.
   return true;
 }
 
 let admittingWaiters = false;
+let admissionScheduled = false;
+function scheduleWaiterAdmission(): void {
+  if (admissionScheduled) return;
+  admissionScheduled = true;
+  queueMicrotask(() => {
+    admissionScheduled = false;
+    admitWaiters();
+  });
+}
+
+function markPresented(entry: PaneEntry): void {
+  if (!needsPresentation(entry)) return;
+  entry.presentedGeneration = entry.contentGeneration;
+  poolStats.presentations++;
+  // A waiter blocked behind an in-flight presentation can now rotate this pane.
+  // Defer until the completed render call has finished all instrumentation.
+  scheduleWaiterAdmission();
+}
+
 function admitWaiters(): void {
   if (admittingWaiters || documentHidden) return;
   admittingWaiters = true;
   try {
-    for (const entry of [...waiters]) {
+    // Presentation debt outranks stable restoration. This avoids strict HOL
+    // blocking when an older, already-presented waiter cannot fit. FIFO order is
+    // retained within each class by filtering the queue without sorting it.
+    const ordered = [
+      ...waiters.filter((entry) => needsPresentation(entry)),
+      ...waiters.filter((entry) => !needsPresentation(entry)),
+    ];
+    for (const entry of ordered) {
       if (entry.disposed) {
         removeWaiter(entry);
         continue;
       }
       if (!entry.visible) continue;
-      if (!canAdmit(entry)) break; // FIFO stability: don't let passive retries jump ahead.
+      const presentationDebt = needsPresentation(entry);
+      if (!canAdmit(entry, presentationDebt)) continue;
       removeWaiter(entry);
       if (activateEntry(entry) && !entry.parked) queueMicrotask(() => entry.onAdmitted?.());
     }
@@ -1188,6 +1253,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
       // Level-2 deep detector: sample this present's actual output color.
       if (deepColorDetectorActive()) sampleDeepColor(entry, entry.srcTexture, p, record);
     }
+    markPresented(entry);
     return true;
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -1296,6 +1362,7 @@ function attemptRenderDiffCached(
       // result texture would flash here by its real color.
       if (deepColorDetectorActive()) sampleDeepColor(entry, cacheEntry.texture, displayParams, record);
     }
+    markPresented(entry);
     return cacheEntry;
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -1469,7 +1536,10 @@ function replacePrimarySource(
   const changed = entry.sourceLayout?.width !== src.width || entry.sourceLayout?.height !== src.height ||
     entry.sourceLayout?.format !== src.format || entry.sourceKey !== contentKey || entry.deep !== null ||
     (contentKey === undefined && entry.source !== src);
-  if (changed) releaseActiveDiff(entry);
+  if (changed) {
+    releaseActiveDiff(entry);
+    noteContentChange(entry);
+  }
 
   // A live replacement is admitted against the complete A+B working set before
   // any texture upload. If it cannot fit, park the old GPU ownership (the canvas
@@ -1531,7 +1601,14 @@ function replaceSecondarySource(
   }
   const nextLayout = src ? layoutOf(src) : null;
   const nextKey = src ? contentKey : undefined;
-  if (entry.sourceBLayout !== nextLayout || entry.sourceBKey !== nextKey) releaseActiveDiff(entry);
+  const changed = entry.sourceBLayout?.width !== nextLayout?.width ||
+    entry.sourceBLayout?.height !== nextLayout?.height ||
+    entry.sourceBLayout?.format !== nextLayout?.format || entry.sourceBKey !== nextKey ||
+    (nextKey === undefined && entry.sourceB !== src);
+  if (changed) {
+    releaseActiveDiff(entry);
+    noteContentChange(entry);
+  }
   if (!entry.parked && entry.surface &&
       !canApplyLiveMutation(entry, entry.sourceLayout, entry.sourceKey, nextLayout, nextKey, entry.deep)) {
     parkEntry(entry, false);
@@ -1598,6 +1675,12 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number): void {
       if (entry.disposed || entry.failed) return;
+      const changed = entry.deep !== spec || entry.sourceLayout !== null ||
+        entry.deepZNear !== zNear || entry.deepZFar !== zFar;
+      if (changed) {
+        releaseActiveDiff(entry);
+        noteContentChange(entry);
+      }
       if (!entry.parked && entry.surface &&
           !canApplyLiveMutation(entry, null, undefined, entry.sourceBLayout, entry.sourceBKey, spec)) {
         parkEntry(entry, false);
@@ -1646,8 +1729,10 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     setDeepWindow(zNear: number, zFar: number): void {
       if (entry.disposed) return;
+      if (entry.deepZNear === zNear && entry.deepZFar === zFar) return;
       entry.deepZNear = zNear;
       entry.deepZFar = zFar;
+      noteContentChange(entry);
       if (!entry.parked && entry.deepBuffers && entry.srcTexture) {
         entry.device.compositeDeep!(entry.deepBuffers, entry.srcTexture, zNear, zFar);
       }
@@ -1799,7 +1884,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     },
     restore(): void {
       if (
-        entry.disposed || entry.failed ||
+        entry.disposed || entry.failed || !entry.parked ||
         !hasPrimarySource(entry) ||
         documentHidden ||
         !entry.visible
@@ -1889,6 +1974,8 @@ export async function acquirePane(
     waiting: false,
     disposed: false,
     failed: false,
+    contentGeneration: 0,
+    presentedGeneration: 0,
     visible: true,
     documentHidden,
     offscreenReleaseTimer: null,
@@ -1920,6 +2007,24 @@ export function isCanvasLive(canvas: HTMLCanvasElement): boolean {
   return live.some((e) => e.canvas === canvas);
 }
 
+/** Per-canvas presentation admission diagnostic used by lifecycle/stress
+ * harnesses. A valid first/current-generation frame is `presented === true`. */
+export function getCanvasPresentationStateForTest(canvas: HTMLCanvasElement): {
+  presented: boolean;
+  everPresented: boolean;
+  contentGeneration: number;
+  presentedGeneration: number;
+} | null {
+  const entry = [...panes].find((candidate) => candidate.canvas === canvas);
+  if (!entry) return null;
+  return {
+    presented: entry.contentGeneration > 0 && !needsPresentation(entry),
+    everPresented: entry.presentedGeneration > 0,
+    contentGeneration: entry.contentGeneration,
+    presentedGeneration: entry.presentedGeneration,
+  };
+}
+
 /** The live `Surface` a pane rendered into, or `null` if parked/unknown —
  *  test/introspection ONLY (the pool never exposes its `Surface` to callers; a
  *  parity harness needs it to `device.readback()` the rendered frame, the same
@@ -1930,7 +2035,15 @@ export function getCanvasSurfaceForTest(canvas: HTMLCanvasElement): Surface | nu
 }
 
 export interface GpuPoolMemorySnapshot {
-  panes: { total: number; live: number; waiting: number; offscreen: number; documentHidden: number };
+  panes: {
+    total: number;
+    live: number;
+    waiting: number;
+    presentationNeeded: number;
+    neverPresented: number;
+    offscreen: number;
+    documentHidden: number;
+  };
   sourceTextures: {
     activeEntries: number;
     /** Logical source texture + deep CSR storage bytes (excludes driver/surface overhead). */
@@ -1997,6 +2110,8 @@ export function getGpuPoolMemorySnapshot(): GpuPoolMemorySnapshot {
       total: panes.size,
       live: live.length,
       waiting: [...panes].filter((entry) => entry.waiting).length,
+      presentationNeeded: [...panes].filter((entry) => needsPresentation(entry)).length,
+      neverPresented: [...panes].filter((entry) => entry.contentGeneration > 0 && entry.presentedGeneration === 0).length,
       offscreen: [...panes].filter((entry) => !entry.visible).length,
       documentHidden: [...panes].filter((entry) => entry.documentHidden).length,
     },
@@ -2067,6 +2182,8 @@ export function resetGpuPoolMemoryStats(): void {
   poolStats.admissions = 0;
   poolStats.admissionBlocks = 0;
   poolStats.evictions = 0;
+  poolStats.presentations = 0;
+  poolStats.presentationRotations = 0;
 }
 
 function updateDocumentVisibility(hidden: boolean): void {

@@ -3,7 +3,10 @@ import { createRoot } from "react-dom/client";
 import { halfBits } from "../../../plots/image/runtime/pixel-buffer.ts";
 import { hdrSource, type FloatImageData } from "../../../plots/image/runtime/contracts.ts";
 import GpuImagePane from "../../../plots/image/webgpu/view.tsx";
-import { getLiveSwapchainCount } from "../../../plots/image/webgpu/pool.ts";
+import {
+  getCanvasPresentationStateForTest,
+  getLiveSwapchainCount,
+} from "../../../plots/image/webgpu/pool.ts";
 import {
   getLiveGpuPaneLimit,
   setLiveGpuPaneLimit,
@@ -50,7 +53,7 @@ async function main(): Promise<void> {
     shape: [height, width],
     dtype: "<f2",
   };
-  const source = hdrSource(image, `stress:half:${width}x${height}`);
+  const source = hdrSource(image, `stress:half:${width}x${height}:generation-1`);
   const container = document.createElement("div");
   container.style.cssText =
     "display:grid;grid-template-columns:repeat(4,240px);grid-auto-rows:110px;gap:4px;width:980px";
@@ -69,7 +72,7 @@ async function main(): Promise<void> {
   const heapBefore = heapBytes();
   const started = performance.now();
   const root = createRoot(container);
-  root.render(
+  const renderGeneration = (generationSource: typeof source) => root.render(
     h(
       React.Fragment,
       null,
@@ -78,7 +81,7 @@ async function main(): Promise<void> {
           "div",
           { key: index, style: { minWidth: 0, minHeight: 0, overflow: "hidden" } },
           h(GpuImagePane, {
-            source,
+            source: generationSource,
             tonemap: "linear",
             exposure: 0,
             zoom: 1,
@@ -91,11 +94,22 @@ async function main(): Promise<void> {
       ),
     ),
   );
+  const canvasStates = () => Array.from(
+    container.querySelectorAll<HTMLCanvasElement>("canvas[data-gpu-image-canvas]"),
+  ).map((canvas) => ({
+    canvas,
+    presentation: getCanvasPresentationStateForTest(canvas),
+  }));
+  renderGeneration(source);
 
   const ready = await waitFor(
-    () =>
-      container.querySelectorAll('[data-gpu-backend-ready="true"]').length === count &&
-      getLiveSwapchainCount() === Math.min(count, liveLimit),
+    () => {
+      const states = canvasStates();
+      return container.querySelectorAll('[data-gpu-backend-ready="true"]').length === count &&
+        getLiveSwapchainCount() === Math.min(count, liveLimit) && states.length === count &&
+        states.every(({ canvas, presentation }) =>
+          canvas.width > 0 && canvas.height > 0 && presentation?.presented === true);
+    },
     180_000,
     100,
   );
@@ -108,12 +122,16 @@ async function main(): Promise<void> {
   const memory = getMemoryDiagnosticSnapshot();
   const stableUploads = stats.sourceUploads === statsAtReady.sourceUploads;
   const sharedOnce = count <= 1 || stats.sourceUploads === 1;
+  const expectedRotations = Math.max(0, count - liveLimit);
   const stableAdmission =
     live <= liveLimit &&
     memory.panes.offscreen === 0 &&
-    memory.panes.waiting === Math.max(0, count - live);
+    memory.panes.waiting === Math.max(0, count - live) &&
+    memory.panes.presentationNeeded === 0 &&
+    memory.panes.neverPresented === 0 &&
+    memory.counters.presentationRotations === expectedRotations;
 
-  report(ready, `BENCH: ${count} panes became GPU-ready at ${width}x${height}`);
+  report(ready, `BENCH: all ${count} panes received a valid first GPU presentation at ${width}x${height}`);
   report(
     stableAdmission,
     `BENCH: visible=${count - memory.panes.offscreen}; live=${live}; waiting=${memory.panes.waiting}; ` +
@@ -146,11 +164,52 @@ async function main(): Promise<void> {
     );
   }
 
+  // Synchronized content replacement: every pane must rotate through one
+  // presentation of the new generation, then both admissions and uploads stop.
+  let sourceChangeRotation = true;
+  if (ready) {
+    const beforeGenerations = canvasStates().map(({ presentation }) => presentation?.contentGeneration ?? 0);
+    const beforeChange = getMemoryDiagnosticSnapshot();
+    const bits2 = new Uint16Array(pixels);
+    bits2.fill(0x3400); // 0.25: generation 2 has genuinely different pixels.
+    const image2: FloatImageData = {
+      pixels: halfBits(bits2),
+      shape: [height, width],
+      dtype: "<f2",
+    };
+    const source2 = hdrSource(image2, `stress:half:${width}x${height}:generation-2`);
+    renderGeneration(source2);
+    const changedPresented = await waitFor(() => {
+      const states = canvasStates();
+      return states.length === count && states.every(({ presentation }, index) =>
+        !!presentation && presentation.contentGeneration > (beforeGenerations[index] ?? 0) && presentation.presented);
+    }, 180_000, 100);
+    const atChangedIdle = getMemoryDiagnosticSnapshot();
+    await sleep(3_000);
+    const afterChangedIdle = getMemoryDiagnosticSnapshot();
+    sourceChangeRotation = changedPresented && atChangedIdle.panes.presentationNeeded === 0 &&
+      atChangedIdle.panes.neverPresented === 0 &&
+      atChangedIdle.counters.presentationRotations - beforeChange.counters.presentationRotations === expectedRotations &&
+      afterChangedIdle.uploads.count === atChangedIdle.uploads.count &&
+      afterChangedIdle.counters.admissions === atChangedIdle.counters.admissions &&
+      afterChangedIdle.counters.presentations === atChangedIdle.counters.presentations;
+    report(
+      sourceChangeRotation,
+      `BENCH: synchronized source change presented on all canvases; rotations=` +
+        `${atChangedIdle.counters.presentationRotations - beforeChange.counters.presentationRotations}; ` +
+        `post-idle upload/admission/presentation deltas=` +
+        `${afterChangedIdle.uploads.count - atChangedIdle.uploads.count}/` +
+        `${afterChangedIdle.counters.admissions - atChangedIdle.counters.admissions}/` +
+        `${afterChangedIdle.counters.presentations - atChangedIdle.counters.presentations}`,
+    );
+  }
+
   // Admission stability: taking one admitted pane offscreen must free its slot
   // for exactly one waiter; returning it becomes a waiter and must not displace
   // another visible pane or trigger another source upload.
   let waiterPromotion = true;
   if (count > liveLimit) {
+    const uploadsBeforeVisibility = getMemoryDiagnosticSnapshot().uploads.count;
     const firstCell = container.firstElementChild as HTMLElement | null;
     if (firstCell) {
       const refsBefore = getMemoryDiagnosticSnapshot().expandedCpuUploads.refs;
@@ -185,7 +244,7 @@ async function main(): Promise<void> {
       }
       const finalCycle = getMemoryDiagnosticSnapshot();
       waiterPromotion = uploadsUnpinned && promoted && returnedWaiting && quickReturnCancelled && delayedRelease &&
-        finalCycle.uploads.count === stats.sourceUploads;
+        finalCycle.uploads.count === uploadsBeforeVisibility;
       report(
         waiterPromotion,
         `BENCH: uploads stay unpinned; offscreen frees one slot; return waits stably; ` +
@@ -200,7 +259,7 @@ async function main(): Promise<void> {
   container.remove();
   const released = await waitFor(() => getLiveSwapchainCount() === 0, 30_000, 50);
   report(released, `BENCH: teardown released all live surfaces in ${(performance.now() - teardownStarted).toFixed(0)} ms`);
-  setOverallStatus(ready && stableAdmission && stableUploads && sharedOnce && waiterPromotion && released);
+  setOverallStatus(ready && stableAdmission && stableUploads && sharedOnce && sourceChangeRotation && waiterPromotion && released);
 }
 
 void main().catch((error) => {

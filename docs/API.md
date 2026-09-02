@@ -294,10 +294,15 @@ immediately trim evictable expanded-upload, shared-source, pane-retention, and
 diff-cache entries. Referenced GPU resources remain pinned, so budgets are soft
 when one exact working set is itself oversize. Reconstructible expanded CPU
 buffers are leased only while uploading/restoring—live and waiting panes retain
-raw decoded sources/reacquire closures, not full expanded arrays.
+raw decoded sources/reacquire closures, not full expanded arrays. Visible panes
+that have not presented their current content generation receive bounded
+priority admission: they may rotate an already-presented pane until they submit
+one coherent frame. After that, passive retries cannot evict another visible
+pane, so admission/upload activity settles instead of ping-ponging.
 
-`getMemoryDiagnosticSnapshot()` reports live, waiting, intersection-offscreen,
-and document-hidden panes; logical active source texture + deep-CSR storage bytes
+`getMemoryDiagnosticSnapshot()` reports live, waiting, current-generation
+presentation-needed, never-presented, intersection-offscreen, and document-hidden
+panes; logical active source texture + deep-CSR storage bytes
 (excluding driver/surface overhead); shared/zero-ref source textures; expanded CPU
 upload cache occupancy and current lease refs; upload counters; and diff/readback
 occupancy. Device rows/caches are explicitly removed after their final pane is

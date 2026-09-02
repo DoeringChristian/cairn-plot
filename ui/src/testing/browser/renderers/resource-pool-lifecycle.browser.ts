@@ -3,6 +3,7 @@ import { imageWebGpuRuntime, type ImageWebGpuRuntime } from "../../../plots/imag
 import {
   acquirePane,
   applyGpuResourcePolicy,
+  getCanvasPresentationStateForTest,
   getGpuPoolMemorySnapshot,
   getRegisteredGpuDeviceCountForTest,
   isCanvasLive,
@@ -27,6 +28,7 @@ const { report, setOverallStatus } = createHarness({
 
 let writes = 0;
 let destroys = 0;
+let presents = 0;
 let failSurface = false;
 const lostListeners = new Set<(reason: unknown) => void>();
 
@@ -66,6 +68,11 @@ const device = {
       getCurrentTextureView() { return {}; },
     };
   },
+  createRenderPipeline() { return {}; },
+  createBindGroup() {
+    return { updateUniform() {}, destroy() {} };
+  },
+  renderFullscreen() { presents++; },
   destroy() {},
   onLost(listener: (reason: unknown) => void) {
     lostListeners.add(listener);
@@ -109,6 +116,21 @@ async function pane(
 async function tick(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+const renderParams = {
+  exposureEV: 0,
+  displayOperationId: "linear",
+  isScalar: false,
+  hdrOut: false,
+  uv: { x: 0, y: 0, w: 1, h: 1 },
+} as const;
+
+async function renderRounds(entries: Array<{ handle: PaneHandle }>, rounds = 3): Promise<void> {
+  for (let round = 0; round < rounds; round++) {
+    for (const entry of entries) entry.handle.render(renderParams);
+    await tick();
+  }
 }
 
 async function main(): Promise<void> {
@@ -178,6 +200,83 @@ async function main(): Promise<void> {
   ok &&= fifoSafe;
   releasePane(f1.handle);
   releasePane(f2.handle);
+
+  // Presentation admission: 24 simultaneously visible panes under a 12-pane
+  // cap each submit one valid first frame. Rotation then settles; passive
+  // retries from presented waiters cannot evict the current live set.
+  setLiveGpuPaneLimit(12);
+  setGpuSourceTextureLimits({ activeBytes: 1024, sharedBytes: 4096, zeroRefBytes: 4096 });
+  const rotationCountersStart = { ...getGpuPoolMemorySnapshot().counters };
+  const rotationPanes = await Promise.all(
+    Array.from({ length: 24 }, (_, index) => pane(`rotate-${index}`, admitted, failed)),
+  );
+  for (const [index, entry] of rotationPanes.entries()) {
+    entry.handle.setSource(upload(16), `rotate:a:g1:${index}`);
+    entry.handle.setSourceB(upload(16), `rotate:b:g1:${index}`);
+    entry.handle.restore();
+  }
+  await renderRounds(rotationPanes);
+  const firstPresentation = getGpuPoolMemorySnapshot();
+  const everyFirstFrame = rotationPanes.every(({ canvas }) =>
+    getCanvasPresentationStateForTest(canvas)?.presented === true);
+  const firstRotationDelta = firstPresentation.counters.presentationRotations -
+    rotationCountersStart.presentationRotations;
+  const settledFirst = everyFirstFrame && firstPresentation.panes.live === 12 &&
+    firstPresentation.panes.waiting === 12 && firstPresentation.panes.presentationNeeded === 0 &&
+    firstPresentation.panes.neverPresented === 0 && firstRotationDelta === 12 &&
+    firstPresentation.sourceTextures.activeBytes <= 1024;
+  report(settledFirst,
+    `24/12 first-frame rotation: presented=${24 - firstPresentation.panes.presentationNeeded}, ` +
+    `live=${firstPresentation.panes.live}, waiting=${firstPresentation.panes.waiting}, ` +
+    `rotations=${firstRotationDelta}, activeBytes=${firstPresentation.sourceTextures.activeBytes}, presents=${presents}`);
+  ok &&= settledFirst;
+
+  const liveBeforePassive = rotationPanes.filter(({ canvas }) => isCanvasLive(canvas)).map(({ canvas }) => canvas.dataset.name);
+  const countersBeforePassive = { ...firstPresentation.counters };
+  await renderRounds(rotationPanes.filter(({ handle }) => handle.isWaiting), 2);
+  const afterPassive = getGpuPoolMemorySnapshot();
+  const liveAfterPassive = rotationPanes.filter(({ canvas }) => isCanvasLive(canvas)).map(({ canvas }) => canvas.dataset.name);
+  const passiveStable = liveBeforePassive.join(",") === liveAfterPassive.join(",") &&
+    afterPassive.counters.admissions === countersBeforePassive.admissions &&
+    afterPassive.counters.presentationRotations === countersBeforePassive.presentationRotations &&
+    afterPassive.counters.presentations === countersBeforePassive.presentations;
+  report(passiveStable,
+    `presented waiters are passive: admission/rotation/presentation deltas=` +
+    `${afterPassive.counters.admissions - countersBeforePassive.admissions}/` +
+    `${afterPassive.counters.presentationRotations - countersBeforePassive.presentationRotations}/` +
+    `${afterPassive.counters.presentations - countersBeforePassive.presentations}`);
+  ok &&= passiveStable;
+
+  // All sources change before any retry. Initially-live panes owe generation 2,
+  // so older presented waiters cannot jump them; after those submits, the other
+  // 12 rotate through coherently and the pool settles again.
+  const generationBefore = rotationPanes.map(({ canvas }) =>
+    getCanvasPresentationStateForTest(canvas)?.contentGeneration ?? 0);
+  const sourceChangeCountersStart = { ...getGpuPoolMemorySnapshot().counters };
+  for (const [index, entry] of rotationPanes.entries()) {
+    // Apply both operands before any render retry. The presented generation can
+    // therefore only acknowledge the complete new A/B tuple.
+    entry.handle.setSource(upload(16), `rotate:a:g2:${index}`);
+    entry.handle.setSourceB(upload(16), `rotate:b:g2:${index}`);
+  }
+  await renderRounds(rotationPanes, 4);
+  const changedPresentation = getGpuPoolMemorySnapshot();
+  const everyChangedFrame = rotationPanes.every(({ canvas }, index) => {
+    const state = getCanvasPresentationStateForTest(canvas);
+    return !!state && state.contentGeneration > (generationBefore[index] ?? 0) && state.presented;
+  });
+  const sourceChangeRotationDelta = changedPresentation.counters.presentationRotations -
+    sourceChangeCountersStart.presentationRotations;
+  const changedSettled = everyChangedFrame && changedPresentation.panes.presentationNeeded === 0 &&
+    changedPresentation.panes.neverPresented === 0 && changedPresentation.panes.live === 12 &&
+    changedPresentation.panes.waiting === 12 && sourceChangeRotationDelta === 12 &&
+    changedPresentation.sourceTextures.activeBytes <= 1024;
+  report(changedSettled,
+    `paired source-change rotation: debt=${changedPresentation.panes.presentationNeeded}, ` +
+    `rotations=${sourceChangeRotationDelta}, activeBytes=${changedPresentation.sourceTextures.activeBytes}, ` +
+    `presentations=${changedPresentation.counters.presentations}`);
+  ok &&= changedSettled;
+  for (const entry of rotationPanes) releasePane(entry.handle);
 
   // Visibility restoration uses the exception-safe activation authority and
   // reports failure only after complete teardown.
