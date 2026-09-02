@@ -208,6 +208,66 @@ mode** selector. Add operation-aware display behavior:
 - **Synchronized panes:** broadcast the flat `compare.encoding` patch through
   the existing settings channel.
 
+## Stack semantics
+
+A stack owns one physical `PlotCell` and one shared `PlotSettings` object while
+its active child changes. The two flat encoding keys fit that model without
+adding per-slot stores:
+
+| Active stack face | Effective mapping |
+| --- | --- |
+| Ordinary source image | `image.encoding` |
+| Split comparison | `image.encoding` |
+| Error comparison with explicit override | `compare.encoding` |
+| Error comparison in Automatic | Recommendation for the active operation |
+
+Both keys remain in the shared stack settings object when dormant. Therefore a
+source → FLIP → source flip restores source appearance without an adoption
+effect, and Automatic can change Magma → red-blue when two error slots use
+different operation domains. One explicit `compare.encoding` intentionally
+applies to every error slot in that stack; stack settings are viewport state,
+not per-tab state. Per-slot explicit mappings would contradict the existing
+single-settings-owner model and are out of scope.
+
+Entering stack layout should continue to seed its settings from the selected
+pane (or the existing first-pane fallback). That seed may contain both keys.
+Leaving stack layout does not copy the stack's overrides into independent grid
+cells; existing grid/stack session lifecycle rules remain unchanged.
+
+### HOME/reset in stacks
+
+The current image HOME path replaces the entire cell settings object with the
+active node defaults. That would erase the dormant encoding scope and defeat the
+source/error separation. Implementation must make image-display reset
+scope-aware:
+
+- HOME on a source or Split face resets source display state but preserves
+  `compare.encoding`.
+- HOME on an error face clears/resets `compare.encoding` but preserves
+  `image.encoding`.
+- View reset, comparison-operation reset, and channel reset retain their current
+  explicit semantics; they must not accidentally clear the dormant encoding.
+- A separate **Reset all image display** action may clear both scopes.
+
+This can be implemented by merging the dormant key back into the replacement or
+by issuing a scoped patch. It does not require nested settings or a new public
+merge API, but it does require changing the current wholesale image HOME path
+and its existing stack tests.
+
+### Stack colorbars and authored defaults
+
+A layout-level colorbar currently reads authored `shared.settings.image.encoding`
+and cannot represent an operation-derived `compare.encoding`. In a stack, the
+visible colorbar must follow the active pane's resolved display operation and
+range. Either the active image pane owns the colorbar, or it publishes a small
+resolved-display snapshot to the stack layout; the durable/session settings
+must still store intent, not the resolved Automatic value.
+
+Authored source mappings remain source defaults. If authored comparison defaults
+are supported, they must be passed as comparison defaults rather than written
+into `image.encoding`. Flipping tabs must never re-seed the stack settings; HOME
+is the explicit adoption/reset action.
+
 ## Other display parameters
 
 This first change separates mapping only. Exposure, offset, range, and reduction
@@ -310,8 +370,16 @@ pane-specific state.
 11. Legacy `image.encoding = srgb` keeps the source sRGB and displays FLIP with
     automatic Magma.
 12. Reference, iteration, and channel changes preserve both settings.
-13. Warm mapping switches record zero diff misses/uploads/recomputations.
-14. Cold and warm operation changes do not flash source encoding inside an
+13. A source/diff mixed stack retains both keys across repeated tab flips.
+14. An Automatic stack changes mapping when active error slots have different
+    domains; an explicit comparison mapping remains shared across them.
+15. HOME on a source slot preserves `compare.encoding`; HOME on an error slot
+    preserves `image.encoding`.
+16. Grid → stack seeding carries both keys and does not re-seed on each tab flip.
+17. The active stack colorbar follows Automatic/explicit resolved mapping.
+18. Warm mapping and stack-tab switches record zero diff misses, uploads, or
+    recomputations.
+19. Cold and warm operation changes do not flash source encoding inside an
     error view.
 
 ## Suggested implementation sequence
@@ -320,5 +388,8 @@ pane-specific state.
 2. Refactor `usePaneEncoding()` to accept explicit and automatic inputs.
 3. Route CPU/WebGPU source and comparison faces to their respective keys.
 4. Remove the invalid runtime colormap cast.
-5. Add Automatic to Cairn and renderer display controls.
-6. Add transition, synchronization, compatibility, and warm-cache tests.
+5. Make image HOME preserve the dormant source/comparison encoding scope.
+6. Make stack colorbars consume the active resolved display rather than static
+   authored `image.encoding`.
+7. Add Automatic to Cairn and renderer display controls.
+8. Add transition, stack, synchronization, compatibility, and warm-cache tests.
