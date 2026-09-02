@@ -22,7 +22,9 @@ test("slices a values-pixels source, preserving the constructor and dropping dee
     data[p * 3 + 1] = 10 + p;
     data[p * 3 + 2] = 20 + p;
   }
-  const dataProps = { source: floatSource(floatValues(data), [2, 2, 3]) };
+  const dataProps = {
+    source: { ...floatSource(floatValues(data), [2, 2, 3]), contentKey: "artifact:rgb" },
+  };
   const out = (await applyChannelSlice(dataProps, "G")) as { source: Record<string, unknown> };
   const src = out.source;
   const px = src.pixels as FloatPixels;
@@ -31,6 +33,7 @@ test("slices a values-pixels source, preserving the constructor and dropping dee
   assert.ok(values instanceof Float32Array);
   assert.deepEqual([...values], [10, 11, 12, 13]);
   assert.deepEqual(src.shape, [2, 2, 1]);
+  assert.equal(src.contentKey, "artifact:rgb|channels:1");
   // A sliced frame is a static copy — the live deep controller must be dropped.
   assert.equal(src.deep, undefined);
 });

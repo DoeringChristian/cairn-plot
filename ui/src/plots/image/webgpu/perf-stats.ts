@@ -4,6 +4,7 @@ export interface WebGpuComparisonStats {
   diffEvictions: number;
   sourceRebinds: number;
   sourceUploads: number;
+  sourceUploadBytes: number;
   cachedPresents: Record<string, number>;
 }
 
@@ -13,6 +14,7 @@ const stats: WebGpuComparisonStats = {
   diffEvictions: 0,
   sourceRebinds: 0,
   sourceUploads: 0,
+  sourceUploadBytes: 0,
   cachedPresents: {},
 };
 
@@ -24,7 +26,10 @@ export const recordDiffHit = (operation: string): void => bump(stats.diffHits, o
 export const recordDiffMiss = (operation: string): void => bump(stats.diffMisses, operation);
 export const recordDiffEviction = (): void => { stats.diffEvictions++; };
 export const recordSourceRebind = (): void => { stats.sourceRebinds++; };
-export const recordSourceUpload = (): void => { stats.sourceUploads++; };
+export const recordSourceUpload = (bytes = 0): void => {
+  stats.sourceUploads++;
+  stats.sourceUploadBytes += bytes;
+};
 export const recordCachedPresent = (operation: string): void => bump(stats.cachedPresents, operation);
 
 export function getWebGpuComparisonStats(): WebGpuComparisonStats {
@@ -37,5 +42,6 @@ export function resetWebGpuComparisonStats(): void {
   stats.diffEvictions = 0;
   stats.sourceRebinds = 0;
   stats.sourceUploads = 0;
+  stats.sourceUploadBytes = 0;
   stats.cachedPresents = {};
 }

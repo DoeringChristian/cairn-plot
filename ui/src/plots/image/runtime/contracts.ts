@@ -405,9 +405,10 @@ export function isFloatSource(p: ImageBackendInput): boolean {
 }
 
 /** Wrap decoded float data as a backend-neutral image source. */
-export function hdrSource(hdr: FloatImageData): FloatImageSource {
+export function hdrSource(hdr: FloatImageData, contentKey?: string): FloatImageSource {
   return {
     dtype: "float",
+    contentKey,
     pixels: hdr.pixels,
     shape: hdr.shape,
     numpyDtype: hdr.dtype,
@@ -417,7 +418,7 @@ export function hdrSource(hdr: FloatImageData): FloatImageSource {
 
 /** Wrap a URL/data-URL as a backend-neutral uint8 image source. */
 export function urlSource(url: string | null): Uint8ImageSource {
-  return { dtype: "uint8", url };
+  return { dtype: "uint8", url, contentKey: url ?? undefined };
 }
 
 /**

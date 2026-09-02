@@ -102,7 +102,14 @@ function sliceFloat(source: FloatSourceLike, indices: number[]): FloatSourceLike
         pixels: out instanceof Uint16Array ? halfBits(out) : floatValues(out),
       }
     : { data: out as Float32Array | Uint16Array };
-  const next = { ...source, ...repack, shape: [h, w, k] };
+  const next = {
+    ...source,
+    ...repack,
+    shape: [h, w, k],
+    contentKey: source.contentKey
+      ? `${String(source.contentKey)}|channels:${indices.join(",")}`
+      : undefined,
+  };
   // A sliced frame is a STATIC copy: drop the live deep-flatten controller so
   // the Z-window slider (which would recomposite the full RGBA and silently
   // discard the slice) hides while a channel isolation is active. HOME clears
@@ -158,7 +165,16 @@ export async function applyChannelSlice(
   }
   if (source.url) {
     const url = await sliceU8Url(source.url, indices);
-    return { ...dataProps, source: { ...source, url } };
+    return {
+      ...dataProps,
+      source: {
+        ...source,
+        url,
+        contentKey: source.contentKey
+          ? `${String(source.contentKey)}|channels:${indices.join(",")}`
+          : url,
+      },
+    };
   }
   return dataProps;
 }

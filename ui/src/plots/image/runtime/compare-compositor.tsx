@@ -87,6 +87,7 @@ function useGpuCompareReadyTick(): void {
 function compareFloatToDecoded(src: ResolvedFloatImage): FloatImageSource {
   return {
     dtype: "float",
+    contentKey: src.contentKey,
     pixels: src.pixels,
     shape: [src.height, src.width, src.channels],
   };

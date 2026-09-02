@@ -201,6 +201,36 @@ export class DiffCache {
     this.totalBytes = 0;
   }
 
+  snapshot(): {
+    entries: number;
+    bytes: number;
+    pinnedEntries: number;
+    pinnedRefs: number;
+    readbackEntries: number;
+    readbackBytes: number;
+    overBudget: boolean;
+  } {
+    let pinnedRefs = 0;
+    let readbackEntries = 0;
+    let readbackBytes = 0;
+    for (const refs of this.pins.values()) pinnedRefs += refs;
+    for (const entry of this.map.values()) {
+      if (entry.resultSamples) {
+        readbackEntries++;
+        readbackBytes += entry.resultSamples.byteLength;
+      }
+    }
+    return {
+      entries: this.map.size,
+      bytes: this.totalBytes,
+      pinnedEntries: this.pins.size,
+      pinnedRefs,
+      readbackEntries,
+      readbackBytes,
+      overBudget: this.map.size > this.maxEntries || this.totalBytes > this.maxBytes,
+    };
+  }
+
   get size(): number {
     return this.map.size;
   }

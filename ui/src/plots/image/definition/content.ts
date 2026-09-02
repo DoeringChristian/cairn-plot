@@ -32,6 +32,8 @@ export interface DeepFlattenController {
 /** Decoded floating-point image content retained by the image runtime. */
 export interface FloatImageSource {
   readonly dtype: "float";
+  /** Stable immutable content/transform identity for CPU/GPU sharing. */
+  readonly contentKey?: string;
   readonly pixels: FloatPixels;
   readonly shape: number[];
   readonly numpyDtype?: string;
@@ -41,6 +43,8 @@ export interface FloatImageSource {
 /** Browser-decodable eight-bit image content retained by the image runtime. */
 export interface Uint8ImageSource {
   readonly dtype: "uint8";
+  /** Stable immutable content/transform identity for CPU/GPU sharing. */
+  readonly contentKey?: string;
   readonly url: string | null;
 }
 

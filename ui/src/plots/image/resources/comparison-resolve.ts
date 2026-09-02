@@ -99,11 +99,12 @@ function decodedSource(operand: ResolvedImageOperand): ImageSource | null {
     const { pixels, width, height, channels } = operand.float;
     return {
       dtype: "float",
+      contentKey: operand.float.contentKey,
       pixels,
       shape: channels > 1 ? [height, width, channels] : [height, width],
     };
   }
-  return operand.url == null ? null : { dtype: "uint8", url: operand.url };
+  return operand.url == null ? null : { dtype: "uint8", url: operand.url, contentKey: operand.url };
 }
 
 function contentKey(operand: ResolvedImageOperand, fallback: string): string {

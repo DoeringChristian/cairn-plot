@@ -96,10 +96,11 @@ import {
   acquirePane,
   releasePane,
   getCanvasSurfaceForTest,
-  MAX_RETAINED_SOURCE_TEXTURES as POOL_MAX_RETAINED_SOURCE_TEXTURES,
   type PaneHandle,
   type SourceUpload,
+  type SourceUploadLease,
 } from "./pool";
+import { expandedUploadCache } from "./expanded-upload-cache.ts";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import { isPaintPhaseLogActive, recordPaintPhase } from "./test-hooks";
 import type { DiffMetrics, ImageParams } from "./image-engine";
@@ -234,49 +235,49 @@ function hdrToRGBAFloat32(hdr: FloatImageData): SourceUpload {
   return { data: out, width: w, height: h, format: "rgba32float" };
 }
 
-/** Expand any decoded source (the reference operand `b` of a diff) into a
- *  `SourceUpload` in its natural texture format: a float source expands RGB→RGBA
- *  (via {@link hdrToRGBAFloat32}), a uint8 source is `<img>`-decoded to
- *  `rgba8unorm`. Async because the uint8 path decodes a URL. Mirrors
- *  `GpuComparePane`'s `loadSide`, but yields the pool's `SourceUpload` shape. */
-const sharedComparisonUploads = new Map<string, SourceUpload>();
-
-function cacheComparisonUpload(key: string, upload: SourceUpload): SourceUpload {
-  if (sharedComparisonUploads.has(key)) sharedComparisonUploads.delete(key);
-  sharedComparisonUploads.set(key, upload);
-  // This is only a lookup owner; pane-local upload caches retain the objects they
-  // actively use. Bound the global tail without invalidating those references.
-  while (sharedComparisonUploads.size > 512) {
-    const oldest = sharedComparisonUploads.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    sharedComparisonUploads.delete(oldest);
-  }
-  return upload;
+/** Acquire one deduplicated upload-ready buffer. The cache key includes the
+ * immutable content transform plus the expanded layout; pane leases are released
+ * after the configured offscreen delay and synchronously reacquired on return. */
+function acquireExpanded(
+  key: string,
+  build: () => SourceUpload,
+): SourceUploadLease {
+  return expandedUploadCache.acquire(key, build);
 }
 
-async function decodedSourceToUpload(src: ImageSource, contentKey?: string): Promise<SourceUpload | null> {
-  if (contentKey) {
-    const cached = sharedComparisonUploads.get(contentKey);
-    if (cached) {
-      sharedComparisonUploads.delete(contentKey);
-      sharedComparisonUploads.set(contentKey, cached);
-      return cached;
-    }
-  }
-  let upload: SourceUpload | null;
+function decodedSourceUploadLease(
+  src: ImageSource,
+  contentKey: string,
+  decodedU8?: ImageData,
+): { lease: SourceUploadLease; reacquire: () => SourceUploadLease } | null {
   if (src.dtype === "float") {
-    upload = hdrToRGBAFloat32({
+    const build = () => hdrToRGBAFloat32({
       pixels: src.pixels,
       shape: src.shape,
       dtype: src.numpyDtype ?? "<f4",
       deep: src.deep,
     });
-  } else {
-    if (!src.url) return null;
-    const d = await loadImageData(src.url);
-    upload = d ? sceneFieldUpload(d) : null;
+    const { h, w } = shapeDims(src.shape);
+    const format = src.pixels.kind === "f16-bits" ? "rgba16float" : "rgba32float";
+    const key = `expanded:${contentKey}|${w}x${h}:${format}`;
+    const reacquire = () => acquireExpanded(key, build);
+    return { lease: reacquire(), reacquire };
   }
-  return upload && contentKey ? cacheComparisonUpload(contentKey, upload) : upload;
+  const image = decodedU8 ?? (src.url ? getCachedLoadedImageData(src.url) : null);
+  if (!image) return null;
+  const key = `expanded:${contentKey}|scene-rgba32float|${image.width}x${image.height}`;
+  const reacquire = () => acquireExpanded(key, () => sceneFieldUpload(image));
+  return { lease: reacquire(), reacquire };
+}
+
+async function decodedSourceToUploadLease(
+  src: ImageSource,
+  contentKey: string,
+): Promise<{ lease: SourceUploadLease; reacquire: () => SourceUploadLease } | null> {
+  const immediate = decodedSourceUploadLease(src, contentKey);
+  if (immediate || src.dtype === "float" || !src.url) return immediate;
+  const image = await loadImageData(src.url);
+  return image ? decodedSourceUploadLease(src, contentKey, image) : null;
 }
 
 function sceneFieldUpload(image: ImageData): SourceUpload {
@@ -391,7 +392,24 @@ export function screenPxPerTexel(
   });
 }
 
+const sourceObjectIds = new WeakMap<object, number>();
+let sourceObjectId = 0;
+function stableSourceContentKey(source: ImageSource): string {
+  if (source.contentKey) return source.contentKey;
+  if (source.dtype === "uint8" && source.url) return source.url;
+  const identity = source.dtype === "float"
+    ? (source.pixels.kind === "f16-bits" ? source.pixels.bits : source.pixels.values)
+    : source;
+  let id = sourceObjectIds.get(identity as object);
+  if (id === undefined) {
+    id = ++sourceObjectId;
+    sourceObjectIds.set(identity as object, id);
+  }
+  return `runtime-image:${id}`;
+}
+
 export default function GpuImagePane(backendProps: ImageBackendInput) {
+  const primaryContentKey = stableSourceContentKey(backendProps.source);
   // The ONE unified `source` fans out (keyed on `source.dtype`) into the two
   // internal dtype-keyed representations the body below consumes — so the body
   // (and its `isFloatSurfaceProps(props)` dispatch) is unchanged. `backendProps` is
@@ -490,18 +508,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // DIRECT op's cpu twin. Float → the raw ImageSource; uint8 → the decoded RGBA.
   const refFloatRef = useRef<ImageSource | null>(null);
   const refU8Ref = useRef<{ data: ArrayLike<number>; width: number; height: number } | null>(null);
-  // FLIP-BACK RETENTION (content-op unification follow-up — residual stacked-flip
-  // flicker). A stacked viewport reuses ONE pane across its slots; flipping BACK
-  // to an already-shown COMPARE slot must present the (content-keyed, still-cached)
-  // diff RESULT SYNCHRONOUSLY — never through an async decode+upload gap that
-  // paints a transient/intermediate frame. This caches the DECODED `SourceUpload`
-  // (the primary reference `a` + foreground `b`) keyed by the slot's content keys,
-  // so a flip back binds without re-decoding; the POOL separately retains the GPU
-  // texture (`PaneHandle.setSource(..., contentKey)`), so neither re-decode nor
-  // re-upload happens. Bounded (LRU) to the pool's retention cap so CPU-buffer
-  // memory can't grow unbounded across many flips. See the setSource/setSourceB
-  // effects below for the synchronous fast-path.
-  const uploadCacheRef = useRef<Map<string, { upload: SourceUpload; ref: ImageSource }>>(new Map());
   // -----------------------------------------------------------------------
   // PRESENT-COHERENCY GUARD (residual fast-flip flicker). The pane's content
   // config — which primary/`b` source, and whether it's a diff/composite/plain
@@ -545,22 +551,13 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const contentEpochRef = useRef(0);
   const contentEpochIdentityRef = useRef<string | undefined>(undefined);
   const lastCommitEpochRef = useRef(-1);
-  const rememberUpload = useCallback((key: string, upload: SourceUpload, ref: ImageSource) => {
-    const m = uploadCacheRef.current;
-    if (m.has(key)) m.delete(key);
-    m.set(key, { upload, ref });
-    while (m.size > POOL_MAX_RETAINED_SOURCE_TEXTURES) {
-      const oldest = m.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      m.delete(oldest);
-    }
-  }, []);
   // Content-identity diff-cache keys (`a` = primary/`source`, `b` = reference):
   // a float side keys on its ORIGINAL content key (URL), not the decoded bytes.
   // Declared here (before the source-upload effects) so those effects can key the
   // pool retention + the local flip-back upload cache on them.
-  const contentKeyA = compareSource?.contentKeyA ?? "diff:a";
-  const contentKeyB = compareSource?.contentKeyB ?? "diff:b";
+  const contentKeyA = compareSource?.contentKeyA ?? primaryContentKey;
+  const contentKeyB = compareSource?.contentKeyB ??
+    (compareSource?.b ? stableSourceContentKey(compareSource.b) : "diff:b");
 
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
@@ -1013,7 +1010,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
             browserHasExtendedToneMapping ? "no-hdr-display" : "no-hdr-browser",
           );
         }
-        acquirePane(canvas, { hdr: useHdr })
+        acquirePane(canvas, {
+          hdr: useHdr,
+          onAdmitted: () => setContainerTick((tick) => tick + 1),
+        })
           .then((handle) => {
             if (cancelled) {
               releasePane(handle);
@@ -1105,12 +1105,16 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // The DEEP-aware effective source (live Z-clip re-flatten swaps its `data`).
     const hdr = deepFlatten.hdr;
     hdrDataRef.current = hdr;
-    const upload = hdrToRGBAFloat32(hdr);
-    // COMPARE primary: key the pool retention on `contentKeyA` so a stacked flip
-    // back rebinds the resident float texture (no GPU re-upload). This effect is
-    // already SYNCHRONOUS (no async decode), so there is no flip-back gap to close
-    // beyond the upload itself. Unkeyed for the single-image path.
-    paneHandleRef.current?.setSource(upload, hasCompare ? contentKeyA : undefined);
+    const { h, w } = shapeDims(hdr.shape);
+    const format = hdr.pixels.kind === "f16-bits" ? "rgba16float" : "rgba32float";
+    const textureKey = hasCompare ? contentKeyA : primaryContentKey;
+    const cacheKey = `expanded:${textureKey}|${w}x${h}:${format}`;
+    const reacquire = () => acquireExpanded(cacheKey, () => hdrToRGBAFloat32(hdr));
+    const lease = reacquire();
+    const upload = lease.upload;
+    // Every immutable plain and comparison source is keyed device-wide; layout is
+    // also folded into the pool key, so transformed/channel-selected sources cannot alias.
+    paneHandleRef.current?.setSourceLease(lease, textureKey, reacquire);
     // Coherency guard: mirrors `expectedPrimaryId` (compare → `A:<keyA>`, else "hdr").
     appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : "hdr";
     setNaturalDims((prev) =>
@@ -1119,7 +1123,15 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     setPixelDataVersion((v) => v + 1);
     setUploadVersion((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hdrMode, paneReady, deepActive, hdrMode ? deepFlatten.hdr : null, hasCompare, hasCompare ? contentKeyA : null]);
+  }, [
+    hdrMode,
+    paneReady,
+    deepActive,
+    hdrMode ? deepFlatten.hdr : null,
+    hasCompare,
+    hasCompare ? contentKeyA : null,
+    primaryContentKey,
+  ]);
 
   // DEEP GPU-composite upload: fetch the Z-sorted samples ONCE, upload them to
   // GPU storage buffers, and composite the full window [zMin, zMax] into the
@@ -1183,21 +1195,28 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // source to render into it).
       return;
     }
-    // COMPARE mode keys the pool retention on the reference's content identity
-    // (`contentKeyA`) so a stacked flip BACK to this slot rebinds the resident
-    // primary texture instead of re-uploading. Unkeyed for the single-image path.
-    const primaryKey = hasCompare ? contentKeyA : undefined;
+    // Plain immutable sources are keyed just like comparison operands. A CPU
+    // false-color bake is a distinct transform/layout key, but presentation-only
+    // settings never enter comparison identity.
+    const primaryKey = hasCompare
+      ? contentKeyA
+      : colormap == null
+        ? primaryContentKey
+        : `${primaryContentKey}|colormap:${colormap}|ev:${displayEV}|off:${displayOffset}`;
     const applySdr = (raw: ImageData, display: ImageData, p2: Uint8SurfaceProps) => {
       sdrImageDataRef.current = raw; // TEV overlay reads the RAW source, like ImagePane.
-      const upload: SourceUpload = hasCompare
-        ? (sharedComparisonUploads.get(contentKeyA) ?? cacheComparisonUpload(contentKeyA, sceneFieldUpload(raw)))
+      const build = (): SourceUpload => hasCompare
+        ? sceneFieldUpload(raw)
         : {
             data: display.data,
             width: display.width,
             height: display.height,
             format: "rgba8unorm",
           };
-      paneHandleRef.current?.setSource(upload, primaryKey);
+      const format = hasCompare ? "rgba32float" : "rgba8unorm";
+      const cacheKey = `expanded:${primaryKey}|${display.width}x${display.height}:${format}`;
+      const reacquire = () => acquireExpanded(cacheKey, build);
+      paneHandleRef.current?.setSourceLease(reacquire(), primaryKey, reacquire);
       // Coherency guard: record which primary content the pool now holds — mirrors
       // `expectedPrimaryId` in renderPass (compare → `A:<keyA>`, else `img:<url>`).
       appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : `img:${imageUrl}`;
@@ -1266,6 +1285,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // Compare primary keys the pool retention on `contentKeyA` (flip-back).
     hasCompare,
     hasCompare ? contentKeyA : null,
+    primaryContentKey,
   ]);
 
   // -----------------------------------------------------------------------
@@ -1293,12 +1313,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       return;
     }
     const key = contentKeyB;
-    // Apply a decoded upload to the pool + local readout refs + versions. Shared
-    // by the SYNCHRONOUS flip-back path (cache hit) and the async decode path so a
-    // flip back to a resident diff slot presents the cached RESULT on the same
-    // commit — no async gap, no intermediate frame.
-    const apply = (upload: SourceUpload) => {
-      paneHandleRef.current?.setSourceB(upload, key);
+    // Apply a ref-counted decoded upload to the pool + local readout refs.
+    const apply = (owned: { lease: SourceUploadLease; reacquire: () => SourceUploadLease }) => {
+      const upload = owned.lease.upload;
+      paneHandleRef.current?.setSourceBLease(owned.lease, key, owned.reacquire);
       // Coherency guard: record the `b` operand the pool now holds — mirrors
       // `expectedBId` in renderPass (`B:<keyB>`).
       appliedBIdRef.current = `B:${key}`;
@@ -1307,7 +1325,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         refFloatRef.current = b;
         refU8Ref.current = null;
       } else {
-        refU8Ref.current = { data: upload.data as unknown as ArrayLike<number>, width: upload.width, height: upload.height };
+        const raw = b.url ? getCachedLoadedImageData(b.url) : null;
+        refU8Ref.current = raw
+          ? { data: raw.data, width: raw.width, height: raw.height }
+          : null;
         refFloatRef.current = null;
       }
       setRefDims((prev) =>
@@ -1315,20 +1336,21 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       );
       setRefUploadVersion((v) => v + 1);
     };
-    const cached = uploadCacheRef.current.get(key);
-    if (cached) {
-      // FLIP-BACK FAST PATH: decoded upload already resident (and the pool retains
-      // the GPU texture under `key`) — bind synchronously, no `.then`.
-      uploadCacheRef.current.delete(key); // touch → most-recently-used
-      uploadCacheRef.current.set(key, cached);
-      apply(cached.upload);
+    const immediate = decodedSourceUploadLease(b, key);
+    if (immediate) {
+      // Float sources and already-decoded uint8 sources reacquire synchronously,
+      // preserving the paint-atomic flip-back path without pane-local full arrays.
+      apply(immediate);
       return;
     }
     let cancelled = false;
-    decodedSourceToUpload(b, key).then((upload) => {
-      if (cancelled || !upload) return;
-      rememberUpload(key, upload, b);
-      apply(upload);
+    decodedSourceToUploadLease(b, key).then((owned) => {
+      if (!owned) return;
+      if (cancelled) {
+        owned.lease.release();
+        return;
+      }
+      apply(owned);
     });
     return () => {
       cancelled = true;

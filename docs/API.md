@@ -269,6 +269,33 @@ plot.restoreSession(session);
 plot.destroy();
 ```
 
+Host-wide exact-resolution resource policy is configured before mounting:
+
+```ts
+configureRuntime({
+  decodedCacheBytes: 1024 ** 3,
+  expandedUploadCacheBytes: 768 * 1024 ** 2,
+  offscreenCpuReleaseMs: 30_000,
+  gpu: {
+    livePaneLimit: 16,             // secondary count guard
+    sourceTexturesPerPane: 8,     // secondary count guard
+    activeSourceBytes: 1024 ** 3,
+    sharedSourceBytes: 1280 * 1024 ** 2,
+    zeroRefSourceBytes: 128 * 1024 ** 2,
+    diffEntries: 256,
+    diffBytes: 1024 ** 3,
+  },
+});
+```
+
+The three source byte limits and the two diff limits are configured as complete
+groups. Referenced resources are pinned, so budgets are soft when one exact
+working set is itself oversize. `getMemoryDiagnosticSnapshot()` reports live,
+waiting and offscreen panes; active/shared/zero-ref source textures; expanded CPU
+upload ownership; upload counters; and diff/readback occupancy.
+`resetMemoryDiagnosticStats()` resets cumulative counters only, never gauges or
+ownership.
+
 ### Descriptor contract
 A plot is mounted from a **tree** descriptor — `{ root: PlotNode, mode?, endpoint? }`
 — serialized in a `<script type="application/cairn-plot+json">` blob (schema:

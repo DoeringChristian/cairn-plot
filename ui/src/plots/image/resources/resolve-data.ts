@@ -92,7 +92,7 @@ export async function resolveImageData(
         // EXR: attach the parts × groups tree so the pane shows the channel strip.
         const exrTree = tryExrTree(bytes);
         return {
-          source: decodedToSource(decoded),
+          source: decodedToSource(decoded, imageContentKey(data.url, data.part, data.layer)),
           baselineUrl: null,
           overlay,
           ...(exrTree ? { exrTree } : {}),
@@ -119,7 +119,7 @@ export async function resolveImageData(
         // format-string gate missed MIME/uppercase hints ("image/x-exr").
         const exrTree = tryExrTree(bytes);
         return {
-          source: decodedToSource(decoded),
+          source: decodedToSource(decoded, imageContentKey(data.hash, data.part, data.layer)),
           baselineUrl,
           overlay,
           ...(exrTree ? { exrTree } : {}),
@@ -150,7 +150,7 @@ export async function resolveImageData(
           );
           const exrTree = tryExrTree(bytes);
           return {
-            source: decodedToSource(decoded),
+            source: decodedToSource(decoded, imageContentKey(data.hash ?? item.url, data.part, data.layer)),
             baselineUrl: ref?.url ?? null,
             overlay: item.overlay ?? undefined,
             ...(exrTree ? { exrTree } : {}),
@@ -158,7 +158,11 @@ export async function resolveImageData(
         }
       }
       return {
-        source: { dtype: "uint8", url: item?.url ?? null },
+        source: {
+          dtype: "uint8",
+          url: item?.url ?? null,
+          contentKey: data.hash ? imageContentKey(data.hash, data.part, data.layer) : item?.url ?? undefined,
+        },
         baselineUrl: ref?.url ?? null,
         overlay: item?.overlay ?? undefined,
       };
@@ -177,7 +181,7 @@ export async function resolveImageData(
         data.referenceSrc ? resolveFinalUrl(data.referenceSrc) : Promise.resolve(null),
       ]);
       return {
-        source: { dtype: "uint8", url: imageUrl },
+        source: { dtype: "uint8", url: imageUrl, contentKey: imageUrl ?? undefined },
         baselineUrl,
         overlay: parseOverlay(data.metadata) ?? undefined,
       };
@@ -202,6 +206,7 @@ export async function resolveImageData(
         return {
           source: {
             dtype: "float",
+            contentKey: imageContentKey(data.hash),
             // SELF-DESCRIBING buffer (image/pixel-buffer.ts): the runtime
             // payload's representation travels with the bytes.
             pixels: floatPixelsFrom(rt.data, rt.precision),
@@ -214,7 +219,13 @@ export async function resolveImageData(
       const buf = await source.bytes(data.hash);
       const npy = parseNpy(buf);
       return {
-        source: { dtype: "float", pixels: floatValues(npy.data), shape: npy.shape, numpyDtype: npy.dtype },
+        source: {
+          dtype: "float",
+          contentKey: imageContentKey(data.hash),
+          pixels: floatValues(npy.data),
+          shape: npy.shape,
+          numpyDtype: npy.dtype,
+        },
         meta: data.meta,
       };
     }
@@ -228,7 +239,16 @@ export async function resolveImageData(
  * controller threaded through), `u8` → a uint8 source carrying a PNG data URL
  * (the byte-exact `<img>` / SDR-surface path).
  */
-function decodedToSource(decoded: DecodedImage) {
+function imageContentKey(
+  identity: string,
+  part?: string | number,
+  layer?: string | string[],
+): string {
+  const layerKey = Array.isArray(layer) ? layer.join(",") : (layer ?? "");
+  return `image:${identity}|part:${part ?? ""}|layer:${layerKey}`;
+}
+
+function decodedToSource(decoded: DecodedImage, contentKey?: string) {
   if (decoded.kind === "f32") {
     const shape =
       decoded.channels === 1
@@ -236,13 +256,14 @@ function decodedToSource(decoded: DecodedImage) {
         : [decoded.height, decoded.width, decoded.channels];
     return {
       dtype: "float",
+      contentKey,
       pixels: floatPixelsFrom(decoded.data, decoded.precision),
       shape,
       numpyDtype: decoded.precision === "f16-bits" ? "<f2" : "<f4",
       deep: decoded.deep,
     };
   }
-  return { dtype: "uint8", url: decodedU8ToDataUrl(decoded) };
+  return { dtype: "uint8", contentKey, url: decodedU8ToDataUrl(decoded) };
 }
 
 /**

@@ -18,21 +18,14 @@
  * `Surface`/`Texture` are freed while the CPU source buffer it was last given
  * via `setSource()` is RETAINED (owned by this pool entry, not by the
  * caller) so a scroll-back-into-view **restore** can re-upload without the
- * caller re-supplying the data. `render()` auto-restores a parked pane
- * (marking it most-recently-used) and — if that pushes the live count over
- * the cap — evicts (parks) the least-recently-used OTHER live pane,
- * PREFERRING an off-screen victim (`PaneHandle.setVisible`/`evictOverCap`) —
- * only reaching into the visible set when every live slot is visible (more
- * visible panes than the cap, the many-panes-gallery case this pool exists
- * for). Critically, `render()`'s auto-restore is unconditional: a pane the
- * LRU parked while it was STILL ON-SCREEN (visible-set eviction)
- * transparently restores on its very next render request (a viewport
- * zoom/pan, an exposure/operator change, the double-click reset, ...) — a
- * re-render never paints into a parked surface. `GpuImagePane` additionally
- * drives explicit `park()`/`restore()`/`setVisible()` from its own
- * `IntersectionObserver` so off-screen panes free GPU memory promptly
- * instead of only reactively at the next over-cap render, and the pool
- * always knows which live panes are actually on-screen.
+ * caller re-supplying the data. Admission is stable: when more panes are
+ * intersection-visible than the count/byte budgets permit, excess panes enter
+ * a FIFO waiting state and keep their last painted canvas. Their passive render
+ * retries never displace another visible pane. An offscreen/disposed live pane
+ * frees a slot and admits the oldest visible waiter. `GpuImagePane` drives
+ * `park()`/`restore()`/`setVisible()` from its `IntersectionObserver`; after a
+ * configurable offscreen delay reconstructible expanded CPU ownership is also
+ * released (quick returns cancel it).
  *
  * `Surface` (`engine/types.ts`) exposes no explicit teardown (WebGPU's
  * `GPUCanvasContext` has no public "release the swapchain" call short of
@@ -42,8 +35,10 @@
  * re-configure (`webgpu/device.ts`'s `createSurface`).
  */
 import {
+  getGpuSourceTextureLimits,
   getGpuSourceTextureRetentionLimit,
   getLiveGpuPaneLimit,
+  getOffscreenCpuReleaseMs,
 } from "../../../resources/runtime-config.ts";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import type { ImageWebGpuRuntime } from "./device/runtime.ts";
@@ -71,6 +66,7 @@ import {
 } from "./diff-engine";
 import { cacheFor } from "./diff-cache";
 import { recordCachedPresent, recordSourceRebind, recordSourceUpload } from "./perf-stats.ts";
+import { textureByteLength, textureBytes } from "./texture-bytes.ts";
 import { mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { getWebGpuImageOperation, getWebGpuMultipassOperation } from "./image-operations.ts";
 import { computeHdrFlipExposures } from "./kernels/hdr-flip-reference.ts";
@@ -173,10 +169,18 @@ export interface SourceUpload {
   data: ArrayBufferView;
 }
 
+/** One ref-counted ownership of an upload-ready CPU buffer. */
+export interface SourceUploadLease {
+  readonly upload: SourceUpload;
+  release(): void;
+}
+
 export interface PaneHandle {
   readonly canvas: HTMLCanvasElement;
   /** True while this pane's GPU resources are freed (parked). */
   readonly isParked: boolean;
+  /** True when visible but stably waiting for count/byte admission. */
+  readonly isWaiting: boolean;
   /**
    * Replace the CPU source buffer. Retained by the pool so `park()`/restore
    * cycles don't need the caller to re-supply it. If the pane is currently
@@ -202,6 +206,13 @@ export interface PaneHandle {
    * lifecycle-identical to before.
    */
   setSource(src: SourceUpload, contentKey?: string): void;
+  /** Transfer one cache lease to this pane. `reacquire` reconstructs/reacquires
+   * exact native upload data after delayed offscreen CPU release. */
+  setSourceLease(
+    lease: SourceUploadLease,
+    contentKey: string,
+    reacquire: () => SourceUploadLease,
+  ): void;
   /**
    * Set (or clear) the SECOND source buffer `b` — the reference/baseline operand
    * of an arity-2 diff IMAGE operation (`image/operations`). Retained by the pool
@@ -219,6 +230,14 @@ export interface PaneHandle {
    * rebinds the reference texture synchronously instead of re-uploading it.
    */
   setSourceB(src: SourceUpload | null, contentKey?: string): void;
+  setSourceBLease(
+    lease: SourceUploadLease | null,
+    contentKey?: string,
+    reacquire?: () => SourceUploadLease,
+  ): void;
+  /** Release reconstructible upload-ready CPU ownership immediately. Raw pixels
+   * used by labels remain owned by the renderer/resolution cache. */
+  releaseCpuUploads(): void;
   /**
    * DEEP-EXR GPU composite source (the depth slider on GPU panes). Uploads the
    * Z-sorted samples to GPU storage buffers ONCE and composites the window
@@ -253,10 +272,10 @@ export interface PaneHandle {
   resize(width: number, height: number): void;
   /**
    * Run the IMAGE render pass with `params` against the current source.
-   * Auto-restores a parked pane first (marking it most-recently-used) and
-   * evicts the LRU live pane if that pushes the pool over
-   * `MAX_LIVE_SWAPCHAINS`. No-op (does not throw) if no source has been set
-   * yet or the handle was disposed.
+   * Auto-restores a parked pane when admission permits. A capacity-blocked
+   * visible pane remains a stable waiter and preserves its last painted frame;
+   * it never displaces another visible pane. No-op (does not throw) if no source
+   * has been set yet or the handle was disposed.
    *
    * MEASURE-THEN-RENDER CONTRACT: a render before the first `resize()` (no backing
    * size yet) is a no-op SUCCESS — the pane is briefly blank until its container is
@@ -415,13 +434,9 @@ export interface PaneHandle {
   /**
    * Report this pane's current on-screen visibility (driven by
    * `GpuImagePane`'s `IntersectionObserver`). Purely informational for the
-   * LRU: `evictOverCap` prefers parking an OFF-SCREEN (`visible: false`)
-   * entry over a visible one, so a still-on-screen pane that got LRU-parked
-   * only because MORE panes are visible than `MAX_LIVE_SWAPCHAINS` (the
-   * many-panes-gallery case this pool exists for) survives longer than an
-   * off-screen one. Does NOT itself park/restore anything — no-op on a
-   * disposed handle. Defaults to visible (`true`) until the caller reports
-   * otherwise, since a freshly-acquired pane is typically on-screen.
+   * visibility. Going offscreen parks immediately and starts delayed CPU-upload
+   * release; returning cancels that release and competes for FIFO admission.
+   * Defaults to visible (`true`) until the caller reports otherwise.
    */
   setVisible(visible: boolean): void;
   /** Permanently release this pane: frees GPU resources AND drops the
@@ -444,12 +459,16 @@ interface PaneEntry {
   surface: Surface | null;
   srcTexture: Texture | null;
   source: SourceUpload | null;
+  sourceLease: SourceUploadLease | null;
+  sourceReacquire: (() => SourceUploadLease) | null;
   /** SECOND source slot `b` (the reference/baseline of an arity-2 diff CONTENT
    *  op) — the retained CPU buffer + its uploaded texture, mirroring `source`/
    *  `srcTexture`. Uploaded in `activateEntry`, freed in `parkEntry`, re-uploaded
    *  on restore. Null for the single-image path (the common case). See
    *  `PaneHandle.setSourceB`. */
   sourceB: SourceUpload | null;
+  sourceBLease: SourceUploadLease | null;
+  sourceBReacquire: (() => SourceUploadLease) | null;
   srcTextureB: Texture | null;
   /** Content key of the CURRENT primary/`b` source (see `PaneHandle.setSource`'s
    *  `contentKey`). `undefined` = the slot's texture is UNKEYED (exclusive, freed
@@ -483,10 +502,12 @@ interface PaneEntry {
    *  (the detector is never armed) and at level ≤ 1. */
   deepSampleTex: Texture | null;
   parked: boolean;
+  waiting: boolean;
   disposed: boolean;
-  /** Last-reported on-screen visibility (`PaneHandle.setVisible`) — read by
-   *  `evictOverCap` to prefer parking off-screen panes first. */
+  /** Last-reported IntersectionObserver visibility. */
   visible: boolean;
+  offscreenReleaseTimer: ReturnType<typeof setTimeout> | null;
+  onAdmitted: (() => void) | undefined;
   /**
    * The canvas backing-store / surface size (DEVICE pixels, i.e. already
    * display-css-size * dpr), as last requested via `PaneHandle.resize()`. 0 until
@@ -500,6 +521,17 @@ interface PaneEntry {
 
 // Module-singleton LRU of currently-LIVE (non-parked) entries, oldest first.
 const live: PaneEntry[] = [];
+const panes = new Set<PaneEntry>();
+const waiters: PaneEntry[] = [];
+let documentHidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+
+const poolStats = {
+  parks: 0,
+  restores: 0,
+  admissions: 0,
+  admissionBlocks: 0,
+  evictions: 0,
+};
 
 function touchMostRecentlyUsed(entry: PaneEntry): void {
   const i = live.indexOf(entry);
@@ -515,13 +547,16 @@ function untrack(entry: PaneEntry): void {
 interface SharedSourceTexture {
   texture: Texture;
   refs: number;
+  bytes: number;
 }
 
 // Artifact-backed sources are immutable. Share one uploaded texture across all
 // panes on the device instead of duplicating a global reference once per run.
 const sharedSourceTextures = new WeakMap<Device, Map<string, SharedSourceTexture>>();
+const knownDevices = new Set<Device>();
 
 function sharedSources(device: Device): Map<string, SharedSourceTexture> {
+  knownDevices.add(device);
   let cache = sharedSourceTextures.get(device);
   if (!cache) {
     cache = new Map();
@@ -530,21 +565,54 @@ function sharedSources(device: Device): Map<string, SharedSourceTexture> {
   return cache;
 }
 
+function touchShared(cache: Map<string, SharedSourceTexture>, key: string, value: SharedSourceTexture): void {
+  cache.delete(key);
+  cache.set(key, value);
+}
+
+/** LRU-trim only zero-ref textures. Unique shared bytes are counted once and a
+ * referenced working set is never destroyed, even while over budget. */
+function trimSharedSources(device: Device): void {
+  const cache = sharedSources(device);
+  const limits = getGpuSourceTextureLimits();
+  const totals = () => {
+    let sharedBytes = 0;
+    let zeroRefBytes = 0;
+    for (const value of cache.values()) {
+      sharedBytes += value.bytes;
+      if (value.refs === 0) zeroRefBytes += value.bytes;
+    }
+    return { sharedBytes, zeroRefBytes };
+  };
+  let total = totals();
+  while (total.sharedBytes > limits.sharedBytes || total.zeroRefBytes > limits.zeroRefBytes) {
+    let victim: [string, SharedSourceTexture] | undefined;
+    for (const candidate of cache) {
+      if (candidate[1].refs === 0) {
+        victim = candidate;
+        break;
+      }
+    }
+    if (!victim) return;
+    cache.delete(victim[0]);
+    victim[1].texture.destroy();
+    total = totals();
+  }
+}
+
 function releaseSharedSource(device: Device, key: string): void {
   const cache = sharedSources(device);
   const shared = cache.get(key);
-  if (!shared) return;
-  shared.refs = Math.max(0, shared.refs - 1);
-  const zeroRefLimit = Math.max(32, getGpuSourceTextureRetentionLimit() * 2);
-  let zeroRefs = 0;
-  for (const value of cache.values()) if (value.refs === 0) zeroRefs++;
-  if (zeroRefs <= zeroRefLimit) return;
-  for (const [candidateKey, candidate] of cache) {
-    if (candidate.refs !== 0) continue;
-    cache.delete(candidateKey);
-    candidate.texture.destroy();
-    break;
-  }
+  if (!shared || shared.refs === 0) return;
+  shared.refs--;
+  touchShared(cache, key, shared);
+  trimSharedSources(device);
+}
+
+function retainedKey(key: string, src: SourceUpload): string {
+  // Layout/transform identity is part of texture identity. This also makes a
+  // stale caller key harmless if the decoded dimensions or native format move.
+  return `${key}\u0000${src.width}x${src.height}:${src.format}`;
 }
 
 /**
@@ -554,34 +622,35 @@ function releaseSharedSource(device: Device, key: string): void {
  */
 function uploadOrBindSource(entry: PaneEntry, src: SourceUpload, key: string | undefined): Texture {
   if (key !== undefined) {
-    const existing = entry.retained.get(key);
+    const cacheKey = retainedKey(key, src);
+    const existing = entry.retained.get(cacheKey);
     if (existing) {
       recordSourceRebind();
-      entry.retained.delete(key);
-      entry.retained.set(key, existing);
+      entry.retained.delete(cacheKey);
+      entry.retained.set(cacheKey, existing);
       return existing;
     }
     const global = sharedSources(entry.device);
-    let shared = global.get(key);
+    let shared = global.get(cacheKey);
     if (shared) {
       recordSourceRebind();
-      global.delete(key);
-      global.set(key, shared);
+      touchShared(global, cacheKey, shared);
       shared.refs++;
     } else {
       const texture = entry.device.createTexture(src.width, src.height, src.format);
       texture.write(src.data);
-      recordSourceUpload();
-      shared = { texture, refs: 1 };
-      global.set(key, shared);
+      const bytes = textureByteLength(src.width, src.height, src.format);
+      recordSourceUpload(bytes);
+      shared = { texture, refs: 1, bytes };
+      global.set(cacheKey, shared);
     }
-    entry.retained.set(key, shared.texture);
-    evictRetained(entry);
+    entry.retained.set(cacheKey, shared.texture);
+    trimSharedSources(entry.device);
     return shared.texture;
   }
   const tex = entry.device.createTexture(src.width, src.height, src.format);
   tex.write(src.data);
-  recordSourceUpload();
+  recordSourceUpload(textureByteLength(src.width, src.height, src.format));
   return tex;
 }
 
@@ -629,13 +698,149 @@ function clearRetained(entry: PaneEntry): void {
   entry.retained.clear();
 }
 
-/** Free `entry`'s live GPU resources; leaves `entry.source` (CPU buffer) intact. */
-function parkEntry(entry: PaneEntry): void {
+function removeWaiter(entry: PaneEntry): void {
+  const index = waiters.indexOf(entry);
+  if (index !== -1) waiters.splice(index, 1);
+  entry.waiting = false;
+}
+
+function enqueueWaiter(entry: PaneEntry): void {
+  if (entry.waiting) return;
+  entry.waiting = true;
+  waiters.push(entry);
+  poolStats.admissionBlocks++;
+}
+
+function releaseCpuUploadOwnership(entry: PaneEntry): void {
+  entry.sourceLease?.release();
+  entry.sourceLease = null;
+  if (entry.sourceReacquire) entry.source = null;
+  entry.sourceBLease?.release();
+  entry.sourceBLease = null;
+  if (entry.sourceBReacquire) entry.sourceB = null;
+}
+
+function reacquireCpuUploads(entry: PaneEntry): void {
+  if (!entry.source && entry.sourceReacquire) {
+    entry.sourceLease = entry.sourceReacquire();
+    entry.source = entry.sourceLease.upload;
+  }
+  if (!entry.sourceB && entry.sourceBReacquire) {
+    entry.sourceBLease = entry.sourceBReacquire();
+    entry.sourceB = entry.sourceBLease.upload;
+  }
+}
+
+function cancelOffscreenRelease(entry: PaneEntry): void {
+  if (entry.offscreenReleaseTimer !== null) clearTimeout(entry.offscreenReleaseTimer);
+  entry.offscreenReleaseTimer = null;
+}
+
+function scheduleOffscreenRelease(entry: PaneEntry): void {
+  cancelOffscreenRelease(entry);
+  const timeout = getOffscreenCpuReleaseMs();
+  if (timeout === 0) {
+    releaseCpuUploadOwnership(entry);
+    return;
+  }
+  entry.offscreenReleaseTimer = setTimeout(() => {
+    entry.offscreenReleaseTimer = null;
+    if (!entry.visible && !entry.disposed) releaseCpuUploadOwnership(entry);
+  }, timeout);
+}
+
+function activeSourceBytes(device?: Device): number {
+  const seen = new Set<Texture>();
+  let bytes = 0;
+  for (const entry of live) {
+    if (device && entry.device !== device) continue;
+    for (const texture of [entry.srcTexture, entry.srcTextureB]) {
+      if (texture && !seen.has(texture)) {
+        seen.add(texture);
+        bytes += textureBytes(texture);
+      }
+    }
+    for (const texture of entry.retained.values()) {
+      if (!seen.has(texture)) {
+        seen.add(texture);
+        bytes += textureBytes(texture);
+      }
+    }
+  }
+  return bytes;
+}
+
+function prospectiveSourceBytes(entry: PaneEntry): number {
+  const keys = new Set<string>();
+  let bytes = 0;
+  const add = (src: SourceUpload | null, key: string | undefined) => {
+    if (!src) return;
+    if (key === undefined) {
+      bytes += textureByteLength(src.width, src.height, src.format);
+      return;
+    }
+    const k = retainedKey(key, src);
+    if (keys.has(k)) return;
+    keys.add(k);
+    const shared = sharedSources(entry.device).get(k);
+    if (!shared || shared.refs === 0) bytes += textureByteLength(src.width, src.height, src.format);
+  };
+  if (entry.deep) bytes += textureByteLength(entry.deep.width, entry.deep.height, "rgba16float");
+  else add(entry.source, entry.sourceKey);
+  add(entry.sourceB, entry.sourceBKey);
+  return bytes;
+}
+
+function canAdmit(entry: PaneEntry): boolean {
+  // An offscreen pane never takes a slot. A hidden document restores nothing.
+  if (!entry.visible || documentHidden) return false;
+  // First reclaim any lingering offscreen resources; visible panes are NEVER
+  // displaced by another pane's passive restore/render.
+  while (live.length >= getLiveGpuPaneLimit()) {
+    const victim = live.find((candidate) => !candidate.visible);
+    if (!victim) return false;
+    poolStats.evictions++;
+    parkEntry(victim, false);
+  }
+  const limit = getGpuSourceTextureLimits().activeBytes;
+  while (activeSourceBytes(entry.device) + prospectiveSourceBytes(entry) > limit && live.length > 0) {
+    const victim = live.find((candidate) => !candidate.visible);
+    if (!victim) return false;
+    poolStats.evictions++;
+    parkEntry(victim, false);
+  }
+  // One oversize working set is pinned when nothing else is live. Diagnostics
+  // report the resulting over-budget state rather than destroying references.
+  return true;
+}
+
+let admittingWaiters = false;
+function admitWaiters(): void {
+  if (admittingWaiters || documentHidden) return;
+  admittingWaiters = true;
+  try {
+    for (const entry of [...waiters]) {
+      if (entry.disposed) {
+        removeWaiter(entry);
+        continue;
+      }
+      if (!entry.visible) continue;
+      if (!canAdmit(entry)) break; // FIFO stability: don't let passive retries jump ahead.
+      removeWaiter(entry);
+      activateEntry(entry);
+      queueMicrotask(() => entry.onAdmitted?.());
+    }
+  } finally {
+    admittingWaiters = false;
+  }
+}
+
+/** Free live GPU resources while retaining reconstructible CPU ownership. */
+function parkEntry(entry: PaneEntry, reconsiderWaiters = true): void {
   if (entry.parked) return;
   untrack(entry);
+  poolStats.parks++;
   releaseActiveDiff(entry);
-  // Free the currently-bound slot textures IF unkeyed; keyed ones are owned by
-  // `retained` and freed by `clearRetained` below (no double-destroy).
   releaseUnkeyedSlotTexture(entry.srcTexture, entry.sourceKey);
   entry.srcTexture = null;
   releaseUnkeyedSlotTexture(entry.srcTextureB, entry.sourceBKey);
@@ -652,82 +857,45 @@ function parkEntry(entry: PaneEntry): void {
   if (entry.surface) releaseImageRenderState(entry.surface);
   entry.surface = null;
   entry.parked = true;
+  if (reconsiderWaiters) admitWaiters();
 }
 
-/**
- * Evict (park) the least-recently-used live entry other than `except`,
- * repeating until at/under `MAX_LIVE_SWAPCHAINS`. Prefers the LRU entry among
- * OFF-SCREEN (`visible: false`) panes — parking a pane nobody can see is
- * always preferable to parking one that's on-screen. Only reaches into the
- * visible set when every other live slot is ALSO visible (the many-panes
- * gallery case: more visible panes than the cap, so an eviction among them is
- * unavoidable) — falls back to plain LRU across all live entries then.
- */
-function evictOverCap(except: PaneEntry): void {
-  while (live.length > getLiveGpuPaneLimit()) {
-    const victim = live.find((e) => e !== except && !e.visible) ?? live.find((e) => e !== except);
-    if (!victim) break;
-    parkEntry(victim);
-  }
-}
-
-/**
- * (Re-)acquire GPU resources for `entry` and upload its retained source (if
- * any); marks it most-recently-used and enforces the live cap.
- *
- * THROWS on a hard GPU-init failure — `Device.createSurface()` can throw
- * under real GPU-context exhaustion or driver failure. Callers
- * (`attemptRender`, below) MUST catch this — it is a genuine "this pane can
- * never activate right now" condition. `?forceEngineFail` (test-only,
- * `./test-hooks`) deterministically triggers this same throw path without
- * needing to actually exhaust a real GPU resource cap.
- */
+/** (Re-)acquire exact source resources if this pane can be stably admitted. */
 function activateEntry(entry: PaneEntry): void {
-  if (entry.disposed) return;
+  if (entry.disposed || documentHidden || !entry.visible) return;
   if (forceEngineFailRequested()) {
     throw new Error("cairn-plot engine: forced pane activation failure (?forceEngineFail test hook)");
   }
   if (!entry.parked && entry.surface) {
     touchMostRecentlyUsed(entry);
-    evictOverCap(entry);
     return;
   }
-  // MEASURE-THEN-RENDER (the pane contract). A pane has NO backing size until its
-  // container is measured (`PaneHandle.resize()`); until then there is nothing to
-  // configure, so activation is DEFERRED — the surface stays null and the render
-  // callers treat this entry as a no-op (a pane rendered pre-measure is briefly
-  // blank, by contract — see `PaneHandle.render`). The on-screen backing size is the
-  // ONLY size the surface is ever configured to: there is no source-dims floor.
   if (!entry.backingWidth || !entry.backingHeight) return;
+  reacquireCpuUploads(entry);
+  if (!canAdmit(entry)) {
+    enqueueWaiter(entry);
+    return;
+  }
+  removeWaiter(entry);
   const device = entry.device;
   entry.surface = entry.engine.createSurface(entry.canvas, { hdr: entry.hdr });
-  const w = entry.backingWidth;
-  const h = entry.backingHeight;
-  entry.canvas.width = w;
-  entry.canvas.height = h;
-  entry.surface.configure(w, h);
+  entry.canvas.width = entry.backingWidth;
+  entry.canvas.height = entry.backingHeight;
+  entry.surface.configure(entry.backingWidth, entry.backingHeight);
   if (entry.deep) {
-    // DEEP GPU composite: an rgba16float target the composite pass fills, plus
-    // the (once-uploaded) sample storage buffers. Re-created on every
-    // restore from the retained CSR (like the CPU `source` path re-uploads).
     const tex = device.createTexture(entry.deep.width, entry.deep.height, "rgba16float");
     entry.srcTexture = tex;
     entry.deepBuffers = device.createDeepSampleBuffers!(entry.deep);
     device.compositeDeep!(entry.deepBuffers, tex, entry.deepZNear, entry.deepZFar);
   } else if (entry.source) {
-    // Re-upload the current primary (park cleared `retained`), re-seeding the
-    // content-keyed retention if the source carries a key.
     entry.srcTexture = uploadOrBindSource(entry, entry.source, entry.sourceKey);
   }
-  // SECOND source slot `b` (arity-2 diff ops) — retained + re-uploaded on every
-  // (re)activate exactly like the primary `a` buffer. Null for the single-image
-  // path (no texture allocated).
-  if (entry.sourceB) {
-    entry.srcTextureB = uploadOrBindSource(entry, entry.sourceB, entry.sourceBKey);
-  }
+  if (entry.sourceB) entry.srcTextureB = uploadOrBindSource(entry, entry.sourceB, entry.sourceBKey);
+  evictRetained(entry);
   entry.parked = false;
+  poolStats.restores++;
+  poolStats.admissions++;
   touchMostRecentlyUsed(entry);
-  evictOverCap(entry);
 }
 
 const DEEP_SAMPLE_DIM = 8;
@@ -802,7 +970,7 @@ function averageSampleRgb(px: Uint8Array | Float32Array, hdr: boolean): { r: num
  * which would otherwise unmount the caller's whole subtree.
  */
 function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
-  if (entry.disposed || (!entry.source && !entry.deep)) return true;
+  if (entry.disposed || (!entry.source && !entry.sourceReacquire && !entry.deep)) return true;
   // A direct/compositor/plain present supersedes a cached metric face. Release
   // that lease; the cache may retain it opportunistically for a later flip-back.
   releaseActiveDiff(entry);
@@ -812,6 +980,7 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   if (!entry.backingWidth || !entry.backingHeight) return true;
   try {
     activateEntry(entry);
+    if (entry.waiting || documentHidden || !entry.visible) return true;
     if (!entry.surface || !entry.srcTexture) return false;
     // Bind the pool-owned SECOND source slot `b` (arity-2 direct diff ops) when
     // present — the caller sets `params.imageOperation`; the pool supplies the
@@ -889,9 +1058,14 @@ function attemptRenderDiffCached(
   mapping?: CompareMapping,
   cacheParams?: Record<string, number>,
 ): DiffCacheEntry | null {
-  if (entry.disposed || (!entry.source && !entry.deep) || !entry.sourceB) return null;
+  if (
+    entry.disposed ||
+    (!entry.source && !entry.sourceReacquire && !entry.deep) ||
+    (!entry.sourceB && !entry.sourceBReacquire)
+  ) return null;
   try {
     activateEntry(entry);
+    if (entry.waiting) return null;
     // MEASURE-THEN-RENDER: unmeasured ⇒ `activateEntry` deferred (no surface). The
     // caller (GpuImagePane.renderPass) already holds pre-measure, so this is a
     // defensive no-op path for any direct caller — a null result the pane retries.
@@ -961,10 +1135,14 @@ function attemptComputeMetrics(
   contentKeys?: { a: string; b: string },
   mapping?: CompareMapping,
 ): Promise<DiffMetrics> | null {
-  if (entry.disposed || !entry.source || !entry.sourceB) return null;
+  if (
+    entry.disposed ||
+    (!entry.source && !entry.sourceReacquire) ||
+    (!entry.sourceB && !entry.sourceBReacquire)
+  ) return null;
   try {
     activateEntry(entry);
-    if (!entry.srcTexture || !entry.srcTextureB) return null;
+    if (entry.waiting || !entry.srcTexture || !entry.srcTextureB) return null;
     if (!contentKeys) return computeMetrics(entry.device, entry.srcTexture, entry.srcTextureB, mapping);
     let cache = sourceMetricsCache.get(entry.device);
     if (!cache) {
@@ -1009,7 +1187,7 @@ function attemptComputeHistogram(
   entry: PaneEntry,
   spec: TexHistogramSpec,
 ): Promise<TexHistogramResult> | null {
-  if (entry.disposed || !entry.source || entry.deep) return null;
+  if (entry.disposed || (!entry.source && !entry.sourceReacquire) || entry.deep) return null;
   try {
     activateEntry(entry);
     const tex = entry.srcTexture;
@@ -1078,10 +1256,14 @@ function attemptComputeSsim(
   mapping?: CompareMapping,
   retainMap = true,
 ): Promise<number> | null {
-  if (entry.disposed || !entry.source || !entry.sourceB) return null;
+  if (
+    entry.disposed ||
+    (!entry.source && !entry.sourceReacquire) ||
+    (!entry.sourceB && !entry.sourceBReacquire)
+  ) return null;
   try {
     activateEntry(entry);
-    if (!entry.srcTexture || !entry.srcTextureB) return null;
+    if (entry.waiting || !entry.srcTexture || !entry.srcTextureB) return null;
     return ensureSsimScalar(
       entry.device,
       entry.srcTexture,
@@ -1101,13 +1283,19 @@ function attemptComputeSsim(
 }
 
 function makeHandle(entry: PaneEntry): PaneHandle {
-  return {
+  const handle: PaneHandle = {
     canvas: entry.canvas,
     get isParked() {
       return entry.parked;
     },
+    get isWaiting() {
+      return entry.waiting;
+    },
     setSource(src: SourceUpload, contentKey?: string): void {
       if (entry.disposed) return;
+      entry.sourceLease?.release();
+      entry.sourceLease = null;
+      entry.sourceReacquire = null;
       if (entry.source !== src || entry.sourceKey !== contentKey) releaseActiveDiff(entry);
       entry.source = src;
       // A plain CPU source supersedes any prior DEEP composite source.
@@ -1131,14 +1319,27 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         if (prev && prev !== tex) releaseUnkeyedSlotTexture(prev, prevKey);
         entry.srcTexture = tex;
         entry.sourceKey = contentKey;
+        evictRetained(entry);
       } else {
         // Parked: the new source is picked up by the next activateEntry();
         // record its key so that upload re-seeds retention correctly.
         entry.sourceKey = contentKey;
       }
     },
+    setSourceLease(lease: SourceUploadLease, contentKey: string, reacquire: () => SourceUploadLease): void {
+      handle.setSource(lease.upload, contentKey);
+      if (entry.disposed) {
+        lease.release();
+        return;
+      }
+      entry.sourceLease = lease;
+      entry.sourceReacquire = reacquire;
+    },
     setSourceB(src: SourceUpload | null, contentKey?: string): void {
       if (entry.disposed) return;
+      entry.sourceBLease?.release();
+      entry.sourceBLease = null;
+      entry.sourceBReacquire = null;
       if (entry.sourceB !== src || entry.sourceBKey !== (src ? contentKey : undefined)) releaseActiveDiff(entry);
       entry.sourceB = src;
       if (!entry.parked && entry.surface) {
@@ -1149,6 +1350,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
           if (prev && prev !== tex) releaseUnkeyedSlotTexture(prev, prevKey);
           entry.srcTextureB = tex;
           entry.sourceBKey = contentKey;
+          evictRetained(entry);
         } else {
           if (prev) releaseUnkeyedSlotTexture(prev, prevKey);
           entry.srcTextureB = null;
@@ -1159,8 +1361,28 @@ function makeHandle(entry: PaneEntry): PaneHandle {
         entry.sourceBKey = src ? contentKey : undefined;
       }
     },
+    setSourceBLease(
+      lease: SourceUploadLease | null,
+      contentKey?: string,
+      reacquire?: () => SourceUploadLease,
+    ): void {
+      handle.setSourceB(lease?.upload ?? null, contentKey);
+      if (!lease) return;
+      if (entry.disposed) {
+        lease.release();
+        return;
+      }
+      entry.sourceBLease = lease;
+      entry.sourceBReacquire = reacquire ?? null;
+    },
+    releaseCpuUploads(): void {
+      releaseCpuUploadOwnership(entry);
+    },
     setDeepSource(spec: DeepGpuCsrSpec, zNear: number, zFar: number): void {
       if (entry.disposed) return;
+      entry.sourceLease?.release();
+      entry.sourceLease = null;
+      entry.sourceReacquire = null;
       entry.deep = spec;
       entry.deepZNear = zNear;
       entry.deepZFar = zFar;
@@ -1265,7 +1487,11 @@ function makeHandle(entry: PaneEntry): PaneHandle {
           mapping,
           cacheParams,
         );
-        return cached ? { entry: cached } : "failed";
+        return cached
+          ? { entry: cached }
+          : entry.waiting || documentHidden || !entry.visible
+            ? "hold"
+            : "failed";
       }
       // Direct operation: pipeline selection is keyed by the semantic id. An
       // unknown or non-inline operation is held rather than shown as identity.
@@ -1329,24 +1555,45 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       parkEntry(entry);
     },
     restore(): void {
-      if (entry.disposed || (!entry.source && !entry.deep)) return;
+      if (
+        entry.disposed ||
+        (!entry.source && !entry.sourceReacquire && !entry.deep) ||
+        documentHidden ||
+        !entry.visible
+      ) return;
       activateEntry(entry);
     },
     setVisible(visible: boolean): void {
-      if (entry.disposed) return;
+      if (entry.disposed || entry.visible === visible) return;
       entry.visible = visible;
+      if (visible) {
+        cancelOffscreenRelease(entry);
+        if (entry.waiting) admitWaiters();
+      } else {
+        removeWaiter(entry);
+        parkEntry(entry);
+        scheduleOffscreenRelease(entry);
+      }
     },
     dispose(): void {
       if (entry.disposed) return;
-      parkEntry(entry); // frees srcTexture + srcTextureB + retained + deepBuffers
+      cancelOffscreenRelease(entry);
+      removeWaiter(entry);
+      parkEntry(entry, false); // frees srcTexture + srcTextureB + retained + deepBuffers
+      releaseCpuUploadOwnership(entry);
       entry.source = null;
       entry.sourceB = null;
+      entry.sourceReacquire = null;
+      entry.sourceBReacquire = null;
       entry.sourceKey = undefined;
       entry.sourceBKey = undefined;
       entry.deep = null;
       entry.disposed = true;
+      panes.delete(entry);
+      admitWaiters();
     },
   };
+  return handle;
 }
 
 /**
@@ -1361,7 +1608,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
  */
 export async function acquirePane(
   canvas: HTMLCanvasElement,
-  opts?: { hdr?: boolean },
+  opts?: { hdr?: boolean; onAdmitted?: () => void },
 ): Promise<PaneHandle> {
   const engine = await imageWebGpuRuntime.acquire();
   const device = engine.device;
@@ -1374,7 +1621,11 @@ export async function acquirePane(
     surface: null,
     srcTexture: null,
     source: null,
+    sourceLease: null,
+    sourceReacquire: null,
     sourceB: null,
+    sourceBLease: null,
+    sourceBReacquire: null,
     srcTextureB: null,
     sourceKey: undefined,
     sourceBKey: undefined,
@@ -1386,11 +1637,15 @@ export async function acquirePane(
     deepBuffers: null,
     deepSampleTex: null,
     parked: true,
+    waiting: false,
     disposed: false,
     visible: true,
+    offscreenReleaseTimer: null,
+    onAdmitted: opts?.onAdmitted,
     backingWidth: 0,
     backingHeight: 0,
   };
+  panes.add(entry);
   return makeHandle(entry);
 }
 
@@ -1419,4 +1674,127 @@ export function isCanvasLive(canvas: HTMLCanvasElement): boolean {
  *  Not used by any production code. */
 export function getCanvasSurfaceForTest(canvas: HTMLCanvasElement): Surface | null {
   return live.find((e) => e.canvas === canvas)?.surface ?? null;
+}
+
+export interface GpuPoolMemorySnapshot {
+  panes: { total: number; live: number; waiting: number; offscreen: number };
+  sourceTextures: {
+    activeEntries: number;
+    activeBytes: number;
+    sharedEntries: number;
+    sharedBytes: number;
+    zeroRefEntries: number;
+    zeroRefBytes: number;
+    activeOverBudget: boolean;
+    sharedOverBudget: boolean;
+    zeroRefOverBudget: boolean;
+  };
+  diff: {
+    entries: number;
+    bytes: number;
+    pinnedEntries: number;
+    pinnedRefs: number;
+    readbackEntries: number;
+    readbackBytes: number;
+    overBudget: boolean;
+  };
+  counters: typeof poolStats;
+}
+
+export function getGpuPoolMemorySnapshot(): GpuPoolMemorySnapshot {
+  const devices = new Set<Device>(knownDevices);
+  for (const pane of panes) devices.add(pane.device);
+  let sharedEntries = 0, sharedBytes = 0, zeroRefEntries = 0, zeroRefBytes = 0;
+  let diffEntries = 0, diffBytes = 0, pinnedEntries = 0, pinnedRefs = 0;
+  let readbackEntries = 0, readbackBytes = 0;
+  let diffOverBudget = false;
+  for (const device of devices) {
+    for (const value of sharedSources(device).values()) {
+      sharedEntries++;
+      sharedBytes += value.bytes;
+      if (value.refs === 0) {
+        zeroRefEntries++;
+        zeroRefBytes += value.bytes;
+      }
+    }
+    const diff = cacheFor(device).snapshot();
+    diffEntries += diff.entries;
+    diffBytes += diff.bytes;
+    pinnedEntries += diff.pinnedEntries;
+    pinnedRefs += diff.pinnedRefs;
+    readbackEntries += diff.readbackEntries;
+    readbackBytes += diff.readbackBytes;
+    diffOverBudget ||= diff.overBudget;
+  }
+  // Include live pane-owned (unkeyed/deep) textures without double-counting
+  // device-shared textures already represented above.
+  const allActiveBytes = activeSourceBytes();
+  const activeTextures = new Set<Texture>();
+  for (const entry of live) {
+    if (entry.srcTexture) activeTextures.add(entry.srcTexture);
+    if (entry.srcTextureB) activeTextures.add(entry.srcTextureB);
+    for (const texture of entry.retained.values()) activeTextures.add(texture);
+  }
+  const limits = getGpuSourceTextureLimits();
+  return {
+    panes: {
+      total: panes.size,
+      live: live.length,
+      waiting: [...panes].filter((entry) => entry.waiting).length,
+      offscreen: [...panes].filter((entry) => !entry.visible).length,
+    },
+    sourceTextures: {
+      activeEntries: activeTextures.size,
+      activeBytes: allActiveBytes,
+      sharedEntries,
+      sharedBytes,
+      zeroRefEntries,
+      zeroRefBytes,
+      activeOverBudget: allActiveBytes > limits.activeBytes,
+      sharedOverBudget: sharedBytes > limits.sharedBytes,
+      zeroRefOverBudget: zeroRefBytes > limits.zeroRefBytes,
+    },
+    diff: {
+      entries: diffEntries,
+      bytes: diffBytes,
+      pinnedEntries,
+      pinnedRefs,
+      readbackEntries,
+      readbackBytes,
+      overBudget: diffOverBudget,
+    },
+    counters: { ...poolStats },
+  };
+}
+
+/** Reset cumulative counters only; gauges and ownership remain untouched. */
+export function resetGpuPoolMemoryStats(): void {
+  poolStats.parks = 0;
+  poolStats.restores = 0;
+  poolStats.admissions = 0;
+  poolStats.admissionBlocks = 0;
+  poolStats.evictions = 0;
+}
+
+// Exactly one module-level page-visibility coordinator. Hidden pages park every
+// pane. On return, only panes still reported intersection-visible compete for
+// admission; offscreen panes remain parked and keep their last painted canvas.
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    documentHidden = document.visibilityState === "hidden";
+    if (documentHidden) {
+      for (const entry of [...live]) parkEntry(entry, false);
+      return;
+    }
+    for (const entry of panes) {
+      if (entry.disposed || !entry.visible) continue;
+      try {
+        activateEntry(entry);
+        if (!entry.parked) queueMicrotask(() => entry.onAdmitted?.());
+      } catch {
+        // The normal render path owns failure/fallback reporting.
+      }
+    }
+    admitWaiters();
+  });
 }
