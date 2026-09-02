@@ -25,8 +25,16 @@ export interface SurfaceConfigResult {
   toneMappingMode?: GPUCanvasToneMappingMode;
 }
 
-/** Both HDR and SDR surfaces need to be sampled back by `Device.readback`. */
-const SURFACE_USAGE = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC;
+/** Both HDR and SDR surfaces need to be sampled back by `Device.readback`.
+ * Resolve the WebGPU global lazily: this module is imported by the public
+ * runtime even in browsers where WebGPU is unavailable (notably non-secure
+ * remote HTTP origins), and eager access would crash before CPU fallback. */
+function surfaceUsage(): GPUTextureUsageFlags {
+  if (typeof GPUTextureUsage === "undefined") {
+    throw new Error("cairn-plot: WebGPU texture usage constants are unavailable");
+  }
+  return GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC;
+}
 
 /**
  * SDR canvas config: the browser's preferred (always 8-bit, e.g.
@@ -34,7 +42,7 @@ const SURFACE_USAGE = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_S
  */
 export function configureSDRSurface(context: GPUCanvasContext, device: GPUDevice): SurfaceConfigResult {
   const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format, alphaMode: "premultiplied", usage: SURFACE_USAGE });
+  context.configure({ device, format, alphaMode: "premultiplied", usage: surfaceUsage() });
   return { hdr: false, format };
 }
 
@@ -58,7 +66,7 @@ export function configureHDRSurface(context: GPUCanvasContext, device: GPUDevice
       colorSpace: "display-p3",
       toneMapping: { mode: "extended" },
       alphaMode: "premultiplied",
-      usage: SURFACE_USAGE,
+      usage: surfaceUsage(),
     });
     return { hdr: true, format: "rgba16float", colorSpace: "display-p3", toneMappingMode: "extended" };
   } catch {
@@ -69,7 +77,7 @@ export function configureHDRSurface(context: GPUCanvasContext, device: GPUDevice
         colorSpace: "display-p3",
         toneMapping: { mode: "standard" },
         alphaMode: "premultiplied",
-        usage: SURFACE_USAGE,
+        usage: surfaceUsage(),
       });
       return { hdr: true, format: "rgba16float", colorSpace: "display-p3", toneMappingMode: "standard" };
     } catch {
