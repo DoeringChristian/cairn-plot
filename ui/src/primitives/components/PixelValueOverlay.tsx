@@ -192,6 +192,10 @@ export interface PixelValueOverlayProps {
    *  enough that per-pixel numbers are being drawn). Lets the host show a
    *  notation toggle only while the numbers are visible. */
   onActiveChange?: (active: boolean) => void;
+  /** Called once geometry is zoomed far enough to request samples, even when
+   *  the sampler is not ready yet. Expensive asynchronous samplers use this to
+   *  start lazy preparation without creating an active/readiness deadlock. */
+  onSampleDemandChange?: (demanded: boolean) => void;
   /**
    * The currently-DISPLAYED portion of the source image, as a `[0,1]`-normalized
    * `{x,y,w,h}` window over `[naturalWidth, naturalHeight]` — top-down, same
@@ -241,11 +245,13 @@ export default function PixelValueOverlay({
   notation = "decimal",
   version = 0,
   onActiveChange,
+  onSampleDemandChange,
   sourceWindow = FULL_SOURCE_WINDOW,
   sourceDims,
 }: PixelValueOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(false);
+  const sampleDemandRef = useRef(false);
   // Q22 fix: self-contained dpr tracking (per this file's own convention —
   // no external hook required of the host pane) so this overlay's own
   // backing store stays crisp when `devicePixelRatio` changes without a
@@ -260,6 +266,13 @@ export default function PixelValueOverlay({
     activeRef.current = active;
     onActiveChangeRef.current?.(active);
   }, []);
+  const onSampleDemandChangeRef = useRef(onSampleDemandChange);
+  onSampleDemandChangeRef.current = onSampleDemandChange;
+  const reportSampleDemand = useCallback((demanded: boolean) => {
+    if (demanded === sampleDemandRef.current) return;
+    sampleDemandRef.current = demanded;
+    onSampleDemandChangeRef.current?.(demanded);
+  }, []);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -269,7 +282,11 @@ export default function PixelValueOverlay({
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth;
     const cssH = canvas.clientHeight;
-    if (cssW === 0 || cssH === 0) return;
+    if (cssW === 0 || cssH === 0) {
+      reportSampleDemand(false);
+      reportActive(false);
+      return;
+    }
     if (canvas.width !== Math.round(cssW * dpr)) canvas.width = Math.round(cssW * dpr);
     if (canvas.height !== Math.round(cssH * dpr)) canvas.height = Math.round(cssH * dpr);
     const ctx = canvas.getContext("2d");
@@ -278,6 +295,7 @@ export default function PixelValueOverlay({
     ctx.clearRect(0, 0, cssW, cssH);
 
     if (!imgEl || naturalWidth <= 0 || naturalHeight <= 0) {
+      reportSampleDemand(false);
       reportActive(false);
       return;
     }
@@ -285,6 +303,7 @@ export default function PixelValueOverlay({
     const box = imgEl.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
     if (box.width === 0 || box.height === 0) {
+      reportSampleDemand(false);
       reportActive(false);
       return;
     }
@@ -310,6 +329,7 @@ export default function PixelValueOverlay({
     const sf = computeSourceFit(fitParams, sourceDims);
     const { sxPerTexel, syPerTexel, gridW, gridH, visibleW, visibleH } = sf;
     if (visibleW <= 0 || visibleH <= 0 || gridW <= 0 || gridH <= 0) {
+      reportSampleDemand(false);
       reportActive(false);
       return;
     }
@@ -328,6 +348,7 @@ export default function PixelValueOverlay({
     // `pixelValueNumbersVisible`.
     const cellScale = Math.min(sxPerTexel, syPerTexel);
     if (!pixelValueNumbersVisible(cellScale)) {
+      reportSampleDemand(false);
       reportActive(false); // below threshold: nothing drawn.
       return;
     }
@@ -338,9 +359,14 @@ export default function PixelValueOverlay({
     const y0 = Math.max(0, Math.floor((0 - quadTop) / syPerTexel));
     const y1 = Math.min(gridH, Math.ceil((cssH - quadTop) / syPerTexel));
     if (x1 <= x0 || y1 <= y0) {
+      reportSampleDemand(false);
       reportActive(false);
       return;
     }
+    // Geometry is eligible for numeric labels. Signal demand before reading any
+    // samples: a lazy asynchronous source initially returns null and must be
+    // allowed to prepare itself before a later version bump redraws the labels.
+    reportSampleDemand(true);
 
     // Pass 1 — collect the visible samples and measure the frame's widest line
     // and tallest stack. The font size is derived from these (never from any one
@@ -437,7 +463,17 @@ export default function PixelValueOverlay({
       }
     }
     ctx.restore(); // matches the ctx.save()/clip() above.
-  }, [imageElRef, naturalWidth, naturalHeight, sample, notation, reportActive, sourceWindow, sourceDims]);
+  }, [
+    imageElRef,
+    naturalWidth,
+    naturalHeight,
+    sample,
+    notation,
+    reportActive,
+    reportSampleDemand,
+    sourceWindow,
+    sourceDims,
+  ]);
 
   // Redraw on viewport / data / notation / mount / dpr changes.
   useEffect(() => {

@@ -169,8 +169,11 @@ export type ImagePaneOverlaySpec =
       /** The GPU panes' displayed crop; CPU omits it (its element grows via
        *  the CSS transform, so `getBoundingClientRect` already encodes zoom). */
       readonly sourceWindow?: { x: number; y: number; w: number; h: number };
-      /** Optional owner notification used to lazily prepare expensive samples. */
+      /** Optional notification that numeric labels are actually being drawn. */
       readonly onActiveChange?: (active: boolean) => void;
+      /** Optional notification that zoomed geometry needs samples. This fires
+       *  before samples exist so an owner can prepare them lazily. */
+      readonly onSampleDemandChange?: (demanded: boolean) => void;
     }
   | {
       /** Emit a bespoke overlay tree (compare's per-side overlays). */
@@ -676,6 +679,7 @@ export default function ImagePaneShell({
           setOverlayActive(active);
           overlay.onActiveChange?.(active);
         }}
+        onSampleDemandChange={overlay.onSampleDemandChange}
       />
     ) : null;
 

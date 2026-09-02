@@ -835,7 +835,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const [activeMapMean, setActiveMapMean] = useState<{ entry: DiffCacheEntry; value: number } | null>(null);
   const [activeEntryVersion, setActiveEntryVersion] = useState(0);
   const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
-  const [diffOverlayActive, setDiffOverlayActive] = useState(false);
+  const [diffOverlayDemanded, setDiffOverlayDemanded] = useState(false);
   const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
   const [refUploadVersion, setRefUploadVersion] = useState(0);
   const diffEntryRef = useRef<DiffCacheEntry | null>(null);
@@ -1936,7 +1936,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // the selected metric.
   // -----------------------------------------------------------------------
   useEffect(() => {
-    if (!diffMode || !diffOverlayActive) {
+    if (!diffMode || !diffOverlayDemanded) {
       diffSamplesRef.current = null;
       diffResultDimsRef.current = null;
       return;
@@ -1971,7 +1971,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     };
   }, [
     diffMode,
-    diffOverlayActive,
+    diffOverlayDemanded,
     paneReady,
     resolvedOperationId,
     activeEntryVersion,
@@ -2429,7 +2429,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
               version: diffMode ? diffOverlayVersion : pixelDataVersion,
               hasSource: true,
               sourceWindow: overlayWindow,
-              onActiveChange: setDiffOverlayActive,
+              onSampleDemandChange: setDiffOverlayDemanded,
             }
       }
       notationSeed={props.pixelValueNotation ?? "decimal"}
