@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import { halfBits } from "../../../plots/image/runtime/pixel-buffer.ts";
 import { hdrSource, type FloatImageData } from "../../../plots/image/runtime/contracts.ts";
 import GpuImagePane from "../../../plots/image/webgpu/view.tsx";
-import { getLiveSwapchainCount, MAX_LIVE_SWAPCHAINS } from "../../../plots/image/webgpu/pool.ts";
+import { getLiveSwapchainCount } from "../../../plots/image/webgpu/pool.ts";
+import { getLiveGpuPaneLimit, setLiveGpuPaneLimit } from "../../../resources/runtime-config.ts";
 import { getWebGpuComparisonStats, resetWebGpuComparisonStats } from "../../../plots/image/webgpu/perf-stats.ts";
 import { createHarness, sleep, waitFor } from "../../harness.ts";
 
@@ -26,10 +27,12 @@ async function main(): Promise<void> {
   const width = Number(body.dataset.width ?? "3840");
   const height = Number(body.dataset.height ?? "2160");
   const count = Number(body.dataset.count ?? "12");
+  if (body.dataset.liveLimit) setLiveGpuPaneLimit(Number(body.dataset.liveLimit));
+  const liveLimit = getLiveGpuPaneLimit();
   const pixels = width * height;
   const sourceBytes = pixels * 2;
   const expandedBytesPerPane = pixels * 4 * 2;
-  const predictedResidentBytes = expandedBytesPerPane * Math.min(count, MAX_LIVE_SWAPCHAINS);
+  const predictedResidentBytes = expandedBytesPerPane * Math.min(count, liveLimit);
 
   const bits = new Uint16Array(pixels);
   bits.fill(0x3800); // 0.5 in IEEE binary16
@@ -94,8 +97,8 @@ async function main(): Promise<void> {
 
   report(ready, `BENCH: ${count} panes became GPU-ready at ${width}x${height}`);
   report(
-    live <= MAX_LIVE_SWAPCHAINS,
-    `BENCH: live surfaces=${live}; cap=${MAX_LIVE_SWAPCHAINS}; mount=${elapsed.toFixed(0)} ms`,
+    live <= liveLimit,
+    `BENCH: live surfaces=${live}; cap=${liveLimit}; mount=${elapsed.toFixed(0)} ms`,
   );
   report(
     true,
@@ -125,7 +128,7 @@ async function main(): Promise<void> {
   container.remove();
   const released = await waitFor(() => getLiveSwapchainCount() === 0, 30_000, 50);
   report(released, `BENCH: teardown released all live surfaces in ${(performance.now() - teardownStarted).toFixed(0)} ms`);
-  setOverallStatus(ready && live <= MAX_LIVE_SWAPCHAINS && released);
+  setOverallStatus(ready && live <= liveLimit && released);
 }
 
 void main().catch((error) => {
