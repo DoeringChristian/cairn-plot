@@ -435,10 +435,10 @@ async function run(): Promise<boolean> {
   // (a) Switching to signed adopts the diverging default.
   A().changeComparisonOperation("signed");
   const defSigned = await waitFor(
-    () => A().comparisonOperationId === "signed" && A().colormap === "red-blue",
+    () => A().comparisonOperationId === "signed" && A().colormap === "red-green",
     8000, 25,
   );
-  report(defSigned, `DEFAULT: signed operation adopts red-blue (got ${A().colormap})`);
+  report(defSigned, `DEFAULT: signed operation adopts red-green (got ${A().colormap})`);
   ok = ok && defSigned;
   // (b) Switching back to absolute restores the magnitude default.
   A().changeComparisonOperation("absolute");

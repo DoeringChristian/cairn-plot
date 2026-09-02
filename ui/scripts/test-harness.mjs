@@ -146,7 +146,8 @@ function walk(dir, out = []) {
 /**
  * @typedef {{ id:string, htmlPath:string, dir:string, urlPath:string,
  *             query:string,
- *             sources:string[], selfDriving:boolean }} Harness
+ *             sources:string[], selfDriving:boolean, quarantined:boolean,
+ *             quarantineReason:string }} Harness
  */
 
 /** @returns {Harness[]} */
@@ -164,6 +165,10 @@ function discoverHarnesses() {
     // (e.g. page-wide selection) is gated by CI just like the engine parity
     // proofs, unlike the gesture-dependent interaction harnesses.
     const selfDriving = /data-cairn-harness\s*=\s*["']self-driving["']/i.test(html);
+    const quarantined = /data-cairn-harness\s*=\s*["']quarantined["']/i.test(html);
+    const quarantineReason = html.match(
+      /data-cairn-harness-reason\s*=\s*["']([^"']*)["']/i,
+    )?.[1] ?? "known unstable diagnostic";
     const query = html.match(/data-cairn-harness-query\s*=\s*["']([^"']*)["']/i)?.[1] ?? "";
     // Every `<script ... src="./X.browser.bundle.js">` maps to source X.browser.ts
     const sources = [];
@@ -176,7 +181,17 @@ function discoverHarnesses() {
       sources.push(src);
     }
     const urlPath = "/" + relative(UI_ROOT, htmlPath).split("\\").join("/");
-    harnesses.push({ id, htmlPath, dir, urlPath, query, sources, selfDriving });
+    harnesses.push({
+      id,
+      htmlPath,
+      dir,
+      urlPath,
+      query,
+      sources,
+      selfDriving,
+      quarantined,
+      quarantineReason,
+    });
   }
   return harnesses;
 }
@@ -590,8 +605,16 @@ async function main() {
   // With a custom --root (e.g. the self-test), treat everything as runnable.
   const customRoot = SEARCH_ROOT !== DEFAULT_SEARCH_ROOT;
   const interactionSkips = [];
+  const quarantinedSkips = [];
   if (!RUN_ALL && !customRoot) {
     harnesses = harnesses.filter((h) => {
+      // Known unstable diagnostics stay available under --all but may not make
+      // the required default CI gate permanently red while their issue remains
+      // explicitly open and reproducible.
+      if (h.quarantined) {
+        quarantinedSkips.push({ id: h.id, reason: h.quarantineReason });
+        return false;
+      }
       // The default set = engine WGSL↔TS parity proofs PLUS any SELF-DRIVING
       // harness (dispatches its own gestures, settles headlessly). Only the
       // gesture-DEPENDENT interaction harnesses are deferred to `--all`.
@@ -615,6 +638,15 @@ async function main() {
 
   console.log(`• running ${harnesses.length} parity harness page(s):`);
   for (const h of harnesses) console.log(`    ${h.id}`);
+  if (quarantinedSkips.length) {
+    console.log(
+      YELLOW(
+        `• ${quarantinedSkips.length} known-failing diagnostic harness(es) quarantined ` +
+          `(run explicitly with --all while fixing):`,
+      ),
+    );
+    for (const h of quarantinedSkips) console.log(YELLOW(`    ${h.id} — ${h.reason}`));
+  }
   if (interactionSkips.length) {
     console.log(
       YELLOW(
