@@ -6,6 +6,8 @@ users build the same descriptor through `window.cairnPlot` or mount a descriptor
 with the React host. Both routes produce a self-contained `PlotSpec` plus an
 optional content-addressed data store.
 
+Related proposal: [semantic display profiles for image comparisons](error-map-display-profiles.md).
+
 ## Goals
 
 - Render portable, offline HTML: no server and no CDN in the default path.
