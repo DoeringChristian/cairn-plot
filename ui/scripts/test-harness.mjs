@@ -338,6 +338,9 @@ const BASE_FLAGS = [
   "--no-first-run",
   "--no-default-browser-check",
   "--disable-background-networking",
+  // Stress/benchmark harnesses report real JS heap usage instead of Chrome's
+  // default quantized performance.memory values.
+  "--enable-precise-memory-info",
 ];
 
 /**
@@ -775,9 +778,10 @@ async function main() {
     // on the device, which is not a parity defect). Surface those lines even
     // on PASS so a chronically-skipped proof can never go green *invisibly* —
     // the runner's "never silently passes" contract applied at sub-case grain.
-    const skipLines = (r.verdict === "pass" && r.result ? r.result : "")
-      .split("\n")
-      .filter((l) => /SKIPPED/i.test(l));
+    const passLines = (r.verdict === "pass" && r.result ? r.result : "").split("\n");
+    const benchmarkLines = passLines.filter((l) => /BENCH:/i.test(l));
+    for (const l of benchmarkLines) console.log("        " + l.trim());
+    const skipLines = passLines.filter((l) => /SKIPPED/i.test(l));
     if (skipLines.length) {
       for (const l of skipLines) console.log("        " + YELLOW(l.trim()));
       ghAnnotate("warning", `${h.id}: sub-case(s) SKIPPED — ${skipLines.map((l) => l.trim()).join(" | ")}`);
