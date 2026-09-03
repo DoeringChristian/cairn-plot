@@ -36,7 +36,7 @@
  *    replaced the old per-pixel adaptive black-on-light / white-on-dark flip
  *    plus opposite-luminance halo stroke.)
  */
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useDevicePixelRatio } from "../../host/hooks/use-device-pixel-ratio";
 import { formatNum } from "../format";
 import {
@@ -475,8 +475,10 @@ export default function PixelValueOverlay({
     sourceDims,
   ]);
 
-  // Redraw on viewport / data / notation / mount / dpr changes.
-  useEffect(() => {
+  // Geometry must update in the same commit as the CPU surface's CSS transform.
+  // A passive effect paints one frame later, which makes labels visibly trail
+  // the texels during a pan (often by about half a texel). Draw before paint.
+  useLayoutEffect(() => {
     draw();
   }, [draw, zoom, pan.x, pan.y, version, notation, sourceWindow, sourceDims, dpr]);
 

@@ -107,6 +107,34 @@ export function useImageGestures(args: {
   const onViewChangeRef = useRef(onViewChange);
   onViewChangeRef.current = onViewChange;
 
+  // Pointer devices can deliver substantially more events than the display can
+  // paint. Keep the latest view locally for lossless wheel accumulation, but fan
+  // synchronized settings out at most once per animation frame.
+  const pendingViewRef = useRef<ImageViewState | null>(null);
+  const frameRef = useRef<number | null>(null);
+  if (pendingViewRef.current) viewRef.current = pendingViewRef.current;
+  const emitView = useCallback((next: ImageViewState) => {
+    viewRef.current = next;
+    pendingViewRef.current = next;
+    if (frameRef.current != null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      const pending = pendingViewRef.current;
+      pendingViewRef.current = null;
+      if (pending) onViewChangeRef.current?.(pending);
+    });
+  }, []);
+  const flushView = useCallback(() => {
+    if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+    const pending = pendingViewRef.current;
+    pendingViewRef.current = null;
+    if (pending) onViewChangeRef.current?.(pending);
+  }, []);
+  useEffect(() => () => {
+    if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+  }, []);
+
   // -----------------------------------------------------------------------
   // Wheel zoom (local — zoom to cursor position)
   // -----------------------------------------------------------------------
@@ -140,14 +168,14 @@ export function useImageGestures(args: {
       const cy = e.clientY - rect.top;
       const newPanX = cx - ((cx - s.pan.x) / s.zoom) * nextZoom;
       const newPanY = cy - ((cy - s.pan.y) / s.zoom) * nextZoom;
-      onViewChangeRef.current?.({
+      emitView({
         zoom: nextZoom,
         pan: { x: newPanX, y: newPanY },
       });
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-  }, [containerRef, !!onViewChange, minZoom, maxZoom, naturalWidth, naturalHeight]);
+  }, [containerRef, !!onViewChange, minZoom, maxZoom, naturalWidth, naturalHeight, emitView]);
 
   // -----------------------------------------------------------------------
   // Pointer pan + two-finger pinch (local)
@@ -270,21 +298,22 @@ export function useImageGestures(args: {
           minZoom,
           effMaxZoom(el),
         );
-        onViewChangeRef.current?.(next);
+        emitView(next);
         return;
       }
 
       const s = dragStateRef.current;
       if (!s || s.pointerId !== e.pointerId || !tracked) return;
-      onViewChangeRef.current?.({
+      emitView({
         zoom: viewRef.current.zoom,
         pan: { x: s.panX + (tracked.x - s.startX), y: s.panY + (tracked.y - s.startY) },
       });
     },
-    [localPoint, minZoom, effMaxZoom],
+    [localPoint, minZoom, effMaxZoom, emitView],
   );
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
+    flushView();
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {
@@ -301,7 +330,7 @@ export function useImageGestures(args: {
       return;
     }
     if (dragStateRef.current?.pointerId === e.pointerId) dragStateRef.current = null;
-  }, [beginPan]);
+  }, [beginPan, flushView]);
 
   // Pan is available when a modifier is held (mouse/pen). Touch pan/pinch is
   // always available and doesn't affect the cursor. `touchAction: "none"` is set

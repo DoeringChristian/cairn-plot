@@ -1609,7 +1609,7 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
       console.warn("cairn-plot CPU comparison metrics failed", error);
     });
     return () => { cancelled = true; };
-  }, [input.source, compare?.b, compare?.align, compare?.fit, compare?.operationId]);
+  }, [input.source, compare?.b, compare?.align, compare?.fit, compare?.operationId, compare?.flipMode]);
   return metrics;
 }
 
