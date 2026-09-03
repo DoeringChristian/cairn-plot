@@ -101,6 +101,7 @@ import { getDisplayOperation, type ReduceMode } from "../definition/display-oper
 import { DEFAULT_DISPLAY_PARAMETERS, defaultReduceMode, type DisplayParameters, type NormMode } from "../runtime/display-settings.ts";
 import { getCpuDisplayOperation } from "./display-operations.ts";
 import { getImageOperationEvaluator, type ImageOperationEvaluator } from "../resources/image-operation-evaluator.ts";
+import { computeCpuSourceMetrics, type CpuSourceMetrics } from "./source-metrics.ts";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isFloatSurfaceProps,
@@ -1453,7 +1454,27 @@ function CpuHdrImagePane(
  * gap (see the default export + the design doc's Phase-4 note). Captions are
  * inlined (NOT `compareCaptions`, which pulls `engine/kernels` into the CORE
  * bundle — the CPU pane must stay engine-free). */
-function cpuCompareChrome(cs: ImageBackendInput["compareSource"]): ReactNode {
+function cpuMetricsLabel(metrics: CpuSourceMetrics | null): string | null {
+  if (!metrics) return null;
+  const source = `MSE ${metrics.mse.toExponential(2)} · PSNR ${Number.isFinite(metrics.psnr) ? metrics.psnr.toFixed(1) : "∞"} dB`;
+  return metrics.ssim == null
+    ? source
+    : `${source} · SSIM ${Number.isFinite(metrics.ssim) ? metrics.ssim.toFixed(4) : "—"}`;
+}
+
+function CpuMetricsChip({ label, stacked }: { label: string; stacked: boolean }) {
+  return (
+    <span
+      className={`absolute right-1 z-30 max-w-[calc(100%-0.5rem)] truncate whitespace-nowrap overflow-hidden rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${stacked ? "bottom-7" : "bottom-1"}`}
+      data-cpu-compare-metrics=""
+      title={label}
+    >
+      {label}
+    </span>
+  );
+}
+
+function cpuCompareChrome(cs: ImageBackendInput["compareSource"], metricsLabel: string | null): ReactNode {
   if (!cs) return undefined;
   const mode = cs.mode ?? "diff";
   if (mode === "diff") {
@@ -1462,11 +1483,14 @@ function cpuCompareChrome(cs: ImageBackendInput["compareSource"]): ReactNode {
     const fg = cs.foregroundLabel || "image";
     const ref = cs.referenceLabel || "reference";
     return (
-      <LabelChip
-        label={`${fg} compared to ${ref}`}
-        corner="bottom-left"
-        attrs={{ "data-cairn-compare-caption": "reference" }}
-      />
+      <>
+        <LabelChip
+          label={`${fg} compared to ${ref}`}
+          corner="bottom-left"
+          attrs={{ "data-cairn-compare-caption": "reference" }}
+        />
+        {metricsLabel && <CpuMetricsChip label={metricsLabel} stacked />}
+      </>
     );
   }
   // split: REFERENCE bottom-left, FOREGROUND bottom-right (the foreground
@@ -1490,12 +1514,37 @@ function cpuCompareChrome(cs: ImageBackendInput["compareSource"]): ReactNode {
           attrs={{ "data-cairn-compare-caption": "foreground" }}
         />
       ) : null}
+      {metricsLabel && <CpuMetricsChip label={metricsLabel} stacked={!!(cs.referenceLabel || cs.foregroundLabel)} />}
     </>
   );
 }
 
+function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null {
+  const compare = input.compareSource;
+  const [metrics, setMetrics] = useState<CpuSourceMetrics | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setMetrics(null);
+    if (!compare) return () => { cancelled = true; };
+    void computeCpuSourceMetrics({
+      reference: input.source,
+      foreground: compare.b,
+      align: compare.align,
+      fit: compare.fit,
+      includeSsim: compare.operationId === "ssim",
+    }).then((next) => {
+      if (!cancelled) setMetrics(next);
+    }).catch((error) => {
+      console.warn("cairn-plot CPU comparison metrics failed", error);
+    });
+    return () => { cancelled = true; };
+  }, [input.source, compare?.b, compare?.align, compare?.fit, compare?.operationId]);
+  return metrics;
+}
+
 export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Element {
   const props = useImageSurfaceProps(backendProps);
+  const compareMetrics = useCpuCompareMetrics(backendProps);
   // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
   // reconstructed legacy props (they aren't part of the dtype-keyed
   // `ImageSurfaceProps` shape).
@@ -1503,9 +1552,9 @@ export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Eleme
   // CPU COMPARE FALLBACK (content-op unification). The unified COMPOSITOR is
   // GPU-only; on the no-WebGPU / render=cpu path a descriptor image-compare
   // lowers to THIS pane, which renders the REFERENCE (`source`) DEGRADED (no
-  // live composite) but keeps the compare CHROME (per-side caption chips + split
-  // REF badge, same DOM/selectors as the GPU pane) so the reference re-pick +
-  // labeling still work. A REAL CPU composite is a documented remaining gap
+  // live composite) but keeps useful compare chrome: captions, exact MSE/PSNR,
+  // selected SSIM, and the split REF badge. A REAL CPU composite is a documented
+  // remaining gap
   // (design doc, Phase-4 note): a CPU diff must render into the SAME `<img>`
   // surface the image tab uses (diff → data-URL) to preserve the
   // homogeneous-stack no-remount flip in CPU mode, which `stack/grid-stacked`
@@ -1522,7 +1571,7 @@ export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Eleme
     onChannelReset: backendProps.onChannelReset,
     // In compare mode the caption chips carry the labeling — suppress the pane's
     // own bottom-left label chip and hand the shell the compare chrome.
-    compareChrome: cpuCompareChrome(backendProps.compareSource),
+    compareChrome: cpuCompareChrome(backendProps.compareSource, cpuMetricsLabel(compareMetrics)),
     isCompareMode: isCompare,
   };
   return isFloatSurfaceProps(props) ? (

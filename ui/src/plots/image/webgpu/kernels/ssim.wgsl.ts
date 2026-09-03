@@ -36,7 +36,7 @@
  * range L is therefore 1, consistent with `data_range=1`.
  */
 import { VERTEX_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
-import { SSIM_K1, SSIM_K2, SSIM_L, SSIM_SIGMA, SSIM_RADIUS } from "./ssim-reference.ts";
+import { SSIM_K1, SSIM_K2, SSIM_L, SSIM_SIGMA, SSIM_RADIUS } from "../../runtime/ssim-reference.ts";
 import type {
   MultipassImageOperationProgram as MultipassKernel,
   ImageOperationPass as KernelPass,

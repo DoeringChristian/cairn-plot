@@ -19,6 +19,7 @@ import { floatValues } from "../../runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { CompositeMediaPane } from "../../runtime/compare-compositor";
+import CpuImagePane from "../../cpu/view.tsx";
 import type { ResolvedFloatImage } from "../../definition/content.ts";
 import type { DiffMode } from "../../../types";
 import { createHarness, waitFor } from "../../../../testing/harness";
@@ -100,6 +101,32 @@ async function run(): Promise<boolean> {
   });
   // 4. UINT8 diff + BASIC kernel (absolute) → CPU pixel-diff pane, NO notice.
   mount("m4", { mode: "diff", imageUrl: urlSide("#27ae60"), baselineUrl: urlSide("#8e44ad") });
+  // 5. The public descriptor path lowers directly to CpuImagePane with a
+  // compareSource. Its exact source metrics must work without WebGPU too.
+  const directSource = floatSource("direct");
+  const directRoot = createRoot(host("m5"));
+  directRoot.render(createElement(CpuImagePane, {
+    source: {
+      dtype: "float",
+      pixels: directSource.pixels,
+      shape: [directSource.height, directSource.width, directSource.channels],
+      contentKey: directSource.contentKey,
+    },
+    compareSource: {
+      b: {
+        dtype: "float",
+        pixels: directSource.pixels,
+        shape: [directSource.height, directSource.width, directSource.channels],
+        contentKey: directSource.contentKey,
+      },
+      operationId: "ssim",
+      mode: "diff",
+      referenceLabel: "reference",
+      foregroundLabel: "foreground",
+    },
+    label: "",
+  }));
+  roots.push(directRoot);
 
   // --- 1. FLOAT diff ---------------------------------------------------------
   const n1 = await waitFor(() => !!notice("m1") && dataImgCount("m1") >= 1, 4000, 20);
@@ -127,6 +154,20 @@ async function run(): Promise<boolean> {
   report(cpuPane, "UINT8 absolute diff → CPU pixel-diff pane renders");
   report(!notice("m4"), "UINT8 absolute diff → NO fallback notice (the CPU computes it)");
   ok = ok && cpuPane && !notice("m4");
+
+  // --- 5. Unified CpuImagePane source metrics -------------------------------
+  const cpuMetrics = await waitFor(
+    () => !!document.getElementById("m5")!.querySelector("[data-cpu-compare-metrics]"),
+    4000,
+    20,
+  );
+  const cpuMetricsText = document.getElementById("m5")!
+    .querySelector("[data-cpu-compare-metrics]")?.textContent ?? "";
+  report(
+    cpuMetrics && /MSE 0\.00e\+0 · PSNR ∞ dB · SSIM 1\.0000/.test(cpuMetricsText),
+    `unified CPU compare exposes exact metrics "${cpuMetricsText}"`,
+  );
+  ok = ok && cpuMetrics && /MSE 0\.00e\+0 · PSNR ∞ dB · SSIM 1\.0000/.test(cpuMetricsText);
 
   roots.forEach((r) => r.unmount());
   return ok;

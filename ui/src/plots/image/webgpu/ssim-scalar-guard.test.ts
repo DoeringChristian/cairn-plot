@@ -23,7 +23,7 @@ import {
   hasGuardedSsimScalar,
   peekGuardedSsimScalar,
 } from "./ssim-scalar-guard.ts";
-import { ssimMeanFromLuminanceChunked } from "./kernels/ssim-reference.ts";
+import { ssimMeanFromLuminanceChunked } from "../runtime/ssim-reference.ts";
 import type { Device } from "./device/device-contract";
 
 /** A stand-in device object — the guard only uses it as a WeakMap key. */

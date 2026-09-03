@@ -22,7 +22,7 @@
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
-import { ssimScene } from "../kernels/ssim-reference";
+import { ssimScene } from "../../runtime/ssim-reference";
 import { srgbEotf } from "../../runtime/tonemap";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
 import { computeCompareMapping, type ImageCompareAlign, type ImageCompareFit } from "../../runtime/compare-align";

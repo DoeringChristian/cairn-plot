@@ -25,7 +25,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { ssim } from "./ssim-reference.ts";
+import { ssim } from "../../runtime/ssim-reference.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 interface Fixture {

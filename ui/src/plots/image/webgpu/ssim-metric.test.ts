@@ -15,7 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { meanSsimFromErrorMap, formatSsim } from "./ssim-metric.ts";
-import { ssim } from "./kernels/ssim-reference.ts";
+import { ssim } from "../runtime/ssim-reference.ts";
 
 /** Build an RGBA `Float32Array` (R = 1−SSIM, replicated) from a SSIM map — the
  *  exact layout the `ssim` kernel writes + `device.readback` returns. */

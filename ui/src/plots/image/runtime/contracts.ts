@@ -314,8 +314,9 @@ export interface ImageBackendInput {
   source: ImageSource;
   /** When set, the pane renders a DIFF of `source` (foreground/`a`) against
    *  `compareSource.b` (reference) — see {@link ImageComparisonInput}. Absent = the
-   *  byte-identical single-image path. Only the GPU backend honors it; the CPU
-   *  backend ignores it (single-image fallback). */
+   *  byte-identical single-image path. The GPU backend renders the comparison;
+   *  the CPU fallback computes exact source metrics and retains its documented
+   *  reduced visual-comparison behavior. */
   compareSource?: ImageComparisonInput;
   /** The viewport's EFFECTIVE settings from its ONE store (`useCellSettings`
    *  at the node/stage/compositor level): the `group > local` merge, driven DOWN.

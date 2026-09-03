@@ -40,7 +40,7 @@ import { recordDiffHit, recordDiffMiss } from "./perf-stats.ts";
 import { type DiffCmapMode } from "../runtime/diff-colormap";
 import { computeCompareMapping, mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { meanSsimFromErrorMap } from "./ssim-metric";
-import { ssimMeanFromLuminanceChunked, ssimLuminance, defaultYield, SSIM_CHUNK_ROWS } from "./kernels/ssim-reference";
+import { ssimMeanFromLuminanceChunked, ssimLuminance, defaultYield, SSIM_CHUNK_ROWS } from "../runtime/ssim-reference";
 import {
   guardedSsimScalar,
   hasGuardedSsimScalar,
