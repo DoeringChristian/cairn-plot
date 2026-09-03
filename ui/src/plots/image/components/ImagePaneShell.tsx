@@ -169,6 +169,15 @@ export type ImagePaneOverlaySpec =
       /** The GPU panes' displayed crop; CPU omits it (its element grows via
        *  the CSS transform, so `getBoundingClientRect` already encodes zoom). */
       readonly sourceWindow?: { x: number; y: number; w: number; h: number };
+      /** Explicit viewport-local paint geometry supplied by the CPU backend. */
+      readonly displayGeometry?: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+        gridWidth: number;
+        gridHeight: number;
+      };
       /** Optional notification that numeric labels are actually being drawn. */
       readonly onActiveChange?: (active: boolean) => void;
       /** Optional notification that zoomed geometry needs samples. This fires
@@ -672,6 +681,7 @@ export default function ImagePaneShell({
         zoom={zoom}
         pan={pan}
         sourceWindow={overlay.sourceWindow}
+        displayGeometry={overlay.displayGeometry}
         sample={overlay.sample}
         notation={notation}
         version={overlay.version}
@@ -739,6 +749,7 @@ export default function ImagePaneShell({
             imageElRef={singleOverlay.displayElRef}
             naturalDims={naturalDims}
             sourceWindow={singleOverlay.sourceWindow}
+            displayGeometry={singleOverlay.displayGeometry}
             onQueryLive={regionSelect.queryLive}
             onSelect={(x0, y0, x1, y1) => {
               setRegionActive(false);
@@ -835,6 +846,7 @@ function RegionSelectLayer({
   imageElRef,
   naturalDims,
   sourceWindow,
+  displayGeometry,
   onQueryLive,
   onSelect,
   onExit,
@@ -842,6 +854,14 @@ function RegionSelectLayer({
   imageElRef: RefObject<HTMLElement | null>;
   naturalDims: { w: number; h: number };
   sourceWindow?: SourceWindow;
+  displayGeometry?: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    gridWidth: number;
+    gridHeight: number;
+  };
   onQueryLive: (x0: number, y0: number, x1: number, y1: number) => void;
   onSelect: (x0: number, y0: number, x1: number, y1: number) => void;
   onExit: () => void;
@@ -854,15 +874,24 @@ function RegionSelectLayer({
   const bandToTexel = useCallback(
     (ax: number, ay: number, bx: number, by: number) => {
       const imgEl = imageElRef.current;
-      if (!imgEl) return null;
+      const layer = layerRef.current;
+      if (!imgEl || (displayGeometry && !layer)) return null;
+      const layerBox = layer?.getBoundingClientRect();
       return screenRectToTexelRect(ax, ay, bx, by, {
-        box: imgEl.getBoundingClientRect(),
-        naturalWidth: naturalDims.w,
-        naturalHeight: naturalDims.h,
-        sourceWindow,
+        box: displayGeometry && layerBox
+          ? {
+              left: layerBox.left + displayGeometry.left,
+              top: layerBox.top + displayGeometry.top,
+              width: displayGeometry.width,
+              height: displayGeometry.height,
+            }
+          : imgEl.getBoundingClientRect(),
+        naturalWidth: displayGeometry?.gridWidth ?? naturalDims.w,
+        naturalHeight: displayGeometry?.gridHeight ?? naturalDims.h,
+        sourceWindow: displayGeometry ? undefined : sourceWindow,
       });
     },
-    [imageElRef, naturalDims, sourceWindow],
+    [imageElRef, naturalDims, sourceWindow, displayGeometry],
   );
 
   // Escape cancels the mode.
@@ -905,20 +934,14 @@ function RegionSelectLayer({
         onExit();
         return;
       }
-      const box = imgEl.getBoundingClientRect();
-      const rect = screenRectToTexelRect(s.x, s.y, e.clientX, e.clientY, {
-        box,
-        naturalWidth: naturalDims.w,
-        naturalHeight: naturalDims.h,
-        sourceWindow,
-      });
+      const rect = bandToTexel(s.x, s.y, e.clientX, e.clientY);
       if (!rect) {
         onExit();
         return;
       }
       onSelect(rect.x0, rect.y0, rect.x1, rect.y1);
     },
-    [imageElRef, naturalDims, sourceWindow, onSelect, onExit],
+    [imageElRef, bandToTexel, onSelect, onExit],
   );
 
   const layerRect = layerRef.current?.getBoundingClientRect();

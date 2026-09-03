@@ -231,6 +231,17 @@ export interface PixelValueOverlayProps {
    * `renderers/region-select`'s {@link computeSourceFit}.
    */
   sourceDims?: { w: number; h: number };
+  /** Explicit viewport-local source grid geometry. CPU panes provide this from
+   * the same affine map that positions the painted bitmap, avoiding any reverse
+   * engineering of CSS transforms or object fitting. */
+  displayGeometry?: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    gridWidth: number;
+    gridHeight: number;
+  };
 }
 
 const FULL_SOURCE_WINDOW = { x: 0, y: 0, w: 1, h: 1 };
@@ -248,6 +259,7 @@ export default function PixelValueOverlay({
   onSampleDemandChange,
   sourceWindow = FULL_SOURCE_WINDOW,
   sourceDims,
+  displayGeometry,
 }: PixelValueOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(false);
@@ -294,15 +306,15 @@ export default function PixelValueOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
 
-    if (!imgEl || naturalWidth <= 0 || naturalHeight <= 0) {
+    if ((!imgEl && !displayGeometry) || naturalWidth <= 0 || naturalHeight <= 0) {
       reportSampleDemand(false);
       reportActive(false);
       return;
     }
 
-    const box = imgEl.getBoundingClientRect();
+    const box = imgEl?.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
-    if (box.width === 0 || box.height === 0) {
+    if (!displayGeometry && (!box || box.width === 0 || box.height === 0)) {
       reportSampleDemand(false);
       reportActive(false);
       return;
@@ -320,13 +332,25 @@ export default function PixelValueOverlay({
     // mismatched-resolution compare side on its own grid (fill-stretch — the
     // split shader draws both operands into one quad, each scaled by its own
     // `textureDimensions`).
-    const fitParams: ScreenToTexelParams = {
-      box,
-      naturalWidth,
-      naturalHeight,
-      sourceWindow,
-    };
-    const sf = computeSourceFit(fitParams, sourceDims);
+    const sf = displayGeometry
+      ? {
+          quadLeft: canvasRect.left + displayGeometry.left,
+          quadTop: canvasRect.top + displayGeometry.top,
+          quadW: displayGeometry.width,
+          quadH: displayGeometry.height,
+          sxPerTexel: displayGeometry.width / displayGeometry.gridWidth,
+          syPerTexel: displayGeometry.height / displayGeometry.gridHeight,
+          gridW: displayGeometry.gridWidth,
+          gridH: displayGeometry.gridHeight,
+          visibleW: displayGeometry.gridWidth,
+          visibleH: displayGeometry.gridHeight,
+        }
+      : computeSourceFit({
+          box: box!,
+          naturalWidth,
+          naturalHeight,
+          sourceWindow,
+        } satisfies ScreenToTexelParams, sourceDims);
     const { sxPerTexel, syPerTexel, gridW, gridH, visibleW, visibleH } = sf;
     if (visibleW <= 0 || visibleH <= 0 || gridW <= 0 || gridH <= 0) {
       reportSampleDemand(false);
@@ -473,6 +497,7 @@ export default function PixelValueOverlay({
     reportSampleDemand,
     sourceWindow,
     sourceDims,
+    displayGeometry,
   ]);
 
   // Geometry must update in the same commit as the CPU surface's CSS transform.

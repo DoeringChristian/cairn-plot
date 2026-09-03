@@ -52,6 +52,7 @@ import SplitDivider from "../compare/SplitDivider.tsx";
 import { useSplitFlipKeys } from "../compare/use-split-flip-keys.ts";
 import type { Colormap, DiffMode, Interpolation } from "../../types";
 import { autoImageRendering, containScreenPxPerTexel } from "../components/interp-auto";
+import { computeCpuDisplayGeometry, type CpuDisplayGeometry } from "./display-geometry.ts";
 // The ONE shared magnification threshold — the SAME constant `GpuImagePane`
 // reads for its nearest/linear sampler switch (and `PixelValueOverlay` for its
 // per-pixel numbers), so the CPU pane's `pixelated` flip stays in lockstep.
@@ -338,12 +339,17 @@ export function sdrTransferToImageData(
  * the UNSCALED layout box (measured via `ResizeObserver`) × `zoom`. Shared by
  * both the SDR and HDR CPU branches.
  */
-function useAutoImageRendering(
+function useCpuDisplayPresentation(
   wrapperRef: RefObject<HTMLDivElement | null>,
   zoom: number,
+  pan: { x: number; y: number },
   naturalDims: { w: number; h: number } | null,
   interpolation: Interpolation,
-): "pixelated" | "crisp-edges" | undefined {
+): {
+  imageRendering: "pixelated" | "crisp-edges" | undefined;
+  geometry: CpuDisplayGeometry | null;
+  surfaceStyle: React.CSSProperties;
+} {
   const [layoutBox, setLayoutBox] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
     const el = wrapperRef.current;
@@ -361,14 +367,37 @@ function useAutoImageRendering(
     return () => ro.disconnect();
   }, [wrapperRef]);
 
-  if (interpolation !== "auto") return interpolation;
-  if (!layoutBox || !naturalDims) return undefined;
-  const screenPxPerTexel = containScreenPxPerTexel(
-    { width: layoutBox.width * zoom, height: layoutBox.height * zoom },
-    naturalDims.w,
-    naturalDims.h,
-  );
-  return autoImageRendering(screenPxPerTexel, PIXEL_VALUE_MIN_SCREEN_PX);
+  const geometry = layoutBox && naturalDims
+    ? computeCpuDisplayGeometry(
+        layoutBox,
+        { width: naturalDims.w, height: naturalDims.h },
+        zoom,
+        pan,
+      )
+    : null;
+  const surfaceStyle: React.CSSProperties = geometry
+    ? {
+        position: "absolute",
+        left: geometry.home.left,
+        top: geometry.home.top,
+        width: geometry.home.width,
+        height: geometry.home.height,
+        objectFit: "fill",
+      }
+    : { width: "100%", height: "100%", objectFit: "contain" };
+  const imageRendering = interpolation !== "auto"
+    ? interpolation
+    : layoutBox && naturalDims
+      ? autoImageRendering(
+          containScreenPxPerTexel(
+            { width: layoutBox.width * zoom, height: layoutBox.height * zoom },
+            naturalDims.w,
+            naturalDims.h,
+          ),
+          PIXEL_VALUE_MIN_SCREEN_PX,
+        )
+      : undefined;
+  return { imageRendering, geometry, surfaceStyle };
 }
 
 // ---------------------------------------------------------------------------
@@ -853,7 +882,11 @@ function CpuSdrImagePane(
   // Auto-interpolation: snap to `pixelated` when magnified past the shared
   // texel-size threshold (GPU-pane parity), else the browser default. Explicit
   // pixelated/crisp-edges bypass it. See `useAutoImageRendering`.
-  const imgRendering = useAutoImageRendering(wrapperRef, zoomProp, naturalDims, interpolation);
+  const {
+    imageRendering: imgRendering,
+    geometry: displayGeometry,
+    surfaceStyle,
+  } = useCpuDisplayPresentation(wrapperRef, zoomProp, panProp, naturalDims, interpolation);
   const invertStyle = flipSign ? { filter: "invert(1)" } : {};
 
   const overlayNode =
@@ -882,8 +915,9 @@ function CpuSdrImagePane(
       )}
       <canvas
         ref={setCanvasEl}
-        className="w-full h-full object-contain block"
+        className="block"
         style={{
+          ...surfaceStyle,
           display: diffReady ? "block" : "none",
           imageRendering: imgRendering,
           ...invertStyle,
@@ -899,8 +933,9 @@ function CpuSdrImagePane(
       )}
       <canvas
         ref={setFalseColorEl}
-        className="w-full h-full object-contain block"
+        className="block"
         style={{
+          ...surfaceStyle,
           display: falseColorReady ? "block" : "none",
           imageRendering: imgRendering,
           ...invertStyle,
@@ -916,8 +951,9 @@ function CpuSdrImagePane(
       )}
       <canvas
         ref={setTransferEl}
-        className="w-full h-full object-contain block"
+        className="block"
         style={{
+          ...surfaceStyle,
           display: transferReady ? "block" : "none",
           imageRendering: imgRendering,
           ...invertStyle,
@@ -929,9 +965,10 @@ function CpuSdrImagePane(
       ref={setImgEl}
       src={imageUrl}
       alt={label}
-      className="w-full h-full object-contain block"
+      className="block"
       draggable={false}
       style={{
+        ...surfaceStyle,
         filter: filterStr,
         imageRendering: imgRendering,
       }}
@@ -965,6 +1002,8 @@ function CpuSdrImagePane(
       // The CPU backend zooms by physically growing the wrapper (CSS
       // transform), unlike the GPU backend's uvRect crop.
       wrapperStyle={{
+        position: "absolute",
+        inset: 0,
         transform: `translate(${panProp.x}px, ${panProp.y}px) scale(${zoomProp})`,
         transformOrigin: "0 0",
       }}
@@ -977,7 +1016,15 @@ function CpuSdrImagePane(
         displayElRef,
         sample: samplePixel,
         version: pixelDataVersion,
-        hasSource: !!imageUrl,
+        hasSource: !!imageUrl && !!displayGeometry,
+        displayGeometry: displayGeometry ? {
+          left: displayGeometry.quad.left,
+          top: displayGeometry.quad.top,
+          width: displayGeometry.quad.width,
+          height: displayGeometry.quad.height,
+          gridWidth: displayGeometry.grid.width,
+          gridHeight: displayGeometry.grid.height,
+        } : undefined,
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={exportCanvasRef}
@@ -1319,7 +1366,11 @@ function CpuHdrImagePane(
   );
 
   // Auto-interpolation: shared threshold (GPU-pane parity); see the SDR branch.
-  const imgRendering = useAutoImageRendering(wrapperRef, zoom, dims, interpolation);
+  const {
+    imageRendering: imgRendering,
+    geometry: displayGeometry,
+    surfaceStyle,
+  } = useCpuDisplayPresentation(wrapperRef, zoom, pan, dims, interpolation);
 
   // DETECTION overlay (boxes + masks) on the FLOAT surface — the CPU-fallback
   // twin of GpuImagePane's `overlayNode` (M7). Composites over the tone-mapped
@@ -1357,6 +1408,8 @@ function CpuHdrImagePane(
       checkerboard="pane"
       wrapperClassName="relative w-full h-full"
       wrapperStyle={{
+        position: "absolute",
+        inset: 0,
         transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
         transformOrigin: "0 0",
       }}
@@ -1364,8 +1417,8 @@ function CpuHdrImagePane(
       surface={
         <canvas
           ref={canvasRef}
-          className="w-full h-full object-contain block"
-          style={{ imageRendering: imgRendering }}
+          className="block"
+          style={{ ...surfaceStyle, imageRendering: imgRendering }}
         />
       }
       showAxes={showAxes}
@@ -1374,7 +1427,15 @@ function CpuHdrImagePane(
         displayElRef: canvasRef,
         sample: samplePixel,
         version: pixelDataVersion,
-        hasSource: true,
+        hasSource: !!displayGeometry,
+        displayGeometry: displayGeometry ? {
+          left: displayGeometry.quad.left,
+          top: displayGeometry.quad.top,
+          width: displayGeometry.quad.width,
+          height: displayGeometry.quad.height,
+          gridWidth: displayGeometry.grid.width,
+          gridHeight: displayGeometry.grid.height,
+        } : undefined,
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
