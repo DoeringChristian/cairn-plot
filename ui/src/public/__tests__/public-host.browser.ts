@@ -64,6 +64,37 @@ async function run() {
   await waitFor(() => element.querySelector("img")?.src === blue, 3_000);
   check(element.querySelector("img")?.src === blue, "DataSource update cannot reuse stale resolved content");
 
+  // Regression: the production descriptor path must route a CPU backend into
+  // comparison presentation, not pass compareSource to a single-image pane.
+  const compareSpec: PlotSpec = {
+    root: {
+      kind: "compare",
+      type: "image",
+      presentation: "split",
+      operands: [
+        { kind: "image", hash: "reference" },
+        { kind: "image", hash: "foreground" },
+      ],
+      strategy: "reference",
+      referenceIndex: 0,
+      settings: { "compare.operation": "split" },
+      props: { labelA: "reference", labelB: "foreground" },
+    },
+  };
+  mounted.update({
+    spec: compareSpec,
+    dataSource: createEndpointDataSource((hash) => hash === "reference" ? blue : red),
+  });
+  await waitFor(() => element.querySelectorAll("img").length === 2, 3_000);
+  check(element.querySelectorAll("img").length === 2, "CPU public comparison enters real split mode");
+  check(!!element.querySelector("[data-cpu-compare-mode]"), "CPU public comparison exposes mode controls");
+  mounted.patchSettings({ "compare.operation": "absolute" });
+  await waitFor(() => {
+    const canvas = element.querySelector("canvas");
+    return !!canvas && canvas.style.display === "block";
+  }, 3_000);
+  check(!!element.querySelector("canvas"), "CPU public comparison switches from split to diff mode");
+
   mounted.destroy();
   mounted.destroy();
   await sleep(0);

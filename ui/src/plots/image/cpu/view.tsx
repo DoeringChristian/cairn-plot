@@ -48,6 +48,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import LabelChip from "../../../primitives/components/LabelChip";
 import RefBadge from "../../../primitives/components/RefBadge";
+import SplitDivider from "../compare/SplitDivider.tsx";
 import type { Colormap, DiffMode, Interpolation } from "../../types";
 import { autoImageRendering, containScreenPxPerTexel } from "../components/interp-auto";
 // The ONE shared magnification threshold — the SAME constant `GpuImagePane`
@@ -1474,6 +1475,30 @@ function CpuMetricsChip({ label, stacked }: { label: string; stacked: boolean })
   );
 }
 
+function CpuCompareModeControl({ compare }: { compare: NonNullable<ImageBackendInput["compareSource"]> }) {
+  const mode = compare.mode ?? "diff";
+  const value = mode === "split" ? "split" : compare.operationId;
+  const options = Object.entries(DIFF_MODE_LABELS);
+  const selectedIsUnsupported = mode === "diff" && !(compare.operationId in DIFF_MODE_LABELS);
+  return (
+    <select
+      data-cpu-compare-mode=""
+      aria-label="Compare / diff mode"
+      className="absolute left-1 top-1 z-30 max-w-[calc(100%-0.5rem)] rounded border border-border bg-bg/90 px-1.5 py-1 text-[10px] text-fg shadow-sm"
+      value={value}
+      onChange={(event) => {
+        const next = event.target.value;
+        if (next === "split") compare.onCompareModeChange?.("split");
+        else compare.onComparisonOperationChange?.(next);
+      }}
+    >
+      <option value="split">Split</option>
+      {selectedIsUnsupported && <option value={compare.operationId}>{compare.operationId} (needs WebGPU)</option>}
+      {options.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+    </select>
+  );
+}
+
 function cpuCompareChrome(cs: ImageBackendInput["compareSource"], metricsLabel: string | null): ReactNode {
   if (!cs) return undefined;
   const mode = cs.mode ?? "diff";
@@ -1484,6 +1509,7 @@ function cpuCompareChrome(cs: ImageBackendInput["compareSource"], metricsLabel: 
     const ref = cs.referenceLabel || "reference";
     return (
       <>
+        <CpuCompareModeControl compare={cs} />
         <LabelChip
           label={`${fg} compared to ${ref}`}
           corner="bottom-left"
@@ -1497,6 +1523,7 @@ function cpuCompareChrome(cs: ImageBackendInput["compareSource"], metricsLabel: 
   // chip is the selection stage's click-to-set-reference affordance).
   return (
     <>
+      <CpuCompareModeControl compare={cs} />
       {mode === "split" && <RefBadge />}
       {cs.referenceLabel ? (
         <LabelChip
@@ -1542,6 +1569,33 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
   return metrics;
 }
 
+function CpuSplitComparePane({ input, metrics }: { input: ImageBackendInput; metrics: CpuSourceMetrics | null }) {
+  const compare = input.compareSource!;
+  const split = compare.splitPosition ?? 0.5;
+  const childProps = {
+    ...input,
+    compareSource: undefined,
+    toolbar: false,
+    label: "",
+  };
+  return (
+    <div data-cpu-compare-pane="" className="relative isolate h-full min-h-0 w-full min-w-0 overflow-hidden">
+      <div className="absolute inset-0" style={{ clipPath: `inset(0 ${(1 - split) * 100}% 0 0)` }}>
+        <CpuImagePane {...childProps} source={input.source} />
+      </div>
+      <div className="absolute inset-0" style={{ clipPath: `inset(0 0 0 ${split * 100}%)` }}>
+        <CpuImagePane {...childProps} source={compare.b} />
+      </div>
+      <SplitDivider
+        splitPosition={split}
+        onChange={compare.onSplitPositionChange}
+        onReset={() => compare.onSplitPositionChange?.(0.5)}
+      />
+      {cpuCompareChrome(compare, cpuMetricsLabel(metrics))}
+    </div>
+  );
+}
+
 function cpuPointwiseCompareInput(input: ImageBackendInput): ImageBackendInput {
   const compare = input.compareSource;
   if (!compare || (compare.mode ?? "diff") !== "diff") return input;
@@ -1564,6 +1618,9 @@ function cpuPointwiseCompareInput(input: ImageBackendInput): ImageBackendInput {
 export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Element {
   const props = useImageSurfaceProps(cpuPointwiseCompareInput(backendProps));
   const compareMetrics = useCpuCompareMetrics(backendProps);
+  if (backendProps.compareSource?.mode === "split") {
+    return <CpuSplitComparePane input={backendProps} metrics={compareMetrics} />;
+  }
   // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
   // reconstructed legacy props (they aren't part of the dtype-keyed
   // `ImageSurfaceProps` shape).
