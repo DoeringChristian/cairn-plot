@@ -1475,10 +1475,20 @@ function cpuCompareChrome(cs: ImageBackendInput["compareSource"]): ReactNode {
     <>
       {mode === "split" && <RefBadge />}
       {cs.referenceLabel ? (
-        <LabelChip label={cs.referenceLabel} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+        <LabelChip
+          label={cs.referenceLabel}
+          corner="bottom-left"
+          maxWidth={cs.foregroundLabel ? "half" : "full"}
+          attrs={{ "data-cairn-compare-caption": "reference" }}
+        />
       ) : null}
       {cs.foregroundLabel ? (
-        <LabelChip label={cs.foregroundLabel} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
+        <LabelChip
+          label={cs.foregroundLabel}
+          corner="bottom-right"
+          maxWidth={cs.referenceLabel ? "half" : "full"}
+          attrs={{ "data-cairn-compare-caption": "foreground" }}
+        />
       ) : null}
     </>
   );

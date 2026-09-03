@@ -2265,7 +2265,8 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // "<metric> · <fg> compared to <ref>"; split/blend → REFERENCE bottom-left +
   // FOREGROUND bottom-right (the divider slides over them). The metrics chip
   // (all compare modes) sits bottom-right, stacked ABOVE the foreground caption
-  // when present (`data-gpu-compare-metrics`, `data-cairn-compare-caption`).
+  // when any caption is present (`data-gpu-compare-metrics`,
+  // `data-cairn-compare-caption`), so captions and metrics never share a row.
   const compareCaps = hasCompare
     ? compareCaptions({
         mode: diffMode ? "diff" : compareOpMode!,
@@ -2274,21 +2275,33 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         foregroundLabel: compareSource?.foregroundLabel,
       })
     : { left: undefined, right: undefined };
-  const metricsBottomClass = compareCaps.right ? "bottom-7" : "bottom-1";
+  const hasCompareCaption = !!(compareCaps.left || compareCaps.right);
+  const metricsBottomClass = hasCompareCaption ? "bottom-7" : "bottom-1";
   const compareChips = hasCompare ? (
     <>
       {/* REF badge: split only (the left-of-divider side IS the reference). */}
       {compareOpMode === "split" && <RefBadge />}
       {compareCaps.left ? (
-        <LabelChip label={compareCaps.left} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+        <LabelChip
+          label={compareCaps.left}
+          corner="bottom-left"
+          maxWidth={compareCaps.right ? "half" : "full"}
+          attrs={{ "data-cairn-compare-caption": "reference" }}
+        />
       ) : null}
       {compareCaps.right ? (
-        <LabelChip label={compareCaps.right} corner="bottom-right" attrs={{ "data-cairn-compare-caption": "foreground" }} />
+        <LabelChip
+          label={compareCaps.right}
+          corner="bottom-right"
+          maxWidth={compareCaps.left ? "half" : "full"}
+          attrs={{ "data-cairn-compare-caption": "foreground" }}
+        />
       ) : null}
       {displayedMetricsLabel && (
         <span
-          className={`absolute right-1 z-30 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}`}
+          className={`absolute right-1 z-30 max-w-[calc(100%-0.5rem)] truncate whitespace-nowrap overflow-hidden rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm font-mono ${metricsBottomClass}`}
           data-gpu-compare-metrics
+          title={displayedMetricsLabel}
         >
           {displayedMetricsLabel}
         </span>

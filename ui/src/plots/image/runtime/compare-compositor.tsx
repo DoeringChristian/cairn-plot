@@ -421,16 +421,24 @@ export function MediaComparePane({
           The legacy single `label` falls back to the foreground caption. */}
       {(() => {
         const caps = compareCaptions({ mode, referenceLabel, foregroundLabel });
+        // MediaComparePane is split-only; preserve its legacy foreground-label
+        // fallback while constraining both captions to disjoint pane halves.
         const rightLabel = caps.right ?? (label || undefined);
         return (
           <>
             {caps.left && (
-              <LabelChip label={caps.left} corner="bottom-left" attrs={{ "data-cairn-compare-caption": "reference" }} />
+              <LabelChip
+                label={caps.left}
+                corner="bottom-left"
+                maxWidth={rightLabel ? "half" : "full"}
+                attrs={{ "data-cairn-compare-caption": "reference" }}
+              />
             )}
             {rightLabel && (
               <LabelChip
                 label={rightLabel}
                 corner="bottom-right"
+                maxWidth={caps.left ? "half" : "full"}
                 isDraggable={isDraggable && !modifierActive}
                 grip
                 onDragStart={onDragStart}

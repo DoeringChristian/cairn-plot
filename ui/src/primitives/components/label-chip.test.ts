@@ -45,6 +45,11 @@ test("LabelChip: both corners + draggable + accessible grip contract", () => {
   // Draggability drives the draggable attr + grab cursor.
   assert.match(chip, /draggable=\{isDraggable\}/, "draggable attr wired to the prop");
   assert.match(chip, /cursor:\s*isDraggable\s*\?/, "grab cursor gated on isDraggable");
+  assert.match(chip, /maxWidth === "half"/, "split captions support a disjoint half-pane bound");
+  assert.match(chip, /calc\(50% - 0\.375rem\)/, "opposing captions cannot cross the pane midpoint");
+  assert.match(chip, /calc\(100% - 0\.5rem\)/, "single captions cannot escape the pane");
+  assert.match(chip, /truncate whitespace-nowrap/, "overlong captions truncate instead of overlapping");
+  assert.match(chip, /title=\{label\}/, "truncated captions expose their full text");
 });
 
 // Every compare pane must render the SHARED chip and NOT hard-code its own
@@ -69,19 +74,20 @@ test("every compare pane routes its label through the shared LabelChip", () => {
   }
 });
 
-// Finding 2: the metrics chip's vertical offset must derive from the SAME value
-// that renders the bottom-RIGHT (foreground) caption chip, so it can't silently
-// drift. Both key off `compareCaps.right`; the metrics className references the
-// derived `metricsBottomClass`, never an independent `bottom-7 : bottom-1` re-test.
-// (Post content-op unification, Phase 4, this rides the unified `GpuImagePane`.)
-test("the unified pane folds the metrics offset into the shared caption-stack flag", () => {
+// Metrics must occupy a separate row whenever EITHER caption exists. Diff has
+// only a left caption, while split has both; checking only the right caption
+// lets diff captions collide horizontally with the metrics chip.
+test("the unified pane keeps metrics on a separate row from every caption", () => {
   const src = read("plots/image/webgpu/view.tsx");
-  // The bottom-right caption chip presence and the metrics offset both key off
-  // `compareCaps.right` (the one foreground-caption value).
   assert.match(
     src,
-    /const metricsBottomClass = compareCaps\.right \?/,
-    "metrics offset must derive from the same compareCaps.right value that renders the chip",
+    /const hasCompareCaption = !!\(compareCaps\.left \|\| compareCaps\.right\)/,
+    "the stack flag must include both diff and split captions",
+  );
+  assert.match(
+    src,
+    /const metricsBottomClass = hasCompareCaption \?/,
+    "metrics offset must derive from the shared any-caption flag",
   );
   assert.match(
     src,
@@ -89,10 +95,16 @@ test("the unified pane folds the metrics offset into the shared caption-stack fl
     "the bottom-right caption chip is gated on the SAME compareCaps.right value",
   );
   assert.match(src, /\$\{metricsBottomClass\}/, "metrics span uses the derived offset");
-  // No independent re-test of `label` for the offset (the silent-break shape).
-  assert.doesNotMatch(
-    src,
-    /\blabel\s*\?\s*"bottom-7"/,
-    "metrics offset must not independently re-test `label`",
-  );
+  assert.match(src, /max-w-\[calc\(100%-0\.5rem\)\].*truncate/, "metrics truncate within the pane");
+  assert.match(src, /title=\{displayedMetricsLabel\}/, "truncated metrics expose their full text");
+});
+
+test("split captions use disjoint half-pane bounds in every image backend", () => {
+  for (const rel of [
+    "plots/image/webgpu/view.tsx",
+    "plots/image/cpu/view.tsx",
+    "plots/image/runtime/compare-compositor.tsx",
+  ]) {
+    assert.match(read(rel), /maxWidth=.*"half"/, `${rel} must half-bound opposing captions`);
+  }
 });

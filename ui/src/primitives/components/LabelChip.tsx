@@ -28,6 +28,7 @@ export default function LabelChip({
   isDraggable = false,
   grip = isDraggable,
   onDragStart,
+  maxWidth = "full",
   attrs,
 }: {
   label: string;
@@ -41,6 +42,9 @@ export default function LabelChip({
    *  temporarily suppresses dragging. */
   grip?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  /** Half-width keeps opposing split captions in disjoint pane halves. All
+   * chips truncate rather than escaping their pane. */
+  maxWidth?: "full" | "half";
   /** Extra attributes spread onto the chip span — used by the compare panes to
    *  tag which SIDE a caption names (`data-cairn-compare-caption`), so a host
    *  (e.g. the compare stage) can target a side's chip via event delegation
@@ -50,16 +54,20 @@ export default function LabelChip({
   const cornerClass = corner === "bottom-right" ? "bottom-1 right-1" : "bottom-1 left-1";
   return (
     <span
-      className={`absolute ${cornerClass} z-10 rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
+      className={`absolute ${cornerClass} z-10 min-w-0 overflow-hidden rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-muted backdrop-blur-sm flex items-center gap-1${isDraggable ? " cairn-drag-grip" : ""}`}
       draggable={isDraggable}
       onDragStart={onDragStart}
-      style={{ cursor: isDraggable ? "grab" : undefined }}
+      style={{
+        cursor: isDraggable ? "grab" : undefined,
+        maxWidth: maxWidth === "half" ? "calc(50% - 0.375rem)" : "calc(100% - 0.5rem)",
+      }}
+      title={label}
       {...attrs}
     >
       {grip && (
         <i className="fa-solid fa-grip-vertical text-[8px] opacity-50" aria-hidden="true" />
       )}
-      {label}
+      <span className="min-w-0 truncate whitespace-nowrap">{label}</span>
     </span>
   );
 }
