@@ -63,7 +63,7 @@ import {
   getCachedImageData,
   setCachedImageData,
 } from "../resources/cache.ts";
-import { computeDiff } from "./diff.ts";
+import { computeDiff, DIFF_MODE_LABELS } from "./diff.ts";
 import { webglRenderDiffToCanvas } from "./webgl-diff.ts";
 import { getColormapLUT } from "../../../settings/colormaps/index";
 import { applyColormap } from "../resources/apply-colormap.ts";
@@ -1542,8 +1542,27 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
   return metrics;
 }
 
+function cpuPointwiseCompareInput(input: ImageBackendInput): ImageBackendInput {
+  const compare = input.compareSource;
+  if (!compare || (compare.mode ?? "diff") !== "diff") return input;
+  if (input.source.dtype !== "uint8" || compare.b.dtype !== "uint8") return input;
+  if (compare.align != null && compare.align !== "top-left") return input;
+  if (compare.fit != null && compare.fit !== "crop") return input;
+  const operation = compare.operationId;
+  if (!(operation in DIFF_MODE_LABELS)) return input;
+  // The legacy CPU diff pane expects foreground as its primary image and the
+  // reference URL separately. Adapt the backend-neutral compareSource contract
+  // instead of silently rendering the reference as a normal image.
+  return {
+    ...input,
+    source: compare.b,
+    baselineUrl: input.source.url,
+    diffMode: operation as DiffMode,
+  };
+}
+
 export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Element {
-  const props = useImageSurfaceProps(backendProps);
+  const props = useImageSurfaceProps(cpuPointwiseCompareInput(backendProps));
   const compareMetrics = useCpuCompareMetrics(backendProps);
   // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
   // reconstructed legacy props (they aren't part of the dtype-keyed

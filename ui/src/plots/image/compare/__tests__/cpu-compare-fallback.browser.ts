@@ -128,6 +128,23 @@ async function run(): Promise<boolean> {
   }));
   roots.push(directRoot);
 
+  // 6. Cairn's public compare descriptor uses this same direct CpuImagePane
+  // shape. A pointwise operation must enter the real CPU diff pipeline rather
+  // than leaving the reference rendered as an ordinary image.
+  const pointwiseRoot = createRoot(host("m6"));
+  pointwiseRoot.render(createElement(CpuImagePane, {
+    source: { dtype: "uint8", url: urlSide("#0000ff"), contentKey: "blue-reference" },
+    compareSource: {
+      b: { dtype: "uint8", url: urlSide("#ff0000"), contentKey: "red-foreground" },
+      operationId: "absolute",
+      mode: "diff",
+      referenceLabel: "reference",
+      foregroundLabel: "foreground",
+    },
+    label: "",
+  }));
+  roots.push(pointwiseRoot);
+
   // --- 1. FLOAT diff ---------------------------------------------------------
   const n1 = await waitFor(() => !!notice("m1") && dataImgCount("m1") >= 1, 4000, 20);
   const n1txt = notice("m1")?.textContent ?? "";
@@ -168,6 +185,17 @@ async function run(): Promise<boolean> {
     `unified CPU compare exposes exact metrics "${cpuMetricsText}"`,
   );
   ok = ok && cpuMetrics && /MSE 0\.00e\+0 · PSNR ∞ dB · SSIM 1\.0000/.test(cpuMetricsText);
+
+  // --- 6. Unified CpuImagePane enters pointwise diff mode -------------------
+  const pointwiseDiff = await waitFor(() => {
+    const canvas = document.getElementById("m6")!.querySelector("canvas");
+    return !!canvas && canvas.style.display === "block" && canvas.width === 8;
+  }, 4000, 20);
+  const diffCanvas = document.getElementById("m6")!.querySelector("canvas");
+  const diffPixel = diffCanvas?.getContext("2d")?.getImageData(0, 0, 1, 1).data;
+  const isMagentaDifference = !!diffPixel && diffPixel[0] === 255 && diffPixel[1] === 0 && diffPixel[2] === 255;
+  report(pointwiseDiff && isMagentaDifference, `unified CPU compare renders the actual pointwise diff (${diffPixel ? [...diffPixel] : "no pixel"})`);
+  ok = ok && pointwiseDiff && isMagentaDifference;
 
   roots.forEach((r) => r.unmount());
   return ok;
