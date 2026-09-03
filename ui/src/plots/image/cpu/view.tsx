@@ -1018,6 +1018,7 @@ function CpuSdrImagePane(
         sample: samplePixel,
         version: pixelDataVersion,
         hasSource: !!imageUrl,
+        snapToDevicePixels: true,
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={exportCanvasRef}
@@ -1422,6 +1423,7 @@ function CpuHdrImagePane(
         sample: samplePixel,
         version: pixelDataVersion,
         hasSource: true,
+        snapToDevicePixels: true,
       }}
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}

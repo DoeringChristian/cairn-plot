@@ -169,6 +169,8 @@ export type ImagePaneOverlaySpec =
       /** The GPU panes' displayed crop; CPU omits it (its element grows via
        *  the CSS transform, so `getBoundingClientRect` already encodes zoom). */
       readonly sourceWindow?: { x: number; y: number; w: number; h: number };
+      /** CPU nearest-neighbor raster cells are snapped to device pixels. */
+      readonly snapToDevicePixels?: boolean;
       /** Optional notification that numeric labels are actually being drawn. */
       readonly onActiveChange?: (active: boolean) => void;
       /** Optional notification that zoomed geometry needs samples. This fires
@@ -672,6 +674,7 @@ export default function ImagePaneShell({
         zoom={zoom}
         pan={pan}
         sourceWindow={overlay.sourceWindow}
+        snapToDevicePixels={overlay.snapToDevicePixels}
         sample={overlay.sample}
         notation={notation}
         version={overlay.version}

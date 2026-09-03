@@ -183,6 +183,23 @@ export function computeSourceFit(
   };
 }
 
+/** Center of one nearest-neighbor raster cell after the browser snaps both
+ * cell edges to the device-pixel grid. CPU CSS-scaled bitmaps use this concrete
+ * paint phase; averaging the snapped edges avoids the near-half-screen-pixel
+ * drift of an ideal `(index + 0.5) * step` center. */
+export function deviceSnappedCellCenter(
+  quadOrigin: number,
+  step: number,
+  index: number,
+  viewportOrigin: number,
+  dpr: number,
+): number {
+  const snap = (local: number): number =>
+    Math.round((viewportOrigin + local) * dpr) / dpr - viewportOrigin;
+  const left = quadOrigin + index * step;
+  return (snap(left) + snap(left + step)) / 2;
+}
+
 /**
  * A sampled-source texel's CENTER → its client-space screen point, under the
  * fill-stretch model (generalizes the overlay's `imgLeft + (px - srcOriginX +
