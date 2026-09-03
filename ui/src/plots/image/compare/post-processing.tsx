@@ -23,19 +23,13 @@ export function buildProcessingFilterList(
   processing: ImageProcessing,
   gammaFilterId: string,
 ): string {
-  const { brightness, contrast, gamma, exposure, offset, flipSign } = processing;
-  const filters: string[] = [];
-  // An identity CSS/SVG filter is not visually free: Chromium rasterizes the
-  // source into an intermediate layout-resolution surface before applying the
-  // large CPU zoom transform. That changes the nearest-neighbor sampling phase,
-  // so source pixels move while numeric labels remain on the true source grid.
-  // Keep the identity path completely filter-free.
-  if (gamma !== 1 || offset !== 0) filters.push(`url(#${gammaFilterId})`);
-  const brightnessFactor = (1 + brightness) * Math.pow(2, exposure);
-  if (brightnessFactor !== 1) filters.push(`brightness(${brightnessFactor})`);
-  if (contrast !== 0) filters.push(`contrast(${1 + contrast})`);
-  if (flipSign) filters.push("invert(1)");
-  return filters.length > 0 ? filters.join(" ") : "none";
+  const { brightness, contrast, exposure, flipSign } = processing;
+  return [
+    `url(#${gammaFilterId})`,
+    `brightness(${(1 + brightness) * Math.pow(2, exposure)})`,
+    `contrast(${1 + contrast})`,
+    ...(flipSign ? ["invert(1)"] : []),
+  ].join(" ");
 }
 
 /**

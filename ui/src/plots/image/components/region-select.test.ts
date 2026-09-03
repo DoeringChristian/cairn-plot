@@ -13,23 +13,10 @@ import {
   screenToTexel,
   texelToScreen,
   sourceTexelCenter,
-  deviceSnappedCellCenter,
   screenRectToTexelRect,
   texelRectToScreenRect,
   type ScreenToTexelParams,
 } from "./region-select.ts";
-
-test("device-snapped CPU cell centers average the concrete raster edges", () => {
-  // Chrome paints 4 nearest-neighbor cells over 242 CSS px at boundaries
-  // 0, 61, 121, 182, 242. Ideal centers are quarter-pixel left of the
-  // concrete centers for this fractional scale.
-  assert.equal(deviceSnappedCellCenter(0, 60.5, 0, 0, 1), 30.5);
-  assert.equal(deviceSnappedCellCenter(0, 60.5, 1, 0, 1), 91);
-  assert.equal(deviceSnappedCellCenter(0, 60.5, 2, 0, 1), 151.5);
-  assert.equal(deviceSnappedCellCenter(0, 60.5, 3, 0, 1), 212);
-  // Snapping is done in viewport/device coordinates, then rebased locally.
-  assert.equal(deviceSnappedCellCenter(0.2, 30.25, 0, 0.3, 2), 15.45);
-});
 
 // A 100x50 source displayed object-contain into a 200x200 box at client (10,20):
 // scale = min(200/100, 200/50) = 2 (width-limited), dispW=200, dispH=100,

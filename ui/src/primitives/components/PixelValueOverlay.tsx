@@ -41,7 +41,6 @@ import { useDevicePixelRatio } from "../../host/hooks/use-device-pixel-ratio";
 import { formatNum } from "../format";
 import {
   computeSourceFit,
-  deviceSnappedCellCenter,
   type ScreenToTexelParams,
 } from "../../plots/image/components/region-select";
 import {
@@ -232,10 +231,6 @@ export interface PixelValueOverlayProps {
    * `renderers/region-select`'s {@link computeSourceFit}.
    */
   sourceDims?: { w: number; h: number };
-  /** Align label centers to the device-pixel-snapped nearest-neighbor cells of
-   * a CSS-scaled CPU bitmap. WebGPU supplies explicit UV geometry and leaves
-   * this disabled. */
-  snapToDevicePixels?: boolean;
 }
 
 const FULL_SOURCE_WINDOW = { x: 0, y: 0, w: 1, h: 1 };
@@ -253,7 +248,6 @@ export default function PixelValueOverlay({
   onSampleDemandChange,
   sourceWindow = FULL_SOURCE_WINDOW,
   sourceDims,
-  snapToDevicePixels = false,
 }: PixelValueOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(false);
@@ -456,16 +450,10 @@ export default function PixelValueOverlay({
     // Pass 2 — draw the cached samples, each centred on the pixel it describes
     // (`cx`/`cy` = the texel centre in canvas-local px, the same transform the
     // region marquee uses; see region-select.test.ts).
-    const cellCenterX = (px: number): number => snapToDevicePixels
-      ? deviceSnappedCellCenter(quadLeft, sxPerTexel, px, canvasRect.left, dpr)
-      : quadLeft + (px + 0.5) * sxPerTexel;
-    const cellCenterY = (py: number): number => snapToDevicePixels
-      ? deviceSnappedCellCenter(quadTop, syPerTexel, py, canvasRect.top, dpr)
-      : quadTop + (py + 0.5) * syPerTexel;
     for (const { px, py, s } of cells) {
       const lc = s.lines.length;
-      const cx = cellCenterX(px);
-      const cy = cellCenterY(py);
+      const cx = quadLeft + (px + 0.5) * sxPerTexel;
+      const cy = quadTop + (py + 0.5) * syPerTexel;
       let ly = cy - (lc * lineH) / 2 + lineH / 2;
       for (let k = 0; k < s.lines.length; k++) {
         const ln = s.lines[k]!;
@@ -485,7 +473,6 @@ export default function PixelValueOverlay({
     reportSampleDemand,
     sourceWindow,
     sourceDims,
-    snapToDevicePixels,
   ]);
 
   // Geometry must update in the same commit as the CPU surface's CSS transform.

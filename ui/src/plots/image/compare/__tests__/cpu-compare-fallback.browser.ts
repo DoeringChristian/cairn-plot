@@ -17,7 +17,7 @@
  */
 import { floatValues } from "../../runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
-import { createElement, useState } from "react";
+import { createElement } from "react";
 import { CompositeMediaPane } from "../../runtime/compare-compositor";
 import CpuImagePane from "../../cpu/view.tsx";
 import type { ResolvedFloatImage } from "../../definition/content.ts";
@@ -131,28 +131,18 @@ async function run(): Promise<boolean> {
   // 6. Cairn's public compare descriptor uses this same direct CpuImagePane
   // shape. A pointwise operation must enter the real CPU diff pipeline rather
   // than leaving the reference rendered as an ordinary image.
-  const pointwiseReference = { dtype: "uint8" as const, url: urlSide("#0000ff"), contentKey: "blue-reference" };
-  const pointwiseForeground = { dtype: "uint8" as const, url: urlSide("#ff0000"), contentKey: "red-foreground" };
-  function InteractivePointwiseDiff() {
-    const [view, setView] = useState({ zoom: 2, pan: { x: 0.25, y: 0.5 } });
-    return createElement(CpuImagePane, {
-      source: pointwiseReference,
-      compareSource: {
-        b: pointwiseForeground,
-        operationId: "absolute",
-        mode: "diff",
-        referenceLabel: "reference",
-        foregroundLabel: "foreground",
-      },
-      zoom: view.zoom,
-      pan: view.pan,
-      onViewChange: setView,
-      toolbar: false,
-      label: "",
-    });
-  }
   const pointwiseRoot = createRoot(host("m6"));
-  pointwiseRoot.render(createElement(InteractivePointwiseDiff));
+  pointwiseRoot.render(createElement(CpuImagePane, {
+    source: { dtype: "uint8", url: urlSide("#0000ff"), contentKey: "blue-reference" },
+    compareSource: {
+      b: { dtype: "uint8", url: urlSide("#ff0000"), contentKey: "red-foreground" },
+      operationId: "absolute",
+      mode: "diff",
+      referenceLabel: "reference",
+      foregroundLabel: "foreground",
+    },
+    label: "",
+  }));
   roots.push(pointwiseRoot);
 
   // --- 1. FLOAT diff ---------------------------------------------------------
@@ -202,49 +192,26 @@ async function run(): Promise<boolean> {
     const canvas = result?.querySelector("canvas");
     return !!canvas && canvas.width === 8;
   }, 4000, 20);
-  const diffCanvas = document.getElementById("m6")!
-    .querySelector<HTMLCanvasElement>('[data-cpu-comparison-result="absolute"] canvas:not([aria-hidden])');
+  const diffCanvas = document.getElementById("m6")!.querySelector("canvas");
   const diffPixel = diffCanvas?.getContext("2d")?.getImageData(0, 0, 1, 1).data;
   const isMagentaDifference = !!diffPixel && diffPixel[0] === 255 && diffPixel[1] === 0 && diffPixel[2] === 255;
   report(pointwiseDiff && isMagentaDifference, `unified CPU compare renders the actual pointwise diff (${diffPixel ? [...diffPixel] : "no pixel"})`);
   ok = ok && pointwiseDiff && isMagentaDifference;
 
-  // CPU display and label geometry now share the display element's concrete
-  // contained rectangle; the browser no longer owns a hidden object-fit phase.
-  const explicitSourceAspect = await waitFor(() => {
-    const canvas = document.getElementById("m6")!
-      .querySelector<HTMLCanvasElement>('[data-cpu-comparison-result="absolute"] canvas:not([aria-hidden])');
-    const rect = canvas?.getBoundingClientRect();
-    return canvas?.style.objectFit === "fill" && !!rect && rect.height > 0 && Math.abs(rect.width / rect.height - 2) < 0.001;
-  }, 2000, 20);
-  const liveDiffCanvas = document.getElementById("m6")!
-    .querySelector<HTMLCanvasElement>('[data-cpu-comparison-result="absolute"] canvas:not([aria-hidden])');
-  const diffRect = liveDiffCanvas?.getBoundingClientRect();
-  const canvasGeometry = [...document.getElementById("m6")!.querySelectorAll("canvas")].map((canvas) => {
-    const rect = canvas.getBoundingClientRect();
-    const computed = getComputedStyle(canvas);
-    const parentEl = canvas.parentElement;
-    const parent = parentEl?.getBoundingClientRect();
-    const parentComputed = parentEl ? getComputedStyle(parentEl) : null;
-    return `${canvas.getAttribute("aria-hidden") ?? "surface"}:${canvas.className}:${canvas.style.cssText}:${computed.width}x${computed.height}:${rect.width}x${rect.height}:parent=${parent?.width}x${parent?.height}/${parentComputed?.width}x${parentComputed?.height}/${parentEl?.className}`;
-  }).join(" | ");
-  report(explicitSourceAspect, `CPU diff canvas exposes its actual 8:4 painted rect (${diffRect?.width}×${diffRect?.height}; ${canvasGeometry})`);
-  ok = ok && explicitSourceAspect;
-
   // View-only changes must remain compositor-only. A fresh diff-source shape on
   // every render used to invalidate the HDR wrapper and tone-map the complete
   // native-resolution error field once per wheel/pointer event.
   let diffRepaints = 0;
-  const diffContext = liveDiffCanvas?.getContext("2d");
+  const diffContext = diffCanvas?.getContext("2d");
   const originalPutImageData = diffContext?.putImageData.bind(diffContext);
-  if (liveDiffCanvas && diffContext && originalPutImageData) {
+  if (diffCanvas && diffContext && originalPutImageData) {
     diffContext.putImageData = ((...args: Parameters<CanvasRenderingContext2D["putImageData"]>) => {
       diffRepaints++;
       return originalPutImageData(...args);
     }) as CanvasRenderingContext2D["putImageData"];
-    const rect = liveDiffCanvas.getBoundingClientRect();
+    const rect = diffCanvas.getBoundingClientRect();
     for (let i = 0; i < 8; i++) {
-      liveDiffCanvas.dispatchEvent(new WheelEvent("wheel", {
+      diffCanvas.dispatchEvent(new WheelEvent("wheel", {
         bubbles: true,
         cancelable: true,
         ctrlKey: true,
