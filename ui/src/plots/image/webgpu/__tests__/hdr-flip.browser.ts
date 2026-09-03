@@ -22,7 +22,7 @@
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
-import { flipHDR, computeHdrFlipExposures } from "../kernels/hdr-flip-reference";
+import { flipHDR, computeHdrFlipExposures } from "../../runtime/hdr-flip-reference";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";
 

@@ -153,15 +153,11 @@ export interface Uint8SurfaceProps {
    *  slider (shown only when the extended surface engages); unset → the pane
    *  default (4). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
   peak?: number;
-  /** Base exposure in EV stops for the WebGPU 8-bit pipeline (`GpuImagePane`'s
-   *  plain-SDR path sRGB-decodes to scene-linear, then applies `color * 2^EV`) —
-   *  the controlled EV surface, additive with the toolbar's runtime EV slider (see
-   *  {@link FloatSurfaceProps.exposure}). Default 0. NOTE: the CPU 2D-canvas backend
-   *  has no scene-linear recompute stage on the plain-SDR `<img>` path, so it does
-   *  NOT apply this (documented graceful degradation — the WebGPU backend does). */
+  /** Base exposure in EV stops. Both backends sRGB-decode to scene-linear and
+   *  apply `color * 2^EV` before display encoding; the CPU backend switches from
+   *  its plain `<img>` fast path to an exact canvas recompute when adjusted. */
   exposure?: number;
-  /** Base additive OFFSET for the WebGPU 8-bit pipeline (offset counterpart of
-   *  {@link exposure}). Default 0. Same CPU-backend caveat. */
+  /** Base additive OFFSET applied after exposure by both backends. */
   offset?: number;
   colormap?: Colormap;
   showAxes?: boolean;
@@ -250,11 +246,16 @@ export interface ImageComparisonInput {
    *  convention (diff + compositor): `a` = reference (texA), `b` = foreground
    *  (texB), so `diff = a − b` and split shows the reference left of the divider. */
   b: ImageSource;
+  /** Backend-supported comparison operations, resolved by the shared image
+   * runtime from the selected backend's capability declaration. */
+  operationOptions?: { id: string; label: string }[];
   /** The DIFF kernel — a menu selection token (a pointwise id, `"flip"`, or
    *  `"ssim"`). SEEDS the pane's diff-kernel state (always a real
    *  kernel, even while {@link mode} is a compositor mode — so switching INTO diff
    *  restores it). Resolved to a concrete kernel id by `resolveComparisonOperationId`. */
   operationId: string;
+  /** Concrete FLIP algorithm selected by shared settings. */
+  flipMode?: "sdr" | "hdr";
   /** The COMPARE mode: `"diff"` (the scalar-error diff of {@link operationId}, the
    *  default when absent) OR the Phase-3 compositor mode `"split"` (a LIGHT
    *  composite of the two operands by divider). Selecting a mode is an OP switch
@@ -314,9 +315,9 @@ export interface ImageBackendInput {
   source: ImageSource;
   /** When set, the pane renders a DIFF of `source` (foreground/`a`) against
    *  `compareSource.b` (reference) — see {@link ImageComparisonInput}. Absent = the
-   *  byte-identical single-image path. The GPU backend renders the comparison;
-   *  the CPU fallback computes exact source metrics and retains its documented
-   *  reduced visual-comparison behavior. */
+   *  byte-identical single-image path. Both backends render split, pointwise
+   *  differences, SDR/HDR-FLIP, and SSIM; capability metadata controls the shared
+   *  operation menu. */
   compareSource?: ImageComparisonInput;
   /** The viewport's EFFECTIVE settings from its ONE store (`useCellSettings`
    *  at the node/stage/compositor level): the `group > local` merge, driven DOWN.

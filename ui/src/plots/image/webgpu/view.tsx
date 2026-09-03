@@ -2238,7 +2238,8 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     const modeMenu = buildCompareModeMenu({
       mode: compositorMode ? compareOpMode! : "diff",
       operation: comparisonOperationId,
-      kernelOptions: listComparisonOperationOptions().map((k) => ({ id: k.id, label: k.label })),
+      kernelOptions: compareSource?.operationOptions ??
+        listComparisonOperationOptions().map((k) => ({ id: k.id, label: k.label })),
       onSplit: () => changeCompareMode("split"),
       onOperation: (id) => {
         if (compositorMode) changeCompareMode("diff");
@@ -2259,7 +2260,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       onSelect: changeDiffEncoding,
     });
     return [modeMenu, displayMenu];
-  }, [hasCompare, compositorMode, compareOpMode, comparisonOperationId, enc.displayOperationId, enc.ids, changeEncoding, changeCompareMode, changeComparisonOperation, changeDiffEncoding]);
+  }, [hasCompare, compositorMode, compareOpMode, comparisonOperationId, compareSource?.operationOptions, enc.displayOperationId, enc.ids, changeEncoding, changeCompareMode, changeComparisonOperation, changeDiffEncoding]);
 
   // Captions (same DOM / selectors as `GpuComparePane`): diff → ONE bottom-left
   // "<metric> · <fg> compared to <ref>"; split/blend → REFERENCE bottom-left +

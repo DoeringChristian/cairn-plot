@@ -214,7 +214,7 @@ numeric headroom API ships (in any browser), seed the PEAK default from it
 
 | Capability detected | Behavior |
 | --- | --- |
-| No WebGPU | CPU image panes; compare keeps pointwise diff modes; FLIP/HDR-FLIP hidden from menus |
+| No WebGPU | CPU image panes; split, pointwise diffs, SDR/HDR-FLIP, and SSIM remain available |
 | WebGPU, no HDR surface | Full GPU pipeline (all kernels, float sources); tone-mapped SDR output |
 | WebGPU + HDR surface + HDR display | True EDR output — float values above 1.0 drive real display brightness |
 
@@ -230,7 +230,7 @@ degraded output is a **browser/OS limitation, not a cairn-plot bug**. The notice
 
 1. **GPU renderer unavailable** (`no-webgpu`) — the page contains GPU-preferring
    content (GPU image / compare panes) but WebGPU is missing entirely, so the
-   CPU fallback is active and FLIP kernels + HDR compare are disabled. A
+   CPU fallback is active; extended-gamut HDR output remains disabled. A
    chart-only page never shows this (it doesn't load the GPU engine at all).
    This message covers HDR implicitly — with no WebGPU there is no HDR canvas —
    and the two HDR messages below can never co-occur with it (they are only

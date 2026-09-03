@@ -7,11 +7,13 @@ import {
   getWebGpuComparisonStats,
   resetWebGpuComparisonStats,
 } from "../plots/image/webgpu/perf-stats.ts";
+import { getCpuComparisonCacheSnapshot } from "../plots/image/cpu/source-metrics.ts";
 
 export interface MemoryDiagnosticSnapshot {
   panes: ReturnType<typeof getGpuPoolMemorySnapshot>["panes"];
   gpuSources: ReturnType<typeof getGpuPoolMemorySnapshot>["sourceTextures"];
   expandedCpuUploads: ReturnType<typeof expandedUploadCache.snapshot>;
+  cpuDiff: ReturnType<typeof getCpuComparisonCacheSnapshot>;
   uploads: { count: number; bytes: number; rebinds: number };
   diff: ReturnType<typeof getGpuPoolMemorySnapshot>["diff"];
   counters: ReturnType<typeof getGpuPoolMemorySnapshot>["counters"] & {
@@ -27,6 +29,7 @@ export function getMemoryDiagnosticSnapshot(): MemoryDiagnosticSnapshot {
     panes: pool.panes,
     gpuSources: pool.sourceTextures,
     expandedCpuUploads: expandedUploadCache.snapshot(),
+    cpuDiff: getCpuComparisonCacheSnapshot(),
     uploads: {
       count: perf.sourceUploads,
       bytes: perf.sourceUploadBytes,

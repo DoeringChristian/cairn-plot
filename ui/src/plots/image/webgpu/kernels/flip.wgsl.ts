@@ -27,7 +27,7 @@
  * `buildLdrFlipPasses`) that HDR-FLIP reuses per exposure.
  */
 import { VERTEX_WGSL, FLIP_COLOR_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
-import { FLIP_CMAX } from "./flip-reference.ts";
+import { FLIP_CMAX } from "../../runtime/flip-reference.ts";
 import type { MultipassImageOperationProgram, ImageOperationPass, ImageOperationBuildContext } from "../operation-pass.ts";
 import type { BindGroupEntry } from "../device/device-contract";
 

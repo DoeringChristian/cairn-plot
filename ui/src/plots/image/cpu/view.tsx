@@ -49,6 +49,7 @@ import type { ReactNode, RefObject } from "react";
 import LabelChip from "../../../primitives/components/LabelChip";
 import RefBadge from "../../../primitives/components/RefBadge";
 import SplitDivider from "../compare/SplitDivider.tsx";
+import { useSplitFlipKeys } from "../compare/use-split-flip-keys.ts";
 import type { Colormap, DiffMode, Interpolation } from "../../types";
 import { autoImageRendering, containScreenPxPerTexel } from "../components/interp-auto";
 // The ONE shared magnification threshold — the SAME constant `GpuImagePane`
@@ -68,10 +69,10 @@ import { computeDiff, DIFF_MODE_LABELS } from "./diff.ts";
 import { webglRenderDiffToCanvas } from "./webgl-diff.ts";
 import { getColormapLUT } from "../../../settings/colormaps/index";
 import { applyColormap } from "../resources/apply-colormap.ts";
+import { imageDataToSceneField } from "../resources/scene-field.ts";
 // Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
 // safe to pull into the CPU pane / core bundle.
-import { resolveColormapMode } from "../runtime/diff-colormap";
-import { floatPixelReader, widenFloatPixels } from "../runtime/pixel-buffer.ts";
+import { floatPixelReader, floatValues, widenFloatPixels } from "../runtime/pixel-buffer.ts";
 import {
   resolveDisplayOperator,
   DEFAULT_DISPLAY_OPERATION_ID,
@@ -97,7 +98,7 @@ import ImagePaneShell, { type EnlargeControl } from "../components/ImagePaneShel
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import type { PlotSettings } from "../../../settings/schema.ts";
-import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-operation";
+import { displayToolbarButton, reduceSegment, resolveDisplayOperationIds, usePaneEncoding } from "../components/display-operation";
 import { getDisplayOperation, type ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_DISPLAY_PARAMETERS, defaultReduceMode, type DisplayParameters, type NormMode } from "../runtime/display-settings.ts";
 import { getCpuDisplayOperation } from "./display-operations.ts";
@@ -116,6 +117,10 @@ import {
   type ImageBackendInput,
 } from "../runtime/contracts";
 import type { ImageProcessing } from "../../types";
+import type { ToolbarButtonSpec, ToolbarSliderSpec } from "../../../primitives/controls/ToolbarConfig.ts";
+import PlotToolbar from "../../../primitives/components/PlotToolbar.tsx";
+import { IMAGE_TOOLBAR_CONFIG, useImageController } from "../components/use-image-controller.ts";
+import { buildCompareModeMenu } from "../compare/compare-mode-menu.ts";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
@@ -307,14 +312,16 @@ export function sdrTransferToImageData(
   src: ImageData,
   operator: string,
   gamma?: number,
+  exposureEV = 0,
+  offset = 0,
 ): ImageData {
   const gEnc = resolveEncodeGamma(operator, gamma ?? TONEMAP_GAMMA_DEFAULT);
   const out = new Uint8ClampedArray(src.data.length);
   const d = src.data;
   for (let i = 0; i < d.length; i += 4) {
-    out[i] = 255 * outputEncode(srgbEotf(d[i]! / 255), gEnc);
-    out[i + 1] = 255 * outputEncode(srgbEotf(d[i + 1]! / 255), gEnc);
-    out[i + 2] = 255 * outputEncode(srgbEotf(d[i + 2]! / 255), gEnc);
+    out[i] = 255 * outputEncode(applyExposureOffset(srgbEotf(d[i]! / 255), exposureEV, offset), gEnc);
+    out[i + 1] = 255 * outputEncode(applyExposureOffset(srgbEotf(d[i + 1]! / 255), exposureEV, offset), gEnc);
+    out[i + 2] = 255 * outputEncode(applyExposureOffset(srgbEotf(d[i + 2]! / 255), exposureEV, offset), gEnc);
     out[i + 3] = d[i + 3]!;
   }
   return new ImageData(out, src.width, src.height);
@@ -380,9 +387,10 @@ function CpuSdrImagePane(
     /** LOCAL apply (initialization writes — see `ImageBackendInput`). */
     /** Controlled fullscreen state (see `ImageBackendInput.enlargeControl`). */
     enlargeControl?: EnlargeControl;
-    /** COMPARE chrome (caption chips + REF badge) when this pane renders a
-     *  compare's reference (degraded CPU fallback); suppresses the label chip. */
+    /** Shared comparison captions/metrics; suppresses the ordinary label chip. */
     compareChrome?: ReactNode;
+    compareLeadingMenus?: ToolbarButtonSpec[];
+    cpuComparisonOperation?: string;
     isCompareMode?: boolean;
   },
 ) {
@@ -395,6 +403,8 @@ function CpuSdrImagePane(
     colormap: colormapProp,
     tonemap: tonemapProp,
     gamma: gammaProp,
+    exposure: baseExposure = 0,
+    offset: baseOffset = 0,
     showAxes = false,
     processing = DEFAULT_PROCESSING,
     zoom: zoomProp = 1,
@@ -451,6 +461,18 @@ function CpuSdrImagePane(
   const tonemapGamma =
     synced?.["image.tonemapGamma"] != null && synced["image.tonemapGamma"] > 0 ? synced["image.tonemapGamma"] : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
+  const displayEV = synced?.["image.exposureEV"] ?? 0;
+  const displayOffset = synced?.["image.offset"] ?? 0;
+  const effectiveExposure = baseExposure + displayEV;
+  const effectiveOffset = baseOffset + displayOffset;
+  const effectiveReduce = (synced?.["image.reduce"] as ReduceMode | undefined) ?? "luminance";
+  const colorRange = synced?.["image.colorRange"];
+  const colorBounds = useMemo<readonly [number, number] | null>(
+    () => colorRange && Number.isFinite(colorRange.min) && Number.isFinite(colorRange.max)
+      ? [colorRange.min, colorRange.max]
+      : null,
+    [colorRange?.min, colorRange?.max],
+  );
 
   const publishSettings = setSynced;
   const changeEncoding = useCallback(
@@ -461,6 +483,18 @@ function CpuSdrImagePane(
   );
   const changeGamma = useCallback(
     (v: number) => publishSettings({ "image.tonemapGamma": v }),
+    [publishSettings],
+  );
+  const changeExposure = useCallback(
+    (v: number) => publishSettings({ "image.exposureEV": v }),
+    [publishSettings],
+  );
+  const changeOffset = useCallback(
+    (v: number) => publishSettings({ "image.offset": v }),
+    [publishSettings],
+  );
+  const changeReduce = useCallback(
+    (v: ReduceMode) => publishSettings({ "image.reduce": v }),
     [publishSettings],
   );
   const changeInfoPanel = useCallback(
@@ -533,7 +567,7 @@ function CpuSdrImagePane(
   // SVG gamma filter + CSS filter string (shared helper)
   // -----------------------------------------------------------------------
   const { flipSign } = processing;
-  const { gammaFilterId, filterStr, gamma, offset } = useGammaFilter(processing);
+  const { gammaFilterId, filterStr, gamma, offset: processingOffset } = useGammaFilter(processing);
 
   // -----------------------------------------------------------------------
   // Diff / false-color rendering
@@ -559,7 +593,7 @@ function CpuSdrImagePane(
     let cancelled = false;
     setFalseColorReady(false);
 
-    const cacheKey = `${imageUrl}::${colormap}`;
+    const cacheKey = `${imageUrl}::${colormap}::${effectiveExposure}::${effectiveOffset}::${effectiveReduce}::${colorBounds?.join(",") ?? "auto"}`;
     const cached = getCachedImageData(cacheKey);
     if (cached) {
       const fc = falseColorRef.current;
@@ -586,11 +620,23 @@ function CpuSdrImagePane(
       if (!ctx) return;
       ctx.drawImage(img, 0, 0);
       const src = ctx.getImageData(0, 0, c.width, c.height);
-      const cmapMode = resolveColormapMode(colormap);
-      const mapped = applyColormap(
-        src,
+      const field = imageDataToSceneField(src);
+      const mapped = tonemapToImageData(
+        {
+          pixels: floatValues(field.pixels),
+          shape: [field.height, field.width, 4],
+          dtype: "<f4",
+        },
+        "srgb",
+        colorBounds ? 0 : effectiveExposure,
+        tonemapGamma,
+        colorBounds ? 0 : effectiveOffset,
         colormap,
-        cmapMode,
+        "linear",
+        colorBounds?.[0],
+        colorBounds?.[1],
+        1,
+        effectiveReduce,
       );
       setCachedImageData(cacheKey, mapped);
       const fc = falseColorRef.current;
@@ -609,7 +655,7 @@ function CpuSdrImagePane(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useFalseColor, imageUrl, colormap]);
+  }, [useFalseColor, imageUrl, colormap, effectiveExposure, effectiveOffset, effectiveReduce, colorBounds, tonemapGamma]);
 
   // PLAIN-image display transfer (tev Gamma/Linear). Only when NOT diffing and
   // NOT colormapped (the false-color LUT output is already display-ready), and
@@ -617,7 +663,8 @@ function CpuSdrImagePane(
   // <img>). Recomputes the pixels through `sdrTransferToImageData` (the CPU mirror
   // of the GPU plain-SDR shader path) into `transferRef`.
   const useDisplayTransfer =
-    imageUrl != null && !showDiff && !useFalseColor && sdrTransfer !== "srgb";
+    imageUrl != null && !showDiff && !useFalseColor &&
+    (sdrTransfer !== "srgb" || effectiveExposure !== 0 || effectiveOffset !== 0);
 
   useEffect(() => {
     if (!useDisplayTransfer || !imageUrl) {
@@ -628,7 +675,13 @@ function CpuSdrImagePane(
     setTransferReady(false);
     loadImageData(imageUrl).then((src) => {
       if (cancelled || !src) return;
-      const mapped = sdrTransferToImageData(src, sdrTransfer, tonemapGamma);
+      const mapped = sdrTransferToImageData(
+        src,
+        sdrTransfer,
+        tonemapGamma,
+        effectiveExposure,
+        effectiveOffset,
+      );
       const c = transferRef.current;
       if (!c) return;
       c.width = mapped.width;
@@ -644,7 +697,7 @@ function CpuSdrImagePane(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useDisplayTransfer, imageUrl, sdrTransfer, tonemapGamma]);
+  }, [useDisplayTransfer, imageUrl, sdrTransfer, tonemapGamma, effectiveExposure, effectiveOffset]);
 
   const updateDims = useCallback((w: number, h: number) => {
     setNaturalDims((prev) =>
@@ -705,7 +758,7 @@ function CpuSdrImagePane(
     }
     let cancelled = false;
 
-    const cacheKey = `${baselineUrl}::${imageUrl}::${diffMode}::${colormap}`;
+    const cacheKey = `${baselineUrl}::${imageUrl}::${diffMode}::${colormap}::${effectiveExposure}::${effectiveOffset}`;
     const cached = getCachedImageData(cacheKey);
     if (cached) {
       const canvas = canvasRef.current;
@@ -768,6 +821,8 @@ function CpuSdrImagePane(
           diffData,
           colormap,
           cmapMode,
+          effectiveExposure,
+          effectiveOffset,
         );
       }
       setCachedImageData(cacheKey, diffData);
@@ -790,7 +845,7 @@ function CpuSdrImagePane(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baselineUrl, imageUrl, diffMode, showDiff, colormap, onNaturalSize]);
+  }, [baselineUrl, imageUrl, diffMode, showDiff, colormap, effectiveExposure, effectiveOffset, onNaturalSize]);
 
   // -----------------------------------------------------------------------
   // Render (display-element branch verbatim from ImagePane; frame = shell)
@@ -893,7 +948,10 @@ function CpuSdrImagePane(
 
   return (
     <ImagePaneShell
-      paneAttrs={{ "data-cpu-image-pane": "" }}
+      paneAttrs={{
+        "data-cpu-image-pane": "",
+        ...(props.cpuComparisonOperation ? { "data-cpu-comparison-result": props.cpuComparisonOperation } : {}),
+      }}
       surfaceAttrs={{ "data-cpu-image-surface": "" }}
       toolbar={toolbar}
       paneRef={paneRef}
@@ -911,7 +969,7 @@ function CpuSdrImagePane(
         transformOrigin: "0 0",
       }}
       viewportPadding={showAxes && naturalDims ? "16px 4px 4px 28px" : "4px"}
-      header={<GammaFilterSvg id={gammaFilterId} gamma={gamma} offset={offset} />}
+      header={<GammaFilterSvg id={gammaFilterId} gamma={gamma} offset={processingOffset} />}
       surface={surface}
       showAxes={showAxes}
       overlayNode={overlayNode}
@@ -927,10 +985,18 @@ function CpuSdrImagePane(
       // curves sRGB · Gamma · Linear + the colormap LUTs) — mutually exclusive by
       // construction (`enc`), replacing the old colormap + transfer menu pair.
       leadingMenus={[
+        ...(props.compareLeadingMenus ?? []),
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
         displayToolbarButton({ value: enc.displayOperationId, ids: enc.ids, onSelect: changeEncoding }),
       ]}
+      rowSegments={enc.hasParam("reduce") ? [reduceSegment(effectiveReduce, changeReduce)] : []}
+      displayAdjust={{
+        exposureEV: displayEV,
+        offset: displayOffset,
+        onExposureChange: changeExposure,
+        onOffsetChange: changeOffset,
+      }}
       // γ slider — gated by the active encoding's manifest (only the Gamma curve
       // declares γ; a colormap LUT / other transfers do not).
       extraSliders={
@@ -958,19 +1024,14 @@ function CpuSdrImagePane(
       extraModified={
         enc.displayOperationModified ||
         gammaModified ||
+        displayEV !== 0 ||
+        displayOffset !== 0 ||
         !!props.channelModified
       }
       enlargeControl={props.enlargeControl}
       histogram={histogramSource}
       infoPanelSetting={synced?.["panel.info"]}
       onInfoPanelChange={changeInfoPanel}
-      // NO EXPOSURE/OFFSET sliders here (graceful degradation, §requirement B):
-      // the CPU SDR path shows already-encoded 8-bit pixels via a plain `<img>`
-      // (or a colormap/diff `<canvas>`), with no scene-linear pixel-recompute
-      // stage to apply `color*2^EV + offset` in. Applying it would need a full
-      // per-pixel re-encode pipeline this path doesn't have. The GPU SDR backend
-      // (`GpuImagePane`) applies both in-shader, and the CPU HDR path recomputes
-      // its tone-map pass — so `displayAdjust` is wired there, just not here.
       // COMPARE mode: the caption chips carry the labeling (suppress the pane's
       // own label chip); else the ordinary bottom-left label.
       label={props.isCompareMode ? "" : label}
@@ -1003,9 +1064,10 @@ function CpuHdrImagePane(
     /** LOCAL apply (initialization writes — see `ImageBackendInput`). */
     /** Controlled fullscreen state (see `ImageBackendInput.enlargeControl`). */
     enlargeControl?: EnlargeControl;
-    /** COMPARE chrome (caption chips + REF badge) for the degraded CPU compare
-     *  fallback; suppresses the label chip. See {@link cpuCompareChrome}. */
+    /** Shared comparison captions/metrics; suppresses the ordinary label chip. */
     compareChrome?: ReactNode;
+    compareLeadingMenus?: ToolbarButtonSpec[];
+    cpuComparisonOperation?: string;
     isCompareMode?: boolean;
   },
 ) {
@@ -1280,7 +1342,10 @@ function CpuHdrImagePane(
 
   return (
     <ImagePaneShell
-      paneAttrs={{ "data-cpu-image-pane": "" }}
+      paneAttrs={{
+        "data-cpu-image-pane": "",
+        ...(props.cpuComparisonOperation ? { "data-cpu-comparison-result": props.cpuComparisonOperation } : {}),
+      }}
       surfaceAttrs={{ "data-cpu-image-surface": "" }}
       toolbar={toolbar}
       paneRef={paneRef}
@@ -1320,6 +1385,7 @@ function CpuHdrImagePane(
       // to k=3. The CPU fallback tone-maps to an 8-bit surface (never engages
       // true HDR), so it is the SDR rendition by construction (no PEAK slider).
       leadingMenus={[
+        ...(props.compareLeadingMenus ?? []),
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
         ...(props.channelMenu ? [props.channelMenu] : []),
         displayToolbarButton({ value: enc.displayOperationId, ids: enc.ids, onSelect: changeEncoding }),
@@ -1475,30 +1541,6 @@ function CpuMetricsChip({ label, stacked }: { label: string; stacked: boolean })
   );
 }
 
-function CpuCompareModeControl({ compare }: { compare: NonNullable<ImageBackendInput["compareSource"]> }) {
-  const mode = compare.mode ?? "diff";
-  const value = mode === "split" ? "split" : compare.operationId;
-  const options = Object.entries(DIFF_MODE_LABELS);
-  const selectedIsUnsupported = mode === "diff" && !(compare.operationId in DIFF_MODE_LABELS);
-  return (
-    <select
-      data-cpu-compare-mode=""
-      aria-label="Compare / diff mode"
-      className="absolute left-1 top-1 z-30 max-w-[calc(100%-0.5rem)] rounded border border-border bg-bg/90 px-1.5 py-1 text-[10px] text-fg shadow-sm"
-      value={value}
-      onChange={(event) => {
-        const next = event.target.value;
-        if (next === "split") compare.onCompareModeChange?.("split");
-        else compare.onComparisonOperationChange?.(next);
-      }}
-    >
-      <option value="split">Split</option>
-      {selectedIsUnsupported && <option value={compare.operationId}>{compare.operationId} (needs WebGPU)</option>}
-      {options.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-    </select>
-  );
-}
-
 function cpuCompareChrome(cs: ImageBackendInput["compareSource"], metricsLabel: string | null): ReactNode {
   if (!cs) return undefined;
   const mode = cs.mode ?? "diff";
@@ -1509,7 +1551,6 @@ function cpuCompareChrome(cs: ImageBackendInput["compareSource"], metricsLabel: 
     const ref = cs.referenceLabel || "reference";
     return (
       <>
-        <CpuCompareModeControl compare={cs} />
         <LabelChip
           label={`${fg} compared to ${ref}`}
           corner="bottom-left"
@@ -1523,7 +1564,6 @@ function cpuCompareChrome(cs: ImageBackendInput["compareSource"], metricsLabel: 
   // chip is the selection stage's click-to-set-reference affordance).
   return (
     <>
-      <CpuCompareModeControl compare={cs} />
       {mode === "split" && <RefBadge />}
       {cs.referenceLabel ? (
         <LabelChip
@@ -1558,7 +1598,11 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
       foreground: compare.b,
       align: compare.align,
       fit: compare.fit,
-      includeSsim: compare.operationId === "ssim",
+      operation: compare.operationId === "flip" && compare.flipMode === "hdr"
+        ? "hdr-flip"
+        : compare.operationId in DIFF_MODE_LABELS || compare.operationId === "ssim" || compare.operationId === "flip"
+          ? compare.operationId as NonNullable<Parameters<typeof computeCpuSourceMetrics>[0]["operation"]>
+          : undefined,
     }).then((next) => {
       if (!cancelled) setMetrics(next);
     }).catch((error) => {
@@ -1569,9 +1613,85 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
   return metrics;
 }
 
+function cpuCompareModeMenu(compare: NonNullable<ImageBackendInput["compareSource"]>): ToolbarButtonSpec {
+  return buildCompareModeMenu({
+    mode: compare.mode ?? "diff",
+    operation: compare.operationId,
+    kernelOptions: compare.operationOptions ??
+      Object.entries(DIFF_MODE_LABELS).map(([id, label]) => ({ id, label })),
+    onSplit: () => compare.onCompareModeChange?.("split"),
+    onOperation: (operationId) => compare.onComparisonOperationChange?.(operationId),
+  });
+}
+
 function CpuSplitComparePane({ input, metrics }: { input: ImageBackendInput; metrics: CpuSourceMetrics | null }) {
   const compare = input.compareSource!;
   const split = compare.splitPosition ?? 0.5;
+  const paneRef = useRef<HTMLDivElement>(null);
+  useSplitFlipKeys(paneRef, "split", compare.onSplitPositionChange, {
+    inStackedGrid: compare.inStackedGrid,
+    inOverlay: compare.inOverlay,
+  });
+  const controller = useImageController({
+    rootRef: paneRef,
+    zoom: input.zoom ?? 1,
+    pan: input.pan ?? { x: 0, y: 0 },
+    onViewChange: input.onViewChange,
+    onReset: input.resetSettings,
+  });
+  const encoding = input.syncedSettings?.["image.encoding"] ?? input.tonemap ?? "srgb";
+  const arity = input.source.dtype === "float" ? shapeDims(input.source.shape).c : 4;
+  const displayIds = resolveDisplayOperationIds({
+    mode: input.source.dtype === "uint8" ? "sdr" : "arity",
+    arity,
+    curveSet: input.source.dtype === "uint8" ? DISPLAY_TRANSFER_OPERATION_IDS : DISPLAY_OPERATION_IDS,
+  });
+  const displayMenu = displayToolbarButton({
+    value: encoding,
+    ids: displayIds,
+    onSelect: (next) => input.setSyncedSettings?.({ "image.encoding": next }),
+  });
+  const exposure = input.syncedSettings?.["image.exposureEV"] ?? input.exposure ?? 0;
+  const offset = input.syncedSettings?.["image.offset"] ?? input.offset ?? 0;
+  const sliders: ToolbarSliderSpec[] = [
+    {
+      id: "exposure",
+      icon: "sun",
+      label: "EV",
+      title: "Exposure (EV stops)",
+      min: -8,
+      max: 8,
+      step: 0.1,
+      value: exposure,
+      onChange: (next) => input.setSyncedSettings?.({ "image.exposureEV": next }),
+      format: (next) => `${next >= 0 ? "+" : "−"}${Math.abs(next).toFixed(1)}`,
+    },
+    {
+      id: "offset",
+      icon: "plusminus",
+      label: "OFF",
+      title: "Offset",
+      min: -1,
+      max: 1,
+      step: 0.01,
+      value: offset,
+      onChange: (next) => input.setSyncedSettings?.({ "image.offset": next }),
+      format: (next) => `${next >= 0 ? "+" : "−"}${Math.abs(next).toFixed(2)}`,
+    },
+  ];
+  if (getDisplayOperation(encoding)?.parameters.includes("gamma")) {
+    sliders.push({
+      id: "gamma",
+      label: "γ",
+      title: "Display gamma γ",
+      min: TONEMAP_GAMMA_MIN,
+      max: TONEMAP_GAMMA_MAX,
+      step: TONEMAP_GAMMA_STEP,
+      value: input.syncedSettings?.["image.tonemapGamma"] ?? input.gamma ?? TONEMAP_GAMMA_DEFAULT,
+      onChange: (next) => input.setSyncedSettings?.({ "image.tonemapGamma": next }),
+      format: (next) => next.toFixed(1),
+    });
+  }
   const childProps = {
     ...input,
     compareSource: undefined,
@@ -1579,7 +1699,23 @@ function CpuSplitComparePane({ input, metrics }: { input: ImageBackendInput; met
     label: "",
   };
   return (
-    <div data-cpu-compare-pane="" className="relative isolate h-full min-h-0 w-full min-w-0 overflow-hidden">
+    <div ref={paneRef} data-cpu-compare-pane="" className="group relative isolate h-full min-h-0 w-full min-w-0 overflow-hidden">
+      {input.toolbar !== false && (
+        <PlotToolbar
+          controller={controller}
+          config={{
+            ...IMAGE_TOOLBAR_CONFIG,
+            leadingButtons: [cpuCompareModeMenu(compare), displayMenu],
+            sliders,
+            segments: getDisplayOperation(encoding)?.parameters.includes("reduce")
+              ? [reduceSegment(
+                  (input.syncedSettings?.["image.reduce"] as ReduceMode | undefined) ?? "luminance",
+                  (next) => input.setSyncedSettings?.({ "image.reduce": next }),
+                )]
+              : [],
+          }}
+        />
+      )}
       <div className="absolute inset-0" style={{ clipPath: `inset(0 ${(1 - split) * 100}% 0 0)` }}>
         <CpuImagePane {...childProps} source={input.source} />
       </div>
@@ -1596,47 +1732,36 @@ function CpuSplitComparePane({ input, metrics }: { input: ImageBackendInput; met
   );
 }
 
-function cpuPointwiseCompareInput(input: ImageBackendInput): ImageBackendInput {
+function cpuComparisonInput(input: ImageBackendInput, metrics: CpuSourceMetrics | null): ImageBackendInput {
   const compare = input.compareSource;
-  if (!compare || (compare.mode ?? "diff") !== "diff") return input;
-  if (input.source.dtype !== "uint8" || compare.b.dtype !== "uint8") return input;
-  if (compare.align != null && compare.align !== "top-left") return input;
-  if (compare.fit != null && compare.fit !== "crop") return input;
-  const operation = compare.operationId;
-  if (!(operation in DIFF_MODE_LABELS)) return input;
-  // The legacy CPU diff pane expects foreground as its primary image and the
-  // reference URL separately. Adapt the backend-neutral compareSource contract
-  // instead of silently rendering the reference as a normal image.
-  return {
-    ...input,
-    source: compare.b,
-    baselineUrl: input.source.url,
-    diffMode: operation as DiffMode,
-  };
+  if (compare && metrics?.errorMap && metrics.width && metrics.height && metrics.channels) {
+    return {
+      ...input,
+      source: {
+        dtype: "float",
+        pixels: floatValues(metrics.errorMap),
+        shape: metrics.channels === 1
+          ? [metrics.height, metrics.width]
+          : [metrics.height, metrics.width, metrics.channels],
+        numpyDtype: "<f4",
+        contentKey: `${input.source.contentKey ?? "reference"}|${compare.b.contentKey ?? "foreground"}|${compare.operationId}`,
+      },
+      exposure: 0,
+      offset: 0,
+    };
+  }
+  return input;
 }
 
 export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Element {
-  const props = useImageSurfaceProps(cpuPointwiseCompareInput(backendProps));
   const compareMetrics = useCpuCompareMetrics(backendProps);
+  const props = useImageSurfaceProps(cpuComparisonInput(backendProps, compareMetrics));
   if (backendProps.compareSource?.mode === "split") {
     return <CpuSplitComparePane input={backendProps} metrics={compareMetrics} />;
   }
-  // The selection settings-sync fields + the COMPARE chrome ride ALONGSIDE the
-  // reconstructed legacy props (they aren't part of the dtype-keyed
-  // `ImageSurfaceProps` shape).
-  //
-  // CPU COMPARE FALLBACK (content-op unification). The unified COMPOSITOR is
-  // GPU-only; on the no-WebGPU / render=cpu path a descriptor image-compare
-  // lowers to THIS pane, which renders the REFERENCE (`source`) DEGRADED (no
-  // live composite) but keeps useful compare chrome: captions, exact MSE/PSNR,
-  // selected SSIM, and the split REF badge. A REAL CPU composite is a documented
-  // remaining gap
-  // (design doc, Phase-4 note): a CPU diff must render into the SAME `<img>`
-  // surface the image tab uses (diff → data-URL) to preserve the
-  // homogeneous-stack no-remount flip in CPU mode, which `stack/grid-stacked`
-  // codifies (a canvas-based diff reintroduces a surface swap). The cross-type
-  // consumers already get a real CPU split/diff via the compositor's
-  // `MediaComparePane` / `CpuImagePane`-diff / `CpuFloatComparePane` fallbacks.
+  // The backend-neutral compare contract is executed here: exact cached CPU
+  // fields become ordinary float image sources, while the shared PlotToolbar /
+  // ImagePaneShell system owns controls, placement, captions, and metrics.
   const isCompare = !!backendProps.compareSource;
   const sync = {
     syncedSettings: backendProps.syncedSettings,
@@ -1648,6 +1773,13 @@ export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Eleme
     // In compare mode the caption chips carry the labeling — suppress the pane's
     // own bottom-left label chip and hand the shell the compare chrome.
     compareChrome: cpuCompareChrome(backendProps.compareSource, cpuMetricsLabel(compareMetrics)),
+    compareLeadingMenus: backendProps.compareSource
+      ? [cpuCompareModeMenu(backendProps.compareSource)]
+      : undefined,
+    cpuComparisonOperation: backendProps.compareSource?.mode === "diff" &&
+      (backendProps.compareSource.operationId in DIFF_MODE_LABELS || !!compareMetrics?.errorMap)
+      ? backendProps.compareSource.operationId
+      : undefined,
     isCompareMode: isCompare,
   };
   return isFloatSurfaceProps(props) ? (

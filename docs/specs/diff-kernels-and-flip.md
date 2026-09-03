@@ -80,11 +80,10 @@ smoke 22/22 + the new section asserting real content · pytest green ·
 browser eyeball: kernel menu switching, FLIP map rendering, zoom/pan on a FLIP diff does
 NOT recompute (verify via a compute counter/log), cache eviction sane.
 
-## Out of scope
-HDR-FLIP (LDR only for now; error clearly for float-HDR sources or tone-map first —
-pick one, document); SSIM (landed — see the SSIM addendum below; the registry made it
-a drop-in as predicted); CPU-backend FLIP/SSIM (GPU-only; CPU compare keeps its existing
-pointwise modes and simply doesn't list them in its menu).
+## Backend coverage
+WebGPU implements every registered comparison operation, including HDR-FLIP. The
+CPU backend implements split, all pointwise modes, SDR/HDR-FLIP, and SSIM with
+exact, content-keyed fields.
 
 ## Addendum (user, 2026-07-20): HDR-FLIP
 

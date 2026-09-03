@@ -52,9 +52,13 @@ export function ImagePlotView({
   const comparison: ImageComparisonInput | undefined = p.comparison
     ? {
         b: p.comparison.foreground,
+        operationOptions: activeBackend.capabilities.imageOperations
+          .filter((operation) => operation.inputs === 2 && operation.id !== "split")
+          .map((operation) => ({ id: operation.id, label: operation.label })),
         operationId: selectedComparisonOperation === "split"
           ? p.comparison.defaultOperation
           : selectedComparisonOperation!,
+        flipMode: settings["compare.flipMode"] ?? "sdr",
         mode: selectedComparisonOperation === "split" ? "split" : "diff",
         splitPosition: settings["compare.split"] ?? p.comparison.defaultSplit,
         align: p.comparison.align,

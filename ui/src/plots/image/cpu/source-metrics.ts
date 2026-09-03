@@ -3,10 +3,12 @@ import { computeCompareMapping } from "../runtime/compare-align.ts";
 import { floatPixelReader } from "../runtime/pixel-buffer.ts";
 import { imageDataToSceneField } from "../resources/scene-field.ts";
 import { loadImageData } from "../resources/load-image-data.ts";
-import {
-  SSIM_LUM,
-  ssimMeanFromLuminanceChunked,
-} from "../runtime/ssim-reference.ts";
+import { SSIM_LUM, ssimFromLuminance } from "../runtime/ssim-reference.ts";
+import { flipLDR } from "../runtime/flip-reference.ts";
+import { flipHDR } from "../runtime/hdr-flip-reference.ts";
+import { outputEncode } from "../runtime/tonemap.ts";
+import { getGpuDiffCacheLimits } from "../../../resources/runtime-config.ts";
+import { registerRuntimePolicyHook } from "../../../resources/runtime-policy-hooks.ts";
 
 export interface CpuSourceMetrics {
   mse: number;
@@ -14,6 +16,11 @@ export interface CpuSourceMetrics {
   mae: number;
   /** Present only when the selected comparison operation is SSIM. */
   ssim?: number;
+  /** Scalar error field for CPU-rendered FLIP/SSIM. */
+  errorMap?: Float32Array;
+  width?: number;
+  height?: number;
+  channels?: 1 | 3;
 }
 
 const finite = (value: number): number => Number.isFinite(value) ? value : 0;
@@ -99,7 +106,7 @@ export interface ComputeCpuSourceMetricsOptions {
   foreground: ImageSource;
   align?: ImageCompareAlign;
   fit?: ImageCompareFit;
-  includeSsim?: boolean;
+  operation?: "signed" | "absolute" | "squared" | "relative_signed" | "relative_absolute" | "relative_squared" | "ssim" | "flip" | "hdr-flip";
 }
 
 /** Exact native-resolution CPU twin of the WebGPU comparison metrics path. */
@@ -126,8 +133,13 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
   const sampleForeground = mappedSampler(foreground, mapping.offsetB, mapping.fit === "fill", width, height);
   const a = [0, 0, 0];
   const b = [0, 0, 0];
-  const lumaA = options.includeSsim ? new Float64Array(count) : null;
-  const lumaB = options.includeSsim ? new Float64Array(count) : null;
+  const lumaA = options.operation === "ssim" ? new Float64Array(count) : null;
+  const lumaB = options.operation === "ssim" ? new Float64Array(count) : null;
+  const flipA = options.operation === "flip" || options.operation === "hdr-flip" ? new Float32Array(count * 3) : null;
+  const flipB = options.operation === "flip" || options.operation === "hdr-flip" ? new Float32Array(count * 3) : null;
+  const pointwise = options.operation && !["flip", "hdr-flip", "ssim"].includes(options.operation)
+    ? new Float32Array(count * 3)
+    : null;
   let sumSquared = 0;
   let sumAbsolute = 0;
 
@@ -135,15 +147,36 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
     for (let x = 0; x < width; x++) {
       sampleReference(x, y, a);
       sampleForeground(x, y, b);
+      const index = y * width + x;
       for (let channel = 0; channel < 3; channel++) {
         const difference = a[channel]! - b[channel]!;
         sumSquared += difference * difference;
         sumAbsolute += Math.abs(difference);
+        if (pointwise) {
+          const denominator = Math.max(a[channel]!, 1e-6);
+          switch (options.operation) {
+            case "signed": pointwise[index * 3 + channel] = difference; break;
+            case "absolute": pointwise[index * 3 + channel] = Math.abs(difference); break;
+            case "squared": pointwise[index * 3 + channel] = difference * difference; break;
+            case "relative_signed": pointwise[index * 3 + channel] = difference / denominator; break;
+            case "relative_absolute": pointwise[index * 3 + channel] = Math.abs(difference) / denominator; break;
+            case "relative_squared": pointwise[index * 3 + channel] = (difference / denominator) ** 2; break;
+          }
+        }
       }
       if (lumaA && lumaB) {
-        const index = y * width + x;
         lumaA[index] = Math.min(1, Math.max(0, SSIM_LUM[0] * a[0]! + SSIM_LUM[1] * a[1]! + SSIM_LUM[2] * a[2]!));
         lumaB[index] = Math.min(1, Math.max(0, SSIM_LUM[0] * b[0]! + SSIM_LUM[1] * b[1]! + SSIM_LUM[2] * b[2]!));
+      }
+      if (flipA && flipB) {
+        for (let channel = 0; channel < 3; channel++) {
+          flipA[index * 3 + channel] = options.operation === "hdr-flip"
+            ? Math.max(0, a[channel]!)
+            : outputEncode(Math.min(1, Math.max(0, a[channel]!)));
+          flipB[index * 3 + channel] = options.operation === "hdr-flip"
+            ? Math.max(0, b[channel]!)
+            : outputEncode(Math.min(1, Math.max(0, b[channel]!)));
+        }
       }
     }
     // Keep exact large-image CPU comparisons responsive between scanline batches.
@@ -158,43 +191,98 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
     mae: sumAbsolute / channelCount,
   };
   if (lumaA && lumaB) {
-    result.ssim = await ssimMeanFromLuminanceChunked(lumaA, lumaB, width, height);
+    const ssim = ssimFromLuminance(lumaA, lumaB, width, height);
+    const errorMap = new Float32Array(count);
+    let sum = 0;
+    for (let i = 0; i < count; i++) {
+      const value = ssim.ssim[i]!;
+      sum += value;
+      errorMap[i] = 1 - value;
+    }
+    result.ssim = sum / count;
+    result.errorMap = errorMap;
+    result.width = width;
+    result.height = height;
+    result.channels = 1;
+  } else if (flipA && flipB) {
+    result.errorMap = options.operation === "hdr-flip"
+      ? flipHDR(flipA, flipB, width, height)
+      : flipLDR(flipA, flipB, width, height);
+    result.width = width;
+    result.height = height;
+    result.channels = 1;
+  } else if (pointwise) {
+    result.errorMap = pointwise;
+    result.width = width;
+    result.height = height;
+    result.channels = 3;
   }
   return result;
 }
 
-// Scalar results are tiny, but the exact source traversal can be expensive.
-// Share StrictMode/remount work by immutable content identity and keep the cache
-// bounded independently of decoded image residency.
-const metricsCache = new Map<string, Promise<CpuSourceMetrics | null>>();
-const MAX_METRIC_ENTRIES = 256;
+// Share StrictMode/remount work by immutable content identity. FLIP/SSIM fields
+// are retained under the same byte/count policy as derived GPU diff fields.
+interface MetricCacheEntry {
+  promise: Promise<CpuSourceMetrics | null>;
+  /** -1 while computing; pending entries are never evicted mid-computation. */
+  bytes: number;
+}
+
+const metricsCache = new Map<string, MetricCacheEntry>();
+let metricsCacheBytes = 0;
+
+function trimMetricsCache(): void {
+  const { maxEntries, maxBytes } = getGpuDiffCacheLimits();
+  while (metricsCache.size > maxEntries || metricsCacheBytes > maxBytes) {
+    let victim: [string, MetricCacheEntry] | undefined;
+    for (const candidate of metricsCache) {
+      if (candidate[1].bytes >= 0) {
+        victim = candidate;
+        break;
+      }
+    }
+    if (!victim) return;
+    metricsCache.delete(victim[0]);
+    metricsCacheBytes -= victim[1].bytes;
+  }
+}
+
+registerRuntimePolicyHook(trimMetricsCache);
+
+export function getCpuComparisonCacheSnapshot(): { entries: number; bytes: number; pending: number } {
+  let pending = 0;
+  for (const entry of metricsCache.values()) if (entry.bytes < 0) pending++;
+  return { entries: metricsCache.size, bytes: metricsCacheBytes, pending };
+}
 
 export function computeCpuSourceMetrics(options: ComputeCpuSourceMetricsOptions): Promise<CpuSourceMetrics | null> {
   const referenceKey = options.reference.contentKey;
   const foregroundKey = options.foreground.contentKey;
   if (!referenceKey || !foregroundKey) return computeCpuSourceMetricsUncached(options);
-  const key = [
+  const key = JSON.stringify([
     referenceKey,
     foregroundKey,
     options.align ?? "top-left",
     options.fit ?? "crop",
-    options.includeSsim ? "ssim" : "source",
-  ].join("|");
+    options.operation ?? "source",
+  ]);
   const cached = metricsCache.get(key);
   if (cached) {
     metricsCache.delete(key);
     metricsCache.set(key, cached);
-    return cached;
+    return cached.promise;
   }
-  const pending = computeCpuSourceMetricsUncached(options).catch((error) => {
+  const entry: MetricCacheEntry = { promise: Promise.resolve(null), bytes: -1 };
+  entry.promise = computeCpuSourceMetricsUncached(options).then((result) => {
+    entry.bytes = result?.errorMap?.byteLength ?? 0;
+    metricsCacheBytes += entry.bytes;
+    trimMetricsCache();
+    return result;
+  }).catch((error) => {
     metricsCache.delete(key);
     throw error;
   });
-  metricsCache.set(key, pending);
-  while (metricsCache.size > MAX_METRIC_ENTRIES) {
-    const oldest = metricsCache.keys().next().value as string | undefined;
-    if (oldest == null) break;
-    metricsCache.delete(oldest);
-  }
-  return pending;
+  metricsCache.set(key, entry);
+  trimMetricsCache();
+  return entry.promise;
 }

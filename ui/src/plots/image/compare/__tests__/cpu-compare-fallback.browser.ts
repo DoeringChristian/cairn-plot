@@ -188,8 +188,9 @@ async function run(): Promise<boolean> {
 
   // --- 6. Unified CpuImagePane enters pointwise diff mode -------------------
   const pointwiseDiff = await waitFor(() => {
-    const canvas = document.getElementById("m6")!.querySelector("canvas");
-    return !!canvas && canvas.style.display === "block" && canvas.width === 8;
+    const result = document.getElementById("m6")!.querySelector('[data-cpu-comparison-result="absolute"]');
+    const canvas = result?.querySelector("canvas");
+    return !!canvas && canvas.width === 8;
   }, 4000, 20);
   const diffCanvas = document.getElementById("m6")!.querySelector("canvas");
   const diffPixel = diffCanvas?.getContext("2d")?.getImageData(0, 0, 1, 1).data;

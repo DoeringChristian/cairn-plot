@@ -73,7 +73,7 @@ import { recordCachedPresent, recordSourceRebind, recordSourceUpload } from "./p
 import { textureByteLength, textureBytes } from "./texture-bytes.ts";
 import { mappingKey, type CompareMapping } from "../runtime/compare-align";
 import { getWebGpuImageOperation, getWebGpuMultipassOperation } from "./image-operations.ts";
-import { computeHdrFlipExposures } from "./kernels/hdr-flip-reference.ts";
+import { computeHdrFlipExposures } from "../runtime/hdr-flip-reference.ts";
 import type { ImageOperationComputeContext } from "./operation-pass.ts";
 import type {
   Device,

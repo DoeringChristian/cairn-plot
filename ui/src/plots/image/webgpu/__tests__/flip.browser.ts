@@ -21,7 +21,7 @@
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
-import { flipLDR } from "../kernels/flip-reference";
+import { flipLDR } from "../../runtime/flip-reference";
 import { srgbEotf } from "../../runtime/tonemap";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";

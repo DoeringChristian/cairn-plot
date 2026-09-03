@@ -27,7 +27,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { flipLDR } from "./flip-reference.ts";
+import { flipLDR } from "../../runtime/flip-reference.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 interface Fixture {

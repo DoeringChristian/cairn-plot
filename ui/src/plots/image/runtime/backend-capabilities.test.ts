@@ -7,9 +7,14 @@ import { IMAGE_OPERATION_EVALUATORS } from "../resources/image-operation-evaluat
 import { CPU_DISPLAY_OPERATIONS } from "../cpu/display-operations.ts";
 import { WEBGPU_IMAGE_OPERATIONS } from "../webgpu/image-operations.ts";
 import { listWebGpuDisplayOperations } from "../webgpu/display.ts";
+import { getImageOperation } from "../definition/image-operations.ts";
 
 const cpuCapabilities = defineImageBackendCapabilities({
-  imageOperations: IMAGE_OPERATION_EVALUATORS.map(({ definition }) => definition),
+  imageOperations: [
+    ...IMAGE_OPERATION_EVALUATORS.map(({ definition }) => definition),
+    getImageOperation("flip")!,
+    getImageOperation("ssim")!,
+  ],
   displayOperations: CPU_DISPLAY_OPERATIONS.map(({ definition }) => definition),
 });
 const webGpuCapabilities = defineImageBackendCapabilities({
@@ -20,7 +25,8 @@ const capabilities = [cpuCapabilities, webGpuCapabilities];
 
 test("image backends advertise executable image and display operations", () => {
   assert.equal(cpuCapabilities.supportsImageOperation("absolute"), true);
-  assert.equal(cpuCapabilities.supportsImageOperation("flip"), false);
+  assert.equal(cpuCapabilities.supportsImageOperation("flip"), true);
+  assert.equal(cpuCapabilities.supportsImageOperation("ssim"), true);
   assert.equal(webGpuCapabilities.supportsImageOperation("flip"), true);
 
   for (const id of ["linear", "srgb", "aces", "turbo", "magma", "red-green"]) {

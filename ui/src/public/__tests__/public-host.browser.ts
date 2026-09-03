@@ -32,6 +32,8 @@ async function run() {
   const element = document.getElementById("mount")!;
   const red = imageUrl("red");
   const blue = imageUrl("blue");
+  const darkReference = imageUrl("#202020");
+  const darkForeground = imageUrl("#404040");
   const mounted = mountPlot(element, {
     spec,
     dataSource: createEndpointDataSource(() => red),
@@ -83,17 +85,43 @@ async function run() {
   };
   mounted.update({
     spec: compareSpec,
-    dataSource: createEndpointDataSource((hash) => hash === "reference" ? blue : red),
+    dataSource: createEndpointDataSource((hash) => hash === "reference" ? darkReference : darkForeground),
   });
   await waitFor(() => element.querySelectorAll("img").length === 2, 3_000);
   check(element.querySelectorAll("img").length === 2, "CPU public comparison enters real split mode");
-  check(!!element.querySelector("[data-cpu-compare-mode]"), "CPU public comparison exposes mode controls");
-  mounted.patchSettings({ "compare.operation": "absolute" });
+  check(
+    !!element.querySelector('[aria-label="Compare / diff mode"]'),
+    "CPU public comparison exposes the shared toolbar mode control",
+  );
+  const toolbar = element.querySelector<HTMLElement>('[role="toolbar"][aria-label="Plot controls"]');
+  check(toolbar?.style.right === "6px" && toolbar.style.left === "", "CPU comparison uses the shared top-right toolbar placement");
+  const cpuComparePane = element.querySelector<HTMLElement>("[data-cpu-compare-pane]");
+  cpuComparePane?.focus();
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  await waitFor(() => mounted.getSession().cells["cell:root"]?.settings["compare.split"] === 1, 3_000);
+  check(
+    mounted.getSession().cells["cell:root"]?.settings["compare.split"] === 1,
+    "CPU split uses the shared keyboard interaction layer",
+  );
+  mounted.patchSettings({ "image.exposureEV": 1 });
+  const exposed = await waitFor(() => [...element.querySelectorAll("canvas")].some((canvas) => {
+    if (canvas.width !== 4 || canvas.height !== 4 || canvas.style.display !== "block") return false;
+    return (canvas.getContext("2d")?.getImageData(0, 0, 1, 1).data[0] ?? 0) > 32;
+  }), 3_000);
+  check(exposed, "CPU split applies shared exposure settings to both surfaces");
+  mounted.patchSettings({ "image.exposureEV": 0, "compare.operation": "absolute" });
   await waitFor(() => {
     const canvas = element.querySelector("canvas");
     return !!canvas && canvas.style.display === "block";
   }, 3_000);
   check(!!element.querySelector("canvas"), "CPU public comparison switches from split to diff mode");
+  mounted.patchSettings({ "compare.operation": "flip" });
+  await waitFor(() => !!element.querySelector('[data-cpu-comparison-result="flip"]'), 5_000);
+  check(!!element.querySelector('[data-cpu-comparison-result="flip"]'), "CPU public comparison renders a cached FLIP field");
+  mounted.patchSettings({ "compare.operation": "ssim" });
+  await waitFor(() => !!element.querySelector('[data-cpu-comparison-result="ssim"]'), 5_000);
+  check(!!element.querySelector('[data-cpu-comparison-result="ssim"]'), "CPU public comparison renders a cached SSIM field");
+  check((element.textContent ?? "").includes("SSIM"), "CPU SSIM exposes its exact scalar metric");
 
   mounted.destroy();
   mounted.destroy();
