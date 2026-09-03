@@ -198,6 +198,34 @@ async function run(): Promise<boolean> {
   report(pointwiseDiff && isMagentaDifference, `unified CPU compare renders the actual pointwise diff (${diffPixel ? [...diffPixel] : "no pixel"})`);
   ok = ok && pointwiseDiff && isMagentaDifference;
 
+  // View-only changes must remain compositor-only. A fresh diff-source shape on
+  // every render used to invalidate the HDR wrapper and tone-map the complete
+  // native-resolution error field once per wheel/pointer event.
+  let diffRepaints = 0;
+  const diffContext = diffCanvas?.getContext("2d");
+  const originalPutImageData = diffContext?.putImageData.bind(diffContext);
+  if (diffCanvas && diffContext && originalPutImageData) {
+    diffContext.putImageData = ((...args: Parameters<CanvasRenderingContext2D["putImageData"]>) => {
+      diffRepaints++;
+      return originalPutImageData(...args);
+    }) as CanvasRenderingContext2D["putImageData"];
+    const rect = diffCanvas.getBoundingClientRect();
+    for (let i = 0; i < 8; i++) {
+      diffCanvas.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        deltaY: -24,
+      }));
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    diffContext.putImageData = originalPutImageData;
+  }
+  report(diffRepaints === 0, `CPU diff pan/zoom does not rerun native-resolution tone mapping (${diffRepaints} repaint(s))`);
+  ok = ok && diffRepaints === 0;
+
   roots.forEach((r) => r.unmount());
   return ok;
 }

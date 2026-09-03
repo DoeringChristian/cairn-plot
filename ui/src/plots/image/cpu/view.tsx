@@ -1732,30 +1732,50 @@ function CpuSplitComparePane({ input, metrics }: { input: ImageBackendInput; met
   );
 }
 
-function cpuComparisonInput(input: ImageBackendInput, metrics: CpuSourceMetrics | null): ImageBackendInput {
+function useCpuComparisonInput(input: ImageBackendInput, metrics: CpuSourceMetrics | null): ImageBackendInput {
   const compare = input.compareSource;
-  if (compare && metrics?.errorMap && metrics.width && metrics.height && metrics.channels) {
+  // A diff is an ordinary float image source, but its wrapper and shape MUST stay
+  // stable while only the viewport changes. Recreating `shape` here on every pan
+  // invalidates `useImageSurfaceProps`'s memoized HDR object, which reruns the
+  // full native-resolution tone-map + putImageData pass for every pointer event.
+  const comparisonSource = useMemo<ImageBackendInput["source"] | null>(() => {
+    if (!compare || !metrics?.errorMap || !metrics.width || !metrics.height || !metrics.channels) return null;
     return {
-      ...input,
-      source: {
-        dtype: "float",
-        pixels: floatValues(metrics.errorMap),
-        shape: metrics.channels === 1
-          ? [metrics.height, metrics.width]
-          : [metrics.height, metrics.width, metrics.channels],
-        numpyDtype: "<f4",
-        contentKey: `${input.source.contentKey ?? "reference"}|${compare.b.contentKey ?? "foreground"}|${compare.operationId}`,
-      },
-      exposure: 0,
-      offset: 0,
+      dtype: "float",
+      pixels: floatValues(metrics.errorMap),
+      shape: metrics.channels === 1
+        ? [metrics.height, metrics.width]
+        : [metrics.height, metrics.width, metrics.channels],
+      numpyDtype: "<f4",
+      contentKey: JSON.stringify([
+        input.source.contentKey ?? "reference",
+        compare.b.contentKey ?? "foreground",
+        compare.operationId,
+        compare.flipMode ?? "sdr",
+        compare.align ?? "top-left",
+        compare.fit ?? "crop",
+      ]),
     };
-  }
-  return input;
+  }, [
+    input.source.contentKey,
+    compare?.b.contentKey,
+    compare?.operationId,
+    compare?.flipMode,
+    compare?.align,
+    compare?.fit,
+    metrics?.errorMap,
+    metrics?.width,
+    metrics?.height,
+    metrics?.channels,
+  ]);
+  return comparisonSource
+    ? { ...input, source: comparisonSource, exposure: 0, offset: 0 }
+    : input;
 }
 
 export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Element {
   const compareMetrics = useCpuCompareMetrics(backendProps);
-  const props = useImageSurfaceProps(cpuComparisonInput(backendProps, compareMetrics));
+  const props = useImageSurfaceProps(useCpuComparisonInput(backendProps, compareMetrics));
   if (backendProps.compareSource?.mode === "split") {
     return <CpuSplitComparePane input={backendProps} metrics={compareMetrics} />;
   }
