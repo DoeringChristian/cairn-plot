@@ -1,19 +1,18 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   ImageOverlayData,
   ImageOverlaySettings,
   OverlayBox,
 } from "../../types";
 import { overlayClassColor } from "../../types";
-import { useContainerSize } from "../../../host/hooks/use-container-size";
-import { computeFit } from "./region-select";
+import type { ImageViewport } from "./image-viewport.ts";
+import { placeBox } from "./image-overlay-placement.ts";
 
 export interface ImageOverlayProps {
   data: ImageOverlayData;
   settings: ImageOverlaySettings;
-  /** Natural (intrinsic) pixel dimensions of the underlying image. */
-  naturalWidth: number;
-  naturalHeight: number;
+  /** The pane's shared viewport geometry (box/backing/quad/natural). */
+  viewport: ImageViewport;
 }
 
 /** Hex "#rrggbb" -> [r, g, b]. */
@@ -37,50 +36,32 @@ function boxVisible(
 }
 
 /**
- * Absolutely-positioned annotation layer (boxes + masks) that sits *inside* the
- * image's transformed wrapper, so it inherits the exact zoom/pan CSS transform.
- * Self-contained: measures its own layout box (ResizeObserver, transform-immune)
- * to letterbox the annotations onto the `object-contain` image rectangle.
+ * Annotation layer (boxes + masks) drawn on ONE canvas that fills the pane and
+ * is sized from `viewport.backing`. Everything is placed through the shared
+ * `viewport.quad` (the image's on-screen rect under the current zoom/pan), so
+ * the annotations follow the image exactly the way the pane's own draw does —
+ * no self-measurement, no CSS transform inheritance. Box labels stay HTML chips
+ * so their font never scales with zoom.
  */
 export default function ImageOverlay({
   data,
   settings,
-  naturalWidth,
-  naturalHeight,
+  viewport,
 }: ImageOverlayProps) {
-  const { ref, size } = useContainerSize<HTMLDivElement>();
-  const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskSourceRef = useRef<HTMLCanvasElement | null>(null);
+  const [maskVersion, setMaskVersion] = useState(0);
 
   const hidden = useMemo(
     () => new Set(settings.hiddenClasses),
     [settings.hiddenClasses],
   );
 
-  // Contained (letterboxed) rectangle of the image within our layout box.
-  const rect = useMemo(() => {
-    const cw = size.w;
-    const ch = size.h;
-    if (cw <= 0 || ch <= 0 || naturalWidth <= 0 || naturalHeight <= 0) {
-      return null;
-    }
-    // Object-contain letterbox from the ONE shared primitive (`computeFit`, full
-    // window) — the SAME math the hover readout / marquee / pane uvRect use, so the
-    // overlay boxes can't drift off the image (D1).
-    const f = computeFit({
-      box: { left: 0, top: 0, width: cw, height: ch },
-      naturalWidth,
-      naturalHeight,
-    });
-    return {
-      left: f.imgLeft,
-      top: f.imgTop,
-      width: f.visibleW * f.scale,
-      height: f.visibleH * f.scale,
-    };
-  }, [size.w, size.h, naturalWidth, naturalHeight]);
+  const { natural, quad, backing, dpr } = viewport;
 
   // -----------------------------------------------------------------------
-  // Masks: decode each PNG, colorize by class id, composite onto one canvas.
+  // Masks: decode each PNG, colorize by class id, composite onto ONE offscreen
+  // native-resolution canvas. Bumping `maskVersion` repaints the draw effect.
   // -----------------------------------------------------------------------
   const masks = data.masks;
   const showMasks = settings.showMasks && !!masks && masks.length > 0;
@@ -88,11 +69,17 @@ export default function ImageOverlay({
     () => settings.hiddenClasses.join(","),
     [settings.hiddenClasses],
   );
+  const naturalWidth = natural.w;
+  const naturalHeight = natural.h;
 
   useEffect(() => {
     if (!showMasks || !masks) return;
-    const canvas = maskCanvasRef.current;
-    if (!canvas) return;
+    if (naturalWidth <= 0 || naturalHeight <= 0) return;
+    let canvas = maskSourceRef.current;
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      maskSourceRef.current = canvas;
+    }
     if (canvas.width !== naturalWidth || canvas.height !== naturalHeight) {
       canvas.width = naturalWidth;
       canvas.height = naturalHeight;
@@ -110,6 +97,7 @@ export default function ImageOverlay({
     const finish = () => {
       if (cancelled) return;
       if (anyDrawn) ctx.putImageData(out, 0, 0);
+      setMaskVersion((v) => v + 1);
     };
 
     const decode = document.createElement("canvas");
@@ -154,114 +142,84 @@ export default function ImageOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMasks, masks, naturalWidth, naturalHeight, hiddenKey]);
 
-  if (!rect) {
-    return (
-      <div
-        ref={ref}
-        data-image-overlay=""
-        className="absolute inset-0 pointer-events-none"
-      />
-    );
-  }
+  // -----------------------------------------------------------------------
+  // Draw: masks + box strokes onto the pane-sized canvas, in device pixels.
+  // -----------------------------------------------------------------------
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (canvas.width !== backing.width || canvas.height !== backing.height) {
+      canvas.width = backing.width;
+      canvas.height = backing.height;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const sx = backing.width / viewport.box.width;
+    const sy = backing.height / viewport.box.height;
+    const drawMasks =
+      settings.showMasks && !!data.masks && data.masks.length > 0;
+    if (drawMasks && maskSourceRef.current) {
+      ctx.globalAlpha = settings.maskOpacity;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        maskSourceRef.current,
+        quad.left * sx,
+        quad.top * sy,
+        quad.width * sx,
+        quad.height * sy,
+      );
+      ctx.globalAlpha = 1;
+    }
+    const boxes = data.boxes ?? [];
+    if (settings.showBoxes && boxes.length > 0) {
+      ctx.lineWidth = 2 * dpr;
+      for (const box of boxes) {
+        if (!boxVisible(box, settings, hidden)) continue;
+        const r = placeBox(box, quad, natural);
+        ctx.strokeStyle = overlayClassColor(box.class_id);
+        ctx.strokeRect(r.left * sx, r.top * sy, r.width * sx, r.height * sy);
+      }
+    }
+  }, [viewport, data, settings, hidden, maskVersion, natural, quad, backing, dpr]);
 
   const boxes = data.boxes ?? [];
-  const showBoxes = settings.showBoxes && boxes.length > 0;
   const classLabels = data.class_labels ?? {};
 
   return (
     <div
-      ref={ref}
       data-image-overlay=""
       className="absolute inset-0 pointer-events-none overflow-hidden"
     >
-      {/* Masks (canvas, natural-res, CSS-scaled to the contained rect) */}
-      {showMasks && (
-        <canvas
-          ref={maskCanvasRef}
-          className="absolute"
-          style={{
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-            opacity: settings.maskOpacity,
-            imageRendering: "pixelated",
-          }}
-        />
-      )}
-
-      {/* Boxes (SVG in image pixel coordinates via viewBox) */}
-      {showBoxes && (
-        <svg
-          className="absolute"
-          style={{
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-            overflow: "visible",
-          }}
-          viewBox={`0 0 ${naturalWidth} ${naturalHeight}`}
-          preserveAspectRatio="none"
-        >
-          {boxes.map((box, i) => {
-            if (!boxVisible(box, settings, hidden)) return null;
-            const px = box.domain === "pixel" ? 1 : naturalWidth;
-            const py = box.domain === "pixel" ? 1 : naturalHeight;
-            const x = box.position.minX * px;
-            const y = box.position.minY * py;
-            const w = (box.position.maxX - box.position.minX) * px;
-            const h = (box.position.maxY - box.position.minY) * py;
-            return (
-              <rect
-                key={i}
-                x={x}
-                y={y}
-                width={w}
-                height={h}
-                fill="none"
-                stroke={overlayClassColor(box.class_id)}
-                strokeWidth={2}
-                vectorEffect="non-scaling-stroke"
-              />
-            );
-          })}
-        </svg>
-      )}
-
-      {/* Box labels (HTML chips, unscaled font, positioned as % of the rect) */}
-      {showBoxes && (
-        <div
-          className="absolute"
-          style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
-        >
-          {boxes.map((box, i) => {
-            if (!boxVisible(box, settings, hidden)) return null;
-            const fx = box.domain === "pixel" ? 1 / naturalWidth : 1;
-            const fy = box.domain === "pixel" ? 1 / naturalHeight : 1;
-            const leftPct = box.position.minX * fx * 100;
-            const topPct = box.position.minY * fy * 100;
-            const name =
-              box.label ?? classLabels[String(box.class_id)] ?? `#${box.class_id}`;
-            const scoreTxt = box.score != null ? ` ${(box.score * 100).toFixed(0)}%` : "";
-            if (!name && !scoreTxt) return null;
-            return (
-              <span
-                key={i}
-                className="absolute whitespace-nowrap rounded px-1 text-[10px] leading-tight text-white"
-                style={{
-                  left: `${leftPct}%`,
-                  top: `${topPct}%`,
-                  transform: "translateY(-100%)",
-                  backgroundColor: overlayClassColor(box.class_id),
-                }}
-              >
-                <span className="mono">{name}{scoreTxt}</span>
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" aria-hidden />
+      {settings.showBoxes &&
+        boxes.map((box, i) => {
+          if (!boxVisible(box, settings, hidden)) return null;
+          const r = placeBox(box, quad, natural);
+          const name =
+            box.label ?? classLabels[String(box.class_id)] ?? `#${box.class_id}`;
+          const scoreTxt =
+            box.score != null ? ` ${(box.score * 100).toFixed(0)}%` : "";
+          if (!name && !scoreTxt) return null;
+          return (
+            <span
+              key={i}
+              className="absolute whitespace-nowrap rounded px-1 text-[10px] leading-tight text-white"
+              style={{
+                left: r.left,
+                top: r.top,
+                transform: "translateY(-100%)",
+                backgroundColor: overlayClassColor(box.class_id),
+              }}
+            >
+              <span className="mono">
+                {name}
+                {scoreTxt}
               </span>
-            );
-          })}
-        </div>
-      )}
+            </span>
+          );
+        })}
     </div>
   );
 }
