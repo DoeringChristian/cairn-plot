@@ -1,116 +1,102 @@
 /**
  * CpuImagePane — the CPU (2D-canvas) image backend. One of TWO interchangeable
- * image backends (see `GpuImagePane.tsx` for the WebGPU one): both accept the
- * SAME `ImageBackendInput` union (`renderers/image-backend.ts`) and are chosen
+ * image backends (see `webgpu/view.tsx` for the WebGPU one): both accept the
+ * SAME `ImageBackendInput` union (`runtime/contracts.ts`) and are chosen
  * upstream by the user-settable render mode (`resolveRenderMode` — cpu | gpu |
  * auto), so the rest of the app is backend-agnostic.
  *
- * ## One component, two prop shapes (mirrors `GpuImagePane` exactly)
+ * ## One component, two prop shapes (mirrors the GPU pane exactly)
  * `isFloatSurfaceProps(props)` (presence of `hdr`) selects the branch:
- *   - SDR (`imageUrl` shape) — the former `ImagePane`'s FULL path, ported
- *     verbatim: `<img>` display with `processing` CSS/SVG filters
- *     (gamma/offset/flipSign via `useGammaFilter`), CPU `applyColormap`
- *     false-color canvas, and the legacy `baselineUrl`/`diffMode` pixel-diff
- *     pipeline (`computeDiff`/`webglRenderDiffToCanvas`).
- *   - HDR (`hdr` float shape) — the former `HdrImagePane`'s
- *     tonemap-to-canvas path: `tonemapToImageData(hdr, tonemap, exposure,
- *     gamma)` per-pixel → `putImageData`.
- * ASYMMETRY (unchanged from before the unification): the HDR branch has no
- * colormap / compare-diff / `processing` — those props only exist on the SDR
- * shape (`Uint8SurfaceProps`), exactly as the two separate panes had it.
+ *   - SDR (`imageUrl` shape) — the decoded 8-bit source, optionally through the
+ *     display transfer, the CPU `applyColormap` false-color pass, or the legacy
+ *     `baselineUrl`/`diffMode` pixel-diff pipeline.
+ *   - HDR (`hdr` float shape) — the single `tonemapToImageData` pass.
+ * ASYMMETRY (unchanged): the HDR branch has no colormap-vs-diff selection and no
+ * `processing` block — those props only exist on the SDR shape.
  *
- * ## Shared plumbing — the shared `ImagePaneShell`
- * Both branches render through `renderers/ImagePaneShell.tsx` (the ONE frame
- * all three image panes share): it owns the `useImageGestures` zoom/pan
- * (modifier-gated wheel zoom-to-cursor + drag pan), the TEV `PixelValueOverlay`
- * mount + notation state, the double-click viewport reset, and the
- * `PlotToolbar` + `useImageController` wiring (notation leading button
- * included, so the two backends look the same). This CPU backend passes the
- * bits that are genuinely its own: the CSS `translate(pan) scale(zoom)`
- * transform (`wrapperStyle`), the checkerboard-on-the-padded-pane placement,
- * and its `<img>`/`<canvas>` surface.
+ * ## The unified viewport (spec §3)
+ * There is ONE presentation `<canvas>` per pane, sized to the viewport element's
+ * DEVICE-pixel box, and ONE geometry: `useImageViewport` measures the viewport
+ * element the shell owns and derives the quad / uv window / px-per-texel /
+ * magnification filter that the paint, the TEV overlay, the detection overlay
+ * and the region tools all read. The CPU backend no longer zooms by scaling a
+ * wrapper with a CSS transform, no longer letterboxes with `object-fit`, and no
+ * longer sets `image-rendering`: `paint.ts` blits the source into the canvas at
+ * the quad the viewport defines, with `imageSmoothingEnabled` from the shared
+ * magnification rule. Numbers and pixels cannot disagree, because there is only
+ * one mapping.
+ *
+ * ## Content vs. presentation
+ * `use-cpu-content.ts` owns the CONTENT stage: the diff / false-color /
+ * transfer / tone-map pipelines, each keyed and cached, producing an
+ * `ImageBitmap` (a `PaintSource`) and a version counter. It depends only on the
+ * content identity and the scalar display parameters — never on the viewport —
+ * so a pan or a zoom never re-runs a pixel pass, and a source swap holds the
+ * previous frame until the new one is ready. The `processing` block
+ * (brightness/contrast/γ/offset/flipSign), which used to be a CSS/SVG filter on
+ * the `<img>`, is a per-pixel stage there now (`processing.ts`).
+ *
+ * ## COMPARE
+ * `compareSource` in `diff` mode becomes an ordinary float image source (the
+ * cached CPU error field — `useCpuComparisonInput`). In `split` mode this ONE
+ * pane paints both operands into the SAME canvas: the reference under the clip
+ * `[0, split]` and the foreground under `[split, 1]`, both at the REFERENCE
+ * quad with the foreground's own grid — the GPU compositor's framing. The
+ * divider rides the surface and the TEV read-out is two clipped overlays.
  *
  * ## `toolbar` (the shared host seam)
- * `toolbar?: boolean` (default `true`) is now an OFFICIAL host seam on the shared
- * `ImageBackendInput` contract — the SAME prop `GpuImagePane`/`GpuComparePane`
- * accept, so all three panes hide the toolbar identically. When `false` the shell
- * renders NO `PlotToolbar` (and no hover `group`); the ONLY floating affordance
- * kept is the `PixelNotationToggle` chip while the TEV overlay is active — the
- * long-standing CPU convention, now unified across every pane (see
- * `ImagePaneShell`). The app-card compositor (`media-compare/compositor.tsx`)
- * still forwards `toolbar={false}` for its per-side chrome; a host that wants its
- * own menu passes `toolbar={false}` from `cp.Image(toolbar=False)` and drives the
- * view through the controlled props (colormap / tonemap / peak / gamma / base
- * exposure+offset). Backend-seam mounts (`resolveImageRenderer` /
- * `GpuImagePane`'s C1 fallback) use the default `toolbar={true}`.
+ * `toolbar?: boolean` (default `true`) is an OFFICIAL host seam on the shared
+ * `ImageBackendInput` contract — the SAME prop the GPU pane accepts, so both
+ * backends hide the toolbar identically. When `false` the shell renders NO
+ * `PlotToolbar` (and no hover `group`); the ONLY floating affordance kept is the
+ * `PixelNotationToggle` chip while the TEV overlay is active.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode, RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import LabelChip from "../../../primitives/components/LabelChip";
 import RefBadge from "../../../primitives/components/RefBadge";
 import SplitDivider from "../compare/SplitDivider.tsx";
 import { useSplitFlipKeys } from "../compare/use-split-flip-keys.ts";
-import type { Colormap, DiffMode, Interpolation } from "../../types";
-import { autoImageRendering, containScreenPxPerTexel } from "../components/interp-auto";
-import { computeCpuDisplayGeometry, type CpuDisplayGeometry } from "./display-geometry.ts";
-// The ONE shared magnification threshold — the SAME constant `GpuImagePane`
-// reads for its nearest/linear sampler switch (and `PixelValueOverlay` for its
-// per-pixel numbers), so the CPU pane's `pixelated` flip stays in lockstep.
-import { PIXEL_VALUE_MIN_SCREEN_PX } from "../../../primitives/components/PixelValueOverlay";
-import { useGammaFilter, GammaFilterSvg } from "../compare/post-processing";
-import ImageOverlay from "../components/ImageOverlay";
-import {
-  loadImageData,
-} from "../resources/load-image-data.ts";
-import {
-  getCachedImageData,
-  setCachedImageData,
-} from "../resources/cache.ts";
-import { computeDiff, DIFF_MODE_LABELS } from "./diff.ts";
-import { webglRenderDiffToCanvas } from "./webgl-diff.ts";
-import { getColormapLUT } from "../../../settings/colormaps/index";
-import { applyColormap } from "../resources/apply-colormap.ts";
-import { imageDataToSceneField } from "../resources/scene-field.ts";
-// Pure sequential-vs-diverging rule (no GPU/engine deps — see its module doc);
-// safe to pull into the CPU pane / core bundle.
-import { floatPixelReader, floatValues, widenFloatPixels } from "../runtime/pixel-buffer.ts";
+import type { Colormap } from "../../types";
+import PixelValueOverlay, {
+  buildChannelSample,
+  type PixelSample,
+  type PixelSampler,
+  type PixelValueNotation,
+} from "../../../primitives/components/PixelValueOverlay";
+import { loadImageData } from "../resources/load-image-data.ts";
+import { DIFF_MODE_LABELS } from "./diff.ts";
+import { floatPixelReader, floatValues } from "../runtime/pixel-buffer.ts";
 import {
   resolveDisplayOperator,
-  DEFAULT_DISPLAY_OPERATION_ID,
-  applyExposureOffset,
-  outputEncode,
-  srgbEotf,
-  resolveEncodeGamma,
   TONEMAP_GAMMA_DEFAULT,
   TONEMAP_GAMMA_MIN,
   TONEMAP_GAMMA_MAX,
   TONEMAP_GAMMA_STEP,
   DISPLAY_TRANSFER_OPERATION_IDS,
   DISPLAY_OPERATION_IDS,
-  type RgbTriple,
   type DisplayCurveId,
 } from "../runtime/tonemap";
-import {
-  buildChannelSample,
-  type PixelSample,
-  type PixelValueNotation,
-} from "../../../primitives/components/PixelValueOverlay";
-import ImagePaneShell, { type EnlargeControl } from "../components/ImagePaneShell";
+import ImagePaneShell, {
+  type EnlargeControl,
+  type ImagePaneOverlaySpec,
+} from "../components/ImagePaneShell";
+import { useImageViewport } from "../components/use-image-viewport.ts";
+import type { ImageViewport } from "../components/image-viewport.ts";
+import { paintViewport } from "./paint.ts";
+import { useCpuContent, type CpuContent } from "./use-cpu-content.ts";
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import type { PlotSettings } from "../../../settings/schema.ts";
-import { displayToolbarButton, reduceSegment, resolveDisplayOperationIds, usePaneEncoding } from "../components/display-operation";
-import { getDisplayOperation, type ReduceMode } from "../definition/display-operations.ts";
-import { DEFAULT_DISPLAY_PARAMETERS, defaultReduceMode, type DisplayParameters, type NormMode } from "../runtime/display-settings.ts";
-import { getCpuDisplayOperation } from "./display-operations.ts";
-import { getImageOperationEvaluator, type ImageOperationEvaluator } from "../resources/image-operation-evaluator.ts";
+import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-operation";
+import type { ReduceMode } from "../definition/display-operations.ts";
+import { defaultReduceMode } from "../runtime/display-settings.ts";
 import { computeCpuSourceMetrics, type CpuSourceMetrics } from "./source-metrics.ts";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isFloatSurfaceProps,
   useImageSurfaceProps,
   shapeDims,
-  finite,
   type FloatImageData,
   type FloatSurfaceProps,
   type Uint8SurfaceProps,
@@ -118,10 +104,13 @@ import {
   type ImageBackendInput,
 } from "../runtime/contracts";
 import type { ImageProcessing } from "../../types";
-import type { ToolbarButtonSpec, ToolbarSliderSpec } from "../../../primitives/controls/ToolbarConfig.ts";
-import PlotToolbar from "../../../primitives/components/PlotToolbar.tsx";
-import { IMAGE_TOOLBAR_CONFIG, useImageController } from "../components/use-image-controller.ts";
+import type { ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig.ts";
 import { buildCompareModeMenu } from "../compare/compare-mode-menu.ts";
+
+// The two per-pixel display passes live in their own module so the content hook
+// can call them without an import cycle through this view; re-exported here so
+// `import { tonemapToImageData } from "../cpu/view"` keeps working.
+export { tonemapToImageData, sdrTransferToImageData } from "./tonemap-image-data.ts";
 
 const DEFAULT_PROCESSING: ImageProcessing = {
   brightness: 0,
@@ -132,297 +121,230 @@ const DEFAULT_PROCESSING: ImageProcessing = {
   flipSign: false,
 };
 
-// ---------------------------------------------------------------------------
-// HDR tone-map (moved verbatim from HdrImagePane.tsx; re-exported there).
-// ---------------------------------------------------------------------------
-
-/** The CONTENT stage's CPU twin (Phase 1: identity — a passthrough). The CPU
- *  pane produces its per-texel content through the content-op registry, the SAME
- *  declaration the GPU shader's `cairnContent` assembles from. Identity returns
- *  the sampled source channels unchanged, so the pixel pipeline is byte-for-byte
- *  as before. */
-const _identityOp = getImageOperationEvaluator("identity");
-if (!_identityOp) {
-  throw new Error("CpuImagePane: the CPU backend must implement the identity image operation");
+/** SPLIT compare wiring handed down to whichever branch renders the pane. */
+interface CompareSplit {
+  /** The FOREGROUND operand (`compareSource.b`) — any dtype. */
+  b: ImageBackendInput["source"];
+  splitPosition: number;
+  onSplitPositionChange?: (pos: number) => void;
+  inStackedGrid?: boolean;
+  inOverlay?: boolean;
 }
-const IDENTITY_CONTENT: ImageOperationEvaluator = _identityOp;
+
+/** The plumbing both branches receive from the public component. */
+interface CpuPaneSyncProps {
+  toolbar?: boolean;
+  /** The viewport's effective settings from its store (group > local merge),
+   *  driven down by the store owner (see `ImageBackendInput.syncedSettings`). */
+  syncedSettings?: PlotSettings;
+  /** The store's ONE write path (see `ImageBackendInput.setSyncedSettings`). */
+  setSyncedSettings?: (patch: PlotSettings) => void;
+  /** Controlled fullscreen state (see `ImageBackendInput.enlargeControl`). */
+  enlargeControl?: EnlargeControl;
+  /** Shared comparison captions/metrics; suppresses the ordinary label chip. */
+  compareChrome?: ReactNode;
+  compareLeadingMenus?: ToolbarButtonSpec[];
+  cpuComparisonOperation?: string;
+  isCompareMode?: boolean;
+  compareSplit?: CompareSplit;
+}
+
+// ---------------------------------------------------------------------------
+// The ONE presentation surface.
+// ---------------------------------------------------------------------------
 
 /**
- * Tone-map the float HDR buffer into an 8-bit RGBA `ImageData`. Pure — no DOM
- * beyond the `ImageData` allocation. Exposure → operator → output-encode per
- * pixel, exactly the pipeline documented in `tonemap.ts`.
+ * The pane's presentation canvas and its paint. The backing store is assigned
+ * ONLY when the device-pixel size actually changes (assigning `width`/`height`
+ * clears the canvas, so an unconditional write would flash on every commit), and
+ * the blit runs in a layout effect keyed on the viewport + the content version —
+ * never the other way round. A pipeline that has not produced its first frame
+ * leaves the canvas untouched, so the previous frame stays up while a new source
+ * loads.
  */
-export function tonemapToImageData(
-  hdr: FloatImageData,
-  tonemap: string,
-  exposure: number,
-  gamma?: number,
-  offset: number = 0,
-  colormap: string | null = null,
-  // DATA-encoding norm + bounds (Phase 4) — the colormap-only extras. `norm`
-  // reshapes the LUT index (linear/log/power; `normExponent` is the power
-  // exponent); `colorMin`/`colorMax` (both set) engage the min/max BOUNDS skin
-  // INSTEAD of the exposure/offset sensitivity (never composed). Defaults
-  // reproduce the Phase-2 behavior (linear, no bounds) bit-for-bit.
-  norm: NormMode = "linear",
-  colorMin?: number,
-  colorMax?: number,
-  normExponent: number = 1,
-  // Multi-channel REDUCE (the multi-channel-colormap follow-up) — how a k>1
-  // colormap source collapses to the scalar the LUT indexes. Unset → the k-based
-  // default (`defaultReduceMode`). Ignored for k=1 (the scalar IS the channel)
-  // and when no colormap is active.
-  reduce?: ReduceMode,
-): ImageData {
-  const { h, w, c } = shapeDims(hdr.shape);
-  // TURBO false-color (the tev-exact follow-up) indexes the bound turbo table at
-  // tev's FIXED log2 mapping (`turboDataIndex`) instead of `computeDataIndex`, and
-  // defaults `reduce` to MEAN (tev averages RGB) regardless of k.
-  const colormapDefinition = colormap != null ? getDisplayOperation(colormap) : undefined;
-  const colormapOperation = colormap != null ? getCpuDisplayOperation(colormap) : undefined;
-  const reduceMode: ReduceMode = reduce ?? colormapDefinition?.defaultReduce ?? defaultReduceMode(c);
-  // COLORMAP (LUT family, CPU twin — Phase 2/4): when a colormap is active the
-  // SCALAR channel (channel 0) indexes the colormap LUT and the DISPLAY color is
-  // written straight out — the tone-map operator + output-encode are SHORT-
-  // CIRCUITED (the LUT holds display sRGB), matching the GPU `cairnLutColor`
-  // family + the diff blit. The index runs through `computeDataIndex` (the norm
-  // reshape + optional bounds affine — the CPU source of truth the WGSL
-  // `cairnDataIndex` mirrors). cmap-mode `linear`.
-  // ANALYTIC colormap (tev-style signed red-green) — computed color, no LUT. The
-  // reduced signed scalar → signedAnalyticColor (neg→red, pos→green, 2*|v|,
-  // UNCLAMPED) → SHARED output-encode (like a curve), NOT a baked-sRGB LUT sample.
-  // This CPU fallback writes an 8-bit ImageData, so |v|>1 clamps here (the extended
-  // >1 survival is the GPU/HDR-surface path); |v|<=1 matches the GPU exactly.
-  const analyticCmap = colormapOperation?.kind === "analytic";
-  // TURBO bakes its own FIXED index (`turboDataIndex`), bypassing the norm/bounds
-  // path — so its params (norm/bounds) are inert on this branch.
-  const cmapBoundsOn =
-    typeof colorMin === "number" && Number.isFinite(colorMin) &&
-    typeof colorMax === "number" && Number.isFinite(colorMax);
-  const cmapDataParams: DisplayParameters = {
-    exposure,
-    offset,
-    peak: 4,
-    gamma: normExponent,
-    norm,
-    ...(cmapBoundsOn ? { min: colorMin, max: colorMax } : {}),
-  };
-  // F16 pipeline: this is the CPU tone-map FALLBACK path (used when the GPU
-  // backend is unavailable), so a `"f16-bits"` buffer is widened to f32 ONCE
-  // for the whole frame here (via the self-describing pixel buffer) rather
-  // than kept half — the GPU path keeps the bits; only this fallback pays.
-  const src = widenFloatPixels(hdr.pixels);
-  // Resolve the operator CURVE straight from the registry (the single source of
-  // truth). Every curve works on this SDR surface; the output conversion below
-  // performs the surface-specific clamp.
-  const curveDefinition = getDisplayOperation(tonemap);
-  const opEnc =
-    curveDefinition && curveDefinition.category !== "colormap"
-      ? getCpuDisplayOperation(tonemap)!
-      : getCpuDisplayOperation(DEFAULT_DISPLAY_OPERATION_ID)!;
-  const op = (rgb: RgbTriple): RgbTriple => {
-    const params = { ...DEFAULT_DISPLAY_PARAMETERS, peak: 1 };
-    return opEnc.evaluate(rgb, 3, params);
-  };
-  const out = new Uint8ClampedArray(w * h * 4);
-
-  for (let i = 0; i < w * h; i++) {
-    const base = i * c;
-    let r: number;
-    let g: number;
-    let b: number;
-    let a = 1;
-    if (c === 1) {
-      r = g = b = finite(src[base]!);
-    } else if (c === 3) {
-      r = finite(src[base]!);
-      g = finite(src[base + 1]!);
-      b = finite(src[base + 2]!);
+function CpuPresentation({
+  content,
+  viewport,
+  canvasRef,
+  foreground,
+  split,
+}: {
+  content: CpuContent;
+  viewport: ImageViewport | null;
+  canvasRef: MutableRefObject<HTMLCanvasElement | null>;
+  /** Split compare: the foreground source drawn right of the divider, on the
+   *  REFERENCE quad with its own grid (the GPU compositor's framing). */
+  foreground?: CpuContent;
+  split?: number;
+}) {
+  const appliedRef = useRef<{ width: number; height: number } | null>(null);
+  const foregroundSource = foreground?.source ?? null;
+  const foregroundVersion = foreground?.version ?? 0;
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !viewport) return;
+    const { backing } = viewport;
+    const applied = appliedRef.current;
+    if (!applied || applied.width !== backing.width || applied.height !== backing.height) {
+      canvas.width = backing.width;
+      canvas.height = backing.height;
+      appliedRef.current = { width: backing.width, height: backing.height };
+    }
+    if (!content.source) return; // hold the previous frame
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (foregroundSource && split != null) {
+      paintViewport(ctx, viewport, content.source, { clipFraction: [0, split] });
+      paintViewport(ctx, viewport, foregroundSource, {
+        clipFraction: [split, 1],
+        grid: { w: foregroundSource.width, h: foregroundSource.height },
+        clear: false,
+      });
     } else {
-      // c === 4 (rgba); alpha passes through the encode as a plain [0,1] value.
-      r = finite(src[base]!);
-      g = finite(src[base + 1]!);
-      b = finite(src[base + 2]!);
-      a = finite(src[base + 3]!);
+      paintViewport(ctx, viewport, content.source);
     }
+  }, [viewport, content.source, content.version, foregroundSource, foregroundVersion, split, canvasRef]);
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full block"
+      data-cpu-image-canvas=""
+      aria-hidden
+    />
+  );
+}
 
-    // CONTENT stage (Phase 1: identity) — the sampled source color enters the
-    // display pipeline through the content-op registry's `cpu` twin, mirroring
-    // the GPU shader's `cairnContent`. Identity is a passthrough, so [r,g,b] is
-    // unchanged (alpha is a coverage value, handled separately below).
-    const content = IDENTITY_CONTENT.evaluate([[r, g, b]], c);
-    r = content[0]!;
-    g = content[1]!;
-    b = content[2]!;
-
-    // 1) exposure + offset (TEV) in scene-linear, 2) tone-map HDR→[0,1],
-    //    3) output-encode. Offset is added after exposure, before the operator.
-    const lit: RgbTriple = [
-      applyExposureOffset(r, exposure, offset),
-      applyExposureOffset(g, exposure, offset),
-      applyExposureOffset(b, exposure, offset),
-    ];
-    const o = i * 4;
-    if (analyticCmap) {
-      // The (exposure/offset-adjusted) color channels REDUCE to a signed scalar,
-      // then the analytic color runs through the SAME output-encode as a curve.
-      const [lr, lg, lb] = colormapOperation!.evaluate(lit, c, { ...cmapDataParams, reduce: reduceMode });
-      // sRGB OETF (no gamma) — matches the GPU analytic branch's hasGamma=false.
-      out[o] = 255 * outputEncode(lr);
-      out[o + 1] = 255 * outputEncode(lg);
-      out[o + 2] = 255 * outputEncode(lb);
-      out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
-      continue;
-    }
-    if (colormapOperation?.kind === "lut") {
-      // Multi-channel follow-up: the color channels are first REDUCED to a scalar
-      // (luminance/mean — `reduceToScalar`, the shared CPU source of truth the WGSL
-      // `cairnReduceScalar` mirrors), then data index → LUT → display color
-      // directly (no operator/encode). The BOUNDS skin reduces the RAW channels
-      // (`r,g,b`); otherwise the exposure/offset sensitivity (`lit`) — the two are
-      // never composed. At k=1 the reduce returns channel 0 unchanged.
-      const [cr, cg, cb] = colormapOperation.evaluate(cmapBoundsOn ? [r, g, b] : lit, c, { ...cmapDataParams, reduce: reduceMode });
-      out[o] = 255 * cr;
-      out[o + 1] = 255 * cg;
-      out[o + 2] = 255 * cb;
-      out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
-      continue;
-    }
-    const [tr, tg, tb] = op(lit);
-    out[o] = 255 * outputEncode(tr, gamma);
-    out[o + 1] = 255 * outputEncode(tg, gamma);
-    out[o + 2] = 255 * outputEncode(tb, gamma);
-    // Alpha is a coverage value, not light — clamp to [0,1], no tone-map.
-    out[o + 3] = 255 * (a < 0 ? 0 : a > 1 ? 1 : a);
-  }
-  return new ImageData(out, w, h);
+/** The centred status placeholder ("computing diff…" / "no image"). */
+function CpuStatus({ content }: { content: CpuContent }) {
+  const text = content.status === "empty" ? "no image" : content.statusText;
+  if (!text) return null;
+  return (
+    <span
+      className={`absolute inset-0 flex items-center justify-center text-xs text-fg-muted${
+        content.status === "loading" ? " motion-safe:animate-pulse" : ""
+      }`}
+    >
+      {text}
+    </span>
+  );
 }
 
 /**
- * Apply an SDR DISPLAY TRANSFER (tev sRGB · Gamma · Linear) to an already-sRGB
- * 8-bit `ImageData`, returning a new `ImageData`. Mirrors the GPU shader's plain-
- * SDR path (`srgbDecode → clamp → output-encode`) at EV=0/offset=0, so the CPU
- * fallback matches `GpuImagePane` to within 8-bit rounding:
- *   linear = srgbEotf(v/255) → clamp01 → out = 255·outputEncode(linear, gEnc)
- * where `gEnc = resolveEncodeGamma(operator, γ)` (gamma → γ, linear → 1/identity,
- * srgb → undefined/sRGB OETF). For `srgb` this is a bit-exact round-trip (so the
- * pane keeps the plain `<img>` there — no recompute); this runs for gamma/linear.
- * Alpha passes through unchanged.
+ * The two split-clipped TEV overlays: LEFT of the divider the REFERENCE (the
+ * framing grid), RIGHT the FOREGROUND on its OWN grid — so its numbers land on
+ * its pixels even when the two resolutions differ. Mirrors the GPU compositor.
  */
-export function sdrTransferToImageData(
-  src: ImageData,
-  operator: string,
-  gamma?: number,
-  exposureEV = 0,
-  offset = 0,
-): ImageData {
-  const gEnc = resolveEncodeGamma(operator, gamma ?? TONEMAP_GAMMA_DEFAULT);
-  const out = new Uint8ClampedArray(src.data.length);
-  const d = src.data;
-  for (let i = 0; i < d.length; i += 4) {
-    out[i] = 255 * outputEncode(applyExposureOffset(srgbEotf(d[i]! / 255), exposureEV, offset), gEnc);
-    out[i + 1] = 255 * outputEncode(applyExposureOffset(srgbEotf(d[i + 1]! / 255), exposureEV, offset), gEnc);
-    out[i + 2] = 255 * outputEncode(applyExposureOffset(srgbEotf(d[i + 2]! / 255), exposureEV, offset), gEnc);
-    out[i + 3] = d[i + 3]!;
-  }
-  return new ImageData(out, src.width, src.height);
+function splitOverlaySpec(args: {
+  viewport: ImageViewport | null;
+  split: number;
+  sample: PixelSampler;
+  version: number;
+  foregroundSample: PixelSampler;
+  foregroundVersion: number;
+  foregroundDims: { w: number; h: number } | null;
+}): ImagePaneOverlaySpec {
+  const { viewport, split, sample, version, foregroundSample, foregroundVersion, foregroundDims } = args;
+  return {
+    render: ({ notation, setOverlayActive }) =>
+      !viewport ? null : (
+        <>
+          <div
+            className="absolute inset-0 overflow-hidden pointer-events-none"
+            style={{ clipPath: `inset(0 ${(1 - split) * 100}% 0 0)` }}
+          >
+            <PixelValueOverlay viewport={viewport} sample={sample} notation={notation} version={version} />
+          </div>
+          <div
+            className="absolute inset-0 overflow-hidden pointer-events-none"
+            style={{ clipPath: `inset(0 0 0 ${split * 100}%)` }}
+          >
+            <PixelValueOverlay
+              viewport={viewport}
+              sourceDims={foregroundDims ?? undefined}
+              sample={foregroundSample}
+              notation={notation}
+              version={foregroundVersion}
+              onActiveChange={setOverlayActive}
+            />
+          </div>
+        </>
+      ),
+  };
 }
 
 /**
- * Resolve the CSS `image-rendering` for a CPU image pane, applying the SHARED
- * auto-interpolation threshold (`interp-auto.ts`) so `interpolation === "auto"`
- * snaps to `pixelated` at the SAME zoom the GPU pane switches to `nearest` —
- * once one source texel covers `PIXEL_VALUE_MIN_SCREEN_PX` screen px. An
- * explicit `pixelated`/`crisp-edges` bypasses the threshold (returned verbatim,
- * matching the pre-threshold behavior). The CPU backend zooms by physically
- * scaling its wrapper (`transform: scale(zoom)`), so the on-screen texel size is
- * the UNSCALED layout box (measured via `ResizeObserver`) × `zoom`. Shared by
- * both the SDR and HDR CPU branches.
+ * The SPLIT foreground's RAW buffer — the numbers the right-hand TEV overlay
+ * prints. Independent of the display pipeline (like the reference side's
+ * `valueDataRef`): a uint8 operand is decoded once per url, a float operand is
+ * read straight out of its sample buffer.
  */
-function useCpuDisplayPresentation(
-  wrapperRef: RefObject<HTMLDivElement | null>,
-  zoom: number,
-  pan: { x: number; y: number },
-  naturalDims: { w: number; h: number } | null,
-  interpolation: Interpolation,
-): {
-  imageRendering: "pixelated" | "crisp-edges" | undefined;
-  geometry: CpuDisplayGeometry | null;
-  surfaceStyle: React.CSSProperties;
-} {
-  const [layoutBox, setLayoutBox] = useState<{ width: number; height: number } | null>(null);
+function useCompareForeground(
+  b: ImageBackendInput["source"] | undefined,
+  colormap: Colormap | null,
+): { imageUrl: string | null; hdr?: FloatImageData; sample: PixelSampler; version: number } {
+  const url = b && b.dtype === "uint8" ? b.url : null;
+  const pixels = b && b.dtype === "float" ? b.pixels : null;
+  const shape = b && b.dtype === "float" ? b.shape : null;
+  const numpyDtype = b && b.dtype === "float" ? b.numpyDtype : undefined;
+  const hdr = useMemo<FloatImageData | undefined>(
+    () => (pixels ? { pixels, shape: shape ?? [], dtype: numpyDtype ?? "<f4" } : undefined),
+    [pixels, shape, numpyDtype],
+  );
+
+  const dataRef = useRef<ImageData | null>(null);
+  const [version, setVersion] = useState(0);
   useEffect(() => {
-    const el = wrapperRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver((entries) => {
-      const cr = entries[entries.length - 1]?.contentRect;
-      if (!cr) return;
-      setLayoutBox((prev) =>
-        prev && prev.width === cr.width && prev.height === cr.height
-          ? prev
-          : { width: cr.width, height: cr.height },
-      );
+    if (!url) {
+      dataRef.current = null;
+      setVersion((v) => v + 1);
+      return;
+    }
+    let cancelled = false;
+    void loadImageData(url).then((d) => {
+      if (cancelled) return;
+      dataRef.current = d;
+      setVersion((v) => v + 1);
     });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [wrapperRef]);
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
 
-  const geometry = layoutBox && naturalDims
-    ? computeCpuDisplayGeometry(
-        layoutBox,
-        { width: naturalDims.w, height: naturalDims.h },
-        zoom,
-        pan,
-      )
-    : null;
-  const surfaceStyle: React.CSSProperties = geometry
-    ? {
-        position: "absolute",
-        left: geometry.home.left,
-        top: geometry.home.top,
-        width: geometry.home.width,
-        height: geometry.home.height,
-        objectFit: "fill",
+  const sample = useCallback<PixelSampler>(
+    (px, py, notation) => {
+      if (hdr) {
+        const { h, w, c } = shapeDims(hdr.shape);
+        if (px < 0 || py < 0 || px >= w || py >= h) return null;
+        const base = (py * w + px) * c;
+        const readV = floatPixelReader(hdr.pixels);
+        const values =
+          c === 1
+            ? [readV(base)]
+            : colormap != null
+              ? [readV(base), ...(c >= 4 ? [readV(base + 3)] : [])]
+              : [readV(base), readV(base + 1), readV(base + 2), ...(c >= 4 ? [readV(base + 3)] : [])];
+        return buildChannelSample(values, "unit", notation);
       }
-    : { width: "100%", height: "100%", objectFit: "contain" };
-  const imageRendering = interpolation !== "auto"
-    ? interpolation
-    : layoutBox && naturalDims
-      ? autoImageRendering(
-          containScreenPxPerTexel(
-            { width: layoutBox.width * zoom, height: layoutBox.height * zoom },
-            naturalDims.w,
-            naturalDims.h,
-          ),
-          PIXEL_VALUE_MIN_SCREEN_PX,
-        )
-      : undefined;
-  return { imageRendering, geometry, surfaceStyle };
+      const vd = dataRef.current;
+      if (!vd || px < 0 || py < 0 || px >= vd.width || py >= vd.height) return null;
+      const i = (py * vd.width + px) * 4;
+      const r = vd.data[i]!;
+      const g = vd.data[i + 1]!;
+      const bb = vd.data[i + 2]!;
+      const a = vd.data[i + 3]!;
+      return buildChannelSample(colormap != null ? [r, a] : [r, g, bb, a], "uint8", notation);
+    },
+    [hdr, colormap, version],
+  );
+
+  return { imageUrl: url, hdr, sample, version };
 }
 
 // ---------------------------------------------------------------------------
-// SDR branch — the former ImagePane body (decode/colormap/diff effects ported
-// verbatim), rendering its display element through the shared shell.
+// SDR branch — the 8-bit source (plain / transfer / false-color / diff).
 // ---------------------------------------------------------------------------
 
-function CpuSdrImagePane(
-  props: Uint8SurfaceProps & {
-    toolbar?: boolean;
-    /** The viewport's effective settings from its store (group > local merge),
-     *  driven down by the store owner (see `ImageBackendInput.syncedSettings`). */
-    syncedSettings?: PlotSettings;
-    /** The store's ONE write path (see `ImageBackendInput.setSyncedSettings`). */
-    setSyncedSettings?: (patch: PlotSettings) => void;
-    /** LOCAL apply (initialization writes — see `ImageBackendInput`). */
-    /** Controlled fullscreen state (see `ImageBackendInput.enlargeControl`). */
-    enlargeControl?: EnlargeControl;
-    /** Shared comparison captions/metrics; suppresses the ordinary label chip. */
-    compareChrome?: ReactNode;
-    compareLeadingMenus?: ToolbarButtonSpec[];
-    cpuComparisonOperation?: string;
-    isCompareMode?: boolean;
-  },
-) {
+function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
   const {
     imageUrl,
     baselineUrl = null,
@@ -434,7 +356,6 @@ function CpuSdrImagePane(
     gamma: gammaProp,
     exposure: baseExposure = 0,
     offset: baseOffset = 0,
-    showAxes = false,
     processing = DEFAULT_PROCESSING,
     zoom: zoomProp = 1,
     pan: panProp = { x: 0, y: 0 },
@@ -449,21 +370,14 @@ function CpuSdrImagePane(
     toolbar = true,
   } = props;
 
-  // Toolbar visibility is presentation only; the viewport store owns settings.
-  // The viewport's settings STORE (see use-cell-settings.ts): threaded
-  // down from its owner when present; a BARE mount owns its own group-of-one
-  // store — settings live ONLY in stores, never in pane state.
+  // The viewport's settings STORE (see use-cell-settings.ts): threaded down from
+  // its owner when present; a BARE mount owns its own group-of-one store —
+  // settings live ONLY in stores, never in pane state.
   const sdrOwnStore = useCellSettings();
   const sdrThreadedSet = props.setSyncedSettings;
   const synced = sdrThreadedSet ? props.syncedSettings : sdrOwnStore.settings;
   const setSynced = sdrThreadedSet ?? sdrOwnStore.set;
-  // NOSTACK fix (see GpuImagePane): store EXISTENCE no longer flips the seed
-  // to live props — `settings.view` alone creates the entry now.
 
-  // Colormap is an authored bootstrap seed. Live changes go through the store.
-  // Descriptor default captured at mount; HOME restores the view-local colormap
-  // override (and `isModified` enables it while off-default) — same contract as
-  // GpuImagePane / the compare pane, now via the shared `useResettableState`.
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id — the colormap LUTs
   // and the tev DISPLAY-TRANSFER curves (sRGB · Gamma · Linear) in one menu,
   // mutually exclusive by construction. `mode:"sdr"` (an 8-bit source has no
@@ -531,213 +445,76 @@ function CpuSdrImagePane(
     [publishSettings],
   );
 
+  // -----------------------------------------------------------------------
+  // CONTENT + the ONE viewport geometry.
+  // -----------------------------------------------------------------------
+  const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const falseColorRef = useRef<HTMLCanvasElement | null>(null);
-  const transferRef = useRef<HTMLCanvasElement | null>(null);
-  const [transferReady, setTransferReady] = useState(false);
-  // The shared shell attaches these (see `ImagePaneShell`); the CPU backend
-  // has no render-pass effect that reads them, but the shell needs them for
-  // the viewport/controller wiring and the PixelAxes container.
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const split = props.compareSplit;
+
+  const content = useCpuContent({
+    kind: "sdr",
+    imageUrl,
+    baselineUrl,
+    isBaseline,
+    diffMode,
+    processing,
+    sdrTransfer,
+    colormap,
+    tonemapGamma,
+    effectiveExposure,
+    effectiveOffset,
+    effectiveReduce,
+    colorBounds,
+  });
+
+  // SPLIT compare: the FOREGROUND operand, rendered through the same display
+  // parameters and painted on the reference quad with its own grid.
+  const foreground = useCompareForeground(split?.b, colormap);
+  const foregroundContent = useCpuContent({
+    kind: foreground.hdr ? "hdr" : "sdr",
+    imageUrl: foreground.imageUrl,
+    hdr: foreground.hdr,
+    tonemapOp: sdrTransfer,
+    sdrTransfer,
+    processing,
+    colormap,
+    tonemapGamma,
+    effectiveExposure,
+    effectiveOffset,
+    effectiveReduce,
+    colorBounds,
+  });
+
+  const naturalDims = content.dims;
+  const viewport = useImageViewport({ viewportRef, zoom: zoomProp, pan: panProp, naturalDims, interpolation });
+  // The paint is synchronous in `CpuPresentation`'s layout effect, so the
+  // controller's pre-screenshot repaint has nothing to schedule.
+  const requestRender = useCallback(() => {}, []);
+
+  // `[`/`]` (and the arrows outside a stacked grid) flip the divider to an edge.
+  useSplitFlipKeys(viewportRef, split ? "split" : "none", split?.onSplitPositionChange, {
+    inStackedGrid: split?.inStackedGrid,
+    inOverlay: split?.inOverlay,
+  });
+
+  // Report the decoded source size up to the descriptor's listener.
+  const onNaturalSizeRef = useRef(onNaturalSize);
+  onNaturalSizeRef.current = onNaturalSize;
+  const dimW = naturalDims?.w;
+  const dimH = naturalDims?.h;
+  useEffect(() => {
+    if (dimW && dimH) onNaturalSizeRef.current?.(dimW, dimH);
+  }, [dimW, dimH]);
 
   // -----------------------------------------------------------------------
-  // TEV-style per-pixel value overlay — source buffer.
-  //   valueDataRef: RAW source pixels (the numbers we print).
-  // The displayed element (img|canvas) is tracked via `displayElRef` so the
-  // overlay can read its live on-screen rect (post zoom/pan). (The overlay's
-  // text colours are fixed-intensity now, so no displayed-pixel luminance
-  // buffer is retained — see `primitives/PixelValueOverlay`.)
+  // TEV per-pixel value overlay — the RAW source pixels (the numbers we print),
+  // decoded once per url and independent of the display pipeline.
   // -----------------------------------------------------------------------
-  const displayElRef = useRef<HTMLElement | null>(null);
   const valueDataRef = useRef<ImageData | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
   const bumpPixelData = useCallback(() => setPixelDataVersion((v) => v + 1), []);
 
-  // Screenshot target: the displayed element when it IS a canvas (diff /
-  // false-color paths); the plain-<img> path has no canvas, so `toPNG` falls
-  // back to `plotToPng(root)` there (which requires a canvas/svg — see the
-  // module doc's shim note; the toolbar only shows in backend mode anyway).
-  const exportCanvasRef = useMemo(
-    () => ({
-      get current(): HTMLCanvasElement | null {
-        const el = displayElRef.current;
-        return el instanceof HTMLCanvasElement ? el : null;
-      },
-    }),
-    [],
-  );
-
-  // Callback refs that also record the currently-displayed element (only one
-  // of img/canvas/falseColor is mounted at a time) for the overlay's geometry.
-  const setCanvasEl = useCallback((el: HTMLCanvasElement | null) => {
-    canvasRef.current = el;
-    if (el) displayElRef.current = el;
-  }, []);
-  const setFalseColorEl = useCallback((el: HTMLCanvasElement | null) => {
-    falseColorRef.current = el;
-    if (el) displayElRef.current = el;
-  }, []);
-  const setTransferEl = useCallback((el: HTMLCanvasElement | null) => {
-    transferRef.current = el;
-    if (el) displayElRef.current = el;
-  }, []);
-  const setImgEl = useCallback((el: HTMLImageElement | null) => {
-    if (el) displayElRef.current = el;
-  }, []);
-  const [diffReady, setDiffReady] = useState(false);
-  const [falseColorReady, setFalseColorReady] = useState(false);
-  const [naturalDims, setNaturalDims] = useState<{
-    w: number;
-    h: number;
-  } | null>(null);
-
-  // -----------------------------------------------------------------------
-  // SVG gamma filter + CSS filter string (shared helper)
-  // -----------------------------------------------------------------------
-  const { flipSign } = processing;
-  const { gammaFilterId, filterStr, gamma, offset: processingOffset } = useGammaFilter(processing);
-
-  // -----------------------------------------------------------------------
-  // Diff / false-color rendering
-  // -----------------------------------------------------------------------
-  const showDiff =
-    !isBaseline &&
-    diffMode !== "none" &&
-    baselineUrl != null &&
-    imageUrl != null;
-
-  const isDiffActive = diffMode !== "none" && baselineUrl != null;
-  const useFalseColor =
-    colormap != null &&
-    !showDiff &&
-    !(isBaseline && isDiffActive) &&
-    imageUrl != null;
-
-  useEffect(() => {
-    if (!useFalseColor || !imageUrl) {
-      setFalseColorReady(false);
-      return;
-    }
-    let cancelled = false;
-    setFalseColorReady(false);
-
-    const cacheKey = `${imageUrl}::${colormap}::${effectiveExposure}::${effectiveOffset}::${effectiveReduce}::${colorBounds?.join(",") ?? "auto"}`;
-    const cached = getCachedImageData(cacheKey);
-    if (cached) {
-      const fc = falseColorRef.current;
-      if (fc) {
-        fc.width = cached.width;
-        fc.height = cached.height;
-        const fctx = fc.getContext("2d");
-        if (fctx) fctx.putImageData(cached, 0, 0);
-        bumpPixelData();
-        setNaturalDims({ w: cached.width, h: cached.height });
-        onNaturalSize?.(cached.width, cached.height);
-        setFalseColorReady(true);
-      }
-      return;
-    }
-
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled) return;
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      const ctx = c.getContext("2d");
-      if (!ctx) return;
-      ctx.drawImage(img, 0, 0);
-      const src = ctx.getImageData(0, 0, c.width, c.height);
-      const field = imageDataToSceneField(src);
-      const mapped = tonemapToImageData(
-        {
-          pixels: floatValues(field.pixels),
-          shape: [field.height, field.width, 4],
-          dtype: "<f4",
-        },
-        "srgb",
-        colorBounds ? 0 : effectiveExposure,
-        tonemapGamma,
-        colorBounds ? 0 : effectiveOffset,
-        colormap,
-        "linear",
-        colorBounds?.[0],
-        colorBounds?.[1],
-        1,
-        effectiveReduce,
-      );
-      setCachedImageData(cacheKey, mapped);
-      const fc = falseColorRef.current;
-      if (!fc || cancelled) return;
-      fc.width = mapped.width;
-      fc.height = mapped.height;
-      const fctx = fc.getContext("2d");
-      if (fctx) fctx.putImageData(mapped, 0, 0);
-      bumpPixelData();
-      setNaturalDims({ w: mapped.width, h: mapped.height });
-      onNaturalSize?.(mapped.width, mapped.height);
-      setFalseColorReady(true);
-    };
-    img.src = imageUrl;
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useFalseColor, imageUrl, colormap, effectiveExposure, effectiveOffset, effectiveReduce, colorBounds, tonemapGamma]);
-
-  // PLAIN-image display transfer (tev Gamma/Linear). Only when NOT diffing and
-  // NOT colormapped (the false-color LUT output is already display-ready), and
-  // only for a NON-sRGB transfer (sRGB is a bit-exact round-trip → keep the plain
-  // <img>). Recomputes the pixels through `sdrTransferToImageData` (the CPU mirror
-  // of the GPU plain-SDR shader path) into `transferRef`.
-  const useDisplayTransfer =
-    imageUrl != null && !showDiff && !useFalseColor &&
-    (sdrTransfer !== "srgb" || effectiveExposure !== 0 || effectiveOffset !== 0);
-
-  useEffect(() => {
-    if (!useDisplayTransfer || !imageUrl) {
-      setTransferReady(false);
-      return;
-    }
-    let cancelled = false;
-    setTransferReady(false);
-    loadImageData(imageUrl).then((src) => {
-      if (cancelled || !src) return;
-      const mapped = sdrTransferToImageData(
-        src,
-        sdrTransfer,
-        tonemapGamma,
-        effectiveExposure,
-        effectiveOffset,
-      );
-      const c = transferRef.current;
-      if (!c) return;
-      c.width = mapped.width;
-      c.height = mapped.height;
-      const ctx = c.getContext("2d");
-      if (ctx) ctx.putImageData(mapped, 0, 0);
-      bumpPixelData();
-      setNaturalDims({ w: mapped.width, h: mapped.height });
-      onNaturalSize?.(mapped.width, mapped.height);
-      setTransferReady(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useDisplayTransfer, imageUrl, sdrTransfer, tonemapGamma, effectiveExposure, effectiveOffset]);
-
-  const updateDims = useCallback((w: number, h: number) => {
-    setNaturalDims((prev) =>
-      prev && prev.w === w && prev.h === h ? prev : { w, h },
-    );
-    onNaturalSize?.(w, h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Decode the RAW source image once per url so the pixel-value overlay can
-  // read true pixel values (independent of the display mode).
   useEffect(() => {
     if (!imageUrl) {
       valueDataRef.current = null;
@@ -745,7 +522,7 @@ function CpuSdrImagePane(
       return;
     }
     let cancelled = false;
-    loadImageData(imageUrl).then((d) => {
+    void loadImageData(imageUrl).then((d) => {
       if (cancelled) return;
       valueDataRef.current = d;
       bumpPixelData();
@@ -780,209 +557,6 @@ function CpuSdrImagePane(
     [pixelDataVersion],
   );
 
-  useEffect(() => {
-    if (!showDiff) {
-      setDiffReady(false);
-      return;
-    }
-    let cancelled = false;
-
-    const cacheKey = `${baselineUrl}::${imageUrl}::${diffMode}::${colormap}::${effectiveExposure}::${effectiveOffset}`;
-    const cached = getCachedImageData(cacheKey);
-    if (cached) {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        if (canvas.width !== cached.width || canvas.height !== cached.height) {
-          canvas.width = cached.width;
-          canvas.height = cached.height;
-        }
-        const ctx = canvas.getContext("2d");
-        if (ctx) ctx.putImageData(cached, 0, 0);
-        updateDims(cached.width, cached.height);
-        setDiffReady(true);
-      }
-      return;
-    }
-
-    (async () => {
-      const [baseData, otherData] = await Promise.all([
-        loadImageData(baselineUrl!),
-        loadImageData(imageUrl!),
-      ]);
-      if (cancelled) return;
-      if (!baseData || !otherData) return;
-
-      const isSigned = (diffMode as string).includes("signed");
-      const cmapMode: "linear" | "signed" | "positive" = isSigned
-        ? "signed"
-        : "positive";
-      const gpuLut =
-        colormap != null
-          ? getColormapLUT(colormap)
-          : null;
-      const gpuOpts = {
-        diffMode: diffMode as DiffMode,
-        colormap: gpuLut,
-        cmapMode,
-      };
-
-      try {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const dims = webglRenderDiffToCanvas(baseData, otherData, gpuOpts, canvas);
-          if (dims) {
-            if (cancelled) return;
-            updateDims(dims.width, dims.height);
-            setDiffReady(true);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("cairn-plot: WebGL 2 diff acceleration failed; using CPU", err);
-      }
-      let diffData = computeDiff(
-        baseData,
-        otherData,
-        diffMode as DiffMode,
-      );
-      if (colormap != null) {
-        diffData = applyColormap(
-          diffData,
-          colormap,
-          cmapMode,
-          effectiveExposure,
-          effectiveOffset,
-        );
-      }
-      setCachedImageData(cacheKey, diffData);
-      const canvas = canvasRef.current;
-      if (!canvas || cancelled) return;
-      if (
-        canvas.width !== diffData.width ||
-        canvas.height !== diffData.height
-      ) {
-        canvas.width = diffData.width;
-        canvas.height = diffData.height;
-      }
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.putImageData(diffData, 0, 0);
-      updateDims(diffData.width, diffData.height);
-      setDiffReady(true);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baselineUrl, imageUrl, diffMode, showDiff, colormap, effectiveExposure, effectiveOffset, onNaturalSize]);
-
-  // -----------------------------------------------------------------------
-  // Render (display-element branch verbatim from ImagePane; frame = shell)
-  // -----------------------------------------------------------------------
-  // Auto-interpolation: snap to `pixelated` when magnified past the shared
-  // texel-size threshold (GPU-pane parity), else the browser default. Explicit
-  // pixelated/crisp-edges bypass it. See `useAutoImageRendering`.
-  const {
-    imageRendering: imgRendering,
-    geometry: displayGeometry,
-    surfaceStyle,
-  } = useCpuDisplayPresentation(wrapperRef, zoomProp, panProp, naturalDims, interpolation);
-  const invertStyle = flipSign ? { filter: "invert(1)" } : {};
-
-  const overlayNode =
-    overlay &&
-    overlaySettings?.enabled &&
-    naturalDims &&
-    imageUrl &&
-    ((overlay.boxes?.length ?? 0) > 0 ||
-      (overlay.masks?.length ?? 0) > 0) ? (
-      <ImageOverlay
-        data={overlay}
-        settings={overlaySettings}
-        naturalWidth={naturalDims.w}
-        naturalHeight={naturalDims.h}
-      />
-    ) : undefined;
-
-  const surface = !imageUrl ? (
-    <span className="text-xs text-fg-muted">no image</span>
-  ) : showDiff ? (
-    <>
-      {!diffReady && (
-        <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-          computing diff...
-        </span>
-      )}
-      <canvas
-        ref={setCanvasEl}
-        className="block"
-        style={{
-          ...surfaceStyle,
-          display: diffReady ? "block" : "none",
-          imageRendering: imgRendering,
-          ...invertStyle,
-        }}
-      />
-    </>
-  ) : useFalseColor ? (
-    <>
-      {!falseColorReady && (
-        <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-          applying colormap...
-        </span>
-      )}
-      <canvas
-        ref={setFalseColorEl}
-        className="block"
-        style={{
-          ...surfaceStyle,
-          display: falseColorReady ? "block" : "none",
-          imageRendering: imgRendering,
-          ...invertStyle,
-        }}
-      />
-    </>
-  ) : useDisplayTransfer ? (
-    <>
-      {!transferReady && (
-        <span className="text-xs text-fg-muted motion-safe:animate-pulse">
-          applying transfer...
-        </span>
-      )}
-      <canvas
-        ref={setTransferEl}
-        className="block"
-        style={{
-          ...surfaceStyle,
-          display: transferReady ? "block" : "none",
-          imageRendering: imgRendering,
-          ...invertStyle,
-        }}
-      />
-    </>
-  ) : (
-    <img
-      ref={setImgEl}
-      src={imageUrl}
-      alt={label}
-      className="block"
-      draggable={false}
-      style={{
-        ...surfaceStyle,
-        filter: filterStr,
-        imageRendering: imgRendering,
-      }}
-      onLoad={(e) => {
-        const img = e.currentTarget;
-        setNaturalDims({
-          w: img.naturalWidth,
-          h: img.naturalHeight,
-        });
-        onNaturalSize?.(img.naturalWidth, img.naturalHeight);
-      }}
-    />
-  );
-
   return (
     <ImagePaneShell
       paneAttrs={{
@@ -991,43 +565,52 @@ function CpuSdrImagePane(
       }}
       surfaceAttrs={{ "data-cpu-image-surface": "" }}
       toolbar={toolbar}
-      paneRef={paneRef}
-      wrapperRef={wrapperRef}
+      viewportRef={viewportRef}
+      viewport={viewport}
       zoom={zoomProp}
       pan={panProp}
       onViewChange={onViewChange}
       naturalDims={naturalDims}
-      checkerboard="pane"
-      wrapperClassName="relative w-full h-full"
-      // The CPU backend zooms by physically growing the wrapper (CSS
-      // transform), unlike the GPU backend's uvRect crop.
-      wrapperStyle={{
-        position: "absolute",
-        inset: 0,
-        transform: `translate(${panProp.x}px, ${panProp.y}px) scale(${zoomProp})`,
-        transformOrigin: "0 0",
-      }}
-      viewportPadding={showAxes && naturalDims ? "16px 4px 4px 28px" : "4px"}
-      header={<GammaFilterSvg id={gammaFilterId} gamma={gamma} offset={processingOffset} />}
-      surface={surface}
-      showAxes={showAxes}
-      overlayNode={overlayNode}
-      overlay={{
-        displayElRef,
-        sample: samplePixel,
-        version: pixelDataVersion,
-        hasSource: !!imageUrl && !!displayGeometry,
-        displayGeometry: displayGeometry ? {
-          left: displayGeometry.quad.left,
-          top: displayGeometry.quad.top,
-          width: displayGeometry.quad.width,
-          height: displayGeometry.quad.height,
-          gridWidth: displayGeometry.grid.width,
-          gridHeight: displayGeometry.grid.height,
-        } : undefined,
-      }}
+      surface={
+        <>
+          <CpuPresentation
+            content={content}
+            viewport={viewport}
+            canvasRef={canvasRef}
+            foreground={split ? foregroundContent : undefined}
+            split={split?.splitPosition}
+          />
+          <CpuStatus content={content} />
+          {split && (
+            <SplitDivider
+              splitPosition={split.splitPosition}
+              onChange={split.onSplitPositionChange}
+              onReset={() => split.onSplitPositionChange?.(0.5)}
+            />
+          )}
+        </>
+      }
+      imageOverlay={
+        overlay && overlaySettings?.enabled && ((overlay.boxes?.length ?? 0) > 0 || (overlay.masks?.length ?? 0) > 0)
+          ? { data: overlay, settings: overlaySettings }
+          : undefined
+      }
+      overlay={
+        split
+          ? splitOverlaySpec({
+              viewport,
+              split: split.splitPosition,
+              sample: samplePixel,
+              version: pixelDataVersion,
+              foregroundSample: foreground.sample,
+              foregroundVersion: foreground.version + foregroundContent.version,
+              foregroundDims: foregroundContent.dims,
+            })
+          : { sample: samplePixel, version: pixelDataVersion }
+      }
       notationSeed={pixelValueNotation}
-      exportCanvasRef={exportCanvasRef}
+      exportCanvasRef={canvasRef}
+      requestRender={requestRender}
       // SDR single-image: ONE unified DISPLAY menu (the tev DISPLAY-TRANSFER
       // curves sRGB · Gamma · Linear + the colormap LUTs) — mutually exclusive by
       // construction (`enc`), replacing the old colormap + transfer menu pair.
@@ -1082,10 +665,10 @@ function CpuSdrImagePane(
       // COMPARE mode: the caption chips carry the labeling (suppress the pane's
       // own label chip); else the ordinary bottom-left label.
       label={props.isCompareMode ? "" : label}
-      // Gate on a non-empty label (matching the CPU HDR path + `GpuImagePane`),
-      // so an empty label renders NO chip. The `side`-compare reference pane
-      // relies on this: it passes `label=""` and shows the shared top-left
-      // `RefBadge` instead of a bottom-left "REF" label chip.
+      // Gate on a non-empty label (matching the CPU HDR path + the GPU pane), so
+      // an empty label renders NO chip. The `side`-compare reference pane relies
+      // on this: it passes `label=""` and shows the shared top-left `RefBadge`
+      // instead of a bottom-left "REF" label chip.
       showLabelChip={!props.isCompareMode && !!label}
       extraChips={props.compareChrome}
       isDraggable={isDraggable}
@@ -1095,35 +678,16 @@ function CpuSdrImagePane(
 }
 
 // ---------------------------------------------------------------------------
-// HDR branch — the former HdrImagePane body (single CPU tone-map pass ported
-// verbatim), rendering its canvas through the shared shell. No colormap /
-// compare-diff / processing here — asymmetric by design (see module doc).
+// HDR branch — the float source through the single tone-map pass. No colormap-
+// vs-diff selection and no `processing` here — asymmetric by design.
 // ---------------------------------------------------------------------------
 
-function CpuHdrImagePane(
-  props: FloatSurfaceProps & {
-    toolbar?: boolean;
-    /** The viewport's effective settings from its store (group > local merge),
-     *  driven down by the store owner (see `ImageBackendInput.syncedSettings`). */
-    syncedSettings?: PlotSettings;
-    /** The store's ONE write path (see `ImageBackendInput.setSyncedSettings`). */
-    setSyncedSettings?: (patch: PlotSettings) => void;
-    /** LOCAL apply (initialization writes — see `ImageBackendInput`). */
-    /** Controlled fullscreen state (see `ImageBackendInput.enlargeControl`). */
-    enlargeControl?: EnlargeControl;
-    /** Shared comparison captions/metrics; suppresses the ordinary label chip. */
-    compareChrome?: ReactNode;
-    compareLeadingMenus?: ToolbarButtonSpec[];
-    cpuComparisonOperation?: string;
-    isCompareMode?: boolean;
-  },
-) {
+function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
   const {
     tonemap = "srgb",
     exposure = 0,
     offset: baseOffset = 0,
     gamma,
-    showAxes = false,
     label = "",
     interpolation = "auto",
     zoom = 1,
@@ -1135,15 +699,12 @@ function CpuHdrImagePane(
     toolbar = true,
   } = props;
 
-  // The viewport's settings STORE (see use-cell-settings.ts): threaded
-  // down from its owner when present; a BARE mount owns its own group-of-one
-  // store — settings live ONLY in stores, never in pane state.
+  // The viewport's settings STORE (see use-cell-settings.ts): threaded down from
+  // its owner when present; a BARE mount owns its own group-of-one store.
   const hdrOwnStore = useCellSettings();
   const hdrThreadedSet = props.setSyncedSettings;
   const synced = hdrThreadedSet ? props.syncedSettings : hdrOwnStore.settings;
   const setSynced = hdrThreadedSet ?? hdrOwnStore.set;
-  // NOSTACK fix (see GpuImagePane): store EXISTENCE no longer flips the seed
-  // to live props — `settings.view` alone creates the entry now.
 
   // DEEP EXR depth slider: `hdr` is the live-flattened effective source; the
   // depth slider + HOME reset ride the shell (absent for non-deep sources).
@@ -1151,13 +712,9 @@ function CpuHdrImagePane(
   const hdr = deepFlatten.hdr;
 
   // UNIFIED DISPLAY ENCODING (Phase 3): ONE `encoding` id replaces the separate
-  // tone-map + colormap overrides — selecting a colormap LUT deactivates the
-  // curve and vice-versa STRUCTURALLY (`display-operation.ts`). Like the GPU float
-  // pane, this pane KNOWS its channel arity (`hdr.shape`), so it gates by arity:
-  // luts@k=1, `normal`@k=3, curves always. The default curve resolves from the
-  // descriptor `tonemap=` coerced to an SDR operator (the CPU pane tone-maps to
-  // an 8-bit ImageData); a colormap `colormap=`
-  // wins the seed for a scalar source. HOME restores the authored seed.
+  // tone-map + colormap overrides. Like the GPU float pane, this pane KNOWS its
+  // channel arity (`hdr.shape`), so it gates by arity: luts@k=1, `normal`@k=3,
+  // curves always.
   const propColormap: Colormap | null =
     (props as unknown as { colormap?: Colormap }).colormap ?? null;
   const sourceArity = shapeDims(hdr.shape).c;
@@ -1172,49 +729,37 @@ function CpuHdrImagePane(
     propColormap,
     propTonemap: tonemap,
     resolveDefaultCurve,
-    // The settings store rules when present; picks publish and flow back down.
     settings: synced,
   });
   const colormap = enc.colormap as Colormap;
   const tonemapOp = enc.curveId as DisplayCurveId;
 
   // Gamma(γ) for the Gamma operator (the γ slider is gated by the active
-  // encoding's param manifest — only the Gamma curve declares γ). Seeded from the
-  // descriptor `gamma=`, else the default 2.2. A viewport setting: persists across
-  // flips; reseeds only on a controlled surface; HOME re-seeds to the visible slot.
+  // encoding's param manifest). Seeded from the descriptor `gamma=`, else 2.2.
   const gammaSeed = gamma && gamma > 0 ? gamma : TONEMAP_GAMMA_DEFAULT;
-  // γ resolves at RENDER: store value > descriptor seed (the one lookup).
   const tonemapGamma =
     synced?.["image.tonemapGamma"] != null && synced["image.tonemapGamma"] > 0 ? synced["image.tonemapGamma"] : gammaSeed;
   const gammaModified = tonemapGamma !== gammaSeed;
 
+  const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
-  const [pixelDataVersion, setPixelDataVersion] = useState(0);
 
   // EXPOSURE / OFFSET display-adjust sliders (§requirement B). View-local,
-  // display-only — recomputes the CPU tone-map pass (like a tonemap/exposure
-  // change already does), never a diff. The display EV ADDS to the prop exposure.
-  // EV/OFFSET resolve at RENDER: store value > 0 (no descriptor prop).
+  // display-only — recomputes the CPU tone-map pass. The display EV ADDS to the
+  // prop exposure; HOME zeroes only the slider, so the descriptor value persists.
   const displayEV = synced?.["image.exposureEV"] ?? 0;
   const displayOffset = synced?.["image.offset"] ?? 0;
+  const effectiveExposure = exposure + displayEV;
+  const effectiveOffset = baseOffset + displayOffset;
 
-  // DATA-ENCODING BOUNDS (Phase 4) — mirrors GpuImagePane. `colorRange` (grid-
+  // DATA-ENCODING BOUNDS (Phase 4) — mirrors the GPU pane. `colorRange` (grid-
   // shared descriptor) SEEDS the min/max BOUNDS skin — the ALTERNATIVE to EV/OFF
-  // (never composed). (The norm Lin·Log·Pow PICKER was removed — the engine norm
-  // machinery `cairnDataIndex`/`computeDataIndex` stays, but the UI is gone and the
-  // effective norm is always linear; see the norm-UI-removal follow-up.)
+  // (never composed).
   const propColorRange = (props as unknown as { colorRange?: [number, number] }).colorRange;
-  // MULTI-CHANNEL REDUCE (the multi-channel-colormap follow-up) — mirrors
-  // GpuImagePane. `reduceOverride` null = the k-based default (luminance for k≥3,
-  // mean for k=2); the segmented control shows only while a lut is active AND
-  // sourceArity>1.
-  // REDUCE resolves at RENDER: store value > the k-based default.
+  // MULTI-CHANNEL REDUCE — `null` = the k-based default (luminance for k≥3, mean
+  // for k=2); the segmented control shows only while a lut is active AND k>1.
   const reduceDefault = defaultReduceMode(sourceArity);
   const effectiveReduce = (synced?.["image.reduce"] as ReduceMode | undefined) ?? reduceDefault;
-  // BOUNDS resolve at RENDER: store pair > descriptor colorRange.
   const colorBounds = useMemo<[number, number] | null>(
     () =>
       synced?.["image.colorRange"] !== undefined
@@ -1277,56 +822,50 @@ function CpuHdrImagePane(
     [publishSettings],
   );
 
-  // Single CPU tone-map pass; reruns on data / tonemap / exposure / gamma /
-  // display-adjust / norm / bounds.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let imageData: ImageData;
-    try {
-      imageData = tonemapToImageData(
-        hdr,
-        tonemapOp,
-        exposure + displayEV,
-        // The output-encode transfer selected by the operator in effect
-        // (gamma → γ, linear → identity, else sRGB OETF). See resolveEncodeGamma.
-        resolveEncodeGamma(tonemapOp, tonemapGamma),
-        // Base offset (controlled) + the additive runtime OFF slider. HOME zeroes
-        // only `displayOffset`, so the descriptor `offset` persists.
-        baseOffset + displayOffset,
-        // Colormap (LUT family): active → the scalar channel is false-colored and
-        // the tone-map operator is bypassed (see tonemapToImageData).
-        colormap,
-        // Phase 4 DATA-encoding bounds (colormap only). When bounds are engaged,
-        // tonemapToImageData reads the RAW value (EV/OFF neutralized here to avoid
-        // double-apply — single-application). Norm is always LINEAR (the picker was
-        // removed; the engine norm machinery stays but is unused UI-side).
-        "linear",
-        boundsEngaged && colorBounds ? colorBounds[0] : undefined,
-        boundsEngaged && colorBounds ? colorBounds[1] : undefined,
-        1,
-        // Multi-channel follow-up: the reduce (luminance/mean) that collapses a
-        // k>1 colormap source to the LUT scalar. Moot for k=1.
-        effectiveReduce,
-      );
-    } catch (err) {
-      console.error("[cairn] HDR tone-map error:", err);
-      return;
-    }
-    if (canvas.width !== imageData.width || canvas.height !== imageData.height) {
-      canvas.width = imageData.width;
-      canvas.height = imageData.height;
-    }
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.putImageData(imageData, 0, 0);
-    setPixelDataVersion((v) => v + 1);
-    setDims((prev) =>
-      prev && prev.w === imageData.width && prev.h === imageData.height
-        ? prev
-        : { w: imageData.width, h: imageData.height },
-    );
-  }, [hdr, tonemapOp, colormap, exposure, baseOffset, tonemapGamma, displayEV, displayOffset, effectiveReduce, colorBounds, boundsEngaged]);
+  // -----------------------------------------------------------------------
+  // CONTENT + the ONE viewport geometry.
+  // -----------------------------------------------------------------------
+  const split = props.compareSplit;
+  const content = useCpuContent({
+    kind: "hdr",
+    hdr,
+    tonemapOp,
+    colormap,
+    tonemapGamma,
+    // When bounds are engaged the tone-map reads the RAW value, so EV/OFF are
+    // neutralized here to avoid a double-apply (single-application).
+    effectiveExposure: boundsEngaged ? 0 : effectiveExposure,
+    effectiveOffset: boundsEngaged ? 0 : effectiveOffset,
+    effectiveReduce,
+    colorBounds,
+    boundsEngaged,
+  });
+
+  const foreground = useCompareForeground(split?.b, colormap);
+  const foregroundContent = useCpuContent({
+    kind: foreground.hdr ? "hdr" : "sdr",
+    imageUrl: foreground.imageUrl,
+    hdr: foreground.hdr,
+    tonemapOp,
+    sdrTransfer: tonemapOp,
+    colormap,
+    tonemapGamma,
+    effectiveExposure: boundsEngaged ? 0 : effectiveExposure,
+    effectiveOffset: boundsEngaged ? 0 : effectiveOffset,
+    effectiveReduce,
+    colorBounds,
+    boundsEngaged,
+  });
+
+  const dims = content.dims;
+  const viewport = useImageViewport({ viewportRef, zoom, pan, naturalDims: dims, interpolation });
+  const requestRender = useCallback(() => {}, []);
+  const pixelDataVersion = content.version;
+
+  useSplitFlipKeys(viewportRef, split ? "split" : "none", split?.onSplitPositionChange, {
+    inStackedGrid: split?.inStackedGrid,
+    inOverlay: split?.inOverlay,
+  });
 
   // TEV-style per-pixel value overlay: reads the RAW float samples so the
   // numbers are the true scene values (not the tone-mapped display pixels).
@@ -1353,7 +892,7 @@ function CpuHdrImagePane(
   );
 
   // In-pane HISTOGRAM source — bins the RAW float scene values. For a DEEP EXR,
-  // `getDeepCsr` exports the retained samples so the panel can list the cursor
+  // `getGpuCsr` exports the retained samples so the panel can list the cursor
   // pixel's per-sample value + DEPTH (Z).
   const histogramSource = useMemo(
     () =>
@@ -1365,32 +904,6 @@ function CpuHdrImagePane(
     [hdr, pixelDataVersion],
   );
 
-  // Auto-interpolation: shared threshold (GPU-pane parity); see the SDR branch.
-  const {
-    imageRendering: imgRendering,
-    geometry: displayGeometry,
-    surfaceStyle,
-  } = useCpuDisplayPresentation(wrapperRef, zoom, pan, dims, interpolation);
-
-  // DETECTION overlay (boxes + masks) on the FLOAT surface — the CPU-fallback
-  // twin of GpuImagePane's `overlayNode` (M7). Composites over the tone-mapped
-  // canvas via the shared display-space `ImageOverlay` layer, identically to the
-  // SDR branch above (`dims` here plays the SDR pane's `naturalDims`/`imageUrl`
-  // role — a mounted float canvas has non-null `dims`).
-  const overlayNode =
-    overlay &&
-    overlaySettings?.enabled &&
-    dims &&
-    ((overlay.boxes?.length ?? 0) > 0 ||
-      (overlay.masks?.length ?? 0) > 0) ? (
-      <ImageOverlay
-        data={overlay}
-        settings={overlaySettings}
-        naturalWidth={dims.w}
-        naturalHeight={dims.h}
-      />
-    ) : undefined;
-
   return (
     <ImagePaneShell
       paneAttrs={{
@@ -1399,52 +912,56 @@ function CpuHdrImagePane(
       }}
       surfaceAttrs={{ "data-cpu-image-surface": "" }}
       toolbar={toolbar}
-      paneRef={paneRef}
-      wrapperRef={wrapperRef}
+      viewportRef={viewportRef}
+      viewport={viewport}
       zoom={zoom}
       pan={pan}
       onViewChange={onViewChange}
       naturalDims={dims}
-      checkerboard="pane"
-      wrapperClassName="relative w-full h-full"
-      wrapperStyle={{
-        position: "absolute",
-        inset: 0,
-        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-        transformOrigin: "0 0",
-      }}
-      viewportPadding={showAxes && dims ? "16px 4px 4px 28px" : "4px"}
       surface={
-        <canvas
-          ref={canvasRef}
-          className="block"
-          style={{ ...surfaceStyle, imageRendering: imgRendering }}
-        />
+        <>
+          <CpuPresentation
+            content={content}
+            viewport={viewport}
+            canvasRef={canvasRef}
+            foreground={split ? foregroundContent : undefined}
+            split={split?.splitPosition}
+          />
+          <CpuStatus content={content} />
+          {split && (
+            <SplitDivider
+              splitPosition={split.splitPosition}
+              onChange={split.onSplitPositionChange}
+              onReset={() => split.onSplitPositionChange?.(0.5)}
+            />
+          )}
+        </>
       }
-      showAxes={showAxes}
-      overlayNode={overlayNode}
-      overlay={{
-        displayElRef: canvasRef,
-        sample: samplePixel,
-        version: pixelDataVersion,
-        hasSource: !!displayGeometry,
-        displayGeometry: displayGeometry ? {
-          left: displayGeometry.quad.left,
-          top: displayGeometry.quad.top,
-          width: displayGeometry.quad.width,
-          height: displayGeometry.quad.height,
-          gridWidth: displayGeometry.grid.width,
-          gridHeight: displayGeometry.grid.height,
-        } : undefined,
-      }}
+      imageOverlay={
+        overlay && overlaySettings?.enabled && ((overlay.boxes?.length ?? 0) > 0 || (overlay.masks?.length ?? 0) > 0)
+          ? { data: overlay, settings: overlaySettings }
+          : undefined
+      }
+      overlay={
+        split
+          ? splitOverlaySpec({
+              viewport,
+              split: split.splitPosition,
+              sample: samplePixel,
+              version: pixelDataVersion,
+              foregroundSample: foreground.sample,
+              foregroundVersion: foreground.version + foregroundContent.version,
+              foregroundDims: foregroundContent.dims,
+            })
+          : { sample: samplePixel, version: pixelDataVersion }
+      }
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
+      requestRender={requestRender}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
-      // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
-      // menus. Selecting a LUT deactivates the curve and vice-versa structurally
-      // (`enc` owns the single `encoding` id); luts are gated to k=1 and `normal`
-      // to k=3. The CPU fallback tone-maps to an 8-bit surface (never engages
-      // true HDR), so it is the SDR rendition by construction (no PEAK slider).
+      // COLORMAPS / REMAPS sections). The CPU fallback tone-maps to an 8-bit
+      // surface (never engages true HDR), so it is the SDR rendition by
+      // construction (no PEAK slider).
       leadingMenus={[
         ...(props.compareLeadingMenus ?? []),
         // CHANNELS (EXR part/layer) menu, owner-supplied — leading, like the rest.
@@ -1453,15 +970,13 @@ function CpuHdrImagePane(
       ]}
       // SECOND-ROW segmented controls (controls-row-separation directive): the
       // multi-channel REDUCE (lut + k>1) picker sits in the second toolbar row
-      // alongside EV/OFF/γ, not next to the DISPLAY menu. Mirrors GpuImagePane.
-      // (The norm Lin·Log·Pow picker was REMOVED — norm-UI-removal follow-up.)
+      // alongside EV/OFF/γ, not next to the DISPLAY menu.
       rowSegments={[
         ...(enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}
       // EXPOSURE / OFFSET display-adjust sliders — the CPU HDR tone-map pass
-      // applies them (recomputed like any exposure/tonemap change). Gated by the
-      // ACTIVE encoding's param manifest: shown for curves + luts (which declare
-      // exposure/offset), hidden for the paramless `normal` remap AND when the
+      // applies them. Gated by the ACTIVE encoding's param manifest: shown for
+      // curves + luts, hidden for the paramless `normal` remap AND when the
       // min/max BOUNDS skin is engaged (the two are never composed).
       displayAdjust={
         enc.hasParam("exposure") && !boundsEngaged
@@ -1473,10 +988,8 @@ function CpuHdrImagePane(
             }
           : undefined
       }
-      // γ slider — gated by the active encoding's manifest (only the Gamma curve
-      // declares γ; a colormap LUT / other curves do not). Phase 4's min/max bounds
-      // sliders follow. (The power-NORM exponent slider was REMOVED with the norm
-      // picker — norm-UI-removal follow-up.)
+      // γ slider — gated by the active encoding's manifest. Phase 4's min/max
+      // bounds sliders follow.
       extraSliders={[
         ...(enc.hasParam("gamma")
           ? [
@@ -1560,26 +1073,11 @@ function CpuHdrImagePane(
 }
 
 // ---------------------------------------------------------------------------
-// Public component.
+// COMPARE chrome (captions / metrics / mode menu).
 // ---------------------------------------------------------------------------
 
 /**
- * One of the two interchangeable image backends (the CPU/2D-canvas one — see
- * `GpuImagePane` for the WebGPU other); both accept the ONE
- * {@link ImageBackendInput} and are assignable to `ImageBackendView`. The unified
- * `source` fans out (keyed on `source.dtype`) into the two internal pane
- * representations via {@link useImageSurfaceProps}; the sub-panes below are
- * unchanged.
- */
-/**
- * COMPARE chrome for the CPU backend (content-op unification). The unified
- * COMPOSITOR lives on the GPU pane (`GpuImagePane`); the CPU backend is the
- * no-WebGPU / render=cpu FALLBACK, so on `compareSource` it renders the
- * REFERENCE image (the primary `source`) DEGRADED — no live composite of the
- * foreground — but keeps the compare CHROME (per-side caption chips + the split
- * REF badge, same DOM/selectors as the GPU pane) so the reference re-pick
- * gesture + labeling still work. A real CPU composite is a documented remaining
- * gap (see the default export + the design doc's Phase-4 note). Captions are
+ * COMPARE chrome for the CPU backend (content-op unification). Captions are
  * inlined (NOT `compareCaptions`, which pulls `engine/kernels` into the CORE
  * bundle — the CPU pane must stay engine-free). */
 function cpuMetricsLabel(metrics: CpuSourceMetrics | null): string | null {
@@ -1685,120 +1183,12 @@ function cpuCompareModeMenu(compare: NonNullable<ImageBackendInput["compareSourc
   });
 }
 
-function CpuSplitComparePane({ input, metrics }: { input: ImageBackendInput; metrics: CpuSourceMetrics | null }) {
-  const compare = input.compareSource!;
-  const split = compare.splitPosition ?? 0.5;
-  const paneRef = useRef<HTMLDivElement>(null);
-  useSplitFlipKeys(paneRef, "split", compare.onSplitPositionChange, {
-    inStackedGrid: compare.inStackedGrid,
-    inOverlay: compare.inOverlay,
-  });
-  const controller = useImageController({
-    rootRef: paneRef,
-    zoom: input.zoom ?? 1,
-    pan: input.pan ?? { x: 0, y: 0 },
-    onViewChange: input.onViewChange,
-    onReset: input.resetSettings,
-  });
-  const encoding = input.syncedSettings?.["image.encoding"] ?? input.tonemap ?? "srgb";
-  const arity = input.source.dtype === "float" ? shapeDims(input.source.shape).c : 4;
-  const displayIds = resolveDisplayOperationIds({
-    mode: input.source.dtype === "uint8" ? "sdr" : "arity",
-    arity,
-    curveSet: input.source.dtype === "uint8" ? DISPLAY_TRANSFER_OPERATION_IDS : DISPLAY_OPERATION_IDS,
-  });
-  const displayMenu = displayToolbarButton({
-    value: encoding,
-    ids: displayIds,
-    onSelect: (next) => input.setSyncedSettings?.({ "image.encoding": next }),
-  });
-  const exposure = input.syncedSettings?.["image.exposureEV"] ?? input.exposure ?? 0;
-  const offset = input.syncedSettings?.["image.offset"] ?? input.offset ?? 0;
-  const sliders: ToolbarSliderSpec[] = [
-    {
-      id: "exposure",
-      icon: "sun",
-      label: "EV",
-      title: "Exposure (EV stops)",
-      min: -8,
-      max: 8,
-      step: 0.1,
-      value: exposure,
-      onChange: (next) => input.setSyncedSettings?.({ "image.exposureEV": next }),
-      format: (next) => `${next >= 0 ? "+" : "−"}${Math.abs(next).toFixed(1)}`,
-    },
-    {
-      id: "offset",
-      icon: "plusminus",
-      label: "OFF",
-      title: "Offset",
-      min: -1,
-      max: 1,
-      step: 0.01,
-      value: offset,
-      onChange: (next) => input.setSyncedSettings?.({ "image.offset": next }),
-      format: (next) => `${next >= 0 ? "+" : "−"}${Math.abs(next).toFixed(2)}`,
-    },
-  ];
-  if (getDisplayOperation(encoding)?.parameters.includes("gamma")) {
-    sliders.push({
-      id: "gamma",
-      label: "γ",
-      title: "Display gamma γ",
-      min: TONEMAP_GAMMA_MIN,
-      max: TONEMAP_GAMMA_MAX,
-      step: TONEMAP_GAMMA_STEP,
-      value: input.syncedSettings?.["image.tonemapGamma"] ?? input.gamma ?? TONEMAP_GAMMA_DEFAULT,
-      onChange: (next) => input.setSyncedSettings?.({ "image.tonemapGamma": next }),
-      format: (next) => next.toFixed(1),
-    });
-  }
-  const childProps = {
-    ...input,
-    compareSource: undefined,
-    toolbar: false,
-    label: "",
-  };
-  return (
-    <div ref={paneRef} data-cpu-compare-pane="" className="group relative isolate h-full min-h-0 w-full min-w-0 overflow-hidden">
-      {input.toolbar !== false && (
-        <PlotToolbar
-          controller={controller}
-          config={{
-            ...IMAGE_TOOLBAR_CONFIG,
-            leadingButtons: [cpuCompareModeMenu(compare), displayMenu],
-            sliders,
-            segments: getDisplayOperation(encoding)?.parameters.includes("reduce")
-              ? [reduceSegment(
-                  (input.syncedSettings?.["image.reduce"] as ReduceMode | undefined) ?? "luminance",
-                  (next) => input.setSyncedSettings?.({ "image.reduce": next }),
-                )]
-              : [],
-          }}
-        />
-      )}
-      <div className="absolute inset-0" style={{ clipPath: `inset(0 ${(1 - split) * 100}% 0 0)` }}>
-        <CpuImagePane {...childProps} source={input.source} />
-      </div>
-      <div className="absolute inset-0" style={{ clipPath: `inset(0 0 0 ${split * 100}%)` }}>
-        <CpuImagePane {...childProps} source={compare.b} />
-      </div>
-      <SplitDivider
-        splitPosition={split}
-        onChange={compare.onSplitPositionChange}
-        onReset={() => compare.onSplitPositionChange?.(0.5)}
-      />
-      {cpuCompareChrome(compare, cpuMetricsLabel(metrics))}
-    </div>
-  );
-}
-
 function useCpuComparisonInput(input: ImageBackendInput, metrics: CpuSourceMetrics | null): ImageBackendInput {
   const compare = input.compareSource;
   // A diff is an ordinary float image source, but its wrapper and shape MUST stay
   // stable while only the viewport changes. Recreating `shape` here on every pan
   // invalidates `useImageSurfaceProps`'s memoized HDR object, which reruns the
-  // full native-resolution tone-map + putImageData pass for every pointer event.
+  // full native-resolution tone-map pass for every pointer event.
   const comparisonSource = useMemo<ImageBackendInput["source"] | null>(() => {
     if (!compare || !metrics?.errorMap || !metrics.width || !metrics.height || !metrics.channels) return null;
     return {
@@ -1834,34 +1224,50 @@ function useCpuComparisonInput(input: ImageBackendInput, metrics: CpuSourceMetri
     : input;
 }
 
+// ---------------------------------------------------------------------------
+// Public component.
+// ---------------------------------------------------------------------------
+
+/**
+ * One of the two interchangeable image backends (the CPU/2D-canvas one — see the
+ * WebGPU pane for the other); both accept the ONE {@link ImageBackendInput} and
+ * are assignable to `ImageBackendView`. The unified `source` fans out (keyed on
+ * `source.dtype`) into the two internal branches via {@link useImageSurfaceProps}.
+ * A `split` compare keeps the ORIGINAL reference source (the error-field
+ * substitution below is the DIFF mode's) and hands the foreground operand down
+ * as `compareSplit`.
+ */
 export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Element {
   const compareMetrics = useCpuCompareMetrics(backendProps);
-  const props = useImageSurfaceProps(useCpuComparisonInput(backendProps, compareMetrics));
-  if (backendProps.compareSource?.mode === "split") {
-    return <CpuSplitComparePane input={backendProps} metrics={compareMetrics} />;
-  }
-  // The backend-neutral compare contract is executed here: exact cached CPU
-  // fields become ordinary float image sources, while the shared PlotToolbar /
-  // ImagePaneShell system owns controls, placement, captions, and metrics.
-  const isCompare = !!backendProps.compareSource;
-  const sync = {
+  const comparisonInput = useCpuComparisonInput(backendProps, compareMetrics);
+  const compare = backendProps.compareSource;
+  const isSplit = compare?.mode === "split";
+  // SPLIT composites the two operands live, so the pane keeps the REFERENCE as
+  // its source; DIFF renders the cached error field as an ordinary float image.
+  const props = useImageSurfaceProps(isSplit ? backendProps : comparisonInput);
+  const isCompare = !!compare;
+  const sync: CpuPaneSyncProps = {
     syncedSettings: backendProps.syncedSettings,
     setSyncedSettings: backendProps.setSyncedSettings,
     enlargeControl: backendProps.enlargeControl,
-    channelMenu: backendProps.channelMenu,
-    channelModified: backendProps.channelModified,
-    onChannelReset: backendProps.onChannelReset,
     // In compare mode the caption chips carry the labeling — suppress the pane's
     // own bottom-left label chip and hand the shell the compare chrome.
-    compareChrome: cpuCompareChrome(backendProps.compareSource, cpuMetricsLabel(compareMetrics)),
-    compareLeadingMenus: backendProps.compareSource
-      ? [cpuCompareModeMenu(backendProps.compareSource)]
-      : undefined,
-    cpuComparisonOperation: backendProps.compareSource?.mode === "diff" &&
-      (backendProps.compareSource.operationId in DIFF_MODE_LABELS || !!compareMetrics?.errorMap)
-      ? backendProps.compareSource.operationId
+    compareChrome: cpuCompareChrome(compare, cpuMetricsLabel(compareMetrics)),
+    compareLeadingMenus: compare ? [cpuCompareModeMenu(compare)] : undefined,
+    cpuComparisonOperation: compare?.mode === "diff" &&
+      (compare.operationId in DIFF_MODE_LABELS || !!compareMetrics?.errorMap)
+      ? compare.operationId
       : undefined,
     isCompareMode: isCompare,
+    compareSplit: isSplit && compare
+      ? {
+          b: compare.b,
+          splitPosition: compare.splitPosition ?? 0.5,
+          onSplitPositionChange: compare.onSplitPositionChange,
+          inStackedGrid: compare.inStackedGrid,
+          inOverlay: compare.inOverlay,
+        }
+      : undefined,
   };
   return isFloatSurfaceProps(props) ? (
     <CpuHdrImagePane {...props} {...sync} />
@@ -1872,6 +1278,6 @@ export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Eleme
 
 // Compile-time contract check: CpuImagePane implements the shared backend
 // interface (accepts the plain `ImageBackendInput` union — `toolbar` is
-  // optional, so the plain union is assignable to `ImageBackendInput`).
+// optional, so the plain union is assignable to `ImageBackendInput`).
 const _backendCheck: ImageBackendView = CpuImagePane;
 void _backendCheck;

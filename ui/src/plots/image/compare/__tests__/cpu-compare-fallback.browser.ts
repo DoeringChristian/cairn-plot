@@ -187,13 +187,21 @@ async function run(): Promise<boolean> {
   ok = ok && cpuMetrics && /MSE 0\.00e\+0 · PSNR ∞ dB · SSIM 1\.0000/.test(cpuMetricsText);
 
   // --- 6. Unified CpuImagePane enters pointwise diff mode -------------------
+  // The pane paints into ONE VIEWPORT-sized presentation canvas (spec §3), so
+  // the diff pixels sit at the image QUAD inside it — sample the centre, not
+  // canvas (0,0), which is letterbox/checkerboard at this aspect.
+  const centrePixel = (canvas: HTMLCanvasElement | null | undefined) =>
+    canvas && canvas.width > 0 && canvas.height > 0
+      ? canvas.getContext("2d")?.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data
+      : undefined;
   const pointwiseDiff = await waitFor(() => {
     const result = document.getElementById("m6")!.querySelector('[data-cpu-comparison-result="absolute"]');
-    const canvas = result?.querySelector("canvas");
-    return !!canvas && canvas.width === 8;
+    const canvas = result?.querySelector<HTMLCanvasElement>("canvas[data-cpu-image-canvas]");
+    const px = centrePixel(canvas);
+    return !!px && px[3]! > 0;
   }, 4000, 20);
-  const diffCanvas = document.getElementById("m6")!.querySelector("canvas");
-  const diffPixel = diffCanvas?.getContext("2d")?.getImageData(0, 0, 1, 1).data;
+  const diffCanvas = document.getElementById("m6")!.querySelector<HTMLCanvasElement>("canvas[data-cpu-image-canvas]");
+  const diffPixel = centrePixel(diffCanvas);
   const isMagentaDifference = !!diffPixel && diffPixel[0] === 255 && diffPixel[1] === 0 && diffPixel[2] === 255;
   report(pointwiseDiff && isMagentaDifference, `unified CPU compare renders the actual pointwise diff (${diffPixel ? [...diffPixel] : "no pixel"})`);
   ok = ok && pointwiseDiff && isMagentaDifference;
