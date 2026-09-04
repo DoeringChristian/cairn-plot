@@ -12,8 +12,20 @@
 // the projection always lands on something the backend renders.
 // ---------------------------------------------------------------------------
 
-import type { ImageBackendCapabilities } from "../backend.ts";
 import { getDisplayOperation } from "./display-operations.ts";
+
+/**
+ * The slices of a backend capability object the projection reads. Declared
+ * here rather than imported from `backend.ts` because definitions must not
+ * depend on backends (plot-boundary rule); `ImageBackendCapabilities`
+ * satisfies both structurally.
+ */
+export interface DisplayOperationSupport {
+  supportsDisplayOperation(id: string): boolean;
+}
+export interface ImageOperationSupport {
+  supportsImageOperation(id: string): boolean;
+}
 
 export const CORE_IMAGE_OPERATION_IDS = ["identity", "split"] as const;
 export const CORE_DISPLAY_OPERATION_IDS = ["srgb", "turbo"] as const;
@@ -39,7 +51,7 @@ export interface Projection {
 
 export function projectDisplayOperation(
   requestedId: string,
-  capabilities: Pick<ImageBackendCapabilities, "supportsDisplayOperation">,
+  capabilities: DisplayOperationSupport,
 ): Projection {
   if (capabilities.supportsDisplayOperation(requestedId)) return { effective: requestedId, fallback: null };
   const effective = fallbackDisplayOperation(requestedId);
@@ -48,7 +60,7 @@ export function projectDisplayOperation(
 
 export function projectComparisonOperation(
   requestedId: string,
-  capabilities: Pick<ImageBackendCapabilities, "supportsImageOperation">,
+  capabilities: ImageOperationSupport,
 ): Projection {
   if (capabilities.supportsImageOperation(requestedId)) return { effective: requestedId, fallback: null };
   const effective = FALLBACK_COMPARISON_OPERATION;
