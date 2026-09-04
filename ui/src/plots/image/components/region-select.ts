@@ -13,6 +13,8 @@
  * a client-space point to a (possibly fractional / out-of-range) source texel.
  */
 import { clampInt } from "../../../primitives/util/clamp.ts";
+import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
+import type { Interpolation } from "../../types";
 
 /** The displayed [0,1] crop of the source that fills `box` (GPU uvRect). */
 export interface SourceWindow {
@@ -245,4 +247,113 @@ export function screenRectToTexelRect(
     x1: clampInt(hiX, 0, maxX),
     y1: clampInt(hiY, 0, maxY),
   };
+}
+
+/** A pane-local rect in CSS px (origin = the viewport element's top-left). */
+export interface ViewportQuad {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The user transform is `screen = pan + zoom * world` about the viewport's
+ * top-left (the convention `useImageGestures`' wheel handler and
+ * `reframeViewForResize` already use). World space is the object-contain home
+ * fit of the full image into `box`: scale `S = min(W/N, H/M)`, letterbox
+ * offset `L = (W - N*S)/2`, `T = (H - M*S)/2`. The image's on-screen rect is
+ * therefore `left = pan.x + zoom*L`, `width = zoom*N*S`, and the same for y.
+ * `viewToUvRect` is the inverse view of the same numbers: the source window
+ * (in [0,1] image fractions) that the viewport box shows. `computeSourceFit`
+ * over that window returns exactly this quad (see region-select.test.ts).
+ */
+export function viewToQuad(
+  view: ImageViewState,
+  box: { width: number; height: number },
+  naturalW: number,
+  naturalH: number,
+): ViewportQuad | null {
+  if (naturalW <= 0 || naturalH <= 0 || box.width <= 0 || box.height <= 0) return null;
+  if (!Number.isFinite(view.zoom) || view.zoom <= 0) return null;
+  if (!Number.isFinite(view.pan.x) || !Number.isFinite(view.pan.y)) return null;
+  const f = computeFit({
+    box: { left: 0, top: 0, width: box.width, height: box.height },
+    naturalWidth: naturalW,
+    naturalHeight: naturalH,
+  });
+  return {
+    left: view.pan.x + view.zoom * f.imgLeft,
+    top: view.pan.y + view.zoom * f.imgTop,
+    width: view.zoom * naturalW * f.scale,
+    height: view.zoom * naturalH * f.scale,
+  };
+}
+
+/**
+ * The source-space `[0,1]` window the viewport box displays under `view`
+ * (the GPU sampler's uvRect; the overlay's `sourceWindow`). Derivation: at rest
+ * `uv.x = -L/dispW`, `uv.w = W/dispW`; composing with `translate(pan)
+ * scale(zoom)` about the origin gives `w = W/(z*dispW)`,
+ * `x = -L/dispW - pan.x/(z*dispW)`. Degenerate input returns the whole image.
+ */
+export function viewToUvRect(
+  view: ImageViewState,
+  box: { width: number; height: number },
+  naturalW: number,
+  naturalH: number,
+): SourceWindow {
+  if (naturalW <= 0 || naturalH <= 0 || box.width <= 0 || box.height <= 0) {
+    return { x: 0, y: 0, w: 1, h: 1 };
+  }
+  const f = computeFit({
+    box: { left: 0, top: 0, width: box.width, height: box.height },
+    naturalWidth: naturalW,
+    naturalHeight: naturalH,
+  });
+  const dispW = naturalW * f.scale;
+  const dispH = naturalH * f.scale;
+  const z = Math.max(view.zoom, 1e-6);
+  return {
+    x: -f.imgLeft / dispW - view.pan.x / (z * dispW),
+    y: -f.imgTop / dispH - view.pan.y / (z * dispH),
+    w: box.width / (z * dispW),
+    h: box.height / (z * dispH),
+  };
+}
+
+/** Screen px covered by one source texel for the displayed `uv` window
+ *  (the object-contain scale of that crop into `box`). 0 for degenerate input. */
+export function screenPxPerTexel(
+  uv: { w: number; h: number },
+  box: { width: number; height: number },
+  naturalW: number,
+  naturalH: number,
+): number {
+  const visibleW = uv.w * naturalW;
+  const visibleH = uv.h * naturalH;
+  if (visibleW <= 0 || visibleH <= 0 || box.width <= 0 || box.height <= 0) return 0;
+  return screenPerTexel({
+    box: { left: 0, top: 0, width: box.width, height: box.height },
+    naturalWidth: naturalW,
+    naturalHeight: naturalH,
+    sourceWindow: { x: 0, y: 0, w: uv.w, h: uv.h },
+  });
+}
+
+export type MagnificationFilter = "nearest" | "linear";
+
+/**
+ * The one interpolation rule for both backends. An explicit `pixelated` /
+ * `crisp-edges` forces nearest; `auto` switches to nearest once a source texel
+ * covers `threshold` screen px (pass `PIXEL_VALUE_MIN_SCREEN_PX`, the same
+ * point at which per-texel numbers appear), linear below it.
+ */
+export function magnificationFilter(
+  interpolation: Interpolation,
+  pxPerTexel: number,
+  threshold: number,
+): MagnificationFilter {
+  if (interpolation === "pixelated" || interpolation === "crisp-edges") return "nearest";
+  return pxPerTexel >= threshold ? "nearest" : "linear";
 }

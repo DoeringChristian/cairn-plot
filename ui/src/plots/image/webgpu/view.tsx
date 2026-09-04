@@ -83,14 +83,13 @@ import { buildCompareModeMenu } from "../compare/compare-mode-menu";
 import SplitDivider from "../compare/SplitDivider";
 import { useSplitFlipKeys } from "../compare/use-split-flip-keys";
 import RefBadge from "../../../primitives/components/RefBadge";
-import { sourceTexelCenter, computeFit, screenPerTexel } from "../components/region-select";
+import { sourceTexelCenter, viewToUvRect, screenPxPerTexel } from "../components/region-select";
 import LabelChip from "../../../primitives/components/LabelChip";
 import type { ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig";
 import ImageOverlay from "../components/ImageOverlay";
 import PixelValueOverlay, {
   PIXEL_VALUE_MIN_SCREEN_PX,
 } from "../../../primitives/components/PixelValueOverlay";
-import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import { useDevicePixelRatio } from "../../../host/hooks/use-device-pixel-ratio";
 import {
   acquirePane,
@@ -283,113 +282,6 @@ async function decodedSourceToUploadLease(
 function sceneFieldUpload(image: ImageData): SourceUpload {
   const field = imageDataToSceneField(image);
   return { data: field.pixels, width: field.width, height: field.height, format: "rgba32float" };
-}
-
-/**
- * Converts the CSS-px `{zoom,pan}` viewport (owned by `useImageGestures`)
- * into the source-space `uv` window `renderImage` samples — for a render
- * target that spans the FULL PANE/canvas (Q24 fix). `paneBox` here MUST be
- * the same box the canvas's own CSS size is measured against (the render
- * effect below uses `imgWrapperRef`'s rect for both) — see this function's
- * derivation below for why a mismatch there breaks the mapping.
- *
- * ## Model: the canvas IS the viewport; the image is a quad placed inside it
- * Q22 (a prior fix) shrank the GPU canvas's own CSS box to the object-contain
- * LETTERBOXED sub-rect of the image, to fix upscaling blur (the backing store
- * now tracks display resolution, not source resolution — a good fix, kept).
- * But that made the canvas element itself the size of the image's home rect,
- * which then CONFINED zoom/pan to the image's own aspect box: zooming in
- * only ever cropped tighter within that fixed small rect, so the checkerboard
- * margins around it were permanently dead space that could never fill in
- * (Q24), and the split/compare shader's screen-space `uv.x` (spanning the
- * SMALL canvas) no longer matched the separator/pointer math (still expressed
- * as a fraction of the full pane) — Q23. Fix: the canvas backing store always
- * covers the FULL pane (see the render-pass effect below); THIS function
- * places the image as a quad inside that full-canvas viewport instead —
- * at `zoom:1, pan:{0,0}` the quad sits at its object-contain "home" rect
- * (letterboxed, centered, checkerboard in the margins via Q18's existing
- * OOB -> transparent path); `zoom`/`pan` then transform the WHOLE viewport
- * (`translate(pan) scale(zoom)`, origin `(0,0)` of the pane — the SAME
- * convention `useImageGestures`'s wheel-zoom-to-cursor math already assumes,
- * since `cx = clientX - paneRect.left` there is measured against that same
- * origin), so the user can zoom toward / pan into the checkerboard margins
- * exactly like a standard image viewer (TEV) — never confined to the image's
- * own aspect box, and no explicit pan/zoom clamp is needed: whatever the
- * quad doesn't cover is genuinely-empty canvas, and Q18 already renders that
- * as transparent (checkerboard shows through).
- *
- * ## Derivation
- * Home fit: `scale = min(paneBox.w/naturalW, paneBox.h/naturalH)`,
- * `dispW/dispH` = the letterboxed on-screen size, `imgLeft/imgTop` = its
- * centered offset within `paneBox`. A canvas-space fragment at `shaderUV`
- * (spanning `[0,1]` across the FULL pane) must sample source-uv
- * `-imgLeft/dispW` at `shaderUV=0` and `(paneBox.w-imgLeft)/dispW` at
- * `shaderUV=1` when at rest — i.e. `uvRect.x = -imgLeft/dispW`,
- * `uvRect.w = paneBox.w/dispW` (>=1 whenever the image is letterboxed on that
- * axis: the SAME "sample past `[0,1]`" mechanism Q18 already uses for
- * zoom<1). Composing that with the `translate(pan) scale(zoom)`-on-the-
- * whole-viewport transform (origin `(0,0)`) gives `w = paneBox.w/(z*dispW)`,
- * `x = -imgLeft/dispW - pan.x/(z*dispW)`.
- */
-export function viewToUvRect(
-  viewport: ImageViewState,
-  paneBox: { width: number; height: number },
-  naturalW: number,
-  naturalH: number,
-): { x: number; y: number; w: number; h: number } {
-  if (naturalW <= 0 || naturalH <= 0 || paneBox.width <= 0 || paneBox.height <= 0) {
-    return { x: 0, y: 0, w: 1, h: 1 };
-  }
-  // Object-contain fit (scale + centering) from the ONE shared primitive
-  // (`region-select.computeFit`, full window) — the SAME letterbox math the hover
-  // readout / marquee / overlay boxes use, so they can't drift (D1). Only the
-  // zoom/pan COMPOSITION below is this function's own.
-  const f = computeFit({
-    box: { left: 0, top: 0, width: paneBox.width, height: paneBox.height },
-    naturalWidth: naturalW,
-    naturalHeight: naturalH,
-  });
-  const scale = f.scale;
-  const dispW = f.visibleW * scale; // = naturalW * scale (full window)
-  const dispH = f.visibleH * scale;
-  const imgLeft = f.imgLeft;
-  const imgTop = f.imgTop;
-  const z = Math.max(viewport.zoom, 1e-6);
-  const w = paneBox.width / (z * dispW);
-  const h = paneBox.height / (z * dispH);
-  const x = -imgLeft / dispW - viewport.pan.x / (z * dispW);
-  const y = -imgTop / dispH - viewport.pan.y / (z * dispH);
-  return { x, y, w, h };
-}
-
-/**
- * Screen pixels covered by ONE source texel, for the CURRENTLY-DISPLAYED
- * `rawUv` window — the exact same object-contain-fit formula
- * `PixelValueOverlay.tsx`'s `draw()` uses for its own `scale` (`min(box.width
- * / visibleW, box.height / visibleH)`, `visibleW/H = rawUv.w/h *
- * naturalW/H`), so `GpuImagePane`'s nearest/linear filter switch (Q20) stays
- * in EXACT lockstep with `PixelValueOverlay`'s `PIXEL_VALUE_MIN_SCREEN_PX`
- * active-state threshold — both flip at the same zoom level. `box` must be
- * the DISPLAYED element's rect (the canvas, same as `PixelValueOverlay`'s
- * `imageElRef`), not the outer padded pane container.
- */
-export function screenPxPerTexel(
-  rawUv: { w: number; h: number },
-  box: { width: number; height: number },
-  naturalW: number,
-  naturalH: number,
-): number {
-  const visibleW = rawUv.w * naturalW;
-  const visibleH = rawUv.h * naturalH;
-  if (visibleW <= 0 || visibleH <= 0 || box.width <= 0 || box.height <= 0) return 0;
-  // The SAME object-contain scale the hover readout uses — the shared primitive over
-  // the CURRENTLY-DISPLAYED `rawUv` crop (D1); x/y don't affect scale.
-  return screenPerTexel({
-    box: { left: 0, top: 0, width: box.width, height: box.height },
-    naturalWidth: naturalW,
-    naturalHeight: naturalH,
-    sourceWindow: { x: 0, y: 0, w: rawUv.w, h: rawUv.h },
-  });
 }
 
 const sourceObjectIds = new WeakMap<object, number>();

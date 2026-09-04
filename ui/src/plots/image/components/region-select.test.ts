@@ -326,3 +326,88 @@ test("overlay fit round-trips through screenToTexel (clip-window inverse)", () =
     assert.ok(Math.abs(back.y - ty) < 1e-9);
   }
 });
+
+// --- viewport composition (view {zoom,pan} -> uv / quad / filter) ---------
+
+import {
+  viewToUvRect,
+  viewToQuad,
+  screenPxPerTexel,
+  magnificationFilter,
+} from "./region-select.ts";
+
+const closeRel = (a: number, b: number, rel: number) =>
+  Math.abs(a - b) <= rel * Math.max(1, Math.abs(a), Math.abs(b));
+
+test("viewToQuad at home equals the object-contain rect", () => {
+  const q = viewToQuad({ zoom: 1, pan: { x: 0, y: 0 } }, { width: 642, height: 277.5 }, 512, 512);
+  // scale = min(642/512, 277.5/512) = 0.54199…, width = height = 277.5, left = (642-277.5)/2
+  assert.ok(Math.abs(q.width - 277.5) < 1e-9);
+  assert.ok(Math.abs(q.height - 277.5) < 1e-9);
+  assert.ok(Math.abs(q.left - 182.25) < 1e-9);
+  assert.ok(Math.abs(q.top - 0) < 1e-9);
+});
+
+test("viewToQuad reproduces the measured cairn viewport", () => {
+  const box = { width: 642, height: 277.5 };
+  const view = { zoom: 242.257, pan: { x: -44091.4, y: -40039.9 } };
+  const q = viewToQuad(view, box, 512, 512);
+  const texel = q.width / 512;
+  // Measured in the live card: left ≈ 59.94, texel ≈ 131.30.
+  assert.ok(Math.abs(q.left - (-44091.4 + 242.257 * 182.25)) < 1e-9);
+  assert.ok(Math.abs(texel - 242.257 * (277.5 / 512)) < 1e-9);
+});
+
+test("viewToQuad reproduces the v1 display-geometry case", () => {
+  const q = viewToQuad(
+    { zoom: 183.934, pan: { x: 78.5184, y: -42_274.7 } },
+    { width: 355, height: 402.5 },
+    512,
+    512,
+  );
+  assert.ok(Math.abs(q.left - 78.5184) < 1e-9);
+  assert.ok(Math.abs(q.width - 65_296.57) < 1e-6);
+  const step = q.width / 512;
+  assert.ok(Math.abs(q.left + step / 2 - 142.284581640625) < 1e-6);
+});
+
+test("computeSourceFit over viewToUvRect returns viewToQuad (inverse property)", () => {
+  const cases = [
+    { view: { zoom: 1, pan: { x: 0, y: 0 } }, box: { width: 642, height: 277.5 }, n: [512, 512] },
+    { view: { zoom: 242.257, pan: { x: -44091.4, y: -40039.9 } }, box: { width: 642, height: 277.5 }, n: [512, 512] },
+    { view: { zoom: 183.934, pan: { x: 78.5184, y: -42_274.7 } }, box: { width: 355, height: 402.5 }, n: [512, 512] },
+    { view: { zoom: 250, pan: { x: -900_000, y: -120_000 } }, box: { width: 1920, height: 1080 }, n: [4096, 2160] },
+    { view: { zoom: 0.4, pan: { x: 30, y: -10 } }, box: { width: 300, height: 700 }, n: [1000, 300] },
+  ] as const;
+  for (const c of cases) {
+    const uv = viewToUvRect(c.view, c.box, c.n[0], c.n[1]);
+    const quad = viewToQuad(c.view, c.box, c.n[0], c.n[1]);
+    const sf = computeSourceFit({
+      box: { left: 0, top: 0, width: c.box.width, height: c.box.height },
+      naturalWidth: c.n[0],
+      naturalHeight: c.n[1],
+      sourceWindow: uv,
+    });
+    const rel = 1e-9 * Math.max(1, Math.abs(c.view.pan.x), Math.abs(c.view.pan.y));
+    assert.ok(closeRel(sf.quadLeft, quad.left, rel), `left ${sf.quadLeft} vs ${quad.left}`);
+    assert.ok(closeRel(sf.quadTop, quad.top, rel), `top ${sf.quadTop} vs ${quad.top}`);
+    assert.ok(closeRel(sf.quadW, quad.width, rel), `w ${sf.quadW} vs ${quad.width}`);
+    assert.ok(closeRel(sf.quadH, quad.height, rel), `h ${sf.quadH} vs ${quad.height}`);
+    assert.ok(closeRel(sf.sxPerTexel, quad.width / c.n[0], rel));
+    assert.ok(closeRel(screenPxPerTexel(uv, c.box, c.n[0], c.n[1]), quad.width / c.n[0], rel));
+  }
+});
+
+test("viewToUvRect and viewToQuad reject degenerate boxes", () => {
+  assert.deepEqual(viewToUvRect({ zoom: 1, pan: { x: 0, y: 0 } }, { width: 0, height: 10 }, 8, 4), { x: 0, y: 0, w: 1, h: 1 });
+  assert.equal(viewToQuad({ zoom: 1, pan: { x: 0, y: 0 } }, { width: 0, height: 10 }, 8, 4), null);
+  assert.equal(viewToQuad({ zoom: 1, pan: { x: 0, y: 0 } }, { width: 10, height: 10 }, 0, 4), null);
+});
+
+test("magnificationFilter: explicit pixelated/crisp-edges force nearest; auto uses the threshold", () => {
+  assert.equal(magnificationFilter("pixelated", 1, 30), "nearest");
+  assert.equal(magnificationFilter("crisp-edges", 1, 30), "nearest");
+  assert.equal(magnificationFilter("auto", 29.99, 30), "linear");
+  assert.equal(magnificationFilter("auto", 30, 30), "nearest");
+  assert.equal(magnificationFilter("auto", 0, 30), "linear");
+});
