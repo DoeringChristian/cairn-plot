@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>CPU pane gesture-cost harness</title>
+    <!-- Committed compiled Tailwind CSS: the pane lays itself out with
+         w-full/h-full/flex/absolute-inset-0 utilities, so without it the
+         viewport element has no size and no paint happens at all. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- Self-driving: dispatches its own wheel / pointer / container-resize
+         gestures and settles #status headlessly, so `npm run test:harness`
+         gates it in the DEFAULT set. No WebGPU is used. -->
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* Independent block hosts: resizing one must not reflow the other, or the
+         per-pane backing-store counts below would be entangled. */
+      #host-u8, #host-float { margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>CpuImagePane — a pan/zoom gesture costs no content work, one blit per frame</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="host-u8"></div>
+    <div id="host-float"></div>
+    <script type="module" src="./cpu-gesture-cost.browser.bundle.js"></script>
+  </body>
+</html>

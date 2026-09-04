@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving" data-cairn-harness-dpr="2">
+  <head>
+    <meta charset="utf-8" />
+    <title>CPU label/paint alignment harness (DPR 2)</title>
+    <!-- Committed compiled Tailwind CSS (the same file the sibling image
+         harnesses link): the pane lays itself out with w-full/h-full/flex/
+         absolute-inset-0 utilities, so WITHOUT this stylesheet the viewport
+         element has no size and every pixel measurement below is meaningless. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- `data-cairn-harness-dpr="2"` — the runner drives this page under an
+         `Emulation.setDeviceMetricsOverride` at deviceScaleFactor 2. DPR 2 is
+         the bug's real condition: the presentation canvas' backing store is
+         device px while the quad is CSS px, so a dropped/doubled dpr factor
+         shows up here and not at dpr 1. The DPR-1 pass is the sibling page
+         `cpu-label-alignment-dpr1.browser.html`, which loads THIS SAME bundle
+         without the attribute. -->
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* The host is resized per case by the harness; keep it out of the flow's way. */
+      #host { margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>CPU/GPU image pane — TEV labels land on the texels the pane paints</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="host"></div>
+    <script type="module" src="./cpu-label-alignment.browser.bundle.js"></script>
+  </body>
+</html>

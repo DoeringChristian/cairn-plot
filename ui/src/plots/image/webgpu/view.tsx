@@ -1991,6 +1991,23 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       | null;
     if (!el) return;
     el.__cairnImagePaneProbe = {
+      // Headless-reliable surface readback for a PLAIN (non-compare) image pane —
+      // the same seam `__cairnImageDiffProbe` exposes, which only exists once a
+      // pane has a compare source. A live in-DOM swapchain reads BLANK through
+      // `createImageBitmap(canvas)`, so a harness that must inspect the pixels the
+      // GPU actually painted (the TEV label/paint alignment proof) has no other
+      // way in. Forces a fresh synchronous frame, then reads the pool-owned
+      // surface. Test-only: no production code reads this probe.
+      readbackSurface: async () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        renderPass();
+        const surface = getCanvasSurfaceForTest(canvas);
+        if (!surface) return null;
+        const engine = await imageWebGpuRuntime.acquire();
+        const data = await engine.readSurface(surface);
+        return { data, width: canvas.width, height: canvas.height };
+      },
       get displayOperationId() {
         return enc.displayOperationId;
       },
@@ -2009,7 +2026,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return () => {
       if (el) delete (el as { __cairnImagePaneProbe?: unknown }).__cairnImagePaneProbe;
     };
-  }, [enc.displayOperationId, enc.colormap, peak, changePeak, changeEncoding, enc]);
+  }, [enc.displayOperationId, enc.colormap, peak, changePeak, changeEncoding, enc, renderPass]);
 
   // The PlotToolbar + `useImageController` wiring (with `requestRender:
   // renderPass` so the screenshot forces a fresh WebGPU frame) and the

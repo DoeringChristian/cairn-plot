@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>CPU label/paint alignment harness (DPR 1)</title>
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- The DPR-1 half of the alignment proof. The runner's device-metrics
+         override is per PAGE, so covering two ratios takes two pages; this one
+         deliberately carries NO `data-cairn-harness-dpr` (browser default, 1)
+         and loads the very SAME bundle as `cpu-label-alignment.browser.html`,
+         so both ratios are proven by ONE source with no duplicated logic. -->
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      #host { margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>CPU/GPU image pane — TEV label alignment at devicePixelRatio 1</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="host"></div>
+    <script type="module" src="./cpu-label-alignment.browser.bundle.js"></script>
+  </body>
+</html>

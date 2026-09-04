@@ -4,7 +4,7 @@
  * Headless WebGPU parity-harness runner for cairn-plot.
  *
  * WHAT IT GUARDS. The `*.browser.ts` harnesses under
- * `src/plots/image/engine/__tests__/` are WebGPU↔TS *parity proofs*: each
+ * `src/plots/image/webgpu/__tests__/` are WebGPU↔TS *parity proofs*: each
  * renders on the GPU (WGSL) and asserts the readback equals what the CPU/TS
  * source of truth computes — tonemap curves (image-pass), HDR-out activation
  * (hdr-output), FLIP/SSIM perceptual metrics, deep-EXR compositing, backend
@@ -46,6 +46,22 @@
  * Dependency-free: plain Node (>=22, for the global `WebSocket`) + esbuild
  * (always installed — it is Vite's own bundler dependency) + a headless
  * Chromium invocation. No new npm dependency is added.
+ *
+ * PAGE ATTRIBUTES (read off each `*.browser.html` source; no JS is executed):
+ *   data-cairn-harness="self-driving"  opt this page into the DEFAULT run (it
+ *       dispatches its own gestures and settles `#status` headlessly).
+ *   data-cairn-harness="quarantined" (+ data-cairn-harness-reason="…") — a
+ *       known-unstable diagnostic: listed, not run, unless `--all`.
+ *   data-cairn-harness-query="a=1&b=2"  appended to the page URL as its query
+ *       string (for a harness that parameterises itself from `location.search`).
+ *   data-cairn-harness-dpr="2"  drive this page at a NON-DEFAULT device pixel
+ *       ratio: the runner applies `Emulation.setDeviceMetricsOverride`
+ *       (1280x900 at that `deviceScaleFactor`) BEFORE `Page.navigate`, so the
+ *       page's FIRST layout already happens at that ratio, and clears the
+ *       override once the page has settled. The override is per PAGE, so a
+ *       harness that must be proven at two ratios ships two `.html` pages
+ *       pointing at the SAME bundle — one carrying the attribute, one without
+ *       (see `cpu-label-alignment{,-dpr1}.browser.html`).
  *
  * Usage:   node scripts/test-harness.mjs            (or: npm run test:harness)
  * Flags:   --only <substr>     run only harnesses whose id contains <substr>
@@ -102,7 +118,7 @@ const RUN_ALL = argv.includes("--all");
 
 /** A parity proof (headless-drivable) vs an interaction harness (human-run). */
 function isParityHarness(h) {
-  return h.htmlPath.split("\\").join("/").includes("/engine/__tests__/");
+  return h.htmlPath.split("\\").join("/").includes("/webgpu/__tests__/");
 }
 const HARNESS_TIMEOUT_MS = Number(process.env.HARNESS_TIMEOUT_MS) || 60_000;
 const SKIP_SUBSTR = (process.env.HARNESS_SKIP ?? "")
@@ -145,7 +161,7 @@ function walk(dir, out = []) {
 
 /**
  * @typedef {{ id:string, htmlPath:string, dir:string, urlPath:string,
- *             query:string,
+ *             query:string, dpr:number|null,
  *             sources:string[], selfDriving:boolean, quarantined:boolean,
  *             quarantineReason:string }} Harness
  */
@@ -170,6 +186,12 @@ function discoverHarnesses() {
       /data-cairn-harness-reason\s*=\s*["']([^"']*)["']/i,
     )?.[1] ?? "known unstable diagnostic";
     const query = html.match(/data-cairn-harness-query\s*=\s*["']([^"']*)["']/i)?.[1] ?? "";
+    // `data-cairn-harness-dpr="2"` — drive this page under a device-metrics
+    // override at that devicePixelRatio (see PAGE ATTRIBUTES in the header).
+    // Absent / non-numeric / <= 0 ⇒ null (the browser's own ratio).
+    const dprRaw = html.match(/data-cairn-harness-dpr\s*=\s*["']([^"']*)["']/i)?.[1];
+    const dprNum = dprRaw === undefined ? NaN : Number(dprRaw);
+    const dpr = Number.isFinite(dprNum) && dprNum > 0 ? dprNum : null;
     // Every `<script ... src="./X.browser.bundle.js">` maps to source X.browser.ts
     const sources = [];
     for (const m of html.matchAll(
@@ -187,6 +209,7 @@ function discoverHarnesses() {
       dir,
       urlPath,
       query,
+      dpr,
       sources,
       selfDriving,
       quarantined,
@@ -495,16 +518,36 @@ function safeRmDir(dir) {
   }
 }
 
-/** Open `url` in a fresh target, run `fn(sessionId)`, then close the target. */
-async function withPage(cdp, url, fn) {
+/**
+ * Open `url` in a fresh target, run `fn(sessionId)`, then close the target.
+ *
+ * `opts.dpr` (a page's `data-cairn-harness-dpr`) installs a device-metrics
+ * override BEFORE the navigation, so the page's very first layout and paint
+ * already happen at that `devicePixelRatio` — a harness that measures
+ * DEVICE-pixel geometry must never see the ratio change under it mid-run. The
+ * override is cleared once `fn` has settled (before the target is closed).
+ */
+async function withPage(cdp, url, fn, opts = {}) {
   const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+  let overrode = false;
   try {
     await cdp.send("Page.enable", {}, sessionId);
     await cdp.send("Runtime.enable", {}, sessionId);
+    if (opts.dpr) {
+      await cdp.send(
+        "Emulation.setDeviceMetricsOverride",
+        { width: 1280, height: 900, deviceScaleFactor: opts.dpr, mobile: false },
+        sessionId,
+      );
+      overrode = true;
+    }
     await cdp.send("Page.navigate", { url }, sessionId);
     return await fn(sessionId);
   } finally {
+    if (overrode) {
+      await cdp.send("Emulation.clearDeviceMetricsOverride", {}, sessionId).catch(() => {});
+    }
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
 }
@@ -585,7 +628,7 @@ async function runHarness(cdp, baseUrl, harness) {
       /* noop */
     }
     return { verdict: "timeout", ms: Date.now() - start, result: tail };
-  });
+  }, { dpr: harness.dpr });
 }
 
 // ── 5. Report / main ──────────────────────────────────────────────────────────
