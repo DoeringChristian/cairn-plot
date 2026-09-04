@@ -82,11 +82,15 @@ export function ImagePlotView({
           nextOperation: operationId,
           currentEncoding: settings["image.encoding"],
         })),
-        onCompareModeChange: (mode) => commands.patch(comparisonOperationSettingsPatch({
-          previousOperation: selectedComparisonOperation,
-          nextOperation: mode === "split" ? "split" : p.comparison!.defaultOperation,
-          currentEncoding: settings["image.encoding"],
-        })),
+        onCompareModeChange: (mode) => {
+          const rawMode = selectedComparisonOperation === "split" ? "split" : "diff";
+          if (mode === rawMode) return; // a projected mode is not a user change; never rewrite the store from it
+          commands.patch(comparisonOperationSettingsPatch({
+            previousOperation: selectedComparisonOperation,
+            nextOperation: mode === "split" ? "split" : p.comparison!.defaultOperation,
+            currentEncoding: settings["image.encoding"],
+          }));
+        },
         onSplitPositionChange: (position) => commands.patch({ "compare.split": position }),
         compareModified:
           selectedComparisonOperation !==

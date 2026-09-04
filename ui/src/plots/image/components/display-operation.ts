@@ -235,6 +235,9 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     [mode, curveSet],
   );
 
+  // Derived curve for a LUT, not a user selection: choosing the first supported
+  // curve when the default is unavailable is intentional and needs no fallback
+  // record.
   const pickDefaultCurve = useCallback(
     (avail: DisplayOperationIds): string => {
       const d = resolveDefaultCurve(propTonemap);

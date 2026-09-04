@@ -25,6 +25,7 @@ import type { MediaCompareModeKind } from "../compare/mode";
 import type { ImageCompareAlign, ImageCompareFit } from "./compare-align";
 import { alignFrameSourcesForDiff } from "../compare/cross-type-align";
 import { resolveRenderMode, urlSource } from "./contracts";
+import { projectComparisonOperation } from "../definition/core.ts";
 import {
   useSeedGroupOnFormation,
   useCellSettings,
@@ -321,16 +322,20 @@ export function CompositeMediaPane({
   // Stable diff-cache identity keys (a source URL / float contentKey, NOT the
   // decoded bytes) — `a` = reference, `b` = foreground, matching the pool's
   // `ensureDiff(texA, texB)` ordering (see `renderers/image-backend.ts`).
+  // The panes keep no fallback menu of their own, so this path — the
+  // offscreen/legacy compositor, not the host adapter — supplies the same
+  // capability-derived list for whichever backend `Pane` resolved to. The
+  // requested kernel is projected through the same read-time-only rule as the
+  // host adapter (`runtime/view.tsx`), so an unsupported id falls back to
+  // split here too, with the substitution reported on `compareSource.fallback`.
+  const caps = Pane === CpuImagePane ? CPU_CAPABILITIES : WEBGPU_CAPABILITIES;
+  const proj = projectComparisonOperation(comparisonOperationId ?? operation, caps);
   const compareSource: ImageComparisonInput = {
     b: foreground,
-    operationId: comparisonOperationId ?? operation,
-    // The panes keep no fallback menu of their own, so this path — the
-    // offscreen/legacy compositor, not the host adapter — supplies the same
-    // capability-derived list for whichever backend `Pane` resolved to.
-    operationOptions: comparisonMenuOptions(
-      Pane === CpuImagePane ? CPU_CAPABILITIES : WEBGPU_CAPABILITIES,
-    ),
-    mode: effectiveMode as "split" | "diff",
+    operationId: proj.effective === "split" ? operation : proj.effective,
+    operationOptions: comparisonMenuOptions(caps),
+    mode: proj.effective === "split" ? "split" : (effectiveMode as "split" | "diff"),
+    fallback: proj.fallback,
     colormap,
     splitPosition: splitPosition ?? 0.5,
     align,

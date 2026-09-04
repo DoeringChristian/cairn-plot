@@ -129,13 +129,16 @@ capability object (`CPU_CAPABILITIES`, `WEBGPU_CAPABILITIES`).
 `projectComparisonOperation(id, activeBackend.capabilities)` before building
 `ImageComparisonInput`. `operationId`, `mode` use the effective id; the write
 callbacks and `compareModified` keep using the raw selection. `ImageComparisonInput`
-gains `fallback?: CapabilityFallback | null`.
+gains `fallback?: CapabilityFallback | null`. The compositor seam
+(`runtime/compare-compositor.tsx`) projects through the same function and
+passes the fallback to its pane.
 
 ### 3.5 Fallback chip
 
 `components/FallbackChip.tsx` renders one small chip per fallback, pinned
-top-right inside the viewport (the label chips own the bottom corners, the
-reference badge the top-left):
+top-left just below the reference-badge slot (the toolbar and info panel own
+the top-right, the label chips the bottom corners, the reference badge the
+very top-left):
 
 ```
 <span data-cairn-capability-fallback="display:plasma:turbo" title="…">
