@@ -18,6 +18,7 @@ import {
 } from "../runtime/tonemap.ts";
 import { resolveImageData } from "../resources/resolve-data.ts";
 import { recommendedImageEncoding } from "./operation-display-defaults.ts";
+import { migrateCompareSettings } from "../definition/settings.ts";
 import type { ImageBackend } from "../backend.ts";
 import type { ImageBackendView } from "./contracts.ts";
 import type { ImagePlotViewProps } from "./view.tsx";
@@ -28,13 +29,17 @@ export type ImageSettings = PlotSettings & SettingsRecord;
 
 /** Image-owned HOME state. Authored node settings are merged by the host. */
 export function defaultImageSettings(node: PlotLeafNode | CompareNode): ImageSettings {
-  const authoredOperation = typeof node.settings?.["compare.operation"] === "string"
-    ? node.settings["compare.operation"]
+  // A descriptor authored before the `flip`/`flip-hdr` split can seed
+  // `compare.flipMode: "hdr"`; the same read-side migration resolves it here so
+  // the seeded operation (and the display default derived from it) is public.
+  const authored = migrateCompareSettings({ ...(node.settings ?? {}) });
+  const authoredOperation = typeof authored["compare.operation"] === "string"
+    ? authored["compare.operation"]
     : node.kind === "compare"
       ? node.presentation === "difference" ? "absolute" : "split"
       : undefined;
-  const authoredSourceEncoding = typeof node.settings?.["image.encoding"] === "string"
-    ? node.settings["image.encoding"]
+  const authoredSourceEncoding = typeof authored["image.encoding"] === "string"
+    ? authored["image.encoding"]
     : resolveDisplayOperator(undefined);
   return {
     "image.view": { zoom: 1, pan: { x: 0, y: 0 } },
@@ -117,7 +122,9 @@ export function ensureImagePlotType(
     data: { validate: validateImageData },
     settings: {
       defaults: defaultImageSettings,
-      project: (settings) => ({ ...settings }) as ImageSettings,
+      // The host adapter's read of cell settings: the one place a saved session
+      // from before the `flip`/`flip-hdr` split is rewritten (`compare.flipMode`).
+      project: (settings) => migrateCompareSettings({ ...settings }) as ImageSettings,
     },
     resolve: (spec, context) => resolveImageData(spec, context.source),
     present: imagePresentation,

@@ -17,6 +17,9 @@ import type {
 } from "../../types";
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import CpuImagePane from "../cpu/view";
+import { CPU_CAPABILITIES } from "../cpu/capabilities.ts";
+import { WEBGPU_CAPABILITIES } from "../webgpu/capabilities.ts";
+import { comparisonMenuOptions } from "./comparison-menu.ts";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import type { MediaCompareModeKind } from "../compare/mode";
 import type { ImageCompareAlign, ImageCompareFit } from "./compare-align";
@@ -321,6 +324,12 @@ export function CompositeMediaPane({
   const compareSource: ImageComparisonInput = {
     b: foreground,
     operationId: comparisonOperationId ?? operation,
+    // The panes keep no fallback menu of their own, so this path — the
+    // offscreen/legacy compositor, not the host adapter — supplies the same
+    // capability-derived list for whichever backend `Pane` resolved to.
+    operationOptions: comparisonMenuOptions(
+      Pane === CpuImagePane ? CPU_CAPABILITIES : WEBGPU_CAPABILITIES,
+    ),
     mode: effectiveMode as "split" | "diff",
     colormap,
     splitPosition: splitPosition ?? 0.5,

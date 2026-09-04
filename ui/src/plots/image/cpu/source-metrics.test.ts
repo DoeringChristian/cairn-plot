@@ -56,10 +56,13 @@ test("CPU HDR-FLIP is exact for identical extended-range images", async () => {
     foreground: reference,
     referenceKey: "hdr-same",
     foregroundKey: "hdr-same",
-    operation: "hdr-flip",
+    operation: "flip-hdr",
   });
   assert.ok(metrics?.errorMap);
   assert.equal(Math.max(...metrics.errorMap), 0);
+  // A scalar field, not a 3-channel pointwise one: an unrecognised operation id
+  // would fall through to the pointwise branch and still read all-zero here.
+  assert.equal(metrics.channels, 1);
 });
 
 test("CPU SSIM scalar is available when selected", async () => {

@@ -101,12 +101,23 @@ function mappedSampler(
   };
 }
 
+/**
+ * The comparison operations this reference path serves, by PUBLIC operation id
+ * (`definition/image-operations.ts`) rather than by a per-pixel evaluator.
+ *
+ * `cpu/capabilities.ts` reads this list instead of repeating it, so the CPU
+ * backend cannot advertise a metric operation this module does not implement.
+ */
+export const CPU_METRIC_OPERATION_IDS = ["flip", "flip-hdr", "ssim"] as const;
+
+export type CpuMetricOperationId = (typeof CPU_METRIC_OPERATION_IDS)[number];
+
 export interface ComputeCpuSourceMetricsOptions {
   reference: ImageSource;
   foreground: ImageSource;
   align?: ImageCompareAlign;
   fit?: ImageCompareFit;
-  operation?: "signed" | "absolute" | "squared" | "relative_signed" | "relative_absolute" | "relative_squared" | "ssim" | "flip" | "hdr-flip";
+  operation?: "signed" | "absolute" | "squared" | "relative_signed" | "relative_absolute" | "relative_squared" | CpuMetricOperationId;
 }
 
 /** Exact native-resolution CPU twin of the WebGPU comparison metrics path. */
@@ -135,9 +146,9 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
   const b = [0, 0, 0];
   const lumaA = options.operation === "ssim" ? new Float64Array(count) : null;
   const lumaB = options.operation === "ssim" ? new Float64Array(count) : null;
-  const flipA = options.operation === "flip" || options.operation === "hdr-flip" ? new Float32Array(count * 3) : null;
-  const flipB = options.operation === "flip" || options.operation === "hdr-flip" ? new Float32Array(count * 3) : null;
-  const pointwise = options.operation && !["flip", "hdr-flip", "ssim"].includes(options.operation)
+  const flipA = options.operation === "flip" || options.operation === "flip-hdr" ? new Float32Array(count * 3) : null;
+  const flipB = options.operation === "flip" || options.operation === "flip-hdr" ? new Float32Array(count * 3) : null;
+  const pointwise = options.operation && !(CPU_METRIC_OPERATION_IDS as readonly string[]).includes(options.operation)
     ? new Float32Array(count * 3)
     : null;
   let sumSquared = 0;
@@ -170,10 +181,10 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
       }
       if (flipA && flipB) {
         for (let channel = 0; channel < 3; channel++) {
-          flipA[index * 3 + channel] = options.operation === "hdr-flip"
+          flipA[index * 3 + channel] = options.operation === "flip-hdr"
             ? Math.max(0, a[channel]!)
             : outputEncode(Math.min(1, Math.max(0, a[channel]!)));
-          flipB[index * 3 + channel] = options.operation === "hdr-flip"
+          flipB[index * 3 + channel] = options.operation === "flip-hdr"
             ? Math.max(0, b[channel]!)
             : outputEncode(Math.min(1, Math.max(0, b[channel]!)));
         }
@@ -205,7 +216,7 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
     result.height = height;
     result.channels = 1;
   } else if (flipA && flipB) {
-    result.errorMap = options.operation === "hdr-flip"
+    result.errorMap = options.operation === "flip-hdr"
       ? flipHDR(flipA, flipB, width, height)
       : flipLDR(flipA, flipB, width, height);
     result.width = width;

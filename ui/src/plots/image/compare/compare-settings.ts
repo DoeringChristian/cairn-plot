@@ -171,7 +171,7 @@ export interface CompareModeOption<M extends string = string> {
   /** True for a native (non-compositor) mode; false for a core kind. */
   native: boolean;
   /** True for an ENGINE diff-KERNEL entry (a sub-kind of the `diff` mode, e.g.
-   *  `hdr-flip`/`ssim`) appended via `extras.engineKernels`; false for a core
+   *  `flip-hdr`/`ssim`) appended via `extras.engineKernels`; false for a core
    *  or native mode. GPU-only, so gated by `extras.gpuAvailable`. */
   operation?: boolean;
   /** True when the mode is offered but not currently selectable (native mode

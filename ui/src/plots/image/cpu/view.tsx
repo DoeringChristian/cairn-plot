@@ -91,7 +91,7 @@ import type { PlotSettings } from "../../../settings/schema.ts";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-operation";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import { defaultReduceMode } from "../runtime/display-settings.ts";
-import { computeCpuSourceMetrics, type CpuSourceMetrics } from "./source-metrics.ts";
+import { computeCpuSourceMetrics, CPU_METRIC_OPERATION_IDS, type CpuSourceMetrics } from "./source-metrics.ts";
 import { useDeepFlatten } from "../components/use-deep-flatten";
 import {
   isFloatSurfaceProps,
@@ -1165,14 +1165,13 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
       foreground: compare.b,
       align: compare.align,
       fit: compare.fit,
-      // `flip-hdr` is its own public operation; the CPU metric path still
-      // spells that kernel `hdr-flip` (renamed with the rest of the CPU
-      // backend). Every other supported id passes through unchanged.
-      operation: compare.operationId === "flip-hdr"
-        ? "hdr-flip"
-        : compare.operationId in DIFF_MODE_LABELS || compare.operationId === "ssim" || compare.operationId === "flip"
-          ? compare.operationId as NonNullable<Parameters<typeof computeCpuSourceMetrics>[0]["operation"]>
-          : undefined,
+      // The metric path speaks PUBLIC operation ids, so the selection passes
+      // straight through; the membership check only guards ids this backend's
+      // reference path does not implement (which yield no metrics at all).
+      operation: compare.operationId in DIFF_MODE_LABELS ||
+        (CPU_METRIC_OPERATION_IDS as readonly string[]).includes(compare.operationId)
+        ? compare.operationId as NonNullable<Parameters<typeof computeCpuSourceMetrics>[0]["operation"]>
+        : undefined,
     }).then((next) => {
       if (!cancelled) setMetrics(next);
     }).catch((error) => {
@@ -1187,8 +1186,10 @@ function cpuCompareModeMenu(compare: NonNullable<ImageBackendInput["compareSourc
   return buildCompareModeMenu({
     mode: compare.mode ?? "diff",
     operation: compare.operationId,
-    kernelOptions: compare.operationOptions ??
-      Object.entries(DIFF_MODE_LABELS).map(([id, label]) => ({ id, label })),
+    // No fallback list: the host adapter always supplies the menu, built once
+    // from the active backend's capabilities (`runtime/comparison-menu.ts`), so
+    // the CPU and WebGPU panes can never offer different operations.
+    kernelOptions: compare.operationOptions ?? [],
     onSplit: () => compare.onCompareModeChange?.("split"),
     onOperation: (operationId) => compare.onComparisonOperationChange?.(operationId),
   });

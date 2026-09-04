@@ -11,12 +11,14 @@ import { DISPLAY_OPERATION_IDS } from "../definition/display-operations.ts";
 import { IMAGE_OPERATION_IDS } from "../definition/image-operations.ts";
 import { getImageOperationEvaluator } from "../resources/image-operation-evaluator.ts";
 import { getCpuDisplayOperation } from "./display-operations.ts";
+import { CPU_METRIC_OPERATION_IDS } from "./source-metrics.ts";
 
 /**
  * Operations the CPU backend serves from its reference metrics path
- * (`cpu/source-metrics.ts`) rather than from a per-pixel evaluator.
+ * (`cpu/source-metrics.ts`) rather than from a per-pixel evaluator — declared
+ * by that module, so the two can never drift apart.
  */
-const CPU_METRIC_OPERATIONS: ReadonlySet<string> = new Set(["flip", "flip-hdr", "ssim"]);
+const CPU_METRIC_OPERATIONS: ReadonlySet<string> = new Set<string>(CPU_METRIC_OPERATION_IDS);
 
 function hasCpuImageOperation(id: string): boolean {
   return getImageOperationEvaluator(id) !== undefined || CPU_METRIC_OPERATIONS.has(id);

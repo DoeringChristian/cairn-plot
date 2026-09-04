@@ -64,7 +64,7 @@ export interface RenderSnapshotInput {
   contentKeyB: string;
   /** Whether a `compareSource.b` operand is present. */
   hasBOperand: boolean;
-  /** The concrete diff kernel id (float sources auto-dispatch flip -> hdr-flip). */
+  /** The selected public comparison operation id (`flip`, `flip-hdr`, `ssim`, …). */
   resolvedOperationId: string;
   /** The active compositor mode ("split"), or null. */
   compareOpMode: "split" | null;

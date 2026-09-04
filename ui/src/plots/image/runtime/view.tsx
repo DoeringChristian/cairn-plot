@@ -16,6 +16,7 @@ import { channelToolbarButton, type ChannelSelection } from "../components/chann
 import { ImageHostRuntimeContext } from "./host-context.ts";
 import { comparisonOperationSettingsPatch } from "./operation-display-defaults.ts";
 import { comparisonMenuOptions } from "./comparison-menu.ts";
+import { migrateCompareSettings } from "../definition/settings.ts";
 
 /** Thin image adapter: framing and projection into the host-selected backend. */
 export interface ImagePlotViewProps extends ReactPlotViewProps<ImagePresentation, ImageSettings> {
@@ -27,11 +28,15 @@ export interface ImagePlotViewProps extends ReactPlotViewProps<ImagePresentation
 
 export function ImagePlotView({
   presentation: p,
-  settings,
+  settings: rawSettings,
   commands,
   backend,
   failureFallback,
 }: ImagePlotViewProps) {
+  // Sessions and descriptors older than the `flip`/`flip-hdr` split still carry
+  // `compare.flipMode`; every read of cell settings goes through the migration,
+  // which returns the same object when there is nothing to rewrite.
+  const settings = migrateCompareSettings(rawSettings);
   const fill = useContext(ChartFillContext);
   const gridUniform = useContext(GridUniformAspectContext);
   const inStack = useContext(InStackedGridContext);
