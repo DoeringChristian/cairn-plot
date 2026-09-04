@@ -26,6 +26,9 @@ export const DISPLAY_OPERATIONS: readonly DisplayOperationDefinition[] = [
   { id: "red-blue", label: "Red–Blue", category: "colormap", arities: curveArities, parameters: ["exposure", "offset", "min", "max", "reduce"] },
 ];
 
+/** Every public display-operation id; backends declare their capabilities from this. */
+export const DISPLAY_OPERATION_IDS: readonly string[] = DISPLAY_OPERATIONS.map((operation) => operation.id);
+
 const operations = new Map(DISPLAY_OPERATIONS.map((operation) => [operation.id, operation]));
 
 export function getDisplayOperation(id: string | null | undefined): DisplayOperationDefinition | undefined {

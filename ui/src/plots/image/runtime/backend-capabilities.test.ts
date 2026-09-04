@@ -3,36 +3,44 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { defineImageBackendCapabilities } from "../backend.ts";
-import { IMAGE_OPERATION_EVALUATORS } from "../resources/image-operation-evaluator.ts";
-import { CPU_DISPLAY_OPERATIONS } from "../cpu/display-operations.ts";
-import { WEBGPU_IMAGE_OPERATIONS } from "../webgpu/image-operations.ts";
-import { listWebGpuDisplayOperations } from "../webgpu/display.ts";
-import { getImageOperation } from "../definition/image-operations.ts";
+/**
+ * The backend modules themselves import their `.tsx` view, which Node's
+ * type-stripping loader cannot resolve, so the capability declarations live in
+ * their own modules. The source assertion below pins each backend object to the
+ * very declaration this test checks.
+ */
+import { CPU_CAPABILITIES } from "../cpu/capabilities.ts";
+import { WEBGPU_CAPABILITIES } from "../webgpu/capabilities.ts";
+import { IMAGE_OPERATION_IDS } from "../definition/image-operations.ts";
+import { DISPLAY_OPERATION_IDS } from "../definition/display-operations.ts";
 
-const cpuCapabilities = defineImageBackendCapabilities({
-  imageOperations: [
-    ...IMAGE_OPERATION_EVALUATORS.map(({ definition }) => definition),
-    getImageOperation("flip")!,
-    getImageOperation("ssim")!,
-  ],
-  displayOperations: CPU_DISPLAY_OPERATIONS.map(({ definition }) => definition),
-});
-const webGpuCapabilities = defineImageBackendCapabilities({
-  imageOperations: WEBGPU_IMAGE_OPERATIONS.map(({ definition }) => definition),
-  displayOperations: listWebGpuDisplayOperations().map(({ definition }) => definition),
-});
-const capabilities = [cpuCapabilities, webGpuCapabilities];
+const sorted = (ids: readonly string[]) => [...ids].sort();
+const capabilities = [CPU_CAPABILITIES, WEBGPU_CAPABILITIES];
 
-test("image backends advertise executable image and display operations", () => {
-  assert.equal(cpuCapabilities.supportsImageOperation("absolute"), true);
-  assert.equal(cpuCapabilities.supportsImageOperation("flip"), true);
-  assert.equal(cpuCapabilities.supportsImageOperation("ssim"), true);
-  assert.equal(webGpuCapabilities.supportsImageOperation("flip"), true);
+test("both backends advertise the identical, registry-complete capability sets", () => {
+  assert.deepEqual(sorted(CPU_CAPABILITIES.imageOperations), sorted(IMAGE_OPERATION_IDS));
+  assert.deepEqual(sorted(WEBGPU_CAPABILITIES.imageOperations), sorted(IMAGE_OPERATION_IDS));
+  assert.deepEqual(sorted(CPU_CAPABILITIES.displayOperations), sorted(DISPLAY_OPERATION_IDS));
+  assert.deepEqual(sorted(WEBGPU_CAPABILITIES.displayOperations), sorted(DISPLAY_OPERATION_IDS));
 
-  for (const id of ["linear", "srgb", "aces", "turbo", "magma", "red-green"]) {
-    assert.equal(cpuCapabilities.supportsDisplayOperation(id), true, `cpu/${id}`);
-    assert.equal(webGpuCapabilities.supportsDisplayOperation(id), true, `webgpu/${id}`);
+  for (const [path, declaration] of [
+    ["../cpu/backend.ts", "CPU_CAPABILITIES"],
+    ["../webgpu/backend.ts", "WEBGPU_CAPABILITIES"],
+  ] as const) {
+    const source = readFileSync(new URL(path, import.meta.url), "utf8");
+    assert.match(source, new RegExp(`capabilities: ${declaration}`), path);
   }
+});
+
+test("capabilities reject ids that are not public registry entries", () => {
+  assert.throws(
+    () => defineImageBackendCapabilities({ imageOperations: ["hdr-flip"], displayOperations: [] }),
+    /unknown image operation/,
+  );
+  assert.throws(
+    () => defineImageBackendCapabilities({ imageOperations: [], displayOperations: ["viridis"] }),
+    /unknown display operation/,
+  );
 });
 
 test("capabilities advertise stages independently rather than duplicating a pair matrix", () => {

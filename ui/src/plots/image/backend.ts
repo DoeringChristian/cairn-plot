@@ -1,11 +1,15 @@
-import type { DisplayOperationDefinition } from "./definition/display-operations.ts";
-import type { ImageOperationDefinition } from "./definition/image-operations.ts";
+import { getDisplayOperation } from "./definition/display-operations.ts";
+import { getImageOperation } from "./definition/image-operations.ts";
 import type { BackendSupport, BackendTechnology, RenderEnvironment } from "../../backends/contracts.ts";
 
-/** Executable semantic coverage advertised by an image backend. */
+/**
+ * Executable semantic coverage advertised by an image backend, as PUBLIC
+ * registry ids. How a backend implements an id — one kernel, three passes, a
+ * reference evaluator — is opaque to everything outside that backend.
+ */
 export interface ImageBackendCapabilities {
-  readonly imageOperations: readonly ImageOperationDefinition[];
-  readonly displayOperations: readonly DisplayOperationDefinition[];
+  readonly imageOperations: readonly string[];
+  readonly displayOperations: readonly string[];
   supportsImageOperation(id: string): boolean;
   supportsDisplayOperation(id: string): boolean;
 }
@@ -23,12 +27,22 @@ export interface ImageBackend<TView> {
   supports(environment: RenderEnvironment): BackendSupport;
 }
 
+/**
+ * Validates every advertised id against the public registries, so a backend
+ * cannot advertise one of its own kernel names.
+ */
 export function defineImageBackendCapabilities(options: {
-  imageOperations: readonly ImageOperationDefinition[];
-  displayOperations: readonly DisplayOperationDefinition[];
+  imageOperations: readonly string[];
+  displayOperations: readonly string[];
 }): ImageBackendCapabilities {
-  const imageIds = new Set(options.imageOperations.map(({ id }) => id));
-  const displayIds = new Set(options.displayOperations.map(({ id }) => id));
+  for (const id of options.imageOperations) {
+    if (!getImageOperation(id)) throw new Error(`image backend advertises unknown image operation ${id}`);
+  }
+  for (const id of options.displayOperations) {
+    if (!getDisplayOperation(id)) throw new Error(`image backend advertises unknown display operation ${id}`);
+  }
+  const imageIds = new Set(options.imageOperations);
+  const displayIds = new Set(options.displayOperations);
   return Object.freeze({
     imageOperations: Object.freeze([...options.imageOperations]),
     displayOperations: Object.freeze([...options.displayOperations]),
