@@ -58,6 +58,21 @@ const { report, setOverallStatus } = createHarness({
 const HOST_W = 480;
 const HOST_H = 360;
 const WHEEL_EVENTS = 60;
+/** `|deltaY|` per synthetic ctrl-wheel. The hook's factor is
+ *  `exp(-deltaY * 0.001)`, so 60 is ~1.062x per event — small enough to stay a
+ *  plausible pinch, large enough that the NET of the phase below is a zoom the
+ *  assertions can see without approaching the adaptive cap (>2000x here). */
+const WHEEL_DELTA = 60;
+/** Of every WHEEL_PERIOD events, this many zoom IN and the rest zoom out — the
+ *  net must be non-zero or an exact round trip can land back on the starting
+ *  zoom and make the "the gesture reached the pane" check false-fail. 36 in /
+ *  24 out over the phase. */
+const WHEEL_PERIOD = 5;
+const WHEEL_IN_PER_PERIOD = 3;
+/** The zoom the phase must reach, as a multiple of the starting zoom. The net
+ *  above is `exp(0.06 * 12)` = ~2.05x, so this holds with margin even if every
+ *  intermediate emission is coalesced away and only the final view is seen. */
+const WHEEL_MIN_PEAK = 1.5;
 const POINTER_EVENTS = 120;
 const POINTER_PER_FRAME = 3;
 const RESIZE_STEPS = 30;
@@ -239,12 +254,18 @@ interface Pane {
    *  the whole harness passes VACUOUSLY if the events stop being delivered,
    *  since every other assertion is a zero or an upper bound. */
   view: () => ImageViewState;
+  /** Subscribe to EVERY view the pane emits, for the duration of one phase;
+   *  returns the unsubscribe. The final view alone is a weak witness for a
+   *  gesture that moves back and forth — the EXTREMUM it reached is the thing
+   *  that says the events landed. */
+  watch: (fn: (v: ImageViewState) => void) => () => void;
 }
 
 async function mountPane(hostId: string, name: string, source: unknown): Promise<Pane> {
   const host = document.getElementById(hostId)!;
   host.style.cssText = `width:${HOST_W}px;height:${HOST_H}px;position:relative;background:#222`;
   let latest: ImageViewState = { zoom: 1, pan: { x: 0, y: 0 } };
+  let watcher: ((v: ImageViewState) => void) | null = null;
   function Harness() {
     const [v, setV] = useState<ImageViewState>(latest);
     return h(CpuImagePane, {
@@ -253,6 +274,7 @@ async function mountPane(hostId: string, name: string, source: unknown): Promise
       pan: v.pan,
       onViewChange: (next: ImageViewState) => {
         latest = next;
+        watcher?.(next);
         setV(next);
       },
       label: "",
@@ -282,14 +304,26 @@ async function mountPane(hostId: string, name: string, source: unknown): Promise
     root,
     surface: host.querySelector<HTMLElement>("[data-cpu-image-surface]")!,
     view: () => latest,
+    watch: (fn) => {
+      watcher = fn;
+      return () => {
+        if (watcher === fn) watcher = null;
+      };
+    },
   };
 }
 
 // ---------------------------------------------------------------------------
 // Gestures
 // ---------------------------------------------------------------------------
-/** WHEEL_EVENTS ctrl-wheel zooms (the trackpad-pinch signature), one per frame,
- *  alternating direction so the adaptive zoom cap never swallows an emission. */
+/**
+ * WHEEL_EVENTS ctrl-wheel zooms (the trackpad-pinch signature), one per frame,
+ * alternating direction so the adaptive zoom cap never swallows an emission —
+ * but WEIGHTED towards zooming in (WHEEL_IN_PER_PERIOD of every WHEEL_PERIOD),
+ * so the phase ends visibly zoomed. A symmetric alternation nets ~1.0, and an
+ * exact round trip lands back on the starting zoom, which would make the
+ * "the gesture actually reached the pane" check fail on a CORRECT pane.
+ */
 async function wheelGesture(el: HTMLElement): Promise<void> {
   const r = el.getBoundingClientRect();
   const cx = r.left + r.width / 2;
@@ -298,7 +332,7 @@ async function wheelGesture(el: HTMLElement): Promise<void> {
     await nextFrame();
     el.dispatchEvent(
       new WheelEvent("wheel", {
-        deltaY: i % 10 < 5 ? -20 : 20,
+        deltaY: i % WHEEL_PERIOD < WHEEL_IN_PER_PERIOD ? -WHEEL_DELTA : WHEEL_DELTA,
         ctrlKey: true,
         bubbles: true,
         cancelable: true,
@@ -357,8 +391,16 @@ async function gesturePhase(
 ): Promise<boolean> {
   resetCounts();
   const before = pane.view();
+  // The zoom EXTREMUM reached during the phase, from the pane's own emissions.
+  // Asserted separately from `after.zoom` so the "the events landed" check does
+  // not depend on where the gesture happens to stop.
+  let peakZoom = before.zoom;
+  const unwatch = pane.watch((v) => {
+    if (v.zoom > peakZoom) peakZoom = v.zoom;
+  });
   const stop = countFrames();
   await gesture();
+  unwatch();
   const stats = stop();
   const after = pane.view();
   const c = snapshot();
@@ -376,6 +418,13 @@ async function gesturePhase(
     `${pane.name} ${label}: the gesture actually reached the pane — ${moved} ` +
       `${moved === "zoom" ? `${before.zoom} -> ${after.zoom}` : `(${before.pan.x}, ${before.pan.y}) -> (${after.pan.x}, ${after.pan.y})`}`,
   );
+  if (moved === "zoom") {
+    check(
+      peakZoom >= before.zoom * WHEEL_MIN_PEAK,
+      `${pane.name} ${label}: the pane reached ${peakZoom.toFixed(3)} zoom (>= ${WHEEL_MIN_PEAK}x the ` +
+        `starting ${before.zoom}) — the wheel events accumulated, not just arrived`,
+    );
+  }
   check(
     c.draw >= Math.floor(stats.frames / 2),
     `${pane.name} ${label}: ${c.draw} presentation blit(s) for ${stats.frames} frame(s) — the pane kept repainting (>= frames/2)`,
@@ -398,6 +447,7 @@ async function gesturePhase(
     `BENCH: ${pane.name} ${label}: ${stats.frames} frames, blits ${c.draw}, ` +
       `createImageBitmap ${c.bitmap}, putImageData ${c.put}, getImageData ${c.getImageData}, ` +
       `canvas.width sets ${c.widthSets}, observe-since-mount ${observeSinceMount}; ` +
+      `zoom ${before.zoom.toFixed(3)} -> ${after.zoom.toFixed(3)} (peak ${peakZoom.toFixed(3)}); ` +
       `rAF interval mean ${stats.meanMs.toFixed(1)} ms / max ${stats.maxMs.toFixed(1)} ms`,
   );
   return ok;

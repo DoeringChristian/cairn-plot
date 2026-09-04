@@ -36,6 +36,13 @@
  * toggle still hits it. A key already resident commits SYNCHRONOUSLY inside the
  * effect, so a cached flip never shows a placeholder.
  *
+ * The key and the pixels it names MUST come from the same inputs, or a cache
+ * entry is poisoned for the life of the LRU. The display-space `processing`
+ * block is the one input a decode can outlive, so each effect captures it ONCE,
+ * at effect time, as a `ProcessingPass` (`processing.ts`) whose `key` fragment
+ * and `apply` close over the same block — never re-read from a ref after the
+ * `await`, which would file the new block's pixels under the old block's key.
+ *
  * ## Holding the previous frame
  * `source` is only ever REPLACED, never cleared, while a new pipeline runs:
  * `status` goes `loading` and the pane keeps painting the frame it has. That is
@@ -52,7 +59,7 @@ import { getColormapLUT } from "../../../settings/colormaps/index";
 import { applyColormap } from "../resources/apply-colormap.ts";
 import { computeDiff } from "./diff.ts";
 import { webglRenderDiffToCanvas } from "./webgl-diff.ts";
-import { applyProcessingToImageData, isIdentityProcessing } from "./processing.ts";
+import { processingPass } from "./processing.ts";
 import { sdrTransferToImageData, tonemapToImageData } from "./tonemap-image-data.ts";
 import type { PaintSource } from "./paint.ts";
 import type { FloatImageData } from "../runtime/contracts";
@@ -217,12 +224,16 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
     boundsEngaged = false,
   } = input;
 
-  const processing = input.processing ?? DEFAULT_PROCESSING;
-  // The processing block's SCALAR identity — a dependency that survives an
-  // inline-authored object literal re-creating the block every render.
-  const processingKey = `${processing.brightness},${processing.contrast},${processing.gamma},${processing.exposure},${processing.offset},${processing.flipSign}`;
-  const processingRef = useRef(processing);
-  processingRef.current = processing;
+  // The processing block bound to the key fragment that names it. Every effect
+  // below CAPTURES this object at effect time (`const proc = pass`) and takes
+  // both its key and its pixel math from that one capture — never from a ref
+  // read after an `await`, which would file the pixels of a newly-selected
+  // block under the key of the one the effect started with. See `ProcessingPass`
+  // in `processing.ts`; `processing.test.ts` pins the pairing.
+  const pass = processingPass(input.processing ?? DEFAULT_PROCESSING);
+  // The SCALAR identity — a dependency that survives an inline-authored object
+  // literal re-creating the block every render.
+  const processingKey = pass.key;
 
   const [frame, setFrame] = useState<Frame | null>(null);
   const [version, setVersion] = useState(0);
@@ -292,7 +303,10 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
   // --- FALSE COLOR --------------------------------------------------------
   useEffect(() => {
     if (!useFalseColor || !imageUrl) return;
-    const key = `${imageUrl}::${colormap}::${effectiveExposure}::${effectiveOffset}::${effectiveReduce}::${boundsKey}::proc(${processingKey})`;
+    // Captured at effect time: `proc.key` names the entry and `proc.apply`
+    // fills it, so the two can never come from different renders.
+    const proc = pass;
+    const key = `${imageUrl}::${colormap}::${effectiveExposure}::${effectiveOffset}::${effectiveReduce}::${boundsKey}::proc(${proc.key})`;
     return run(key, "applying colormap...", () =>
       bitmapFor(key, async () => {
         const src = await loadImageData(imageUrl);
@@ -311,7 +325,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
           1,
           effectiveReduce,
         );
-        return applyProcessingToImageData(mapped, processingRef.current);
+        return proc.apply(mapped);
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -320,24 +334,25 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
   // --- DIRECT (the plain source, optionally through the display transfer) --
   useEffect(() => {
     if (!useDirect || !imageUrl) return;
+    // Captured at effect time — see the FALSE COLOR effect.
+    const proc = pass;
     const key = useTransfer
-      ? `${imageUrl}::transfer::${sdrTransfer}::${tonemapGamma}::${effectiveExposure}::${effectiveOffset}::proc(${processingKey})`
-      : `${imageUrl}::plain::proc(${processingKey})`;
+      ? `${imageUrl}::transfer::${sdrTransfer}::${tonemapGamma}::${effectiveExposure}::${effectiveOffset}::proc(${proc.key})`
+      : `${imageUrl}::plain::proc(${proc.key})`;
     return run(key, useTransfer ? "applying transfer..." : undefined, async () => {
       // The untouched source: decode straight to a bitmap (the old `<img>` fast
       // path — no readback, so a cross-origin image still displays).
-      if (!useTransfer && isIdentityProcessing(processingRef.current)) {
+      if (!useTransfer && proc.isIdentity) {
         const direct = await bitmapFromUrl(imageUrl);
         return direct && bitmapCache.claim(key, direct);
       }
       return bitmapFor(key, async () => {
         const src = await loadImageData(imageUrl);
         if (!src) return null;
-        return applyProcessingToImageData(
+        return proc.apply(
           useTransfer
             ? sdrTransferToImageData(src, sdrTransfer, tonemapGamma, effectiveExposure, effectiveOffset)
             : src,
-          processingRef.current,
         );
       });
     });
@@ -347,7 +362,9 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
   // --- DIFF ---------------------------------------------------------------
   useEffect(() => {
     if (!showDiff || !imageUrl || !baselineUrl) return;
-    const key = `${baselineUrl}::${imageUrl}::${diffMode}::${colormap}::${effectiveExposure}::${effectiveOffset}::proc(${processingKey})`;
+    // Captured at effect time — see the FALSE COLOR effect.
+    const proc = pass;
+    const key = `${baselineUrl}::${imageUrl}::${diffMode}::${colormap}::${effectiveExposure}::${effectiveOffset}::proc(${proc.key})`;
     const cmapMode: "linear" | "signed" | "positive" = (diffMode as string).includes("signed")
       ? "signed"
       : "positive";
@@ -356,7 +373,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
       // no `getImageData` readback. Usable only when `processing` is the identity
       // (otherwise the display stage needs the pixels) and only when the CPU
       // result is not already cached.
-      if (isIdentityProcessing(processingRef.current) && !getCachedImageData(key)) {
+      if (proc.isIdentity && !getCachedImageData(key)) {
         const [baseData, otherData] = await Promise.all([loadImageData(baselineUrl), loadImageData(imageUrl)]);
         if (!baseData || !otherData) return null;
         try {
@@ -381,7 +398,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
         if (colormap != null) {
           diffData = applyColormap(diffData, colormap, cmapMode, effectiveExposure, effectiveOffset);
         }
-        return applyProcessingToImageData(diffData, processingRef.current);
+        return proc.apply(diffData);
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -69,3 +69,36 @@ export function applyProcessingToImageData(src: ImageData, p: ImageProcessing): 
   }
   return makeImageData(out, src.width, src.height);
 }
+
+/**
+ * A processing block bound to the KEY FRAGMENT that names it — one object that
+ * carries both halves of the cache contract.
+ *
+ * A content cache is poisoned the moment the key it stores under and the pixels
+ * it stores are derived from different blocks. That is easy to write by
+ * accident when the key is built at effect time and the block is read from a
+ * ref after an `await`: a `processing` change mid-decode files the NEW pixels
+ * under the OLD key. Handing the effect ONE `ProcessingPass` makes the two
+ * halves inseparable — `key` and `apply` close over the same `p` — so the only
+ * way to key a bitmap wrongly is to use a key from a different pass object,
+ * which the call sites make plainly visible.
+ */
+export interface ProcessingPass {
+  /** The block's SCALAR identity — the cache-key fragment (and a React dep that
+   *  survives an inline object literal re-created every render). */
+  readonly key: string;
+  /** `isIdentityProcessing(p)` for the very same `p`. */
+  readonly isIdentity: boolean;
+  /** `applyProcessingToImageData(src, p)` for the very same `p`. */
+  readonly apply: (src: ImageData) => ImageData;
+}
+
+/** Bind one `ImageProcessing` block to its key (see `ProcessingPass`). Pure and
+ *  cheap — safe to build on every render. */
+export function processingPass(p: ImageProcessing): ProcessingPass {
+  return {
+    key: `${p.brightness},${p.contrast},${p.gamma},${p.exposure},${p.offset},${p.flipSign}`,
+    isIdentity: isIdentityProcessing(p),
+    apply: (src: ImageData) => applyProcessingToImageData(src, p),
+  };
+}

@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyProcessingToImageData, isIdentityProcessing } from "./processing.ts";
+import { applyProcessingToImageData, isIdentityProcessing, processingPass } from "./processing.ts";
 
 const IDENTITY = { brightness: 0, contrast: 0, gamma: 1, exposure: 0, offset: 0, flipSign: false };
 const px = (r: number, g: number, b: number, a = 255) =>
@@ -40,4 +40,40 @@ test("exposure folds into the brightness gain, alpha passes through", () => {
   assert.equal(out.data[3], 128);
   assert.equal(out.width, 1);
   assert.equal(out.height, 1);
+});
+
+// ---------------------------------------------------------------------------
+// The key/apply pairing — the guard against a poisoned content cache.
+// ---------------------------------------------------------------------------
+test("a pass keys and applies the SAME block", () => {
+  const dim = { ...IDENTITY, brightness: -0.5 };
+  const bright = { ...IDENTITY, brightness: 0.5 };
+  const a = processingPass(dim);
+  const b = processingPass(bright);
+  // Distinct blocks get distinct keys...
+  assert.notEqual(a.key, b.key);
+  // ...and each pass's pixels are the ones its key names.
+  assert.deepEqual([...a.apply(px(128, 128, 128)).data], [...applyProcessingToImageData(px(128, 128, 128), dim).data]);
+  assert.deepEqual([...b.apply(px(128, 128, 128)).data], [...applyProcessingToImageData(px(128, 128, 128), bright).data]);
+  // Scalar-equal blocks authored as separate objects share one key (the React
+  // dependency an inline object literal would otherwise defeat).
+  assert.equal(processingPass({ ...dim }).key, a.key);
+  assert.equal(a.isIdentity, false);
+  assert.equal(processingPass(IDENTITY).isIdentity, true);
+});
+
+test("a captured pass never observes a later block", () => {
+  // The cache-poisoning shape: a pass captured before an async content pass
+  // starts must still key AND apply its own block once a newer one is selected,
+  // so a bitmap can never be filed under a key that does not describe it.
+  let live = { ...IDENTITY, gamma: 2 };
+  const captured = processingPass(live);
+  const keyAtCapture = captured.key;
+  const pixelsAtCapture = [...captured.apply(px(64, 64, 64)).data];
+  live = { ...IDENTITY, gamma: 0.5 };
+  const later = processingPass(live);
+  assert.notEqual(later.key, keyAtCapture);
+  assert.equal(captured.key, keyAtCapture);
+  assert.deepEqual([...captured.apply(px(64, 64, 64)).data], pixelsAtCapture);
+  assert.notDeepEqual([...later.apply(px(64, 64, 64)).data], pixelsAtCapture);
 });

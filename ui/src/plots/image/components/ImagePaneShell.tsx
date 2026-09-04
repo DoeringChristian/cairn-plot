@@ -4,10 +4,13 @@
  * cairn-plot ships two panes that are both "an image in a zoom/pan viewport
  * with a toolbar, a TEV pixel-value overlay and a label chip", differing only
  * in HOW they put pixels on screen:
- *   - `renderers/CpuImagePane.tsx`  — 2D-canvas / `<img>` + CSS-transform zoom.
+ *   - `renderers/CpuImagePane.tsx`  — paints its content bitmap into a
+ *     device-pixel 2D canvas, zoom via the viewport quad it blits to.
  *   - `renderers/GpuImagePane.tsx`  — WebGPU engine, zoom via a sampled uvRect;
  *     also owns the split/diff compositor (content-op unification, Phase
  *     4 — the standalone `media-compare/GpuComparePane.tsx` it replaced is gone).
+ * Both backends share ONE viewport (the same `zoom`/`pan` state and the same
+ * gesture wiring); they differ only in what draws inside it.
  * Everything AROUND the pixels — the pane root, the ONE viewport element (the
  * `useImageGestures` wheel/drag/dblclick wiring, the checkerboard, the pointer
  * handlers), the `PlotToolbar` + `useImageController` adapter (with the
@@ -125,8 +128,9 @@ export type PaneDataAttrs = Record<string, string | boolean>;
  * pass — display-only, never a diff recompute) and passes the current values +
  * setters here; the shell renders them as the toolbar's SECOND slider row (which
  * folds into the overflow menu on a narrow pane). Omitted by panes/sub-paths
- * that can't apply the adjustment (e.g. the CPU SDR `<img>` path) — the slider
- * row is then simply absent. */
+ * that can't apply the adjustment (e.g. an encoding whose param manifest has no
+ * `exposure`, or the min/max bounds skin) — the slider row is then simply
+ * absent. */
 export interface ImageDisplayAdjust {
   /** Exposure in EV stops (color * 2^EV). Slider range -8..+8, default 0, but
    *  any finite value is legal (manual toolbar entry can exceed the range). */
