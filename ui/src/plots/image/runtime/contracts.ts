@@ -247,13 +247,12 @@ export interface ImageComparisonInput {
   /** Backend-supported comparison operations, resolved by the shared image
    * runtime from the selected backend's capability declaration. */
   operationOptions?: { id: string; label: string }[];
-  /** The DIFF kernel — a menu selection token (a pointwise id, `"flip"`, or
-   *  `"ssim"`). SEEDS the pane's diff-kernel state (always a real
-   *  kernel, even while {@link mode} is a compositor mode — so switching INTO diff
-   *  restores it). Resolved to a concrete kernel id by `resolveComparisonOperationId`. */
+  /** The selected comparison operation — a PUBLIC registry id (a pointwise id,
+   *  `"flip"`, `"flip-hdr"`, `"ssim"`), always one of {@link operationOptions}.
+   *  SEEDS the pane's diff state (always a real operation, even while
+   *  {@link mode} is a compositor mode — so switching INTO diff restores it).
+   *  Backends key their implementation off this id directly. */
   operationId: string;
-  /** Concrete FLIP algorithm selected by shared settings. */
-  flipMode?: "sdr" | "hdr";
   /** The COMPARE mode: `"diff"` (the scalar-error diff of {@link operationId}, the
    *  default when absent) OR the Phase-3 compositor mode `"split"` (a LIGHT
    *  composite of the two operands by divider). Selecting a mode is an OP switch

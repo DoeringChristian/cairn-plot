@@ -70,7 +70,7 @@ test("enumerate: native modes are disabled when topology mismatches; core stay e
 
 const ENGINE_KERNELS = [
   { value: "absolute", label: "Absolute" },
-  { value: "hdr-flip", label: "FLIP" },
+  { value: "flip-hdr", label: "HDR-FLIP" },
   { value: "ssim", label: "SSIM" },
 ] as const;
 
@@ -90,7 +90,7 @@ test("enumerate: engine operations append after core+native, GPU-enabled by defa
   const operations = opts.filter((o) => o.operation);
   assert.equal(operations.length, ENGINE_KERNELS.length);
   // Kernels trail the three core kinds and are enabled (GPU assumed available).
-  assert.deepEqual(opts.slice(3).map((o) => o.value), ["absolute", "hdr-flip", "ssim"]);
+  assert.deepEqual(opts.slice(3).map((o) => o.value), ["absolute", "flip-hdr", "ssim"]);
   assert.ok(operations.every((o) => o.operation && !o.native && !o.disabled));
 });
 

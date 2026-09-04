@@ -1793,7 +1793,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
     ): { entry: DiffCacheEntry | null } | "hold" | "failed" {
       const operation = getWebGpuMultipassOperation(operationId);
       if (operation) {
-        const automaticHdr = operationId === "hdr-flip" && !ctx.hdrExposures;
+        const automaticHdr = operationId === "flip-hdr" && !ctx.hdrExposures;
         const computeParams = automaticHdr
           ? () => automaticHdrFlipParams(entry, contentKeys.a)
           : operation.program.computeParams?.(ctx);
@@ -1836,7 +1836,7 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       const operation = getWebGpuMultipassOperation(operationId);
       if (!operation) return getWebGpuImageOperation(operationId)?.kind === "inline";
       if (entry.disposed || !entry.sourceLayout || !entry.sourceBLayout) return false;
-      const automaticHdr = operationId === "hdr-flip" && !ctx.hdrExposures;
+      const automaticHdr = operationId === "flip-hdr" && !ctx.hdrExposures;
       return hasDiff(
         entry.device,
         { w: entry.sourceLayout.width, h: entry.sourceLayout.height },

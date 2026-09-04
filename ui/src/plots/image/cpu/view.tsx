@@ -1165,7 +1165,10 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
       foreground: compare.b,
       align: compare.align,
       fit: compare.fit,
-      operation: compare.operationId === "flip" && compare.flipMode === "hdr"
+      // `flip-hdr` is its own public operation; the CPU metric path still
+      // spells that kernel `hdr-flip` (renamed with the rest of the CPU
+      // backend). Every other supported id passes through unchanged.
+      operation: compare.operationId === "flip-hdr"
         ? "hdr-flip"
         : compare.operationId in DIFF_MODE_LABELS || compare.operationId === "ssim" || compare.operationId === "flip"
           ? compare.operationId as NonNullable<Parameters<typeof computeCpuSourceMetrics>[0]["operation"]>
@@ -1176,7 +1179,7 @@ function useCpuCompareMetrics(input: ImageBackendInput): CpuSourceMetrics | null
       console.warn("cairn-plot CPU comparison metrics failed", error);
     });
     return () => { cancelled = true; };
-  }, [input.source, compare?.b, compare?.align, compare?.fit, compare?.operationId, compare?.flipMode]);
+  }, [input.source, compare?.b, compare?.align, compare?.fit, compare?.operationId]);
   return metrics;
 }
 
@@ -1210,7 +1213,6 @@ function useCpuComparisonInput(input: ImageBackendInput, metrics: CpuSourceMetri
         input.source.contentKey ?? "reference",
         compare.b.contentKey ?? "foreground",
         compare.operationId,
-        compare.flipMode ?? "sdr",
         compare.align ?? "top-left",
         compare.fit ?? "crop",
       ]),
@@ -1219,7 +1221,6 @@ function useCpuComparisonInput(input: ImageBackendInput, metrics: CpuSourceMetri
     input.source.contentKey,
     compare?.b.contentKey,
     compare?.operationId,
-    compare?.flipMode,
     compare?.align,
     compare?.fit,
     metrics?.errorMap,

@@ -6,7 +6,7 @@
  * (`flip-reference.test.ts`).
  *
  * ## Pass graph (all intermediates rgba16float, source resolution)
- *   ycxczA / ycxczB : srcA/srcB (sRGB) → YCxCz.
+ *   ycxczA / ycxczB : srcA/srcB (scene-linear, display-clamped) → YCxCz.
  *   labA   / labB   : ycxcz → per-channel CSF spatial filter → Hunt-CIELAB.
  *   combine         : HyAB color diff (redistributed) ⊕ edge/point feature diff
  *                     on the (unfiltered) achromatic channel → flip ∈ [0,1].
@@ -17,13 +17,14 @@
  * uniforms (see `prelude.wgsl.ts`'s SEPARABLE_CONV_NOTE). `displayRange:"unit"`
  * — the output is already in [0,1].
  *
- * ## LDR-FLIP + float-source SDR evaluation
- * `flipKernel` assumes sRGB/display-encoded LDR inputs (u8 sources). For FLOAT
- * (HDR) sources the public `flip` mode auto-dispatches to HDR-FLIP
- * (`hdr-flip.ts`) by default. The SDR runtime setting selects
- * `flipLdrForcedProgram`, which clamps linear values to the display range first
- * (see `YCXCZ_LINEAR_CLAMP_SHADER`). This file also exports the
- * shared LDR pass pieces (`LAB_SHADER`, `COMBINE_SHADER`, filter constants,
+ * ## The public `flip` operation
+ * `flipProgram` implements the registry's `flip` operation. Its operands are
+ * already scene-linear floats (source storage is normalized before the pane
+ * sees it), so the front-end clamps linear values to the display range instead
+ * of sRGB-decoding — see `YCXCZ_LINEAR_CLAMP_SHADER`. The separate public
+ * `flip-hdr` operation (`hdr-flip.ts`) sweeps an exposure range instead; it is
+ * an explicit user choice, never an automatic dispatch. This file also exports
+ * the shared LDR pass pieces (`LAB_SHADER`, `COMBINE_SHADER`, filter constants,
  * `buildLdrFlipPasses`) that HDR-FLIP reuses per exposure.
  */
 import { VERTEX_WGSL, FLIP_COLOR_WGSL, SAMPLING_WGSL, SOURCE_MAP_WGSL } from "./prelude.wgsl.ts";
@@ -77,21 +78,6 @@ export function featureConstants(ppd: number): { r: number; sd: number; edgeNorm
 }
 
 // ---- WGSL pass shaders -----------------------------------------------------
-const YCXCZ_SHADER = `
-${VERTEX_WGSL}
-${FLIP_COLOR_WGSL}
-${SAMPLING_WGSL}
-${SOURCE_MAP_WGSL}
-@group(0) @binding(0) var src: texture_2d<f32>;
-@group(0) @binding(5) var<uniform> u_map0: vec4<f32>; // offX, offY, fitFill, 0
-@group(0) @binding(8) var<uniform> u_map1: vec4<f32>; // resultW, resultH, 0, 0
-@fragment fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-  let px = vec2<i32>(in.position.xy);
-  let s = mapSample(src, px, u_map0.x, u_map0.y, u_map1.x, u_map1.y, u_map0.z);
-  return vec4<f32>(flip_rgb2ycxcz(s.rgb), 1.0);
-}
-`;
-
 // Forced-LDR-on-float front-end: the source is LINEAR float (not sRGB), so we
 // tone-map with the default srgb operator = clamp to [0,1] then (implicitly)
 // sRGB-encode-for-display. LDR-FLIP would sRGB-DECODE its input, so encode∘decode
@@ -290,23 +276,14 @@ export function buildLdrFlipPasses(
   return { passes, flipRef: flip };
 }
 
-export const flipProgram: MultipassImageOperationProgram = {
-  params: { ppd: 67 },
-  buildPasses(ctx: ImageOperationBuildContext): { passes: ImageOperationPass[]; final: string } {
-    const ppd = ctx.params.ppd ?? 67;
-    const { passes, flipRef } = buildLdrFlipPasses(ppd, YCXCZ_SHADER, "srcA", "srcB", ctx);
-    return { passes, final: flipRef };
-  },
-};
-
 /**
- * SDR FLIP evaluation for FLOAT sources.
- * Identical to LDR-FLIP except the front-end reads LINEAR float and clamps to
- * [0,1] (the default srgb tone-map operator) instead of sRGB-decoding — see
- * `YCXCZ_LINEAR_CLAMP_SHADER`. U8 sources use the plain `flip` operation, so
- * this program only ever runs on float sources.
+ * The public `flip` operation: LDR-FLIP over scene-linear operands.
+ * Identical to the paper's LDR-FLIP except the front-end reads LINEAR float and
+ * clamps to [0,1] (the default srgb tone-map operator) instead of sRGB-decoding
+ * — see `YCXCZ_LINEAR_CLAMP_SHADER`. Source storage is normalized to
+ * scene-linear before the pane sees it, so this is the only front-end needed.
  */
-export const flipLdrForcedProgram: MultipassImageOperationProgram = {
+export const flipProgram: MultipassImageOperationProgram = {
   params: { ppd: 67 },
   buildPasses(ctx: ImageOperationBuildContext): { passes: ImageOperationPass[]; final: string } {
     const ppd = ctx.params.ppd ?? 67;

@@ -55,8 +55,8 @@ fn ssim_luma(lin: vec3<f32>) -> f32 {
 // mapping (`mapSample`) — the RESULT-grid pixel maps to the aligned integer
 // texel per source under crop, or a bilinear rescale under fill. This is the
 // SAME source-map every other source-reading kernel applies (pointwise's
-// `pointwiseShader`, FLIP's `YCXCZ_SHADER`); the moment passes are the only
-// SSIM passes that read the sources, so they carry it and every later pass runs
+// `pointwiseShader`, FLIP's `YCXCZ_LINEAR_CLAMP_SHADER`); the moment passes are
+// the only SSIM passes that read the sources, so they carry it and every later pass runs
 // over RESULT-resolution intermediates unaffected. `u_map` = (offAx, offAy,
 // offBx, offBy); `u_res` = (resultW, resultH, fitFill, 0) — identical layout to
 // `pointwiseShader`. Absent a mapping ⇒ zero offsets / crop (identity, the

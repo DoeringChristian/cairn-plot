@@ -68,11 +68,6 @@ import { imageDataToSceneField } from "../resources/scene-field.ts";
 // never `core.iife.js`.
 import { getImageOperation } from "../definition/image-operations.ts";
 import { getWebGpuMultipassOperation } from "./image-operations.ts";
-import {
-  resolveComparisonOperationId,
-  listComparisonOperationOptions,
-  type FlipMode,
-} from "../definition/comparison-operations";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation } from "./display.ts";
@@ -533,15 +528,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [compareSource?.onComparisonOperationChange, setSynced],
   );
-  // Cheap pure derivations: FLIP's concrete backend implementation follows its
-  // explicit HDR/SDR setting. Source storage has already been normalized away.
-  // Standard SDR FLIP is the safe/default operation for browser-native images.
-  // HDR-FLIP is an explicit opt-in: its exposure sweep is substantially more
-  // expensive and can saturate the GPU during a many-pane iteration scrub.
-  const flipMode: FlipMode = synced?.["compare.flipMode"] ?? "sdr";
-  const resolvedOperationId = diffMode
-    ? resolveComparisonOperationId(comparisonOperationId, flipMode)
-    : comparisonOperationId;
+  // The selected operation id IS the backend's kernel key — `flip` and
+  // `flip-hdr` are two public operations the user picks between in the compare
+  // menu, not one operation with a hidden mode. No resolution step.
+  const resolvedOperationId = comparisonOperationId;
   const diffDefaultEncoding = diffSeedColormap ?? DEFAULT_COMPARISON_DISPLAY_OPERATION_ID;
   // ONE-CONCRETE-VALUE model (user ruling): the viewport's encoding seeds ONCE from
   // the INITIALLY-VISIBLE face's defaults — diff → authored/shared default colormap,
@@ -791,10 +781,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const changeComparisonOperation = useCallback(
     (id: string) => setComparisonOperation(id),
     [setComparisonOperation],
-  );
-  const changeFlipMode = useCallback(
-    (mode: FlipMode) => publishSettings({ "compare.flipMode": mode }),
-    [publishSettings],
   );
   const changeDiffEncoding = useCallback(
     (id: string) => publishSettings({ "image.encoding": id }),
@@ -1656,7 +1642,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneReady, naturalDims, viewport, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged,
     // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
-    // change, or the hdr-flip exposures resolve.
+    // change, or the flip-hdr exposures resolve.
     diffMode, refDims, refUploadVersion, resolvedOperationId, effectiveDiffEncoding, diffMapping, hdrExposures, contentKeyA, contentKeyB,
     // COMPOSITOR deps: re-render on a divider drag / mode change
     // (only the compositor param uniform changes — no recompile).
@@ -1870,7 +1856,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     ? null
     : resolvedOperationId === "ssim"
       ? `SSIM ${formatSsim(displayedMapMean)}`
-      : resolvedOperationId === "flip" || resolvedOperationId === "flip-sdr" || resolvedOperationId === "hdr-flip"
+      : resolvedOperationId === "flip" || resolvedOperationId === "flip-hdr"
         ? `Mean FLIP ${displayedMapMean.toExponential(2)}`
         : null;
   const sourceMetricsLabel = diffMetrics
@@ -2115,8 +2101,9 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     const modeMenu = buildCompareModeMenu({
       mode: compositorMode ? compareOpMode! : "diff",
       operation: comparisonOperationId,
-      kernelOptions: compareSource?.operationOptions ??
-        listComparisonOperationOptions().map((k) => ({ id: k.id, label: k.label })),
+      // The host adapter always supplies the list, filtered by the ACTIVE
+      // backend's capabilities — the view never invents its own.
+      kernelOptions: compareSource?.operationOptions ?? [],
       onSplit: () => changeCompareMode("split"),
       onOperation: (id) => {
         if (compositorMode) changeCompareMode("diff");
@@ -2352,19 +2339,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // channel (the reduction is moot for a scalar). (The norm Lin·Log·Pow picker
       // was REMOVED — norm-UI-removal follow-up.)
       rowSegments={[
-        ...(diffMode && comparisonOperationId === "flip"
-          ? [{
-              id: "flip-mode",
-              label: "FLIP",
-              title: "FLIP exposure evaluation: HDR sweeps the reference-derived exposure range; SDR evaluates one display-mapped image",
-              options: [
-                { id: "hdr", label: "HDR" },
-                { id: "sdr", label: "SDR" },
-              ],
-              value: flipMode,
-              onSelect: (id: string) => changeFlipMode(id as FlipMode),
-            }]
-          : []),
         // The diff error is a k=1 scalar (reduce mean) — no reduce picker in diff mode.
         ...(!diffMode && enc.hasParam("reduce") && sourceArity > 1 ? [reduceSegment(effectiveReduce, changeReduce)] : []),
       ]}

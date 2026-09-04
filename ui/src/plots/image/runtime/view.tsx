@@ -60,7 +60,6 @@ export function ImagePlotView({
         operationId: selectedComparisonOperation === "split"
           ? p.comparison.defaultOperation
           : selectedComparisonOperation!,
-        flipMode: settings["compare.flipMode"] ?? "sdr",
         mode: selectedComparisonOperation === "split" ? "split" : "diff",
         splitPosition: settings["compare.split"] ?? p.comparison.defaultSplit,
         align: p.comparison.align,
@@ -75,13 +74,11 @@ export function ImagePlotView({
           previousOperation: selectedComparisonOperation,
           nextOperation: operationId,
           currentEncoding: settings["image.encoding"],
-          flipMode: settings["compare.flipMode"],
         })),
         onCompareModeChange: (mode) => commands.patch(comparisonOperationSettingsPatch({
           previousOperation: selectedComparisonOperation,
           nextOperation: mode === "split" ? "split" : p.comparison!.defaultOperation,
           currentEncoding: settings["image.encoding"],
-          flipMode: settings["compare.flipMode"],
         })),
         onSplitPositionChange: (position) => commands.patch({ "compare.split": position }),
         compareModified:

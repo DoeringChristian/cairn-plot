@@ -4,7 +4,7 @@
  * two-sided HDR-FLIP verification (spec addendum): the node test
  * (`kernels/hdr-flip-reference.test.ts`) pins the CPU reference to the official
  * `flip-evaluator` HDR values; this harness asserts the GPU kernel
- * (`kernels/hdr-flip.ts`, run via `computeDiff("hdr-flip", …)`) agrees with that
+ * (`kernels/hdr-flip.ts`, run via `computeDiff("flip-hdr", …)`) agrees with that
  * CPU reference within tolerance on synthetic float HDR fixture pairs.
  *
  * Both sides use the SAME exposure range (`computeHdrFlipExposures`, computed on
@@ -84,7 +84,7 @@ async function runHdrFlipCase(device: Device, w: number, h: number, seed: number
     stopExposure: exp.stopExposure,
     numExposures: exp.numExposures,
   };
-  const result = computeDiff(device, texRef, texTest, "hdr-flip", params);
+  const result = computeDiff(device, texRef, texTest, "flip-hdr", params);
   const gpu = await device.readback(result);
   texRef.destroy();
   texTest.destroy();
@@ -125,7 +125,7 @@ async function runCacheContract(device: Device): Promise<boolean> {
     numExposures: exp.numExposures,
   };
   const before = getDiffComputeCount();
-  const e1 = ensureDiff(device, texRef, texTest, "hdr-flip", params, "ref#hdr", "test#hdr");
+  const e1 = ensureDiff(device, texRef, texTest, "flip-hdr", params, "ref#hdr", "test#hdr");
   const afterFirst = getDiffComputeCount();
   const presentations = [
     { uv: { x: 0, y: 0, w: 1, h: 1 }, exposureEV: 0, offset: 0 },
@@ -135,7 +135,7 @@ async function runCacheContract(device: Device): Promise<boolean> {
   for (const presentation of presentations) {
     renderDiffDisplay(device, target, e1.texture, e1.displayRange, presentation);
   }
-  const e2 = ensureDiff(device, texRef, texTest, "hdr-flip", params, "ref#hdr", "test#hdr");
+  const e2 = ensureDiff(device, texRef, texTest, "flip-hdr", params, "ref#hdr", "test#hdr");
   const afterSecond = getDiffComputeCount();
   texRef.destroy();
   texTest.destroy();

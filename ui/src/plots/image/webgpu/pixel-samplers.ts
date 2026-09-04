@@ -50,7 +50,7 @@ export interface PixelSamplerInputs {
   naturalDims: { w: number; h: number } | null;
   /** Active LUT id, or null when a curve display operation is active. */
   sdrColormap: string | null;
-  /** The concrete diff kernel id (float sources auto-dispatch flip -> hdr-flip). */
+  /** The selected public comparison-operation id (`flip`, `flip-hdr`, `ssim`, …). */
   resolvedOperationId: string;
   /** Retained primary buffers (mutually exclusive by `hdrMode`). */
   hdrDataRef: Cell<FloatImageData | null>;

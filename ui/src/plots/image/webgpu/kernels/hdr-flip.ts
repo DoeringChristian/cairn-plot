@@ -8,8 +8,10 @@
  *
  * ## Inputs
  * Two LINEAR-RGB float sources (rgba16/32float) — HDR imagery (cp.Image hdr
- * arrays / f32-decoded EXR urls). Auto-dispatched under the public `flip` mode
- * when the compare sources are float (`model/comparison-operations.ts`).
+ * arrays / f32-decoded EXR urls). This program implements the PUBLIC `flip-hdr`
+ * operation, which the user selects explicitly in the compare menu — there is
+ * no auto-dispatch from `flip` (its exposure sweep is far more expensive and
+ * would silently saturate the GPU during a many-pane scrub).
  *
  * ## Pass graph (per exposure, all intermediates rgba16float, source resolution)
  * The exposure RANGE + COUNT are precomputed on the CPU from the reference

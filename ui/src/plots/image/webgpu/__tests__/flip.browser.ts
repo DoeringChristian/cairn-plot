@@ -4,8 +4,8 @@
  * two-sided FLIP verification (spec §FLIP): the node test
  * (`kernels/flip-reference.test.ts`) pins the CPU reference to the official
  * `flip-evaluator` values; this harness asserts the GPU kernel
- * (`kernels/flip.wgsl.ts`, run via `computeDiff`) agrees with that CPU
- * reference within tolerance on fixture pairs.
+ * (`kernels/flip.wgsl.ts`, run via `computeDiff("flip", …)`) agrees with that
+ * CPU reference within tolerance on fixture pairs.
  *
  * It also asserts the CACHE contract: after the first `ensureDiff`, re-issuing
  * the SAME (contentKey, kernel, params) — and re-blitting through a different
@@ -28,7 +28,8 @@ import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "FLIP", resultFlag: "__flipTestResult" });
 
-// Deterministic small sRGB fixture pairs (W*H*3, [0,1]).
+// Deterministic small sRGB-encoded fixture pairs (W*H*3, [0,1]) — the CPU
+// reference `flipLDR` takes them as-is; the GPU gets their linear decode.
 function makePair(w: number, h: number, seed: number): { ref: Float32Array; test: Float32Array } {
   const ref = new Float32Array(w * h * 3);
   const test = new Float32Array(w * h * 3);
@@ -57,6 +58,8 @@ function uploadRGBA(device: Device, rgb: Float32Array, w: number, h: number): Te
   return tex;
 }
 
+/** Upload an sRGB-encoded fixture as the SCENE-LINEAR field the pane actually
+ *  holds (source storage is normalized to linear before any operation runs). */
 function uploadSceneRGBA(device: Device, srgb: Float32Array, w: number, h: number): Texture {
   return uploadRGBA(device, Float32Array.from(srgb, srgbEotf), w, h);
 }
@@ -66,8 +69,10 @@ const TOL = 3e-2; // GPU (rgba16float intermediates) vs CPU (f64) reference
 
 async function runFlipCase(device: Device, w: number, h: number, seed: number): Promise<boolean> {
   const { ref, test } = makePair(w, h, seed);
-  const texRef = uploadRGBA(device, ref, w, h);
-  const texTest = uploadRGBA(device, test, w, h);
+  // `flip` reads SCENE-LINEAR operands and clamps them to the display range,
+  // which is exactly encode∘decode of the sRGB fixture the CPU reference takes.
+  const texRef = uploadSceneRGBA(device, ref, w, h);
+  const texTest = uploadSceneRGBA(device, test, w, h);
   const result = computeDiff(device, texRef, texTest, "flip", { ppd: PPD });
   const gpu = await device.readback(result);
   texRef.destroy();
@@ -91,29 +96,11 @@ async function runFlipCase(device: Device, w: number, h: number, seed: number): 
   return ok;
 }
 
-async function runNormalizedSdrFlipCase(device: Device, w: number, h: number, seed: number): Promise<boolean> {
-  const { ref, test } = makePair(w, h, seed);
-  const texRef = uploadSceneRGBA(device, ref, w, h);
-  const texTest = uploadSceneRGBA(device, test, w, h);
-  const result = computeDiff(device, texRef, texTest, "flip-sdr", { ppd: PPD });
-  const gpu = await device.readback(result);
-  texRef.destroy();
-  texTest.destroy();
-  result.destroy();
-  if (!(gpu instanceof Float32Array)) return false;
-  const cpu = flipLDR(ref, test, w, h, PPD);
-  let worst = 0;
-  for (let i = 0; i < w * h; i++) worst = Math.max(worst, Math.abs(gpu[i * 4]! - cpu[i]!));
-  const ok = worst <= TOL;
-  report(ok, `[flip SDR scene-field ${w}x${h}] worst |GPU-CPU|=${worst.toFixed(4)} (tol ${TOL})`);
-  return ok;
-}
-
 async function runCacheContract(device: Device): Promise<boolean> {
   const w = 12, h = 12;
   const { ref, test } = makePair(w, h, 99);
-  const texRef = uploadRGBA(device, ref, w, h);
-  const texTest = uploadRGBA(device, test, w, h);
+  const texRef = uploadSceneRGBA(device, ref, w, h);
+  const texTest = uploadSceneRGBA(device, test, w, h);
   const target = device.createTexture(w, h, "rgba8unorm");
   const before = getDiffComputeCount();
   const e1 = ensureDiff(device, texRef, texTest, "flip", { ppd: PPD }, "ref#1", "test#1");
@@ -146,7 +133,7 @@ async function main(): Promise<void> {
     ok = (await runFlipCase(device, 12, 12, 1)) && ok;
     ok = (await runFlipCase(device, 16, 16, 7)) && ok;
     ok = (await runFlipCase(device, 20, 14, 42)) && ok;
-    ok = (await runNormalizedSdrFlipCase(device, 16, 16, 17)) && ok;
+    ok = (await runFlipCase(device, 16, 16, 17)) && ok;
     ok = (await runCacheContract(device)) && ok;
     setOverallStatus(ok);
   } catch (err) {
