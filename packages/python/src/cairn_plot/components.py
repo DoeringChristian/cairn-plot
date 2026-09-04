@@ -136,9 +136,9 @@ _COMPARE_OPERATION_MODES = {
     "rel_signed": "relative_signed",
     "rel_abs": "relative_absolute",
     "rel_square": "relative_squared",
-    # `flip` is one public operation. Its SDR/HDR evaluation is selected through
-    # the runtime setting exposed by the image backend, not a second compare mode.
+    # SDR FLIP (`flip`) and HDR FLIP (`flip_hdr`) are two public operations.
     "flip": "flip",
+    "flip_hdr": "flip-hdr",
     # `ssim` is structural similarity (Wang et al. 2004); the diff map shows the
     # ERROR field 1 - SSIM. GPU-only kernel (like FLIP); registry drop-in.
     "ssim": "ssim",
@@ -239,7 +239,6 @@ def _take_image_settings(props: dict[str, Any]) -> dict[str, Any]:
         "offset": "image.offset",
         "splitPosition": "compare.split",
         "operation": "compare.operation",
-        "flipMode": "compare.flipMode",
     }
     for prop, key in mapping.items():
         if prop in props:
@@ -297,8 +296,8 @@ class Component:
         if node.get("kind") == "plot":
             data = node.get("data") or {}
             # `imghdr` = a true-float HDR image (`cp.Image(hdr_float)`) — a valid
-            # compare leaf: the renderer decodes it to a float compare side and
-            # `mode="flip"` auto-dispatches to HDR-FLIP (spec addendum).
+            # compare leaf: the renderer decodes it to a float compare side, and
+            # `mode="flip_hdr"` compares it with HDR-FLIP.
             if data.get("kind") in ("image", "url", "imghdr"):
                 return data
         return None
@@ -1941,13 +1940,13 @@ class Compare(Component):
 
     * View composition: ``"split"`` (draggable divider — the DEFAULT).
     * Diff kernels: ``"signed"``, ``"abs"``, ``"square"``, ``"rel_signed"``,
-      ``"rel_abs"``, ``"rel_square"``, ``"flip"`` — each lowers to
-      a ``compare`` node with ``mode="diff"`` and the kernel id as ``operation``
-      (the pane's initial diff kernel).
+      ``"rel_abs"``, ``"rel_square"``, ``"flip"``, ``"flip_hdr"``, ``"ssim"`` —
+      each lowers to a ``compare`` node with ``mode="diff"`` and the operation
+      id as ``operation`` (the pane's initial comparison operation).
 
-    ``"flip"`` is perceptual FLIP (Andersson et al.). Float/HDR comparisons
-    default to the multi-exposure evaluation; the viewer offers an SDR/HDR
-    control without exposing a second comparison mode.
+    ``"flip"`` is perceptual SDR FLIP (Andersson et al.) and ``"flip_hdr"`` is
+    its multi-exposure HDR variant. They are two public operations; there is no
+    FLIP mode selector.
 
     ``reference`` is always the baseline (``baselineIndex=0``; the ``REF`` chip);
     ``diff = prediction vs reference``. ALL modes require both operands be
@@ -1976,7 +1975,6 @@ class Compare(Component):
         align: str = "top-left",
         fit: str = "crop",
         split_position: float | None = None,
-        flip_mode: str | None = None,
         colormap: str | None = None,
         exposure: float | None = None,
         gamma: float | None = None,
@@ -1996,12 +1994,6 @@ class Compare(Component):
                 f"cp.Compare(mode=...) must be one of {_COMPARE_PUBLIC_MODES!r}, "
                 f"got {mode!r}"
             )
-        if flip_mode is not None and flip_mode not in ("hdr", "sdr"):
-            raise ValueError(
-                f"cp.Compare(flip_mode=...) must be 'hdr' or 'sdr', got {flip_mode!r}"
-            )
-        if flip_mode is not None and mode != "flip":
-            raise ValueError("cp.Compare(flip_mode=...) is only valid with mode='flip'")
         if align not in _COMPARE_ALIGNS:
             raise ValueError(
                 f"cp.Compare(align=...) must be one of {_COMPARE_ALIGNS!r}, got {align!r}"
@@ -2031,8 +2023,6 @@ class Compare(Component):
         )
         if split_position is not None:
             built["splitPosition"] = float(split_position)
-        if flip_mode is not None:
-            built["flipMode"] = flip_mode
         if comparison_operation is not None:
             # Carried as `operation` (the kernel id) — the pane initializes its
             # diff kernel from this; the toolbar menu (next track) preselects it.

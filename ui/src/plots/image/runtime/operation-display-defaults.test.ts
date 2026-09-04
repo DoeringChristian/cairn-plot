@@ -13,7 +13,7 @@ test("comparison operations receive semantic display defaults", () => {
   for (const operation of ["absolute", "squared", "relative_absolute", "relative_squared", "flip", "ssim"]) {
     assert.equal(recommendedImageEncoding({ operation }), "magma", operation);
   }
-  assert.equal(recommendedImageEncoding({ operation: "flip", flipMode: "hdr" }), "magma");
+  assert.equal(recommendedImageEncoding({ operation: "flip-hdr" }), "magma");
 });
 
 test("operation transitions follow defaults but preserve custom encodings", () => {

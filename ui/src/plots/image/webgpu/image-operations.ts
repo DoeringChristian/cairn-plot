@@ -1,6 +1,6 @@
 import { getImageOperation, type ImageOperationDefinition } from "../definition/index.ts";
 import type { MultipassImageOperationProgram } from "./operation-pass.ts";
-import { flipLdrForcedProgram, flipProgram } from "./kernels/flip.wgsl.ts";
+import { flipLdrForcedProgram } from "./kernels/flip.wgsl.ts";
 import { hdrFlipProgram } from "./kernels/hdr-flip.ts";
 import { ssimProgram } from "./kernels/ssim.wgsl.ts";
 
@@ -54,9 +54,8 @@ export const WEBGPU_IMAGE_OPERATIONS: readonly WebGpuImageOperation[] = [
   inline("split", `
     return select(b, a, uv.x < param.x);
   `, "compositor"),
-  multipass("flip", flipProgram),
-  multipass("hdr-flip", hdrFlipProgram),
-  multipass("flip-sdr", flipLdrForcedProgram),
+  multipass("flip", flipLdrForcedProgram),
+  multipass("flip-hdr", hdrFlipProgram),
   multipass("ssim", ssimProgram),
 ];
 

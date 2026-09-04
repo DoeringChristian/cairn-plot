@@ -79,20 +79,11 @@ def test_flip_is_accepted_and_orientation():
     assert node["referenceIndex"] == 0
 
 
-@pytest.mark.parametrize("flip_mode", ["hdr", "sdr"])
-def test_flip_evaluation_mode_is_publicly_authored(flip_mode):
-    node = cp.Compare(
-        _img(), _img(), mode="flip", flip_mode=flip_mode,
-    ).to_node()
-    assert node["settings"]["compare.operation"] == "flip"
-    assert node["settings"]["compare.flipMode"] == flip_mode
-
-
-def test_flip_options_are_validated():
-    with pytest.raises(ValueError):
-        cp.Compare(_img(), _img(), mode="flip", flip_mode="automatic")
-    with pytest.raises(ValueError):
-        cp.Compare(_img(), _img(), mode="abs", flip_mode="hdr")
+def test_compare_flip_hdr_is_a_public_mode() -> None:
+    node = cp.Compare(_img(), _img(), mode="flip_hdr").to_node()
+    assert node["settings"]["compare.operation"] == "flip-hdr"
+    with pytest.raises(TypeError):
+        cp.Compare(_img(), _img(), mode="flip", flip_mode="hdr")  # type: ignore[call-arg]
 
 
 def test_flip_ldr_is_not_a_separate_public_mode():

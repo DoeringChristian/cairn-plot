@@ -15,12 +15,12 @@ import { getWebGpuImageOperation, WEBGPU_IMAGE_OPERATIONS } from "../webgpu/imag
 
 test("every multipass operation declares scalar display output", () => {
   const operations = WEBGPU_IMAGE_OPERATIONS.filter((operation) => operation.kind === "multipass");
-  assert.ok(operations.length >= 4, "expected the multipass FLIP/SSIM implementations");
+  assert.ok(operations.length >= 3, "expected the multipass FLIP/SSIM implementations");
   for (const operation of operations) assert.equal(operation.definition.output.arity, 1, `${operation.definition.id} must be scalar`);
 });
 
 test("the FLIP family is scalar, the pointwise diffs are per-channel", () => {
-  const scalar = ["flip", "flip-sdr", "hdr-flip", "ssim"];
+  const scalar = ["flip", "flip-hdr", "ssim"];
   const perChannel = [
     "signed",
     "absolute",

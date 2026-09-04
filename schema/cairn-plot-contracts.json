@@ -28,9 +28,10 @@
     "rel_abs",
     "rel_square",
     "flip",
+    "flip_hdr",
     "ssim"
   ],
-  "$comment_comparisonOperationModes": "The public `cp.Compare(mode=)` diff-name -> descriptor `operation` mapping, hand-mirrored by Python `_COMPARE_OPERATION_MODES` (components.py) and TS `COMPARE_KERNEL_MODES` (builder/validate.ts). FLIP is one public operation; its SDR/HDR backend implementation is selected by the runtime compare.flipMode setting.",
+  "$comment_comparisonOperationModes": "The public `cp.Compare(mode=)` diff-name -> descriptor `operation` mapping, hand-mirrored by Python `_COMPARE_OPERATION_MODES` (components.py) and TS `COMPARE_KERNEL_MODES` (builder/validate.ts). SDR FLIP (`flip`) and HDR FLIP (`flip_hdr`) are two public operations.",
   "comparisonOperationModes": {
     "signed": "signed",
     "abs": "absolute",
@@ -39,6 +40,7 @@
     "rel_abs": "relative_absolute",
     "rel_square": "relative_squared",
     "flip": "flip",
+    "flip_hdr": "flip-hdr",
     "ssim": "ssim"
   },
   "$comment_compareEnums": "Compare view-compositions + mismatched-size operand handling (audit M5): `compareViewModes` = `cp.Compare(mode=)` non-diff views; `compareAligns`/`compareFits` = `cp.Compare(align=, fit=)`. Python `_COMPARE_VIEW_MODES`/`_COMPARE_ALIGNS`/`_COMPARE_FITS` (components.py) <-> TS `COMPARE_VIEW_MODES`/`COMPARE_ALIGNS`/`COMPARE_FITS` (builder/validate.ts).",

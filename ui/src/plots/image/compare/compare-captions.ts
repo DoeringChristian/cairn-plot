@@ -8,7 +8,7 @@
 //     naming the error map, where <metric> is the active diff kernel's display
 //     name. Missing side captions fall back to "image"/"reference".
 // ---------------------------------------------------------------------------
-import { listComparisonOperationOptions } from "../definition/comparison-operations";
+import { getImageOperation } from "../definition/image-operations";
 
 export interface CompareCaptions {
   /** Bottom-LEFT chip: the reference caption (slide) OR the whole diff
@@ -22,7 +22,7 @@ export interface CompareCaptions {
  *  caption), falling back to the raw id. */
 export function diffMetricName(comparisonOperationId: string | undefined): string {
   if (!comparisonOperationId) return "";
-  return listComparisonOperationOptions().find((k) => k.id === comparisonOperationId)?.label ?? comparisonOperationId;
+  return getImageOperation(comparisonOperationId)?.label ?? comparisonOperationId;
 }
 
 export function compareCaptions(opts: {

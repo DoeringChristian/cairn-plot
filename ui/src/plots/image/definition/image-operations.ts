@@ -4,7 +4,6 @@ export type ImageOperationCachePolicy = "never" | "global-lru";
 export type ImageOperationParameter =
   | "split"
   | "ppd"
-  | "flip-mode"
   | "exposure-min"
   | "exposure-max";
 
@@ -42,11 +41,13 @@ export const IMAGE_OPERATIONS: readonly ImageOperationDefinition[] = [
   pointwise("relative_signed", "Relative Signed", "rel_signed", "signed"),
   pointwise("relative_squared", "Relative Squared", "rel_square", "nonnegative"),
   { id: "split", label: "Split", inputs: 2, output: { arity: 3, domain: "light" }, cache: "never", parameters: ["split"] },
-  { id: "flip", label: "FLIP", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd", "flip-mode"] },
-  { id: "hdr-flip", label: "HDR-FLIP", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd", "exposure-min", "exposure-max"] },
-  { id: "flip-sdr", label: "FLIP SDR implementation", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd"] },
+  { id: "flip", label: "FLIP", publicName: "flip", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd"] },
+  { id: "flip-hdr", label: "HDR-FLIP", publicName: "flip_hdr", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: ["ppd", "exposure-min", "exposure-max"] },
   { id: "ssim", label: "SSIM", publicName: "ssim", inputs: 2, output: { arity: 1, domain: "nonnegative" }, defaultDisplayOperation: "magma", cache: "global-lru", parameters: [] },
 ];
+
+/** Every public image-operation id; backends declare their capabilities from this. */
+export const IMAGE_OPERATION_IDS: readonly string[] = IMAGE_OPERATIONS.map((operation) => operation.id);
 
 const operations = new Map(IMAGE_OPERATIONS.map((operation) => [operation.id, operation]));
 
@@ -56,4 +57,20 @@ export function getImageOperation(id: string | null | undefined): ImageOperation
 
 export function listImageOperations(): readonly ImageOperationDefinition[] {
   return IMAGE_OPERATIONS;
+}
+
+/**
+ * The flat PUBLIC compare-mode names (`cp.Compare(mode=)`), pinned to
+ * `schema/cairn-plot-contracts.json` by `testing/contracts.test.ts` and
+ * mirrored by Python `_COMPARE_OPERATION_MODES`.
+ */
+export function listComparisonOperationPublicNames(): string[] {
+  return IMAGE_OPERATIONS
+    .filter((operation) => operation.inputs === 2 && operation.id !== "split" && !!operation.publicName)
+    .map((operation) => operation.publicName!);
+}
+
+/** Lower an authored public name (`abs`, `flip_hdr`, …) to its registry id. */
+export function operationIdForPublicName(publicName: string): string | undefined {
+  return IMAGE_OPERATIONS.find((operation) => operation.publicName === publicName)?.id;
 }

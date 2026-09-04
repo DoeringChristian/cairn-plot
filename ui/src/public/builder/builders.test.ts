@@ -127,9 +127,8 @@ function samples(): Record<string, any> {
     table: cp.table([{ a: 1, b: "x" }, { a: 2, b: "y" }]),
     "compare (abs)": cp.compare(cp.image(f32, { shape: [2, 3] }), cp.image(f32, { shape: [2, 3] }), { mode: "abs" }),
     "compare (split)": cp.compare(cp.image({ url: "a.png" }), cp.image({ url: "b.png" }), { mode: "split" }),
-    "compare (FLIP SDR)": cp.compare(cp.image({ url: "a.png" }), cp.image({ url: "b.png" }), {
-      mode: "flip", flipMode: "sdr",
-    }),
+    "compare (FLIP)": cp.compare(cp.image({ url: "a.png" }), cp.image({ url: "b.png" }), { mode: "flip" }),
+    "compare (HDR FLIP)": cp.compare(cp.image({ url: "a.png" }), cp.image({ url: "b.png" }), { mode: "flip_hdr" }),
     grid: cp.grid([[cp.line([1, 2, 3]), cp.bar([1, 2])]], { gap: 8 }),
   };
 }

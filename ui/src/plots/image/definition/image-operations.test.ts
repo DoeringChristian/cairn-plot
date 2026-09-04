@@ -2,14 +2,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { IMAGE_OPERATION_EVALUATORS, getImageOperationEvaluator } from "../resources/image-operation-evaluator.ts";
 import { buildImageOperationWGSL, getWebGpuImageOperation, WEBGPU_IMAGE_OPERATIONS } from "../webgpu/image-operations.ts";
-import { IMAGE_OPERATIONS } from "./image-operations.ts";
+import {
+  IMAGE_OPERATIONS,
+  listComparisonOperationPublicNames,
+  listImageOperations,
+  operationIdForPublicName,
+} from "./image-operations.ts";
 
 const POINTWISE = ["absolute", "signed", "squared", "relative_absolute", "relative_signed", "relative_squared"];
 
 test("semantic image operations have unique backend-neutral definitions", () => {
   const ids = IMAGE_OPERATIONS.map(({ id }) => id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(ids, ["identity", ...POINTWISE, "split", "flip", "hdr-flip", "flip-sdr", "ssim"]);
+  assert.deepEqual(ids, ["identity", ...POINTWISE, "split", "flip", "flip-hdr", "ssim"]);
   for (const operation of IMAGE_OPERATIONS) {
     assert.equal("implementation" in operation, false);
   }
@@ -36,7 +41,7 @@ test("pointwise image operations preserve RGB while scalar fields expand to gray
 
 test("CPU implements the pointwise subset and reports unsupported multipass operations", () => {
   assert.deepEqual(IMAGE_OPERATION_EVALUATORS.map(({ definition }) => definition.id), ["identity", ...POINTWISE, "split"]);
-  for (const id of ["flip", "hdr-flip", "flip-sdr", "ssim"]) assert.equal(getImageOperationEvaluator(id), undefined);
+  for (const id of ["flip", "flip-hdr", "ssim"]) assert.equal(getImageOperationEvaluator(id), undefined);
 });
 
 test("CPU pointwise implementations retain comparison math", () => {
@@ -59,5 +64,26 @@ test("WebGPU JIT compiles one inline backend implementation at a time", () => {
       }
     }
   }
-  for (const id of ["flip", "hdr-flip", "ssim"]) assert.equal(getWebGpuImageOperation(id)?.kind, "multipass");
+  for (const id of ["flip", "flip-hdr", "ssim"]) assert.equal(getWebGpuImageOperation(id)?.kind, "multipass");
+});
+
+test("SDR FLIP and HDR FLIP are two public registry entries and no kernel id exists", () => {
+  const byId = new Map(listImageOperations().map((o) => [o.id, o]));
+  assert.deepEqual([byId.get("flip")?.label, byId.get("flip")?.publicName], ["FLIP", "flip"]);
+  assert.deepEqual([byId.get("flip-hdr")?.label, byId.get("flip-hdr")?.publicName], ["HDR-FLIP", "flip_hdr"]);
+  assert.equal(byId.has("hdr-flip"), false);
+  assert.equal(byId.has("flip-sdr"), false);
+  for (const o of listImageOperations()) {
+    if (o.inputs === 2 && o.id !== "split") assert.ok(o.publicName, `${o.id} has a public name`);
+  }
+});
+
+test("public names round-trip to registry ids", () => {
+  assert.equal(operationIdForPublicName("flip"), "flip");
+  assert.equal(operationIdForPublicName("flip_hdr"), "flip-hdr");
+  assert.equal(operationIdForPublicName("ssim"), "ssim");
+  assert.deepEqual(
+    [...listComparisonOperationPublicNames()].sort(),
+    ["abs", "flip", "flip_hdr", "rel_abs", "rel_signed", "rel_square", "signed", "square", "ssim"],
+  );
 });

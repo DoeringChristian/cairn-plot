@@ -6,14 +6,14 @@
  *   - colormaps                → `colormaps/lut.ts`'s `COLORMAP_NAMES`
  *                                (derived from the `COLORMAP_STOPS` registry)
  *   - tonemapOperators         → `image/tonemap.ts`'s SDR + HDR group arrays
- *   - comparisonOperationPublicNames → `model/comparison-operations.ts`'s
+ *   - comparisonOperationPublicNames → `image/definition/image-operations.ts`'s
  *                                `listComparisonOperationPublicNames()`
  *   - compareViewModes/Aligns/Fits, pixelValueNotations
  *                              → `builder/validate.ts` (audit M5)
  *   - comparisonOperationModes       → `builder/validate.ts`'s `COMPARE_OPERATION_MODES`
  *                                mapping; every emitted `operation` VALUE is
- *                                additionally resolved through the kernel
- *                                registry so a kernel-id rename can't drift the
+ *                                additionally looked up in the image-operation
+ *                                registry so an id rename can't drift the
  *                                hand-mirrored tables (audit M6)
  *
  * The Python side is pinned to the SAME JSON by `tests/test_contracts.py`, so
@@ -35,10 +35,9 @@ import {
   DISPLAY_TRANSFER_OPERATION_IDS,
 } from "../plots/image/runtime/tonemap.ts";
 import {
+  getImageOperation,
   listComparisonOperationPublicNames,
-  resolveComparisonOperationId,
-} from "../plots/image/definition/comparison-operations.ts";
-import { getImageOperation } from "../plots/image/definition/image-operations.ts";
+} from "../plots/image/definition/image-operations.ts";
 import {
   COMPARE_VIEW_MODES,
   COMPARE_ALIGNS,
@@ -115,16 +114,13 @@ test("comparisonOperationModes: keys equal comparisonOperationPublicNames (inter
   );
 });
 
-test("comparisonOperationModes: every emitted operation resolves to a registered kernel", () => {
-  // The derivation guard M6 asks for: a kernel-id rename in the registry that
-  // isn't mirrored into the tables makes at least one value fail to resolve.
-  for (const [publicName, submode] of Object.entries(contract.comparisonOperationModes)) {
-    for (const flipMode of ["hdr", "sdr"] as const) {
-      const operationId = resolveComparisonOperationId(submode, flipMode);
-      assert.ok(
-        getImageOperation(operationId),
-        `operation ${JSON.stringify(submode)} (mode ${publicName}, FLIP=${flipMode}) → operation id ${JSON.stringify(operationId)} is not registered`,
-      );
-    }
+test("comparisonOperationModes: every emitted operation is a registered image operation", () => {
+  // The derivation guard M6 asks for: an id rename in the registry that isn't
+  // mirrored into the tables makes at least one value fail to resolve.
+  for (const [publicName, operationId] of Object.entries(contract.comparisonOperationModes)) {
+    assert.ok(
+      getImageOperation(operationId),
+      `operation ${JSON.stringify(operationId)} (mode ${publicName}) is not a registered image operation`,
+    );
   }
 });

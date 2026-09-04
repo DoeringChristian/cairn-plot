@@ -39,7 +39,7 @@ CDN) in a notebook via `_repr_html_`, or bakes into one offline HTML file.
 | Container | Purpose |
 | --- | --- |
 | `cp.Grid` | Lay out child components with `initial_layout="grid" | "stack"`; the header toggle remains available unless `switchable=False`. Supports per-column widths and optional view/camera settings sync via `Shared`. |
-| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`split`) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip` · `flip_ldr` · `ssim`). `flip` is perceptual FLIP — auto-dispatched LDR-FLIP for u8 sources, HDR-FLIP (multi-exposure) for float/HDR sources; `flip_ldr` forces the tone-mapped LDR comparison on float sources. `ssim` is structural similarity (Wang et al. 2004) on linear luminance — the map shows the error field `1 − SSIM`. SDR/HDR-FLIP and SSIM run on both CPU and WebGPU backends. `colormap=` colors the diff map. |
+| `cp.Compare` | Visual compare of a `prediction` against a `reference`. Flat `mode=`: view (`split`) or diff kernel (`signed` · `abs` · `square` · `rel_signed` · `rel_abs` · `rel_square` · `flip` · `flip_hdr` · `ssim`). `flip` is perceptual SDR FLIP (Andersson et al.) and `flip_hdr` is its multi-exposure HDR variant — two public operations, no mode selector. `ssim` is structural similarity (Wang et al. 2004) on linear luminance — the map shows the error field `1 − SSIM`. SDR/HDR-FLIP and SSIM run on both CPU and WebGPU backends. `colormap=` colors the diff map. |
 | `cp.Shared` | Declare shared view/camera settings for children of a `Grid`. |
 | `cp.Component` | Base class for the above (subclassing seam). |
 
