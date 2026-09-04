@@ -93,7 +93,7 @@ const num = (v: unknown): number => Number(v);
 
 function imageDisplayProps(o: Opts, suppressGamma = false, suppressExposureOffset = false): Opts {
   const props: Opts = {};
-  const { exposure, gamma, brightness, contrast, offset, flipSign, colormap, interpolation, showAxes, pixelValueNotation } = o;
+  const { exposure, gamma, brightness, contrast, offset, flipSign, colormap, interpolation, pixelValueNotation } = o;
   // `gamma` is suppressed here when a UNIFIED tone-map transfer is engaged, so
   // the Gamma operator's γ is never ALSO applied as the CSS-filter
   // `processing.gamma` (mirrors Python `_image_display_props` gamma=None wiring).
@@ -116,7 +116,6 @@ function imageDisplayProps(o: Opts, suppressGamma = false, suppressExposureOffse
   }
   if (colormap != null) props.colormap = checkImageColormap(String(colormap));
   if (interpolation != null) props.interpolation = interpolation;
-  if (showAxes != null) props.showAxes = Boolean(showAxes);
   if (pixelValueNotation != null) props.pixelValueNotation = checkPixelValueNotation(String(pixelValueNotation));
   return props;
 }
@@ -154,7 +153,6 @@ function imageHdrProps(o: Opts): Opts {
   if (o.gamma != null) props.gamma = num(o.gamma);
   if (o.peak != null) props.peak = num(o.peak);
   if (o.interpolation != null) props.interpolation = o.interpolation;
-  if (o.showAxes != null) props.showAxes = Boolean(o.showAxes);
   if (o.pixelValueNotation != null) props.pixelValueNotation = checkPixelValueNotation(String(o.pixelValueNotation));
   return props;
 }

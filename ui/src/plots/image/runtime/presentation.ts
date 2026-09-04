@@ -25,7 +25,6 @@ export interface ImagePresentation {
   readonly diffMode?: "none" | DiffMode;
   readonly interpolation?: Interpolation;
   readonly processing?: ImageProcessing;
-  readonly showAxes?: boolean;
   readonly label?: string;
   readonly overlay?: ImageOverlayData;
   readonly overlaySettings?: ImageOverlaySettings;

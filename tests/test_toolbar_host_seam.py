@@ -62,11 +62,17 @@ def test_image_sdr_toolbar_default_omitted() -> None:
 
 
 def test_image_sdr_toolbar_coexists_with_display_props() -> None:
-    node = cp.Image(_sdr(), toolbar=False, colormap="turbo", show_axes=True).to_node()
+    node = cp.Image(_sdr(), toolbar=False, colormap="turbo").to_node()
     props = node["props"]
     assert props["toolbar"] is False
     assert node["settings"]["image.encoding"] == "turbo"
-    assert props["showAxes"] is True
+
+
+def test_image_show_axes_is_gone() -> None:
+    with pytest.raises(TypeError):
+        cp.Image(_sdr(), show_axes=True)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        cp.Compare(cp.Image(_sdr()), cp.Image(_sdr()), show_axes=True)  # type: ignore[call-arg]
 
 
 # --- cp.Image (float-HDR) -------------------------------------------------

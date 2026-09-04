@@ -87,7 +87,6 @@ export interface MediaCompareSettings {
   // Rendering (capability-gated) -----------------------------------------
   interpolation?: Interpolation;
   colormap?: Colormap;
-  showAxes?: boolean;
   overlay?: ImageOverlaySettings;
 
   // Step slider / layout -------------------------------------------------

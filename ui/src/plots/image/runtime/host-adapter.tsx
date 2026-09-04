@@ -304,7 +304,7 @@ export function ImageHostAdapter({
     // plus the per-render mode/kernel/split/blend settings + callbacks). No
     // shared-colormap merge, no channel strip — those are single-image concerns.
     // `node.props` carries the synth leaf's view controls
-    // (interpolation/showAxes/toolbar/pixelValueNotation).
+    // (interpolation/toolbar/pixelValueNotation).
     if (diffSpec) {
       return composeImageComparisonPresentation({
         leaf: node,

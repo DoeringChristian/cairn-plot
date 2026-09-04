@@ -745,13 +745,12 @@ def _image_display_props(
     flip_sign: bool | None = None,
     colormap: str | None = None,
     interpolation: str | None = None,
-    show_axes: bool | None = None,
     pixel_value_notation: str | None = None,
 ) -> dict[str, Any]:
     """Build the non-data ``props`` an image / image-compare renderer honours:
     a full ``processing`` block (exposure EV, gamma, brightness, contrast,
-    offset, sign-flip) when any is set, plus ``colormap`` / ``interpolation`` /
-    ``showAxes``. Matches ``ImageProcessing`` + ``ImagePane`` props in the TS
+    offset, sign-flip) when any is set, plus ``colormap`` / ``interpolation``.
+    Matches ``ImageProcessing`` + ``ImagePane`` props in the TS
     library. NOTE: with the current 8-bit image pipeline these are display
     adjustments applied to already-8-bit pixels (true float HDR is a separate,
     future path)."""
@@ -772,8 +771,6 @@ def _image_display_props(
         props["colormap"] = _check_image_colormap(colormap)
     if interpolation is not None:
         props["interpolation"] = interpolation
-    if show_axes is not None:
-        props["showAxes"] = bool(show_axes)
     if pixel_value_notation is not None:
         props["pixelValueNotation"] = _check_pixel_value_notation(pixel_value_notation)
     return props
@@ -855,7 +852,6 @@ def _image_hdr_props(
     peak: float | None = None,
     colormap: str | None = None,
     interpolation: str | None = None,
-    show_axes: bool | None = None,
     pixel_value_notation: str | None = None,
 ) -> dict[str, Any]:
     """Build the ``imagehdr`` renderer props (real HDR tone-map, NOT the 8-bit
@@ -864,8 +860,8 @@ def _image_hdr_props(
     ``tonemap`` lets the client pick the surface default (``srgb`` on every
     surface; on an engaged HDR surface with the managed PEAK ceiling).
     ``gamma`` / ``peak`` are OPTIONAL and included only when explicitly passed,
-    so the renderer's defaults stay in effect. ``showAxes`` / ``interpolation``
-    are the two extra ``HdrImagePane`` props honoured.
+    so the renderer's defaults stay in effect. ``interpolation``
+    is the extra ``HdrImagePane`` prop honoured.
 
     UNIFIED model: ``tonemap`` is one of ``{linear, srgb, gamma, reinhard,
     aces}`` and ``peak`` (``P``, ×SDR white) is the HDR MODE — every operator
@@ -901,8 +897,6 @@ def _image_hdr_props(
         props["colormap"] = _check_image_colormap(colormap)
     if interpolation is not None:
         props["interpolation"] = interpolation
-    if show_axes is not None:
-        props["showAxes"] = bool(show_axes)
     if pixel_value_notation is not None:
         props["pixelValueNotation"] = _check_pixel_value_notation(pixel_value_notation)
     return props
@@ -985,7 +979,7 @@ class Image(Component):
       ``{linear,srgb,gamma,reinhard,aces}`` (default ``srgb``),
       ``exposure`` (base EV stops), ``offset`` (base additive offset, applied
       after exposure), and an OPTIONAL ``gamma`` override;
-      ``showAxes``/``interpolation`` are honoured;
+      ``interpolation`` is honoured;
       ``colormap``/``brightness``/``contrast``/``flip_sign`` are
       8-bit-only and ignored (with a note) on the float path. The viewer also gets
       a leading toolbar **TONEMAP menu** to switch the operator interactively;
@@ -1031,7 +1025,6 @@ class Image(Component):
         flip_sign: bool | None = None,
         colormap: str | None = None,
         interpolation: str | None = None,
-        show_axes: bool | None = None,
         pixel_value_notation: str | None = None,
         toolbar: bool | None = None,
         label: str | None = None,
@@ -1117,7 +1110,7 @@ class Image(Component):
                 brightness=brightness,
                 contrast=contrast, offset=None, flip_sign=flip_sign,
                 colormap=colormap, interpolation=interpolation,
-                show_axes=show_axes, pixel_value_notation=pixel_value_notation,
+                pixel_value_notation=pixel_value_notation,
             )
             self._props.update(transfer)
             if exposure is not None:
@@ -1164,13 +1157,12 @@ class Image(Component):
                 log.warning(
                     "cp.Image float path ignores 8-bit-only args %s "
                     "(the float surface honours tonemap/exposure/offset/gamma/"
-                    "colormap/showAxes/interpolation).",
+                    "colormap/interpolation).",
                     ignored,
                 )
             self._props = _image_hdr_props(
                 tonemap=tonemap, exposure=exposure, offset=offset, gamma=gamma,
                 peak=peak, colormap=colormap, interpolation=interpolation,
-                show_axes=show_axes,
                 pixel_value_notation=pixel_value_notation,
             )
             # M2: guarantee C-contiguous float32 (halves size vs float64; the
@@ -1227,7 +1219,7 @@ class Image(Component):
             exposure=None, gamma=(None if transfer else gamma),
             brightness=brightness,
             contrast=contrast, offset=None, flip_sign=flip_sign,
-            colormap=colormap, interpolation=interpolation, show_axes=show_axes,
+            colormap=colormap, interpolation=interpolation,
             pixel_value_notation=pixel_value_notation,
         )
         self._props.update(transfer)
@@ -1993,7 +1985,6 @@ class Compare(Component):
         offset: float | None = None,
         flip_sign: bool | None = None,
         interpolation: str | None = None,
-        show_axes: bool | None = None,
         pixel_value_notation: str | None = None,
         toolbar: bool | None = None,
         props: dict[str, Any] | None = None,
@@ -2035,7 +2026,7 @@ class Compare(Component):
         built = _image_display_props(
             exposure=exposure, gamma=gamma, brightness=brightness,
             contrast=contrast, offset=offset, flip_sign=flip_sign,
-            colormap=colormap, interpolation=interpolation, show_axes=show_axes,
+            colormap=colormap, interpolation=interpolation,
             pixel_value_notation=pixel_value_notation,
         )
         if split_position is not None:

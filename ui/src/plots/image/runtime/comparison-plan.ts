@@ -53,7 +53,6 @@ export function planImageComparison(
     if (index === referenceIndex) return [];
     const leafProps: NonNullable<PlotLeafNode["props"]> = {
       interpolation: (props.interpolation as string | undefined) ?? "auto",
-      showAxes: (props.showAxes as boolean | undefined) ?? false,
     };
     if (props.toolbar !== undefined) leafProps.toolbar = props.toolbar;
     if (props.pixelValueNotation !== undefined) leafProps.pixelValueNotation = props.pixelValueNotation;

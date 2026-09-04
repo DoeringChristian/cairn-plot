@@ -104,7 +104,6 @@ export function ImagePlotView({
     diffMode={p.diffMode ?? "none"}
     interpolation={p.interpolation ?? "auto"}
     processing={p.processing}
-    showAxes={p.showAxes ?? false}
     label={p.label ?? ""}
     overlay={p.overlay}
     overlaySettings={p.overlaySettings}

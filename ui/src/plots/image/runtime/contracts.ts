@@ -82,7 +82,6 @@ export interface FloatSurfaceProps {
    *  through {@link useImageSurfaceProps} so `GpuImagePane`/`CpuImagePane` read it
    *  as `propColormap`. Unset leaves the display-operation default in effect. */
   colormap?: Colormap;
-  showAxes?: boolean;
   label?: string;
   interpolation?: Interpolation;
   /** DETECTION overlay (bounding boxes + segmentation masks) drawn ON TOP of the
@@ -160,7 +159,6 @@ export interface Uint8SurfaceProps {
   /** Base additive OFFSET applied after exposure by both backends. */
   offset?: number;
   colormap?: Colormap;
-  showAxes?: boolean;
   processing?: ImageProcessing;
   zoom?: number;
   pan?: { x: number; y: number };
@@ -362,7 +360,6 @@ export interface ImageBackendInput {
   onDragStart?: (e: React.DragEvent) => void;
   className?: string;
   // — common view controls —
-  showAxes?: boolean;
   label?: string;
   zoom?: number;
   pan?: { x: number; y: number };
@@ -467,7 +464,6 @@ export function useImageSurfaceProps(p: ImageBackendInput): ImageSurfaceProps {
       // authored LUT. Omitting it (the stale pre-unification float contract) is
       // exactly what dropped `cp.Image(float, colormap="magma")` to sRGB grayscale.
       colormap: p.colormap,
-      showAxes: p.showAxes,
       label: p.label,
       interpolation: p.interpolation,
       // Detection overlays composite over ANY dtype (display-space CSS layer),
@@ -500,7 +496,6 @@ export function useImageSurfaceProps(p: ImageBackendInput): ImageSurfaceProps {
     exposure: p.exposure,
     offset: p.offset,
     colormap: p.colormap,
-    showAxes: p.showAxes,
     processing: p.processing,
     zoom: p.zoom,
     pan: p.pan,

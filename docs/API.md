@@ -129,7 +129,7 @@ lowered data.
 | `cairnPlot.histogram` | `histogram(x?, { bins, counts, edges, logY })` | `cp.Histogram` |
 | `cairnPlot.heatmap` | `heatmap(z, { colormap, zmin, zmax, logColor, originTop, xLabel, yLabel, valueLabel })` | `cp.Heatmap` |
 | `cairnPlot.parallelCoordinates` | `parallelCoordinates(dimensions, { colormap })` | `cp.ParallelCoordinates` |
-| `cairnPlot.image` | `image(data, { shape, hdr, tonemap, exposure, gamma, peak, colormap, interpolation, showAxes, brightness, contrast, offset, flipSign, pixelValueNotation, toolbar })` | `cp.Image` |
+| `cairnPlot.image` | `image(data, { shape, hdr, tonemap, exposure, gamma, peak, colormap, interpolation, brightness, contrast, offset, flipSign, pixelValueNotation, toolbar })` | `cp.Image` |
 | `cairnPlot.table` | `table(rows \| { cols })` | `cp.Table` |
 | `cairnPlot.compare` | `compare(a, b, { mode, colormap, align, fit, splitPosition, toolbar, ... })` | `cp.Compare` |
 | `cairnPlot.grid` | `grid([[...handles]], { cols, colWidths, rowHeights, gap, shared })` | `cp.Grid` |
@@ -503,7 +503,7 @@ from its prop on change, so the prop is the controlled value:
 | Compare mode | `mode` / view-mode | re-seeds + `onCompareModeChange` | split · diff |
 | Diff kernel | `diffSubmode` / `diffKernel` | re-seeds + `onDiffKernelChange` | the pointwise ids + `flip`/`ssim` |
 | Split position | `splitPosition` | controlled + `onSplitPositionChange` | split mode |
-| Interpolation / axes / notation | `interpolation` / `showAxes` / `pixelValueNotation` | read straight from props | — |
+| Interpolation / notation | interpolation / pixelValueNotation | read straight from props | — |
 
 Notes on EV/offset: the toolbar's **EV/OFF sliders are additive runtime
 adjustments** layered on the controlled base `exposure`/`offset`; HOME resets only
