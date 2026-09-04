@@ -84,7 +84,7 @@ import {
 import type { ImageViewport } from "./image-viewport.ts";
 import ImageOverlay from "./ImageOverlay";
 import FallbackChip from "./FallbackChip";
-import type { CapabilityFallback } from "../definition/core";
+import type { CapabilityFallback } from "../definition/core.ts";
 import type { ImageOverlayData, ImageOverlaySettings } from "../../types";
 import ImageInfoPanel, {
   INFO_PANEL_W,
