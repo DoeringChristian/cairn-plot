@@ -118,6 +118,7 @@ import {
   reduceSegment,
   usePaneEncoding,
 } from "../components/display-operation";
+import { WEBGPU_CAPABILITIES } from "./capabilities.ts";
 import {
   resolveDisplayOperator,
   resolveRenderTonemap,
@@ -570,6 +571,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     resolveDefaultCurve,
     // The settings store rules when present; picks publish and flow back down.
     settings: synced,
+    capabilities: WEBGPU_CAPABILITIES,
   });
   // HOME is owned by the viewport. The renderer neither derives defaults nor
   // branches on image/compare/stack state.

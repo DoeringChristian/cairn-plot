@@ -29,7 +29,9 @@
  */
 import { useCallback, useMemo, useRef } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../../../primitives/controls/ToolbarConfig";
+import type { ImageBackendCapabilities } from "../backend.ts";
 import { getDisplayOperation, listDisplayOperations, type ReduceMode } from "../definition/display-operations.ts";
+import { projectDisplayOperation, type CapabilityFallback } from "../definition/core.ts";
 
 /** The DATA-encoding multi-channel REDUCE options, in order (the multi-channel-
  *  colormap follow-up). Shown ONLY while a colormap LUT is active AND the source
@@ -93,26 +95,30 @@ function lutIdsForArity(arity: number): string[] {
  * Which encoding ids a pane offers, given its surface mode + arity + the curve
  * set it can actually render. `curveSet` is an ORDERED list of curve/remap ids
  * (it may include `"normal"`); curves and the `normal` remap are split into
- * their sections here.
+ * their sections here. Seeding stays catalogue-level; only the offered menu is
+ * intersected with the backend.
  */
 export function resolveDisplayOperationIds(opts: {
   mode: "sdr" | "arity";
   arity: number;
   curveSet: readonly string[];
+  /** The ACTIVE backend's declaration: the menu is catalogue ∩ backend. */
+  capabilities: Pick<ImageBackendCapabilities, "supportsDisplayOperation">;
 }): DisplayOperationIds {
-  const { mode, arity, curveSet } = opts;
-  const curveIds = curveSet.filter((id) => getDisplayOperation(id)?.category === "curve");
-  const hasNormal = curveSet.some((id) => getDisplayOperation(id)?.category === "remap");
+  const { mode, arity, curveSet, capabilities } = opts;
+  const supported = (id: string) => capabilities.supportsDisplayOperation(id);
+  const curveIds = curveSet.filter((id) => getDisplayOperation(id)?.category === "curve").filter(supported);
+  const hasNormal = curveSet.some((id) => getDisplayOperation(id)?.category === "remap") && supported("normal");
   let lutIds: string[];
   let remapIds: string[];
   if (mode === "sdr") {
     // No channel-count knowledge → offer the full applicable set.
-    lutIds = allLutIds();
+    lutIds = allLutIds().filter(supported);
     remapIds = hasNormal ? ["normal"] : [];
   } else {
     // Colormaps are legal at every k∈[1,4] (the multi-channel follow-up reduces a
     // k>1 sample to a scalar before the LUT); the `normal` remap stays k=3 only.
-    lutIds = lutIdsForArity(arity);
+    lutIds = lutIdsForArity(arity).filter(supported);
     remapIds = arity === 3 && hasNormal ? ["normal"] : [];
   }
   return { curveIds, lutIds, remapIds, all: [...curveIds, ...lutIds, ...remapIds] };
@@ -176,6 +182,10 @@ export interface PaneEncodingConfig {
    *  encoding — derived by value every render, no local copy, no adoption
    *  effect. Applicability stays a render decision. */
   settings?: import("../../../settings/schema.ts").PlotSettings | null;
+  /** The ACTIVE backend's display capability. The menu is catalogue ∩ backend;
+   *  a store id the backend lacks is PROJECTED (read-time, never written back)
+   *  onto the core fallback and reported through {@link PaneEncoding.fallback}. */
+  capabilities: Pick<ImageBackendCapabilities, "supportsDisplayOperation">;
 }
 
 /** What a pane needs from the unified encoding state. */
@@ -195,7 +205,18 @@ export interface PaneEncoding {
   displayOperationModified: boolean;
   /** Whether the ACTIVE encoding declares a given param (drives slider gating). */
   hasParam: (name: string) => boolean;
+  /** The substitution in effect when the raw store id is unsupported here, else `null`. */
+  fallback: CapabilityFallback | null;
 }
+
+/** Catalogue-level pseudo-capability used for SEEDING only (never for the
+ *  offered menu): every registered display operation is "supported" here, so
+ *  `idsFor`/`seedFor` resolve against the full catalogue regardless of which
+ *  backend is active. Only the menu (`ids`) is intersected with the real
+ *  backend capabilities. */
+const CATALOGUE: Pick<ImageBackendCapabilities, "supportsDisplayOperation"> = {
+  supportsDisplayOperation: (id) => !!getDisplayOperation(id),
+};
 
 /**
  * Projects the viewport store's encoding into renderer-ready values. Descriptor
@@ -203,11 +224,14 @@ export interface PaneEncoding {
  * store; they are never a second mutable settings source.
  */
 export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
-  const { mode, arity, curveSet, propTonemap, resolveDefaultCurve } = config;
+  const { mode, arity, curveSet, propTonemap, resolveDefaultCurve, capabilities } = config;
   const propColormap = config.propColormap;
 
+  // Seeding stays catalogue-level: the authored seed must resolve the same way
+  // regardless of which backend is active. Only the offered menu (`ids` below)
+  // is intersected with the real backend capabilities.
   const idsFor = useCallback(
-    (a: number): DisplayOperationIds => resolveDisplayOperationIds({ mode, arity: a, curveSet }),
+    (a: number): DisplayOperationIds => resolveDisplayOperationIds({ mode, arity: a, curveSet, capabilities: CATALOGUE }),
     [mode, curveSet],
   );
 
@@ -238,14 +262,23 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   // the first render before the owner's initialization effect fills the store.
   const storeId = config.settings?.["image.encoding"];
   const rawEncodingId = storeId ?? initialSeedRef.current;
-  const displayOperationId = rawEncodingId;
 
-  const ids = useMemo(() => idsFor(arity), [idsFor, arity]);
+  // The offered menu IS the catalogue intersected with the active backend.
+  const ids = useMemo(
+    () => resolveDisplayOperationIds({ mode, arity, curveSet, capabilities }),
+    [mode, arity, curveSet, capabilities],
+  );
+
+  // The raw store id is PROJECTED (read-time only, never written back) onto the
+  // core fallback when the active backend cannot render it.
+  const projection = projectDisplayOperation(rawEncodingId, capabilities);
+  const displayOperationId = projection.effective;
+
   const activeEncoding = getDisplayOperation(displayOperationId);
   const isLut = activeEncoding?.category === "colormap";
   const curveId = isLut ? pickDefaultCurve(ids) : displayOperationId;
   const colormap = isLut ? displayOperationId : null;
-  const displayOperationModified = displayOperationId !== seedFor(arity);
+  const displayOperationModified = rawEncodingId !== seedFor(arity);
   const hasParam = useCallback(
     (name: string) => !!getDisplayOperation(displayOperationId)?.parameters.includes(name as never),
     [displayOperationId],
@@ -259,5 +292,6 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     ids,
     displayOperationModified,
     hasParam,
+    fallback: projection.fallback,
   };
 }

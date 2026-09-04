@@ -89,6 +89,7 @@ import { u8HistogramSource, floatHistogramSource } from "../components/image-his
 import { useCellSettings } from "../../../state/settings/use-cell-settings";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-operation";
+import { CPU_CAPABILITIES } from "./capabilities.ts";
 import type { ReduceMode } from "../definition/display-operations.ts";
 import { defaultReduceMode } from "../runtime/display-settings.ts";
 import { computeCpuSourceMetrics, CPU_METRIC_OPERATION_IDS, type CpuSourceMetrics } from "./source-metrics.ts";
@@ -402,6 +403,7 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
       const s = resolveDisplayOperator(t);
       return s === "gamma" || s === "linear" ? s : "srgb";
     },
+    capabilities: CPU_CAPABILITIES,
     // The settings store rules when present; picks publish and flow back down.
     settings: synced,
   });
@@ -738,6 +740,7 @@ function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
     propTonemap: tonemap,
     resolveDefaultCurve,
     settings: synced,
+    capabilities: CPU_CAPABILITIES,
   });
   const colormap = enc.colormap as Colormap;
   const tonemapOp = enc.curveId as DisplayCurveId;
