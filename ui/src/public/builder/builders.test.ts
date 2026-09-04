@@ -260,3 +260,23 @@ test("URL routing: known browser-native ext → verbatim <img>; raw-buffer/unkno
     assert.equal(d.url, u);
   }
 });
+
+// ── the retired `flipMode` option is REJECTED, not silently ignored ──────────
+// HDR FLIP is its own public operation (`mode: "flip_hdr"`). Python drops the
+// keyword outright, so `flip_mode=` raises `TypeError`; the JS builder takes a
+// loose options bag, so an unknown key would otherwise be swallowed and the
+// caller would silently get SDR FLIP.
+test("compare rejects the retired flipMode option; mode:'flip_hdr' is the way", () => {
+  const a = cp.image({ url: "a.png" });
+  const b = cp.image({ url: "b.png" });
+  assert.throws(
+    () => cp.compare(a, b, { mode: "flip", flipMode: "hdr" }),
+    /cairnPlot\.compare: flipMode was removed; use mode:"flip_hdr" for HDR FLIP/,
+  );
+  // Even paired with the replacement mode, the retired key never passes.
+  assert.throws(() => cp.compare(a, b, { mode: "flip_hdr", flipMode: "hdr" }), /flipMode was removed/);
+
+  const hdr = cp.compare(a, b, { mode: "flip_hdr" });
+  assert.equal((hdr.node as any).settings["compare.operation"], "flip-hdr");
+  assert.deepEqual(validate(schema, hdr.spec), []);
+});

@@ -400,6 +400,14 @@ export function createCairnPlot(mount?: Mounter): CairnPlot {
     },
 
     compare(a, b, opts = {}) {
+      // HDR FLIP is its own public operation now. Python drops the keyword, so
+      // `flip_mode=` raises TypeError; this bag would silently swallow it and
+      // hand the caller SDR FLIP.
+      if (opts.flipMode != null) {
+        throw new Error(
+          'cairnPlot.compare: flipMode was removed; use mode:"flip_hdr" for HDR FLIP',
+        );
+      }
       const mode = checkCompareMode(String(opts.mode ?? "split"));
       const align = checkAlign(String(opts.align ?? "top-left"));
       const fit = checkFit(String(opts.fit ?? "crop"));

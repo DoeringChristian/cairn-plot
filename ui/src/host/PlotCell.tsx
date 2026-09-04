@@ -34,7 +34,7 @@ import {
 } from "../layout/grid-uniform-aspect.tsx";
 import { ChartFillContext } from "./standalone-helpers.tsx";
 import { useCellSettings } from "../state/settings/use-cell-settings.ts";
-import { defaultSettingsForNode } from "../plots/settings.ts";
+import { defaultSettingsForNode, migrateSettingsForNode } from "../plots/settings.ts";
 import type { PlotSettings } from "../settings/schema.ts";
 import { CellSettingsContext, useSharedPlot, type CellSettingsContextValue } from "./plot-context.ts";
 import { usePlotSessionController } from "../state/session/session-context.ts";
@@ -109,14 +109,37 @@ export function PlotCell({
     recordSessionSettings,
   );
 
+  // THE restore-side migration seam. The session controller replays saved
+  // records verbatim (restore, late registration, host `patchSettings`), so a
+  // snapshot written before a key was retired would otherwise reintroduce it
+  // into this cell's store — where `project` renders it AND it keeps coercing
+  // every later patch. The controller stays ignorant of plot semantics; the
+  // cell owns its node, so it migrates on the way in. The healed record is
+  // recorded back because `replaceLocal` reports no user change, and without
+  // that the stale key would survive in the session and re-poison the next
+  // patch.
+  // The node rides a ref rather than the dep list: a stacked tab flip swaps
+  // `node` while the cell (and its session id) stays the same, and a new
+  // callback identity there would re-run the registration effect.
+  const nodeRef = useRef(node);
+  nodeRef.current = node;
+  const replaceSessionSettings = useCallback((settings: PlotSettings) => {
+    const current = nodeRef.current;
+    const migrated = current.kind === "grid"
+      ? settings
+      : migrateSettingsForNode(current, settings);
+    vst.replaceLocal(migrated);
+    if (migrated !== settings) sessionController?.recordCell(sessionId, migrated);
+  }, [vst.replaceLocal, sessionController, sessionId]);
+
   useEffect(() => {
     if (!sessionController) return;
     return sessionController.registerCell(
       sessionId,
-      vst.replaceLocal,
+      replaceSessionSettings,
       vst.get() ?? {},
     );
-  }, [sessionController, sessionId, vst.replaceLocal, vst.get]);
+  }, [sessionController, sessionId, replaceSessionSettings, vst.get]);
 
   useEffect(() => {
     if (!selectable) return;
