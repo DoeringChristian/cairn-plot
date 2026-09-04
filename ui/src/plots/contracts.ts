@@ -16,6 +16,12 @@ export interface DataSchema<TSpec extends DataSpec> {
 export interface SettingsSchema<TSettings extends SettingsRecord> {
   defaults(node: PlotLeafNode | CompareNode): TSettings;
   project(settings: Readonly<SettingsRecord>): TSettings;
+  /** Rewrites retired setting keys into their current form; must be idempotent
+   *  and return the same object when nothing changes. Applied by the generic
+   *  seed (`plots/settings.ts`) over the FULLY merged record — defaults, shared
+   *  settings and authored node settings — so a retired key never survives into
+   *  the store, where a later patch would be read alongside it. */
+  migrateSettings?(settings: SettingsRecord): SettingsRecord;
 }
 
 export interface ComparisonPresentationDefinition {
@@ -93,6 +99,9 @@ export interface RegisteredPlotDefinition {
   validateData(value: DataSpec): DataSpec;
   defaults(node: PlotLeafNode | CompareNode): SettingsRecord;
   projectSettings(settings: Readonly<SettingsRecord>): SettingsRecord;
+  /** See {@link SettingsSchema.migrateSettings}; absent when the kind has no
+   *  retired keys, in which case the seeded record is used as merged. */
+  migrateSettings?(settings: SettingsRecord): SettingsRecord;
   resolve(node: PlotLeafNode, context: ResolveContext): Promise<unknown>;
   present(content: unknown): unknown;
   readonly comparison?: ComparisonCapability<unknown, unknown>;
@@ -113,6 +122,9 @@ export function definePlot<
     validateData: (value) => definition.data.validate(value),
     defaults: (node) => definition.settings.defaults(node),
     projectSettings: (settings) => definition.settings.project(settings),
+    ...(definition.settings.migrateSettings
+      ? { migrateSettings: (settings) => definition.settings.migrateSettings!(settings) }
+      : {}),
     resolve: (node, context) => definition.resolve(definition.data.validate(node.data), context),
     present: (content) => definition.present(content as TContent),
     comparison: definition.comparison as unknown as

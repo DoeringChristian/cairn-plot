@@ -122,8 +122,12 @@ export function ensureImagePlotType(
     data: { validate: validateImageData },
     settings: {
       defaults: defaultImageSettings,
-      // The host adapter's read of cell settings: the one place a saved session
-      // from before the `flip`/`flip-hdr` split is rewritten (`compare.flipMode`).
+      // The SEED: `compare.flipMode` is rewritten out of the merged record
+      // before it ever reaches the cell store, so no later patch is read
+      // alongside it (`plots/settings.ts`).
+      migrateSettings: migrateCompareSettings,
+      // Belt and braces on the READ side, for a store seeded before this
+      // existed (a restored session). Idempotent, so running both is free.
       project: (settings) => migrateCompareSettings({ ...settings }) as ImageSettings,
     },
     resolve: (spec, context) => resolveImageData(spec, context.source),

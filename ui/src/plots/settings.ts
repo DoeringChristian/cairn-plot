@@ -7,9 +7,15 @@ export function defaultSettingsForNode(
   node: PlotLeafNode | CompareNode,
   shared?: SharedProps,
 ): PlotSettings {
-  return {
-    ...(getPlotType(node.type)?.defaults(node) ?? {}),
+  const definition = getPlotType(node.type);
+  const merged = {
+    ...(definition?.defaults(node) ?? {}),
     ...(shared?.settings ?? {}),
     ...(node.settings ?? {}),
-  } as PlotSettings;
+  };
+  // LAST, over the merged record: authored node settings win over the defaults,
+  // so a kind that migrates only inside `defaults()` would still let a retired
+  // key reach the cell store — where the store's patch merge would keep reading
+  // it beside every later choice the user makes.
+  return (definition?.migrateSettings?.(merged) ?? merged) as PlotSettings;
 }
