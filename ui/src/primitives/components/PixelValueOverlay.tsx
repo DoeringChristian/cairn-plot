@@ -10,13 +10,16 @@
  * zoom level — never shorter values before longer ones.
  *
  * Design (self-contained; data-in-props):
- *  - It is a single absolutely-positioned <canvas> laid OVER the image, OUTSIDE
- *    the zoom/pan CSS transform, so its text stays crisp at any zoom (no raster
- *    up-scaling). Position is derived from the displayed image element's live
- *    on-screen rect (`getBoundingClientRect`, already post zoom/pan), so we
- *    never reconstruct the transform math ourselves.
- *  - object-contain letterboxing is applied to that box to find the actual
- *    image region and the per-source-pixel screen size (== the trigger metric).
+ *  - It is a single absolutely-positioned <canvas> filling the pane's ONE
+ *    viewport element, so its text stays crisp at any zoom (no raster
+ *    up-scaling). It NEVER measures anything itself: both the CSS box and the
+ *    device-pixel backing store come from the shared `ImageViewport`
+ *    (`plots/image/components/image-viewport.ts`), the same geometry the pane's
+ *    own paint uses — so the numbers can never disagree with the pixels.
+ *  - `viewport.quad` is the image's on-screen rect (pane-local CSS px) under the
+ *    current zoom/pan; the sampled grid (`sourceDims`, default `viewport.natural`)
+ *    is spread across it, giving the per-source-pixel screen size (== the
+ *    trigger metric).
  *  - Font size: ONE size for the whole frame (every number identical in height),
  *    derived from the on-screen pixel-cell size, the channel count, and the
  *    WIDEST value in view (measured in pass 1; see `pixel-value-size.ts`) — so
@@ -36,13 +39,9 @@
  *    replaced the old per-pixel adaptive black-on-light / white-on-dark flip
  *    plus opposite-luminance halo stroke.)
  */
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { useDevicePixelRatio } from "../../host/hooks/use-device-pixel-ratio";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { formatNum } from "../format";
-import {
-  computeSourceFit,
-  type ScreenToTexelParams,
-} from "../../plots/image/components/region-select";
+import type { ImageViewport } from "../../plots/image/components/image-viewport";
 import {
   pixelValueClipRect,
   pixelValueFontHeight,
@@ -174,13 +173,14 @@ export type PixelSampler = (
 ) => PixelSample | null;
 
 export interface PixelValueOverlayProps {
-  /** The displayed <img>/<canvas> — its live rect gives the on-screen image. */
-  imageElRef: React.RefObject<HTMLElement | null>;
-  naturalWidth: number;
-  naturalHeight: number;
-  /** Viewport — used only to retrigger a redraw when the user zooms/pans. */
-  zoom: number;
-  pan: { x: number; y: number };
+  /**
+   * The pane's ONE measured viewport geometry (`useImageViewport`): the CSS box,
+   * the device-pixel backing size, the natural source dims, and `quad` — the
+   * image's pane-local on-screen rect under the current zoom/pan. Everything the
+   * overlay draws is derived from this; it measures nothing itself, so its
+   * numbers land on exactly the texels the pane painted.
+   */
+  viewport: ImageViewport;
   /** Per-pixel value accessor over the RAW source buffer. The current notation
    *  is passed so the sampler formats its lines consistently. */
   sample: PixelSampler;
@@ -197,29 +197,9 @@ export interface PixelValueOverlayProps {
    *  start lazy preparation without creating an active/readiness deadlock. */
   onSampleDemandChange?: (demanded: boolean) => void;
   /**
-   * The currently-DISPLAYED portion of the source image, as a `[0,1]`-normalized
-   * `{x,y,w,h}` window over `[naturalWidth, naturalHeight]` — top-down, same
-   * convention as `renderers/GpuImagePane.tsx`'s `viewToUvRect()` BEFORE
-   * any backend-specific display flip. Default `{x:0,y:0,w:1,h:1}` (the whole
-   * image, matching every prior caller's behaviour exactly).
-   *
-   * Needed by the GPU panes (`GpuImagePane`/`GpuComparePane`): unlike the
-   * legacy CSS-`transform:scale(zoom)` panes — whose `imageElRef` element
-   * physically GROWS on screen at higher zoom, so `getBoundingClientRect()`
-   * already encodes the zoom and the old naturalWidth/Height-only math was
-   * correct — the GPU panes zoom by sampling a smaller crop into an
-   * UNCHANGING canvas CSS box (`w-full h-full`, sized by the container, never
-   * by zoom). Without this, `draw()` would always compute the SAME
-   * zoom-invariant scale (as if the whole image were shown at zoom=1), so the
-   * "zoom in until pixels are big enough" trigger could never fire and no
-   * per-pixel numbers would ever appear on a GPU pane, however far zoomed in.
-   */
-  sourceWindow?: { x: number; y: number; w: number; h: number };
-  /**
    * The SAMPLED source's own grid resolution, when it differs from the FRAMING
-   * dims (`naturalWidth`/`naturalHeight`). Default = the framing dims (the
-   * single-image pane and the compare foreground/primary side — an isotropic,
-   * unchanged mapping).
+   * dims (`viewport.natural`). Default = the framing dims (the single-image pane
+   * and the compare foreground/primary side — an isotropic, unchanged mapping).
    *
    * Needed by the compare split pane's NON-primary (reference) side: both
    * operands are drawn stretched into the SAME framing quad (the shader samples
@@ -227,50 +207,23 @@ export interface PixelValueOverlayProps {
    * `textureDimensions`), so the reference side fills that quad with ITS OWN
    * texel count. Without this the reference numbers map through the primary's
    * grid — misplaced whenever the two resolutions differ, drifting further off
-   * their pixels with texel index (worst at large resolution). See
-   * `renderers/region-select`'s {@link computeSourceFit}.
+   * their pixels with texel index (worst at large resolution).
    */
   sourceDims?: { w: number; h: number };
-  /** Explicit viewport-local source grid geometry. CPU panes provide this from
-   * the same affine map that positions the painted bitmap, avoiding any reverse
-   * engineering of CSS transforms or object fitting. */
-  displayGeometry?: {
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-    gridWidth: number;
-    gridHeight: number;
-  };
 }
 
-const FULL_SOURCE_WINDOW = { x: 0, y: 0, w: 1, h: 1 };
-
 export default function PixelValueOverlay({
-  imageElRef,
-  naturalWidth,
-  naturalHeight,
-  zoom,
-  pan,
+  viewport,
   sample,
   notation = "decimal",
   version = 0,
   onActiveChange,
   onSampleDemandChange,
-  sourceWindow = FULL_SOURCE_WINDOW,
   sourceDims,
-  displayGeometry,
 }: PixelValueOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(false);
   const sampleDemandRef = useRef(false);
-  // Q22 fix: self-contained dpr tracking (per this file's own convention —
-  // no external hook required of the host pane) so this overlay's own
-  // backing store stays crisp when `devicePixelRatio` changes without a
-  // container resize (e.g. dragging the window to a different-DPI display)
-  // — `draw()` below already re-reads `window.devicePixelRatio` fresh every
-  // call, it just needs a trigger to actually redraw.
-  const dpr = useDevicePixelRatio();
   const onActiveChangeRef = useRef(onActiveChange);
   onActiveChangeRef.current = onActiveChange;
   const reportActive = useCallback((active: boolean) => {
@@ -288,81 +241,48 @@ export default function PixelValueOverlay({
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    const imgEl = imageElRef.current;
     if (!canvas) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth;
-    const cssH = canvas.clientHeight;
-    if (cssW === 0 || cssH === 0) {
+    // Sizing comes from the SHARED viewport, never from this canvas's own
+    // measurement: `backing` is the device-pixel store, `box` the CSS box, and
+    // the transform between them lets everything below draw in CSS px.
+    const { box, backing } = viewport;
+    if (box.width <= 0 || box.height <= 0) {
       reportSampleDemand(false);
       reportActive(false);
       return;
     }
-    if (canvas.width !== Math.round(cssW * dpr)) canvas.width = Math.round(cssW * dpr);
-    if (canvas.height !== Math.round(cssH * dpr)) canvas.height = Math.round(cssH * dpr);
+    if (canvas.width !== backing.width) canvas.width = backing.width;
+    if (canvas.height !== backing.height) canvas.height = backing.height;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.setTransform(backing.width / box.width, 0, 0, backing.height / box.height, 0, 0);
+    ctx.clearRect(0, 0, box.width, box.height);
+    const cssW = box.width;
+    const cssH = box.height;
 
-    if ((!imgEl && !displayGeometry) || naturalWidth <= 0 || naturalHeight <= 0) {
-      reportSampleDemand(false);
-      reportActive(false);
-      return;
-    }
-
-    const box = imgEl?.getBoundingClientRect();
-    const canvasRect = canvas.getBoundingClientRect();
-    if (!displayGeometry && (!box || box.width === 0 || box.height === 0)) {
-      reportSampleDemand(false);
-      reportActive(false);
-      return;
-    }
-
-    // The DISPLAYED sub-image, in source pixels: `sourceWindow` (default the
-    // whole image) selects a `[0,1]`-normalized crop of
-    // `[naturalWidth, naturalHeight]`. The object-contain fit of THIS crop into
-    // `box` establishes the FRAMING QUAD (the on-screen rect the full framing
-    // image renders into) — the SAME `computeFit` the region marquee uses
-    // (renderers/region-select) — while `sourceDims` (default = the framing
-    // dims) is the SAMPLED source's own grid spread across that quad. Consuming
-    // the shared `computeSourceFit` keeps the overlay's per-pixel placement and
-    // the marquee's texel mapping from ever drifting apart, AND places a
-    // mismatched-resolution compare side on its own grid (fill-stretch — the
-    // split shader draws both operands into one quad, each scaled by its own
-    // `textureDimensions`).
-    const sf = displayGeometry
-      ? {
-          quadLeft: canvasRect.left + displayGeometry.left,
-          quadTop: canvasRect.top + displayGeometry.top,
-          quadW: displayGeometry.width,
-          quadH: displayGeometry.height,
-          sxPerTexel: displayGeometry.width / displayGeometry.gridWidth,
-          syPerTexel: displayGeometry.height / displayGeometry.gridHeight,
-          gridW: displayGeometry.gridWidth,
-          gridH: displayGeometry.gridHeight,
-          visibleW: displayGeometry.gridWidth,
-          visibleH: displayGeometry.gridHeight,
-        }
-      : computeSourceFit({
-          box: box!,
-          naturalWidth,
-          naturalHeight,
-          sourceWindow,
-        } satisfies ScreenToTexelParams, sourceDims);
-    const { sxPerTexel, syPerTexel, gridW, gridH, visibleW, visibleH } = sf;
+    // The FRAMING QUAD is `viewport.quad` — the image's pane-local on-screen rect
+    // under the current zoom/pan, already letterbox-fitted by the shared
+    // geometry. `sourceDims` (default = the framing dims) is the SAMPLED source's
+    // own grid spread across that quad (fill-stretch), which places a
+    // mismatched-resolution compare side on ITS own texels — the split shader
+    // draws both operands into one quad, each scaled by its own
+    // `textureDimensions`.
+    const gridW = sourceDims?.w ?? viewport.natural.w;
+    const gridH = sourceDims?.h ?? viewport.natural.h;
+    const quadLeft = viewport.quad.left;
+    const quadTop = viewport.quad.top;
+    const quadW = viewport.quad.width;
+    const quadH = viewport.quad.height;
+    const sxPerTexel = quadW / gridW;
+    const syPerTexel = quadH / gridH;
+    const visibleW = gridW;
+    const visibleH = gridH;
     if (visibleW <= 0 || visibleH <= 0 || gridW <= 0 || gridH <= 0) {
       reportSampleDemand(false);
       reportActive(false);
       return;
     }
-
-    // The framing quad rebased into this canvas's local (CSS px) coords. For the
-    // default (framing == sampled) case `sxPerTexel === syPerTexel === scale` and
-    // this reduces to the historical `imgLeft + (px - srcOriginX + 0.5)*scale`.
-    const quadLeft = sf.quadLeft - canvasRect.left;
-    const quadTop = sf.quadTop - canvasRect.top;
 
     // The SINGLE global visibility gate. Rectangular cells (mismatched aspect):
     // the TIGHTER axis governs legibility/containment; for square cells this is
@@ -432,11 +352,9 @@ export default function PixelValueOverlay({
 
     // Q19: clip ALL drawing to the DISPLAYED IMAGE's own on-screen rect — the
     // FRAMING QUAD (where the full image renders; the sampled source fills the
-    // SAME quad). `sourceWindow` alone (the crop rect) is NOT enough: when zoomed
-    // out past the image's native size (Q18), `sourceWindow` extends past `[0,1]`
-    // into the checkerboard border, so its on-screen box is BIGGER than the
-    // actual image — without this clip, a halo/stroke drawn near that border
-    // could bleed onto the checkerboard.
+    // SAME quad). The canvas covers the WHOLE viewport, which at low zoom is
+    // bigger than the image — without this clip, a halo/shadow drawn near the
+    // image border could bleed onto the checkerboard.
     // Bug 5: clip to the image rect EXPANDED by ~one font-height, NOT the exact
     // rect — a number centred on an EDGE/CORNER texel legitimately reaches the
     // image boundary (its outer half + drop shadow), and the tight clip truncated
@@ -445,8 +363,8 @@ export default function PixelValueOverlay({
       {
         left: quadLeft,
         top: quadTop,
-        right: quadLeft + sf.quadW,
-        bottom: quadTop + sf.quadH,
+        right: quadLeft + quadW,
+        bottom: quadTop + quadH,
       },
       fontH,
     );
@@ -488,37 +406,27 @@ export default function PixelValueOverlay({
     }
     ctx.restore(); // matches the ctx.save()/clip() above.
   }, [
-    imageElRef,
-    naturalWidth,
-    naturalHeight,
+    viewport,
     sample,
     notation,
     reportActive,
     reportSampleDemand,
-    sourceWindow,
     sourceDims,
-    displayGeometry,
   ]);
 
-  // Geometry must update in the same commit as the CPU surface's CSS transform.
-  // A passive effect paints one frame later, which makes labels visibly trail
-  // the texels during a pan (often by about half a texel). Draw before paint.
+  // Geometry must update in the same commit as the pane's own paint. A passive
+  // effect paints one frame later, which makes labels visibly trail the texels
+  // during a pan (often by about half a texel). Draw before paint. There is no
+  // ResizeObserver here: `viewport` is a fresh object whenever the pane's box,
+  // dpr, or view changes, so a new geometry IS the redraw trigger.
   useLayoutEffect(() => {
     draw();
-  }, [draw, zoom, pan.x, pan.y, version, notation, sourceWindow, sourceDims, dpr]);
-
-  // Redraw on container resize (fit box changes -> pixel size changes).
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ro = new ResizeObserver(() => draw());
-    ro.observe(canvas);
-    return () => ro.disconnect();
-  }, [draw]);
+  }, [draw, viewport, version, notation, sourceDims]);
 
   return (
     <canvas
       ref={canvasRef}
+      data-pixel-value-overlay=""
       className="absolute inset-0 w-full h-full pointer-events-none z-10"
       aria-hidden
     />

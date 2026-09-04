@@ -30,17 +30,19 @@
  * ## Render triggers (on demand, NOT per animation frame)
  * The source-upload layout effects re-upload only when the decoded pixels change
  * (source identity / `imageUrl`+`colormap` / the `b` operand). Two render effects
- * (pre-paint for resident flips, post-paint for everything else) fire on a
- * viewport (zoom/pan → `uvRect`), exposure/operator/gamma, container-resize, or
- * source change. `engine/pool.ts`'s `acquirePane`/`releasePane` own the GPU
- * lifecycle (shared device, LRU park/restore, live-swapchain cap).
+ * (pre-paint for resident flips, post-paint for everything else) fire on a new
+ * `viewport` object (zoom/pan/resize/dpr → `uvRect` + backing size),
+ * exposure/operator/gamma, or a source change. `engine/pool.ts`'s `acquirePane`/
+ * `releasePane` own the GPU lifecycle (shared device, LRU park/restore,
+ * live-swapchain cap).
  *
  * ## Zoom/pan -> uvRect
  * `ImagePaneShell` owns the CSS-px zoom/pan state (Alt-gated wheel-zoom-to-cursor
- * + pointer-drag pan) and the double-click reset; `viewToUvRect` converts it
- * into the source-space `[x,y,w,h]` window `renderImage` samples (GPU-side pan/
- * zoom, not a CSS transform), using the same object-contain fit math the pixel
- * overlay computes from the live rect.
+ * + pointer-drag pan) and the double-click reset; `useImageViewport` measures the
+ * ONE viewport element and derives the source-space `[x,y,w,h]` window
+ * `renderImage` samples (GPU-side pan/zoom, not a CSS transform), the device-pixel
+ * backing size, and the magnification filter. The SAME object is handed to every
+ * overlay through the shell, so the numbers and the pixels share one geometry.
  *
  * ## Off-screen park/restore
  * An `IntersectionObserver` on the pane calls the pool handle's `park()`/
@@ -83,14 +85,10 @@ import { buildCompareModeMenu } from "../compare/compare-mode-menu";
 import SplitDivider from "../compare/SplitDivider";
 import { useSplitFlipKeys } from "../compare/use-split-flip-keys";
 import RefBadge from "../../../primitives/components/RefBadge";
-import { sourceTexelCenter, viewToUvRect, screenPxPerTexel } from "../components/region-select";
 import LabelChip from "../../../primitives/components/LabelChip";
 import type { ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig";
-import ImageOverlay from "../components/ImageOverlay";
-import PixelValueOverlay, {
-  PIXEL_VALUE_MIN_SCREEN_PX,
-} from "../../../primitives/components/PixelValueOverlay";
-import { useDevicePixelRatio } from "../../../host/hooks/use-device-pixel-ratio";
+import PixelValueOverlay from "../../../primitives/components/PixelValueOverlay";
+import { useImageViewport } from "../components/use-image-viewport.ts";
 import {
   acquirePane,
   releasePane,
@@ -332,8 +330,9 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const splitPosition = compareSource?.splitPosition ?? 0.5;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  const imgWrapperRef = useRef<HTMLDivElement | null>(null);
+  // The ONE viewport element (spec §3.3): the shell attaches this ref, the
+  // gestures/controller/probe read it, and `useImageViewport` measures it.
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const paneHandleRef = useRef<PaneHandle | null>(null);
 
   // DEEP EXR depth WINDOW. A deep source drives the REAL-TIME GPU composite
@@ -384,12 +383,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const [paneReady, setPaneReady] = useState(false);
   const [naturalDims, setNaturalDims] = useState<{ w: number; h: number } | null>(null);
   const [uploadVersion, setUploadVersion] = useState(0);
-  const [containerTick, setContainerTick] = useState(0);
-  // The DISPLAYED uv window, for `PixelValueOverlay`'s
-  // `sourceWindow` — see that prop's doc for why the GPU pane must supply
-  // this explicitly (its canvas CSS box doesn't grow with zoom the way the
-  // legacy CSS-transform panes' <img>/<canvas> does).
-  const [overlayWindow, setOverlayWindow] = useState({ x: 0, y: 0, w: 1, h: 1 });
+  // A forced-repaint tick owned by the POOL lifecycle only (admission, and a
+  // park→restore that dropped the surface). Container resizes no longer ride
+  // this: they change `viewport`, which is a `renderPass` dep.
+  const [poolTick, setPoolTick] = useState(0);
 
   // TEV overlay source buffers (retained CPU pixels, mirrors ImagePane's
   // valueDataRef / HdrImagePane's `hdr.data`).
@@ -454,6 +451,12 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const zoom = props.zoom ?? 1;
   const pan = props.pan ?? { x: 0, y: 0 };
   const onViewChange = props.onViewChange;
+  const interpolation = props.interpolation ?? "auto";
+  // THE geometry (spec §3.2): one measurement of the viewport element, one
+  // derived object. The render pass takes its uv window, backing size and
+  // magnification filter from here, and the shell forwards the same object to
+  // every overlay — so the numbers and the pixels can never disagree.
+  const viewport = useImageViewport({ viewportRef, zoom, pan, naturalDims, interpolation });
   // Host seam: `toolbar={false}` hides the PlotToolbar (the shell then renders
   // the free-floating pixel-notation toggle only), so a host can drive the view
   // from its own menu via the controlled props below. Default true.
@@ -828,16 +831,13 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // from `GpuComparePane`. Active only in split mode; `inStackedGrid`/`inOverlay`
   // are threaded via `compareSource` from the CORE side (the addon bundle's
   // context identity differs, so the hook's own context read would miss).
-  useSplitFlipKeys(paneRef, compareOpMode === "split" ? "split" : "normal", changeSplit, {
+  useSplitFlipKeys(viewportRef, compareOpMode === "split" ? "split" : "normal", changeSplit, {
     inStackedGrid: compareSource?.inStackedGrid,
     inOverlay: compareSource?.inOverlay,
   });
-  // Q22 fix: the canvas backing store / WebGPU surface are sized to
-  // `displayCssSize * dpr` (see the render-pass effect below) — this must
-  // re-fire that sizing whenever `devicePixelRatio` itself changes (moving
-  // the window to a different-DPI display, an OS/browser zoom change), not
-  // just on container resize.
-  const dpr = useDevicePixelRatio();
+  // (Q22: `devicePixelRatio` changes — a different-DPI display, an OS/browser
+  // zoom — are tracked inside `useImageViewport`, which re-derives `viewport`
+  // with a new `backing` size and so re-fires the render pass.)
 
   // -----------------------------------------------------------------------
   // Acquire/release the pool handle for this canvas.
@@ -904,7 +904,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         }
         acquirePane(canvas, {
           hdr: useHdr,
-          onAdmitted: () => setContainerTick((tick) => tick + 1),
+          onAdmitted: () => setPoolTick((tick) => tick + 1),
           onActivationFailure: () => setEngineFailed(true),
         })
           .then((handle) => {
@@ -948,21 +948,15 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // the double-click reset are owned by the shared `ImagePaneShell` — this
   // backend only CONSUMES the resulting `{zoom, pan}` (as a uvRect) below.
 
-  // Redraw the TEV overlay / re-run the render pass when the container's own
-  // box changes (object-contain fit depends on the live rect).
-  useEffect(() => {
-    const el = paneRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setContainerTick((t) => t + 1));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  // Container resize no longer needs an observer here: `useImageViewport` owns
+  // the ONE ResizeObserver on the viewport element, and a new `viewport` object
+  // recreates `renderPass` (a dep) → the render effects re-fire.
 
   // -----------------------------------------------------------------------
   // Off-screen park/restore.
   // -----------------------------------------------------------------------
   useEffect(() => {
-    const el = paneRef.current;
+    const el = viewportRef.current;
     if (!el) return;
     const io = new IntersectionObserver(
       (entries) => {
@@ -974,7 +968,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         if (entry.isIntersecting) {
           if (handle.isParked) {
             handle.restore();
-            setContainerTick((t) => t + 1); // force a re-render pass
+            setPoolTick((t) => t + 1); // force a re-render pass
           }
         } else {
           handle.park();
@@ -1081,7 +1075,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       setNaturalDims(null);
       setPixelDataVersion((v) => v + 1);
       // Q24 fix: no explicit inline CSS size to drop anymore — the canvas is
-      // always `w-full h-full` of `imgWrapperRef` (see the JSX below); only
+      // always `absolute inset-0` of the viewport (see the JSX below); only
       // its device-pixel backing store is set imperatively, and the
       // render-pass effect's early-return on `!naturalDims` simply leaves
       // that backing store at whatever it last was, which is harmless (no
@@ -1357,42 +1351,18 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const renderPass = useCallback((): boolean => {
     const handle = paneHandleRef.current;
     if (!handle || !paneReady || !naturalDims) return false;
-    const paneEl = paneRef.current;
-    // Both the uv math and the canvas backing store key off `imgWrapperRef`, the
-    // padding-free content box the axes/overlay also measure — one coordinate
-    // space, so the sampled window and the canvas rect never disagree.
-    const wrapEl = imgWrapperRef.current;
-    // MEASURE-THEN-RENDER (pane contract): present only once the container has a real
-    // layout box — its size drives `handle.resize()` → the surface backing size. No
-    // source-dims fallback: a pane with no measured box (pre-layout, or a hidden
-    // stack slot) HOLDS (blank), and the ResizeObserver re-runs this pass
-    // (`containerTick`) the moment layout arrives. This is why the pool needs no
-    // backing-size floor.
-    const measureEl = wrapEl ?? paneEl;
-    const wrapBox = measureEl ? measureEl.getBoundingClientRect() : null;
-    if (!wrapBox || wrapBox.width <= 0 || wrapBox.height <= 0) return false;
-    const rawUv = viewToUvRect({ zoom, pan }, wrapBox, naturalDims.w, naturalDims.h);
-    setOverlayWindow((prev) =>
-      prev.x === rawUv.x && prev.y === rawUv.y && prev.w === rawUv.w && prev.h === rawUv.h ? prev : rawUv,
-    );
-
-    // The canvas backing store / WebGPU surface span the FULL content box ×
-    // devicePixelRatio; the image is placed as a quad inside that viewport by
-    // `viewToUvRect` (letterboxed at rest, pannable/zoomable into the
-    // margins). The CSS layout box is `w-full h-full` of the wrapper, so only
-    // the device-pixel backing store is computed here; letterbox + checkerboard
-    // in any empty region is the shader's OOB→transparent path.
-    // The measured box is guaranteed positive by the measure-then-render gate above.
-    handle.resize(Math.round(wrapBox.width * dpr), Math.round(wrapBox.height * dpr));
-
-    // Nearest filtering once a source texel is >= PIXEL_VALUE_MIN_SCREEN_PX on
-    // screen (the same threshold at which the pixel overlay starts drawing
-    // per-texel numbers), linear below it — see `screenPxPerTexel`.
-    const filter: "nearest" | "linear" =
-      screenPxPerTexel(rawUv, wrapBox, naturalDims.w, naturalDims.h) >= PIXEL_VALUE_MIN_SCREEN_PX
-        ? "nearest"
-        : "linear";
-    const uv = rawUv;
+    // MEASURE-THEN-RENDER (pane contract): present only once the viewport has a
+    // real layout box. `useImageViewport` returns null until then (pre-layout, or
+    // a hidden stack slot), so the pane HOLDS (blank) and re-fires the moment the
+    // measurement arrives — this is why the pool needs no backing-size floor.
+    if (!viewport) return false;
+    // ONE geometry: the sampled source window, the device-pixel backing store the
+    // canvas/WebGPU surface span, and the magnification filter all come from the
+    // same object the overlays draw with — they can never disagree. Letterbox +
+    // checkerboard in any empty region is the shader's OOB→transparent path.
+    const uv = viewport.uv;
+    handle.resize(viewport.backing.width, viewport.backing.height);
+    const filter = viewport.filter;
 
     // ---- PRESENT GATE (the snapshot's one rule) ------------------------
     // Present ONLY when the pool has bound exactly the sources this frame's
@@ -1684,7 +1654,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     }
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneReady, naturalDims, zoom, pan.x, pan.y, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged, dpr,
+  }, [paneReady, naturalDims, viewport, baseExposure, baseOffset, displayEV, displayOffset, effectiveTonemap, peak, tonemapGamma, sdrPlain, hdrMode, sdrColormap, hdrColormap, effectiveReduce, sourceArity, colorBounds, boundsEngaged,
     // DIFF deps: re-render when the reference uploads, the kernel/colormap/mapping
     // change, or the hdr-flip exposures resolve.
     diffMode, refDims, refUploadVersion, resolvedOperationId, effectiveDiffEncoding, diffMapping, hdrExposures, contentKeyA, contentKeyB,
@@ -1704,7 +1674,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   renderPassRef.current = renderPass;
 
   // Dedupe identity: a fresh object per `renderPass` recreation (i.e. whenever any
-  // pixel-affecting dep changes). Paired with `uploadVersion`/`containerTick` (the
+  // pixel-affecting dep changes). Paired with `uploadVersion`/`poolTick` (the
   // forced-re-render triggers — re-upload, park/restore, resize) it uniquely keys a
   // render. `renderPass` returns whether it actually SUBMITTED (a held/guarded frame
   // returns false), so a hold does NOT mark the key done and a later retry still
@@ -1719,10 +1689,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const contentEpoch = contentEpochRef.current;
   const alreadyRendered = (): boolean => {
     const r = lastRenderedRef.current;
-    return !!r && r.id === renderId && r.uv === uploadVersion && r.ct === containerTick;
+    return !!r && r.id === renderId && r.uv === uploadVersion && r.ct === poolTick;
   };
   const markRendered = (): void => {
-    lastRenderedRef.current = { id: renderId, uv: uploadVersion, ct: containerTick };
+    lastRenderedRef.current = { id: renderId, uv: uploadVersion, ct: poolTick };
   };
 
   // PRE-PAINT (paint-atomic) render for a RESIDENT slot flip. Runs in the layout
@@ -1767,7 +1737,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         t: performance.now(),
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderId, uploadVersion, containerTick, snapshot.resident, snapshot.contentKey]);
+  }, [renderId, uploadVersion, poolTick, viewport, snapshot.resident, snapshot.contentKey]);
 
   // POST-PAINT render — the general path (pan/zoom/exposure/param changes,
   // park/restore/resize, and NON-resident flips whose async load resolves later and
@@ -1795,7 +1765,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     });
     return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderId, uploadVersion, containerTick]);
+  }, [renderId, uploadVersion, poolTick, viewport]);
 
   // MSE and PSNR are cheap source reductions and useful for every comparison.
   // Keep them content-cached in the pool; a short settle window prevents native
@@ -1916,7 +1886,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // fields (kernel/colormap/metrics) AND the compositor fields (split/blend +
   // per-side overlay geometry + surface readback the split-numbers harness needs).
   useEffect(() => {
-    const el = paneRef.current as (HTMLDivElement & { __cairnImageDiffProbe?: unknown }) | null;
+    const el = viewportRef.current as (HTMLDivElement & { __cairnImageDiffProbe?: unknown }) | null;
     if (!el || !hasCompare) return;
     el.__cairnImageDiffProbe = {
       canvas: canvasRef.current,
@@ -1963,23 +1933,21 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         return naturalDims ? { a: naturalDims, b: refDims ?? naturalDims } : null;
       },
       get overlayWindow() {
-        return overlayWindow;
+        return viewport?.uv ?? { x: 0, y: 0, w: 1, h: 1 };
       },
-      // Per-side TEV texel→screen mapping (canvas-LOCAL CSS px) through the SAME
-      // `sourceTexelCenter`/`computeSourceFit` the per-side overlays draw with —
+      // Per-side TEV texel→screen mapping (viewport-LOCAL CSS px — the canvas is
+      // `absolute inset-0` of the viewport, so this is also canvas-local) through
+      // the SAME `viewport.quad` fill-stretch the per-side overlays draw with —
       // the split-numbers alignment proof (the #88 fix).
       overlayTexelCenter: (side: "a" | "b", px: number, py: number) => {
-        const canvas = canvasRef.current;
-        if (!canvas || !naturalDims) return null;
-        const box = canvas.getBoundingClientRect();
-        const srcd = side === "a" ? naturalDims : (refDims ?? naturalDims);
-        const c = sourceTexelCenter(
-          px,
-          py,
-          { box, naturalWidth: naturalDims.w, naturalHeight: naturalDims.h, sourceWindow: overlayWindow },
-          srcd,
-        );
-        return { x: c.x - box.left, y: c.y - box.top };
+        if (!viewport) return null;
+        const srcd = side === "a"
+          ? { w: viewport.natural.w, h: viewport.natural.h }
+          : (refDims ?? { w: viewport.natural.w, h: viewport.natural.h });
+        return {
+          x: viewport.quad.left + (px + 0.5) * (viewport.quad.width / srcd.w),
+          y: viewport.quad.top + (py + 0.5) * (viewport.quad.height / srcd.h),
+        };
       },
       // Headless-reliable surface readback (a live in-DOM swapchain reads blank via
       // createImageBitmap): a fresh synchronous frame then `device.readback` of the
@@ -2011,14 +1979,14 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return () => {
       if (el) delete el.__cairnImageDiffProbe;
     };
-  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, displayedMapMean, splitPosition, changeSplit, naturalDims, refDims, overlayWindow, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
+  }, [hasCompare, diffMode, compareOpMode, renderPass, comparisonOperationId, resolvedOperationId, effectiveDiffEncoding, effectiveTonemap, diffMetrics, displayedMapMean, splitPosition, changeSplit, naturalDims, refDims, viewport, changeCompareMode, changeComparisonOperation, changeDiffEncoding, changeEncoding, setComparisonOperation, enc, compareSource]);
 
   // TEST-ONLY seam for the IMAGE display encoding (the diff probe covers compare).
   // Lets a harness drive + read the plain-image colormap/curve pick WITHOUT a
   // fragile DOM menu click — the reg: a user's colormap pick must SURVIVE a
   // stacked/enlarge slot flip. No production code reads it (mirrors the diff probe).
   useEffect(() => {
-    const el = paneRef.current as
+    const el = viewportRef.current as
       | (HTMLDivElement & { __cairnImagePaneProbe?: unknown })
       | null;
     if (!el) return;
@@ -2205,10 +2173,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // -----------------------------------------------------------------------
   // Render.
   // -----------------------------------------------------------------------
-  const showAxes = props.showAxes ?? false;
   const label = hdrMode ? ((props as FloatSurfaceProps).label ?? "") : (props as Uint8SurfaceProps).label;
-  const interpolation = props.interpolation ?? "auto";
-  const imgRendering = interpolation === "auto" ? undefined : interpolation;
   // Detection overlays composite over the display surface regardless of dtype —
   // read from the unified props on BOTH the float (HDR) and uint8 (SDR) paths
   // (M7 fix: the old `hdrMode ? undefined` null-out silently dropped boxes/masks
@@ -2219,50 +2184,39 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const isDraggable = hdrMode ? false : ((props as Uint8SurfaceProps).isDraggable ?? false);
   const onDragStart = hdrMode ? undefined : (props as Uint8SurfaceProps).onDragStart;
 
-  // The image quad is placed inside the FULL-viewport canvas by
-  // `viewToUvRect` (letterboxed at rest, filling/pannable at any zoom); the
-  // canvas is always `w-full h-full` of the shell's wrapper (no inline size /
-  // object-fit — only its device-pixel backing store is set imperatively, in
-  // the render-pass effect above). The checkerboard lives on that padding-free
-  // wrapper (`checkerboard="wrapper"`, Q26) so it shows ONLY where the quad
-  // doesn't cover the canvas (letterbox margins / under-zoomed pan), never as a
-  // fixed border in the axis gutter.
-  const overlayNode =
+  // The image quad is placed inside the FULL-viewport canvas by `viewport.uv`
+  // (letterboxed at rest, filling/pannable at any zoom); the canvas fills the
+  // viewport element exactly (`absolute inset-0 w-full h-full`), and only its
+  // device-pixel backing store is set imperatively (in the render pass). The
+  // checkerboard lives on the viewport itself, so it shows ONLY where the quad
+  // doesn't cover it (letterbox margins / under-zoomed pan).
+  const imageOverlay =
     overlay &&
     overlaySettings?.enabled &&
-    naturalDims &&
-    ((overlay.boxes?.length ?? 0) > 0 || (overlay.masks?.length ?? 0) > 0) ? (
-      <ImageOverlay
-        data={overlay}
-        settings={overlaySettings}
-        naturalWidth={naturalDims.w}
-        naturalHeight={naturalDims.h}
-      />
-    ) : undefined;
+    ((overlay.boxes?.length ?? 0) > 0 || (overlay.masks?.length ?? 0) > 0)
+      ? { data: overlay, settings: overlaySettings }
+      : undefined;
 
   return (
     <ImagePaneShell
       paneAttrs={{ "data-gpu-image-pane": "", "data-gpu-backend-ready": paneReady }}
       surfaceAttrs={{ "data-gpu-image-surface": "" }}
       toolbar={toolbar}
-      paneRef={paneRef}
-      wrapperRef={imgWrapperRef}
+      viewportRef={viewportRef}
+      viewport={viewport}
       zoom={zoom}
       pan={pan}
       onViewChange={onViewChange}
       naturalDims={naturalDims}
-      checkerboard="wrapper"
-      wrapperClassName="relative w-full h-full flex items-center justify-center"
-      // COMPOSITOR: zero padding + no axis gutter, so the divider (a child of the
-      // wrapper, `left:split%`) and the shader's screen-space `uv.x < split` agree
-      // by construction (matching `GpuComparePane`).
-      viewportPadding={!compositorMode && showAxes && naturalDims ? "16px 4px 4px 28px" : 0}
       surface={
         <>
+          {/* The canvas IS the viewport box (no inline size / object-fit / CSS
+              `image-rendering`: magnification is the shader's `filter`, from the
+              shared viewport). The divider's `left:split%` and the shader's
+              screen-space `uv.x < split` therefore agree by construction. */}
           <canvas
             ref={canvasRef}
-            className="w-full h-full block"
-            style={{ imageRendering: imgRendering }}
+            className="absolute inset-0 w-full h-full block"
             data-gpu-image-canvas
             data-gpu-compare-canvas={compositorMode ? "" : undefined}
           />
@@ -2274,8 +2228,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
           )}
         </>
       }
-      showAxes={showAxes && !compositorMode}
-      overlayNode={overlayNode}
+      imageOverlay={imageOverlay}
       overlay={
         compositorMode
           ? {
@@ -2287,40 +2240,28 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
               // instead of drifting through the framing grid). blend → the single
               // foreground overlay. The shell owns notation / active state.
               render: ({ notation, setOverlayActive }) =>
-                compareOpMode === "split" ? (
+                !viewport ? null : compareOpMode === "split" ? (
                   <>
-                    {naturalDims && (
-                      <div
-                        className="absolute inset-0 overflow-hidden pointer-events-none"
-                        style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
-                      >
-                        <PixelValueOverlay
-                          imageElRef={canvasRef}
-                          naturalWidth={naturalDims.w}
-                          naturalHeight={naturalDims.h}
-                          zoom={zoom}
-                          pan={pan}
-                          sourceWindow={overlayWindow}
-                          // REFERENCE side = the primary/framing footprint → identity.
-                          sourceDims={naturalDims}
-                          sample={samplePixel}
-                          notation={notation}
-                          version={pixelDataVersion}
-                        />
-                      </div>
-                    )}
-                    {naturalDims && refDims && (
+                    <div
+                      className="absolute inset-0 overflow-hidden pointer-events-none"
+                      style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
+                    >
+                      <PixelValueOverlay
+                        viewport={viewport}
+                        // REFERENCE side = the primary/framing footprint → identity.
+                        sourceDims={naturalDims ?? undefined}
+                        sample={samplePixel}
+                        notation={notation}
+                        version={pixelDataVersion}
+                      />
+                    </div>
+                    {refDims && (
                       <div
                         className="absolute inset-0 overflow-hidden pointer-events-none"
                         style={{ clipPath: `inset(0 0 0 ${splitPosition * 100}%)` }}
                       >
                         <PixelValueOverlay
-                          imageElRef={canvasRef}
-                          naturalWidth={naturalDims.w}
-                          naturalHeight={naturalDims.h}
-                          zoom={zoom}
-                          pan={pan}
-                          sourceWindow={overlayWindow}
+                          viewport={viewport}
                           // FOREGROUND side = its OWN grid (mismatched-res #88 fix).
                           sourceDims={refDims}
                           sample={sampleForeground}
@@ -2332,15 +2273,9 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                     )}
                   </>
                 ) : (
-                  naturalDims &&
                   refDims && (
                     <PixelValueOverlay
-                      imageElRef={canvasRef}
-                      naturalWidth={naturalDims.w}
-                      naturalHeight={naturalDims.h}
-                      zoom={zoom}
-                      pan={pan}
-                      sourceWindow={overlayWindow}
+                      viewport={viewport}
                       sourceDims={refDims}
                       sample={sampleForeground}
                       notation={notation}
@@ -2351,19 +2286,18 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                 ),
             }
           : {
-              displayElRef: canvasRef,
               // DIFF mode prints the metric values (cpu twin / result readback); the
               // version bumps on kernel switches so the numbers track the selected metric.
               sample: diffMode ? sampleDiffPixel : samplePixel,
               version: diffMode ? diffOverlayVersion : pixelDataVersion,
-              hasSource: true,
-              sourceWindow: overlayWindow,
               onSampleDemandChange: setDiffOverlayDemanded,
             }
       }
       notationSeed={props.pixelValueNotation ?? "decimal"}
       exportCanvasRef={canvasRef}
-      requestRender={renderPass}
+      requestRender={() => {
+        renderPass();
+      }}
       // Histogram button: suppressed for a compare (a scalar error has no channel
       // histogram). Plain images — including an image slot in a mixed stack — keep it.
       enlargeControl={backendProps.enlargeControl}

@@ -8,14 +8,14 @@
  *   - `renderers/GpuImagePane.tsx`  — WebGPU engine, zoom via a sampled uvRect;
  *     also owns the split/diff compositor (content-op unification, Phase
  *     4 — the standalone `media-compare/GpuComparePane.tsx` it replaced is gone).
- * Everything AROUND the pixels — the pane root, the `useImageGestures`
- * wheel/drag/dblclick wiring, the `PlotToolbar` + `useImageController` adapter
- * (with the pixel-notation leading button), the `PixelValueOverlay` mount +
- * notation/active state, the `PixelAxes` + `ImageOverlay` mounts, the
- * checkerboard/letterbox container and the `LabelChip` — used to be copy-pasted
- * into all three. This component owns that plumbing ONCE; each pane keeps only
- * its genuine rendering logic and expresses its differences through the narrow
- * contract below.
+ * Everything AROUND the pixels — the pane root, the ONE viewport element (the
+ * `useImageGestures` wheel/drag/dblclick wiring, the checkerboard, the pointer
+ * handlers), the `PlotToolbar` + `useImageController` adapter (with the
+ * pixel-notation leading button), the `PixelValueOverlay` mount +
+ * notation/active state, the `ImageOverlay` mount and the `LabelChip` — used to
+ * be copy-pasted into every pane. This component owns that plumbing ONCE; each
+ * pane keeps only its genuine rendering logic and expresses its differences
+ * through the narrow contract below.
  *
  * ## The contract (what a pane supplies, and why each knob exists)
  * Identity / DOM (test selectors + tailwind `group` hover depend on these, so
@@ -33,37 +33,32 @@
  *     floating affordance kept is the `PixelNotationToggle` chip while the TEV
  *     overlay is active (below). See docs/API.md "Host-controlled panes".
  *
- * Refs — the pane OWNS `paneRef` (the padded viewport box, measured by the GPU
- * render passes for uvRect/backing-store sizing, and by `useImageGestures` /
- * `useImageController`) and `wrapperRef` (the padding-free content box PixelAxes
- * measures). The shell only ATTACHES them, so a pane's own effects keep reading
- * their live rects unchanged.
- *
- * Container geometry (the letterbox math that legitimately differs per backend):
- *   - `checkerboard: "pane" | "wrapper"` — where `cairn-checkerboard` lives
- *     (CPU/compare on the padded pane; GPU-image on the padding-free wrapper,
- *     per its Q26 fix).
- *   - `wrapperClassName` — CPU's transform wrapper (`relative w-full h-full`)
- *     vs the GPU panes' flex-centred wrapper.
- *   - `wrapperStyle` — CPU's `transform: translate(pan) scale(zoom)`; unset for
- *     the GPU panes (they zoom in the shader, the wrapper never transforms).
- *   - `viewportPadding` — the axis gutter (`showAxes`) vs the per-pane base pad.
+ * The ONE viewport (spec §3.3) — the pane owns `viewportRef` and the shell
+ * attaches it to the SINGLE measured element: it carries the checkerboard, the
+ * clipping (`overflow-hidden rounded`), the pointer/wheel handlers, the
+ * `surfaceAttrs` markers and the `data-cairn-view-*` attributes, and it is what
+ * `useImageGestures`, `useReframeViewportOnResize`, `useImageController`,
+ * `useImageViewport` and every overlay measure. The 4 px inset is padding on the
+ * wrapper OUTSIDE it, never on the viewport itself, so the measured box and the
+ * painted box are literally the same rect. `viewport` is the geometry the pane
+ * derived from that element (`useImageViewport`) — one object, forwarded to
+ * every overlay, so nothing here re-measures anything.
  *
  * Surface + overlays:
- *   - `surface` — the pane's own `<img>`/`<canvas>` (+ compare's split divider),
- *     placed inside the wrapper. Carries the per-pane canvas `data-*` markers.
- *   - `showAxes` + `naturalDims` gate the shared `PixelAxes`; `overlayNode` is
- *     the optional `ImageOverlay` (boxes/masks), both inside the wrapper.
+ *   - `surface` — the pane's own `<canvas>` (+ compare's split divider),
+ *     rendered `absolute inset-0` inside the viewport. Carries the per-pane
+ *     canvas `data-*` markers.
+ *   - `imageOverlay` — the optional detection boxes/masks; the shell renders
+ *     `ImageOverlay` itself from the shared `viewport`.
  *   - `overlay` (a discriminated union) is the TEV `PixelValueOverlay`: the
- *     `single` variant is the shared one-overlay mount (CPU + GPU-image, which
- *     differ only in `displayElRef`/`sourceWindow`/`hasSource`); the `render`
- *     variant lets the compare pane emit its own per-side split-clipped
+ *     `single` variant is the shared one-overlay mount (both backends); the
+ *     `render` variant lets the compare pane emit its own per-side split-clipped
  *     overlays while the shell still owns the `notation`/`overlayActive` state.
  *
  * Toolbar / controller:
  *   - `exportCanvasRef` is the controller's screenshot target; `requestRender`
- *     is the GPU panes' synchronous repaint (undefined on CPU) — both forwarded
- *     verbatim into `useImageController`.
+ *     is the pane's synchronous repaint — both forwarded verbatim into
+ *     `useImageController`.
  *
  * Chips: `label` + `showLabelChip` drive the shared bottom-left `LabelChip`;
  * `extraChips` is the compare pane's REF / metrics / custom-label slot.
@@ -77,21 +72,20 @@
  */
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, ReactNode, RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import {
-  screenPerTexel,
   screenRectToTexelRect,
-  screenToTexel,
   texelRectToScreenRect,
-  type SourceWindow,
   type TexelRect,
 } from "./region-select";
+import type { ImageViewport } from "./image-viewport.ts";
+import ImageOverlay from "./ImageOverlay";
+import type { ImageOverlayData, ImageOverlaySettings } from "../../types";
 import ImageInfoPanel, {
   INFO_PANEL_W,
   type HistogramSource,
 } from "../../../primitives/components/ImageInfoPanel";
 import { applyRectEdit, RESIZE_HANDLES, type RegionHandle } from "./region-edit";
-import PixelAxes from "../../../primitives/components/PixelAxes";
 import LabelChip from "../../../primitives/components/LabelChip";
 import type { ToolbarButtonSpec, ToolbarSliderSpec, ToolbarSegmentSpec } from "../../../primitives/controls/ToolbarConfig";
 import PixelValueOverlay, {
@@ -158,26 +152,10 @@ export interface ImagePaneOverlayContext {
  */
 export type ImagePaneOverlaySpec =
   | {
-      /** The displayed `<img>`/`<canvas>` whose live rect the overlay reads. */
-      readonly displayElRef: RefObject<HTMLElement | null>;
       /** Per-pixel value accessor over the RAW source buffer. */
       readonly sample: PixelSampler;
       /** Bumped when the underlying source buffer changes (forces a redraw). */
       readonly version: number;
-      /** Overlay gate beyond `naturalDims` (CPU: `!!imageUrl`; GPU: `true`). */
-      readonly hasSource: boolean;
-      /** The GPU panes' displayed crop; CPU omits it (its element grows via
-       *  the CSS transform, so `getBoundingClientRect` already encodes zoom). */
-      readonly sourceWindow?: { x: number; y: number; w: number; h: number };
-      /** Explicit viewport-local paint geometry supplied by the CPU backend. */
-      readonly displayGeometry?: {
-        left: number;
-        top: number;
-        width: number;
-        height: number;
-        gridWidth: number;
-        gridHeight: number;
-      };
       /** Optional notification that numeric labels are actually being drawn. */
       readonly onActiveChange?: (active: boolean) => void;
       /** Optional notification that zoomed geometry needs samples. This fires
@@ -202,33 +180,24 @@ export interface ImagePaneShellProps {
    *  at the pane boundary is `true`; the shell prop is required (panes resolve it). */
   toolbar: boolean;
 
-  // --- refs (pane-owned; the shell only attaches them) ---------------------
-  /** The padded viewport box — pointer target + GPU render-pass measurement. */
-  paneRef: RefObject<HTMLDivElement>;
-  /** The padding-free content box — PixelAxes / letterbox measurement. */
-  wrapperRef: RefObject<HTMLDivElement>;
-
-  // --- viewport ------------------------------------------------------------
+  // --- the ONE viewport (pane-owned ref; the shell only attaches it) -------
+  /** The single measured viewport element: gestures, controller, reframe,
+   *  `useImageViewport`, and every overlay measure. */
+  viewportRef: RefObject<HTMLDivElement>;
+  /** The geometry the pane derived from that element (`useImageViewport`);
+   *  `null` until the element is measured and the source dims are known. */
+  viewport: ImageViewport | null;
   zoom: number;
   pan: { x: number; y: number };
   onViewChange?: (v: ImageViewState) => void;
   /** Source pixel size — enables the adaptive max-zoom cap + gates overlays. */
   naturalDims: { w: number; h: number } | null;
 
-  // --- container geometry --------------------------------------------------
-  checkerboard: "pane" | "wrapper";
-  wrapperClassName: string;
-  wrapperStyle?: CSSProperties;
-  viewportPadding: string | number;
-
-  // --- surface + in-wrapper overlays ---------------------------------------
-  /** Rendered before the pane box (the CPU SDR branch's `GammaFilterSvg`). */
-  header?: ReactNode;
-  /** The pane's `<img>`/`<canvas>` (+ compare's split divider). */
+  // --- surface + in-viewport overlays --------------------------------------
+  /** The pane's `<canvas>` (+ compare's split divider), `absolute inset-0`. */
   surface: ReactNode;
-  showAxes: boolean;
-  /** Optional `ImageOverlay` (boxes/masks), inside the transformed wrapper. */
-  overlayNode?: ReactNode;
+  /** Detection boxes/masks (both backends); the shell renders `ImageOverlay`. */
+  imageOverlay?: { data: ImageOverlayData; settings: ImageOverlaySettings };
 
   // --- TEV pixel-value overlay ---------------------------------------------
   overlay: ImagePaneOverlaySpec;
@@ -237,8 +206,8 @@ export interface ImagePaneShellProps {
   // --- toolbar / controller ------------------------------------------------
   /** The controller's preferred screenshot target. */
   exportCanvasRef?: RefObject<HTMLCanvasElement | null>;
-  /** The pane's synchronous repaint, so `toPNG` gets a fresh WebGPU frame. */
-  requestRender?: () => void;
+  /** The pane's synchronous repaint, so `toPNG` gets a fresh frame. */
+  requestRender: () => void;
   /** Pane-supplied LEADING toolbar buttons/menus (the diff-mode + colormap
    *  dropdowns). Rendered before the notation button, so they sit leftmost and
    *  never shift the corner-anchored standard buttons. Only shown when the
@@ -305,8 +274,8 @@ export interface ImagePaneShellProps {
    *  to the pane's top-right (below the toolbar). The pane closes `readChannel`
    *  over its own decoded buffer (no server); see
    *  `primitives/ImageInfoPanel.tsx`. Only wired for the `single` overlay
-   *  variant (the cursor read-out reuses its displayElRef/sourceWindow
-   *  screen→texel mapping). Absent = no panel. */
+   *  variant (the cursor read-out maps through the shared `viewport.quad`).
+   *  Absent = no panel. */
   histogram?: HistogramSource;
   /** DEEP-Z only: the LIVE depth window `[zNear, zFar]` (the toolbar sliders /
    *  region select) — drawn as limit marks on the info panel's depth
@@ -334,20 +303,14 @@ export default function ImagePaneShell({
   paneAttrs,
   surfaceAttrs,
   toolbar,
-  paneRef,
-  wrapperRef,
+  viewportRef,
+  viewport,
   zoom,
   pan,
   onViewChange,
   naturalDims,
-  checkerboard,
-  wrapperClassName,
-  wrapperStyle,
-  viewportPadding,
-  header,
   surface,
-  showAxes,
-  overlayNode,
+  imageOverlay,
   overlay,
   notationSeed,
   exportCanvasRef,
@@ -383,27 +346,19 @@ export default function ImagePaneShell({
   const [overlayActive, setOverlayActive] = useState(false);
   // DEEP region-select ("select depth from region") — a one-shot marquee draw
   // mode. Any region is valid (an empty one selects an empty Z window). Only the
-  // `single` overlay variant exposes the displayElRef/sourceWindow mapping needs.
+  // `single` overlay variant is wired for it.
   const [regionActive, setRegionActive] = useState(false);
   const singleOverlay = "render" in overlay ? null : overlay;
   const regionAvailable = !!regionSelect && !!singleOverlay;
 
   // In-pane HISTOGRAM: an optional multi-channel histogram panel toggled from
-  // the toolbar. Available only for the `single` overlay variant (its
-  // displayElRef/sourceWindow give the cursor read-out's screen→texel mapping).
+  // the toolbar. Available only for the `single` overlay variant (the cursor
+  // read-out maps through the shared `viewport`).
   const histogramAvailable = !!histogram && !!singleOverlay;
   // INFO-PANEL visibility (spec §2): explicit SETTING (store) > local override
   // (storeless host fallback) > AUTO (footprint ≤ 25% of the live pane width).
-  const [paneW, setPaneW] = useState(0);
-  useEffect(() => {
-    const el = paneRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const measure = () => setPaneW(el.clientWidth);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [paneRef]);
+  // The width comes from the ONE viewport measurement — no second observer.
+  const paneW = viewport?.box.width ?? 0;
   const [localInfoOverride, setLocalInfoOverride] = useState<boolean | null>(null);
   const autoInfoOpen = paneW > 0 && INFO_PANEL_W <= paneW * 0.25;
   const infoOpen = histogramAvailable && (infoPanelSetting ?? localInfoOverride ?? autoInfoOpen);
@@ -417,31 +372,26 @@ export default function ImagePaneShell({
   const [histCursor, setHistCursor] = useState<{ px: number; py: number } | null>(null);
 
   // Track the texel under the cursor for the histogram's per-pixel read-out,
-  // reusing the SHARED `screenToTexel` mapping (region-select) — the same math
-  // the TEV overlay + marquee use, not a second sampler. Active only while the
-  // panel is open, so it costs nothing otherwise.
+  // through the SHARED `viewport.quad` — the same geometry the TEV overlay and
+  // the marquee use, not a second mapping. Active only while the panel is open,
+  // so it costs nothing otherwise (and the one `getBoundingClientRect` here is
+  // per pointer move, never per frame).
   const trackHistCursor = useCallback(
     (e: React.PointerEvent) => {
-      if (!infoOpen || !histogramAvailable || !singleOverlay || !naturalDims) return;
-      const el = singleOverlay.displayElRef.current;
-      if (!el) return;
-      const box = el.getBoundingClientRect();
-      if (box.width === 0 || box.height === 0) return;
-      const t = screenToTexel(e.clientX, e.clientY, {
-        box,
-        naturalWidth: naturalDims.w,
-        naturalHeight: naturalDims.h,
-        sourceWindow: singleOverlay.sourceWindow,
-      });
-      const px = Math.floor(t.x);
-      const py = Math.floor(t.y);
-      if (px < 0 || py < 0 || px >= naturalDims.w || py >= naturalDims.h) {
+      if (!infoOpen || !histogramAvailable || !viewport) return;
+      const r = viewportRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      const px = Math.floor(((x - viewport.quad.left) / viewport.quad.width) * viewport.natural.w);
+      const py = Math.floor(((y - viewport.quad.top) / viewport.quad.height) * viewport.natural.h);
+      if (px < 0 || py < 0 || px >= viewport.natural.w || py >= viewport.natural.h) {
         setHistCursor((prev) => (prev === null ? prev : null));
         return;
       }
       setHistCursor((prev) => (prev && prev.px === px && prev.py === py ? prev : { px, py }));
     },
-    [infoOpen, histogramAvailable, singleOverlay, naturalDims],
+    [infoOpen, histogramAvailable, viewport, viewportRef],
   );
 
   // ENLARGE (fullscreen overlay). The shell keeps the pane's ENTIRE subtree in
@@ -518,7 +468,7 @@ export default function ImagePaneShell({
   );
 
   const { containerProps: viewportProps } = useImageGestures({
-    containerRef: paneRef,
+    containerRef: viewportRef,
     zoom,
     pan,
     onViewChange,
@@ -533,7 +483,7 @@ export default function ImagePaneShell({
   // overlay OR a window/container resize — instead of the top-left-anchored pan
   // letting the view jump. HOME (untouched) still re-fits to the new box.
   useReframeViewportOnResize({
-    containerRef: paneRef,
+    containerRef: viewportRef,
     zoom,
     pan,
     onViewChange,
@@ -548,7 +498,7 @@ export default function ImagePaneShell({
   // PlotToolbar controller (zoom/pan/reset/screenshot). Runs unconditionally
   // (rules-of-hooks); only the toolbar's RENDER is gated on `toolbar`.
   const controller = useImageController({
-    rootRef: paneRef,
+    rootRef: viewportRef,
     canvasRef: exportCanvasRef,
     zoom,
     pan,
@@ -664,24 +614,12 @@ export default function ImagePaneShell({
     [overlayActive, notation, leadingMenus, regionButton, histogramButton, sliders, rowSegments, enlargeButton],
   );
 
-  const checkerClass = " cairn-checkerboard";
-  const paneClass =
-    "relative flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden rounded" +
-    (checkerboard === "pane" ? checkerClass : "");
-  const wrapClass = wrapperClassName + (checkerboard === "wrapper" ? checkerClass : "");
-
   const pixelOverlay =
     "render" in overlay ? (
       overlay.render({ notation, setOverlayActive })
-    ) : overlay.hasSource && naturalDims ? (
+    ) : viewport ? (
       <PixelValueOverlay
-        imageElRef={overlay.displayElRef}
-        naturalWidth={naturalDims.w}
-        naturalHeight={naturalDims.h}
-        zoom={zoom}
-        pan={pan}
-        sourceWindow={overlay.sourceWindow}
-        displayGeometry={overlay.displayGeometry}
+        viewport={viewport}
         sample={overlay.sample}
         notation={notation}
         version={overlay.version}
@@ -709,80 +647,74 @@ export default function ImagePaneShell({
     // box itself slides under the header, so the fix must be stacking, not
     // clipping. The library stays well-behaved regardless of the host's CSS.
     <div className={`relative isolate flex flex-col h-full${toolbar ? " group" : ""}`} {...paneAttrs}>
-      {header}
       {toolbar && <PlotToolbar controller={controller} config={toolbarConfig} />}
-      <div
-        ref={paneRef}
-        className={paneClass}
-        style={{ padding: viewportPadding, ...viewportProps.style }}
-        onPointerDown={viewportProps.onPointerDown}
-        onPointerMove={(e) => {
-          viewportProps.onPointerMove?.(e);
-          trackHistCursor(e);
-        }}
-        onPointerUp={viewportProps.onPointerUp}
-        onPointerCancel={viewportProps.onPointerCancel}
-        onPointerLeave={() => setHistCursor((prev) => (prev === null ? prev : null))}
-        onDoubleClick={resetView}
-        {...surfaceAttrs}
-      >
-        <div ref={wrapperRef} className={wrapClass} style={wrapperStyle}>
+      {/* The 4 px inset lives OUT HERE (spec §3.3), so the viewport element the
+          hook measures is exactly the box the pane paints into. */}
+      <div className="relative flex-1 min-h-0 min-w-0 p-1">
+        <div
+          ref={viewportRef}
+          className="relative w-full h-full overflow-hidden rounded cairn-checkerboard"
+          style={viewportProps.style}
+          data-cairn-view-zoom={zoom}
+          data-cairn-view-pan={`${pan.x},${pan.y}`}
+          onPointerDown={viewportProps.onPointerDown}
+          onPointerMove={(e) => {
+            viewportProps.onPointerMove?.(e);
+            trackHistCursor(e);
+          }}
+          onPointerUp={viewportProps.onPointerUp}
+          onPointerCancel={viewportProps.onPointerCancel}
+          onPointerLeave={() => setHistCursor((prev) => (prev === null ? prev : null))}
+          onDoubleClick={resetView}
+          {...surfaceAttrs}
+        >
           {surface}
-          {showAxes && naturalDims && (
-            <PixelAxes
-              naturalWidth={naturalDims.w}
-              naturalHeight={naturalDims.h}
-              zoom={zoom}
-              containerRef={wrapperRef}
+          {viewport && imageOverlay && (
+            <ImageOverlay
+              data={imageOverlay.data}
+              settings={imageOverlay.settings}
+              viewport={viewport}
             />
           )}
-          {overlayNode}
+          {pixelOverlay}
+          {!toolbar && overlayActive && (
+            <PixelNotationToggle notation={notation} onChange={setNotation} />
+          )}
+          {/* Fresh-draw marquee (button active) — replaces any existing rect.
+              Live-queries the window as it's dragged; commit persists on release. */}
+          {regionActive && regionSelect && singleOverlay && viewport && (
+            <RegionSelectLayer
+              viewport={viewport}
+              onQueryLive={regionSelect.queryLive}
+              onSelect={(x0, y0, x1, y1) => {
+                setRegionActive(false);
+                regionSelect.commit(x0, y0, x1, y1);
+              }}
+              onExit={() => setRegionActive(false)}
+            />
+          )}
+          {/* Persisted, editable rect — anchored in image space (moves with zoom/pan). */}
+          {!regionActive && regionSelect?.rect && singleOverlay && viewport && (
+            <RegionRectOverlay
+              rect={regionSelect.rect}
+              viewport={viewport}
+              onQueryLive={regionSelect.queryLive}
+              onCommit={regionSelect.commit}
+              onRemove={regionSelect.remove}
+            />
+          )}
+          {/* In-pane INFO panel — pinned top-right below the toolbar seam;
+              pointer-events scoped to the panel (see ImageInfoPanel). Closing is
+              an EXPLICIT choice → writes the viewport setting. */}
+          {infoOpen && histogram && singleOverlay && naturalDims && (
+            <ImageInfoPanel
+              source={histogram}
+              cursor={histCursor}
+              depthWindow={depthWindow}
+              onClose={() => setInfoOpen(false)}
+            />
+          )}
         </div>
-        {pixelOverlay}
-        {!toolbar && overlayActive && (
-          <PixelNotationToggle notation={notation} onChange={setNotation} />
-        )}
-        {/* Fresh-draw marquee (button active) — replaces any existing rect.
-            Live-queries the window as it's dragged; commit persists on release. */}
-        {regionActive && regionSelect && singleOverlay && naturalDims && (
-          <RegionSelectLayer
-            imageElRef={singleOverlay.displayElRef}
-            naturalDims={naturalDims}
-            sourceWindow={singleOverlay.sourceWindow}
-            displayGeometry={singleOverlay.displayGeometry}
-            onQueryLive={regionSelect.queryLive}
-            onSelect={(x0, y0, x1, y1) => {
-              setRegionActive(false);
-              regionSelect.commit(x0, y0, x1, y1);
-            }}
-            onExit={() => setRegionActive(false)}
-          />
-        )}
-        {/* Persisted, editable rect — anchored in image space (moves with zoom/pan). */}
-        {!regionActive && regionSelect?.rect && singleOverlay && naturalDims && (
-          <RegionRectOverlay
-            rect={regionSelect.rect}
-            imageElRef={singleOverlay.displayElRef}
-            naturalDims={naturalDims}
-            sourceWindow={singleOverlay.sourceWindow}
-            zoom={zoom}
-            pan={pan}
-            onQueryLive={regionSelect.queryLive}
-            onCommit={regionSelect.commit}
-            onRemove={regionSelect.remove}
-          />
-        )}
-        {/* In-pane INFO panel — pinned top-right below the toolbar seam;
-            pointer-events scoped to the panel (see ImageInfoPanel). Closing is
-            an EXPLICIT choice → writes the viewport setting. */}
-        {infoOpen && histogram && singleOverlay && naturalDims && (
-          <ImageInfoPanel
-            source={histogram}
-            cursor={histCursor}
-            depthWindow={depthWindow}
-            onClose={() => setInfoOpen(false)}
-          />
-        )}
       </div>
       {showLabelChip && (
         <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
@@ -843,25 +775,12 @@ export default function ImagePaneShell({
  * pre-empts the viewport's pan/zoom pointer handlers while active.
  */
 function RegionSelectLayer({
-  imageElRef,
-  naturalDims,
-  sourceWindow,
-  displayGeometry,
+  viewport,
   onQueryLive,
   onSelect,
   onExit,
 }: {
-  imageElRef: RefObject<HTMLElement | null>;
-  naturalDims: { w: number; h: number };
-  sourceWindow?: SourceWindow;
-  displayGeometry?: {
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-    gridWidth: number;
-    gridHeight: number;
-  };
+  viewport: ImageViewport;
   onQueryLive: (x0: number, y0: number, x1: number, y1: number) => void;
   onSelect: (x0: number, y0: number, x1: number, y1: number) => void;
   onExit: () => void;
@@ -870,28 +789,26 @@ function RegionSelectLayer({
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
-  // Map the current band to an image-texel rect (or null if off-image).
+  // Map the current band to an image-texel rect (or null if off-image). The
+  // layer is `absolute inset-0` of the viewport, so its own client rect plus the
+  // shared `viewport.quad` (pane-local CSS px) is the image's client-space box.
   const bandToTexel = useCallback(
     (ax: number, ay: number, bx: number, by: number) => {
-      const imgEl = imageElRef.current;
       const layer = layerRef.current;
-      if (!imgEl || (displayGeometry && !layer)) return null;
-      const layerBox = layer?.getBoundingClientRect();
+      if (!layer) return null;
+      const layerBox = layer.getBoundingClientRect();
       return screenRectToTexelRect(ax, ay, bx, by, {
-        box: displayGeometry && layerBox
-          ? {
-              left: layerBox.left + displayGeometry.left,
-              top: layerBox.top + displayGeometry.top,
-              width: displayGeometry.width,
-              height: displayGeometry.height,
-            }
-          : imgEl.getBoundingClientRect(),
-        naturalWidth: displayGeometry?.gridWidth ?? naturalDims.w,
-        naturalHeight: displayGeometry?.gridHeight ?? naturalDims.h,
-        sourceWindow: displayGeometry ? undefined : sourceWindow,
+        box: {
+          left: layerBox.left + viewport.quad.left,
+          top: layerBox.top + viewport.quad.top,
+          width: viewport.quad.width,
+          height: viewport.quad.height,
+        },
+        naturalWidth: viewport.natural.w,
+        naturalHeight: viewport.natural.h,
       });
     },
-    [imageElRef, naturalDims, sourceWindow, displayGeometry],
+    [viewport],
   );
 
   // Escape cancels the mode.
@@ -924,8 +841,7 @@ function RegionSelectLayer({
       const s = startRef.current;
       startRef.current = null;
       setBand(null);
-      const imgEl = imageElRef.current;
-      if (!s || !imgEl) {
+      if (!s) {
         onExit();
         return;
       }
@@ -941,7 +857,7 @@ function RegionSelectLayer({
       }
       onSelect(rect.x0, rect.y0, rect.x1, rect.y1);
     },
-    [imageElRef, bandToTexel, onSelect, onExit],
+    [bandToTexel, onSelect, onExit],
   );
 
   const layerRect = layerRef.current?.getBoundingClientRect();
@@ -995,26 +911,19 @@ const HANDLE_META: Record<Exclude<RegionHandle, "move">, { cursor: string; fx: n
  * clamped to the image + a min size — `region-edit.ts`), pointer-captured so the
  * pane's pan gesture never fires mid-edit. On release the new rect re-queries the
  * Z window (`onCommit`). The top-right × removes the rect + resets only the Z
- * window (`onRemove`). The screen box is recomputed in a layout effect (post-DOM-
- * commit) so it reads the transform the just-applied zoom/pan produced.
+ * window (`onRemove`). The screen box is a SYNCHRONOUS derivation of the shared
+ * `viewport.quad` — pane-local CSS px, exactly the layer's own coordinate space
+ * — so there is no measuring effect and no observer to lag a frame behind.
  */
 function RegionRectOverlay({
   rect,
-  imageElRef,
-  naturalDims,
-  sourceWindow,
-  zoom,
-  pan,
+  viewport,
   onQueryLive,
   onCommit,
   onRemove,
 }: {
   rect: TexelRect;
-  imageElRef: RefObject<HTMLElement | null>;
-  naturalDims: { w: number; h: number };
-  sourceWindow?: SourceWindow;
-  zoom: number;
-  pan: { x: number; y: number };
+  viewport: ImageViewport;
   onQueryLive: (x0: number, y0: number, x1: number, y1: number) => void;
   onCommit: (x0: number, y0: number, x1: number, y1: number) => void;
   onRemove: () => void;
@@ -1023,35 +932,22 @@ function RegionRectOverlay({
   // Live rect during an edit (texels); null when idle → show the committed rect.
   const [editing, setEditing] = useState<TexelRect | null>(null);
   const dragRef = useRef<{ handle: RegionHandle; sx: number; sy: number; start: TexelRect } | null>(null);
-  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
   const activeRect = editing ?? rect;
 
-  // Recompute the on-screen box AFTER the DOM commits (so getBoundingClientRect
-  // reflects the zoom/pan transform just applied). Re-runs on any viewport change.
-  useLayoutEffect(() => {
-    const compute = () => {
-      const img = imageElRef.current;
-      const layer = layerRef.current;
-      if (!img || !layer) return;
-      const imgBox = img.getBoundingClientRect();
-      const layerBox = layer.getBoundingClientRect();
-      const s = texelRectToScreenRect(activeRect, {
-        box: imgBox,
-        naturalWidth: naturalDims.w,
-        naturalHeight: naturalDims.h,
-        sourceWindow,
-      });
-      setBox({ left: s.left - layerBox.left, top: s.top - layerBox.top, width: s.width, height: s.height });
-    };
-    compute();
-    const img = imageElRef.current;
-    if (!img || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(compute);
-    ro.observe(img);
-    return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRect, naturalDims.w, naturalDims.h, sourceWindow, zoom, pan.x, pan.y]);
+  // The on-screen box, computed in render from the ONE geometry: `viewport.quad`
+  // is already pane-local (the layer is `absolute inset-0` of the viewport), so
+  // the mapping lands directly in this layer's coordinates.
+  const box = texelRectToScreenRect(activeRect, {
+    box: {
+      left: viewport.quad.left,
+      top: viewport.quad.top,
+      width: viewport.quad.width,
+      height: viewport.quad.height,
+    },
+    naturalWidth: viewport.natural.w,
+    naturalHeight: viewport.natural.h,
+  });
 
   const beginDrag = useCallback(
     (handle: RegionHandle) => (e: React.PointerEvent) => {
@@ -1065,22 +961,24 @@ function RegionRectOverlay({
   const onDragMove = useCallback(
     (e: React.PointerEvent) => {
       const d = dragRef.current;
-      const img = imageElRef.current;
-      if (!d || !img) return;
-      const scale = screenPerTexel({
-        box: img.getBoundingClientRect(),
-        naturalWidth: naturalDims.w,
-        naturalHeight: naturalDims.h,
-        sourceWindow,
-      });
+      if (!d) return;
+      // Texel deltas = screen delta ÷ the shared on-screen scale.
+      const scale = viewport.pxPerTexel;
       const dx = (e.clientX - d.sx) / (scale || 1);
       const dy = (e.clientY - d.sy) / (scale || 1);
-      const next = applyRectEdit(d.start, d.handle, dx, dy, { w: naturalDims.w, h: naturalDims.h }, 1);
+      const next = applyRectEdit(
+        d.start,
+        d.handle,
+        dx,
+        dy,
+        { w: viewport.natural.w, h: viewport.natural.h },
+        1,
+      );
       setEditing(next);
       // Live-query the window as the rect moves/resizes (coalesced upstream).
       onQueryLive(next.x0, next.y0, next.x1, next.y1);
     },
-    [imageElRef, naturalDims.w, naturalDims.h, sourceWindow, onQueryLive],
+    [viewport, onQueryLive],
   );
   const endDrag = useCallback(() => {
     const d = dragRef.current;
@@ -1089,11 +987,6 @@ function RegionRectOverlay({
     setEditing(null);
     if (d && r) onCommit(r.x0, r.y0, r.x1, r.y1);
   }, [editing, onCommit]);
-
-  if (!box) {
-    // First paint: mount the ref so the layout effect can measure.
-    return <div ref={layerRef} className="absolute inset-0 z-20 pointer-events-none" />;
-  }
 
   return (
     <div ref={layerRef} className="absolute inset-0 z-20 pointer-events-none" style={{ touchAction: "none" }}>
