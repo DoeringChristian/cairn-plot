@@ -336,8 +336,7 @@ import {
   magnificationFilter,
 } from "./region-select.ts";
 
-const closeRel = (a: number, b: number, rel: number) =>
-  Math.abs(a - b) <= rel * Math.max(1, Math.abs(a), Math.abs(b));
+const closeAbs = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol;
 
 test("viewToQuad at home equals the object-contain rect", () => {
   const q = viewToQuad({ zoom: 1, pan: { x: 0, y: 0 } }, { width: 642, height: 277.5 }, 512, 512);
@@ -388,13 +387,13 @@ test("computeSourceFit over viewToUvRect returns viewToQuad (inverse property)",
       naturalHeight: c.n[1],
       sourceWindow: uv,
     });
-    const rel = 1e-9 * Math.max(1, Math.abs(c.view.pan.x), Math.abs(c.view.pan.y));
-    assert.ok(closeRel(sf.quadLeft, quad.left, rel), `left ${sf.quadLeft} vs ${quad.left}`);
-    assert.ok(closeRel(sf.quadTop, quad.top, rel), `top ${sf.quadTop} vs ${quad.top}`);
-    assert.ok(closeRel(sf.quadW, quad.width, rel), `w ${sf.quadW} vs ${quad.width}`);
-    assert.ok(closeRel(sf.quadH, quad.height, rel), `h ${sf.quadH} vs ${quad.height}`);
-    assert.ok(closeRel(sf.sxPerTexel, quad.width / c.n[0], rel));
-    assert.ok(closeRel(screenPxPerTexel(uv, c.box, c.n[0], c.n[1]), quad.width / c.n[0], rel));
+    const tol = 1e-9 * Math.max(1, Math.abs(c.view.pan.x), Math.abs(c.view.pan.y));
+    assert.ok(closeAbs(sf.quadLeft, quad.left, tol), `left ${sf.quadLeft} vs ${quad.left}`);
+    assert.ok(closeAbs(sf.quadTop, quad.top, tol), `top ${sf.quadTop} vs ${quad.top}`);
+    assert.ok(closeAbs(sf.quadW, quad.width, tol), `w ${sf.quadW} vs ${quad.width}`);
+    assert.ok(closeAbs(sf.quadH, quad.height, tol), `h ${sf.quadH} vs ${quad.height}`);
+    assert.ok(closeAbs(sf.sxPerTexel, quad.width / c.n[0], tol));
+    assert.ok(closeAbs(screenPxPerTexel(uv, c.box, c.n[0], c.n[1]), quad.width / c.n[0], tol));
   }
 });
 
