@@ -141,9 +141,13 @@ async function run(): Promise<boolean> {
     return false;
   }
 
-  // Each pane is a REAL image pane (its <img> renders the data-URL source).
-  const imagesReady = await waitFor(() => document.querySelectorAll("img[src^='data:image/png']").length >= 3, 6000, 20);
-  report(imagesReady, "each mount renders a real image pane (<img> source)");
+  // Each pane is a REAL image pane. The CPU backend blits its source into ONE
+  // viewport-sized presentation canvas (there is no `<img>` any more), so the
+  // presence of that canvas is what "a real image pane rendered" means.
+  const paneCanvases = () =>
+    document.querySelectorAll("[data-cpu-image-pane] canvas[data-cpu-image-canvas]").length;
+  const imagesReady = await waitFor(() => paneCanvases() >= 3, 6000, 20);
+  report(imagesReady, `each mount renders a real image pane (${paneCanvases()} presentation canvases)`);
   ok = ok && imagesReady;
 
   const [fa, fb, fc] = frames();

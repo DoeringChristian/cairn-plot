@@ -25,14 +25,15 @@
  * pane as cases 1/2, just with a `compareSource`:
  *   1. `GpuImagePane` (SDR `imageUrl` prop shape) — asserts NO
  *      `[data-gpu-image-canvas]` mounts (the engine bailed before painting)
- *      and the LEGACY `ImagePane`'s `<img>` renders instead, with the
- *      correct `src`.
+ *      and the LEGACY `CpuImagePane` renders instead, painting the ORIGINAL
+ *      source into its viewport presentation canvas (`[data-cpu-image-canvas]`;
+ *      read back as a centre pixel, since there is no `<img>`/`src` any more).
  *   2. `GpuImagePane` (HDR `hdr` prop shape) — asserts NO
  *      `[data-gpu-image-canvas]` and the legacy `HdrImagePane`'s `<canvas>`
  *      renders NON-BLANK content (readback).
  *   3. `GpuImagePane` + `compareSource` (`mode:"split"`) — asserts NO
  *      `[data-gpu-image-canvas]` and the legacy `CpuImagePane` compare fallback
- *      renders its `<img>` (NOT a blank card).
+ *      mounts its viewport presentation canvas (NOT a blank card).
  *   4. `GpuImagePane` + `compareSource` (`mode:"diff"`) — asserts NO
  *      `[data-gpu-image-canvas]` and the legacy `CpuImagePane` diff fallback
  *      renders content (`<canvas>`/`<img>`, NOT a blank card).
@@ -143,14 +144,33 @@ async function runSdrImageCase(): Promise<boolean> {
   report(!gpuCanvasFound, "[SDR] engine bailed BEFORE mounting its own canvas (no [data-gpu-image-canvas])");
   ok = ok && !gpuCanvasFound;
 
-  const legacyImgFound = await waitFor(() => !!container.querySelector("img"), 6000, 20);
-  report(legacyImgFound, "[SDR] legacy ImagePane's <img> mounted (NOT a blank card)");
-  ok = ok && legacyImgFound;
+  // The CPU fallback pane blits its source into ONE viewport-sized presentation
+  // canvas — there is no `<img>` and no `src` string to compare any more, so the
+  // "the ORIGINAL imageUrl is what got rendered" assertion reads the pixels back:
+  // the source is a 1x1 RED PNG in a square viewport, so the canvas centre must
+  // be red.
+  const legacyCanvasFound = await waitFor(
+    () => !!container.querySelector("[data-cpu-image-pane] canvas[data-cpu-image-canvas]"), 6000, 20);
+  report(legacyCanvasFound, "[SDR] legacy CpuImagePane's presentation canvas mounted (NOT a blank card)");
+  ok = ok && legacyCanvasFound;
 
-  if (legacyImgFound) {
-    const img = container.querySelector("img") as HTMLImageElement;
-    const srcOk = img.src === RED_PNG_DATA_URL || img.getAttribute("src") === RED_PNG_DATA_URL;
-    report(srcOk, `[SDR] legacy <img> src matches the original imageUrl (got "${img.getAttribute("src")?.slice(0, 40)}...")`);
+  if (legacyCanvasFound) {
+    const canvas = container.querySelector(
+      "[data-cpu-image-pane] canvas[data-cpu-image-canvas]",
+    ) as HTMLCanvasElement;
+    const centre = () => {
+      if (canvas.width === 0 || canvas.height === 0) return null;
+      const px = canvas
+        .getContext("2d")
+        ?.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+      return px ? [px[0]!, px[1]!, px[2]!, px[3]!] : null;
+    };
+    const isRed = () => {
+      const p = centre();
+      return !!p && p[3]! > 0 && p[0]! > 128 && p[0]! > p[1]! + 64 && p[0]! > p[2]! + 64;
+    };
+    const srcOk = await waitFor(isRed, 4000, 20);
+    report(srcOk, `[SDR] the presentation canvas paints the original imageUrl (RED; centre ${centre()})`);
     ok = ok && srcOk;
   }
 
@@ -237,9 +257,13 @@ async function runCompareSplitCase(): Promise<boolean> {
   report(!gpuCanvasFound, "[compare/split] engine bailed BEFORE mounting its own canvas (no [data-gpu-image-canvas])");
   ok = ok && !gpuCanvasFound;
 
-  const legacyImgFound = await waitFor(() => container.querySelectorAll("img").length > 0, 6000, 20);
-  report(legacyImgFound, "[compare/split] legacy CpuImagePane compare fallback <img> mounted (NOT a blank card)");
-  ok = ok && legacyImgFound;
+  // The CPU compare fallback composites BOTH operands into the ONE presentation
+  // canvas of ONE pane (no per-side `<img>`s any more) — so a mounted CPU pane
+  // with its presentation canvas is the "NOT a blank card" proof.
+  const legacyPaneFound = await waitFor(
+    () => !!container.querySelector("[data-cpu-image-pane] canvas[data-cpu-image-canvas]"), 6000, 20);
+  report(legacyPaneFound, "[compare/split] legacy CpuImagePane compare fallback mounted its presentation canvas (NOT a blank card)");
+  ok = ok && legacyPaneFound;
 
   root.unmount();
   container.remove();

@@ -252,14 +252,20 @@ function stageModeBtn(mode: "enlarge" | "compare"): HTMLButtonElement | null {
   const bd = stageBackdrop();
   return bd?.querySelector<HTMLButtonElement>(`[data-cairn-stage-mode-btn="${mode}"]`) ?? null;
 }
-/** The CPU image pane's transformed wrapper (`transform: translate(pan) scale(zoom)`)
- *  inside a stage cell — the DOM signal a zoom/pan is applied to. */
-function zoomWrapper(cell: HTMLElement): HTMLElement | null {
-  const pane = cell.querySelector<HTMLElement>("[data-cpu-image-pane]");
-  if (!pane) return null;
-  return Array.from(pane.querySelectorAll<HTMLElement>("*")).find((el) =>
-    /scale\(/.test(el.style.transform),
-  ) ?? null;
+/** The CPU image pane's VIEWPORT element inside a stage cell. The pane no longer
+ *  zooms by CSS-transforming a wrapper: the live view is published on the ONE
+ *  viewport element as `data-cairn-view-zoom` / `data-cairn-view-pan`, and that
+ *  is now the DOM signal a zoom/pan is applied to. */
+function zoomSurface(cell: HTMLElement): HTMLElement | null {
+  return cell.querySelector<HTMLElement>("[data-cpu-image-pane] [data-cpu-image-surface]");
+}
+/** The published view state of a stage cell's pane, as a comparable string. */
+function viewState(el: HTMLElement | null): string | null {
+  if (!el) return null;
+  const zoom = el.dataset.cairnViewZoom;
+  const pan = el.dataset.cairnViewPan;
+  if (zoom == null || pan == null) return null;
+  return `zoom=${zoom} pan=${pan}`;
 }
 const ORANGE = "rgb(245, 158, 11)"; // REFERENCE_COLOR (#f59e0b)
 /** The repr-pane id of the CURRENT stage's reference cell (the orange-ringed one). */
@@ -296,9 +302,12 @@ async function run(): Promise<boolean> {
     roots.forEach((r) => r.unmount());
     return false;
   }
-  const imagesReady = await waitFor(
-    () => document.querySelectorAll("img[src^='data:image/png']").length >= 3, 6000, 20);
-  report(imagesReady, "each mount renders a real image pane");
+  // A "real image pane" is the CPU backend's ONE viewport presentation canvas
+  // (there is no `<img>` any more — the source is blitted into that canvas).
+  const paneCanvases = () =>
+    document.querySelectorAll("[data-cpu-image-pane] canvas[data-cpu-image-canvas]").length;
+  const imagesReady = await waitFor(() => paneCanvases() >= 3, 6000, 20);
+  report(imagesReady, `each mount renders a real image pane (${paneCanvases()} presentation canvases)`);
   ok = ok && imagesReady;
 
   const [fa, fb, fc] = frames();
@@ -510,11 +519,10 @@ async function run(): Promise<boolean> {
   //     (the group the stage previously dropped while keeping only settings). ====
   {
     const cells = stageCells();
-    const vpA = cells[0]?.querySelector<HTMLElement>("[data-cpu-image-surface]") ?? null;
-    const wrapA = cells[0] ? zoomWrapper(cells[0]) : null;
-    const wrapB = cells[1] ? zoomWrapper(cells[1]) : null;
-    if (vpA && wrapA && wrapB) {
-      const beforeB = getComputedStyle(wrapB).transform;
+    const vpA = cells[0] ? zoomSurface(cells[0]) : null;
+    const vpB = cells[1] ? zoomSurface(cells[1]) : null;
+    if (vpA && vpB) {
+      const beforeB = viewState(vpB);
       const r = vpA.getBoundingClientRect();
       const cx = Math.round(r.left + r.width / 2);
       const cy = Math.round(r.top + r.height / 2);
@@ -531,12 +539,13 @@ async function run(): Promise<boolean> {
         );
         await sleep(20);
       }
-      const propagated = await waitFor(() => getComputedStyle(wrapB).transform !== beforeB, 3000);
-      report(propagated, "ctrl+wheel zoom on enlarge cell A PROPAGATES to cell B (viewport sync)");
-      const tA = getComputedStyle(wrapA).transform;
-      const tB = getComputedStyle(wrapB).transform;
-      const synced = tA === tB && tA !== "matrix(1, 0, 0, 1, 0, 0)" && tA !== "none";
-      report(synced, `both enlarge cells share the SAME zoomed viewport transform (A=${tA}, B=${tB})`);
+      const propagated = await waitFor(() => viewState(vpB) !== beforeB, 3000);
+      report(propagated, `ctrl+wheel zoom on enlarge cell A PROPAGATES to cell B (viewport sync, ${beforeB} → ${viewState(vpB)})`);
+      const tA = viewState(vpA);
+      const tB = viewState(vpB);
+      const zoomA = Number(vpA.dataset.cairnViewZoom);
+      const synced = tA != null && tA === tB && Number.isFinite(zoomA) && zoomA !== 1;
+      report(synced, `both enlarge cells share the SAME zoomed viewport state (A=${tA}, B=${tB})`);
       ok = ok && propagated && synced;
     } else {
       report(false, "could not locate the CPU image viewport/wrapper for the viewport-sync probe");

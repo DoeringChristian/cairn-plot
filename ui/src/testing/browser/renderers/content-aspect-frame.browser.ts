@@ -78,9 +78,12 @@ async function run(): Promise<boolean> {
   mount("mount-square", imageDescriptor(64, 64, "#c0392b")); // aspect 1
   mount("mount-wide", imageDescriptor(128, 64, "#2980b9")); // aspect 2
 
-  const imagesReady = await waitFor(
-    () => document.querySelectorAll("img[src^='data:image/png']").length >= 2, 6000, 20);
-  report(imagesReady, "both standalone image panes mount");
+  // The CPU backend paints into ONE viewport-sized presentation canvas (no
+  // `<img>` any more), so a mounted pane is one `canvas[data-cpu-image-canvas]`.
+  const paneCanvases = () =>
+    document.querySelectorAll("[data-cpu-image-pane] canvas[data-cpu-image-canvas]").length;
+  const imagesReady = await waitFor(() => paneCanvases() >= 2, 6000, 20);
+  report(imagesReady, `both standalone image panes mount (${paneCanvases()} presentation canvases)`);
   ok = ok && imagesReady;
 
   // The real "no empty bands" invariant: in a fixed-width / auto-height parent the

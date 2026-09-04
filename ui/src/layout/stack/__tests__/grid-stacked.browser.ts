@@ -24,9 +24,10 @@ function imageLeaf(w: number, h: number, label: string): unknown {
   };
 }
 // A flat colour PNG data-url — the CPU compare pane takes URL sources and
-// rasterizes/blends them with a CSS `translate(pan) scale(zoom)` transform (the
-// same transform an image leaf uses), so a MIXED stack's camera is observable
-// on both cell types without WebGPU.
+// blits them into its ONE viewport presentation canvas under the view the
+// viewport element publishes (`data-cairn-view-zoom`/`-pan`, the same view an
+// image leaf publishes), so a MIXED stack's camera is observable on both cell
+// types without WebGPU.
 function imgUrl(color: string, width = 16, height = 16): string {
   const c = document.createElement("canvas");
   c.width = width;
@@ -52,8 +53,8 @@ function compareUrlChild(fg: string, ref: string, label: string): unknown {
 // A DIFF-mode compare (mode="diff") lowers — post Phase 2c routing — to the SAME
 // `image` renderer family an image leaf uses (`LeafView` + a `compareSource`),
 // so an `[image, diff]` stack is HOMOGENEOUS and a flip is a SOURCE-SWAP on ONE
-// reused instance (no remount / no flicker). URL sources ⇒ CpuImagePane renders
-// each as an `<img>` (no WebGPU needed to prove the React reconciliation).
+// reused instance (no remount / no flicker). URL sources ⇒ CpuImagePane paints
+// each into its viewport canvas (no WebGPU needed to prove the reconciliation).
 function diffUrlChild(fg: string, ref: string, label: string): unknown {
   return {
     kind: "compare",
@@ -88,8 +89,8 @@ function imageDiffGrid(initialLayout: "grid" | "stack"): PlotSpec {
 // Phase 3: an image LEAF next to a SPLIT compare — HOMOGENEOUS (both lower to
 // `plot:image`), so the flip is a reused-instance source-swap, NOT a mount-swap
 // (the 341c577 mixed-stack sync-group machinery is retired). Both sides are URL
-// sources ⇒ CpuImagePane renders each as an `<img>`, so the SAME surface DOM node
-// survives the flip (the no-remount proof, no WebGPU needed).
+// sources ⇒ CpuImagePane paints each into its ONE viewport canvas, so the SAME
+// surface DOM node survives the flip (the no-remount proof, no WebGPU needed).
 function mixedGrid(initialLayout: "grid" | "stack"): PlotSpec {
   return {
     mode: "local",
@@ -220,14 +221,21 @@ async function run(): Promise<boolean> {
   ok = ok && boxStable && cellStable;
 
   // ── ZOOM PERSISTENCE: the shared camera survives a flip ───────────────────
-  // Wheel-zoom the (CPU) pane — its zoom renders as an inline `scale(...)`
-  // transform — then flip and assert the SAME transform still applies (one
-  // reused renderer instance ⇒ one camera, shared by construction).
-  const zoomTransformsIn = (id: string): string[] =>
-    qa(id, "*")
-      .filter((n) => n.style?.transform && /scale\(/.test(n.style.transform))
-      .map((n) => n.style.transform);
-  const zoomTransforms = (): string[] => zoomTransformsIn("m1");
+  // Wheel-zoom the (CPU) pane, then flip and assert the SAME view still
+  // applies (one reused renderer instance ⇒ one camera, shared by
+  // construction). The pane no longer zooms by CSS-transforming a wrapper: the
+  // live view is published on the ONE viewport element as
+  // `data-cairn-view-zoom` / `data-cairn-view-pan`, which is what we read.
+  const zoomStatesIn = (id: string): string[] =>
+    qa(id, "[data-cpu-image-surface]").map(
+      (n) => `zoom=${n.dataset.cairnViewZoom} pan=${n.dataset.cairnViewPan}`,
+    );
+  const isZoomed = (states: string[]): boolean =>
+    states.some((s) => {
+      const z = Number(/zoom=([^ ]+)/.exec(s)?.[1]);
+      return Number.isFinite(z) && z !== 1;
+    });
+  const zoomStates = (): string[] => zoomStatesIn("m1");
   const surface = q("m1", "[data-cairn-stacked-pane] canvas") ?? q("m1", "[data-cairn-stacked-pane] img");
   if (surface) {
     const r = surface.getBoundingClientRect();
@@ -245,13 +253,13 @@ async function run(): Promise<boolean> {
       await sleep(30);
     }
     await sleep(150);
-    const zoomed = zoomTransforms();
-    const zoomApplied = zoomed.length > 0 && zoomed.some((t) => !/scale\(1\)/.test(t));
-    report(zoomApplied, `wheel-zoom applied on the stacked pane (transforms: ${JSON.stringify(zoomed)})`);
+    const zoomed = zoomStates();
+    const zoomApplied = zoomed.length > 0 && isZoomed(zoomed);
+    report(zoomApplied, `wheel-zoom applied on the stacked pane (view: ${JSON.stringify(zoomed)})`);
     key("1"); // flip to tab 0
     await waitFor(() => activePaneIndex("m1") === 0, 5000, 20);
     await sleep(150);
-    const afterFlip = zoomTransforms();
+    const afterFlip = zoomStates();
     const zoomPersisted = JSON.stringify(afterFlip) === JSON.stringify(zoomed);
     report(zoomPersisted, `the zoom PERSISTS across the flip (before ${JSON.stringify(zoomed)} → after ${JSON.stringify(afterFlip)})`);
     ok = ok && zoomApplied && zoomPersisted;
@@ -341,22 +349,34 @@ async function run(): Promise<boolean> {
       await sleep(30);
     }
     await sleep(150);
-    const mixImgZoom = zoomTransformsIn("m4");
-    const mixZoomApplied = mixImgZoom.some((t) => !/scale\(1\)/.test(t));
+    const mixImgZoom = zoomStatesIn("m4");
+    const mixZoomApplied = isZoomed(mixImgZoom);
     report(mixZoomApplied, `wheel-zoom applied on the stack's image (${JSON.stringify(mixImgZoom)})`);
 
     key("2"); // → slide-compare tab (source-swap on the reused instance)
     await waitFor(() => activePaneIndex("m4") === 1, 5000, 20);
     await sleep(150);
-    // Split needs two independently clipped execution surfaces. The shared image
-    // renderer stays mounted, but backend leaf nodes may change legitimately.
-    const mixSurfaceReady = qa("m4", "[data-cpu-image-surface]").length === 2;
-    report(mixSurfaceReady, "slide-compare mounts two CPU execution surfaces in the reused image pane");
+    // Split composites BOTH operands into the ONE viewport of the reused pane
+    // now (spec §3): one surface + one presentation canvas, with the split
+    // chrome — the divider and the two per-side, clipped TEV overlays — proving
+    // the compare actually took over that viewport.
+    const mixSurfaceReady =
+      qa("m4", "[data-cpu-image-surface]").length === 1 &&
+      qa("m4", "canvas[data-cpu-image-canvas]").length === 1 &&
+      qa("m4", ".cairn-plot-split-divider").length === 1 &&
+      qa("m4", "canvas[data-pixel-value-overlay]").length === 2;
+    report(
+      mixSurfaceReady,
+      `slide-compare composites into the ONE reused CPU viewport (surfaces ${qa("m4", "[data-cpu-image-surface]").length},` +
+        ` canvases ${qa("m4", "canvas[data-cpu-image-canvas]").length},` +
+        ` divider ${qa("m4", ".cairn-plot-split-divider").length},` +
+        ` overlays ${qa("m4", "canvas[data-pixel-value-overlay]").length})`,
+    );
     const stillOneMixPane = qa("m4", '[data-cairn-stacked-pane="active"]').length === 1;
     report(stillOneMixPane, "still exactly ONE stacked-pane after the flip (no hidden sibling)");
     await sleep(50);
-    const mixCmpZoom = zoomTransformsIn("m4");
-    const compareAdopted = mixCmpZoom.some((t) => !/scale\(1\)/.test(t));
+    const mixCmpZoom = zoomStatesIn("m4");
+    const compareAdopted = isZoomed(mixCmpZoom);
     report(compareAdopted, `the zoom PERSISTS across the flip — ONE shared camera by construction (${JSON.stringify(mixCmpZoom)})`);
     ok = ok && mixZoomApplied && mixSurfaceReady && stillOneMixPane && compareAdopted;
   } else {
@@ -397,18 +417,19 @@ async function run(): Promise<boolean> {
     }
     await sleep(120);
   }
-  const diffZoomBefore = zoomTransformsIn("m5");
+  const diffZoomBefore = zoomStatesIn("m5");
 
   // Flip to the DIFF tab. A source-swap keeps the marked node; a remount drops it.
   key("2");
   await waitFor(() => activePaneIndex("m5") === 1, 5000, 20);
   await sleep(150);
-  const comparisonReady = !!q("m5", '[data-cpu-comparison-result="absolute"] canvas');
+  // The CPU error field is painted into the pane's ONE presentation canvas now.
+  const comparisonReady = !!q("m5", '[data-cpu-comparison-result="absolute"] canvas[data-cpu-image-canvas]');
   report(comparisonReady, "image↔diff flip reuses the image pane and mounts the exact CPU field surface");
   const stillOnePane = qa("m5", '[data-cairn-stacked-pane="active"]').length === 1;
   report(stillOnePane, "still exactly ONE stacked-pane after the flip (no hidden sibling)");
-  const diffZoomAfter = zoomTransformsIn("m5");
-  const diffZoomPersisted = diffZoomAfter.some((t) => !/scale\(1\)/.test(t));
+  const diffZoomAfter = zoomStatesIn("m5");
+  const diffZoomPersisted = isZoomed(diffZoomAfter);
   report(diffZoomPersisted, `zoom PERSISTS across the image↔diff flip (before ${JSON.stringify(diffZoomBefore)} → after ${JSON.stringify(diffZoomAfter)})`);
   ok = ok && diffUp && oneDiffPane && diffSurface0 && comparisonReady && stillOnePane && diffZoomPersisted;
 

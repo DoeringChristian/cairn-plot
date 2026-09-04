@@ -15,10 +15,13 @@
  *
  * WHAT IT PROVES.
  *   1. A FLOAT `GpuImagePane` given `overlay` (one box) + default `overlaySettings`
- *      renders the `ImageOverlay` layer WITH an SVG `<rect>` box on the float
- *      surface (the layer is a display-space CSS/SVG overlay, so it composites
- *      over the float canvas regardless of the WebGPU readback dance).
- *   2. CONTROL — the SAME float pane with NO `overlay` renders no `<rect>` box
+ *      renders the `ImageOverlay` layer WITH the box actually drawn on the float
+ *      surface: `ImageOverlay` strokes its boxes onto its OWN pane-sized canvas
+ *      (placed through the shared `viewport.quad`; the old `<svg><rect>` is gone)
+ *      and mounts one HTML label chip per box, so "drawn" = non-transparent ink
+ *      on that canvas AND a chip. The layer composites over the float canvas
+ *      regardless of the WebGPU readback dance.
+ *   2. CONTROL — the SAME float pane with NO `overlay` draws no box at all
  *      (so case 1 is a real effect of the prop, not an always-on artifact).
  *   3. `overlaySettings.enabled === false` suppresses the layer on the float
  *      surface (settings are honoured on float, not just uint8).
@@ -108,14 +111,40 @@ function mountFloatPane(
   };
 }
 
-/** Count the overlay `<rect>` boxes drawn inside a mounted pane. */
-function overlayBoxCount(container: HTMLElement): number {
-  const layer = container.querySelector("[data-image-overlay]");
-  if (!layer) return 0;
-  return layer.querySelectorAll("svg rect").length;
+/** The overlay layer's OWN canvas — `ImageOverlay` strokes its boxes onto this
+ *  (they used to be `<svg><rect>` elements; the layer is one canvas now, placed
+ *  through the shared `viewport.quad`). */
+function overlayCanvas(container: HTMLElement): HTMLCanvasElement | null {
+  return container.querySelector<HTMLCanvasElement>("[data-image-overlay] canvas");
 }
 
-/** Diagnostics for why an overlay may not be drawing (layer/svg/sizing). */
+/** How many box LABEL CHIPS the overlay rendered (one HTML `<span class="mono">`
+ *  per visible, named box — the box strokes' DOM-countable companion). */
+function overlayChipCount(container: HTMLElement): number {
+  const layer = container.querySelector("[data-image-overlay]");
+  if (!layer) return 0;
+  return layer.querySelectorAll("span.mono").length;
+}
+
+/** How many NON-TRANSPARENT pixels the overlay canvas holds — i.e. whether the
+ *  box STROKE actually got drawn. Zero for an absent/empty/cleared layer. */
+function overlayInkPixels(container: HTMLElement): number {
+  const canvas = overlayCanvas(container);
+  if (!canvas || canvas.width === 0 || canvas.height === 0) return 0;
+  const data = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
+  if (!data) return 0;
+  let ink = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i]! > 0) ink++;
+  return ink;
+}
+
+/** Count the overlay boxes drawn inside a mounted pane: a box is "drawn" only if
+ *  BOTH its stroke reached the overlay canvas AND its label chip mounted. */
+function overlayBoxCount(container: HTMLElement): number {
+  return overlayInkPixels(container) > 0 ? overlayChipCount(container) : 0;
+}
+
+/** Diagnostics for why an overlay may not be drawing (layer/canvas/sizing). */
 function overlayDiag(container: HTMLElement): string {
   const layer = container.querySelector("[data-image-overlay]") as HTMLElement | null;
   const wrap = container.querySelector("[data-gpu-image-surface]") as HTMLElement | null;
@@ -128,12 +157,14 @@ function overlayDiag(container: HTMLElement): string {
   const lr = layer?.getBoundingClientRect();
   const wr = wrap?.getBoundingClientRect();
   const cr = canvas?.getBoundingClientRect();
+  const oc = overlayCanvas(container);
   return [
     `pane=${paneKind}`,
     `layer=${layer ? "yes" : "NO"}`,
     layer ? `layer:${Math.round(lr!.width)}x${Math.round(lr!.height)}` : "",
-    `svg=${layer?.querySelector("svg") ? "yes" : "NO"}`,
-    `rects=${layer?.querySelectorAll("svg rect").length ?? 0}`,
+    `overlayCanvas=${oc ? `${oc.width}x${oc.height}` : "NO"}`,
+    `ink=${overlayInkPixels(container)}`,
+    `chips=${overlayChipCount(container)}`,
     wrap ? `viewport:${Math.round(wr!.width)}x${Math.round(wr!.height)}` : "viewport:NO",
     canvas ? `canvas:${Math.round(cr!.width)}x${Math.round(cr!.height)}` : "canvas:NO",
   ]
@@ -156,7 +187,7 @@ async function main(): Promise<void> {
     const boxDrew = await waitFor(() => overlayBoxCount(withOverlay.container) > 0, 8000, 40);
     report(
       boxDrew,
-      `overlay box renders on the FLOAT surface (found ${overlayBoxCount(withOverlay.container)} <rect>` +
+      `overlay box renders on the FLOAT surface (found ${overlayBoxCount(withOverlay.container)} box(es)` +
         ` — ${overlayDiag(withOverlay.container)})`,
     );
     ok = ok && boxDrew;
@@ -167,7 +198,7 @@ async function main(): Promise<void> {
     await waitFor(() => !!noOverlay.container.querySelector("canvas"), 8000, 40);
     await sleep(400);
     const noBox = overlayBoxCount(noOverlay.container) === 0;
-    report(noBox, `float pane WITHOUT overlay draws no box (found ${overlayBoxCount(noOverlay.container)})`);
+    report(noBox, `float pane WITHOUT overlay draws no box (${overlayDiag(noOverlay.container)})`);
     ok = ok && noBox;
 
     // Case 3 — overlaySettings.enabled=false suppresses the layer on float.
@@ -180,7 +211,7 @@ async function main(): Promise<void> {
     const suppressed = overlayBoxCount(disabled.container) === 0;
     report(
       suppressed,
-      `overlaySettings.enabled=false suppresses the overlay on float (found ${overlayBoxCount(disabled.container)})`,
+      `overlaySettings.enabled=false suppresses the overlay on float (${overlayDiag(disabled.container)})`,
     );
     ok = ok && suppressed;
 
