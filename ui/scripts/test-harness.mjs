@@ -18,7 +18,7 @@
  * are INTERACTION harnesses: they mount live React panes and settle only in
  * response to real layout + pointer/keyboard gestures, so headless navigation
  * alone never completes them. They stay human-run and are listed (not run)
- * unless `--all` is passed. Default = the engine parity set.
+ * unless `--all` is passed. Default = the WebGPU parity set.
  *
  * WHAT IT DOES.
  *   1. Discovers every `*.browser.html` harness page and the `*.browser.ts`
@@ -112,7 +112,7 @@ const KEEP_BUNDLES = argv.includes("--keep-bundles");
 // primitives). Those mount live React panes and settle their `#status` only in
 // response to real layout + pointer/keyboard gestures, so they DO NOT complete
 // under headless navigation alone (verified: every one times out). They stay
-// human-run; the default set is the engine WGSL↔TS parity proofs — exactly the
+// human-run; the default set is the WebGPU WGSL↔TS parity proofs — exactly the
 // harnesses the finding flagged as invisible to CI — which all settle headlessly.
 const RUN_ALL = argv.includes("--all");
 
@@ -178,7 +178,7 @@ function discoverHarnesses() {
     // A harness that dispatches its OWN gestures (and sets #status to PASS/FAIL
     // without any external driving) opts into the DEFAULT run by declaring
     // `data-cairn-harness="self-driving"` in its HTML — so a non-WebGPU DOM proof
-    // (e.g. page-wide selection) is gated by CI just like the engine parity
+    // (e.g. page-wide selection) is gated by CI just like the WebGPU parity
     // proofs, unlike the gesture-dependent interaction harnesses.
     const selfDriving = /data-cairn-harness\s*=\s*["']self-driving["']/i.test(html);
     const quarantined = /data-cairn-harness\s*=\s*["']quarantined["']/i.test(html);
@@ -661,7 +661,7 @@ async function main() {
         quarantinedSkips.push({ id: h.id, reason: h.quarantineReason });
         return false;
       }
-      // The default set = engine WGSL↔TS parity proofs PLUS any SELF-DRIVING
+      // The default set = WebGPU WGSL↔TS parity proofs PLUS any SELF-DRIVING
       // harness (dispatches its own gestures, settles headlessly). Only the
       // gesture-DEPENDENT interaction harnesses are deferred to `--all`.
       if (!isParityHarness(h) && !h.selfDriving) {
@@ -816,7 +816,7 @@ async function main() {
             : RED("ERROR");
     console.log(`${tag} ${DIM(`(${r.ms}ms)`)}`);
     if (r.verdict !== "pass" && r.result) console.log(indent(r.result));
-    // A harness can PASS while loudly SKIPPING a sub-case (e.g. the engine
+    // A harness can PASS while loudly SKIPPING a sub-case (e.g. the WebGPU engine
     // reported a `DeviceLostError` mid-readback — the software backend gave up
     // on the device, which is not a parity defect). Surface those lines even
     // on PASS so a chronically-skipped proof can never go green *invisibly* —

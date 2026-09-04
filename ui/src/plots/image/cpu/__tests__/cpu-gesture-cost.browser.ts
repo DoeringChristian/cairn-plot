@@ -110,6 +110,14 @@ interface Counts {
   observe: number;
 }
 const counts: Counts = { put: 0, bitmap: 0, getImageData: 0, draw: 0, widthSets: 0, observe: 0 };
+/**
+ * `ResizeObserver.observe` calls since the spies went up — deliberately NEVER
+ * reset, unlike `counts.observe`. The budget is a whole-run property (exactly one
+ * observer per pane, installed at mount), so a per-phase counter would only ever
+ * report the last phase and a resubscribe during an earlier gesture would go
+ * unseen.
+ */
+let observeSinceMount = 0;
 function resetCounts(): void {
   counts.put = 0;
   counts.bitmap = 0;
@@ -169,6 +177,7 @@ function installSpies(): () => void {
 
   ResizeObserver.prototype.observe = function (this: ResizeObserver, ...a: unknown[]) {
     counts.observe++;
+    observeSinceMount++;
     return (origObserve as unknown as (...args: unknown[]) => void).apply(this, a);
   } as typeof ResizeObserver.prototype.observe;
 
@@ -226,18 +235,26 @@ interface Pane {
   host: HTMLElement;
   root: Root;
   surface: HTMLElement;
+  /** The view the pane last emitted. Read back after every gesture: without it
+   *  the whole harness passes VACUOUSLY if the events stop being delivered,
+   *  since every other assertion is a zero or an upper bound. */
+  view: () => ImageViewState;
 }
 
 async function mountPane(hostId: string, name: string, source: unknown): Promise<Pane> {
   const host = document.getElementById(hostId)!;
   host.style.cssText = `width:${HOST_W}px;height:${HOST_H}px;position:relative;background:#222`;
+  let latest: ImageViewState = { zoom: 1, pan: { x: 0, y: 0 } };
   function Harness() {
-    const [v, setV] = useState<ImageViewState>({ zoom: 1, pan: { x: 0, y: 0 } });
+    const [v, setV] = useState<ImageViewState>(latest);
     return h(CpuImagePane, {
       source,
       zoom: v.zoom,
       pan: v.pan,
-      onViewChange: setV,
+      onViewChange: (next: ImageViewState) => {
+        latest = next;
+        setV(next);
+      },
       label: "",
       toolbar: false,
     } as never);
@@ -264,6 +281,7 @@ async function mountPane(hostId: string, name: string, source: unknown): Promise
     host,
     root,
     surface: host.querySelector<HTMLElement>("[data-cpu-image-surface]")!,
+    view: () => latest,
   };
 }
 
@@ -321,17 +339,47 @@ async function panGesture(el: HTMLElement): Promise<void> {
   await nextFrame();
 }
 
-async function gesturePhase(pane: Pane, label: string, gesture: () => Promise<void>): Promise<boolean> {
+/**
+ * Run one gesture and check what it cost.
+ *
+ * `moved` names the view field the gesture is supposed to change (`zoom` for a
+ * wheel, `pan` for a drag). It is READ BACK from the pane afterwards and asserted
+ * to have actually moved, and the blit count is bounded from BELOW as well as
+ * above — without both, this harness passes vacuously the moment the synthetic
+ * events stop reaching the gesture hook, since every other assertion here is a
+ * zero or an upper bound.
+ */
+async function gesturePhase(
+  pane: Pane,
+  label: string,
+  moved: "zoom" | "pan",
+  gesture: () => Promise<void>,
+): Promise<boolean> {
   resetCounts();
+  const before = pane.view();
   const stop = countFrames();
   await gesture();
   const stats = stop();
+  const after = pane.view();
   const c = snapshot();
   let ok = true;
   const check = (pass: boolean, msg: string) => {
     report(pass, msg);
     ok = ok && pass;
   };
+  const changed =
+    moved === "zoom"
+      ? after.zoom !== before.zoom
+      : after.pan.x !== before.pan.x || after.pan.y !== before.pan.y;
+  check(
+    changed,
+    `${pane.name} ${label}: the gesture actually reached the pane — ${moved} ` +
+      `${moved === "zoom" ? `${before.zoom} -> ${after.zoom}` : `(${before.pan.x}, ${before.pan.y}) -> (${after.pan.x}, ${after.pan.y})`}`,
+  );
+  check(
+    c.draw >= Math.floor(stats.frames / 2),
+    `${pane.name} ${label}: ${c.draw} presentation blit(s) for ${stats.frames} frame(s) — the pane kept repainting (>= frames/2)`,
+  );
   check(c.put === 0, `${pane.name} ${label}: 0 putImageData (got ${c.put})`);
   check(c.bitmap === 0, `${pane.name} ${label}: 0 createImageBitmap — no content pass (got ${c.bitmap})`);
   check(c.getImageData === 0, `${pane.name} ${label}: 0 getImageData — no re-decode (got ${c.getImageData})`);
@@ -349,7 +397,7 @@ async function gesturePhase(pane: Pane, label: string, gesture: () => Promise<vo
     true,
     `BENCH: ${pane.name} ${label}: ${stats.frames} frames, blits ${c.draw}, ` +
       `createImageBitmap ${c.bitmap}, putImageData ${c.put}, getImageData ${c.getImageData}, ` +
-      `canvas.width sets ${c.widthSets}, observe ${c.observe}; ` +
+      `canvas.width sets ${c.widthSets}, observe-since-mount ${observeSinceMount}; ` +
       `rAF interval mean ${stats.meanMs.toFixed(1)} ms / max ${stats.maxMs.toFixed(1)} ms`,
   );
   return ok;
@@ -382,14 +430,14 @@ async function resizePhase(pane: Pane): Promise<boolean> {
     `${pane.name} resize: 0 createImageBitmap — a resize re-blits the CACHED bitmap (got ${c.bitmap})`,
   );
   check(
-    c.observe === 0,
-    `${pane.name} resize: 0 further ResizeObserver.observe (got ${c.observe})`,
+    observeSinceMount === 0,
+    `${pane.name} resize: 0 ResizeObserver.observe since mount, resize included (got ${observeSinceMount})`,
   );
   report(
     true,
     `BENCH: ${pane.name} resize (${RESIZE_STEPS} widths): ${stats.frames} frames, blits ${c.draw}, ` +
       `canvas.width sets ${c.widthSets}, createImageBitmap ${c.bitmap}, putImageData ${c.put}, ` +
-      `getImageData ${c.getImageData}, observe ${c.observe}; ` +
+      `getImageData ${c.getImageData}, observe-since-mount ${observeSinceMount}; ` +
       `rAF interval mean ${stats.meanMs.toFixed(1)} ms / max ${stats.maxMs.toFixed(1)} ms`,
   );
   pane.host.style.width = `${HOST_W}px`;
@@ -417,16 +465,16 @@ async function run(): Promise<boolean> {
   let ok = true;
   try {
     for (const pane of [u8, flt]) {
-      ok = (await gesturePhase(pane, "wheel zoom", () => wheelGesture(pane.surface))) && ok;
-      ok = (await gesturePhase(pane, "pointer pan", () => panGesture(pane.surface))) && ok;
+      ok = (await gesturePhase(pane, "wheel zoom", "zoom", () => wheelGesture(pane.surface))) && ok;
+      ok = (await gesturePhase(pane, "pointer pan", "pan", () => panGesture(pane.surface))) && ok;
     }
-    // The ResizeObserver budget is a MOUNT-time property: after both panes are up,
-    // no gesture and no resize may install another observer.
-    const observedDuringGestures = counts.observe;
-    ok = ok && observedDuringGestures === 0;
+    // The ResizeObserver budget is a MOUNT-time property: after both panes are
+    // up, no gesture may install another observer. `observeSinceMount` spans
+    // EVERY phase (never reset), so this cannot silently see only the last one.
+    ok = ok && observeSinceMount === 0;
     report(
-      observedDuringGestures === 0,
-      `BENCH: no further ResizeObserver.observe after mount (got ${observedDuringGestures})`,
+      observeSinceMount === 0,
+      `BENCH: no ResizeObserver.observe across all gesture phases since mount (got ${observeSinceMount})`,
     );
     ok = (await resizePhase(u8)) && ok;
   } finally {

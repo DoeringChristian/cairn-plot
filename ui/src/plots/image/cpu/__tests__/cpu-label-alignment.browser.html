@@ -9,10 +9,24 @@
          element has no size and every pixel measurement below is meaningless. -->
     <link rel="stylesheet" href="./harness-style.css" />
     <!-- `data-cairn-harness-dpr="2"` — the runner drives this page under an
-         `Emulation.setDeviceMetricsOverride` at deviceScaleFactor 2. DPR 2 is
-         the bug's real condition: the presentation canvas' backing store is
-         device px while the quad is CSS px, so a dropped/doubled dpr factor
-         shows up here and not at dpr 1. The DPR-1 pass is the sibling page
+         `Emulation.setDeviceMetricsOverride` at deviceScaleFactor 2, so
+         `window.devicePixelRatio` is 2. The presentation canvas' backing store
+         is device px while the quad is CSS px, so a dropped or doubled dpr
+         factor is what this ratio is meant to expose.
+
+         CAVEAT — do not read this page as "a 2x backing store was tested". A
+         HEADLESS Chromium does NOT apply the CDP deviceScaleFactor to its
+         device-pixel content box: measured here, a 100.5x50.25 CSS px element
+         still reports devicePixelContentBoxSize 101x50 at devicePixelRatio 2.
+         Under a headless runner this page therefore exercises the
+         devicePixelRatio-vs-measured-box MISMATCH case (the pane must believe
+         the measured box, not the ratio); on a real 2x display, or a Chromium
+         launched with --force-device-scale-factor=2, the same page is a genuine
+         2x backing store. The harness MEASURES canvas.width / box.width and
+         prints one explicit line per run naming which of the two it got, so a
+         run can never claim a ratio it did not have.
+
+         The DPR-1 pass is the sibling page
          `cpu-label-alignment-dpr1.browser.html`, which loads THIS SAME bundle
          without the attribute. -->
     <style>
