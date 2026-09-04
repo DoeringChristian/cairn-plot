@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // SplitDivider — the full-height, gapless split-mode divider shared by BOTH
-// compare panes: the CPU `MediaComparePane` (compositor.tsx) and the GPU
-// `GpuComparePane`. Both used to carry a byte-for-byte copy of this element
+// image backends in split mode: `CpuImagePane` (cpu/view.tsx) and
+// `GpuImagePane` (webgpu/view.tsx). Both used to carry a byte-for-byte copy of this element
 // AND its ~20-line pointer-capture drag handler; the copies had already begun
 // to diverge (the GPU dbl-click reset called `stopPropagation`, the CPU one
 // did not). This is the single source of truth — the correct behavior is

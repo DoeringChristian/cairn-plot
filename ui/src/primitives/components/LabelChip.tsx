@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // LabelChip — the ONE label chip shared by every pane that names a source: the
 // viewport panes' bottom-LEFT draggable label (image + all 3D types, via
-// `ImagePaneShell`) AND the compare panes' bottom-RIGHT label (media-compare
-// CPU `MediaComparePane` + GPU `GpuComparePane`). Corner differs on purpose —
+// `ImagePaneShell`) AND the compare panes' bottom-RIGHT label (the split chrome
+// of both image backends — `CpuImagePane` + `GpuImagePane`). Corner differs on purpose —
 // the compare panes carry a top-left `RefBadge`, so their label sits bottom-
 // RIGHT to stay clear of it, while the plain viewport panes keep it bottom-
 // LEFT. This is ONE component (same markup/classes), not one corner.

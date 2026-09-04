@@ -1,13 +1,15 @@
 // ---------------------------------------------------------------------------
 // PaneUnavailable — the ONE placeholder a pane renders when a capability it
-// needs isn't available (WebGL2 for the volume raymarcher, WebGPU for a float
-// compare, …). These are CAPABILITY FACTS, not errors: the browser/GPU simply
-// can't do the thing, so the styling is neutral-muted (never red/error), with a
-// short bold title + a one-line explanation.
+// needs isn't available (WebGL2 for the volume raymarcher, …). These are
+// CAPABILITY FACTS, not errors: the browser/GPU simply can't do the thing, so
+// the styling is neutral-muted (never red/error), with a short bold title + a
+// one-line explanation.
 //
 // Unifies three divergent stylings that used to describe the SAME concept:
 //   - VolumeViewer's neutral `bg-bg-hover` placeholder,
-//   - compositor's RED `CompareFloatUnsupportedError` card, and
+//   - the compositor's RED `CompareFloatUnsupportedError` card — now DELETED,
+//     because both image backends render every compare mode (float sides
+//     included), so there is no "needs WebGPU" gap left to report, and
 //   - CpuImagePane's console.warn-only WebGL2 branch (untouched here — owned by
 //     another workstream; see the CHIPS report note).
 // ---------------------------------------------------------------------------

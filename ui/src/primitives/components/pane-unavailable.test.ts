@@ -7,10 +7,12 @@
  *
  * Background: three divergent stylings described the SAME concept — a pane
  * whose required capability is missing: VolumeViewer's neutral placeholder,
- * compositor's RED `CompareFloatUnsupportedError` card, and CpuImagePane's
+ * the compositor's RED `CompareFloatUnsupportedError` card, and CpuImagePane's
  * console.warn-only branch. These are capability FACTS, not errors, so they now
- * share ONE neutral-muted placeholder. (CpuImagePane is owned by another
- * workstream and is intentionally out of scope here.)
+ * share ONE neutral-muted placeholder. The compositor's card is GONE: both
+ * image backends render every compare mode (float sides included), so there is
+ * no "needs WebGPU" capability gap left to report. (CpuImagePane is owned by
+ * another workstream and is intentionally out of scope here.)
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -36,9 +38,9 @@ test("PaneUnavailable: neutral-muted (not an error), title + body", () => {
 
 // Every capability-fact placeholder in scope routes through PaneUnavailable and
 // no longer paints its own bespoke styling.
-const CONSUMERS = ["plots/three/backends/three/VolumeViewer.tsx", "plots/image/runtime/compare-compositor.tsx"];
+const CONSUMERS = ["plots/three/backends/three/VolumeViewer.tsx"];
 
-test("VolumeViewer + compositor render the shared PaneUnavailable (no bespoke card)", () => {
+test("every capability-fact placeholder renders the shared PaneUnavailable (no bespoke card)", () => {
   for (const rel of CONSUMERS) {
     const src = read(rel);
     assert.match(src, /<PaneUnavailable\b/, `${rel} must render <PaneUnavailable>`);

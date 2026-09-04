@@ -176,9 +176,10 @@ export function outputEncode(x: number, gamma?: number): number {
 // DISPLAY-SPACE post-processing (`ImageProcessing`'s brightness/contrast/flipSign).
 //
 // WHY THIS EXISTS. The 8-bit `processing` block (brightness/contrast/flipSign)
-// is a DISPLAY-space adjustment applied to already-encoded (sRGB) pixels — on
-// the CPU SDR pane it is a CSS `filter` string (`media-compare/post-processing`'s
-// `buildProcessingFilterList`): `brightness(1+b) contrast(1+c) invert(1)?`. The
+// is a DISPLAY-space adjustment applied to already-encoded (sRGB) pixels — it
+// began life as a CSS `filter` string on the CPU pane's `<img>`
+// (`brightness(1+b) contrast(1+c) invert(1)?`) and is now a per-pixel pass over
+// the decoded bytes (`cpu/processing.ts`'s `applyProcessingToImageData`). The
 // DEFAULT WebGPU pane (`GpuImagePane`) ignored the block entirely, so
 // `cp.Image(uint8, brightness=…, contrast=…, flip_sign=…)` rendered nothing on
 // most machines (audit H1). This is the ONE numeric definition of that CSS math,
@@ -192,8 +193,8 @@ export function outputEncode(x: number, gamma?: number): number {
 //   brightness(a): out = in · a                (a = 1 + brightness)
 //   contrast(a):   out = (in − 0.5)·a + 0.5     (a = 1 + contrast)
 //   invert(1):     out = 1 − in                 (flipSign)
-// NOTE `exposure` is NOT folded in here (unlike `buildProcessingFilterList`,
-// which folds `2^exposure` into the brightness factor): exposure/offset are now
+// NOTE `exposure` is NOT folded in here (unlike the old CSS filter list, which
+// folded `2^exposure` into the brightness factor): exposure/offset are now
 // lifted TOP-LEVEL and applied in SCENE-LINEAR space (before the operator), so the
 // `processing.exposure`/`processing.offset` slots are 0 on the unified path and
 // this stage is purely the brightness/contrast/flipSign display affine. Values are

@@ -7,7 +7,7 @@
 // everywhere and never collide with anything. `←`/`→` (and `h`/`l` aliases) ALSO
 // flip, but ONLY when NOT inside a stacked grid — there arrows/hjkl drive the tab
 // strip, so the divider is reached with `[`/`]` (distinct keys, no collision).
-// Shared by BOTH compare panes (CPU `MediaComparePane` + `GpuComparePane`).
+// Shared by BOTH image backends in split mode (`CpuImagePane` + `GpuImagePane`).
 //
 // Scope: a `window` keydown listener.
 //   - Inside a FULLSCREEN compare/enlarge overlay (a modal with ONE active
@@ -42,7 +42,7 @@ export function useSplitFlipKeys(
   // already-hovered pane after the first key press until the pointer moved.
   const hoveredRef = useRef(false);
   // `inOverlay` / `inStackedGrid` are resolved from React context by CORE callers
-  // (e.g. the CPU `MediaComparePane`). But the GPU `GpuComparePane` ships in a
+  // (e.g. the CPU backend, `CpuImagePane`). But `GpuImagePane` ships in a
   // SEPARATE bundle: its copy of these context objects is a DIFFERENT identity
   // than the one the core `StackedPanes` / `FullscreenOverlayShell` providers use,
   // so a cross-bundle `useContext` here silently returns the DEFAULT (`false`) —

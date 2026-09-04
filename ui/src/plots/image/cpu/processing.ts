@@ -2,8 +2,8 @@
  * `cpu/processing.ts` — the display-space `processing` block as a PER-PIXEL pass.
  *
  * The CPU backend used to express `ImageProcessing` as CSS on its `<img>`
- * element (`url(#gamma) brightness() contrast() invert()` — see
- * `compare/post-processing.tsx`). The unified viewport paints every CPU image
+ * element (`url(#gamma) brightness() contrast() invert()`, built by the
+ * since-deleted `compare/post-processing.tsx`). The unified viewport paints every CPU image
  * into ONE presentation canvas with `drawImage`, so there is no styled element
  * to hang a filter on any more: the same math runs here, over the 8-bit sRGB
  * pixels, before the bitmap is made.

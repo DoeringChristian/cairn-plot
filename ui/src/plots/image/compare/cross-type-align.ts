@@ -4,10 +4,10 @@ import type { FrameSource } from "../../../backends/frame-source";
 // Cross-type raster alignment (WS-VC6, prototype-first per the design doc's
 // §2.4 / §5 risk #1).
 //
-// side/split cross-type (image <-> 3D) are "free": the compositor
-// already layers ANY two FrameSources as plain <img>s regardless of pixel
-// dimensions (CSS `object-fit: contain` handles the aspect mismatch visually
-// — see MediaComparePane/ImagePane). Pixel `diff`, however, does per-pixel
+// side/split cross-type (image <-> 3D) are "free": the image backends
+// already composite ANY two sources regardless of pixel dimensions (the shared
+// viewport geometry letterboxes the aspect mismatch visually — see
+// `cpu/view.tsx` / `webgpu/view.tsx`). Pixel `diff`, however, does per-pixel
 // math (`image/diff.ts`'s `computeDiff`, which crops to `min(width,height)`,
 // top-left anchored) — meaningful only when the two rasters depict the same
 // spatial content at the same scale/aspect. An image capture (arbitrary

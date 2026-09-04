@@ -54,7 +54,6 @@ test("RefBadge: single top-left, accent-tinted, pointer-transparent contract", (
 // REF chip. `wants` = files that render a reference marker; each must reference
 // `RefBadge` and must not contain a competing inline REF label/span.
 const CONSUMERS = [
-  "plots/image/runtime/compare-compositor.tsx",
   "plots/image/webgpu/view.tsx",
   "plots/image/cpu/view.tsx",
 ];

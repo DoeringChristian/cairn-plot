@@ -1,19 +1,22 @@
 /**
- * CPU COMPARE FALLBACK — when the WebGPU compare engine is unavailable (render
- * mode `cpu`), a compare must NOT show a bare "unavailable" placeholder with no
- * image. It falls back to a VALID view + a small notice:
+ * CPU COMPARE — with `CpuImagePane` and `GpuImagePane` implementing the SAME
+ * `ImageBackendInput`/`ImageComparisonInput` contract, a compare in render mode
+ * `cpu` is not a "fallback" at all: the CPU backend renders every mode the GPU
+ * one does. This harness pins that there is no degraded path left:
  *
- *   1. FLOAT diff  → tone-map the float sides on the CPU, show a SLIDE + a
- *      "Diff needs WebGPU" notice (float diff is GPU-only pixel math).
- *   2. FLOAT split → the requested slide of the tone-mapped floats + a
- *      "Compare on CPU" notice.
- *   3. UINT8 diff with an ENGINE-only kernel (e.g. SSIM) → slide + a
- *      "This diff needs WebGPU" notice.
- *   4. UINT8 diff with a BASIC kernel (absolute) → the CPU pixel-diff pane
- *      (`computeDiff`), NO notice — the CPU can compute it.
+ *   1. FLOAT diff  → the real CPU error field (`[data-cpu-comparison-result]`),
+ *      NOT a slide, and no "needs WebGPU" notice.
+ *   2. FLOAT split → the CPU split composite (divider + two per-side TEV
+ *      overlays) in ONE pane, no notice.
+ *   3. UINT8 diff with an engine-era kernel (SSIM) → a real CPU comparison
+ *      (metrics chip), no notice.
+ *   4. UINT8 diff with a pointwise kernel (absolute) → the CPU pixel-diff pane.
+ *   5/6. The public descriptor path lowers straight to `CpuImagePane` with a
+ *      `compareSource`; exact metrics and the pointwise diff pixels must work
+ *      without WebGPU, and pan/zoom must not rerun a content pass.
  *
- * Mounts `CompositeMediaPane` directly (bypassing the descriptor pipeline) in
- * forced CPU mode. No WebGPU needed — that's the whole point.
+ * Cases 1-4 mount `CompositeMediaPane` directly (bypassing the descriptor
+ * pipeline) in forced CPU mode. No WebGPU needed — that's the whole point.
  */
 import { floatValues } from "../../runtime/pixel-buffer.ts";
 import { createRoot, type Root } from "react-dom/client";
@@ -64,8 +67,18 @@ function notice(hostId: string): HTMLElement | null {
 function hasUnavailablePlaceholder(hostId: string): boolean {
   return (document.getElementById(hostId)!.textContent ?? "").includes("GPU compare unavailable");
 }
-function dataImgCount(hostId: string): number {
-  return document.getElementById(hostId)!.querySelectorAll("img[src^='data:image']").length;
+/** The ONE presentation canvas of a mounted CPU pane (there is no `<img>` any more). */
+function paneCanvasCount(hostId: string): number {
+  return document
+    .getElementById(hostId)!
+    .querySelectorAll("[data-cpu-image-pane] canvas[data-cpu-image-canvas]").length;
+}
+function splitChrome(hostId: string): { divider: boolean; overlays: number } {
+  const el = document.getElementById(hostId)!;
+  return {
+    divider: !!el.querySelector(".cairn-plot-split-divider"),
+    overlays: el.querySelectorAll("[data-pixel-value-overlay]").length,
+  };
 }
 
 async function run(): Promise<boolean> {
@@ -88,11 +101,11 @@ async function run(): Promise<boolean> {
     roots.push(root);
   };
 
-  // 1. FLOAT diff → slide + "Diff needs WebGPU"; no unavailable placeholder.
+  // 1. FLOAT diff → the real CPU error field; no notice, no placeholder.
   mount("m1", { mode: "diff", imageFloat: floatSource("fg1"), baselineFloat: floatSource("ref1") });
-  // 2. FLOAT split → slide + "Compare on CPU".
+  // 2. FLOAT split → the CPU split composite in ONE pane.
   mount("m2", { mode: "split", imageFloat: floatSource("fg2"), baselineFloat: floatSource("ref2") });
-  // 3. UINT8 diff + ENGINE kernel (ssim) → slide + "This diff needs WebGPU".
+  // 3. UINT8 diff + the engine-era SSIM kernel → a real CPU comparison.
   mount("m3", {
     mode: "diff",
     operation: "ssim" as DiffMode,
@@ -145,26 +158,41 @@ async function run(): Promise<boolean> {
   }));
   roots.push(pointwiseRoot);
 
-  // --- 1. FLOAT diff ---------------------------------------------------------
-  const n1 = await waitFor(() => !!notice("m1") && dataImgCount("m1") >= 1, 4000, 20);
-  const n1txt = notice("m1")?.textContent ?? "";
-  report(n1 && /diff needs webgpu/i.test(n1txt), `FLOAT diff → slide + notice "${n1txt}"`);
+  // --- 1. FLOAT diff → the real CPU error field ------------------------------
+  const d1 = await waitFor(
+    () => !!document.getElementById("m1")!.querySelector("[data-cpu-comparison-result]"),
+    4000,
+    20,
+  );
+  report(d1, "FLOAT diff → the CPU comparison result renders (no slide degradation)");
+  report(!notice("m1"), "FLOAT diff → NO 'needs WebGPU' notice (the CPU computes it)");
   report(!hasUnavailablePlaceholder("m1"), "FLOAT diff → NO full 'GPU compare unavailable' placeholder");
-  report(dataImgCount("m1") >= 1, `FLOAT diff → tone-mapped image(s) shown (${dataImgCount("m1")})`);
-  ok = ok && n1 && /diff needs webgpu/i.test(n1txt) && !hasUnavailablePlaceholder("m1") && dataImgCount("m1") >= 1;
+  report(paneCanvasCount("m1") >= 1, `FLOAT diff → the viewport canvas is painted (${paneCanvasCount("m1")})`);
+  ok = ok && d1 && !notice("m1") && !hasUnavailablePlaceholder("m1") && paneCanvasCount("m1") >= 1;
 
-  // --- 2. FLOAT split --------------------------------------------------------
-  const n2 = await waitFor(() => !!notice("m2") && dataImgCount("m2") >= 1, 4000, 20);
-  const n2txt = notice("m2")?.textContent ?? "";
-  report(n2 && /compare on cpu/i.test(n2txt), `FLOAT split → slide + notice "${n2txt}"`);
+  // --- 2. FLOAT split → ONE pane compositing both operands -------------------
+  const s2 = await waitFor(() => {
+    const c = splitChrome("m2");
+    return paneCanvasCount("m2") === 1 && c.divider && c.overlays >= 2;
+  }, 4000, 20);
+  const c2 = splitChrome("m2");
+  report(
+    s2,
+    `FLOAT split → one pane, divider ${c2.divider}, ${c2.overlays} per-side TEV overlay(s), ${paneCanvasCount("m2")} canvas`,
+  );
+  report(!notice("m2"), "FLOAT split → NO 'compare on CPU' notice");
   report(!hasUnavailablePlaceholder("m2"), "FLOAT split → NO full placeholder");
-  ok = ok && n2 && /compare on cpu/i.test(n2txt) && !hasUnavailablePlaceholder("m2");
+  ok = ok && s2 && !notice("m2") && !hasUnavailablePlaceholder("m2");
 
-  // --- 3. UINT8 engine-kernel diff ------------------------------------------
-  const n3 = await waitFor(() => !!notice("m3") && dataImgCount("m3") >= 1, 4000, 20);
-  const n3txt = notice("m3")?.textContent ?? "";
-  report(n3 && /diff needs webgpu/i.test(n3txt), `UINT8 SSIM diff → slide + notice "${n3txt}"`);
-  ok = ok && n3 && /diff needs webgpu/i.test(n3txt);
+  // --- 3. UINT8 SSIM diff → a real CPU comparison ---------------------------
+  const m3metrics = await waitFor(
+    () => !!document.getElementById("m3")!.querySelector("[data-cpu-compare-metrics]"),
+    4000,
+    20,
+  );
+  report(m3metrics, "UINT8 SSIM diff → the CPU comparison runs (metrics chip present)");
+  report(!notice("m3"), "UINT8 SSIM diff → NO 'this diff needs WebGPU' notice");
+  ok = ok && m3metrics && !notice("m3");
 
   // --- 4. UINT8 basic diff → CPU pixel diff, NO notice -----------------------
   const cpuPane = await waitFor(() => !!document.getElementById("m4")!.querySelector("[data-cpu-image-pane]"), 4000, 20);

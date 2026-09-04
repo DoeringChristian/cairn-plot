@@ -28,10 +28,11 @@ const shell = read("plots/image/components/ImagePaneShell.tsx");
 const compositor = read("plots/image/runtime/compare-compositor.tsx");
 const overlay = read("primitives/components/PixelValueOverlay.tsx");
 
-// The pane roots: `ImagePaneShell` (every single-image + GPU-compare pane) and
-// the CPU-compare `compositor`. Each opens with `relative … flex flex-col
-// h-full` on its outermost <div>; the guard is that `isolate` sits in that
-// same class list.
+// There is now exactly ONE pane root: `ImagePaneShell`. Every single-image AND
+// every compare pane (split included) renders through it, on both image
+// backends; `compare-compositor.tsx` is a backend ADAPTER that emits no DOM of
+// its own. The shell opens with `relative … flex flex-col h-full` on its
+// outermost <div>; the guard is that `isolate` sits in that same class list.
 test("ImagePaneShell root establishes a stacking context (isolate)", () => {
   assert.match(
     shell,
@@ -40,11 +41,13 @@ test("ImagePaneShell root establishes a stacking context (isolate)", () => {
   );
 });
 
-test("CPU-compare compositor root establishes a stacking context (isolate)", () => {
-  assert.match(
+test("the compare compositor renders no pane root of its own", () => {
+  // Re-divergence guard: if the compositor ever grows its own pane markup again
+  // it would need its own `isolate` — and a second split implementation with it.
+  assert.doesNotMatch(
     compositor,
-    /className="relative isolate flex flex-col h-full"/,
-    "compositor's pane root must carry `isolate` (same rationale as ImagePaneShell)",
+    /className="relative/,
+    "compare-compositor.tsx must stay a backend adapter (no pane root markup)",
   );
 });
 

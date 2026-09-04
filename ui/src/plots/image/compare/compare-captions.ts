@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // compareCaptions — the ONE place that turns a compare pane's per-side image
-// labels (captions) into the two chips it shows, by mode. Shared by the CPU
-// `MediaComparePane` and the GPU `GpuComparePane` so both label identically:
+// labels (captions) into the two chips it shows, by mode. Shared by both image
+// backends (`CpuImagePane` and `GpuImagePane`) so both label identically:
 //   - split: the REFERENCE caption bottom-LEFT, the FOREGROUND caption
 //     bottom-RIGHT (the full-height divider passes over them as it slides);
 //   - diff:          ONE bottom-LEFT caption "<metric> · <fg> compared to <ref>"

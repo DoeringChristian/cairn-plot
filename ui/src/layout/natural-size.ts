@@ -23,9 +23,10 @@ export const ReportNaturalSizeContext = createContext<ReportNaturalSize | null>(
 /**
  * Publish a pane's natural content size on {@link ReportNaturalSizeContext} to
  * whatever framing wrapper encloses it, re-firing whenever the dims change. The
- * ONE place every image/compare pane (`ImagePaneShell`, `GpuComparePane`, the CPU
- * `MediaComparePane`) reports up from — so the publish protocol lives in a single
- * spot. `null` dims (not yet decoded) simply don't publish.
+ * ONE place every image/compare pane (`ImagePaneShell`, and through it both image
+ * backends — `CpuImagePane` and `GpuImagePane`) reports up from — so the publish
+ * protocol lives in a single spot. `null` dims (not yet decoded) simply don't
+ * publish.
  */
 export function usePublishNaturalSize(dims: { w: number; h: number } | null): void {
   const report = useContext(ReportNaturalSizeContext);

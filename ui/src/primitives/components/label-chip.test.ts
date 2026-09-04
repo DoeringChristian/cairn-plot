@@ -12,7 +12,8 @@
  * shared bottom-left `LabelChip`, `compositor.tsx`'s inline bottom-right span
  * (grip always, drag gated on a modifier), and `GpuComparePane.tsx`'s inline
  * bottom-right span (no grip). All now go through this ONE component; corner +
- * drag semantics are props.
+ * drag semantics are props. The consumers are the two image BACKENDS — the
+ * compositor is a backend adapter that renders no chrome of its own.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -55,7 +56,7 @@ test("LabelChip: both corners + draggable + accessible grip contract", () => {
 // Every compare pane must render the SHARED chip and NOT hard-code its own
 // inline label chip. The grip icon + drag-grip class are the tells of the old
 // inline copies, so their absence outside LabelChip is the re-divergence guard.
-const CONSUMERS = ["plots/image/runtime/compare-compositor.tsx", "plots/image/webgpu/view.tsx"];
+const CONSUMERS = ["plots/image/cpu/view.tsx", "plots/image/webgpu/view.tsx"];
 
 test("every compare pane routes its label through the shared LabelChip", () => {
   for (const rel of CONSUMERS) {
@@ -103,7 +104,6 @@ test("split captions use disjoint half-pane bounds in every image backend", () =
   for (const rel of [
     "plots/image/webgpu/view.tsx",
     "plots/image/cpu/view.tsx",
-    "plots/image/runtime/compare-compositor.tsx",
   ]) {
     assert.match(read(rel), /maxWidth=.*"half"/, `${rel} must half-bound opposing captions`);
   }

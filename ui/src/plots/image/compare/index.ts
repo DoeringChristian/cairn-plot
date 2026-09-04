@@ -74,18 +74,9 @@ export {
 export { CrossTypeForeignFrame } from "./CrossTypeForeignFrame";
 
 export {
-  buildProcessingFilterList,
-  useGammaFilter,
-  GammaFilterSvg,
-} from "./post-processing";
-
-export {
-  MediaComparePane,
-  type MediaComparePaneProps,
   CompositeMediaPane,
   type CompositeMediaPaneProps,
   CrossTypeCompositeMediaPane,
-  CompareFloatUnsupportedError,
 } from "../runtime/compare-compositor";
 export type { ResolvedFloatImage } from "../definition/content.ts";
 
