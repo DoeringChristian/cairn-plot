@@ -13,6 +13,7 @@ import { CPU_CAPABILITIES } from "../cpu/capabilities.ts";
 import { WEBGPU_CAPABILITIES } from "../webgpu/capabilities.ts";
 import { IMAGE_OPERATION_IDS } from "../definition/image-operations.ts";
 import { DISPLAY_OPERATION_IDS } from "../definition/display-operations.ts";
+import { CORE_DISPLAY_OPERATION_IDS, CORE_IMAGE_OPERATION_IDS } from "../definition/core.ts";
 
 const sorted = (ids: readonly string[]) => [...ids].sort();
 const capabilities = [CPU_CAPABILITIES, WEBGPU_CAPABILITIES];
@@ -68,4 +69,32 @@ test("each concrete backend exports one complete backend object", () => {
   const view = readFileSync(new URL("./view.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(view, /useImageBackend|resolveRenderMode/,
     "the image view consumes the backend selected by the generic host");
+});
+
+test("capabilities must advertise the core subset the fallbacks rely on", () => {
+  assert.throws(
+    () => defineImageBackendCapabilities({
+      imageOperations: IMAGE_OPERATION_IDS,
+      displayOperations: DISPLAY_OPERATION_IDS.filter((id) => id !== "turbo"),
+    }),
+    /core display operation turbo/,
+  );
+  assert.throws(
+    () => defineImageBackendCapabilities({
+      imageOperations: IMAGE_OPERATION_IDS.filter((id) => id !== "split"),
+      displayOperations: DISPLAY_OPERATION_IDS,
+    }),
+    /core image operation split/,
+  );
+  for (const advertised of capabilities) {
+    for (const id of CORE_IMAGE_OPERATION_IDS) assert.ok(advertised.supportsImageOperation(id), id);
+    for (const id of CORE_DISPLAY_OPERATION_IDS) assert.ok(advertised.supportsDisplayOperation(id), id);
+  }
+});
+
+test("the union of backend declarations is the catalogue (hull)", () => {
+  const union = (pick: (c: (typeof capabilities)[number]) => readonly string[]) =>
+    sorted([...new Set(capabilities.flatMap((c) => [...pick(c)]))]);
+  assert.deepEqual(union((c) => c.imageOperations), sorted(IMAGE_OPERATION_IDS));
+  assert.deepEqual(union((c) => c.displayOperations), sorted(DISPLAY_OPERATION_IDS));
 });

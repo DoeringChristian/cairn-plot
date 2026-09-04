@@ -1,11 +1,17 @@
 import { getDisplayOperation } from "./definition/display-operations.ts";
 import { getImageOperation } from "./definition/image-operations.ts";
+import { CORE_DISPLAY_OPERATION_IDS, CORE_IMAGE_OPERATION_IDS } from "./definition/core.ts";
 import type { BackendSupport, BackendTechnology, RenderEnvironment } from "../../backends/contracts.ts";
 
 /**
  * Executable semantic coverage advertised by an image backend, as PUBLIC
- * registry ids. How a backend implements an id — one kernel, three passes, a
- * reference evaluator — is opaque to everything outside that backend.
+ * catalogue ids. How a backend implements an id — one kernel, three passes, a
+ * reference evaluator — is opaque to everything outside that backend. A
+ * declaration must include the catalogue's required core (see
+ * `definition/core.ts`), so the read-time fallback projection always lands on
+ * something the backend renders. Any parameter the catalogue declares for a
+ * supported id is assumed supported too — capabilities are id lists only,
+ * never parameter-level.
  */
 export interface ImageBackendCapabilities {
   readonly imageOperations: readonly string[];
@@ -40,6 +46,12 @@ export function defineImageBackendCapabilities(options: {
   }
   for (const id of options.displayOperations) {
     if (!getDisplayOperation(id)) throw new Error(`image backend advertises unknown display operation ${id}`);
+  }
+  for (const id of CORE_IMAGE_OPERATION_IDS) {
+    if (!options.imageOperations.includes(id)) throw new Error(`image backend must advertise core image operation ${id}`);
+  }
+  for (const id of CORE_DISPLAY_OPERATION_IDS) {
+    if (!options.displayOperations.includes(id)) throw new Error(`image backend must advertise core display operation ${id}`);
   }
   const imageIds = new Set(options.imageOperations);
   const displayIds = new Set(options.displayOperations);
