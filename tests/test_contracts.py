@@ -45,10 +45,9 @@ def test_display_transfers_match_contract() -> None:
 
 
 def test_compare_kernel_public_names_match_contract() -> None:
-    # `_COMPARE_OPERATION_MODES` keys are the PUBLIC `cp.Compare(mode=)` diff names —
-    # the auto-dispatch-only `flip_hdr` (reached under `flip` on float sources) is
-    # intentionally NOT a public mode, matching the TS `listDiffKernelPublicNames()`
-    # which filters it out.
+    # `_COMPARE_OPERATION_MODES` keys are the PUBLIC `cp.Compare(mode=)` diff names.
+    # `flip_hdr` is a public mode in its own right (HDR FLIP, no mode selector
+    # under `flip`), matching the TS `listComparisonOperationPublicNames()`.
     assert set(_COMPARE_OPERATION_MODES.keys()) == set(CONTRACT["comparisonOperationPublicNames"])
 
 

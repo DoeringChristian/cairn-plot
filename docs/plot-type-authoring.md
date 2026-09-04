@@ -45,6 +45,10 @@ presentation's defaults.
 This rule is what makes stack navigation safe: all slots in one stack use the
 same settings object, while ordinary grid cells stay independent.
 
+A definition may declare `migrateSettings` to rewrite retired setting keys;
+the generic seed applies it after merging node and shared settings, so a
+store never holds a retired key.
+
 ## Comparison capability
 
 Comparison is plot-defined. A capability declares accepted operands and
@@ -96,6 +100,12 @@ and settings. CPU and WebGPU implementations reference those definitions but
 do not leak executable code upward. WebGPU selects a cached pipeline specialized
 to exactly one image operation and one display operation; operations are never
 encoded as numeric shader dispatch IDs.
+
+A backend advertises the public image and display operations it supports, by
+id; `defineImageBackendCapabilities` rejects any id that is not a registry
+entry. Kernel identifiers never leave the backend directory; the comparison
+menu is built from the active backend's capabilities with registry labels and
+order.
 
 ## Review checklist
 

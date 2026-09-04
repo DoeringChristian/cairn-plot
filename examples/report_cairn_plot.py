@@ -447,12 +447,12 @@ def build_report() -> cp.Report:
             f"`flip-evaluator`, `applyMagma=False`), **mean FLIP = {_official_ldr_mean:.4f}** — "
             "baked as a raw float scalar field and colored by OUR bit-exact magma "
             "LUT (the same 256-entry table FLIP itself ships). Second: the SAME "
-            "LDR pair diffed live using `mode=\"flip\", flip_mode=\"sdr\"`, which "
+            "LDR pair diffed live using `mode=\"flip\"`, which "
             "is the like-for-like NVIDIA LDR validation. Third/Fourth: the **same "
             "SDR image pair** normalized to floats and sent through HDR-FLIP — "
             f"official Python reference mean = {_official_hdr_on_sdr_mean:.4f} "
             f"over {_official_hdr_on_sdr_params.get('numExposures', 'auto')} exposures, beside the "
-            "live client `flip_mode=\"hdr\"` result. Fifth/Sixth: the true-HDR float "
+            "live client `mode=\"flip_hdr\"` result. Fifth/Sixth: the true-HDR float "
             f"pair, official mean HDR-FLIP = {_official_hdr_mean:.4f} over "
             f"{_official_hdr_params.get('numExposures', 'auto')} exposures, beside the live HDR kernel. "
             "All panes apply the same colorscheme to independently computed error "
@@ -468,23 +468,20 @@ def build_report() -> cp.Report:
                     cp.Image(flip_pred, label="SDR prediction"),
                     cp.Image(flip_ref, label="SDR reference"),
                     mode="flip",
-                    flip_mode="sdr",
                     colormap="magma",
                 ),
                 cp.Image(_official_hdr_on_sdr_err, label="official HDR-FLIP on SDR pair", colormap="magma"),
                 cp.Compare(
                     cp.Image(_sdr_as_hdr_pred, label="SDR-as-HDR prediction"),
                     cp.Image(_sdr_as_hdr_ref, label="SDR-as-HDR reference"),
-                    mode="flip",
-                    flip_mode="hdr",
+                    mode="flip_hdr",
                     colormap="magma",
                 ),
                 cp.Image(_official_hdr_err, label="official HDR-FLIP on HDR pair", colormap="magma"),
                 cp.Compare(
                     cp.Image(hdr_pred, label="HDR prediction"),
                     cp.Image(hdr_ref, label="HDR reference"),
-                    mode="flip",
-                    flip_mode="hdr",
+                    mode="flip_hdr",
                     colormap="magma",
                 ),
             ],

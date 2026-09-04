@@ -157,7 +157,8 @@ Images are the richest plot family and demonstrate the separation of concerns:
 - both backends share one measured viewport and one geometry object
   (`components/region-select.ts`, `use-image-viewport.ts`); the CPU backend
   paints into a device-pixel canvas, never through a CSS transform, because
-  layout snapping is magnified by zoom.
+  layout snapping is magnified by zoom;
+- backends declare public operations; kernels stay private.
 
 WebGPU is an acceleration path, not a distinct authored API. When WebGPU is
 unavailable or unsupported for a presentation, the backend registry falls back to

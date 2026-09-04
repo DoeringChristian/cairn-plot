@@ -595,8 +595,8 @@ Two resolvers share one decode seam:
   `float: ResolvedFloatImage` to the item and
   clearing its `url`. Browser-native panes (png/jpeg/…) and extension-less URLs
   pass through UNCHANGED (no extra fetch/decode), so it is a strict superset a
-  host adopts to get true-HDR panes/compare (rgba16float, HDR-FLIP
-  auto-dispatch, tonemap menu).
+  host adopts to get true-HDR panes/compare (rgba16float, `flip_hdr` compare,
+  tonemap menu).
 
 The decode itself is the shared `decodeImageSource({ url?, bytes?, mime? })` →
 `{ url, float? }` seam (also consumed by `plot-node.tsx`'s `resolveFrame`): fetch

@@ -161,7 +161,7 @@ source/content identity.
 The stack owns one shared copy of:
 
 - `image.encoding`;
-- `compare.operation` and `compare.flipMode`;
+- `compare.operation`;
 - exposure, range, reduction, and channels;
 - viewport and information-panel state.
 
@@ -271,9 +271,10 @@ luminance for arbitrary scientific channels.
 
 ### FLIP variants
 
-The public operation remains `flip`; SDR/HDR selects the concrete evaluator.
-Both recommend Magma and share one encoding. Changing only `compare.flipMode`
-does not rewrite `image.encoding`.
+`flip` (SDR) and `flip_hdr` (HDR) are two public operations; there is no mode
+selector within FLIP. Both recommend Magma and share one encoding. Changing
+`compare.operation` between `flip` and `flip-hdr` does not rewrite
+`image.encoding`.
 
 ### SSIM
 
