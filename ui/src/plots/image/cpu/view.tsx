@@ -183,6 +183,12 @@ function CpuPresentation({
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !viewport) return;
+    // HOLD THE PREVIOUS FRAME: with no source there is nothing to repaint, and
+    // assigning `width`/`height` CLEARS a canvas — so the resize is skipped
+    // too. A box change while a new source loads leaves the held frame up
+    // (CSS-scaled by `w-full h-full` for the moment); the backing store is
+    // re-sized by the very next run, which has a source to paint with it.
+    if (!content.source) return;
     const { backing } = viewport;
     const applied = appliedRef.current;
     if (!applied || applied.width !== backing.width || applied.height !== backing.height) {
@@ -190,7 +196,6 @@ function CpuPresentation({
       canvas.height = backing.height;
       appliedRef.current = { width: backing.width, height: backing.height };
     }
-    if (!content.source) return; // hold the previous frame
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     if (foregroundSource && split != null) {

@@ -29,10 +29,12 @@
  * ## Caching and identity
  * Each pipeline names its output with a KEY built from the content identity plus
  * the scalar display parameters it consumes — the same tuple its effect depends
- * on. Bitmaps are memoized per key in a module-level LRU (closed on eviction);
- * the intermediate `ImageData` rides the existing `resources/cache.ts` LRU, so a
- * mode/colormap toggle still hits it. A key already resident commits
- * SYNCHRONOUSLY inside the effect, so a cached flip never shows a placeholder.
+ * on. Bitmaps are memoized per key in `bitmap-cache.ts` — an LRU that never
+ * destroys an evicted value and never displaces a resident one, because a
+ * mounted pane keeps re-blitting the bitmap it committed; the intermediate
+ * `ImageData` rides the existing `resources/cache.ts` LRU, so a mode/colormap
+ * toggle still hits it. A key already resident commits SYNCHRONOUSLY inside the
+ * effect, so a cached flip never shows a placeholder.
  *
  * ## Holding the previous frame
  * `source` is only ever REPLACED, never cleared, while a new pipeline runs:
@@ -41,7 +43,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Colormap, DiffMode, ImageProcessing } from "../../types";
-import { createLruMap } from "../resources/lru-map.ts";
+import { createBitmapCache } from "./bitmap-cache.ts";
 import { getCachedImageData, setCachedImageData } from "../resources/cache.ts";
 import { loadImageData } from "../resources/load-image-data.ts";
 import { imageDataToSceneField } from "../resources/scene-field.ts";
@@ -107,15 +109,12 @@ const DEFAULT_PROCESSING: ImageProcessing = {
 };
 
 // ---------------------------------------------------------------------------
-// The bitmap LRU. One entry per content key; an evicted `ImageBitmap` is closed
-// (an offscreen canvas used as a bitmap — the WebGL diff path — is plain GC).
+// The bitmap store. One entry per content key. See `bitmap-cache.ts` for why it
+// never destroys an evicted value and never displaces a resident one: a mounted
+// pane holds the bitmap it committed and re-blits it on every viewport change.
 // ---------------------------------------------------------------------------
 const BITMAP_CACHE_MAX = 50;
-const bitmapCache = createLruMap<PaintSource>(BITMAP_CACHE_MAX, {
-  onEvict: (_key, value) => {
-    if (typeof ImageBitmap !== "undefined" && value.bitmap instanceof ImageBitmap) value.bitmap.close();
-  },
-});
+const bitmapCache = createBitmapCache<PaintSource>(BITMAP_CACHE_MAX);
 
 /** A stable string id per object identity — the float HDR buffer has no content
  *  key of its own, and its identity IS its cache identity (the pane's `hdr` is
@@ -174,8 +173,10 @@ async function bitmapFromUrl(url: string): Promise<PaintSource | null> {
 }
 
 /**
- * The one production path: the bitmap LRU, then the shared `ImageData` LRU, then
- * `produce()`. Never calls `getImageData` on a produced bitmap.
+ * The one production path: the bitmap store, then the shared `ImageData` LRU,
+ * then `produce()`. Never calls `getImageData` on a produced bitmap, and never
+ * displaces a resident entry (`claim`) — a cancelled or duplicate run converges
+ * on whatever a mounted pane is already painting instead of replacing it.
  */
 async function bitmapFor(key: string, produce: () => Promise<ImageData | null>): Promise<PaintSource | null> {
   const resident = bitmapCache.get(key);
@@ -187,12 +188,9 @@ async function bitmapFor(key: string, produce: () => Promise<ImageData | null>):
     data = produced;
     setCachedImageData(key, data);
   }
-  // A concurrent run may have won the race while this one awaited.
-  const raced = bitmapCache.get(key);
-  if (raced) return raced;
-  const source = await toPaintSource(data);
-  bitmapCache.set(key, source);
-  return source;
+  // `claim` returns the incumbent if a concurrent run won the race while this
+  // one awaited, so every caller converges on the ONE entry panes are painting.
+  return bitmapCache.claim(key, await toPaintSource(data));
 }
 
 interface Frame {
@@ -232,7 +230,13 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
   const frameRef = useRef<Frame | null>(null);
 
   const commit = useCallback((key: string, source: PaintSource) => {
-    setLoading((prev) => (prev && prev.key === key ? null : prev));
+    // Unconditionally: only the pipeline the current render selected can reach
+    // here (every other run is cancelled by its effect cleanup), so ANY commit
+    // means the pane is showing what it should. Keying this to the loading
+    // entry's own key stranded the placeholder whenever the pane switched to a
+    // pipeline whose result was already resident (that path commits a DIFFERENT
+    // key), leaving "computing diff..." pulsing forever over a correct frame.
+    setLoading(null);
     const current = frameRef.current;
     if (current && current.key === key && current.source === source) return;
     frameRef.current = { key, source };
@@ -324,9 +328,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
       // path — no readback, so a cross-origin image still displays).
       if (!useTransfer && isIdentityProcessing(processingRef.current)) {
         const direct = await bitmapFromUrl(imageUrl);
-        if (!direct) return null;
-        bitmapCache.set(key, direct);
-        return direct;
+        return direct && bitmapCache.claim(key, direct);
       }
       return bitmapFor(key, async () => {
         const src = await loadImageData(imageUrl);
@@ -366,9 +368,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
             canvas,
           );
           if (dims) {
-            const source: PaintSource = { bitmap: canvas, width: dims.width, height: dims.height };
-            bitmapCache.set(key, source);
-            return source;
+            return bitmapCache.claim(key, { bitmap: canvas, width: dims.width, height: dims.height });
           }
         } catch (err) {
           console.warn("cairn-plot: WebGL 2 diff acceleration failed; using CPU", err);

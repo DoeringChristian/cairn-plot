@@ -206,17 +206,35 @@ async function run(): Promise<boolean> {
   report(pointwiseDiff && isMagentaDifference, `unified CPU compare renders the actual pointwise diff (${diffPixel ? [...diffPixel] : "no pixel"})`);
   ok = ok && pointwiseDiff && isMagentaDifference;
 
-  // View-only changes must remain compositor-only. A fresh diff-source shape on
-  // every render used to invalidate the HDR wrapper and tone-map the complete
+  // View-only changes must remain presentation-only. A fresh diff-source shape
+  // on every render used to invalidate the HDR wrapper and tone-map the complete
   // native-resolution error field once per wheel/pointer event.
-  let diffRepaints = 0;
-  const diffContext = diffCanvas?.getContext("2d");
-  const originalPutImageData = diffContext?.putImageData.bind(diffContext);
-  if (diffCanvas && diffContext && originalPutImageData) {
-    diffContext.putImageData = ((...args: Parameters<CanvasRenderingContext2D["putImageData"]>) => {
-      diffRepaints++;
-      return originalPutImageData(...args);
-    }) as CanvasRenderingContext2D["putImageData"];
+  //
+  // The pane paints its presentation canvas with `drawImage` now, so watching
+  // THAT canvas's `putImageData` would be vacuous. Watch the two calls the
+  // CONTENT stage cannot avoid instead, GLOBALLY (they also fire on the
+  // offscreen canvases the pipelines use): every native `ImageData` write goes
+  // through `CanvasRenderingContext2D.prototype.putImageData`, and every new
+  // paint source goes through `createImageBitmap`. Zero of each across the
+  // gesture means no pixel pass re-ran.
+  let contentWrites = 0;
+  const proto = CanvasRenderingContext2D.prototype;
+  const originalPutImageData = proto.putImageData;
+  const originalCreateImageBitmap = window.createImageBitmap;
+  if (diffCanvas) {
+    proto.putImageData = function patched(
+      this: CanvasRenderingContext2D,
+      ...args: Parameters<CanvasRenderingContext2D["putImageData"]>
+    ) {
+      contentWrites++;
+      return originalPutImageData.apply(this, args);
+    } as CanvasRenderingContext2D["putImageData"];
+    window.createImageBitmap = function patched(
+      ...args: Parameters<typeof createImageBitmap>
+    ) {
+      contentWrites++;
+      return originalCreateImageBitmap.apply(window, args);
+    } as typeof createImageBitmap;
     const rect = diffCanvas.getBoundingClientRect();
     for (let i = 0; i < 8; i++) {
       diffCanvas.dispatchEvent(new WheelEvent("wheel", {
@@ -229,10 +247,46 @@ async function run(): Promise<boolean> {
       }));
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    diffContext.putImageData = originalPutImageData;
+    proto.putImageData = originalPutImageData;
+    window.createImageBitmap = originalCreateImageBitmap;
   }
-  report(diffRepaints === 0, `CPU diff pan/zoom does not rerun native-resolution tone mapping (${diffRepaints} repaint(s))`);
-  ok = ok && diffRepaints === 0;
+  // Guard against the assertion going vacuous: BOTH spies must actually observe
+  // the calls a content pass would make (an offscreen `putImageData`, a
+  // `createImageBitmap`). Without this a broken patch would read as "0 passes".
+  let probePuts = 0;
+  let probeBitmaps = 0;
+  {
+    const put = proto.putImageData;
+    const make = window.createImageBitmap;
+    proto.putImageData = function patched(
+      this: CanvasRenderingContext2D,
+      ...args: Parameters<CanvasRenderingContext2D["putImageData"]>
+    ) {
+      probePuts++;
+      return put.apply(this, args);
+    } as CanvasRenderingContext2D["putImageData"];
+    window.createImageBitmap = function patched(...args: Parameters<typeof createImageBitmap>) {
+      probeBitmaps++;
+      return make.apply(window, args);
+    } as typeof createImageBitmap;
+    try {
+      const probeCanvas = document.createElement("canvas");
+      probeCanvas.width = 1;
+      probeCanvas.height = 1;
+      probeCanvas.getContext("2d")!.putImageData(new ImageData(1, 1), 0, 0);
+      await window.createImageBitmap(new ImageData(1, 1));
+    } finally {
+      proto.putImageData = put;
+      window.createImageBitmap = make;
+    }
+  }
+  const spiesWork = probePuts === 1 && probeBitmaps === 1;
+  report(spiesWork, `content-pass spies observe both calls (${probePuts} putImageData, ${probeBitmaps} createImageBitmap)`);
+  report(
+    contentWrites === 0,
+    `CPU diff pan/zoom does not rerun native-resolution tone mapping (${contentWrites} content pass(es))`,
+  );
+  ok = ok && spiesWork && contentWrites === 0;
 
   roots.forEach((r) => r.unmount());
   return ok;
