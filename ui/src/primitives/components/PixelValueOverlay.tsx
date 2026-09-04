@@ -428,6 +428,9 @@ export default function PixelValueOverlay({
       ref={canvasRef}
       data-pixel-value-overlay=""
       className="absolute inset-0 w-full h-full pointer-events-none z-10"
+      // Structural, not cosmetic: the viewport element measures itself, so this
+      // canvas must stay OUT of flow even on a page with no Tailwind.
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
       aria-hidden
     />
   );

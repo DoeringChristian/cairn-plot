@@ -2234,6 +2234,15 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
           <canvas
             ref={canvasRef}
             className="absolute inset-0 w-full h-full block"
+            // Structural, not cosmetic: the viewport element measures itself, so
+            // this canvas must stay OUT of flow even on a page with no Tailwind.
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              display: "block",
+            }}
             data-gpu-image-canvas
             data-gpu-compare-canvas={compositorMode ? "" : undefined}
           />

@@ -192,7 +192,14 @@ export default function ImageOverlay({
       data-image-overlay=""
       className="absolute inset-0 pointer-events-none overflow-hidden"
     >
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" aria-hidden />
+      {/* Structural, not cosmetic: the viewport element measures itself, so this
+          canvas must stay OUT of flow even on a page with no Tailwind. */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
+        aria-hidden
+      />
       {settings.showBoxes &&
         boxes.map((box, i) => {
           if (!boxVisible(box, settings, hidden)) return null;

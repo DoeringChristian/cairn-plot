@@ -646,15 +646,62 @@ export default function ImagePaneShell({
     // (`overflow-hidden` on the inner viewport) does NOT fix this — the clipped
     // box itself slides under the header, so the fix must be stacking, not
     // clipping. The library stays well-behaved regardless of the host's CSS.
-    <div className={`relative isolate flex flex-col h-full${toolbar ? " group" : ""}`} {...paneAttrs}>
+    <div
+      className={`relative isolate flex flex-col h-full${toolbar ? " group" : ""}`}
+      style={{
+        // Structural, not cosmetic: `h-full` is what carries the HOST's height
+        // down to the measured viewport element. Left to the class alone, a page
+        // without the utility stylesheet (the browser harnesses) content-sizes
+        // this box, and the viewport below it ends up deriving its height from
+        // its own children. `display`/`flex-direction` are deliberately NOT set
+        // here: the chips this root overlays (LabelChip, RefBadge, the compare
+        // metrics) are positioned by class, so forcing a flex column inline
+        // would turn them into flow items and move them. Height is all the
+        // measurement needs.
+        position: "relative",
+        isolation: "isolate",
+        height: "100%",
+        minHeight: 0,
+      }}
+      {...paneAttrs}
+    >
       {toolbar && <PlotToolbar controller={controller} config={toolbarConfig} />}
       {/* The 4 px inset lives OUT HERE (spec §3.3), so the viewport element the
           hook measures is exactly the box the pane paints into. */}
-      <div className="relative flex-1 min-h-0 min-w-0 p-1">
+      <div
+        className="relative flex-1 min-h-0 min-w-0 p-1"
+        // `height: 100%` is inert in production: this is a `flex-1` child of a
+        // flex COLUMN, and a definite `flex-basis` (0%) replaces the main-size
+        // property. Without the stylesheet the parent is a plain block and the
+        // `height` is what keeps this box — and therefore the viewport inside
+        // it — sized by the host rather than by its own content.
+        style={{
+          position: "relative",
+          flex: "1 1 0%",
+          height: "100%",
+          minHeight: 0,
+          minWidth: 0,
+        }}
+      >
+        {/* INVARIANT: the measured element must never derive its size from its
+            children — its box comes from the host container alone. The inline
+            styles below (and the matching `position:absolute; inset:0` on every
+            canvas inside it) keep that true WITHOUT the stylesheet, so a page
+            that ships no Tailwind (the browser harnesses) cannot turn the
+            children back into flow content and feed the measurement into
+            itself. Do NOT swap this for `contain: layout size`: `contain: size`
+            would collapse this flex child to zero. */}
         <div
           ref={viewportRef}
           className="relative w-full h-full overflow-hidden rounded cairn-checkerboard"
-          style={viewportProps.style}
+          style={{
+            position: "relative",
+            width: "100%",
+            height: "100%",
+            overflow: "hidden",
+            // Spread LAST: the gesture hook's `cursor`/`touchAction` win.
+            ...viewportProps.style,
+          }}
           data-cairn-view-zoom={zoom}
           data-cairn-view-pan={`${pan.x},${pan.y}`}
           onPointerDown={viewportProps.onPointerDown}
@@ -730,7 +777,18 @@ export default function ImagePaneShell({
           is moved into the overlay below while enlarged. Rendered EMPTY by React
           (the child is imperatively appended) so React never fights the
           reparent. */}
-      <div ref={inlineMountRef} className="relative flex flex-col h-full min-h-0 min-w-0" />
+      <div
+        ref={inlineMountRef}
+        className="relative flex flex-col h-full min-h-0 min-w-0"
+        style={{
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+          minWidth: 0,
+        }}
+      />
 
       {/* Fullscreen ENLARGE overlay — the SHARED body-portaled chrome (backdrop,
           ✕, Escape, backdrop-click, scroll-lock, themed portal). The pane's own
