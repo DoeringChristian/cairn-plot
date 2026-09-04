@@ -185,11 +185,12 @@ export interface CompareModeOption<M extends string = string> {
  * operations a host settings panel wants to enumerate alongside the core+native
  * modes (so the panel can offer the FULL diff-operation set, GPU-gated).
  *
- * The operation list is passed IN by the caller (from the gpu-image addon's
- * `listComparisonOperationOptions()`, or the `window.__cairnPlotComparisonOperationOptions` list
- * `plot-node` reads) — this module NEVER imports `engine/operations`, exactly
- * mirroring how `compare-mode-menu.ts` stays engine-free, so it remains safe
- * for the core bundle.
+ * The operation list is passed IN by the caller — ultimately the image host
+ * adapter's `comparisonMenuOptions()` (`runtime/comparison-menu.ts`), which
+ * derives it from the registry filtered by the active backend's capabilities.
+ * This module NEVER imports the operation registry itself, exactly mirroring
+ * how `compare-mode-menu.ts` stays registry-free, so it remains safe for the
+ * core bundle.
  */
 export interface CompareModeExtras {
   /** Engine diff-operation entries appended after the core+native modes. Empty /

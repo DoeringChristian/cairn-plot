@@ -14,6 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -25,7 +26,9 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 test("kernel identifiers stay private to the WebGPU backend", () => {
-  const root = new URL("../", import.meta.url).pathname; // ui/src/plots/image
+  // `fileURLToPath`, not `.pathname` — the latter stays percent-encoded and
+  // breaks on a checkout path containing spaces.
+  const root = fileURLToPath(new URL("../", import.meta.url)); // ui/src/plots/image
   for (const file of walk(root)) {
     if (file.includes("/webgpu/")) continue;
     const src = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");

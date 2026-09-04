@@ -15,7 +15,7 @@ import type { ImageComparisonInput } from "./contracts.ts";
 import { channelToolbarButton, type ChannelSelection } from "../components/channel-menu.ts";
 import { ImageHostRuntimeContext } from "./host-context.ts";
 import { comparisonOperationSettingsPatch } from "./operation-display-defaults.ts";
-import { listImageOperations } from "../definition/image-operations.ts";
+import { comparisonMenuOptions } from "./comparison-menu.ts";
 
 /** Thin image adapter: framing and projection into the host-selected backend. */
 export interface ImagePlotViewProps extends ReactPlotViewProps<ImagePresentation, ImageSettings> {
@@ -53,10 +53,7 @@ export function ImagePlotView({
   const comparison: ImageComparisonInput | undefined = p.comparison
     ? {
         b: p.comparison.foreground,
-        operationOptions: listImageOperations()
-          .filter((operation) => operation.inputs === 2 && operation.id !== "split")
-          .filter((operation) => activeBackend.capabilities.supportsImageOperation(operation.id))
-          .map((operation) => ({ id: operation.id, label: operation.label })),
+        operationOptions: comparisonMenuOptions(activeBackend.capabilities),
         operationId: selectedComparisonOperation === "split"
           ? p.comparison.defaultOperation
           : selectedComparisonOperation!,

@@ -6,14 +6,16 @@
  * same option list and the same onSelect
  * switch; this is that logic written once.
  *
- * Deliberately engine-FREE — the caller passes `kernelOptions` (from
- * `listComparisonOperationOptions()` in the addon, or the window-published list `plot-node`
- * reads to keep `engine/operations` out of `core.iife.js`), so this module never
- * imports the operation registry and stays safe for the core bundle.
+ * Deliberately registry-FREE — the caller passes `kernelOptions` in. Both hosts
+ * get that list from the SAME place: the image host adapter
+ * (`runtime/view.tsx`) builds it once via `comparisonMenuOptions()` — registry
+ * order and labels, filtered by the active backend's capabilities — and hands
+ * it down as `ImageComparisonInput.operationOptions`. Because this module never
+ * imports the operation registry it stays safe for `core.iife.js`.
  */
 import type { ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig";
 
-/** A `{id,label}` diff-operation entry (the shape of `listComparisonOperationOptions()`). */
+/** A `{id,label}` diff-operation entry (the shape `comparisonMenuOptions()` emits). */
 export interface CompareModeMenuOption {
   id: string;
   label: string;

@@ -29,9 +29,9 @@ test("both backends advertise the identical, registry-complete capability sets",
   ] as const) {
     const source = readFileSync(new URL(path, import.meta.url), "utf8");
     assert.match(source, new RegExp(`capabilities: ${declaration}`), path);
-    // …and that the object it names is the one asserted above, not a local
-    // re-declaration that happens to share the identifier.
-    assert.match(source, /from "\.\/capabilities\.ts"/, path);
+    // …and that the identifier it names is IMPORTED from the module this test
+    // asserts on, so a local re-declaration sharing the name cannot pass.
+    assert.match(source, new RegExp(`import \\{ ${declaration} \\} from "\\./capabilities\\.ts"`), path);
   }
 });
 
