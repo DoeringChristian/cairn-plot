@@ -47,6 +47,17 @@ machinery such as the shared WebGPU device/RHI or Three resource primitives.
 Layout never interprets image, chart, table, or 3D semantics. See
 [Authoring plot types](plot-type-authoring.md).
 
+The image catalogue (`plots/image/definition/`) is the hull of display and
+comparison operations the authoring side validates against. A backend
+advertises catalogue ids only (`ImageBackendCapabilities`), must include the
+core (`identity`, `split`, `srgb`, `turbo`) and is assumed to support every
+parameter the catalogue declares for an id it advertises. Toolbars are the
+catalogue intersected with the active backend. Authored settings are the
+default state and HOME restores them; when the active backend lacks a
+selected id, the view projects it at read time onto the core fallback
+(`definition/core.ts`) and shows a fallback chip. The store is never
+rewritten by a projection.
+
 ## Browser host
 
 The supported browser API is `ui/src/public`:

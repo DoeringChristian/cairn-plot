@@ -16,6 +16,7 @@ import type {
 import type { ImageViewState } from "../../../host/hooks/use-image-gestures";
 import type { PixelValueNotation } from "../../../primitives/components/PixelValueOverlay";
 import type { FloatPixels } from "../runtime/pixel-buffer.ts";
+import type { CapabilityFallback } from "../definition/core.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import type {
   FloatImageSource,
@@ -258,6 +259,10 @@ export interface ImageComparisonInput {
    *  composite of the two operands by divider). Selecting a mode is an OP switch
    *  on the reused pane — the display + chrome change, no remount. */
   mode?: "diff" | "split";
+  /** Set when {@link operationId}/{@link mode} were PROJECTED because the active
+   *  backend lacks the selected operation (read-time; the store still holds the
+   *  selection). The pane shows it as a chip. */
+  fallback?: CapabilityFallback | null;
   /** Split-divider position `[0,1]` (`operationId:"split"`) — the reference is shown
    *  where the fragment `uv.x < splitPosition`. Controlled: the pane's divider /
    *  `[`·`]` keys report up via {@link onSplitPositionChange}; the owner lifts it

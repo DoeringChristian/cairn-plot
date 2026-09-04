@@ -69,6 +69,7 @@ import { imageDataToSceneField } from "../resources/scene-field.ts";
 import { getImageOperation } from "../definition/image-operations.ts";
 import { getWebGpuMultipassOperation } from "./image-operations.ts";
 import type { ReduceMode } from "../definition/display-operations.ts";
+import type { CapabilityFallback } from "../definition/core.ts";
 import { DEFAULT_COMPARISON_DISPLAY_OPERATION_ID } from "../runtime/display-settings.ts";
 import { getWebGpuDisplayOperation } from "./display.ts";
 import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
@@ -2477,6 +2478,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       label={hasCompare ? "" : label}
       showLabelChip={!hasCompare && !!label}
       extraChips={compareChips}
+      fallbacks={[enc.fallback, compareSource?.fallback ?? null].filter((f): f is CapabilityFallback => f !== null)}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
     />

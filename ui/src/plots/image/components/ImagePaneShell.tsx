@@ -83,6 +83,8 @@ import {
 } from "./region-select";
 import type { ImageViewport } from "./image-viewport.ts";
 import ImageOverlay from "./ImageOverlay";
+import FallbackChip from "./FallbackChip";
+import type { CapabilityFallback } from "../definition/core";
 import type { ImageOverlayData, ImageOverlaySettings } from "../../types";
 import ImageInfoPanel, {
   INFO_PANEL_W,
@@ -301,6 +303,8 @@ export interface ImagePaneShellProps {
   onDragStart?: (e: React.DragEvent) => void;
   /** Compare's REF / metrics / custom-label chips (rendered on the root). */
   extraChips?: ReactNode;
+  /** Read-time substitutions the pane made for ids the active backend lacks. */
+  fallbacks?: readonly CapabilityFallback[];
 }
 
 export default function ImagePaneShell({
@@ -337,6 +341,7 @@ export default function ImagePaneShell({
   isDraggable = false,
   onDragStart,
   extraChips,
+  fallbacks,
 }: ImagePaneShellProps) {
   // Report the source (natural) pixel dims UP to any enclosing framing wrapper
   // (the default `ContentAspectFrame` / the selection stage), so the pane's BOX
@@ -771,6 +776,9 @@ export default function ImagePaneShell({
         <LabelChip label={label} isDraggable={isDraggable} onDragStart={onDragStart} />
       )}
       {extraChips}
+      {fallbacks?.map((fallback, i) => (
+        <FallbackChip key={`${fallback.kind}:${fallback.requested}`} fallback={fallback} index={i} />
+      ))}
     </div>
   );
 

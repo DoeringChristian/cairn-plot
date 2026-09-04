@@ -17,6 +17,7 @@ import { ImageHostRuntimeContext } from "./host-context.ts";
 import { comparisonOperationSettingsPatch } from "./operation-display-defaults.ts";
 import { comparisonMenuOptions } from "./comparison-menu.ts";
 import { migrateCompareSettings } from "../definition/settings.ts";
+import { projectComparisonOperation } from "../definition/core.ts";
 
 /** Thin image adapter: framing and projection into the host-selected backend. */
 export interface ImagePlotViewProps extends ReactPlotViewProps<ImagePresentation, ImageSettings> {
@@ -55,14 +56,18 @@ export function ImagePlotView({
     ? settings["compare.operation"] ??
       (p.comparison.presentation === "split" ? "split" : p.comparison.defaultOperation)
     : undefined;
+  const comparisonProjection = selectedComparisonOperation !== undefined
+    ? projectComparisonOperation(selectedComparisonOperation, activeBackend.capabilities)
+    : undefined;
+  const effectiveComparisonOperation = comparisonProjection?.effective;
   const comparison: ImageComparisonInput | undefined = p.comparison
     ? {
         b: p.comparison.foreground,
         operationOptions: comparisonMenuOptions(activeBackend.capabilities),
-        operationId: selectedComparisonOperation === "split"
+        operationId: effectiveComparisonOperation === "split"
           ? p.comparison.defaultOperation
-          : selectedComparisonOperation!,
-        mode: selectedComparisonOperation === "split" ? "split" : "diff",
+          : effectiveComparisonOperation!,
+        mode: effectiveComparisonOperation === "split" ? "split" : "diff",
         splitPosition: settings["compare.split"] ?? p.comparison.defaultSplit,
         align: p.comparison.align,
         fit: p.comparison.fit,
@@ -87,6 +92,7 @@ export function ImagePlotView({
           selectedComparisonOperation !==
             (p.comparison.presentation === "split" ? "split" : p.comparison.defaultOperation) ||
           (settings["compare.split"] ?? p.comparison.defaultSplit) !== p.comparison.defaultSplit,
+        fallback: comparisonProjection?.fallback ?? null,
       }
     : undefined;
   const channelSelection = settings["image.channelSelect"] as ChannelSelection | null | undefined;

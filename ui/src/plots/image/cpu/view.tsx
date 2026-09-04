@@ -91,6 +91,7 @@ import type { PlotSettings } from "../../../settings/schema.ts";
 import { displayToolbarButton, reduceSegment, usePaneEncoding } from "../components/display-operation";
 import { CPU_CAPABILITIES } from "./capabilities.ts";
 import type { ReduceMode } from "../definition/display-operations.ts";
+import type { CapabilityFallback } from "../definition/core.ts";
 import { defaultReduceMode } from "../runtime/display-settings.ts";
 import { computeCpuSourceMetrics, CPU_METRIC_OPERATION_IDS, type CpuSourceMetrics } from "./source-metrics.ts";
 import { useDeepFlatten } from "../components/use-deep-flatten";
@@ -148,6 +149,8 @@ interface CpuPaneSyncProps {
   cpuComparisonOperation?: string;
   isCompareMode?: boolean;
   compareSplit?: CompareSplit;
+  /** Read-time comparison-operation fallback, threaded down for the shell's chip. */
+  compareFallback?: CapabilityFallback | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -681,6 +684,7 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
       // instead of a bottom-left "REF" label chip.
       showLabelChip={!props.isCompareMode && !!label}
       extraChips={props.compareChrome}
+      fallbacks={[enc.fallback, props.compareFallback ?? null].filter((f): f is CapabilityFallback => f !== null)}
       isDraggable={isDraggable}
       onDragStart={onDragStart}
     />
@@ -1079,6 +1083,7 @@ function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
       label={props.isCompareMode ? "" : label}
       showLabelChip={!props.isCompareMode && !!label}
       extraChips={props.compareChrome}
+      fallbacks={[enc.fallback, props.compareFallback ?? null].filter((f): f is CapabilityFallback => f !== null)}
     />
   );
 }
@@ -1272,6 +1277,7 @@ export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Eleme
       ? compare.operationId
       : undefined,
     isCompareMode: isCompare,
+    compareFallback: compare?.fallback ?? null,
     compareSplit: isSplit && compare
       ? {
           b: compare.b,

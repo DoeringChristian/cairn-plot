@@ -1,7 +1,8 @@
 # Comparison operations as backend capabilities
 
 Status: v1 DRAFT (2026-09-04). Follows the viewport work on branch
-`cpu-viewport-canvas`; implemented on a branch off it.
+`cpu-viewport-canvas`; implemented on a branch off it. Follow-up:
+`2026-09-04-capability-fallbacks-design.md`.
 Owner: cairn-plot. Consumer: cairn (submodule `vendor/cairn-plot`).
 
 ## 1. Problem
