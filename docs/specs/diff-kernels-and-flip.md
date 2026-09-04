@@ -1,5 +1,12 @@
 # Diff kernels: registry, cached result textures, FLIP, toolbar selection
 
+> **2026-09-04 update — superseded in part.** SDR FLIP (`flip`) and HDR FLIP
+> (`flip_hdr`) are now two public comparison operations and there is no
+> `compare.flipMode` setting or auto-dispatch; backends advertise public
+> operation ids only. See
+> `docs/superpowers/specs/2026-09-04-comparison-capabilities-design.md`. The
+> kernel descriptions below remain accurate.
+
 Status: user-approved direction (2026-07-20). Supersedes the ubershader diff dispatch.
 User requirements: (1) ALL diff methods render into a texture, cached; display blits it;
 recompute only when method/params/sources change. (2) Implement the FLIP metric; show it

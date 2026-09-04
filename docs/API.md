@@ -503,7 +503,7 @@ from its prop on change, so the prop is the controlled value:
 | Base exposure (EV) | `exposure` | read straight from props | render EV = `exposure` + toolbar slider (additive; HOME zeroes only the slider) |
 | Base offset | `offset` | read straight from props | render offset = `offset` + toolbar slider (additive) |
 | Compare mode | `mode` / view-mode | re-seeds + `onCompareModeChange` | split · diff |
-| Diff kernel | `diffSubmode` / `diffKernel` | re-seeds + `onDiffKernelChange` | the pointwise ids + `flip`/`ssim` |
+| Diff kernel | `diffSubmode` / `diffKernel` | re-seeds + `onDiffKernelChange` | the pointwise ids + `flip`/`flip-hdr`/`ssim` |
 | Split position | `splitPosition` | controlled + `onSplitPositionChange` | split mode |
 | Interpolation / notation | interpolation / pixelValueNotation | read straight from props | — |
 
