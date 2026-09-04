@@ -352,7 +352,9 @@ The interchangeable CPU and WebGPU image backends consume the same semantic
 image presentation and the same cell-owned settings. Backend selection changes
 implementation only; it cannot initialize or mutate settings. Both backends
 receive the standard `{ presentation, settings, commands }` input and are picked
-by the image runtime's capability policy.
+by the image runtime's capability policy. Viewport geometry (`viewToQuad`,
+`viewToUvRect`) lives in `ui/src/plots/image/components/region-select.ts` and is
+consumed by both backends.
 
 - `interface ImageSource` — one backend-neutral decoded source tagged as
   `float` or `uint8`.

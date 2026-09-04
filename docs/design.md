@@ -153,7 +153,11 @@ Images are the richest plot family and demonstrate the separation of concerns:
   and URL/runtime sources into canonical buffers;
 - CPU and WebGPU backends consume the same presentation/settings contracts;
 - compare, histogram, channel-selection, overlay, and pixel-readout components
-  are shared around those backends.
+  are shared around those backends;
+- both backends share one measured viewport and one geometry object
+  (`components/region-select.ts`, `use-image-viewport.ts`); the CPU backend
+  paints into a device-pixel canvas, never through a CSS transform, because
+  layout snapping is magnified by zoom.
 
 WebGPU is an acceleration path, not a distinct authored API. When WebGPU is
 unavailable or unsupported for a presentation, the backend registry falls back to

@@ -86,6 +86,7 @@ plots/image/
   definition/  fields, settings, operation manifests, comparison capability
   runtime/     host adapter and settings/presentation projection
   resources/   decode, resolution, and cache helpers
+  components/  shared pane shell, viewport geometry and overlays used by both backends
   cpu/         CPU and Canvas implementations of image/display operations
   webgpu/      WebGPU implementations, shaders, pipelines, and retained surfaces
 ```
