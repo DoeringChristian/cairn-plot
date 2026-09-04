@@ -184,15 +184,21 @@ async function run(): Promise<boolean> {
   report(!hasUnavailablePlaceholder("m2"), "FLOAT split → NO full placeholder");
   ok = ok && s2 && !notice("m2") && !hasUnavailablePlaceholder("m2");
 
-  // --- 3. UINT8 SSIM diff → a real CPU comparison ---------------------------
-  const m3metrics = await waitFor(
-    () => !!document.getElementById("m3")!.querySelector("[data-cpu-compare-metrics]"),
-    4000,
-    20,
-  );
-  report(m3metrics, "UINT8 SSIM diff → the CPU comparison runs (metrics chip present)");
+  // --- 3. UINT8 SSIM diff → a real CPU error field ---------------------------
+  // `[data-cpu-comparison-result]` is the load-bearing probe: `cpu/view.tsx`
+  // only sets it once the operation is a known pointwise kernel OR the metrics
+  // pass produced an actual `errorMap` — so for SSIM it proves the error FIELD
+  // rendered. The metrics chip alone would not: it appears whenever the metrics
+  // pass resolves, error map or not.
+  const d3 = await waitFor(() => {
+    const result = document.getElementById("m3")!.querySelector('[data-cpu-comparison-result="ssim"]');
+    return !!result && !!result.querySelector("canvas[data-cpu-image-canvas]");
+  }, 4000, 20);
+  const m3metrics = !!document.getElementById("m3")!.querySelector("[data-cpu-compare-metrics]");
+  report(d3, "UINT8 SSIM diff → the CPU SSIM error field renders into the viewport canvas");
+  report(m3metrics, "UINT8 SSIM diff → the CPU comparison metrics chip is present");
   report(!notice("m3"), "UINT8 SSIM diff → NO 'this diff needs WebGPU' notice");
-  ok = ok && m3metrics && !notice("m3");
+  ok = ok && d3 && m3metrics && !notice("m3");
 
   // --- 4. UINT8 basic diff → CPU pixel diff, NO notice -----------------------
   const cpuPane = await waitFor(() => !!document.getElementById("m4")!.querySelector("[data-cpu-image-pane]"), 4000, 20);

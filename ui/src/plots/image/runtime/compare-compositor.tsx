@@ -306,7 +306,14 @@ export function CompositeMediaPane({
   // `compareSource.b` = slot `b` = FOREGROUND (`imageUrl`/`imageFloat`), so
   // `diff = a − b` and split shows the reference left of the divider. The
   // metrics chip / per-side captions / divider gesture ride the pane's chrome,
-  // so the compositor passes an empty `label`.
+  // so the compositor passes an empty `label` — the pane suppresses its own
+  // label chip in compare mode and captions from `compareSource` instead.
+  //
+  // That makes the legacy single `label` the FOREGROUND caption's fallback (the
+  // semantics the deleted `MediaComparePane` had, `caps.right ?? label`): a
+  // caller that names only the primary side — `OffscreenComparePanes` passes
+  // `label={primaryLabel}` and no per-side captions — would otherwise render a
+  // compare pane with NO caption at all. Applied here, so both backends inherit it.
   //
   // Stable diff-cache identity keys (a source URL / float contentKey, NOT the
   // decoded bytes) — `a` = reference, `b` = foreground, matching the pool's
@@ -322,7 +329,7 @@ export function CompositeMediaPane({
     contentKeyA: baselineFloat?.contentKey ?? baselineUrl ?? "diff:a",
     contentKeyB: imageFloat?.contentKey ?? imageUrl ?? "diff:b",
     referenceLabel,
-    foregroundLabel,
+    foregroundLabel: foregroundLabel ?? (label || undefined),
     inStackedGrid,
     inOverlay,
     onComparisonOperationChange,
