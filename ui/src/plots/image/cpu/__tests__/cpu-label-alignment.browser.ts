@@ -87,7 +87,7 @@ import GpuImagePane from "../../webgpu/view.tsx";
 import type { ImageViewState } from "../../../../host/hooks/use-image-gestures";
 import { createHarness, sleep, waitFor } from "../../../../testing/harness";
 import { viewToQuad } from "../../components/region-select.ts";
-import { PIXEL_VALUE_LINE_H_FRAC } from "../../../../primitives/components/pixel-value-size.ts";
+import { PIXEL_VALUE_LINE_H_FRAC, pixelValueFontHeight } from "../../../../primitives/components/pixel-value-size.ts";
 
 const { report, setOverallStatus } = createHarness({
   title: "CPU-LABEL-ALIGNMENT",
@@ -246,8 +246,8 @@ function inkProfiles(img: Pixels): { cols: Float64Array; rows: Float64Array } {
  * centre and reading the ink back through the same brightness rule, so the
  * correction is scale-free and threshold-consistent with the real measurement.
  */
-function calibrateInkBias(): { x: number; y: number; note: string } {
-  const F = 40;
+function calibrateInkBias(fontH: number): { x: number; y: number; note: string } {
+  const F = fontH;
   const size = 400;
   const c = document.createElement("canvas");
   c.width = size;
@@ -290,7 +290,21 @@ function calibrateInkBias(): { x: number; y: number; note: string } {
   };
 }
 
-const INK_BIAS = calibrateInkBias();
+/** Ink bias calibrated AT THE CASE'S OWN FONT SIZE (memoised per quarter px).
+ *  The bias is not scale-free: the shadow's `max(2, …)`/`max(1, …)` floors and
+ *  glyph hinting make it non-proportional below ~20 px, which is where every
+ *  zoomed case lands (fonts are capped at 24 px), so a 40 px calibration
+ *  applied proportionally misses by up to ~1 px on some platforms' fonts. */
+const inkBiasMemo = new Map<number, ReturnType<typeof calibrateInkBias>>();
+function inkBiasFor(fontH: number): ReturnType<typeof calibrateInkBias> {
+  const k = Math.round(fontH * 4) / 4;
+  let v = inkBiasMemo.get(k);
+  if (!v) {
+    v = calibrateInkBias(k);
+    inkBiasMemo.set(k, v);
+  }
+  return v;
+}
 
 interface AxisResult {
   /** Painted texel centres that were compared against a label. */
@@ -393,13 +407,28 @@ function paintIdentityErrors(
   img: Pixels,
   edg: number[],
   along: "x" | "y",
-  fixed: number,
+  crossEdges: number[],
   quad: { left: number; top: number; width: number; height: number },
   dpr: number,
 ): { errors: number; checked: number } {
   const pitch = (quad.width / N) * dpr;
   const originAlong = (along === "x" ? quad.left : quad.top) * dpr;
   const originFixed = (along === "x" ? quad.top : quad.left) * dpr;
+  // Sample along the CENTRE of the cross-axis cell that straddles the image
+  // middle — never along the raw middle line, which can coincide with a painted
+  // texel boundary (a sub-pixel coin toss that inverts every check on this row).
+  const mid = (along === "x" ? img.height : img.width) / 2;
+  let fixed = mid;
+  if (crossEdges.length > 0) {
+    // The painted edge nearest the middle, then half a pitch into the cell the
+    // middle lies in (this also covers a single cell whose only interior edge
+    // does not bracket the middle).
+    let nearest = crossEdges[0]!;
+    for (const e of crossEdges) if (Math.abs(e - mid) < Math.abs(nearest - mid)) nearest = e;
+    fixed = Math.floor(nearest + (mid >= nearest ? 0.5 : -0.5) * pitch);
+  }
+  const fixedExtent = along === "x" ? img.height : img.width;
+  if (fixed < 0 || fixed >= fixedExtent) return { errors: 0, checked: 0 };
   const fixedIndex = Math.floor((fixed - originFixed) / pitch);
   let errors = 0;
   let checked = 0;
@@ -683,7 +712,7 @@ async function measure(
     const dpr = paintImg.width / box.width;
 
     // Painted texel boundaries: R alternates per column, G alternates per row.
-    const { row, col, midRow, midCol } = midStrips(paintImg);
+    const { row, col } = midStrips(paintImg);
     const xEdges = edges(row, paintImg.width, 0);
     const yEdges = edges(col, paintImg.height, 1);
 
@@ -701,8 +730,12 @@ async function measure(
     const xClusters = inkClusters(cols, 0.1 * pitch);
     const yClusters = inkClusters(rows, 0.18 * pitch);
 
-    const xr = compareAxis(xEdges, xClusters, dpr, pitch, INK_BIAS.x);
-    const yr = compareAxis(yEdges, yClusters, dpr, pitch, INK_BIAS.y);
+    // The overlay sizes its font from the cell pitch, the line count (4: RGBA
+    // uint8) and the widest printed line ("0.502": 5 chars); calibrate there.
+    const fontH = pixelValueFontHeight(pitch / dpr, 4, 5);
+    const bias = inkBiasFor(fontH);
+    const xr = compareAxis(xEdges, xClusters, dpr, pitch, bias.x);
+    const yr = compareAxis(yEdges, yClusters, dpr, pitch, bias.y);
 
     let pitchErr = 0;
     for (let i = 0; i + 1 < xEdges.length; i++) {
@@ -712,8 +745,8 @@ async function measure(
       pitchErr = Math.max(pitchErr, Math.abs(yEdges[i + 1]! - yEdges[i]! - pitch) / dpr);
     }
 
-    const idX = paintIdentityErrors(paintImg, xEdges, "x", midRow, quad, dpr);
-    const idY = paintIdentityErrors(paintImg, yEdges, "y", midCol, quad, dpr);
+    const idX = paintIdentityErrors(paintImg, xEdges, "x", yEdges, quad, dpr);
+    const idY = paintIdentityErrors(paintImg, yEdges, "y", xEdges, quad, dpr);
 
     return {
       xCells: xr.cells,
@@ -834,10 +867,13 @@ async function runPane(pane: PaneSpec): Promise<boolean> {
 }
 
 async function run(): Promise<boolean> {
-  report(true, `BENCH: ${INK_BIAS.note}`);
 
   (window as unknown as { __cairnPlotRenderMode?: string }).__cairnPlotRenderMode = "cpu";
   const cpuOk = await runPane(CPU_PANE);
+  // The calibrations the CPU cases used, one per distinct font size, so the
+  // bias numbers stay visible in the log (they are the tell when the overlay's
+  // halo or font constants change).
+  for (const c of inkBiasMemo.values()) report(true, `BENCH: ${c.note}`);
 
   // GPU section — the same measurement against the WebGPU backend. Without an
   // adapter it SKIPS LOUDLY (the runner surfaces any "SKIPPED" line even on a

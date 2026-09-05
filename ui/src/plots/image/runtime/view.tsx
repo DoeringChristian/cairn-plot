@@ -1,3 +1,4 @@
+import { recordContextLossEvent } from "../../../engines/context-loss-diagnostics.ts";
 import { useContext, useState } from "react";
 
 import { ContentAspectFrame } from "../../../layout/ContentAspectFrame.tsx";
@@ -130,7 +131,12 @@ export function ImagePlotView({
     onChannelReset={() => commands.patch({ "image.channelSelect": null })}
     enlargeControl={hostRuntime.enlargeControl}
     inStackedGrid={inStack}
-    onBackendFailure={failureFallback ? () => setWebGpuFailed(true) : undefined}
+    onBackendFailure={failureFallback ? () => {
+      // Diagnostics only (no-op unless a harness armed the capture): the GPU
+      // backend gave up and this cell now renders on the fallback backend.
+      recordContextLossEvent("webgpu-backend-fallback", { from: backend.id, to: failureFallback.id });
+      setWebGpuFailed(true);
+    } : undefined}
   />;
   const dims = source.dtype === "float" && source.shape.length >= 2 ? shapeDims(source.shape) : null;
   const knownAspect = dims ? finitePositive(dims.w / dims.h) : null;
