@@ -80,7 +80,9 @@
  *              it a lost device is a FAIL. CI (no GPU) sets it; see
  *              `downgradeIfDeviceLost`.
  *          HARNESS_MIN_PARITY  minimum parity pages a DEFAULT run must select
- *              before it is allowed to pass (default 10)
+ *              before it is allowed to pass (default 10). Must parse as a
+ *              non-negative number — anything else is a hard error, never a
+ *              silently disabled floor.
  *          HARNESS_FORCE_STRATEGY  pin GPU strategy selection to one strategy
  *              instead of trying (a) then (b) — `swiftshader`/`software`/`sw`/
  *              `dawn` forces the software SwiftShader/Dawn adapter CI actually
@@ -136,6 +138,9 @@ const SKIP_SUBSTR = (process.env.HARNESS_SKIP ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+/** Floor of parity pages a DEFAULT run must select (see the check in `main`). */
+const MIN_PARITY_RAW = process.env.HARNESS_MIN_PARITY;
+const MIN_PARITY = MIN_PARITY_RAW === undefined ? 10 : Number(MIN_PARITY_RAW);
 
 const RED = (s) => `\x1b[31m${s}\x1b[0m`;
 const GREEN = (s) => `\x1b[32m${s}\x1b[0m`;
@@ -146,6 +151,20 @@ const DIM = (s) => `\x1b[2m${s}\x1b[0m`;
 function die(msg) {
   console.error(RED(`\ntest:harness FAILED — ${msg}\n`));
   process.exit(1);
+}
+
+// Validated as early as `die` allows — BEFORE any selection check — because an
+// unparseable floor would otherwise disable the floor silently: `Number("abc")`
+// is NaN and `parityCount < NaN` is false, so a typo'd override would let a
+// shrunken default run go green. An empty value is a typo too (`Number("")` is 0).
+if (
+  MIN_PARITY_RAW !== undefined &&
+  (MIN_PARITY_RAW.trim() === "" || !Number.isFinite(MIN_PARITY) || MIN_PARITY < 0)
+) {
+  die(
+    `HARNESS_MIN_PARITY must be a number, got "${MIN_PARITY_RAW}" — ` +
+      `it is the minimum number of parity pages a default run must select`,
+  );
 }
 
 /** GitHub Actions workflow-command annotation (loud, survives log folding). */
@@ -858,11 +877,10 @@ async function main() {
   // otherwise stay green on a handful of pages. `--only`/`--all`/`HARNESS_SKIP`
   // and a custom `--root` are deliberate narrowings and are exempt.
   const parityCount = harnesses.filter(isParityHarness).length;
-  const minParity = Number(process.env.HARNESS_MIN_PARITY ?? 10);
-  if (!ONLY && !RUN_ALL && !process.env.HARNESS_SKIP && !customRoot && parityCount < minParity) {
+  if (!ONLY && !RUN_ALL && !process.env.HARNESS_SKIP && !customRoot && parityCount < MIN_PARITY) {
     die(
       `a default run selected only ${parityCount} parity harness page(s), fewer than ` +
-        `HARNESS_MIN_PARITY=${minParity}. The parity set shrank (moved, renamed or ` +
+        `HARNESS_MIN_PARITY=${MIN_PARITY}. The parity set shrank (moved, renamed or ` +
         `quarantined pages?) — fix the set, or set HARNESS_MIN_PARITY deliberately.`,
     );
   }

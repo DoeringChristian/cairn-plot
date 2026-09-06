@@ -14,9 +14,13 @@
  *     (`destroyed`), a `webgpu-backend-fallback` (which every GPU render
  *     failure emits), a loss recorded after the verdict, or a run that did not
  *     opt in must leave the FAIL a FAIL.
- *   • `parseHarnessAttributes` reads the opening `<html …>` tag only, so an
- *     attribute mentioned in an HTML COMMENT cannot quarantine a page.
- * Plus: the runner must not exit 0 when its filters selected no harness.
+ *   • `parseHarnessAttributes` reads the DECLARATION TAGS only (the opening
+ *     `<html …>` tag and `<meta name="cairn-harness" …>`), so an attribute
+ *     mentioned in an HTML comment, a `<script>` literal or on a `<div>`
+ *     cannot quarantine a page out of the CI gate.
+ * Plus, as spawned runs: the runner must not exit 0 when its filters selected no
+ * harness, nor accept an unparseable `HARNESS_MIN_PARITY` (which would silently
+ * disable the parity floor).
  *
  * END-TO-END half — it writes two throwaway "fake harness" pages into a temp dir: one that sets
  * `#status = "PASS"` and one that sets `#status = "FAIL"` (the exact completion
@@ -112,6 +116,14 @@ function unitChecks() {
     '<html lang="en"><head><!-- <meta name="cairn-harness" data-cairn-harness="quarantined"> -->' +
       '<meta name="cairn-harness" data-cairn-harness="self-driving" /></head>',
   );
+  // …nor may the attribute decide anything from OUTSIDE a declaration tag: a
+  // script literal or a `<div>` carrying it is page content, not a declaration.
+  // (This is the case a whole-file scan would fail: it would report quarantined.)
+  const bodyMention = parseHarnessAttributes(
+    '<html lang="en" data-cairn-harness="self-driving" data-cairn-harness-dpr="2"><body>' +
+      "<script>const s = 'data-cairn-harness=\"quarantined\"'</script>" +
+      '<div data-cairn-harness="quarantined"></div></body>',
+  );
 
   return [
     [
@@ -134,22 +146,46 @@ function unitChecks() {
       "a <meta name=cairn-harness> declaration counts; the same tag inside a comment does not",
       commentedMeta.selfDriving === true && commentedMeta.quarantined === false,
     ],
+    [
+      "the attribute in a <script> literal or on a <div> decides nothing (declaration tags only)",
+      bodyMention.quarantined === false &&
+        bodyMention.selfDriving === true &&
+        bodyMention.dpr === 2,
+    ],
   ];
 }
 
-/** The runner must refuse (nonzero) a run whose filters selected no harness. */
-function noSelectionCheck() {
-  const r = spawnSync(process.execPath, [RUNNER, "--only", "zzz-nomatch"], {
+/** Run the real runner with `args`/`env` and return its exit code + plain output. */
+function runRunner(args, env = {}) {
+  const r = spawnSync(process.execPath, [RUNNER, ...args], {
     encoding: "utf-8",
-    env: { ...process.env, HARNESS_ASSUME_GPU: "1" },
+    env: { ...process.env, HARNESS_ASSUME_GPU: "1", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   // eslint-disable-next-line no-control-regex
   const out = ((r.stdout || "") + (r.stderr || "")).replace(/\x1b\[[0-9;]*m/g, "");
+  return { status: r.status, out };
+}
+
+/**
+ * Runner-level refusals: a run that selected nothing, and an unparseable parity
+ * floor (which must be rejected, not silently disable the floor — `parityCount
+ * < NaN` is false). The floor is validated BEFORE the selection check, so the
+ * second case can also pass `--only zzz-nomatch` and stay fast.
+ */
+function refusalChecks() {
+  const noSelection = runRunner(["--only", "zzz-nomatch"]);
+  const badFloor = runRunner(["--only", "zzz-nomatch"], { HARNESS_MIN_PARITY: "abc" });
   return [
     [
       "an empty selection (--only zzz-nomatch) exits nonzero saying no harness selected",
-      r.status !== 0 && r.status != null && /no harness selected/.test(out),
+      noSelection.status !== 0 && noSelection.status != null && /no harness selected/.test(noSelection.out),
+    ],
+    [
+      "an unparseable HARNESS_MIN_PARITY exits nonzero instead of disabling the floor",
+      badFloor.status !== 0 &&
+        badFloor.status != null &&
+        /HARNESS_MIN_PARITY must be a number, got "abc"/.test(badFloor.out),
     ],
   ];
 }
@@ -181,7 +217,7 @@ function main() {
     ["pass harness reported as PASS (not failed by the FAIL peer)", passLine],
     ["exactly one harness failed", /1 of 2 harness\(es\) did not pass/.test(out)],
     ...unitChecks(),
-    ...noSelectionCheck(),
+    ...refusalChecks(),
   ];
 
   console.log("");
