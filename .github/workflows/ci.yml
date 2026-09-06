@@ -153,4 +153,8 @@ jobs:
           # realstack harnesses legitimately run 40s+ there. 3x headroom so a
           # slower runner can't turn a passing harness into a TIMEOUT.
           HARNESS_TIMEOUT_MS: "180000"
+          # ubuntu runners have no GPU; SwiftShader loses the device under load.
+          # A loss is reported as a loud SKIP, never a backend fallback or an
+          # ordinary destroy.
+          HARNESS_ALLOW_DEVICE_LOSS_SKIPS: "1"
         run: npm run test:harness

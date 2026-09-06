@@ -47,7 +47,10 @@
  * (always installed — it is Vite's own bundler dependency) + a headless
  * Chromium invocation. No new npm dependency is added.
  *
- * PAGE ATTRIBUTES (read off each `*.browser.html` source; no JS is executed):
+ * PAGE ATTRIBUTES (read off each `*.browser.html` source; no JS is executed).
+ * They are read from the opening `<html …>` tag or a `<meta name="cairn-harness" …>`
+ * tag ONLY, with HTML comments stripped first — prose quoting an attribute
+ * cannot decide how a page runs (see `parseHarnessAttributes`):
  *   data-cairn-harness="self-driving"  opt this page into the DEFAULT run (it
  *       dispatches its own gestures and settles `#status` headlessly).
  *   data-cairn-harness="quarantined" (+ data-cairn-harness-reason="…") — a
@@ -70,6 +73,14 @@
  * Env:     CHROME_BIN          path to a Chromium-family browser (else auto)
  *          HARNESS_TIMEOUT_MS  per-harness completion timeout (default 60000)
  *          HARNESS_SKIP        comma list of harness-id substrings to SKIP-LOUD
+ *          HARNESS_ALLOW_DEVICE_LOSS_SKIPS=1  opt in to the software-adapter
+ *              device-loss downgrade: a FAIL preceded by a GENUINE
+ *              `webgpu-device-lost` (reason other than `destroyed`) recorded
+ *              before the verdict becomes a loud SKIP. Off by default — without
+ *              it a lost device is a FAIL. CI (no GPU) sets it; see
+ *              `downgradeIfDeviceLost`.
+ *          HARNESS_MIN_PARITY  minimum parity pages a DEFAULT run must select
+ *              before it is allowed to pass (default 10)
  *          HARNESS_FORCE_STRATEGY  pin GPU strategy selection to one strategy
  *              instead of trying (a) then (b) — `swiftshader`/`software`/`sw`/
  *              `dawn` forces the software SwiftShader/Dawn adapter CI actually
@@ -91,7 +102,7 @@ import {
   mkdtempSync,
 } from "node:fs";
 import { createServer } from "node:http";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve, join, relative, extname } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -166,6 +177,50 @@ function walk(dir, out = []) {
  *             quarantineReason:string }} Harness
  */
 
+/**
+ * Read the `data-cairn-harness*` page attributes from the page's DECLARATION
+ * TAGS only: the opening `<html …>` tag (first `/<html\b[^>]*>/i` match) and any
+ * `<meta name="cairn-harness" …>` tag — the two places the harness pages
+ * actually declare them — after HTML comments have been stripped.
+ *
+ * Scanning the whole file would let any mention of an attribute anywhere in the
+ * page decide how it runs: several pages carry a prose comment quoting
+ * `data-cairn-harness="self-driving"`, and a comment quoting `"quarantined"`
+ * would silently drop a proof out of the CI gate. Only a real tag declares.
+ *
+ * @param {string} html
+ * @returns {{ selfDriving:boolean, quarantined:boolean, quarantineReason:string,
+ *             query:string, dpr:number|null }}
+ */
+export function parseHarnessAttributes(html) {
+  const source = String(html).replace(/<!--[\s\S]*?-->/g, "");
+  const htmlTag = source.match(/<html\b[^>]*>/i)?.[0] ?? "";
+  const metaTags = [
+    ...source.matchAll(/<meta\b[^>]*\bname\s*=\s*["']cairn-harness["'][^>]*>/gi),
+  ]
+    .map((m) => m[0])
+    .join(" ");
+  const tag = `${htmlTag} ${metaTags}`;
+  // A harness that dispatches its OWN gestures (and sets #status to PASS/FAIL
+  // without any external driving) opts into the DEFAULT run by declaring
+  // `data-cairn-harness="self-driving"` in its HTML — so a non-WebGPU DOM proof
+  // (e.g. page-wide selection) is gated by CI just like the WebGPU parity
+  // proofs, unlike the gesture-dependent interaction harnesses.
+  const selfDriving = /data-cairn-harness\s*=\s*["']self-driving["']/i.test(tag);
+  const quarantined = /data-cairn-harness\s*=\s*["']quarantined["']/i.test(tag);
+  const quarantineReason =
+    tag.match(/data-cairn-harness-reason\s*=\s*["']([^"']*)["']/i)?.[1] ??
+    "known unstable diagnostic";
+  const query = tag.match(/data-cairn-harness-query\s*=\s*["']([^"']*)["']/i)?.[1] ?? "";
+  // `data-cairn-harness-dpr="2"` — drive this page at that devicePixelRatio
+  // (see PAGE ATTRIBUTES in the header).
+  // Absent / non-numeric / <= 0 ⇒ null (the browser's own ratio).
+  const dprRaw = tag.match(/data-cairn-harness-dpr\s*=\s*["']([^"']*)["']/i)?.[1];
+  const dprNum = dprRaw === undefined ? NaN : Number(dprRaw);
+  const dpr = Number.isFinite(dprNum) && dprNum > 0 ? dprNum : null;
+  return { selfDriving, quarantined, quarantineReason, query, dpr };
+}
+
 /** @returns {Harness[]} */
 function discoverHarnesses() {
   const pages = walk(SEARCH_ROOT).sort();
@@ -175,23 +230,8 @@ function discoverHarnesses() {
     const html = readFileSync(htmlPath, "utf-8");
     const dir = dirname(htmlPath);
     const id = relative(SEARCH_ROOT, htmlPath).replace(/\.browser\.html$/, "");
-    // A harness that dispatches its OWN gestures (and sets #status to PASS/FAIL
-    // without any external driving) opts into the DEFAULT run by declaring
-    // `data-cairn-harness="self-driving"` in its HTML — so a non-WebGPU DOM proof
-    // (e.g. page-wide selection) is gated by CI just like the WebGPU parity
-    // proofs, unlike the gesture-dependent interaction harnesses.
-    const selfDriving = /data-cairn-harness\s*=\s*["']self-driving["']/i.test(html);
-    const quarantined = /data-cairn-harness\s*=\s*["']quarantined["']/i.test(html);
-    const quarantineReason = html.match(
-      /data-cairn-harness-reason\s*=\s*["']([^"']*)["']/i,
-    )?.[1] ?? "known unstable diagnostic";
-    const query = html.match(/data-cairn-harness-query\s*=\s*["']([^"']*)["']/i)?.[1] ?? "";
-    // `data-cairn-harness-dpr="2"` — drive this page under a device-metrics
-    // override at that devicePixelRatio (see PAGE ATTRIBUTES in the header).
-    // Absent / non-numeric / <= 0 ⇒ null (the browser's own ratio).
-    const dprRaw = html.match(/data-cairn-harness-dpr\s*=\s*["']([^"']*)["']/i)?.[1];
-    const dprNum = dprRaw === undefined ? NaN : Number(dprRaw);
-    const dpr = Number.isFinite(dprNum) && dprNum > 0 ? dprNum : null;
+    const { selfDriving, quarantined, quarantineReason, query, dpr } =
+      parseHarnessAttributes(html);
     // Every `<script ... src="./X.browser.bundle.js">` maps to source X.browser.ts
     const sources = [];
     for (const m of html.matchAll(
@@ -592,16 +632,29 @@ async function probeAdapter(cdp, baseUrl) {
   });
 }
 
-/** Drive one harness page to completion; poll #status until PASS/FAIL or timeout. */
-/** Device-loss events the page recorded (armed in `withPage`), as strings. */
+/**
+ * The GENUINE-device-loss events the page recorded (the sink is armed in
+ * `withPage`), as `{kind, reason, message, t}` — `t` is the page's
+ * `performance.now()` at the moment of the loss, so it can be compared with the
+ * verdict time.
+ *
+ * Only `webgpu-device-lost` is collected. `webgpu-backend-fallback` is
+ * deliberately NOT: the runtime emits it whenever a GPU render fails for ANY
+ * reason and the cell falls back to the CPU backend — i.e. it is emitted BY the
+ * very failure a harness is meant to catch, so treating it as evidence of a
+ * lost device would let any GPU defect excuse itself.
+ */
 async function deviceLossEvents(cdp, sessionId) {
   try {
     return await evalInPage(
       cdp,
       sessionId,
       `(window.__cairnContextLossEvents || [])
-         .filter((e) => e.kind === 'webgpu-device-lost' || e.kind === 'webgpu-backend-fallback')
-         .map((e) => e.kind + (e.detail ? ' ' + JSON.stringify(e.detail) : ''))`,
+         .filter((e) => e.kind === 'webgpu-device-lost')
+         .map((e) => ({ kind: e.kind,
+                        reason: e.detail && e.detail.reason,
+                        message: e.detail && e.detail.message,
+                        t: e.t }))`,
     );
   } catch {
     return [];
@@ -610,35 +663,79 @@ async function deviceLossEvents(cdp, sessionId) {
 
 /**
  * SOFTWARE-ADAPTER POLICY. On a software WebGPU adapter (SwiftShader/Dawn — what
- * CI runs) the device is routinely destroyed under a running proof; the panes
- * then fall back to the CPU backend (correct product behaviour) and every later
- * GPU assertion fails for a reason that is not a defect. Several harnesses
- * already encode this by hand (report a loud "SKIPPED — device lost" instead of
- * a FAIL). This applies the same rule centrally: a FAIL/timeout on a software
- * adapter after the page recorded a `webgpu-device-lost` or `webgpu-backend-fallback`
- * event (the GPU backend gave up and the cell fell back to the CPU backend) becomes a PASS
- * carrying a SKIPPED line — surfaced as a warning annotation by the caller, so
- * it can never go green invisibly. On a hardware adapter nothing is downgraded.
+ * CI runs) the device is genuinely lost under a running proof; the panes then
+ * fall back to the CPU backend (correct product behaviour) and every later GPU
+ * assertion fails for a reason that is not a defect. Several harnesses already
+ * encode this by hand (report a loud "SKIPPED — device lost" instead of a FAIL).
+ * This applies the same rule centrally — but ONLY when every one of these holds,
+ * because each missing condition is a way for a real FAIL to go green:
+ *
+ *   • `ctx.softwareAdapter` — a hardware adapter never downgrades anything;
+ *   • `ctx.allowSkips` — the job explicitly opted in with
+ *     `HARNESS_ALLOW_DEVICE_LOSS_SKIPS=1` (CI does; a local run does not);
+ *   • the run did not pass (nothing to downgrade otherwise);
+ *   • some `webgpu-device-lost` event has `reason !== "destroyed"` — a
+ *     `destroyed` device is ORDINARY teardown, not a loss; and
+ *   • that event happened at or before the verdict (`t <= r.verdictAt`) — a loss
+ *     recorded after the verdict cannot have caused it.
+ *
+ * A `webgpu-backend-fallback` event never qualifies (see `deviceLossEvents`).
+ * The downgrade produces a PASS carrying a SKIPPED line naming the reason and
+ * time — surfaced as a warning annotation and counted in the summary by the
+ * caller, so it can never go green invisibly.
+ *
+ * @param {{verdict:string, verdictAt?:number, result?:string}} r
+ * @param {{softwareAdapter?:boolean, allowSkips?:boolean,
+ *          losses?:{kind?:string, reason?:string, message?:string, t?:number}[]}} ctx
+ * @returns {{verdict:string, verdictAt?:number, result?:string, deviceLost?:boolean}}
  */
-function downgradeIfDeviceLost(r, softwareAdapter, losses) {
-  if (!softwareAdapter || r.verdict === "pass" || !losses || losses.length === 0) return r;
+export function downgradeIfDeviceLost(r, ctx = {}) {
+  const { softwareAdapter = false, allowSkips = false, losses = [] } = ctx;
+  if (!softwareAdapter || !allowSkips) return r;
+  if (!r || r.verdict === "pass") return r;
+  const verdictAt = typeof r.verdictAt === "number" ? r.verdictAt : Number.NaN;
+  const genuine = (losses || []).filter(
+    (e) =>
+      e &&
+      e.kind === "webgpu-device-lost" &&
+      e.reason !== "destroyed" &&
+      typeof e.t === "number" &&
+      e.t <= verdictAt,
+  );
+  if (genuine.length === 0) return r;
+  const detail = genuine
+    .map(
+      (e) =>
+        `reason=${e.reason ?? "unspecified"} at ${Math.round(e.t)}ms` +
+        (e.message ? `: ${e.message}` : ""),
+    )
+    .join(" | ");
   const line =
-    `SKIPPED — WebGPU device lost on the software adapter (${losses.join(" | ")}); ` +
-    `the ${r.verdict === "timeout" ? "proof timed out" : "proof failed"} after the loss and could not run (not a parity failure)`;
+    `SKIPPED — WebGPU device lost on the software adapter (${detail}; verdict at ` +
+    `${Math.round(verdictAt)}ms); the ${r.verdict === "timeout" ? "proof timed out" : "proof failed"} ` +
+    `after the loss and could not run (not a parity failure)`;
   return { ...r, verdict: "pass", deviceLost: true, result: `${line}\n${r.result || ""}` };
 }
 
-async function runHarness(cdp, baseUrl, harness, softwareAdapter = false) {
+/** Drive one harness page to completion; poll #status until PASS/FAIL or timeout. */
+async function runHarness(cdp, baseUrl, harness, ctx = {}) {
+  const { softwareAdapter = false, allowSkips = false } = ctx;
   const url = baseUrl + harness.urlPath + (harness.query ? `?${harness.query}` : "");
   return withPage(cdp, url, async (sessionId) => {
     const start = Date.now();
+    // `now` is the PAGE clock (`performance.now()`), the same clock
+    // `recordContextLossEvent` stamps its events with — so `verdictAt` and a
+    // loss `t` are comparable and "the loss happened before the verdict" is a
+    // real causality check rather than a guess.
     const poll = `(() => {
       const s = document.getElementById('status');
       const status = s ? (s.textContent || '').trim() : '';
       const res = document.getElementById('result');
       return { status, verdict: /^(PASS|FAIL)$/.test(status) ? status.toLowerCase() : null,
+               now: performance.now(),
                result: res ? (res.innerText || '') : '' };
     })()`;
+    let lastNow = Number.NaN;
     while (Date.now() - start < HARNESS_TIMEOUT_MS) {
       let snap;
       try {
@@ -648,14 +745,20 @@ async function runHarness(cdp, baseUrl, harness, softwareAdapter = false) {
         await sleep(100);
         continue;
       }
+      if (snap && typeof snap.now === "number") lastNow = snap.now;
       if (snap && snap.verdict) {
         const r = {
           verdict: snap.verdict, // 'pass' | 'fail'
           ms: Date.now() - start,
+          verdictAt: snap.now,
           result: snap.result,
         };
-        if (r.verdict !== "pass" && softwareAdapter) {
-          return downgradeIfDeviceLost(r, softwareAdapter, await deviceLossEvents(cdp, sessionId));
+        if (r.verdict !== "pass" && softwareAdapter && allowSkips) {
+          return downgradeIfDeviceLost(r, {
+            softwareAdapter,
+            allowSkips,
+            losses: await deviceLossEvents(cdp, sessionId),
+          });
         }
         return r;
       }
@@ -672,8 +775,20 @@ async function runHarness(cdp, baseUrl, harness, softwareAdapter = false) {
     } catch {
       /* noop */
     }
-    const r = { verdict: "timeout", ms: Date.now() - start, result: tail };
-    return softwareAdapter ? downgradeIfDeviceLost(r, softwareAdapter, await deviceLossEvents(cdp, sessionId)) : r;
+    let verdictAt = lastNow;
+    try {
+      verdictAt = await evalInPage(cdp, sessionId, `performance.now()`);
+    } catch {
+      /* keep the last polled page clock */
+    }
+    const r = { verdict: "timeout", ms: Date.now() - start, verdictAt, result: tail };
+    return softwareAdapter && allowSkips
+      ? downgradeIfDeviceLost(r, {
+          softwareAdapter,
+          allowSkips,
+          losses: await deviceLossEvents(cdp, sessionId),
+        })
+      : r;
   }, { dpr: harness.dpr });
 }
 
@@ -690,8 +805,8 @@ async function main() {
   console.log(BOLD("\ncairn-plot WebGPU parity-harness runner\n"));
 
   let harnesses = discoverHarnesses();
-  if (ONLY) harnesses = harnesses.filter((h) => h.id.includes(ONLY));
   if (harnesses.length === 0) die(`no *.browser.html harnesses found under ${SEARCH_ROOT}`);
+  if (ONLY) harnesses = harnesses.filter((h) => h.id.includes(ONLY));
 
   // Interaction harnesses are human-run (see isParityHarness / RUN_ALL notes).
   // With a custom --root (e.g. the self-test), treat everything as runnable.
@@ -727,6 +842,30 @@ async function main() {
     }
     return true;
   });
+
+  // A run that selected NOTHING is not a green run: exiting 0 here would let a
+  // typo'd `--only`, an over-broad `HARNESS_SKIP`, or a renamed/quarantined page
+  // report success while proving nothing.
+  if (harnesses.length === 0) {
+    die(
+      `no harness selected after filters (root ${SEARCH_ROOT}` +
+        `${ONLY ? `, --only "${ONLY}"` : ""}${SKIP_SUBSTR.length ? `, HARNESS_SKIP=${SKIP_SUBSTR.join(",")}` : ""}` +
+        `) — a run that proves nothing must not pass`,
+    );
+  }
+  // A DEFAULT run (the CI gate) must actually drive the parity set. If the page
+  // set silently shrinks — a moved directory, a mass quarantine — the job would
+  // otherwise stay green on a handful of pages. `--only`/`--all`/`HARNESS_SKIP`
+  // and a custom `--root` are deliberate narrowings and are exempt.
+  const parityCount = harnesses.filter(isParityHarness).length;
+  const minParity = Number(process.env.HARNESS_MIN_PARITY ?? 10);
+  if (!ONLY && !RUN_ALL && !process.env.HARNESS_SKIP && !customRoot && parityCount < minParity) {
+    die(
+      `a default run selected only ${parityCount} parity harness page(s), fewer than ` +
+        `HARNESS_MIN_PARITY=${minParity}. The parity set shrank (moved, renamed or ` +
+        `quarantined pages?) — fix the set, or set HARNESS_MIN_PARITY deliberately.`,
+    );
+  }
 
   console.log(`• running ${harnesses.length} parity harness page(s):`);
   for (const h of harnesses) console.log(`    ${h.id}`);
@@ -847,8 +986,24 @@ async function main() {
   const softwareAdapter =
     /swiftshader|software|llvmpipe|lavapipe/i.test(JSON.stringify(adapter.info || {})) ||
     /swiftshader|software/i.test(strategyUsed);
-  if (softwareAdapter) {
-    console.log(YELLOW("    software adapter: a FAIL after a recorded WebGPU device loss is reported as a loud SKIP (see downgradeIfDeviceLost)\n"));
+  // The device-loss downgrade is OPT-IN per job: a run that has not asked for it
+  // reports a lost device as the FAIL it is (see `downgradeIfDeviceLost`).
+  const allowSkips = process.env.HARNESS_ALLOW_DEVICE_LOSS_SKIPS === "1";
+  if (softwareAdapter && allowSkips) {
+    console.log(
+      YELLOW(
+        "    software adapter + HARNESS_ALLOW_DEVICE_LOSS_SKIPS=1: a FAIL preceded by a genuine\n" +
+          "    WebGPU device loss (reason other than \"destroyed\") is reported as a loud SKIP\n" +
+          "    (see downgradeIfDeviceLost)\n",
+      ),
+    );
+  } else if (softwareAdapter) {
+    console.log(
+      YELLOW(
+        "    software adapter, but HARNESS_ALLOW_DEVICE_LOSS_SKIPS is not \"1\": a WebGPU device\n" +
+          "    loss will be reported as a FAIL. Set it to 1 to allow the loud-SKIP downgrade.\n",
+      ),
+    );
   }
 
   // Run harnesses sequentially (each gets its own target + fresh GPU device).
@@ -857,7 +1012,7 @@ async function main() {
     process.stdout.write(`  running ${h.id} … `);
     let r;
     try {
-      r = await runHarness(cdp, baseUrl, h, softwareAdapter);
+      r = await runHarness(cdp, baseUrl, h, { softwareAdapter, allowSkips });
     } catch (err) {
       r = { verdict: "error", ms: 0, result: String(err.message || err) };
     }
@@ -911,6 +1066,16 @@ async function main() {
             : RED("ERROR  ");
     console.log(`  ${tag} ${r.id}`);
   }
+  const downgraded = rows.filter((r) => r.deviceLost);
+  if (downgraded.length) {
+    console.log("");
+    console.log(
+      YELLOW(
+        `  ${downgraded.length} page(s) downgraded to SKIP (device lost on the software adapter)`,
+      ),
+    );
+    for (const r of downgraded) console.log(YELLOW(`    ${r.id}`));
+  }
   if (loudSkips.length) {
     console.log("");
     for (const id of loudSkips) console.log(YELLOW(`  SKIP    ${id} (HARNESS_SKIP)`));
@@ -932,4 +1097,12 @@ async function main() {
   }
 }
 
-main().catch((err) => die(err.stack || String(err)));
+// Run only when invoked as a program. The self-test imports
+// `downgradeIfDeviceLost` / `parseHarnessAttributes` from this module to pin the
+// rules that decide whether a FAIL may be reported as a PASS; importing must not
+// launch a browser.
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((err) => die(err.stack || String(err)));
+}
