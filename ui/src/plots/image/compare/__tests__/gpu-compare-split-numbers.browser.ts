@@ -30,6 +30,13 @@
  *      drift), while the OLD primary-grid placement drifts (and drifts MORE at
  *      the far corner).
  *
+ * Both cases ALSO assert that each side's overlay actually PRINTS (ink on both
+ * overlay canvases). That is a different property from placement: the seams
+ * above are pure viewport math and pass with no pixels at all, whereas the
+ * numbers now exist only if the whole DEMAND chain held — each overlay reporting
+ * `onSampleDemandChange`, the pane aggregating it, and the primary's and the `b`
+ * operand's pixels being read back from the one shared decode in response.
+ *
  * Loads the committed compiled Tailwind CSS (`harness-style.css`) — the pane
  * uses `w-full`/`h-full`/`flex` utilities for layout; without them the pixel
  * geometry below is meaningless.
@@ -244,6 +251,61 @@ function mount(id: string, wCss: number, hCss: number, imageUrl: string, baselin
   };
 }
 
+/**
+ * Ink per TEV overlay canvas, in DOM order — split mode renders the REFERENCE
+ * side's overlay first and the FOREGROUND side's second.
+ *
+ * Copied from `gpu-cached-error-numbers.browser.ts`'s `overlayHasInk` (there is
+ * no shared harness helper module for it), with two deliberate differences: it
+ * selects `canvas[data-pixel-value-overlay]` rather than every `aria-hidden`
+ * canvas, and it answers PER SIDE instead of "any", because the property under
+ * test is that BOTH sides print.
+ */
+function overlayInk(container: HTMLElement): boolean[] {
+  const overlays = Array.from(container.querySelectorAll<HTMLCanvasElement>("canvas[data-pixel-value-overlay]"));
+  return overlays.map((canvas) => {
+    if (canvas.width === 0 || canvas.height === 0) return false;
+    const data = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
+    if (!data) return false;
+    for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) return true;
+    return false;
+  });
+}
+
+/**
+ * THE DEMAND CHAIN, end to end. Neither side's numbers exist at mount any more:
+ * each `PixelValueOverlay` reports `onSampleDemandChange` once its cells clear
+ * the legibility threshold, the pane aggregates those reports, and only then
+ * does it read the primary's pixels (`sdrImageDataRef`) and the `b` operand's
+ * (`refU8Ref`, from `decodedImage(b.url).imageData()`) back and bump the version
+ * that redraws the glyphs. Ink on BOTH overlay canvases is the only end-to-end
+ * evidence that every link held — the geometry proofs below read the placement
+ * seam, which is pure viewport math and would pass with no pixels at all.
+ */
+async function waitForBothOverlaysInked(container: HTMLElement): Promise<boolean[]> {
+  let ink: boolean[] = [];
+  await waitFor(() => {
+    ink = overlayInk(container);
+    return ink.length >= 2 && ink[0] === true && ink[1] === true;
+  }, 8000, 60);
+  return ink;
+}
+
+function inkLabel(ink: boolean[]): string {
+  return ink.length === 0 ? "no overlay canvas" : ink.map((v) => (v ? "1" : "0")).join("/");
+}
+
+/** On-screen CSS px per texel for one side, straight off the placement seam —
+ *  the quantity the overlay's two legibility gates (`PIXEL_VALUE_MIN_SCREEN_PX`
+ *  = 30, and a derived font over `PIXEL_VALUE_MIN_FONT_PX` = 6, ~38.3 px for a
+ *  4-line RGBA stack) are computed from. Printed in the ink line so a zoom that
+ *  silently drops under either gate is diagnosable rather than mysterious. */
+function cellPx(probe: SplitNumbersProbe, side: "a" | "b"): number {
+  const p0 = probe.overlayTexelCenter(side, 10, 10);
+  const p1 = probe.overlayTexelCenter(side, 11, 11);
+  return p0 && p1 ? Math.min(Math.abs(p1.x - p0.x), Math.abs(p1.y - p0.y)) : NaN;
+}
+
 async function waitForContent(probe: () => SplitNumbersProbe | null): Promise<boolean> {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -282,8 +344,14 @@ async function runMismatchCase(): Promise<boolean> {
     return false;
   }
   const canvas = H.canvas()!;
-  // Zoom in so ~1 texel is ≥30px (nearest filtering → solid sentinel blocks).
-  const zoom = 5;
+  // Zoom in so ~1 texel is many px (nearest filtering → solid sentinel blocks),
+  // and far enough that the FOREGROUND side actually PRINTS. Both operands share
+  // one quad, so the finer 100×70 grid has the smaller cells and governs: it must
+  // clear `PIXEL_VALUE_MIN_SCREEN_PX` (30) AND leave a font over
+  // `PIXEL_VALUE_MIN_FONT_PX` (6), which for a 4-line RGBA stack needs ~38.3 px
+  // per cell. At the old zoom 5 its cells were ~33 px — over the visibility
+  // threshold, under the font one — so the foreground overlay drew nothing.
+  const zoom = 8;
   H.setView({ zoom, pan: centerZoomPan(paneW, paneH, zoom) });
   const dimsReady = await waitFor(() => {
     const p = H.probe();
@@ -294,6 +362,16 @@ async function runMismatchCase(): Promise<boolean> {
   report(contentA, "[mismatch] surface renders non-blank content (readback)");
   ok = ok && contentA;
   await sleep(200);
+
+  const inkA = await waitForBothOverlaysInked(H.container);
+  const inkAOk = inkA.length >= 2 && !!inkA[0] && !!inkA[1];
+  const cellsA = H.probe()!;
+  report(
+    inkAOk,
+    `[mismatch] reference/foreground overlay prints glyphs after demand (ink ${inkLabel(inkA)}, ` +
+      `cells ref ${cellPx(cellsA, "a").toFixed(1)}px / fg ${cellPx(cellsA, "b").toFixed(1)}px)`,
+  );
+  ok = ok && inkAOk;
 
   const probe = H.probe()!;
   const box = canvas.getBoundingClientRect();
@@ -388,7 +466,14 @@ async function runLargeCase(): Promise<boolean> {
     return false;
   }
   const canvas = H.canvas()!;
-  const zoom = 40; // deep zoom so a single texel is many px
+  // Deep zoom so a single texel is many px — and, like the mismatch case, big
+  // enough that the FOREGROUND's finer 1200×800 grid (the smaller cells of the
+  // two, both sides sharing one quad) still prints. The binding constraint is
+  // not `PIXEL_VALUE_MIN_SCREEN_PX` (30) but the overlay's own
+  // `PIXEL_VALUE_MIN_FONT_PX` (6) guard: a 4-line RGBA stack needs a cell of
+  // ~38.3 px before its font clears 6 px. At the old zoom 40 the cells were
+  // ~25 px and NEITHER side drew a glyph.
+  const zoom = 80;
   H.setView({ zoom, pan: centerZoomPan(paneW, paneH, zoom) });
   const ready = await waitFor(() => {
     const p = H.probe();
@@ -397,6 +482,16 @@ async function runLargeCase(): Promise<boolean> {
   report(ready, "[large] both source dims loaded (ref 1100×760, fg 1200×800)");
   await waitForContent(H.probe);
   await sleep(200);
+
+  const inkB = await waitForBothOverlaysInked(H.container);
+  const inkBOk = inkB.length >= 2 && !!inkB[0] && !!inkB[1];
+  const cellsB = H.probe()!;
+  report(
+    inkBOk,
+    `[large] reference/foreground overlay prints glyphs after demand (ink ${inkLabel(inkB)}, ` +
+      `cells ref ${cellPx(cellsB, "a").toFixed(1)}px / fg ${cellPx(cellsB, "b").toFixed(1)}px)`,
+  );
+  ok = ok && inkBOk;
 
   const probe = H.probe()!;
   const box = canvas.getBoundingClientRect();
