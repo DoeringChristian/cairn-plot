@@ -22,6 +22,14 @@
  * `renderDiffDisplay`, two dead engine exports whose WGSL had silently stopped
  * compiling, and was deleted with them.
  *
+ * STILL UNPROVEN: this page only pins the MSE/PSNR/MAE *numbers*. The LIVE
+ * diff-DISPLAY path (`pool.ts`'s `renderDiff` → `image-engine.ts`'s
+ * `renderImage` with the identity op + a scalar colormap — what the compare
+ * pane actually paints) has no per-pixel parity proof against its CPU twins
+ * `computeDataIndex`, `signedAnalyticColor` (`plots/image/cpu/display-math.ts`)
+ * and `extendedOutputEncode` (`plots/image/runtime/tonemap.ts`). A wrong pixel
+ * color in that path could still ship undetected by any harness in this suite.
+ *
  * RUNNING: `node scripts/test-harness.mjs --only compare-metrics` (the runner
  * bundles with esbuild, serves over http and reads `#status`).
  */

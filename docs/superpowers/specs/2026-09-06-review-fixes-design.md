@@ -37,12 +37,19 @@ Goals:
   guard and the settings patch reason about the effective operation.
 - `compareModified` reaches both panes; compare defaults come from the cell
   defaults the adapter already computes.
-- `compare-pass` is split: dead `renderCompose`/blend cases deleted with the
-  dead export if it has no product caller, live metrics and diff-display
-  cases re-homed into a passing harness, quarantine removed.
+- `compare-pass` is split: triage found `renderCompose` and
+  `renderDiffDisplay` were not merely dead — both had been silently
+  non-compiling WGSL since 2026-08-29 (they called prelude helpers removed
+  when display operations were split per backend), so the ruling (option A)
+  is to delete both exports, their shaders, and their harness cases outright
+  rather than repair code nothing in the product calls; only the one live
+  proof, `[metrics]`, is re-homed into a passing harness, and the quarantine
+  is removed.
 
 Non-goals: no change to comparison operations, catalogue, capabilities'
-public shape, kernels, or the CPU paint path. The remaining review items
+public shape, or the CPU paint path. Kernels are otherwise unchanged except
+that `kernels/prelude.wgsl.ts` lost the dead `buildTonemapWGSL`, deleted
+alongside the non-compiling renderers above. The remaining review items
 (bitmap cache budget, empty-source paint, overlay blit clipping, viewport
 measurement space, cairn's hand-copied lists, docs) are separate work.
 
@@ -140,7 +147,9 @@ record, `modified` still compares raw to seed.
 - `backend-capabilities.test.ts` "complete backend object": match
   `id: "cpu"` / `id: "webgpu"`, `View: CpuImagePane` / `View: GpuImagePane`,
   `capabilities: CPU_CAPABILITIES` / `WEBGPU_CAPABILITIES` exactly.
-- `compare-pass`: see goals; the re-homed harness is `webgpu/__tests__/diff-display.browser.{html,ts}`.
+- `compare-pass`: see goals (option A) — `renderCompose`/`renderDiffDisplay`
+  and their cases are deleted, not repaired; the re-homed metrics proof is
+  `webgpu/__tests__/compare-metrics.browser.{html,ts}`.
 
 ## 4. Compatibility
 

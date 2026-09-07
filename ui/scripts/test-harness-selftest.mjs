@@ -207,6 +207,11 @@ function runRunner(args, env = {}) {
 function refusalChecks() {
   const noSelection = runRunner(["--only", "zzz-nomatch"]);
   const badFloor = runRunner(["--only", "zzz-nomatch"], { HARNESS_MIN_PARITY: "abc" });
+  // A default run (no --only/--all/--root) whose parity set can't possibly meet
+  // an absurdly high floor must die BEFORE launching any browser, naming the
+  // floor it failed — this is the actual CI gate that protects the parity set
+  // from silently shrinking.
+  const belowFloor = runRunner([], { HARNESS_MIN_PARITY: "999" });
   return [
     [
       "an empty selection (--only zzz-nomatch) exits nonzero saying no harness selected",
@@ -217,6 +222,12 @@ function refusalChecks() {
       badFloor.status !== 0 &&
         badFloor.status != null &&
         /HARNESS_MIN_PARITY must be a number, got "abc"/.test(badFloor.out),
+    ],
+    [
+      "a default run below an absurdly high HARNESS_MIN_PARITY=999 exits nonzero naming the floor",
+      belowFloor.status !== 0 &&
+        belowFloor.status != null &&
+        /fewer than\s+HARNESS_MIN_PARITY=999/.test(belowFloor.out),
     ],
   ];
 }

@@ -4,8 +4,9 @@
     <meta charset="utf-8" />
     <title>CPU label/paint alignment harness (DPR 1)</title>
     <link rel="stylesheet" href="./harness-style.css" />
-    <!-- The DPR-1 half of the alignment proof. The runner's device-metrics
-         override is per PAGE, so covering two ratios takes two pages; this one
+    <!-- The DPR-1 half of the alignment proof. The runner launches one browser
+         PER distinct device scale factor (a launch flag, not a per-page CDP
+         override), so covering two ratios takes two pages; this one
          deliberately carries NO `data-cairn-harness-dpr` (browser default, 1)
          and loads the very SAME bundle as `cpu-label-alignment.browser.html`,
          so both ratios are proven by ONE source with no duplicated logic. -->

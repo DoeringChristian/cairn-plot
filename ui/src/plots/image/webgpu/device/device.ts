@@ -990,6 +990,10 @@ export async function createWebGPUDevice(): Promise<Device> {
     },
 
     createRenderPipeline(spec) {
+      // KNOWN GAP: invalid WGSL doesn't throw — the resulting pipeline's draws
+      // are silently dropped (the clear value is just read back). We never
+      // await/surface `getCompilationInfo()`; this hid two broken modules for
+      // a week (see compare-metrics.browser.ts header).
       const module = gpuDevice.createShaderModule({ code: spec.shaderWGSL });
       const bindings = parseWGSLBindings(spec.shaderWGSL);
       const primaryFormat = gpuFormatFor(spec.targetFormat);
