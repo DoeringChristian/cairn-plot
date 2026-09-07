@@ -31,7 +31,8 @@ import { useCallback, useMemo, useRef } from "react";
 import type { ToolbarButtonSpec, ToolbarMenuOption, ToolbarSegmentSpec } from "../../../primitives/controls/ToolbarConfig";
 import type { ImageBackendCapabilities } from "../backend.ts";
 import { getDisplayOperation, listDisplayOperations, type ReduceMode } from "../definition/display-operations.ts";
-import { projectDisplayOperation, type CapabilityFallback } from "../definition/core.ts";
+import type { CapabilityFallback } from "../definition/core.ts";
+import { resolvePaneEncoding } from "./pane-encoding.ts";
 
 /** The DATA-encoding multi-channel REDUCE options, in order (the multi-channel-
  *  colormap follow-up). Shown ONLY while a colormap LUT is active AND the source
@@ -124,6 +125,51 @@ export function resolveDisplayOperationIds(opts: {
   return { curveIds, lutIds, remapIds, all: [...curveIds, ...lutIds, ...remapIds] };
 }
 
+/** Catalogue-level pseudo-capability used for SEEDING only (never for the
+ *  offered menu): every registered display operation is "supported" here, so
+ *  the authored seed resolves against the full catalogue regardless of which
+ *  backend is active. Only the menu (`ids`) is intersected with the real
+ *  backend capabilities. */
+const CATALOGUE: Pick<ImageBackendCapabilities, "supportsDisplayOperation"> = {
+  supportsDisplayOperation: (id) => !!getDisplayOperation(id),
+};
+
+/**
+ * The curve to render under an active LUT (and the fallback when the pane's
+ * preferred default curve is not in `avail`). A DERIVED curve, not a user
+ * selection: substituting the first available one is intentional and needs no
+ * fallback record.
+ */
+export function pickDefaultCurve(avail: DisplayOperationIds, preferred: string): string {
+  if (avail.curveIds.includes(preferred)) return preferred;
+  return avail.curveIds[0] ?? avail.remapIds[0] ?? "srgb";
+}
+
+/**
+ * The authored HOME encoding at one arity — the seed `displayOperationModified`
+ * compares against. Deliberately takes NO capabilities: seeding is catalogue-
+ * level, so the same authored node seeds the same encoding on every backend and
+ * an unsupported seed is projected at READ time (see `pane-encoding.ts`) rather
+ * than silently becoming a different HOME.
+ *
+ * "Both set → colormap wins for scalars" falls out of the arity gating:
+ * `propColormap` is only in `lutIds` when the arity permits it.
+ */
+export function seedDisplayOperation(input: {
+  mode: "sdr" | "arity";
+  arity: number;
+  curveSet: readonly string[];
+  /** Optional authored LUT seed. */
+  propColormap: string | null | undefined;
+  /** The pane's resolved default curve (`resolveDefaultCurve(propTonemap)`). */
+  defaultCurve: string;
+}): string {
+  const { mode, arity, curveSet, propColormap, defaultCurve } = input;
+  const avail = resolveDisplayOperationIds({ mode, arity, curveSet, capabilities: CATALOGUE });
+  if (propColormap && avail.lutIds.includes(propColormap)) return propColormap;
+  return pickDefaultCurve(avail, defaultCurve);
+}
+
 /** A section-header option row (non-interactive) for the flat menu. */
 function header(id: string, label: string): ToolbarMenuOption {
   return { id: `__display_${id}`, label, header: true };
@@ -209,15 +255,6 @@ export interface PaneEncoding {
   fallback: CapabilityFallback | null;
 }
 
-/** Catalogue-level pseudo-capability used for SEEDING only (never for the
- *  offered menu): every registered display operation is "supported" here, so
- *  `idsFor`/`seedFor` resolve against the full catalogue regardless of which
- *  backend is active. Only the menu (`ids`) is intersected with the real
- *  backend capabilities. */
-const CATALOGUE: Pick<ImageBackendCapabilities, "supportsDisplayOperation"> = {
-  supportsDisplayOperation: (id) => !!getDisplayOperation(id),
-};
-
 /**
  * Projects the viewport store's encoding into renderer-ready values. Descriptor
  * props are captured once as a bootstrap value while the owner initializes the
@@ -227,35 +264,19 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   const { mode, arity, curveSet, propTonemap, resolveDefaultCurve, capabilities } = config;
   const propColormap = config.propColormap;
 
-  // Seeding stays catalogue-level: the authored seed must resolve the same way
-  // regardless of which backend is active. Only the offered menu (`ids` below)
-  // is intersected with the real backend capabilities.
-  const idsFor = useCallback(
-    (a: number): DisplayOperationIds => resolveDisplayOperationIds({ mode, arity: a, curveSet, capabilities: CATALOGUE }),
-    [mode, curveSet],
-  );
-
-  // Derived curve for a LUT, not a user selection: choosing the first supported
-  // curve when the default is unavailable is intentional and needs no fallback
-  // record.
-  const pickDefaultCurve = useCallback(
-    (avail: DisplayOperationIds): string => {
-      const d = resolveDefaultCurve(propTonemap);
-      if (avail.curveIds.includes(d)) return d;
-      return avail.curveIds[0] ?? avail.remapIds[0] ?? "srgb";
-    },
-    [resolveDefaultCurve, propTonemap],
-  );
-
+  // Seeding stays catalogue-level (see `seedDisplayOperation`): the authored seed
+  // must resolve the same way regardless of which backend is active. Only the
+  // offered menu (`ids` below) is intersected with the real backend capabilities.
   const seedFor = useCallback(
-    (a: number): string => {
-      const avail = idsFor(a);
-      const seedIsLut = !!propColormap && avail.lutIds.includes(propColormap);
-      // "both set → colormap wins for scalars": lut is only in `lutIds` when the
-      // arity permits it, so this already scopes the colormap win to scalars.
-      return seedIsLut ? propColormap : pickDefaultCurve(avail);
-    },
-    [idsFor, pickDefaultCurve, propColormap],
+    (a: number): string =>
+      seedDisplayOperation({
+        mode,
+        arity: a,
+        curveSet,
+        propColormap,
+        defaultCurve: resolveDefaultCurve(propTonemap),
+      }),
+    [mode, curveSet, propColormap, resolveDefaultCurve, propTonemap],
   );
 
   const initialSeedRef = useRef<string>();
@@ -273,15 +294,20 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
   );
 
   // The raw store id is PROJECTED (read-time only, never written back) onto the
-  // core fallback when the active backend cannot render it.
-  const projection = projectDisplayOperation(rawEncodingId, capabilities);
-  const displayOperationId = projection.effective;
+  // core fallback when the active backend cannot render it; `modified` keeps
+  // comparing the RAW id to the catalogue-level seed.
+  const { effective, fallback, modified } = resolvePaneEncoding({
+    rawId: rawEncodingId,
+    seedId: seedFor(arity),
+    capabilities,
+  });
+  const displayOperationId = effective;
 
   const activeEncoding = getDisplayOperation(displayOperationId);
   const isLut = activeEncoding?.category === "colormap";
-  const curveId = isLut ? pickDefaultCurve(ids) : displayOperationId;
+  const curveId = isLut ? pickDefaultCurve(ids, resolveDefaultCurve(propTonemap)) : displayOperationId;
   const colormap = isLut ? displayOperationId : null;
-  const displayOperationModified = rawEncodingId !== seedFor(arity);
+  const displayOperationModified = modified;
   const hasParam = useCallback(
     (name: string) => !!getDisplayOperation(displayOperationId)?.parameters.includes(name as never),
     [displayOperationId],
@@ -295,6 +321,6 @@ export function usePaneEncoding(config: PaneEncodingConfig): PaneEncoding {
     ids,
     displayOperationModified,
     hasParam,
-    fallback: projection.fallback,
+    fallback,
   };
 }

@@ -57,12 +57,19 @@ test("capabilities advertise stages independently rather than duplicating a pair
 });
 
 test("each concrete backend exports one complete backend object", () => {
-  for (const path of ["../cpu/backend.ts", "../webgpu/backend.ts"]) {
-    const source = readFileSync(new URL(path, import.meta.url), "utf8");
+  // The exact identifiers, not `id:`/`View:`/`capabilities:` — a bare key name
+  // matches any value (including a wrong or empty one), which made this guard
+  // pass for a backend wired to the other backend's view or capabilities.
+  const backends = [
+    { path: "../cpu/backend.ts", id: "cpu", view: "CpuImagePane", declaration: "CPU_CAPABILITIES" },
+    { path: "../webgpu/backend.ts", id: "webgpu", view: "GpuImagePane", declaration: "WEBGPU_CAPABILITIES" },
+  ] as const;
+  for (const backend of backends) {
+    const source = readFileSync(new URL(backend.path, import.meta.url), "utf8");
     assert.match(source, /ImageBackend<ImageBackendView>/);
-    assert.match(source, /id:/);
-    assert.match(source, /View:/);
-    assert.match(source, /capabilities:/);
+    assert.match(source, new RegExp(`id: "${backend.id}"`), backend.path);
+    assert.match(source, new RegExp(`View: ${backend.view}\\b`), backend.path);
+    assert.match(source, new RegExp(`capabilities: ${backend.declaration}\\b`), backend.path);
   }
   const compositionRoot = readFileSync(new URL("../../register-core.tsx", import.meta.url), "utf8");
   assert.match(compositionRoot, /ensureImagePlotType\(ImagePlotView, \[webGpuImageBackend, cpuImageBackend\]\)/);
