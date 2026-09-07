@@ -53,6 +53,7 @@ import type { Colormap, DiffMode, ImageProcessing } from "../../types";
 import { createBitmapCache } from "./bitmap-cache.ts";
 import { getCachedImageData, setCachedImageData } from "../resources/cache.ts";
 import { loadImageData } from "../resources/load-image-data.ts";
+import { decodeElementImage } from "../resources/decoded-image.ts";
 import { imageDataToSceneField } from "../resources/scene-field.ts";
 import { floatValues } from "../runtime/pixel-buffer.ts";
 import { getColormapLUT } from "../../../settings/colormaps/index";
@@ -157,26 +158,13 @@ async function toPaintSource(data: ImageData): Promise<PaintSource> {
  * pane displayed such an image fine through its `<img>`. Decoding to a bitmap
  * keeps that working (only pixel READBACK is restricted, and only the TEV
  * numbers/histogram depend on that).
+ *
+ * The body now lives in `resources/decoded-image.ts`, where it is the FALLBACK
+ * for the one shared decode; this call keeps the plain path's behaviour
+ * identical until it moves onto `decodedImage(url)` itself.
  */
 async function bitmapFromUrl(url: string): Promise<PaintSource | null> {
-  const img = new Image();
-  img.decoding = "async";
-  const ok = await new Promise<boolean>((resolve) => {
-    img.onload = () => resolve(true);
-    img.onerror = () => resolve(false);
-    img.src = url;
-  });
-  if (!ok) return null;
-  const width = img.naturalWidth;
-  const height = img.naturalHeight;
-  if (typeof createImageBitmap === "function") {
-    try {
-      return { bitmap: await createImageBitmap(img), width, height };
-    } catch {
-      /* fall through to the element itself — `drawImage` accepts it */
-    }
-  }
-  return { bitmap: img, width, height };
+  return await decodeElementImage(url);
 }
 
 /**
