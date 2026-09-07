@@ -7,13 +7,15 @@
  * test in the tree — they are native calls inside the decode path, not DOM state
  * — so they are counted here with prototype spies:
  *
- *   HTMLImageElement.prototype.src   — an ELEMENT decode. `loadImageData`
- *                                      decodes every source through an `<img>`,
- *                                      draws it to a scratch canvas and reads
- *                                      the whole thing back, at mount, for every
- *                                      pane; the CPU backend then decodes the
- *                                      same URL a SECOND time for its paint
- *                                      source.
+ *   HTMLImageElement.prototype.src   — an ELEMENT decode. It is the FALLBACK
+ *                                      path now (`decoded-image.ts` uses it only
+ *                                      when `fetch` or `createImageBitmap`
+ *                                      cannot serve the URL), so on this page —
+ *                                      same-origin `data:` sources — it must
+ *                                      never fire. Before the fix it ran twice
+ *                                      per image on the CPU backend: once in
+ *                                      `loadImageData` and once more for the
+ *                                      paint source.
  *   createImageBitmap                — the cheap decode, counted BY SOURCE TYPE
  *                                      (`Blob` / `HTMLImageElement` / `ImageData`),
  *                                      because "decoded from a Blob" and
@@ -28,11 +30,19 @@
  *                                      are this harness's own paint probe and
  *                                      the pane's pixel-value overlay, not load
  *                                      cost.
- *   GPUQueue.writeTexture            — bytes uploaded as raw buffers. Every byte
- *                                      here is a CPU-side expansion the GPU
- *                                      could have decoded itself.
+ *   GPUQueue.writeTexture            — bytes uploaded as raw buffers, split by
+ *                                      the COPY EXTENT: a write of more than one
+ *                                      row is an image, a single-row write is a
+ *                                      colormap LUT (`image-engine.ts`
+ *                                      `buildColormapTexture`: a 256x1 ramp, or
+ *                                      the 1x1 placeholder every render passes).
+ *                                      Every SOURCE byte here is a CPU-side
+ *                                      expansion the GPU could have decoded
+ *                                      itself; the LUT rows are not source data
+ *                                      and are reported, not gated.
  *   GPUQueue.copyExternalImageToTexture — the upload that does NOT go through a
- *                                      CPU buffer. Today: zero.
+ *                                      CPU buffer: the queue copies the decoded
+ *                                      bitmap straight into the texture.
  *   sceneConversionCount()           — `imageDataToSceneField` calls, from
  *                                      `resources/scene-field.ts`. Each one
  *                                      builds a `w*h*4` Float32Array one pixel
@@ -41,14 +51,33 @@
  *                                      on an sRGB texture returns linear values
  *                                      already.
  *
- * WHAT IS GATED, AND WHAT IS NOT. Only one thing is asserted today: all twelve
- * image panes paint, on each backend, inside the runner's timeout. Every
- * measurement is emitted as `report(true, "BENCH: …")` — a BASELINE, not a
- * budget. That is deliberate: this harness is written BEFORE the fixes, so the
- * numbers it prints are the numbers to beat, and pinning them as assertions now
- * would only pin in the defect. The later tasks in this plan turn the BENCH
- * lines into gates (element decodes 0, `createImageBitmap` == distinct URLs,
- * `getImageData` == 1, `writeTexture` bytes 0, scene conversions 0).
+ * WHAT IS GATED. The numbers are ASSERTIONS now, not baselines (design §3.5):
+ * the load path is fixed, and these gates are what keep it fixed. Per backend
+ * phase:
+ *
+ *   - all twelve image panes paint inside the phase's deadline;
+ *   - ELEMENT DECODES 0 — nothing on this page reaches the fallback path;
+ *   - `createImageBitmap` calls == the phase's DISTINCT URL COUNT, every one of
+ *     them from a `Blob`: one decode per image, off the main thread, and none
+ *     of them re-encoding an already-decoded element;
+ *   - `getImageData` exactly 1 at mount — the ONE wide pane whose histogram
+ *     panel is open — and exactly ONE MORE after the per-pixel numbers are
+ *     toggled on one narrow pane, and none after that. A readback happens
+ *     when, and only when, something on screen asks for pixels;
+ *   - SCENE CONVERSIONS 0: `imageDataToSceneField` has left both backends'
+ *     mount paths (it survives only for the CPU false-colour and metrics
+ *     callers, which this page does not exercise);
+ *   - GPU only: `writeTexture` uploads ZERO source bytes, and
+ *     `copyExternalImageToTexture` runs once per distinct uploaded texture.
+ *
+ * Plus, after both phases: the gamma-tagged and translucent fixtures read back
+ * BYTE-IDENTICAL through `decodedImage(...).imageData()` (the product path) and
+ * through an `<img>` element decoded and drawn by this harness (the path the
+ * product used to take) — the proof that moving to `createImageBitmap(Blob)`
+ * did not change anyone's pixels.
+ *
+ * The `BENCH:` lines that remain are measurements with no budget attached
+ * (elapsed ms, megapixels, MB) plus the before/after summary in `costRatio()`.
  *
  * TWO THINGS THE LAYOUT HAS TO GET RIGHT.
  *  1. `window.__cairnPlotEagerMount = true` (see `host/lazy-mount.ts`) — without
@@ -65,12 +94,22 @@
  * card that carries `"panel.info": true`. See `WIDE_W` for why that setting is
  * spelled out instead of being reached by making the card wider.
  *
- * PHASE INDEPENDENCE. The decoded-`ImageData` cache (`resources/cache.ts`) is
- * keyed by URL and lives for the document, so if the two backend phases shared
- * URLs the GPU phase would measure a warm cache and report near-zero cost. The
- * two 2048² PNG payloads are therefore encoded ONCE (the expensive part) and
- * handed to each phase under a distinct URL FRAGMENT (`#cpu` / `#gpu`), which a
- * data: URL decoder ignores but every cache key includes.
+ * TWELVE DISTINCT URLS PER PHASE, AND WHY. Every cache on the load path
+ * (`resources/decoded-image.ts`, `resources/cache.ts`, the GPU upload cache)
+ * is keyed by URL and lives for the document. Two panes sharing a URL
+ * therefore share ONE decode and ONE upload — which is a real and wanted
+ * property, but it is not the one being gated here: with two URLs behind
+ * twelve cards, "one decode per image" and "one decode per PAGE" print the
+ * same number, and eleven twelfths of the cost would be invisible. So each
+ * pane gets its OWN url (`#cpu-p0`…`#cpu-p11`, `#gpu-p0`…), the two comparison
+ * cards get two further ones (`#gpu-cmp-a` / `#gpu-cmp-b`), and the gates
+ * measure PER-PANE cost. The same fragments keep the two backend phases
+ * independent: without them the GPU phase would measure the CPU phase's warm
+ * cache and report near-zero.
+ *
+ * The payloads are still encoded ONCE (that is the expensive part) and handed
+ * out under distinct FRAGMENTS, which a `data:` URL decoder ignores but every
+ * cache key includes.
  */
 import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
@@ -78,7 +117,10 @@ import { PlotApp } from "../../../host/bootstrap";
 import { registerCoreRenderers } from "../../register-core";
 import type { PlotSpec } from "../../../../../packages/spec/src/spec.ts";
 import { sceneConversionCount } from "../resources/scene-field.ts";
+import { decodedImage } from "../resources/decoded-image.ts";
 import { getCanvasPresentationStateForTest } from "../webgpu/pool.ts";
+import { getRegisteredPane } from "../../../state/selection/pane-registry.ts";
+import { PIXEL_VALUE_MIN_SCREEN_PX } from "../../../primitives/components/pixel-value-size.ts";
 import { createHarness, sleep, waitFor } from "../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({
@@ -125,6 +167,14 @@ const WIDE_H = 620;
  * fixture readbacks inside it, so neither phase may claim the whole 60 s.
  */
 const PAINT_TIMEOUT_MS = 24_000;
+/**
+ * The on-screen cell size (screen px per source texel) the numbers toggle aims
+ * for. `PIXEL_VALUE_MIN_SCREEN_PX` (30) is where the overlay starts asking for
+ * samples; this leaves a comfortable margin above it so a pixel of rounding in
+ * the measured viewport box cannot land the pane on the wrong side of the one
+ * gate that makes the second readback happen.
+ */
+const NUMBERS_CELL_PX = 44;
 
 /**
  * The 2D `getImageData` as it was BEFORE any spy — the paint probe below calls
@@ -143,8 +193,7 @@ const PANE_CANVAS_SELECTOR = "[data-cpu-image-canvas], [data-gpu-image-canvas]";
  * 64×64 RGBA checkerboard carrying a `gAMA` chunk of 1/2.2. A decoder that
  * honours the tag returns different bytes from one that ignores it, so this is
  * the fixture that catches a decode path swapped for one with different colour
- * management. Baseline digests are printed below; the byte-identity GATE lands
- * with the decode rewrite.
+ * management (see `fixtureIdentity`).
  */
 const TAGGED_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAABGdBTUEAALGPC/xhBQAAAIJJREFUeNrt2LEVABAQRMErRagsRSpCEXqhA2JuAuEFJvpvY/a6Tq+0cXyv3wcAAAAAAACQGOD3D97uAQAAAAAAgMwAShAAAAAAAACwByhBAAAAAAAAwB6gBAEAAAAAAAB7gBIEAAAAAAAA7AFKEAAAAAAAALAHKEEAAAAAAADgO4AN6NPySuoHhxgAAAAASUVORK5CYII=";
@@ -203,7 +252,12 @@ interface Counters {
   getImageDataCalls: number;
   getImageDataPixels: number;
   writeTextureCalls: number;
-  writeTextureBytes: number;
+  /** Bytes written into a MULTI-ROW copy extent — an image, and the number the
+   *  GPU gate holds at zero. */
+  writeTextureSourceBytes: number;
+  /** Bytes written into a SINGLE-ROW extent — a colormap LUT (256x1) or the
+   *  1x1 placeholder. Reported, never gated: no image travels this way. */
+  writeTextureRowBytes: number;
   copyExternalImage: number;
 }
 
@@ -215,9 +269,18 @@ function zeroCounters(): Counters {
     getImageDataCalls: 0,
     getImageDataPixels: 0,
     writeTextureCalls: 0,
-    writeTextureBytes: 0,
+    writeTextureSourceBytes: 0,
+    writeTextureRowBytes: 0,
     copyExternalImage: 0,
   };
+}
+
+/** Rows covered by a `writeTexture` copy extent (`GPUExtent3D`: an object with
+ *  `height`, or a `[w, h, d]` array — the spec allows both). One row is a LUT;
+ *  more than one is an image. */
+function copyRows(size: unknown): number {
+  if (Array.isArray(size)) return Number(size[1] ?? 1);
+  return Number((size as { height?: number } | null)?.height ?? 1);
 }
 
 let counters = zeroCounters();
@@ -283,7 +346,9 @@ function installSpies(): () => void {
     queue.writeTexture = function (this: GPUQueue, ...args: unknown[]) {
       counters.writeTextureCalls++;
       const data = args[1] as { byteLength?: number } | null;
-      counters.writeTextureBytes += Number(data?.byteLength ?? 0);
+      const bytes = Number(data?.byteLength ?? 0);
+      if (copyRows(args[3]) > 1) counters.writeTextureSourceBytes += bytes;
+      else counters.writeTextureRowBytes += bytes;
       return (origWrite as unknown as (...a: unknown[]) => void).apply(this, args);
     } as typeof queue.writeTexture;
     queue.copyExternalImageToTexture = function (this: GPUQueue, ...args: unknown[]) {
@@ -320,8 +385,9 @@ function imageSpec(src: string, label: string, settings?: Record<string, unknown
   } as unknown as PlotSpec;
 }
 
-/** A two-operand absolute-difference card — the shape that drags every operand
- *  through `imageDataToSceneField` on the WebGPU path today. */
+/** A two-operand absolute-difference card — the shape that used to drag every
+ *  operand through `imageDataToSceneField` and upload it as rgba32float, and
+ *  now uploads each operand once as an `rgba8unorm-srgb` bitmap. */
 function compareSpec(a: string, b: string, label: string): PlotSpec {
   return {
     mode: "local",
@@ -413,6 +479,69 @@ function gpuPainted(host: HTMLElement): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// The numbers toggle — the SECOND demand for pixels
+// ---------------------------------------------------------------------------
+/**
+ * True once the pixel-value overlay has drawn anything at all. Read through the
+ * SAVED original `getImageData` (the overlay canvas is not one of the two pane
+ * canvases the spy excludes, so the live one would count this probe as load
+ * cost).
+ */
+function overlayInked(host: HTMLElement): boolean {
+  const canvas = host.querySelector<HTMLCanvasElement>("canvas[data-pixel-value-overlay]");
+  if (!canvas || canvas.width === 0 || canvas.height === 0) return false;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return false;
+  const px = ORIGINAL_GET_IMAGE_DATA.call(ctx, 0, 0, canvas.width, canvas.height).data;
+  for (let i = 3; i < px.length; i += 4) if (px[i]! > 0) return true;
+  return false;
+}
+
+interface NumbersToggle {
+  /** The `image.view` zoom published to the pane. */
+  zoom: number;
+  /** Screen px per source texel at that zoom — must clear the overlay gate. */
+  cellPx: number;
+  /** The overlay actually drew numbers (so the demand really was made). */
+  inked: boolean;
+}
+
+/**
+ * Turn the per-pixel numbers ON for one pane, the way a user does: by ZOOMING
+ * IN. There is no "numbers" switch — `PixelValueOverlay` reports demand
+ * (`onSampleDemandChange`) the moment one source texel covers
+ * `PIXEL_VALUE_MIN_SCREEN_PX` screen px, and it is that report which makes a
+ * demand-driven backend read its pixels back. So this publishes an
+ * `"image.view"` zoom through the pane's own registered settings accessor
+ * (`state/selection/pane-registry.ts` — the same external-write seam a linked
+ * peer writes through), which is the ONE write path a gesture would take too.
+ *
+ * The zoom is DERIVED from the pane's measured viewport instead of hard-coded:
+ * the source is square, so the contain-fit side is `min(box.w, box.h)`, one
+ * texel covers `zoom * side / IMAGE_N` screen px, and the zoom that puts that
+ * at `NUMBERS_CELL_PX` falls out. Pan stays at the origin — `viewToQuad` scales
+ * the fitted rect about the box origin, so the top-left texels stay in view at
+ * any zoom and the overlay always has a non-empty window to draw.
+ */
+async function toggleNumbers(host: HTMLElement): Promise<NumbersToggle> {
+  const surface = host.querySelector<HTMLElement>(
+    "[data-cpu-image-surface], [data-gpu-image-surface]",
+  );
+  const paneId = host.querySelector<HTMLElement>("[data-plot-pane-id]")?.dataset.plotPaneId;
+  const settings = paneId ? getRegisteredPane(paneId)?.settings : undefined;
+  if (!surface || !settings) {
+    throw new Error("image-load-cost: no registered pane to zoom (numbers toggle)");
+  }
+  const box = surface.getBoundingClientRect();
+  const side = Math.min(box.width, box.height);
+  if (side <= 0) throw new Error("image-load-cost: the pane to zoom has no measured viewport");
+  const zoom = (NUMBERS_CELL_PX * IMAGE_N) / side;
+  settings.set({ "image.view": { zoom, pan: { x: 0, y: 0 } } });
+  const inked = await waitFor(() => overlayInked(host), 10_000, 50);
+  return { zoom, cellPx: (zoom * side) / IMAGE_N, inked };
+}
+
+// ---------------------------------------------------------------------------
 // One backend phase
 // ---------------------------------------------------------------------------
 const mib = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(1);
@@ -426,9 +555,27 @@ function bySource(counts: Record<string, number>): string {
 interface PhaseOptions {
   name: "cpu" | "gpu";
   renderMode: "cpu" | "gpu";
-  gradient: string;
-  checker: string;
+  /** One URL per image card — twelve DISTINCT ones (see the file header). */
+  paneUrls: readonly string[];
+  /** The two operands shared by every comparison card, distinct from all of
+   *  the above. */
+  compareUrls: readonly [string, string];
   compareCards: number;
+}
+
+/**
+ * The GPU upload gate's expected `copyExternalImageToTexture` count: one per
+ * DISTINCT source texture. The twelve image cards hold twelve distinct URLs, so
+ * twelve; the comparison cards hold two more, and each is uploaded once per
+ * FORMAT it is needed in — `rgba8unorm` for a plain pane, `rgba8unorm-srgb` for
+ * a comparison operand (`expanded-upload-cache.ts` keys on the format) — but
+ * these two URLs appear only inside comparison cards, so one upload each. Both
+ * comparison cards name the SAME two URLs, and the upload cache is keyed by
+ * content, so the second card re-leases the first card's textures rather than
+ * uploading its own: two cards, two uploads, not four.
+ */
+function expectedCopies(paneCount: number, compareCards: number): number {
+  return paneCount + (compareCards > 0 ? 2 : 0);
 }
 
 async function runPhase(opts: PhaseOptions): Promise<boolean> {
@@ -452,22 +599,29 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
   );
   const imageHosts = [wideHost, ...narrowHosts];
 
+  const distinctUrls = PANE_COUNT + (opts.compareCards > 0 ? 2 : 0);
+
   counters = zeroCounters();
   const conversionsBefore = sceneConversionCount();
   const restore = installSpies();
   const roots: Root[] = [];
   let painted = 0;
   let elapsed = 0;
+  // `getImageData` calls at the end of MOUNT — before anything on screen asks
+  // for pixels a second time.
+  let readbacksAtMount = -1;
+  let histogramBinned = false;
+  let toggle: NumbersToggle | null = null;
+  let readbacksAfterToggle = -1;
+  let readbacksSettled = -1;
   try {
     const started = performance.now();
     imageHosts.forEach((host, i) => {
       const root = createRoot(host);
-      // Alternate the two sources so the run is not one URL twelve times — a
-      // per-URL cache would otherwise hide eleven twelfths of the cost.
       root.render(
         createElement(PlotApp, {
           spec: imageSpec(
-            i % 2 === 0 ? opts.gradient : opts.checker,
+            opts.paneUrls[i]!,
             `card-${i}`,
             // Index 0 IS `wideHost` (it heads `imageHosts`).
             i === 0 ? { "panel.info": true } : undefined,
@@ -479,7 +633,9 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
     compareHosts.forEach((host, i) => {
       const root = createRoot(host);
       root.render(
-        createElement(PlotApp, { spec: compareSpec(opts.gradient, opts.checker, `diff-${i}`) }),
+        createElement(PlotApp, {
+          spec: compareSpec(opts.compareUrls[0], opts.compareUrls[1], `diff-${i}`),
+        }),
       );
       roots.push(root);
     });
@@ -498,24 +654,42 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
     // A panel with a non-zero sample total is the proof that the readback
     // actually REACHED the histogram — on the CPU backend those pixels now
     // arrive only because the panel asked for them (`onHistogramDemandChange`),
-    // so an open panel binning nothing would mean the one `getImageData` below
-    // was counted for a histogram that never got its data.
-    await waitFor(() => histogramTotals().some((t) => t > 0), 8_000, 50);
+    // so an open panel binning nothing would mean the one `getImageData` gated
+    // below was counted for a histogram that never got its data.
+    histogramBinned = await waitFor(() => histogramTotals().some((t) => t > 0), 8_000, 50);
+    // Settle before latching the mount count: a readback that arrives a tick
+    // after the histogram's would otherwise be attributed to the toggle.
+    await sleep(400);
+    readbacksAtMount = counters.getImageDataCalls;
+
+    // ── the second demand ────────────────────────────────────────────────────
+    // Zoom ONE narrow pane past the numbers threshold. Its pixels were never
+    // read at mount (nothing was showing them), so this is the whole point of
+    // the demand-driven readback: exactly one more full-frame read, for the one
+    // pane that now needs it, and nothing for the ten that do not.
+    toggle = await toggleNumbers(narrowHosts[0]!);
+    await waitFor(() => counters.getImageDataCalls > readbacksAtMount, 10_000, 50);
+    readbacksAfterToggle = counters.getImageDataCalls;
+    // And it must STAY at one more: a pane that re-reads its frame on every
+    // redraw would pass the check above and still be the defect.
+    await sleep(600);
+    readbacksSettled = counters.getImageDataCalls;
   } finally {
     restore();
   }
 
   const c = counters;
   const conversions = sceneConversionCount() - conversionsBefore;
-  const ok = painted === PANE_COUNT;
+  let ok = painted === PANE_COUNT;
   report(
     ok,
     `${opts.name}: ${painted}/${PANE_COUNT} image panes painted within ${(PAINT_TIMEOUT_MS / 1000).toFixed(0)} s`,
   );
-  // Reported, not gated: the wide card exists precisely so ONE pane has its
-  // histogram open and pays for the readback that demands. If this ever reads 0
-  // the harness has stopped measuring the case it was built for, and the
-  // `getImageData` baseline below is quietly the wrong shape.
+
+  // The wide card exists precisely so ONE pane has its histogram open and pays
+  // for the readback that demands. If this ever stops holding, the harness has
+  // stopped measuring the case it was built for and the readback gates below
+  // are quietly the wrong shape — so it is a GATE, not a note.
   const panels = stage().querySelectorAll("[data-cairn-info-panel]").length;
   // The shell spreads `surfaceAttrs` onto the ONE measured viewport element, so
   // this is exactly the `paneW` the auto-open rule would compare against —
@@ -524,17 +698,84 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
     wideHost
       .querySelector("[data-cpu-image-surface], [data-gpu-image-surface]")
       ?.getBoundingClientRect().width ?? 0;
+  const panelOk = panels === 1 && histogramBinned;
+  ok = ok && panelOk;
   report(
-    true,
-    `BENCH: ${opts.name}: ${panels} histogram panel(s) open (the ${WIDE_W}x${WIDE_H} card, viewport ` +
-      `${wideBox.toFixed(0)} px; the ${NARROW_W}x${NARROW_H} cards must not), ` +
-      `binned samples ${histogramTotals().join("/") || "none"}`,
+    panelOk,
+    `${opts.name}: exactly one histogram panel open and binning (the ${WIDE_W}x${WIDE_H} card, ` +
+      `viewport ${wideBox.toFixed(0)} px; the ${NARROW_W}x${NARROW_H} cards must not), ` +
+      `panels ${panels}, binned samples ${histogramTotals().join("/") || "none"}`,
   );
-  const gpuPart =
-    opts.name === "gpu"
-      ? `, writeTexture ${mib(c.writeTextureBytes)} MB in ${c.writeTextureCalls} call(s), ` +
-        `copyExternalImageToTexture ${c.copyExternalImage}`
-      : "";
+
+  const elementOk = c.elementDecodes === 0;
+  ok = ok && elementOk;
+  report(
+    elementOk,
+    `${opts.name}: ${c.elementDecodes} element decode(s) — the <img> fallback must never run on ` +
+      `same-origin data (expected 0)`,
+  );
+
+  const blobs = c.bitmapBySource["Blob"] ?? 0;
+  const bitmapOk = c.bitmapTotal === distinctUrls && blobs === distinctUrls;
+  ok = ok && bitmapOk;
+  report(
+    bitmapOk,
+    `${opts.name}: createImageBitmap ${c.bitmapTotal} (${bySource(c.bitmapBySource)}) — one decode ` +
+      `per distinct URL, all from a Blob (expected ${distinctUrls} = ${PANE_COUNT} cards` +
+      (opts.compareCards > 0 ? " + 2 comparison operands" : "") +
+      `)`,
+  );
+
+  const mountReadbackOk = readbacksAtMount === 1;
+  ok = ok && mountReadbackOk;
+  report(
+    mountReadbackOk,
+    `${opts.name}: ${readbacksAtMount} full-frame readback(s) at mount — only the open histogram's ` +
+      `(expected 1; ${mpx(c.getImageDataPixels)} Mpx read in total by the end of the phase)`,
+  );
+
+  const toggleOk =
+    !!toggle &&
+    toggle.inked &&
+    toggle.cellPx >= PIXEL_VALUE_MIN_SCREEN_PX &&
+    readbacksAfterToggle === readbacksAtMount + 1 &&
+    readbacksSettled === readbacksAtMount + 1;
+  ok = ok && toggleOk;
+  report(
+    toggleOk,
+    `${opts.name}: numbers on ONE narrow pane (zoom ${toggle?.zoom.toFixed(0) ?? "-"}, ` +
+      `${toggle?.cellPx.toFixed(1) ?? "-"} px per texel ≥ ${PIXEL_VALUE_MIN_SCREEN_PX}, overlay ` +
+      `inked ${toggle?.inked ?? false}) cost exactly one more readback: ` +
+      `${readbacksAtMount} → ${readbacksAfterToggle}, still ${readbacksSettled} after settling`,
+  );
+
+  const conversionsOk = conversions === 0;
+  ok = ok && conversionsOk;
+  report(
+    conversionsOk,
+    `${opts.name}: ${conversions} imageDataToSceneField conversion(s) — no scalar sRGB expansion on ` +
+      `either mount path (expected 0)`,
+  );
+
+  if (opts.name === "gpu") {
+    const uploadOk = c.writeTextureSourceBytes === 0;
+    ok = ok && uploadOk;
+    report(
+      uploadOk,
+      `gpu: writeTexture uploaded ${c.writeTextureSourceBytes} source byte(s) — no image travels ` +
+        `through a CPU buffer (expected 0; the ${c.writeTextureCalls} call(s) left are ` +
+        `${c.writeTextureRowBytes}-byte single-row colormap LUTs)`,
+    );
+    const want = expectedCopies(PANE_COUNT, opts.compareCards);
+    const copyOk = c.copyExternalImage === want;
+    ok = ok && copyOk;
+    report(
+      copyOk,
+      `gpu: copyExternalImageToTexture ${c.copyExternalImage} — one bitmap upload per distinct ` +
+        `source texture (expected ${want})`,
+    );
+  }
+
   report(
     true,
     `BENCH: ${opts.name} ${PANE_COUNT} panes` +
@@ -542,7 +783,12 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
       `: all painted in ${elapsed.toFixed(0)} ms; element decodes ${c.elementDecodes}, ` +
       `createImageBitmap ${c.bitmapTotal} (${bySource(c.bitmapBySource)}), ` +
       `getImageData ${c.getImageDataCalls} (${mpx(c.getImageDataPixels)} Mpx), ` +
-      `scene conversions ${conversions}${gpuPart}`,
+      `scene conversions ${conversions}` +
+      (opts.name === "gpu"
+        ? `, writeTexture ${mib(c.writeTextureSourceBytes)} MB of sources + ` +
+          `${c.writeTextureRowBytes} B of LUT rows in ${c.writeTextureCalls} call(s), ` +
+          `copyExternalImageToTexture ${c.copyExternalImage}`
+        : ""),
   );
 
   roots.forEach((r) => r.unmount());
@@ -552,11 +798,10 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture readback baseline
+// Fixture byte-identity
 // ---------------------------------------------------------------------------
 /** FNV-1a over the decoded bytes — a stable, comparable stand-in for "these two
- *  paths produced the same pixels", printed so the byte-identity gate that
- *  lands with the decode rewrite has a baseline to be measured against. */
+ *  paths produced the same pixels". */
 function digest(data: Uint8ClampedArray): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < data.length; i++) {
@@ -575,20 +820,64 @@ function readBack(source: CanvasImageSource, w: number, h: number): Uint8Clamped
   return ORIGINAL_GET_IMAGE_DATA.call(ctx, 0, 0, w, h).data;
 }
 
-async function fixtureBaseline(name: string, url: string): Promise<void> {
+/**
+ * GATE: the pixels the PRODUCT now hands to a histogram, to the pixel-value
+ * numbers and to a CPU processing pass — `decodedImage(url).imageData()`, the
+ * `fetch` → `Blob` → `createImageBitmap` path — are byte-for-byte the pixels
+ * the product used to produce by decoding an `<img>` and drawing it to a
+ * scratch canvas (still done here, by hand, as the reference).
+ *
+ * Two fixtures, chosen for the two ways a decode swap silently changes colour:
+ * a `gAMA`-tagged PNG (colour management) and a two-alpha-level PNG
+ * (premultiplication). `decodedImage` decodes with
+ * `colorSpaceConversion: "default"` and `premultiplyAlpha: "none"` precisely so
+ * both stay identical; this is the assertion that says so.
+ */
+async function fixtureIdentity(name: string, url: string): Promise<boolean> {
   const img = new Image();
   img.src = url;
   await img.decode();
   const viaElement = readBack(img, img.naturalWidth, img.naturalHeight);
-  const blob = await (await fetch(url)).blob();
-  const bitmap = await createImageBitmap(blob);
-  const viaBitmap = readBack(bitmap, bitmap.width, bitmap.height);
-  bitmap.close();
-  const same = digest(viaElement) === digest(viaBitmap);
+  const decoded = await decodedImage(url);
+  const pixels = decoded ? await decoded.imageData() : null;
+  const sameDims =
+    !!pixels && pixels.width === img.naturalWidth && pixels.height === img.naturalHeight;
+  const elementDigest = digest(viaElement);
+  const productDigest = pixels ? digest(pixels.data) : "none";
+  const same = sameDims && elementDigest === productDigest;
+  report(
+    same,
+    `${name} ${img.naturalWidth}x${img.naturalHeight} fixture reads back identical through ` +
+      `decodedImage().imageData() and through the <img> element path: element ${elementDigest}, ` +
+      `decodedImage ${productDigest}` +
+      (sameDims ? "" : ` (dims ${pixels ? `${pixels.width}x${pixels.height}` : "null"})`),
+  );
+  return same;
+}
+
+/**
+ * The BEFORE/AFTER summary, per image, as one BENCH line.
+ *
+ * The "before" figures are the per-image costs of the code at the plan's Task 0
+ * commit (`ff7cf32`), read off ITS harness run — not re-measured here: the
+ * branch is linear, that code is gone, and re-running it would mean rewriting
+ * history. Task 0 measured twelve panes sharing TWO urls; the per-image costs
+ * below are what its aggregate decomposes into, and its GPU byte total is the
+ * arithmetic proof of the decomposition: 2 plain images x 16 MB (rgba8unorm)
+ * + 2 comparison operands x 64 MB (rgba32float) = the 160 MB it reported.
+ */
+function costRatio(): void {
+  const frame = IMAGE_N * IMAGE_N * 4;
   report(
     true,
-    `BENCH: ${name} ${img.naturalWidth}x${img.naturalHeight} fixture: element path ${digest(viaElement)}, ` +
-      `createImageBitmap(Blob) path ${digest(viaBitmap)}, identical ${same}`,
+    `BENCH: per image, before → after: CPU 2 element decodes + 1 createImageBitmap(element) + ` +
+      `1 unconditional ${mib(frame)} MB readback → 1 createImageBitmap(Blob) + 0 readbacks ` +
+      `(4 native decode/readback calls → 1, and ${mib(frame)} MB → 0 B of main-thread copy); ` +
+      `GPU 1 element decode + 1 ${mib(frame)} MB readback + ${mib(frame)} MB writeTexture → ` +
+      `1 createImageBitmap(Blob) + 1 copyExternalImageToTexture (0 B through a CPU buffer); ` +
+      `per comparison operand 1 scalar rgba32float scene conversion + ${mib(frame * 4)} MB ` +
+      `writeTexture → 0 conversions and an rgba8unorm-srgb bitmap upload. Readbacks are now ` +
+      `demand-driven: this page pays exactly 1 at mount (the open histogram) instead of 12.`,
   );
 }
 
@@ -606,11 +895,27 @@ async function run(): Promise<boolean> {
       `checker ${mib(checker.length)} MB as PNG data URLs; ${mib(IMAGE_N * IMAGE_N * 4)} MB each decoded`,
   );
 
+  // One URL PER PANE (see the file header): the payload alternates so no two
+  // neighbouring cards show the same picture, but every card has a cache key of
+  // its own, so twelve cards cost twelve decodes and the gates measure per-pane
+  // work rather than per-page work.
+  const paneUrls = (phase: string): string[] =>
+    Array.from(
+      { length: PANE_COUNT },
+      (_, i) => `${i % 2 === 0 ? gradient : checker}#${phase}-p${i}`,
+    );
+  // The comparison cards' two operands: distinct from the twelve AND from each
+  // other, so `absolute` difference has something to compute.
+  const compareUrls = (phase: string): [string, string] => [
+    `${gradient}#${phase}-cmp-a`,
+    `${checker}#${phase}-cmp-b`,
+  ];
+
   let ok = await runPhase({
     name: "cpu",
     renderMode: "cpu",
-    gradient: `${gradient}#cpu`,
-    checker: `${checker}#cpu`,
+    paneUrls: paneUrls("cpu"),
+    compareUrls: compareUrls("cpu"),
     compareCards: 0,
   });
 
@@ -619,8 +924,8 @@ async function run(): Promise<boolean> {
       (await runPhase({
         name: "gpu",
         renderMode: "gpu",
-        gradient: `${gradient}#gpu`,
-        checker: `${checker}#gpu`,
+        paneUrls: paneUrls("gpu"),
+        compareUrls: compareUrls("gpu"),
         compareCards: 2,
       })) && ok;
   } else {
@@ -629,10 +934,10 @@ async function run(): Promise<boolean> {
     report(true, "BENCH: gpu phase SKIPPED — navigator.gpu is absent");
   }
 
-  // Unspied, after both phases: these two calls are a baseline for a LATER
-  // gate, not part of the load cost being measured.
-  await fixtureBaseline("gamma-tagged", TAGGED_PNG);
-  await fixtureBaseline("translucent", TRANSLUCENT_PNG);
+  // Unspied, after both phases: the two decode paths must agree byte for byte.
+  ok = (await fixtureIdentity("gamma-tagged", TAGGED_PNG)) && ok;
+  ok = (await fixtureIdentity("translucent", TRANSLUCENT_PNG)) && ok;
+  costRatio();
   return ok;
 }
 

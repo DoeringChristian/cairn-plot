@@ -512,8 +512,9 @@ Notes on EV/offset: the toolbar's **EV/OFF sliders are additive runtime
 adjustments** layered on the controlled base `exposure`/`offset`; HOME resets only
 the slider (to 0), so the descriptor base persists. With the toolbar hidden the
 host sets EV/offset entirely through `exposure`/`offset`. The **CPU 2D-canvas**
-plain-`<img>` SDR path has no scene-linear recompute stage, so it does NOT apply
-base EV/offset there (documented graceful degradation — the WebGPU backend and the
+plain 8-bit SDR path (a decoded bitmap blitted straight to the canvas — see
+`plots/image/resources/decoded-image.ts`) has no scene-linear recompute stage,
+so it does NOT apply base EV/offset there (documented graceful degradation — the WebGPU backend and the
 CPU HDR tone-map path both do); a colormapped SDR pane forces a raw passthrough, so
 EV/offset don't apply there either. Deep-EXR depth sliders + region-select are
 **data-driven** (present only for a deep source), not host-menu controls.

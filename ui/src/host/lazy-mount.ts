@@ -54,6 +54,26 @@ export function isEagerMount(signals: EagerMountSignals): boolean {
   return hasEagerQueryParam(signals.search);
 }
 
-/** Generous rootMargin so a pane mounts well BEFORE it scrolls into view — the
- *  real renderer is usually already painted by the time the pane is visible. */
+/**
+ * Generous rootMargin so a pane mounts well BEFORE it scrolls into view — the
+ * real renderer is usually already painted by the time the pane is visible.
+ *
+ * WHY IT STAYS AT 600 px. The obvious tuning knob for "opening a gallery of
+ * image cards is slow" is to shrink this margin so fewer panes mount at once,
+ * and it was considered and rejected (image-load-cost design §3.4). The cost
+ * that made a wide margin hurt was per-pane work at mount — two decodes, a
+ * full-frame `getImageData`, a CPU-side sRGB expansion — and that is now gone:
+ * `resources/decoded-image.ts` decodes each URL once off the main thread,
+ * pixels are read back only when something on screen asks for them, and
+ * `resources/decode-queue.ts` bounds decode concurrency AND serves its queue
+ * most-recent-first, so a pane scrolled into view now PREEMPTS the stale
+ * offscreen requests ahead of it instead of queueing behind them. An offscreen
+ * decode no longer delays a visible one, which is the property a smaller margin
+ * was going to buy.
+ *
+ * Shrinking it now would only cost: a pane that enters the viewport during a
+ * fast scroll would be blank until its decode lands, and cairn's card layout
+ * was never checked for a dependency on this distance. This constant is the one
+ * place to change if measurement ever says otherwise.
+ */
 export const LAZY_ROOT_MARGIN = "600px 0px";

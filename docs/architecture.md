@@ -58,6 +58,31 @@ selected id, the view projects it at read time onto the core fallback
 (`definition/core.ts`) and shows a fallback chip. The store is never
 rewritten by a projection.
 
+An 8-bit image URL is decoded exactly once, by
+`plots/image/resources/decoded-image.ts`: `fetch` → `Blob` →
+`createImageBitmap`, off the main thread, de-duplicated in flight and cached by
+URL, with the old `<img>` element path kept only as the fallback for what
+`fetch` cannot serve. Pixels are lazy — `imageData()` reads a frame back once,
+on first demand (the pixel-value numbers, an open histogram panel, a CPU
+processing pass), so a gallery of cards pays no readback at mount. The CPU
+backend paints the bitmap directly; the WebGPU backend uploads it with
+`copyExternalImageToTexture` (no CPU-side RGBA buffer) as `rgba8unorm` for a
+plain pane and as `rgba8unorm-srgb` for a comparison operand, letting the
+hardware do the sRGB decode that `imageDataToSceneField` used to do in a scalar
+JavaScript loop at four times the bytes. The hardware decode is not bit-identical
+to that loop; it is bounded to half an 8-bit code step and gated exactly, by
+requiring every decoded sample to re-encode onto its source byte
+(`webgpu/__tests__/compare-metrics.browser.ts`). Decodes run through
+`resources/decode-queue.ts`, which bounds concurrency and serves its queue
+most-recent-first so a pane scrolled into view preempts stale offscreen
+requests; because of that priority the lazy-mount margin
+(`host/lazy-mount.ts` `LAZY_ROOT_MARGIN`) stays at 600 px — offscreen decodes no
+longer delay visible ones, and a smaller margin would only blank panes on fast
+scrolling. `plots/image/__tests__/image-load-cost.browser.ts` gates the whole
+path: per backend, twelve cards cost twelve decodes, zero element decodes, one
+readback (the one open histogram), zero scene conversions and zero source bytes
+through `writeTexture`.
+
 ## Browser host
 
 The supported browser API is `ui/src/public`:
