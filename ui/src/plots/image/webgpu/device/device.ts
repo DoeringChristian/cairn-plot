@@ -152,6 +152,10 @@ import {
   histParamsData,
 } from "../histogram/compute";
 import { tevBinMapping } from "../../definition/histogram-binning";
+// The ONE sRGB EOTF definition, shared with the CPU backend, the display
+// shader and `imageDataToSceneField` — `readback()` of an `rgba8unorm-srgb`
+// texture must reproduce the hardware decode, not approximate it.
+import { srgbEotf } from "../../runtime/tonemap.ts";
 import type { TexHistogramSpec, TexHistogramResult, DeepDepthHistogramResult } from "./device-contract";
 
 /**
@@ -233,6 +237,8 @@ function gpuFormatFor(format: TextureFormat): GPUTextureFormat {
   switch (format) {
     case "rgba8unorm":
       return "rgba8unorm";
+    case "rgba8unorm-srgb":
+      return "rgba8unorm-srgb";
     case "rgba16float":
       return "rgba16float";
     case "rgba32float":
@@ -249,6 +255,8 @@ function gpuFormatFor(format: TextureFormat): GPUTextureFormat {
 function bytesPerPixelFor(format: TextureFormat): number {
   switch (format) {
     case "rgba8unorm":
+    // Same 8-bit storage as `rgba8unorm`; only the READ applies the EOTF.
+    case "rgba8unorm-srgb":
       return 4;
     case "rgba16float":
       return 8;
@@ -1301,6 +1309,24 @@ export async function createWebGPUDevice(): Promise<Device> {
           }
         }
         return tight;
+      }
+      if (format === "rgba8unorm-srgb") {
+        // `copyTextureToBuffer` copies RAW texel bytes — it does NOT apply the
+        // sRGB EOTF the way a shader's `textureLoad` does. A caller that reads
+        // an operand back to reduce it on the CPU (`image-engine.ts`'s mapped
+        // `computeMetrics` branch, `diff-engine.ts`'s SSIM reference) must see
+        // the SAME scene-linear values the kernels see, or an alignment offset
+        // would silently change the metric, so decode here. RGB through the
+        // EOTF, alpha linear — exactly `imageDataToSceneField`'s split, and
+        // exactly what the sRGB format's hardware read does.
+        const out = new Float32Array(tight.length);
+        for (let i = 0; i < tight.length; i += 4) {
+          out[i] = srgbEotf(tight[i]! / 255);
+          out[i + 1] = srgbEotf(tight[i + 1]! / 255);
+          out[i + 2] = srgbEotf(tight[i + 2]! / 255);
+          out[i + 3] = tight[i + 3]! / 255;
+        }
+        return out;
       }
       if (format === "rgba16float") {
         const half = new Uint16Array(tight.buffer, tight.byteOffset, tight.byteLength / 2);

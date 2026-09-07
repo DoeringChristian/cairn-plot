@@ -2,6 +2,9 @@
 
 export type RhiTextureFormat =
   | "rgba8unorm"
+  /** 8-bit storage read back through the sRGB EOTF by the hardware — mirrors
+   *  `device-contract.ts`'s `TextureFormat`; see its doc for why. */
+  | "rgba8unorm-srgb"
   | "rgba16float"
   | "rgba32float"
   | "r32float";

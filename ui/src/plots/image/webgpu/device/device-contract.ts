@@ -8,7 +8,19 @@
 export type Backend = "webgpu";
 /** WebGPU is the engine's only backend and is always full-featured. */
 export interface Capabilities { hdr: boolean; compute: boolean; float16: boolean; }
-export type TextureFormat = "rgba8unorm" | "rgba16float" | "rgba32float" | "r32float";
+/**
+ * `"rgba8unorm-srgb"` is the SAME 8-bit storage as `"rgba8unorm"` with the sRGB
+ * EOTF applied by the hardware on every read: `textureLoad`/`textureSample`
+ * return SCENE-LINEAR values, and `readback()` (which copies raw texel bytes)
+ * decodes them the same way so both sides of a comparison see one set of
+ * numbers. It is what comparison operands upload as — the GPU does the
+ * sRGB→linear expansion `resources/scene-field.ts`'s `imageDataToSceneField`
+ * used to do per channel on the CPU, at a quarter of the upload bytes (design
+ * §3.3; proven equivalent in `__tests__/compare-metrics.browser.ts`). An sRGB
+ * format is NOT storage-bindable in WebGPU, so a texture in this format must
+ * never be given `STORAGE_BINDING` — nothing here does (see `WGPUTexture`).
+ */
+export type TextureFormat = "rgba8unorm" | "rgba8unorm-srgb" | "rgba16float" | "rgba32float" | "r32float";
 /**
  * `write` takes either a CPU buffer (`queue.writeTexture`) or a decoded
  * `ImageBitmap` (`queue.copyExternalImageToTexture`). The bitmap form is what

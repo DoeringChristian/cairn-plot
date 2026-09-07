@@ -2,6 +2,9 @@ import type { Texture, TextureFormat } from "./device/device-contract.ts";
 
 const BYTES_PER_TEXEL: Readonly<Record<TextureFormat, number>> = {
   rgba8unorm: 4,
+  // Same storage as `rgba8unorm` — the sRGB decode happens on READ, not in the
+  // texel layout, so an operand costs a QUARTER of the scene-float upload.
+  "rgba8unorm-srgb": 4,
   rgba16float: 8,
   rgba32float: 16,
   r32float: 4,

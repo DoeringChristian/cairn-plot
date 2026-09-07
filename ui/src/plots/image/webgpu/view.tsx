@@ -245,6 +245,7 @@ function decodedSourceUploadLease(
   src: ImageSource,
   contentKey: string,
   decodedU8?: ImageData,
+  decodedSource?: DecodedImage,
 ): { lease: SourceUploadLease; reacquire: () => SourceUploadLease } | null {
   if (src.dtype === "float") {
     const build = () => hdrToRGBAFloat32({
@@ -259,6 +260,20 @@ function decodedSourceUploadLease(
     const reacquire = () => acquireExpanded(key, build);
     return { lease: reacquire(), reacquire };
   }
+  // 8-BIT OPERAND: the decoded bitmap IS the upload (design §3.3). No readback,
+  // no CPU expansion, a quarter of the bytes — and the kernels still read
+  // scene-linear light, because `rgba8unorm-srgb` makes the hardware apply the
+  // sRGB EOTF on every `textureLoad`.
+  const decoded = decodedSource ?? (src.url ? peekDecodedImage(src.url) : null);
+  const bitmapUpload = decoded ? srgbOperandUpload(decoded) : null;
+  if (bitmapUpload) {
+    const key = `expanded:${contentKey}|scene-rgba8unorm-srgb|${bitmapUpload.width}x${bitmapUpload.height}`;
+    const reacquire = () => acquireExpanded(key, () => bitmapUpload);
+    return { lease: reacquire(), reacquire };
+  }
+  // FALLBACK: no bitmap the queue can copy (a runtime without
+  // `createImageBitmap` decoded through an element). The CPU scene field still
+  // works and is byte-for-byte the same field it always was.
   const image = decodedU8 ?? (src.url ? getCachedLoadedImageData(src.url) : null);
   if (!image) return null;
   const key = `expanded:${contentKey}|scene-rgba32float|${image.width}x${image.height}`;
@@ -272,10 +287,32 @@ async function decodedSourceToUploadLease(
 ): Promise<{ lease: SourceUploadLease; reacquire: () => SourceUploadLease } | null> {
   const immediate = decodedSourceUploadLease(src, contentKey);
   if (immediate || src.dtype === "float" || !src.url) return immediate;
+  // ONE decode per URL, shared with the primary and both backends.
+  const decoded = await decodedImage(src.url);
+  if (decoded) {
+    const owned = decodedSourceUploadLease(src, contentKey, undefined, decoded);
+    if (owned) return owned;
+    // Element-decoded (or non-origin-clean): fall back to the pixels, which is
+    // also `null` for a tainted source — exactly what this operand resolved to
+    // before, so the pane simply holds no `b`.
+    const raw = await decoded.imageData();
+    return raw ? decodedSourceUploadLease(src, contentKey, raw) : null;
+  }
   const image = await loadImageData(src.url);
   return image ? decodedSourceUploadLease(src, contentKey, image) : null;
 }
 
+/** The comparison-operand upload for a decoded 8-bit source, or `null` when this
+ *  decode carries no `ImageBitmap` the queue can copy (element fallback, or a
+ *  cross-origin bitmap `copyExternalImageToTexture` would reject). */
+function srgbOperandUpload(decoded: DecodedImage): SourceUpload | null {
+  if (!decoded.originClean) return null;
+  const bitmap = decoded.bitmap;
+  if (typeof ImageBitmap === "undefined" || !(bitmap instanceof ImageBitmap)) return null;
+  return { data: bitmap, width: decoded.width, height: decoded.height, format: "rgba8unorm-srgb" };
+}
+
+/** The CPU sRGB→scene-linear expansion, now only for sources with no bitmap. */
 function sceneFieldUpload(image: ImageData): SourceUpload {
   const field = imageDataToSceneField(image);
   return { data: field.pixels, width: field.width, height: field.height, format: "rgba32float" };
@@ -1138,8 +1175,8 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       setPixelDataVersion((v) => v + 1);
       setUploadVersion((v) => v + 1);
     };
-    // The CPU-PIXEL branches: a compare primary (converted to a scene field) and
-    // an authored CPU false-color bake. Both genuinely need `ImageData`.
+    // The CPU-PIXEL FALLBACK: a compare primary with no copyable bitmap (scene
+    // field) and an authored CPU false-color bake. Both genuinely need `ImageData`.
     const applySdr = (raw: ImageData, display: ImageData, p2: Uint8SurfaceProps) => {
       const build = (): SourceUpload => hasCompare
         ? sceneFieldUpload(raw)
@@ -1152,10 +1189,14 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       const format = hasCompare ? "rgba32float" : "rgba8unorm";
       applyUpload(build, format, display.width, display.height, p2);
     };
-    // The PLAIN branch: the decoded bitmap IS the upload. Returns false only when
-    // this decode has no bitmap the queue can copy (a runtime without
-    // `createImageBitmap` fell back to an element), so the caller can fall back
-    // to the pixels.
+    // The BITMAP branch: the decoded bitmap IS the upload, for a plain image AND
+    // for a comparison primary. A comparison operand only differs in its FORMAT
+    // — `rgba8unorm-srgb`, so the hardware applies the sRGB EOTF on every
+    // `textureLoad` and the kernels read the same scene-linear light
+    // `imageDataToSceneField` used to build on the CPU (design §3.3). Returns
+    // false only when this decode has no bitmap the queue can copy (a runtime
+    // without `createImageBitmap` fell back to an element), so the caller can
+    // fall back to the pixels.
     const applyBitmap = (decoded: DecodedImage, p2: Uint8SurfaceProps): boolean => {
       if (!decoded.originClean) {
         // Cross-origin without CORS: the bitmap taints a canvas AND is rejected
@@ -1168,9 +1209,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       }
       const bitmap = decoded.bitmap;
       if (typeof ImageBitmap === "undefined" || !(bitmap instanceof ImageBitmap)) return false;
+      const format: TextureFormat = hasCompare ? "rgba8unorm-srgb" : "rgba8unorm";
       applyUpload(
-        () => ({ data: bitmap, width: decoded.width, height: decoded.height, format: "rgba8unorm" }),
-        "rgba8unorm",
+        () => ({ data: bitmap, width: decoded.width, height: decoded.height, format }),
+        format,
         decoded.width,
         decoded.height,
         p2,
@@ -1184,8 +1226,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // Drops this pane's hold on a still-queued decode (a no-op once it settled).
       controller.abort();
     };
-    if (!hasCompare && colormap == null) {
-      // PLAIN 8-BIT: upload the decoded bitmap, no readback anywhere on this path.
+    if (colormap == null) {
+      // 8-BIT, NO CPU BAKE (a plain image OR a comparison primary): upload the
+      // decoded bitmap, no readback anywhere on this path. A colormapped image
+      // is the one 8-bit case that still needs pixels — its LUT is baked on the
+      // CPU — and it falls through to the branch below.
       // FLIP-BACK / PAINT-ATOMIC FAST PATH: a resident decode binds SYNCHRONOUSLY
       // so the target presents on THIS commit with no async gap. In a
       // `useLayoutEffect` that stamps `appliedPrimaryIdRef` + `naturalDims` before
@@ -1212,38 +1257,19 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       });
       return cleanup;
     }
-    // COMPARE PRIMARY (raw scene field) / CPU FALSE-COLOR BAKE. The compare
-    // primary keeps the same synchronous flip-back fast path over the pixels it
-    // already has; a colormapped image keeps its async bake (both unchanged).
-    if (colormap == null) {
-      const cachedRaw = getCachedLoadedImageData(imageUrl);
-      if (cachedRaw) {
-        applySdr(cachedRaw, cachedRaw, p);
-        return;
-      }
-    }
+    // CPU FALSE-COLOR BAKE: an authored colormap on an 8-bit image is the one
+    // remaining CPU-pixel primary — it keeps its async bake, unchanged.
     loadImageData(imageUrl).then((raw) => {
       if (cancelled || !raw) return;
-      let display = raw;
-      if (colormap != null) {
-        // Exposure/offset are folded into the LUT INDEX here (before the LUT),
-        // so the toolbar sliders change colormap SENSITIVITY — matching the GPU
-        // diff blit. They enter the cache key so a bake is reused per EV/offset.
-        const cacheKey = `gpu::${imageUrl}::${colormap}::ev${displayEV}::off${displayOffset}`;
-        const cached = getCachedImageData(cacheKey);
-        if (cached) {
-          display = cached;
-        } else {
-          const cmapMode = resolveColormapMode(colormap);
-          display = applyColormap(
-            raw,
-            colormap,
-            cmapMode,
-            displayEV,
-            displayOffset,
-          );
-          setCachedImageData(cacheKey, display);
-        }
+      // Exposure/offset are folded into the LUT INDEX here (before the LUT), so
+      // the toolbar sliders change colormap SENSITIVITY — matching the GPU diff
+      // blit. They enter the cache key so a bake is reused per EV/offset.
+      const cacheKey = `gpu::${imageUrl}::${colormap}::ev${displayEV}::off${displayOffset}`;
+      const cached = getCachedImageData(cacheKey);
+      let display = cached;
+      if (!display) {
+        display = applyColormap(raw, colormap, resolveColormapMode(colormap), displayEV, displayOffset);
+        setCachedImageData(cacheKey, display);
       }
       applySdr(raw, display, p);
     });

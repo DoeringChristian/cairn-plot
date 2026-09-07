@@ -17,6 +17,12 @@
  * calling back into the engine), so a regression in either reduction path shows
  * up as a numeric disagreement rather than as two mirrored bugs.
  *
+ * It also carries the `[equiv/srgb-operand]` proof that the two OPERAND UPLOAD
+ * formats are interchangeable — `rgba8unorm-srgb` from a decoded `ImageBitmap`
+ * against the scene-linear `rgba32float` field it replaced — which is what lets
+ * the pane stop expanding 8-bit comparison operands on the CPU. See
+ * `runSrgbOperandEquivalence`.
+ *
  * This page carries the `[metrics]` proof that used to live in
  * `compare-pass.browser.ts`; the rest of that page drove `renderCompose` /
  * `renderDiffDisplay`, two dead engine exports whose WGSL had silently stopped
@@ -37,6 +43,9 @@ import { getSharedWebGpuDevice } from "../device/device-provider.ts";
 import { computeMetrics } from "../image-engine";
 import { computeCompareMapping, type ImageCompareAlign, type ImageCompareFit } from "../../runtime/compare-align";
 import type { Device, Texture } from "../device/device-contract";
+import { passthroughWGSL } from "../shaders/passthrough.wgsl.ts";
+import { imageDataToSceneField } from "../../resources/scene-field.ts";
+import { srgbOetf } from "../../runtime/tonemap";
 import { createHarness } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({
@@ -51,6 +60,23 @@ const { report, setOverallStatus } = createHarness({
 const TOL = 1e-5;
 /** PSNR is logarithmic; 1e-5 of MSE is ~1e-4 dB. */
 const TOL_DB = 1e-3;
+/**
+ * Tolerance for the GPU's sRGB DECODE against the exact IEC 61966-2-1 EOTF
+ * (`srgbEotf`) — three orders looser than {@link TOL}, and deliberately so.
+ *
+ * A GPU's sRGB texture decode is NOT required to reproduce the EOTF to float
+ * precision: the WebGPU/Vulkan/Metal specs all allow implementation tolerance
+ * there, and hardware uses a reduced-precision table. Measured on Apple
+ * Metal-3 (Chrome), the worst deviation over all 256 code values is ~1.2e-4
+ * absolute (code 80: 0.08034 vs the exact 0.08022) — 1.5e-3 RELATIVE, and
+ * about 6% of the gap between two adjacent 8-bit code values there. So this
+ * number is a bound on the HARDWARE, not on the code under test, and it is set
+ * high enough to hold on any conformant GPU rather than pinned to one vendor's
+ * table. The tight, hardware-independent statement — that the decode still
+ * identifies the source byte uniquely — is the `srgbOetf` round-trip assertion
+ * in the case below, which is exact.
+ */
+const SRGB_DECODE_TOL = 5e-4;
 
 type Rgba = [number, number, number, number];
 
@@ -220,6 +246,150 @@ async function runInternalConsistency(device: Device): Promise<boolean> {
   return ok;
 }
 
+/**
+ * SRGB-FORMAT OPERAND EQUIVALENCE (design §3.3).
+ *
+ * Comparison operands used to reach the GPU as scene-linear `rgba32float`,
+ * expanded from the decoded 8-bit bytes by `imageDataToSceneField` — a scalar
+ * JS loop calling the sRGB EOTF per channel, then four times the upload bytes.
+ * They now upload as `rgba8unorm-srgb` straight from the decoded `ImageBitmap`,
+ * because WebGPU's `textureLoad` on an sRGB-format SAMPLED texture returns
+ * exactly those scene-linear values — the hardware performs the EOTF. Every
+ * comparison kernel binds its operands as `texture_2d<f32>` and reads them with
+ * `textureLoad`, so nothing downstream had to change.
+ *
+ * That last sentence is a claim about the GPU, and this case is its proof: the
+ * SAME 8-bit fixture goes up both ways — as `rgba8unorm-srgb` from an
+ * `ImageBitmap` via `copyExternalImageToTexture`, and as `rgba32float` from
+ * `imageDataToSceneField` — both textures are read through the SAME trivial
+ * `textureLoad` pass (`passthroughWGSL` into an `rgba32float` target), and the
+ * two readbacks are compared three ways:
+ *
+ *   - RGB re-encodes (`srgbOetf`, round to 8 bits) to the EXACT source code
+ *     value — hardware-independent, and the real statement: the GPU decode
+ *     loses nothing the 8-bit source carried;
+ *   - RGB agrees with the exact EOTF within {@link SRGB_DECODE_TOL} — a bound
+ *     on the hardware's decode table, see that constant;
+ *   - alpha agrees BIT-EXACTLY (an sRGB format leaves alpha linear, exactly as
+ *     `imageDataToSceneField` did).
+ *
+ * A premultiply, a row flip or a colour-space conversion introduced by
+ * `copyExternalImageToTexture` would show up here as a per-channel delta rather
+ * than as a silently shifted metric on a live compare pane.
+ */
+async function runSrgbOperandEquivalence(device: Device): Promise<boolean> {
+  const w = 64;
+  const h = 64;
+  // Every one of the 256 code values appears in each colour channel (4096
+  // pixels, strides coprime with 256), so the whole transfer curve is covered —
+  // including the linear segment below 0.04045 where the EOTF changes form.
+  const bytes = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    bytes[i * 4] = i % 256;
+    bytes[i * 4 + 1] = (i * 7 + 13) % 256;
+    bytes[i * 4 + 2] = (i * 61 + 197) % 256;
+    bytes[i * 4 + 3] = (i * 5 + 3) % 256;
+  }
+  const image = new ImageData(bytes, w, h);
+
+  // The bitmap the product uploads: unpremultiplied, no colour-space
+  // conversion — the same options `resources/decoded-image.ts` decodes with.
+  const bitmap = await createImageBitmap(image, {
+    premultiplyAlpha: "none",
+    colorSpaceConversion: "none",
+  });
+  const texSrgb = device.createTexture(w, h, "rgba8unorm-srgb");
+  texSrgb.write(bitmap);
+
+  // The path it replaces: the CPU sRGB→linear expansion, uploaded as floats.
+  const field = imageDataToSceneField(image);
+  const texFloat = device.createTexture(w, h, "rgba32float");
+  texFloat.write(field.pixels);
+
+  const gpu = await loadThroughPass(device, texSrgb, w, h);
+  const cpu = await loadThroughPass(device, texFloat, w, h);
+  texSrgb.destroy();
+  texFloat.destroy();
+  bitmap.close();
+
+  if (gpu.length !== cpu.length || gpu.length !== w * h * 4) {
+    report(false, `[equiv/srgb-operand] readback lengths ${gpu.length} / ${cpu.length} (expected ${w * h * 4})`);
+    return false;
+  }
+  let maxRgb = 0;
+  let worstRgbAt = -1;
+  let codeMismatches = 0;
+  let firstCodeAt = -1;
+  let alphaMismatches = 0;
+  let firstAlphaAt = -1;
+  for (let i = 0; i < w * h; i++) {
+    for (let c = 0; c < 3; c++) {
+      const at = i * 4 + c;
+      const d = Math.abs(gpu[at]! - cpu[at]!);
+      if (d > maxRgb) {
+        maxRgb = d;
+        worstRgbAt = at;
+      }
+      // THE HARDWARE-INDEPENDENT GATE (see the tolerance note below): re-encode
+      // what the GPU handed back and it must land on the SOURCE code value
+      // exactly — the sRGB format loses nothing the 8-bit source carried.
+      if (Math.round(255 * srgbOetf(gpu[at]!)) !== bytes[at]!) {
+        codeMismatches++;
+        if (firstCodeAt < 0) firstCodeAt = at;
+      }
+    }
+    if (gpu[i * 4 + 3]! !== cpu[i * 4 + 3]!) {
+      alphaMismatches++;
+      if (firstAlphaAt < 0) firstAlphaAt = i;
+    }
+  }
+  // A degenerate fixture (an all-black upload on either side) would make the
+  // agreement vacuous — pin that both readbacks carry real, differing values.
+  let nonTrivial = false;
+  for (let i = 0; i < gpu.length; i += 4) {
+    if (gpu[i]! > 0.5 && gpu[i]! < 1) { nonTrivial = true; break; }
+  }
+  report(nonTrivial, `[equiv/srgb-operand] fixture is non-degenerate (the sRGB upload carries mid-range linear values)`);
+  const codeOk = codeMismatches === 0;
+  report(
+    codeOk,
+    `[equiv/srgb-operand] all ${w * h * 3} rgb samples re-encode to their EXACT source code value` +
+      (codeOk
+        ? ""
+        : ` — ${codeMismatches} mismatch(es), first at sample ${firstCodeAt} (srgb=${gpu[firstCodeAt]!.toPrecision(9)} re-encodes to ${Math.round(255 * srgbOetf(gpu[firstCodeAt]!))}, source byte ${bytes[firstCodeAt]})`),
+  );
+  const rgbOk = maxRgb <= SRGB_DECODE_TOL;
+  report(
+    rgbOk,
+    `[equiv/srgb-operand] rgb max|Δ| vs the exact EOTF ${maxRgb.toExponential(2)} <= ${SRGB_DECODE_TOL.toExponential(0)}` +
+      (worstRgbAt >= 0
+        ? ` (worst at texel ${Math.floor(worstRgbAt / 4)} ch${worstRgbAt % 4}, code ${bytes[worstRgbAt]}: srgb=${gpu[worstRgbAt]!.toPrecision(9)} scene-field=${cpu[worstRgbAt]!.toPrecision(9)})`
+        : ""),
+  );
+  const alphaOk = alphaMismatches === 0;
+  report(
+    alphaOk,
+    `[equiv/srgb-operand] alpha bit-exact on all ${w * h} texels` +
+      (alphaOk ? "" : ` — ${alphaMismatches} mismatch(es), first at texel ${firstAlphaAt} (srgb=${gpu[firstAlphaAt * 4 + 3]} scene-field=${cpu[firstAlphaAt * 4 + 3]})`),
+  );
+  return rgbOk && codeOk && alphaOk && nonTrivial;
+}
+
+/** The trivial `textureLoad` copy every comparison kernel's operand read stands
+ *  in for: one fullscreen pass into an `rgba32float` target, read back as
+ *  floats. Whatever the source FORMAT, this returns the values a kernel sees. */
+async function loadThroughPass(device: Device, source: Texture, w: number, h: number): Promise<Float32Array> {
+  const target = device.createTexture(w, h, "rgba32float");
+  const pipeline = device.createRenderPipeline({ shaderWGSL: passthroughWGSL, targetFormat: "rgba32float" });
+  const bindGroup = device.createBindGroup(pipeline, [{ binding: 0, resource: source }]);
+  device.renderFullscreen(target, pipeline, bindGroup);
+  const out = await device.readback(target);
+  bindGroup.destroy?.();
+  target.destroy();
+  if (!(out instanceof Float32Array)) throw new Error(`expected Float32Array from an rgba32float readback, got ${out.constructor.name}`);
+  return out;
+}
+
 async function runAll(device: Device): Promise<boolean> {
   report(true, `device.backend = ${device.backend}`);
   let ok = true;
@@ -233,6 +403,15 @@ async function runAll(device: Device): Promise<boolean> {
   ok = (await runMappedCase(device, "bottom-right", "crop")) && ok;
   ok = (await runMappedCase(device, "top-left", "fill")) && ok;
   ok = (await runInternalConsistency(device)) && ok;
+  // Its own try/catch: an unsupported texture format throws out of
+  // `createTexture`, and that must read as ONE failing proof rather than
+  // abandoning the metrics cases above it.
+  try {
+    ok = (await runSrgbOperandEquivalence(device)) && ok;
+  } catch (err) {
+    report(false, `[equiv/srgb-operand] threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    ok = false;
+  }
   return ok;
 }
 
