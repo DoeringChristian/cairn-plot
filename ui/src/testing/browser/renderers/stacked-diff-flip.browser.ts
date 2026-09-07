@@ -23,6 +23,8 @@ import React from "react";
 import { isDeviceLostError } from "../../../plots/image/webgpu/device/device";
 import { createRoot, type Root } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
+import { WEBGPU_CAPABILITIES } from "../../../plots/image/webgpu/capabilities.ts";
+import { comparisonMenuOptions } from "../../../plots/image/runtime/comparison-menu.ts";
 import { urlSource } from "../../../plots/image/runtime/contracts";
 import { getSharedWebGpuDevice } from "../../../plots/image/webgpu/device/device-provider.ts";
 import { getDiffComputeCount } from "../../../plots/image/webgpu/diff-engine";
@@ -115,6 +117,7 @@ function diffProps(): Record<string, unknown> {
     source: urlSource(REF_URL),
     compareSource: {
       b: urlSource(FG_URL),
+      operationOptions: comparisonMenuOptions(WEBGPU_CAPABILITIES),
       operationId: "flip",
       mode: "diff",
       contentKeyA: STACK_KEYS.a,
