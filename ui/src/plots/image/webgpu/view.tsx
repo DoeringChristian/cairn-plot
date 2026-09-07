@@ -1110,15 +1110,18 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // SDR mode: decode `imageUrl` (+ optional CPU colormap false-color, exact
   // parity with ImagePane), upload on change.
   //
-  // THE PLAIN 8-BIT PATH UPLOADS THE DECODED BITMAP (design §3.3): no
-  // full-frame readback, no CPU-side RGBA buffer, no `writeTexture` — the queue
-  // copies the `ImageBitmap` from the ONE shared decode
-  // (`resources/decoded-image.ts`) straight into an `rgba8unorm` texture. The
-  // pixels the TEV numbers and the histogram print are a SEPARATE, demand-gated
-  // concern (see the `sdrImageDataRef` effect below); mounting a card no longer
-  // pays for them. The two branches that genuinely need CPU pixels — a compare
-  // primary (scene-field conversion) and an authored CPU false-color bake —
-  // keep `loadImageData`.
+  // THE 8-BIT PATH UPLOADS THE DECODED BITMAP (design §3.3): no full-frame
+  // readback, no CPU-side RGBA buffer, no `writeTexture` — the queue copies the
+  // `ImageBitmap` from the ONE shared decode (`resources/decoded-image.ts`)
+  // straight into the texture. A COMPARISON primary goes the same way; it only
+  // asks for a different FORMAT (`rgba8unorm-srgb`), so the hardware applies the
+  // sRGB EOTF on every `textureLoad` and the kernels read the same scene-linear
+  // light the CPU scene field used to carry. The pixels the TEV numbers and the
+  // histogram print are a SEPARATE, demand-gated concern (see the
+  // `sdrImageDataRef` effect below); mounting a card no longer pays for them.
+  // Only two cases still reach for CPU pixels via `loadImageData`: an authored
+  // CPU false-color bake, and the fallback for a decode with no copyable bitmap
+  // (a runtime without `createImageBitmap`), which keeps the scene-field build.
   // -----------------------------------------------------------------------
   // LAYOUT effect (paint-atomic flips): the resident SYNCHRONOUS fast-path (cache
   // hit → `applySdr`) must stamp `appliedPrimaryIdRef` + `naturalDims` BEFORE paint

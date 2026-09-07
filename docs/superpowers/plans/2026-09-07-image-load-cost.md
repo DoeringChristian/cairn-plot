@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - No numerics change: FLIP, HDR-FLIP, SSIM, pointwise diffs, tone maps and colormaps produce the same values. Task 4 adds the equivalence case that proves the sRGB-format operands; `compare-metrics`' `[metrics] mse` line must be identical before and after.
+- ONE exception, Task 4: an 8-bit GPU comparison operand is decoded by the hardware sRGB table instead of the CPU EOTF, bounded by half an 8-bit code step (test-enforced by the exact `srgbOetf` re-encode gate; measured ≤1.22e-4 absolute / 1.5e-3 relative on Apple Metal-3 and 7.7e-6 on SwiftShader, ≤6% of one code step), which shifts displayed mse by ≤4.9e-4 absolute (≈1e-3 relative at mse 0.19), psnr ≤5e-3 dB and mae ≤2.4e-4, leaves identical images at exactly mse 0 / psnr ∞, and leaves the CPU-reduced operand paths (mapped `computeMetrics`, `ssimScalarReference`) unchanged.
 - Kernels (`webgpu/kernels/*`, `webgpu/shaders/*`) are not edited.
 - Bitmaps are never `close()`d by a cache (`cpu/bitmap-cache.ts` rule).
 - `colorSpaceConversion: "default"`; pixels painted and read back must equal today's element path (harness fixtures).

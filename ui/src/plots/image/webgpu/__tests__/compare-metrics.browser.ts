@@ -77,6 +77,15 @@ const TOL_DB = 1e-3;
  * in the case below, which is exact.
  */
 const SRGB_DECODE_TOL = 5e-4;
+/**
+ * A few float32 ulps — the bound for values that are supposed to be the SAME
+ * arithmetic on both sides (the linear alpha channel). Unorm→float conversion
+ * is the adapter's, not ours, and is not bit-portable: SwiftShader returns
+ * `3/255` as 0.011764707 where Metal and the CPU give 0.011764706. Anything
+ * this assertion is actually looking for — a premultiply round-trip, an alpha
+ * swizzle — is O(1e-2), four orders above this.
+ */
+const ALPHA_ULP_TOL = 1e-7;
 
 type Rgba = [number, number, number, number];
 
@@ -270,8 +279,10 @@ async function runInternalConsistency(device: Device): Promise<boolean> {
  *     loses nothing the 8-bit source carried;
  *   - RGB agrees with the exact EOTF within {@link SRGB_DECODE_TOL} — a bound
  *     on the hardware's decode table, see that constant;
- *   - alpha agrees BIT-EXACTLY (an sRGB format leaves alpha linear, exactly as
- *     `imageDataToSceneField` did).
+ *   - alpha agrees to a few float32 ulps ({@link ALPHA_ULP_TOL}) — an sRGB
+ *     format leaves alpha LINEAR, exactly as `imageDataToSceneField` did, so
+ *     the two sides compute the same `a/255`; only the adapter's unorm→float
+ *     rounding separates them.
  *
  * A premultiply, a row flip or a colour-space conversion introduced by
  * `copyExternalImageToTexture` would show up here as a per-channel delta rather
@@ -338,7 +349,13 @@ async function runSrgbOperandEquivalence(device: Device): Promise<boolean> {
         if (firstCodeAt < 0) firstCodeAt = at;
       }
     }
-    if (gpu[i * 4 + 3]! !== cpu[i * 4 + 3]!) {
+    // Alpha is LINEAR in an sRGB format — both sides should be the same `a/255`
+    // — but not bit-portably so: the unorm→float conversion is the adapter's,
+    // and SwiftShader lands one float32 ulp off the CPU's `a/255` (3/255 →
+    // 0.011764707 vs 0.011764706) where Metal is exact. An ulp is not what this
+    // assertion is hunting: a premultiply round-trip or an alpha/colour swizzle
+    // moves alpha by O(1e-2), four orders above this bound.
+    if (Math.abs(gpu[i * 4 + 3]! - cpu[i * 4 + 3]!) > ALPHA_ULP_TOL) {
       alphaMismatches++;
       if (firstAlphaAt < 0) firstAlphaAt = i;
     }
@@ -369,7 +386,7 @@ async function runSrgbOperandEquivalence(device: Device): Promise<boolean> {
   const alphaOk = alphaMismatches === 0;
   report(
     alphaOk,
-    `[equiv/srgb-operand] alpha bit-exact on all ${w * h} texels` +
+    `[equiv/srgb-operand] alpha agrees to ${ALPHA_ULP_TOL.toExponential(0)} on all ${w * h} texels` +
       (alphaOk ? "" : ` — ${alphaMismatches} mismatch(es), first at texel ${firstAlphaAt} (srgb=${gpu[firstAlphaAt * 4 + 3]} scene-field=${cpu[firstAlphaAt * 4 + 3]})`),
   );
   return rgbOk && codeOk && alphaOk && nonTrivial;

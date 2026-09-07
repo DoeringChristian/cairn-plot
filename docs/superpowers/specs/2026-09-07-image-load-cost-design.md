@@ -37,11 +37,30 @@ Goals:
   opened, or a processing pass that needs pixels).
 - WebGPU: plain 8-bit images upload from the `ImageBitmap`
   (`copyExternalImageToTexture`); comparison operands upload as
-  `rgba8unorm-srgb`, so the GPU performs the sRGB decode; kernels unchanged.
+  `rgba8unorm-srgb`, so the GPU performs the sRGB decode. No kernel, WGSL
+  binding or reduction changes — but the decoded VALUES move slightly; see
+  Numerics below.
 - Bounded decode concurrency and a tighter lazy-mount margin.
 - A self-driving harness that counts decodes, readbacks, uploads and
   conversions per image at mount and reports time-to-painted for N panes,
   with gates.
+
+Numerics: moving the sRGB decode of 8-bit comparison operands from the CPU
+EOTF (`imageDataToSceneField`'s `srgbEotf`) to the hardware's sRGB texture
+table is not bit-identical — a GPU's sRGB decode is spec-permitted
+implementation tolerance, not an exact function. The bound is HALF AN 8-BIT
+CODE STEP, enforced by an exact test gate rather than a number: every decoded
+sample must re-encode through `srgbOetf` onto its source code value
+(`__tests__/compare-metrics.browser.ts`, `[equiv/srgb-operand]`), so a decoded
+operand can never be confused with a different source byte. Measured worst
+deviation from the exact EOTF: ≤1.22e-4 absolute / 1.5e-3 relative on Apple
+Metal-3, 7.7e-6 on SwiftShader — ≤6% of one code step. Downstream, displayed
+metrics shift by ≤4.9e-4 absolute mse (≈1e-3 relative at mse 0.19), ≤5e-3 dB
+psnr, ≤2.4e-4 mae; identical images still reduce to exactly mse 0 / psnr ∞.
+The CPU-reduced operand paths (`computeMetrics`' mapped branch,
+`ssimScalarReference`) are unchanged: `readback()` decodes an
+`rgba8unorm-srgb` texture with the same exact `srgbEotf` those paths always
+used.
 
 Non-goals: HDR/float sources (`FloatImageData`, EXR) are untouched; CPU
 processing passes (tone map, false colour, diff) still need pixels and keep
