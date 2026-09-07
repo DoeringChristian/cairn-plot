@@ -462,15 +462,16 @@ unsupported browser, pointing at the localhost/https fix — see
 **split** mode now exposes the SAME unified TONEMAP menu + PEAK/γ
 sliders as the single-image pane, wired through the SAME `resolveEffectiveTonemap`
 / `resolveRenderTonemap` + HOME contract. Both operands run through ONE display
-mapping in the compose shader (each u8 side sRGB-DECODED to scene-linear per side,
-so mixed u8/float operands compare in linear light), and the pane engages the
+mapping (each u8 side sRGB-DECODED to scene-linear per side, so mixed u8/float
+operands compare in linear light), and the pane engages the
 extended `rgba16float` surface (probed exactly like the single-image pane) when
 the browser + display support it. **DIFF** modes keep the menu **hidden** — a
 derived error map routes through **colormaps**, not a tone-map operator (error
 values aren't light). **Side** mode is two independent single-image panes, which
-already carry the menu. Parity: a split compose with an operator applied is
-byte-identical to a single-pane render of the same operand (GPU harness,
-`renderCompose(split:0) === renderImage`).
+already carry the menu. Parity is structural rather than asserted: split is two
+single-image panes clipped at the divider (`clipPath`), so each side IS a
+single-pane `renderImage` of its operand — there is no separate compose shader
+that could drift from it.
 
 ### Host-controlled panes (`toolbar=` + the controlled-props contract)
 

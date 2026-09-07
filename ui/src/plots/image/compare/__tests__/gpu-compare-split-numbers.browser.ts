@@ -8,9 +8,10 @@
  *   (2) the resolution is very large (numbers drift progressively with index).
  *
  * Root cause: BOTH per-side overlays mapped texel→screen through the PRIMARY
- * (foreground / texB) dims, but the split shader (`compare.wgsl`) samples each
- * operand through ONE normalized uv window scaled by its OWN `textureDimensions`
- * — so the reference (texA) side fills the framing quad with its OWN grid. The
+ * (foreground / texB) dims, but each split side is its OWN single-image pass
+ * sampling through ONE normalized uv window scaled by its OWN
+ * `textureDimensions` — so the reference (texA) side fills the framing quad with
+ * its OWN grid. The
  * fix threads each side's own `sourceDims` into `PixelValueOverlay` (fill-stretch
  * via `region-select`'s `computeSourceFit`).
  *

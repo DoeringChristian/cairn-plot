@@ -21,7 +21,9 @@
  * commands as the sibling *.browser.ts).
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
-import { computeDiff, ensureDiff, ensureSsimScalar, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
+import { computeDiff, ensureDiff, ensureSsimScalar, getDiffComputeCount } from "../diff-engine";
+import { renderImage } from "../image-engine";
+import { prepareDisplayOperation } from "../prepare-display-operation.ts";
 import { ssimScene } from "../../runtime/ssim-reference";
 import { srgbEotf } from "../../runtime/tonemap";
 import { meanSsimFromErrorMap, formatSsim } from "../ssim-metric";
@@ -284,13 +286,24 @@ async function runCacheContract(device: Device): Promise<boolean> {
   const before = getDiffComputeCount();
   const e1 = ensureDiff(device, texRef, texTest, "ssim", undefined, "ref#1", "test#1");
   const afterFirst = getDiffComputeCount();
-  // Re-display through several "zoom/pan" windows — must NOT recompute.
+  // Re-display through several "zoom/pan" windows — must NOT recompute. This is
+  // the LIVE presentation path the pool uses for a cached result (`pool.ts`'s
+  // `renderDiff` → `renderImage` with identity content + an isScalar colormap),
+  // not a diff-private blit.
   for (const win of [
     { x: 0, y: 0, w: 1, h: 1 },
     { x: 0.25, y: 0.25, w: 0.5, h: 0.5 },
     { x: 0.1, y: 0.1, w: 0.3, h: 0.3 },
   ]) {
-    renderDiffDisplay(device, target, e1.texture, e1.displayRange, { uv: win });
+    renderImage(device, target, e1.texture, {
+      exposureEV: 0,
+      ...prepareDisplayOperation("turbo", { hdrSurface: false }),
+      imageOperation: "identity",
+      reduce: "mean",
+      channelCount: 3,
+      uv: win,
+      filter: "nearest",
+    });
   }
   const e2 = ensureDiff(device, texRef, texTest, "ssim", undefined, "ref#1", "test#1");
   const afterSecond = getDiffComputeCount();

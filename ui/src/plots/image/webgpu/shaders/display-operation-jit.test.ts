@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getWebGpuDisplayOperation } from "../display.ts";
-import { buildCompareWGSL } from "./compare.wgsl.ts";
 import { buildImageWGSL } from "./image.wgsl.ts";
 import { requireWebGpuInlineOperation } from "../image-operations.ts";
 
@@ -27,11 +26,15 @@ test("image shaders specialize to one image operation", () => {
   assert.doesNotMatch(signed, /operationId|IMAGE_OPERATION_ID/);
 });
 
-test("split and blend shaders use the same operation specialization seam", () => {
-  const operation = getWebGpuDisplayOperation("magma")!;
-  for (const mode of ["split", "blend"] as const) {
-    const shader = buildCompareWGSL(mode, operation);
+test("lut and analytic display operations reach the shader through one seam", () => {
+  const identity = requireWebGpuInlineOperation("identity");
+  // Both implementation kinds emit the SAME two specialization functions
+  // (`applyDisplayIndex` / `applyAnalyticDisplay`, see `display-shader.ts`), so
+  // the shader never branches on an operation id at runtime.
+  for (const id of ["magma", "red-green"]) {
+    const shader = buildImageWGSL(getWebGpuDisplayOperation(id)!, identity);
     assert.match(shader, /fn applyDisplayIndex/);
+    assert.match(shader, /fn applyAnalyticDisplay/);
     assert.doesNotMatch(shader, /operatorId|OPERATOR_ID/);
   }
 });

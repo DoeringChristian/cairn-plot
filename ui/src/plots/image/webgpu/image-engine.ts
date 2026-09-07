@@ -33,7 +33,6 @@
  */
 import type { BindGroup, Device, RenderPipeline, Surface, Texture, TextureFormat } from "./device/device-contract";
 import { buildImageWGSL } from "./shaders/image.wgsl.ts";
-import { buildCompareWGSL } from "./shaders/compare.wgsl.ts";
 import { computeCompareMapping, type CompareMapping } from "../runtime/compare-align";
 import { EXTENDED_TONEMAP_PEAK_DEFAULT } from "../runtime/tonemap";
 import type { ReduceMode } from "../definition/display-operations.ts";
@@ -149,7 +148,7 @@ export interface ImageParams {
    * on-screen for `PixelValueOverlay`'s per-pixel numbers to appear, so the
    * two visual cues change in lockstep. Defaulting to `"linear"` does not
    * change any EXISTING byte-exact parity-test case: at exact texel-aligned
-   * sampling (every case in `image-pass.browser.ts`/`compare-pass.browser.ts`)
+   * sampling (every case in `image-pass.browser.ts`/`image-operations.browser.ts`)
    * the bilinear weight is exactly 0, degenerating to the same value nearest
    * would produce.
    */
@@ -446,124 +445,6 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   } catch (error) {
     releaseImageRenderState(target);
     throw error;
-  }
-}
-
-// ===========================================================================
-// COMPOSE render pass — split / blend view compositions over TWO textures.
-// (Diff moved to the cached kernel path — see `engine/diff-engine.ts`. The
-// `diffChannel` switch + mode/submode uniforms were DELETED per the
-// diff-kernel spec; split/blend are now two switch-free specialized pipelines
-// built from the shared prelude — see `engine/shaders/compare.wgsl.ts`.)
-// ===========================================================================
-
-/** Pane-facing compare mode. `diff` is handled by the diff-engine, not the
- *  compose pipelines here — see `renderCompose`. */
-export type CompareMode = "split" | "blend" | "diff";
-
-export interface CompareParams extends ImageParams {
-  /** Compose mode. Only `split`/`blend` are rendered here; `diff` is a caller
-   *  error (routed to the diff-engine instead). */
-  mode: CompareMode;
-  /** Split-divider screen-space fraction `[0,1]` — reference (texA) shown where `uv.x < split`. */
-  split: number;
-  /** Blend factor `[0,1]` for `mode:"blend"` — `mix(texA, texB, alpha)`. */
-  alpha: number;
-  /** sRGB-DECODE the A side (reference/texA) to scene-linear BEFORE exposure —
-   *  set for a u8 sRGB operand so the unified operator×peak pipeline runs on
-   *  linear light; a float (scene-linear) operand leaves it off. Per-SIDE (not
-   *  the shared `ImageParams.srgbDecode`) because a compare pane can mix a u8 and
-   *  a float operand. Unset = false. */
-  srgbDecodeA?: boolean;
-  /** sRGB-DECODE the B side (foreground/texB) to scene-linear. See {@link srgbDecodeA}. */
-  srgbDecodeB?: boolean;
-}
-
-// One compiled pipeline per (Device, split|blend shader, target format).
-const composeCache = new WeakMap<Device, Map<string, RenderPipeline>>();
-
-function getComposePipeline(device: Device, mode: "split" | "blend", targetFormat: TextureFormat, operation: WebGpuDisplayOperation): RenderPipeline {
-  let byKey = composeCache.get(device);
-  if (!byKey) {
-    byKey = new Map();
-    composeCache.set(device, byKey);
-  }
-  const key = `${mode}:${targetFormat}:${operation.definition.id}`;
-  let pipeline = byKey.get(key);
-  if (!pipeline) {
-    pipeline = device.createRenderPipeline({
-      shaderWGSL: buildCompareWGSL(mode, operation),
-      targetFormat,
-    });
-    byKey.set(key, pipeline);
-  }
-  return pipeline;
-}
-
-/**
- * Runs the COMPOSE render pass: samples `texA` (reference/baseline, the "A"
- * role: left side / alpha=0 endpoint) and `texB` (foreground/comparison)
- * through the shared exposure/scalar-LUT/tonemap/encode pipeline, then
- * composites them per `params.mode` (split | blend) into `target` using the
- * matching switch-free specialized pipeline. `mode:"diff"` is NOT valid here —
- * the pane routes diff through `engine/diff-engine.ts` (cached kernel result +
- * `renderDiffDisplay`).
- */
-export function renderCompose(
-  device: Device,
-  target: Surface | Texture,
-  texA: Texture,
-  texB: Texture,
-  params: CompareParams,
-): void {
-  if (params.mode === "diff") {
-    throw new Error("renderCompose: mode 'diff' is handled by the diff-engine, not renderCompose");
-  }
-  const targetFormat = targetFormatOf(target);
-  const operation = getWebGpuDisplayOperation(params.displayOperationId);
-  if (!operation) throw new Error(`unknown display operation ${JSON.stringify(params.displayOperationId)}`);
-  const pipeline = getComposePipeline(device, params.mode, targetFormat, operation);
-  const lut = buildColormapTexture(device, params.isScalar ? params.colormap : undefined);
-
-  const gamma = typeof params.gamma === "number" && params.gamma > 0 ? params.gamma : 0;
-  // u_img: exposureEV, reserved, gamma, isScalar. The operation is selected by
-  // the cached specialized pipeline, not a uniform.
-  const imgVec = new Float32Array([params.exposureEV, 0, gamma, params.isScalar ? 1 : 0]);
-  // u_uv: uvRect.xy, uvRect.wh.
-  const uvRect = new Float32Array([params.uv.x, params.uv.y, params.uv.w, params.uv.h]);
-  // u_compose: split, alpha, hdrOut, filterMode.
-  const composeVec = new Float32Array([
-    params.split,
-    params.alpha,
-    params.hdrOut ? 1 : 0,
-    params.filter === "nearest" ? 0 : 1,
-  ]);
-  // u_extra: offset, peak, srgbDecodeA, srgbDecodeB. offset is the TEV display
-  // offset (default 0 = identity); peak is the PEAK white ceiling for the
-  // extended operators (default 4); srgbDecodeA/B sRGB-DECODE each u8 side to
-  // scene-linear (default 0 = a scene-linear/float side) — see CompareParams.
-  const extraVec = new Float32Array([
-    params.offset ?? 0,
-    params.peak ?? EXTENDED_TONEMAP_PEAK_DEFAULT,
-    params.srgbDecodeA ? 1 : 0,
-    params.srgbDecodeB ? 1 : 0,
-  ]);
-
-  let bindGroup: BindGroup | undefined;
-  try {
-    bindGroup = device.createBindGroup(pipeline, [
-      { binding: 0, resource: texA },
-      { binding: 1, resource: texB },
-      { binding: 2, resource: lut },
-      { binding: 3, resource: { uniform: imgVec } },
-      { binding: 4, resource: { uniform: uvRect } },
-      { binding: 5, resource: { uniform: composeVec } },
-      { binding: 6, resource: { uniform: extraVec } },
-    ]);
-    device.renderFullscreen(target, pipeline, bindGroup);
-  } finally {
-    bindGroup?.destroy?.();
-    lut.destroy();
   }
 }
 

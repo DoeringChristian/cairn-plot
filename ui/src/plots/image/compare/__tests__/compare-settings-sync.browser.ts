@@ -256,7 +256,7 @@ async function run(): Promise<boolean> {
 
   // (The NORM sync step was removed — the norm Lin·Log·Pow picker is gone,
   // norm-UI-removal follow-up. The ENGINE norm parity cases live in the
-  // display-operation-registry / compare-pass harnesses and stay.)
+  // display-operation-registry / image-operations harnesses and stay.)
 
   // --- 5. back to split, then TONEMAP: srgb → aces (tonemap is split/blend) --
   A().changeCompareMode("split");

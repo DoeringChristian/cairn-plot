@@ -21,7 +21,9 @@
  * (same commands as the sibling *.browser.ts).
  */
 import { getSharedWebGpuDevice } from "../device/device-provider.ts";
-import { computeDiff, ensureDiff, renderDiffDisplay, getDiffComputeCount } from "../diff-engine";
+import { computeDiff, ensureDiff, getDiffComputeCount } from "../diff-engine";
+import { renderImage } from "../image-engine";
+import { prepareDisplayOperation } from "../prepare-display-operation.ts";
 import { flipHDR, computeHdrFlipExposures } from "../../runtime/hdr-flip-reference";
 import type { Device, Texture } from "../device/device-contract";
 import { createHarness } from "../../../../testing/harness";
@@ -127,13 +129,24 @@ async function runCacheContract(device: Device): Promise<boolean> {
   const before = getDiffComputeCount();
   const e1 = ensureDiff(device, texRef, texTest, "flip-hdr", params, "ref#hdr", "test#hdr");
   const afterFirst = getDiffComputeCount();
+  // Re-display through several exposure/offset/viewport presentations — must NOT
+  // recompute. This is the LIVE presentation path the pool uses for a cached
+  // result (`pool.ts`'s `renderDiff` → `renderImage` with identity content + an
+  // isScalar colormap), not a diff-private blit.
   const presentations = [
     { uv: { x: 0, y: 0, w: 1, h: 1 }, exposureEV: 0, offset: 0 },
     { uv: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, exposureEV: 1.5, offset: 0 },
     { uv: { x: 0.1, y: 0.1, w: 0.3, h: 0.3 }, exposureEV: -0.5, offset: 0.1 },
   ];
   for (const presentation of presentations) {
-    renderDiffDisplay(device, target, e1.texture, e1.displayRange, presentation);
+    renderImage(device, target, e1.texture, {
+      ...presentation,
+      ...prepareDisplayOperation("turbo", { hdrSurface: false }),
+      imageOperation: "identity",
+      reduce: "mean",
+      channelCount: 3,
+      filter: "nearest",
+    });
   }
   const e2 = ensureDiff(device, texRef, texTest, "flip-hdr", params, "ref#hdr", "test#hdr");
   const afterSecond = getDiffComputeCount();

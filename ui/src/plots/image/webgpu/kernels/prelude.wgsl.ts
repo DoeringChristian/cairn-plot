@@ -9,9 +9,8 @@
  *   - `VERTEX_WGSL`    — the fullscreen-triangle vertex stage (same Y-flip
  *     convention as `shaders/image.wgsl.ts` / `passthrough.wgsl.ts`).
  *   - `SAMPLING_WGSL`  — bilinear/nearest source sampling + nearest/linear LUT lookup.
- *   - `TONEMAP_WGSL`   — sRGB OETF + tone-map operators + `processSide`
- *     (the per-side exposure→[scalar LUT]→operator→encode pipeline, verbatim
- *     from `shaders/compare.wgsl.ts`, used by the split/blend compose shaders).
+ *   - `SOURCE_MAP_WGSL`— per-source RESULT-pixel → source-texel mapping (crop
+ *     offsets, or a bilinear rescale under fill).
  *   - `FLIP_COLOR_WGSL`— sRGB→linear, linRGB↔XYZ, XYZ→YCxCz, YCxCz→linRGB,
  *     linRGB→Hunt-adjusted CIELAB, HyAB. Mirrors `flip-reference.ts` exactly so
  *     the GPU FLIP kernel and the CPU reference agree.
@@ -20,7 +19,6 @@
  *     passed as uniforms), so no filter-coefficient buffer plumbing is needed.
  */
 
-import { buildDisplayOperationWGSL, type WebGpuDisplayOperation } from "../display.ts";
 
 export const VERTEX_WGSL = `
 struct VSOut {
@@ -112,90 +110,6 @@ fn mapSample(
   return textureLoad(tex, p, 0);
 }
 `;
-
-// UNIFIED compose tone-map pipeline — the FULL operator × peak × surface model,
-// byte-identical to `shaders/image.wgsl.ts` (single-image path) so a compare
-// pane tone-maps EXACTLY as the single-image pane does. All of `srgbEotf`
-// (sRGB-DECODE), the extended roll-off/clamp operators (ids 4-7 + peak), and the
-// extended (unclamped, origin-mirrored) output encode are ported here verbatim
-// from `image.wgsl.ts`; the GPU↔TS parity harness (`compare-pass.browser.ts`)
-// pins the compose path to the SAME `image/tonemap.ts` reference the image path
-// uses. Keep the math in lockstep with `image.wgsl.ts` when either changes.
-export function buildTonemapWGSL(displayOperation: WebGpuDisplayOperation): string {
-const scalarStage = displayOperation.implementation.kind === "lut"
-  ? `if (isScalar) {
-    let index = applyDisplayIndex(rgb.x, 0, 0.0, 1.0, false, gamma);
-    if (filterLinear) { return sampleLUTLinear(lut, index); }
-    return sampleLUT(lut, index);
-  }`
-  : displayOperation.implementation.kind === "analytic"
-    ? `if (isScalar) { rgb = applyAnalyticDisplay(rgb.x); }`
-    : "";
-return `
-fn srgbOetf(x: f32) -> f32 {
-  let v = clamp(x, 0.0, 1.0);
-  if (v <= 0.0031308) { return 12.92 * v; }
-  return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
-}
-
-// sRGB EOTF (sRGB code -> linear) — inverse of srgbOetf. LINEARIZES an 8-bit
-// sRGB compare side when srgbDecode is set (a u8 source going through the
-// display-transfer pipeline), so exposure/offset + the operator act on linear
-// light. A float side leaves srgbDecode off (already scene-linear).
-fn srgbEotf(x: f32) -> f32 {
-  let v = clamp(x, 0.0, 1.0);
-  if (v <= 0.04045) { return v / 12.92; }
-  return pow((v + 0.055) / 1.055, 2.4);
-}
-
-fn outputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
-  if (hasGamma) { return clamp(pow(clamp(x, 0.0, 1.0), 1.0 / gamma), 0.0, 1.0); }
-  return srgbOetf(x);
-}
-
-// EXTENDED output-encode (HDR-out / extended-surface transfer) — unclamped,
-// origin-mirrored sRGB OETF / power curve (values past 1 survive as extended
-// brightness). Mirrors image.wgsl.ts's extendedSrgbOetf/extendedGammaEncode/
-// extendedOutputEncodeF exactly.
-fn extendedSrgbOetf(x: f32) -> f32 {
-  let a = abs(x);
-  let s = sign(x);
-  if (a <= 0.0031308) { return s * 12.92 * a; }
-  return s * (1.055 * pow(a, 1.0 / 2.4) - 0.055);
-}
-fn extendedGammaEncode(x: f32, gamma: f32) -> f32 {
-  let a = abs(x);
-  let s = sign(x);
-  return s * pow(a, 1.0 / gamma);
-}
-fn extendedOutputEncodeF(x: f32, gamma: f32, hasGamma: bool) -> f32 {
-  if (hasGamma) { return extendedGammaEncode(x, gamma); }
-  return extendedSrgbOetf(x);
-}
-
-// The selected operation is compiled directly into this compose shader. The
-// operation registry owns its body; pipeline selection replaces GPU dispatch.
-${buildDisplayOperationWGSL(displayOperation)}
-
-// Per-side [sRGB-DECODE] -> exposure+offset -> [scalar LUT] -> operator(peak) ->
-// encode. srgbDecode LINEARIZES a u8 side first (a float side passes it 0). The
-// lut is only read when isScalar. offset is the TEV display offset (added AFTER
-// exposure, BEFORE colormap/tonemap/encode). On hdrOut the EXTENDED (unclamped)
-// encode runs so values past P survive to the extended HDR surface.
-fn processSide(lut: texture_2d<f32>, sampled: vec4<f32>, exposureEV: f32, offset: f32, gamma: f32, isScalar: bool, hdrOut: bool, peak: f32, srgbDecode: bool, filterLinear: bool) -> vec3<f32> {
-  var src = sampled.rgb;
-  if (srgbDecode) { src = vec3<f32>(srgbEotf(src.r), srgbEotf(src.g), srgbEotf(src.b)); }
-  var rgb = src * exp2(exposureEV) + vec3<f32>(offset);
-  ${scalarStage}
-  rgb = applyDisplayOperation(rgb, peak);
-  let hasGamma = gamma > 0.0;
-  if (hdrOut) {
-    return vec3<f32>(extendedOutputEncodeF(rgb.r, gamma, hasGamma), extendedOutputEncodeF(rgb.g, gamma, hasGamma), extendedOutputEncodeF(rgb.b, gamma, hasGamma));
-  }
-  return vec3<f32>(outputEncodeF(rgb.r, gamma, hasGamma), outputEncodeF(rgb.g, gamma, hasGamma), outputEncodeF(rgb.b, gamma, hasGamma));
-}
-`;
-}
 
 // FLIP color-space transforms — MUST match flip-reference.ts numerically.
 export const FLIP_COLOR_WGSL = `
