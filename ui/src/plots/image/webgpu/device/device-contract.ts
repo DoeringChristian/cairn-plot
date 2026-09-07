@@ -9,7 +9,14 @@ export type Backend = "webgpu";
 /** WebGPU is the engine's only backend and is always full-featured. */
 export interface Capabilities { hdr: boolean; compute: boolean; float16: boolean; }
 export type TextureFormat = "rgba8unorm" | "rgba16float" | "rgba32float" | "r32float";
-export interface Texture { readonly width: number; readonly height: number; readonly format: TextureFormat; write(data: ArrayBufferView): void; destroy(): void; }
+/**
+ * `write` takes either a CPU buffer (`queue.writeTexture`) or a decoded
+ * `ImageBitmap` (`queue.copyExternalImageToTexture`). The bitmap form is what
+ * lets an 8-bit source reach the GPU without a full-frame readback and a
+ * CPU-side RGBA expansion first (design §3.3); it requires no extra usage flag
+ * beyond the ones every texture here already carries.
+ */
+export interface Texture { readonly width: number; readonly height: number; readonly format: TextureFormat; write(data: ArrayBufferView | ImageBitmap): void; destroy(): void; }
 export interface Sampler { readonly _s: unknown; }
 export interface RenderPipeline { readonly _p: unknown; }
 export interface ComputePipeline { readonly _c: unknown; }

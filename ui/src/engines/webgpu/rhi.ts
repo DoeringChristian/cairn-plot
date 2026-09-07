@@ -16,7 +16,9 @@ export interface RhiTexture {
   readonly width: number;
   readonly height: number;
   readonly format: RhiTextureFormat;
-  write(data: ArrayBufferView): void;
+  /** A CPU buffer (`writeTexture`) or a decoded bitmap
+   *  (`copyExternalImageToTexture`) — mirrors `device-contract.ts`. */
+  write(data: ArrayBufferView | ImageBitmap): void;
   destroy(): void;
 }
 

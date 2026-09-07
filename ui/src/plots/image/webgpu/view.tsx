@@ -57,6 +57,7 @@ import type { Colormap } from "../../types";
 import { applyColormap } from "../resources/apply-colormap.ts";
 import { resolveColormapMode } from "../runtime/diff-colormap";
 import { loadImageData } from "../resources/load-image-data.ts";
+import { decodedImage, peekDecodedImage, type DecodedImage } from "../resources/decoded-image.ts";
 import { getCachedImageData, setCachedImageData, getCachedLoadedImageData } from "../resources/cache.ts";
 import { HALF_ONE } from "../runtime/half";
 import { floatValues } from "../runtime/pixel-buffer.ts";
@@ -93,6 +94,7 @@ import {
   type SourceUpload,
   type SourceUploadLease,
 } from "./pool";
+import type { TextureFormat } from "./device/device-contract.ts";
 import { expandedUploadCache } from "./expanded-upload-cache.ts";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import { isPaintPhaseLogActive, recordPaintPhase } from "./test-hooks";
@@ -720,9 +722,35 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const [activeMapMean, setActiveMapMean] = useState<{ entry: DiffCacheEntry; value: number } | null>(null);
   const [activeEntryVersion, setActiveEntryVersion] = useState(0);
   const [diffOverlayVersion, setDiffOverlayVersion] = useState(0);
-  const [diffOverlayDemanded, setDiffOverlayDemanded] = useState(false);
+  // -----------------------------------------------------------------------
+  // THE ONE DEMAND SIGNAL for everything this pane reads back (design §3.3).
+  // Nothing here is prepared at mount any more: the diff RESULT readback, the
+  // primary's raw pixels (`sdrImageDataRef`) and the `b` operand's pixels
+  // (`refU8Ref`) are all fetched only once something asks for them. The askers
+  // are the TEV pixel-value overlays — however many this pane renders (the ONE
+  // spec below, or BOTH compositor sides) — once they are zoomed in far enough
+  // to print numbers, and the shell's info panel when it opens.
+  //
+  // A LATCH, not a boolean: `PixelValueOverlay` reports only on a CHANGE, so
+  // counting reports is what makes "either one wants them" hold — the right
+  // side saying "not zoomed in" can never cancel the left side's demand.
+  // (Mirrors `cpu/view.tsx`'s `useDemandLatch`.)
+  // -----------------------------------------------------------------------
+  const sampleDemandCount = useRef(0);
+  const [sampleDemanded, setSampleDemanded] = useState(false);
+  const reportSampleDemand = useCallback((demanded: boolean) => {
+    sampleDemandCount.current = Math.max(0, sampleDemandCount.current + (demanded ? 1 : -1));
+    setSampleDemanded(sampleDemandCount.current > 0);
+  }, []);
+  // The histogram panel's own demand. Only a PLAIN pane offers a histogram (a
+  // compare's scalar error has none — see the `histogram` prop below), so this
+  // can never pull a diff readback in behind an opened info panel.
+  const [histogramDemanded, setHistogramDemanded] = useState(false);
+  const overlayDemanded = sampleDemanded || histogramDemanded;
   const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
   const [refUploadVersion, setRefUploadVersion] = useState(0);
+  /** Bumps when the `b` operand's raw pixels arrive (its own demand fetch). */
+  const [refPixelsVersion, setRefPixelsVersion] = useState(0);
   const diffEntryRef = useRef<DiffCacheEntry | null>(null);
   const setDiffEntry = useCallback((entry: DiffCacheEntry | null) => {
     if (diffEntryRef.current === entry) return;
@@ -1043,7 +1071,17 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
 
   // -----------------------------------------------------------------------
   // SDR mode: decode `imageUrl` (+ optional CPU colormap false-color, exact
-  // parity with ImagePane), retain for the overlay, upload on change.
+  // parity with ImagePane), upload on change.
+  //
+  // THE PLAIN 8-BIT PATH UPLOADS THE DECODED BITMAP (design §3.3): no
+  // full-frame readback, no CPU-side RGBA buffer, no `writeTexture` — the queue
+  // copies the `ImageBitmap` from the ONE shared decode
+  // (`resources/decoded-image.ts`) straight into an `rgba8unorm` texture. The
+  // pixels the TEV numbers and the histogram print are a SEPARATE, demand-gated
+  // concern (see the `sdrImageDataRef` effect below); mounting a card no longer
+  // pays for them. The two branches that genuinely need CPU pixels — a compare
+  // primary (scene-field conversion) and an authored CPU false-color bake —
+  // keep `loadImageData`.
   // -----------------------------------------------------------------------
   // LAYOUT effect (paint-atomic flips): the resident SYNCHRONOUS fast-path (cache
   // hit → `applySdr`) must stamp `appliedPrimaryIdRef` + `naturalDims` BEFORE paint
@@ -1079,8 +1117,30 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       : colormap == null
         ? primaryContentKey
         : `${primaryContentKey}|colormap:${colormap}|ev:${displayEV}|off:${displayOffset}`;
+    // The tail every branch shares: bind the upload lease, stamp the coherency
+    // guard, publish the natural size. `build` is what the expanded-upload cache
+    // memoizes and what a park→restore reacquires.
+    const applyUpload = (
+      build: () => SourceUpload,
+      format: TextureFormat,
+      width: number,
+      height: number,
+      p2: Uint8SurfaceProps,
+    ) => {
+      const cacheKey = `expanded:${primaryKey}|${width}x${height}:${format}`;
+      const reacquire = () => acquireExpanded(cacheKey, build);
+      paneHandleRef.current?.setSourceLease(reacquire(), primaryKey, reacquire);
+      // Coherency guard: record which primary content the pool now holds — mirrors
+      // `expectedPrimaryId` in renderPass (compare → `A:<keyA>`, else `img:<url>`).
+      appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : `img:${imageUrl}`;
+      setNaturalDims((prev) => (prev && prev.w === width && prev.h === height ? prev : { w: width, h: height }));
+      p2.onNaturalSize?.(width, height);
+      setPixelDataVersion((v) => v + 1);
+      setUploadVersion((v) => v + 1);
+    };
+    // The CPU-PIXEL branches: a compare primary (converted to a scene field) and
+    // an authored CPU false-color bake. Both genuinely need `ImageData`.
     const applySdr = (raw: ImageData, display: ImageData, p2: Uint8SurfaceProps) => {
-      sdrImageDataRef.current = raw; // TEV overlay reads the RAW source, like ImagePane.
       const build = (): SourceUpload => hasCompare
         ? sceneFieldUpload(raw)
         : {
@@ -1090,36 +1150,78 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
             format: "rgba8unorm",
           };
       const format = hasCompare ? "rgba32float" : "rgba8unorm";
-      const cacheKey = `expanded:${primaryKey}|${display.width}x${display.height}:${format}`;
-      const reacquire = () => acquireExpanded(cacheKey, build);
-      paneHandleRef.current?.setSourceLease(reacquire(), primaryKey, reacquire);
-      // Coherency guard: record which primary content the pool now holds — mirrors
-      // `expectedPrimaryId` in renderPass (compare → `A:<keyA>`, else `img:<url>`).
-      appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : `img:${imageUrl}`;
-      setNaturalDims((prev) =>
-        prev && prev.w === display.width && prev.h === display.height ? prev : { w: display.width, h: display.height },
-      );
-      p2.onNaturalSize?.(display.width, display.height);
-      setPixelDataVersion((v) => v + 1);
-      setUploadVersion((v) => v + 1);
+      applyUpload(build, format, display.width, display.height, p2);
     };
-    // FLIP-BACK / PAINT-ATOMIC FAST PATH (no authored colormap — a raw source with no
-    // CPU false-color, i.e. every compare primary AND every plain non-colormapped
-    // image): if the decode is already resident, bind SYNCHRONOUSLY so the target
-    // presents on THIS commit with no async gap. In a `useLayoutEffect` (below)
-    // this stamps `appliedPrimaryIdRef` + `naturalDims` before paint, so a resident
-    // slot flip renders pre-paint (no one-frame stale flash). The plain-image case
-    // matters for the diff→image direction: without it the image slot's primary
-    // uploads async and the diff frame is held for one paint. A colormapped image
-    // (an authored colormap is present) keeps its async bake below (unchanged).
+    // The PLAIN branch: the decoded bitmap IS the upload. Returns false only when
+    // this decode has no bitmap the queue can copy (a runtime without
+    // `createImageBitmap` fell back to an element), so the caller can fall back
+    // to the pixels.
+    const applyBitmap = (decoded: DecodedImage, p2: Uint8SurfaceProps): boolean => {
+      if (!decoded.originClean) {
+        // Cross-origin without CORS: the bitmap taints a canvas AND is rejected
+        // by `copyExternalImageToTexture`. The source is simply unavailable —
+        // which is exactly what the readback path reports for it today, so the
+        // pane holds no source and shows nothing.
+        // eslint-disable-next-line no-console
+        console.warn(`cairn-plot: image source is not readable (cross-origin without CORS): ${decoded.url}`);
+        return true;
+      }
+      const bitmap = decoded.bitmap;
+      if (typeof ImageBitmap === "undefined" || !(bitmap instanceof ImageBitmap)) return false;
+      applyUpload(
+        () => ({ data: bitmap, width: decoded.width, height: decoded.height, format: "rgba8unorm" }),
+        "rgba8unorm",
+        decoded.width,
+        decoded.height,
+        p2,
+      );
+      return true;
+    };
+    let cancelled = false;
+    const controller = new AbortController();
+    const cleanup = () => {
+      cancelled = true;
+      // Drops this pane's hold on a still-queued decode (a no-op once it settled).
+      controller.abort();
+    };
+    if (!hasCompare && colormap == null) {
+      // PLAIN 8-BIT: upload the decoded bitmap, no readback anywhere on this path.
+      // FLIP-BACK / PAINT-ATOMIC FAST PATH: a resident decode binds SYNCHRONOUSLY
+      // so the target presents on THIS commit with no async gap. In a
+      // `useLayoutEffect` that stamps `appliedPrimaryIdRef` + `naturalDims` before
+      // paint, so a resident slot flip renders pre-paint (no one-frame stale
+      // flash) — it matters for the diff→image direction, where an async primary
+      // would hold the diff frame for one paint.
+      const resident = peekDecodedImage(imageUrl);
+      if (resident) {
+        if (!applyBitmap(resident, p)) {
+          void resident.imageData().then((raw) => {
+            if (!cancelled && raw) applySdr(raw, raw, p);
+          });
+        }
+        return cleanup;
+      }
+      void decodedImage(imageUrl, { signal: controller.signal }).then((decoded) => {
+        // A `null` is an ABORT or a URL that will not decode: nothing to show,
+        // never an error.
+        if (cancelled || !decoded) return;
+        if (applyBitmap(decoded, p)) return;
+        return decoded.imageData().then((raw) => {
+          if (!cancelled && raw) applySdr(raw, raw, p);
+        });
+      });
+      return cleanup;
+    }
+    // COMPARE PRIMARY (raw scene field) / CPU FALSE-COLOR BAKE. The compare
+    // primary keeps the same synchronous flip-back fast path over the pixels it
+    // already has; a colormapped image keeps its async bake (both unchanged).
     if (colormap == null) {
-      const raw = getCachedLoadedImageData(imageUrl);
-      if (raw) {
-        applySdr(raw, raw, p);
+      const cachedRaw = getCachedLoadedImageData(imageUrl);
+      if (cachedRaw) {
+        applySdr(cachedRaw, cachedRaw, p);
         return;
       }
     }
-    let cancelled = false;
     loadImageData(imageUrl).then((raw) => {
       if (cancelled || !raw) return;
       let display = raw;
@@ -1196,17 +1298,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       // Coherency guard: record the `b` operand the pool now holds — mirrors
       // `expectedBId` in renderPass (`B:<keyB>`).
       appliedBIdRef.current = `B:${key}`;
-      // Retain the reference pixels for the DIRECT-op cpu-twin readout.
-      if (b.dtype === "float") {
-        refFloatRef.current = b;
-        refU8Ref.current = null;
-      } else {
-        const raw = b.url ? getCachedLoadedImageData(b.url) : null;
-        refU8Ref.current = raw
-          ? { data: raw.data, width: raw.width, height: raw.height }
-          : null;
-        refFloatRef.current = null;
-      }
+      // Retain the reference pixels for the DIRECT-op cpu-twin readout. A FLOAT
+      // operand already IS its samples (nothing to read back); a uint8 operand's
+      // pixels are fetched on demand only — see the `refU8Ref` effect below.
+      refFloatRef.current = b.dtype === "float" ? b : null;
       setRefDims((prev) =>
         prev && prev.w === upload.width && prev.h === upload.height ? prev : { w: upload.width, h: upload.height },
       );
@@ -1233,6 +1328,95 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneReady, hasCompare, compareSource?.b, contentKeyB]);
+
+  // -----------------------------------------------------------------------
+  // ON-DEMAND PIXELS (design §3.3). Two refs hold the RAW bytes this pane's TEV
+  // numbers and CPU histogram read — the primary (`sdrImageDataRef`) and the `b`
+  // operand (`refU8Ref`) — and NEITHER is filled at mount any more. The GPU has
+  // the image (the bitmap upload / the operand's own upload); these readbacks
+  // exist purely so a human can read values off it, so they wait for
+  // `overlayDemanded`. A pane nobody zoomed into, with its info panel closed,
+  // pays for no `getImageData` at all.
+  //
+  // Both go through the ONE shared decode; both abort their hold on it when the
+  // pane unmounts or the url changes, and both treat a `null` (an abort, a
+  // cross-origin source without CORS, a URL that will not decode) as "no
+  // numbers", never as an error.
+  // -----------------------------------------------------------------------
+  /** The url `sdrImageDataRef` holds pixels for — a url change must never leave
+   *  the PREVIOUS source's numbers under the new one's cursor. */
+  const sdrPixelsUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const url = hdrMode ? null : ((props as Uint8SurfaceProps).imageUrl ?? null);
+    if (sdrPixelsUrlRef.current !== url) {
+      sdrPixelsUrlRef.current = url;
+      // Bump only when pixels actually went away — a version bump nothing
+      // consumes is a wasted render per pane.
+      if (sdrImageDataRef.current) {
+        sdrImageDataRef.current = null;
+        setPixelDataVersion((v) => v + 1);
+      }
+    }
+    if (!url || !overlayDemanded || sdrImageDataRef.current) return;
+    // Already read back (by this pane's colormap bake / compare conversion, or
+    // by another pane on the same url): take it synchronously.
+    const cached = getCachedLoadedImageData(url);
+    if (cached) {
+      sdrImageDataRef.current = cached;
+      setPixelDataVersion((v) => v + 1);
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    void decodedImage(url, { signal: controller.signal })
+      .then((decoded) => decoded?.imageData() ?? null)
+      .then((data) => {
+        if (cancelled || !data) return;
+        sdrImageDataRef.current = data;
+        setPixelDataVersion((v) => v + 1);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hdrMode, hdrMode ? null : (props as Uint8SurfaceProps).imageUrl, overlayDemanded]);
+
+  /** The content key `refU8Ref` holds pixels for (the `b` operand's identity). */
+  const refPixelsKeyRef = useRef<string | null>(null);
+  const bOperand = hasCompare ? compareSource?.b : undefined;
+  const bPixelsUrl = bOperand && bOperand.dtype === "uint8" ? (bOperand.url ?? null) : null;
+  useEffect(() => {
+    const key = bPixelsUrl ? contentKeyB : null;
+    if (refPixelsKeyRef.current !== key) {
+      refPixelsKeyRef.current = key;
+      if (refU8Ref.current) {
+        refU8Ref.current = null;
+        setRefPixelsVersion((v) => v + 1);
+      }
+    }
+    if (!bPixelsUrl || !overlayDemanded || refU8Ref.current) return;
+    const cached = getCachedLoadedImageData(bPixelsUrl);
+    if (cached) {
+      refU8Ref.current = { data: cached.data, width: cached.width, height: cached.height };
+      setRefPixelsVersion((v) => v + 1);
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    void decodedImage(bPixelsUrl, { signal: controller.signal })
+      .then((decoded) => decoded?.imageData() ?? null)
+      .then((data) => {
+        if (cancelled || !data) return;
+        refU8Ref.current = { data: data.data, width: data.width, height: data.height };
+        setRefPixelsVersion((v) => v + 1);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bPixelsUrl, contentKeyB, overlayDemanded]);
 
   // Align/fit overlap mapping for the two operands (a = `source`/reference, b =
   // foreground) — folds into the diff cache key + the metrics reduction region
@@ -1810,7 +1994,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // the selected metric.
   // -----------------------------------------------------------------------
   useEffect(() => {
-    if (!diffMode || !diffOverlayDemanded) {
+    if (!diffMode || !overlayDemanded) {
       diffSamplesRef.current = null;
       diffResultDimsRef.current = null;
       return;
@@ -1845,7 +2029,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     };
   }, [
     diffMode,
-    diffOverlayDemanded,
+    overlayDemanded,
     paneReady,
     resolvedOperationId,
     activeEntryVersion,
@@ -2262,6 +2446,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                       className="absolute inset-0 overflow-hidden pointer-events-none"
                       style={{ clipPath: `inset(0 ${(1 - splitPosition) * 100}% 0 0)` }}
                     >
+                      {/* BOTH sides report demand: the operand pixels these
+                          numbers print are read back lazily, and either side
+                          zooming in far enough is reason enough to prepare
+                          them (the latch aggregates the two reporters). */}
                       <PixelValueOverlay
                         viewport={viewport}
                         // REFERENCE side = the primary/framing footprint → identity.
@@ -2269,6 +2457,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                         sample={samplePixel}
                         notation={notation}
                         version={pixelDataVersion}
+                        onSampleDemandChange={reportSampleDemand}
                       />
                     </div>
                     {refDims && (
@@ -2282,8 +2471,9 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                           sourceDims={refDims}
                           sample={sampleForeground}
                           notation={notation}
-                          version={refUploadVersion + pixelDataVersion}
+                          version={refUploadVersion + pixelDataVersion + refPixelsVersion}
                           onActiveChange={setOverlayActive}
+                          onSampleDemandChange={reportSampleDemand}
                         />
                       </div>
                     )}
@@ -2295,8 +2485,9 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                       sourceDims={refDims}
                       sample={sampleForeground}
                       notation={notation}
-                      version={refUploadVersion + pixelDataVersion}
+                      version={refUploadVersion + pixelDataVersion + refPixelsVersion}
                       onActiveChange={setOverlayActive}
+                      onSampleDemandChange={reportSampleDemand}
                     />
                   )
                 ),
@@ -2305,8 +2496,14 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
               // DIFF mode prints the metric values (cpu twin / result readback); the
               // version bumps on kernel switches so the numbers track the selected metric.
               sample: diffMode ? sampleDiffPixel : samplePixel,
-              version: diffMode ? diffOverlayVersion : pixelDataVersion,
-              onSampleDemandChange: setDiffOverlayDemanded,
+              // A DIRECT op's numbers come from the cpu twin over BOTH operands'
+              // raw pixels, which now arrive asynchronously once this very
+              // overlay reports demand — so their arrival has to bump the
+              // version too, or the first demanded frame would print nothing.
+              version: diffMode
+                ? diffOverlayVersion + pixelDataVersion + refPixelsVersion
+                : pixelDataVersion,
+              onSampleDemandChange: reportSampleDemand,
             }
       }
       notationSeed={props.pixelValueNotation ?? "decimal"}
@@ -2321,6 +2518,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
       infoPanelSetting={synced?.["panel.info"]}
       onInfoPanelChange={changeInfoPanel}
+      // The panel's own demand for the raw pixels its CPU reader bins: the
+      // histogram source above is a synchronous view over `sdrImageDataRef`,
+      // which now stays empty until this fires (or an overlay asks). Only a
+      // plain pane offers a histogram at all, so a compare never wires it.
+      onHistogramDemandChange={hasCompare ? undefined : setHistogramDemanded}
       // UNIFIED DISPLAY menu (Phase 3): ONE arity-gated dropdown (CURVES /
       // COLORMAPS / REMAPS sections) replaces the separate colormap + tonemap
       // menus. Selecting a LUT deactivates the curve and vice-versa structurally

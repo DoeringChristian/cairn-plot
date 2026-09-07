@@ -374,8 +374,25 @@ class WGPUTexture implements Texture {
     });
   }
 
-  write(data: ArrayBufferView): void {
+  write(data: ArrayBufferView | ImageBitmap): void {
     if (this.destroyed) throw new Error("webgpu device: write() on a destroyed texture");
+    // A DECODED BITMAP goes straight to the texture: no readback, no CPU-side
+    // RGBA expansion, no staging buffer (design §3.3). `premultipliedAlpha:
+    // false` matches the buffer path's bytes — `decoded-image.ts` decodes with
+    // `premultiplyAlpha: "none"`, and `ImageData` is unpremultiplied too — and
+    // the default `flipY: false` keeps the same top-down row order.
+    // `ArrayBuffer.isView` is the discriminator rather than `instanceof
+    // ImageBitmap`, which is not defined in every runtime this module is typed
+    // for. The texture's usage flags already include `COPY_DST |
+    // RENDER_ATTACHMENT`, the pair `copyExternalImageToTexture` requires.
+    if (!ArrayBuffer.isView(data)) {
+      this.device.queue.copyExternalImageToTexture(
+        { source: data },
+        { texture: this.gpuTexture, premultipliedAlpha: false },
+        { width: this.width, height: this.height, depthOrArrayLayers: 1 },
+      );
+      return;
+    }
     const bytesPerRow = this.width * bytesPerPixelFor(this.format);
     this.device.queue.writeTexture(
       { texture: this.gpuTexture },

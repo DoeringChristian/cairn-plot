@@ -165,12 +165,18 @@ export const MAX_LIVE_SWAPCHAINS = 12;
  */
 export const MAX_RETAINED_SOURCE_TEXTURES = 6;
 
-/** A CPU-side source buffer + the GPU texture layout to upload it as. */
+/**
+ * A source to upload + the GPU texture layout to upload it as. `data` is either
+ * a CPU-side buffer (`writeTexture`) or a DECODED BITMAP that the queue copies
+ * directly (`copyExternalImageToTexture`) — a plain 8-bit image needs no CPU
+ * buffer at all (design §3.3). Byte accounting therefore comes from the LAYOUT
+ * (`textureByteLength`), never from `data.byteLength`.
+ */
 export interface SourceUpload {
   width: number;
   height: number;
   format: TextureFormat;
-  data: ArrayBufferView;
+  data: ArrayBufferView | ImageBitmap;
 }
 
 /** One ref-counted ownership of an upload-ready CPU buffer. */

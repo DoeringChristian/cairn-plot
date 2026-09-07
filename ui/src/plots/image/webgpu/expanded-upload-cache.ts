@@ -1,5 +1,6 @@
 import { getExpandedUploadCacheByteLimit } from "../../../resources/runtime-config.ts";
 import type { SourceUpload } from "./pool.ts";
+import { textureByteLength } from "./texture-bytes.ts";
 
 interface Entry {
   upload: SourceUpload;
@@ -38,7 +39,10 @@ export class ExpandedUploadCache {
       this.entries.set(key, entry);
     } else {
       const upload = build();
-      entry = { upload, bytes: upload.data.byteLength, refs: 0 };
+      // The LAYOUT, not the buffer: an upload may carry a decoded `ImageBitmap`
+      // (no CPU bytes at all) instead of an `ArrayBufferView`, and for every
+      // buffer form the two agree exactly.
+      entry = { upload, bytes: textureByteLength(upload.width, upload.height, upload.format), refs: 0 };
       this.entries.set(key, entry);
       this.totalBytes += entry.bytes;
     }
