@@ -21,9 +21,12 @@
          element still reported devicePixelContentBoxSize 101x50 at
          devicePixelRatio 2, i.e. a 1x backing store wearing a DPR-2 label —
          this page then silently duplicated its own DPR-1 sibling. The harness
-         MEASURES canvas.width / box.width and FAILS the run when it differs
-         from `window.devicePixelRatio` by more than 0.01, so a run can never
-         claim a ratio it did not have.
+         MEASURES canvas.width / box.width and FAILS the run unless it matches
+         BOTH `window.devicePixelRatio` AND the "2" declared right here (read
+         back off this tag) to within 0.01 — the first catches a ratio without a
+         matching content box, the second catches this page being run in a
+         browser that never got the scale factor, where a 1x run would otherwise
+         agree with itself. A run can never claim a ratio it did not have.
 
          The DPR-1 pass is the sibling page
          `cpu-label-alignment-dpr1.browser.html`, which loads THIS SAME bundle

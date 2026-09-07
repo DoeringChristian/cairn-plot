@@ -70,10 +70,12 @@
  * `--force-device-scale-factor=2`; `cpu-label-alignment-dpr1.browser.html` loads
  * this same bundle without the attribute, on the default browser. The EFFECTIVE
  * ratio is MEASURED (`paint.width / box.width`) and printed on every line rather
- * than assumed, and a measured ratio that disagrees with `devicePixelRatio` by
- * more than 0.01 FAILS the page (`dprSituation`) — headless Chromium's
- * `device-pixel-content-box` does not follow a CDP `deviceScaleFactor` override,
- * so a DPR page that got its ratio that way would silently re-run the 1x case.
+ * than assumed, and it must match BOTH `devicePixelRatio` and the ratio the page
+ * DECLARES in `data-cairn-harness-dpr` to within 0.01, or the page FAILS
+ * (`dprSituation`) — headless Chromium's `device-pixel-content-box` does not
+ * follow a CDP `deviceScaleFactor` override, and a page launched without its
+ * scale factor at all agrees with itself at 1x; either way a DPR page would
+ * otherwise silently re-run the 1x case under a 2x name.
  *
  * The GPU section repeats the whole measurement on `GpuImagePane` (whose live
  * in-DOM swapchain reads blank through `createImageBitmap`, so it goes through
@@ -786,32 +788,57 @@ const CASES: [number, number, ImageViewState][] = [
 const HOME_CASE: [number, number] = [642, 277.5];
 
 /**
+ * The ratio this PAGE declared it must run at: its own
+ * `data-cairn-harness-dpr` (the attribute the runner groups pages by, carried on
+ * `<html>`, hence `dataset.cairnHarnessDpr`), or 1 when it carries none — which
+ * is exactly what `cpu-label-alignment-dpr1.browser.html` is.
+ */
+function declaredDpr(): number {
+  const raw = document.documentElement.dataset.cairnHarnessDpr;
+  const n = raw === undefined ? 1 : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/**
  * What this PAGE actually got, MEASURED rather than assumed, and whether that is
  * the ratio it was supposed to run at. `effective` is the pane's own
  * `canvas.width / box.width`, so the log always names the case that actually ran
  * instead of the one the page asked for.
  *
- * A mismatch is a FAILURE, not a note: the runner launches a browser with
- * `--force-device-scale-factor` per `data-cairn-harness-dpr` page, so the
- * device-pixel content box must really be `devicePixelRatio` times the CSS box.
- * When it is not, this page is silently re-running the DPR-1 case under a DPR-2
- * name (what the old CDP `Emulation.setDeviceMetricsOverride` path did), and the
- * DPR-2 proof it claims to be does not exist.
+ * BOTH comparisons must hold, and either one failing FAILS the page:
+ *
+ *   measured == devicePixelRatio — the device-pixel content box really is the
+ *     ratio the page believes it is running at. A headless Chromium under a CDP
+ *     `Emulation.setDeviceMetricsOverride` moved `devicePixelRatio` to 2 and
+ *     left the content box at 1x: this page then ran the DPR-1 case under a
+ *     DPR-2 name. That is what the launch-flag runner replaced.
+ *
+ *   measured == declared — the browser actually applied the page's
+ *     `--force-device-scale-factor`. Without this half a DPR-2 page dropped into
+ *     an unscaled browser measures 1 AND reports `devicePixelRatio` 1, agrees
+ *     with itself, and passes as a silent duplicate of its DPR-1 sibling.
  */
 function dprSituation(effective: number): { ok: boolean; text: string } {
   const ratio = window.devicePixelRatio;
-  if (Math.abs(effective - ratio) <= 0.01) {
+  const declared = declaredDpr();
+  const boxOk = Math.abs(effective - ratio) <= 0.01;
+  const declaredOk = Math.abs(effective - declared) <= 0.01;
+  if (boxOk && declaredOk) {
     return {
       ok: true,
-      text: `effective ratio ${effective} — true ${effective}x backing store (devicePixelRatio ${ratio})`,
+      text:
+        `effective ratio ${effective} — true ${effective}x backing store ` +
+        `(devicePixelRatio ${ratio}, declared ${declared})`,
     };
   }
+  const why = !boxOk
+    ? `the browser did not give this page a ${ratio}x device-pixel content box`
+    : `the browser ran this page at ${effective}x, not the ${declared}x it declares`;
   return {
     ok: false,
     text:
-      `effective ratio ${effective} vs devicePixelRatio ${ratio} — ratio/box MISMATCH ` +
-      `(the browser did not give this page a ${ratio}x device-pixel content box, so this ` +
-      `run is NOT the DPR ${ratio} proof it claims to be)`,
+      `effective ratio ${effective} vs devicePixelRatio ${ratio} vs declared ${declared} — ` +
+      `DPR MISMATCH (${why}, so this run is NOT the DPR ${declared} proof it claims to be)`,
   };
 }
 
