@@ -101,6 +101,12 @@ export function peekDecodedImage(url: string): DecodedImage | null {
   return entries.get(url) ?? null;
 }
 
+/** Test-only: the number of URLs currently negative-cached (bounded by
+ *  `DECODED_IMAGE_CACHE_MAX`, see `produce`). */
+export function negativeCacheSize(): number {
+  return failures.size;
+}
+
 /** Per-call options. `deps` exists for the tests; production callers pass at
  *  most a `signal`. */
 export interface DecodedImageOptions {
@@ -204,6 +210,16 @@ async function produce(url: string, deps: DecodedImageDeps): Promise<DecodedImag
   }
   if (!decoded) {
     failures.set(url, deps.now());
+    // Bounded, same size class as the entry LRU: an unbounded negative cache on
+    // a page hammering broken URLs would grow forever. `failures` is a plain
+    // `Map`, whose iteration order is insertion order, so the front of it IS
+    // the oldest entries — no separate LRU bookkeeping needed since nothing
+    // ever "touches" a negative entry the way a hit touches the entry LRU.
+    while (failures.size > DECODED_IMAGE_CACHE_MAX) {
+      const oldestUrl = failures.keys().next().value;
+      if (oldestUrl === undefined) break;
+      failures.delete(oldestUrl);
+    }
     return null;
   }
   // Bounded: a URL that decodes keeps no negative entry.

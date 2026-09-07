@@ -203,9 +203,17 @@ decodes `=== 0` on same-origin data; `createImageBitmap` calls `=== distinct
 URLs`; `getImageData` `=== 1` before any overlay demand (the wide pane);
 after toggling numbers on one narrow pane exactly one more; GPU:
 `writeTexture` bytes for uint8 sources `=== 0`, `copyExternalImageToTexture`
-`=== image count + 2 × operands`; scene conversions `=== 0`; the tagged and
-translucent fixtures read back byte-identical through `decodedImage` and
-through the element path.
+`=== image count + one upload per distinct operand URL and format` (the
+upload cache is keyed by content+format, so two comparison cards naming the
+same operands share textures — two cards, two operand uploads, not four);
+scene conversions `=== 0`; the tagged and translucent fixtures read back
+byte-identical through `decodedImage` and through the element path.
+
+Note: the wide pane opens its histogram via `settings: {"panel.info": true}`
+rather than by width alone, because a square 2048² source cannot reach the
+auto-open width (`4 × INFO_PANEL_W`) in the runner window — `ContentAspectFrame`
+caps the drawable box by `window.innerHeight`, so a square box capped in
+height is capped in width too.
 
 ## 4. Testing
 
@@ -214,9 +222,19 @@ refcount drop; decoded-image cache de-duplication, fallback to the element
 path on fetch failure, negative caching, LRU eviction without `close()`,
 write-through to `imageLoadCache`; `peekImageData` semantics. Harnesses: the
 new one; a device-level equivalence case in `webgpu/__tests__/compare-metrics`
-uploading one fixture as `rgba32float` via `imageDataToSceneField` and as
-`rgba8unorm-srgb` via `copyExternalImageToTexture`, asserting `textureLoad`
-agreement within 1e-5 per channel and an identical `[metrics] mse` line;
+(`runSrgbOperandEquivalence`, `[equiv/srgb-operand]`) uploading one fixture as
+`rgba32float` via `imageDataToSceneField` and as `rgba8unorm-srgb` via
+`copyExternalImageToTexture`, reading both back through the same trivial
+`textureLoad` pass and gating on the shipped bound rather than a single
+number: every RGB sample must re-encode through the exact `srgbOetf` back onto
+its source 8-bit code value (hardware-independent — the GPU decode loses
+nothing the source carried), the raw decode must additionally agree with the
+CPU EOTF within `SRGB_DECODE_TOL = 5e-4` (a bound on the hardware's
+reduced-precision sRGB table, not on the code under test), and alpha — left
+linear by the sRGB format, same as `imageDataToSceneField` — must agree within
+`ALPHA_ULP_TOL = 1e-7` (a few float32 ulps, covering only the adapter's
+unorm→float rounding); see `webgpu/__tests__/compare-metrics.browser.ts`
+~line 60 for the constants;
 `cpu-gesture-cost`, `cpu-label-alignment`, `gpu-image-diff`, `flip`,
 `hdr-flip`, `ssim`, `gpu-compare-split-numbers`, `gpu-cached-error-numbers`,
 `cpu-compare-fallback`, `pane-histogram`, `enlarge-channel` keep passing.

@@ -65,6 +65,7 @@ import PixelValueOverlay, {
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
 import { decodedImage } from "../resources/decoded-image.ts";
+import { useDemandLatch } from "../components/use-demand-latch.ts";
 import { DIFF_MODE_LABELS } from "./diff.ts";
 import { floatPixelReader, floatValues } from "../runtime/pixel-buffer.ts";
 import {
@@ -306,24 +307,6 @@ function splitOverlaySpec(args: {
         </>
       ),
   };
-}
-
-/**
- * A DEMAND latch for the raw uint8 pixels, aggregated over however many
- * reporters a pane wires into it (the `single` overlay; BOTH split overlays;
- * the histogram panel). `PixelValueOverlay` reports only on a CHANGE, so
- * counting the reports is what makes "either one wants them" hold: the right
- * overlay saying "not zoomed in" can never cancel the left one's demand, and a
- * fetch already in flight for one reporter is never aborted by another.
- */
-function useDemandLatch(): { demanded: boolean; report: (demanded: boolean) => void } {
-  const live = useRef(0);
-  const [demanded, setDemanded] = useState(false);
-  const report = useCallback((next: boolean) => {
-    live.current = Math.max(0, live.current + (next ? 1 : -1));
-    setDemanded(live.current > 0);
-  }, []);
-  return { demanded, report };
 }
 
 /**

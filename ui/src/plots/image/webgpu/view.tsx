@@ -86,6 +86,7 @@ import LabelChip from "../../../primitives/components/LabelChip";
 import type { ToolbarButtonSpec } from "../../../primitives/controls/ToolbarConfig";
 import PixelValueOverlay from "../../../primitives/components/PixelValueOverlay";
 import { useImageViewport } from "../components/use-image-viewport.ts";
+import { useDemandLatch } from "../components/use-demand-latch.ts";
 import {
   acquirePane,
   releasePane,
@@ -771,19 +772,14 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // A LATCH, not a boolean: `PixelValueOverlay` reports only on a CHANGE, so
   // counting reports is what makes "either one wants them" hold — the right
   // side saying "not zoomed in" can never cancel the left side's demand.
-  // (Mirrors `cpu/view.tsx`'s `useDemandLatch`.)
+  // Shared with `cpu/view.tsx` as `useDemandLatch`.
   // -----------------------------------------------------------------------
-  const sampleDemandCount = useRef(0);
-  const [sampleDemanded, setSampleDemanded] = useState(false);
-  const reportSampleDemand = useCallback((demanded: boolean) => {
-    sampleDemandCount.current = Math.max(0, sampleDemandCount.current + (demanded ? 1 : -1));
-    setSampleDemanded(sampleDemandCount.current > 0);
-  }, []);
+  const sampleDemand = useDemandLatch();
   // The histogram panel's own demand. Only a PLAIN pane offers a histogram (a
   // compare's scalar error has none — see the `histogram` prop below), so this
   // can never pull a diff readback in behind an opened info panel.
   const [histogramDemanded, setHistogramDemanded] = useState(false);
-  const overlayDemanded = sampleDemanded || histogramDemanded;
+  const overlayDemanded = sampleDemand.demanded || histogramDemanded;
   const [refDims, setRefDims] = useState<{ w: number; h: number } | null>(null);
   const [refUploadVersion, setRefUploadVersion] = useState(0);
   /** Bumps when the `b` operand's raw pixels arrive (its own demand fetch). */
@@ -2486,7 +2482,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                         sample={samplePixel}
                         notation={notation}
                         version={pixelDataVersion}
-                        onSampleDemandChange={reportSampleDemand}
+                        onSampleDemandChange={sampleDemand.report}
                       />
                     </div>
                     {refDims && (
@@ -2502,7 +2498,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                           notation={notation}
                           version={refUploadVersion + pixelDataVersion + refPixelsVersion}
                           onActiveChange={setOverlayActive}
-                          onSampleDemandChange={reportSampleDemand}
+                          onSampleDemandChange={sampleDemand.report}
                         />
                       </div>
                     )}
@@ -2516,7 +2512,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
                       notation={notation}
                       version={refUploadVersion + pixelDataVersion + refPixelsVersion}
                       onActiveChange={setOverlayActive}
-                      onSampleDemandChange={reportSampleDemand}
+                      onSampleDemandChange={sampleDemand.report}
                     />
                   )
                 ),
@@ -2532,7 +2528,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
               version: diffMode
                 ? diffOverlayVersion + pixelDataVersion + refPixelsVersion
                 : pixelDataVersion,
-              onSampleDemandChange: reportSampleDemand,
+              onSampleDemandChange: sampleDemand.report,
             }
       }
       notationSeed={props.pixelValueNotation ?? "decimal"}

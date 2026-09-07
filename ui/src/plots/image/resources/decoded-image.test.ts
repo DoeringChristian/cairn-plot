@@ -28,6 +28,7 @@ import { DECODE_CONCURRENCY, decodeQueueStats, enqueueDecode } from "./decode-qu
 import {
   DECODED_IMAGE_CACHE_MAX,
   decodedImage,
+  negativeCacheSize,
   peekDecodedImage,
   type DecodedImageDeps,
 } from "./decoded-image.ts";
@@ -214,6 +215,36 @@ test("a total failure resolves null and is negative-cached for 5 s", async () =>
   const entry = await decodedImage(url, { deps: ok.deps });
   assert.ok(entry, "the negative entry expired and the retry succeeded");
   assert.equal(ok.calls.fetchBlob, 1);
+});
+
+test("the negative cache is bounded and evicts the oldest failures first", async () => {
+  const h = harness({ fetchFails: true, element: null });
+  const urls = Array.from({ length: DECODED_IMAGE_CACHE_MAX + 5 }, () => nextUrl());
+  for (const url of urls) {
+    assert.equal(await decodedImage(url, { deps: h.deps }), null);
+  }
+  assert.equal(
+    negativeCacheSize(),
+    DECODED_IMAGE_CACHE_MAX,
+    "bounded to DECODED_IMAGE_CACHE_MAX, not left to grow with every broken URL",
+  );
+
+  // The oldest URL (insertion order) was evicted to stay within the bound, so
+  // re-asking for it — still inside the 5 s negative window — is NOT served
+  // from a negative cache entry: it is retried immediately.
+  const fetchesBefore = h.calls.fetchBlob;
+  assert.equal(await decodedImage(urls[0]!, { deps: h.deps }), null);
+  assert.equal(
+    h.calls.fetchBlob,
+    fetchesBefore + 1,
+    "the evicted URL was re-attempted rather than negatively cached",
+  );
+
+  // The most recently failed URL is still within the bound and the window:
+  // it IS served from the negative cache, no new fetch.
+  const fetchesBefore2 = h.calls.fetchBlob;
+  assert.equal(await decodedImage(urls[urls.length - 1]!, { deps: h.deps }), null);
+  assert.equal(h.calls.fetchBlob, fetchesBefore2, "a still-cached URL is not retried inside the window");
 });
 
 test("the entry LRU evicts the least-recently-used WITHOUT closing its bitmap", async () => {
