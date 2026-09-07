@@ -345,6 +345,14 @@ function stage(): HTMLElement {
   return document.getElementById("stage")!;
 }
 
+/** `data-hist-total` for every open info panel on the stage — the number of
+ *  samples its histogram actually binned. */
+function histogramTotals(): number[] {
+  return Array.from(stage().querySelectorAll("[data-cairn-info-panel]")).map((el) =>
+    Number(el.getAttribute("data-hist-total") ?? "0"),
+  );
+}
+
 /** Two columns inside the pinned stage: the tall wide card, then everything
  *  else wrapped beside it. See the page's stylesheet for why. */
 function buildColumns(): { wide: HTMLElement; rest: HTMLElement } {
@@ -481,11 +489,18 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
     await waitFor(() => paintedCount() === PANE_COUNT, PAINT_TIMEOUT_MS, 50);
     elapsed = performance.now() - started;
     painted = paintedCount();
-    // The wide card's histogram panel opens one commit AFTER its first paint
-    // (the panel needs the readback the mount effect is still finishing), and
-    // the readback it demands is part of the load cost being measured — so wait
-    // for it here, INSIDE the spied window, rather than counting it afterwards.
-    await waitFor(() => stage().querySelectorAll("[data-cairn-info-panel]").length > 0, 4_000, 50);
+    // The wide card's histogram panel opens a commit or two AFTER its first
+    // paint, and on the CPU backend the readback it needs is a whole round trip
+    // behind that again (the panel's `onHistogramDemandChange` → the pane's
+    // demand effect → `imageData()` → a version bump). That readback IS part of
+    // the load cost being measured, so wait for it here, INSIDE the spied
+    // window, rather than counting it afterwards.
+    // A panel with a non-zero sample total is the proof that the readback
+    // actually REACHED the histogram — on the CPU backend those pixels now
+    // arrive only because the panel asked for them (`onHistogramDemandChange`),
+    // so an open panel binning nothing would mean the one `getImageData` below
+    // was counted for a histogram that never got its data.
+    await waitFor(() => histogramTotals().some((t) => t > 0), 8_000, 50);
   } finally {
     restore();
   }
@@ -512,7 +527,8 @@ async function runPhase(opts: PhaseOptions): Promise<boolean> {
   report(
     true,
     `BENCH: ${opts.name}: ${panels} histogram panel(s) open (the ${WIDE_W}x${WIDE_H} card, viewport ` +
-      `${wideBox.toFixed(0)} px; the ${NARROW_W}x${NARROW_H} cards must not)`,
+      `${wideBox.toFixed(0)} px; the ${NARROW_W}x${NARROW_H} cards must not), ` +
+      `binned samples ${histogramTotals().join("/") || "none"}`,
   );
   const gpuPart =
     opts.name === "gpu"

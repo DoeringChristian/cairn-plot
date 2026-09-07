@@ -64,7 +64,7 @@ import PixelValueOverlay, {
   type PixelSampler,
   type PixelValueNotation,
 } from "../../../primitives/components/PixelValueOverlay";
-import { loadImageData } from "../resources/load-image-data.ts";
+import { decodedImage } from "../resources/decoded-image.ts";
 import { DIFF_MODE_LABELS } from "./diff.ts";
 import { floatPixelReader, floatValues } from "../runtime/pixel-buffer.ts";
 import {
@@ -258,8 +258,18 @@ function splitOverlaySpec(args: {
   foregroundSample: PixelSampler;
   foregroundVersion: number;
   foregroundDims: { w: number; h: number } | null;
+  onSampleDemandChange?: (demanded: boolean) => void;
 }): ImagePaneOverlaySpec {
-  const { viewport, split, sample, version, foregroundSample, foregroundVersion, foregroundDims } = args;
+  const {
+    viewport,
+    split,
+    sample,
+    version,
+    foregroundSample,
+    foregroundVersion,
+    foregroundDims,
+    onSampleDemandChange,
+  } = args;
   return {
     render: ({ notation, setOverlayActive }) =>
       !viewport ? null : (
@@ -268,7 +278,16 @@ function splitOverlaySpec(args: {
             className="absolute inset-0 overflow-hidden pointer-events-none"
             style={{ clipPath: `inset(0 ${(1 - split) * 100}% 0 0)` }}
           >
-            <PixelValueOverlay viewport={viewport} sample={sample} notation={notation} version={version} />
+            {/* BOTH sides report demand: the pane reads its raw pixels back
+                lazily, and either overlay zooming in far enough to want
+                numbers is reason enough to prepare them. */}
+            <PixelValueOverlay
+              viewport={viewport}
+              sample={sample}
+              notation={notation}
+              version={version}
+              onSampleDemandChange={onSampleDemandChange}
+            />
           </div>
           <div
             className="absolute inset-0 overflow-hidden pointer-events-none"
@@ -281,6 +300,7 @@ function splitOverlaySpec(args: {
               notation={notation}
               version={foregroundVersion}
               onActiveChange={setOverlayActive}
+              onSampleDemandChange={onSampleDemandChange}
             />
           </div>
         </>
@@ -289,14 +309,38 @@ function splitOverlaySpec(args: {
 }
 
 /**
+ * A DEMAND latch for the raw uint8 pixels, aggregated over however many
+ * reporters a pane wires into it (the `single` overlay; BOTH split overlays;
+ * the histogram panel). `PixelValueOverlay` reports only on a CHANGE, so
+ * counting the reports is what makes "either one wants them" hold: the right
+ * overlay saying "not zoomed in" can never cancel the left one's demand, and a
+ * fetch already in flight for one reporter is never aborted by another.
+ */
+function useDemandLatch(): { demanded: boolean; report: (demanded: boolean) => void } {
+  const live = useRef(0);
+  const [demanded, setDemanded] = useState(false);
+  const report = useCallback((next: boolean) => {
+    live.current = Math.max(0, live.current + (next ? 1 : -1));
+    setDemanded(live.current > 0);
+  }, []);
+  return { demanded, report };
+}
+
+/**
  * The SPLIT foreground's RAW buffer — the numbers the right-hand TEV overlay
  * prints. Independent of the display pipeline (like the reference side's
- * `valueDataRef`): a uint8 operand is decoded once per url, a float operand is
- * read straight out of its sample buffer.
+ * `valueDataRef`): a uint8 operand's pixels are read back from the ONE shared
+ * decode, a float operand is read straight out of its sample buffer.
+ *
+ * `demanded` gates that readback (spec §3.2): mounting a split compare no
+ * longer costs a full-frame `getImageData` per operand — the pixels are fetched
+ * when an overlay zooms in far enough to print numbers, or when the histogram
+ * panel opens.
  */
 function useCompareForeground(
   b: ImageBackendInput["source"] | undefined,
   colormap: Colormap | null,
+  demanded: boolean,
 ): { imageUrl: string | null; hdr?: FloatImageData; sample: PixelSampler; version: number } {
   const url = b && b.dtype === "uint8" ? b.url : null;
   const pixels = b && b.dtype === "float" ? b.pixels : null;
@@ -308,23 +352,38 @@ function useCompareForeground(
   );
 
   const dataRef = useRef<ImageData | null>(null);
+  // The url `dataRef` holds pixels for — a url change must never leave the
+  // PREVIOUS operand's numbers under the new one's cursor, and must re-arm the
+  // "already have them" test below.
+  const dataUrlRef = useRef<string | null>(null);
   const [version, setVersion] = useState(0);
   useEffect(() => {
-    if (!url) {
-      dataRef.current = null;
-      setVersion((v) => v + 1);
-      return;
+    if (dataUrlRef.current !== url) {
+      dataUrlRef.current = url;
+      // Bump only when pixels actually went away — a first mount has none, and
+      // a version bump nothing consumes is a wasted render per pane.
+      if (dataRef.current) {
+        dataRef.current = null;
+        setVersion((v) => v + 1);
+      }
     }
+    if (!url || !demanded || dataRef.current) return;
+    // ONE AbortController per url effect: the shared decode holds its queue slot
+    // only while this pane still wants it.
+    const controller = new AbortController();
     let cancelled = false;
-    void loadImageData(url).then((d) => {
-      if (cancelled) return;
-      dataRef.current = d;
-      setVersion((v) => v + 1);
-    });
+    void decodedImage(url, { signal: controller.signal })
+      .then((decoded) => decoded?.imageData() ?? null)
+      .then((d) => {
+        if (cancelled || !d) return;
+        dataRef.current = d;
+        setVersion((v) => v + 1);
+      });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [url]);
+  }, [url, demanded]);
 
   const sample = useCallback<PixelSampler>(
     (px, py, notation) => {
@@ -485,9 +544,21 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
     colorBounds,
   });
 
+  // -----------------------------------------------------------------------
+  // PIXEL DEMAND (spec §3.2). Painting needs only the decoded bitmap; the RAW
+  // uint8 pixels behind the TEV numbers and the histogram cost a full-frame
+  // readback, so nothing reads them back until something asks. The two askers:
+  // the pixel-value overlay(s) once zoomed in far enough to print numbers, and
+  // the shell's info panel when it opens (including a wide pane's auto-open at
+  // mount, which is why one wide card still pays for exactly one readback).
+  // -----------------------------------------------------------------------
+  const sampleDemand = useDemandLatch();
+  const [histogramDemanded, setHistogramDemanded] = useState(false);
+  const rawPixelsDemanded = sampleDemand.demanded || histogramDemanded;
+
   // SPLIT compare: the FOREGROUND operand, rendered through the same display
   // parameters and painted on the reference quad with its own grid.
-  const foreground = useCompareForeground(split?.b, colormap);
+  const foreground = useCompareForeground(split?.b, colormap, rawPixelsDemanded);
   const foregroundContent = useCpuContent({
     kind: foreground.hdr ? "hdr" : "sdr",
     imageUrl: foreground.imageUrl,
@@ -526,28 +597,43 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
 
   // -----------------------------------------------------------------------
   // TEV per-pixel value overlay — the RAW source pixels (the numbers we print),
-  // decoded once per url and independent of the display pipeline.
+  // read back ON DEMAND from the ONE shared decode and independent of the
+  // display pipeline. A pane nobody has zoomed into, with its histogram closed,
+  // never pays for the readback at all; a cross-origin source without CORS
+  // resolves null here and simply prints no numbers, exactly as before.
   // -----------------------------------------------------------------------
   const valueDataRef = useRef<ImageData | null>(null);
+  // The url `valueDataRef` holds pixels for (see `useCompareForeground`).
+  const valueUrlRef = useRef<string | null>(null);
   const [pixelDataVersion, setPixelDataVersion] = useState(0);
   const bumpPixelData = useCallback(() => setPixelDataVersion((v) => v + 1), []);
 
   useEffect(() => {
-    if (!imageUrl) {
-      valueDataRef.current = null;
-      bumpPixelData();
-      return;
+    if (valueUrlRef.current !== imageUrl) {
+      valueUrlRef.current = imageUrl;
+      // See `useCompareForeground`: only a real loss of pixels bumps.
+      if (valueDataRef.current) {
+        valueDataRef.current = null;
+        bumpPixelData();
+      }
     }
+    if (!imageUrl || !rawPixelsDemanded || valueDataRef.current) return;
+    // ONE AbortController per url effect: the shared decode keeps its queue slot
+    // only while this pane still wants it.
+    const controller = new AbortController();
     let cancelled = false;
-    void loadImageData(imageUrl).then((d) => {
-      if (cancelled) return;
-      valueDataRef.current = d;
-      bumpPixelData();
-    });
+    void decodedImage(imageUrl, { signal: controller.signal })
+      .then((decoded) => decoded?.imageData() ?? null)
+      .then((d) => {
+        if (cancelled || !d) return;
+        valueDataRef.current = d;
+        bumpPixelData();
+      });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [imageUrl, bumpPixelData]);
+  }, [imageUrl, rawPixelsDemanded, bumpPixelData]);
 
   const samplePixel = useCallback(
     (px: number, py: number, notation: PixelValueNotation): PixelSample | null => {
@@ -622,8 +708,13 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
               foregroundSample: foreground.sample,
               foregroundVersion: foreground.version + foregroundContent.version,
               foregroundDims: foregroundContent.dims,
+              onSampleDemandChange: sampleDemand.report,
             })
-          : { sample: samplePixel, version: pixelDataVersion }
+          : {
+              sample: samplePixel,
+              version: pixelDataVersion,
+              onSampleDemandChange: sampleDemand.report,
+            }
       }
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
@@ -680,6 +771,10 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
       histogram={histogramSource}
       infoPanelSetting={synced?.["panel.info"]}
       onInfoPanelChange={changeInfoPanel}
+      // The panel's own demand for the raw pixels it bins — the histogram source
+      // above is a synchronous view over `valueDataRef`, which stays empty until
+      // this fires (or an overlay asks).
+      onHistogramDemandChange={setHistogramDemanded}
       // COMPARE mode: the caption chips carry the labeling (suppress the pane's
       // own label chip); else the ordinary bottom-left label.
       label={props.isCompareMode ? "" : label}
@@ -861,7 +956,19 @@ function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
     boundsEngaged,
   });
 
-  const foreground = useCompareForeground(split?.b, colormap);
+  // PIXEL DEMAND — this shell has NO uint8 buffer of its own (its numbers and
+  // its histogram both read the float `hdr` already in memory, and its
+  // `pixelDataVersion` is `content.version`). The latch exists for the SPLIT
+  // FOREGROUND, whose operand may be a uint8 url that would otherwise be read
+  // back at mount for numbers nobody is looking at.
+  const sampleDemand = useDemandLatch();
+  const [histogramDemanded, setHistogramDemanded] = useState(false);
+
+  const foreground = useCompareForeground(
+    split?.b,
+    colormap,
+    sampleDemand.demanded || histogramDemanded,
+  );
   const foregroundContent = useCpuContent({
     kind: foreground.hdr ? "hdr" : "sdr",
     imageUrl: foreground.imageUrl,
@@ -972,8 +1079,11 @@ function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
               foregroundSample: foreground.sample,
               foregroundVersion: foreground.version + foregroundContent.version,
               foregroundDims: foregroundContent.dims,
+              onSampleDemandChange: sampleDemand.report,
             })
-          : { sample: samplePixel, version: pixelDataVersion }
+          : // The float samples are already in memory: this shell's SINGLE
+            // overlay has nothing to prepare, so it reports no demand.
+            { sample: samplePixel, version: pixelDataVersion }
       }
       notationSeed={pixelValueNotation}
       exportCanvasRef={canvasRef}
@@ -1086,6 +1196,10 @@ function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
       depthWindow={deepFlatten.hasDeep ? deepFlatten.window : undefined}
       infoPanelSetting={synced?.["panel.info"]}
       onInfoPanelChange={changeInfoPanel}
+      // This shell's OWN histogram bins the float buffer (nothing to prepare);
+      // the demand is forwarded for the split foreground's sake, which may be a
+      // uint8 operand whose pixels are read back lazily.
+      onHistogramDemandChange={setHistogramDemanded}
       label={props.isCompareMode ? "" : label}
       showLabelChip={!props.isCompareMode && !!label}
       extraChips={props.compareChrome}

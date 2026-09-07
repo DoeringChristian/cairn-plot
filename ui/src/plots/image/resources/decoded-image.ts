@@ -32,14 +32,26 @@
  *     never uploaded with `copyExternalImageToTexture`. `imageData()` then
  *     resolves null rather than throwing.
  *
+ * CANCELLATION is per CALL, through an `AbortSignal`. Every call retains the
+ * URL in the decode queue before enqueueing and releases it when it settles —
+ * or as soon as its signal aborts, which resolves that call with `null` ("show
+ * nothing"). The queue drops a still-QUEUED decode only when its LAST requester
+ * lets go, so a pane unmounting frees the slot while a second pane on the same
+ * URL keeps the decode alive. A caller whose shared decode was cancelled out
+ * from under it (its own effect cleanup released the last ref one tick before
+ * the re-run retained it again) simply asks again — a cancelled decode is never
+ * a failure and is never negative-cached.
+ *
  * Bounds: `DECODED_IMAGE_CACHE_MAX = 50` entries, evicted by dropping the
  * reference ONLY — never `close()`, because a mounted CPU pane or a GPU
  * upload lease may still be holding the bitmap (see `cpu/bitmap-cache.ts` for
  * the same rule). A total failure is negative-cached for `NEGATIVE_CACHE_MS`
- * so a broken URL on a page of cards is not retried on every render.
+ * so a broken URL on a page of cards is not retried on every render; the
+ * negative entry is dropped the moment the URL decodes, and the in-flight map,
+ * the failure map and the queue's refcounts all delete their keys at zero.
  */
 import { setCachedLoadedImageData } from "./cache.ts";
-import { DecodeCancelled, enqueueDecode } from "./decode-queue.ts";
+import { DecodeCancelled, enqueueDecode, releaseDecode, retainDecode } from "./decode-queue.ts";
 import { createLruMap } from "./lru-map.ts";
 
 /** A decoded image plus its lazy, memoised pixels. */
@@ -89,29 +101,93 @@ export function peekDecodedImage(url: string): DecodedImage | null {
   return entries.get(url) ?? null;
 }
 
+/** Per-call options. `deps` exists for the tests; production callers pass at
+ *  most a `signal`. */
+export interface DecodedImageOptions {
+  /** Abort this CALL: it resolves `null` and drops its hold on the decode. */
+  signal?: AbortSignal;
+  /** Injected platform, for the unit tests. */
+  deps?: DecodedImageDeps;
+}
+
 /**
  * The one decode. Cached by URL, in-flight de-duplicated, negative-cached for
- * `NEGATIVE_CACHE_MS` on a total failure. `deps` exists for the tests; production
- * callers pass nothing.
+ * `NEGATIVE_CACHE_MS` on a total failure.
+ *
+ * The call holds a decode-queue retain for as long as it wants the result;
+ * aborting `options.signal` drops that hold and resolves the call with `null`
+ * (never a rejection — an aborted caller has "nothing to show", which every
+ * pane already handles). The DECODE itself outlives an abort only while some
+ * OTHER call still wants it.
  */
-export function decodedImage(url: string, deps: DecodedImageDeps = defaultDeps): Promise<DecodedImage | null> {
-  const resident = entries.get(url);
-  if (resident) return Promise.resolve(resident);
+export function decodedImage(url: string, options: DecodedImageOptions = {}): Promise<DecodedImage | null> {
+  return request(url, options.deps ?? defaultDeps, options.signal);
+}
 
-  const pending = inFlight.get(url);
-  if (pending) return pending;
+/** The outcome of joining one shared decode: the entry, "nothing", or "the
+ *  shared decode was cancelled while this call still wanted it". */
+const RETRY = Symbol("decode-retry");
 
-  const failedAt = failures.get(url);
-  if (failedAt !== undefined) {
-    if (deps.now() - failedAt < NEGATIVE_CACHE_MS) return Promise.resolve(null);
-    failures.delete(url);
+async function request(
+  url: string,
+  deps: DecodedImageDeps,
+  signal: AbortSignal | undefined,
+): Promise<DecodedImage | null> {
+  for (;;) {
+    const resident = entries.get(url);
+    if (resident) return resident;
+    if (signal?.aborted) return null;
+
+    const failedAt = failures.get(url);
+    if (failedAt !== undefined) {
+      if (deps.now() - failedAt < NEGATIVE_CACHE_MS) return null;
+      failures.delete(url);
+    }
+
+    const outcome = await join(url, deps, signal);
+    if (outcome !== RETRY) return outcome;
   }
+}
 
-  const promise = produce(url, deps).finally(() => {
-    inFlight.delete(url);
+/**
+ * Join (or start) the shared decode for `url` under ONE retain of this call's
+ * own, racing it against `signal`. The retain is what keeps a queued decode
+ * alive: it is taken BEFORE the enqueue and dropped the instant this call
+ * settles, so the last pane to let go is the one that frees the slot.
+ */
+function join(
+  url: string,
+  deps: DecodedImageDeps,
+  signal: AbortSignal | undefined,
+): Promise<DecodedImage | null | typeof RETRY> {
+  retainDecode(url);
+  let shared = inFlight.get(url);
+  if (!shared) {
+    // `inFlight` is cleared BEFORE any joiner's reaction runs (the `finally`
+    // settles first), so a retry below always starts a fresh decode.
+    shared = produce(url, deps).finally(() => {
+      inFlight.delete(url);
+    });
+    inFlight.set(url, shared);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value: DecodedImage | null | typeof RETRY) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      releaseDecode(url);
+      resolve(value);
+    };
+    const onAbort = () => settle(null);
+    signal?.addEventListener("abort", onAbort);
+    shared.then(
+      (entry) => settle(entry),
+      // A cancelled shared decode is not a failure: this call still wants the
+      // image, so the loop above asks again.
+      (error) => settle(error instanceof DecodeCancelled ? RETRY : null),
+    );
   });
-  inFlight.set(url, promise);
-  return promise;
 }
 
 async function produce(url: string, deps: DecodedImageDeps): Promise<DecodedImage | null> {
@@ -120,15 +196,18 @@ async function produce(url: string, deps: DecodedImageDeps): Promise<DecodedImag
     // Only the DECODE is admitted through the queue.
     decoded = await enqueueDecode(url, () => decodeOnce(url, deps));
   } catch (error) {
-    // A cancelled decode is not a failure: nobody wants it any more, and a
-    // later requester must be free to ask again.
-    if (error instanceof DecodeCancelled) return null;
+    // Cancellation propagates to the joiners, which decide (by whether THEY
+    // were aborted) between asking again and giving up. It is never a failure
+    // and is never negative-cached.
+    if (error instanceof DecodeCancelled) throw error;
     decoded = null;
   }
   if (!decoded) {
     failures.set(url, deps.now());
     return null;
   }
+  // Bounded: a URL that decodes keeps no negative entry.
+  failures.delete(url);
   const entry = makeEntry(url, decoded, deps);
   entries.set(url, entry);
   return entry;
@@ -164,16 +243,27 @@ function makeEntry(url: string, decoded: DecodedElement, deps: DecodedImageDeps)
       }
       if (!decoded.originClean) return Promise.resolve(null);
       if (reading) return reading;
-      reading = (async () => {
-        const data = deps.readback(decoded.bitmap, decoded.width, decoded.height);
-        if (data) {
-          memo = data;
-          setCachedLoadedImageData(url, data);
-        }
-        reading = null;
-        return data;
-      })();
-      return reading;
+      // Deferred deliberately (`Promise.resolve().then`): the whole chain runs
+      // in a microtask, AFTER `reading` has been assigned below, so the clear
+      // at the end really clears. Only a SUCCESS is memoised — a readback that
+      // returns null or throws leaves nothing parked here for every later
+      // demand to inherit.
+      const attempt = Promise.resolve()
+        .then(() => deps.readback(decoded.bitmap, decoded.width, decoded.height))
+        .catch((error): ImageData | null => {
+          console.warn("[cairn] decodedImage readback threw:", error);
+          return null;
+        })
+        .then((data) => {
+          if (data) {
+            memo = data;
+            setCachedLoadedImageData(url, data);
+          }
+          reading = null;
+          return data;
+        });
+      reading = attempt;
+      return attempt;
     },
     peekImageData(): ImageData | null {
       return memo;

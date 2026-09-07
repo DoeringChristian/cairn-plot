@@ -295,6 +295,17 @@ export interface ImagePaneShellProps {
   /** Write the setting on a toggle (the pane routes this into its settings
    *  stack). Absent (a storeless host mount) → a local override is kept. */
   onInfoPanelChange?: (open: boolean) => void;
+  /**
+   * The HISTOGRAM's DEMAND signal — fired whenever the resolved `infoOpen`
+   * changes (the setting, the local override OR the auto rule; a wide pane
+   * opens the panel by itself at mount). The `histogram` source a pane hands in
+   * is a plain synchronous view over whatever buffer the pane holds, so a pane
+   * whose pixels are read back lazily (the CPU 8-bit pane) uses this to know
+   * that the panel now WANTS them — the counterpart of the pixel-value
+   * overlay's `onSampleDemandChange`. Panes with the pixels already in memory
+   * (the float ones) can ignore it.
+   */
+  onHistogramDemandChange?: (open: boolean) => void;
 
   // --- chips ---------------------------------------------------------------
   label: string;
@@ -336,6 +347,7 @@ export default function ImagePaneShell({
   depthWindow,
   infoPanelSetting,
   onInfoPanelChange,
+  onHistogramDemandChange,
   label,
   showLabelChip,
   isDraggable = false,
@@ -378,6 +390,17 @@ export default function ImagePaneShell({
     },
     [onInfoPanelChange],
   );
+  // The panel's DEMAND for pixels, reported to the pane. Fired from an effect on
+  // the RESOLVED `infoOpen` (setting > local override > the auto rule), so a
+  // pane wide enough to auto-open at mount asks for its readback at mount and a
+  // narrow one never does. Held in a ref so a host that passes a fresh closure
+  // every render does not re-fire it.
+  const onHistogramDemandChangeRef = useRef(onHistogramDemandChange);
+  onHistogramDemandChangeRef.current = onHistogramDemandChange;
+  useEffect(() => {
+    onHistogramDemandChangeRef.current?.(!!infoOpen);
+  }, [infoOpen]);
+
   const [histCursor, setHistCursor] = useState<{ px: number; py: number } | null>(null);
 
   // Track the texel under the cursor for the histogram's per-pixel read-out,

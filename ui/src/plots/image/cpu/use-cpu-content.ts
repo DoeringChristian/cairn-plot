@@ -53,7 +53,7 @@ import type { Colormap, DiffMode, ImageProcessing } from "../../types";
 import { createBitmapCache } from "./bitmap-cache.ts";
 import { getCachedImageData, setCachedImageData } from "../resources/cache.ts";
 import { loadImageData } from "../resources/load-image-data.ts";
-import { decodeElementImage } from "../resources/decoded-image.ts";
+import { decodedImage } from "../resources/decoded-image.ts";
 import { imageDataToSceneField } from "../resources/scene-field.ts";
 import { floatValues } from "../runtime/pixel-buffer.ts";
 import { getColormapLUT } from "../../../settings/colormaps/index";
@@ -152,22 +152,6 @@ async function toPaintSource(data: ImageData): Promise<PaintSource> {
 }
 
 /**
- * The PLAIN path's bitmap, straight from the decoded image element — no
- * `ImageData` round trip. This matters beyond speed: `loadImageData` reads back
- * a canvas, which a cross-origin image without CORS headers taints, and the old
- * pane displayed such an image fine through its `<img>`. Decoding to a bitmap
- * keeps that working (only pixel READBACK is restricted, and only the TEV
- * numbers/histogram depend on that).
- *
- * The body now lives in `resources/decoded-image.ts`, where it is the FALLBACK
- * for the one shared decode; this call keeps the plain path's behaviour
- * identical until it moves onto `decodedImage(url)` itself.
- */
-async function bitmapFromUrl(url: string): Promise<PaintSource | null> {
-  return await decodeElementImage(url);
-}
-
-/**
  * The one production path: the bitmap store, then the shared `ImageData` LRU,
  * then `produce()`. Never calls `getImageData` on a produced bitmap, and never
  * displaces a resident entry (`claim`) — a cancelled or duplicate run converges
@@ -247,20 +231,30 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
    * Run one pipeline. A resident bitmap commits SYNCHRONOUSLY (a cached flip
    * never shows a placeholder); otherwise the pane keeps its current frame while
    * `produce` runs. Returns the effect's cleanup.
+   *
+   * `produce` receives the run's `AbortSignal`, aborted by that cleanup: the
+   * shared decode (`decodedImage`) holds a decode-queue slot for exactly as
+   * long as some live run wants it, so a pane that unmounts (or switches
+   * pipeline) frees the slot for a pane the user is actually looking at.
    */
   const run = useCallback(
-    (key: string, text: string | undefined, produce: () => Promise<PaintSource | null>): (() => void) => {
+    (
+      key: string,
+      text: string | undefined,
+      produce: (signal: AbortSignal) => Promise<PaintSource | null>,
+    ): (() => void) => {
       const resident = bitmapCache.get(key);
       if (resident) {
         commit(key, resident);
         return () => {};
       }
       let cancelled = false;
+      const controller = new AbortController();
       setLoading((prev) => (prev && prev.key === key && prev.text === text ? prev : { key, text }));
       void (async () => {
         let produced: PaintSource | null = null;
         try {
-          produced = await produce();
+          produced = await produce(controller.signal);
         } catch (err) {
           console.warn("cairn-plot: CPU image content failed", err);
         }
@@ -271,6 +265,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
       })();
       return () => {
         cancelled = true;
+        controller.abort();
       };
     },
     [commit],
@@ -327,12 +322,22 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
     const key = useTransfer
       ? `${imageUrl}::transfer::${sdrTransfer}::${tonemapGamma}::${effectiveExposure}::${effectiveOffset}::proc(${proc.key})`
       : `${imageUrl}::plain::proc(${proc.key})`;
-    return run(key, useTransfer ? "applying transfer..." : undefined, async () => {
-      // The untouched source: decode straight to a bitmap (the old `<img>` fast
-      // path — no readback, so a cross-origin image still displays).
+    return run(key, useTransfer ? "applying transfer..." : undefined, async (signal) => {
+      // The untouched source: PAINT THE DECODED BITMAP. No `ImageData` round
+      // trip at all — no `getImageData` readback and no re-encode through
+      // `createImageBitmap(ImageData)` — which is what makes a page of plain
+      // 8-bit cards cost one decode each and nothing more. It also keeps a
+      // cross-origin image without CORS displaying: such a bitmap paints fine
+      // and only its pixel READBACK is restricted (the TEV numbers and the
+      // histogram, which ask for it separately and handle a null).
       if (!useTransfer && proc.isIdentity) {
-        const direct = await bitmapFromUrl(imageUrl);
-        return direct && bitmapCache.claim(key, direct);
+        const decoded = await decodedImage(imageUrl, { signal });
+        if (!decoded) return null;
+        return bitmapCache.claim(key, {
+          bitmap: decoded.bitmap,
+          width: decoded.width,
+          height: decoded.height,
+        });
       }
       return bitmapFor(key, async () => {
         const src = await loadImageData(imageUrl);

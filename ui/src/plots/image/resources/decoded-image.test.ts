@@ -24,6 +24,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { getCachedLoadedImageData } from "./cache.ts";
+import { DECODE_CONCURRENCY, decodeQueueStats, enqueueDecode } from "./decode-queue.ts";
 import {
   DECODED_IMAGE_CACHE_MAX,
   decodedImage,
@@ -86,10 +87,33 @@ function harness(options: HarnessOptions = {}): Harness {
   return { deps, calls, clock };
 }
 
+/**
+ * Fill every decode slot, so the NEXT `decodedImage` call is QUEUED rather than
+ * running — the only state in which a decode can still be cancelled. Returns
+ * the release, which must be awaited before the queue drains.
+ */
+let busyCounter = 0;
+function occupySlots(): () => Promise<void> {
+  const opens: (() => void)[] = [];
+  for (let i = 0; i < DECODE_CONCURRENCY; i++) {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    void enqueueDecode(`busy-${busyCounter++}`, () => gate);
+    opens.push(open);
+  }
+  return async () => {
+    opens.forEach((open) => open());
+    // Let the queue pump and whatever it starts settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+}
+
 test("two concurrent calls for one URL decode exactly once", async () => {
   const url = nextUrl();
   const h = harness();
-  const [a, b] = await Promise.all([decodedImage(url, h.deps), decodedImage(url, h.deps)]);
+  const [a, b] = await Promise.all([decodedImage(url, { deps: h.deps }), decodedImage(url, { deps: h.deps })]);
 
   assert.ok(a && b);
   assert.equal(a, b, "both callers get the SAME entry");
@@ -101,7 +125,7 @@ test("two concurrent calls for one URL decode exactly once", async () => {
   assert.equal(a.originClean, true);
 
   // A later call is served from the cache, and `peekDecodedImage` sees it.
-  assert.equal(await decodedImage(url, h.deps), a);
+  assert.equal(await decodedImage(url, { deps: h.deps }), a);
   assert.equal(peekDecodedImage(url), a);
   assert.equal(h.calls.decodeBlob, 1);
 });
@@ -109,7 +133,7 @@ test("two concurrent calls for one URL decode exactly once", async () => {
 test("imageData() is lazy and memoised; peekImageData() is null until it happens", async () => {
   const url = nextUrl();
   const h = harness();
-  const entry = await decodedImage(url, h.deps);
+  const entry = await decodedImage(url, { deps: h.deps });
   assert.ok(entry);
 
   assert.equal(h.calls.readback, 0, "decoding does NOT read back");
@@ -129,7 +153,7 @@ test("imageData() is lazy and memoised; peekImageData() is null until it happens
 test("a failed fetch falls back to the element path and carries its originClean", async () => {
   const url = nextUrl();
   const h = harness({ fetchFails: true, element: { originClean: true } });
-  const entry = await decodedImage(url, h.deps);
+  const entry = await decodedImage(url, { deps: h.deps });
 
   assert.ok(entry);
   assert.equal(h.calls.decodeElement, 1);
@@ -140,7 +164,7 @@ test("a failed fetch falls back to the element path and carries its originClean"
   // Same fallback when the fetch succeeds but `createImageBitmap` rejects.
   const url2 = nextUrl();
   const h2 = harness({ decodeFails: true, element: { originClean: false } });
-  const entry2 = await decodedImage(url2, h2.deps);
+  const entry2 = await decodedImage(url2, { deps: h2.deps });
   assert.ok(entry2);
   assert.equal(h2.calls.decodeBlob, 1);
   assert.equal(h2.calls.decodeElement, 1);
@@ -150,7 +174,7 @@ test("a failed fetch falls back to the element path and carries its originClean"
 test("a non-origin-clean image resolves imageData() to null WITHOUT a readback", async () => {
   const url = nextUrl();
   const h = harness({ fetchFails: true, element: { originClean: false } });
-  const entry = await decodedImage(url, h.deps);
+  const entry = await decodedImage(url, { deps: h.deps });
   assert.ok(entry);
 
   assert.equal(await entry.imageData(), null);
@@ -162,7 +186,7 @@ test("a non-origin-clean image resolves imageData() to null WITHOUT a readback",
 test("a readback that returns null is not memoised as a success", async () => {
   const url = nextUrl();
   const h = harness({ readbackFails: true });
-  const entry = await decodedImage(url, h.deps);
+  const entry = await decodedImage(url, { deps: h.deps });
   assert.ok(entry);
 
   assert.equal(await entry.imageData(), null);
@@ -174,12 +198,12 @@ test("a total failure resolves null and is negative-cached for 5 s", async () =>
   const url = nextUrl();
   const h = harness({ fetchFails: true, element: null });
 
-  assert.equal(await decodedImage(url, h.deps), null);
+  assert.equal(await decodedImage(url, { deps: h.deps }), null);
   assert.equal(h.calls.decodeElement, 1);
 
   // Within 5 s: not re-attempted.
   h.clock.value += 4_999;
-  assert.equal(await decodedImage(url, h.deps), null);
+  assert.equal(await decodedImage(url, { deps: h.deps }), null);
   assert.equal(h.calls.fetchBlob, 1, "no second fetch inside the negative window");
   assert.equal(h.calls.decodeElement, 1);
 
@@ -187,7 +211,7 @@ test("a total failure resolves null and is negative-cached for 5 s", async () =>
   h.clock.value += 2;
   const ok = harness();
   ok.clock.value = h.clock.value;
-  const entry = await decodedImage(url, ok.deps);
+  const entry = await decodedImage(url, { deps: ok.deps });
   assert.ok(entry, "the negative entry expired and the retry succeeded");
   assert.equal(ok.calls.fetchBlob, 1);
 });
@@ -195,21 +219,79 @@ test("a total failure resolves null and is negative-cached for 5 s", async () =>
 test("the entry LRU evicts the least-recently-used WITHOUT closing its bitmap", async () => {
   const h = harness();
   const first = nextUrl();
-  assert.ok(await decodedImage(first, h.deps));
+  assert.ok(await decodedImage(first, { deps: h.deps }));
   assert.equal(peekDecodedImage(first)?.url, first);
 
   for (let i = 0; i < DECODED_IMAGE_CACHE_MAX; i++) {
-    assert.ok(await decodedImage(nextUrl(), h.deps));
+    assert.ok(await decodedImage(nextUrl(), { deps: h.deps }));
   }
 
   assert.equal(peekDecodedImage(first), null, "the oldest entry was evicted");
   assert.equal(h.calls.close, 0, "eviction drops the reference only — never close()");
 });
 
+test("a call aborted while its decode is QUEUED cancels the decode and resolves null", async () => {
+  const url = nextUrl();
+  const h = harness();
+  const free = occupySlots();
+  const controller = new AbortController();
+  const pending = decodedImage(url, { deps: h.deps, signal: controller.signal });
+  assert.equal(decodeQueueStats().queued, 1, "the decode is queued behind the busy slots");
+
+  controller.abort();
+  assert.equal(await pending, null, "an aborted call resolves null — nothing to show");
+  assert.equal(decodeQueueStats().queued, 0, "the LAST requester let go, so the decode was dropped");
+  await free();
+  assert.equal(h.calls.fetchBlob, 0, "the cancelled decode never ran");
+
+  // A cancellation is NOT a failure: the URL is not negative-cached.
+  const entry = await decodedImage(url, { deps: h.deps });
+  assert.ok(entry, "a later caller decodes it normally");
+  assert.equal(h.calls.fetchBlob, 1);
+});
+
+test("a second, un-aborted caller for the same URL keeps the queued decode alive", async () => {
+  const url = nextUrl();
+  const h = harness();
+  const free = occupySlots();
+  const controller = new AbortController();
+  const first = decodedImage(url, { deps: h.deps, signal: controller.signal });
+  const second = decodedImage(url, { deps: h.deps });
+  assert.deepEqual(decodeQueueStats(), { running: DECODE_CONCURRENCY, queued: 1 }, "ONE shared decode");
+
+  controller.abort();
+  assert.equal(await first, null);
+  assert.equal(decodeQueueStats().queued, 1, "the surviving caller's retain kept it queued");
+
+  await free();
+  const entry = await second;
+  assert.ok(entry, "the caller that never aborted still gets the image");
+  assert.equal(h.calls.fetchBlob, 1, "decoded exactly once");
+});
+
+test("a caller that joins a decode cancelled in the same tick asks again", async () => {
+  // The pane shape this exists for: an effect cleanup aborts (dropping the last
+  // ref, which cancels the queued decode) and the effect's re-run asks for the
+  // SAME url one statement later, while the dying promise is still in-flight.
+  const url = nextUrl();
+  const h = harness();
+  const free = occupySlots();
+  const controller = new AbortController();
+  const abandoned = decodedImage(url, { deps: h.deps, signal: controller.signal });
+  controller.abort();
+  const remounted = decodedImage(url, { deps: h.deps });
+
+  assert.equal(await abandoned, null);
+  await free();
+  const entry = await remounted;
+  assert.ok(entry, "the re-mounted caller still gets its image");
+  assert.equal(h.calls.fetchBlob, 1);
+});
+
 test("imageData() writes through to imageLoadCache for the synchronous readers", async () => {
   const url = nextUrl();
   const h = harness();
-  const entry = await decodedImage(url, h.deps);
+  const entry = await decodedImage(url, { deps: h.deps });
   assert.ok(entry);
 
   assert.equal(getCachedLoadedImageData(url), undefined, "not written before the demand");

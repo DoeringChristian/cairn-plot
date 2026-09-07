@@ -289,14 +289,21 @@ async function mountPane(hostId: string, name: string, source: unknown): Promise
     30,
   );
   if (!ready) throw new Error(`${name}: pane did not mount`);
-  // The presentation canvas is only sized+painted once a content bitmap exists,
-  // so a non-zero backing store is the signal that the mount's own content pass
-  // has completed and the spies below will see only gesture work.
-  const painted = await waitFor(
-    () => (host.querySelector("canvas[data-cpu-image-canvas]") as HTMLCanvasElement).width > 0,
-    30000,
-    50,
-  );
+  // The spies below must see ONLY gesture work, so the mount's own content pass
+  // has to be finished first — and the honest signal for that is INK, not the
+  // backing store. (`canvas.width > 0` is not a signal at all: an unsized canvas
+  // already reports the 300x150 HTML default, so that test passed the instant
+  // the element existed and let every mount decode leak into the first gesture
+  // phase, where it was counted as gesture cost.) Both fixtures are opaque, so a
+  // non-transparent centre pixel means the pane has blitted a real frame. Read
+  // BEFORE `installSpies`, so this probe is never counted itself.
+  const painted = await waitFor(() => {
+    const canvas = host.querySelector<HTMLCanvasElement>("canvas[data-cpu-image-canvas]");
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx || canvas.width === 0 || canvas.height === 0) return false;
+    const px = ctx.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+    return px[3]! > 0 && (px[0]! > 0 || px[1]! > 0 || px[2]! > 0);
+  }, 30000, 50);
   if (!painted) throw new Error(`${name}: pane never painted`);
   return {
     name,
