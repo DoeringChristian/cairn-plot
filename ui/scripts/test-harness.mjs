@@ -58,13 +58,17 @@
  *   data-cairn-harness-query="a=1&b=2"  appended to the page URL as its query
  *       string (for a harness that parameterises itself from `location.search`).
  *   data-cairn-harness-dpr="2"  drive this page at a NON-DEFAULT device pixel
- *       ratio: the runner applies `Emulation.setDeviceMetricsOverride`
- *       (1280x900 at that `deviceScaleFactor`) BEFORE `Page.navigate`, so the
- *       page's FIRST layout already happens at that ratio, and clears the
- *       override once the page has settled. The override is per PAGE, so a
- *       harness that must be proven at two ratios ships two `.html` pages
- *       pointing at the SAME bundle — one carrying the attribute, one without
- *       (see `cpu-label-alignment{,-dpr1}.browser.html`).
+ *       ratio. The runner GROUPS pages by this attribute and launches a SECOND
+ *       Chromium per distinct ratio with `--force-device-scale-factor=<dpr>`
+ *       (same GPU strategy flags as the default browser), runs that group's
+ *       pages there, and kills it. A launch flag — not a CDP
+ *       `Emulation.setDeviceMetricsOverride`, which a HEADLESS Chromium does
+ *       NOT apply to `devicePixelContentBoxSize`: the override moved
+ *       `window.devicePixelRatio` while the device-pixel content box stayed 1x,
+ *       so a "DPR 2" page silently re-ran the DPR-1 case. The scale factor is
+ *       per BROWSER, so a harness that must be proven at two ratios ships two
+ *       `.html` pages pointing at the SAME bundle — one carrying the attribute,
+ *       one without (see `cpu-label-alignment{,-dpr1}.browser.html`).
  *
  * Usage:   node scripts/test-harness.mjs            (or: npm run test:harness)
  * Flags:   --only <substr>     run only harnesses whose id contains <substr>
@@ -231,9 +235,9 @@ export function parseHarnessAttributes(html) {
     tag.match(/data-cairn-harness-reason\s*=\s*["']([^"']*)["']/i)?.[1] ??
     "known unstable diagnostic";
   const query = tag.match(/data-cairn-harness-query\s*=\s*["']([^"']*)["']/i)?.[1] ?? "";
-  // `data-cairn-harness-dpr="2"` — drive this page at that devicePixelRatio
-  // (see PAGE ATTRIBUTES in the header).
-  // Absent / non-numeric / <= 0 ⇒ null (the browser's own ratio).
+  // `data-cairn-harness-dpr="2"` — run this page in a browser launched at that
+  // device scale factor (see PAGE ATTRIBUTES in the header).
+  // Absent / non-numeric / <= 0 ⇒ null (the default browser's own ratio).
   const dprRaw = tag.match(/data-cairn-harness-dpr\s*=\s*["']([^"']*)["']/i)?.[1];
   const dprNum = dprRaw === undefined ? NaN : Number(dprRaw);
   const dpr = Number.isFinite(dprNum) && dprNum > 0 ? dprNum : null;
@@ -580,16 +584,15 @@ function safeRmDir(dir) {
 /**
  * Open `url` in a fresh target, run `fn(sessionId)`, then close the target.
  *
- * `opts.dpr` (a page's `data-cairn-harness-dpr`) installs a device-metrics
- * override BEFORE the navigation, so the page's very first layout and paint
- * already happen at that `devicePixelRatio` — a harness that measures
- * DEVICE-pixel geometry must never see the ratio change under it mid-run. The
- * override is cleared once `fn` has settled (before the target is closed).
+ * A page's device pixel ratio is NOT set here: it comes from the browser this
+ * `cdp` is attached to (`--force-device-scale-factor`, see the per-DPR group
+ * loop in `main`), so the
+ * page's very first layout and paint already happen at that ratio and the
+ * device-pixel content box really is that many device pixels wide.
  */
-async function withPage(cdp, url, fn, opts = {}) {
+async function withPage(cdp, url, fn) {
   const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
-  let overrode = false;
   try {
     await cdp.send("Page.enable", {}, sessionId);
     // Arm the library's context-loss diagnostics BEFORE the page's scripts run:
@@ -599,20 +602,9 @@ async function withPage(cdp, url, fn, opts = {}) {
     await cdp.send("Page.addScriptToEvaluateOnNewDocument",
       { source: "window.__cairnContextLossEvents = [];" }, sessionId).catch(() => {});
     await cdp.send("Runtime.enable", {}, sessionId);
-    if (opts.dpr) {
-      await cdp.send(
-        "Emulation.setDeviceMetricsOverride",
-        { width: 1280, height: 900, deviceScaleFactor: opts.dpr, mobile: false },
-        sessionId,
-      );
-      overrode = true;
-    }
     await cdp.send("Page.navigate", { url }, sessionId);
     return await fn(sessionId);
   } finally {
-    if (overrode) {
-      await cdp.send("Emulation.clearDeviceMetricsOverride", {}, sessionId).catch(() => {});
-    }
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
 }
@@ -808,7 +800,69 @@ async function runHarness(cdp, baseUrl, harness, ctx = {}) {
           losses: await deviceLossEvents(cdp, sessionId),
         })
       : r;
-  }, { dpr: harness.dpr });
+  });
+}
+
+/**
+ * Run `group` (harness pages sharing one device scale factor) sequentially on
+ * the browser behind `cdp`, printing each verdict and appending a row to `rows`.
+ * Each page gets its own target — and so its own fresh GPU device.
+ */
+async function runGroup(cdp, baseUrl, group, ctx, rows) {
+  for (const h of group) {
+    process.stdout.write(`  running ${h.id} … `);
+    let r;
+    try {
+      r = await runHarness(cdp, baseUrl, h, ctx);
+    } catch (err) {
+      r = { verdict: "error", ms: 0, result: String(err.message || err) };
+    }
+    const tag =
+      r.verdict === "pass"
+        ? GREEN("PASS")
+        : r.verdict === "fail"
+          ? RED("FAIL")
+          : r.verdict === "timeout"
+            ? YELLOW("TIMEOUT")
+            : RED("ERROR");
+    console.log(`${tag} ${DIM(`(${r.ms}ms)`)}`);
+    if (r.verdict !== "pass" && r.result) console.log(indent(r.result));
+    // A harness can PASS while loudly SKIPPING a sub-case (e.g. the WebGPU engine
+    // reported a `DeviceLostError` mid-readback — the software backend gave up
+    // on the device, which is not a parity defect). Surface those lines even
+    // on PASS so a chronically-skipped proof can never go green *invisibly* —
+    // the runner's "never silently passes" contract applied at sub-case grain.
+    const passLines = (r.verdict === "pass" && r.result ? r.result : "").split("\n");
+    const benchmarkLines = passLines.filter((l) => /BENCH:/i.test(l));
+    for (const l of benchmarkLines) console.log("        " + l.trim());
+    const skipLines = passLines.filter((l) => /SKIPPED/i.test(l));
+    if (skipLines.length) {
+      for (const l of skipLines) console.log("        " + YELLOW(l.trim()));
+      ghAnnotate("warning", `${h.id}: sub-case(s) SKIPPED — ${skipLines.map((l) => l.trim()).join(" | ")}`);
+    }
+    rows.push({ id: h.id, ...r, skipped: skipLines.length });
+  }
+}
+
+/**
+ * Split `harnesses` into one group per device scale factor, `null` (the default
+ * browser) FIRST and the forced-scale-factor groups after it in ascending
+ * order — so the default run is never held up by an extra browser launch.
+ *
+ * @param {Harness[]} harnesses
+ * @returns {{ dpr:number|null, pages:Harness[] }[]}
+ */
+export function groupByDpr(harnesses) {
+  /** @type {Map<number|null, Harness[]>} */
+  const byDpr = new Map();
+  for (const h of harnesses) {
+    const key = h.dpr ?? null;
+    if (!byDpr.has(key)) byDpr.set(key, []);
+    byDpr.get(key).push(h);
+  }
+  const forced = [...byDpr.keys()].filter((k) => k !== null).sort((a, b) => a - b);
+  const keys = byDpr.has(null) ? [null, ...forced] : forced;
+  return keys.map((dpr) => ({ dpr, pages: byDpr.get(dpr) }));
 }
 
 // ── 5. Report / main ──────────────────────────────────────────────────────────
@@ -938,6 +992,11 @@ async function main() {
   let launched = null;
   let adapter = null;
   let strategyUsed = "";
+  // The flags of the strategy that actually got an adapter. The per-DPR
+  // browsers below reuse them verbatim (plus `--force-device-scale-factor`), so
+  // every page in the run talks to the same kind of WebGPU adapter — the
+  // adapter is probed ONCE, on this default browser.
+  let strategyFlags = [];
   for (const strat of strategies) {
     console.log(`• launching Chromium — ${strat.name}`);
     let l;
@@ -960,6 +1019,7 @@ async function main() {
     if (a && a.ok) {
       launched = l;
       adapter = a;
+      strategyFlags = strat.flags;
       strategyUsed = assumeGpu ? strat.name + " [probe bypassed]" : strat.name;
       break;
     }
@@ -1024,40 +1084,49 @@ async function main() {
     );
   }
 
-  // Run harnesses sequentially (each gets its own target + fresh GPU device).
+  // Run harnesses sequentially, grouped by the device scale factor they need.
+  // The default group runs on the browser the adapter was probed on; each other
+  // group gets its OWN Chromium launched with `--force-device-scale-factor`,
+  // because that is the only way a headless Chromium gives the page a truly
+  // scaled `devicePixelContentBoxSize` (a CDP metrics override moves
+  // `devicePixelRatio` alone and the DPR page silently re-runs the 1x case).
+  const ctx = { softwareAdapter, allowSkips };
   const rows = [];
-  for (const h of harnesses) {
-    process.stdout.write(`  running ${h.id} … `);
-    let r;
+  for (const { dpr, pages } of groupByDpr(harnesses)) {
+    if (dpr === null) {
+      await runGroup(cdp, baseUrl, pages, ctx, rows);
+      continue;
+    }
+    console.log(
+      `• launching Chromium at device scale factor ${dpr} for ${pages.length} page(s)`,
+    );
+    let scaled;
     try {
-      r = await runHarness(cdp, baseUrl, h, { softwareAdapter, allowSkips });
+      scaled = await launchChrome(chrome, [
+        ...strategyFlags,
+        `--force-device-scale-factor=${dpr}`,
+      ]);
     } catch (err) {
-      r = { verdict: "error", ms: 0, result: String(err.message || err) };
+      // The scaled browser is the ONLY thing that can run these pages: report
+      // them as errors rather than quietly running them at the wrong ratio.
+      console.log(RED(`    launch failed: ${err.message}`));
+      for (const h of pages) {
+        rows.push({
+          id: h.id,
+          verdict: "error",
+          ms: 0,
+          result: `could not launch Chromium at device scale factor ${dpr}: ${err.message}`,
+        });
+      }
+      continue;
     }
-    const tag =
-      r.verdict === "pass"
-        ? GREEN("PASS")
-        : r.verdict === "fail"
-          ? RED("FAIL")
-          : r.verdict === "timeout"
-            ? YELLOW("TIMEOUT")
-            : RED("ERROR");
-    console.log(`${tag} ${DIM(`(${r.ms}ms)`)}`);
-    if (r.verdict !== "pass" && r.result) console.log(indent(r.result));
-    // A harness can PASS while loudly SKIPPING a sub-case (e.g. the WebGPU engine
-    // reported a `DeviceLostError` mid-readback — the software backend gave up
-    // on the device, which is not a parity defect). Surface those lines even
-    // on PASS so a chronically-skipped proof can never go green *invisibly* —
-    // the runner's "never silently passes" contract applied at sub-case grain.
-    const passLines = (r.verdict === "pass" && r.result ? r.result : "").split("\n");
-    const benchmarkLines = passLines.filter((l) => /BENCH:/i.test(l));
-    for (const l of benchmarkLines) console.log("        " + l.trim());
-    const skipLines = passLines.filter((l) => /SKIPPED/i.test(l));
-    if (skipLines.length) {
-      for (const l of skipLines) console.log("        " + YELLOW(l.trim()));
-      ghAnnotate("warning", `${h.id}: sub-case(s) SKIPPED — ${skipLines.map((l) => l.trim()).join(" | ")}`);
+    try {
+      await runGroup(scaled.cdp, baseUrl, pages, ctx, rows);
+    } finally {
+      scaled.cdp.close();
+      scaled.proc.kill("SIGKILL");
+      safeRmDir(scaled.userDataDir);
     }
-    rows.push({ id: h.id, ...r, skipped: skipLines.length });
   }
 
   // Teardown.

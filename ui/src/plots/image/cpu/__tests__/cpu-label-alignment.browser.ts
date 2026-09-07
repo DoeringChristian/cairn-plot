@@ -65,15 +65,15 @@
  *   every glyph sits on a black drop shadow offset downward, which would bias an
  *   alpha-keyed midpoint on the very axis being measured.
  *
- * DPR. The page runs under the runner's `data-cairn-harness-dpr="2"` override;
- * `cpu-label-alignment-dpr1.browser.html` loads this same bundle without it. The
- * EFFECTIVE ratio is MEASURED (`paint.width / box.width`) and printed on every
- * line rather than assumed — headless Chromium's `device-pixel-content-box` does
- * not follow a CDP `deviceScaleFactor` override, so on a headless runner the
- * DPR-2 page exercises `devicePixelRatio = 2` against a 1x device-pixel content
- * box (the pane must believe the MEASURED box, not the ratio); on a real 2x
- * display, or a Chromium launched with `--force-device-scale-factor=2`, the same
- * page is a genuine 2x backing store.
+ * DPR. `cpu-label-alignment.browser.html` carries `data-cairn-harness-dpr="2"`,
+ * so the runner runs it in a Chromium launched with
+ * `--force-device-scale-factor=2`; `cpu-label-alignment-dpr1.browser.html` loads
+ * this same bundle without the attribute, on the default browser. The EFFECTIVE
+ * ratio is MEASURED (`paint.width / box.width`) and printed on every line rather
+ * than assumed, and a measured ratio that disagrees with `devicePixelRatio` by
+ * more than 0.01 FAILS the page (`dprSituation`) — headless Chromium's
+ * `device-pixel-content-box` does not follow a CDP `deviceScaleFactor` override,
+ * so a DPR page that got its ratio that way would silently re-run the 1x case.
  *
  * The GPU section repeats the whole measurement on `GpuImagePane` (whose live
  * in-DOM swapchain reads blank through `createImageBitmap`, so it goes through
@@ -786,23 +786,33 @@ const CASES: [number, number, ImageViewState][] = [
 const HOME_CASE: [number, number] = [642, 277.5];
 
 /**
- * What this PAGE actually got, MEASURED rather than assumed. A headless Chromium
- * does not apply the runner's CDP `deviceScaleFactor` to its device-pixel content
- * box, so the `data-cairn-harness-dpr="2"` page can legitimately end up running
- * against a 1x backing store. `effective` is the pane's own
+ * What this PAGE actually got, MEASURED rather than assumed, and whether that is
+ * the ratio it was supposed to run at. `effective` is the pane's own
  * `canvas.width / box.width`, so the log always names the case that actually ran
- * instead of the one the attribute asked for.
+ * instead of the one the page asked for.
+ *
+ * A mismatch is a FAILURE, not a note: the runner launches a browser with
+ * `--force-device-scale-factor` per `data-cairn-harness-dpr` page, so the
+ * device-pixel content box must really be `devicePixelRatio` times the CSS box.
+ * When it is not, this page is silently re-running the DPR-1 case under a DPR-2
+ * name (what the old CDP `Emulation.setDeviceMetricsOverride` path did), and the
+ * DPR-2 proof it claims to be does not exist.
  */
-function dprSituation(effective: number): string {
+function dprSituation(effective: number): { ok: boolean; text: string } {
   const ratio = window.devicePixelRatio;
-  if (Math.abs(effective - ratio) < 1e-3) {
-    return `effective ratio ${effective} — true ${effective}x backing store (devicePixelRatio ${ratio})`;
+  if (Math.abs(effective - ratio) <= 0.01) {
+    return {
+      ok: true,
+      text: `effective ratio ${effective} — true ${effective}x backing store (devicePixelRatio ${ratio})`,
+    };
   }
-  return (
-    `effective ratio ${effective} vs devicePixelRatio ${ratio} — ratio/box MISMATCH case ` +
-    `(headless Chromium does not apply the CDP deviceScaleFactor to the device-pixel ` +
-    `content box, so the pane must believe the MEASURED box, not the ratio)`
-  );
+  return {
+    ok: false,
+    text:
+      `effective ratio ${effective} vs devicePixelRatio ${ratio} — ratio/box MISMATCH ` +
+      `(the browser did not give this page a ${ratio}x device-pixel content box, so this ` +
+      `run is NOT the DPR ${ratio} proof it claims to be)`,
+  };
 }
 
 async function runPane(pane: PaneSpec): Promise<boolean> {
@@ -811,7 +821,9 @@ async function runPane(pane: PaneSpec): Promise<boolean> {
   // --- HOME: painted image rect == the object-contain home quad -------------
   try {
     const hm = await measureHome(pane, HOME_CASE[0], HOME_CASE[1]);
-    report(true, `BENCH: ${pane.name}: ${dprSituation(hm.dpr)}`);
+    const dpr = dprSituation(hm.dpr);
+    report(dpr.ok, `BENCH: ${pane.name}: ${dpr.text}`);
+    ok = ok && dpr.ok;
     const pass = hm.viewHeld && hm.maxEdgeErr <= 1;
     report(
       pass,

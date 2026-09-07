@@ -6,8 +6,9 @@
  *
  * It has two halves.
  *
- * UNIT half — imports the runner's two pure decision functions and pins the
- * rules that decide whether a FAIL may be reported as a PASS:
+ * UNIT half — imports the runner's pure decision functions and pins the rules
+ * that decide whether a FAIL may be reported as a PASS, and which browser a page
+ * runs in:
  *   • `downgradeIfDeviceLost` only downgrades a genuine `webgpu-device-lost`
  *     (reason other than `destroyed`) recorded BEFORE the verdict, on a
  *     software adapter, with the explicit env opt-in. An ordinary teardown
@@ -18,6 +19,10 @@
  *     `<html …>` tag and `<meta name="cairn-harness" …>`), so an attribute
  *     mentioned in an HTML comment, a `<script>` literal or on a `<div>`
  *     cannot quarantine a page out of the CI gate.
+ *   • `groupByDpr` puts the default pages first and gives every distinct
+ *     `data-cairn-harness-dpr` its own group — the runner launches one Chromium
+ *     per group with `--force-device-scale-factor`, so a page landing in the
+ *     wrong group would run at the wrong device pixel ratio.
  * Plus, as spawned runs: the runner must not exit 0 when its filters selected no
  * harness, nor accept an unparseable `HARNESS_MIN_PARITY` (which would silently
  * disable the parity floor).
@@ -38,7 +43,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
-import { downgradeIfDeviceLost, parseHarnessAttributes } from "./test-harness.mjs";
+import { downgradeIfDeviceLost, groupByDpr, parseHarnessAttributes } from "./test-harness.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RUNNER = resolve(__dirname, "test-harness.mjs");
@@ -124,6 +129,19 @@ function unitChecks() {
       "<script>const s = 'data-cairn-harness=\"quarantined\"'</script>" +
       '<div data-cairn-harness="quarantined"></div></body>',
   );
+  // (g) pages are grouped by the device scale factor they need: the default
+  // (null) group runs FIRST on the probed browser, then one forced-scale-factor
+  // browser per distinct ratio. A page must appear in exactly one group.
+  const grouped = groupByDpr([
+    { id: "a", dpr: 2 },
+    { id: "b", dpr: null },
+    { id: "c", dpr: 2 },
+    { id: "d", dpr: 3 },
+    { id: "e", dpr: null },
+  ]);
+  const groupShape = grouped.map((g) => [g.dpr, g.pages.map((p) => p.id).join("")]);
+  // …and a run whose pages ALL need a scale factor launches no default group.
+  const forcedOnly = groupByDpr([{ id: "a", dpr: 2 }]).map((g) => g.dpr);
 
   return [
     [
@@ -151,6 +169,19 @@ function unitChecks() {
       bodyMention.quarantined === false &&
         bodyMention.selfDriving === true &&
         bodyMention.dpr === 2,
+    ],
+    [
+      "pages group by device scale factor, default group first then ascending ratios",
+      JSON.stringify(groupShape) ===
+        JSON.stringify([
+          [null, "be"],
+          [2, "ac"],
+          [3, "d"],
+        ]),
+    ],
+    [
+      "a run with only forced-scale-factor pages has no default group",
+      JSON.stringify(forcedOnly) === JSON.stringify([2]),
     ],
   ];
 }

@@ -8,23 +8,22 @@
          absolute-inset-0 utilities, so WITHOUT this stylesheet the viewport
          element has no size and every pixel measurement below is meaningless. -->
     <link rel="stylesheet" href="./harness-style.css" />
-    <!-- `data-cairn-harness-dpr="2"` — the runner drives this page under an
-         `Emulation.setDeviceMetricsOverride` at deviceScaleFactor 2, so
-         `window.devicePixelRatio` is 2. The presentation canvas' backing store
-         is device px while the quad is CSS px, so a dropped or doubled dpr
-         factor is what this ratio is meant to expose.
+    <!-- `data-cairn-harness-dpr="2"` — the runner launches a SEPARATE Chromium
+         with `--force-device-scale-factor=2` and runs this page there, so
+         `window.devicePixelRatio` is 2 AND the device-pixel content box really
+         is 2x the CSS box. The presentation canvas' backing store is device px
+         while the quad is CSS px, so a dropped or doubled dpr factor is what
+         this ratio is meant to expose.
 
-         CAVEAT — do not read this page as "a 2x backing store was tested". A
-         HEADLESS Chromium does NOT apply the CDP deviceScaleFactor to its
-         device-pixel content box: measured here, a 100.5x50.25 CSS px element
-         still reports devicePixelContentBoxSize 101x50 at devicePixelRatio 2.
-         Under a headless runner this page therefore exercises the
-         devicePixelRatio-vs-measured-box MISMATCH case (the pane must believe
-         the measured box, not the ratio); on a real 2x display, or a Chromium
-         launched with --force-device-scale-factor=2, the same page is a genuine
-         2x backing store. The harness MEASURES canvas.width / box.width and
-         prints one explicit line per run naming which of the two it got, so a
-         run can never claim a ratio it did not have.
+         The scale factor must be a LAUNCH FLAG. A headless Chromium does NOT
+         apply a CDP `Emulation.setDeviceMetricsOverride` deviceScaleFactor to
+         its device-pixel content box: under the override a 100.5x50.25 CSS px
+         element still reported devicePixelContentBoxSize 101x50 at
+         devicePixelRatio 2, i.e. a 1x backing store wearing a DPR-2 label —
+         this page then silently duplicated its own DPR-1 sibling. The harness
+         MEASURES canvas.width / box.width and FAILS the run when it differs
+         from `window.devicePixelRatio` by more than 0.01, so a run can never
+         claim a ratio it did not have.
 
          The DPR-1 pass is the sibling page
          `cpu-label-alignment-dpr1.browser.html`, which loads THIS SAME bundle
