@@ -64,8 +64,13 @@ export type ImageCompareFit = "crop" | "fill";
 export interface ImageComparisonContent {
   readonly foreground: ImageSource;
   readonly presentation: "split" | "difference";
-  readonly defaultOperation: string;
-  readonly defaultSplit: number;
+  /** The cell's HOME settings, passed through from the host. The public builders
+   *  MOVE the authored `operation` / `splitPosition` into the settings seed, so
+   *  this — not a presentation prop — is what HOME means for a comparison. */
+  readonly cellDefaults: {
+    readonly "compare.operation"?: string;
+    readonly "compare.split"?: number;
+  };
   readonly align?: ImageCompareAlign;
   readonly fit?: ImageCompareFit;
   readonly contentKeyA?: string;

@@ -151,6 +151,10 @@ interface CpuPaneSyncProps {
   compareSplit?: CompareSplit;
   /** Read-time comparison-operation fallback, threaded down for the shell's chip. */
   compareFallback?: CapabilityFallback | null;
+  /** True when the hoisted compare control (mode / kernel / split) is off HOME —
+   *  folds into the shell's "modified" state exactly as it does on the GPU pane,
+   *  so a compare cell's HOME button lights up on either backend. */
+  compareModified?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -669,7 +673,8 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
         gammaModified ||
         displayEV !== 0 ||
         displayOffset !== 0 ||
-        !!props.channelModified
+        !!props.channelModified ||
+        !!props.compareModified
       }
       enlargeControl={props.enlargeControl}
       histogram={histogramSource}
@@ -1073,7 +1078,8 @@ function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
         gammaModified ||
         effectiveReduce !== reduceDefault ||
         boundsModified ||
-        !!props.channelModified
+        !!props.channelModified ||
+        !!props.compareModified
       }
       enlargeControl={props.enlargeControl}
       histogram={histogramSource}
@@ -1197,7 +1203,7 @@ function cpuCompareModeMenu(compare: NonNullable<ImageBackendInput["compareSourc
     // No fallback list: the host adapter always supplies the menu, built once
     // from the active backend's capabilities (`runtime/comparison-menu.ts`), so
     // the CPU and WebGPU panes can never offer different operations.
-    kernelOptions: compare.operationOptions ?? [],
+    kernelOptions: compare.operationOptions,
     onSplit: () => compare.onCompareModeChange?.("split"),
     onOperation: (operationId) => compare.onComparisonOperationChange?.(operationId),
   });
@@ -1278,6 +1284,7 @@ export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Eleme
       : undefined,
     isCompareMode: isCompare,
     compareFallback: compare?.fallback ?? null,
+    compareModified: compare?.compareModified ?? false,
     compareSplit: isSplit && compare
       ? {
           b: compare.b,

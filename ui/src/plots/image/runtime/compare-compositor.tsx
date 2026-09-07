@@ -25,7 +25,7 @@ import type { MediaCompareModeKind } from "../compare/mode";
 import type { ImageCompareAlign, ImageCompareFit } from "./compare-align";
 import { alignFrameSourcesForDiff } from "../compare/cross-type-align";
 import { resolveRenderMode, urlSource } from "./contracts";
-import { projectComparisonOperation } from "../definition/core.ts";
+import { resolveComparisonSelection } from "./comparison-selection.ts";
 import {
   useSeedGroupOnFormation,
   useCellSettings,
@@ -324,18 +324,31 @@ export function CompositeMediaPane({
   // `ensureDiff(texA, texB)` ordering (see `renderers/image-backend.ts`).
   // The panes keep no fallback menu of their own, so this path — the
   // offscreen/legacy compositor, not the host adapter — supplies the same
-  // capability-derived list for whichever backend `Pane` resolved to. The
-  // requested kernel is projected through the same read-time-only rule as the
-  // host adapter (`runtime/view.tsx`), so an unsupported id falls back to
-  // split here too, with the substitution reported on `compareSource.fallback`.
+  // capability-derived list for whichever backend `Pane` resolved to, and
+  // resolves the selection through the SAME helper the host adapter uses
+  // (`runtime/comparison-selection.ts`): one rule for the projection, the mode
+  // and the seeded kernel, so this seam cannot drift from the descriptor one.
+  // This compositor is its own viewport owner and carries no cell settings
+  // seed, so it has no HOME to compare against (`compareModified` is the host
+  // adapter's concern) — but the MODE is its own lifted `mode` prop, and the
+  // requested kernel stays the seed a switch INTO diff restores. A projection
+  // still forces split, exactly as it does for a descriptor cell.
   const caps = Pane === CpuImagePane ? CPU_CAPABILITIES : WEBGPU_CAPABILITIES;
-  const proj = projectComparisonOperation(comparisonOperationId ?? operation, caps);
+  const comparisonOptions = comparisonMenuOptions(caps);
+  const sel = resolveComparisonSelection({
+    selected: comparisonOperationId ?? operation,
+    presentation: "difference",
+    cellDefaults: {},
+    splitSetting: splitPosition,
+    options: comparisonOptions,
+    capabilities: caps,
+  });
   const compareSource: ImageComparisonInput = {
     b: foreground,
-    operationId: proj.effective === "split" ? operation : proj.effective,
-    operationOptions: comparisonMenuOptions(caps),
-    mode: proj.effective === "split" ? "split" : (effectiveMode as "split" | "diff"),
-    fallback: proj.fallback,
+    operationId: sel.operationId,
+    operationOptions: comparisonOptions,
+    mode: sel.mode === "split" ? "split" : (effectiveMode as "split" | "diff"),
+    fallback: sel.fallback,
     colormap,
     splitPosition: splitPosition ?? 0.5,
     align,

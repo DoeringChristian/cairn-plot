@@ -1,6 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../webgpu/view";
+import { WEBGPU_CAPABILITIES } from "../../webgpu/capabilities.ts";
+import { comparisonMenuOptions } from "../../runtime/comparison-menu.ts";
 import { urlSource, type ImageComparisonInput } from "../../runtime/contracts";
 import { isDeviceLostError } from "../../webgpu/device/device";
 import { createHarness, waitFor } from "../../../../testing/harness";
@@ -50,6 +52,7 @@ async function runOperation(operationId: "flip" | "ssim"): Promise<boolean> {
   const comparison: ImageComparisonInput = {
     b: urlSource(b),
     operationId,
+    operationOptions: comparisonMenuOptions(WEBGPU_CAPABILITIES),
     mode: "diff",
     splitPosition: 0.5,
   };

@@ -23,6 +23,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { CompositeMediaPane } from "../../runtime/compare-compositor";
 import CpuImagePane from "../../cpu/view.tsx";
+import { CPU_CAPABILITIES } from "../../cpu/capabilities.ts";
+import { comparisonMenuOptions } from "../../runtime/comparison-menu.ts";
 import type { ResolvedFloatImage } from "../../definition/content.ts";
 import type { DiffMode } from "../../../types";
 import { createHarness, waitFor } from "../../../../testing/harness";
@@ -133,6 +135,7 @@ async function run(): Promise<boolean> {
         contentKey: directSource.contentKey,
       },
       operationId: "ssim",
+      operationOptions: comparisonMenuOptions(CPU_CAPABILITIES),
       mode: "diff",
       referenceLabel: "reference",
       foregroundLabel: "foreground",
@@ -150,6 +153,7 @@ async function run(): Promise<boolean> {
     compareSource: {
       b: { dtype: "uint8", url: urlSide("#ff0000"), contentKey: "red-foreground" },
       operationId: "absolute",
+      operationOptions: comparisonMenuOptions(CPU_CAPABILITIES),
       mode: "diff",
       referenceLabel: "reference",
       foregroundLabel: "foreground",

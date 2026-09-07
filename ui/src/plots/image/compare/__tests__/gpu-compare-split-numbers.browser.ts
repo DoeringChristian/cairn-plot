@@ -51,6 +51,8 @@ import { createRoot } from "react-dom/client";
 // whose `mode:"split"`), so the #88 per-side number-alignment proof migrates onto
 // it — reading the SAME per-side geometry seams (now on `__cairnImageDiffProbe`).
 import GpuImagePane from "../../webgpu/view";
+import { WEBGPU_CAPABILITIES } from "../../webgpu/capabilities.ts";
+import { comparisonMenuOptions } from "../../runtime/comparison-menu.ts";
 import { urlSource, type ImageComparisonInput } from "../../runtime/contracts";
 import type { ImageViewState } from "../../../../host/hooks/use-image-gestures";
 import { isDeviceLostError } from "../../webgpu/device/device";
@@ -197,6 +199,7 @@ function mount(id: string, wCss: number, hCss: number, imageUrl: string, baselin
     const compareSource: ImageComparisonInput = {
       b: urlSource(imageUrl),
       operationId: "absolute", // the diff kernel seed (unused in split mode)
+      operationOptions: comparisonMenuOptions(WEBGPU_CAPABILITIES),
       mode: "split",
       splitPosition: split,
       onSplitPositionChange: setSplit,

@@ -66,6 +66,8 @@ import { floatValues } from "../../../plots/image/runtime/pixel-buffer.ts";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
+import { WEBGPU_CAPABILITIES } from "../../../plots/image/webgpu/capabilities.ts";
+import { comparisonMenuOptions } from "../../../plots/image/runtime/comparison-menu.ts";
 import { hdrSource, urlSource, type FloatImageData } from "../../../plots/image/runtime/contracts";
 import { createHarness, sleep, waitFor } from "../../harness";
 
@@ -242,6 +244,7 @@ async function runCompareSplitCase(): Promise<boolean> {
       compareSource: {
         b: urlSource(RED_PNG_DATA_URL),
         operationId: "absolute",
+        operationOptions: comparisonMenuOptions(WEBGPU_CAPABILITIES),
         mode: "split",
         splitPosition: 0.5,
       },
@@ -288,6 +291,7 @@ async function runCompareDiffCase(): Promise<boolean> {
       compareSource: {
         b: urlSource(RED_PNG_DATA_URL),
         operationId: "signed",
+        operationOptions: comparisonMenuOptions(WEBGPU_CAPABILITIES),
         mode: "diff",
         colormap: "red-blue",
       },

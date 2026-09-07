@@ -30,12 +30,14 @@ export function composeImageComparisonPresentation(args: {
 }): Record<string, unknown> {
   const { leaf, resolved, comparison } = args;
   if (resolved.__diffB === undefined) return {};
-  const props = (comparison.node.props ?? {}) as Record<string, unknown>;
   const content: ImageComparisonContent = {
     foreground: resolved.__diffB as ImageSource,
     presentation: comparison.node.presentation === "difference" ? "difference" : "split",
-    defaultOperation: typeof props.operation === "string" ? props.operation : "absolute",
-    defaultSplit: typeof props.splitPosition === "number" ? props.splitPosition : 0.5,
+    // HOME comes from the cell's settings seed, NOT from `node.props`: both
+    // public builders move the authored `operation` / `splitPosition` into
+    // `compare.operation` / `compare.split` before emission, so reading the
+    // props here saw `absolute` / 0.5 for every authored comparison.
+    cellDefaults: comparison.cellDefaults,
     align: comparison.align,
     fit: comparison.fit,
     contentKeyA: resolved.__diffContentKeyA as string,

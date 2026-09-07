@@ -246,8 +246,11 @@ export interface ImageComparisonInput {
    *  (texB), so `diff = a − b` and split shows the reference left of the divider. */
   b: ImageSource;
   /** Backend-supported comparison operations, resolved by the shared image
-   * runtime from the selected backend's capability declaration. */
-  operationOptions?: { id: string; label: string }[];
+   * runtime from the selected backend's capability declaration
+   * (`runtime/comparison-menu.ts`). REQUIRED: the panes keep no fallback list,
+   * so an omitted one built a menu with only "Split" — a caller that mounts a
+   * backend pane directly must supply `comparisonMenuOptions(capabilities)`. */
+  operationOptions: { id: string; label: string }[];
   /** The selected comparison operation — a PUBLIC registry id (a pointwise id,
    *  `"flip"`, `"flip-hdr"`, `"ssim"`), always one of {@link operationOptions}.
    *  SEEDS the pane's diff state (always a real operation, even while
@@ -300,8 +303,9 @@ export interface ImageComparisonInput {
    *  renders on THIS unified pane, so a mode switch is an OP switch on the reused
    *  instance (NO remount) — not the old route-to-`GpuComparePane` remount. */
   onCompareModeChange?: (mode: "split" | "diff") => void;
-  /** True when the hoisted compare control (mode / kernel / split) differs
-   *  from the descriptor — folds into the pane's HOME-enabled ("modified") state. */
+  /** True when the hoisted compare control (mode / kernel / split) differs from
+   *  the cell's HOME settings — folds into the pane's HOME-enabled ("modified")
+   *  state. Consumed by BOTH panes' `extraModified`. */
   compareModified?: boolean;
 }
 

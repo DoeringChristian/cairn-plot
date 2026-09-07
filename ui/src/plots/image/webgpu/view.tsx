@@ -2106,7 +2106,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       operation: comparisonOperationId,
       // The host adapter always supplies the list, filtered by the ACTIVE
       // backend's capabilities — the view never invents its own.
-      kernelOptions: compareSource?.operationOptions ?? [],
+      kernelOptions: compareSource!.operationOptions,
       onSplit: () => changeCompareMode("split"),
       onOperation: (id) => {
         if (compositorMode) changeCompareMode("diff");

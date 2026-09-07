@@ -18,7 +18,7 @@ import { ImageHostRuntimeContext } from "./host-context.ts";
 import { comparisonOperationSettingsPatch } from "./operation-display-defaults.ts";
 import { comparisonMenuOptions } from "./comparison-menu.ts";
 import { migrateCompareSettings } from "../definition/settings.ts";
-import { projectComparisonOperation } from "../definition/core.ts";
+import { resolveComparisonSelection } from "./comparison-selection.ts";
 
 /** Thin image adapter: framing and projection into the host-selected backend. */
 export interface ImagePlotViewProps extends ReactPlotViewProps<ImagePresentation, ImageSettings> {
@@ -53,23 +53,27 @@ export function ImagePlotView({
   const activeBackend = webGpuFailed && failureFallback ? failureFallback : backend;
   const Pane = activeBackend.View;
   const source = p.source;
-  const selectedComparisonOperation = p.comparison
-    ? settings["compare.operation"] ??
-      (p.comparison.presentation === "split" ? "split" : p.comparison.defaultOperation)
+  // The ONE menu, and the ONE resolution of the selection over it. Both the
+  // rendered ids and the write callbacks below read `sel` — nothing here
+  // recomputes a projection or a default of its own.
+  const comparisonOptions = p.comparison ? comparisonMenuOptions(activeBackend.capabilities) : [];
+  const sel = p.comparison
+    ? resolveComparisonSelection({
+        selected: settings["compare.operation"],
+        presentation: p.comparison.presentation,
+        cellDefaults: p.comparison.cellDefaults,
+        splitSetting: settings["compare.split"],
+        options: comparisonOptions,
+        capabilities: activeBackend.capabilities,
+      })
     : undefined;
-  const comparisonProjection = selectedComparisonOperation !== undefined
-    ? projectComparisonOperation(selectedComparisonOperation, activeBackend.capabilities)
-    : undefined;
-  const effectiveComparisonOperation = comparisonProjection?.effective;
-  const comparison: ImageComparisonInput | undefined = p.comparison
+  const comparison: ImageComparisonInput | undefined = p.comparison && sel
     ? {
         b: p.comparison.foreground,
-        operationOptions: comparisonMenuOptions(activeBackend.capabilities),
-        operationId: effectiveComparisonOperation === "split"
-          ? p.comparison.defaultOperation
-          : effectiveComparisonOperation!,
-        mode: effectiveComparisonOperation === "split" ? "split" : "diff",
-        splitPosition: settings["compare.split"] ?? p.comparison.defaultSplit,
+        operationOptions: comparisonOptions,
+        operationId: sel.operationId,
+        mode: sel.mode,
+        splitPosition: settings["compare.split"] ?? sel.defaultSplit,
         align: p.comparison.align,
         fit: p.comparison.fit,
         contentKeyA: p.comparison.contentKeyA,
@@ -78,26 +82,33 @@ export function ImagePlotView({
         foregroundLabel: p.comparison.foregroundLabel,
         inStackedGrid: inStack,
         inOverlay,
+        // The display default a patch preserves-or-replaces is the one the user
+        // is LOOKING at, so both callbacks pass the EFFECTIVE operation — with
+        // the raw id the encoding of an unrendered kernel would decide whether
+        // the visible encoding counts as a customization.
         onComparisonOperationChange: (operationId) => commands.patch(comparisonOperationSettingsPatch({
-          previousOperation: selectedComparisonOperation,
+          previousOperation: sel.effective,
           nextOperation: operationId,
           currentEncoding: settings["image.encoding"],
         })),
         onCompareModeChange: (mode) => {
-          const rawMode = selectedComparisonOperation === "split" ? "split" : "diff";
-          if (mode === rawMode) return; // a projected mode is not a user change; never rewrite the store from it
+          // Guard on the RENDERED mode: re-picking the mode the menu already
+          // shows is not a user change, whether it got there from the store or
+          // from a capability projection.
+          if (mode === sel.mode) return;
           commands.patch(comparisonOperationSettingsPatch({
-            previousOperation: selectedComparisonOperation,
-            nextOperation: mode === "split" ? "split" : p.comparison!.defaultOperation,
+            previousOperation: sel.effective,
+            // Leaving split restores HOME's operation — unless HOME IS split,
+            // in which case the seeded menu kernel is the only real choice.
+            nextOperation: mode === "split"
+              ? "split"
+              : sel.authoredDefault === "split" ? sel.operationId : sel.authoredDefault,
             currentEncoding: settings["image.encoding"],
           }));
         },
         onSplitPositionChange: (position) => commands.patch({ "compare.split": position }),
-        compareModified:
-          selectedComparisonOperation !==
-            (p.comparison.presentation === "split" ? "split" : p.comparison.defaultOperation) ||
-          (settings["compare.split"] ?? p.comparison.defaultSplit) !== p.comparison.defaultSplit,
-        fallback: comparisonProjection?.fallback ?? null,
+        compareModified: sel.compareModified,
+        fallback: sel.fallback,
       }
     : undefined;
   const channelSelection = settings["image.channelSelect"] as ChannelSelection | null | undefined;

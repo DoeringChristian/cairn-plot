@@ -36,6 +36,8 @@ import React from "react";
 import { isDeviceLostError } from "../../../plots/image/webgpu/device/device";
 import { createRoot } from "react-dom/client";
 import GpuImagePane from "../../../plots/image/webgpu/view";
+import { WEBGPU_CAPABILITIES } from "../../../plots/image/webgpu/capabilities.ts";
+import { comparisonMenuOptions } from "../../../plots/image/runtime/comparison-menu.ts";
 import { urlSource } from "../../../plots/image/runtime/contracts";
 import { getSharedWebGpuDevice } from "../../../plots/image/webgpu/device/device-provider.ts";
 import { createHarness, waitFor } from "../../harness";
@@ -190,6 +192,9 @@ function mountUnifiedDiff(container: HTMLElement, operationId: string, encoding:
       compareSource: {
         b: urlSource(FG_URL),
         operationId: settings["compare.operation"] as string,
+        // The pane keeps no fallback menu: a mount that omits this renders a
+        // MODE menu with nothing but "Split" (the contract now requires it).
+        operationOptions: comparisonMenuOptions(WEBGPU_CAPABILITIES),
         colormap: encoding,
         referenceLabel: "ref",
         foregroundLabel: "fg",

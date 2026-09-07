@@ -608,6 +608,12 @@ URL. `decodedFloatToImageComparisonInput(decoded, contentKey)` is the pure
 gate. The image comparison presentation forwards decoded float operands to the
 selected backend through its typed input contract.
 
+`ImageComparisonInput.operationOptions` is **required**: the backend panes keep
+no fallback operation menu of their own, so a caller mounting a pane directly
+must pass `comparisonMenuOptions(capabilities)`
+(`plots/image/runtime/comparison-menu.ts`) for the backend it mounts — omitting
+it used to render a comparison menu containing nothing but "Split".
+
 #### Auto image-interpolation threshold (`plots/image/components/interp-auto.ts`)
 Both image backends snap magnification to nearest/pixelated at the SAME zoom —
 once one source texel covers `PIXEL_VALUE_MIN_SCREEN_PX` screen px (the point
