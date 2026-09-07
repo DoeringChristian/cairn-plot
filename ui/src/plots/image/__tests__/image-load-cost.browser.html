@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>Image load cost harness</title>
+    <!-- Committed compiled Tailwind CSS: the panes lay themselves out with
+         w-full/h-full/flex/absolute-inset-0 utilities, so without it every
+         viewport element has zero size and nothing paints at all. -->
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- Self-driving: it mounts its own panes and settles #status headlessly,
+         so `npm run test:harness` gates it in the DEFAULT set. The GPU phase is
+         skipped (and reported as skipped) when `navigator.gpu` is absent. -->
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 12px; margin: 0; background: #111; color: #eee; }
+      /*
+        LAYOUT IS LOAD-BEARING, not cosmetic. The WebGPU pane pool never admits
+        an OFFSCREEN pane to a swapchain slot (`pool.ts`: "an offscreen pane
+        never takes a slot"), so a page that scrolls its panes out of the
+        viewport would measure parking, not loading. `#stage` is therefore
+        pinned to the viewport — in VIEWPORT UNITS, not the runner's nominal
+        1600x1000 window size, because the page's `innerHeight` is 913 there and
+        a 1000 px stage would hang 87 px of cards off the bottom — and sized so
+        all fourteen hosts fit inside it at once. The PASS/FAIL log floats over
+        the stage instead of pushing it down as lines accumulate.
+      */
+      #stage {
+        position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+        display: flex; gap: 6px; padding: 4px; overflow: hidden;
+      }
+      /* Left: the ONE card with its histogram open. Right: everything else,
+         wrapped. The split is explicit rather than one wrapping row because that
+         card is as TALL as it is wide (a square image's frame keeps the content
+         aspect), and a single wrapping row would push every later card off the
+         bottom of the viewport — where the GPU pool would never admit it. */
+      #stage > div { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; }
+      #stage [data-bench-role] { background: #222; flex: 0 0 auto; position: relative; }
+      #log {
+        position: fixed; right: 6px; top: 6px; width: 480px; max-height: 96vh;
+        overflow: auto; z-index: 100; background: rgba(0, 0, 0, 0.82);
+        padding: 8px; border: 1px solid #444;
+      }
+      #status { font-size: 22px; font-weight: bold; margin-bottom: 8px; }
+      #result div { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="log">
+      <h1 style="font-size: 13px; margin: 0 0 6px">image-load-cost — what one run of image cards costs at mount</h1>
+      <div id="status">RUNNING&hellip;</div>
+      <div id="result"></div>
+    </div>
+    <script type="module" src="./image-load-cost.browser.bundle.js"></script>
+  </body>
+</html>
