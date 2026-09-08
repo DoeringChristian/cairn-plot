@@ -152,11 +152,12 @@ test("timeout terminates only the slow worker; the other worker and the queue su
   await assert.rejects(slow, /timed out/);
   assert.equal(workers[0]!.terminated, true);
   assert.equal(workers[1]!.terminated, false);
-  // the freed slot respawned and took the queued job
+  // the freed slot (index 0) respawned — the fake is workers[2], its pool index is 0 — and took the queued job
   assert.equal(workers.length, 3);
+  assert.equal(workers[2]!.index, 0);
   assert.deepEqual(workers[2]!.posts.map((p) => p.kind), ["queued"]);
   pool.onMessage(1, { id: workers[1]!.posts[0]!.id, ok: true }); await fine;
-  pool.onMessage(2, { id: workers[2]!.posts[0]!.id, ok: true }); await queued;
+  pool.onMessage(0, { id: workers[2]!.posts[0]!.id, ok: true }); await queued;
 });
 
 test("worker error rejects that worker's jobs only and respawns on next use", async () => {
@@ -167,7 +168,8 @@ test("worker error rejects that worker's jobs only and respawns on next use", as
   assert.equal(workers[0]!.terminated, true);
   const c = pool.run(job("c"));
   assert.equal(workers.length, 3);
-  pool.onMessage(2, { id: workers[2]!.posts[0]!.id, ok: true }); await c;
+  assert.equal(workers[2]!.index, 0); // respawned into slot 0
+  pool.onMessage(0, { id: workers[2]!.posts[0]!.id, ok: true }); await c;
   pool.onMessage(1, { id: workers[1]!.posts[0]!.id, ok: true }); await b;
 });
 
