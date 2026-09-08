@@ -1,8 +1,8 @@
 /**
  * `image/decoders/exr-wasm.ts` — the WASM-first EXR decode core.
  *
- * Wraps the Rust/WASM OpenEXR decoder (the `exr` crate, compiled to WASM and
- * embedded as inline base64 in `wasm-inline/`) and layers the TS full decoder
+ * Wraps the official C++ OpenEXR library (v3.4.9, built to WASM with Emscripten
+ * by `wasm/openexr/build.sh` and embedded as inline base64 in `wasm-inline/`) and layers the TS full decoder
  * (`exr-full.ts`) as the fallback. This is the *testable core* the Web Worker
  * (`exr-worker.ts`) runs and the main-thread path (`exr-decode.ts`) reuses when
  * no `Worker` is available — it needs no DOM/Worker, so `node:test` exercises it
