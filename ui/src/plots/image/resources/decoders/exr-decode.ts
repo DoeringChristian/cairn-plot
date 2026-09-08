@@ -3,26 +3,27 @@
  * Moves the (potentially slow) EXR decode OFF the main thread and layers a
  * clean fallback chain:
  *
- *   1. a PERSISTENT Web Worker running the WASM-first core
- *      (`exr-worker.ts` → `exr-wasm.ts`: OpenEXR wasm, TS decoder fallback),
+ *   1. the shared decode POOL (`decode-pool.ts`) running the WASM-first core
+ *      (`decode-worker.ts` → `exr-wasm.ts`: OpenEXR wasm, TS decoder fallback),
  *      the normal browser path — all compressions (PIZ/PXR24/B44/DWA/…), result
  *      returned as a transferable (f16 bit patterns for all-HALF, else f32);
- *   2. if `Worker` is unavailable or the worker path fails to spin up, the SAME
+ *   2. if `Worker` is unavailable or the pool path fails to spin up, the SAME
  *      WASM-first core on the MAIN thread (also the `node:test` path);
  *   3. if that throws, the original pure-TS reader (`exr.ts`, NONE/ZIP/ZIPS) as
  *      a last-ditch net.
  *
  * ## Deep live-flatten (the depth slider)
  * `decodeExr(src, { deepLiveFlatten: true })` (the single-image LEAF path) opens
- * a DEEP EXR with the samples RETAINED behind a wasm handle — living in the
+ * a DEEP EXR with the samples RETAINED behind a wasm handle — living in ONE pool
  * worker (or the main-thread module) — and attaches a `DeepFlattenController`
  * (`decoded.deep`) whose `flatten(zClip)` re-composites live and `dispose()`
- * frees the handle. Generic/compare callers omit the flag: deep files decode
+ * frees the handle. Every follow-up message for that handle is pinned to the
+ * worker that opened it (the pool's `affinity`), since the samples live in that
+ * worker's wasm heap. Generic/compare callers omit the flag: deep files decode
  * one-shot (full composite) with no retained handle.
  *
- * One worker is reused across decodes; jobs are correlated by id through a
- * pending map, each guarded by a timeout, with errors propagated back to the
- * awaiting promise.
+ * Correlation, timeouts, queueing and per-worker crash recovery all live in the
+ * pool (`decode-pool-core.ts`); this module only shapes requests and replies.
  */
 import type {
   DecodedImage,
@@ -36,6 +37,7 @@ import { decodeExr as decodeExrPure } from "./exr.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import { hasExrSelection, type ExrSelection } from "./exr-full.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
+import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
 import type {
   ExrGpuCsrPayload,
   ExrImagePayload,
@@ -43,93 +45,27 @@ import type {
   ExrWorkerResponse,
 } from "./decode-worker.ts";
 
-// A decode should never hang the queue; cap it generously (large DWA/PIZ frames
-// can take a while, but not this long). Deep re-flatten (dense files re-decode)
-// rides the same bound.
-const DECODE_TIMEOUT_MS = 30_000;
-
 type F32Image = Extract<DecodedImage, { kind: "f32" }>;
 type OkResponse = Extract<ExrWorkerResponse, { ok: true }>;
 
-interface PendingJob {
-  resolve: (msg: OkResponse) => void;
-  reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-const pending = new Map<number, PendingJob>();
-let nextId = 1;
-let workerPromise: Promise<Worker> | null = null;
-
-/** True when this runtime can host a browser Web Worker (false under node). */
+/** True when this runtime can host the pool's Web Workers (false under node). */
 function canUseWorker(): boolean {
-  return typeof Worker === "function";
+  return decodePoolAvailable();
 }
 
-function rejectAllPending(err: Error): void {
-  for (const [, job] of pending) {
-    clearTimeout(job.timer);
-    job.reject(err);
-  }
-  pending.clear();
-}
-
-/** Tear down the current worker so the next decode respawns a fresh one. */
-function resetWorker(err: Error): void {
-  rejectAllPending(err);
-  const wp = workerPromise;
-  workerPromise = null;
-  if (wp) wp.then((w) => w.terminate()).catch(() => {});
-}
-
-function onWorkerMessage(event: MessageEvent<ExrWorkerResponse>): void {
-  const msg = event.data;
-  const job = pending.get(msg.id);
-  if (!job) return;
-  pending.delete(msg.id);
-  clearTimeout(job.timer);
-  if (msg.ok) job.resolve(msg);
-  else job.reject(new Error(msg.error));
-}
-
-/** Lazily create (once) the persistent inline-blob worker. */
-function getWorker(): Promise<Worker> {
-  if (!workerPromise) {
-    workerPromise = (async () => {
-      // Vite `?worker&inline`: the worker + its whole module graph ship as a
-      // self-contained inline blob (no separate file / CDN). Dynamic import so
-      // the blob is only realized on the first EXR decode.
-      const mod = await import("./decode-worker.ts?worker&inline");
-      const worker = new mod.default();
-      worker.addEventListener("message", onWorkerMessage as EventListener);
-      worker.addEventListener("error", () => {
-        resetWorker(new Error("cairn-plot decodeImage: EXR decode worker crashed"));
-      });
-      return worker;
-    })();
-    // If construction itself rejects, clear so we can retry / fall back.
-    workerPromise.catch(() => {
-      workerPromise = null;
-    });
-  }
-  return workerPromise;
-}
-
-/** Send one correlated request to the persistent worker. */
+/**
+ * Run one request through the pool. `affinity` pins the job to the worker that
+ * owns a retained deep handle; omit it for stateless jobs (any idle worker).
+ * The reply's `worker` index is what a deep open passes back as that affinity.
+ */
 async function requestWorker(
   make: (id: number) => ExrWorkerRequest,
   transfer: Transferable[],
-): Promise<OkResponse> {
-  const worker = await getWorker();
-  const id = nextId++;
-  return new Promise<OkResponse>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      resetWorker(new Error("cairn-plot decodeImage: EXR decode timed out"));
-    }, DECODE_TIMEOUT_MS);
-    pending.set(id, { resolve, reject, timer });
-    worker.postMessage(make(id), transfer);
-  });
+  affinity?: number,
+): Promise<{ msg: OkResponse; worker: number }> {
+  const { result, worker } = await getDecodePool().run<ExrWorkerResponse>({ make, transfer, affinity });
+  if (!result.ok) throw new Error(result.error);
+  return { msg: result, worker };
 }
 
 /** A flat image payload (worker reply) → the canonical f32 DecodedImage. */
@@ -144,30 +80,34 @@ function payloadToImage(msg: ExrImagePayload): F32Image {
   };
 }
 
-/** Decode via the persistent worker, transferring a copy of the bytes in. */
+/** Decode via a pool worker, transferring a copy of the bytes in. */
 async function decodeViaWorker(bytes: ArrayBuffer, select?: ExrSelection): Promise<F32Image> {
   const buffer = bytes.slice(0); // copy so we never detach the caller's buffer
-  const msg = await requestWorker((id) => ({ id, buffer, select }), [buffer]);
+  const { msg } = await requestWorker((id) => ({ id, buffer, select }), [buffer]);
   return payloadToImage(msg as ExrImagePayload);
 }
 
-/** Build a worker-backed deep controller (flatten/free posted to the worker). */
+/**
+ * Build a worker-backed deep controller. Every message is pinned to `worker` —
+ * the pool slot whose wasm heap holds this `handle`.
+ */
 function workerDeepController(
   handle: number,
   zMin: number,
   zMax: number,
+  worker: number,
 ): DeepFlattenController {
   let disposed = false;
   return {
     zMin,
     zMax,
     async flatten(zNear: number, zFar: number) {
-      const msg = await requestWorker((id) => ({ id, kind: "flattenDeep", handle, zNear, zFar }), []);
+      const { msg } = await requestWorker((id) => ({ id, kind: "flattenDeep", handle, zNear, zFar }), [], worker);
       const p = msg as ExrImagePayload;
       return p.precision === "f16-bits" ? new Uint16Array(p.data) : new Float32Array(p.data);
     },
     async getGpuCsr(): Promise<DeepGpuCsrData> {
-      const msg = await requestWorker((id) => ({ id, kind: "deepGpuCsr", handle }), []);
+      const { msg } = await requestWorker((id) => ({ id, kind: "deepGpuCsr", handle }), [], worker);
       const g = (msg as Extract<OkResponse, { gpuCsr: ExrGpuCsrPayload }>).gpuCsr;
       return {
         width: g.width,
@@ -179,15 +119,15 @@ function workerDeepController(
       };
     },
     async zRangeInRect(x0: number, y0: number, x1: number, y1: number): Promise<DeepZRangeData> {
-      const msg = await requestWorker((id) => ({ id, kind: "deepZRange", handle, x0, y0, x1, y1 }), []);
+      const { msg } = await requestWorker((id) => ({ id, kind: "deepZRange", handle, x0, y0, x1, y1 }), [], worker);
       return (msg as Extract<OkResponse, { zRange: DeepZRangeData }>).zRange;
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      // Fire-and-forget; a worker reset before this lands is harmless (the wasm
-      // instance — and its handles — is gone with it).
-      void requestWorker((id) => ({ id, kind: "freeDeep", handle }), []).catch(() => {});
+      // Fire-and-forget; a worker teardown before this lands is harmless (the
+      // wasm instance — and its handles — is gone with it).
+      void requestWorker((id) => ({ id, kind: "freeDeep", handle }), [], worker).catch(() => {});
     },
   };
 }
@@ -233,18 +173,18 @@ async function mainThreadDeepController(
 /**
  * Deep-aware decode: open the source with the samples retained and attach a
  * `deep` controller when it IS a deep EXR (else a plain image, no handle).
- * Runs in the worker when available, else on the main-thread module (node).
+ * Runs in a pool worker when available, else on the main-thread module (node).
  */
 async function decodeDeepAware(bytes: ArrayBuffer): Promise<DecodedImage> {
   if (canUseWorker()) {
     const buffer = bytes.slice(0);
-    const msg = await requestWorker((id) => ({ id, kind: "openDeep", buffer }), [buffer]);
+    const { msg, worker } = await requestWorker((id) => ({ id, kind: "openDeep", buffer }), [buffer]);
     const image = payloadToImage(msg as ExrImagePayload);
     const deep = (msg as Extract<OkResponse, { deep?: unknown }>).deep as
       | { handle: number; zMin: number; zMax: number }
       | undefined;
     if (!deep) return image;
-    return { ...image, deep: workerDeepController(deep.handle, deep.zMin, deep.zMax) };
+    return { ...image, deep: workerDeepController(deep.handle, deep.zMin, deep.zMax, worker) };
   }
   // No Worker (node): open + retain on the main-thread module.
   const { open_deep, flatten_deep } = await loadExrDecoder();

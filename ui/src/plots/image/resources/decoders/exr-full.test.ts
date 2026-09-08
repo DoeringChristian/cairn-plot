@@ -13,7 +13,7 @@
  *     (NONE / ZIP, FLOAT/HALF, RGB/RGBA/Y) round-trip through the new decoder,
  *     which also exercises the vertical flip + channel compaction.
  *
- * The browser Worker wrapper (`exr-worker.ts` / `exr-decode.ts` `?worker&inline`)
+ * The browser Worker wrapper (`decode-worker.ts` / `decode-pool.ts` `?worker&inline`)
  * is NOT exercised here — node has no Web `Worker`; the decode LOGIC below is
  * what the worker runs. The worker instantiation only verifies in-browser.
  */

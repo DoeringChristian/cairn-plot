@@ -2,7 +2,7 @@
  * `image/decoders/exr-full.ts` — the FULL-coverage EXR decode, adapting the
  * vendored three.js `EXRLoader` (see `vendor/PROVENANCE.md`) to cairn-plot's
  * canonical {@link DecodedImage}. This is the real decode logic; it runs both
- * inside the Web Worker (`exr-worker.ts`, the normal browser path) and directly
+ * inside the decode worker (`decode-worker.ts`, the normal browser path) and directly
  * on the main thread (fallback + `node:test`).
  *
  * SUPPORTED (superset of the pure-TS reader in `exr.ts`): NONE, RLE, ZIP(S),

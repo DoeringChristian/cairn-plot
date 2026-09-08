@@ -13,11 +13,13 @@
  *     `ImageData`). AVIF is native in modern Chrome/Firefox/Safari, so no WASM
  *     dependency is bundled for it.
  *   - npy/npz → the pure raw-buffer parsers (`parseNpy`/`parseNpz`). Float
- *     dtypes yield `f32`; `uint8`/`int8`/`bool` yield `u8`.
+ *     dtypes yield `f32`; `uint8`/`int8`/`bool` yield `u8`. A raw `.npy` runs
+ *     that parse in the shared decode pool (`decoders/npy-decode.ts`), falling
+ *     back inline when no Worker is available.
  *   - exr → the worker-backed full decoder (`decoders/exr-decode.ts`): the
  *     vendored three.js EXR loader (`decoders/vendor/`) covering NONE/RLE/
  *     ZIP(S)/PIZ/PXR24/B44(A)/DWAA/DWAB (+ tiled/multi-part/deep), run OFF the
- *     main thread in a persistent inline Web Worker. Yields `f32` (RGB→3,
+ *     main thread in the shared decode pool. Yields `f32` (RGB→3,
  *     RGBA→4, Y/single→1). Falls back to the pure-TS `decoders/exr.ts` reader
  *     (NONE/ZIP/ZIPS) when no Worker is available; genuinely unsupported inputs
  *     surface a clear error.
@@ -37,18 +39,19 @@
  * needs a DOM and is exercised only through the registry-dispatch tests.
  */
 
-// `parse-npy` is a self-contained leaf module — a static import keeps this
-// module loadable under Node's type-stripping test runner (see `decoders.test.ts`).
 // `parse-npz` pulls the browser `DecompressionStream` inflate path and is loaded
 // LAZILY (only when an `.npz` is actually decoded), so the eager module graph —
 // and the node-test import — stays DOM-free. `.ts` extensions are required for
 // Node's resolver and accepted by tsc (`allowImportingTsExtensions`) + the vite
 // bundler.
-import { parseNpy } from "../../transforms/parse-npy.ts";
+//
 // The `.npy` → DecodedImage map lives in its own leaf module so the decode
 // worker can import it without dragging this registry into the worker bundle;
-// it is re-exported here so the public decoder surface is unchanged.
+// it is re-exported here so the public decoder surface is unchanged. `.npz`
+// members map through it on the main thread (the archive is already inflated
+// there); a raw `.npy` routes through the pool (`decoders/npy-decode.ts`).
 import { npyArrayToDecoded } from "./decoders/npy-image.ts";
+import { decodeNpyBytes } from "./decoders/npy-decode.ts";
 import type { DeepFlattenController } from "../definition/content.ts";
 
 export { npyArrayToDecoded } from "./decoders/npy-image.ts";
@@ -60,11 +63,11 @@ export type {
 } from "../definition/content.ts";
 // The EXR slot is the worker-backed dispatcher (`decoders/exr-decode.ts`): it
 // runs the FULL vendored decoder (PIZ/PXR24/B44/DWA/… — see
-// `decoders/vendor/PROVENANCE.md`) OFF the main thread in a persistent inline
-// Web Worker, falling back to the same decoder on the main thread (and, last,
+// `decoders/vendor/PROVENANCE.md`) OFF the main thread in the shared decode
+// pool, falling back to the same decoder on the main thread (and, last,
 // to the pure-TS `decoders/exr.ts` reader for NONE/ZIP/ZIPS) when a Worker is
-// unavailable. The dispatcher's eager module graph is DOM-free (the worker is
-// loaded lazily via `?worker&inline`), so the node-test import stays clean.
+// unavailable. The dispatcher's eager module graph is DOM-free (the pool loads
+// the worker lazily via `?worker&inline`), so the node-test import stays clean.
 import { decodeExr } from "./decoders/exr-decode.ts";
 // The gain-map parsers/reconstruction are PURE and DOM-free (byte-walking +
 // float math), so this static import keeps the node-test module graph clean.
@@ -322,8 +325,7 @@ export function sniffFormat(src: ImageSource): ImageFormat {
 // ---------------------------------------------------------------------------
 
 async function decodeNpy(src: ImageSource): Promise<DecodedImage> {
-  const bytes = requireBytes(src, "npy");
-  return npyArrayToDecoded(parseNpy(bytes));
+  return decodeNpyBytes(requireBytes(src, "npy"));
 }
 
 async function decodeNpz(src: ImageSource): Promise<DecodedImage> {
