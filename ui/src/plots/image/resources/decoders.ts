@@ -44,8 +44,14 @@
 // and the node-test import — stays DOM-free. `.ts` extensions are required for
 // Node's resolver and accepted by tsc (`allowImportingTsExtensions`) + the vite
 // bundler.
-import { parseNpy, type NpyArray } from "../../transforms/parse-npy.ts";
+import { parseNpy } from "../../transforms/parse-npy.ts";
+// The `.npy` → DecodedImage map lives in its own leaf module so the decode
+// worker can import it without dragging this registry into the worker bundle;
+// it is re-exported here so the public decoder surface is unchanged.
+import { npyArrayToDecoded } from "./decoders/npy-image.ts";
 import type { DeepFlattenController } from "../definition/content.ts";
+
+export { npyArrayToDecoded } from "./decoders/npy-image.ts";
 
 export type {
   DeepFlattenController,
@@ -314,41 +320,6 @@ export function sniffFormat(src: ImageSource): ImageFormat {
 // ---------------------------------------------------------------------------
 // Raw-buffer decode: `.npy` / `.npz` → DecodedImage (pure, unit-tested).
 // ---------------------------------------------------------------------------
-
-/** True when a numpy descr string names a uint8/int8/bool (single-byte) dtype. */
-function isU8Dtype(dtype: string): boolean {
-  const kind = dtype[1]; // '<' | '>' | '|' prefix, then kind char
-  const itemsize = dtype.slice(2) || "1";
-  return (kind === "u" || kind === "i" || kind === "b") && itemsize === "1";
-}
-
-/**
- * Map a parsed numpy array (`[H,W]` grayscale or `[H,W,C]`) to the canonical
- * {@link DecodedImage}. `uint8`/`int8`/`bool` → `u8`; everything else (floats,
- * and wider integers, which `parseNpy` already coerced to `Float64`) → `f32`.
- */
-export function npyArrayToDecoded(npy: NpyArray): DecodedImage {
-  const { shape, dtype, data } = npy;
-  if (shape.length !== 2 && shape.length !== 3) {
-    throw new Error(
-      `cairn-plot decodeImage: expected a 2D [H,W] or 3D [H,W,C] array, got shape [${shape.join(
-        ", ",
-      )}]`,
-    );
-  }
-  const height = shape[0]!;
-  const width = shape[1]!;
-  const channels = shape.length === 3 ? shape[2]! : 1;
-
-  if (isU8Dtype(dtype)) {
-    return { kind: "u8", data: Uint8ClampedArray.from(data), width, height };
-  }
-  // Floats (and any other numeric dtype `parseNpy` coerced to Float64) feed the
-  // HDR/float path. `parseNpy` always widens to Float64, so numpy `.npy` arrays
-  // are always `precision:"f32"` here; emitting `float16` arrays as `"f16-bits"`
-  // is a deferred follow-up (needs a raw-half path in `parseNpy` — see P1 note).
-  return { kind: "f32", data: Float32Array.from(data), width, height, channels, precision: "f32" };
-}
 
 async function decodeNpy(src: ImageSource): Promise<DecodedImage> {
   const bytes = requireBytes(src, "npy");

@@ -41,7 +41,7 @@ import type {
   ExrImagePayload,
   ExrWorkerRequest,
   ExrWorkerResponse,
-} from "./exr-worker.ts";
+} from "./decode-worker.ts";
 
 // A decode should never hang the queue; cap it generously (large DWA/PIZ frames
 // can take a while, but not this long). Deep re-flatten (dense files re-decode)
@@ -99,7 +99,7 @@ function getWorker(): Promise<Worker> {
       // Vite `?worker&inline`: the worker + its whole module graph ship as a
       // self-contained inline blob (no separate file / CDN). Dynamic import so
       // the blob is only realized on the first EXR decode.
-      const mod = await import("./exr-worker.ts?worker&inline");
+      const mod = await import("./decode-worker.ts?worker&inline");
       const worker = new mod.default();
       worker.addEventListener("message", onWorkerMessage as EventListener);
       worker.addEventListener("error", () => {

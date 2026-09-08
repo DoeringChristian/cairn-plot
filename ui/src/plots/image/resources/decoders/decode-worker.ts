@@ -1,9 +1,14 @@
 /**
- * `image/decoders/exr-worker.ts` — the Web Worker entry that runs the
- * vendored EXR decoder OFF the main thread. Imported by the dispatcher
- * (`exr-decode.ts`) via Vite's `?worker&inline` so the whole worker module
- * graph (this file + `exr-full.ts` + `vendor/exr-loader.js` + `fflate`) is
- * embedded as a self-contained inline blob — no separate asset, no CDN.
+ * `image/decoders/decode-worker.ts` — the ONE Web Worker entry behind the decode
+ * pool. It runs the vendored EXR decoder AND the `.npy` → image map OFF the main
+ * thread. Imported (once, lazily) by the pool shell (`decode-pool.ts`) via Vite's
+ * `?worker&inline` so the whole worker module graph (this file + `exr-full.ts` +
+ * `vendor/exr-loader.js` + `fflate` + `parse-npy.ts`) is embedded as a
+ * self-contained inline blob — no separate asset, no CDN. One module, so N pool
+ * workers share ONE inlined blob instead of one blob per format.
+ *
+ * Nothing here may import `../decoders.ts` at RUNTIME: that registry pulls the
+ * browser-native decode paths and would bloat (and DOM-bind) the worker bundle.
  *
  * Decode is WASM-first (OpenEXR compiled to wasm, inline base64) with the
  * vendored TS decoder as the fallback — see `exr-wasm.ts`. The WASM decoder is
@@ -23,11 +28,15 @@
  *   ← { id, kind:"openDeep", buffer }                                (transferred in)
  *   ← { id, kind:"flattenDeep", handle, zClip }
  *   ← { id, kind:"freeDeep", handle }
+ *   ← { id, kind:"parseNpy", buffer }                                (transferred in)
  *   → { id, ok:true, data, width, height, channels, precision, deep? } (transferred out)
+ *   → { id, ok:true, npy: NpyImagePayload }                          (transferred out)
  *   → { id, ok:true, freed:true }                                    (freeDeep ack)
  *   → { id, ok:false, error }
  */
 import type { Precision } from "../../runtime/half.ts";
+import { parseNpy } from "../../../transforms/parse-npy.ts";
+import { npyArrayToDecoded } from "./npy-image.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import { loadExrDecoder, type DecodedImage } from "./wasm-inline/wasm-exr-inline.ts";
 
@@ -45,7 +54,8 @@ export type ExrWorkerRequest =
   | { id: number; kind: "flattenDeep"; handle: number; zNear: number; zFar: number }
   | { id: number; kind: "deepGpuCsr"; handle: number }
   | { id: number; kind: "deepZRange"; handle: number; x0: number; y0: number; x1: number; y1: number }
-  | { id: number; kind: "freeDeep"; handle: number };
+  | { id: number; kind: "freeDeep"; handle: number }
+  | { id: number; kind: "parseNpy"; buffer: ArrayBuffer };
 
 /** A flat image payload shared by decode / openDeep / flattenDeep replies. */
 export interface ExrImagePayload {
@@ -55,6 +65,17 @@ export interface ExrImagePayload {
   channels: number;
   /** How to reinterpret `data`: `"f16-bits"` → Uint16Array, `"f32"` → Float32Array. */
   precision: Precision;
+}
+
+/** A decoded `.npy` image payload (`data` is transferred, never copied). */
+export interface NpyImagePayload {
+  /** `"u8"` → Uint8ClampedArray bytes (RGBA-agnostic), `"f32"` → Float32Array. */
+  kind: "u8" | "f32";
+  data: ArrayBuffer;
+  width: number;
+  height: number;
+  channels: number;
+  precision: "f32";
 }
 
 /** Z-sorted deep samples for GPU upload (transferable buffers). */
@@ -75,6 +96,7 @@ export type ExrWorkerResponse =
       /** Present when the source was a live-flatten DEEP open. */
       deep?: { handle: number; zMin: number; zMax: number };
     })
+  | { id: number; ok: true; npy: NpyImagePayload }
   | { id: number; ok: true; gpuCsr: ExrGpuCsrPayload }
   | { id: number; ok: true; zRange: { zMin: number; zMax: number; count: number } }
   | { id: number; ok: true; freed: true }
@@ -111,6 +133,30 @@ function fail(id: number, err: unknown): void {
 async function handle(req: ExrWorkerRequest): Promise<void> {
   const { id } = req;
   const kind = req.kind ?? "decode";
+
+  if (kind === "parseNpy") {
+    const { buffer } = req as Extract<ExrWorkerRequest, { kind: "parseNpy" }>;
+    // `u8` here is always a `Uint8ClampedArray` (never `ImageData`):
+    // `npyArrayToDecoded` builds it with `Uint8ClampedArray.from`.
+    const img = npyArrayToDecoded(parseNpy(buffer));
+    const data = (img.data as Uint8ClampedArray | Float32Array).buffer as ArrayBuffer;
+    ctx.postMessage(
+      {
+        id,
+        ok: true,
+        npy: {
+          kind: img.kind,
+          data,
+          width: img.width,
+          height: img.height,
+          channels: img.kind === "f32" ? img.channels : 1,
+          precision: "f32",
+        },
+      },
+      [data],
+    );
+    return;
+  }
 
   if (kind === "flattenDeep") {
     const { handle: h, zNear, zFar } = req as Extract<ExrWorkerRequest, { kind: "flattenDeep" }>;
