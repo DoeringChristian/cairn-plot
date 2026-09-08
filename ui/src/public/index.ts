@@ -1,4 +1,4 @@
-export { PlotHost, type PlotHostProps } from "./PlotHost.tsx";
+export { PlotHost, type PlotHostProps, type PlotSizing } from "./PlotHost.tsx";
 export { mountPlot, type MountedPlot } from "./mountPlot.tsx";
 export { createEndpointDataSource } from "../resources/data/data-source.ts";
 export type { DataSource } from "../resources/data/data-source.ts";

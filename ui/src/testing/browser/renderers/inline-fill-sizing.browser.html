@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>inline fill sizing harness</title>
+    <link rel="stylesheet" href="./harness-style.css" />
+    <!-- Opt into the DEFAULT `npm run test:harness` run: it mounts, measures
+         and settles #status headlessly with no gestures at all. -->
+    <meta name="cairn-harness" data-cairn-harness="self-driving" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* The CARD shape the bug is about: a fixed-height flex column with a
+         header sibling, leaving exactly 180px for the plot. */
+      .card-shell {
+        display: flex;
+        flex-direction: column;
+        height: 220px;
+        width: 420px;
+        background: #222;
+        margin-bottom: 16px;
+      }
+      .card-header { height: 40px; flex: none; background: #333; }
+      /* The card's plot cell: a DEFINITE 220 - 40 = 180px flex cell. */
+      .card-body { flex: 1 1 0; min-height: 0; }
+    </style>
+  </head>
+  <body>
+    <h1>PlotHost — inline chart FILL sizing harness</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div class="card-shell"><div class="card-header">fill</div><div class="card-body" id="mount-fill"></div></div>
+    <div class="card-shell"><div class="card-header">auto</div><div class="card-body" id="mount-auto"></div></div>
+    <script type="module" src="./inline-fill-sizing.browser.bundle.js"></script>
+  </body>
+</html>

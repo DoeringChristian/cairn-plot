@@ -258,6 +258,26 @@ const dataSource = createEndpointDataSource(artifactUrl);
 <PlotHost spec={spec} dataSource={dataSource} />;
 ```
 
+`sizing` (`"auto" | "fill"`, default `"auto"`) says who owns the height. Leave it
+alone for a standalone page: chart leaves then use their intrinsic standalone
+height (400px) and the mounted content height is published to an embedding host
+as a `cairn:resize` message. Pass `sizing="fill"` whenever the HOST already
+supplies the height — a fixed-height card, a dashboard cell, any definite-height
+flex child. The surface then fills that box (`height:100%`, a shrinkable flex
+column), chart leaves fill the surface instead of overflowing it with their
+400px default, and no `cairn:resize` is posted, because a host that sized the box
+is not asking the plot how tall it would like to be.
+
+```tsx
+<div className="flex h-64 flex-col">
+  <header>…</header>
+  {/* the definite-height cell the plot fills */}
+  <div className="flex-1 min-h-0">
+    <PlotHost spec={spec} dataSource={dataSource} sizing="fill" className="" />
+  </div>
+</div>
+```
+
 The imperative API mounts the same host and adds lifecycle plus optional runtime
 session import/export:
 
