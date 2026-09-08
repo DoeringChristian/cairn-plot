@@ -1,0 +1,210 @@
+/**
+ * `image/decoders/decode-pool-core.ts` — the decode worker pool SCHEDULER.
+ *
+ * Pure: no Worker, no DOM. The browser shell (`decode-pool.ts`) supplies
+ * `spawn` and forwards worker messages/errors here; node tests drive it with
+ * fake workers. Policy (spec §5.2):
+ *   - a non-affinity job goes to an idle worker (spawning one while
+ *     `spawned < size`), else waits; waiting jobs are served most-recent-first;
+ *   - an `affinity` job posts to its worker immediately (deep handles live in
+ *     one worker's wasm heap);
+ *   - abort before dispatch dequeues; abort after dispatch rejects now and drops
+ *     the late reply — wasm cannot be interrupted, the worker is kept;
+ *   - a timeout or error terminates ONLY that worker (its dispatched jobs
+ *     reject); the slot respawns on next use; other workers and the shared queue
+ *     are untouched.
+ */
+export interface PoolWorker {
+  post(msg: unknown, transfer: Transferable[]): void;
+  terminate(): void;
+}
+export interface PoolOptions {
+  size: number;
+  spawn(index: number): PoolWorker;
+  timeoutMs?: number;
+}
+export interface PoolJob {
+  make(id: number): { id: number };
+  transfer?: Transferable[];
+  /** Worker index a deep handle lives in: post there, never elsewhere. */
+  affinity?: number;
+  signal?: AbortSignal;
+  /** Per-job override of the pool's timeout. */
+  timeoutMs?: number;
+}
+export interface PoolReply { id: number; ok?: boolean; error?: string }
+export interface PoolStats { size: number; spawned: number; completed: number[]; queued: number }
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+interface Queued { job: PoolJob; resolve: (v: { result: never; worker: number }) => void; reject: (e: Error) => void; onAbort?: () => void }
+interface Dispatched { worker: number; resolve: (v: { result: never; worker: number }) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; dropped: boolean; holdsBusy: boolean; onAbort?: () => void }
+
+export class DecodePool {
+  private size: number;
+  private readonly spawn: (index: number) => PoolWorker;
+  private readonly timeoutMs: number;
+  private readonly slots: (PoolWorker | null)[] = [];
+  private readonly busy: boolean[] = [];
+  private readonly completed: number[] = [];
+  private readonly queue: Queued[] = [];
+  private readonly dispatched = new Map<number, Dispatched>();
+  private nextId = 1;
+  private disposed = false;
+
+  constructor(opts: PoolOptions) {
+    this.size = Math.max(1, opts.size | 0);
+    this.spawn = opts.spawn;
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  run<T extends PoolReply>(job: PoolJob): Promise<{ result: T; worker: number }> {
+    const promise = new Promise<{ result: T; worker: number }>((resolve, reject) => {
+      if (this.disposed) return reject(new Error("cairn-plot decode pool: disposed"));
+      if (job.signal?.aborted) return reject(abortError(job.signal));
+      if (job.affinity !== undefined) {
+        if (!this.slots[job.affinity]) {
+          return reject(new Error("cairn-plot decode pool: the worker holding this deep handle is gone"));
+        }
+        this.dispatch(job.affinity, { job, resolve: resolve as never, reject });
+        return;
+      }
+      const idle = this.idleSlot();
+      if (idle !== -1) {
+        this.dispatch(idle, { job, resolve: resolve as never, reject });
+        return;
+      }
+      const q: Queued = { job, resolve: resolve as never, reject };
+      if (job.signal) {
+        q.onAbort = () => {
+          const i = this.queue.indexOf(q);
+          if (i !== -1) this.queue.splice(i, 1);
+          reject(abortError(job.signal!));
+        };
+        job.signal.addEventListener("abort", q.onAbort, { once: true });
+      }
+      this.queue.push(q);
+    });
+    // A job can reject asynchronously (timer, worker error) before the caller
+    // awaits it — this guard registers a reaction immediately so Node never
+    // flags it as an unhandled rejection; it does not consume the rejection
+    // for real callers, who still see it via their own await/.then/.catch.
+    promise.catch(() => {});
+    return promise;
+  }
+
+  onMessage(worker: number, msg: PoolReply): void {
+    const d = this.dispatched.get(msg.id);
+    if (!d || d.worker !== worker) return;
+    this.dispatched.delete(msg.id);
+    clearTimeout(d.timer);
+    this.completed[worker] = (this.completed[worker] ?? 0) + 1;
+    this.markIdle(worker);
+    if (!d.dropped) {
+      if (msg.ok === false) d.reject(new Error(msg.error ?? "cairn-plot decode pool: worker error"));
+      else d.resolve({ result: msg as never, worker });
+    }
+    this.pump();
+  }
+
+  onWorkerError(worker: number, err: Error): void {
+    this.terminate(worker, err);
+    this.pump();
+  }
+
+  resize(size: number): void { this.size = Math.max(1, size | 0); }
+
+  stats(): PoolStats {
+    return {
+      size: this.size,
+      spawned: this.slots.filter((s) => s !== null).length,
+      completed: this.slots.map((_, i) => this.completed[i] ?? 0),
+      queued: this.queue.length,
+    };
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    const err = new Error("cairn-plot decode pool: disposed");
+    for (let i = 0; i < this.slots.length; i++) this.terminate(i, err);
+    for (const q of this.queue.splice(0)) { q.onAbort && q.job.signal?.removeEventListener("abort", q.onAbort); q.reject(err); }
+  }
+
+  // ---- internals ----
+
+  /** Index of an idle spawned worker, or a fresh slot while under `size`, else -1. */
+  private idleSlot(): number {
+    for (let i = 0; i < this.slots.length; i++) if (this.slots[i] && !this.busy[i]) return i;
+    if (this.slots.filter((s) => s !== null).length < this.size) {
+      const free = this.slots.indexOf(null);
+      return free !== -1 ? free : this.slots.length;
+    }
+    return -1;
+  }
+
+  private ensure(index: number): PoolWorker {
+    let w = this.slots[index];
+    if (!w) {
+      w = this.spawn(index);
+      this.slots[index] = w;
+      this.busy[index] = false;
+      this.completed[index] = this.completed[index] ?? 0;
+    }
+    return w;
+  }
+
+  private dispatch(worker: number, q: Queued): void {
+    const w = this.ensure(worker);
+    const id = this.nextId++;
+    const d: Dispatched = {
+      worker, resolve: q.resolve, reject: q.reject, dropped: false, holdsBusy: q.job.affinity === undefined,
+      timer: setTimeout(() => {
+        this.terminate(worker, new Error("cairn-plot decode pool: decode timed out"));
+        this.pump();
+      }, q.job.timeoutMs ?? this.timeoutMs),
+    };
+    if (q.job.signal) {
+      d.onAbort = () => { if (this.dispatched.has(id)) { d.dropped = true; d.reject(abortError(q.job.signal!)); } };
+      q.job.signal.addEventListener("abort", d.onAbort, { once: true });
+    }
+    this.dispatched.set(id, d);
+    if (q.job.affinity === undefined) this.busy[worker] = true;
+    w.post(q.job.make(id), q.job.transfer ?? []);
+  }
+
+  /** A worker is busy while a non-affinity job is outstanding on it. */
+  private markIdle(worker: number): void {
+    let busy = false;
+    for (const d of this.dispatched.values()) if (d.worker === worker && d.holdsBusy) { busy = true; break; }
+    this.busy[worker] = busy;
+  }
+
+  private terminate(worker: number, err: Error): void {
+    const w = this.slots[worker];
+    if (!w) return;
+    this.slots[worker] = null;
+    this.busy[worker] = false;
+    w.terminate();
+    for (const [id, d] of this.dispatched) {
+      if (d.worker !== worker) continue;
+      this.dispatched.delete(id);
+      clearTimeout(d.timer);
+      if (!d.dropped) d.reject(err);
+    }
+  }
+
+  private pump(): void {
+    while (this.queue.length) {
+      const idle = this.idleSlot();
+      if (idle === -1) return;
+      const q = this.queue.pop()!;
+      if (q.onAbort) q.job.signal?.removeEventListener("abort", q.onAbort);
+      this.dispatch(idle, q);
+    }
+  }
+}
+
+function abortError(signal: AbortSignal): Error {
+  const r = signal.reason;
+  return r instanceof Error ? r : new Error(typeof r === "string" ? r : "cairn-plot decode pool: aborted");
+}
