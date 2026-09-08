@@ -112,8 +112,9 @@ test("abort before dispatch dequeues and rejects with the reason", async () => {
   const ctl = new AbortController();
   const b = pool.run(job("b", { signal: ctl.signal }));
   ctl.abort(new Error("gone"));
-  // An Error abort reason is thrown as-is (not wrapped in a DecodePoolError).
-  await assert.rejects(b, (err) => !(err instanceof DecodePoolError) && /gone/.test((err as Error).message));
+  // An Error abort reason becomes a DecodePoolError coded "aborted" (never inline-retryable),
+  // carrying the caller's reason as `cause`.
+  await assert.rejects(b, (err) => err instanceof DecodePoolError && err.code === "aborted" && /gone/.test(err.message) && err.cause instanceof Error);
   assert.equal(pool.stats().queued, 0);
   pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true }); await a;
   assert.equal(workers[0]!.posts.length, 1);
@@ -133,7 +134,7 @@ test("abort after dispatch rejects now, drops the late result, keeps the worker"
   const a = pool.run(job("a", { signal: ctl.signal }));
   const b = pool.run(job("b"));
   ctl.abort(new Error("gone"));
-  await assert.rejects(a, (err) => !(err instanceof DecodePoolError) && /gone/.test((err as Error).message));
+  await assert.rejects(a, (err) => err instanceof DecodePoolError && err.code === "aborted" && /gone/.test(err.message));
   assert.equal(workers[0]!.terminated, false);
   pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true }); // late result
   await tick();

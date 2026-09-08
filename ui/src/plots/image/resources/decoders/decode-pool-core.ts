@@ -63,6 +63,8 @@ export type DecodePoolErrorCode = "timeout" | "worker-error" | "reply" | "affini
 
 export class DecodePoolError extends Error {
   readonly code: DecodePoolErrorCode;
+  /** The caller's abort reason for `"aborted"` errors (the lib target predates `Error.cause`). */
+  cause?: unknown;
   constructor(message: string, code: DecodePoolErrorCode) {
     super(message);
     this.name = "DecodePoolError";
@@ -274,8 +276,17 @@ function detachAbort(d: Dispatched): void {
   if (d.onAbort) d.signal?.removeEventListener("abort", d.onAbort);
 }
 
-function abortError(signal: AbortSignal): Error {
+/**
+ * Every abort rejects with a `DecodePoolError` coded `"aborted"` so callers'
+ * retry gates (`isRetryableInline`) can never mistake it for an error that
+ * happened before the pool was reached. The caller's own reason survives as
+ * `cause` (and as the message when it is an Error or a string).
+ */
+function abortError(signal: AbortSignal): DecodePoolError {
   const r = signal.reason;
-  if (r instanceof Error) return r; // caller's own reason wins, unwrapped
-  return new DecodePoolError(typeof r === "string" ? r : "cairn-plot decode pool: aborted", "aborted");
+  const message =
+    r instanceof Error ? r.message : typeof r === "string" ? r : "cairn-plot decode pool: aborted";
+  const err = new DecodePoolError(message, "aborted");
+  err.cause = r;
+  return err;
 }
