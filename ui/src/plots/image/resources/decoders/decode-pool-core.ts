@@ -38,7 +38,7 @@ export interface PoolStats { size: number; spawned: number; completed: number[];
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 interface Queued { job: PoolJob; resolve: (v: { result: never; worker: number }) => void; reject: (e: Error) => void; onAbort?: () => void }
-interface Dispatched { worker: number; resolve: (v: { result: never; worker: number }) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; dropped: boolean; holdsBusy: boolean; onAbort?: () => void }
+interface Dispatched { worker: number; resolve: (v: { result: never; worker: number }) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; dropped: boolean; holdsBusy: boolean; signal?: AbortSignal; onAbort?: () => void }
 
 export class DecodePool {
   private size: number;
@@ -98,6 +98,7 @@ export class DecodePool {
     if (!d || d.worker !== worker) return;
     this.dispatched.delete(msg.id);
     clearTimeout(d.timer);
+    detachAbort(d);
     this.completed[worker] = (this.completed[worker] ?? 0) + 1;
     this.markIdle(worker);
     if (!d.dropped) {
@@ -164,6 +165,7 @@ export class DecodePool {
       }, q.job.timeoutMs ?? this.timeoutMs),
     };
     if (q.job.signal) {
+      d.signal = q.job.signal;
       d.onAbort = () => { if (this.dispatched.has(id)) { d.dropped = true; d.reject(abortError(q.job.signal!)); } };
       q.job.signal.addEventListener("abort", d.onAbort, { once: true });
     }
@@ -189,6 +191,7 @@ export class DecodePool {
       if (d.worker !== worker) continue;
       this.dispatched.delete(id);
       clearTimeout(d.timer);
+      detachAbort(d);
       if (!d.dropped) d.reject(err);
     }
   }
@@ -202,6 +205,11 @@ export class DecodePool {
       this.dispatch(idle, q);
     }
   }
+}
+
+/** Detach a dispatched job's abort listener on every settle path (not just abort itself). */
+function detachAbort(d: Dispatched): void {
+  if (d.onAbort) d.signal?.removeEventListener("abort", d.onAbort);
 }
 
 function abortError(signal: AbortSignal): Error {

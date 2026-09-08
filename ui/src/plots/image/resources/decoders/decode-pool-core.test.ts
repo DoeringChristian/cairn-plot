@@ -131,3 +131,25 @@ test("dispose terminates every worker and rejects queued and dispatched jobs", a
   await assert.rejects(a, /disposed/); await assert.rejects(b, /disposed/);
   assert.equal(workers[0]!.terminated, true);
 });
+
+test("dispatch-stage abort listener is removed on settle, not just on abort", async () => {
+  const { pool, workers } = makePool(1);
+  const ctl = new AbortController();
+  let adds = 0;
+  let removes = 0;
+  const rawAdd = ctl.signal.addEventListener.bind(ctl.signal);
+  const rawRemove = ctl.signal.removeEventListener.bind(ctl.signal);
+  ctl.signal.addEventListener = ((...args: Parameters<typeof rawAdd>) => { adds++; return rawAdd(...args); }) as typeof rawAdd;
+  ctl.signal.removeEventListener = ((...args: Parameters<typeof rawRemove>) => { removes++; return rawRemove(...args); }) as typeof rawRemove;
+
+  const a = pool.run(job("a", { signal: ctl.signal }));
+  pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true });
+  await a;
+  const b = pool.run(job("b", { signal: ctl.signal }));
+  pool.onMessage(0, { id: workers[0]!.posts[1]!.id, ok: true });
+  await b;
+
+  assert.equal(pool.stats().queued, 0);
+  assert.equal(adds, removes); // every dispatch-stage listener registered on settle was also removed
+  assert.doesNotThrow(() => ctl.abort(new Error("late, nobody is listening any more")));
+});
