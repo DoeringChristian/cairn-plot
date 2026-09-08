@@ -102,3 +102,25 @@ test("isWasmUnsupportedError recognizes the typed fallback codes only", () => {
   assert.equal(isWasmUnsupportedError(new Error("boom")), false);
   assert.equal(isWasmUnsupportedError(null), false);
 });
+
+// ---------------------------------------------------------------------------
+// 5. A truncated header must reject fast on the full chain, not hang: the real
+// WASM decoder rejects the malformed bytes (untyped error → fallback), and the
+// TS fallback (`exr-full.ts`, see the bound-scan fix in `vendor/exr-loader.js`)
+// must now throw promptly too instead of spinning forever in
+// `parseNullTerminatedString`. Race against a timer so a regression fails the
+// test instead of hanging the runner.
+// ---------------------------------------------------------------------------
+test("decodeExrPreferWasm on a truncated header rejects within 2s instead of hanging", async () => {
+  const truncated = new Uint8Array([0x76, 0x2f, 0x31, 0x01, 0, 0, 0, 0]).buffer;
+  const timeout = new Promise<never>((_resolve, reject) =>
+    setTimeout(
+      () => reject(new Error("TIMEOUT: decodeExrPreferWasm did not return within 2000ms")),
+      2000,
+    ).unref(),
+  );
+  await assert.rejects(
+    Promise.race([decodeExrPreferWasm(truncated), timeout]),
+    /truncated|unterminated/i,
+  );
+});

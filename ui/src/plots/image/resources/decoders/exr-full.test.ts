@@ -322,3 +322,31 @@ test("HALF Y, NONE: single channel decodes to channels=1", () => {
 test("decodeExrFull rejects a url without bytes", async () => {
   await assert.rejects(decodeExrFull({ url: "https://x/y.exr" }), /needs raw bytes/);
 });
+
+// ---------------------------------------------------------------------------
+// A truncated header (magic + version, no attribute data, no null terminator)
+// must throw promptly, not hang. `parseNullTerminatedString`
+// (`vendor/exr-loader.js`) used to scan for a null byte with
+// `while ( uintBuffer[ offset.value + endOffset ] != 0 )`: past the end of the
+// buffer that index read is `undefined`, and `undefined != 0` is always true,
+// so a truncated file (missing terminator) spun the loop forever. Race against
+// a timer so a regression fails the test instead of hanging the runner.
+// ---------------------------------------------------------------------------
+test("decodeExrBuffer on a truncated header rejects within 2s instead of hanging", async () => {
+  const truncated = new Uint8Array([0x76, 0x2f, 0x31, 0x01, 0, 0, 0, 0]).buffer;
+  const decode = new Promise<never>((_resolve, reject) => {
+    try {
+      decodeExrBuffer(truncated);
+      reject(new Error("expected decodeExrBuffer to throw on a truncated header"));
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+  const timeout = new Promise<never>((_resolve, reject) =>
+    setTimeout(
+      () => reject(new Error("TIMEOUT: decodeExrBuffer did not return within 2000ms")),
+      2000,
+    ).unref(),
+  );
+  await assert.rejects(Promise.race([decode, timeout]), /truncated|unterminated/i);
+});

@@ -71,3 +71,9 @@ no bare RGB/Y). All selected channels must share one pixel type (the decode
 getter is global). Grep for `channelSelection` when re-vendoring; the block is
 marked `cairn-plot adaptation` inline. Driven by `../exr-full.ts` via
 `describeExr` + `channel-groups.ts`.
+
+`parseNullTerminatedString` also carries a cairn-plot adaptation: the scan for
+the terminating null byte is bounded by the buffer length and throws
+`THREE.EXRLoader: unterminated string in header (truncated file)` instead of
+looping forever when a truncated header omits the terminator (upstream reads
+past the end return `undefined`, and `undefined != 0` never ends the loop).

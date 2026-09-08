@@ -2001,9 +2001,18 @@ class EXRLoader extends DataTextureLoader {
 			const uintBuffer = new Uint8Array( buffer );
 			let endOffset = 0;
 
+			// cairn-plot adaptation: bound the scan by the buffer length. Upstream reads
+			// past the end return `undefined`, and `undefined != 0` is true, so a truncated
+			// header (missing terminator) spun this loop forever instead of failing fast.
 			while ( uintBuffer[ offset.value + endOffset ] != 0 ) {
 
 				endOffset += 1;
+
+				if ( offset.value + endOffset >= uintBuffer.length ) {
+
+					throw new Error( 'THREE.EXRLoader: unterminated string in header (truncated file)' );
+
+				}
 
 			}
 
