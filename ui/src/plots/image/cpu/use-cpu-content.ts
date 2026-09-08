@@ -101,10 +101,14 @@ export interface CpuContent {
   /** Bumps whenever `source` changes — the paint's trigger. */
   version: number;
   dims: { w: number; h: number } | null;
-  status: "ready" | "loading" | "empty";
+  status: "ready" | "loading" | "empty" | "error";
   /** Placeholder text for the shell while `status === "loading"` (absent for
    *  the pipelines that never showed a placeholder). */
   statusText?: string;
+  /** Why the content could not be produced, when `status === "error"`. A
+   *  decode that yields nothing is a VISIBLE failure — never an eternal
+   *  "loading" placeholder over a checkerboard. */
+  error?: string;
 }
 
 const DEFAULT_PROCESSING: ImageProcessing = {
@@ -210,6 +214,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
   const [frame, setFrame] = useState<Frame | null>(null);
   const [version, setVersion] = useState(0);
   const [loading, setLoading] = useState<{ key: string; text?: string } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const frameRef = useRef<Frame | null>(null);
 
   const commit = useCallback((key: string, source: PaintSource) => {
@@ -220,6 +225,7 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
     // pipeline whose result was already resident (that path commits a DIFFERENT
     // key), leaving "computing diff..." pulsing forever over a correct frame.
     setLoading(null);
+    setFailure(null);
     const current = frameRef.current;
     if (current && current.key === key && current.source === source) return;
     frameRef.current = { key, source };
@@ -251,16 +257,26 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
       let cancelled = false;
       const controller = new AbortController();
       setLoading((prev) => (prev && prev.key === key && prev.text === text ? prev : { key, text }));
+      setFailure(null);
       void (async () => {
         let produced: PaintSource | null = null;
+        let reason: string | null = null;
         try {
           produced = await produce(controller.signal);
         } catch (err) {
+          reason = err instanceof Error ? err.message : String(err);
           console.warn("cairn-plot: CPU image content failed", err);
         }
-        // A failed production leaves the pane on its previous frame with the
-        // placeholder up — exactly what the pre-viewport pane did.
-        if (cancelled || !produced) return;
+        if (cancelled) return;
+        // A production that yields nothing is a VISIBLE failure. Returning
+        // silently left the placeholder up forever over the checkerboard, which
+        // is exactly how a float compare that never decoded looked like a blank
+        // pane instead of an error.
+        if (!produced) {
+          setLoading(null);
+          setFailure(reason ?? `Could not decode the image content for ${key}.`);
+          return;
+        }
         commit(key, produced);
       })();
       return () => {
@@ -435,17 +451,20 @@ export function useCpuContent(input: CpuContentInput): CpuContent {
   return useMemo<CpuContent>(() => {
     const status: CpuContent["status"] = !hasContent
       ? "empty"
-      : loading
-        ? "loading"
-        : source
-          ? "ready"
-          : "loading";
+      : failure && !source
+        ? "error"
+        : loading
+          ? "loading"
+          : source
+            ? "ready"
+            : "loading";
     return {
       source,
       version,
       dims: source ? { w: source.width, h: source.height } : null,
       status,
       statusText: status === "loading" ? loading?.text : undefined,
+      error: status === "error" ? (failure ?? undefined) : undefined,
     };
-  }, [hasContent, loading, source, version]);
+  }, [failure, hasContent, loading, source, version]);
 }

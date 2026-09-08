@@ -1,7 +1,7 @@
 /**
  * Regression pin — the compare operands' F16-PIPELINE tag must survive packing.
  *
- * `plots/image/resources/comparison-resolve.ts`'s `decodedSource` converts a resolved compare frame
+ * `plots/image/resources/comparison-resolve.ts` used to convert a resolved compare frame
  * (`ResolvedFloatImage`) into the `ImageSource` the unified pane uploads. A
  * `"f16-bits"` payload is a `Uint16Array` of raw IEEE-754 binary16 BIT
  * PATTERNS; dropping the `precision` tag makes `decodedSourceToUpload` take
@@ -28,20 +28,23 @@ const comparisonResolve = readFileSync(
   "utf8",
 );
 
-test("frameToSource forwards the SELF-DESCRIBING pixels buffer", () => {
-  const fn = comparisonResolve.slice(
-    comparisonResolve.indexOf("function decodedSource"),
-    comparisonResolve.indexOf("function contentKey"),
-  );
-  assert.ok(fn.length > 0, "decodedSource must exist in the image comparison resolver");
+test("the compare resolver has NO second decoder — operands come from the ONE leaf resolver", () => {
   // The original bug (an optional side-channel `precision` tag dropped in
-  // transit) is now STRUCTURALLY impossible: the representation travels
-  // inside the `pixels` buffer object (image/pixel-buffer.ts). This pin
-  // guards that the operand packer forwards that buffer whole.
+  // transit) is now STRUCTURALLY impossible in the strongest way available:
+  // the compare path does not repack operands at all. Each operand is resolved
+  // by `resolveImageData` — the ONE image leaf resolver — and its `ImageSource`
+  // (whose `pixels` buffer is self-describing, image/pixel-buffer.ts) is
+  // forwarded whole. A private duplicate here is what dropped `precision`, and
+  // what ignored `data.format` so a float (.npy) compare never decoded.
   assert.match(
-    fn,
-    /pixels/,
-    "decodedSource must forward the self-describing `pixels` buffer — the " +
-      "representation must travel WITH the bytes (the 2^14 compare-exposure bug class)",
+    comparisonResolve,
+    /resolveImageData\(/,
+    "compare operands must be resolved through resolveImageData",
   );
+  for (const forbidden of ["function decodedSource", "parseNpy", "decodeImageSource", "resolveImageArtifacts"]) {
+    assert.ok(
+      !comparisonResolve.includes(forbidden),
+      `the compare resolver must not re-implement leaf decoding (found \`${forbidden}\`)`,
+    );
+  }
 });

@@ -78,6 +78,7 @@ import {
   DISPLAY_OPERATION_IDS,
   type DisplayCurveId,
 } from "../runtime/tonemap";
+import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
 import ImagePaneShell, {
   type EnlargeControl,
   type ImagePaneOverlaySpec,
@@ -231,8 +232,21 @@ function CpuPresentation({
   );
 }
 
-/** The centred status placeholder ("computing diff…" / "no image"). */
+/** The centred status placeholder ("computing diff…" / "no image"), or — when
+ *  the content pipeline failed outright — the ONE visible failure surface. A
+ *  decode that produced nothing used to leave an eternal pulse over the
+ *  checkerboard, indistinguishable from a slow load. */
 function CpuStatus({ content }: { content: CpuContent }) {
+  if (content.status === "error") {
+    return (
+      <div className="absolute inset-0" data-cpu-image-error="">
+        <PaneUnavailable
+          title="Image unavailable"
+          body={content.error ?? "The image content could not be decoded."}
+        />
+      </div>
+    );
+  }
   const text = content.status === "empty" ? "no image" : content.statusText;
   if (!text) return null;
   return (

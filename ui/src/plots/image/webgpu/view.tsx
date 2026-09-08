@@ -107,6 +107,7 @@ import type { DiffMetrics, ImageParams } from "./image-engine";
 // core-bundle guard is about core staying free of the ENGINE, not about the
 // addon avoiding a duplicate copy of the already-tiny CPU renderer.
 import ImagePaneShell from "../components/ImagePaneShell";
+import PaneUnavailable from "../../../primitives/components/PaneUnavailable";
 import { u8HistogramSource, floatHistogramSource } from "../components/image-histogram-source";
 import {
   depthHistogramFromWeights,
@@ -1030,6 +1031,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     return () => io.disconnect();
   }, []);
 
+  // ONE visible failure surface: a decode/upload that produced nothing for an
+  // operand is an ERROR the user must see, not a blank checkerboard.
+  const [operandError, setOperandError] = useState<string | null>(null);
+
   // -----------------------------------------------------------------------
   // HDR mode: decode/retain source, upload on identity change.
   // -----------------------------------------------------------------------
@@ -1341,7 +1346,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     }
     let cancelled = false;
     decodedSourceToUploadLease(b, key).then((owned) => {
-      if (!owned) return;
+      if (!owned) {
+        if (!cancelled) setOperandError(`Could not decode the comparison operand (${key}).`);
+        return;
+      }
+      setOperandError(null);
       if (cancelled) {
         owned.lease.release();
         return;
@@ -2413,6 +2422,13 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       ? { data: overlay, settings: overlaySettings }
       : undefined;
 
+  if (operandError) {
+    return (
+      <div className="relative h-full w-full" data-gpu-image-error="">
+        <PaneUnavailable title="Image unavailable" body={operandError} />
+      </div>
+    );
+  }
   return (
     <ImagePaneShell
       paneAttrs={{ "data-gpu-image-pane": "", "data-gpu-backend-ready": paneReady }}

@@ -45,10 +45,9 @@
  * Bounds: `DECODED_IMAGE_CACHE_MAX = 50` entries, evicted by dropping the
  * reference ONLY — never `close()`, because a mounted CPU pane or a GPU
  * upload lease may still be holding the bitmap (see `cpu/bitmap-cache.ts` for
- * the same rule). A total failure is negative-cached for `NEGATIVE_CACHE_MS`
- * so a broken URL on a page of cards is not retried on every render; the
- * negative entry is dropped the moment the URL decodes, and the in-flight map,
- * the failure map and the queue's refcounts all delete their keys at zero.
+ * the same rule). A failed decode resolves `null` EVERY time it is asked —
+ * there is no negative cache: a cached failure looks exactly like "still
+ * loading" to the pane, and hid the real error from the surface.
  */
 import { setCachedLoadedImageData } from "./cache.ts";
 import { DecodeCancelled, enqueueDecode, releaseDecode, retainDecode } from "./decode-queue.ts";
@@ -87,24 +86,15 @@ export interface DecodedImageDeps {
 }
 
 export const DECODED_IMAGE_CACHE_MAX = 50;
-const NEGATIVE_CACHE_MS = 5_000;
 
 // Never an `onEvict`: eviction drops the reference, it does NOT close the
 // bitmap a pane may still be painting.
 const entries = createLruMap<DecodedImage>(DECODED_IMAGE_CACHE_MAX);
 const inFlight = new Map<string, Promise<DecodedImage | null>>();
-/** url → the clock reading at which the decode failed outright. */
-const failures = new Map<string, number>();
 
 /** The resident entry for `url`, or null. Synchronous; never starts a decode. */
 export function peekDecodedImage(url: string): DecodedImage | null {
   return entries.get(url) ?? null;
-}
-
-/** Test-only: the number of URLs currently negative-cached (bounded by
- *  `DECODED_IMAGE_CACHE_MAX`, see `produce`). */
-export function negativeCacheSize(): number {
-  return failures.size;
 }
 
 /** Per-call options. `deps` exists for the tests; production callers pass at
@@ -117,8 +107,8 @@ export interface DecodedImageOptions {
 }
 
 /**
- * The one decode. Cached by URL, in-flight de-duplicated, negative-cached for
- * `NEGATIVE_CACHE_MS` on a total failure.
+ * The one decode. Cached by URL and in-flight de-duplicated. A total failure
+ * resolves `null` and is NOT cached — every ask retries.
  *
  * The call holds a decode-queue retain for as long as it wants the result;
  * aborting `options.signal` drops that hold and resolves the call with `null`
@@ -143,12 +133,6 @@ async function request(
     const resident = entries.get(url);
     if (resident) return resident;
     if (signal?.aborted) return null;
-
-    const failedAt = failures.get(url);
-    if (failedAt !== undefined) {
-      if (deps.now() - failedAt < NEGATIVE_CACHE_MS) return null;
-      failures.delete(url);
-    }
 
     const outcome = await join(url, deps, signal);
     if (outcome !== RETRY) return outcome;
@@ -203,27 +187,14 @@ async function produce(url: string, deps: DecodedImageDeps): Promise<DecodedImag
     decoded = await enqueueDecode(url, () => decodeOnce(url, deps));
   } catch (error) {
     // Cancellation propagates to the joiners, which decide (by whether THEY
-    // were aborted) between asking again and giving up. It is never a failure
-    // and is never negative-cached.
+    // were aborted) between asking again and giving up. It is never a failure.
     if (error instanceof DecodeCancelled) throw error;
     decoded = null;
   }
-  if (!decoded) {
-    failures.set(url, deps.now());
-    // Bounded, same size class as the entry LRU: an unbounded negative cache on
-    // a page hammering broken URLs would grow forever. `failures` is a plain
-    // `Map`, whose iteration order is insertion order, so the front of it IS
-    // the oldest entries — no separate LRU bookkeeping needed since nothing
-    // ever "touches" a negative entry the way a hit touches the entry LRU.
-    while (failures.size > DECODED_IMAGE_CACHE_MAX) {
-      const oldestUrl = failures.keys().next().value;
-      if (oldestUrl === undefined) break;
-      failures.delete(oldestUrl);
-    }
-    return null;
-  }
-  // Bounded: a URL that decodes keeps no negative entry.
-  failures.delete(url);
+  // A failed decode is NOT cached: the next ask retries. A silently-swallowed
+  // failure that stuck around for 5 s was indistinguishable from "still
+  // loading", and the pane it fed had nothing to report.
+  if (!decoded) return null;
   const entry = makeEntry(url, decoded, deps);
   entries.set(url, entry);
   return entry;
