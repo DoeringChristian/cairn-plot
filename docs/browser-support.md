@@ -268,9 +268,9 @@ OpenEXR sources are decoded **WASM-first** by the upstream **OpenEXR C++ library
 (v3.4.9 + Imath v3.2.2, with libdeflate v1.25 and OpenJPH 0.26.3 for HTJ2K),
 compiled to WebAssembly with Emscripten (single-threaded — no COOP/COEP needed —
 `-msimd128`, wasm exceptions) and shipped inline as base64 (no fetch, so it works
-on `file://` and under strict CSP). It runs inside the same persistent Web Worker
-that already handles EXR off the main thread, and is instantiated once per worker
-lifetime.
+on `file://` and under strict CSP). It runs inside each decode-pool worker
+(`decoders/decode-worker.ts`), instantiated once per worker lifetime, so N
+workers hold N WASM instances.
 
 Because it is the reference implementation, it decodes **literally every EXR**:
 

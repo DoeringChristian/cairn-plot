@@ -57,3 +57,13 @@ export function getDecodePool(): DecodePool {
 export function setDecodePoolSize(n: number): void {
   getDecodePool().resize(n);
 }
+
+/**
+ * TEST-ONLY seam: install a specific `DecodePool` (e.g. one built with a fake
+ * `spawn` and a short `timeoutMs`) so `getDecodePool()` returns it instead of
+ * the lazily-constructed default. Pass `null` to restore the default on next
+ * call to `getDecodePool()`. Never call this from application code.
+ */
+export function setDecodePoolForTests(p: DecodePool | null): void {
+  pool = p;
+}

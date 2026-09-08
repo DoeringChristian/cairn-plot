@@ -44,6 +44,47 @@ export interface PoolJob {
 export interface PoolReply { id: number; ok?: boolean; error?: string }
 export interface PoolStats { size: number; spawned: number; completed: number[]; queued: number }
 
+/**
+ * Every rejection the pool itself produces is a `DecodePoolError` carrying a
+ * `code` that says WHY:
+ *   - `"timeout"` — a dispatched job outran its timeout; the worker was killed.
+ *   - `"worker-error"` — the worker crashed, or the shell couldn't spawn/load
+ *     it (module-load failure forwarded via `onWorkerError`).
+ *   - `"reply"` — the worker replied `ok:false` (a decode-level failure).
+ *   - `"affinity"` — an affinity job is missing its `affinityEpoch`, or the
+ *     worker holding its deep handle is gone (crashed/timed out/never existed).
+ *   - `"disposed"` — the pool was disposed.
+ *   - `"aborted"` — the job's `AbortSignal` fired and its `reason` was not
+ *     itself an `Error` (an `Error` reason is thrown as-is, unwrapped).
+ * Callers use this to decide whether replaying the same decode inline on the
+ * main thread is safe: see `isRetryableInline` below.
+ */
+export type DecodePoolErrorCode = "timeout" | "worker-error" | "reply" | "affinity" | "disposed" | "aborted";
+
+export class DecodePoolError extends Error {
+  readonly code: DecodePoolErrorCode;
+  constructor(message: string, code: DecodePoolErrorCode) {
+    super(message);
+    this.name = "DecodePoolError";
+    this.code = code;
+  }
+}
+
+/**
+ * True only for pool failures safe to retry with the SAME decode run inline
+ * on the main thread: a worker that never ran the job (`"worker-error"`) or
+ * one that ran it and reported a decode-level failure (`"reply"`, which the
+ * inline path re-derives with a fresh, informative error for a bad file).
+ * False for `"timeout"` and `"aborted"` (the job may already be running / may
+ * have genuinely taken too long — replaying it inline can freeze the main
+ * thread), `"disposed"`, and `"affinity"`. A non-`DecodePoolError` (e.g. a
+ * shell exception thrown before the pool was even reached) is retryable.
+ */
+export function isRetryableInline(err: unknown): boolean {
+  if (err instanceof DecodePoolError) return err.code === "worker-error" || err.code === "reply";
+  return true;
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 type Settle = (v: { result: never; worker: number; epoch: number }) => void;
@@ -72,18 +113,19 @@ export class DecodePool {
 
   run<T extends PoolReply>(job: PoolJob): Promise<{ result: T; worker: number; epoch: number }> {
     const promise = new Promise<{ result: T; worker: number; epoch: number }>((resolve, reject) => {
-      if (this.disposed) return reject(new Error("cairn-plot decode pool: disposed"));
+      if (this.disposed) return reject(new DecodePoolError("cairn-plot decode pool: disposed", "disposed"));
       if (job.signal?.aborted) return reject(abortError(job.signal));
       if (job.affinity !== undefined) {
         if (job.affinityEpoch === undefined) {
-          return reject(new Error(
+          return reject(new DecodePoolError(
             "cairn-plot decode pool: an affinity job needs the affinityEpoch its run() returned",
+            "affinity",
           ));
         }
         // The slot may have been terminated and respawned; a fresh worker holds
         // none of the old worker's handles, so match the generation, not the index.
         if (!this.slots[job.affinity] || this.epochs[job.affinity] !== job.affinityEpoch) {
-          return reject(new Error("cairn-plot decode pool: the worker holding this deep handle is gone"));
+          return reject(new DecodePoolError("cairn-plot decode pool: the worker holding this deep handle is gone", "affinity"));
         }
         this.dispatch(job.affinity, { job, resolve: resolve as never, reject });
         return;
@@ -121,14 +163,14 @@ export class DecodePool {
     this.completed[worker] = (this.completed[worker] ?? 0) + 1;
     this.markIdle(worker);
     if (!d.dropped) {
-      if (msg.ok === false) d.reject(new Error(msg.error ?? "cairn-plot decode pool: worker error"));
+      if (msg.ok === false) d.reject(new DecodePoolError(msg.error ?? "cairn-plot decode pool: worker error", "reply"));
       else d.resolve({ result: msg as never, worker, epoch: d.epoch });
     }
     this.pump();
   }
 
   onWorkerError(worker: number, err: Error): void {
-    this.terminate(worker, err);
+    this.terminate(worker, new DecodePoolError(err.message, "worker-error"));
     this.pump();
   }
 
@@ -145,7 +187,7 @@ export class DecodePool {
 
   dispose(): void {
     this.disposed = true;
-    const err = new Error("cairn-plot decode pool: disposed");
+    const err = new DecodePoolError("cairn-plot decode pool: disposed", "disposed");
     for (let i = 0; i < this.slots.length; i++) this.terminate(i, err);
     for (const q of this.queue.splice(0)) { q.onAbort && q.job.signal?.removeEventListener("abort", q.onAbort); q.reject(err); }
   }
@@ -180,7 +222,7 @@ export class DecodePool {
     const d: Dispatched = {
       worker, epoch: this.epochs[worker]!, resolve: q.resolve, reject: q.reject, dropped: false, holdsBusy: q.job.affinity === undefined,
       timer: setTimeout(() => {
-        this.terminate(worker, new Error("cairn-plot decode pool: decode timed out"));
+        this.terminate(worker, new DecodePoolError("cairn-plot decode pool: decode timed out", "timeout"));
         this.pump();
       }, q.job.timeoutMs ?? this.timeoutMs),
     };
@@ -234,5 +276,6 @@ function detachAbort(d: Dispatched): void {
 
 function abortError(signal: AbortSignal): Error {
   const r = signal.reason;
-  return r instanceof Error ? r : new Error(typeof r === "string" ? r : "cairn-plot decode pool: aborted");
+  if (r instanceof Error) return r; // caller's own reason wins, unwrapped
+  return new DecodePoolError(typeof r === "string" ? r : "cairn-plot decode pool: aborted", "aborted");
 }

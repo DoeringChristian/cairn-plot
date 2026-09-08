@@ -7,8 +7,12 @@
  *      (`decode-worker.ts` → `exr-wasm.ts`: OpenEXR wasm, TS decoder fallback),
  *      the normal browser path — all compressions (PIZ/PXR24/B44/DWA/…), result
  *      returned as a transferable (f16 bit patterns for all-HALF, else f32);
- *   2. if `Worker` is unavailable or the pool path fails to spin up, the SAME
- *      WASM-first core on the MAIN thread (also the `node:test` path);
+ *   2. if `Worker` is unavailable, or the pool path fails to spin up or reports
+ *      an `ok:false` decode error, the SAME WASM-first core on the MAIN thread
+ *      (also the `node:test` path). A pool TIMEOUT or ABORT is never replayed
+ *      here: the decode may already be running in the worker, and doing the
+ *      same slow work again on the main thread would freeze the tab — that
+ *      error surfaces to the caller as-is (see `isRetryableInline`);
  *   3. if that throws, the original pure-TS reader (`exr.ts`, NONE/ZIP/ZIPS) as
  *      a last-ditch net.
  *
@@ -39,6 +43,7 @@ import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import { hasExrSelection, type ExrSelection } from "./exr-full.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
 import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
+import { isRetryableInline } from "./decode-pool-core.ts";
 import type {
   ExrGpuCsrPayload,
   ExrImagePayload,
@@ -224,9 +229,12 @@ async function decodeFull(src: ImageSource, select?: ExrSelection): Promise<Deco
   if (canUseWorker()) {
     try {
       return await decodeViaWorker(bytes, select);
-    } catch {
+    } catch (err) {
       // Worker path unavailable/broken → run the SAME WASM-first core on the
       // main thread (also yields the real, informative error for a bad file).
+      // A pool TIMEOUT or ABORT is NOT retried here: the worker may still be
+      // running the decode, and replaying it inline can freeze the tab.
+      if (!isRetryableInline(err)) throw err;
       return decodeExrPreferWasm(bytes.slice(0), undefined, select);
     }
   }

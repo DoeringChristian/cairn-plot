@@ -7,14 +7,20 @@
  *
  *   1. a pool worker (`kind:"parseNpy"`), the normal browser path — the decoded
  *      samples come back as a transferable, never copied;
- *   2. on ANY pool failure (no `Worker`, construction, crash, timeout) the SAME
- *      pure parse runs inline on the main thread (also the `node:test` path, and
- *      the path that surfaces the real, informative error for a bad file).
+ *   2. on a pool failure the worker never actually ran the job (no `Worker`,
+ *      construction/module-load failure, crash) or reported a decode-level
+ *      `ok:false`, the SAME pure parse runs inline on the main thread (also the
+ *      `node:test` path, and the path that surfaces the real, informative error
+ *      for a bad file). A pool TIMEOUT or ABORT is never replayed inline — the
+ *      worker may still be parsing, and re-running the same parse on the main
+ *      thread can freeze the tab — that error surfaces to the caller as-is
+ *      (see `isRetryableInline`).
  */
 import type { DecodedImage } from "../decoders.ts";
 import { parseNpy } from "../../../transforms/parse-npy.ts";
 import { npyArrayToDecoded } from "./npy-image.ts";
 import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
+import { isRetryableInline } from "./decode-pool-core.ts";
 import type { ExrWorkerResponse, NpyImagePayload } from "./decode-worker.ts";
 
 /** A worker `.npy` reply → the canonical {@link DecodedImage} (buffers reinterpreted). */
@@ -43,9 +49,12 @@ export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage> 
       transfer: [buffer],
     });
     payload = result.npy;
-  } catch {
-    // Pool unavailable/broken → the same parse inline (also yields the real,
-    // informative error for a genuinely bad file).
+  } catch (err) {
+    // Pool unavailable/broken (never ran the job) or a decode-level failure →
+    // the same parse inline (also yields the real, informative error for a
+    // genuinely bad file). A TIMEOUT or ABORT is NOT retried here: the worker
+    // may still be parsing, and replaying it inline can freeze the tab.
+    if (!isRetryableInline(err)) throw err;
     return npyArrayToDecoded(parseNpy(bytes));
   }
   // OUTSIDE the catch: a malformed reply is a protocol bug, and must surface as
