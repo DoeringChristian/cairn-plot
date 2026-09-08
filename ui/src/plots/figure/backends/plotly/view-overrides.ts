@@ -80,7 +80,35 @@ export function mergeRelayout(prev: SharedView, incoming: SharedView): SharedVie
     result[k] = v;
   }
   for (const [k, v] of Object.entries(incoming)) result[k] = v;
-  return result;
+  // Identity-stable when nothing changed. Plotly echoes the ranges it was
+  // just given back through `plotly_relayout`; returning `prev` for such an
+  // echo keeps the state identity, so the host does not re-render, the
+  // figure does not re-plot, and the echo cannot loop (re-plot → relayout →
+  // new state → re-plot …), which shows up as a zoom that jitters forever.
+  return sameView(prev, result) ? prev : result;
+}
+
+/** Value equality of two views; numbers compare within 1e-9 relative. */
+export function sameView(a: SharedView, b: SharedView): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    if (!(k in b) || !sameValue(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+function sameValue(x: unknown, y: unknown): boolean {
+  if (x === y) return true;
+  if (typeof x === "number" && typeof y === "number") {
+    return Number.isNaN(x) && Number.isNaN(y) || Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(x), Math.abs(y));
+  }
+  if (Array.isArray(x) && Array.isArray(y)) return x.length === y.length && x.every((v, i) => sameValue(v, y[i]));
+  if (x && y && typeof x === "object" && typeof y === "object") {
+    const kx = Object.keys(x as object), ky = Object.keys(y as object);
+    return kx.length === ky.length && kx.every((k) => sameValue((x as Record<string, unknown>)[k], (y as Record<string, unknown>)[k]));
+  }
+  return false;
 }
 
 /**

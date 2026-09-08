@@ -102,3 +102,12 @@ test("mergeRelayout does not mutate its inputs", () => {
   assert.deepEqual(prev, { "xaxis.autorange": true });
   assert.deepEqual(next, { "xaxis.range[0]": 1 });
 });
+
+test("mergeRelayout returns the previous view itself when a relayout echoes it", () => {
+  const prev = { "xaxis.range[0]": 1, "xaxis.range[1]": 2, "yaxis.range[0]": 0.1 };
+  const echoed = mergeRelayout(prev, { "xaxis.range[0]": 1 + 1e-12, "xaxis.range[1]": 2 });
+  assert.equal(echoed, prev, "an echo of the same ranges must keep state identity (no re-render, no loop)");
+  const changed = mergeRelayout(prev, { "xaxis.range[0]": 1.5, "xaxis.range[1]": 2 });
+  assert.notEqual(changed, prev);
+  assert.equal(changed["xaxis.range[0]"], 1.5);
+});
