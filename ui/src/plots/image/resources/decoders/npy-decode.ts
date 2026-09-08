@@ -36,15 +36,19 @@ export function npyPayloadToImage(p: NpyImagePayload): DecodedImage {
 export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage> {
   if (!decodePoolAvailable()) return npyArrayToDecoded(parseNpy(bytes));
   const buffer = bytes.slice(0); // copy so we never detach the caller's buffer
+  let payload: NpyImagePayload;
   try {
     const { result } = await getDecodePool().run<Extract<ExrWorkerResponse, { npy: NpyImagePayload }>>({
       make: (id) => ({ id, kind: "parseNpy", buffer }),
       transfer: [buffer],
     });
-    return npyPayloadToImage(result.npy);
+    payload = result.npy;
   } catch {
     // Pool unavailable/broken → the same parse inline (also yields the real,
     // informative error for a genuinely bad file).
     return npyArrayToDecoded(parseNpy(bytes));
   }
+  // OUTSIDE the catch: a malformed reply is a protocol bug, and must surface as
+  // one rather than being masked by a silent (and now buffer-less) re-parse.
+  return npyPayloadToImage(payload);
 }

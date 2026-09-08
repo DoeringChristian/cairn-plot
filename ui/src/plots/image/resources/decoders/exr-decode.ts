@@ -18,9 +18,10 @@
  * worker (or the main-thread module) — and attaches a `DeepFlattenController`
  * (`decoded.deep`) whose `flatten(zClip)` re-composites live and `dispose()`
  * frees the handle. Every follow-up message for that handle is pinned to the
- * worker that opened it (the pool's `affinity`), since the samples live in that
- * worker's wasm heap. Generic/compare callers omit the flag: deep files decode
- * one-shot (full composite) with no retained handle.
+ * worker GENERATION that opened it (the pool's `affinity` + `affinityEpoch`),
+ * since the samples live in that worker's wasm heap and a crashed slot is later
+ * reused by a fresh worker. Generic/compare callers omit the flag: deep files
+ * decode one-shot (full composite) with no retained handle.
  *
  * Correlation, timeouts, queueing and per-worker crash recovery all live in the
  * pool (`decode-pool-core.ts`); this module only shapes requests and replies.
@@ -53,19 +54,29 @@ function canUseWorker(): boolean {
   return decodePoolAvailable();
 }
 
+/** Which pool worker GENERATION a retained deep handle lives in. */
+type WorkerAffinity = { worker: number; epoch: number };
+
 /**
  * Run one request through the pool. `affinity` pins the job to the worker that
  * owns a retained deep handle; omit it for stateless jobs (any idle worker).
- * The reply's `worker` index is what a deep open passes back as that affinity.
+ * A deep open passes its own `{ worker, epoch }` back as that affinity — the
+ * epoch matters because a terminated slot is reused by a fresh worker that
+ * knows nothing of the old handle.
  */
 async function requestWorker(
   make: (id: number) => ExrWorkerRequest,
   transfer: Transferable[],
-  affinity?: number,
-): Promise<{ msg: OkResponse; worker: number }> {
-  const { result, worker } = await getDecodePool().run<ExrWorkerResponse>({ make, transfer, affinity });
+  affinity?: WorkerAffinity,
+): Promise<{ msg: OkResponse; worker: number; epoch: number }> {
+  const { result, worker, epoch } = await getDecodePool().run<ExrWorkerResponse>({
+    make,
+    transfer,
+    affinity: affinity?.worker,
+    affinityEpoch: affinity?.epoch,
+  });
   if (!result.ok) throw new Error(result.error);
-  return { msg: result, worker };
+  return { msg: result, worker, epoch };
 }
 
 /** A flat image payload (worker reply) → the canonical f32 DecodedImage. */
@@ -88,26 +99,28 @@ async function decodeViaWorker(bytes: ArrayBuffer, select?: ExrSelection): Promi
 }
 
 /**
- * Build a worker-backed deep controller. Every message is pinned to `worker` —
- * the pool slot whose wasm heap holds this `handle`.
+ * Build a worker-backed deep controller. Every message is pinned to `affinity` —
+ * the pool slot GENERATION whose wasm heap holds this `handle`. If that worker
+ * crashed or timed out (even where its slot has since been reused), the pool
+ * rejects rather than replaying the stale handle into a fresh wasm heap.
  */
 function workerDeepController(
   handle: number,
   zMin: number,
   zMax: number,
-  worker: number,
+  affinity: WorkerAffinity,
 ): DeepFlattenController {
   let disposed = false;
   return {
     zMin,
     zMax,
     async flatten(zNear: number, zFar: number) {
-      const { msg } = await requestWorker((id) => ({ id, kind: "flattenDeep", handle, zNear, zFar }), [], worker);
+      const { msg } = await requestWorker((id) => ({ id, kind: "flattenDeep", handle, zNear, zFar }), [], affinity);
       const p = msg as ExrImagePayload;
       return p.precision === "f16-bits" ? new Uint16Array(p.data) : new Float32Array(p.data);
     },
     async getGpuCsr(): Promise<DeepGpuCsrData> {
-      const { msg } = await requestWorker((id) => ({ id, kind: "deepGpuCsr", handle }), [], worker);
+      const { msg } = await requestWorker((id) => ({ id, kind: "deepGpuCsr", handle }), [], affinity);
       const g = (msg as Extract<OkResponse, { gpuCsr: ExrGpuCsrPayload }>).gpuCsr;
       return {
         width: g.width,
@@ -119,7 +132,7 @@ function workerDeepController(
       };
     },
     async zRangeInRect(x0: number, y0: number, x1: number, y1: number): Promise<DeepZRangeData> {
-      const { msg } = await requestWorker((id) => ({ id, kind: "deepZRange", handle, x0, y0, x1, y1 }), [], worker);
+      const { msg } = await requestWorker((id) => ({ id, kind: "deepZRange", handle, x0, y0, x1, y1 }), [], affinity);
       return (msg as Extract<OkResponse, { zRange: DeepZRangeData }>).zRange;
     },
     dispose() {
@@ -127,7 +140,7 @@ function workerDeepController(
       disposed = true;
       // Fire-and-forget; a worker teardown before this lands is harmless (the
       // wasm instance — and its handles — is gone with it).
-      void requestWorker((id) => ({ id, kind: "freeDeep", handle }), [], worker).catch(() => {});
+      void requestWorker((id) => ({ id, kind: "freeDeep", handle }), [], affinity).catch(() => {});
     },
   };
 }
@@ -178,13 +191,13 @@ async function mainThreadDeepController(
 async function decodeDeepAware(bytes: ArrayBuffer): Promise<DecodedImage> {
   if (canUseWorker()) {
     const buffer = bytes.slice(0);
-    const { msg, worker } = await requestWorker((id) => ({ id, kind: "openDeep", buffer }), [buffer]);
+    const { msg, worker, epoch } = await requestWorker((id) => ({ id, kind: "openDeep", buffer }), [buffer]);
     const image = payloadToImage(msg as ExrImagePayload);
     const deep = (msg as Extract<OkResponse, { deep?: unknown }>).deep as
       | { handle: number; zMin: number; zMax: number }
       | undefined;
     if (!deep) return image;
-    return { ...image, deep: workerDeepController(deep.handle, deep.zMin, deep.zMax, worker) };
+    return { ...image, deep: workerDeepController(deep.handle, deep.zMin, deep.zMax, { worker, epoch }) };
   }
   // No Worker (node): open + retain on the main-thread module.
   const { open_deep, flatten_deep } = await loadExrDecoder();

@@ -51,11 +51,54 @@ test("result carries the worker index and ok:false rejects with the error text",
 test("affinity posts to its worker immediately even when busy", async () => {
   const { pool, workers } = makePool(2);
   const a = pool.run(job("a"));
-  const f = pool.run(job("flatten", { affinity: 0 }));
+  const f = pool.run(job("flatten", { affinity: 0, affinityEpoch: 1 }));
   assert.deepEqual(workers[0]!.posts.map((p) => p.kind), ["a", "flatten"]);
   assert.equal(workers.length, 1);
   pool.onMessage(0, { id: workers[0]!.posts[1]!.id, ok: true }); await f;
   pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true }); await a;
+});
+
+test("an affinity job carrying the epoch its run() returned is dispatched", async () => {
+  const { pool, workers } = makePool(2);
+  const open = pool.run(job("open"));
+  pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true });
+  const { worker, epoch } = await open;
+  const f = pool.run(job("flatten", { affinity: worker, affinityEpoch: epoch }));
+  assert.deepEqual(workers[0]!.posts.map((p) => p.kind), ["open", "flatten"]);
+  pool.onMessage(0, { id: workers[0]!.posts[1]!.id, ok: true });
+  assert.deepEqual(await f.then((r) => [r.worker, r.epoch]), [worker, epoch]);
+});
+
+test("a stale affinity epoch is rejected after the slot is reused by a fresh worker", async () => {
+  const { pool, workers } = makePool(1);
+  const open = pool.run(job("open"));
+  pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true });
+  const stale = await open; // handle lives in generation 1 of slot 0
+  pool.onWorkerError(0, new Error("crashed"));
+  // A plain job respawns slot 0 — same INDEX, a brand-new wasm heap.
+  const plain = pool.run(job("plain"));
+  assert.equal(workers.length, 2);
+  assert.equal(workers[1]!.index, 0);
+  pool.onMessage(0, { id: workers[1]!.posts[0]!.id, ok: true });
+  const fresh = await plain;
+  assert.equal(fresh.worker, stale.worker);
+  assert.notEqual(fresh.epoch, stale.epoch);
+  // The OLD generation's handle must not be replayed into the new worker...
+  await assert.rejects(
+    pool.run(job("flatten", { affinity: stale.worker, affinityEpoch: stale.epoch })),
+    /deep handle is gone/,
+  );
+  assert.equal(workers[1]!.posts.length, 1); // nothing posted to the fresh worker
+  // ...while a handle opened on the NEW generation still works.
+  const f = pool.run(job("flatten", { affinity: fresh.worker, affinityEpoch: fresh.epoch }));
+  assert.deepEqual(workers[1]!.posts.map((p) => p.kind), ["plain", "flatten"]);
+  pool.onMessage(0, { id: workers[1]!.posts[1]!.id, ok: true }); await f;
+});
+
+test("affinity without an epoch is rejected outright", async () => {
+  const { pool, workers } = makePool(1);
+  await assert.rejects(pool.run(job("flatten", { affinity: 0 })), /needs the affinityEpoch/);
+  assert.equal(workers.length, 0);
 });
 
 test("abort before dispatch dequeues and rejects with the reason", async () => {
@@ -119,7 +162,7 @@ test("affinity to a terminated slot rejects and never respawns", async () => {
   const a = pool.run(job("open"));
   pool.onWorkerError(0, new Error("crashed"));
   await assert.rejects(a, /crashed/);
-  const f = pool.run(job("flatten", { affinity: 0 }));
+  const f = pool.run(job("flatten", { affinity: 0, affinityEpoch: 1 }));
   await assert.rejects(f, /deep handle is gone/);
   assert.equal(workers.length, 1); // no respawn for the affinity job
 });

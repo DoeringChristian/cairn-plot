@@ -7,7 +7,10 @@
  *   - a non-affinity job goes to an idle worker (spawning one while
  *     `spawned < size`), else waits; waiting jobs are served most-recent-first;
  *   - an `affinity` job posts to its worker immediately (deep handles live in
- *     one worker's wasm heap);
+ *     one worker's wasm heap). A slot INDEX is not enough to name that worker:
+ *     a terminated slot is reused by the next spawn, so an affinity job must
+ *     also carry the `affinityEpoch` its `run` returned — the slot's generation
+ *     counter — or a stale handle would be replayed into a fresh wasm heap;
  *   - abort before dispatch dequeues; abort after dispatch rejects now and drops
  *     the late reply — wasm cannot be interrupted, the worker is kept;
  *   - a timeout or error terminates ONLY that worker (its dispatched jobs
@@ -28,6 +31,12 @@ export interface PoolJob {
   transfer?: Transferable[];
   /** Worker index a deep handle lives in: post there, never elsewhere. */
   affinity?: number;
+  /**
+   * Generation of that worker (the `epoch` the handle-creating `run` resolved).
+   * REQUIRED whenever `affinity` is set: the slot may have been terminated and
+   * respawned since, and the fresh worker knows nothing of the old handle.
+   */
+  affinityEpoch?: number;
   signal?: AbortSignal;
   /** Per-job override of the pool's timeout. */
   timeoutMs?: number;
@@ -37,14 +46,17 @@ export interface PoolStats { size: number; spawned: number; completed: number[];
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-interface Queued { job: PoolJob; resolve: (v: { result: never; worker: number }) => void; reject: (e: Error) => void; onAbort?: () => void }
-interface Dispatched { worker: number; resolve: (v: { result: never; worker: number }) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; dropped: boolean; holdsBusy: boolean; signal?: AbortSignal; onAbort?: () => void }
+type Settle = (v: { result: never; worker: number; epoch: number }) => void;
+interface Queued { job: PoolJob; resolve: Settle; reject: (e: Error) => void; onAbort?: () => void }
+interface Dispatched { worker: number; epoch: number; resolve: Settle; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; dropped: boolean; holdsBusy: boolean; signal?: AbortSignal; onAbort?: () => void }
 
 export class DecodePool {
   private size: number;
   private readonly spawn: (index: number) => PoolWorker;
   private readonly timeoutMs: number;
   private readonly slots: (PoolWorker | null)[] = [];
+  /** Per-slot generation, bumped on every spawn: identifies WHICH worker a slot holds. */
+  private readonly epochs: number[] = [];
   private readonly busy: boolean[] = [];
   private readonly completed: number[] = [];
   private readonly queue: Queued[] = [];
@@ -58,12 +70,19 @@ export class DecodePool {
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
-  run<T extends PoolReply>(job: PoolJob): Promise<{ result: T; worker: number }> {
-    const promise = new Promise<{ result: T; worker: number }>((resolve, reject) => {
+  run<T extends PoolReply>(job: PoolJob): Promise<{ result: T; worker: number; epoch: number }> {
+    const promise = new Promise<{ result: T; worker: number; epoch: number }>((resolve, reject) => {
       if (this.disposed) return reject(new Error("cairn-plot decode pool: disposed"));
       if (job.signal?.aborted) return reject(abortError(job.signal));
       if (job.affinity !== undefined) {
-        if (!this.slots[job.affinity]) {
+        if (job.affinityEpoch === undefined) {
+          return reject(new Error(
+            "cairn-plot decode pool: an affinity job needs the affinityEpoch its run() returned",
+          ));
+        }
+        // The slot may have been terminated and respawned; a fresh worker holds
+        // none of the old worker's handles, so match the generation, not the index.
+        if (!this.slots[job.affinity] || this.epochs[job.affinity] !== job.affinityEpoch) {
           return reject(new Error("cairn-plot decode pool: the worker holding this deep handle is gone"));
         }
         this.dispatch(job.affinity, { job, resolve: resolve as never, reject });
@@ -103,7 +122,7 @@ export class DecodePool {
     this.markIdle(worker);
     if (!d.dropped) {
       if (msg.ok === false) d.reject(new Error(msg.error ?? "cairn-plot decode pool: worker error"));
-      else d.resolve({ result: msg as never, worker });
+      else d.resolve({ result: msg as never, worker, epoch: d.epoch });
     }
     this.pump();
   }
@@ -148,6 +167,7 @@ export class DecodePool {
     if (!w) {
       w = this.spawn(index);
       this.slots[index] = w;
+      this.epochs[index] = (this.epochs[index] ?? 0) + 1;
       this.busy[index] = false;
       this.completed[index] = this.completed[index] ?? 0;
     }
@@ -158,7 +178,7 @@ export class DecodePool {
     const w = this.ensure(worker);
     const id = this.nextId++;
     const d: Dispatched = {
-      worker, resolve: q.resolve, reject: q.reject, dropped: false, holdsBusy: q.job.affinity === undefined,
+      worker, epoch: this.epochs[worker]!, resolve: q.resolve, reject: q.reject, dropped: false, holdsBusy: q.job.affinity === undefined,
       timer: setTimeout(() => {
         this.terminate(worker, new Error("cairn-plot decode pool: decode timed out"));
         this.pump();
