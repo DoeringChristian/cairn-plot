@@ -15,7 +15,9 @@
 - All new code lives under `ui/src/plots/image/resources/decoders/` (docs/plot-type-authoring.md layout rule).
 - The worker must keep shipping as ONE inlined module (`import("./decode-worker.ts?worker&inline")`); `build:plot-inline` uses `inlineDynamicImports: true` and no separate worker asset may appear. N pool members are N `new mod.default()` from that one module.
 - Pool size in the browser: `clamp((navigator.hardwareConcurrency ?? 2) - 1, 1, 4)`; `setDecodePoolSize(n)` exists for harnesses.
-- Non-affinity jobs dispatch only to an idle worker; otherwise they wait in the pool queue, served most-recent-first (LIFO), like `decode-queue.ts`. Affinity jobs post to their worker immediately.
+- Non-affinity jobs dispatch only to an idle worker; otherwise they wait in the pool queue, served most-recent-first (LIFO), like `decode-queue.ts`. (Deliberate deviation from the spec's "else least-loaded": a worker handles one message at a time, so posting to a busy worker only moves the queue into the worker where it can neither be reordered nor aborted. Spec §5.2 is amended to match.) Affinity jobs post to their worker immediately; an affinity job whose worker slot is gone (terminated) rejects with "the worker holding this deep handle is gone" and never respawns a worker (a deep handle is a raw pointer into the old wasm heap).
+- Per-job `timeoutMs` override on `PoolJob`; pool default 30 000 ms.
+- The browser harness runner (`ui/scripts/test-harness.mjs`) bundles pages with esbuild, which does not implement Vite's `?worker&inline`; Task 4 adds an esbuild plugin so harness pages spawn real workers. Until then every harness EXR decode silently ran on the main thread.
 - Abort before dispatch: dequeue and reject with the signal's reason. Abort after dispatch: reject now, drop the result when it arrives, do NOT terminate the worker.
 - Job timeout (default 30 000 ms) or a worker `error` event terminates THAT worker only, rejects the jobs dispatched to it, and leaves other workers and the shared queue untouched; the slot respawns on next use.
 - When `typeof Worker !== "function"` (node), today's main-thread paths (`decodeExrPreferWasm`, `parseNpy`) run unchanged.
@@ -39,7 +41,7 @@
   ```ts
   export interface PoolWorker { post(msg: unknown, transfer: Transferable[]): void; terminate(): void; }
   export interface PoolOptions { size: number; spawn(index: number): PoolWorker; timeoutMs?: number; }
-  export interface PoolJob { make(id: number): { id: number }; transfer?: Transferable[]; affinity?: number; signal?: AbortSignal; }
+  export interface PoolJob { make(id: number): { id: number }; transfer?: Transferable[]; affinity?: number; signal?: AbortSignal; timeoutMs?: number; }
   export interface PoolReply { id: number; ok?: boolean; error?: string; }
   export interface PoolStats { size: number; spawned: number; completed: number[]; queued: number; }
   export class DecodePool {
@@ -144,8 +146,8 @@ test("abort after dispatch rejects now, drops the late result, keeps the worker"
 });
 
 test("timeout terminates only the slow worker; the other worker and the queue survive", async () => {
-  const { pool, workers } = makePool(2, 10);
-  const slow = pool.run(job("slow"));
+  const { pool, workers } = makePool(2); // 30 s default; only `slow` carries a short per-job timeout
+  const slow = pool.run(job("slow", { timeoutMs: 10 }));
   const fine = pool.run(job("fine"));
   const queued = pool.run(job("queued"));
   await new Promise((r) => setTimeout(r, 30));
@@ -171,6 +173,16 @@ test("worker error rejects that worker's jobs only and respawns on next use", as
   assert.equal(workers[2]!.index, 0); // respawned into slot 0
   pool.onMessage(0, { id: workers[2]!.posts[0]!.id, ok: true }); await c;
   pool.onMessage(1, { id: workers[1]!.posts[0]!.id, ok: true }); await b;
+});
+
+test("affinity to a terminated slot rejects and never respawns", async () => {
+  const { pool, workers } = makePool(2);
+  const a = pool.run(job("open"));
+  pool.onWorkerError(0, new Error("crashed"));
+  await assert.rejects(a, /crashed/);
+  const f = pool.run(job("flatten", { affinity: 0 }));
+  await assert.rejects(f, /deep handle is gone/);
+  assert.equal(workers.length, 1); // no respawn for the affinity job
 });
 
 test("dispose terminates every worker and rejects queued and dispatched jobs", async () => {
@@ -219,8 +231,11 @@ export interface PoolOptions {
 export interface PoolJob {
   make(id: number): { id: number };
   transfer?: Transferable[];
+  /** Worker index a deep handle lives in: post there, never elsewhere. */
   affinity?: number;
   signal?: AbortSignal;
+  /** Per-job override of the pool's timeout. */
+  timeoutMs?: number;
 }
 export interface PoolReply { id: number; ok?: boolean; error?: string }
 export interface PoolStats { size: number; spawned: number; completed: number[]; queued: number }
@@ -253,6 +268,9 @@ export class DecodePool {
       if (this.disposed) return reject(new Error("cairn-plot decode pool: disposed"));
       if (job.signal?.aborted) return reject(abortError(job.signal));
       if (job.affinity !== undefined) {
+        if (!this.slots[job.affinity]) {
+          return reject(new Error("cairn-plot decode pool: the worker holding this deep handle is gone"));
+        }
         this.dispatch(job.affinity, { job, resolve: resolve as never, reject });
         return;
       }
@@ -342,7 +360,7 @@ export class DecodePool {
       timer: setTimeout(() => {
         this.terminate(worker, new Error("cairn-plot decode pool: decode timed out"));
         this.pump();
-      }, this.timeoutMs),
+      }, q.job.timeoutMs ?? this.timeoutMs),
     };
     if (q.job.signal) {
       d.onAbort = () => { if (this.dispatched.has(id)) { d.dropped = true; d.reject(abortError(q.job.signal!)); } };
@@ -396,7 +414,7 @@ Note: `dispatch` sets `busy[worker] = true` only for non-affinity jobs; `markIdl
 - [ ] **Step 4: Run tests to green**
 
 Run: `cd ui && node --experimental-strip-types --test src/plots/image/resources/decoders/decode-pool-core.test.ts`
-Expected: 8 passing.
+Expected: 9 passing, no "asynchronous activity after the test ended" notices.
 
 - [ ] **Step 5: Commit**
 
@@ -413,7 +431,7 @@ git commit -m "Add decode worker pool scheduler"
 - Create: `ui/src/plots/image/resources/decoders/npy-image.ts` (moved code)
 - Rename: `ui/src/plots/image/resources/decoders/exr-worker.ts` → `decode-worker.ts` (`git mv`)
 - Create: `ui/src/plots/image/resources/decoders/decode-pool.ts`
-- Modify: `ui/src/plots/image/resources/decoders.ts` (import `npyArrayToDecoded`/`isU8Dtype` from `./decoders/npy-image.ts`, re-export `npyArrayToDecoded` so existing importers keep working)
+- Modify: `ui/src/plots/image/resources/decoders.ts` (delete the local `isU8Dtype` and `npyArrayToDecoded`; import ONLY `npyArrayToDecoded` from `./decoders/npy-image.ts` and re-export it so `decoders.test.ts` keeps compiling; `tsconfig.app.json` has `noUnusedLocals`, so an unused `isU8Dtype` import fails `typecheck`; the `type NpyArray` import at `decoders.ts:47` becomes unused as well — drop it, keeping `parseNpy` until Task 3 removes it)
 - Modify: `ui/src/plots/image/resources/decoders/exr-decode.ts` (only the import of the message types and the `?worker&inline` path, so the rename compiles; the pool rewiring is Task 3)
 - Test: `ui/src/plots/image/resources/decoders/npy-image.test.ts`
 
@@ -548,7 +566,7 @@ git commit -m "Introduce the shared decode worker module and pool shell"
 
 **Interfaces:**
 - Consumes: `getDecodePool`, `decodePoolAvailable` (Task 2); `DecodePool.run` (Task 1); `NpyImagePayload`, `ExrWorkerRequest`, `ExrWorkerResponse` (Task 2).
-- Produces: `npy-decode.ts`: `export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage>` (pool when available, else `npyArrayToDecoded(parseNpy(bytes))`), and `export function npyPayloadToImage(p: NpyImagePayload): DecodedImage`.
+- Produces: `npy-decode.ts`: `export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage>` (pool when available; on ANY pool failure — construction, crash, timeout — falls back to `npyArrayToDecoded(parseNpy(bytes))` on the main thread, mirroring `decodeFull`'s chain in `exr-decode.ts`), and `export function npyPayloadToImage(p: NpyImagePayload): DecodedImage`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -602,19 +620,24 @@ export function npyPayloadToImage(p: NpyImagePayload): DecodedImage {
   return { kind: "f32", data: new Float32Array(p.data), width: p.width, height: p.height, channels: p.channels, precision: "f32" };
 }
 
-/** Parse a `.npy` image in a pool worker (browser) or inline (node). */
+/** Parse a `.npy` image in a pool worker (browser) or inline (node / pool failure). */
 export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage> {
   if (!decodePoolAvailable()) return npyArrayToDecoded(parseNpy(bytes));
   const buffer = bytes.slice(0); // never detach the caller's buffer
-  const { result } = await getDecodePool().run<Extract<ExrWorkerResponse, { npy: NpyImagePayload }>>({
-    make: (id) => ({ id, kind: "parseNpy", buffer }),
-    transfer: [buffer],
-  });
-  return npyPayloadToImage(result.npy);
+  try {
+    const { result } = await getDecodePool().run<Extract<ExrWorkerResponse, { npy: NpyImagePayload }>>({
+      make: (id) => ({ id, kind: "parseNpy", buffer }),
+      transfer: [buffer],
+    });
+    return npyPayloadToImage(result.npy);
+  } catch {
+    // Pool unavailable/broken → same parse inline (also yields the real error for a bad file).
+    return npyArrayToDecoded(parseNpy(bytes));
+  }
 }
 ```
 
-`decoders.ts`: `async function decodeNpy(src) { return decodeNpyBytes(requireBytes(src, "npy")); }` with the import; remove the now-unused direct `parseNpy` import from `decoders.ts` only if nothing else in the file uses it.
+`decoders.ts`: `async function decodeNpy(src) { return decodeNpyBytes(requireBytes(src, "npy")); }` with the import; delete the whole `import { parseNpy, type NpyArray } from "../../transforms/parse-npy.ts"` line (nothing else in the file uses either).
 
 `exr-decode.ts` rewrite of the worker plumbing (keep every exported symbol and the module doc's fallback chain; update the doc to say "pool"):
 
@@ -633,13 +656,13 @@ export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage> 
   }
   ```
 - `decodeViaWorker`: `const { msg } = await requestWorker(...)`.
-- `workerDeepController(handle, zMin, zMax, worker: number)`: every `requestWorker(...)` inside passes `worker` as `affinity`; `dispose()` too.
+- `workerDeepController(handle, zMin, zMax, worker: number)`: every one of its four `const msg = await requestWorker(...)` sites (`flatten`, `getGpuCsr`, `zRangeInRect`, and the `dispose` fire-and-forget) becomes `const { msg } = await requestWorker(..., worker)` — i.e. passes `worker` as `affinity`.
 - `decodeDeepAware`: `const { msg, worker } = await requestWorker((id) => ({ id, kind: "openDeep", buffer }), [buffer]);` and `workerDeepController(deep.handle, deep.zMin, deep.zMax, worker)`.
 - Everything else (main-thread controllers, `decodeFull`, `decodeExr`) unchanged.
 
 - [ ] **Step 4: Typecheck and run all unit tests** — `cd ui && npm run typecheck && node --experimental-strip-types --test "src/**/*.test.ts"` → PASS.
 
-- [ ] **Step 5: Build the inline bundle and confirm one file** — `cd ui && npm run build:plot-inline && ls dist/plot-inline` → no `*worker*` asset file besides the IIFE/css; `grep -c "parseNpy" dist/plot-inline/core.iife.js` ≥ 1. Then `npm run sync:plot-assets` (the python package's synced copy must match; CI runs `check:plot-assets`).
+- [ ] **Step 5: Build the inline bundle and confirm one file** — `cd ui && npm run build:plot-inline && ls dist/plot-inline` → exactly `core.iife.js`, `figure.iife.js`, `three.iife.js`, `style.css` (no worker asset); `grep -c "cairn-plot decode pool" dist/plot-inline/core.iife.js` ≥ 1 (a string literal only the new code introduces; identifiers are minified). Then `npm run sync:plot-assets` (the python package's synced copy must match; CI runs `check:plot-assets`).
 
 - [ ] **Step 6: Commit**
 
@@ -661,7 +684,35 @@ git commit -m "Decode EXR and npy through the worker pool"
 **Interfaces:**
 - Consumes: `setDecodePoolSize`, `getDecodePool().stats()` (Task 2), `decodeImage` from `resources/decoders.ts`.
 
-- [ ] **Step 1: Read the harness conventions** — `ui/scripts/test-harness.mjs` lines 1–99 and `__tests__/gain-map-decode.browser.{html,ts}` as the template (fixture URLs resolve from `import.meta.url`; the page sets `#status` to exactly `PASS`/`FAIL`; opt in with `data-cairn-harness="self-driving"` on `<html>`).
+- [ ] **Step 1: Read the harness conventions** — `ui/scripts/test-harness.mjs` lines 1–99 and `__tests__/gain-map-decode.browser.{html,ts}` as the page template (fixture URLs resolve from `import.meta.url`; the page sets `#status` to exactly `PASS`/`FAIL`). The opt-in example is `src/plots/image/compare/__tests__/float-compare.browser.html:2` (`<html lang="en" data-cairn-harness="self-driving">`); the gain-map page is `--all`-only.
+
+- [ ] **Step 1b: Teach the harness bundler Vite's `?worker&inline`** — `bundleAll()` in `ui/scripts/test-harness.mjs` (around line 294) calls esbuild with no plugins, so `import("./decode-worker.ts?worker&inline")` bundles the worker as a plain module: `mod.default` is undefined, `new mod.default()` throws, and every EXR decode in every harness silently ran on the main thread through `decodeFull`'s fallback. Add an esbuild plugin to that build call:
+
+```js
+/** Vite `?worker&inline` for esbuild: bundle the worker to an IIFE and expose a Worker-constructing default export. */
+function inlineWorkerPlugin(esbuild, baseOptions) {
+  return {
+    name: "cairn-inline-worker",
+    setup(build) {
+      build.onResolve({ filter: /\?worker&inline$/ }, (args) => ({
+        path: path.resolve(args.resolveDir, args.path.replace(/\?worker&inline$/, "")),
+        namespace: "inline-worker",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "inline-worker" }, async (args) => {
+        const result = await esbuild.build({ ...baseOptions, entryPoints: [args.path], bundle: true, write: false, format: "iife", platform: "browser" });
+        const code = result.outputFiles[0].text;
+        return {
+          loader: "js",
+          contents: `const CODE = ${JSON.stringify(code)};
+export default class InlineWorker { constructor() { const url = URL.createObjectURL(new Blob([CODE], { type: "text/javascript" })); const w = new Worker(url); URL.revokeObjectURL(url); return w; } }`,
+        };
+      });
+    },
+  };
+}
+```
+
+`baseOptions` are the same `loader`/`target`/`define` options the page build uses (read them off the existing call so the worker sees the same `.wasm` loader). Register it as `plugins: [inlineWorkerPlugin(esbuild, baseOptions)]` on the page build. Add one check to `scripts/test-harness-selftest.mjs`: bundling a fixture entry that imports `./x.ts?worker&inline` yields output containing `new Worker(` (follow the selftest file's existing check style). Run `npm run test:harness:selftest` → all checks pass.
 
 - [ ] **Step 2: Write `decode-pool.browser.ts`**
 
@@ -671,7 +722,8 @@ Behaviour:
 3. Start a `PerformanceObserver` on `longtask` (guard: `PerformanceObserver.supportedEntryTypes?.includes("longtask")`; if unsupported, record "longtask unsupported" and skip that assertion).
 4. `await Promise.all(fixtures.map((b) => decodeImage({ bytes: b, ext: "exr" })))`, timing wall time.
 5. Then decode the same 8 serially and time that.
-6. Assertions: every decode returned `kind === "f32"` with `width > 0`; `getDecodePool().stats().spawned >= 2`; at least two entries of `stats().completed` are > 0; no `longtask` entry ≥ 100 ms during the parallel phase; print both wall times (informational, no assertion on the ratio — the fixtures are tiny).
+6. Assertions: every decode returned `kind === "f32"` with `width > 0`; `getDecodePool().stats().spawned >= 2`; at least two entries of `stats().completed` are > 0; no `longtask` entry > 50 ms during the parallel phase; print both wall times (informational only — the fixtures are 64×48, so a ratio assertion would measure worker spawn cost, not decode; spec §6 is amended accordingly).
+6b. Deep affinity: `setDecodePoolSize(3)` is already set; kick off two plain decodes (`rgb-piz-half-64x48.exr`, `rgb-zip-half-64x48.exr`) and, while they are in flight, `decodeImage({ bytes: deepRgba, ext: "exr" }, { deepLiveFlatten: true })` on `deep-rgba-32x32.exr`; assert `decoded.deep` exists; then run `await decoded.deep.flatten(decoded.deep.zMin, decoded.deep.zMax)` three times interleaved with two more plain decodes; every flatten resolves with `length === 32*32*4` (a handle posted to a different worker would fail or corrupt); finally `decoded.deep.dispose()`.
 7. Also: an npy decode through the pool: build a 4×4 float32 npy in-page (copy the `npyFloat32` helper from Task 3's test), `decodeImage({ bytes, ext: "npy" })` → `kind === "f32"`, values round-trip.
 8. Failure isolation: post a deliberately broken EXR (`new Uint8Array([0x76,0x2f,0x31,0x01, 0,0,0,0]).buffer`) → `decodeImage` rejects; afterwards a good decode still resolves and `stats().spawned` is unchanged (an `ok:false` reply is not a crash).
 9. Set `#status` to `PASS` or `FAIL` with the failing assertion text in `#result`.
@@ -680,15 +732,15 @@ Behaviour:
 
 - [ ] **Step 4: Run it** — `cd ui && node scripts/test-harness.mjs --only decode-pool` (check the runner's filter flag name in its header; if `--only` matches on page basename use that) → PASS.
 
-- [ ] **Step 5: float-compare EXR cases** — in `float-compare.browser.ts` add, after the existing cases: (a) EXR × same EXR (`rgb-piz-half-64x48.exr`, fetched via `new URL("../../resources/decoders/fixtures/rgb-piz-half-64x48.exr", import.meta.url)`) in `difference` mode → readback all zeros; (b) EXR × npy: decode the EXR with `decodeImage`, widen `f16-bits` via `halfToFloat` from `runtime/half.ts` if needed, encode to npy with the page's existing encoder, compare in `difference` mode → all zeros within 1e-6. Both on whichever backends the page already iterates. Run: `node scripts/test-harness.mjs --only float-compare` → PASS.
+- [ ] **Step 5: float-compare EXR cases** — `float-compare.browser.ts` keeps its bytes in an in-page hash store (`source.bytes(hash)` at lines ~100-106 throws for unknown hashes) and asserts via `paintedCentre()` / `isBlank(px)` (lines ~115-127), not readback. Add: fetch `EXR_A` from `new URL("../../resources/decoders/fixtures/rgb-piz-half-64x48.exr", import.meta.url)`; register `if (hash === "exrA") return EXR_A;` in the store; add `const NODE_EXR_A = { kind: "image", hash: "exrA", format: "exr" }` next to the existing npy nodes (which carry `format: "npy"`). Cases, on the backends the page already iterates (cpu, then gpu when `navigator.gpu`): (a) `NODE_EXR_A` × `NODE_EXR_A` in `split` mode → centre pixel opaque and not blank; (b) EXR × npy `difference`: decode `EXR_A` with `decodeImage`, widen `f16-bits` with `halfToFloat` from `runtime/half.ts`, encode with the page's `encodeNpy`, register as hash `npyFromExr`, compare `NODE_EXR_A` × `{ kind: "image", hash: "npyFromExr", format: "npy" }` in `difference` mode → centre pixel opaque (alpha 255) and RGB each ≤ 1 (a zero difference paints black, which `isBlank` would otherwise misread as "nothing painted"). Run: `node scripts/test-harness.mjs --only float-compare` → PASS.
 
 - [ ] **Step 6: Docs** — in `docs/architecture.md`, in the image decode section (around the `decoded-image.ts` paragraph), add one paragraph: EXR and npy bytes decode in a pool of up to four inlined workers (`decoders/decode-pool-core.ts` scheduler, `decode-pool.ts` shell, `decode-worker.ts`), each with its own OpenEXR WASM instance; policy summary (idle-first, LIFO wait, affinity for deep handles, per-worker failure isolation); node runs the main-thread paths.
 
 - [ ] **Step 7: Full check and commit**
 
-Run: `cd ui && npm run typecheck && node --experimental-strip-types --test "src/**/*.test.ts" && node scripts/test-harness.mjs` (full harness; note any pre-existing quarantined pages).
+Run: `cd ui && npm run typecheck && node --experimental-strip-types --test "src/**/*.test.ts" && npm run test:harness:selftest && node scripts/test-harness.mjs` (full harness; note any pre-existing quarantined pages; EXR-touching pages now exercise real workers for the first time — report any that change verdict).
 
 ```bash
-git add ui/src/plots/image/resources/decoders/__tests__/decode-pool.browser.ts ui/src/plots/image/resources/decoders/__tests__/decode-pool.browser.html ui/src/plots/image/compare/__tests__/float-compare.browser.ts docs/architecture.md
+git add ui/scripts/test-harness.mjs ui/scripts/test-harness-selftest.mjs ui/src/plots/image/resources/decoders/__tests__/decode-pool.browser.ts ui/src/plots/image/resources/decoders/__tests__/decode-pool.browser.html ui/src/plots/image/compare/__tests__/float-compare.browser.ts docs/architecture.md
 git commit -m "Add decode pool harness, EXR compare cases, and docs"
 ```
