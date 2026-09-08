@@ -7,6 +7,10 @@ export type {
   FigureInteractionSettings,
   SharedView,
 } from "../plots/figure/backends/plotly/Figure.tsx";
+// Pure view-state helper (no Plotly import): hosts accumulating relayout
+// events across panes must merge them with this, not `{...prev, ...next}` —
+// see mergeRelayout's doc comment.
+export { mergeRelayout } from "../plots/figure/backends/plotly/view-overrides.ts";
 export {
   checkFigureMergeable,
   mergeFigures,

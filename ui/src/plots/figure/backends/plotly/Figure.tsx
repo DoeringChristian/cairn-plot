@@ -3,6 +3,7 @@ import createPlotlyComponent from "react-plotly.js/factory";
 // @ts-expect-error - plotly.js-dist-min has no bundled types, but is runtime-compatible with the factory.
 import Plotly from "plotly.js-dist-min";
 import type { PlotlyFigureLike } from "../../../types";
+import { applyViewOverrides, extractViewState, type SharedView } from "./view-overrides";
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -32,97 +33,12 @@ export interface FigureInteractionSettings {
   showLegend: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Shared view state synced across comparison panes.
-// Captures axis ranges (2D) and camera (3D) from Plotly relayout events.
-// ---------------------------------------------------------------------------
-
-export type SharedView = Record<string, unknown>;
-
-/** Extract axis ranges + scene camera from a Plotly relayout event object. */
-export function extractViewState(relayoutData: Record<string, unknown>): SharedView | null {
-  const view: SharedView = {};
-  let any = false;
-  for (const [k, v] of Object.entries(relayoutData)) {
-    // 2D axis ranges: xaxis.range[0], yaxis.range[1], xaxis.autorange, etc.
-    if (/^[xy]axis\d*\./.test(k)) {
-      view[k] = v;
-      any = true;
-    }
-    // 3D scene camera: both dot-path (scene.camera.eye.x) and nested object (scene)
-    if (/^scene\d*\.camera/.test(k)) {
-      view[k] = v;
-      any = true;
-    }
-    // 3D scene as a nested object (Plotly sometimes sends {scene: {camera: {...}}})
-    if (/^scene\d*$/.test(k) && v && typeof v === "object") {
-      view[k] = v;
-      any = true;
-    }
-    // Mapbox/geo: mapbox.center, mapbox.zoom, geo.projection, etc.
-    if (/^(mapbox|geo)\d*\./.test(k)) {
-      view[k] = v;
-      any = true;
-    }
-  }
-  return any ? view : null;
-}
-
-/** Deep merge b into a (returns new object). */
-export function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...a };
-  for (const [k, v] of Object.entries(b)) {
-    if (v && typeof v === "object" && !Array.isArray(v) && a[k] && typeof a[k] === "object" && !Array.isArray(a[k])) {
-      result[k] = deepMerge(a[k] as Record<string, unknown>, v as Record<string, unknown>);
-    } else {
-      result[k] = v;
-    }
-  }
-  return result;
-}
-
-/** Merge shared view overrides into a Plotly layout object. */
-export function applyViewOverrides(
-  layout: Record<string, unknown>,
-  overrides: SharedView,
-): Record<string, unknown> {
-  const result = { ...layout };
-  for (const [k, v] of Object.entries(overrides)) {
-    // If the value is an object and key has no dots (e.g. "scene" with nested camera),
-    // deep-merge it into the layout.
-    if (!k.includes(".") && !k.includes("[") && v && typeof v === "object" && !Array.isArray(v)) {
-      result[k] = deepMerge((result[k] as Record<string, unknown>) ?? {}, v as Record<string, unknown>);
-      continue;
-    }
-    // Plotly relayout keys are dot-separated paths like "xaxis.range[0]"
-    const bracketMatch = k.match(/^(.+)\[(\d+)]$/);
-    if (bracketMatch) {
-      const [, path, idx] = bracketMatch;
-      const parts = path!.split(".");
-      let obj: Record<string, unknown> = result;
-      for (let i = 0; i < parts.length; i++) {
-        const p = parts[i]!;
-        if (i === parts.length - 1) {
-          if (!Array.isArray(obj[p])) obj[p] = [];
-          (obj[p] as unknown[])[Number(idx)] = v;
-        } else {
-          if (obj[p] == null || typeof obj[p] !== "object") obj[p] = {};
-          obj = obj[p] as Record<string, unknown>;
-        }
-      }
-    } else {
-      const parts = k.split(".");
-      let obj: Record<string, unknown> = result;
-      for (let i = 0; i < parts.length - 1; i++) {
-        const p = parts[i]!;
-        if (obj[p] == null || typeof obj[p] !== "object") obj[p] = {};
-        obj = obj[p] as Record<string, unknown>;
-      }
-      obj[parts[parts.length - 1]!] = v;
-    }
-  }
-  return result;
-}
+// Shared view state (axis ranges / scene camera) synced across comparison
+// panes lives in the pure `view-overrides` module so it can be unit-tested
+// without loading plotly.js; re-exported here so existing importers of
+// `.../Figure` keep working unchanged.
+export type { SharedView } from "./view-overrides";
+export { extractViewState, deepMerge, applyViewOverrides, mergeRelayout } from "./view-overrides";
 
 const DARK_LAYOUT: Record<string, unknown> = {
   paper_bgcolor: "transparent",
