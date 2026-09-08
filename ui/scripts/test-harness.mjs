@@ -292,7 +292,7 @@ function discoverHarnesses() {
  * fail on the very modules (`.wasm` loader, node-module lookup) the page
  * resolves fine.
  */
-const BASE_BUILD_OPTIONS = {
+export const BASE_BUILD_OPTIONS = {
   target: "es2022",
   logLevel: "silent",
   // Some public package sources live beside ui/, so normal ancestor

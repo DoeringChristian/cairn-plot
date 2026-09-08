@@ -97,9 +97,11 @@ heap owns it, pinned by that worker's generation counter so a respawned slot
 rejects a stale handle rather than replaying it into a fresh heap; a timeout or
 crash terminates ONLY that worker, rejecting its in-flight jobs and leaving the
 other workers and the shared queue untouched (an `ok:false` reply is an ordinary
-error, not a teardown). Every path falls back to the same decoders running
-inline on the calling thread when no `Worker` exists — which is how node's
-`*.test.ts` suite runs them. The pool is proven end-to-end only in a browser:
+error, not a teardown). Both paths fall back to the same decoders running inline
+on the calling thread not only when no `Worker` exists (which is how node's
+`*.test.ts` suite runs them) but on ANY worker-side failure — a crash, the
+pool's timeout, or an `ok:false` reply — so a decode is retried on the main
+thread, where it also yields the real, informative error for a bad file. The pool is proven end-to-end only in a browser:
 `decoders/__tests__/decode-pool.browser.ts` decodes eight distinct EXRs at once
 with no >50 ms main-thread longtask, interleaves deep-handle flattens with
 unrelated decodes, and pins the failure isolation.

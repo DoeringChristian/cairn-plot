@@ -50,6 +50,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { build as esbuild } from "esbuild";
 import {
+  BASE_BUILD_OPTIONS,
   downgradeIfDeviceLost,
   groupByDpr,
   inlineWorkerPlugin,
@@ -255,7 +256,15 @@ function refusalChecks() {
  * really constructs a Worker (and carries the worker's own code inline).
  */
 async function workerPluginChecks(dir) {
-  writeFileSync(join(dir, "x.ts"), "self.onmessage = () => postMessage('cairn-worker-alive');\n");
+  // The worker imports a `.wasm` asset — exactly what the REAL decode worker
+  // does (its OpenEXR module) — so the sub-build only compiles if it inherited
+  // the page build's `loader` from `BASE_BUILD_OPTIONS`. Passing a stripped
+  // options object here would fail with "No loader is configured for .wasm".
+  writeFileSync(join(dir, "w.wasm"), Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+  writeFileSync(
+    join(dir, "x.ts"),
+    'import wasmUrl from "./w.wasm";\nself.onmessage = () => postMessage("cairn-worker-alive:" + wasmUrl);\n',
+  );
   writeFileSync(
     join(dir, "entry.ts"),
     'import W from "./x.ts?worker&inline";\n(globalThis as Record<string, unknown>).W = W;\n',
@@ -264,22 +273,22 @@ async function workerPluginChecks(dir) {
   let error = null;
   try {
     const out = await esbuild({
+      ...BASE_BUILD_OPTIONS,
       entryPoints: [join(dir, "entry.ts")],
       bundle: true,
       write: false,
       format: "esm",
       platform: "browser",
-      target: "es2022",
-      logLevel: "silent",
-      plugins: [inlineWorkerPlugin(esbuild, { target: "es2022", logLevel: "silent" })],
+      outdir: dir,
+      plugins: [inlineWorkerPlugin(esbuild, BASE_BUILD_OPTIONS)],
     });
-    text = out.outputFiles[0].text;
+    text = (out.outputFiles.find((f) => f.path.endsWith(".js")) ?? out.outputFiles[0]).text;
   } catch (err) {
     error = err;
   }
   return [
     [
-      "a `?worker&inline` import bundles without error",
+      "a `?worker&inline` import bundles with the page build's own options (a .wasm-importing worker compiles)",
       error === null,
     ],
     [

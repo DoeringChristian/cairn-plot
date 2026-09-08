@@ -128,6 +128,14 @@ async function run(): Promise<boolean> {
   );
 
   // ---- (a)(b) eight decodes in parallel, main thread unblocked -----------
+  // One WARM decode first: spawning a worker means materialising the inlined
+  // blob (the OpenEXR WASM travels base64 inside it), compiling that script and
+  // instantiating the WASM. That is a one-time STARTUP cost, not decode work,
+  // and it is main-thread work on the way in — pay it outside the measured
+  // window so the >50 ms longtask assertion below is about decoding, not about
+  // booting the pool. The assertion itself is unchanged and stays strict.
+  await decodeImage({ bytes: bytes[0]!, ext: "exr" });
+
   const longtasks = longtaskRecorder();
   longtasks.start();
   const t0 = performance.now();
@@ -178,31 +186,45 @@ async function run(): Promise<boolean> {
 
   // ---- (c) a retained DEEP handle stays pinned to ONE worker --------------
   // The deep samples live in the wasm heap of the worker that opened them, so
-  // every follow-up message must land there. Unrelated decodes are kept in
-  // flight around the open AND around the flattens: if affinity were ignored,
-  // a flatten posted to a different worker would reject (unknown handle) or
-  // return the wrong pixels.
+  // every follow-up message must land there. This runs the pool SATURATED: at
+  // every step, a plain decode occupies EVERY spawned worker, so there is no
+  // idle slot an affinity-ignoring scheduler could fall back on — it would have
+  // to queue the flatten and then hand it to whichever worker frees first,
+  // which rejects (unknown handle) or returns another image's pixels.
+  //
+  // `setDecodePoolSize(2)` caps how far the pool may GROW from here; it does
+  // NOT retire the workers already spawned above (`resize` only moves the
+  // ceiling), so saturation is measured against `stats().spawned`, not `size`.
+  setDecodePoolSize(2);
+  const saturate = (tag: number): Promise<unknown>[] =>
+    Array.from({ length: getDecodePool().stats().spawned }, (_, k) =>
+      decodeImage({ bytes: bytes[(tag + k) % bytes.length]!, ext: "exr" }),
+    );
   const deepBytes = await fetchFixture(DEEP_FIXTURE);
-  const busyA = decodeImage({ bytes: bytes[0]!, ext: "exr" });
-  const busyB = decodeImage({ bytes: bytes[2]!, ext: "exr" });
+  const busy = saturate(1);
   const decodedDeep = await decodeImage({ bytes: deepBytes, ext: "exr" }, { deepLiveFlatten: true });
-  await Promise.all([busyA, busyB]);
+  await Promise.all(busy);
   const deep = decodedDeep.kind === "f32" ? decodedDeep.deep : undefined;
-  check(deep !== undefined, `${DEEP_FIXTURE} decoded with a retained deep handle (deep=${deep !== undefined})`);
+  check(
+    deep !== undefined,
+    `${DEEP_FIXTURE} opened behind a retained deep handle while every worker was busy (deep=${deep !== undefined})`,
+  );
   if (deep) {
     const EXPECT = 32 * 32 * 4;
     for (let i = 0; i < 3; i++) {
-      const interleaved = decodeImage({ bytes: bytes[(i + 1) % bytes.length]!, ext: "exr" });
+      const interleaved = saturate(i + 2);
       const flat = await deep.flatten(deep.zMin, deep.zMax);
-      await interleaved;
+      await Promise.all(interleaved);
       check(
         flat.length === EXPECT,
-        `deep flatten #${i + 1} (interleaved with a plain decode) → ${flat.length} samples == 32*32*4`,
+        `deep flatten #${i + 1} (all ${interleaved.length} spawned workers busy with plain decodes) → ${flat.length} samples == 32*32*4`,
       );
     }
     deep.dispose();
     info("deep handle disposed");
   }
+  // Later steps assert on a 3-worker pool again.
+  setDecodePoolSize(3);
 
   // ---- (d) .npy through the SAME pool ------------------------------------
   const values = Array.from({ length: 16 }, (_, i) => i * 0.25 - 1);
@@ -217,31 +239,39 @@ async function run(): Promise<boolean> {
   }
 
   // ---- (e) a bad file is an ERROR, not a crash ---------------------------
-  // A REAL EXR truncated mid-pixel-data: the header parses, the chunk read
-  // fails, and the worker replies `ok:false`. That must reject the decode
-  // WITHOUT tearing the worker down — the pool's spawned count is the proof (a
-  // crash would terminate the slot).
+  // Valid EXR magic + version, then nothing: the WASM decoder rejects it and
+  // the worker replies `ok:false`. That must reject the decode WITHOUT tearing
+  // the worker down — the pool's spawned count is the proof (a crash or a
+  // timeout would terminate the slot).
   //
-  // Deliberately NOT an 8-byte "magic + version, then nothing" stub: the
-  // vendored OpenEXR wasm does not reject that, it spins FOREVER on it (same
-  // in node, so it is not a browser artefact), which would hang the worker,
-  // then the pool's 30 s timeout, then the main-thread fallback — and the page
-  // with it. Truncating a real file exercises the same `ok:false` reply path
-  // in milliseconds.
+  // These exact bytes used to HANG instead. Not in the WASM decoder (that
+  // rejects them in ~2 ms) but in the vendored pure-TS fallback underneath it:
+  // `parseNullTerminatedString` scanned for a header terminator with
+  // `uintBuffer[i] != 0`, and reading past the end yields `undefined`, which is
+  // `!= 0` forever. Fixed in f3e7e91 ("Bound header string reads in the TS EXR
+  // fallback"), so the brief's original input is usable again — and the wall
+  // clock below is the guard that keeps it that way: a rejection that took
+  // 30 s would be the POOL TIMEOUT tearing a worker down, a completely
+  // different code path wearing the same error, so anything slower than 5 s
+  // fails this case even though it "rejected".
   const before = getDecodePool().stats().spawned;
-  const whole = bytes[0]!;
-  const broken = whole.slice(0, whole.byteLength >> 1);
+  const broken = new Uint8Array([0x76, 0x2f, 0x31, 0x01, 0, 0, 0, 0]).buffer;
   let rejected = false;
   let rejectMessage = "";
+  const tBroken = performance.now();
   try {
     await decodeImage({ bytes: broken, ext: "exr" });
   } catch (err) {
     rejected = true;
     rejectMessage = err instanceof Error ? err.message : String(err);
   }
+  const brokenMs = performance.now() - tBroken;
   check(rejected, `a truncated EXR rejects ("${rejectMessage.slice(0, 90)}")`);
-  const after = decodeImage({ bytes: bytes[0]!, ext: "exr" });
-  const recovered = await after;
+  check(
+    brokenMs < 5000,
+    `it rejects promptly — ${brokenMs.toFixed(1)} ms < 5000 ms (an ok:false reply, not the pool's 30 s timeout)`,
+  );
+  const recovered = await decodeImage({ bytes: bytes[0]!, ext: "exr" });
   check(recovered.kind === "f32" && recovered.width > 0, `a good decode still resolves afterwards (${recovered.width}x${recovered.height})`);
   const spawnedAfter = getDecodePool().stats().spawned;
   check(

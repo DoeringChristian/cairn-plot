@@ -38,7 +38,7 @@ import { decodeImage } from "../../resources/decoders.ts";
 import { halfToFloat } from "../../runtime/half.ts";
 import type { DataSource } from "../../../../resources/data/data-source.ts";
 import type { ImageSource } from "../../definition/content.ts";
-import { createHarness, waitFor } from "../../../../testing/harness";
+import { createHarness, sleep, waitFor } from "../../../../testing/harness";
 
 const { report, setOverallStatus } = createHarness({ title: "FLOAT-COMPARE" });
 
@@ -181,16 +181,40 @@ function isBlank(px: Uint8ClampedArray | undefined): boolean {
  * Under `gpu` the presentation canvas is a WebGPU one: `paintedCentre` (a 2D
  * `getImageData`) can never read it, so every wait below would otherwise spin
  * out its full budget before the `gpuOk` branch decided the verdict — six
- * cases x 15 s overruns the runner's per-page timeout. A sized GPU canvas is
- * the positive signal that ends the wait early; it changes no verdict (the
- * `gpuOk` branch still decides), it only stops waiting for something that
- * cannot happen.
+ * cases x 15 s overruns the runner's per-page timeout. This is the positive
+ * signal that ends the wait early instead. It changes no verdict (the `gpuOk`
+ * branch still decides), it only stops waiting for something that cannot
+ * happen.
+ *
+ * A sized canvas alone is NOT enough: `webgpu/view.tsx` sizes the canvas before
+ * the operand lease resolves, so a failing operand still has a sized canvas for
+ * a moment. Where the pane exposes `data-gpu-backend-ready` (it renders that
+ * attribute alongside the canvas, and swaps the whole pane for the error
+ * surface when the operand fails) we require it too.
  */
 function gpuCanvasReady(hostId: string): boolean {
-  const c = document
-    .getElementById(hostId)
-    ?.querySelector<HTMLCanvasElement>("canvas[data-gpu-image-canvas]");
-  return !!c && c.width > 0 && c.height > 0;
+  const el = document.getElementById(hostId);
+  const c = el?.querySelector<HTMLCanvasElement>("canvas[data-gpu-image-canvas]");
+  if (!c || c.width === 0 || c.height === 0) return false;
+  const readyAttr = el?.querySelector("[data-gpu-backend-ready]");
+  // Absent = this pane does not expose the flag; present = it must say "true".
+  return !readyAttr || readyAttr.getAttribute("data-gpu-backend-ready") === "true";
+}
+
+/**
+ * The GPU branch's verdict input, decided only after a grace period.
+ *
+ * `operandError` is set from a promise callback (`webgpu/view.tsx`, the
+ * `decodedSourceToUploadLease` continuation), so a failed operand surfaces its
+ * error box one or more frames AFTER the canvas is sized and ready. Reading
+ * `unavailableText` the instant the wait ends could therefore call a broken
+ * pane "fine". Wait ~250 ms and read it again.
+ */
+async function gpuPaintedWithoutError(mode: "cpu" | "gpu", id: string, resolveError: string | null | undefined): Promise<boolean> {
+  if (mode !== "gpu" || resolveError) return false;
+  if (unavailableText(id) !== "") return false;
+  await sleep(250);
+  return unavailableText(id) === "";
 }
 
 function unavailableText(hostId: string): string {
@@ -295,7 +319,7 @@ async function runMode(mode: "cpu" | "gpu"): Promise<boolean> {
     const resolveError = failures.get(id);
     await waitFor(settled(id), 15_000, 50);
     const painted = !isBlank(paintedCentre(id));
-    const gpuOk = mode === "gpu" && !resolveError && unavailableText(id) === "";
+    const gpuOk = await gpuPaintedWithoutError(mode, id, resolveError);
     const pass = !resolveError && (painted || gpuOk);
     report(
       pass,
@@ -319,7 +343,7 @@ async function runMode(mode: "cpu" | "gpu"): Promise<boolean> {
     await waitFor(settled("m5"), 15_000, 50);
     const painted = !isBlank(paintedCentre("m5"));
     const px = paintedCentre("m5");
-    const gpuOk = mode === "gpu" && !resolveError && unavailableText("m5") === "";
+    const gpuOk = await gpuPaintedWithoutError(mode, "m5", resolveError);
     const pass = !resolveError && (gpuOk || (painted && px?.[3] === 255));
     report(
       pass,
@@ -343,7 +367,7 @@ async function runMode(mode: "cpu" | "gpu"): Promise<boolean> {
     const px = paintedCentre("m6");
     const opaque = px?.[3] === 255;
     const zero = !!px && px[0]! <= 1 && px[1]! <= 1 && px[2]! <= 1;
-    const gpuOk = mode === "gpu" && !resolveError && unavailableText("m6") === "";
+    const gpuOk = await gpuPaintedWithoutError(mode, "m6", resolveError);
     const pass = !resolveError && (gpuOk || (opaque && zero));
     report(
       pass,
