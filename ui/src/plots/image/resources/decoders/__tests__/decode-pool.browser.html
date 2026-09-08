@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>decode worker pool harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>decode worker pool — 8 EXRs in parallel, deep-handle affinity, failure isolation</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <!--
+      Loads the ESM bundle produced from decode-pool.browser.ts. Serve from the
+      ui/ ROOT so the fixture URLs (resolved from import.meta.url) are
+      reachable. The `.bundle.js` is gitignored — regenerate via the runner
+      (`npm run test:harness -- --only decode-pool`), which also teaches esbuild
+      Vite's `?worker&inline` so the pool spawns REAL workers here.
+    -->
+    <script type="module" src="./decode-pool.browser.bundle.js"></script>
+  </body>
+</html>

@@ -23,6 +23,11 @@
  *     `data-cairn-harness-dpr` its own group — the runner launches one Chromium
  *     per group with `--force-device-scale-factor`, so a page landing in the
  *     wrong group would run at the wrong device pixel ratio.
+ *   • `inlineWorkerPlugin` gives esbuild Vite's `?worker&inline`: the bundled
+ *     module must construct a REAL `new Worker(` from an inline blob. Without
+ *     it the worker is bundled as a plain module, `new mod.default()` throws,
+ *     and every decode silently ran on the main thread — the harnesses would
+ *     keep passing while proving nothing about the worker path.
  * Plus, as spawned runs: the runner must not exit 0 when its filters selected no
  * harness, nor accept an unparseable `HARNESS_MIN_PARITY` (which would silently
  * disable the parity floor).
@@ -43,7 +48,13 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
-import { downgradeIfDeviceLost, groupByDpr, parseHarnessAttributes } from "./test-harness.mjs";
+import { build as esbuild } from "esbuild";
+import {
+  downgradeIfDeviceLost,
+  groupByDpr,
+  inlineWorkerPlugin,
+  parseHarnessAttributes,
+} from "./test-harness.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RUNNER = resolve(__dirname, "test-harness.mjs");
@@ -232,7 +243,57 @@ function refusalChecks() {
   ];
 }
 
-function main() {
+/**
+ * `?worker&inline` must bundle to a real Worker constructor.
+ *
+ * esbuild does not implement Vite's `?worker&inline`, so without
+ * `inlineWorkerPlugin` the worker module is bundled as an ordinary ESM module:
+ * its default export is `undefined`, `new mod.default()` throws, and the decode
+ * pool's caller silently falls back to the MAIN thread — every harness would
+ * still pass while proving nothing about the worker path. This check bundles a
+ * throwaway entry that imports `./x.ts?worker&inline` and asserts the output
+ * really constructs a Worker (and carries the worker's own code inline).
+ */
+async function workerPluginChecks(dir) {
+  writeFileSync(join(dir, "x.ts"), "self.onmessage = () => postMessage('cairn-worker-alive');\n");
+  writeFileSync(
+    join(dir, "entry.ts"),
+    'import W from "./x.ts?worker&inline";\n(globalThis as Record<string, unknown>).W = W;\n',
+  );
+  let text = "";
+  let error = null;
+  try {
+    const out = await esbuild({
+      entryPoints: [join(dir, "entry.ts")],
+      bundle: true,
+      write: false,
+      format: "esm",
+      platform: "browser",
+      target: "es2022",
+      logLevel: "silent",
+      plugins: [inlineWorkerPlugin(esbuild, { target: "es2022", logLevel: "silent" })],
+    });
+    text = out.outputFiles[0].text;
+  } catch (err) {
+    error = err;
+  }
+  return [
+    [
+      "a `?worker&inline` import bundles without error",
+      error === null,
+    ],
+    [
+      "the bundled `?worker&inline` module constructs a real Worker (`new Worker(`)",
+      text.includes("new Worker("),
+    ],
+    [
+      "the worker's own code travels inline in that bundle (a Blob URL, no separate asset)",
+      /createObjectURL/.test(text) && text.includes("cairn-worker-alive"),
+    ],
+  ];
+}
+
+async function main() {
   // Fixtures must live UNDER ui/ so the runner's static server (rooted at ui/)
   // can serve them; a /tmp dir would 404 and every fake harness would time out.
   const dir = mkdtempSync(join(UI_ROOT, ".harness-selftest-"));
@@ -247,6 +308,7 @@ function main() {
   });
   const raw = (r.stdout || "") + (r.stderr || "");
   process.stdout.write(raw.replace(/^/gm, "    "));
+  const workerChecks = await workerPluginChecks(dir);
   rmSync(dir, { recursive: true, force: true });
 
   // eslint-disable-next-line no-control-regex
@@ -259,6 +321,7 @@ function main() {
     ["pass harness reported as PASS (not failed by the FAIL peer)", passLine],
     ["exactly one harness failed", /1 of 2 harness\(es\) did not pass/.test(out)],
     ...unitChecks(),
+    ...workerChecks,
     ...refusalChecks(),
   ];
 
@@ -278,4 +341,7 @@ function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  console.log(RED(`✗ runner self-test FAILED: ${err?.stack ?? err}`) + "\n");
+  process.exit(1);
+});

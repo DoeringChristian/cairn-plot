@@ -83,6 +83,27 @@ path: per backend, twelve cards cost twelve decodes, zero element decodes, one
 readback (the one open histogram), zero scene conversions and zero source bytes
 through `writeTexture`.
 
+Formats the browser cannot decode itself — `.exr` and `.npy` — go to a pool of
+up to four Web Workers instead of the main thread: `decoders/decode-pool-core.ts`
+is the pure scheduler, `decoders/decode-pool.ts` the browser shell, and
+`decoders/decode-worker.ts` the single worker module every slot runs (imported
+`?worker&inline`, so one inlined blob serves N workers and `build:plot-inline`
+stays a single file). Each worker instantiates its OWN OpenEXR WASM module.
+Policy: a stateless job takes an idle worker, spawning one while the pool is
+under size, else it waits and waiting jobs are served most-recent-first (LIFO —
+the pane scrolled into view preempts stale requests, as in `decode-queue.ts`); a
+job touching a RETAINED deep-EXR handle has affinity for the worker whose WASM
+heap owns it, pinned by that worker's generation counter so a respawned slot
+rejects a stale handle rather than replaying it into a fresh heap; a timeout or
+crash terminates ONLY that worker, rejecting its in-flight jobs and leaving the
+other workers and the shared queue untouched (an `ok:false` reply is an ordinary
+error, not a teardown). Every path falls back to the same decoders running
+inline on the calling thread when no `Worker` exists — which is how node's
+`*.test.ts` suite runs them. The pool is proven end-to-end only in a browser:
+`decoders/__tests__/decode-pool.browser.ts` decodes eight distinct EXRs at once
+with no >50 ms main-thread longtask, interleaves deep-handle flattens with
+unrelated decodes, and pins the failure isolation.
+
 ## Browser host
 
 The supported browser API is `ui/src/public`:

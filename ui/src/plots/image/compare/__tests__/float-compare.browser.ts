@@ -15,6 +15,15 @@
  *   2. float × float DIFFERENCE → the pane paints.
  *   3. png   × float SPLIT      → the mixed pair paints.
  *   4. a REJECTED foreground hash → a VISIBLE failure surface, not a blank pane.
+ *   5. EXR   × EXR   SPLIT      → a `format:"exr"` operand paints too. This is
+ *      also the first compare case whose operands decode in a POOL WORKER (the
+ *      npy operands above take the same route), so it covers the worker reply
+ *      being reassembled back into a compare-ready image.
+ *   6. EXR   × npy   DIFFERENCE → the SAME pixels, widened out of the EXR's
+ *      half bits and re-encoded as float32 `.npy`, differenced against their
+ *      own source. A correct answer is ZERO, i.e. BLACK — which `isBlank`
+ *      cannot tell apart from "nothing painted", so this case probes ALPHA
+ *      (255 = the pane painted) plus RGB ≈ 0 (the difference really is zero).
  *
  * Run under forced `cpu`, then again under `gpu` when the host has WebGPU.
  */
@@ -25,6 +34,8 @@ import GpuImagePane from "../../webgpu/view.tsx";
 import { comparisonMenuOptions } from "../../runtime/comparison-menu.ts";
 import { CPU_CAPABILITIES } from "../../cpu/capabilities.ts";
 import { resolveImageComparisonPair } from "../../resources/comparison-resolve.ts";
+import { decodeImage } from "../../resources/decoders.ts";
+import { halfToFloat } from "../../runtime/half.ts";
 import type { DataSource } from "../../../../resources/data/data-source.ts";
 import type { ImageSource } from "../../definition/content.ts";
 import { createHarness, waitFor } from "../../../../testing/harness";
@@ -92,6 +103,35 @@ const NPY_A = encodeNpy(floatField(0), [H, W, C]);
 const NPY_B = encodeNpy(floatField(1), [H, W, C]);
 const PNG_URL = pngDataUrl();
 
+/** A committed 64x48 half-float EXR — the `format:"exr"` compare operand. */
+const EXR_URL = new URL(
+  "../../resources/decoders/fixtures/rgb-piz-half-64x48.exr",
+  import.meta.url,
+).href;
+/** Filled by `loadExrOperands()` before any case mounts. */
+let EXR_A: ArrayBuffer | null = null;
+/** The SAME pixels as `EXR_A`, widened to f32 and re-encoded as `.npy`. */
+let NPY_FROM_EXR: ArrayBuffer | null = null;
+
+/**
+ * Fetch the EXR fixture and derive its `.npy` twin. The twin is built by
+ * decoding the EXR (through the decode worker pool, like any other EXR) and
+ * widening its half BIT PATTERNS to float — so the two operands hold
+ * bit-identical values and case 6's difference is exactly zero.
+ */
+async function loadExrOperands(): Promise<void> {
+  const res = await fetch(EXR_URL);
+  if (!res.ok) throw new Error(`EXR fixture → HTTP ${res.status}`);
+  EXR_A = await res.arrayBuffer();
+  const decoded = await decodeImage({ bytes: EXR_A, ext: "exr" });
+  if (decoded.kind !== "f32") throw new Error(`EXR fixture decoded to ${decoded.kind}, expected f32`);
+  const wide =
+    decoded.data instanceof Uint16Array
+      ? Float32Array.from(decoded.data, (h) => halfToFloat(h))
+      : new Float32Array(decoded.data);
+  NPY_FROM_EXR = encodeNpy(wide, [decoded.height, decoded.width, decoded.channels]);
+}
+
 /** The host's artifact store: two float `.npy` blobs, one PNG, one bad hash. */
 const source: DataSource = {
   artifactUrl(hash: string): string {
@@ -101,12 +141,23 @@ const source: DataSource = {
   async bytes(hash: string): Promise<ArrayBuffer> {
     if (hash === "npyA") return NPY_A;
     if (hash === "npyB") return NPY_B;
+    if (hash === "exrA" && EXR_A) return EXR_A;
+    if (hash === "npyFromExr" && NPY_FROM_EXR) return NPY_FROM_EXR;
     throw new Error(`no artifact ${hash}`);
   },
 };
 
+/**
+ * The mount point for one case. The page ships four `<div>`s; the EXR cases
+ * create their own so the `.html` stays a plain four-slot page.
+ */
 function host(id: string): HTMLElement {
-  const el = document.getElementById(id)!;
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = id;
+    (document.getElementById("mounts") ?? document.body).appendChild(el);
+  }
   el.style.cssText = "width:280px;height:200px;position:relative;background:#222";
   return el;
 }
@@ -114,8 +165,8 @@ function host(id: string): HTMLElement {
 /** Centre-pixel readback of the ONE presentation canvas — the paint probe. */
 function paintedCentre(hostId: string): Uint8ClampedArray | undefined {
   const canvas = document
-    .getElementById(hostId)!
-    .querySelector<HTMLCanvasElement>("canvas[data-cpu-image-canvas]");
+    .getElementById(hostId)
+    ?.querySelector<HTMLCanvasElement>("canvas[data-cpu-image-canvas]");
   if (!canvas || canvas.width === 0 || canvas.height === 0) return undefined;
   return canvas
     .getContext("2d")
@@ -126,9 +177,25 @@ function isBlank(px: Uint8ClampedArray | undefined): boolean {
   return !px || px[3] === 0;
 }
 
+/**
+ * Under `gpu` the presentation canvas is a WebGPU one: `paintedCentre` (a 2D
+ * `getImageData`) can never read it, so every wait below would otherwise spin
+ * out its full budget before the `gpuOk` branch decided the verdict — six
+ * cases x 15 s overruns the runner's per-page timeout. A sized GPU canvas is
+ * the positive signal that ends the wait early; it changes no verdict (the
+ * `gpuOk` branch still decides), it only stops waiting for something that
+ * cannot happen.
+ */
+function gpuCanvasReady(hostId: string): boolean {
+  const c = document
+    .getElementById(hostId)
+    ?.querySelector<HTMLCanvasElement>("canvas[data-gpu-image-canvas]");
+  return !!c && c.width > 0 && c.height > 0;
+}
+
 function unavailableText(hostId: string): string {
-  const el = document.getElementById(hostId)!;
-  const box = el.querySelector("[data-cpu-image-error]") ?? el.querySelector("[data-gpu-image-error]");
+  const el = document.getElementById(hostId);
+  const box = el?.querySelector("[data-cpu-image-error]") ?? el?.querySelector("[data-gpu-image-error]");
   return box?.textContent ?? "";
 }
 
@@ -137,6 +204,8 @@ const NODE_NPY_A = { kind: "image", hash: "npyA", format: "npy" } as const;
 const NODE_NPY_B = { kind: "image", hash: "npyB", format: "npy" } as const;
 const NODE_PNG = { kind: "image", hash: "png" } as const;
 const NODE_MISSING = { kind: "image", hash: "missing", format: "npy" } as const;
+const NODE_EXR_A = { kind: "image", hash: "exrA", format: "exr" } as const;
+const NODE_NPY_FROM_EXR = { kind: "image", hash: "npyFromExr", format: "npy" } as const;
 
 interface Case {
   id: string;
@@ -157,6 +226,14 @@ const CASES: Case[] = [
   },
   { id: "m3", reference: NODE_PNG, foreground: NODE_NPY_B, presentation: "split" },
   { id: "m4", reference: NODE_NPY_A, foreground: NODE_MISSING, presentation: "split" },
+  { id: "m5", reference: NODE_EXR_A, foreground: NODE_EXR_A, presentation: "split" },
+  {
+    id: "m6",
+    reference: NODE_EXR_A,
+    foreground: NODE_NPY_FROM_EXR,
+    presentation: "difference",
+    settings: { "compare.operation": "absolute" },
+  },
 ];
 
 async function mountCase(
@@ -204,7 +281,7 @@ async function runMode(mode: "cpu" | "gpu"): Promise<boolean> {
   const roots: Root[] = [];
   const failures = new Map<string, string | null>();
   for (const c of CASES) {
-    document.getElementById(c.id)!.innerHTML = "";
+    host(c.id).innerHTML = "";
     failures.set(c.id, await mountCase(c, mode === "cpu" ? CpuImagePane : GpuImagePane, roots));
   }
 
@@ -212,9 +289,12 @@ async function runMode(mode: "cpu" | "gpu"): Promise<boolean> {
   // 1-3: the three RESOLVABLE pairs must PAINT. Under `gpu` the presentation
   // canvas is the GPU one, so "painted" is probed by the pane having produced a
   // non-blank surface OR (GPU path) by the pane never showing the error box.
+  const settled = (id: string) => (): boolean =>
+    !isBlank(paintedCentre(id)) || (mode === "gpu" && gpuCanvasReady(id));
   for (const id of ["m1", "m2", "m3"]) {
     const resolveError = failures.get(id);
-    const painted = await waitFor(() => !isBlank(paintedCentre(id)), 15_000, 50);
+    await waitFor(settled(id), 15_000, 50);
+    const painted = !isBlank(paintedCentre(id));
     const gpuOk = mode === "gpu" && !resolveError && unavailableText(id) === "";
     const pass = !resolveError && (painted || gpuOk);
     report(
@@ -231,11 +311,55 @@ async function runMode(mode: "cpu" | "gpu"): Promise<boolean> {
   report(shown, `[${mode}] m4 → a rejected operand surfaces a visible failure ("${unavailableText("m4").slice(0, 80)}")`);
   ok = ok && shown;
 
+  // 5: a `format:"exr"` operand (decoded in a pool worker) paints like any
+  // other. Same probe as 1-3, plus ALPHA: the split view is real image content,
+  // so an opaque centre pixel is the honest "it painted" signal.
+  {
+    const resolveError = failures.get("m5");
+    await waitFor(settled("m5"), 15_000, 50);
+    const painted = !isBlank(paintedCentre("m5"));
+    const px = paintedCentre("m5");
+    const gpuOk = mode === "gpu" && !resolveError && unavailableText("m5") === "";
+    const pass = !resolveError && (gpuOk || (painted && px?.[3] === 255));
+    report(
+      pass,
+      `[${mode}] m5 → EXR × EXR split paints (resolve ${resolveError ?? "ok"}, centre ${
+        JSON.stringify(px ? [...px] : null)
+      })`,
+    );
+    ok = ok && pass;
+  }
+
+  // 6: EXR differenced against its OWN pixels re-encoded as float32 `.npy`.
+  // The right answer is zero — i.e. BLACK — which `isBlank` reads as "nothing
+  // painted", so alpha is the paint probe and RGB is the correctness probe.
+  {
+    const resolveError = failures.get("m6");
+    await waitFor(
+      () => paintedCentre("m6")?.[3] === 255 || (mode === "gpu" && gpuCanvasReady("m6")),
+      15_000,
+      50,
+    );
+    const px = paintedCentre("m6");
+    const opaque = px?.[3] === 255;
+    const zero = !!px && px[0]! <= 1 && px[1]! <= 1 && px[2]! <= 1;
+    const gpuOk = mode === "gpu" && !resolveError && unavailableText("m6") === "";
+    const pass = !resolveError && (gpuOk || (opaque && zero));
+    report(
+      pass,
+      `[${mode}] m6 → EXR × (same pixels as npy) difference paints an opaque BLACK centre (resolve ${
+        resolveError ?? "ok"
+      }, centre ${JSON.stringify(px ? [...px] : null)})`,
+    );
+    ok = ok && pass;
+  }
+
   roots.forEach((r) => r.unmount());
   return ok;
 }
 
 async function run(): Promise<boolean> {
+  await loadExrOperands();
   let ok = await runMode("cpu");
   if ((navigator as unknown as { gpu?: unknown }).gpu) {
     ok = (await runMode("gpu")) && ok;

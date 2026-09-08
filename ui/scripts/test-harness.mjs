@@ -283,6 +283,85 @@ function discoverHarnesses() {
 }
 
 // ── 2. Bundle sources with esbuild ────────────────────────────────────────────
+
+/**
+ * The compilation settings EVERY harness bundle (page entry AND the inlined
+ * worker sub-bundles below) is built with. Kept as one object so a worker
+ * bundled by `inlineWorkerPlugin` sees exactly the same loaders/target/JSX as
+ * the page that imports it — a worker built with different settings would
+ * fail on the very modules (`.wasm` loader, node-module lookup) the page
+ * resolves fine.
+ */
+const BASE_BUILD_OPTIONS = {
+  target: "es2022",
+  logLevel: "silent",
+  // Some public package sources live beside ui/, so normal ancestor
+  // lookup does not reach ui/node_modules. Keep one dependency install
+  // authoritative instead of requiring duplicate package installs.
+  nodePaths: [join(UI_ROOT, "node_modules")],
+  // Harnesses that import React components (`*.tsx`, e.g. the pane
+  // harnesses) need the automatic JSX runtime: the project's root
+  // tsconfig.json is a references-only stub esbuild does not resolve
+  // through to `tsconfig.app.json`'s `"jsx": "react-jsx"`, so without this
+  // esbuild falls back to the classic `React.createElement` factory and
+  // the component modules throw "React is not defined" at eval (the same
+  // gotcha the gpu-image-pane harness's RUNNING doc calls out). Engine
+  // parity harnesses import no JSX, so this is a no-op for them.
+  jsx: "automatic",
+  // Inline .wasm/.exr etc. that harnesses import via new URL(...import.meta.url)
+  // are left as URL references resolved against the served ui/ root.
+  loader: { ".wasm": "file" },
+};
+
+/**
+ * Vite's `?worker&inline` for esbuild.
+ *
+ * The app builds through Vite, which turns `import("./x.ts?worker&inline")`
+ * into a module whose DEFAULT export constructs a Worker from a self-contained
+ * inline blob. esbuild implements no such thing: without this plugin the query
+ * string is just part of the path, the worker module is bundled as an ordinary
+ * ESM module, `mod.default` is `undefined`, `new mod.default()` throws — and
+ * the decode pool's caller silently falls back to the MAIN thread. Every EXR
+ * decode in every harness ran single-threaded that way, so the harnesses could
+ * never have caught a worker-path regression.
+ *
+ * `baseOptions` are the page build's own compilation settings, so the worker
+ * sub-build resolves the same modules and loaders (see `BASE_BUILD_OPTIONS`).
+ */
+export function inlineWorkerPlugin(build_, baseOptions) {
+  return {
+    name: "cairn-inline-worker",
+    setup(build) {
+      build.onResolve({ filter: /\?worker&inline$/ }, (args) => ({
+        path: resolve(args.resolveDir, args.path.replace(/\?worker&inline$/, "")),
+        namespace: "inline-worker",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "inline-worker" }, async (args) => {
+        const result = await build_({
+          ...baseOptions,
+          entryPoints: [args.path],
+          bundle: true,
+          write: false,
+          format: "iife",
+          platform: "browser",
+          // Nothing is written (`write:false`), but the inherited `.wasm` file
+          // loader is rejected outright without an output path — and the path
+          // it would use decides how emitted asset URLs are spelled, so root it
+          // beside the worker source.
+          outdir: dirname(args.path),
+        });
+        const js = result.outputFiles.find((f) => f.path.endsWith(".js")) ?? result.outputFiles[0];
+        const code = js.text;
+        return {
+          loader: "js",
+          contents: `const CODE = ${JSON.stringify(code)};
+export default class InlineWorker { constructor() { const url = URL.createObjectURL(new Blob([CODE], { type: "text/javascript" })); const w = new Worker(url); URL.revokeObjectURL(url); return w; } }`,
+        };
+      });
+    },
+  };
+}
+
 async function bundleAll(harnesses) {
   const sources = [...new Set(harnesses.flatMap((h) => h.sources))];
   if (sources.length === 0) return [];
@@ -292,29 +371,13 @@ async function bundleAll(harnesses) {
     sources.map(async (src) => {
       const outfile = src.replace(/\.ts$/, ".bundle.js");
       await esbuild({
+        ...BASE_BUILD_OPTIONS,
         entryPoints: [src],
         bundle: true,
         format: "esm",
         platform: "browser",
-        target: "es2022",
         outfile,
-        logLevel: "silent",
-        // Some public package sources live beside ui/, so normal ancestor
-        // lookup does not reach ui/node_modules. Keep one dependency install
-        // authoritative instead of requiring duplicate package installs.
-        nodePaths: [join(UI_ROOT, "node_modules")],
-        // Harnesses that import React components (`*.tsx`, e.g. the pane
-        // harnesses) need the automatic JSX runtime: the project's root
-        // tsconfig.json is a references-only stub esbuild does not resolve
-        // through to `tsconfig.app.json`'s `"jsx": "react-jsx"`, so without this
-        // esbuild falls back to the classic `React.createElement` factory and
-        // the component modules throw "React is not defined" at eval (the same
-        // gotcha the gpu-image-pane harness's RUNNING doc calls out). Engine
-        // parity harnesses import no JSX, so this is a no-op for them.
-        jsx: "automatic",
-        // Inline .wasm/.exr etc. that harnesses import via new URL(...import.meta.url)
-        // are left as URL references resolved against the served ui/ root.
-        loader: { ".wasm": "file" },
+        plugins: [inlineWorkerPlugin(esbuild, BASE_BUILD_OPTIONS)],
       }).catch((err) => {
         die(`esbuild failed on ${relative(UI_ROOT, src)}:\n${err.message ?? err}`);
       });
