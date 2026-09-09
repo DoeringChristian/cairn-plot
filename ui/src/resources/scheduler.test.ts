@@ -184,3 +184,46 @@ test("comparePreparationTasks orders priority, then visibility, then FIFO", () =
   );
   assert.equal(comparePreparationTasks(fg, fg), 0);
 });
+
+// --- promote: raise a QUEUED task without ever starting new work -----------
+
+test("promote raises a queued task's priority and visibility", async () => {
+  const scheduler = new PreparationScheduler({ concurrency: 1 });
+  const gate = deferred<void>();
+  const order: string[] = [];
+  const blocker = scheduler.schedule("blocker", "foreground", () => gate.promise);
+  const preload = scheduler.schedule("slot", "preload", async () => { order.push("slot"); });
+  const other = scheduler.schedule("other", "foreground", async () => { order.push("other"); });
+  scheduler.promote("slot", "foreground", { visible: true });
+
+  gate.resolve();
+  await Promise.all([blocker, preload, other]);
+  assert.deepEqual(order, ["slot", "other"], "the promoted preload now outranks queued foreground work");
+});
+
+test("promote never starts work — not for an unknown key, nor for a running one", async () => {
+  const scheduler = new PreparationScheduler({ concurrency: 1, watchdogMs: 10 });
+  // eslint-disable-next-line no-console
+  const realWarn = console.warn;
+  // eslint-disable-next-line no-console
+  console.warn = () => {};
+  try {
+    let runs = 0;
+    void scheduler.schedule("stuck", "foreground", () => {
+      runs++;
+      return new Promise<void>(() => {});
+    });
+    await new Promise((r) => setTimeout(r, 30)); // watchdog releases the slot
+    // This is the resolution cache's promote path: work is still in flight, so
+    // it must NOT be launched a second time even though the slot was reclaimed.
+    scheduler.promote("stuck", "foreground", { visible: true });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(runs, 1, "promote must never re-run in-flight work");
+
+    scheduler.promote("never-seen", "foreground");
+    assert.equal(await scheduler.schedule("never-seen", "foreground", async () => "ok"), "ok");
+  } finally {
+    // eslint-disable-next-line no-console
+    console.warn = realWarn;
+  }
+});

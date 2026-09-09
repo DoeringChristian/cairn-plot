@@ -24,6 +24,7 @@ import {
   acquireResolved,
   peekResolved,
   peekResolveError,
+  clearResolveError,
   resolveCached,
   subscribeResolveCache,
   resolveCacheVersion,
@@ -196,11 +197,22 @@ export function ImageHostAdapter({
   const [rendererError, setRendererError] = useState<string | null>(null);
   const [, bumpRegistry] = useState(0);
 
+  // Hoisted ABOVE the resolve effect and listed in its deps: the cached error is
+  // what gates the retry, so when its backoff expires the cache notifies, this
+  // leaf re-renders with `cacheError === undefined` and the effect resolves
+  // again — with no node change. (A pure read; the cache's own timer forgets it.)
+  const cacheError = peekResolveError(resolveKey);
+  const resolvedNodeRef = useRef<PlotLeafNode | null>(null);
   useEffect(() => {
     const key = resolveKey;
-    // Already resolved (warm/prefetched) or errored → nothing to kick off; the pure
-    // read below shows it. On resolution the cache NOTIFIES and this leaf re-renders.
-    if (peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
+    const nodeChanged = resolvedNodeRef.current !== node;
+    resolvedNodeRef.current = node;
+    // A new node is fresh evidence — a spec update never waits out a backoff.
+    if (nodeChanged) clearResolveError(key);
+    else if (cacheError !== undefined) return;
+    // Already resolved (warm/prefetched) → nothing to kick off; the pure read
+    // below shows it. On resolution the cache NOTIFIES and this leaf re-renders.
+    if (peekResolved(key) !== undefined) return;
     let cancelled = false;
     // DIFF path: resolve BOTH operands through the compare resolver; the cached payload
     // carries the decoded foreground (`__diffB`) + content keys alongside the reference
@@ -253,7 +265,7 @@ export function ImageHostAdapter({
     return () => {
       cancelled = true;
     };
-  }, [node, source, selKey, effectiveData, resolveKey, diffSpec, paneSync, visible]);
+  }, [cacheError, node, source, selKey, effectiveData, resolveKey, diffSpec, paneSync, visible]);
 
   // PURE READ of THIS render's resolveKey (the flip-commit guarantee). `peekResolved`
   // returns the SAME cached object across renders, so `dataProps` is reference-stable;
@@ -267,7 +279,6 @@ export function ImageHostAdapter({
     const lease = acquireResolved(resolveKey);
     return () => lease?.release();
   }, [resolveKey, resolvedNow]);
-  const cacheError = peekResolveError(resolveKey);
   // CHANNEL-PICK HOLD (user ruling: a channel pick must NEVER create a new
   // pane). The pick rides the settings store like any other display setting,
   // so its pending re-resolve must not swap the viewport for a placeholder —

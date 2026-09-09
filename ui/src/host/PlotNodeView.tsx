@@ -42,6 +42,7 @@ import {
   acquireResolved,
   peekResolved,
   peekResolveError,
+  clearResolveError,
   resolveCached,
   prefetchResolved,
   subscribeResolveCache,
@@ -50,7 +51,11 @@ import {
 import { type PlotSettings } from "../settings/schema.ts";
 import { defaultSettingsForNode } from "../plots/settings.ts";
 import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
-import { gridCellKeys } from "../layout/grid-cell-key.ts";
+import {
+  gridCellKeys,
+  gridCellPath,
+  positionalCellKey,
+} from "../layout/grid-cell-key.ts";
 import {
   CellSettingsContext,
   PaneVisibilityContext,
@@ -178,23 +183,39 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
   // filtered run set must move each pane's mounted instance with its node
   // instead of handing pane 0 a different run's data.
   const cellKeys = useMemo(() => gridCellKeys(children), [children]);
+  // The cell PATH — and therefore `cell:<path>` / `stack:<path>` session ids —
+  // follows the same identity as the React key: an index-derived path would
+  // hand slot 2's saved settings to whichever run lands in slot 2 next.
+  const cellPath = useCallback(
+    (index: number) => gridCellPath(path, cellKeys[index] ?? positionalCellKey(index)),
+    [cellKeys, path],
+  );
   const renderGridCell = useCallback(
-    (index: number) => <PlotNodeView node={children[index]!} path={`${path}/${index}`} />,
-    [children, path],
+    (index: number) => <PlotNodeView node={children[index]!} path={cellPath(index)} />,
+    [cellPath, children],
   );
   const renderStackSlot = useCallback(
     (index: number) => {
       const child = children[index];
       if (!child) return null;
+      // The stacked slot is the pane the user is looking at, and it bypasses
+      // `LazyGate` (it is mounted by the stack, not by a viewport observer), so
+      // it must declare its own visibility rather than inherit the "no
+      // evidence" default. The gate-level signal stays coarse — per-pane
+      // intersection tracking is CP3 work.
       return child.kind === "grid" ? (
-        <LayoutFrame><NodeDispatch node={child} path={`${path}/${index}`} /></LayoutFrame>
+        <PaneVisibilityContext.Provider value={true}>
+          <LayoutFrame><NodeDispatch node={child} path={cellPath(index)} /></LayoutFrame>
+        </PaneVisibilityContext.Provider>
       ) : (
-        <PlotCell sessionId={`stack:${path}`} selectable={isSelectableNode(child)} node={child}>
-          <NodeDispatch node={child} path={`${path}/${index}`} />
-        </PlotCell>
+        <PaneVisibilityContext.Provider value={true}>
+          <PlotCell sessionId={`stack:${path}`} selectable={isSelectableNode(child)} node={child}>
+            <NodeDispatch node={child} path={cellPath(index)} />
+          </PlotCell>
+        </PaneVisibilityContext.Provider>
       );
     },
-    [children, path],
+    [cellPath, children, path],
   );
   const preload = useCallback(
     (indices: number[]) => {
@@ -360,26 +381,32 @@ function LazyGate({
     // tab) re-triggers the intersection check when it finally gains a box.
     let cancelled = false;
     let attempts = 0;
-    let frame: ReturnType<typeof requestAnimationFrame> | number | null = null;
     let io: IntersectionObserver | null = null;
     let ro: ResizeObserver | null = null;
 
-    const schedule = (fn: () => void): ReturnType<typeof requestAnimationFrame> | number =>
+    // TAGGED handle: a raf id and a timeout id are both opaque numbers, and
+    // cancelling one with the other's canceller silently does nothing.
+    type RetryHandle =
+      | { kind: "raf"; id: number }
+      | { kind: "timeout"; id: ReturnType<typeof setTimeout> };
+    let retry: RetryHandle | null = null;
+
+    const schedule = (fn: () => void): RetryHandle =>
       typeof requestAnimationFrame === "function"
-        ? requestAnimationFrame(fn)
-        : (setTimeout(fn, 16) as unknown as number);
-    const unschedule = (handle: ReturnType<typeof requestAnimationFrame> | number): void => {
-      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(handle as number);
-      else clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+        ? { kind: "raf", id: requestAnimationFrame(fn) }
+        : { kind: "timeout", id: setTimeout(fn, 16) };
+    const unschedule = (handle: RetryHandle): void => {
+      if (handle.kind === "raf") cancelAnimationFrame(handle.id);
+      else clearTimeout(handle.id);
     };
 
     const attach = (): void => {
       if (cancelled) return;
-      frame = null;
+      retry = null;
       const el = placeholderRef.current;
       if (!el) {
         if (!shouldRetryObserve(attempts++)) return;
-        frame = schedule(attach);
+        retry = schedule(attach);
         return;
       }
       io = new IntersectionObserver(
@@ -409,7 +436,7 @@ function LazyGate({
 
     return () => {
       cancelled = true;
-      if (frame !== null) unschedule(frame);
+      if (retry !== null) unschedule(retry);
       io?.disconnect();
       ro?.disconnect();
       cleanupPrint();
@@ -499,15 +526,27 @@ function GenericLeafView({ node }: { node: PlotLeafNode }) {
     if (registered) return;
     return onRegisterReactPlotType(() => bumpRegistry((value) => value + 1));
   }, [registered, node.type]);
+  // The resolve effect DEPENDS on the cached error: when the backoff expires the
+  // cache notifies, this leaf re-renders with `cachedError === undefined`, and
+  // the effect re-runs and retries. Without that dependency the TTL would be
+  // inert (nothing else re-renders an idle pane).
+  const cachedError = peekResolveError(key);
+  const resolvedNodeRef = useRef<PlotLeafNode | null>(null);
   useEffect(() => {
-    if (!registered || peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
+    const nodeChanged = resolvedNodeRef.current !== node;
+    resolvedNodeRef.current = node;
+    // A new node is fresh evidence: never make a spec update wait out a
+    // backoff recorded for the previous attempt at this key.
+    if (nodeChanged) clearResolveError(key);
+    else if (cachedError !== undefined) return;
+    if (!registered || peekResolved(key) !== undefined) return;
     void resolveCached(key, async () => registered.definition.present(
       await registered.definition.resolve(node, {
         source,
         signal: new AbortController().signal,
       }),
     ), "foreground", { visible }).catch(() => {});
-  }, [key, node, registered, source, visible]);
+  }, [cachedError, key, node, registered, source, visible]);
 
   const presentation = peekResolved<unknown>(key);
   useEffect(() => {
@@ -516,8 +555,7 @@ function GenericLeafView({ node }: { node: PlotLeafNode }) {
     return () => lease?.release();
   }, [key, presentation]);
 
-  const error = peekResolveError(key);
-  if (error) return <Message text={`Plot error: ${error}`} error />;
+  if (cachedError) return <Message text={`Plot error: ${cachedError}`} error />;
   if (!registered) return <Message text={`plot type ${JSON.stringify(node.type)} is not installed`} error />;
   if (presentation === undefined) return <Message text="Loading…" />;
   if (presentation === null || typeof presentation !== "object" || Array.isArray(presentation)) {
@@ -562,20 +600,27 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
       return { value: null, error: error instanceof Error ? error.message : String(error) };
     }
   }, [node]);
+  // See GenericLeafView: the error is a DEPENDENCY so its expiry retries.
+  const cachedError = peekResolveError(key);
+  const resolvedNodeRef = useRef<CompareNode | null>(null);
   useEffect(() => {
-    if (!planned.value || peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
+    const nodeChanged = resolvedNodeRef.current !== node;
+    resolvedNodeRef.current = node;
+    if (nodeChanged) clearResolveError(key);
+    else if (cachedError !== undefined) return;
+    if (!planned.value || peekResolved(key) !== undefined) return;
     void resolveCached(key, () => resolveComparison(node, {
       source,
       signal: new AbortController().signal,
     }), "foreground", { visible }).catch(() => {});
-  }, [key, node, planned.value, source, visible]);
+  }, [cachedError, key, node, planned.value, source, visible]);
   const presentation = peekResolved<unknown>(key);
   useEffect(() => {
     if (presentation === undefined) return;
     const lease = acquireResolved(key);
     return () => lease?.release();
   }, [key, presentation]);
-  const error = planned.error ?? peekResolveError(key);
+  const error = planned.error ?? cachedError;
   if (error) return <Message text={error} error />;
   if (presentation === undefined) return <Message text="Loading…" />;
   if (!planned.value) return <Message text="invalid comparison" error />;

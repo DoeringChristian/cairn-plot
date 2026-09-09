@@ -12,8 +12,9 @@ import {
   prefetchResolved,
   estimateResolvedBytes,
   RESOLVE_ERROR_TTL_MS,
+  subscribeResolveCache,
   __resetResolveCacheForTest,
-  __setResolveClockForTest,
+  __setResolveErrorTtlForTest,
 } from "./resolution-cache.ts";
 import { globalResourceCache, setRuntimeCacheBudget } from "./cache.ts";
 import { clearPlotTypesForTest } from "../plots/registry.ts";
@@ -237,10 +238,11 @@ test("two nodes of a registered type without a content id key APART, not onto on
 // later SUCCESS of the same key — which the guard itself prevented.
 // ---------------------------------------------------------------------------
 
-test("a cached resolve error expires after the TTL and the key retries", async () => {
+test("a cached resolve error expires into a notification, and the key retries", async () => {
   __resetResolveCacheForTest();
-  let now = 1_000_000;
-  __setResolveClockForTest(() => now);
+  __setResolveErrorTtlForTest(20);
+  const notifications: string[] = [];
+  const unsubscribe = subscribeResolveCache(() => { notifications.push("tick"); });
   try {
     let attempts = 0;
     const run = async () => {
@@ -253,23 +255,71 @@ test("a cached resolve error expires after the TTL and the key retries", async (
     await assert.rejects(resolveCached(key, run));
     assert.equal(attempts, 1);
     assert.equal(peekResolveError(key), "transient decode failure", "the failure is visible");
+    assert.equal(notifications.length, 1, "the failure notifies subscribers");
 
     // Still inside the backoff window: the consumer must NOT retry yet.
-    now += RESOLVE_ERROR_TTL_MS - 1;
+    await new Promise((r) => setTimeout(r, 5));
     assert.equal(peekResolveError(key), "transient decode failure");
+    assert.equal(notifications.length, 1);
 
-    // Past the window: the error is forgotten and the guard opens.
-    now += 1;
+    // Past the window: the entry expires ON ITS OWN TIMER and WAKES the leaf.
+    // Nothing here reads the cache to make that happen — the old TTL was inert
+    // precisely because expiry only ever ran inside a render nobody triggered.
+    await new Promise((r) => setTimeout(r, 40));
     assert.equal(peekResolveError(key), undefined, "an expired error must not block a retry");
+    assert.equal(notifications.length, 2, "expiry notifies so the pane re-renders and retries");
 
     assert.equal(await resolveCached(key, run), "second time lucky");
     assert.equal(attempts, 2, "the retry actually ran");
     assert.equal(peekResolved<string>(key), "second time lucky");
     assert.equal(peekResolveError(key), undefined);
   } finally {
-    __setResolveClockForTest(undefined);
+    unsubscribe();
+    __setResolveErrorTtlForTest(undefined);
     __resetResolveCacheForTest();
   }
+});
+
+test("the consumer loop retries after the backoff with NO node change", async () => {
+  // Models what `GenericLeafView` / `ImageLeafView` do: subscribe to the cache,
+  // and on every notification re-run the resolve guard for the SAME key. The
+  // pane must recover on its own — this is the failure the inert TTL left on
+  // screen forever.
+  __resetResolveCacheForTest();
+  __setResolveErrorTtlForTest(20);
+  const key = "consumer-key";
+  let attempts = 0;
+  const run = async () => {
+    attempts++;
+    if (attempts === 1) throw new Error("transient decode failure");
+    return "recovered";
+  };
+  // The guard is a verbatim copy of the leaf's: skip while resolved or errored.
+  const renderAndResolve = () => {
+    if (peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
+    void resolveCached(key, run).catch(() => {});
+  };
+  const unsubscribe = subscribeResolveCache(renderAndResolve);
+  try {
+    renderAndResolve(); // first "render"
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(attempts, 1);
+    assert.equal(peekResolveError(key), "transient decode failure");
+
+    // No further input: no node change, no scroll, no settings edit.
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(attempts, 2, "the pane retried itself once the backoff expired");
+    assert.equal(peekResolved<string>(key), "recovered");
+    assert.equal(peekResolveError(key), undefined);
+  } finally {
+    unsubscribe();
+    __setResolveErrorTtlForTest(undefined);
+    __resetResolveCacheForTest();
+  }
+});
+
+test("RESOLVE_ERROR_TTL_MS is the documented 2 s backoff", () => {
+  assert.equal(RESOLVE_ERROR_TTL_MS, 2000);
 });
 
 test("one key's cached error never suppresses another key", async () => {
@@ -286,8 +336,6 @@ test("one key's cached error never suppresses another key", async () => {
 
 test("clearResolveError forgets a failure immediately", async () => {
   __resetResolveCacheForTest();
-  let now = 0;
-  __setResolveClockForTest(() => now);
   try {
     const key = "clear-key";
     await assert.rejects(resolveCached(key, async () => { throw new Error("boom"); }));
@@ -296,7 +344,6 @@ test("clearResolveError forgets a failure immediately", async () => {
     assert.equal(peekResolveError(key), undefined, "no need to wait out the TTL");
     assert.equal(await resolveCached(key, async () => "fresh"), "fresh");
   } finally {
-    __setResolveClockForTest(undefined);
     __resetResolveCacheForTest();
   }
 });

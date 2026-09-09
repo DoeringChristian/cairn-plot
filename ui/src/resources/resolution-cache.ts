@@ -125,6 +125,15 @@ export function resolutionKey(source: object, node: object, suffix = ""): string
  */
 export const RESOLVE_ERROR_TTL_MS = 2000;
 
+/** The live TTL — {@link RESOLVE_ERROR_TTL_MS} except while a test shortens it. */
+let resolveErrorTtlMs: number = RESOLVE_ERROR_TTL_MS;
+
+/** Test seam only — shorten the error backoff so a test need not wait 2 s.
+ *  Pass `undefined` to restore {@link RESOLVE_ERROR_TTL_MS}. */
+export function __setResolveErrorTtlForTest(ms: number | undefined): void {
+  resolveErrorTtlMs = ms ?? RESOLVE_ERROR_TTL_MS;
+}
+
 /**
  * How long `resolveCached` keeps its own lease on a freshly resolved entry
  * (H12). The resolver used to release immediately, leaving the entry at zero
@@ -138,22 +147,17 @@ export const RESOLVE_HANDOFF_MS = 5000;
 
 interface CachedResolveError {
   readonly message: string;
-  /** `resolveNow()` at the moment the failure was recorded. */
-  readonly at: number;
+  /** Fires at the end of the backoff: forgets the entry AND notifies, so the
+   *  subscribed leaf re-renders and its resolve effect (which depends on the
+   *  error) runs again. Without this wake-up the TTL would be inert — nothing
+   *  else re-renders an idle pane. */
+  readonly expiry: ReturnType<typeof setTimeout>;
 }
 
 const errors = new Map<string, CachedResolveError>();
 const resolving = new Map<string, Promise<void>>();
 /** Grace leases held by `resolveCached` between resolution and consumer handoff. */
 const handoffs = new Map<string, { lease: ResourceLease<unknown>; timer: ReturnType<typeof setTimeout> }>();
-
-let resolveNow: () => number = () => Date.now();
-
-/** Test seam only — inject a controllable clock for the error TTL. Pass
- *  `undefined` to restore `Date.now`. */
-export function __setResolveClockForTest(clock: (() => number) | undefined): void {
-  resolveNow = clock ?? (() => Date.now());
-}
 
 /** Release the resolver's grace lease for `key`, if it still holds one. */
 function releaseHandoff(key: string): void {
@@ -205,23 +209,21 @@ export function acquireResolved<T>(key: string): ResourceLease<T> | undefined {
   return lease;
 }
 
-/** The cached error for `key`, if the last resolve failed WITHIN the backoff
- *  window. A stale entry is forgotten here (and the caller therefore retries) —
- *  see {@link RESOLVE_ERROR_TTL_MS}. */
+/** The cached error for `key`, if the last resolve failed within the backoff
+ *  window. A PURE read — the entry is dropped by its own expiry timer, never
+ *  as a side effect of a render. See {@link RESOLVE_ERROR_TTL_MS}. */
 export function peekResolveError(key: string): string | undefined {
-  const entry = errors.get(key);
-  if (!entry) return undefined;
-  if (resolveNow() - entry.at >= RESOLVE_ERROR_TTL_MS) {
-    errors.delete(key);
-    return undefined;
-  }
-  return entry.message;
+  return errors.get(key)?.message;
 }
 
 /** Forget the cached failure for `key` so the next request retries at once —
- *  for callers that KNOW the cause is gone (a node/settings change, a manual
- *  retry) and should not wait out {@link RESOLVE_ERROR_TTL_MS}. */
+ *  for callers that KNOW the cause is gone (a node change, a manual retry) and
+ *  should not wait out {@link RESOLVE_ERROR_TTL_MS}. Deliberately does NOT
+ *  notify: every caller is about to re-request the key itself. */
 export function clearResolveError(key: string): void {
+  const entry = errors.get(key);
+  if (!entry) return;
+  clearTimeout(entry.expiry);
   errors.delete(key);
 }
 
@@ -237,9 +239,12 @@ export function resolveCached<T>(
   if (hit !== undefined) return Promise.resolve(hit);
   const existing = resolving.get(key);
   if (existing) {
-    // This may promote a queued preload. The scheduler returns the same work;
-    // the cache keeps its single completion/notification path below.
-    void globalPreparationScheduler.schedule(key, priority, run, options).catch(() => {});
+    // PROMOTE ONLY. Work for this key is already in flight, so this must never
+    // start a second run — and `schedule` would, whenever the watchdog has
+    // released the running task's slot (it drops the key→promise mapping so a
+    // genuinely NEW request can proceed). `promote` touches a still-QUEUED task
+    // and is a no-op once it has started.
+    globalPreparationScheduler.promote(key, priority, options);
     return existing.then(() => globalResourceCache.peek<T>(key) as T);
   }
   const promise = globalResourceCache.getOrCreate(key, async () => {
@@ -254,7 +259,7 @@ export function resolveCached<T>(
       const timer = setTimeout(() => releaseHandoff(key), RESOLVE_HANDOFF_MS);
       (timer as unknown as { unref?: () => void }).unref?.();
       handoffs.set(key, { lease: lease as ResourceLease<unknown>, timer });
-      errors.delete(key);
+      clearResolveError(key);
       resolving.delete(key);
       notifyResolveCache(); // wake subscribed leaves — they re-read peekResolved(key)
     },
@@ -262,9 +267,17 @@ export function resolveCached<T>(
       // Background failures are diagnostics only. A later foreground request
       // retries and becomes visible only if it also fails.
       if (priority === "foreground") {
+        clearResolveError(key);
+        // The backoff must END in a retry, not merely stop reporting: the
+        // expiry timer forgets the entry and NOTIFIES, which re-renders the
+        // subscribed leaf whose resolve effect depends on the error state.
+        const expiry = setTimeout(() => {
+          if (errors.delete(key)) notifyResolveCache();
+        }, resolveErrorTtlMs);
+        (expiry as unknown as { unref?: () => void }).unref?.();
         errors.set(key, {
           message: err instanceof Error ? err.message : String(err),
-          at: resolveNow(),
+          expiry,
         });
         notifyResolveCache();
       }
@@ -292,8 +305,8 @@ export function prefetchResolved(entries: Array<{ key: string; run: () => Promis
  *  intact; ids stay stable). */
 export function __resetResolveCacheForTest(): void {
   for (const key of [...handoffs.keys()]) releaseHandoff(key);
+  for (const key of [...errors.keys()]) clearResolveError(key);
   globalResourceCache.clear();
-  errors.clear();
   resolving.clear();
   notifyResolveCache();
 }

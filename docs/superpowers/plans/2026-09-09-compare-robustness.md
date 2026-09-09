@@ -41,6 +41,11 @@ Files: `ui/src/plots/image/webgpu/view.tsx`, `ui/src/plots/image/webgpu/pool.ts`
 File: `ui/src/plots/image/compare/__tests__/compare-grid-interactions.browser.{ts,html}` (self-driving).
 18 panes of split/difference compares over the committed EXR fixtures (registered as distinct hashes with per-"step" variants), driven through: 20 step changes (spec updates via `update({spec})`), operation changes split→difference→flip→split, 10 wheel zooms and pans, settings-panel-style remount (unmount+mount the host). After each action wait for settle (≤ 3 s) and assert: no pane shows "Loading…" or `PaneUnavailable`; every pane canvas has a non-transparent centre; the presented generation equals the requested one (expose via a test-only `data-presented-step` attribute set by the view when a frame is presented); no long task > 200 ms. Both backends (cpu, gpu when available).
 
+**DOM cases CP2 could not unit-test (must be asserted by this harness):**
+- H2 consumer retry — a pane whose resolve fails once must recover on its own after `RESOLVE_ERROR_TTL_MS` with NO node change, no scroll and no settings edit (the cache's expiry timer notifies; the leaf's resolve effect depends on the error). The pure-API equivalent is `resolution-cache.test.ts` "the consumer loop retries after the backoff with NO node change"; the React wiring (`PlotNodeView.tsx` both resolve effects, `host-adapter.tsx`) is only covered here.
+- H13a placeholder ref null at the first effect — a pane whose placeholder element is not committed when the gate's effect first runs must still mount when scrolled to (the attach retries for up to `LAZY_OBSERVE_RETRY_FRAMES` frames). Drive it by mounting the host inside a container that commits its children a frame late.
+- H13b zero-sized container mounts on resize — a pane inside a container that is `display:none`/zero-height at attach time must mount once the container gains a box (the gate's `ResizeObserver` re-observes it in the `IntersectionObserver`). Drive it by unhiding a collapsed panel after settle.
+
 ## cairn task (parallel with CP1)
 
 ### C1 — CairnPlotCard

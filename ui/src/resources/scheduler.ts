@@ -99,6 +99,22 @@ export class PreparationScheduler {
     return promise;
   }
 
+  /**
+   * Raise a still-QUEUED task's priority/visibility without ever starting new
+   * work. Callers that already hold the in-flight promise for `key` (the
+   * resolution cache does) must use this rather than `schedule`: after the
+   * watchdog releases a stuck task's slot the key→promise mapping is gone, so
+   * `schedule` would launch a SECOND run of work that is still in flight.
+   * A no-op once the task has started, or if the key is unknown.
+   */
+  promote(key: string, priority: PreparationPriority, options?: ScheduleOptions): void {
+    const queued = this.queued.get(key);
+    if (!queued) return;
+    if (priority === "foreground") queued.priority = "foreground";
+    if (options?.visible === true) queued.visible = true;
+    this.drain();
+  }
+
   private drain(): void {
     while (this.active < this.concurrency && this.queued.size > 0) {
       const task = this.next();
