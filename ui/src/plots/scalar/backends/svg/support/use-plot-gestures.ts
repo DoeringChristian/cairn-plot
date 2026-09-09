@@ -38,6 +38,7 @@ import {
   wheelZoomFactor,
   type ClientRect,
 } from "../../../../chart/chart-view-math";
+import { useFrameCoalescer } from "../../../../chart/frame-coalescer";
 
 export interface PlotOffset {
   top: number;
@@ -74,6 +75,13 @@ export function usePlotGestures({
   onViewChange,
   baseDragMode = "zoom",
 }: UsePlotGesturesArgs) {
+  // High-frequency gestures (wheel, pinch, pan) push through this coalescer
+  // instead of calling `onViewChange` directly, capping emits to one per
+  // frame. Gesture-commit sites (box-zoom release, double-click reset) flush
+  // any pending coalesced value first, then call `onViewChange` directly so
+  // the commit itself is never delayed or dropped.
+  const coalescer = useFrameCoalescer<ChartViewState>(onViewChange);
+
   // The base drag mode is read live (via a ref) inside the pointer-down
   // callback so a toolbar toggle takes effect without re-binding handlers.
   const baseDragModeRef = useRef(baseDragMode);
@@ -151,7 +159,7 @@ export function usePlotGestures({
       const fy = (plotBottom - e.clientY) / Math.max(1, plotBottom - plotTop);
       const ax = x[0] + fx * (x[1] - x[0]);
       const ay = y[0] + fy * (y[1] - y[0]);
-      onViewChange({
+      coalescer.push({
         xMin: ax - (ax - x[0]) * factor,
         xMax: ax + (x[1] - ax) * factor,
         yMin: ay - (ay - y[0]) * factor,
@@ -160,8 +168,9 @@ export function usePlotGestures({
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
-    // refs are stable; only onViewChange is a reactive dependency.
-  }, [chartBoxRef, plotOffsetRef, effectiveRef, onViewChange]);
+    // refs (and the stable `coalescer`) are stable; nothing reactive here
+    // besides the ones listed.
+  }, [chartBoxRef, plotOffsetRef, effectiveRef, coalescer]);
 
   // ── Plot-area pointer down (starts pan or box-select) ──
   const onChartPointerDown = useCallback(
@@ -250,7 +259,7 @@ export function usePlotGestures({
             pinch.rectClient,
             "both",
           );
-          onViewChange({
+          coalescer.push({
             xMin: next.xDomain[0],
             xMax: next.xDomain[1],
             yMin: next.yDomain[0],
@@ -274,7 +283,7 @@ export function usePlotGestures({
         const [y0, y1] = s.startYDomain;
         const dxData = (dxPx / s.plotW) * (x1 - x0);
         const dyData = (dyPx / s.plotH) * (y1 - y0);
-        onViewChange({
+        coalescer.push({
           xMin: x0 - dxData,
           xMax: x1 - dxData,
           yMin: y0 + dyData,
@@ -316,7 +325,7 @@ export function usePlotGestures({
         }
       }
     },
-    [chartBoxRef, onViewChange],
+    [chartBoxRef, coalescer],
   );
 
   const onChartPointerUp = useCallback(
@@ -366,6 +375,10 @@ export function usePlotGestures({
             Number.isFinite(yMinNew) && Number.isFinite(yMaxNew) &&
             xMaxNew > xMinNew && yMaxNew > yMinNew
           ) {
+            // Flush any still-pending coalesced value first so this commit's
+            // authoritative value is emitted last, not clobbered by a stale
+            // coalesced frame firing after it.
+            coalescer.flush();
             onViewChange({ xMin: xMinNew, xMax: xMaxNew, yMin: yMinNew, yMax: yMaxNew });
           }
         }
@@ -373,7 +386,7 @@ export function usePlotGestures({
       }
       plotDragRef.current = null;
     },
-    [onViewChange],
+    [onViewChange, coalescer],
   );
 
   // ── Double-click: reset the viewport to autoscale (home) ──
@@ -382,8 +395,9 @@ export function usePlotGestures({
   const onChartDoubleClick = useCallback(() => {
     plotDragRef.current = null;
     setSelection(null);
+    coalescer.flush();
     onViewChange({ xMin: null, xMax: null, yMin: null, yMax: null });
-  }, [onViewChange]);
+  }, [onViewChange, coalescer]);
 
   // For the container's onLostPointerCapture: abort any in-flight gesture.
   const clearDrag = useCallback(() => {
