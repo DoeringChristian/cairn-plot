@@ -2,8 +2,11 @@
  * ADMISSION VICTIM CHOICE (H7) — the pure half of the GPU pane pool's admission
  * policy, extracted so it can be tested without a device.
  *
- * A pane asking for a live slot may have to displace another one. The order of
- * preference is:
+ * A pane asking for a live slot may have to displace another one. The COUNT cap
+ * calls this with `allowPresentationRotation: false`, so it only ever takes
+ * rule-1 (off-screen) victims and otherwise lets the requester in over the cap:
+ * a visible pane is never parked for a count. Rules 2 and 3 serve the BYTE
+ * budget. The order of preference is:
  *
  *  1. An OFF-SCREEN pane. It is not showing anything, so taking its slot costs
  *     the user nothing.

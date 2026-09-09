@@ -297,7 +297,7 @@ configureRuntime({
   expandedUploadCacheBytes: 768 * 1024 ** 2,
   offscreenCpuReleaseMs: 30_000,
   gpu: {
-    livePaneLimit: 16,             // secondary count guard
+    livePaneLimit: 16,             // off-screen live-surface count guard; visible panes are always live
     sourceTexturesPerPane: 8,     // secondary count guard
     activeSourceBytes: 1024 ** 3,
     sharedSourceBytes: 1280 * 1024 ** 2,

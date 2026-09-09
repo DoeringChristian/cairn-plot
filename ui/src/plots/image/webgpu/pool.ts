@@ -10,12 +10,16 @@
  * `getSharedDevice()` instance; the per-pane cost is each pane's own source
  * texture (`Texture`) — potentially large for HDR float images.
  *
- * Even so, this pool caps the number of panes that hold LIVE GPU resources
- * ("swapchains" — a configured `Surface` + its source `Texture`) at
+ * Even so, this pool caps the number of OFF-SCREEN panes that keep LIVE GPU
+ * resources ("swapchains" — a configured `Surface` + its source `Texture`) at
  * `MAX_LIVE_SWAPCHAINS`, tracked as an LRU, so a page with far more panes
  * than are ever on-screen at once (a big gallery) doesn't keep every pane's
- * source texture resident. A pane that scrolls off-screen is **parked**: its
- * `Surface`/`Texture` are freed. Direct `setSource()` buffers remain pane-owned;
+ * source texture resident. The count cap never parks a VISIBLE pane: every
+ * on-screen pane holds a surface (the cap is exceeded when the viewport shows
+ * more panes than it allows), because a parked pane keeps its last frame and
+ * the pool cannot see a zoom/exposure change coming — it would stay stale.
+ * Only the byte budget may hold a visible pane in the waiting state. A pane
+ * that scrolls off-screen is **parked**: its `Surface`/`Texture` are freed. Direct `setSource()` buffers remain pane-owned;
  * reconstructible `setSourceLease()` buffers are released immediately after a
  * successful upload (and while waiting), retaining only exact layout metadata
  * plus the raw-source reacquire closure needed for restore. Admission is stable: when more panes are
@@ -137,12 +141,11 @@ function displayFingerprint(params: ImageParams): {
 }
 
 /**
- * Cap on simultaneously-LIVE GPU swapchains (configured `Surface` + source
- * `Texture`) across every pane this pool has acquired. Named per the Task 6
- * brief ("cap live swapchains... make it a named const"). 12 is a sensible
- * default: large enough that a normal viewport of on-screen panes all stay
- * live, small enough to bound total resident source-texture memory for a big
- * gallery.
+ * Cap on LIVE GPU swapchains (configured `Surface` + source `Texture`) across
+ * every pane this pool has acquired, enforced against OFF-SCREEN panes only:
+ * admission of a visible pane parks off-screen panes down to this count and
+ * then proceeds even when the count is still exceeded (see `canAdmit`). 12 is
+ * a sensible default for the off-screen tail of a big gallery.
  */
 export const MAX_LIVE_SWAPCHAINS = 12;
 
@@ -1067,12 +1070,19 @@ function canApplyLiveMutation(
 function canAdmit(entry: PaneEntry, allowPresentationRotation = needsPresentation(entry)): boolean {
   // An offscreen pane never takes a slot. A hidden document restores nothing.
   if (!entry.visible || documentHidden) return false;
-  // Prefer same-device victims: doing so can satisfy both the global count cap
-  // and this device's byte cap with one bounded rotation.
+  // COUNT CAP: bounds OFF-SCREEN retention only. It takes off-screen victims
+  // (rule 1) and never rotates a visible pane, and when nothing off-screen is
+  // left the cap is simply exceeded: a VISIBLE pane always gets a surface.
+  // A parked-but-visible pane keeps its last canvas frame, and the pool only
+  // learns of a presentation debt from SOURCE changes, not render parameters —
+  // so a zoom/exposure/colormap change on such a pane would never repaint it.
+  // Two of eighteen visible compare panes stayed on a stale frame for exactly
+  // that reason. On-screen canvases are bounded by screen area, so this costs
+  // nothing worth guarding; the byte budget below stays the memory authority.
   while (live.length >= getLiveGpuPaneLimit()) {
-    const victim = pickAdmissionVictim(entry, allowPresentationRotation, false);
-    if (!victim) return false;
-    evictForAdmission(victim, victim.visible);
+    const victim = pickAdmissionVictim(entry, false, false);
+    if (!victim) break;
+    evictForAdmission(victim, false);
   }
   const limit = getGpuSourceTextureLimits().activeBytes;
   while (activeSourceBytes(entry.device) + prospectiveSourceBytes(entry) > limit &&
@@ -2314,10 +2324,12 @@ export function applyGpuResourcePolicy(): void {
       if (victim.visible) enqueueWaiter(victim);
     }
   }
-  while (live.length > getLiveGpuPaneLimit()) {
-    const victim = live[0]!;
-    parkEntry(victim, false);
-    if (victim.visible) enqueueWaiter(victim);
+  // The count cap only ever parks OFF-SCREEN panes (see `canAdmit`): a visible
+  // pane parked here would keep a stale frame through its next zoom.
+  for (const entry of [...live]) {
+    if (live.length <= getLiveGpuPaneLimit()) break;
+    if (entry.visible) continue;
+    parkEntry(entry, false);
   }
   admitWaiters();
 }

@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     () => {
       const states = canvasStates();
       return container.querySelectorAll('[data-gpu-backend-ready="true"]').length === count &&
-        getLiveSwapchainCount() === Math.min(count, liveLimit) && states.length === count &&
+        getLiveSwapchainCount() === count && states.length === count &&
         states.every(({ canvas, presentation }) =>
           canvas.width > 0 && canvas.height > 0 && presentation?.presented === true);
     },
@@ -122,14 +122,16 @@ async function main(): Promise<void> {
   const memory = getMemoryDiagnosticSnapshot();
   const stableUploads = stats.sourceUploads === statsAtReady.sourceUploads;
   const sharedOnce = count <= 1 || stats.sourceUploads === 1;
-  const expectedRotations = Math.max(0, count - liveLimit);
+  // The live-pane count cap bounds OFF-SCREEN panes only: every visible pane
+  // holds a surface (a cap-parked visible pane would keep a stale frame through
+  // its next zoom), so with all `count` panes on screen nothing waits or rotates.
   const stableAdmission =
-    live <= liveLimit &&
+    live === count &&
     memory.panes.offscreen === 0 &&
-    memory.panes.waiting === Math.max(0, count - live) &&
+    memory.panes.waiting === 0 &&
     memory.panes.presentationNeeded === 0 &&
     memory.panes.neverPresented === 0 &&
-    memory.counters.presentationRotations === expectedRotations;
+    memory.counters.presentationRotations === 0;
 
   report(ready, `BENCH: all ${count} panes received a valid first GPU presentation at ${width}x${height}`);
   report(
@@ -164,8 +166,8 @@ async function main(): Promise<void> {
     );
   }
 
-  // Synchronized content replacement: every pane must rotate through one
-  // presentation of the new generation, then both admissions and uploads stop.
+  // Synchronized content replacement: every (visible, hence live) pane presents
+  // the new generation in place — no rotation — then admissions and uploads stop.
   let sourceChangeRotation = true;
   if (ready) {
     const beforeGenerations = canvasStates().map(({ presentation }) => presentation?.contentGeneration ?? 0);
@@ -189,7 +191,7 @@ async function main(): Promise<void> {
     const afterChangedIdle = getMemoryDiagnosticSnapshot();
     sourceChangeRotation = changedPresented && atChangedIdle.panes.presentationNeeded === 0 &&
       atChangedIdle.panes.neverPresented === 0 &&
-      atChangedIdle.counters.presentationRotations - beforeChange.counters.presentationRotations === expectedRotations &&
+      atChangedIdle.counters.presentationRotations - beforeChange.counters.presentationRotations === 0 &&
       afterChangedIdle.uploads.count === atChangedIdle.uploads.count &&
       afterChangedIdle.counters.admissions === atChangedIdle.counters.admissions &&
       afterChangedIdle.counters.presentations === atChangedIdle.counters.presentations;
@@ -204,27 +206,25 @@ async function main(): Promise<void> {
     );
   }
 
-  // Admission stability: taking one admitted pane offscreen must free its slot
-  // for exactly one waiter; returning it becomes a waiter and must not displace
-  // another visible pane or trigger another source upload.
+  // Park/restore stability: taking one pane offscreen parks it (no waiter is
+  // promoted, because visible panes are never held back by the count cap);
+  // returning it restores it in place without another source upload.
   let waiterPromotion = true;
-  if (count > liveLimit) {
+  if (count > 1) {
     const uploadsBeforeVisibility = getMemoryDiagnosticSnapshot().uploads.count;
     const firstCell = container.firstElementChild as HTMLElement | null;
     if (firstCell) {
       const refsBefore = getMemoryDiagnosticSnapshot().expandedCpuUploads.refs;
       const uploadsUnpinned = refsBefore === 0;
       firstCell.style.display = "none";
-      const promoted = await waitFor(() => {
+      const parked = await waitFor(() => {
         const now = getMemoryDiagnosticSnapshot();
-        return now.panes.offscreen === 1 && now.panes.live === liveLimit &&
-          now.panes.waiting === count - liveLimit - 1;
+        return now.panes.offscreen === 1 && now.panes.live === count - 1 && now.panes.waiting === 0;
       }, 5_000, 25);
       firstCell.style.display = "";
-      const returnedWaiting = await waitFor(() => {
+      const restored = await waitFor(() => {
         const now = getMemoryDiagnosticSnapshot();
-        return now.panes.offscreen === 0 && now.panes.live === liveLimit &&
-          now.panes.waiting === count - liveLimit;
+        return now.panes.offscreen === 0 && now.panes.live === count && now.panes.waiting === 0;
       }, 5_000, 25);
       if (releaseMs !== null) await sleep(releaseMs + 50);
       const afterCycle = getMemoryDiagnosticSnapshot();
@@ -243,11 +243,11 @@ async function main(): Promise<void> {
         }, 5_000, 25);
       }
       const finalCycle = getMemoryDiagnosticSnapshot();
-      waiterPromotion = uploadsUnpinned && promoted && returnedWaiting && quickReturnCancelled && delayedRelease &&
+      waiterPromotion = uploadsUnpinned && parked && restored && quickReturnCancelled && delayedRelease &&
         finalCycle.uploads.count === uploadsBeforeVisibility;
       report(
         waiterPromotion,
-        `BENCH: uploads stay unpinned; offscreen frees one slot; return waits stably; ` +
+        `BENCH: uploads stay unpinned; offscreen parks one pane (parked=${parked}); return restores it live (restored=${restored}); ` +
           `hidden/offscreen refs stay released=${delayedRelease}; uploads remain ${finalCycle.uploads.count}`,
       );
     }

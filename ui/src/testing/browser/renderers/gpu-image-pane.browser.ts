@@ -22,21 +22,13 @@
  *      leaves it unchanged (the `useModifierKey` Alt-gate — plain wheel must
  *      keep scrolling the PAGE, never hijacked).
  *   4. Double-click resets the viewport to `{zoom:1, pan:{x:0,y:0}}` (Q17).
- *   5. Mounting ~30 panes never leaves more than `MAX_LIVE_SWAPCHAINS` (12)
- *      panes with LIVE GPU resources at once (`engine/pool.ts`'s LRU cap).
- *   5b. Park-aware render: mount MORE visible (on-screen, never scrolled
- *      away) panes than `MAX_LIVE_SWAPCHAINS`, so the LRU cap PARKS some of
- *      them while they stay on-screen (`engine/pool.ts`'s `isCanvasLive`
- *      finds one). Triggering a re-render on that still-parked pane (an
- *      exposure change) must transparently RESTORE it first — checked
- *      structurally (non-blank content) for the same canvas-compositing
- *      reason as case 2. Proves a re-render on a cap-parked-but-visible pane
- *      never paints into a destroyed/parked GPU context.
- *   6. The gpu-image addon's CAPABILITY-GATED registration
- *      (`plot-gpu-image-addon.tsx`): stub `__cairnPlotRegisterBackends`,
- *      import the addon module, and assert it registers `"image"`/
- *      `"imagehdr"` and sets `__cairnPlotGpuImageLoaded` once
- *      `getSharedWebGpuDevice()` resolves.
+ *   5. Mounting ~30 panes: every INTERSECTING pane is live, and the total
+ *      never exceeds max(`MAX_LIVE_SWAPCHAINS`, visible count) — the cap
+ *      bounds OFF-SCREEN panes only (`engine/pool.ts` `canAdmit`).
+ *   5b. Visible panes are never cap-parked: mount MORE on-screen panes than
+ *      `MAX_LIVE_SWAPCHAINS`; all of them must hold a live surface, and a
+ *      source change on the last one must commit a new frame (a cap-parked
+ *      visible pane keeps a stale frame through zoom/exposure changes).
  *
  * No console.error during the whole run is asserted throughout (a
  * `console.error` override records every call; the final status factors it
@@ -279,25 +271,37 @@ async function runPoolCapCase(): Promise<boolean> {
   await sleep(1500);
 
   const live = getLiveSwapchainCount();
-  const capOk = live <= MAX_LIVE_SWAPCHAINS;
+  // The cap bounds OFF-SCREEN panes only; every intersecting pane is live.
+  const canvases = Array.from(container.querySelectorAll("canvas[data-gpu-image-canvas]")) as HTMLCanvasElement[];
+  const visible = canvases.filter((canvas) => {
+    const r = canvas.getBoundingClientRect();
+    return r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth;
+  });
+  const visibleLive = visible.filter((canvas) => isCanvasLive(canvas)).length;
+  const allVisibleLive = visibleLive === visible.length;
+  report(
+    allVisibleLive,
+    `mounted ${N} panes -> ${visible.length} visible, ${visibleLive} of them live (a visible pane is never cap-parked)`,
+  );
+  const capOk = live <= Math.max(MAX_LIVE_SWAPCHAINS, visible.length);
   report(
     capOk,
-    `mounted ${N} panes -> ${live} live swapchains (cap=${MAX_LIVE_SWAPCHAINS}): ${capOk ? "within cap" : "OVER CAP"}`,
+    `mounted ${N} panes -> ${live} live swapchains (cap=${MAX_LIVE_SWAPCHAINS} applies to off-screen panes): ${capOk ? "within cap" : "OVER CAP"}`,
   );
 
   for (const root of roots) root.unmount();
   container.remove();
-  return capOk;
+  return capOk && allVisibleLive;
 }
 
 // ---------------------------------------------------------------------------
-// Case 5b: park-aware render — a pane PARKED by LRU cap pressure (NOT by
-// scrolling off-screen; every pane here stays on-screen the whole time) must
-// RESTORE before rendering, so a re-render (an exposure change, here) shows
-// the CORRECT new frame — never stale content from before it was parked.
-// This is the many-panes-gallery scenario `engine/pool.ts`'s module doc
-// describes: more visible panes than `MAX_LIVE_SWAPCHAINS`, so the LRU parks
-// some of them even though nothing ever left the viewport.
+// Case 5b: visible panes are never cap-parked. More visible panes than
+// `MAX_LIVE_SWAPCHAINS`, nothing ever leaves the viewport: EVERY pane must hold
+// a live surface, and a SOURCE change on any of them must commit a new frame.
+// (Before this contract, the cap parked the LRU tail while still on screen; a
+// parked pane keeps its last canvas frame and the pool cannot see a
+// zoom/exposure change as a presentation debt, so those panes stayed stale —
+// the two-of-eighteen stuck compare panes.)
 // ---------------------------------------------------------------------------
 async function runParkAwareRenderCase(): Promise<boolean> {
   let ok = true;
@@ -309,13 +313,8 @@ async function runParkAwareRenderCase(): Promise<boolean> {
   container.style.display = "grid";
   container.style.gridTemplateColumns = `repeat(${cols}, ${size}px)`;
   container.style.gap = "4px";
-  // Pinned to the viewport (NOT normal document flow): `#result` above
-  // accumulates one line per `report()` call as this run progresses, which
-  // would otherwise keep pushing an in-flow container further down the page
-  // — eventually scrolling some panes below the fold MID-TEST and flipping
-  // their `IntersectionObserver` state to "not intersecting" for real
-  // (parking them off-screen instead of by LRU-cap pressure alone), which
-  // this case does not intend to exercise.
+  // Pinned to the viewport (NOT normal document flow) so `#result` growth
+  // cannot scroll panes below the fold mid-test.
   container.style.position = "fixed";
   container.style.top = "0";
   container.style.left = "0";
@@ -357,65 +356,47 @@ async function runParkAwareRenderCase(): Promise<boolean> {
   };
 
   const mounted = await waitFor(() => container.querySelectorAll("canvas[data-gpu-image-canvas]").length === N, 6000, 20);
-  report(mounted, `[park-aware] mounted ${N} visible panes (cap=${MAX_LIVE_SWAPCHAINS})`);
+  report(mounted, `[visible-live] mounted ${N} visible panes (cap=${MAX_LIVE_SWAPCHAINS})`);
   if (!mounted) {
     cleanup();
     return false;
   }
-  // Let the mount-time acquire/upload/render chain (and its LRU eviction) settle.
-  await sleep(2000);
 
   const canvases = Array.from(container.querySelectorAll("canvas[data-gpu-image-canvas]")) as HTMLCanvasElement[];
-  const liveCountAfterMount = getLiveSwapchainCount();
-  const overCapPresent = liveCountAfterMount <= MAX_LIVE_SWAPCHAINS && N > MAX_LIVE_SWAPCHAINS;
+  const allLive = await waitFor(() => canvases.every((canvas) => isCanvasLive(canvas)), 6000, 20);
   report(
-    overCapPresent,
-    `[park-aware] ${N} visible panes -> ${liveCountAfterMount} live (cap=${MAX_LIVE_SWAPCHAINS}), so some MUST be parked while still visible`,
+    allLive,
+    `[visible-live] ${N} visible panes -> ${getLiveSwapchainCount()} live (cap=${MAX_LIVE_SWAPCHAINS}): every visible pane holds a surface`,
   );
+  ok = ok && allLive;
+  // Let the mount-time upload/render chain settle before sampling frames.
+  await sleep(1000);
 
-  let parkedIndex = -1;
-  for (let i = 0; i < canvases.length; i++) {
-    if (!isCanvasLive(canvases[i]!)) {
-      parkedIndex = i;
-      break;
-    }
-  }
-  const foundParked = parkedIndex !== -1;
-  report(foundParked, `[park-aware] found an on-screen pane the LRU parked (index=${parkedIndex})`);
-  if (!foundParked) {
-    cleanup();
-    return false;
-  }
-
-  const targetCanvas = canvases[parkedIndex]!;
+  // The LAST pane is the one the old LRU cap would have parked. Change its
+  // source and require a new frame to commit.
+  const targetIndex = N - 1;
+  const targetCanvas = canvases[targetIndex]!;
   const before = await readbackCanvas(targetCanvas);
-
-  // Trigger a content update on the still-parked, still-visible pane. Authored
-  // settings props are mount seeds now, so mutating `exposure` here would test
-  // the deleted second settings owner rather than backend restoration.
   const changed = buildHdrN();
   const changedPixels = new Float32Array(hdrValues.length);
   changedPixels.fill(0.8);
-  setSourceFns[parkedIndex]!({ ...changed, pixels: floatValues(changedPixels) });
+  setSourceFns[targetIndex]!({ ...changed, pixels: floatValues(changedPixels) });
 
-  // Residency may be shorter than a polling turn: restoring this pane can
-  // immediately rotate another visible pane through the soft cap. The durable
-  // contract is that the requested frame commits, so test the bitmap rather
-  // than an incidental post-render LRU snapshot.
   let img = before;
   const changedFrame = await waitFor(async () => {
     img = await readbackCanvas(targetCanvas);
     return img.data.some((value, index) => value !== before.data[index]);
   }, 3000, 20);
-  report(changedFrame, `[park-aware] pane[${parkedIndex}] committed its updated frame after restore`);
+  report(changedFrame, `[visible-live] pane[${targetIndex}] committed its updated frame`);
   ok = ok && changedFrame;
 
-  // Checked structurally (not pixel-exact) — see this file's module doc note
-  // on why (canvas-compositing color management can introduce small
-  // non-deterministic differences).
   const nonBlank = isNonBlank(img);
-  report(nonBlank, `[park-aware] pane[${parkedIndex}] re-rendered parked pane has non-blank content`);
+  report(nonBlank, `[visible-live] pane[${targetIndex}] re-rendered pane has non-blank content`);
   ok = ok && nonBlank;
+
+  const stillAllLive = canvases.every((canvas) => isCanvasLive(canvas));
+  report(stillAllLive, `[visible-live] every visible pane is still live after the update (${getLiveSwapchainCount()} live)`);
+  ok = ok && stillAllLive;
 
   cleanup();
   return ok;
