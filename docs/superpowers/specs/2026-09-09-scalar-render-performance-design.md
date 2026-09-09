@@ -117,8 +117,17 @@ Per render:
    capture already present (`plotOffsetRef`), falling back to the container
    width, then 800.
 4. For each visible series: `[start, end] = visibleWindow(xs, x0, x1)`,
-   `idx = reduceToColumns(...)`, rows built from `idx`.
-5. `mergeToRows` over the reduced points only.
+   `idx = reduceToColumns(...)`, rows built from `idx`. The faint raw overlay
+   samples `rawYs` at the SAME picked indices as the smoothed curve, so it
+   shares the curve's rows rather than being windowed and reduced separately.
+5. Rows merged over the reduced points only. The picks are snapped to one of
+   five fixed slots inside their column so every series shares one x grid:
+   unsnapped, each series' per-column min/max land on its own x and the merged
+   union grows as `series x 4 x columns`, which Recharts re-walks once per
+   `<Line>` (`getTicksOfAxis` in `getFormatItems`) — quadratic in the series
+   count. Snapping caps the union at `5 x columns` and moves a point by at most
+   a tenth of a pixel; windows small enough to draw point-for-point are not
+   snapped and keep their exact x.
 
 The row array is memoised on `(prepared identities, x0, x1, columns,
 visibility)`; hover does not enter the memo.

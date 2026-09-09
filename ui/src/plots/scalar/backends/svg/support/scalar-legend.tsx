@@ -47,20 +47,25 @@ export function CustomLegend({
 
   // Hover is delegated on the wrapper rather than bound per chip: the shared
   // PlotLegend primitive owns the chip markup and stays hover-agnostic (every
-  // other chart's legend uses it too). One <li> per item, in `series` order,
-  // so the row's index is the series.
-  const hoverProps = onHover
-    ? {
-        onMouseOver: (e: React.MouseEvent) => {
-          const li = (e.target as HTMLElement).closest("li");
-          const ul = li?.parentElement;
-          if (!li || !ul) return onHover(null);
-          const i = Array.prototype.indexOf.call(ul.children, li);
-          onHover(series[i]?.key ?? null);
-        },
-        onMouseLeave: () => onHover(null),
-      }
-    : undefined;
+  // other chart's legend uses it too). Each chip carries `data-series-key`, so
+  // the series is read off the DOM rather than inferred from a row position.
+  //
+  // The wrapper also swallows click and double-click: the legend sits INSIDE
+  // the plot's root div, whose handlers select a run on click and reset the
+  // view on double-click. Toggling or isolating a series must do neither.
+  const wrapperProps = {
+    onClick: (e: React.MouseEvent) => e.stopPropagation(),
+    onDoubleClick: (e: React.MouseEvent) => e.stopPropagation(),
+    ...(onHover
+      ? {
+          onMouseOver: (e: React.MouseEvent) => {
+            const chip = (e.target as HTMLElement).closest<HTMLElement>("[data-series-key]");
+            onHover(chip?.dataset.seriesKey ?? null);
+          },
+          onMouseLeave: () => onHover(null),
+        }
+      : {}),
+  };
 
   // Interactive (visibility) mode → the shared PlotLegend primitive drives the
   // toggle/isolate interaction; the scalar-specific visuals ride the override
@@ -69,7 +74,7 @@ export function CustomLegend({
   // selected series keeps the taller (3px) squared-off swatch.
   if (visibility) {
     return (
-      <div {...hoverProps}>
+      <div {...wrapperProps}>
         <PlotLegend
           items={series as LegendItem[]}
           visibility={visibility}
@@ -90,13 +95,14 @@ export function CustomLegend({
   // Legacy select-on-click mode (no visibility API): a chip click selects the
   // run; no toggle/isolate.
   return (
-    <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1" {...hoverProps}>
+    <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1" {...wrapperProps}>
       {series.map((s) => {
         const isSelected = selectedKeys?.has(s.key) ?? false;
         const opacity = hasSel && !isSelected ? HIDDEN_OPACITY : 1;
         return (
           <li
             key={s.key}
+            data-series-key={s.key}
             className="inline-flex items-center gap-1 text-[11px] text-fg-muted"
           >
             <button

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,6 +34,18 @@ import { usePlotGestures, type PlotOffset } from "./support/use-plot-gestures";
 import { useScalarController } from "./support/use-scalar-controller";
 
 const CHART_MARGIN = { top: 4, right: 8, left: 0, bottom: 4 } as const;
+
+/** Prepared series for one render, plus the bookkeeping that hangs off them. */
+interface Prepared {
+  /** One per input series, in `series` order (index-aligned with it). */
+  main: PreparedSeries[];
+  /** `main` plus the legacy `${key}__raw` overlays — what actually gets drawn. */
+  all: PreparedSeries[];
+  /** Keys whose faint overlay comes from the LEGACY pre-smoothed contract. */
+  legacyRaw: Set<string>;
+  /** Every key in `all`, for pruning the cache when a series leaves the data. */
+  liveKeys: Set<string>;
+}
 
 export interface ScalarPlotProps {
   series: Series[];
@@ -80,7 +93,19 @@ export default function ScalarPlot({
 }: ScalarPlotProps) {
   // S6 interactive legend: per-series show/hide. Hidden series are dropped from
   // the render AND from y-autoscale so the axis reframes to what's visible.
-  const seriesKeys = useMemo(() => series.map((s) => s.key), [series]);
+  //
+  // The key LIST is held ref-stable: `useSeriesVisibility` prunes stale keys in
+  // an effect keyed on it, and a live poller hands us a fresh `series` array on
+  // every tick, so a fresh array here would fire that effect — and cost a
+  // second full render of a chart that has not changed shape — on every append.
+  const seriesKeysRef = useRef<string[]>([]);
+  const seriesKeys = useMemo(() => {
+    const next = series.map((s) => s.key);
+    const prev = seriesKeysRef.current;
+    if (prev.length === next.length && prev.every((k, i) => k === next[i])) return prev;
+    seriesKeysRef.current = next;
+    return next;
+  }, [series]);
   const visibility = useSeriesVisibility(seriesKeys);
 
   // ── Prepared series ──
@@ -88,9 +113,11 @@ export default function ScalarPlot({
   // the memo key downstream: preparing unchanged points returns the very same
   // object, so the row build below is skipped on a re-render that changed
   // nothing. The tuple prop is spread into scalar deps so a fresh
-  // `[0, 100]` literal from the host does not bust the memo every render.
+  // `[0, 100]` literal from the host does not bust the memo every render, and
+  // the result itself is held ref-stable (below) so a host that hands us a
+  // fresh `series` ARRAY of the same series does not either.
   const cacheRef = useRef(new PreparedSeriesCache());
-  const preparedKeysRef = useRef<Set<string>>(new Set());
+  const preparedRef = useRef<Prepared | null>(null);
   const logX = xScale === "log";
   const outLo = outlierPct?.[0] ?? 0;
   const outHi = outlierPct?.[1] ?? 100;
@@ -112,19 +139,34 @@ export default function ScalarPlot({
       if (smoothing === undefined && s.rawPoints) {
         // Legacy input: `points` is already smoothed (prepared with smoothing
         // 0, so no `rawYs`) and the overlay rides on the host's `rawPoints`,
-        // prepared and pixel-reduced as a series of its own under exactly the
-        // `__raw` key `mergeToRows` would have given it.
+        // prepared and pixel-reduced as a series of its own, under the
+        // `${key}__raw` dataKey the faint <Line> already asks for.
         legacyRaw.add(s.key);
         all.push(cache.prepare({ ...s, key: `${s.key}__raw`, points: s.rawPoints }, opts));
       }
     }
-    // The cache outlives every render, so a series that leaves the data would
-    // otherwise pin its typed arrays forever (run selection changes are common).
-    const live = new Set(all.map((p) => p.key));
-    for (const key of preparedKeysRef.current) if (!live.has(key)) cache.drop(key);
-    preparedKeysRef.current = live;
-    return { main, all, legacyRaw };
+    // `prepare` returns the SAME object while a series is unchanged, so an
+    // all-identical result means nothing downstream can have changed: hand
+    // back the previous wrapper and the row build memo below stays hit even
+    // when the caller's `series` array identity churns.
+    const prev = preparedRef.current;
+    if (prev && prev.all.length === all.length && prev.all.every((p, i) => p === all[i])) {
+      return prev;
+    }
+    const next: Prepared = { main, all, legacyRaw, liveKeys: new Set(all.map((p) => p.key)) };
+    preparedRef.current = next;
+    return next;
   }, [series, smoothing, outLo, outHi, logX]);
+
+  // The cache outlives every render, so a series that leaves the data would
+  // otherwise pin its typed arrays forever (run selection changes are common).
+  const liveKeys = prepared.liveKeys;
+  const droppedKeysRef = useRef<Set<string>>(liveKeys);
+  useEffect(() => {
+    const cache = cacheRef.current;
+    for (const key of droppedKeysRef.current) if (!liveKeys.has(key)) cache.drop(key);
+    droppedKeysRef.current = liveKeys;
+  }, [liveKeys]);
 
   const xDomain = resolveAxisDomain(
     xRange[0], xRange[1], view.xMin, view.xMax, xScale,
@@ -210,8 +252,8 @@ export default function ScalarPlot({
   // do the rest. React never sees the hovered key; only `hoveredSeriesRef`,
   // read by the click handler, does.
   const hoveredSeriesRef = useRef<string | null>(null);
-  const applyEmphasis = useCallback((key: string | null) => {
-    hoveredSeriesRef.current = key;
+  /** Repaint `data-emph` for `key`. Pure DOM; nothing about hover is state. */
+  const paintEmphasis = useCallback((key: string | null) => {
     const root = chartBoxRef.current;
     if (!root) return;
     root.querySelectorAll<SVGPathElement>("path[data-series-key]").forEach((el) => {
@@ -226,23 +268,41 @@ export default function ScalarPlot({
     // is imperative, so an Alt-pan cursor is never stolen by a hover.
     if (!altDownRef.current) root.style.cursor = key ? "pointer" : "crosshair";
   }, []);
+  /**
+   * Emphasise the series the pointer is over IN THE PLOT. Only this records
+   * the key for the click handler — legend hover paints but must NOT arm a
+   * run-selection click, or pointing at a chip and clicking it would select
+   * a run as well as toggling its visibility.
+   */
+  const applyEmphasis = useCallback((key: string | null) => {
+    hoveredSeriesRef.current = key;
+    paintEmphasis(key);
+  }, [paintEmphasis]);
+  // Recharts rebuilds the curve <path> elements on every render, and React
+  // does not manage `data-emph` (it is never a prop), so a new path would come
+  // up unemphasised mid-hover. Repaint from the ref after each commit.
+  useLayoutEffect(() => { paintEmphasis(hoveredSeriesRef.current); });
 
   // ── Render data ──
-  // How many screen columns the reduction may spend. The primary source is
-  // ResponsiveContainer's onResize, which fires BEFORE the chart renders; the
-  // <Customized> plot rect (the real drawing area, ~54 px narrower once the
-  // y-axis and margins are taken out) corrects it one render later. Both are
-  // ignored below an 8 px difference so a resize drag does not rebuild the
-  // rows on every pixel. 800 until either has spoken.
-  const [plotWidth, setPlotWidth] = useState(800);
+  // How many screen columns the reduction may spend: the <Customized> plot
+  // rect (the real drawing area, ~54 px narrower than the container once the
+  // y-axis and margins are taken out), captured during the chart's own render.
+  // ResponsiveContainer's onResize only feeds a REF — it fires before the
+  // chart renders, so committing it too would cost a second render per resize
+  // for a width the plot rect is about to correct anyway; it is the fallback
+  // for the first frame. Changes below 8 px are ignored so a resize drag does
+  // not rebuild the rows on every pixel. 800 until either has spoken.
+  const [plotWidth, setPlotWidth] = useState(0);
+  const containerWidthRef = useRef(0);
   const onContainerResize = useCallback((width: number) => {
-    setPlotWidth((prev) => (Math.abs(prev - width) >= 8 ? width : prev));
+    containerWidthRef.current = width;
   }, []);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const o = plotOffsetRef.current;
-    if (o && o.width > 0 && Math.abs(o.width - plotWidth) >= 8) setPlotWidth(o.width);
+    const width = o && o.width > 0 ? o.width : containerWidthRef.current;
+    if (width > 0 && Math.abs(width - plotWidth) >= 8) setPlotWidth(width);
   });
-  const columns = Math.max(64, Math.round(plotWidth));
+  const columns = Math.max(64, Math.round(plotWidth || 800));
 
   const [x0, x1] = effectiveX;
   const data = useMemo(() => {
@@ -321,6 +381,7 @@ export default function ScalarPlot({
               const payload = state.activePayload as Array<{
                 dataKey: string;
                 value: number;
+                type?: string;
               }>;
               const po = plotOffsetRef.current;
               if (po && state.chartY != null) {
@@ -335,6 +396,10 @@ export default function ScalarPlot({
                 let closestScreenDist = Infinity;
                 for (const p of payload) {
                   if (p.value == null) continue;
+                  // The faint overlay is a graphical item like any other, so
+                  // Recharts puts it in `activePayload` despite tooltipType
+                  // "none". It is not a hoverable series.
+                  if (p.type === "none" || p.dataKey.endsWith("__raw")) continue;
                   const [yMin, yMax] = effectiveRef.current.y;
                   const valueFrac =
                     1 - (p.value - yMin) / Math.max(1e-10, yMax - yMin);
@@ -345,8 +410,11 @@ export default function ScalarPlot({
                   }
                 }
                 applyEmphasis(closestKey);
-              } else if (payload.length === 1) {
-                applyEmphasis(payload[0]!.dataKey);
+              } else {
+                const only = payload.filter(
+                  (p) => p.type !== "none" && !p.dataKey.endsWith("__raw"),
+                );
+                if (only.length === 1) applyEmphasis(only[0]!.dataKey);
               }
             }
           }}
@@ -362,6 +430,13 @@ export default function ScalarPlot({
             scale={xScale === "log" ? "log" : "linear"}
             domain={xDomainPadded}
             allowDataOverflow
+            /* Each <Line> brings its OWN data, so the series' rows are NOT
+               index-aligned: the tooltip must resolve a hovered x by VALUE in
+               each line's array, which is what `false` here switches it to
+               (`getTooltipContent` → `findEntryInArray`). With the default
+               `true` it would index every line by one shared row index and
+               show values from the wrong x. */
+            allowDuplicatedCategory={false}
             stroke={AXIS.lineColor}
             tick={{
               fontSize: AXIS.tickFontSize,
@@ -407,7 +482,7 @@ export default function ScalarPlot({
                 <CustomLegend
                   series={series}
                   onSelect={(key) => onSeriesClick?.(key)}
-                  onHover={applyEmphasis}
+                  onHover={paintEmphasis}
                   selectedKeys={selectedSeriesKeys}
                   visibility={visibility}
                 />
@@ -423,6 +498,9 @@ export default function ScalarPlot({
             // attribute so hovering a non-selected series still highlights it.
             const isSelDimmed =
               (selectedSeriesKeys?.size ?? 0) > 0 && !selectedSeriesKeys!.has(s.key);
+            // The overlay reads `${key}__raw`, filled either by this series'
+            // own `rawYs` (smoothing here) or by a legacy `${key}__raw` series
+            // prepared from the host's pre-smoothed `rawPoints`.
             const hasRaw = prepared.main[i]?.rawYs != null || prepared.legacyRaw.has(s.key);
             return [
               hasRaw && (

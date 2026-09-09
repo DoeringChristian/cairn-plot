@@ -8,6 +8,8 @@ import type { LegendSeries } from "./scalar-legend";
 
 interface TooltipPayloadEntry {
   dataKey?: string | number;
+  /** The `<Line tooltipType>`; "none" marks the faint raw overlay. */
+  type?: string;
   name?: string | number;
   color?: string;
   value?: number | string | Array<number | string>;
@@ -31,7 +33,15 @@ export function CustomTooltip({
   showContext: boolean;
   showWallTime: boolean;
 }) {
-  if (!active || !payload || payload.length === 0) return null;
+  if (!active || !payload) return null;
+  // Recharts puts EVERY graphical item in the payload, `tooltipType="none"`
+  // included (it only honours the flag in its own default content). The faint
+  // raw overlay is one of those, and it would otherwise show up as a second,
+  // unlabelled row for the same series.
+  const rows = payload.filter(
+    (e) => e.type !== "none" && !String(e.dataKey ?? "").endsWith("__raw"),
+  );
+  if (rows.length === 0) return null;
   const labelNum = typeof label === "number" ? label : Number(label);
   return (
     // Same shared chrome (rounded, token bg/border, shadow) as every other
@@ -40,7 +50,7 @@ export function CustomTooltip({
       <div style={{ color: "var(--color-fg-muted, #656d76)", marginBottom: 4 }}>
         {formatXTick(labelNum, xAxis)}
       </div>
-      {payload.map((entry, i) => {
+      {rows.map((entry, i) => {
         const key = String(entry.dataKey ?? "");
         const meta = seriesByKey[key];
         const val = entry.value;

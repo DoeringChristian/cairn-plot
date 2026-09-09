@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import ScalarPlot from "./backends/svg/ScalarPlot.tsx";
 import type { ChartViewState } from "../types.ts";
@@ -32,9 +32,13 @@ export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlo
     outlierPct,
     ...rest
   } = p;
+  // ScalarPlot memoises its whole prepare -> reduce pipeline on the `series`
+  // array, so the readonly-to-mutable copy has to be made ONCE per presentation,
+  // not per render — a fresh array every render would miss every memo.
+  const seriesArray = useMemo(() => [...(series ?? [])], [series]);
   return <ChartBox height={height}>
     <ScalarPlot
-      series={[...(series ?? [])]}
+      series={seriesArray}
       xAxis={xAxis ?? "step"}
       xScale={xScale ?? "linear"}
       yScale={yScale ?? "linear"}

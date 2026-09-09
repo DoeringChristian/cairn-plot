@@ -64,6 +64,10 @@ export default function PlotLegend({
         return (
           <li
             key={item.key}
+            // Lets a wrapper delegate per-chip pointer handling by ATTRIBUTE
+            // (ScalarPlot emphasises the hovered series) without this
+            // primitive having to know what any of those handlers do.
+            data-series-key={item.key}
             className="inline-flex items-center gap-1 text-[11px] text-fg-muted"
           >
             <button
