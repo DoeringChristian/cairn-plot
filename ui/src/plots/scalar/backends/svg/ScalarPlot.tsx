@@ -294,14 +294,24 @@ export default function ScalarPlot({
   // not rebuild the rows on every pixel. 800 until either has spoken.
   const [plotWidth, setPlotWidth] = useState(0);
   const containerWidthRef = useRef(0);
-  const onContainerResize = useCallback((width: number) => {
-    containerWidthRef.current = width;
-  }, []);
-  useLayoutEffect(() => {
+  const resizeFrameRef = useRef(0);
+  const commitPlotWidth = useCallback(() => {
     const o = plotOffsetRef.current;
     const width = o && o.width > 0 ? o.width : containerWidthRef.current;
-    if (width > 0 && Math.abs(width - plotWidth) >= 8) setPlotWidth(width);
-  });
+    if (width > 0) setPlotWidth((prev) => (Math.abs(width - prev) >= 8 ? width : prev));
+  }, []);
+  const onContainerResize = useCallback((width: number) => {
+    containerWidthRef.current = width;
+    // onResize fires BEFORE the chart renders at the new size, so committing
+    // this width would only be corrected by the plot rect a render later. Wait
+    // one frame instead — by then <Customized> has written the real rect — and
+    // commit that, so a resize costs ONE render.
+    cancelAnimationFrame(resizeFrameRef.current);
+    resizeFrameRef.current = requestAnimationFrame(commitPlotWidth);
+  }, [commitPlotWidth]);
+  useEffect(() => () => cancelAnimationFrame(resizeFrameRef.current), []);
+  // Our own renders can move the plot rect too (a wider y-axis label, say).
+  useLayoutEffect(commitPlotWidth);
   const columns = Math.max(64, Math.round(plotWidth || 800));
 
   const [x0, x1] = effectiveX;

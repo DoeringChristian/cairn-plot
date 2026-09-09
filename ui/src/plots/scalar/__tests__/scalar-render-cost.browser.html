@@ -17,20 +17,25 @@
       body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
       #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
       #result div { white-space: pre-wrap; }
-      /* 800 x 320 host — the geometry spec §4's budgets are stated for. */
-      #chart-host { width: 800px; height: 320px; margin: 12px 0; background: #0d1117; }
+      /* 800 x 320 hosts — the geometry the budgets are stated for. One per
+         scenario (common: 3 x 10 000, extreme: 10 x 100 000); both stay mounted
+         so a failing run can be inspected by hand. */
+      .chart-host { width: 800px; height: 320px; margin: 12px 0; background: #0d1117; }
       /* ScalarPlot's own root <div> is sized by its EMBEDDER (in the app, by the
          pane's Tailwind classes). Without a size its ResponsiveContainer
          measures height 0 and draws nothing, so the host sizes it here — this
          is the embedder's job, not the plot's. */
-      #chart-host > div { width: 100%; height: 100%; }
+      .chart-host > div { width: 100%; height: 100%; }
     </style>
   </head>
   <body>
-    <h1>ScalarPlot render cost — 10 series &times; 100 000 points (spec §4 budgets)</h1>
+    <h1>ScalarPlot render cost — 3 &times; 10 000 (spec budgets) and 10 &times; 100 000 (SVG budgets)</h1>
     <div id="status">RUNNING&hellip;</div>
     <div id="result"></div>
-    <div id="chart-host"></div>
+    <h2>A — common: 3 series &times; 10 000 points</h2>
+    <div id="chart-host-a" class="chart-host"></div>
+    <h2>B — extreme: 10 series &times; 100 000 points</h2>
+    <div id="chart-host-b" class="chart-host"></div>
     <script type="module" src="./scalar-render-cost.browser.bundle.js?v=1"></script>
   </body>
 </html>

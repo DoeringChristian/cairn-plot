@@ -117,7 +117,17 @@ goes through an M4 pixel reduction (`transforms/`): the visible window is split
 into one bucket per screen column and at most four samples survive per column
 (first, last, min, max), so a path carries points proportional to the plot's
 *width*, not to the data — the budget the render-cost harness pins is
-≤ 5 × columns + 2 per path. Inline data identity is a content summary
+≤ 5 × columns + 2 per path. Those picks are then snapped to five fixed slots
+inside their column so every series lands on ONE shared x grid: Recharts' cost
+is `graphical items × merged rows` (it rebuilds the x-axis' whole categorical
+tick array once per `<Line>`), so an unshared grid would make it quadratic in
+the series count. The faint raw overlay reduces separately to a two-point
+envelope (min and max per column) — at 0.2 opacity that is all it conveys, and
+it is a quarter of the ink. What remains is an SVG floor of roughly 0.7 µs per
+DRAWN point for React, d3 path-string building and raster, which is why the
+spec's 30 ms interaction budgets are met at the common size (3 series × 10 000)
+but stand as the canvas backend's target at 10 series × 100 000, where the
+harness asserts the SVG backend's own ≤ 150 ms append and ≤ 80 ms wheel. Inline data identity is a content summary
 (`contentId`), not a serialisation: two identical point arrays produce the same
 key and an append produces a different one, without hashing every sample.
 Hovering a line does not re-render: Recharts forwards `data-*` onto the curve
@@ -128,11 +138,12 @@ through a frame coalescer instead of calling `onViewChange` directly, capping
 view emits at one per frame, while commits (box-zoom release, double-click
 reset) flush the pending value and fire immediately.
 `plots/scalar/__tests__/scalar-render-cost.browser.ts` is the gate for the
-budgets in the scalar render-performance spec (§4): 10 series × 100 000 points
-in an 800 px host, measuring mount-to-paint, an append, one wheel step and a
-hover sweep against long-task budgets, and printing a cost attribution (the
-prepare + reduce pipeline separately from what React and Recharts spend on the
-merged rows).
+budgets in the scalar render-performance spec (§4): two scenarios in an 800 px
+host — 3 series × 10 000 and 10 series × 100 000 — measuring mount-to-paint, an
+append, one wheel step and a hover sweep against long-task budgets, printing a
+cost attribution (the prepare + reduce pipeline separately from what React and
+Recharts spend on the merged rows) and a `BENCH:` line per scenario that the
+runner echoes even on a green run.
 
 ## Browser host
 

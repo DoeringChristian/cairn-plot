@@ -87,19 +87,37 @@ test("__raw is present exactly when the prepared series has rawYs", () => {
   assert.notEqual(smoothed[0]!.rawYs, null);
   const rows = buildRenderRows(smoothed, ALL, 0, N - 1, COLUMNS, false);
   assert.ok(rows.length <= CAP);
-  // The overlay samples the RAW value at the SMOOTHED curve's picked indices,
-  // so it shares the row (and the snapped x) rather than being reduced apart.
-  const rawOf = new Map(smoothed[0]!.ys.length
-    ? Array.from({ length: smoothed[0]!.n }, (_, i) => [smoothed[0]!.ys[i]!, smoothed[0]!.rawYs![i]!] as const)
-    : []);
-  let seen = 0;
-  for (const r of rows) {
-    if (r.a === undefined) continue;
-    assert.notEqual(r.a__raw, undefined, "a smoothed row must carry its raw value");
-    assert.equal(r.a__raw, rawOf.get(r.a as number));
-    seen++;
+  assert.ok(rows.some((r) => r.a__raw !== undefined));
+  // Every raw value is a real raw value of that series.
+  const raws = new Set(Array.from({ length: smoothed[0]!.n }, (_, i) => smoothed[0]!.rawYs![i]!));
+  for (const r of rows) if (r.a__raw !== undefined) assert.ok(raws.has(r.a__raw as number));
+});
+
+test("the raw overlay is an ENVELOPE: at most 2 picks per column, per series", () => {
+  const smoothed = prepareTwo({ ...OPTS, smoothing: 0.9 });
+  const rows = buildRenderRows(smoothed, ALL, 0, N - 1, COLUMNS, false);
+  for (const key of ["a__raw", "b__raw"]) {
+    const n = rows.filter((r) => r[key] !== undefined).length;
+    assert.ok(n <= 2 * COLUMNS + 2, `${key} carries ${n} points > ${2 * COLUMNS + 2}`);
+    assert.ok(n > COLUMNS, `${key} carries only ${n} points`);
   }
-  assert.ok(seen > COLUMNS);
+  // ... and it stays cheaper than the curve it sits behind.
+  const curve = rows.filter((r) => r.a !== undefined).length;
+  const raw = rows.filter((r) => r.a__raw !== undefined).length;
+  assert.ok(raw < curve, `raw ${raw} should be below curve ${curve}`);
+});
+
+test("the envelope spans the raw extremes of each column", () => {
+  const cache = new PreparedSeriesCache();
+  // Two columns' worth of a sawtooth: the envelope must find both extremes.
+  const points = Array.from({ length: 4000 }, (_, i) => ({ x: i, y: i % 2 === 0 ? -i : i }));
+  const p = cache.prepare({ key: "a", label: "a", color: "#000", points }, { ...OPTS, smoothing: 0.9 });
+  const rows = buildRenderRows([p], ALL, 0, 3999, 4, false);
+  const raw = rows.filter((r) => r.a__raw !== undefined).map((r) => r.a__raw as number);
+  assert.ok(raw.length <= 2 * 4 + 2, `${raw.length} envelope points`);
+  // Last column holds the extremes of the last quarter: -3998 and 3999.
+  assert.equal(Math.min(...raw), -3998);
+  assert.equal(Math.max(...raw), 3999);
 });
 
 test("a window small enough to draw point-for-point keeps its EXACT x", () => {
