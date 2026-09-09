@@ -58,6 +58,14 @@ export function planImageComparison(
     if (props.pixelValueNotation !== undefined) leafProps.pixelValueNotation = props.pixelValueNotation;
     if (props.processing !== undefined) leafProps.processing = props.processing;
     if (typeof props.height === "number") leafProps.height = props.height;
+    // H3': the synthesised leaf IS the pane, so the authored hold-previous
+    // request has to survive the lowering. Dropping it here (the allowlist was
+    // written for view controls only) is why every compare pane blinked to
+    // "Loading…" between iteration steps even though the author asked for the
+    // previous frame to be held.
+    if (props.holdPreviousWhileLoading !== undefined) {
+      leafProps.holdPreviousWhileLoading = props.holdPreviousWhileLoading;
+    }
     return [{
       operandIndices: [referenceIndex, index],
       plan: {

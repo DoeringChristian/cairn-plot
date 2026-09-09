@@ -38,6 +38,8 @@ import { applyChannelSlice } from "../resources/channel-slice.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { defaultSettingsForNode } from "../../settings.ts";
 import { CellSettingsContext, useSharedPlot, usePaneVisible } from "../../../host/plot-context.ts";
+import { InStackedGridContext } from "../../../layout/stack/stack-context.ts";
+import { shouldHoldPrevious } from "./hold-previous.ts";
 import { ReactBackendOutlet } from "../../../host/react-backend.ts";
 import { withoutSettingsPlumbing } from "../../../host/presentation.ts";
 import {
@@ -126,6 +128,10 @@ export function ImageHostAdapter({
   // The lazy gate's viewport answer — passed to the preparation scheduler so an
   // on-screen pane's decode runs before an off-screen one's.
   const visible = usePaneVisible();
+  // Inside a STACKED grid this component instance is reused across slot flips
+  // (that is the point of the homogeneous stack), so the hold-previous decision
+  // below needs a slot identity it can trust — see that block.
+  const inStackedGrid = useContext(InStackedGridContext);
   // True inside a STACKED viewport — threaded to the pane so it treats its display
   // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
   // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
@@ -279,28 +285,56 @@ export function ImageHostAdapter({
     const lease = acquireResolved(resolveKey);
     return () => lease?.release();
   }, [resolveKey, resolvedNow]);
+  // HOLD-PREVIOUS (the decision itself is the pure `shouldHoldPrevious`).
+  //
   // CHANNEL-PICK HOLD (user ruling: a channel pick must NEVER create a new
   // pane). The pick rides the settings store like any other display setting,
   // so its pending re-resolve must not swap the viewport for a placeholder —
   // the SAME pane instance keeps showing the previous channel's payload and
   // the new decode swaps IN PLACE as a prop change when it lands (exactly how
   // a colormap change propagates; the pane re-uploads, nothing remounts).
-  // Gated to the SAME BASE SOURCE (`sourceKey(node)` unchanged — only the
-  // channel-selection suffix differs): a STACKED-slot flip changes the base
-  // key, so the flip-commit ruling ("a cold flip renders loading, never a
-  // hold of the previous slot's frame" — the stale-diff guarantee) is
-  // untouched, as is the first mount (no previous payload to hold).
+  // That reason is the SAME BASE SOURCE (`sourceKey(node)` unchanged — only the
+  // channel-selection suffix differs).
+  //
+  // SOURCE-SWAP HOLD (H3'): an iteration step swaps the operands outright, so
+  // the base key changes and the pane would blink to "Loading…" every step. The
+  // authored `holdPreviousWhileLoading` opts that pane into holding its last
+  // ready frame across the swap — in compare mode too (the old gate excluded
+  // every compare pane, which is exactly where cairn asks for it).
+  //
+  // The stacked-flip invariant is preserved by keying the hold on the pane's own
+  // SLOT identity rather than on the base key: a STACKED flip reuses this
+  // component instance with a different node, and holding there would paint the
+  // previous slot's frame under the new slot's labels ("a cold flip renders
+  // loading, never a hold of the previous slot's frame" — the stale-diff
+  // guarantee). The slot is the authored node identity (a run id) plus the
+  // comparison operation; when the node carries no id, a pane inside a stacked
+  // grid cannot prove its slot is unchanged and refuses the source-swap hold.
   const baseKey = resolutionKey(source, resolutionNode, isDiff ? "|diffpair" : "");
-  const lastReadyRef = useRef<{ base: string; dataProps: Record<string, unknown> } | null>(null);
-  const holdSourceSwap = node.props?.holdPreviousWhileLoading === true && !diffSpec;
-  const held =
-    resolvedNow === undefined && cacheError === undefined && lastReadyRef.current &&
-      (lastReadyRef.current.base === baseKey || holdSourceSwap)
-      ? lastReadyRef.current.dataProps
-      : undefined;
+  const slotOperation = diffSpec ? `compare:${diffSpec.node.presentation}` : "image";
+  const slotIdentity = diffSpec?.node.id ?? node.id;
+  const slotKey = slotIdentity !== undefined
+    ? `${slotIdentity}|${slotOperation}`
+    : inStackedGrid
+      ? null
+      : `pane|${slotOperation}`;
+  const lastReadyRef = useRef<
+    { base: string; slot: string | null; dataProps: Record<string, unknown> } | null
+  >(null);
+  const lastReady = lastReadyRef.current;
+  const held = lastReady && shouldHoldPrevious({
+    hasPainted: true,
+    status: resolvedNow === undefined ? "resolving" : "ready",
+    holdFlag: node.props?.holdPreviousWhileLoading === true,
+    sameSlot: slotKey !== null && lastReady.slot === slotKey,
+    sameSource: lastReady.base === baseKey,
+    error: cacheError,
+  })
+    ? lastReady.dataProps
+    : undefined;
   const dataProps = resolvedNow ?? held;
   if (resolvedNow !== undefined) {
-    lastReadyRef.current = { base: baseKey, dataProps: resolvedNow };
+    lastReadyRef.current = { base: baseKey, slot: slotKey, dataProps: resolvedNow };
   }
   // A `kind:"diff"` payload STRUCTURALLY carries its foreground (`__diffB`) — the leaf
   // only builds a `compareSource` from a RESOLVED diff pair, so `b` is never undefined.

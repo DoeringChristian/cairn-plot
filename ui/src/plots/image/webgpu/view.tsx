@@ -1034,6 +1034,23 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // ONE visible failure surface: a decode/upload that produced nothing for an
   // operand is an ERROR the user must see, not a blank checkerboard.
   const [operandError, setOperandError] = useState<string | null>(null);
+  // Functional updates so an unchanged value re-renders nothing (React bails out
+  // when the state is identical), which keeps these safe to call unconditionally
+  // from a layout effect body.
+  const clearOperandError = useCallback(
+    () => setOperandError((prev) => (prev === null ? prev : null)),
+    [],
+  );
+  // H8: an operand that will NEVER bind must also release the present gate.
+  // `appliedBIdRef` is stamped with exactly the id `buildRenderSnapshot` expects
+  // (`B:<contentKeyB>`) so `renderPass` stops waiting for a binding that is not
+  // coming. Nothing stale can reach the screen through that: `operandError`
+  // renders `PaneUnavailable` in place of the canvas until the next node change
+  // clears it (the effect below clears it whenever a new operand arrives).
+  const failOperand = useCallback((key: string, message: string) => {
+    appliedBIdRef.current = `B:${key}`;
+    setOperandError(message);
+  }, []);
 
   // -----------------------------------------------------------------------
   // HDR mode: decode/retain source, upload on identity change.
@@ -1052,11 +1069,18 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     const textureKey = hasCompare ? contentKeyA : primaryContentKey;
     const cacheKey = `expanded:${textureKey}|${w}x${h}:${format}`;
     const reacquire = () => acquireExpanded(cacheKey, () => hdrToRGBAFloat32(hdr));
+    // H14: the LEASE is only created once there is a pool handle to own it. The
+    // pane hands ownership to the pool in `setSourceLease`, so a lease taken
+    // with no handle is never released — a permanent expanded-cache pin (and a
+    // silently skipped upload). `paneReady` is a dep, so the effect re-runs and
+    // uploads the moment the handle arrives.
+    const handle = paneHandleRef.current;
+    if (!handle) return;
     const lease = reacquire();
     const upload = lease.upload;
     // Every immutable plain and comparison source is keyed device-wide; layout is
     // also folded into the pool key, so transformed/channel-selected sources cannot alias.
-    paneHandleRef.current?.setSourceLease(lease, textureKey, reacquire);
+    handle.setSourceLease(lease, textureKey, reacquire);
     // Coherency guard: mirrors `expectedPrimaryId` (compare → `A:<keyA>`, else "hdr").
     appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : "hdr";
     setNaturalDims((prev) =>
@@ -1170,7 +1194,12 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     ) => {
       const cacheKey = `expanded:${primaryKey}|${width}x${height}:${format}`;
       const reacquire = () => acquireExpanded(cacheKey, build);
-      paneHandleRef.current?.setSourceLease(reacquire(), primaryKey, reacquire);
+      // H14: take the lease only when a pool handle can own it (see the HDR
+      // effect above) — `reacquire()` with no handle pins the expanded cache
+      // forever. The `paneReady` dep re-runs this effect once the handle lands.
+      const handle = paneHandleRef.current;
+      if (!handle) return;
+      handle.setSourceLease(reacquire(), primaryKey, reacquire);
       // Coherency guard: record which primary content the pool now holds — mirrors
       // `expectedPrimaryId` in renderPass (compare → `A:<keyA>`, else `img:<url>`).
       appliedPrimaryIdRef.current = hasCompare ? `A:${contentKeyA}` : `img:${imageUrl}`;
@@ -1318,9 +1347,15 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       setRefDims(null);
       refFloatRef.current = null;
       refU8Ref.current = null;
+      clearOperandError();
       return;
     }
     const key = contentKeyB;
+    // H8: a NEW operand is fresh evidence — the previous operand's failure must
+    // not keep this pane on `PaneUnavailable` for the rest of the page's life.
+    // (The synchronous `immediate` branch below never cleared it, so a pane that
+    // failed once stayed unavailable even when the next step decoded fine.)
+    clearOperandError();
     // Apply a ref-counted decoded upload to the pool + local readout refs.
     const apply = (owned: { lease: SourceUploadLease; reacquire: () => SourceUploadLease }) => {
       const upload = owned.lease.upload;
@@ -1347,15 +1382,23 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     let cancelled = false;
     decodedSourceToUploadLease(b, key).then((owned) => {
       if (!owned) {
-        if (!cancelled) setOperandError(`Could not decode the comparison operand (${key}).`);
+        if (!cancelled) failOperand(key, `Could not decode the comparison operand (${key}).`);
         return;
       }
-      setOperandError(null);
       if (cancelled) {
         owned.lease.release();
         return;
       }
       apply(owned);
+    }).catch((err: unknown) => {
+      // H8: a REJECTED operand lease used to be swallowed — nothing set the
+      // error and nothing stamped `appliedBIdRef`, so the present gate waited
+      // for a `B:<key>` binding that would never arrive and the pane held its
+      // previous frame forever. Mirror the "decoded to nothing" branch: surface
+      // the failure (the pane renders `PaneUnavailable`) and stamp the gate.
+      // A later node change re-runs this effect, clears the error and retries.
+      if (cancelled) return;
+      failOperand(key, err instanceof Error ? err.message : String(err));
     });
     return () => {
       cancelled = true;

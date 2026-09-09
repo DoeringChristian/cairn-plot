@@ -44,6 +44,7 @@ import {
   getOffscreenCpuReleaseMs,
 } from "../../../resources/runtime-config.ts";
 import { registerRuntimePolicyHook } from "../../../resources/runtime-policy-hooks.ts";
+import { chooseAdmissionVictim } from "./admission-victim.ts";
 import { imageWebGpuRuntime } from "./device/runtime.ts";
 import type { ImageWebGpuRuntime } from "./device/runtime.ts";
 import {
@@ -529,6 +530,17 @@ interface PaneEntry {
   contentGeneration: number;
   /** Latest content epoch successfully submitted to this pane's surface. */
   presentedGeneration: number;
+  /** Monotonic stamp of the LAST successful present (0 = never presented). The
+   *  admission policy rotates the least-recently-presented slot when every
+   *  visible pane owes a frame — see {@link chooseAdmissionVictim}. */
+  lastPresentedAt: number;
+  /** Consecutive activation failures. Bounded retries (H7): fresh evidence — a
+   *  new content generation or a visibility change — clears `failed` while this
+   *  is at or below {@link MAX_ACTIVATION_RETRIES}. */
+  activationFailures: number;
+  /** `contentGeneration` at the last activation failure, so "the content
+   *  changed since we failed" is decidable. */
+  failedGeneration: number;
   /** Last-reported IntersectionObserver visibility. */
   visible: boolean;
   /** Page-visibility suspension, independent of intersection visibility. */
@@ -549,6 +561,12 @@ interface PaneEntry {
 
 // Module-singleton LRU of currently-LIVE (non-parked) entries, oldest first.
 const live: PaneEntry[] = [];
+/** Monotonic present counter feeding `PaneEntry.lastPresentedAt`. */
+let presentationClock = 0;
+/** The entry whose render is on the stack, if any. Admission runs from inside
+ *  `attemptRender`, so this is the one pane that must never be evicted by the
+ *  slot it is currently painting into. */
+let presentingEntry: PaneEntry | null = null;
 const panes = new Set<PaneEntry>();
 const waiters: PaneEntry[] = [];
 let documentHidden = typeof document !== "undefined" && document.visibilityState === "hidden";
@@ -771,6 +789,32 @@ function needsPresentation(entry: PaneEntry): boolean {
 
 function noteContentChange(entry: PaneEntry): void {
   entry.contentGeneration++;
+  // New content is fresh evidence: a pane whose activation failed once is worth
+  // one more try rather than being blank for the life of the page (H7).
+  reconsiderFailedEntry(entry, "content");
+}
+
+/**
+ * How many times a FAILED pane is re-tried before its failure is permanent
+ * (H7). `activateEntryUnsafe` early-returns on `entry.failed`, and nothing ever
+ * cleared the flag: one transient activation failure (a surface creation that
+ * lost a race with a page-visibility flip, say) blanked that pane forever. The
+ * failure is still reported to the owner on EVERY failure — the view falls back
+ * to the legacy CPU pane on the first one — so this only ever recovers panes
+ * whose owner is still asking the pool to draw them.
+ */
+const MAX_ACTIVATION_RETRIES = 3;
+
+/** Clear a soft activation failure when fresh evidence arrives (H7). */
+function reconsiderFailedEntry(entry: PaneEntry, evidence: "content" | "visibility"): void {
+  if (!entry.failed || entry.disposed) return;
+  if (entry.activationFailures > MAX_ACTIVATION_RETRIES) return;
+  // Only a genuinely NEW generation counts as content evidence.
+  if (evidence === "content" && entry.contentGeneration <= entry.failedGeneration) return;
+  entry.failed = false;
+  if (!hasPrimarySource(entry) || documentHidden || !entry.visible) return;
+  enqueueWaiter(entry);
+  admitWaiters();
 }
 
 function removeWaiter(entry: PaneEntry): void {
@@ -932,13 +976,34 @@ function projectedLiveMutationBytes(
   return bytes;
 }
 
-function isAdmissionVictim(candidate: PaneEntry, requester: PaneEntry, allowPresentationRotation: boolean): boolean {
-  if (candidate === requester) return false;
-  if (!candidate.visible) return true;
-  // A pane may rotate a visible peer only while it still owes the user one
-  // presentation of its current content generation. Never displace another
-  // presentation-needing pane: it is already making bounded forward progress.
-  return allowPresentationRotation && !needsPresentation(candidate);
+/**
+ * Pick the pane to evict so `requester` can be admitted (H7). The policy itself
+ * is the pure {@link chooseAdmissionVictim}; this only projects the live LRU
+ * list into its plain-data view and maps the answer back to an entry.
+ */
+function pickAdmissionVictim(
+  requester: PaneEntry,
+  allowPresentationRotation: boolean,
+  sameDeviceOnly: boolean,
+): PaneEntry | null {
+  const chosen = chooseAdmissionVictim(
+    live.map((candidate) => ({
+      id: candidate.paneId,
+      sameDevice: candidate.device === requester.device,
+      visible: candidate.visible,
+      needsPresentation: needsPresentation(candidate),
+      presenting: candidate === presentingEntry,
+      lastPresentedAt: candidate.lastPresentedAt,
+    })),
+    {
+      requesterId: requester.paneId,
+      allowPresentationRotation,
+      requesterLastPresentedAt: requester.lastPresentedAt,
+      sameDeviceOnly,
+    },
+  );
+  if (!chosen) return null;
+  return live.find((candidate) => candidate.paneId === chosen.id) ?? null;
 }
 
 function evictForAdmission(victim: PaneEntry, rotated: boolean): void {
@@ -962,8 +1027,7 @@ function canApplyLiveMutation(
   const limit = getGpuSourceTextureLimits().activeBytes;
   const mayRotate = needsPresentation(entry);
   while (projectedLiveMutationBytes(entry, sourceLayout, sourceKey, sourceBLayout, sourceBKey, deep) > limit) {
-    const victim = live.find((candidate) =>
-      candidate.device === entry.device && isAdmissionVictim(candidate, entry, mayRotate));
+    const victim = pickAdmissionVictim(entry, mayRotate, true);
     if (!victim) return false;
     evictForAdmission(victim, victim.visible);
   }
@@ -976,16 +1040,14 @@ function canAdmit(entry: PaneEntry, allowPresentationRotation = needsPresentatio
   // Prefer same-device victims: doing so can satisfy both the global count cap
   // and this device's byte cap with one bounded rotation.
   while (live.length >= getLiveGpuPaneLimit()) {
-    const candidates = live.filter((candidate) => isAdmissionVictim(candidate, entry, allowPresentationRotation));
-    const victim = candidates.find((candidate) => candidate.device === entry.device) ?? candidates[0];
+    const victim = pickAdmissionVictim(entry, allowPresentationRotation, false);
     if (!victim) return false;
     evictForAdmission(victim, victim.visible);
   }
   const limit = getGpuSourceTextureLimits().activeBytes;
   while (activeSourceBytes(entry.device) + prospectiveSourceBytes(entry) > limit &&
          live.some((candidate) => candidate.device === entry.device)) {
-    const victim = live.find((candidate) =>
-      candidate.device === entry.device && isAdmissionVictim(candidate, entry, allowPresentationRotation));
+    const victim = pickAdmissionVictim(entry, allowPresentationRotation, true);
     if (!victim) return false;
     evictForAdmission(victim, victim.visible);
   }
@@ -1006,6 +1068,10 @@ function scheduleWaiterAdmission(): void {
 }
 
 function markPresented(entry: PaneEntry): void {
+  // The stamp advances on every present, including a repaint of an already
+  // presented generation: it answers "how long since this slot last produced a
+  // frame", which is what the rotation order needs.
+  entry.lastPresentedAt = ++presentationClock;
   if (!needsPresentation(entry)) return;
   entry.presentedGeneration = entry.contentGeneration;
   poolStats.presentations++;
@@ -1116,6 +1182,8 @@ function failEntryActivation(entry: PaneEntry, error: unknown): void {
   removeWaiter(entry);
   releaseCpuUploadOwnership(entry);
   entry.failed = true;
+  entry.activationFailures++;
+  entry.failedGeneration = entry.contentGeneration;
   queueMicrotask(() => entry.onActivationFailure?.(error));
   admitWaiters();
 }
@@ -1231,6 +1299,8 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
   // size set via `resize()`). A no-op SUCCESS (not a failure) so the caller does NOT
   // fall back to the legacy pane; the first render after the first `resize()` paints.
   if (!entry.backingWidth || !entry.backingHeight) return true;
+  const previouslyPresenting = presentingEntry;
+  presentingEntry = entry;
   try {
     if (!activateEntry(entry)) return false;
     if (entry.waiting || documentHidden || !entry.visible) return true;
@@ -1266,6 +1336,8 @@ function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
     console.warn("cairn-plot engine: pane activation/render failed, falling back to legacy pane", err);
     failEntryActivation(entry, err);
     return false;
+  } finally {
+    presentingEntry = previouslyPresenting;
   }
 }
 
@@ -1903,6 +1975,9 @@ function makeHandle(entry: PaneEntry): PaneHandle {
       entry.visible = visible;
       if (visible) {
         if (!entry.documentHidden) cancelOffscreenRelease(entry);
+        // Scrolling a failed pane back into view is fresh evidence (H7): retry
+        // its activation rather than leaving it blank forever.
+        reconsiderFailedEntry(entry, "visibility");
         if (entry.waiting) admitWaiters();
       } else {
         removeWaiter(entry);
@@ -1982,6 +2057,9 @@ export async function acquirePane(
     failed: false,
     contentGeneration: 0,
     presentedGeneration: 0,
+    lastPresentedAt: 0,
+    activationFailures: 0,
+    failedGeneration: 0,
     visible: true,
     documentHidden,
     offscreenReleaseTimer: null,
