@@ -6,6 +6,7 @@
 // moved to identity-derived cell paths while this compiler still walked by
 // index, so on a grid with authored ids the two sets stopped intersecting.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { PlotNode, PlotSpec } from "../../../../packages/spec/src/spec.ts";
@@ -71,23 +72,24 @@ test("nested grids nest their identity paths", () => {
   assert.ok(cellIds.has("stack:root/inner"));
 });
 
+const testImageBackend = (): ImageBackend<ImageBackendView> => ({
+  id: "test",
+  technology: "canvas2d",
+  priority: 1,
+  View: (() => null) as ImageBackendView,
+  supports: () => ({ supported: true, priority: 1 }),
+  capabilities: {
+    imageOperations: [],
+    displayOperations: [],
+    supportsImageOperation: () => false,
+    supportsDisplayOperation: () => false,
+  },
+});
+
 test("an expanded image comparison contributes cells one level deeper", () => {
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  const backend: ImageBackend<ImageBackendView> = {
-    id: "test",
-    technology: "canvas2d",
-    priority: 1,
-    View: (() => null) as ImageBackendView,
-    supports: () => ({ supported: true, priority: 1 }),
-    capabilities: {
-      imageOperations: [],
-      displayOperations: [],
-      supportsImageOperation: () => false,
-      supportsDisplayOperation: () => false,
-    },
-  };
-  ensureImagePlotType((() => null) as never, [backend]);
+  ensureImagePlotType((() => null) as never, [testImageBackend()]);
   const compare: PlotNode = {
     kind: "compare",
     type: "image",
@@ -129,19 +131,58 @@ test("an expanded image comparison contributes cells one level deeper", () => {
   clearPlotTypesForTest();
 });
 
-test("a single-output image comparison stays one cell at its own path", () => {
-  const compare: PlotNode = {
-    kind: "compare",
-    type: "image",
-    presentation: "split",
-    strategy: "reference",
-    operands: [{ kind: "image", hash: "a" }, { kind: "image", hash: "b" }],
-  };
+const twoOperandCompare = (): PlotNode => ({
+  kind: "compare",
+  type: "image",
+  presentation: "split",
+  strategy: "reference",
+  operands: [{ kind: "image", hash: "a" }, { kind: "image", hash: "b" }],
+});
+
+test("an unplannable comparison stays one cell at its own path", () => {
   // With no image plot type registered `planComparison` throws; the topology
-  // must degrade to the unexpanded cell rather than propagate the error.
+  // must degrade to the unexpanded cell rather than propagate the error — the
+  // view renders the plan error in that same one cell's place.
+  clearReactPlotTypesForTest();
   clearPlotTypesForTest();
-  const { cellIds } = compileSessionTopology(specOf({ kind: "grid", children: [compare] }));
+  const { cellIds } = compileSessionTopology(
+    specOf({ kind: "grid", children: [twoOperandCompare()] }),
+  );
   assert.deepEqual([...cellIds].sort(), ["cell:root/i0", "stack:root"]);
+});
+
+test("a REGISTERED two-operand comparison is one output, so it stays one cell", () => {
+  // The other half of that branch, and the one the unplannable case cannot
+  // reach: planning SUCCEEDS, but a single output means `expandImageComparison`
+  // returns null and there is no `/comparison` level to nest under.
+  clearReactPlotTypesForTest();
+  clearPlotTypesForTest();
+  ensureImagePlotType((() => null) as never, [testImageBackend()]);
+  try {
+    const { cellIds, grids } = compileSessionTopology(
+      specOf({ kind: "grid", children: [twoOperandCompare()] }),
+    );
+    assert.deepEqual([...cellIds].sort(), ["cell:root/i0", "stack:root"]);
+    assert.deepEqual([...grids.keys()], ["grid:root"], "no nested comparison grid");
+  } finally {
+    clearReactPlotTypesForTest();
+    clearPlotTypesForTest();
+  }
+});
+
+test("PlotNodeView still derives its cell path from the shared helper", () => {
+  // A SOURCE pin, because the bug this file exists for is the two sides drifting
+  // apart: if `GridView` went back to `${path}/${index}` every assertion above
+  // would keep passing while prune/patch silently missed every grid cell again.
+  // Same technique as `plots/image/runtime/register.test.ts`'s CORE_RENDERERS pin.
+  const source = readFileSync(new URL("../../host/PlotNodeView.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /gridCellPath\(path, cellKeys\[index\]/,
+    "GridView must build cell paths with gridCellPath(path, cellKeys[index] …) — " +
+      "session-topology.ts derives the same ids and the two must not drift",
+  );
+  assert.match(source, /cellKeys=\{cellKeys\}/, "and hand the same keys to GridLayout");
 });
 
 test("patchCellSettings reaches a grid cell through the compiled topology", () => {

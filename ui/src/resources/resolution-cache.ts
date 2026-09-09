@@ -144,6 +144,18 @@ export const RESOLVE_ERROR_TTL_MS = 2000;
  */
 export const RESOLVE_ERROR_MAX_TTL_MS = 60_000;
 
+/**
+ * How long after a backoff expires a key's failure COUNT survives, as a
+ * multiple of that backoff. The count has to outlive the error entry (the entry
+ * is removed by its own expiry timer, and the next failure must keep doubling
+ * rather than restart at 2 s), but it must not outlive it forever: without this
+ * decay a page that fails one key at load and then runs happily for an hour
+ * would still be holding the counter, and one unlucky failure much later would
+ * be punished with a minute-long backoff — and the map would only ever grow.
+ * A key that behaves for four backoffs is treated as healthy again.
+ */
+export const RESOLVE_ATTEMPT_DECAY_FACTOR = 4;
+
 /** The live TTLs — the constants above except while a test shortens them. */
 let resolveErrorTtlMs: number = RESOLVE_ERROR_TTL_MS;
 let resolveErrorMaxTtlMs: number = RESOLVE_ERROR_MAX_TTL_MS;
@@ -177,8 +189,6 @@ export const RESOLVE_HANDOFF_MS = 5000;
 
 interface CachedResolveError {
   readonly message: string;
-  /** How many consecutive failures this key has had — drives the backoff. */
-  readonly attempts: number;
   /** Fires at the end of the backoff: forgets the entry AND notifies, so the
    *  subscribed leaf re-renders and its resolve effect (which depends on the
    *  error) runs again. Without this wake-up the TTL would be inert — nothing
@@ -187,9 +197,37 @@ interface CachedResolveError {
 }
 
 const errors = new Map<string, CachedResolveError>();
+
+interface ResolveAttempts {
+  /** Consecutive failures for this key — the backoff exponent. */
+  count: number;
+  /** Pending prune of this record; null while a failure is still cached. */
+  decay: ReturnType<typeof setTimeout> | null;
+}
 /** Consecutive failures per key. Outlives the error entry (which its own expiry
- *  timer removes) so the NEXT failure keeps doubling instead of restarting. */
-const errorAttempts = new Map<string, number>();
+ *  timer removes) so the NEXT failure keeps doubling instead of restarting —
+ *  but only for {@link RESOLVE_ATTEMPT_DECAY_FACTOR} backoffs, after which the
+ *  record is pruned and the key starts over at the base TTL. */
+const errorAttempts = new Map<string, ResolveAttempts>();
+
+/** Forget `key`'s failure count unless a new failure re-arms it first. */
+function armAttemptDecay(key: string, ms: number): void {
+  const record = errorAttempts.get(key);
+  if (!record) return;
+  if (record.decay) clearTimeout(record.decay);
+  const decay = setTimeout(() => {
+    if (errorAttempts.get(key)?.decay === decay) errorAttempts.delete(key);
+  }, ms);
+  (decay as unknown as { unref?: () => void }).unref?.();
+  record.decay = decay;
+}
+
+/** Drop `key`'s failure count and any pending prune of it. */
+function dropAttempts(key: string): void {
+  const record = errorAttempts.get(key);
+  if (record?.decay) clearTimeout(record.decay);
+  errorAttempts.delete(key);
+}
 const resolving = new Map<string, Promise<void>>();
 /** Grace leases held by `resolveCached` between resolution and consumer handoff. */
 const handoffs = new Map<string, { lease: ResourceLease<unknown>; timer: ReturnType<typeof setTimeout> }>();
@@ -265,7 +303,7 @@ function dropResolveError(key: string): void {
  *  is about to re-request the key itself. */
 export function clearResolveError(key: string): void {
   dropResolveError(key);
-  errorAttempts.delete(key);
+  dropAttempts(key);
 }
 
 /** Resolve `key` via `run` exactly once and cache the result; concurrent/repeat
@@ -309,20 +347,25 @@ export function resolveCached<T>(
       // retries and becomes visible only if it also fails.
       if (priority === "foreground") {
         dropResolveError(key);
-        const attempts = (errorAttempts.get(key) ?? 0) + 1;
-        errorAttempts.set(key, attempts);
+        const record = errorAttempts.get(key);
+        // A fresh failure cancels any pending prune of the counter.
+        if (record?.decay) clearTimeout(record.decay);
+        const attempts = (record?.count ?? 0) + 1;
+        errorAttempts.set(key, { count: attempts, decay: null });
+        const backoff = resolveErrorBackoffMs(attempts);
         // The backoff must END in a retry, not merely stop reporting: the
         // expiry timer forgets the entry and NOTIFIES, which re-renders the
         // subscribed leaf whose resolve effect depends on the error state. It
         // lengthens with each consecutive failure so a permanently broken
-        // source is not re-resolved every two seconds forever.
+        // source is not re-resolved every two seconds forever, and the counter
+        // behind it decays once the key has been quiet for a while.
         const expiry = setTimeout(() => {
           if (errors.delete(key)) notifyResolveCache();
-        }, resolveErrorBackoffMs(attempts));
+          armAttemptDecay(key, backoff * RESOLVE_ATTEMPT_DECAY_FACTOR);
+        }, backoff);
         (expiry as unknown as { unref?: () => void }).unref?.();
         errors.set(key, {
           message: err instanceof Error ? err.message : String(err),
-          attempts,
           expiry,
         });
         notifyResolveCache();
@@ -352,7 +395,7 @@ export function prefetchResolved(entries: Array<{ key: string; run: () => Promis
 export function __resetResolveCacheForTest(): void {
   for (const key of [...handoffs.keys()]) releaseHandoff(key);
   for (const key of [...errors.keys()]) clearResolveError(key);
-  errorAttempts.clear();
+  for (const key of [...errorAttempts.keys()]) dropAttempts(key);
   globalResourceCache.clear();
   resolving.clear();
   notifyResolveCache();

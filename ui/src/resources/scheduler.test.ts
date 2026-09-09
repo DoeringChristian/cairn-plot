@@ -227,3 +227,28 @@ test("promote never starts work — not for an unknown key, nor for a running on
     console.warn = realWarn;
   }
 });
+
+test("a second schedule() joining a stuck task is failed by the same watchdog", async () => {
+  const scheduler = new PreparationScheduler({ concurrency: 2, watchdogMs: 10 });
+  // eslint-disable-next-line no-console
+  const realWarn = console.warn;
+  // eslint-disable-next-line no-console
+  console.warn = () => {};
+  try {
+    let runs = 0;
+    const first = scheduler.schedule("stuck", "foreground", () => {
+      runs++;
+      return new Promise<void>(() => {});
+    });
+    // A second pane asks for the same key while it is RUNNING. It joins the
+    // in-flight task — and must inherit its watchdog rather than wait forever
+    // on the raw `run()` promise the old code handed back.
+    const joined = scheduler.schedule("stuck", "foreground", async () => { runs++; }, { visible: true });
+    await assert.rejects(joined, /task watchdog expired: stuck/);
+    await assert.rejects(first, /task watchdog expired: stuck/);
+    assert.equal(runs, 1, "joining must not start a second run");
+  } finally {
+    // eslint-disable-next-line no-console
+    console.warn = realWarn;
+  }
+});

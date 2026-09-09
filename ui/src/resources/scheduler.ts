@@ -28,6 +28,11 @@ interface QueuedTask<T> {
  * and its backoff retries the key instead of leaving the pane on "Loading…"
  * forever. The underlying `run()` promise cannot be cancelled and is simply
  * abandoned — if it settles later, that settle is ignored.
+ *
+ * The trade-off is deliberate: a LEGITIMATELY slow task (a huge decode on a slow
+ * machine) that crosses a minute is failed rather than waited for, and recovers
+ * through the resolution cache's backoff retry instead — a pane that retries is
+ * strictly better than a page whose four slots are gone.
  */
 export const TASK_WATCHDOG_MS = 60_000;
 
@@ -53,7 +58,9 @@ export class PreparationScheduler {
   readonly concurrency: number;
   readonly watchdogMs: number;
   private readonly queued = new Map<string, QueuedTask<unknown>>();
-  private readonly running = new Map<string, Promise<unknown>>();
+  /** Started tasks, by key. Holding the TASK (not the raw `run()` promise) is
+   *  what puts a second `schedule` for the same key behind the same watchdog. */
+  private readonly running = new Map<string, QueuedTask<unknown>>();
   private active = 0;
   private clock = 0;
 
@@ -71,8 +78,14 @@ export class PreparationScheduler {
     run: () => Promise<T>,
     options?: ScheduleOptions,
   ): Promise<T> {
-    const inFlight = this.running.get(key);
-    if (inFlight) return inFlight as Promise<T>;
+    const inFlight = this.running.get(key) as QueuedTask<T> | undefined;
+    if (inFlight) {
+      // The TASK promise, not the raw `run()` promise: a caller that joins an
+      // already-started task must be failed by the watchdog too, or it would
+      // wait forever on exactly the stall the watchdog exists to break.
+      if (options?.visible === true) inFlight.visible = true;
+      return inFlight.promise;
+    }
 
     const existing = this.queued.get(key) as QueuedTask<T> | undefined;
     if (existing) {
@@ -106,7 +119,7 @@ export class PreparationScheduler {
    * Raise a still-QUEUED task's priority/visibility without ever starting new
    * work. Callers that already hold the in-flight promise for `key` (the
    * resolution cache does) must use this rather than `schedule`: after the
-   * watchdog releases a stuck task's slot the key→promise mapping is gone, so
+   * watchdog releases a stuck task's slot the key→task mapping is gone, so
    * `schedule` would launch a SECOND run of work that is still in flight.
    * A no-op once the task has started, or if the key is unknown.
    */
@@ -125,7 +138,7 @@ export class PreparationScheduler {
       this.queued.delete(task.key);
       this.active++;
       const running = Promise.resolve().then(task.run);
-      this.running.set(task.key, running);
+      this.running.set(task.key, task);
 
       // The slot is released EXACTLY once — by the task settling, or by the
       // watchdog when it never does.
@@ -133,9 +146,9 @@ export class PreparationScheduler {
       const releaseSlot = (): void => {
         if (releasedSlot) return;
         releasedSlot = true;
-        // Only drop the key→promise mapping if it is still ours: a watchdog
+        // Only drop the key→task mapping if it is still ours: a watchdog
         // release lets a later `schedule(key)` start fresh work.
-        if (this.running.get(task.key) === running) this.running.delete(task.key);
+        if (this.running.get(task.key) === task) this.running.delete(task.key);
         this.active--;
         this.drain();
       };

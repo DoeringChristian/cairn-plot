@@ -13,6 +13,7 @@ import {
   estimateResolvedBytes,
   RESOLVE_ERROR_TTL_MS,
   RESOLVE_ERROR_MAX_TTL_MS,
+  RESOLVE_ATTEMPT_DECAY_FACTOR,
   resolveErrorBackoffMs,
   subscribeResolveCache,
   __resetResolveCacheForTest,
@@ -406,6 +407,50 @@ test("consecutive failures lengthen the wait; clearResolveError resets it", asyn
     await assert.rejects(resolveCached(key, fail));
     await new Promise((r) => setTimeout(r, 40));
     assert.equal(peekResolveError(key), undefined, "back to the base delay");
+  } finally {
+    __setResolveErrorTtlForTest(undefined);
+    __resetResolveCacheForTest();
+  }
+});
+
+test("the failure count decays, so a long-quiet key starts over at the base TTL", async () => {
+  __resetResolveCacheForTest();
+  __setResolveErrorTtlForTest(20, 10_000);
+  assert.equal(RESOLVE_ATTEMPT_DECAY_FACTOR, 4);
+  const key = "decaying";
+  const fail = async () => { throw new Error("x"); };
+  try {
+    // Three consecutive failures ⇒ the count is 3 and the next wait is 4 x base.
+    for (let i = 0; i < 3; i++) await assert.rejects(resolveCached(key, fail));
+    // Sit quiet past the last backoff (80 ms) AND its decay window (4 x 80 ms).
+    await new Promise((r) => setTimeout(r, 500));
+
+    // The key is treated as healthy again: this failure is a FIRST attempt, so
+    // it expires after ONE base delay. With the counter still held it would be
+    // the fourth attempt — a 160 ms wait — and still be here at 40 ms.
+    await assert.rejects(resolveCached(key, fail));
+    assert.equal(peekResolveError(key), "x");
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(peekResolveError(key), undefined, "the counter decayed; back to the base TTL");
+  } finally {
+    __setResolveErrorTtlForTest(undefined);
+    __resetResolveCacheForTest();
+  }
+});
+
+test("a failure inside the decay window keeps the count growing", async () => {
+  __resetResolveCacheForTest();
+  __setResolveErrorTtlForTest(20, 10_000);
+  const key = "still-sick";
+  const fail = async () => { throw new Error("x"); };
+  try {
+    for (let i = 0; i < 3; i++) await assert.rejects(resolveCached(key, fail));
+    // Past the 80 ms backoff but well inside the 320 ms decay window.
+    await new Promise((r) => setTimeout(r, 120));
+    await assert.rejects(resolveCached(key, fail));
+    // Fourth consecutive failure ⇒ 160 ms, so it is still cached at 60 ms.
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(peekResolveError(key), "x", "the decay must not reset a key that is still failing");
   } finally {
     __setResolveErrorTtlForTest(undefined);
     __resetResolveCacheForTest();

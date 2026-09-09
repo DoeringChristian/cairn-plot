@@ -291,6 +291,31 @@ function showsLoading(cell: Element): boolean {
 // bare counter delta.
 // ---------------------------------------------------------------------------
 let currentAction = "mount";
+/**
+ * Half-open wall-clock windows, one per action. A long task is DELIVERED in the
+ * next idle period — often after the action that raised it has ended — so
+ * reading `currentAction` at delivery time charged stalls to the wrong phase
+ * (usually the one AFTER the culprit). Attribution is by `entry.startTime`
+ * instead, which is when the task actually began.
+ */
+const actionWindows: Array<{ action: string; from: number; to: number }> = [
+  { action: "mount", from: 0, to: Number.POSITIVE_INFINITY },
+];
+/** Close the open window and start a new one. The only way to set the action. */
+function beginAction(action: string): void {
+  const at = performance.now();
+  actionWindows[actionWindows.length - 1]!.to = at;
+  actionWindows.push({ action, from: at, to: Number.POSITIVE_INFINITY });
+  currentAction = action;
+}
+/** The action running at wall-clock `at` (newest window wins on a boundary). */
+function actionAt(at: number): string {
+  for (let i = actionWindows.length - 1; i >= 0; i--) {
+    const window = actionWindows[i]!;
+    if (at >= window.from && at <= window.to) return window.action;
+  }
+  return actionWindows[0]!.action;
+}
 const loadingBlinks: Array<{ action: string; run: number }> = [];
 const seenBlinks = new Set<string>();
 let loadingObserver: MutationObserver | null = null;
@@ -555,10 +580,13 @@ function observeLongTasks(): void {
   try {
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
-        // `currentAction` at DELIVERY time: a long task is delivered in the next
-        // idle period, so this names the action it belongs to or the one right
-        // after it — enough to point a reader at the phase that stalled.
-        longTasks.push({ duration: entry.duration, at: entry.startTime, action: currentAction });
+        // By START time, not delivery time: the entry arrives in a later idle
+        // period, and `currentAction` by then is usually the NEXT action.
+        longTasks.push({
+          duration: entry.duration,
+          at: entry.startTime,
+          action: actionAt(entry.startTime),
+        });
       }
     }).observe({ entryTypes: ["longtask"] });
   } catch {
@@ -654,7 +682,7 @@ async function runGridScenario(mode: "cpu" | "gpu"): Promise<boolean> {
   };
 
   // --- cold mount --------------------------------------------------------
-  currentAction = `${mode} cold mount`;
+  beginAction(`${mode} cold mount`);
   let plot = mountGrid(0, "split");
   observeLoading("grid-host");
   const mounted = await waitFor(() => cellsOf("grid-host").length === RUNS, MOUNT_MS, 25);
@@ -679,7 +707,7 @@ async function runGridScenario(mode: "cpu" | "gpu"): Promise<boolean> {
   // --- 20 step changes ---------------------------------------------------
   for (let step = 1; step < STEPS; step++) {
     const t0 = performance.now();
-    currentAction = `${mode} step ${step}`;
+    beginAction(`${mode} step ${step}`);
     plot.update({ spec: specFor(step, "split") });
     const result = await checkGrid("grid-host", step, `step ${step}`, mode);
     timings.push({ label: `step ${step}`, ms: performance.now() - t0, settleMs: result.settleMs });
@@ -710,7 +738,7 @@ async function runGridScenario(mode: "cpu" | "gpu"): Promise<boolean> {
     const t0 = performance.now();
     // Exactly cairn's two writes: the authored node changes comparison topology,
     // the live settings patch reaches the already-mounted cells.
-    currentAction = `${mode} operation ${operation}`;
+    beginAction(`${mode} operation ${operation}`);
     plot.update({ spec: specFor(lastStep, operation) });
     plot.patchSettings({ "compare.operation": operation });
     const result = await checkGrid("grid-host", lastStep, `operation ${operation}`, mode);
@@ -739,7 +767,7 @@ async function runGridScenario(mode: "cpu" | "gpu"): Promise<boolean> {
   // --- 10 wheel zooms + a pan on pane 0 ----------------------------------
   {
     const t0 = performance.now();
-    currentAction = `${mode} zoom+pan`;
+    beginAction(`${mode} zoom+pan`);
     const surface = surfaceOf(cellsOf("grid-host")[0]!);
     const gestureOk = !!surface;
     report(gestureOk, `[${mode}] pane 0 exposes a gesture surface`);
@@ -769,7 +797,7 @@ async function runGridScenario(mode: "cpu" | "gpu"): Promise<boolean> {
   // --- host unmount + remount (the settings-panel shape) -----------------
   {
     const t0 = performance.now();
-    currentAction = `${mode} remount`;
+    beginAction(`${mode} remount`);
     plot.destroy();
     await nextFrame();
     plot = mountGrid(lastStep, "split");
@@ -796,7 +824,7 @@ async function runGridScenario(mode: "cpu" | "gpu"): Promise<boolean> {
   // --- window resize ------------------------------------------------------
   {
     const t0 = performance.now();
-    currentAction = `${mode} resize`;
+    beginAction(`${mode} resize`);
     const host = document.getElementById("grid-host")!;
     host.style.width = "980px";
     window.dispatchEvent(new Event("resize"));

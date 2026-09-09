@@ -290,3 +290,54 @@ test("a crash on the DEEP OPEN still gets its one-shot pool decode, however big 
     setDecodePoolForTests(null);
   }
 });
+
+/** Wraps a pool so the number of jobs it is asked to run is observable. */
+function countingPool(inner: InstanceType<typeof DecodePool>): {
+  pool: InstanceType<typeof DecodePool>;
+  runs: () => number;
+} {
+  let runs = 0;
+  const real = inner.run.bind(inner);
+  (inner as unknown as { run: unknown }).run = (...args: unknown[]) => {
+    runs++;
+    return (real as (...a: unknown[]) => unknown)(...args);
+  };
+  return { pool: inner, runs: () => runs };
+}
+
+test("a TERMINAL deep-open failure rethrows without a second pool attempt", async () => {
+  // The deep-open fall-through exists for a one-off worker CRASH (the test
+  // above): it retries through the pool as an ordinary flat decode. A TIMEOUT
+  // must not take it — the worker is still grinding on this very file, so the
+  // second attempt buys nothing and costs the pane another full timeout before
+  // it can show an error. The run count is the assertion: exactly one job.
+  const bytes = exrHeaderOnly([{ width: 32, height: 32, channels: ["R", "G", "B", "A", "Z"], deep: true }]);
+  const { pool, runs } = countingPool(silentPool(5));
+  setDecodePoolForTests(pool);
+  try {
+    await assert.rejects(
+      decodeExr({ bytes, ext: "exr" }, { deepLiveFlatten: true }),
+      (err: unknown) => err instanceof DecodePoolError && err.code === "timeout",
+    );
+    assert.equal(runs(), 1, "a timeout must not be followed by a second pool decode");
+  } finally {
+    setDecodePoolForTests(null);
+  }
+});
+
+test("a DISPOSED pool during a deep open rethrows without a second pool attempt", async () => {
+  const bytes = exrHeaderOnly([{ width: 32, height: 32, channels: ["R", "G", "B", "A", "Z"], deep: true }]);
+  const { pool, runs } = countingPool(silentPool(30_000));
+  setDecodePoolForTests(pool);
+  try {
+    const p = decodeExr({ bytes, ext: "exr" }, { deepLiveFlatten: true });
+    pool.dispose();
+    await assert.rejects(p, (err: unknown) => err instanceof DecodePoolError && err.code === "disposed");
+    // A retry here would ask a DISPOSED pool for a second job — it can only
+    // reject again, so the pane would just wait one more round trip for the
+    // same answer.
+    assert.equal(runs(), 1, "a disposed pool must not be asked twice");
+  } finally {
+    setDecodePoolForTests(null);
+  }
+});
