@@ -11,6 +11,10 @@ import { percentile } from "../transforms/percentile.ts";
  * grown one) and a rebuild replaces the buffers outright. Consumers must read
  * them within the render that obtained them and never retain them across
  * prepares.
+ *
+ * The object identity is stable while nothing changes: preparing the same
+ * points with the same options returns the very same `PreparedSeries`, so it
+ * can be used as a memo dependency.
  */
 export interface PreparedSeries {
   key: string;
@@ -22,15 +26,27 @@ export interface PreparedSeries {
   ys: Float64Array;
   /** Raw y, only when smoothing is on. */
   rawYs: Float64Array | null;
-  /** log10(x) with NaN for x <= 0, only when an x log scale was requested. */
+  /**
+   * log10(x) with NaN for x <= 0. Built on the first `prepare` that asks for
+   * `logX` and kept afterwards, so it may be present even when the current
+   * options no longer request a log x scale; read it only when you asked for it.
+   */
   logXs: Float64Array | null;
   /** Index of the first positive x (== n when there is none); log-scale windows start here. */
   logStart: number;
-  /** The input points in sorted order, for wallTime/context lookup. */
+  /**
+   * The input points in sorted order, for wallTime/context lookup. This may
+   * alias the caller's array (it is not copied when it is already x-ascending)
+   * and must never be mutated: `xs`/`ys` would silently disagree with it.
+   */
   points: SeriesPoint[];
   /** Finite extents. */
   xMin: number; xMax: number; yMin: number; yMax: number;
-  /** Outlier bounds from `outlierPct`, ±Infinity when it is [0, 100]. */
+  /**
+   * Outlier bounds from `outlierPct`, ±Infinity when it is [0, 100] or when
+   * no finite y exists. Exact after a rebuild; after appends they lag by up to
+   * 1 % of the point count (see `PreparedSeriesCache`).
+   */
   lo: number; hi: number;
 }
 
@@ -40,6 +56,9 @@ export interface PrepareOptions {
   outlierPct: [number, number];
   logX: boolean;
 }
+
+/** Recompute the outlier bounds on append once the series has grown by this fraction. */
+const BOUNDS_GROWTH = 0.01;
 
 interface Signature { n: number; x0: number; xMid: number; xLast: number }
 
@@ -54,11 +73,20 @@ interface Entry {
   logXs: Float64Array | null;
   logStart: number;
   points: SeriesPoint[];
+  /** The last rebuild had to sort, so `points` is our own copy and appends are unsafe. */
+  sorted: boolean;
   xMin: number; xMax: number; yMin: number; yMax: number;
+  clipped: boolean;
+  lo: number; hi: number;
+  /** `n` at the last bounds computation. */
+  boundsN: number;
+  /** The last returned view, reused while nothing changes; null once invalid. */
+  cached: PreparedSeries | null;
 }
 
+/** Only `smoothing` and `outlierPct` shape the stored arrays and bounds; `logX` is a lazy extra. */
 function sameOptions(a: PrepareOptions, b: PrepareOptions): boolean {
-  return a.smoothing === b.smoothing && a.logX === b.logX
+  return a.smoothing === b.smoothing
     && a.outlierPct[0] === b.outlierPct[0] && a.outlierPct[1] === b.outlierPct[1];
 }
 
@@ -95,14 +123,24 @@ function firstPositive(xs: Float64Array, from: number, n: number): number {
   return i;
 }
 
+/**
+ * One entry per series key. `prepare` reuses the entry unchanged when the
+ * points are unchanged, extends it in place when points were appended, and
+ * rebuilds it otherwise.
+ */
 export class PreparedSeriesCache {
   private entries = new Map<string, Entry>();
   private appends = 0;
   private rebuilds = 0;
+  private reuses = 0;
+  private boundsRecomputes = 0;
 
   /** Counters for tests and the render-cost harness. */
-  stats(): { appends: number; rebuilds: number } {
-    return { appends: this.appends, rebuilds: this.rebuilds };
+  stats(): { appends: number; rebuilds: number; reuses: number; boundsRecomputes: number } {
+    return {
+      appends: this.appends, rebuilds: this.rebuilds,
+      reuses: this.reuses, boundsRecomputes: this.boundsRecomputes,
+    };
   }
 
   drop(key: string): void {
@@ -110,35 +148,40 @@ export class PreparedSeriesCache {
   }
 
   prepare(series: Series, options: PrepareOptions): PreparedSeries {
+    const points = series.points;
     const cached = this.entries.get(series.key);
     let entry: Entry;
-    if (cached && this.canAppend(cached, series.points, options)) {
-      this.append(cached, series.points);
-      this.appends++;
-      entry = cached;
+    if (cached && sameOptions(cached.options, options) && this.probesMatch(cached, points)) {
+      if (points.length === cached.n) {
+        this.reuses++;
+        entry = cached;
+      } else if (!cached.sorted && this.tailAscending(cached, points)) {
+        this.append(cached, points);
+        this.appends++;
+        if (cached.clipped && cached.n > cached.boundsN * (1 + BOUNDS_GROWTH)) this.setBounds(cached);
+        entry = cached;
+      } else {
+        entry = this.rebuild(series.key, points, options);
+      }
     } else {
-      entry = this.rebuild(series.points, options);
-      this.entries.set(series.key, entry);
-      this.rebuilds++;
+      entry = this.rebuild(series.key, points, options);
     }
     return this.view(series.key, entry, options);
   }
 
-  /**
-   * An append is a longer points array with unchanged options whose cached
-   * prefix still matches at three probe indices plus the last cached x, and
-   * whose new tail is x-ascending. Everything else is a full rebuild.
-   */
-  private canAppend(e: Entry, points: SeriesPoint[], options: PrepareOptions): boolean {
+  /** The cached prefix still looks like this input at three probe indices. */
+  private probesMatch(e: Entry, points: SeriesPoint[]): boolean {
     const n = e.n;
-    if (n === 0 || points.length <= n) return false;
-    if (!sameOptions(e.options, options)) return false;
+    if (points.length < n) return false;
+    if (n === 0) return points.length === 0;
     const sig = e.sig;
-    if (points[0]!.x !== sig.x0) return false;
-    if (points[n >> 1]!.x !== sig.xMid) return false;
-    if (points[n - 1]!.x !== sig.xLast) return false;
-    let prev = sig.xLast;
-    for (let i = n; i < points.length; i++) {
+    return points[0]!.x === sig.x0 && points[n >> 1]!.x === sig.xMid && points[n - 1]!.x === sig.xLast;
+  }
+
+  /** The points past the cached prefix are non-decreasing, starting at the cached last x. */
+  private tailAscending(e: Entry, points: SeriesPoint[]): boolean {
+    let prev = e.sig.xLast;
+    for (let i = e.n; i < points.length; i++) {
       const x = points[i]!.x;
       if (!(x >= prev)) return false;
       prev = x;
@@ -179,9 +222,10 @@ export class PreparedSeriesCache {
     e.sig = signatureOf(points);
     e.xMin = xMin; e.xMax = xMax; e.yMin = yMin; e.yMax = yMax;
     if (e.logStart >= from) e.logStart = firstPositive(xs, from, n);
+    e.cached = null;
   }
 
-  private rebuild(input: SeriesPoint[], options: PrepareOptions): Entry {
+  private rebuild(key: string, input: SeriesPoint[], options: PrepareOptions): Entry {
     const points = sortedByX(input);
     const n = points.length;
     const opts = copyOptions(options);
@@ -192,7 +236,6 @@ export class PreparedSeriesCache {
     // so ys[0] === alpha * y0 + (1 - alpha) * y0. Reproduced literally, guards
     // included (none): a non-finite y poisons the tail exactly as it does there.
     const rawYs = alpha > 0 && n > 0 ? new Float64Array(n) : null;
-    const logXs = opts.logX ? new Float64Array(n) : null;
     let prev = n > 0 ? points[0]!.y : 0;
     let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
     for (let i = 0; i < n; i++) {
@@ -210,30 +253,59 @@ export class PreparedSeriesCache {
       ys[i] = y;
       if (y < yMin) yMin = y;
       if (y > yMax) yMax = y;
-      if (logXs) logXs[i] = x > 0 ? Math.log10(x) : NaN;
     }
-    return {
-      options: opts, sig: signatureOf(points), n, xs, ys, rawYs, logXs,
-      logStart: firstPositive(xs, 0, n), points, xMin, xMax, yMin, yMax,
+    const [pLo, pHi] = opts.outlierPct;
+    const e: Entry = {
+      options: opts, sig: signatureOf(points), n, xs, ys, rawYs,
+      logXs: null, logStart: firstPositive(xs, 0, n),
+      points, sorted: points !== input,
+      xMin, xMax, yMin, yMax,
+      clipped: pLo > 0 || pHi < 100, lo: -Infinity, hi: Infinity, boundsN: n,
+      cached: null,
     };
+    this.setBounds(e);
+    this.entries.set(key, e);
+    this.rebuilds++;
+    return e;
+  }
+
+  private setBounds(e: Entry): void {
+    e.boundsN = e.n;
+    if (!e.clipped) { e.lo = -Infinity; e.hi = Infinity; return; }
+    const ys = e.ys.subarray(0, e.n);
+    const lo = percentile(ys, e.options.outlierPct[0]);
+    const hi = percentile(ys, e.options.outlierPct[1]);
+    e.lo = Number.isNaN(lo) ? -Infinity : lo;
+    e.hi = Number.isNaN(hi) ? Infinity : hi;
+    this.boundsRecomputes++;
+  }
+
+  /** log10 of every x, built on the first prepare that asks for a log x scale. */
+  private buildLogXs(e: Entry): void {
+    const n = e.n;
+    const logXs = new Float64Array(Math.max(e.xs.length, n));
+    const xs = e.xs;
+    for (let i = 0; i < n; i++) { const x = xs[i]!; logXs[i] = x > 0 ? Math.log10(x) : NaN; }
+    e.logXs = logXs;
+    e.cached = null;
   }
 
   private view(key: string, e: Entry, options: PrepareOptions): PreparedSeries {
+    if (options.logX && e.logXs === null) this.buildLogXs(e);
+    if (e.cached) return e.cached;
     const n = e.n;
-    const ys = e.ys.subarray(0, n);
-    const [pLo, pHi] = options.outlierPct;
-    const clipped = pLo > 0 || pHi < 100;
-    return {
+    const view: PreparedSeries = {
       key, n,
       xs: e.xs.subarray(0, n),
-      ys,
+      ys: e.ys.subarray(0, n),
       rawYs: e.rawYs ? e.rawYs.subarray(0, n) : null,
       logXs: e.logXs ? e.logXs.subarray(0, n) : null,
       logStart: e.logStart,
       points: e.points,
       xMin: e.xMin, xMax: e.xMax, yMin: e.yMin, yMax: e.yMax,
-      lo: clipped ? percentile(ys, pLo) : -Infinity,
-      hi: clipped ? percentile(ys, pHi) : Infinity,
+      lo: e.lo, hi: e.hi,
     };
+    e.cached = view;
+    return view;
   }
 }
