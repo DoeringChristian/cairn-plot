@@ -21,6 +21,51 @@
 /** Max image fetches in flight at once (across all panes). */
 export const MAX_CONCURRENT_IMAGE_FETCHES = 4;
 
+/**
+ * How long ONE request may stall before it is aborted with a clear error.
+ *
+ * A `fetch` that never answers (a hung connection, a proxy that keeps the socket
+ * open, a server that accepted and forgot) never rejects on its own. Everything
+ * downstream waits on it forever: the resolve cache records neither a value nor
+ * an error, so a pane holds its previous frame or its "Loading…" for the life of
+ * the page, and the preparation scheduler's watchdog frees only the SLOT — it
+ * never fails the task. Generous on purpose (a 200 MB EXR over a slow link must
+ * not be cut off); this is a deadlock breaker, not a latency budget.
+ */
+export const IMAGE_FETCH_TIMEOUT_MS = 60_000;
+
+/** `AbortSignal.timeout` where the runtime has it (Node ≥ 17.3, all modern
+ *  browsers); `undefined` elsewhere, and the fetch simply has no deadline. */
+function timeoutSignal(ms: number): AbortSignal | undefined {
+  const ctor = AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal };
+  return typeof ctor.timeout === "function" ? ctor.timeout(ms) : undefined;
+}
+
+/** The message every timed-out fetch reports, so callers can recognise it. */
+export function fetchTimeoutMessage(url: string, ms: number): string {
+  return `cairn-plot: fetch timed out after ${ms} ms (no response): ${url}`;
+}
+
+/**
+ * ONE plain fetch with a deadline — the shape the decode paths want (no
+ * concurrency gate, no retries, just "never hang forever"). Rejects with
+ * {@link fetchTimeoutMessage} when the deadline passes.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  opts: { timeoutMs?: number; fetchImpl?: typeof fetch; init?: RequestInit } = {},
+): Promise<Response> {
+  const timeoutMs = opts.timeoutMs ?? IMAGE_FETCH_TIMEOUT_MS;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const signal = timeoutSignal(timeoutMs);
+  try {
+    return await doFetch(url, { ...opts.init, ...(signal ? { signal } : {}) });
+  } catch (err) {
+    if (signal?.aborted) throw new Error(fetchTimeoutMessage(url, timeoutMs));
+    throw err;
+  }
+}
+
 let inFlight = 0;
 const waiters: Array<() => void> = [];
 
@@ -51,6 +96,8 @@ export interface FetchImageOptions {
   backoffBaseMs?: number;
   /** Injectable fetch (tests). Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Per-attempt deadline; see {@link IMAGE_FETCH_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }
 
 /**
@@ -62,15 +109,22 @@ export interface FetchImageOptions {
 export async function fetchImageBytes(url: string, opts: FetchImageOptions = {}): Promise<Response> {
   const retries = opts.retries ?? 4;
   const base = opts.backoffBaseMs ?? 500;
+  const timeoutMs = opts.timeoutMs ?? IMAGE_FETCH_TIMEOUT_MS;
   const doFetch = opts.fetchImpl ?? fetch;
   await acquireSlot();
   try {
     let backoff = base;
     for (let attempt = 0; ; attempt++) {
       let res: Response;
+      const signal = timeoutSignal(timeoutMs);
       try {
-        res = await doFetch(url);
+        res = await doFetch(url, signal ? { signal } : undefined);
       } catch (err) {
+        // A TIMEOUT is terminal, not transient: the deadline is already generous,
+        // and retrying a stalled host four more times would keep the consumer
+        // waiting minutes. It rejects immediately so the error path can run (the
+        // resolve cache records it and retries on its own backoff).
+        if (signal?.aborted) throw new Error(fetchTimeoutMessage(url, timeoutMs));
         if (attempt >= retries) throw err;
         await sleepMs(backoff + Math.random() * backoff);
         backoff = Math.min(backoff * 2, 8000);

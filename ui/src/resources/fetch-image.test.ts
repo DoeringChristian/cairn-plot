@@ -6,7 +6,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchImageBytes, MAX_CONCURRENT_IMAGE_FETCHES } from "./fetch-image.ts";
+import {
+  fetchImageBytes,
+  fetchWithTimeout,
+  IMAGE_FETCH_TIMEOUT_MS,
+  MAX_CONCURRENT_IMAGE_FETCHES,
+} from "./fetch-image.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const resp = (status: number, headers: Record<string, string> = {}) =>
@@ -90,4 +95,60 @@ test("bounds concurrency to MAX_CONCURRENT_IMAGE_FETCHES", async () => {
   );
   assert.ok(peak <= MAX_CONCURRENT_IMAGE_FETCHES, `peak ${peak} ≤ ${MAX_CONCURRENT_IMAGE_FETCHES}`);
   assert.ok(peak >= 1);
+});
+
+// --- deadlines -------------------------------------------------------------
+// A hung request never rejects on its own, and everything downstream (the
+// resolve cache, the pane's held frame, the preparation scheduler) waits on the
+// promise, so the pane stays stuck with no error recorded anywhere.
+
+/** A fetch that hangs until its abort signal fires — a stalled server. */
+const hangingFetch = (async (_url: string, init?: RequestInit) =>
+  new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () =>
+      reject(new DOMException("The operation was aborted.", "AbortError")));
+  })) as unknown as typeof fetch;
+
+test("fetchWithTimeout: a stalled request rejects with a clear timeout error", async () => {
+  await assert.rejects(
+    () => fetchWithTimeout("http://stalled/x.exr", { fetchImpl: hangingFetch, timeoutMs: 20 }),
+    (err: Error) => /timed out after 20 ms/.test(err.message) && err.message.includes("http://stalled/x.exr"),
+  );
+});
+
+test("fetchWithTimeout: passes a normal response straight through", async () => {
+  const fetchImpl = (async () => resp(200)) as unknown as typeof fetch;
+  const res = await fetchWithTimeout("u", { fetchImpl, timeoutMs: 50 });
+  assert.equal(res.status, 200);
+});
+
+test("fetchImageBytes: a stalled request times out and is NOT retried", async () => {
+  let calls = 0;
+  const counting = (async (url: string, init?: RequestInit) => {
+    calls++;
+    return hangingFetch(url, init);
+  }) as unknown as typeof fetch;
+  await assert.rejects(
+    () => fetchImageBytes("http://stalled/y.png", { fetchImpl: counting, timeoutMs: 20, backoffBaseMs: 1 }),
+    /timed out after 20 ms/,
+  );
+  // The deadline is already generous; retrying a stalled host would multiply it.
+  assert.equal(calls, 1);
+});
+
+test("fetchImageBytes: a rejecting fetch still surfaces as a rejection after its retries", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls++;
+    throw new TypeError("NetworkError when attempting to fetch resource.");
+  }) as unknown as typeof fetch;
+  await assert.rejects(
+    () => fetchImageBytes("u", { fetchImpl, retries: 2, backoffBaseMs: 1 }),
+    /NetworkError/,
+  );
+  assert.equal(calls, 3, "the first try plus both retries");
+});
+
+test("the default deadline is the documented one", () => {
+  assert.equal(IMAGE_FETCH_TIMEOUT_MS, 60_000);
 });

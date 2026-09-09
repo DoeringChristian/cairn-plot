@@ -49,6 +49,7 @@
  * there is no negative cache: a cached failure looks exactly like "still
  * loading" to the pane, and hid the real error from the surface.
  */
+import { fetchWithTimeout } from "../../../resources/fetch-image.ts";
 import { setCachedLoadedImageData } from "./cache.ts";
 import { DecodeCancelled, enqueueDecode, releaseDecode, retainDecode } from "./decode-queue.ts";
 import { createLruMap } from "./lru-map.ts";
@@ -301,7 +302,7 @@ export async function decodeElementImage(url: string): Promise<DecodedElement | 
 
 const defaultDeps: DecodedImageDeps = {
   async fetchBlob(url: string): Promise<Blob> {
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     // An opaque response has no readable bytes; a non-2xx has the wrong ones.
     if (!response.ok || response.type === "opaque") {
       throw new Error(`[cairn] decodedImage: ${response.status} for ${url}`);

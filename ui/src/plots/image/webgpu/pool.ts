@@ -534,9 +534,16 @@ interface PaneEntry {
    *  admission policy rotates the least-recently-presented slot when every
    *  visible pane owes a frame — see {@link chooseAdmissionVictim}. */
   lastPresentedAt: number;
-  /** Consecutive activation failures. Bounded retries (H7): fresh evidence — a
-   *  new content generation or a visibility change — clears `failed` while this
-   *  is at or below {@link MAX_ACTIVATION_RETRIES}. */
+  /** This pane activated successfully at least once. A pane that has NEVER
+   *  managed one has no evidence the engine can draw it at all, so its first
+   *  failure is reported immediately (the owner falls back to the legacy pane);
+   *  only a pane with a working history gets the silent retry budget. */
+  activatedOnce: boolean;
+  /** CONSECUTIVE activation failures — reset to 0 by a successful activation, so
+   *  the budget is per failure episode, not per pane lifetime. Bounded retries
+   *  (H7): fresh evidence — a new content generation, a new source, or a
+   *  visibility change — clears `failed` while this is at or below
+   *  {@link MAX_ACTIVATION_RETRIES}. */
   activationFailures: number;
   /** `contentGeneration` at the last activation failure, so "the content
    *  changed since we failed" is decidable. */
@@ -798,15 +805,25 @@ function noteContentChange(entry: PaneEntry): void {
  * How many times a FAILED pane is re-tried before its failure is permanent
  * (H7). `activateEntryUnsafe` early-returns on `entry.failed`, and nothing ever
  * cleared the flag: one transient activation failure (a surface creation that
- * lost a race with a page-visibility flip, say) blanked that pane forever. The
- * failure is still reported to the owner on EVERY failure — the view falls back
- * to the legacy CPU pane on the first one — so this only ever recovers panes
- * whose owner is still asking the pool to draw them.
+ * lost a race with a page-visibility flip, say) blanked that pane forever.
+ *
+ * The count is PER EPISODE, not per lifetime: a successful activation resets it,
+ * so a pane that recovers is not one failure away from being written off hours
+ * later. A DEVICE LOSS is not a transient failure and does not use this budget —
+ * it is reported at once (see `failEntryActivation`'s `permanent` flag).
  */
-const MAX_ACTIVATION_RETRIES = 3;
+export const MAX_ACTIVATION_RETRIES = 3;
 
-/** Clear a soft activation failure when fresh evidence arrives (H7). */
-function reconsiderFailedEntry(entry: PaneEntry, evidence: "content" | "visibility"): void {
+/**
+ * Clear a soft activation failure when fresh evidence arrives (H7).
+ *
+ * Evidence is one of: a NEW content generation, the pane becoming visible again,
+ * or a caller handing this pane a new SOURCE. The last one is separate because
+ * `replacePrimarySource`/`replaceSecondarySource` refuse to touch a failed entry
+ * — they run BEFORE `noteContentChange`, so the generation has not moved yet and
+ * a generation test would reject the very evidence they carry.
+ */
+function reconsiderFailedEntry(entry: PaneEntry, evidence: "content" | "visibility" | "source"): void {
   if (!entry.failed || entry.disposed) return;
   if (entry.activationFailures > MAX_ACTIVATION_RETRIES) return;
   // Only a genuinely NEW generation counts as content evidence.
@@ -1170,12 +1187,30 @@ function activateEntryUnsafe(entry: PaneEntry): void {
   poolStats.restores++;
   poolStats.admissions++;
   touchMostRecentlyUsed(entry);
+  // A successful activation ends the failure EPISODE: the retry budget is about
+  // consecutive failures, not the pane's whole life.
+  entry.activationFailures = 0;
+  entry.activatedOnce = true;
   // GPU ownership is now sufficient. Drop reconstructible expanded arrays;
   // raw decoded pixels/reacquire closures remain the restoration authority.
   releaseCpuUploadOwnership(entry);
 }
 
-function failEntryActivation(entry: PaneEntry, error: unknown): void {
+/**
+ * Tear a pane down after an activation/render failure.
+ *
+ * The owner is notified — which for `GpuImagePane` means falling back to the
+ * legacy CPU pane, a one-way door — only when the failure is PERMANENT: a device
+ * loss (`permanent`), a pane that has never once activated (a broken engine, the
+ * `?forceEngineFail` hook — nothing suggests a retry would fare better), or a
+ * transient failure that has used up {@link MAX_ACTIVATION_RETRIES}. A pane with
+ * a working history is torn down silently and retried when fresh evidence
+ * arrives (`reconsiderFailedEntry`), because the common causes (a surface
+ * creation racing a page-visibility flip, a momentarily unavailable swapchain)
+ * succeed on the next attempt and the pane should not lose its GPU backend over
+ * them.
+ */
+function failEntryActivation(entry: PaneEntry, error: unknown, opts?: { permanent?: boolean }): void {
   if (entry.disposed || entry.failed) return;
   entry.parked = false; // force teardown after a partial unsafe activation
   parkEntry(entry, false);
@@ -1184,7 +1219,14 @@ function failEntryActivation(entry: PaneEntry, error: unknown): void {
   entry.failed = true;
   entry.activationFailures++;
   entry.failedGeneration = entry.contentGeneration;
-  queueMicrotask(() => entry.onActivationFailure?.(error));
+  // No working history ⇒ nothing says a retry could ever succeed: report at
+  // once so the owner can fall back, exactly as before this budget existed.
+  if (opts?.permanent === true || !entry.activatedOnce) {
+    entry.activationFailures = MAX_ACTIVATION_RETRIES + 1;
+  }
+  if (entry.activationFailures > MAX_ACTIVATION_RETRIES) {
+    queueMicrotask(() => entry.onActivationFailure?.(error));
+  }
   admitWaiters();
 }
 
@@ -1203,7 +1245,8 @@ function activateEntry(entry: PaneEntry): boolean {
 
 function handleDeviceLoss(device: Device, reason: unknown): void {
   for (const entry of panes) {
-    if (entry.device === device && !entry.disposed) failEntryActivation(entry, reason);
+    // A lost device is terminal for every pane on it — no retry budget applies.
+    if (entry.device === device && !entry.disposed) failEntryActivation(entry, reason, { permanent: true });
   }
   // Failed panes remain until their React owners dispose, but the dead device
   // must not remain strongly registered and its opportunistic caches are useless.
@@ -1606,6 +1649,10 @@ function replacePrimarySource(
   lease: SourceUploadLease | null,
   reacquire: (() => SourceUploadLease) | null,
 ): void {
+  // A new source is fresh evidence (H7): a soft failure gets its retry here,
+  // BEFORE the refusal below — otherwise the only way back for a failed pane
+  // would be a visibility change.
+  reconsiderFailedEntry(entry, "source");
   if (entry.disposed || entry.failed) {
     lease?.release();
     return;
@@ -1673,6 +1720,7 @@ function replaceSecondarySource(
   lease: SourceUploadLease | null,
   reacquire: (() => SourceUploadLease) | null,
 ): void {
+  reconsiderFailedEntry(entry, "source"); // see `replacePrimarySource`
   if (entry.disposed || entry.failed) {
     lease?.release();
     return;
@@ -2055,6 +2103,7 @@ export async function acquirePane(
     waiting: false,
     disposed: false,
     failed: false,
+    activatedOnce: false,
     contentGeneration: 0,
     presentedGeneration: 0,
     lastPresentedAt: 0,

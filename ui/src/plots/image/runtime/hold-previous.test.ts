@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldHoldPrevious, type HoldPreviousInput } from "./hold-previous.ts";
+import { shouldHoldPrevious, HOLD_TTL_MS, type HoldPreviousInput } from "./hold-previous.ts";
 
 const base: HoldPreviousInput = {
-  hasPainted: true,
+  hasResolved: true,
   status: "resolving",
   holdFlag: true,
   sameSlot: true,
@@ -19,8 +19,8 @@ test("shouldHoldPrevious: a compare pane holds its previous frame between steps"
   assert.equal(shouldHoldPrevious(base), true);
 });
 
-test("shouldHoldPrevious: a pane that never painted shows the placeholder", () => {
-  assert.equal(shouldHoldPrevious({ ...base, hasPainted: false }), false);
+test("shouldHoldPrevious: a pane that never resolved shows the placeholder", () => {
+  assert.equal(shouldHoldPrevious({ ...base, hasResolved: false }), false);
 });
 
 test("shouldHoldPrevious: a resolved key is never held back", () => {
@@ -50,4 +50,20 @@ test("shouldHoldPrevious: without the authored flag only a same-source re-resolv
 test("shouldHoldPrevious: a same-source re-resolve holds even across an unknown slot", () => {
   // A channel re-slice cannot be a slot flip: the flip changes the base key.
   assert.equal(shouldHoldPrevious({ ...base, holdFlag: false, sameSlot: false, sameSource: true }), true);
+});
+
+test("shouldHoldPrevious: a hold expires at the TTL and falls back to loading", () => {
+  assert.equal(shouldHoldPrevious({ ...base, heldForMs: HOLD_TTL_MS - 1 }), true);
+  assert.equal(shouldHoldPrevious({ ...base, heldForMs: HOLD_TTL_MS }), false);
+  // The unconditional same-source hold expires too — a hung re-decode of the
+  // same source is just as stale as a hung step.
+  assert.equal(
+    shouldHoldPrevious({ ...base, holdFlag: false, sameSource: true, heldForMs: HOLD_TTL_MS }),
+    false,
+  );
+});
+
+test("shouldHoldPrevious: the TTL is overridable for tests", () => {
+  assert.equal(shouldHoldPrevious({ ...base, heldForMs: 5, holdTtlMs: 10 }), true);
+  assert.equal(shouldHoldPrevious({ ...base, heldForMs: 10, holdTtlMs: 10 }), false);
 });

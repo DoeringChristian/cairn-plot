@@ -7,6 +7,7 @@ import {
   getGpuPoolMemorySnapshot,
   getRegisteredGpuDeviceCountForTest,
   isCanvasLive,
+  MAX_ACTIVATION_RETRIES,
   releasePane,
   setDocumentHiddenForTest,
   type PaneHandle,
@@ -278,8 +279,11 @@ async function main(): Promise<void> {
   ok &&= changedSettled;
   for (const entry of rotationPanes) releasePane(entry.handle);
 
-  // Visibility restoration uses the exception-safe activation authority and
-  // reports failure only after complete teardown.
+  // Visibility restoration uses the exception-safe activation authority. A
+  // TRANSIENT activation failure tears the pane down completely but does NOT
+  // notify the owner yet (H7): notifying means falling back to the legacy CPU
+  // pane, a one-way door, and the common causes succeed on the next attempt.
+  // The owner is told only once the retry budget is spent.
   const broken = await pane("broken", admitted, failed);
   broken.handle.setSource(upload(16), "broken");
   broken.handle.restore();
@@ -287,11 +291,26 @@ async function main(): Promise<void> {
   failSurface = true;
   setDocumentHiddenForTest(false);
   await tick();
+  const firstFailSnapshot = getGpuPoolMemorySnapshot();
+  const softFailure = !failed.includes("broken") && broken.handle.isParked && !broken.handle.isWaiting &&
+    firstFailSnapshot.panes.live === 0;
+  report(softFailure,
+    `first activation failure tears down without notifying: failed=${failed.join(",")}, live=${firstFailSnapshot.panes.live}, waiting=${firstFailSnapshot.panes.waiting}`);
+  ok &&= softFailure;
+  // Each new source is fresh evidence and buys one retry; the synthetic device
+  // is re-armed so every one of them fails again (`failSurface` is one-shot).
+  for (let attempt = 0; attempt < MAX_ACTIVATION_RETRIES; attempt++) {
+    failSurface = true;
+    broken.handle.setSource(upload(16), `broken:${attempt}`);
+    broken.handle.restore();
+    await tick();
+  }
+  failSurface = false;
   const failedSnapshot = getGpuPoolMemorySnapshot();
   const failureSafe = failed.includes("broken") && broken.handle.isParked && !broken.handle.isWaiting &&
     failedSnapshot.panes.live === 0;
   report(failureSafe,
-    `visibility activation failure tears down + notifies: failed=${failed.join(",")}, live=${failedSnapshot.panes.live}, waiting=${failedSnapshot.panes.waiting}`);
+    `activation failure notifies after the retry budget: failed=${failed.join(",")}, live=${failedSnapshot.panes.live}, waiting=${failedSnapshot.panes.waiting}`);
   ok &&= failureSafe;
   releasePane(broken.handle);
 

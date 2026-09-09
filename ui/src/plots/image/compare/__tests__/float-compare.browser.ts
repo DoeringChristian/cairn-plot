@@ -189,8 +189,10 @@ function isBlank(px: Uint8ClampedArray | undefined): boolean {
  * A sized canvas alone is NOT enough: `webgpu/view.tsx` sizes the canvas before
  * the operand lease resolves, so a failing operand still has a sized canvas for
  * a moment. Where the pane exposes `data-gpu-backend-ready` (it renders that
- * attribute alongside the canvas, and swaps the whole pane for the error
- * surface when the operand fails) we require it too.
+ * attribute alongside the canvas) we require it too. A failed operand no longer
+ * replaces the pane — the error surface is an OVERLAY above the still-mounted
+ * canvas (unmounting it stranded the pool handle on a detached canvas) — so the
+ * verdict below reads `[data-gpu-image-error]`, which coexists with the canvas.
  */
 function gpuCanvasReady(hostId: string): boolean {
   const el = document.getElementById(hostId);

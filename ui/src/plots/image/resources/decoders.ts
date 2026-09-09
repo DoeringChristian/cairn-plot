@@ -50,6 +50,7 @@
 // it is re-exported here so the public decoder surface is unchanged. `.npz`
 // members map through it on the main thread (the archive is already inflated
 // there); a raw `.npy` routes through the pool (`decoders/npy-decode.ts`).
+import { fetchWithTimeout } from "../../../resources/fetch-image.ts";
 import { npyArrayToDecoded } from "./decoders/npy-image.ts";
 import { decodeNpyBytes } from "./decoders/npy-decode.ts";
 import type { DeepFlattenController } from "../definition/content.ts";
@@ -441,7 +442,7 @@ async function decodeBrowserNative(src: ImageSource): Promise<DecodedImage> {
   if (src.bytes) {
     blob = new Blob([src.bytes], src.mime ? { type: src.mime } : undefined);
   } else if (src.url) {
-    const res = await fetch(src.url);
+    const res = await fetchWithTimeout(src.url);
     if (!res.ok) {
       throw new Error(
         `cairn-plot decodeImage: failed to fetch ${src.url} (${res.status})`,
@@ -498,7 +499,7 @@ async function decodeJpeg(src: ImageSource): Promise<DecodedImage> {
   let bytes = src.bytes;
   if (!bytes && src.url) {
     try {
-      const res = await fetch(src.url);
+      const res = await fetchWithTimeout(src.url);
       if (res.ok) bytes = await res.arrayBuffer();
     } catch {
       /* fall through: decodeBrowserNative(src) will surface the fetch error */
@@ -636,7 +637,7 @@ export async function decodeImage(
   // dispatch below (and any browser-native fallback) reuses them, never fetching
   // twice.
   if (fmt === "unknown" && src.url && !src.bytes) {
-    const res = await fetch(src.url);
+    const res = await fetchWithTimeout(src.url);
     if (!res.ok) {
       throw new Error(
         `cairn-plot decodeImage: failed to fetch ${src.url} (${res.status})`,

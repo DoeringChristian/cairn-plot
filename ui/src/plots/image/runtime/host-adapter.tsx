@@ -37,8 +37,7 @@ import { applyChannelSlice } from "../resources/channel-slice.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { defaultSettingsForNode } from "../../settings.ts";
 import { CellSettingsContext, useSharedPlot, usePaneVisible } from "../../../host/plot-context.ts";
-import { InStackedGridContext } from "../../../layout/stack/stack-context.ts";
-import { shouldHoldPrevious } from "./hold-previous.ts";
+import { shouldHoldPrevious, HOLD_TTL_MS } from "./hold-previous.ts";
 import { ReactBackendOutlet } from "../../../host/react-backend.ts";
 import { withoutSettingsPlumbing } from "../../../host/presentation.ts";
 import {
@@ -127,10 +126,6 @@ export function ImageHostAdapter({
   // The lazy gate's viewport answer — passed to the preparation scheduler so an
   // on-screen pane's decode runs before an off-screen one's.
   const visible = usePaneVisible();
-  // Inside a STACKED grid this component instance is reused across slot flips
-  // (that is the point of the homogeneous stack), so the hold-previous decision
-  // below needs a slot identity it can trust — see that block.
-  const inStackedGrid = useContext(InStackedGridContext);
   // True inside a STACKED viewport — threaded to the pane so it treats its display
   // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
   // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
@@ -190,12 +185,20 @@ export function ImageHostAdapter({
   // (a `useSyncExternalStore` over the cache) keyed by THIS render's `resolveKey`. So
   // the resolved value is a pure function of `resolveKey`: a WARM/prefetched flip
   // resolves the new slot SYNCHRONOUSLY in the flip commit itself (instant, no
-  // placeholder), and a COLD swap (cache miss) renders a brief `"Loading…"` — the
-  // accepted loading state (user ruling: brief loading OK), never a HOLD of the
-  // previous slot's frame. There is therefore no lag cell to leak a stale operand:
-  // the stale-diff / reference-flash windows are structurally unrepresentable, not
-  // guarded. The shared-block + selection-sync props are merged at RENDER time (below)
-  // so a selection change re-renders WITHOUT re-fetching the data.
+  // placeholder), and a COLD swap (cache miss) renders `"Loading…"` unless the HOLD
+  // below applies. The shared-block + selection-sync props are merged at RENDER time
+  // (below) so a selection change re-renders WITHOUT re-fetching the data.
+  //
+  // THE ONE LAG CELL (`lastReadyRef`, the HOLD block further down) is the single
+  // exception to "pure function of `resolveKey`", and it is deliberately narrow.
+  // It remembers the last RESOLVED payload together with the base source and the
+  // SLOT identity it came from, and re-renders it while the next key resolves —
+  // for a channel re-slice of the same source, or for an authored
+  // `holdPreviousWhileLoading` pane whose slot is provably unchanged (an
+  // iteration step). It never applies to a STACKED-slot flip (the slot identity
+  // differs, so the stale-diff / reference-flash window stays closed), it yields
+  // to a resolve error, and it expires at `HOLD_TTL_MS` so a request that never
+  // answers cannot keep step N-1's pixels under step N's labels forever.
   useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
   // Local error surface for a renderer-registration TIMEOUT only; a decode/resolve
   // error lives in the cache (read via `peekResolveError`).
@@ -304,35 +307,57 @@ export function ImageHostAdapter({
   // component instance with a different node, and holding there would paint the
   // previous slot's frame under the new slot's labels ("a cold flip renders
   // loading, never a hold of the previous slot's frame" — the stale-diff
-  // guarantee). The slot is the authored node identity (a run id) plus the
-  // comparison operation; when the node carries no id, a pane inside a stacked
-  // grid cannot prove its slot is unchanged and refuses the source-swap hold.
+  // guarantee). The slot is the authored node identity plus the comparison
+  // operation. A node with NO identity has no slot to compare, so it refuses the
+  // source-swap hold outright — a positional stand-in would be the constant
+  // `pane|<op>`, i.e. "always the same slot", which is exactly the guarantee we
+  // are trying to keep. (`expandImageComparison` derives an id for the pair
+  // children it synthesises, so the common expanded compare grid holds.)
+  //
+  // Finally the hold is BOUNDED (`HOLD_TTL_MS`): a resolve that never settles —
+  // a stalled fetch, a worker that never answers — would otherwise keep step
+  // N-1's frame under step N's labels for the life of the page. The timer below
+  // re-renders the pane at the deadline so it falls back to the loading state
+  // even if nothing else disturbs it.
   const baseKey = resolutionKey(source, resolutionNode, isDiff ? "|diffpair" : "");
   const slotOperation = diffSpec ? `compare:${diffSpec.node.presentation}` : "image";
   const slotIdentity = diffSpec?.node.id ?? node.id;
-  const slotKey = slotIdentity !== undefined
-    ? `${slotIdentity}|${slotOperation}`
-    : inStackedGrid
-      ? null
-      : `pane|${slotOperation}`;
+  const slotKey = slotIdentity === undefined ? null : `${slotIdentity}|${slotOperation}`;
   const lastReadyRef = useRef<
     { base: string; slot: string | null; dataProps: Record<string, unknown> } | null
   >(null);
+  // When the CURRENT hold started (null = not holding), for the TTL.
+  const heldSinceRef = useRef<number | null>(null);
+  const [, bumpHold] = useState(0);
   const lastReady = lastReadyRef.current;
+  const nowMs = Date.now();
   const held = lastReady && shouldHoldPrevious({
-    hasPainted: true,
+    hasResolved: true,
     status: resolvedNow === undefined ? "resolving" : "ready",
     holdFlag: node.props?.holdPreviousWhileLoading === true,
     sameSlot: slotKey !== null && lastReady.slot === slotKey,
     sameSource: lastReady.base === baseKey,
     error: cacheError,
+    heldForMs: heldSinceRef.current === null ? 0 : nowMs - heldSinceRef.current,
   })
     ? lastReady.dataProps
     : undefined;
   const dataProps = resolvedNow ?? held;
   if (resolvedNow !== undefined) {
     lastReadyRef.current = { base: baseKey, slot: slotKey, dataProps: resolvedNow };
+    heldSinceRef.current = null;
+  } else if (held !== undefined) {
+    heldSinceRef.current ??= nowMs;
+  } else {
+    heldSinceRef.current = null;
   }
+  const holding = held !== undefined;
+  useEffect(() => {
+    if (!holding) return;
+    const remaining = Math.max(0, HOLD_TTL_MS - (Date.now() - (heldSinceRef.current ?? Date.now())));
+    const timer = setTimeout(() => bumpHold((v) => v + 1), remaining + 1);
+    return () => clearTimeout(timer);
+  }, [holding, resolveKey]);
   // A `kind:"diff"` payload STRUCTURALLY carries its foreground (`__diffB`) — the leaf
   // only builds a `compareSource` from a RESOLVED diff pair, so `b` is never undefined.
   // This guard is defensive (should be unreachable): if a diff payload ever lacked its

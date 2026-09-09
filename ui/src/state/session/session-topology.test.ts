@@ -105,9 +105,12 @@ test("an expanded image comparison contributes cells one level deeper", () => {
   // `PlotNodeView` lowers a multi-output image compare into a grid dispatched at
   // `<path>/comparison`; its two pair panes are that grid's children.
   assert.ok(grids.has("grid:root/cmp/comparison"), [...grids.keys()].join(", "));
+  // The pair children carry an `id` derived from the parent's identity + the
+  // foreground's role (`comparison-plan.ts`'s `pairChildId`), so their cell keys
+  // — and therefore these session ids — follow the run rather than the slot.
   assert.deepEqual([...cellIds].sort(), [
-    "cell:root/cmp/comparison/i0",
-    "cell:root/cmp/comparison/i1",
+    "cell:root/cmp/comparison/cmp|0",
+    "cell:root/cmp/comparison/cmp|1",
     "stack:root",
     "stack:root/cmp/comparison",
   ]);

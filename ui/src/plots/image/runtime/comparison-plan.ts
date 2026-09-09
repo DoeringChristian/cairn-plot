@@ -117,6 +117,26 @@ export async function resolveRegisteredImageComparison(
 
 const expandedNodes = new WeakMap<CompareNode, GridNode | null>();
 
+/**
+ * Stable identity for one pair child of an expanded multi-operand comparison.
+ *
+ * The synthesised children carried NO `id`, which cost them twice: the grid
+ * keyed them by position (CP2/H6), and the pane's hold-previous gate refuses to
+ * hold a frame for a node it cannot identify (a stacked flip between two
+ * identity-less panes would otherwise show the wrong slot's picture).
+ *
+ * The identity is the parent's own identity plus the FOREGROUND's role — its
+ * authored label when there is one, else its operand index. Deliberately NOT the
+ * operand hashes: a content-derived id changes on every iteration step, which is
+ * exactly when the pane needs its slot to look unchanged, so hashing would
+ * disable the very hold this id exists to enable. Role-derived ids are unique
+ * among siblings (the only place a cell key or a slot key is compared) and
+ * survive a step, a reorder and a re-authored spec.
+ */
+function pairChildId(parent: CompareNode, foregroundLabel: string | undefined, index: number): string {
+  return `${parent.id ?? "compare"}|${foregroundLabel ?? index}`;
+}
+
 /** Lower a multi-output image plan into layout-only pair nodes for the host. */
 export function expandImageComparison(node: CompareNode): GridNode | null {
   const cached = expandedNodes.get(node);
@@ -126,10 +146,11 @@ export function expandImageComparison(node: CompareNode): GridNode | null {
     expandedNodes.set(node, null);
     return null;
   }
-  const children = planned.plan.outputs.map((output) => {
+  const children = planned.plan.outputs.map((output, index) => {
     const plan = output.plan as ImageComparisonPlan;
     return {
       kind: "compare" as const,
+      id: pairChildId(node, plan.foregroundLabel, index),
       type: "image",
       operands: [plan.reference, plan.foreground],
       strategy: "reference" as const,

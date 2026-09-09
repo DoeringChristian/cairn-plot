@@ -119,6 +119,11 @@ export function useImageViewport(args: {
       if (retryHandle?.kind === "raf") cancelAnimationFrame(retryHandle.id);
       else if (retryHandle?.kind === "timeout") clearTimeout(retryHandle.id);
       detach?.();
+      // Forget the last measurement with the observer that produced it: the next
+      // attach may be measuring a DIFFERENT element (a dpr change re-runs this
+      // effect; a remount gives a new element), and `same()` against a stale
+      // value would swallow the first real measurement of the new one.
+      lastRef.current = null;
     };
   }, [viewportRef, dpr]);
 

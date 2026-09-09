@@ -34,6 +34,14 @@
  *
  * A pane that is CURRENTLY presenting is never a victim, and neither is the
  * requester itself.
+ *
+ * EQUIVALENCE with the inline `isAdmissionVictim` this replaced: rules 1 and 2
+ * are that predicate exactly — "not the requester; an invisible candidate always;
+ * a visible one only while the requester owes a presentation and the candidate
+ * does not" — and the same-device-first / LRU-order tie-breaks reproduce the two
+ * call sites' `live.find(...)` and `candidates.find(sameDevice) ?? candidates[0]`.
+ * Rule 3 and the `presenting` exclusion are the only new behaviour; everything a
+ * pane could evict before, it can still evict, in the same order.
  */
 
 export interface AdmissionCandidate {

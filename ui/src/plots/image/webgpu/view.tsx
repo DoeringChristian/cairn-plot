@@ -368,6 +368,20 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   const splitPosition = compareSource?.splitPosition ?? 0.5;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // The canvas the pool handle below is BOUND to, and an epoch that changes if a
+  // different element ever takes its place. Pool acquisition is mount-only, so a
+  // swapped canvas would leave the handle pointing at a detached element and the
+  // pane permanently blank. No path swaps it today (an operand error is an
+  // overlay, and the shell's enlarge MOVES the same node with `appendChild`), so
+  // the epoch never advances — it is the guard that keeps that true.
+  const acquiredCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
+  const setCanvasEl = useCallback((el: HTMLCanvasElement | null) => {
+    canvasRef.current = el;
+    if (el && acquiredCanvasRef.current && el !== acquiredCanvasRef.current) {
+      setCanvasEpoch((epoch) => epoch + 1);
+    }
+  }, []);
   // The ONE viewport element (spec §3.3): the shell attaches this ref, the
   // gestures/controller/probe read it, and `useImageViewport` measures it.
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -964,6 +978,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
               return;
             }
             paneHandleRef.current = handle;
+            acquiredCanvasRef.current = canvas;
             setPaneReady(true);
           })
           .catch((err) => {
@@ -987,13 +1002,16 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       });
     return () => {
       cancelled = true;
+      acquiredCanvasRef.current = null;
       if (paneHandleRef.current) {
         releasePane(paneHandleRef.current);
         paneHandleRef.current = null;
       }
+      setPaneReady(false);
     };
+    // Re-acquires if the canvas element is ever REPLACED (see `canvasEpoch`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canvasEpoch]);
 
   // Viewport interaction (Alt-gated wheel zoom-to-cursor + pointer pan) and
   // the double-click reset are owned by the shared `ImagePaneShell` — this
@@ -1034,20 +1052,33 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // ONE visible failure surface: a decode/upload that produced nothing for an
   // operand is an ERROR the user must see, not a blank checkerboard.
   const [operandError, setOperandError] = useState<string | null>(null);
+  // The gate stamp `failOperand` wrote, if it is still standing. Clearing the
+  // error MUST undo it (see below), so the two are tracked together.
+  const failedBStampRef = useRef<string | null>(null);
   // Functional updates so an unchanged value re-renders nothing (React bails out
   // when the state is identical), which keeps these safe to call unconditionally
   // from a layout effect body.
-  const clearOperandError = useCallback(
-    () => setOperandError((prev) => (prev === null ? prev : null)),
-    [],
-  );
+  const clearOperandError = useCallback(() => {
+    // A retry of the SAME key would otherwise keep the failure's stamp and the
+    // present gate would open with NO `b` texture bound — the composite would
+    // sample the 1×1 placeholder (or the previous operand). Close the gate again
+    // and drop the operand dims: only a real `apply()` may reopen it.
+    if (failedBStampRef.current !== null) {
+      failedBStampRef.current = null;
+      appliedBIdRef.current = null;
+      setRefDims(null);
+      refFloatRef.current = null;
+      refU8Ref.current = null;
+    }
+    setOperandError((prev) => (prev === null ? prev : null));
+  }, []);
   // H8: an operand that will NEVER bind must also release the present gate.
   // `appliedBIdRef` is stamped with exactly the id `buildRenderSnapshot` expects
   // (`B:<contentKeyB>`) so `renderPass` stops waiting for a binding that is not
   // coming. Nothing stale can reach the screen through that: `operandError`
-  // renders `PaneUnavailable` in place of the canvas until the next node change
-  // clears it (the effect below clears it whenever a new operand arrives).
+  // renders `PaneUnavailable` OVER the canvas until the next operand clears it.
   const failOperand = useCallback((key: string, message: string) => {
+    failedBStampRef.current = `B:${key}`;
     appliedBIdRef.current = `B:${key}`;
     setOperandError(message);
   }, []);
@@ -2465,13 +2496,24 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
       ? { data: overlay, settings: overlaySettings }
       : undefined;
 
-  if (operandError) {
-    return (
-      <div className="relative h-full w-full" data-gpu-image-error="">
-        <PaneUnavailable title="Image unavailable" body={operandError} />
-      </div>
-    );
-  }
+  // An operand failure is an OVERLAY, never a different tree. Returning a
+  // replacement tree here unmounted the shell — and with it the canvas the pool
+  // handle is bound to (acquisition is mount-only, deps `[]`), the park/restore
+  // IntersectionObserver and the viewport ResizeObserver. Clearing the error
+  // then remounted a fresh canvas that nothing was bound to or measuring: the
+  // pane stayed blank for good. The shell stays mounted; the message sits above
+  // the canvas, opaque and pointer-capturing so the dead pane cannot be dragged
+  // or split-dragged underneath it.
+  const errorOverlay = operandError ? (
+    <div
+      className="absolute inset-0 z-30"
+      data-gpu-image-error=""
+      role="status"
+      aria-live="polite"
+    >
+      <PaneUnavailable title="Image unavailable" body={operandError} />
+    </div>
+  ) : null;
   return (
     <ImagePaneShell
       paneAttrs={{ "data-gpu-image-pane": "", "data-gpu-backend-ready": paneReady }}
@@ -2490,7 +2532,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
               shared viewport). The divider's `left:split%` and the shader's
               screen-space `uv.x < split` therefore agree by construction. */}
           <canvas
-            ref={canvasRef}
+            ref={setCanvasEl}
             className="absolute inset-0 w-full h-full block"
             // Structural, not cosmetic: the viewport element measures itself, so
             // this canvas must stay OUT of flow even on a page with no Tailwind.
@@ -2507,9 +2549,10 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
           {/* Full-height gapless split divider — drives the `contentParam` uniform
               via `changeSplit`. Double-click resets to 0.5. Ported from
               `GpuComparePane` (SplitDivider is the single source of truth). */}
-          {compareOpMode === "split" && (
+          {compareOpMode === "split" && !operandError && (
             <SplitDivider splitPosition={splitPosition} onChange={changeSplit} onReset={() => changeSplit(0.5)} />
           )}
+          {errorOverlay}
         </>
       }
       imageOverlay={imageOverlay}
