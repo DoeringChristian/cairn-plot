@@ -13,7 +13,9 @@
  *      here: the decode may already be running in the worker, and doing the
  *      same slow work again on the main thread would freeze the tab — that
  *      error surfaces to the caller as-is, and so does a worker CRASH on a
- *      large input (see `canReplayInline`);
+ *      large DECODE (measured from the header, not the file size). A worker
+ *      that never started (`spawn-failed`: no `Worker`, blocked by CSP, offline
+ *      `file://`) always falls back, whatever the size (see `canReplayInline`);
  *   3. if that throws, the original pure-TS reader (`exr.ts`, NONE/ZIP/ZIPS) as
  *      a last-ditch net — gated by the SAME rule: a terminal pool error never
  *      reaches it either, since it too decodes on the main thread.
@@ -43,6 +45,7 @@ import type {
 import { decodeExr as decodeExrPure } from "./exr.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import { hasExrSelection, type ExrSelection } from "./exr-full.ts";
+import { describeExr } from "./exr-describe.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
 import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
 import { canReplayInline } from "./decode-pool-core.ts";
@@ -55,6 +58,38 @@ import type {
 
 type F32Image = Extract<DecodedImage, { kind: "f32" }>;
 type OkResponse = Extract<ExrWorkerResponse, { ok: true }>;
+
+/**
+ * How much DECODED image a main-thread replay may redo after a worker crash.
+ * An EXR replay is entropy decoding (PIZ/DWA/ZIP/B44) plus a full float image,
+ * and that cost tracks the decoded extent, which the file size barely predicts:
+ * a 2 MB DWA file can hold 100 MB of pixels, and a 40 MB uncompressed one
+ * decodes almost for free. 32 MB ≈ a 2048×2048 RGBA half image.
+ */
+const EXR_INLINE_REPLAY_MAX_DECODED_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Bytes the decoded pixels will occupy — `w · h · Σ bytesPerSample` over the
+ * largest part — read from the HEADER alone (`describeExr` walks attributes, it
+ * never touches pixel data, so this is safe on the main thread for any file).
+ * A header that will not parse falls back to `byteLength × 8`: EXR compression
+ * rarely does better than 8:1, so that under-estimates rather than lets a
+ * genuinely huge decode through. Exported for its unit test.
+ */
+export function decodedByteEstimate(bytes: ArrayBuffer): number {
+  try {
+    let largest = 0;
+    for (const part of describeExr(bytes).parts) {
+      let perPixel = 0;
+      for (const ch of part.channels) perPixel += ch.pixelType === 1 ? 2 : 4; // HALF is 2, UINT/FLOAT 4
+      largest = Math.max(largest, part.width * part.height * perPixel);
+    }
+    if (largest > 0) return largest;
+  } catch {
+    // Not an EXR header we can walk — fall through to the size estimate.
+  }
+  return bytes.byteLength * 8;
+}
 
 /** True when this runtime can host the pool's Web Workers (false under node). */
 function canUseWorker(): boolean {
@@ -236,8 +271,9 @@ async function decodeFull(src: ImageSource, select?: ExrSelection): Promise<Deco
       // main thread (also yields the real, informative error for a bad file).
       // A pool TIMEOUT or ABORT is NOT retried here: the worker may still be
       // running the decode, and replaying it inline can freeze the tab. Nor is
-      // a crash on a LARGE input, where the decode itself is the likely cause.
-      if (!canReplayInline(err, bytes.byteLength)) throw err;
+      // a crash on a large DECODE, where the decode itself is the likely cause;
+      // a worker that never started is exempt, since nothing ran.
+      if (!canReplayInline(err, decodedByteEstimate(bytes), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw err;
       return decodeExrPreferWasm(bytes.slice(0), undefined, select);
     }
   }
@@ -269,7 +305,11 @@ export async function decodeExr(
   if (opts?.deepLiveFlatten && !hasExrSelection(select)) {
     try {
       return await decodeDeepAware(src.bytes);
-    } catch {
+    } catch (deepErr) {
+      // A terminal pool failure is terminal HERE too: falling through would
+      // send the very same file back through the pool and pay a second full
+      // timeout before the pane finally shows an error.
+      if (!canReplayInline(deepErr, decodedByteEstimate(src.bytes), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw deepErr;
       // Deep-aware path failed (worker crash / broken retained read) → fall
       // through to the ordinary one-shot decode chain below (no slider).
     }
@@ -278,10 +318,10 @@ export async function decodeExr(
     return await decodeFull(src, select);
   } catch (fullErr) {
     // A TERMINAL pool failure (timeout/abort/disposed/affinity, or a crash on a
-    // large input) stops the chain here. `decodeExrPure` is a main-thread decode
-    // like any other: replaying a decode the worker already spent 30 s on would
-    // freeze the tab exactly as the inline WASM path would.
-    if (!canReplayInline(fullErr, src.bytes.byteLength)) throw fullErr;
+    // large decode) stops the chain here. `decodeExrPure` is a main-thread
+    // decode like any other: replaying a decode the worker already spent 30 s
+    // on would freeze the tab exactly as the inline WASM path would.
+    if (!canReplayInline(fullErr, decodedByteEstimate(src.bytes), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw fullErr;
     // The pure reader has no selection support — with a selection, the full
     // decoder's error (e.g. "no channel named X") is the real answer.
     if (hasExrSelection(select)) {

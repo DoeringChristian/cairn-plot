@@ -5,7 +5,6 @@ import {
   DecodePool,
   DecodePoolError,
   INLINE_REPLAY_MAX_BYTES,
-  isRetryableInline,
   type PoolWorker,
 } from "./decode-pool-core.ts";
 
@@ -16,11 +15,17 @@ function poolErr(code: DecodePoolError["code"], pattern: RegExp) {
 
 interface Fake extends PoolWorker { index: number; posts: { id: number; kind?: string }[]; terminated: boolean }
 
-function makePool(size: number, timeoutMs = 30_000) {
+/**
+ * `abandonReapMs` defaults to 1 s rather than the pool's real minute: an
+ * abandoned job holds a live timer, and a test that forgets to `dispose()`
+ * would otherwise keep the node process alive for the full 60 s.
+ */
+function makePool(size: number, timeoutMs = 30_000, abandonReapMs = 1_000) {
   const workers: Fake[] = [];
   const pool = new DecodePool({
     size,
     timeoutMs,
+    abandonReapMs,
     spawn(index) {
       const w: Fake = { index, posts: [], terminated: false, post(msg) { w.posts.push(msg as { id: number }); }, terminate() { w.terminated = true; } };
       workers.push(w);
@@ -133,6 +138,7 @@ test("abort with a non-Error reason is wrapped in a DecodePoolError coded \"abor
   const b = pool.run(job("b", { signal: ctl.signal }));
   ctl.abort("gone-string");
   await assert.rejects(b, poolErr("aborted", /gone-string/));
+  pool.dispose();
 });
 
 test("abort after dispatch frees the worker at once, drops the late result, and cancels its timer", async () => {
@@ -152,10 +158,88 @@ test("abort after dispatch frees the worker at once, drops the late result, and 
   // it would fire here and terminate the worker, taking `b` down too.
   await new Promise((r) => setTimeout(r, 40));
   assert.equal(workers[0]!.terminated, false);
+  // The worker is nonetheless still computing `a` for nobody: booked as such.
+  assert.deepEqual(pool.stats().abandoned, [1]);
   pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true }); // late result for `a`: ignored by id
   await tick();
+  assert.deepEqual(pool.stats().abandoned, [0]); // ...but it does free the worker
   pool.onMessage(0, { id: workers[0]!.posts[1]!.id, ok: true }); await b;
   assert.deepEqual(pool.stats().completed, [1]); // only `b` counted
+  pool.dispose();
+});
+
+test("new work avoids a worker still chewing on an abandoned job", async () => {
+  const { pool, workers } = makePool(2);
+  const ctl = new AbortController();
+  const a = pool.run(job("a", { signal: ctl.signal })); // slot 0
+  const b = pool.run(job("b")); // slot 1
+  pool.onMessage(1, { id: workers[1]!.posts[0]!.id, ok: true }); await b; // slot 1: idle and clean
+  ctl.abort(new Error("gone"));
+  await assert.rejects(a, poolErr("aborted", /gone/)); // slot 0: idle on paper, loaded in fact
+  assert.deepEqual(pool.stats().abandoned, [1, 0]);
+  pool.run(job("c"));
+  assert.deepEqual(workers[0]!.posts.map((p) => p.kind), ["a"]);
+  assert.deepEqual(workers[1]!.posts.map((p) => p.kind), ["b", "c"]);
+  pool.dispose();
+});
+
+test("a fresh spawn beats an abandoned worker while the pool is under size", async () => {
+  const { pool, workers } = makePool(2);
+  const ctl = new AbortController();
+  const a = pool.run(job("a", { signal: ctl.signal }));
+  ctl.abort(new Error("gone"));
+  await assert.rejects(a, poolErr("aborted", /gone/));
+  pool.run(job("b"));
+  assert.equal(workers.length, 2, "a second worker was spawned rather than queueing behind the abandoned decode");
+  assert.deepEqual(workers[1]!.posts.map((p) => p.kind), ["b"]);
+  pool.dispose();
+});
+
+test("a worker that never returns from an abandoned job is reaped", async () => {
+  const { pool, workers } = makePool(1, 30_000, 20);
+  const ctl = new AbortController();
+  const a = pool.run(job("a", { signal: ctl.signal }));
+  ctl.abort(new Error("gone"));
+  await assert.rejects(a, poolErr("aborted", /gone/));
+  const b = pool.run(job("b")); // the only slot: dispatched behind the abandoned decode
+  assert.equal(workers[0]!.terminated, false);
+  await new Promise((r) => setTimeout(r, 60));
+  // The abandoned reply never came: the worker is not coming back, so it is
+  // killed rather than left holding a slot — and whatever was queued behind it
+  // is told so instead of hanging.
+  assert.equal(workers[0]!.terminated, true);
+  await assert.rejects(b, poolErr("worker-error", /never returned/));
+  assert.deepEqual(pool.stats().abandoned, [0]);
+  // ...and the slot is usable again.
+  const c = pool.run(job("c"));
+  assert.equal(workers.length, 2);
+  pool.onMessage(0, { id: workers[1]!.posts[0]!.id, ok: true }); await c;
+  pool.dispose();
+});
+
+test("a late reply cancels the reaper: the worker is kept", async () => {
+  const { pool, workers } = makePool(1, 30_000, 20);
+  const ctl = new AbortController();
+  const a = pool.run(job("a", { signal: ctl.signal }));
+  ctl.abort(new Error("gone"));
+  await assert.rejects(a, poolErr("aborted", /gone/));
+  pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true }); // it did come back
+  assert.deepEqual(pool.stats().abandoned, [0]);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(workers[0]!.terminated, false, "a returned worker must not be reaped");
+  pool.dispose();
+});
+
+test("a spawn failure rejects with a code that says nothing ever ran", async () => {
+  const { pool, workers } = makePool(1);
+  const a = pool.run(job("a"));
+  // The shell could not construct the Worker (blocked by CSP, offline file://,
+  // module load failed): a different code from a worker that crashed ON a job.
+  pool.onSpawnFailed(0, new Error("worker module unavailable"));
+  await assert.rejects(a, poolErr("spawn-failed", /module unavailable/));
+  assert.equal(workers[0]!.terminated, true);
+  // Callers may redo such a decode inline however large it is.
+  assert.equal(canReplayInline(new DecodePoolError("x", "spawn-failed"), 1e9), true);
 });
 
 test("timeout terminates only the slow worker; the other worker and the queue survive", async () => {
@@ -248,32 +332,41 @@ test("dispatch-stage abort listener is removed on settle, not just on abort", as
   assert.doesNotThrow(() => ctl.abort(new Error("late, nobody is listening any more")));
 });
 
-test("isRetryableInline: only worker-error and reply are safe to replay inline", () => {
-  assert.equal(isRetryableInline(new DecodePoolError("x", "worker-error")), true);
-  assert.equal(isRetryableInline(new DecodePoolError("x", "reply")), true);
-  assert.equal(isRetryableInline(new DecodePoolError("x", "timeout")), false);
-  assert.equal(isRetryableInline(new DecodePoolError("x", "aborted")), false);
-  assert.equal(isRetryableInline(new DecodePoolError("x", "disposed")), false);
-  assert.equal(isRetryableInline(new DecodePoolError("x", "affinity")), false);
+test("canReplayInline: only a never-ran failure and a decode-level reply may be redone inline", () => {
+  const small = 1024;
+  // The worker never ran the job (it could not be spawned) or ran it and said
+  // the FILE is bad — the inline path re-derives that with a real error message.
+  assert.equal(canReplayInline(new DecodePoolError("x", "spawn-failed"), small), true);
+  assert.equal(canReplayInline(new DecodePoolError("x", "worker-error"), small), true);
+  assert.equal(canReplayInline(new DecodePoolError("x", "reply"), small), true);
+  // The work may already be under way, or the caller is gone, or the pool is:
+  // redoing any of these on the main thread is what freezes a tab.
+  assert.equal(canReplayInline(new DecodePoolError("x", "timeout"), small), false);
+  assert.equal(canReplayInline(new DecodePoolError("x", "aborted"), small), false);
+  assert.equal(canReplayInline(new DecodePoolError("x", "disposed"), small), false);
+  assert.equal(canReplayInline(new DecodePoolError("x", "affinity"), small), false);
   // A non-DecodePoolError (e.g. a shell exception thrown before the pool was
-  // even reached) is retryable — there is no pool decision to defer to.
-  assert.equal(isRetryableInline(new Error("shell exploded")), true);
-  assert.equal(isRetryableInline("not even an Error"), true);
+  // even reached) carries no pool verdict to defer to.
+  assert.equal(canReplayInline(new Error("shell exploded"), small), true);
+  assert.equal(canReplayInline("not even an Error", small), true);
 });
 
-test("canReplayInline: a worker crash on a large input is not replayed on the main thread", () => {
+test("canReplayInline: the size gate applies to a worker CRASH, and only to that", () => {
   const big = INLINE_REPLAY_MAX_BYTES + 1;
   const small = 1024;
-  // A crash the pool cannot attribute: below the size gate it is treated as the
-  // spawn/module-load failure it usually is; above it, as the decode dying.
+  // A crash the pool cannot attribute: below the budget it is treated as the
+  // spin-up failure it usually is; above it, as the decode killing the worker.
   assert.equal(canReplayInline(new DecodePoolError("x", "worker-error"), small), true);
   assert.equal(canReplayInline(new DecodePoolError("x", "worker-error"), big), false);
+  // Callers pass their own budget: the same crash, the same input, two formats.
+  assert.equal(canReplayInline(new DecodePoolError("x", "worker-error"), big, big * 4), true);
+  // A worker that never started ran nothing, so nothing is being REPEATED: the
+  // fallback holds at any size (offline `file://`, strict CSP).
+  assert.equal(canReplayInline(new DecodePoolError("x", "spawn-failed"), big * 1000), true);
   // A decode-level `ok:false` reply says the worker ran fine — size is irrelevant.
   assert.equal(canReplayInline(new DecodePoolError("x", "reply"), big), true);
   // Terminal codes stay terminal at every size.
   for (const code of ["timeout", "aborted", "disposed", "affinity"] as const) {
     assert.equal(canReplayInline(new DecodePoolError("x", code), small), false);
   }
-  // A failure from before the pool was reached carries no pool verdict.
-  assert.equal(canReplayInline(new Error("shell exploded"), big), true);
 });

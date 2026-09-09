@@ -32,19 +32,32 @@ function loadModule() {
 function spawn(index: number): PoolWorker {
   let worker: Worker | null = null;
   let dead = false;
+  /** Has any message actually reached a live Worker? Until it has, a failure here ran nothing. */
+  let posted = false;
   const buffered: [unknown, Transferable[]][] = [];
   loadModule()
     .then((mod) => {
       if (dead) return;
       const w = new mod.default();
       w.addEventListener("message", (e: MessageEvent) => pool?.onMessage(index, e.data));
-      w.addEventListener("error", () => pool?.onWorkerError(index, new Error("cairn-plot decode pool: worker crashed")));
+      w.addEventListener("error", () => {
+        const err = new Error("cairn-plot decode pool: worker crashed");
+        // Nothing was ever handed to it → it cannot have died on a decode.
+        if (posted) pool?.onWorkerError(index, err);
+        else pool?.onSpawnFailed(index, err);
+      });
       worker = w;
-      for (const [m, t] of buffered.splice(0)) w.postMessage(m, t);
+      for (const [m, t] of buffered.splice(0)) { w.postMessage(m, t); posted = true; }
     })
-    .catch((err) => pool?.onWorkerError(index, err instanceof Error ? err : new Error(String(err))));
+    // The module never loaded, or `new Worker` was refused outright (offline
+    // `file://`, a strict CSP). Nothing ran, and the caller may safely redo the
+    // whole decode inline however big it is — this is the path such pages live on.
+    .catch((err) => pool?.onSpawnFailed(index, err instanceof Error ? err : new Error(String(err))));
   return {
-    post(msg, transfer) { if (worker) worker.postMessage(msg, transfer); else buffered.push([msg, transfer]); },
+    post(msg, transfer) {
+      if (worker) { worker.postMessage(msg, transfer); posted = true; }
+      else buffered.push([msg, transfer]);
+    },
     terminate() { dead = true; worker?.terminate(); worker = null; },
   };
 }

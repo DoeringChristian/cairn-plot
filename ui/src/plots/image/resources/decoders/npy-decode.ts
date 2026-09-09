@@ -14,8 +14,11 @@
  *      for a bad file). A pool TIMEOUT or ABORT is never replayed inline — the
  *      worker may still be parsing, and re-running the same parse on the main
  *      thread can freeze the tab — that error surfaces to the caller as-is, and
- *      so does a worker CRASH on an input past `INLINE_REPLAY_MAX_BYTES` (the
- *      parse itself is then the likely cause). See `canReplayInline`.
+ *      so does a worker CRASH on an input past `NPY_INLINE_REPLAY_MAX_BYTES`
+ *      (the parse itself is then the likely cause). A worker that never started
+ *      (`spawn-failed`) always falls back, whatever the size — nothing ran, and
+ *      that is the path an offline `file://` report lives on. See
+ *      `canReplayInline`.
  */
 import type { DecodedImage } from "../decoders.ts";
 import { parseNpy } from "../../../transforms/parse-npy.ts";
@@ -23,6 +26,14 @@ import { npyArrayToDecoded } from "./npy-image.ts";
 import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
 import { canReplayInline } from "./decode-pool-core.ts";
 import type { ExrWorkerResponse, NpyImagePayload } from "./decode-worker.ts";
+
+/**
+ * How much `.npy` a main-thread replay may redo after a worker CRASH. `parseNpy`
+ * is a header walk plus a typed-array widening — on the order of 3 ms per 10 MB —
+ * so the honest budget for this format is far above the pool's generic default:
+ * 64 MB is a hitch, not a freeze, and beats failing a pane outright.
+ */
+const NPY_INLINE_REPLAY_MAX_BYTES = 64 * 1024 * 1024;
 
 /** A worker `.npy` reply → the canonical {@link DecodedImage} (buffers reinterpreted). */
 export function npyPayloadToImage(p: NpyImagePayload): DecodedImage {
@@ -56,8 +67,9 @@ export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage> 
     // genuinely bad file). A TIMEOUT or ABORT is NOT retried here: the worker
     // may still be parsing, and replaying it inline can freeze the tab. Nor is
     // a crash on a LARGE input: the parse itself is then the likely cause, so
-    // the error surfaces instead of being re-run on the main thread.
-    if (!canReplayInline(err, bytes.byteLength)) throw err;
+    // the error surfaces instead of being re-run on the main thread. A worker
+    // that never STARTED (`spawn-failed`) is exempt at any size — nothing ran.
+    if (!canReplayInline(err, bytes.byteLength, NPY_INLINE_REPLAY_MAX_BYTES)) throw err;
     return npyArrayToDecoded(parseNpy(bytes));
   }
   // OUTSIDE the catch: a malformed reply is a protocol bug, and must surface as
