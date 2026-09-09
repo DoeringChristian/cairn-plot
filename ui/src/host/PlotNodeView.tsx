@@ -42,7 +42,6 @@ import {
   acquireResolved,
   peekResolved,
   peekResolveError,
-  clearResolveError,
   resolveCached,
   prefetchResolved,
   subscribeResolveCache,
@@ -183,9 +182,12 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
   // filtered run set must move each pane's mounted instance with its node
   // instead of handing pane 0 a different run's data.
   const cellKeys = useMemo(() => gridCellKeys(children), [children]);
-  // The cell PATH — and therefore `cell:<path>` / `stack:<path>` session ids —
-  // follows the same identity as the React key: an index-derived path would
-  // hand slot 2's saved settings to whichever run lands in slot 2 next.
+  // The cell PATH — and therefore the `cell:<path>` session id — follows the
+  // same identity as the React key: an index-derived path would hand slot 2's
+  // saved settings to whichever run lands in slot 2 next. (`stack:<path>` uses
+  // the GRID's own path and is deliberately left alone: the stacked viewport is
+  // one shared cell for every slot, not a per-child one.) `session-topology.ts`
+  // derives the same paths from the same helpers.
   const cellPath = useCallback(
     (index: number) => gridCellPath(path, cellKeys[index] ?? positionalCellKey(index)),
     [cellKeys, path],
@@ -202,7 +204,8 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
       // `LazyGate` (it is mounted by the stack, not by a viewport observer), so
       // it must declare its own visibility rather than inherit the "no
       // evidence" default. The gate-level signal stays coarse — per-pane
-      // intersection tracking is CP3 work.
+      // intersection tracking is CP3 work. Note the `stack:` session id below
+      // is the GRID's path, shared by every slot, which is the point.
       return child.kind === "grid" ? (
         <PaneVisibilityContext.Provider value={true}>
           <LayoutFrame><NodeDispatch node={child} path={cellPath(index)} /></LayoutFrame>
@@ -531,14 +534,11 @@ function GenericLeafView({ node }: { node: PlotLeafNode }) {
   // the effect re-runs and retries. Without that dependency the TTL would be
   // inert (nothing else re-renders an idle pane).
   const cachedError = peekResolveError(key);
-  const resolvedNodeRef = useRef<PlotLeafNode | null>(null);
   useEffect(() => {
-    const nodeChanged = resolvedNodeRef.current !== node;
-    resolvedNodeRef.current = node;
-    // A new node is fresh evidence: never make a spec update wait out a
-    // backoff recorded for the previous attempt at this key.
-    if (nodeChanged) clearResolveError(key);
-    else if (cachedError !== undefined) return;
+    // The backoff is keyed by CONTENT identity, so a rebuilt-but-equivalent node
+    // (a host that re-authors the spec on every tick) must not bypass it — only
+    // a genuinely different key escapes, and a new key has no error to begin with.
+    if (cachedError !== undefined) return;
     if (!registered || peekResolved(key) !== undefined) return;
     void resolveCached(key, async () => registered.definition.present(
       await registered.definition.resolve(node, {
@@ -602,12 +602,9 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
   }, [node]);
   // See GenericLeafView: the error is a DEPENDENCY so its expiry retries.
   const cachedError = peekResolveError(key);
-  const resolvedNodeRef = useRef<CompareNode | null>(null);
   useEffect(() => {
-    const nodeChanged = resolvedNodeRef.current !== node;
-    resolvedNodeRef.current = node;
-    if (nodeChanged) clearResolveError(key);
-    else if (cachedError !== undefined) return;
+    // See GenericLeafView: the backoff is content-keyed, never node-identity-keyed.
+    if (cachedError !== undefined) return;
     if (!planned.value || peekResolved(key) !== undefined) return;
     void resolveCached(key, () => resolveComparison(node, {
       source,

@@ -24,7 +24,6 @@ import {
   acquireResolved,
   peekResolved,
   peekResolveError,
-  clearResolveError,
   resolveCached,
   subscribeResolveCache,
   resolveCacheVersion,
@@ -208,14 +207,12 @@ export function ImageHostAdapter({
   // leaf re-renders with `cacheError === undefined` and the effect resolves
   // again — with no node change. (A pure read; the cache's own timer forgets it.)
   const cacheError = peekResolveError(resolveKey);
-  const resolvedNodeRef = useRef<PlotLeafNode | null>(null);
   useEffect(() => {
     const key = resolveKey;
-    const nodeChanged = resolvedNodeRef.current !== node;
-    resolvedNodeRef.current = node;
-    // A new node is fresh evidence — a spec update never waits out a backoff.
-    if (nodeChanged) clearResolveError(key);
-    else if (cacheError !== undefined) return;
+    // The backoff is keyed by CONTENT identity: a host that re-authors an
+    // equivalent node every tick must not bypass it. A genuinely different key
+    // has no error of its own, so nothing needs clearing here.
+    if (cacheError !== undefined) return;
     // Already resolved (warm/prefetched) → nothing to kick off; the pure read
     // below shows it. On resolution the cache NOTIFIES and this leaf re-renders.
     if (peekResolved(key) !== undefined) return;

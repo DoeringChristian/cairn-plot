@@ -60,7 +60,10 @@ export function gridCellKeys(
   const keys = children.map((child, index) => {
     let key = gridCellKey(child, index);
     if (used.has(key)) {
-      duplicate ??= key;
+      // Only an AUTHORED id colliding is a bug worth reporting. A positional
+      // fallback can collide too (a sibling authored `id: "i3"`), and that is
+      // this function's business to resolve silently, not the author's.
+      if (gridCellKey(child, index) === child?.id) duplicate ??= key;
       key = positionalCellKey(index);
     }
     let candidate = key;
@@ -92,5 +95,8 @@ export function __resetDuplicateCellIdWarningForTest(): void {
  * escaped rather than silently creating a phantom nesting level.
  */
 export function gridCellPath(parentPath: string, cellKey: string): string {
-  return `${parentPath}/${cellKey.replace(/\//g, "%2F")}`;
+  // `%` FIRST, or escaping `/` would make an authored "%2F" indistinguishable
+  // from an escaped separator.
+  const segment = cellKey.replace(/%/g, "%25").replace(/\//g, "%2F");
+  return `${parentPath}/${segment}`;
 }

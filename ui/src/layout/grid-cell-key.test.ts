@@ -106,3 +106,30 @@ test("gridCellPath escapes the path separator inside an authored id", () => {
   assert.equal(gridCellPath("root", "a/b"), "root/a%2Fb");
   assert.equal(gridCellPath("root", "a/b/c"), "root/a%2Fb%2Fc");
 });
+
+test("gridCellPath escapes % before /, so escapes stay unambiguous", () => {
+  assert.equal(gridCellPath("root", "a%b"), "root/a%25b");
+  // Without the %-first order these two ids would both become "root/a%2Fb".
+  assert.notEqual(gridCellPath("root", "a%2Fb"), gridCellPath("root", "a/b"));
+  assert.equal(gridCellPath("root", "a%2Fb"), "root/a%252Fb");
+});
+
+test("gridCellKeys warns only for an AUTHORED duplicate id", () => {
+  __resetDuplicateCellIdWarningForTest();
+  // eslint-disable-next-line no-console
+  const realWarn = console.warn;
+  const warnings: unknown[][] = [];
+  // eslint-disable-next-line no-console
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  let keys: string[];
+  try {
+    // Cell 1's POSITIONAL key collides with cell 0's authored id. That is this
+    // function's problem to resolve, not an authoring bug — no warning.
+    keys = gridCellKeys([{ id: "i1" }, {}]);
+  } finally {
+    // eslint-disable-next-line no-console
+    console.warn = realWarn;
+  }
+  assert.deepEqual(warnings, []);
+  assert.equal(new Set(keys).size, 2);
+});

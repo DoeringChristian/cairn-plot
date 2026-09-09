@@ -76,11 +76,9 @@ test("watchdog frees the slot a never-settling task holds", async () => {
     assert.equal(ranAfter, true, "the watchdog released the slot and drained the queue");
     assert.equal(warnings.length, 1, "the watchdog warns exactly once");
     assert.match(String(warnings[0]?.[0]), /"stuck"/);
-    // The stuck task's own promise is deliberately left alone.
-    assert.equal(
-      await Promise.race([stuck.then(() => "settled"), Promise.resolve("pending")]),
-      "pending",
-    );
+    // The CALLER is failed, so the resolution cache records an error and its
+    // backoff retries — rather than a pane waiting on a promise forever.
+    await assert.rejects(stuck, /task watchdog expired: stuck/);
   } finally {
     // eslint-disable-next-line no-console
     console.warn = realWarn;
@@ -111,8 +109,10 @@ test("a watchdogged key can be rescheduled and runs again", async () => {
   // eslint-disable-next-line no-console
   console.warn = () => {};
   try {
-    void scheduler.schedule("slot", "foreground", () => new Promise<number>(() => {}));
-    await new Promise((r) => setTimeout(r, 30));
+    await assert.rejects(
+      scheduler.schedule("slot", "foreground", () => new Promise<number>(() => {})),
+      /task watchdog expired/,
+    );
     assert.equal(await scheduler.schedule("slot", "foreground", async () => 5), 5);
   } finally {
     // eslint-disable-next-line no-console
@@ -209,11 +209,11 @@ test("promote never starts work — not for an unknown key, nor for a running on
   console.warn = () => {};
   try {
     let runs = 0;
-    void scheduler.schedule("stuck", "foreground", () => {
+    // The watchdog releases the slot and rejects the caller.
+    await assert.rejects(scheduler.schedule("stuck", "foreground", () => {
       runs++;
       return new Promise<void>(() => {});
-    });
-    await new Promise((r) => setTimeout(r, 30)); // watchdog releases the slot
+    }), /task watchdog expired/);
     // This is the resolution cache's promote path: work is still in flight, so
     // it must NOT be launched a second time even though the slot was reclaimed.
     scheduler.promote("stuck", "foreground", { visible: true });

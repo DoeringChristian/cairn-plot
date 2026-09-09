@@ -20,11 +20,14 @@ interface QueuedTask<T> {
 
 /**
  * How long a started task may hold its concurrency slot before the scheduler
- * assumes it will never settle and frees the slot anyway (H1). A decode worker
- * that dies without replying, or an await on a promise nobody will resolve,
- * used to pin one of only four slots FOREVER — four such tasks froze every
- * later resolve on the page. The task promise itself is left alone (a late
- * settle still resolves its callers); only the SLOT is reclaimed.
+ * assumes it will never settle (H1). A decode worker that dies without
+ * replying, or an await on a promise nobody will resolve, used to pin one of
+ * only four slots FOREVER — four such tasks froze every later resolve on the
+ * page. On expiry the slot is reclaimed AND the task's promise is rejected, so
+ * the caller sees a real failure: the resolution cache records it as an error
+ * and its backoff retries the key instead of leaving the pane on "Loading…"
+ * forever. The underlying `run()` promise cannot be cancelled and is simply
+ * abandoned — if it settles later, that settle is ignored.
  */
 export const TASK_WATCHDOG_MS = 60_000;
 
@@ -141,8 +144,12 @@ export class PreparationScheduler {
         // eslint-disable-next-line no-console
         console.warn(
           `cairn-plot: preparation task ${JSON.stringify(task.key)} did not settle within ` +
-            `${this.watchdogMs}ms — releasing its scheduler slot (the task is left to settle on its own)`,
+            `${this.watchdogMs}ms — releasing its scheduler slot and failing the request ` +
+            `(the abandoned run may still settle; that settle is ignored)`,
         );
+        // Fail the CALLER so the failure is cached and retried, rather than
+        // leaving a promise that never settles behind a pane's loading state.
+        task.reject(new Error(`cairn-plot scheduler: task watchdog expired: ${task.key}`));
         releaseSlot();
       }, this.watchdogMs);
       // Never keep a Node process alive just to watch a task.

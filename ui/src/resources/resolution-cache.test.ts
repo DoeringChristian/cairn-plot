@@ -12,6 +12,8 @@ import {
   prefetchResolved,
   estimateResolvedBytes,
   RESOLVE_ERROR_TTL_MS,
+  RESOLVE_ERROR_MAX_TTL_MS,
+  resolveErrorBackoffMs,
   subscribeResolveCache,
   __resetResolveCacheForTest,
   __setResolveErrorTtlForTest,
@@ -240,7 +242,7 @@ test("two nodes of a registered type without a content id key APART, not onto on
 
 test("a cached resolve error expires into a notification, and the key retries", async () => {
   __resetResolveCacheForTest();
-  __setResolveErrorTtlForTest(20);
+  __setResolveErrorTtlForTest(200, 200);
   const notifications: string[] = [];
   const unsubscribe = subscribeResolveCache(() => { notifications.push("tick"); });
   try {
@@ -258,14 +260,14 @@ test("a cached resolve error expires into a notification, and the key retries", 
     assert.equal(notifications.length, 1, "the failure notifies subscribers");
 
     // Still inside the backoff window: the consumer must NOT retry yet.
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 20));
     assert.equal(peekResolveError(key), "transient decode failure");
     assert.equal(notifications.length, 1);
 
     // Past the window: the entry expires ON ITS OWN TIMER and WAKES the leaf.
     // Nothing here reads the cache to make that happen — the old TTL was inert
     // precisely because expiry only ever ran inside a render nobody triggered.
-    await new Promise((r) => setTimeout(r, 40));
+    await new Promise((r) => setTimeout(r, 300));
     assert.equal(peekResolveError(key), undefined, "an expired error must not block a retry");
     assert.equal(notifications.length, 2, "expiry notifies so the pane re-renders and retries");
 
@@ -286,7 +288,7 @@ test("the consumer loop retries after the backoff with NO node change", async ()
   // pane must recover on its own — this is the failure the inert TTL left on
   // screen forever.
   __resetResolveCacheForTest();
-  __setResolveErrorTtlForTest(20);
+  __setResolveErrorTtlForTest(200, 200);
   const key = "consumer-key";
   let attempts = 0;
   const run = async () => {
@@ -302,12 +304,12 @@ test("the consumer loop retries after the backoff with NO node change", async ()
   const unsubscribe = subscribeResolveCache(renderAndResolve);
   try {
     renderAndResolve(); // first "render"
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 20));
     assert.equal(attempts, 1);
     assert.equal(peekResolveError(key), "transient decode failure");
 
     // No further input: no node change, no scroll, no settings edit.
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 400));
     assert.equal(attempts, 2, "the pane retried itself once the backoff expired");
     assert.equal(peekResolved<string>(key), "recovered");
     assert.equal(peekResolveError(key), undefined);
@@ -318,8 +320,71 @@ test("the consumer loop retries after the backoff with NO node change", async ()
   }
 });
 
-test("RESOLVE_ERROR_TTL_MS is the documented 2 s backoff", () => {
+test("the documented backoff constants and their doubling", () => {
   assert.equal(RESOLVE_ERROR_TTL_MS, 2000);
+  assert.equal(RESOLVE_ERROR_MAX_TTL_MS, 60_000);
+  assert.equal(resolveErrorBackoffMs(1), 2000);
+  assert.equal(resolveErrorBackoffMs(2), 4000);
+  assert.equal(resolveErrorBackoffMs(3), 8000);
+  assert.equal(resolveErrorBackoffMs(5), 32_000);
+  assert.equal(resolveErrorBackoffMs(6), 60_000, "capped, not 64 s");
+  assert.equal(resolveErrorBackoffMs(400), 60_000, "the cap holds, and 2**399 never overflows");
+});
+
+test("a permanently failing key backs off exponentially, not at a flat rate", async () => {
+  __resetResolveCacheForTest();
+  // Base 20 ms, cap high enough that the cap never bites inside the window:
+  // delays are 20, 40, 80, 160, 320 ms → 4 retries in ~300 ms, where a flat
+  // 20 ms backoff would have re-run the resolve about fifteen times.
+  __setResolveErrorTtlForTest(20, 10_000);
+  const key = "permafail";
+  let attempts = 0;
+  const run = async () => {
+    attempts++;
+    throw new Error("gone for good");
+  };
+  const renderAndResolve = () => {
+    if (peekResolved(key) !== undefined || peekResolveError(key) !== undefined) return;
+    void resolveCached(key, run).catch(() => {});
+  };
+  const unsubscribe = subscribeResolveCache(renderAndResolve);
+  try {
+    renderAndResolve();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(attempts >= 3, `expected the key to keep retrying, got ${attempts}`);
+    assert.ok(attempts <= 6, `expected exponential backoff, got ${attempts} attempts in 300 ms`);
+    assert.equal(peekResolveError(key), "gone for good");
+  } finally {
+    unsubscribe();
+    __setResolveErrorTtlForTest(undefined);
+    __resetResolveCacheForTest();
+  }
+});
+
+test("consecutive failures lengthen the wait; clearResolveError resets it", async () => {
+  __resetResolveCacheForTest();
+  __setResolveErrorTtlForTest(20, 10_000);
+  const key = "growing-backoff";
+  const fail = async () => { throw new Error("x"); };
+  try {
+    // `resolveCached` itself never consults the error map (only consumers do),
+    // so three calls are three consecutive failures: the next wait is 4 x base.
+    for (let i = 0; i < 3; i++) await assert.rejects(resolveCached(key, fail));
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(peekResolveError(key), "x", "still inside the grown backoff");
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(peekResolveError(key), undefined, "and it does eventually expire");
+
+    // Clearing resets the counter: the next failure is a FIRST attempt again.
+    for (let i = 0; i < 3; i++) await assert.rejects(resolveCached(key, fail));
+    clearResolveError(key);
+    await assert.rejects(resolveCached(key, fail));
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(peekResolveError(key), undefined, "back to the base delay");
+  } finally {
+    __setResolveErrorTtlForTest(undefined);
+    __resetResolveCacheForTest();
+  }
 });
 
 test("one key's cached error never suppresses another key", async () => {

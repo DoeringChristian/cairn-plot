@@ -125,13 +125,33 @@ export function resolutionKey(source: object, node: object, suffix = ""): string
  */
 export const RESOLVE_ERROR_TTL_MS = 2000;
 
-/** The live TTL — {@link RESOLVE_ERROR_TTL_MS} except while a test shortens it. */
-let resolveErrorTtlMs: number = RESOLVE_ERROR_TTL_MS;
+/**
+ * The ceiling on that backoff. Consecutive failures for one key double the wait
+ * (2 s, 4 s, 8 s, …) so a PERMANENTLY broken source — a 404, a corrupt file, a
+ * missing decoder — stops re-running an expensive resolve every two seconds for
+ * as long as the tab is open, while a transient failure still recovers fast.
+ * The counter resets on success and on {@link clearResolveError}.
+ */
+export const RESOLVE_ERROR_MAX_TTL_MS = 60_000;
 
-/** Test seam only — shorten the error backoff so a test need not wait 2 s.
- *  Pass `undefined` to restore {@link RESOLVE_ERROR_TTL_MS}. */
-export function __setResolveErrorTtlForTest(ms: number | undefined): void {
+/** The live TTLs — the constants above except while a test shortens them. */
+let resolveErrorTtlMs: number = RESOLVE_ERROR_TTL_MS;
+let resolveErrorMaxTtlMs: number = RESOLVE_ERROR_MAX_TTL_MS;
+
+/** Test seam only — shorten the error backoff so a test need not wait seconds.
+ *  Pass `undefined` for either to restore the constant. */
+export function __setResolveErrorTtlForTest(
+  ms: number | undefined,
+  maxMs?: number | undefined,
+): void {
   resolveErrorTtlMs = ms ?? RESOLVE_ERROR_TTL_MS;
+  resolveErrorMaxTtlMs = maxMs ?? RESOLVE_ERROR_MAX_TTL_MS;
+}
+
+/** The backoff for the `attempts`-th consecutive failure of one key. */
+export function resolveErrorBackoffMs(attempts: number): number {
+  const exponent = Math.max(0, Math.min(attempts - 1, 30));
+  return Math.min(resolveErrorTtlMs * 2 ** exponent, resolveErrorMaxTtlMs);
 }
 
 /**
@@ -147,6 +167,8 @@ export const RESOLVE_HANDOFF_MS = 5000;
 
 interface CachedResolveError {
   readonly message: string;
+  /** How many consecutive failures this key has had — drives the backoff. */
+  readonly attempts: number;
   /** Fires at the end of the backoff: forgets the entry AND notifies, so the
    *  subscribed leaf re-renders and its resolve effect (which depends on the
    *  error) runs again. Without this wake-up the TTL would be inert — nothing
@@ -155,6 +177,9 @@ interface CachedResolveError {
 }
 
 const errors = new Map<string, CachedResolveError>();
+/** Consecutive failures per key. Outlives the error entry (which its own expiry
+ *  timer removes) so the NEXT failure keeps doubling instead of restarting. */
+const errorAttempts = new Map<string, number>();
 const resolving = new Map<string, Promise<void>>();
 /** Grace leases held by `resolveCached` between resolution and consumer handoff. */
 const handoffs = new Map<string, { lease: ResourceLease<unknown>; timer: ReturnType<typeof setTimeout> }>();
@@ -216,15 +241,21 @@ export function peekResolveError(key: string): string | undefined {
   return errors.get(key)?.message;
 }
 
-/** Forget the cached failure for `key` so the next request retries at once —
- *  for callers that KNOW the cause is gone (a node change, a manual retry) and
- *  should not wait out {@link RESOLVE_ERROR_TTL_MS}. Deliberately does NOT
- *  notify: every caller is about to re-request the key itself. */
-export function clearResolveError(key: string): void {
+/** Drop the live error entry and its expiry timer, leaving the attempt count. */
+function dropResolveError(key: string): void {
   const entry = errors.get(key);
   if (!entry) return;
   clearTimeout(entry.expiry);
   errors.delete(key);
+}
+
+/** Forget the cached failure for `key` AND its backoff, so the next request
+ *  retries at once at the base delay — for callers that KNOW the cause is gone
+ *  (a manual retry, a source swap). Deliberately does NOT notify: every caller
+ *  is about to re-request the key itself. */
+export function clearResolveError(key: string): void {
+  dropResolveError(key);
+  errorAttempts.delete(key);
 }
 
 /** Resolve `key` via `run` exactly once and cache the result; concurrent/repeat
@@ -267,16 +298,21 @@ export function resolveCached<T>(
       // Background failures are diagnostics only. A later foreground request
       // retries and becomes visible only if it also fails.
       if (priority === "foreground") {
-        clearResolveError(key);
+        dropResolveError(key);
+        const attempts = (errorAttempts.get(key) ?? 0) + 1;
+        errorAttempts.set(key, attempts);
         // The backoff must END in a retry, not merely stop reporting: the
         // expiry timer forgets the entry and NOTIFIES, which re-renders the
-        // subscribed leaf whose resolve effect depends on the error state.
+        // subscribed leaf whose resolve effect depends on the error state. It
+        // lengthens with each consecutive failure so a permanently broken
+        // source is not re-resolved every two seconds forever.
         const expiry = setTimeout(() => {
           if (errors.delete(key)) notifyResolveCache();
-        }, resolveErrorTtlMs);
+        }, resolveErrorBackoffMs(attempts));
         (expiry as unknown as { unref?: () => void }).unref?.();
         errors.set(key, {
           message: err instanceof Error ? err.message : String(err),
+          attempts,
           expiry,
         });
         notifyResolveCache();
@@ -306,6 +342,7 @@ export function prefetchResolved(entries: Array<{ key: string; run: () => Promis
 export function __resetResolveCacheForTest(): void {
   for (const key of [...handoffs.keys()]) releaseHandoff(key);
   for (const key of [...errors.keys()]) clearResolveError(key);
+  errorAttempts.clear();
   globalResourceCache.clear();
   resolving.clear();
   notifyResolveCache();
