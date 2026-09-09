@@ -149,6 +149,11 @@ class PlotLeafSpec(_Strict):
     """`PlotNode{kind:"plot"}` — one plot type and its data."""
 
     kind: Literal["plot"]
+    #: Stable identity across re-authored specs (a run id, a series name, …).
+    #: Hosts key grid cells by it so a reordered grid reuses each cell's
+    #: component instance instead of re-mounting by position. Never part of
+    #: data resolution. Mirrors TS ``PlotNode.id``.
+    id: Optional[str] = None
     type: str
     settings: Optional[dict[str, Any]] = None
     props: Optional[dict[str, Any]] = None
@@ -175,6 +180,11 @@ class GridSpec(_Strict):
     ``rowHeights`` entries: number → ``Nfr``, string → verbatim CSS."""
 
     kind: Literal["grid"]
+    #: Stable identity across re-authored specs (a run id, a series name, …).
+    #: Hosts key grid cells by it so a reordered grid reuses each cell's
+    #: component instance instead of re-mounting by position. Never part of
+    #: data resolution. Mirrors TS ``PlotNode.id``.
+    id: Optional[str] = None
     children: list["PlotNode"]
     cols: Optional[int] = None
     colWidths: Optional[list[Union[float, str]]] = None
@@ -189,6 +199,11 @@ class CompareSpec(_Strict):
     """A plot-defined comparison of an ordered operand set."""
 
     kind: Literal["compare"]
+    #: Stable identity across re-authored specs (a run id, a series name, …).
+    #: Hosts key grid cells by it so a reordered grid reuses each cell's
+    #: component instance instead of re-mounting by position. Never part of
+    #: data resolution. Mirrors TS ``PlotNode.id``.
+    id: Optional[str] = None
     type: str
     presentation: str
     operands: list[DataSpec]

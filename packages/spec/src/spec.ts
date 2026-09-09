@@ -12,6 +12,11 @@ export type PlotNode = PlotLeafNode | GridNode | CompareNode;
 
 export interface PlotLeafNode {
   kind: "plot";
+  /** Stable identity for this node across re-authored specs (a run id, a
+   *  series name, …). Hosts key grid cells by it, so a reordered/filtered grid
+   *  reuses each cell's component instance instead of re-mounting by position.
+   *  Purely an identity hint: it never takes part in data resolution. */
+  id?: string;
   type: string;
   settings?: Record<string, JsonValue>;
   props?: Record<string, JsonValue>;
@@ -20,6 +25,11 @@ export interface PlotLeafNode {
 
 export interface GridNode {
   kind: "grid";
+  /** Stable identity for this node across re-authored specs (a run id, a
+   *  series name, …). Hosts key grid cells by it, so a reordered/filtered grid
+   *  reuses each cell's component instance instead of re-mounting by position.
+   *  Purely an identity hint: it never takes part in data resolution. */
+  id?: string;
   children: PlotNode[];
   cols?: number;
   colWidths?: Array<number | string>;
@@ -34,6 +44,11 @@ export interface GridNode {
 
 export interface CompareNode {
   kind: "compare";
+  /** Stable identity for this node across re-authored specs (a run id, a
+   *  series name, …). Hosts key grid cells by it, so a reordered/filtered grid
+   *  reuses each cell's component instance instead of re-mounting by position.
+   *  Purely an identity hint: it never takes part in data resolution. */
+  id?: string;
   /** Plot definition that owns comparison semantics. */
   type: string;
   /** Plot-defined presentation (`overlay`, `difference`, …). */

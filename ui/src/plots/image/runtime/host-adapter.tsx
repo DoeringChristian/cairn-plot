@@ -36,7 +36,7 @@ import {
 import { applyChannelSlice } from "../resources/channel-slice.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { defaultSettingsForNode } from "../../settings.ts";
-import { CellSettingsContext, useSharedPlot } from "../../../host/plot-context.ts";
+import { CellSettingsContext, useSharedPlot, usePaneVisible } from "../../../host/plot-context.ts";
 import { ReactBackendOutlet } from "../../../host/react-backend.ts";
 import { withoutSettingsPlumbing } from "../../../host/presentation.ts";
 import {
@@ -122,6 +122,9 @@ export function ImageHostAdapter({
   const { source, shared } = useSharedPlot();
   // Per-pane selection-derived sync overrides (undefined outside a ≥2 selection).
   const paneSync = useContext(CellSettingsContext);
+  // The lazy gate's viewport answer — passed to the preparation scheduler so an
+  // on-screen pane's decode runs before an off-screen one's.
+  const visible = usePaneVisible();
   // True inside a STACKED viewport — threaded to the pane so it treats its display
   // settings as the stack's ONE SHARED object (a pick applies to all slots + survives
   // flips; authored props are seeds; HOME adopts the focused slot; exit discards).
@@ -204,7 +207,12 @@ export function ImageHostAdapter({
     // `source`. SIGN convention: `source` = reference, `compareSource.b` = foreground
     // (`diff = source − b`, byte-parity with the compare pane's `texA − texB`).
     if (diffSpec) {
-      void resolveCached(key, () => resolveRegisteredImageComparison(diffSpec.node, source)).catch(() => {
+      void resolveCached(
+        key,
+        () => resolveRegisteredImageComparison(diffSpec.node, source),
+        "foreground",
+        { visible },
+      ).catch(() => {
         /* error is cached (peekResolveError) — the pure read surfaces it */
       });
       return () => {
@@ -229,7 +237,7 @@ export function ImageHostAdapter({
         return applyChannelSlice(dp, chSelRef.current.layer);
       }
       return dp;
-    }).catch((err) => {
+    }, "foreground", { visible }).catch((err) => {
       if (cancelled) return;
       // A CHANNEL-OVERRIDE decode that fails must never strand the pane in an error
       // state with no way back (the CHANNELS menu only renders on the ready pane):
@@ -245,7 +253,7 @@ export function ImageHostAdapter({
     return () => {
       cancelled = true;
     };
-  }, [node, source, selKey, effectiveData, resolveKey, diffSpec, paneSync]);
+  }, [node, source, selKey, effectiveData, resolveKey, diffSpec, paneSync, visible]);
 
   // PURE READ of THIS render's resolveKey (the flip-commit guarantee). `peekResolved`
   // returns the SAME cached object across renders, so `dataProps` is reference-stable;

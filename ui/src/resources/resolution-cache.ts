@@ -22,6 +22,7 @@
 import {
   globalPreparationScheduler,
   type PreparationPriority,
+  type ScheduleOptions,
 } from "./scheduler.ts";
 import {
   globalResourceCache,
@@ -114,8 +115,54 @@ export function resolutionKey(source: object, node: object, suffix = ""): string
   return `${sourceKey(source)}|${descriptorContentId(node) ?? sourceKey(node)}${suffix}`;
 }
 
-const errors = new Map<string, string>();
+/**
+ * How long a cached resolve FAILURE suppresses a retry (H2). Consumers guard
+ * their resolve effect with `peekResolveError(key) !== undefined`, and the old
+ * error map only ever forgot an entry on a later SUCCESS of the same key — which
+ * that very guard prevented, so one transient failure (a decode timeout, a
+ * dropped fetch) wedged the pane permanently. An error is now a short-lived
+ * backoff: after the TTL the key is forgotten and the next render retries.
+ */
+export const RESOLVE_ERROR_TTL_MS = 2000;
+
+/**
+ * How long `resolveCached` keeps its own lease on a freshly resolved entry
+ * (H12). The resolver used to release immediately, leaving the entry at zero
+ * leases until the consumer's passive effect ran a commit later — a window in
+ * which `evictToBudget` could (and under a tight budget did) throw the payload
+ * away, producing a resolve → evict → resolve loop that never converged. The
+ * grace lease hands the entry over: it is released when the consumer acquires
+ * it, or after this long, whichever comes first.
+ */
+export const RESOLVE_HANDOFF_MS = 5000;
+
+interface CachedResolveError {
+  readonly message: string;
+  /** `resolveNow()` at the moment the failure was recorded. */
+  readonly at: number;
+}
+
+const errors = new Map<string, CachedResolveError>();
 const resolving = new Map<string, Promise<void>>();
+/** Grace leases held by `resolveCached` between resolution and consumer handoff. */
+const handoffs = new Map<string, { lease: ResourceLease<unknown>; timer: ReturnType<typeof setTimeout> }>();
+
+let resolveNow: () => number = () => Date.now();
+
+/** Test seam only — inject a controllable clock for the error TTL. Pass
+ *  `undefined` to restore `Date.now`. */
+export function __setResolveClockForTest(clock: (() => number) | undefined): void {
+  resolveNow = clock ?? (() => Date.now());
+}
+
+/** Release the resolver's grace lease for `key`, if it still holds one. */
+function releaseHandoff(key: string): void {
+  const held = handoffs.get(key);
+  if (!held) return;
+  handoffs.delete(key);
+  clearTimeout(held.timer);
+  held.lease.release();
+}
 
 // SUBSCRIBABLE STORE. The cache is a tiny external store a React leaf reads via
 // `useSyncExternalStore`: the resolved value for a key is then a PURE FUNCTION of the
@@ -149,14 +196,33 @@ export function peekResolved<T>(key: string): T | undefined {
   return globalResourceCache.peek<T>(key);
 }
 
-/** Pin a resolved payload while it is visible. */
+/** Pin a resolved payload while it is visible. Acquiring COMPLETES the handoff
+ *  from {@link resolveCached}: the resolver's grace lease is dropped only once
+ *  the consumer holds its own, so the entry is never momentarily unleased. */
 export function acquireResolved<T>(key: string): ResourceLease<T> | undefined {
-  return globalResourceCache.acquire<T>(key);
+  const lease = globalResourceCache.acquire<T>(key);
+  if (lease) releaseHandoff(key);
+  return lease;
 }
 
-/** The cached error for `key`, if the last resolve failed. */
+/** The cached error for `key`, if the last resolve failed WITHIN the backoff
+ *  window. A stale entry is forgotten here (and the caller therefore retries) —
+ *  see {@link RESOLVE_ERROR_TTL_MS}. */
 export function peekResolveError(key: string): string | undefined {
-  return errors.get(key);
+  const entry = errors.get(key);
+  if (!entry) return undefined;
+  if (resolveNow() - entry.at >= RESOLVE_ERROR_TTL_MS) {
+    errors.delete(key);
+    return undefined;
+  }
+  return entry.message;
+}
+
+/** Forget the cached failure for `key` so the next request retries at once —
+ *  for callers that KNOW the cause is gone (a node/settings change, a manual
+ *  retry) and should not wait out {@link RESOLVE_ERROR_TTL_MS}. */
+export function clearResolveError(key: string): void {
+  errors.delete(key);
 }
 
 /** Resolve `key` via `run` exactly once and cache the result; concurrent/repeat
@@ -165,6 +231,7 @@ export function resolveCached<T>(
   key: string,
   run: () => Promise<T>,
   priority: PreparationPriority = "foreground",
+  options?: ScheduleOptions,
 ): Promise<T> {
   const hit = globalResourceCache.peek<T>(key);
   if (hit !== undefined) return Promise.resolve(hit);
@@ -172,15 +239,21 @@ export function resolveCached<T>(
   if (existing) {
     // This may promote a queued preload. The scheduler returns the same work;
     // the cache keeps its single completion/notification path below.
-    void globalPreparationScheduler.schedule(key, priority, run).catch(() => {});
+    void globalPreparationScheduler.schedule(key, priority, run, options).catch(() => {});
     return existing.then(() => globalResourceCache.peek<T>(key) as T);
   }
   const promise = globalResourceCache.getOrCreate(key, async () => {
-    const value = await globalPreparationScheduler.schedule(key, priority, run);
+    const value = await globalPreparationScheduler.schedule(key, priority, run, options);
     return { value, bytes: estimateResolvedBytes(value) };
   }).then(
     (lease) => {
-      lease.release();
+      // HANDOFF (H12): hold this lease until the consumer acquires its own (or
+      // the grace window lapses) so a tight budget cannot evict the payload in
+      // the gap between resolution and the pane's passive lease effect.
+      releaseHandoff(key);
+      const timer = setTimeout(() => releaseHandoff(key), RESOLVE_HANDOFF_MS);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      handoffs.set(key, { lease: lease as ResourceLease<unknown>, timer });
       errors.delete(key);
       resolving.delete(key);
       notifyResolveCache(); // wake subscribed leaves — they re-read peekResolved(key)
@@ -189,7 +262,10 @@ export function resolveCached<T>(
       // Background failures are diagnostics only. A later foreground request
       // retries and becomes visible only if it also fails.
       if (priority === "foreground") {
-        errors.set(key, err instanceof Error ? err.message : String(err));
+        errors.set(key, {
+          message: err instanceof Error ? err.message : String(err),
+          at: resolveNow(),
+        });
         notifyResolveCache();
       }
       resolving.delete(key);
@@ -206,13 +282,16 @@ export function resolveCached<T>(
 export function prefetchResolved(entries: Array<{ key: string; run: () => Promise<unknown> }>): void {
   for (const { key, run } of entries) {
     if (globalResourceCache.has(key)) continue;
-    void resolveCached(key, run, "preload").catch(() => {});
+    // Explicitly NOT visible: a warm-ahead never overtakes an on-screen pane's
+    // work inside the preload band.
+    void resolveCached(key, run, "preload", { visible: false }).catch(() => {});
   }
 }
 
 /** Test seam only — drop all cached resolutions (the `sourceKey` WeakMap is left
  *  intact; ids stay stable). */
 export function __resetResolveCacheForTest(): void {
+  for (const key of [...handoffs.keys()]) releaseHandoff(key);
   globalResourceCache.clear();
   errors.clear();
   resolving.clear();

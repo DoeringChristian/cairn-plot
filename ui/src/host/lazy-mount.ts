@@ -77,3 +77,27 @@ export function isEagerMount(signals: EagerMountSignals): boolean {
  * place to change if measurement ever says otherwise.
  */
 export const LAZY_ROOT_MARGIN = "600px 0px";
+
+/**
+ * How many animation frames `LazyGate` will wait for its placeholder element
+ * before giving up on attaching the viewport observer (H13).
+ *
+ * The observer used to be attached ONCE, in an effect with `[mounted]` deps: if
+ * `placeholderRef.current` was still null at that moment — the placeholder had
+ * not been committed yet, or the pane was inside a container React had not laid
+ * out — the effect returned early and NOTHING ever re-ran it. That pane stayed a
+ * blank placeholder for the life of the page, no matter how far the user
+ * scrolled. Retrying across a bounded number of frames closes that hole without
+ * ever spinning forever.
+ */
+export const LAZY_OBSERVE_RETRY_FRAMES = 10;
+
+/** Whether the gate should schedule ANOTHER attempt to attach its observer
+ *  after `attempts` failures. Bounded by {@link LAZY_OBSERVE_RETRY_FRAMES}. */
+export function shouldRetryObserve(
+  attempts: number,
+  maxAttempts: number = LAZY_OBSERVE_RETRY_FRAMES,
+): boolean {
+  if (!Number.isFinite(attempts) || attempts < 0) return false;
+  return attempts < maxAttempts;
+}

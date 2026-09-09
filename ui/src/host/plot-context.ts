@@ -29,3 +29,20 @@ export interface CellSettingsContextValue {
 }
 
 export const CellSettingsContext = createContext<CellSettingsContextValue | null>(null);
+
+/**
+ * Whether the pane rendering this subtree is at/near the viewport, as reported
+ * by the `LazyGate` that mounted it. Consumers pass it to `resolveCached` so the
+ * preparation scheduler runs on-screen work first within a priority band.
+ *
+ * DEFAULT `false` = "no viewport evidence". Only a gate that has actually
+ * mounted its child claims visibility; work scheduled from outside a gate
+ * (blind prefetch, the stacked-slot dispatch) must never outrank a pane the
+ * user is looking at.
+ */
+export const PaneVisibilityContext = createContext<boolean>(false);
+
+/** The current pane's viewport answer — see {@link PaneVisibilityContext}. */
+export function usePaneVisible(): boolean {
+  return useContext(PaneVisibilityContext);
+}

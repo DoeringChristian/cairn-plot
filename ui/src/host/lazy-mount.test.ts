@@ -12,7 +12,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isEagerMount, hasEagerQueryParam } from "./lazy-mount.ts";
+import {
+  isEagerMount,
+  hasEagerQueryParam,
+  shouldRetryObserve,
+  LAZY_OBSERVE_RETRY_FRAMES,
+} from "./lazy-mount.ts";
 
 test("hasEagerQueryParam: truthy forms are eager", () => {
   assert.equal(hasEagerQueryParam("?eager=1"), true);
@@ -74,4 +79,31 @@ test("isEagerMount: any single hatch is sufficient", () => {
     isEagerMount({ search: "?eager=1", windowFlag: false, printMedia: false }),
     true,
   );
+});
+
+// ---------------------------------------------------------------------------
+// H13 — the gate's bounded observer-attach retry. `LazyGate` used to attach its
+// IntersectionObserver exactly once, in an effect keyed only on `mounted`: when
+// `placeholderRef.current` was still null at that moment the effect returned
+// early and nothing ever re-ran it, so the pane stayed a blank placeholder for
+// the life of the page. Only the bounded-retry DECISION is pure and tested
+// here; the observer/ResizeObserver wiring itself is DOM and is covered by the
+// self-driving compare-grid harness (CP4).
+// ---------------------------------------------------------------------------
+
+test("shouldRetryObserve: retries up to the bound, then stops", () => {
+  assert.equal(LAZY_OBSERVE_RETRY_FRAMES, 10);
+  assert.equal(shouldRetryObserve(0), true, "the first miss retries");
+  assert.equal(shouldRetryObserve(LAZY_OBSERVE_RETRY_FRAMES - 1), true, "the last allowed attempt");
+  assert.equal(shouldRetryObserve(LAZY_OBSERVE_RETRY_FRAMES), false, "bounded — never spins forever");
+  assert.equal(shouldRetryObserve(LAZY_OBSERVE_RETRY_FRAMES + 5), false);
+});
+
+test("shouldRetryObserve: honours an explicit bound and rejects nonsense counts", () => {
+  assert.equal(shouldRetryObserve(2, 3), true);
+  assert.equal(shouldRetryObserve(3, 3), false);
+  assert.equal(shouldRetryObserve(0, 0), false);
+  assert.equal(shouldRetryObserve(-1), false);
+  assert.equal(shouldRetryObserve(Number.NaN), false);
+  assert.equal(shouldRetryObserve(Number.POSITIVE_INFINITY), false);
 });

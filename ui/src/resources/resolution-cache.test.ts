@@ -4,13 +4,18 @@ import { test } from "node:test";
 import {
   sourceKey,
   resolutionKey,
+  acquireResolved,
+  clearResolveError,
   peekResolved,
   peekResolveError,
   resolveCached,
   prefetchResolved,
   estimateResolvedBytes,
+  RESOLVE_ERROR_TTL_MS,
   __resetResolveCacheForTest,
+  __setResolveClockForTest,
 } from "./resolution-cache.ts";
+import { globalResourceCache, setRuntimeCacheBudget } from "./cache.ts";
 import { clearPlotTypesForTest } from "../plots/registry.ts";
 import { clearReactPlotTypesForTest, registerReactPlotType } from "../plots/react-registry.ts";
 import { ensureScalarPlotType } from "../plots/scalar/register.ts";
@@ -223,4 +228,139 @@ test("two nodes of a registered type without a content id key APART, not onto on
     "structurally equal data still shares one key",
   );
   assert.equal(resolutionKey(source, first).endsWith("plot:imagelike:null"), false);
+});
+
+// ---------------------------------------------------------------------------
+// H2 — a cached resolve FAILURE is a short backoff, not a permanent wedge.
+// Before the TTL, consumers guarded their resolve effect on
+// `peekResolveError(key) !== undefined` and the entry was only ever cleared by a
+// later SUCCESS of the same key — which the guard itself prevented.
+// ---------------------------------------------------------------------------
+
+test("a cached resolve error expires after the TTL and the key retries", async () => {
+  __resetResolveCacheForTest();
+  let now = 1_000_000;
+  __setResolveClockForTest(() => now);
+  try {
+    let attempts = 0;
+    const run = async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("transient decode failure");
+      return "second time lucky";
+    };
+    const key = "ttl-key";
+
+    await assert.rejects(resolveCached(key, run));
+    assert.equal(attempts, 1);
+    assert.equal(peekResolveError(key), "transient decode failure", "the failure is visible");
+
+    // Still inside the backoff window: the consumer must NOT retry yet.
+    now += RESOLVE_ERROR_TTL_MS - 1;
+    assert.equal(peekResolveError(key), "transient decode failure");
+
+    // Past the window: the error is forgotten and the guard opens.
+    now += 1;
+    assert.equal(peekResolveError(key), undefined, "an expired error must not block a retry");
+
+    assert.equal(await resolveCached(key, run), "second time lucky");
+    assert.equal(attempts, 2, "the retry actually ran");
+    assert.equal(peekResolved<string>(key), "second time lucky");
+    assert.equal(peekResolveError(key), undefined);
+  } finally {
+    __setResolveClockForTest(undefined);
+    __resetResolveCacheForTest();
+  }
+});
+
+test("one key's cached error never suppresses another key", async () => {
+  __resetResolveCacheForTest();
+  try {
+    await assert.rejects(resolveCached("bad", async () => { throw new Error("nope"); }));
+    assert.equal(peekResolveError("bad"), "nope");
+    assert.equal(peekResolveError("good"), undefined);
+    assert.equal(await resolveCached("good", async () => 1), 1);
+  } finally {
+    __resetResolveCacheForTest();
+  }
+});
+
+test("clearResolveError forgets a failure immediately", async () => {
+  __resetResolveCacheForTest();
+  let now = 0;
+  __setResolveClockForTest(() => now);
+  try {
+    const key = "clear-key";
+    await assert.rejects(resolveCached(key, async () => { throw new Error("boom"); }));
+    assert.equal(peekResolveError(key), "boom");
+    clearResolveError(key);
+    assert.equal(peekResolveError(key), undefined, "no need to wait out the TTL");
+    assert.equal(await resolveCached(key, async () => "fresh"), "fresh");
+  } finally {
+    __setResolveClockForTest(undefined);
+    __resetResolveCacheForTest();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// H12 — the resolver holds a grace lease until the consumer acquires, so a
+// tight budget cannot evict a payload in the gap between resolution and the
+// pane's passive lease effect (which caused a resolve → evict → resolve loop).
+// ---------------------------------------------------------------------------
+
+test("a just-resolved entry survives a tight budget until the consumer acquires", async () => {
+  __resetResolveCacheForTest();
+  const originalBudget = globalResourceCache.budgetBytes;
+  try {
+    // Budget fits ONE payload; two resolved back-to-back must both survive.
+    setRuntimeCacheBudget(1024);
+    const payload = () => new Uint8Array(768);
+    const first = "handoff-a";
+    const second = "handoff-b";
+
+    await resolveCached(first, async () => payload());
+    await resolveCached(second, async () => payload());
+
+    assert.notEqual(peekResolved(first), undefined, "the earlier entry must not be evicted");
+    assert.notEqual(peekResolved(second), undefined);
+
+    // The consumers' passive effects run a commit later; both still find their
+    // payload and take over the lease.
+    const leaseA = acquireResolved(first);
+    const leaseB = acquireResolved(second);
+    assert.ok(leaseA && leaseB, "both consumers acquire the payload they asked for");
+
+    // Handing over is not a leak: once the consumers release, the budget bites.
+    leaseA.release();
+    leaseB.release();
+    assert.ok(
+      globalResourceCache.bytes <= 1024,
+      `retained ${globalResourceCache.bytes} bytes must fall back inside the budget`,
+    );
+  } finally {
+    setRuntimeCacheBudget(originalBudget);
+    __resetResolveCacheForTest();
+  }
+});
+
+test("the resolver's grace lease is dropped exactly once per key", async () => {
+  __resetResolveCacheForTest();
+  const originalBudget = globalResourceCache.budgetBytes;
+  try {
+    setRuntimeCacheBudget(1024);
+    const key = "handoff-once";
+    await resolveCached(key, async () => new Uint8Array(768));
+    // Two acquires: the second must not double-release the resolver's lease.
+    const a = acquireResolved(key);
+    const b = acquireResolved(key);
+    assert.ok(a && b);
+    a.release();
+    assert.notEqual(peekResolved(key), undefined, "still leased by the second consumer");
+    b.release();
+    // Only now is it evictable; a fresh over-budget entry pushes it out.
+    await resolveCached("handoff-other", async () => new Uint8Array(900));
+    assert.equal(peekResolved(key), undefined, "an unleased entry is evictable again");
+  } finally {
+    setRuntimeCacheBudget(originalBudget);
+    __resetResolveCacheForTest();
+  }
 });

@@ -13,6 +13,7 @@ import {
 import { InStackedGridContext } from "./stack/stack-context.ts";
 import { ChartFillContext } from "./chart-fill.ts";
 import { adjacentStackIndices } from "./stack-preload.ts";
+import { positionalCellKey } from "./grid-cell-key.ts";
 
 export type GridLayoutKind = "grid" | "stack";
 export interface GridLayoutState { layout: GridLayoutKind; activeSlot: number }
@@ -28,6 +29,10 @@ export interface GridLayoutProps {
   onStateChange?(state: GridLayoutState): void;
   switchable?: boolean;
   labels: string[];
+  /** Stable per-cell React keys (see `grid-cell-key.ts`). Index-keyed cells
+   *  hand a reordered grid's node to the WRONG mounted pane, so callers that
+   *  can identify their children MUST supply these; omitted ⇒ positional. */
+  cellKeys?: readonly string[];
   renderGridCell(index: number): React.ReactNode;
   renderStackSlot(index: number): React.ReactNode;
   preload?(indices: number[]): void;
@@ -56,6 +61,7 @@ export function GridLayout({
   onStateChange,
   switchable = true,
   labels,
+  cellKeys,
   renderGridCell,
   renderStackSlot,
   preload,
@@ -172,7 +178,9 @@ export function GridLayout({
           ) : (
             <div style={gridStyle}>
               {Array.from({ length: count }, (_, index) => (
-                <React.Fragment key={index}>{renderGridCell(index)}</React.Fragment>
+                <React.Fragment key={cellKeys?.[index] ?? positionalCellKey(index)}>
+                  {renderGridCell(index)}
+                </React.Fragment>
               ))}
             </div>
           )}

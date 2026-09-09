@@ -34,6 +34,7 @@ import {
 import {
   isEagerMount,
   LAZY_ROOT_MARGIN,
+  shouldRetryObserve,
   type EagerMountSignals,
 } from "./lazy-mount";
 import {
@@ -49,10 +50,13 @@ import {
 import { type PlotSettings } from "../settings/schema.ts";
 import { defaultSettingsForNode } from "../plots/settings.ts";
 import { GridLayout, type GridLayoutState } from "../layout/GridLayout.tsx";
+import { gridCellKeys } from "../layout/grid-cell-key.ts";
 import {
   CellSettingsContext,
+  PaneVisibilityContext,
   SharedPlotContext,
   useSharedPlot,
+  usePaneVisible,
 } from "./plot-context.ts";
 import { PlotCell } from "./PlotCell.tsx";
 import { ReactBackendOutlet } from "./react-backend.ts";
@@ -170,6 +174,10 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
     sessionController?.recordGrid(sessionId, next);
   }, [layoutState.layout, path, sessionController, sessionId]);
 
+  // H6: cells are keyed by node IDENTITY, never by position — a reordered or
+  // filtered run set must move each pane's mounted instance with its node
+  // instead of handing pane 0 a different run's data.
+  const cellKeys = useMemo(() => gridCellKeys(children), [children]);
   const renderGridCell = useCallback(
     (index: number) => <PlotNodeView node={children[index]!} path={`${path}/${index}`} />,
     [children, path],
@@ -242,6 +250,7 @@ function GridView({ node, path }: { node: GridNode; path: string }) {
       onStateChange={changeLayoutState}
       switchable={node.switchable !== false}
       labels={children.map((child, index) => stackLabelFor(child, index))}
+      cellKeys={cellKeys}
       renderGridCell={renderGridCell}
       renderStackSlot={renderStackSlot}
       preload={preload}
@@ -340,25 +349,81 @@ function LazyGate({
       setMounted(true);
       return cleanupPrint;
     }
-    const el = placeholderRef.current;
-    if (!el) return cleanupPrint;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setMounted(true);
-          io.disconnect();
-        }
-      },
-      { rootMargin: LAZY_ROOT_MARGIN },
-    );
-    io.observe(el);
+
+    // H13. The placeholder ref can still be null at effect time (the element is
+    // committed in a later pass, or the pane sits in a container React has not
+    // laid out yet). The old code returned early and, because the effect only
+    // re-ran on `mounted`, NEVER attached an observer: that pane stayed blank
+    // forever. Retry across a bounded number of frames instead, and once
+    // attached keep a ResizeObserver on the placeholder so a container that is
+    // zero-sized/hidden at attach time (a collapsed panel, a `display:none`
+    // tab) re-triggers the intersection check when it finally gains a box.
+    let cancelled = false;
+    let attempts = 0;
+    let frame: ReturnType<typeof requestAnimationFrame> | number | null = null;
+    let io: IntersectionObserver | null = null;
+    let ro: ResizeObserver | null = null;
+
+    const schedule = (fn: () => void): ReturnType<typeof requestAnimationFrame> | number =>
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame(fn)
+        : (setTimeout(fn, 16) as unknown as number);
+    const unschedule = (handle: ReturnType<typeof requestAnimationFrame> | number): void => {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(handle as number);
+      else clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+    };
+
+    const attach = (): void => {
+      if (cancelled) return;
+      frame = null;
+      const el = placeholderRef.current;
+      if (!el) {
+        if (!shouldRetryObserve(attempts++)) return;
+        frame = schedule(attach);
+        return;
+      }
+      io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            io?.disconnect();
+            ro?.disconnect();
+            setMounted(true);
+          }
+        },
+        { rootMargin: LAZY_ROOT_MARGIN },
+      );
+      io.observe(el);
+      if (typeof ResizeObserver !== "undefined") {
+        ro = new ResizeObserver(() => {
+          const node = placeholderRef.current;
+          if (!node || !io) return;
+          // Re-observing re-delivers an entry for the CURRENT geometry, so a
+          // placeholder that has just become visible is evaluated again.
+          io.unobserve(node);
+          io.observe(node);
+        });
+        ro.observe(el);
+      }
+    };
+    attach();
+
     return () => {
-      io.disconnect();
+      cancelled = true;
+      if (frame !== null) unschedule(frame);
+      io?.disconnect();
+      ro?.disconnect();
       cleanupPrint();
     };
   }, [mounted]);
 
-  if (mounted) return <>{children}</>;
+  // A mounted gate is the one viewport answer this tree has: the pane is at (or
+  // within `LAZY_ROOT_MARGIN` of) the viewport, so its preparation work should
+  // run before work nobody has evidence is on screen.
+  if (mounted) {
+    return (
+      <PaneVisibilityContext.Provider value={true}>{children}</PaneVisibilityContext.Provider>
+    );
+  }
   // Layout-preserving placeholder: reserve the SAME height ChartBox will use
   // once the real child mounts (props.height → fill 100% → 400px default), so
   // the swap causes no layout shift for the ChartBox-wrapped renderers.
@@ -424,6 +489,7 @@ function NodeDispatch({ node, path = "root" }: { node: PlotNode; path?: string }
 function GenericLeafView({ node }: { node: PlotLeafNode }) {
   const { source, shared } = useSharedPlot();
   const cell = useContext(CellSettingsContext);
+  const visible = usePaneVisible();
   const key = resolutionKey(source, node);
   const [, bumpRegistry] = useState(0);
   useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
@@ -440,8 +506,8 @@ function GenericLeafView({ node }: { node: PlotLeafNode }) {
         source,
         signal: new AbortController().signal,
       }),
-    )).catch(() => {});
-  }, [key, node, registered, source]);
+    ), "foreground", { visible }).catch(() => {});
+  }, [key, node, registered, source, visible]);
 
   const presentation = peekResolved<unknown>(key);
   useEffect(() => {
@@ -486,6 +552,7 @@ function GenericLeafView({ node }: { node: PlotLeafNode }) {
 function GenericComparisonView({ node }: { node: CompareNode }) {
   const { source, shared } = useSharedPlot();
   const paneSync = useContext(CellSettingsContext);
+  const visible = usePaneVisible();
   const key = resolutionKey(source, node, "|comparison");
   useSyncExternalStore(subscribeResolveCache, resolveCacheVersion, resolveCacheVersion);
   const planned = useMemo(() => {
@@ -500,8 +567,8 @@ function GenericComparisonView({ node }: { node: CompareNode }) {
     void resolveCached(key, () => resolveComparison(node, {
       source,
       signal: new AbortController().signal,
-    })).catch(() => {});
-  }, [key, node, planned.value, source]);
+    }), "foreground", { visible }).catch(() => {});
+  }, [key, node, planned.value, source, visible]);
   const presentation = peekResolved<unknown>(key);
   useEffect(() => {
     if (presentation === undefined) return;

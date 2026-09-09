@@ -46,6 +46,10 @@
           "type": "string",
           "const": "plot"
         },
+        "id": {
+          "type": "string",
+          "description": "Stable identity for this node across re-authored specs (a run id, a series name, …). Hosts key grid cells by it, so a reordered/filtered grid reuses each cell's component instance instead of re-mounting by position. Purely an identity hint: it never takes part in data resolution."
+        },
         "type": {
           "type": "string"
         },
@@ -272,6 +276,10 @@
           "type": "string",
           "const": "grid"
         },
+        "id": {
+          "type": "string",
+          "description": "Stable identity for this node across re-authored specs (a run id, a series name, …). Hosts key grid cells by it, so a reordered/filtered grid reuses each cell's component instance instead of re-mounting by position. Purely an identity hint: it never takes part in data resolution."
+        },
         "children": {
           "type": "array",
           "items": {
@@ -363,6 +371,10 @@
         "kind": {
           "type": "string",
           "const": "compare"
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable identity for this node across re-authored specs (a run id, a series name, …). Hosts key grid cells by it, so a reordered/filtered grid reuses each cell's component instance instead of re-mounting by position. Purely an identity hint: it never takes part in data resolution."
         },
         "type": {
           "type": "string",

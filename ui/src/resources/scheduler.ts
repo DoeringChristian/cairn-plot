@@ -1,13 +1,44 @@
 export type PreparationPriority = "foreground" | "preload";
 
+/** Per-request hints. `visible` is the caller's live viewport answer (the lazy
+ *  gate's intersection state); it breaks ties WITHIN a priority band so an
+ *  on-screen pane is prepared before an equally-urgent off-screen one. */
+export interface ScheduleOptions {
+  readonly visible?: boolean;
+}
+
 interface QueuedTask<T> {
   readonly key: string;
   priority: PreparationPriority;
+  visible: boolean;
   readonly order: number;
   readonly run: () => Promise<T>;
   readonly promise: Promise<T>;
   resolve(value: T): void;
   reject(error: unknown): void;
+}
+
+/**
+ * How long a started task may hold its concurrency slot before the scheduler
+ * assumes it will never settle and frees the slot anyway (H1). A decode worker
+ * that dies without replying, or an await on a promise nobody will resolve,
+ * used to pin one of only four slots FOREVER — four such tasks froze every
+ * later resolve on the page. The task promise itself is left alone (a late
+ * settle still resolves its callers); only the SLOT is reclaimed.
+ */
+export const TASK_WATCHDOG_MS = 60_000;
+
+/** The queue order, as a pure comparator: priority band first, then visible
+ *  work, then FIFO by arrival. Negative ⇒ `a` runs before `b`. */
+export function comparePreparationTasks(
+  a: { priority: PreparationPriority; visible?: boolean; order: number },
+  b: { priority: PreparationPriority; visible?: boolean; order: number },
+): number {
+  const byPriority = rank(b.priority) - rank(a.priority);
+  if (byPriority !== 0) return byPriority;
+  const byVisible = (b.visible === true ? 1 : 0) - (a.visible === true ? 1 : 0);
+  if (byVisible !== 0) return byVisible;
+  return a.order - b.order;
 }
 
 /**
@@ -17,22 +48,25 @@ interface QueuedTask<T> {
  */
 export class PreparationScheduler {
   readonly concurrency: number;
+  readonly watchdogMs: number;
   private readonly queued = new Map<string, QueuedTask<unknown>>();
   private readonly running = new Map<string, Promise<unknown>>();
   private active = 0;
   private clock = 0;
 
-  constructor(options: { concurrency: number }) {
+  constructor(options: { concurrency: number; watchdogMs?: number }) {
     if (!Number.isInteger(options.concurrency) || options.concurrency < 1) {
       throw new Error("cairn-plot: preparation concurrency must be a positive integer");
     }
     this.concurrency = options.concurrency;
+    this.watchdogMs = options.watchdogMs ?? TASK_WATCHDOG_MS;
   }
 
   schedule<T>(
     key: string,
     priority: PreparationPriority,
     run: () => Promise<T>,
+    options?: ScheduleOptions,
   ): Promise<T> {
     const inFlight = this.running.get(key);
     if (inFlight) return inFlight as Promise<T>;
@@ -40,6 +74,7 @@ export class PreparationScheduler {
     const existing = this.queued.get(key) as QueuedTask<T> | undefined;
     if (existing) {
       if (priority === "foreground") existing.priority = "foreground";
+      if (options?.visible === true) existing.visible = true;
       this.drain();
       return existing.promise;
     }
@@ -53,6 +88,7 @@ export class PreparationScheduler {
     this.queued.set(key, {
       key,
       priority,
+      visible: options?.visible === true,
       order: this.clock++,
       run,
       promise,
@@ -71,10 +107,34 @@ export class PreparationScheduler {
       this.active++;
       const running = Promise.resolve().then(task.run);
       this.running.set(task.key, running);
-      void running.then(task.resolve, task.reject).finally(() => {
-        this.running.delete(task.key);
+
+      // The slot is released EXACTLY once — by the task settling, or by the
+      // watchdog when it never does.
+      let releasedSlot = false;
+      const releaseSlot = (): void => {
+        if (releasedSlot) return;
+        releasedSlot = true;
+        // Only drop the key→promise mapping if it is still ours: a watchdog
+        // release lets a later `schedule(key)` start fresh work.
+        if (this.running.get(task.key) === running) this.running.delete(task.key);
         this.active--;
         this.drain();
+      };
+      const watchdog = setTimeout(() => {
+        if (releasedSlot) return;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `cairn-plot: preparation task ${JSON.stringify(task.key)} did not settle within ` +
+            `${this.watchdogMs}ms — releasing its scheduler slot (the task is left to settle on its own)`,
+        );
+        releaseSlot();
+      }, this.watchdogMs);
+      // Never keep a Node process alive just to watch a task.
+      (watchdog as unknown as { unref?: () => void }).unref?.();
+
+      void running.then(task.resolve, task.reject).finally(() => {
+        clearTimeout(watchdog);
+        releaseSlot();
       });
     }
   }
@@ -82,10 +142,7 @@ export class PreparationScheduler {
   private next(): QueuedTask<unknown> | undefined {
     let selected: QueuedTask<unknown> | undefined;
     for (const task of this.queued.values()) {
-      if (!selected || rank(task.priority) > rank(selected.priority) ||
-          (task.priority === selected.priority && task.order < selected.order)) {
-        selected = task;
-      }
+      if (!selected || comparePreparationTasks(task, selected) < 0) selected = task;
     }
     return selected;
   }
